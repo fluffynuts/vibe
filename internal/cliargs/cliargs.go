@@ -18,6 +18,7 @@ type Args struct {
 	ReCreate bool
 	Force    bool
 	List     bool
+	Install  bool
 	Help     bool
 }
 
@@ -48,6 +49,9 @@ func Parse(argv []string) (Args, error) {
 			i++
 		case arg == "-l" || arg == "--list":
 			a.List = true
+			i++
+		case arg == "-i" || arg == "--install":
+			a.Install = true
 			i++
 		case arg == "-n" || arg == "--name":
 			v, n, err := valueArg(argv, i)
@@ -110,10 +114,10 @@ func setPath(a *Args, v string) error {
 }
 
 // ExclusiveActions counts how many of the mutually-exclusive action flags
-// (stop/ssh/re-init/re-create/list) are set.
+// (stop/ssh/re-init/re-create/list/install) are set.
 func (a Args) ExclusiveActions() int {
 	n := 0
-	for _, b := range []bool{a.Stop, a.Ssh, a.ReInit, a.ReCreate, a.List} {
+	for _, b := range []bool{a.Stop, a.Ssh, a.ReInit, a.ReCreate, a.List, a.Install} {
 		if b {
 			n++
 		}

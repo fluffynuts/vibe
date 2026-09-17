@@ -150,6 +150,31 @@ func TestCreateGuidedComposesTheChosenFeatures(t *testing.T) {
 	}
 }
 
+// TestCreateGuidedUsesTheOverlaysOverrideForOneFeatureOnly checks the
+// actual requirement: overriding a single feature in the overlay must not
+// hide any other feature the bundle ships.
+func TestCreateGuidedUsesTheOverlaysOverrideForOneFeatureOnly(t *testing.T) {
+	l := testLayout(t)
+	write(t, mkdirAndPath(t, l.BundlePath("library", "mysql", "install-scripts"), "01-install-mysql"),
+		"#!/bin/sh\necho bundled-mysql\n", 0o644)
+	write(t, mkdirAndPath(t, l.BundlePath("library", "rabbitmq", "install-scripts"), "01-install-rabbitmq"),
+		"#!/bin/sh\necho install-rabbitmq\n", 0o644)
+	write(t, mkdirAndPath(t, l.HomePath("library", "mysql", "install-scripts"), "01-install-mysql"),
+		"#!/bin/sh\necho my-own-mysql\n", 0o644)
+
+	dir, err := CreateGuided(l, "phoenix", []string{"mysql", "rabbitmq"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mysqlScript, err := os.ReadFile(filepath.Join(dir, "install-scripts", "01-install-mysql"))
+	if err != nil || string(mysqlScript) != "#!/bin/sh\necho my-own-mysql\n" {
+		t.Errorf("expected the overlay's mysql override, got %q, %v", mysqlScript, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "install-scripts", "02-install-rabbitmq")); err != nil {
+		t.Errorf("expected the bundle's rabbitmq still used, unaffected by mysql's override: %v", err)
+	}
+}
+
 func mkdirAndPath(t *testing.T, dir, name string) string {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {

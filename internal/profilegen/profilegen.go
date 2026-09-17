@@ -77,7 +77,7 @@ func CreateGuided(l layout.Layout, profile string, features []string) (string, e
 	if err != nil {
 		return "", err
 	}
-	if err := library.Compose(l.LibraryDir(), features, dir); err != nil {
+	if err := library.Compose(features, l.FeatureDir, dir); err != nil {
 		return "", createErr(dir, err)
 	}
 	return dir, nil

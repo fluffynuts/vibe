@@ -67,3 +67,40 @@ func Tree(src, dst string) error {
 		}
 	})
 }
+
+// TreeMerge copies the directory tree rooted at src into dst like Tree,
+// except a file already present at the destination is left exactly as it
+// is rather than overwritten — so merging the same source in twice (e.g.
+// --install run again after fetching a newer bundle) never clobbers a
+// local edit. Directories are still created as needed.
+func TreeMerge(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		switch {
+		case info.IsDir():
+			return os.MkdirAll(target, info.Mode().Perm()|0o700)
+		default:
+			if _, statErr := os.Stat(target); statErr == nil {
+				return nil // already there — leave it alone
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				link, err := os.Readlink(path)
+				if err != nil {
+					return err
+				}
+				return os.Symlink(link, target)
+			}
+			if !info.Mode().IsRegular() {
+				return nil
+			}
+			return fileWithMode(path, target, info.Mode().Perm())
+		}
+	})
+}

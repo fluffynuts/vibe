@@ -57,9 +57,12 @@ func TestNeeded(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(l.Home, "defaults")); err != nil {
 		t.Fatal(err)
 	}
+	// the library is deliberately not a marker: it overrides per-feature
+	// (see layout.FeatureDir), so a custom feature alone must not be read
+	// as "this overlay is already fully configured"
 	write(t, filepath.Join(l.Home, "library", "mysql", "install-scripts", "01-a"), "echo mine\n")
-	if Needed(l) {
-		t.Error("an overlay with its own library does not need seeding")
+	if !Needed(l) {
+		t.Error("an overlay holding only a custom library feature still needs seeding")
 	}
 	if Needed(layout.New("", l.Bundle)) {
 		t.Error("with no overlay there is nothing to seed")
@@ -79,7 +82,7 @@ func TestRunCopiesBaseFilesAndAcceptedProfiles(t *testing.T) {
 	if want := []string{"phoenix", "yumbi"}; !reflect.DeepEqual(asked, want) {
 		t.Errorf("asked about %v, want every bundled profile %v", asked, want)
 	}
-	if want := []string{"config.yaml", "settings.yaml", "defaults/", "library/"}; !reflect.DeepEqual(res.Files, want) {
+	if want := []string{"config.yaml", "settings.yaml", "defaults/"}; !reflect.DeepEqual(res.Files, want) {
 		t.Errorf("copied %v, want %v", res.Files, want)
 	}
 	if _, err := os.Stat(l.HomePath("defaults", "install-scripts", "01-a")); err != nil {
@@ -88,11 +91,14 @@ func TestRunCopiesBaseFilesAndAcceptedProfiles(t *testing.T) {
 	if got, want := l.DefaultsDir(), l.HomePath("defaults"); got != want {
 		t.Errorf("DefaultsDir = %s, want the seeded %s", got, want)
 	}
-	if _, err := os.Stat(l.HomePath("library", "mysql", "install-scripts", "01-install-mysql")); err != nil {
-		t.Errorf("library not copied into the overlay: %v", err)
+	// unlike defaults, the library is never bulk-seeded: FeatureDir falls
+	// back to the bundle per-feature, so the bundle's mysql must still be
+	// what resolves here
+	if _, err := os.Stat(l.HomePath("library")); !os.IsNotExist(err) {
+		t.Errorf("expected no library/ copied into the overlay, got err=%v", err)
 	}
-	if got, want := l.LibraryDir(), l.HomePath("library"); got != want {
-		t.Errorf("LibraryDir = %s, want the seeded %s", got, want)
+	if got, want := l.FeatureDir("mysql"), l.BundlePath("library", "mysql"); got != want {
+		t.Errorf("FeatureDir(mysql) = %s, want the bundle's %s", got, want)
 	}
 	if want := []string{"yumbi"}; !reflect.DeepEqual(res.Profiles, want) {
 		t.Errorf("copied profiles %v, want %v", res.Profiles, want)

@@ -19,6 +19,13 @@ func write(t *testing.T, path, content string) {
 	}
 }
 
+// flatDirFor returns a DirFor that resolves every feature directly under
+// root — the shape most of these tests need, where every feature lives in
+// one flat "library" directory rather than split across two layers.
+func flatDirFor(root string) DirFor {
+	return func(feature string) string { return filepath.Join(root, feature) }
+}
+
 func TestListDescribesFromInstallScriptFirst(t *testing.T) {
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, "mysql", "install-scripts", "01-install-mysql"),
@@ -26,10 +33,7 @@ func TestListDescribesFromInstallScriptFirst(t *testing.T) {
 	write(t, filepath.Join(dir, "mysql", "agent-files", ".local", "bin", "start-mysql"),
 		"#!/bin/sh\n# vibe: description: should not be used\necho hi\n")
 
-	features, err := List(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	features := List([]string{"mysql"}, flatDirFor(dir))
 	if len(features) != 1 || features[0].Name != "mysql" {
 		t.Fatalf("features = %+v", features)
 	}
@@ -46,10 +50,7 @@ func TestListFallsBackToAgentFileDescription(t *testing.T) {
 	write(t, filepath.Join(dir, "nuget", "agent-files", ".local", "bin", "link-nuget"),
 		"#!/bin/sh\n# vibe: description: Link the host nuget cache\necho hi\n")
 
-	features, err := List(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	features := List([]string{"nuget"}, flatDirFor(dir))
 	if len(features) != 1 {
 		t.Fatalf("features = %+v", features)
 	}
@@ -62,10 +63,7 @@ func TestListFallsBackToBareNameWithNoDescriptionAnywhere(t *testing.T) {
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, "redis", "install-scripts", "01-install-redis-server"), "echo hi\n")
 
-	features, err := List(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	features := List([]string{"redis"}, flatDirFor(dir))
 	if features[0].Description != "" {
 		t.Errorf("Description = %q, want empty", features[0].Description)
 	}
@@ -74,22 +72,28 @@ func TestListFallsBackToBareNameWithNoDescriptionAnywhere(t *testing.T) {
 	}
 }
 
-func TestListSortedByNameAndMissingDirYieldsNone(t *testing.T) {
+func TestListPreservesGivenOrderAndResolvesEachIndependently(t *testing.T) {
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, "rabbitmq", "install-scripts", "01-a"), "echo\n")
-	write(t, filepath.Join(dir, "dotnet", "install-scripts", "01-a"), "echo\n")
+	overlay := t.TempDir()
+	write(t, filepath.Join(overlay, "dotnet", "install-scripts", "01-a"),
+		"#!/bin/sh\n# vibe: description: my custom dotnet\necho\n")
 
-	features, err := List(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(features) != 2 || features[0].Name != "dotnet" || features[1].Name != "rabbitmq" {
-		t.Fatalf("features = %+v", features)
+	// dotnet resolves from the overlay, rabbitmq from the (flat) bundle —
+	// List must not assume every feature comes from the same directory.
+	dirFor := func(feature string) string {
+		if feature == "dotnet" {
+			return filepath.Join(overlay, "dotnet")
+		}
+		return filepath.Join(dir, feature)
 	}
 
-	none, err := List(filepath.Join(dir, "does-not-exist"))
-	if err != nil || none != nil {
-		t.Errorf("List of a missing dir = %v, %v", none, err)
+	features := List([]string{"rabbitmq", "dotnet"}, dirFor)
+	if len(features) != 2 || features[0].Name != "rabbitmq" || features[1].Name != "dotnet" {
+		t.Fatalf("features = %+v, want the given order preserved", features)
+	}
+	if features[1].Description != "my custom dotnet" {
+		t.Errorf("expected dotnet resolved from its own dir, got %+v", features[1])
 	}
 }
 
@@ -112,7 +116,7 @@ func TestComposeRenumbersEachFeatureBlockInOrder(t *testing.T) {
 	libDir := seedTwoFeatures(t)
 	profileDir := t.TempDir()
 
-	if err := Compose(libDir, []string{"mysql", "rabbitmq"}, profileDir); err != nil {
+	if err := Compose([]string{"mysql", "rabbitmq"}, flatDirFor(libDir), profileDir); err != nil {
 		t.Fatal(err)
 	}
 
@@ -154,7 +158,7 @@ func TestComposeReversedOrderOffsetsFromTheOtherFeature(t *testing.T) {
 	libDir := seedTwoFeatures(t)
 	profileDir := t.TempDir()
 
-	if err := Compose(libDir, []string{"rabbitmq", "mysql"}, profileDir); err != nil {
+	if err := Compose([]string{"rabbitmq", "mysql"}, flatDirFor(libDir), profileDir); err != nil {
 		t.Fatal(err)
 	}
 
@@ -182,7 +186,7 @@ func TestComposeExpandsDigitWidthPastNinetyNine(t *testing.T) {
 	}
 	profileDir := t.TempDir()
 
-	if err := Compose(libDir, features, profileDir); err != nil {
+	if err := Compose(features, flatDirFor(libDir), profileDir); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(filepath.Join(profileDir, "install-scripts"))
@@ -202,7 +206,7 @@ func TestComposeNoInstallScriptsStillCopiesAgentFilesAndOnStart(t *testing.T) {
 	write(t, filepath.Join(libDir, "nuget", "agent-files", ".local", "bin", "link-nuget"), "echo link\n")
 	profileDir := t.TempDir()
 
-	if err := Compose(libDir, []string{"nuget"}, profileDir); err != nil {
+	if err := Compose([]string{"nuget"}, flatDirFor(libDir), profileDir); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(profileDir, "install-scripts")); !os.IsNotExist(err) {
@@ -221,7 +225,7 @@ func TestComposeNoFeaturesWithStartScriptsWritesNoOnStart(t *testing.T) {
 	write(t, filepath.Join(libDir, "dotnet", "install-scripts", "01-install-dotnet-sdk"), "echo\n")
 	profileDir := t.TempDir()
 
-	if err := Compose(libDir, []string{"dotnet"}, profileDir); err != nil {
+	if err := Compose([]string{"dotnet"}, flatDirFor(libDir), profileDir); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(profileDir, "agent-files", ".local", "bin", "on-start")); !os.IsNotExist(err) {

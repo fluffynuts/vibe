@@ -60,15 +60,42 @@ func (l Layout) DefaultsDir() string {
 	return l.BundlePath("defaults")
 }
 
-// LibraryDir returns the single directory the feature library is read from:
-// the overlay's when it has one, else the bundle's. Like defaults, it
-// overrides whole, so a feature the user deletes from their copy is gone
-// rather than falling back to the bundle's.
-func (l Layout) LibraryDir() string {
-	if p := l.HomePath("library"); p != "" && isDir(p) {
+// FeatureDir returns the single directory a library feature is read from:
+// the overlay's when that directory exists at all, else the bundle's —
+// mirroring ProfileDir, so a user can override one feature (say, mysql) by
+// creating their own ~/.vibe/library/mysql without that also hiding every
+// other feature the bundle ships.
+func (l Layout) FeatureDir(feature string) string {
+	if p := l.HomePath("library", feature); p != "" && isDir(p) {
 		return p
 	}
-	return l.BundlePath("library")
+	return l.BundlePath("library", feature)
+}
+
+// Features returns the names of every feature in the library across both
+// layers, sorted and de-duplicated — mirroring Profiles().
+func (l Layout) Features() []string {
+	seen := map[string]bool{}
+	for _, dir := range []string{l.BundlePath("library"), l.HomePath("library")} {
+		if dir == "" {
+			continue
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				seen[e.Name()] = true
+			}
+		}
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // ProfileDir returns the single directory a profile is read from: the

@@ -34,30 +34,21 @@ func (f Feature) Label() string {
 	return f.Name + ": " + f.Description
 }
 
-// List returns every feature in dir (a library root), sorted by name. A
-// missing directory yields no features rather than an error, since a
-// bundle need not ship a library at all.
-func List(dir string) ([]Feature, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("reading %s: %w", dir, err)
+// DirFor resolves a feature name to the single directory it should be read
+// from — the overlay's copy when the user has one, else the bundle's (see
+// layout.Layout.FeatureDir) — so overriding one feature never hides any
+// other.
+type DirFor func(feature string) string
+
+// List describes every named feature, in the given order — normally
+// layout.Layout.Features(), the sorted union of feature names across both
+// layers.
+func List(names []string, dirFor DirFor) []Feature {
+	features := make([]Feature, len(names))
+	for i, name := range names {
+		features[i] = Feature{Name: name, Description: describe(dirFor(name))}
 	}
-	var features []Feature
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		featureDir := filepath.Join(dir, e.Name())
-		features = append(features, Feature{
-			Name:        e.Name(),
-			Description: describe(featureDir),
-		})
-	}
-	sort.Slice(features, func(i, j int) bool { return features[i].Name < features[j].Name })
-	return features, nil
+	return features
 }
 
 // describe derives a feature's description from what it already documents
@@ -139,13 +130,13 @@ type plannedScript struct {
 //     an on-start script is generated (in the same vein as
 //     library/on-start.example) to run all of them, across every feature,
 //     in the given feature order.
-func Compose(libraryDir string, features []string, profileDir string) error {
+func Compose(features []string, dirFor DirFor, profileDir string) error {
 	var scripts []plannedScript
 	var startupScripts []string
 	counter := 0
 
 	for _, feature := range features {
-		featureDir := filepath.Join(libraryDir, feature)
+		featureDir := dirFor(feature)
 
 		entries, err := kitspec.SortedDirEntries(filepath.Join(featureDir, "install-scripts"))
 		if err != nil {

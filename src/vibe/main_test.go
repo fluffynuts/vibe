@@ -208,6 +208,92 @@ func TestDoReCreateDeletesTheOverlayProfileThenRebuilds(t *testing.T) {
 	}
 }
 
+// TestDoInstallCopiesEverythingAndLeavesCustomizationsAlone checks the
+// two --install requirements: it merges config.yaml/settings.yaml,
+// defaults/, profiles/ and library/ from the bundle into ~/.vibe (without
+// touching anything already customized there), and it copies the running
+// binary into ~/.local/bin.
+func TestDoInstallCopiesEverythingAndLeavesCustomizationsAlone(t *testing.T) {
+	home := t.TempDir()
+	bundle := t.TempDir()
+	t.Setenv("HOME", home) // installBinary resolves ~/.local/bin from this
+
+	writeFile(t, filepath.Join(bundle, "config.yaml"), "name: vibe\n")
+	writeFile(t, filepath.Join(bundle, "settings.yaml"), "memory: 12g\n")
+	writeFile(t, filepath.Join(bundle, "defaults", "install-scripts", "01-a"), "echo a\n")
+	writeFile(t, filepath.Join(bundle, "profiles", "yumbi", "config.yaml"), "name: yumbi\n")
+	writeFile(t, filepath.Join(bundle, "library", "mysql", "install-scripts", "01-a"), "echo mysql\n")
+
+	vibeHome := filepath.Join(home, ".vibe")
+	// a pre-existing customization that must survive the install
+	writeFile(t, filepath.Join(vibeHome, "settings.yaml"), "memory: 24g\n")
+
+	lay := layout.New(vibeHome, bundle)
+	if err := doInstall(lay, true); err != nil {
+		t.Fatal(err)
+	}
+
+	if data, err := os.ReadFile(filepath.Join(vibeHome, "settings.yaml")); err != nil || !strings.Contains(string(data), "24g") {
+		t.Errorf("existing settings.yaml was overwritten: %q, %v", data, err)
+	}
+	if _, err := os.ReadFile(filepath.Join(vibeHome, "config.yaml")); err != nil {
+		t.Errorf("expected config.yaml copied in: %v", err)
+	}
+	for _, p := range []string{
+		filepath.Join(vibeHome, "defaults", "install-scripts", "01-a"),
+		filepath.Join(vibeHome, "profiles", "yumbi", "config.yaml"),
+		filepath.Join(vibeHome, "library", "mysql", "install-scripts", "01-a"),
+	} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("expected %s copied in: %v", p, err)
+		}
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	dest := filepath.Join(home, ".local", "bin", filepath.Base(exe))
+	if info, err := os.Stat(dest); err != nil {
+		t.Errorf("expected the binary copied to %s: %v", dest, err)
+	} else if info.Mode().Perm()&0o100 == 0 {
+		t.Errorf("expected the copied binary to be executable, got %v", info.Mode())
+	}
+}
+
+// TestDoInstallIsSafeToRunTwice re-running --install (e.g. after fetching a
+// newer bundle release) must not clobber a file the user edited in ~/.vibe
+// after the first install.
+func TestDoInstallIsSafeToRunTwice(t *testing.T) {
+	home := t.TempDir()
+	bundle := t.TempDir()
+	t.Setenv("HOME", home)
+	writeFile(t, filepath.Join(bundle, "config.yaml"), "name: vibe\n")
+
+	lay := layout.New(filepath.Join(home, ".vibe"), bundle)
+	if err := doInstall(lay, true); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(home, ".vibe", "config.yaml"), "name: customized\n")
+	if err := doInstall(lay, true); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".vibe", "config.yaml"))
+	if err != nil || !strings.Contains(string(data), "customized") {
+		t.Errorf("second install overwrote the customized config.yaml: %q, %v", data, err)
+	}
+}
+
+func TestWarnIfNotOnPathNeverFails(t *testing.T) {
+	if err := warnIfNotOnPath(t.TempDir()); err != nil {
+		t.Errorf("warnIfNotOnPath must never fail: %v", err)
+	}
+}
+
 // TestEnsureProfileRejectsBadName refuses to create a profile whose name
 // could escape the profiles directory.
 func TestEnsureProfileRejectsBadName(t *testing.T) {

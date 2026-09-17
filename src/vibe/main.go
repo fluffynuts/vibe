@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"vibe/internal/cliargs"
+	"vibe/internal/fscopy"
 	"vibe/internal/homeinit"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
@@ -42,6 +43,10 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe -R/--re-create [path] delete the profile too, then re-init — the
                              profile is gone, so this always re-prompts
   vibe -l/--list             list every known sandbox and its status
+  vibe -i/--install          copy defaults/profiles/library, config.yaml and
+                             settings.yaml into ~/.vibe, and the vibe binary
+                             into ~/.local/bin, so the unpacked bundle this
+                             was run from can be deleted afterward
 
 -s, -c, -r, -R and -l resolve the sandbox name exactly as a normal run
 would, so "vibe -s && vibe" restarts whatever you were working on.
@@ -49,7 +54,10 @@ would, so "vibe -s && vibe" restarts whatever you were working on.
 When a folder has no profile yet, vibe offers to create one: a copy of an
 existing profile, a blank profile to grow yourself, or a guided walk
 through picking features from the library. Profiles live in profiles/<name>
-next to the vibe binary.
+next to the vibe binary. ~/.vibe (or $VIBE_HOME) overrides the bundle: a
+single file or a whole profile/feature overrides one at a time, so you can
+override just one library feature (say, library/mysql) without affecting
+any other, and pick up new ones the bundle adds later.
 
 -c requires 'sbx setup ssh' to have been run once on this machine.
 `
@@ -75,7 +83,7 @@ func run(argv []string) error {
 		return nil
 	}
 	if args.ExclusiveActions() > 1 {
-		return fmt.Errorf("--stop, --ssh, --re-init and --list are mutually exclusive")
+		return fmt.Errorf("--stop, --ssh, --re-init, --re-create, --list and --install are mutually exclusive")
 	}
 
 	vibeHome := vibeHomeDir()
@@ -85,6 +93,17 @@ func run(argv []string) error {
 			return fmt.Errorf("--list takes no path argument")
 		}
 		return doList()
+	}
+
+	if args.Install {
+		if args.Path != "" {
+			return fmt.Errorf("--install takes no path argument")
+		}
+		bundleRoot, err := pathresolve.BundleRoot()
+		if err != nil {
+			return err
+		}
+		return doInstall(layout.New(vibeHome, bundleRoot), args.Force)
 	}
 
 	if !sbxrun.Available() {
@@ -233,6 +252,113 @@ func doList() error {
 		}
 		fmt.Printf("%-16s%s\n", s.Name, text)
 	}
+	return nil
+}
+
+// --- install ----------------------------------------------------------------
+
+// doInstall makes vibe fully self-contained under lay.Home (~/.vibe or
+// $VIBE_HOME) plus a copy of the binary on PATH, so the unpacked bundle it
+// was run from — lay.Bundle — can be deleted afterward. It never
+// overwrites anything already at the destination, so it's safe to re-run
+// (e.g. after fetching a newer bundle release) without losing local edits;
+// re-running only fills in what's missing.
+func doInstall(lay layout.Layout, force bool) error {
+	if lay.Home == "" {
+		return fmt.Errorf("no home directory to install into, and $VIBE_HOME is not set")
+	}
+	if err := os.MkdirAll(lay.Home, 0o755); err != nil {
+		return err
+	}
+	note("installing into %s", lay.Home)
+
+	for _, rel := range []string{"config.yaml", "settings.yaml"} {
+		src := lay.BundlePath(rel)
+		if _, err := os.Stat(src); err != nil {
+			continue // the bundle doesn't ship it — nothing to install
+		}
+		dst := filepath.Join(lay.Home, rel)
+		if _, err := os.Stat(dst); err == nil {
+			note("  %s: already present, left alone", rel)
+			continue
+		}
+		if err := fscopy.File(src, dst); err != nil {
+			return fmt.Errorf("copying %s: %w", rel, err)
+		}
+		note("  copied %s", rel)
+	}
+
+	for _, rel := range []string{"defaults", "profiles", "library"} {
+		src := lay.BundlePath(rel)
+		if info, err := os.Stat(src); err != nil || !info.IsDir() {
+			continue // the bundle doesn't ship it — nothing to install
+		}
+		if err := fscopy.TreeMerge(src, filepath.Join(lay.Home, rel)); err != nil {
+			return fmt.Errorf("copying %s/: %w", rel, err)
+		}
+		note("  merged %s/ (any files already there were left alone)", rel)
+	}
+
+	return installBinary(force)
+}
+
+// installBinary copies the running executable to ~/.local/bin, creating
+// that directory if needed, then warns (without failing) if it isn't on
+// $PATH — the freshly installed binary would otherwise be invisible to the
+// shell with no explanation why.
+func installBinary(force bool) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locating vibe executable: %w", err)
+	}
+	exe, err = filepath.EvalSymlinks(exe)
+	if err != nil {
+		return fmt.Errorf("resolving vibe executable path: %w", err)
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	binDir := filepath.Join(home, ".local", "bin")
+	dest := filepath.Join(binDir, filepath.Base(exe))
+
+	if srcInfo, err := os.Stat(exe); err == nil {
+		if dstInfo, err := os.Stat(dest); err == nil && os.SameFile(srcInfo, dstInfo) {
+			note("  already installed at %s", dest)
+			return warnIfNotOnPath(binDir)
+		}
+	}
+
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		return err
+	}
+	if _, err := os.Stat(dest); err == nil {
+		if !confirmDefault(force, true, fmt.Sprintf("Overwrite existing %s?", dest)) {
+			note("  left %s as-is", dest)
+			return warnIfNotOnPath(binDir)
+		}
+	}
+	if err := fscopy.File(exe, dest); err != nil {
+		return fmt.Errorf("copying the vibe binary to %s: %w", dest, err)
+	}
+	if err := os.Chmod(dest, 0o755); err != nil {
+		return err
+	}
+	note("  copied the vibe binary to %s", dest)
+	return warnIfNotOnPath(binDir)
+}
+
+// warnIfNotOnPath reports whether dir is on $PATH, warning (never failing)
+// when it isn't.
+func warnIfNotOnPath(dir string) error {
+	for _, entry := range filepath.SplitList(os.Getenv("PATH")) {
+		if filepath.Clean(entry) == dir {
+			return nil
+		}
+	}
+	note("  WARNING: %s is not on your PATH", dir)
+	note("  add it, e.g. in ~/.bashrc or ~/.zshrc:  export PATH=\"%s:$PATH\"", dir)
 	return nil
 }
 
@@ -828,13 +954,11 @@ func ensureProfile(lay layout.Layout, profile string, force bool) error {
 // features a new profile should install, lets them reorder the ones they
 // picked, and writes the result as a new profile via profilegen.CreateGuided.
 func ensureGuidedProfile(lay layout.Layout, profile string) error {
-	features, err := library.List(lay.LibraryDir())
-	if err != nil {
-		return err
+	names := lay.Features()
+	if len(names) == 0 {
+		return fmt.Errorf("no library features found — pick another option instead")
 	}
-	if len(features) == 0 {
-		return fmt.Errorf("no features found in %s — pick another option instead", lay.LibraryDir())
-	}
+	features := library.List(names, lay.FeatureDir)
 	labels := make([]string, len(features))
 	for i, f := range features {
 		labels[i] = f.Label()

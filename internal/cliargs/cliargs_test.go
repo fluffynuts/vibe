@@ -39,6 +39,14 @@ func TestParseActionFlags(t *testing.T) {
 	if err != nil || !a.ReCreate {
 		t.Fatalf("expected ReCreate, got %+v err=%v", a, err)
 	}
+	a, err = Parse([]string{"-i"})
+	if err != nil || !a.Install {
+		t.Fatalf("expected Install, got %+v err=%v", a, err)
+	}
+	a, err = Parse([]string{"--install"})
+	if err != nil || !a.Install {
+		t.Fatalf("expected Install, got %+v err=%v", a, err)
+	}
 }
 
 func TestExclusiveActions(t *testing.T) {
@@ -49,6 +57,10 @@ func TestExclusiveActions(t *testing.T) {
 	a, _ = Parse([]string{"--re-create"})
 	if a.ExclusiveActions() != 1 {
 		t.Errorf("expected re-create to count as an exclusive action, got %d", a.ExclusiveActions())
+	}
+	a, _ = Parse([]string{"--install"})
+	if a.ExclusiveActions() != 1 {
+		t.Errorf("expected install to count as an exclusive action, got %d", a.ExclusiveActions())
 	}
 }
 

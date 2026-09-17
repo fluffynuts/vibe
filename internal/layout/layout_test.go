@@ -56,23 +56,42 @@ func TestDefaultsDirIsAWholeDirectoryOverride(t *testing.T) {
 	}
 }
 
-func TestLibraryDirIsAWholeDirectoryOverride(t *testing.T) {
+// TestFeatureDirOverridesOnePerFeature checks that a library feature
+// overrides individually, unlike defaults: the overlay having its own
+// mysql must not hide the bundle's rabbitmq.
+func TestFeatureDirOverridesOnePerFeature(t *testing.T) {
 	l := New(t.TempDir(), t.TempDir())
 	write(t, l.BundlePath("library", "mysql", "install-scripts", "01-a"), "echo a\n")
 	write(t, l.BundlePath("library", "rabbitmq", "install-scripts", "01-b"), "echo b\n")
 
-	if got, want := l.LibraryDir(), l.BundlePath("library"); got != want {
-		t.Errorf("LibraryDir = %s, want %s", got, want)
+	if got, want := l.FeatureDir("mysql"), l.BundlePath("library", "mysql"); got != want {
+		t.Errorf("FeatureDir(mysql) = %s, want the bundle's %s", got, want)
 	}
 
-	// once the overlay has a library directory it wins whole: the bundle's
-	// rabbitmq feature must not show through
+	// the overlay overriding mysql alone must not hide the bundle's rabbitmq
 	write(t, l.HomePath("library", "mysql", "install-scripts", "01-a"), "echo mine\n")
-	if got, want := l.LibraryDir(), l.HomePath("library"); got != want {
-		t.Errorf("LibraryDir = %s, want the overlay's %s", got, want)
+	if got, want := l.FeatureDir("mysql"), l.HomePath("library", "mysql"); got != want {
+		t.Errorf("FeatureDir(mysql) = %s, want the overlay's %s", got, want)
 	}
-	if _, err := os.Stat(filepath.Join(l.LibraryDir(), "rabbitmq")); err == nil {
-		t.Error("the bundle's rabbitmq feature is still visible — the override is not whole")
+	if got, want := l.FeatureDir("rabbitmq"), l.BundlePath("library", "rabbitmq"); got != want {
+		t.Errorf("FeatureDir(rabbitmq) = %s, want the bundle's %s — one feature's override must not hide another", got, want)
+	}
+}
+
+// TestFeaturesUnionsBothLayers checks Features() lists every feature from
+// either layer, deduplicated, without requiring the overlay to carry a
+// full mirror of the bundle's library.
+func TestFeaturesUnionsBothLayers(t *testing.T) {
+	l := New(t.TempDir(), t.TempDir())
+	write(t, l.BundlePath("library", "mysql", "install-scripts", "01-a"), "echo a\n")
+	write(t, l.BundlePath("library", "rabbitmq", "install-scripts", "01-b"), "echo b\n")
+	write(t, l.HomePath("library", "mysql", "install-scripts", "01-a"), "echo mine\n")
+	write(t, l.HomePath("library", "postgres", "install-scripts", "01-c"), "echo c\n")
+
+	got := l.Features()
+	want := []string{"mysql", "postgres", "rabbitmq"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Features = %v, want %v", got, want)
 	}
 }
 
