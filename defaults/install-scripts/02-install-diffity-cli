@@ -1,0 +1,5 @@
+#!/bin/sh
+# vibe: description: Install diffity globally (non-fatal)
+# vibe: user: 0
+/home/agent/.local/bin/install-diffity || echo "WARN: diffity install failed" >>/tmp/sbx-setup.log
+true

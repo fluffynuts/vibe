@@ -1,0 +1,6 @@
+#!/bin/sh
+# vibe: description: Start the setup log and ensure ~/.local/bin exists
+# vibe: user: 0
+echo "=== setup started $(date -Is) ===" >>/tmp/sbx-setup.log 2>&1
+chmod 666 /tmp/sbx-setup.log 2>/dev/null || true
+install -d -o agent -g agent -m 0755 /home/agent/.local/bin

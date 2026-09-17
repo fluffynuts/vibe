@@ -1,0 +1,18 @@
+#!/bin/sh
+# vibe: description: Refresh apt indexes (waits for dpkg lock, retries, non-fatal)
+# vibe: user: 0
+i=0
+ok=0
+while [ $i -lt 5 ]; do
+  i=$((i + 1))
+  echo "--- apt-get update attempt $i $(date -Is)" >>/tmp/sbx-setup.log
+  if sudo apt-get -o DPkg::Lock::Timeout=300 update >>/tmp/sbx-setup.log 2>&1; then
+    ok=1
+    echo "apt-get update OK on attempt $i" >>/tmp/sbx-setup.log
+    break
+  fi
+  echo "apt-get update FAILED on attempt $i, sleeping 10s" >>/tmp/sbx-setup.log
+  sleep 10
+done
+[ $ok -eq 1 ] || echo "WARN: apt-get update never succeeded — see log above" >>/tmp/sbx-setup.log
+true

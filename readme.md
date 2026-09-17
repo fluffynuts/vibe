@@ -1,0 +1,189 @@
+# vibe
+
+Create, start and attach to [Docker Sandboxes](https://github.com/docker/sbx-releases) for
+contained agentic coding — driven by **profiles**, so different teams/repos can bring their
+own tooling (a .NET + Elasticsearch profile, a Rails profile, whatever a repo needs) without
+touching the tool itself.
+
+## Usage
+
+```
+vibe                       # use $PWD, profile derived from its folder name
+vibe /path/to/code         # use an explicit folder
+vibe -n/--name custom .    # override the derived sandbox name
+vibe -p/--profile foo      # use profile "foo" instead of the derived one
+vibe -s/--stop [path]      # stop the sandbox for path (default: $PWD)
+vibe -c/--ssh [path]       # ssh into the sandbox for path
+vibe -r/--re-init [path]   # remove and recreate the sandbox from its profile
+vibe -r -f/--force         # ...without prompting
+vibe -f                    # ...and, for an unknown profile, create a blank one
+                           #    instead of asking
+vibe -l/--list             # list every known sandbox and its status
+```
+
+Every option has a long and a short form. `-s`, `-c`, `-r` and `-l` resolve the sandbox name
+exactly as a normal run would, so `vibe -s && vibe` restarts whatever you were working on.
+
+`-c`/`--ssh` requires `sbx setup ssh` to have been run once on this machine.
+
+## Where the configuration lives
+
+There are two layers. `~/.vibe` (override with `$VIBE_HOME`) is the master copy, and the bundle
+next to the binary is the fall-back — so a vibe upgrade replaces the bundle without touching
+anything you've changed.
+
+On its first run vibe seeds the overlay: it creates `~/.vibe`, copies the bundle's `config.yaml`,
+`settings.yaml` and the whole `defaults/` tree there, then asks, one at a time, whether to copy
+each bundled profile across. Decline and the profile still works — it's just read from the bundle
+until you take a copy.
+
+```
+vibe: first run — setting up /home/me/.vibe
+vibe: copy profile 'valleyrunner' into /home/me/.vibe/profiles? [y/N] y
+vibe:   copied config.yaml, settings.yaml, defaults/
+vibe:   copied profile 'valleyrunner'
+```
+
+After that:
+
+- **Single files override one at a time, by relative path.** `~/.vibe/settings.yaml` replaces the
+  bundle's — it is not merged into it, the whole file wins. Same for `config.yaml`.
+- **`defaults/` and each profile override whole.** Once `~/.vibe/defaults/` exists, that directory
+  *is* the defaults: the bundle's is ignored entirely, so a script you delete from your copy is
+  gone rather than reappearing from underneath, and one you add joins the sequence in number
+  order. `~/.vibe/profiles/valleyrunner/` works the same way against the bundle's profile of that
+  name. The trade is that new default scripts shipped by a vibe upgrade don't reach your copy on
+  their own — diff `~/.vibe/defaults` against the bundle's after upgrading.
+- **Profiles vibe creates land in `~/.vibe/profiles/`.**
+
+## A folder with no profile yet
+
+The first time you run `vibe` in a folder, the derived profile usually doesn't exist yet. Rather
+than failing, vibe offers to create it:
+
+```
+vibe: no profile 'foo-browser' yet in /home/me/.vibe/profiles
+vibe: create it how?
+     * 1) copy an existing profile
+       2) create a new blank profile
+       q) quit
+vibe: choice [1]
+```
+
+Copying clones the chosen profile's whole directory — config, settings, install scripts and agent
+files — and renames it, which is the quickest way to start from something close to what you need.
+A blank profile is just a `config.yaml` naming it, plus empty `install-scripts/` and
+`agent-files/` directories to grow into; the sandbox it builds is the base kit and nothing more.
+
+Either way the new profile is written to `~/.vibe/profiles/<name>/`, and copying reads the source
+profile from wherever it currently wins — your overlay if you have a copy of it, the bundle
+otherwise.
+
+`vibe -f` skips the question and creates a blank profile; `vibe -p <existing>` uses a profile you
+already have without creating anything. With no terminal to ask on, vibe says so instead of
+guessing.
+
+## How a sandbox is built
+
+`vibe` is a single self-contained binary; everything else it needs lives alongside it in the
+unpacked bundle, and `~/.vibe` overlays that bundle file for file (profiles directory for
+directory):
+
+```
+vibe                  # the binary
+readme.md
+settings.yaml         # base settings — memory, published ports, etc.
+config.yaml           # base sbx kit fragment — permissions/ports/env shared by every profile
+defaults/             # tooling applied to every profile, regardless of tech stack
+  install-scripts/
+  agent-files/
+profiles/
+  <profile-name>/
+    config.yaml          # profile-specific kit fragment, merged over the base one
+    settings.yaml         # profile-specific settings, merged over the base ones
+    install-scripts/      # profile-specific setup steps, run after defaults'
+    agent-files/           # profile-specific files, deployed after defaults'
+    agent-instructions.md # appended to the base kit's agent instructions
+```
+
+On each run, `vibe` derives the sandbox's **profile** (`--profile`, else `--name`, else the
+target folder's leaf name) and generates a kit spec for `sbx create --kit` from:
+
+- `config.yaml`: base merged with the profile's (maps merge recursively, lists append, and any
+  other value the profile sets wins).
+- `settings.yaml`: same idea, but for `memory`, `agent`, `publish` and friends — see below.
+- `setup.install`: every script under `defaults/install-scripts/`, in their own numeric order,
+  followed by every script under `profiles/<name>/install-scripts/`, in theirs. The defaults
+  always run to completion before the profile's scripts start.
+- `setup.files`: every file under `defaults/agent-files/`, then `profiles/<name>/agent-files/` —
+  each deployed at the same relative path under `/home/agent` inside the sandbox. A profile file
+  at the same path as a default file overrides it.
+- `startup`: if either agent-files tree provides `.local/bin/on-start`, it's added as a
+  backgrounded root step. Make it idempotent — it also gets re-invoked (harmlessly) on every
+  `vibe` attach, to work around `setup.startup` not firing on a sandbox's very first boot.
+- `agentInstructions.content`: the base kit's content, with the profile's `agent-instructions.md`
+  appended.
+
+## Writing a profile
+
+A profile only needs `config.yaml` to exist. Everything else is optional — which is why vibe can
+offer to create a blank one for a folder it hasn't seen before.
+
+**Install scripts** (`install-scripts/NN-name`) run as a shell script, in filename order. Add
+directives as `# vibe: key: value` comment lines anywhere in the file:
+
+- `# vibe: description: ...` — shown while the step runs (defaults to the file name)
+- `# vibe: user: 1000` — which user runs the step (defaults to `0`, root)
+
+**Agent files** (`agent-files/<path>`) are deployed verbatim to `/home/agent/<path>`. Directives
+work the same way, plus:
+
+- `# vibe: mode: 755` — deployed file mode (defaults to `0755` for anything with a shebang or
+  under a `bin/` directory, else `0644`)
+- `# vibe: onlyIfMissing: true` — only deploy if the destination doesn't already exist (defaults
+  to always overwriting)
+
+For a file whose format can't carry a `#` comment (JSON, binary, ...), put the same `key: value`
+lines in a sidecar file named `<file>.vibe` next to it instead — e.g. `settings.json.vibe`. The
+sidecar itself is never deployed.
+
+Directive lines (inline or sidecar) are stripped from the deployed content, so they never leak
+into a real script or config file.
+
+**`settings.yaml`** merges these fields (all optional):
+
+```yaml
+memory: 12g          # sandbox memory limit
+agent: claude         # which coding agent to run
+nugetDir: ~/.nuget    # mounted into the sandbox and symlinked in, if it exists on the host
+memoryRoot: ~/.vibe/memories   # where per-sandbox agent memories are backed up
+env:                  # extra environment variables passed to `sbx create -e`
+  SOME_VAR: value
+publish:              # ports to publish, and (optionally) a stable URL env var for each
+  - name: diffity
+    ports: [5391]
+    urlEnv: SBX_CC_DIFFITY_URL   # sandbox env var set to http://localhost:<host port>
+```
+
+`publish` entries append across base → profile, so a profile only needs to list what it's adding.
+
+## The bundled template profile
+
+`profiles/template_dotnet-mysql-rabbitmq-elasticsearch-redis/` is a real example: it installs the
+.NET SDK, MySQL/Redis/RabbitMQ and Elasticsearch, on top of the diffity review tooling every
+profile gets from `defaults/`. Copy it as a starting point for a new profile.
+
+## State
+
+Alongside the configuration, `~/.vibe` (override with `$VIBE_HOME`) is where `vibe` keeps its own
+state:
+
+- `instances/<name>.yaml` — which profile and target folder created a sandbox, and its published
+  ports, so `--stop`/`--ssh`/`--re-init`/`--list` don't need `--profile` repeated.
+- `ports/<name>-<container-port>` — the host port remembered for a sandbox, so its URL stays
+  stable across restarts.
+- `memories/<name>/` — an agent's backed-up memories across a `--re-init`, when the profile's
+  agent supports it.
+
+These sit next to `config.yaml`, `settings.yaml` and `profiles/`; only the latter three are
+configuration, and an overlay holding nothing but state is seeded on the next run.

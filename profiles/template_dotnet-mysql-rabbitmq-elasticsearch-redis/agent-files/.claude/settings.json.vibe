@@ -1,0 +1,2 @@
+description: Deny rules for secrets — these still apply in bypass mode
+onlyIfMissing: true

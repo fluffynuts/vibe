@@ -1,0 +1,46 @@
+#!/bin/sh
+# vibe: description: Start Elasticsearch on 9200 and wait until it answers
+# No braced shell expansions: sbx validates every brace-form
+# substitution in file content against its own placeholder list.
+exec >>/tmp/elasticsearch.log 2>&1
+echo "=== start-elasticsearch at $(date -Is) ==="
+
+# 23F0 is 9200 in hex, 0A is LISTEN.
+if awk '$2 ~ /:23F0$/ && $4 == "0A" { f = 1 } END { exit f ? 0 : 1 }' /proc/net/tcp; then
+  echo "already listening on 9200 — nothing to do"
+  exit 0
+fi
+
+if [ ! -x /usr/share/elasticsearch/bin/elasticsearch ]; then
+  echo "ERROR: elasticsearch is not installed"
+  exit 1
+fi
+
+# ES refuses to start below this; the microVM has its own kernel so
+# the sysctl is ours to set.
+sudo sysctl -w vm.max_map_count=262144 || echo "WARN: could not set vm.max_map_count"
+
+echo "Recreating elasticsearch keystore"
+sudo rm -f /etc/elasticsearch/elasticsearch.keystore
+sudo /usr/share/elasticsearch/bin/elasticsearch-keystore create
+
+echo "starting elasticsearch"
+sudo -u elasticsearch env ES_PATH_CONF=/etc/elasticsearch \
+  ES_TMPDIR=/usr/share/elasticsearch/tmp \
+  setsid /usr/share/elasticsearch/bin/elasticsearch -d -p /tmp/elasticsearch.pid
+
+# The wrapper in Yumbi probes for HTTP 200, so wait for that, not just
+# for the port to open.
+i=0
+while [ $i -lt 120 ]; do
+  code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9200 2>/dev/null)
+  if [ "$code" = "200" ]; then
+    echo "elasticsearch ready after $i seconds"
+    exit 0
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+echo "ERROR: elasticsearch not answering 200 after $i seconds (last code: $code)"
+echo "check /var/log/elasticsearch/yumbi-sandbox.log"
+exit 1

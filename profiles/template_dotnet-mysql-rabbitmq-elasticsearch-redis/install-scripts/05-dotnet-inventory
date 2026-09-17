@@ -1,0 +1,11 @@
+#!/bin/sh
+# vibe: description: Record which SDKs and runtimes ended up installed
+# vibe: user: 0
+echo "--- dotnet inventory $(date -Is)" >>/tmp/sbx-setup.log
+{
+  echo "SDKs:"
+  dotnet --list-sdks
+  echo "Runtimes:"
+  dotnet --list-runtimes
+} >>/tmp/sbx-setup.log 2>&1 || echo "WARN: dotnet not usable" >>/tmp/sbx-setup.log
+true

@@ -1,0 +1,7 @@
+#!/bin/sh
+# vibe: description: Install mysql-server, redis-server and rabbitmq-server (non-fatal)
+# vibe: user: 0
+echo "--- installing mysql,redis,rabbitmq,file $(date -Is)" >>/tmp/sbx-setup.log
+sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y mysql-server redis-server rabbitmq-server file </dev/null >>/tmp/sbx-setup.log 2>&1 \
+  || echo "WARN: service dependencies install failed" >>/tmp/sbx-setup.log
+true

@@ -1,0 +1,7 @@
+memory: 12g
+agent: claude
+publish:
+  - name: diffity
+    ports:
+      - 5391
+    urlEnv: SBX_CC_DIFFITY_URL
