@@ -178,12 +178,24 @@ profile gets from `defaults/`. Copy it as a starting point for a new profile.
 Alongside the configuration, `~/.vibe` (override with `$VIBE_HOME`) is where `vibe` keeps its own
 state:
 
-- `instances/<name>.yaml` — which profile and target folder created a sandbox, and its published
-  ports, so `--stop`/`--ssh`/`--re-init`/`--list` don't need `--profile` repeated.
-- `ports/<name>-<container-port>` — the host port remembered for a sandbox, so its URL stays
-  stable across restarts.
+- `instances/<name>.yaml` — which profile and target folder created a sandbox, and the host port
+  each of its published container ports was given. It is the single source of truth for both:
+  `--re-init` reads the profile back so it doesn't need `--profile` repeated, and re-claims the
+  recorded host ports so a sandbox's URL stays stable across a rebuild.
 - `memories/<name>/` — an agent's backed-up memories across a `--re-init`, when the profile's
   agent supports it.
 
+A record outlives the sandbox it describes — `--re-init` tears the sandbox down but keeps the
+record, since the ports it remembers are what the rebuild re-claims.
+
+Allocating a host port consults every instance record, not just the running sandboxes: a port
+another record claims is skipped even when nothing is listening on it, because that sandbox may
+be stopped and will want its port back on the next start. Within one creation the ports already
+handed out are skipped for the same reason — the sandbox that will bind them doesn't exist yet.
+Failing that, vibe walks upward from the container port until it finds something free.
+
 These sit next to `config.yaml`, `settings.yaml` and `profiles/`; only the latter three are
 configuration, and an overlay holding nothing but state is seeded on the next run.
+
+Earlier versions also kept a `ports/<name>-<container-port>` file holding the same host port as
+the instance record. Nothing reads it any more; if your `~/.vibe` has one, it is safe to delete.

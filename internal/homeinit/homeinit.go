@@ -24,7 +24,7 @@ const DefaultsDir = "defaults"
 
 // Needed reports whether the overlay still has to be seeded. It is true
 // until the overlay holds some configuration of its own — vibe's state
-// directories (instances/, ports/, memories/) don't count, so an overlay
+// directories (instances/, memories/) don't count, so an overlay
 // created by an older version is seeded on the next run.
 func Needed(l layout.Layout) bool {
 	if l.Home == "" {

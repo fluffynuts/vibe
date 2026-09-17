@@ -298,19 +298,45 @@ type publishMapping struct {
 	urlEnv        string
 }
 
+// portSearchSpan is how far above a container port allocatePublish will look
+// for a free host port before giving up.
+const portSearchSpan = 60
+
+// allocatePublish assigns a host port to every container port the merged
+// settings publish. The instance records are the only source of truth for who
+// holds what: a sandbox re-claims the ports its own record remembers, so its
+// URL survives a re-init, and every port another record claims is excluded
+// even when nothing is listening on it — that sandbox may simply be stopped.
+// Ports handed out earlier in this same pass are excluded on the same
+// grounds, since the sandbox that will bind them does not exist yet.
 func allocatePublish(vibeHome, name string, merged settings.Settings) ([]publishMapping, error) {
+	instances, err := state.List(vibeHome)
+	if err != nil {
+		return nil, err
+	}
+	taken := map[int]bool{}
+	remembered := map[int]int{}
+	for _, inst := range instances {
+		for _, rec := range inst.Publish {
+			if inst.Name == name {
+				remembered[rec.ContainerPort] = rec.HostPort
+				continue
+			}
+			taken[rec.HostPort] = true
+		}
+	}
+
 	var mappings []publishMapping
 	for _, entry := range merged.Publish {
 		for i, cp := range entry.Ports {
-			key := fmt.Sprintf("%s-%d", name, cp)
-			hostPort := portalloc.Recall(vibeHome, key, 0)
-			if hostPort == 0 || portalloc.InUse(hostPort) {
-				var err error
-				hostPort, err = portalloc.FindFree(cp, cp+60)
+			hostPort := remembered[cp]
+			if hostPort == 0 || taken[hostPort] || portalloc.InUse(hostPort) {
+				hostPort, err = portalloc.FindFree(cp, cp+portSearchSpan, taken)
 				if err != nil {
 					return nil, err
 				}
 			}
+			taken[hostPort] = true
 			urlEnv := ""
 			if i == 0 {
 				urlEnv = entry.UrlEnv
@@ -460,11 +486,6 @@ func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merg
 	}); err != nil {
 		return err
 	}
-	for _, rec := range publishRecords {
-		if err := portalloc.Remember(vibeHome, fmt.Sprintf("%s-%d", name, rec.ContainerPort), rec.HostPort); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
@@ -527,9 +548,10 @@ func doReInit(lay layout.Layout, args cliargs.Args, name, target string) error {
 		if err := sbxrun.Remove(name, true); err != nil {
 			return err
 		}
-		if err := state.Remove(vibeHome, name); err != nil {
-			return err
-		}
+		// The instance record deliberately outlives the sandbox: it carries
+		// the published ports this name already owns, which is what lets the
+		// rebuild below re-claim them and keep the URL stable. createSandbox
+		// overwrites it once the new sandbox is up.
 	} else {
 		note("no existing sandbox '%s' — nothing to remove", name)
 	}
