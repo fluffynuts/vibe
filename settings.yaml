@@ -4,4 +4,4 @@ publish:
   - name: diffity
     ports:
       - 5391
-    urlEnv: SBX_CC_DIFFITY_URL
+    urlEnv: VIBE_DIFFITY_URL

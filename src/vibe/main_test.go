@@ -46,7 +46,7 @@ func TestLoadKitBundledProfile(t *testing.T) {
 	if merged.NugetDir == "" {
 		t.Error("expected NugetDir from profile settings.yaml")
 	}
-	if len(merged.Publish) != 1 || merged.Publish[0].Name != "diffity" || merged.Publish[0].UrlEnv != "SBX_CC_DIFFITY_URL" {
+	if len(merged.Publish) != 1 || merged.Publish[0].Name != "diffity" || merged.Publish[0].UrlEnv != "VIBE_DIFFITY_URL" {
 		t.Errorf("unexpected Publish: %+v", merged.Publish)
 	}
 

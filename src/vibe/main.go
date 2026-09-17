@@ -434,7 +434,7 @@ func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merg
 			return err
 		}
 		mounts = append(mounts, memoryStore)
-		env = append(env, "SBX_CC_MEMORY_STORE="+memoryStore)
+		env = append(env, "VIBE_MEMORY_STORE="+memoryStore)
 		note("  memories:  %s", memoryStore)
 	}
 

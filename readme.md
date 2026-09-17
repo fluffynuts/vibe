@@ -161,7 +161,7 @@ env:                  # extra environment variables passed to `sbx create -e`
 publish:              # ports to publish, and (optionally) a stable URL env var for each
   - name: diffity
     ports: [5391]
-    urlEnv: SBX_CC_DIFFITY_URL   # sandbox env var set to http://localhost:<host port>
+    urlEnv: VIBE_DIFFITY_URL   # sandbox env var set to http://localhost:<host port>
 ```
 
 `publish` entries append across base → profile, so a profile only needs to list what it's adding.

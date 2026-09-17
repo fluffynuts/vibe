@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# this is the original incarnation of the app, written in bash. It should
+# be used as a reference only
 #
 # vibe — open (creating if needed) a Claude Code sandbox for a project folder.
 #
@@ -401,7 +403,7 @@ agentInstructions:
     default port 5391, which is the only port published to the host.
 
     After starting a session, tell the user the URL to open. It is in the
-    environment variable `SBX_CC_DIFFITY_URL` — the host port may differ from
+    environment variable `VIBE_DIFFITY_URL` — the host port may differ from
     5391 when several sandboxes are running, so report that variable's value
     rather than assuming.
 
@@ -717,7 +719,7 @@ else
     note "  memories:  ${memory_store}"
   fi
 
-  create_env+=(-e "SBX_CC_DIFFITY_URL=http://localhost:${port}")
+  create_env+=(-e "VIBE_DIFFITY_URL=http://localhost:${port}")
 
   sbx create \
     --name "$name" \
