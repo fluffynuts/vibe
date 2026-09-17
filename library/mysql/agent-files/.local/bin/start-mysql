@@ -1,1 +1,45 @@
-# TODO: a script to start up mysql backgrounded
+#!/bin/sh
+# vibe: description: Start mysqld backgrounded and wait until it answers
+# No braced shell expansions: sbx validates every brace-form
+# substitution in file content against its own placeholder list.
+exec >>/tmp/mysql.log 2>&1
+echo "=== start-mysql at $(date -Is) ==="
+
+# 0CEA is 3306 in hex, 0A is LISTEN.
+if awk '$2 ~ /:0CEA$/ && $4 == "0A" { f = 1 } END { exit f ? 0 : 1 }' /proc/net/tcp; then
+  echo "mysqld already listening on 3306"
+else
+  if ! command -v mysqld >/dev/null 2>&1; then
+    echo "ERROR: mysqld is not installed"
+    exit 1
+  fi
+
+  # /var/run/mysqld is on tmpfs and is gone after a container restart;
+  # mysqld refuses to start if it can't create its pid file/socket there.
+  sudo install -d -o mysql -g mysql -m 755 /var/run/mysqld \
+    || echo "WARN: could not prepare /var/run/mysqld"
+
+  echo "starting mysqld"
+  sudo -u mysql mysqld --daemonize \
+    --pid-file=/var/run/mysqld/mysqld.pid \
+    --socket=/var/run/mysqld/mysqld.sock
+fi
+
+# --daemonize returns once forked, not once ready; wait for a real answer
+# rather than assume.
+i=0
+ready=0
+while [ $i -lt 60 ]; do
+  if sudo mysqladmin --socket=/var/run/mysqld/mysqld.sock ping >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+if [ $ready -eq 0 ]; then
+  echo "ERROR: mysqld not ready after $i seconds"
+  echo "check /var/log/mysql/error.log for the boot failure"
+  exit 1
+fi
+echo "mysqld ready after $i seconds"
