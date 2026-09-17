@@ -22,6 +22,11 @@ var BaseFiles = []string{"config.yaml", "settings.yaml"}
 // in full, since it overrides the bundle's whole.
 const DefaultsDir = "defaults"
 
+// LibraryDir is the directory of selectable features seeded into a fresh
+// overlay in full, alongside defaults/, since it overrides the bundle's
+// whole.
+const LibraryDir = "library"
+
 // Needed reports whether the overlay still has to be seeded. It is true
 // until the overlay holds some configuration of its own — vibe's state
 // directories (instances/, memories/) don't count, so an overlay
@@ -30,7 +35,7 @@ func Needed(l layout.Layout) bool {
 	if l.Home == "" {
 		return false
 	}
-	for _, rel := range append([]string{"profiles", DefaultsDir}, BaseFiles...) {
+	for _, rel := range append([]string{"profiles", DefaultsDir, LibraryDir}, BaseFiles...) {
 		if _, err := os.Stat(filepath.Join(l.Home, rel)); err == nil {
 			return false
 		}
@@ -70,6 +75,12 @@ func Run(l layout.Layout, ask func(profile string) bool) (Result, error) {
 			return res, fmt.Errorf("copying %s/ into %s: %w", DefaultsDir, l.Home, err)
 		}
 		res.Files = append(res.Files, DefaultsDir+"/")
+	}
+	if src := l.BundlePath(LibraryDir); isDir(src) {
+		if err := fscopy.Tree(src, filepath.Join(l.Home, LibraryDir)); err != nil {
+			return res, fmt.Errorf("copying %s/ into %s: %w", LibraryDir, l.Home, err)
+		}
+		res.Files = append(res.Files, LibraryDir+"/")
 	}
 	if ask == nil {
 		return res, nil

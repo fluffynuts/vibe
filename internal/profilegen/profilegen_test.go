@@ -117,6 +117,47 @@ func TestImportToHomeKeepsTheName(t *testing.T) {
 	}
 }
 
+func TestCreateGuidedComposesTheChosenFeatures(t *testing.T) {
+	l := testLayout(t)
+	write(t, mkdirAndPath(t, l.BundlePath("library", "mysql", "install-scripts"), "01-install-mysql"),
+		"#!/bin/sh\necho install-mysql\n", 0o644)
+	write(t, mkdirAndPath(t, l.BundlePath("library", "mysql", "agent-files", ".local", "bin"), "start-mysql"),
+		"#!/bin/sh\necho start-mysql\n", 0o644)
+	write(t, mkdirAndPath(t, l.BundlePath("library", "rabbitmq", "install-scripts"), "01-install-rabbitmq"),
+		"#!/bin/sh\necho install-rabbitmq\n", 0o644)
+
+	dir, err := CreateGuided(l, "phoenix", []string{"mysql", "rabbitmq"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := l.HomePath("profiles", "phoenix"); dir != want {
+		t.Errorf("created in %s, want %s", dir, want)
+	}
+	if _, err := os.ReadFile(filepath.Join(dir, "config.yaml")); err != nil {
+		t.Errorf("expected a config.yaml naming the profile: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "install-scripts", "01-install-mysql")); err != nil {
+		t.Errorf("expected mysql's install script first: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "install-scripts", "02-install-rabbitmq")); err != nil {
+		t.Errorf("expected rabbitmq's install script offset after mysql's: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "agent-files", ".local", "bin", "start-mysql")); err != nil {
+		t.Errorf("expected start-mysql copied in: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "agent-files", ".local", "bin", "on-start")); err != nil {
+		t.Errorf("expected a generated on-start: %v", err)
+	}
+}
+
+func mkdirAndPath(t *testing.T, dir, name string) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(dir, name)
+}
+
 func TestCopyFromUnknownSource(t *testing.T) {
 	if _, err := CopyFrom(testLayout(t), "nope", "phoenix"); err == nil {
 		t.Fatal("expected an error copying from a missing profile")

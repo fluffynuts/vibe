@@ -56,6 +56,26 @@ func TestDefaultsDirIsAWholeDirectoryOverride(t *testing.T) {
 	}
 }
 
+func TestLibraryDirIsAWholeDirectoryOverride(t *testing.T) {
+	l := New(t.TempDir(), t.TempDir())
+	write(t, l.BundlePath("library", "mysql", "install-scripts", "01-a"), "echo a\n")
+	write(t, l.BundlePath("library", "rabbitmq", "install-scripts", "01-b"), "echo b\n")
+
+	if got, want := l.LibraryDir(), l.BundlePath("library"); got != want {
+		t.Errorf("LibraryDir = %s, want %s", got, want)
+	}
+
+	// once the overlay has a library directory it wins whole: the bundle's
+	// rabbitmq feature must not show through
+	write(t, l.HomePath("library", "mysql", "install-scripts", "01-a"), "echo mine\n")
+	if got, want := l.LibraryDir(), l.HomePath("library"); got != want {
+		t.Errorf("LibraryDir = %s, want the overlay's %s", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(l.LibraryDir(), "rabbitmq")); err == nil {
+		t.Error("the bundle's rabbitmq feature is still visible — the override is not whole")
+	}
+}
+
 func TestProfileDirIsAWholeDirectoryOverride(t *testing.T) {
 	l := New(t.TempDir(), t.TempDir())
 	write(t, l.BundlePath("profiles", "yumbi", "config.yaml"), "name: yumbi\n")

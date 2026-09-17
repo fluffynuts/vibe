@@ -1,0 +1,45 @@
+#!/bin/sh
+# vibe: description: Start redis-server backgrounded and wait until it answers
+# No braced shell expansions: sbx validates every brace-form
+# substitution in file content against its own placeholder list.
+exec >>/tmp/redis.log 2>&1
+echo "=== start-redis at $(date -Is) ==="
+
+# 18EB is 6379 in hex, 0A is LISTEN.
+if awk '$2 ~ /:18EB$/ && $4 == "0A" { f = 1 } END { exit f ? 0 : 1 }' /proc/net/tcp; then
+  echo "redis-server already listening on 6379"
+else
+  if ! command -v redis-server >/dev/null 2>&1; then
+    echo "ERROR: redis-server is not installed"
+    exit 1
+  fi
+
+  # /var/run/redis is on tmpfs and is gone after a container restart;
+  # redis-server refuses to start if it can't create its pid file there.
+  sudo install -d -o redis -g redis -m 755 /var/run/redis \
+    || echo "WARN: could not prepare /var/run/redis"
+
+  echo "starting redis-server"
+  sudo -u redis redis-server /etc/redis/redis.conf \
+    --daemonize yes \
+    --pidfile /var/run/redis/redis-server.pid
+fi
+
+# --daemonize returns once forked, not once ready; wait for a real answer
+# rather than assume.
+i=0
+ready=0
+while [ $i -lt 60 ]; do
+  if [ "$(redis-cli -h 127.0.0.1 -p 6379 ping 2>/dev/null)" = "PONG" ]; then
+    ready=1
+    break
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+if [ $ready -eq 0 ]; then
+  echo "ERROR: redis-server not ready after $i seconds"
+  echo "check /var/log/redis/redis-server.log for the boot failure"
+  exit 1
+fi
+echo "redis-server ready after $i seconds"

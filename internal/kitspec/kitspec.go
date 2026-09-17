@@ -103,7 +103,13 @@ func leadingNumber(name string) int {
 	return n
 }
 
-func sortedDirEntries(dir string) ([]os.DirEntry, error) {
+// SortedDirEntries returns dir's non-directory, non-sidecar entries in the
+// order install scripts and agent files are applied in: by leading number,
+// then by name. A missing directory yields no entries rather than an
+// error, since not every profile or feature has one. Exported so the
+// library package can plan a combined, renumbered install-scripts sequence
+// using the exact same ordering rules InstallSteps applies.
+func SortedDirEntries(dir string) ([]os.DirEntry, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -113,7 +119,7 @@ func sortedDirEntries(dir string) ([]os.DirEntry, error) {
 	}
 	files := make([]os.DirEntry, 0, len(entries))
 	for _, e := range entries {
-		if !e.IsDir() && !isSidecar(e.Name()) {
+		if !e.IsDir() && !IsSidecar(e.Name()) {
 			files = append(files, e)
 		}
 	}
@@ -127,10 +133,10 @@ func sortedDirEntries(dir string) ([]os.DirEntry, error) {
 	return files, nil
 }
 
-// isSidecar reports whether name is a ".vibe" directive sidecar file, which
+// IsSidecar reports whether name is a ".vibe" directive sidecar file, which
 // carries directives for a file that can't hold a "# vibe:" comment inline
 // (e.g. JSON) and is never itself deployed.
-func isSidecar(name string) bool {
+func IsSidecar(name string) bool {
 	return strings.HasSuffix(name, ".vibe")
 }
 
@@ -154,7 +160,7 @@ func directivesFor(path string, content []byte) (directive.Set, error) {
 func InstallSteps(dirs ...string) ([]interface{}, error) {
 	var steps []interface{}
 	for _, dir := range dirs {
-		entries, err := sortedDirEntries(dir)
+		entries, err := SortedDirEntries(dir)
 		if err != nil {
 			return nil, err
 		}
@@ -206,7 +212,7 @@ func FileEntries(dirs ...string) ([]interface{}, error) {
 			if d.IsDir() {
 				return nil
 			}
-			if isSidecar(d.Name()) {
+			if IsSidecar(d.Name()) {
 				return nil
 			}
 			rel, err := filepath.Rel(dir, path)
@@ -274,9 +280,10 @@ func normalizeMode(v string) string {
 // on-start script at, to have it run at sandbox startup.
 const OnStartRelPath = ".local/bin/on-start"
 
-// StartupSteps returns the startup: section, adding the on-start script (if
-// setup.files ended up including one at OnStartRelPath) as a backgrounded
-// root step, per spec.md.
+// StartupSteps returns the setup.startup section, adding the on-start
+// script (if setup.files ended up including one at OnStartRelPath) as a
+// backgrounded root step, per spec.md. sbx's kit schema only recognizes
+// startup nested under setup — there is no top-level startup field.
 func StartupSteps(fileEntries []interface{}) []interface{} {
 	target := AgentHome + "/" + OnStartRelPath
 	for _, e := range fileEntries {
@@ -294,6 +301,115 @@ func StartupSteps(fileEntries []interface{}) []interface{} {
 		}
 	}
 	return nil
+}
+
+// urlHostRE matches an http(s) URL's host, requiring at least two
+// dot-separated labels so a bare hostname like "localhost" (used for
+// services the sandbox reaches on its own loopback, never an external host
+// needing an egress allow rule) never matches.
+var urlHostRE = regexp.MustCompile(`https?://([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)`)
+
+// extractDomains returns every http(s) URL host found in text, excluding
+// bare IPv4 addresses (which an allow rule wouldn't sensibly target either).
+func extractDomains(text string) []string {
+	var domains []string
+	for _, m := range urlHostRE.FindAllStringSubmatch(text, -1) {
+		host := m[1]
+		if !isIPv4(host) {
+			domains = append(domains, host)
+		}
+	}
+	return domains
+}
+
+func isIPv4(host string) bool {
+	parts := strings.Split(host, ".")
+	if len(parts) != 4 {
+		return false
+	}
+	for _, p := range parts {
+		if p == "" {
+			return false
+		}
+		for _, c := range p {
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// discoverDomains scans every install step's command and every deployed
+// file's content for http(s) URLs, so a feature's own curl/apt-repo
+// targets — like the Elastic apt key fetch in
+// library/elasticsearch/install-scripts/01-enable-elasticsearch-repo —
+// don't also have to be hand-copied into permissions.network.allow, a
+// separate list that's easy for it to drift out of sync with. It returns
+// the discovered hosts in a stable, deduplicated order.
+func discoverDomains(installSteps, fileEntries []interface{}) []string {
+	seen := map[string]bool{}
+	var domains []string
+	add := func(text string) {
+		for _, d := range extractDomains(text) {
+			if !seen[d] {
+				seen[d] = true
+				domains = append(domains, d)
+			}
+		}
+	}
+	for _, s := range installSteps {
+		if step, ok := s.(Doc); ok {
+			if cmd, ok := step["command"].(string); ok {
+				add(cmd)
+			}
+		}
+	}
+	for _, f := range fileEntries {
+		if entry, ok := f.(Doc); ok {
+			if content, ok := entry["content"].(string); ok {
+				add(content)
+			}
+		}
+	}
+	sort.Strings(domains)
+	return domains
+}
+
+// mergeDiscoveredDomains adds any of domains not already present (by exact
+// string match — a wildcard entry like "*.ubuntu.com" already covering one
+// isn't recognized, so both may end up listed; harmless, just slightly
+// redundant) to merged's permissions.network.allow, creating that path if
+// config.yaml didn't set it at all.
+func mergeDiscoveredDomains(merged Doc, domains []string) {
+	if len(domains) == 0 {
+		return
+	}
+	permissions, _ := merged["permissions"].(Doc)
+	if permissions == nil {
+		permissions = Doc{}
+	}
+	network, _ := permissions["network"].(Doc)
+	if network == nil {
+		network = Doc{}
+	}
+	existing, _ := network["allow"].([]interface{})
+	have := map[string]bool{}
+	for _, e := range existing {
+		if s, ok := e.(string); ok {
+			have[s] = true
+		}
+	}
+	allow := append([]interface{}{}, existing...)
+	for _, d := range domains {
+		if !have[d] {
+			allow = append(allow, d)
+			have[d] = true
+		}
+	}
+	network["allow"] = allow
+	permissions["network"] = network
+	merged["permissions"] = permissions
 }
 
 // Build assembles the final kit spec document for a sandbox.
@@ -323,14 +439,16 @@ func Build(baseConfig, profileConfig Doc, defaultsDir, profileDir string, agentI
 		return nil, err
 	}
 
-	merged["setup"] = Doc{
+	setup := Doc{
 		"install": installSteps,
 		"files":   fileEntries,
 	}
-
 	if startup := StartupSteps(fileEntries); startup != nil {
-		merged["startup"] = startup
+		setup["startup"] = startup
 	}
+	merged["setup"] = setup
+
+	mergeDiscoveredDomains(merged, discoverDomains(installSteps, fileEntries))
 
 	if agentInstructionsProfile != "" {
 		agentInstructions, _ := merged["agentInstructions"].(Doc)

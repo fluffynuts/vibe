@@ -18,11 +18,13 @@ vibe -r/--re-init [path]   # remove and recreate the sandbox from its profile
 vibe -r -f/--force         # ...without prompting
 vibe -f                    # ...and, for an unknown profile, create a blank one
                            #    instead of asking
+vibe -R/--re-create [path] # delete the profile too, then re-init — the profile
+                           #    is gone, so this always re-prompts
 vibe -l/--list             # list every known sandbox and its status
 ```
 
-Every option has a long and a short form. `-s`, `-c`, `-r` and `-l` resolve the sandbox name
-exactly as a normal run would, so `vibe -s && vibe` restarts whatever you were working on.
+Every option has a long and a short form. `-s`, `-c`, `-r`, `-R` and `-l` resolve the sandbox
+name exactly as a normal run would, so `vibe -s && vibe` restarts whatever you were working on.
 
 `-c`/`--ssh` requires `sbx setup ssh` to have been run once on this machine.
 

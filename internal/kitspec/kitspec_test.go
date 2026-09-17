@@ -3,6 +3,7 @@ package kitspec
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -127,6 +128,97 @@ func TestFileEntriesOverrideAndSidecar(t *testing.T) {
 	// The sidecar file itself must never appear as a deployed entry.
 	if _, ok := byPath[AgentHome+"/.claude/settings.json.vibe"]; ok {
 		t.Error("sidecar file should not be deployed")
+	}
+}
+
+// TestBuildNestsStartupUnderSetup guards against a regression that reached
+// a real sandbox: sbx's kit schema has no top-level "startup" field, only
+// setup.startup — putting it at the document root fails "sbx create" with
+// "field startup not found in type spec.specFileV2".
+func TestBuildNestsStartupUnderSetup(t *testing.T) {
+	defaultsDir := t.TempDir()
+	profileDir := t.TempDir()
+	must(t, os.MkdirAll(filepath.Join(profileDir, "agent-files", ".local", "bin"), 0o755))
+	must(t, os.WriteFile(filepath.Join(profileDir, "agent-files", ".local", "bin", "on-start"),
+		[]byte("#!/bin/sh\necho hi\n"), 0o755))
+
+	doc, err := Build(Doc{}, Doc{}, defaultsDir, profileDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc["startup"]; ok {
+		t.Error("startup must not be a top-level field")
+	}
+	setup, ok := doc["setup"].(Doc)
+	if !ok {
+		t.Fatal("expected a setup section")
+	}
+	startup, _ := setup["startup"].([]interface{})
+	if len(startup) != 1 {
+		t.Fatalf("expected setup.startup to carry the on-start step, got %v", setup["startup"])
+	}
+}
+
+// TestBuildDiscoversDomainsFromInstallScripts guards against the actual
+// failure this was written for: an install script's curl target (the
+// Elastic apt-key fetch, in practice) 403ing inside the sandbox because
+// permissions.network.allow never had it and config.yaml's own list had
+// drifted out of sync.
+func TestBuildDiscoversDomainsFromInstallScripts(t *testing.T) {
+	defaultsDir := t.TempDir()
+	profileDir := t.TempDir()
+	must(t, os.MkdirAll(filepath.Join(profileDir, "install-scripts"), 0o755))
+	must(t, os.WriteFile(filepath.Join(profileDir, "install-scripts", "01-elastic-repo"),
+		[]byte("#!/bin/sh\ncurl -fsSL https://artifacts.elastic.co/GPG-KEY-elasticsearch | gpg --dearmor\n"+
+			"curl -s http://127.0.0.1:9200 && curl -s http://localhost:9200\n"), 0o644))
+
+	base := Doc{"permissions": Doc{"network": Doc{"allow": []interface{}{"github.com"}}}}
+	doc, err := Build(base, Doc{}, defaultsDir, profileDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	allow := doc["permissions"].(Doc)["network"].(Doc)["allow"].([]interface{})
+	want := []interface{}{"github.com", "artifacts.elastic.co"}
+	if !reflect.DeepEqual(allow, want) {
+		t.Errorf("allow = %v, want %v (base entries first, no localhost/IP entries)", allow, want)
+	}
+}
+
+// TestBuildDiscoversDomainsFromAgentFilesAndDedupes checks the other
+// content source (deployed files, not just install-script commands) and
+// that a domain already explicitly allowed doesn't get a duplicate entry.
+func TestBuildDiscoversDomainsFromAgentFilesAndDedupes(t *testing.T) {
+	defaultsDir := t.TempDir()
+	profileDir := t.TempDir()
+	must(t, os.MkdirAll(filepath.Join(profileDir, "agent-files", ".local", "bin"), 0o755))
+	must(t, os.WriteFile(filepath.Join(profileDir, "agent-files", ".local", "bin", "fetch-thing"),
+		[]byte("#!/bin/sh\ncurl -fsSL https://api.nuget.org/v3/index.json\ncurl -fsSL https://api.nuget.org/other\n"), 0o644))
+
+	base := Doc{"permissions": Doc{"network": Doc{"allow": []interface{}{"api.nuget.org"}}}}
+	doc, err := Build(base, Doc{}, defaultsDir, profileDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	allow := doc["permissions"].(Doc)["network"].(Doc)["allow"].([]interface{})
+	if want := []interface{}{"api.nuget.org"}; !reflect.DeepEqual(allow, want) {
+		t.Errorf("allow = %v, want %v (no duplicate for an already-allowed domain)", allow, want)
+	}
+}
+
+// TestBuildNoDomainsLeavesPermissionsUntouched confirms a profile with no
+// URLs anywhere gets no permissions section fabricated for it.
+func TestBuildNoDomainsLeavesPermissionsUntouched(t *testing.T) {
+	defaultsDir := t.TempDir()
+	profileDir := t.TempDir()
+	must(t, os.MkdirAll(filepath.Join(profileDir, "install-scripts"), 0o755))
+	must(t, os.WriteFile(filepath.Join(profileDir, "install-scripts", "01-hello"), []byte("echo hi\n"), 0o644))
+
+	doc, err := Build(Doc{}, Doc{}, defaultsDir, profileDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc["permissions"]; ok {
+		t.Errorf("expected no permissions section, got %v", doc["permissions"])
 	}
 }
 

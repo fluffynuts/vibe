@@ -16,6 +16,7 @@ import (
 	"vibe/internal/homeinit"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
+	"vibe/internal/library"
 	agentmem "vibe/internal/memory"
 	"vibe/internal/pathresolve"
 	"vibe/internal/portalloc"
@@ -38,14 +39,17 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe -r -f/--force         ...without prompting
   vibe -f                    ...and, for an unknown profile, create a blank
                              one instead of asking
+  vibe -R/--re-create [path] delete the profile too, then re-init — the
+                             profile is gone, so this always re-prompts
   vibe -l/--list             list every known sandbox and its status
 
--s, -c, -r and -l resolve the sandbox name exactly as a normal run would, so
-"vibe -s && vibe" restarts whatever you were working on.
+-s, -c, -r, -R and -l resolve the sandbox name exactly as a normal run
+would, so "vibe -s && vibe" restarts whatever you were working on.
 
 When a folder has no profile yet, vibe offers to create one: a copy of an
-existing profile, or a blank profile to grow yourself. Profiles live in
-profiles/<name> next to the vibe binary.
+existing profile, a blank profile to grow yourself, or a guided walk
+through picking features from the library. Profiles live in profiles/<name>
+next to the vibe binary.
 
 -c requires 'sbx setup ssh' to have been run once on this machine.
 `
@@ -130,6 +134,8 @@ func run(argv []string) error {
 		return doSsh(name, target)
 	case args.ReInit:
 		return doReInit(lay, args, name, target)
+	case args.ReCreate:
+		return doReCreate(lay, args, name, target)
 	default:
 		return doCreateOrAttach(lay, args, name, target)
 	}
@@ -491,20 +497,36 @@ func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merg
 
 // --- re-init --------------------------------------------------------------
 
-func doReInit(lay layout.Layout, args cliargs.Args, name, target string) error {
-	vibeHome := lay.Home
-	var profile string
+// resolveReInitProfile returns the profile a re-init (or re-create) should
+// use: the one explicitly given, else the one already recorded for an
+// existing sandbox of this name, else the one a plain run would derive.
+func resolveReInitProfile(vibeHome string, args cliargs.Args, name, target string) (string, error) {
+	if args.Profile != "" {
+		return args.Profile, nil
+	}
 	inst, found, err := state.Load(vibeHome, name)
 	if err != nil {
-		return err
+		return "", err
 	}
-	switch {
-	case args.Profile != "":
-		profile = args.Profile
-	case found:
-		profile = inst.Profile
-	default:
-		profile = resolveProfileName(args, target)
+	if found {
+		return inst.Profile, nil
+	}
+	return resolveProfileName(args, target), nil
+}
+
+func doReInit(lay layout.Layout, args cliargs.Args, name, target string) error {
+	return reInit(lay, args, name, target, false)
+}
+
+// reInit is --re-init's implementation. skipSandboxConfirm is set by
+// doReCreate, which already got one confirmation up front covering both
+// the profile and the sandbox, so this must not ask about the sandbox a
+// second time.
+func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm bool) error {
+	vibeHome := lay.Home
+	profile, err := resolveReInitProfile(vibeHome, args, name, target)
+	if err != nil {
+		return err
 	}
 
 	if err := ensureProfile(lay, profile, args.Force); err != nil {
@@ -523,7 +545,7 @@ func doReInit(lay layout.Layout, args cliargs.Args, name, target string) error {
 	var memoryStore string
 
 	if sbxrun.Exists(name) {
-		if !confirmDefault(args.Force, true, fmt.Sprintf("Remove sandbox '%s' (workspace %s)?", name, target)) {
+		if !skipSandboxConfirm && !confirmDefault(args.Force, true, fmt.Sprintf("Remove sandbox '%s' (workspace %s)?", name, target)) {
 			return fmt.Errorf("aborted — sandbox left alone")
 		}
 		if agentmem.Supported(agent) {
@@ -564,6 +586,39 @@ func doReInit(lay layout.Layout, args cliargs.Args, name, target string) error {
 		return err
 	}
 	return finish(vibeHome, name)
+}
+
+// --- re-create --------------------------------------------------------------
+
+// doReCreate deletes the overlay copy of the matched profile (if there is
+// one — the bundle's own copy, if any, is never touched), then does
+// exactly what --re-init does: with the profile gone, ensureProfile guides
+// the user through creating a new one (copy, blank or guided) instead of
+// silently reusing the old one, and any existing sandbox is removed and
+// rebuilt from it. Both destructive steps share a single confirmation up
+// front rather than asking once per step.
+func doReCreate(lay layout.Layout, args cliargs.Args, name, target string) error {
+	profile, err := resolveReInitProfile(lay.Home, args, name, target)
+	if err != nil {
+		return err
+	}
+
+	if !confirmDefault(args.Force, false,
+		"This action will destroy any existing profile or sandbox for the current project. Continue?") {
+		return fmt.Errorf("aborted — nothing removed")
+	}
+
+	dir := lay.HomePath("profiles", profile)
+	if info, err := os.Stat(dir); dir != "" && err == nil && info.IsDir() {
+		if err := os.RemoveAll(dir); err != nil {
+			return err
+		}
+		note("deleted profile '%s' from %s", profile, dir)
+	} else {
+		note("no overlay profile '%s' to delete", profile)
+	}
+
+	return reInit(lay, args, name, target, true)
 }
 
 // ttyReader opens whatever this process can ask a question on: /dev/tty so a
@@ -708,8 +763,9 @@ func initHome(lay layout.Layout, force bool) error {
 
 // ensureProfile makes sure the profile a sandbox is about to be built from
 // exists. A folder vibe hasn't seen before derives a profile name that has
-// no profile behind it yet, so rather than failing, offer to seed one:
-// either a copy of an existing profile or a blank one.
+// no profile behind it yet, so rather than failing, offer to seed one: a
+// copy of an existing profile, a blank one, or a guided walk through
+// picking library features.
 func ensureProfile(lay layout.Layout, profile string, force bool) error {
 	if lay.ProfileExists(profile) {
 		return nil
@@ -734,16 +790,19 @@ func ensureProfile(lay layout.Layout, profile string, force bool) error {
 				filepath.Join(lay.NewProfileDir(profile), "config.yaml"))
 		}
 		choice, ok := chooseFrom("create it how?",
-			[]string{"copy an existing profile", "create a new blank profile"}, 0)
+			[]string{"copy an existing profile", "create a new blank profile", "guided profile creation"}, 0)
 		if !ok {
 			return fmt.Errorf("aborted — no profile '%s' created", profile)
 		}
-		if choice == 0 {
+		switch choice {
+		case 0:
 			pick, ok := chooseFrom(fmt.Sprintf("which profile should '%s' start from?", profile), existing, 0)
 			if !ok {
 				return fmt.Errorf("aborted — no profile '%s' created", profile)
 			}
 			source = existing[pick]
+		case 2:
+			return ensureGuidedProfile(lay, profile)
 		}
 	}
 
@@ -762,8 +821,79 @@ func ensureProfile(lay layout.Layout, profile string, force bool) error {
 	} else {
 		note("created blank profile '%s' in %s", profile, dir)
 	}
-	note("edit it and re-run with -r to rebuild the sandbox from the changes")
 	return nil
+}
+
+// ensureGuidedProfile walks the user through picking which library
+// features a new profile should install, lets them reorder the ones they
+// picked, and writes the result as a new profile via profilegen.CreateGuided.
+func ensureGuidedProfile(lay layout.Layout, profile string) error {
+	features, err := library.List(lay.LibraryDir())
+	if err != nil {
+		return err
+	}
+	if len(features) == 0 {
+		return fmt.Errorf("no features found in %s — pick another option instead", lay.LibraryDir())
+	}
+	labels := make([]string, len(features))
+	for i, f := range features {
+		labels[i] = f.Label()
+	}
+
+	idxs, ok := checklistFrom("pick the features this sandbox needs", labels, make([]bool, len(features)))
+	if !ok {
+		return fmt.Errorf("aborted — no profile '%s' created", profile)
+	}
+	chosen := make([]string, len(idxs))
+	for i, idx := range idxs {
+		chosen[i] = features[idx].Name
+	}
+
+	if len(chosen) > 1 {
+		ordered, ok := reorderFrom("order the features — they install and start in this order", chosen)
+		if !ok {
+			return fmt.Errorf("aborted — no profile '%s' created", profile)
+		}
+		chosen = ordered
+	}
+
+	dir, err := profilegen.CreateGuided(lay, profile, chosen)
+	if err != nil {
+		return err
+	}
+	if len(chosen) > 0 {
+		note("created guided profile '%s' (%s) in %s", profile, strings.Join(chosen, ", "), dir)
+	} else {
+		note("created guided profile '%s' (no features picked) in %s", profile, dir)
+	}
+	return nil
+}
+
+// checklistFrom asks the user to check zero or more of labels with an
+// interactive checkbox list. checked is the initial checked state. It
+// returns the checked indices, and ok=false when the user quit or there is
+// no terminal to ask on.
+func checklistFrom(question string, labels []string, checked []bool) ([]int, bool) {
+	tty, closeFn, ok := ttyRW()
+	if !ok {
+		return nil, false
+	}
+	defer closeFn()
+	note("%s", question)
+	return prompt.MultiSelect(tty, labels, checked)
+}
+
+// reorderFrom asks the user to rearrange labels with an interactive,
+// arrow-key-movable list. It returns the labels in their final order, and
+// ok=false when the user quit or there is no terminal to ask on.
+func reorderFrom(question string, labels []string) ([]string, bool) {
+	tty, closeFn, ok := ttyRW()
+	if !ok {
+		return nil, false
+	}
+	defer closeFn()
+	note("%s", question)
+	return prompt.Reorder(tty, labels)
 }
 
 // --- finishing the foreground session --------------------------------------

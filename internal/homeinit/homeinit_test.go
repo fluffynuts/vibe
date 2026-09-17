@@ -17,6 +17,7 @@ func seedBundle(t *testing.T) layout.Layout {
 	write(t, l.BundlePath("profiles", "yumbi", "config.yaml"), "name: yumbi\n")
 	write(t, l.BundlePath("profiles", "phoenix", "config.yaml"), "name: phoenix\n")
 	write(t, l.BundlePath("defaults", "install-scripts", "01-a"), "echo a\n")
+	write(t, l.BundlePath("library", "mysql", "install-scripts", "01-install-mysql"), "echo mysql\n")
 	return l
 }
 
@@ -53,6 +54,13 @@ func TestNeeded(t *testing.T) {
 	if Needed(l) {
 		t.Error("an overlay with its own defaults does not need seeding")
 	}
+	if err := os.RemoveAll(filepath.Join(l.Home, "defaults")); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(l.Home, "library", "mysql", "install-scripts", "01-a"), "echo mine\n")
+	if Needed(l) {
+		t.Error("an overlay with its own library does not need seeding")
+	}
 	if Needed(layout.New("", l.Bundle)) {
 		t.Error("with no overlay there is nothing to seed")
 	}
@@ -71,7 +79,7 @@ func TestRunCopiesBaseFilesAndAcceptedProfiles(t *testing.T) {
 	if want := []string{"phoenix", "yumbi"}; !reflect.DeepEqual(asked, want) {
 		t.Errorf("asked about %v, want every bundled profile %v", asked, want)
 	}
-	if want := []string{"config.yaml", "settings.yaml", "defaults/"}; !reflect.DeepEqual(res.Files, want) {
+	if want := []string{"config.yaml", "settings.yaml", "defaults/", "library/"}; !reflect.DeepEqual(res.Files, want) {
 		t.Errorf("copied %v, want %v", res.Files, want)
 	}
 	if _, err := os.Stat(l.HomePath("defaults", "install-scripts", "01-a")); err != nil {
@@ -79,6 +87,12 @@ func TestRunCopiesBaseFilesAndAcceptedProfiles(t *testing.T) {
 	}
 	if got, want := l.DefaultsDir(), l.HomePath("defaults"); got != want {
 		t.Errorf("DefaultsDir = %s, want the seeded %s", got, want)
+	}
+	if _, err := os.Stat(l.HomePath("library", "mysql", "install-scripts", "01-install-mysql")); err != nil {
+		t.Errorf("library not copied into the overlay: %v", err)
+	}
+	if got, want := l.LibraryDir(), l.HomePath("library"); got != want {
+		t.Errorf("LibraryDir = %s, want the seeded %s", got, want)
 	}
 	if want := []string{"yumbi"}; !reflect.DeepEqual(res.Profiles, want) {
 		t.Errorf("copied profiles %v, want %v", res.Profiles, want)

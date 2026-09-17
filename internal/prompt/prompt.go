@@ -5,6 +5,8 @@ package prompt
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"golang.org/x/sys/unix"
 	"golang.org/x/term"
@@ -84,12 +86,192 @@ func Select(rw *os.File, labels []string, def int) (choice int, ok bool) {
 	}
 }
 
+// MultiSelect renders labels as an arrow-key-navigable checkbox list on rw
+// (same terminal requirements as Select). checked is the initial checked
+// state, matched index-for-index with labels (a shorter or nil slice is
+// treated as all-unchecked). Up/Down (and k/j) move the cursor, Space
+// toggles the item under it, enter confirms — returning the checked
+// indices in ascending order — q/Esc/Ctrl-C cancel (ok=false).
+func MultiSelect(rw *os.File, labels []string, checked []bool) (selected []int, ok bool) {
+	if len(labels) == 0 {
+		return nil, false
+	}
+	fd := int(rw.Fd())
+	state, err := term.MakeRaw(fd)
+	if err != nil {
+		return nil, false
+	}
+	defer term.Restore(fd, state)
+
+	marks := make([]bool, len(labels))
+	copy(marks, checked)
+
+	cursor := 0
+	lines := len(labels) + 1
+	drawChecklist(rw, labels, marks, cursor)
+
+	buf := make([]byte, 1)
+	for {
+		n, err := rw.Read(buf)
+		if err != nil || n == 0 {
+			clear(rw, lines)
+			return nil, false
+		}
+		switch buf[0] {
+		case 3, 'q', 'Q': // Ctrl-C, q
+			clear(rw, lines)
+			return nil, false
+		case '\r', '\n':
+			clear(rw, lines)
+			var idxs []int
+			var picked []string
+			for i, m := range marks {
+				if m {
+					idxs = append(idxs, i)
+					picked = append(picked, labels[i])
+				}
+			}
+			summary := "(nothing)"
+			if len(picked) > 0 {
+				summary = strings.Join(picked, ", ")
+			}
+			fmt.Fprintf(rw, "  \x1b[32m✔\x1b[0m %s\r\n", summary)
+			return idxs, true
+		case ' ':
+			marks[cursor] = !marks[cursor]
+		case 'k':
+			if cursor > 0 {
+				cursor--
+			}
+		case 'j':
+			if cursor < len(labels)-1 {
+				cursor++
+			}
+		case 0x1b:
+			switch readEscape(rw) {
+			case escUp:
+				if cursor > 0 {
+					cursor--
+				}
+			case escDown:
+				if cursor < len(labels)-1 {
+					cursor++
+				}
+			case escBare:
+				clear(rw, lines)
+				return nil, false
+			default:
+				continue
+			}
+		default:
+			continue
+		}
+		up(rw, lines)
+		drawChecklist(rw, labels, marks, cursor)
+	}
+}
+
+// Reorder lets the user rearrange labels on rw (same terminal requirements
+// as Select). Up/Down (and j/k) move the selection over the list without
+// changing the order; Shift+Up/Shift+Down (and J/K, for a terminal that
+// doesn't pass the shift modifier through) move the selected item,
+// swapping it with its neighbor and following it. Enter confirms the final
+// order, q/Esc/Ctrl-C cancel (ok=false).
+func Reorder(rw *os.File, labels []string) (ordered []string, ok bool) {
+	if len(labels) == 0 {
+		return nil, false
+	}
+	fd := int(rw.Fd())
+	state, err := term.MakeRaw(fd)
+	if err != nil {
+		return nil, false
+	}
+	defer term.Restore(fd, state)
+
+	order := make([]string, len(labels))
+	copy(order, labels)
+	cursor := 0
+	lines := len(order) + 1
+	drawReorder(rw, order, cursor)
+
+	selectUp := func() {
+		if cursor > 0 {
+			cursor--
+		}
+	}
+	selectDown := func() {
+		if cursor < len(order)-1 {
+			cursor++
+		}
+	}
+	moveUp := func() {
+		if cursor > 0 {
+			order[cursor-1], order[cursor] = order[cursor], order[cursor-1]
+			cursor--
+		}
+	}
+	moveDown := func() {
+		if cursor < len(order)-1 {
+			order[cursor+1], order[cursor] = order[cursor], order[cursor+1]
+			cursor++
+		}
+	}
+
+	buf := make([]byte, 1)
+	for {
+		n, err := rw.Read(buf)
+		if err != nil || n == 0 {
+			clear(rw, lines)
+			return nil, false
+		}
+		switch buf[0] {
+		case 3, 'q', 'Q': // Ctrl-C, q
+			clear(rw, lines)
+			return nil, false
+		case '\r', '\n':
+			clear(rw, lines)
+			fmt.Fprintf(rw, "  \x1b[32m✔\x1b[0m %s\r\n", strings.Join(order, ", "))
+			return order, true
+		case 'k':
+			selectUp()
+		case 'j':
+			selectDown()
+		case 'K':
+			moveUp()
+		case 'J':
+			moveDown()
+		case 0x1b:
+			switch readEscape(rw) {
+			case escUp:
+				selectUp()
+			case escDown:
+				selectDown()
+			case escShiftUp:
+				moveUp()
+			case escShiftDown:
+				moveDown()
+			case escBare:
+				clear(rw, lines)
+				return nil, false
+			default:
+				continue
+			}
+		default:
+			continue
+		}
+		up(rw, lines)
+		drawReorder(rw, order, cursor)
+	}
+}
+
 type escKey int
 
 const (
 	escOther escKey = iota
 	escUp
 	escDown
+	escShiftUp
+	escShiftDown
 	escBare
 )
 
@@ -104,24 +286,59 @@ const (
 // sidesteps that.
 const escapeWait = 30 // milliseconds
 
-// readEscape reads what follows an already-consumed ESC byte.
+// readEscape reads what follows an already-consumed ESC byte: a bare
+// Escape keypress, a plain arrow ("ESC [ A/B"), or an arrow held with a
+// modifier key ("ESC [ 1 ; <modifier> A/B", xterm's scheme for Shift,
+// Alt, Ctrl and combinations of them on a cursor key).
 func readEscape(rw *os.File) escKey {
 	b1, ok := pollByte(rw)
 	if !ok || b1 != '[' {
 		return escBare
 	}
-	b2, ok := pollByte(rw)
-	if !ok {
-		return escBare
+	var params []byte
+	var final byte
+	for {
+		b, ok := pollByte(rw)
+		if !ok {
+			return escBare
+		}
+		if (b >= '0' && b <= '9') || b == ';' {
+			params = append(params, b)
+			continue
+		}
+		final = b
+		break
 	}
-	switch b2 {
+	shift := hasShiftModifier(params)
+	switch final {
 	case 'A':
+		if shift {
+			return escShiftUp
+		}
 		return escUp
 	case 'B':
+		if shift {
+			return escShiftDown
+		}
 		return escDown
 	default:
 		return escOther
 	}
+}
+
+// hasShiftModifier reports whether a CSI sequence's parameter bytes encode
+// the Shift modifier, alone or combined with another (xterm's "1;<mod>"
+// scheme, where <mod>-1 is a bitmask with bit 0 set for Shift).
+func hasShiftModifier(params []byte) bool {
+	parts := strings.Split(string(params), ";")
+	if len(parts) < 2 {
+		return false
+	}
+	mod, err := strconv.Atoi(parts[1])
+	if err != nil || mod < 2 {
+		return false
+	}
+	return (mod-1)&1 == 1
 }
 
 // pollByte waits up to escapeWait for rw to become readable and reads a
@@ -148,6 +365,34 @@ func draw(w *os.File, labels []string, sel int) {
 		}
 	}
 	fmt.Fprint(w, "\x1b[2K\r\x1b[2m(↑/↓ to move, enter to select, q to quit)\x1b[0m")
+}
+
+func drawChecklist(w *os.File, labels []string, marks []bool, cursor int) {
+	for i, label := range labels {
+		fmt.Fprint(w, "\x1b[2K\r")
+		box := "[ ]"
+		if marks[i] {
+			box = "[x]"
+		}
+		if i == cursor {
+			fmt.Fprintf(w, "\x1b[36m❯ %s %s\x1b[0m\r\n", box, label)
+		} else {
+			fmt.Fprintf(w, "  %s %s\r\n", box, label)
+		}
+	}
+	fmt.Fprint(w, "\x1b[2K\r\x1b[2m(↑/↓ to move, space to toggle, enter to confirm, q to quit)\x1b[0m")
+}
+
+func drawReorder(w *os.File, labels []string, cursor int) {
+	for i, label := range labels {
+		fmt.Fprint(w, "\x1b[2K\r")
+		if i == cursor {
+			fmt.Fprintf(w, "\x1b[36m❯ %s\x1b[0m\r\n", label)
+		} else {
+			fmt.Fprintf(w, "  %s\r\n", label)
+		}
+	}
+	fmt.Fprint(w, "\x1b[2K\r\x1b[2m(↑/↓ to select, shift+↑/↓ to move the selected item, enter to confirm, q to quit)\x1b[0m")
 }
 
 // up moves the cursor back to the first drawn line, ready to redraw in

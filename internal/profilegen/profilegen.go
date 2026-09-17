@@ -12,6 +12,7 @@ import (
 
 	"vibe/internal/fscopy"
 	"vibe/internal/layout"
+	"vibe/internal/library"
 )
 
 // validName is what a profile directory may be called: the same shape
@@ -59,6 +60,24 @@ func CreateBlank(l layout.Layout, profile string) (string, error) {
 	}
 	path := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(path, []byte(fmt.Sprintf(blankConfig, profile)), 0o644); err != nil {
+		return "", createErr(dir, err)
+	}
+	return dir, nil
+}
+
+// CreateGuided writes a new profile assembled from the chosen library
+// features, in the given order: it starts from the same minimum a blank
+// profile has, then has library.Compose lay it out install-scripts (each
+// feature's own scripts renumbered to run in this order, one feature block
+// after another) and agent-files (a later feature's file overrides an
+// earlier one's at the same path), generating an on-start script when any
+// feature needs one. It returns the created profile directory.
+func CreateGuided(l layout.Layout, profile string, features []string) (string, error) {
+	dir, err := CreateBlank(l, profile)
+	if err != nil {
+		return "", err
+	}
+	if err := library.Compose(l.LibraryDir(), features, dir); err != nil {
 		return "", createErr(dir, err)
 	}
 	return dir, nil

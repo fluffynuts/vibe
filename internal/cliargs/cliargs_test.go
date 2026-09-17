@@ -31,12 +31,24 @@ func TestParseActionFlags(t *testing.T) {
 	if err != nil || !a.ReInit || !a.Force {
 		t.Fatalf("expected ReInit+Force, got %+v err=%v", a, err)
 	}
+	a, err = Parse([]string{"-R"})
+	if err != nil || !a.ReCreate {
+		t.Fatalf("expected ReCreate, got %+v err=%v", a, err)
+	}
+	a, err = Parse([]string{"--re-create"})
+	if err != nil || !a.ReCreate {
+		t.Fatalf("expected ReCreate, got %+v err=%v", a, err)
+	}
 }
 
 func TestExclusiveActions(t *testing.T) {
 	a, _ := Parse([]string{"--stop", "--ssh"})
 	if a.ExclusiveActions() != 2 {
 		t.Errorf("expected 2 exclusive actions set, got %d", a.ExclusiveActions())
+	}
+	a, _ = Parse([]string{"--re-create"})
+	if a.ExclusiveActions() != 1 {
+		t.Errorf("expected re-create to count as an exclusive action, got %d", a.ExclusiveActions())
 	}
 }
 

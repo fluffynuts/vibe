@@ -60,6 +60,17 @@ func (l Layout) DefaultsDir() string {
 	return l.BundlePath("defaults")
 }
 
+// LibraryDir returns the single directory the feature library is read from:
+// the overlay's when it has one, else the bundle's. Like defaults, it
+// overrides whole, so a feature the user deletes from their copy is gone
+// rather than falling back to the bundle's.
+func (l Layout) LibraryDir() string {
+	if p := l.HomePath("library"); p != "" && isDir(p) {
+		return p
+	}
+	return l.BundlePath("library")
+}
+
 // ProfileDir returns the single directory a profile is read from: the
 // overlay's when that directory exists at all, else the bundle's. The path
 // is returned even when nothing is there, so it can be reported or created.
