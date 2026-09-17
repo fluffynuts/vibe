@@ -1,0 +1,7 @@
+#!/bin/sh
+# vibe: description: Install rabbitmq-server
+# vibe: user: 0
+echo "--- installing rabbitmq $(date -Is)" >>/tmp/sbx-setup.log
+sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y rabbitmq-server </dev/null >>/tmp/sbx-setup.log 2>&1 \
+  || echo "WARN: rabbitmq install failed" >>/tmp/sbx-setup.log
+true

@@ -1,0 +1,7 @@
+#!/bin/sh
+# vibe: description: Install redis-server
+# vibe: user: 0
+echo "--- installing redis-server $(date -Is)" >>/tmp/sbx-setup.log
+sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y redis-server </dev/null >>/tmp/sbx-setup.log 2>&1 \
+  || echo "WARN: redis-server install failed" >>/tmp/sbx-setup.log
+true

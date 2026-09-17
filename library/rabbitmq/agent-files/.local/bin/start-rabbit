@@ -1,0 +1,54 @@
+#!/bin/sh
+# vibe: description: Start RabbitMQ with a stable node name, then ensure the rabbit user
+# No braced shell expansions: sbx validates every brace-form
+# substitution in file content against its own placeholder list.
+exec >>/tmp/rabbitmq.log 2>&1
+echo "=== start-rabbit at $(date -Is) ==="
+sleep 5
+
+NODE=rabbit@localhost
+CTL="sudo -u rabbitmq env RABBITMQ_NODENAME=$NODE rabbitmqctl"
+
+# 1628 is 5672 in hex, 0A is LISTEN.
+if awk '$2 ~ /:1628$/ && $4 == "0A" { f = 1 } END { exit f ? 0 : 1 }' /proc/net/tcp; then
+  echo "broker already listening on 5672"
+else
+  # The mnesia tree must be owned by rabbitmq or ra_log_ets crashes
+  # with eacces on quorum/.../names.dets and boot aborts.
+  # sudo because this runs as root from setup.startup but as the agent
+  # user when invoked via sbx exec from vibe's nudge.
+  sudo install -d -o rabbitmq -g rabbitmq -m 750 /var/lib/rabbitmq/mnesia \
+    || echo "WARN: could not prepare /var/lib/rabbitmq/mnesia"
+  echo "starting broker as $NODE"
+  sudo -u rabbitmq env RABBITMQ_NODENAME=$NODE RABBITMQ_LOG_BASE=/tmp \
+    rabbitmq-server -detached
+fi
+
+# rabbitmqctl needs a live node; wait rather than assume.
+i=0
+ready=0
+while [ $i -lt 60 ]; do
+  if $CTL await_startup --timeout 5 >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+if [ $ready -eq 0 ]; then
+  echo "ERROR: broker not ready after $i seconds"
+  echo "check /tmp/rabbit@localhost.log for the boot failure"
+  exit 1
+fi
+echo "broker ready after $i seconds"
+
+# Idempotent: startup commands replay on every container restart.
+if $CTL list_users 2>/dev/null | awk 'NR > 1 && $1 == "rabbit" { f = 1 } END { exit f ? 0 : 1 }'; then
+  echo "user 'rabbit' already exists"
+else
+  echo "creating user 'rabbit'"
+  $CTL add_user rabbit rabbit || echo "WARN: add_user failed"
+fi
+$CTL set_permissions -p / rabbit '.*' '.*' '.*' || echo "WARN: set_permissions failed"
+$CTL set_user_tags rabbit administrator || echo "WARN: set_user_tags failed"
+echo "rabbit user provisioned"

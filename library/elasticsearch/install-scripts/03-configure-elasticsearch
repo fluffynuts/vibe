@@ -1,0 +1,20 @@
+#!/bin/sh
+# vibe: description: Single-node, security-disabled config with a pinned heap
+# vibe: user: 0
+printf "%s\n" \
+  "cluster.name: yumbi-sandbox" \
+  "discovery.type: single-node" \
+  "network.host: 127.0.0.1" \
+  "http.port: 9200" \
+  "path.data: /var/lib/elasticsearch" \
+  "path.logs: /var/log/elasticsearch" \
+  "xpack.security.enabled: false" \
+  "xpack.security.enrollment.enabled: false" \
+  "xpack.ml.enabled: false" \
+  | sudo tee /etc/elasticsearch/elasticsearch.yml >/dev/null \
+  && printf "%s\n" "-Xms512m" "-Xmx512m" | sudo tee /etc/elasticsearch/jvm.options.d/heap.options >/dev/null \
+  && sudo install -d -o elasticsearch -g elasticsearch -m 0750 /var/lib/elasticsearch /var/log/elasticsearch \
+  && sudo install -d -o elasticsearch -g elasticsearch -m 0755 /usr/share/elasticsearch/logs /usr/share/elasticsearch/tmp \
+  && echo "--- wrote elasticsearch config" >>/tmp/sbx-setup.log \
+  || echo "WARN: elasticsearch config failed" >>/tmp/sbx-setup.log
+true

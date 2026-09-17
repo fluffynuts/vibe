@@ -25,6 +25,13 @@ func StoreFor(memoryRoot, name string) string {
 	return filepath.Join(memoryRoot, name)
 }
 
+// HasMemories reports whether the running sandbox has any agent memories
+// worth offering to preserve — a missing or empty AgentPath doesn't count.
+func HasMemories(sandboxName string) bool {
+	return sbxrun.ExecSilent(sandboxName, "sh", "-c",
+		fmt.Sprintf("test -d '%s' && [ -n \"$(ls -A '%s' 2>/dev/null)\" ]", AgentPath, AgentPath))
+}
+
 // Backup copies memories out of a running sandbox into store, before it is
 // destroyed. Returns false (no error) when the sandbox has no memories to
 // preserve.
@@ -32,7 +39,7 @@ func Backup(sandboxName, store string) (bool, error) {
 	if err := os.MkdirAll(store, 0o755); err != nil {
 		return false, fmt.Errorf("creating memory store: %w", err)
 	}
-	if !sbxrun.ExecSilent(sandboxName, "test", "-d", AgentPath) {
+	if !HasMemories(sandboxName) {
 		return false, nil
 	}
 	ok := sbxrun.ExecSilent(sandboxName, "sh", "-c",

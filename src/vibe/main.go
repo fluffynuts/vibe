@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +20,7 @@ import (
 	"vibe/internal/pathresolve"
 	"vibe/internal/portalloc"
 	"vibe/internal/profilegen"
+	"vibe/internal/prompt"
 	"vibe/internal/sbxrun"
 	"vibe/internal/settings"
 	"vibe/internal/state"
@@ -523,11 +523,14 @@ func doReInit(lay layout.Layout, args cliargs.Args, name, target string) error {
 	var memoryStore string
 
 	if sbxrun.Exists(name) {
-		if !confirm(args.Force, fmt.Sprintf("Remove sandbox '%s' (workspace %s)?", name, target)) {
+		if !confirmDefault(args.Force, true, fmt.Sprintf("Remove sandbox '%s' (workspace %s)?", name, target)) {
 			return fmt.Errorf("aborted — sandbox left alone")
 		}
 		if agentmem.Supported(agent) {
-			if confirm(args.Force, fmt.Sprintf("Preserve agent memories from '%s'?", name)) {
+			switch {
+			case !agentmem.HasMemories(name):
+				note("  no memories found in '%s' — nothing to preserve", name)
+			case confirmDefault(args.Force, true, fmt.Sprintf("Preserve agent memories from '%s'?", name)):
 				root := merged.MemoryRoot
 				if root == "" {
 					root = filepath.Join(vibeHome, "memories")
@@ -593,8 +596,15 @@ func isTerminal(f *os.File) bool {
 	return true
 }
 
-// confirm asks a yes/no question on the terminal. force answers yes.
-func confirm(force bool, prompt string) bool {
+// confirm asks a yes/no question on the terminal, defaulting to no. force
+// answers yes without asking.
+func confirm(force bool, question string) bool {
+	return confirmDefault(force, false, question)
+}
+
+// confirmDefault asks a yes/no question on the terminal, answering def when
+// the user just presses enter. force answers yes without asking.
+func confirmDefault(force, def bool, question string) bool {
 	if force {
 		return true
 	}
@@ -604,10 +614,21 @@ func confirm(force bool, prompt string) bool {
 		os.Exit(1)
 	}
 	defer closeFn()
-	fmt.Fprintf(os.Stderr, "vibe: %s [y/N] ", prompt)
+	hint := "y/N"
+	if def {
+		hint = "Y/n"
+	}
+	fmt.Fprintf(os.Stderr, "vibe: %s [%s] ", question, hint)
 	line, _ := reader.ReadString('\n')
 	line = strings.ToLower(strings.TrimSpace(line))
-	return line == "y" || line == "yes"
+	switch line {
+	case "":
+		return def
+	case "y", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 // interactive reports whether there is a terminal to ask questions on.
@@ -617,52 +638,37 @@ func interactive() bool {
 	return ok
 }
 
-// chooseFrom asks the user to pick one of labels, by number or by its exact
-// text. An empty answer takes def (a 0-based index); "q" quits. It returns
-// the chosen index, and ok=false when the user quit.
+// ttyRW opens the same terminal ttyReader would, but for reading and writing
+// raw bytes on one *os.File — what an interactive list picker needs to put
+// the terminal into raw mode and redraw itself in place.
+func ttyRW() (rw *os.File, closeFn func(), ok bool) {
+	if tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0); err == nil {
+		return tty, func() { tty.Close() }, true
+	}
+	if !isTerminal(os.Stdin) {
+		return nil, func() {}, false
+	}
+	return os.Stdin, func() {}, true
+}
+
+// chooseFrom asks the user to pick one of labels with an interactive,
+// arrow-key-navigable list (inquirer-style). def is the 0-based index
+// highlighted first. It returns the chosen index, and ok=false when the
+// user quit or there is no terminal to ask on.
+//
+// Falling back to numbered/typed input when Select can't put the terminal
+// into raw mode is deliberately not attempted: interactive() already gates
+// every chooseFrom call site on there being a real terminal, and a terminal
+// that can't go raw is rare enough (and unhelpful enough for scripting) not
+// to be worth a second input mode.
 func chooseFrom(question string, labels []string, def int) (int, bool) {
-	reader, closeFn, ok := ttyReader()
+	tty, closeFn, ok := ttyRW()
 	if !ok {
 		return 0, false
 	}
 	defer closeFn()
-	for {
-		note("%s", question)
-		for i, label := range labels {
-			marker := " "
-			if i == def {
-				marker = "*"
-			}
-			fmt.Fprintf(os.Stderr, "     %s %d) %s\n", marker, i+1, label)
-		}
-		fmt.Fprintf(os.Stderr, "       q) quit\n")
-		fmt.Fprintf(os.Stderr, "vibe: choice [%d] ", def+1)
-		line, err := reader.ReadString('\n')
-		answer := strings.TrimSpace(line)
-		switch {
-		case answer == "":
-			if err != nil { // EOF with nothing typed: don't loop forever
-				return 0, false
-			}
-			return def, true
-		case strings.EqualFold(answer, "q"), strings.EqualFold(answer, "quit"):
-			return 0, false
-		}
-		if n, convErr := strconv.Atoi(answer); convErr == nil {
-			if n >= 1 && n <= len(labels) {
-				return n - 1, true
-			}
-		}
-		for i, label := range labels {
-			if strings.EqualFold(answer, label) {
-				return i, true
-			}
-		}
-		note("'%s' is not one of the choices", answer)
-		if err != nil {
-			return 0, false
-		}
-	}
+	note("%s", question)
+	return prompt.Select(tty, labels, def)
 }
 
 // initHome seeds the user's ~/.vibe overlay on first run: it is where the

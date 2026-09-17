@@ -1,0 +1,14 @@
+#!/bin/sh
+# vibe: description: Add the .NET 8 ASP.NET Core runtime so net8.0 tests can run (non-fatal)
+# vibe: user: 0
+echo "--- installing .NET 8 ASP.NET Core runtime $(date -Is)" >>/tmp/sbx-setup.log
+if command -v dotnet >/dev/null 2>&1; then
+  root=$(dirname "$(readlink -f "$(command -v dotnet)")")
+  echo "DOTNET_ROOT=$root" >>/tmp/sbx-setup.log
+  curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh >>/tmp/sbx-setup.log 2>&1 \
+    && sudo bash /tmp/dotnet-install.sh --runtime aspnetcore --channel 8.0 --install-dir "$root" --no-path </dev/null >>/tmp/sbx-setup.log 2>&1 \
+    || echo "WARN: .NET 8 runtime install failed" >>/tmp/sbx-setup.log
+else
+  echo "WARN: no dotnet on PATH, skipping .NET 8 runtime" >>/tmp/sbx-setup.log
+fi
+true

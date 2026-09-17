@@ -1,0 +1,8 @@
+#!/bin/sh
+# vibe: description: Summarise any warnings from setup
+# vibe: user: 0
+echo "=== setup finished $(date -Is) ===" >>/tmp/sbx-setup.log
+echo "--- setup warnings ---"
+grep -E "^(WARN|ERROR)" /tmp/sbx-setup.log || echo "none"
+echo "--- full log: sbx exec <name> -- cat /tmp/sbx-setup.log"
+true

@@ -1,0 +1,44 @@
+#!/bin/sh
+# vibe: description: Point ~/.nuget at the mounted host NuGet dir, if one was passed
+# SBX_HOST_NUGET is set by vibe when it mounts the host ~/.nuget.
+# No braced shell expansions here: sbx validates every brace-form
+# substitution in file content against its own placeholder list.
+exec >>/tmp/link-nuget.log 2>&1
+echo "=== link-nuget at $(date -Is) ==="
+if [ -z "$SBX_HOST_NUGET" ]; then
+  echo "SBX_HOST_NUGET unset — nothing to link"
+  exit 0
+fi
+if [ ! -d "$SBX_HOST_NUGET" ]; then
+  echo "ERROR: $SBX_HOST_NUGET is not mounted"
+  exit 1
+fi
+LINK=/home/agent/.nuget
+if [ -L "$LINK" ]; then
+  ln -sfn "$SBX_HOST_NUGET" "$LINK"
+elif [ -e "$LINK" ]; then
+  echo "WARN: $LINK exists and is not a symlink; moving aside"
+  mv "$LINK" "$LINK.local" && ln -s "$SBX_HOST_NUGET" "$LINK"
+else
+  ln -s "$SBX_HOST_NUGET" "$LINK"
+fi
+echo "linked $LINK -> $(readlink "$LINK")"
+ls "$LINK" 2>/dev/null | head
+
+# Restore bakes absolute package paths into obj/project.assets.json.
+# Left to itself NuGet resolves via HOME, giving /home/agent/.nuget,
+# which does not exist on the host — so Rider cannot resolve a single
+# package after a container build. Pinning both sides to the host path
+# keeps the generated files identical. Written to the persistent env
+# file rather than passed at create time so it cannot go missing on a
+# sandbox created before this change.
+PERSIST=/etc/sandbox-persistent.sh
+WANT="export NUGET_PACKAGES=$SBX_HOST_NUGET/packages"
+if [ -f "$PERSIST" ] && grep -qxF "$WANT" "$PERSIST"; then
+  echo "NUGET_PACKAGES already persisted"
+else
+  sudo sh -c "sed -i '/^export NUGET_PACKAGES=/d' '$PERSIST' 2>/dev/null; \
+    echo '$WANT' >> '$PERSIST'" \
+    && echo "persisted: $WANT" \
+    || echo "WARN: could not write $PERSIST"
+fi

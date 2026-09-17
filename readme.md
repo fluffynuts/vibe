@@ -64,10 +64,9 @@ than failing, vibe offers to create it:
 ```
 vibe: no profile 'foo-browser' yet in /home/me/.vibe/profiles
 vibe: create it how?
-     * 1) copy an existing profile
-       2) create a new blank profile
-       q) quit
-vibe: choice [1]
+❯ copy an existing profile
+  create a new blank profile
+(↑/↓ to move, enter to select, q to quit)
 ```
 
 Copying clones the chosen profile's whole directory — config, settings, install scripts and agent

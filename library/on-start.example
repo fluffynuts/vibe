@@ -1,0 +1,9 @@
+#!/bin/sh
+# vibe: description: Link nuget, start RabbitMQ & Elasticsearch
+exec >>/tmp/start-services.log 2>&1
+echo "=== start-services at $(date -Is) ==="
+for s in link-nuget start-rabbit start-elasticsearch; do
+  echo "--- $s"
+  /home/agent/.local/bin/$s || echo "WARN: $s exited $?"
+done
+echo "=== done at $(date -Is) ==="
