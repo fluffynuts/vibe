@@ -14,3 +14,8 @@ permissions:
       - "*.pkg.github.com"
       - codeload.github.com
       - objects.githubusercontent.com
+      # apt — the defaults refresh the indexes for every profile
+      - archive.ubuntu.com
+      - security.ubuntu.com
+      - ports.ubuntu.com
+      - "*.ubuntu.com"
