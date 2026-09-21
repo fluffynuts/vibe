@@ -1,0 +1,16 @@
+# Kit fragment for the diffity feature, merged into the config.yaml of any
+# profile composed with it.
+permissions:
+  network:
+    allow:
+      # npm — the diffity CLI itself
+      - registry.npmjs.org
+      # the skills CLI
+      - add-skill.vercel.sh
+ports:
+  - container: 5391
+    protocol: tcp
+    name: diffity
+environment:
+  variables:
+    DIFFITY_HOST: "localhost"

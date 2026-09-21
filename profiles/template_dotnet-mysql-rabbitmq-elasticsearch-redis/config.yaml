@@ -4,6 +4,9 @@ description: .NET SDK, MySQL/Redis/RabbitMQ and Elasticsearch for the yumbi code
 permissions:
   network:
     allow:
+      # diffity: the CLI from npm, its skills from the skills CLI
+      - registry.npmjs.org
+      - add-skill.vercel.sh
       # apt
       - archive.ubuntu.com
       - security.ubuntu.com
@@ -21,7 +24,12 @@ permissions:
       - builds.dotnet.microsoft.com
       - dotnetcli.azureedge.net
       - dotnetcli.blob.core.windows.net
+ports:
+  - container: 5391
+    protocol: tcp
+    name: diffity
 environment:
   variables:
+    DIFFITY_HOST: "localhost"
     DOTNET_CLI_TELEMETRY_OPTOUT: "1"
     DOTNET_NOLOGO: "1"

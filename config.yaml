@@ -2,53 +2,15 @@ schemaVersion: "2"
 kind: mixin
 name: vibe
 displayName: vibe base kit
-description: Tooling shared by every vibe profile — diffity review viewer and agent skills
-sourceURL: https://github.com/nilbuild/diffity
+description: Permissions and tooling shared by every vibe profile
+sourceURL: https://github.com/fluffynuts/vibe
 requires:
   agent: claude
 permissions:
   network:
     allow:
-      - registry.npmjs.org
+      # git and gh, which every sandbox needs whatever it is built for
       - github.com
       - "*.pkg.github.com"
       - codeload.github.com
       - objects.githubusercontent.com
-      # skills CLI
-      - add-skill.vercel.sh
-ports:
-  - container: 5391
-    protocol: tcp
-    name: diffity
-environment:
-  variables:
-    DIFFITY_HOST: "localhost"
-agentInstructions:
-  content: |
-    ## Diffity
-
-    `diffity` is installed and its skills are available, but no session is
-    running at startup. Comments are anchored to a specific diff, so a session
-    started before a commit goes stale as soon as one is made — start a fresh
-    session when review is wanted.
-
-    - `/diffity-diff <ref>` starts a session and opens the diff viewer.
-    - `/diffity-review <ref>` leaves your own inline comments, tagged
-      `[must-fix]`, `[suggestion]`, `[nit]` or `[question]`.
-    - `/diffity-resolve` reads all open comments — the user's or your own —
-      and applies the requested changes.
-    - `diffity agent list --status open --json` reads the current session's
-      comments directly.
-
-    There is no browser in this sandbox: always pass `--no-open`, and use the
-    default port 5391, which is the only port published to the host.
-
-    After starting a session, tell the user the URL to open. It is in the
-    environment variable `VIBE_DIFFITY_URL` — the host port may differ from
-    5391 when several sandboxes are running, so report that variable's value
-    rather than assuming.
-
-    If the user says they left comments but `diffity agent list` shows none,
-    the session's ref no longer matches the diff they commented on (usually
-    because of an intervening commit). Say so rather than asking them to
-    re-run `/diffity-review`, which only adds your own comments.

@@ -1,6 +1,9 @@
 package settings
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestMergeScalarsOverride(t *testing.T) {
 	base := Settings{Memory: "12g", Agent: "claude"}
@@ -35,5 +38,16 @@ func TestMergeEnvOverrideWins(t *testing.T) {
 		if got.Env[k] != v {
 			t.Errorf("Env[%q] = %q, want %q", k, got.Env[k], v)
 		}
+	}
+}
+
+func TestMergeReplacesDefaultFeatures(t *testing.T) {
+	base := Settings{DefaultFeatures: []string{"diffity"}}
+	if got := Merge(base, Settings{}).DefaultFeatures; !reflect.DeepEqual(got, []string{"diffity"}) {
+		t.Errorf("an override that sets none keeps the base's: %v", got)
+	}
+	got := Merge(base, Settings{DefaultFeatures: []string{"dotnet", "mysql"}}).DefaultFeatures
+	if !reflect.DeepEqual(got, []string{"dotnet", "mysql"}) {
+		t.Errorf("DefaultFeatures = %v, want the override's outright", got)
 	}
 }

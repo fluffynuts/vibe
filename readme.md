@@ -98,6 +98,8 @@ config.yaml           # base sbx kit fragment — permissions/ports/env shared b
 defaults/             # tooling applied to every profile, regardless of tech stack
   install-scripts/
   agent-files/
+library/              # selectable features a guided profile is composed from
+  <feature-name>/     # same shape as a profile — see "Library features"
 profiles/
   <profile-name>/
     config.yaml          # profile-specific kit fragment, merged over the base one
@@ -136,6 +138,11 @@ directives as `# vibe: key: value` comment lines anywhere in the file:
 - `# vibe: description: ...` — shown while the step runs (defaults to the file name)
 - `# vibe: user: 1000` — which user runs the step (defaults to `0`, root)
 
+An install script must be self-contained: `setup.files` are not on disk yet while `setup.install`
+runs, so a step that calls `/home/agent/.local/bin/<helper>` from an `agent-files` tree fails with
+"not found" every time. `agent-files` scripts are for startup (`on-start`) and for the user to run
+by hand.
+
 **Agent files** (`agent-files/<path>`) are deployed verbatim to `/home/agent/<path>`. Directives
 work the same way, plus:
 
@@ -158,6 +165,8 @@ memory: 12g          # sandbox memory limit
 agent: claude         # which coding agent to run
 nugetDir: ~/.nuget    # mounted into the sandbox and symlinked in, if it exists on the host
 memoryRoot: ~/.vibe/memories   # where per-sandbox agent memories are backed up
+defaultFeatures:      # library features a guided profile starts with ticked
+  - diffity
 env:                  # extra environment variables passed to `sbx create -e`
   SOME_VAR: value
 publish:              # ports to publish, and (optionally) a stable URL env var for each
@@ -167,12 +176,50 @@ publish:              # ports to publish, and (optionally) a stable URL env var 
 ```
 
 `publish` entries append across base → profile, so a profile only needs to list what it's adding.
+`defaultFeatures` is the exception that replaces rather than appends, and it is read from the base
+settings only — it is what the guided picker starts with ticked, so it is consulted before the
+profile it is creating exists. Naming a feature the library doesn't have is an error, with the
+closest real name suggested:
+
+```
+vibe: defaultFeatures in ~/.vibe/settings.yaml: no library feature 'diffty' — did you mean 'diffity'?
+```
+
+## Library features
+
+`library/<feature>/` holds the building blocks a **guided profile** is composed from: when vibe
+offers to create a profile for a folder it hasn't seen, one of the options is to pick features
+from this list and order them. A feature is shaped like a small profile, and every part is
+optional:
+
+```
+library/
+  diffity/
+    config.yaml           # kit fragment — ports, permissions, environment
+    settings.yaml          # settings fragment — publish, memory, ...
+    install-scripts/       # setup steps, renumbered into the profile's sequence
+    agent-files/           # files deployed into /home/agent
+    agent-instructions.md  # appended to the profile's agent instructions
+```
+
+Composing writes all of that into the new profile: install scripts are renumbered so the features
+run in the order you picked, `agent-files/.local/bin/*` scripts get an `on-start` generated to run
+them, and the `config.yaml` / `settings.yaml` / `agent-instructions.md` fragments are merged into
+the profile's own (lists append in feature order; anything the profile itself sets wins). A
+feature therefore carries the ports, permissions and instructions its tooling needs — picking
+`diffity` is what gives a sandbox the review viewer, its published port and `$VIBE_DIFFITY_URL`,
+the `registry.npmjs.org` egress rule and the agent instructions for using it.
+
+The profile that comes out is an ordinary profile directory: edit it afterwards like any other.
+Overriding one bundled feature means dropping your own `~/.vibe/library/<feature>/` next to it —
+unlike `defaults/`, that replaces only the feature you copied, so features the bundle adds later
+still show up.
 
 ## The bundled template profile
 
 `profiles/template_dotnet-mysql-rabbitmq-elasticsearch-redis/` is a real example: it installs the
-.NET SDK, MySQL/Redis/RabbitMQ and Elasticsearch, on top of the diffity review tooling every
-profile gets from `defaults/`. Copy it as a starting point for a new profile.
+.NET SDK, MySQL/Redis/RabbitMQ and Elasticsearch, and picks up the diffity review tooling the same
+way a guided profile does. Copy it as a starting point for a new profile.
 
 ## State
 

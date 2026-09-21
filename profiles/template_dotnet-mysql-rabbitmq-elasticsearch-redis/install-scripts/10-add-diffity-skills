@@ -1,0 +1,46 @@
+#!/bin/sh
+# vibe: description: Install diffity's agent skills (non-interactive, non-fatal)
+# vibe: user: 1000
+# Self-contained for the same reason as 01-install-diffity-cli: agent-files
+# are not on disk yet while install steps run.
+LOG=/tmp/sbx-setup.log
+SKILLS=/home/agent/.claude/skills
+
+echo "--- skills add $(date -Is)" >>$LOG
+cd /home/agent || exit 0
+npx -y skills add nilbuild/diffity -- -y </dev/null >>$LOG 2>&1 \
+  || echo "WARN: skills add failed" >>$LOG
+
+mkdir -p "$SKILLS"
+
+# The home directory outlives the sandbox, so an earlier install may have left
+# symlinks pointing at a skills tree that is no longer there: they look like
+# installed skills but resolve nowhere. Drop them before consolidating.
+for l in "$SKILLS"/*; do
+  if [ -L "$l" ] && [ ! -e "$l" ]; then
+    rm -f "$l"
+  fi
+done
+
+# The installer unpacks the skills under ~/.agents/skills and symlinks them
+# into ~/.claude/skills for Claude Code; older versions put them elsewhere, so
+# copy in anything found outside. Skipping entries that already resolve to the
+# same tree matters: copying a directory onto itself is a cp error, and that
+# error used to become the script's exit status, reporting failure after a
+# perfectly good install.
+for d in /home/agent/.agents/skills /home/agent/workspace/.agents/skills /home/agent/workspace/.claude/skills; do
+  [ -d "$d" ] || continue
+  for s in "$d"/*; do
+    [ -e "$s" ] || continue
+    name=$(basename "$s")
+    dest=$SKILLS/$name
+    if [ -e "$dest" ] && [ "$(readlink -f "$dest")" = "$(readlink -f "$s")" ]; then
+      continue
+    fi
+    cp -a "$s" "$SKILLS/" >>$LOG 2>&1 || echo "WARN: could not add skill $name" >>$LOG
+  done
+done
+
+{ echo "--- skills present:"; ls "$SKILLS"; } >>$LOG 2>&1
+ls "$SKILLS" 2>/dev/null | grep -q . || echo "WARN: no diffity skills installed" >>$LOG
+true

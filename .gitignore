@@ -2,4 +2,4 @@
 /dist/
 *.exe
 .idea/
-vibe
+/src/vibe/vibe

@@ -1,0 +1,4 @@
+memory: 12g
+agent: claude
+defaultFeatures:
+  - diffity

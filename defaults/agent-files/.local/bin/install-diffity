@@ -1,5 +1,0 @@
-#!/bin/sh
-# vibe: description: Install the diffity CLI globally via npm
-exec >>/tmp/install-diffity.log 2>&1
-echo "=== install-diffity at $(date -Is) ==="
-npm install -g diffity

@@ -958,13 +958,34 @@ func ensureGuidedProfile(lay layout.Layout, profile string) error {
 	if len(names) == 0 {
 		return fmt.Errorf("no library features found — pick another option instead")
 	}
-	features := library.List(names, lay.FeatureDir)
-	labels := make([]string, len(features))
-	for i, f := range features {
-		labels[i] = f.Label()
+	settingsPath := lay.File("settings.yaml")
+	base, err := settings.Load(settingsPath)
+	if err != nil {
+		return err
+	}
+	// A defaultFeatures entry naming a feature that isn't there is a
+	// mistake worth stopping for: carrying on would quietly build a
+	// sandbox without the tooling it was told to always start with.
+	if err := library.Validate(base.DefaultFeatures, names); err != nil {
+		return fmt.Errorf("defaultFeatures in %s: %w", settingsPath, err)
 	}
 
-	idxs, ok := checklistFrom("pick the features this sandbox needs", labels, make([]bool, len(features)))
+	features := library.List(names, lay.FeatureDir)
+	labels := make([]string, len(features))
+	checked := make([]bool, len(features))
+	wanted := make(map[string]bool, len(base.DefaultFeatures))
+	for _, name := range base.DefaultFeatures {
+		wanted[name] = true
+	}
+	for i, f := range features {
+		labels[i] = f.Label()
+		checked[i] = wanted[f.Name]
+	}
+	if len(base.DefaultFeatures) > 0 {
+		note("ticked from defaultFeatures (untick any you don't want): %s", strings.Join(base.DefaultFeatures, ", "))
+	}
+
+	idxs, ok := checklistFrom("pick the features this sandbox needs", labels, checked)
 	if !ok {
 		return fmt.Errorf("aborted — no profile '%s' created", profile)
 	}

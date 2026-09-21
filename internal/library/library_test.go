@@ -232,3 +232,108 @@ func TestComposeNoFeaturesWithStartScriptsWritesNoOnStart(t *testing.T) {
 		t.Errorf("expected no on-start when no feature has a startup script, got err=%v", err)
 	}
 }
+
+// TestComposeMergesFragmentsUnderTheProfile covers what lets a feature bring
+// its own ports, permissions and instructions along: the fragments merge in
+// feature order, lists append rather than replace, and the profile's own
+// values — its name, above all — survive being merged into.
+func TestComposeMergesFragmentsUnderTheProfile(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "diffity", "config.yaml"),
+		"permissions:\n  network:\n    allow:\n      - registry.npmjs.org\nports:\n  - container: 5391\n    name: diffity\n")
+	write(t, filepath.Join(dir, "diffity", "settings.yaml"),
+		"publish:\n  - name: diffity\n    ports:\n      - 5391\n")
+	write(t, filepath.Join(dir, "diffity", "agent-instructions.md"), "## Diffity\n\nreview tooling.\n")
+	write(t, filepath.Join(dir, "dotnet", "config.yaml"),
+		"permissions:\n  network:\n    allow:\n      - api.nuget.org\n")
+	write(t, filepath.Join(dir, "dotnet", "agent-instructions.md"), "## Toolchain\n\ndotnet.\n")
+
+	profile := filepath.Join(t.TempDir(), "demo")
+	write(t, filepath.Join(profile, "config.yaml"), "# a comment header\nname: demo\ndescription: mine\n")
+
+	if err := Compose([]string{"diffity", "dotnet"}, flatDirFor(dir), profile); err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+
+	config := read(t, filepath.Join(profile, "config.yaml"))
+	for _, want := range []string{"# a comment header", "name: demo", "description: mine", "registry.npmjs.org", "api.nuget.org", "5391"} {
+		if !strings.Contains(config, want) {
+			t.Errorf("config.yaml is missing %q:\n%s", want, config)
+		}
+	}
+	if !strings.Contains(read(t, filepath.Join(profile, "settings.yaml")), "VIBE") &&
+		!strings.Contains(read(t, filepath.Join(profile, "settings.yaml")), "diffity") {
+		t.Error("the feature's settings fragment did not reach the profile")
+	}
+	if got, want := read(t, filepath.Join(profile, "agent-instructions.md")),
+		"## Diffity\n\nreview tooling.\n\n## Toolchain\n\ndotnet.\n"; got != want {
+		t.Errorf("agent-instructions.md =\n%q\nwant\n%q", got, want)
+	}
+}
+
+// TestComposeLeavesFragmentlessFeaturesAlone keeps Compose from writing a
+// settings.yaml or agent-instructions.md a profile never asked for.
+func TestComposeLeavesFragmentlessFeaturesAlone(t *testing.T) {
+	dir := seedTwoFeatures(t)
+	profile := filepath.Join(t.TempDir(), "demo")
+	if err := Compose([]string{"mysql", "rabbitmq"}, flatDirFor(dir), profile); err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	for _, name := range []string{"config.yaml", "settings.yaml", "agent-instructions.md"} {
+		if _, err := os.Stat(filepath.Join(profile, name)); err == nil {
+			t.Errorf("%s was created for features that carry no fragments", name)
+		}
+	}
+}
+
+func read(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func TestValidateAcceptsEveryKnownFeature(t *testing.T) {
+	if err := Validate([]string{"diffity", "dotnet"}, []string{"diffity", "dotnet", "mysql"}); err != nil {
+		t.Errorf("Validate: %v", err)
+	}
+	if err := Validate(nil, nil); err != nil {
+		t.Errorf("Validate with nothing wanted: %v", err)
+	}
+}
+
+func TestValidateSuggestsTheFeatureThatWasMeant(t *testing.T) {
+	available := []string{"diffity", "dotnet", "elasticsearch", "mysql", "rabbitmq", "redis"}
+	for _, tc := range []struct{ typo, want string }{
+		{"diffty", "diffity"},
+		{"Diffity", "diffity"},
+		{"elasticserch", "elasticsearch"},
+		{"rabbit-mq", "rabbitmq"},
+	} {
+		err := Validate([]string{tc.typo}, available)
+		if err == nil {
+			t.Fatalf("'%s' was accepted", tc.typo)
+		}
+		if want := "did you mean '" + tc.want + "'?"; !strings.Contains(err.Error(), want) {
+			t.Errorf("Validate(%q) = %v, want it to suggest %s", tc.typo, err, tc.want)
+		}
+	}
+}
+
+func TestValidateListsTheLibraryWhenNothingIsClose(t *testing.T) {
+	err := Validate([]string{"postgres"}, []string{"mysql", "redis"})
+	if err == nil {
+		t.Fatal("an unknown feature was accepted")
+	}
+	if strings.Contains(err.Error(), "did you mean") {
+		t.Errorf("suggested something for a name nothing resembles: %v", err)
+	}
+	if !strings.Contains(err.Error(), "mysql, redis") {
+		t.Errorf("error should list what is available, got: %v", err)
+	}
+	if err := Validate([]string{"mysql"}, nil); err == nil || !strings.Contains(err.Error(), "library is empty") {
+		t.Errorf("empty library error = %v", err)
+	}
+}

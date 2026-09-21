@@ -30,6 +30,10 @@ type Settings struct {
 	MemoryRoot string            `yaml:"memoryRoot,omitempty"`
 	Publish    []PublishEntry    `yaml:"publish,omitempty"`
 	Env        map[string]string `yaml:"env,omitempty"`
+	// DefaultFeatures are the library features a guided profile starts with
+	// them ticked. They are a starting point, not a requirement: the user
+	// can untick any of them while picking.
+	DefaultFeatures []string `yaml:"defaultFeatures,omitempty"`
 }
 
 // Load reads a settings.yaml file. A missing file yields a zero Settings and
@@ -50,8 +54,9 @@ func Load(path string) (Settings, error) {
 }
 
 // Merge overlays override on top of base: scalars are replaced when the
-// override sets a non-zero value, Publish entries are appended, and Env maps
-// are merged key-by-key with override winning on conflicts.
+// override sets a non-zero value, Publish entries are appended, Env maps
+// are merged key-by-key with override winning on conflicts, and a non-empty
+// DefaultFeatures replaces the one below it.
 func Merge(base, override Settings) Settings {
 	out := base
 
@@ -72,6 +77,13 @@ func Merge(base, override Settings) Settings {
 	}
 
 	out.Publish = append(append([]PublishEntry{}, base.Publish...), override.Publish...)
+
+	// unlike Publish, a list of default features replaces rather than adds
+	// to the one below it: "start from these" is not something two layers
+	// can both be half-right about.
+	if len(override.DefaultFeatures) > 0 {
+		out.DefaultFeatures = override.DefaultFeatures
+	}
 
 	if len(base.Env) > 0 || len(override.Env) > 0 {
 		out.Env = make(map[string]string, len(base.Env)+len(override.Env))

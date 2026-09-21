@@ -57,24 +57,36 @@ func TestLoadKitBundledProfile(t *testing.T) {
 	}
 
 	installSteps, _ := setup["install"].([]interface{})
-	const defaultSteps = 5
-	const wantSteps = defaultSteps + 9 // default scripts + the profile's own
+	const defaultSteps = 3
+	const wantSteps = defaultSteps + 11 // default scripts + the profile's own
 	if len(installSteps) != wantSteps {
 		t.Fatalf("expected %d install steps, got %d", wantSteps, len(installSteps))
 	}
 	first := installSteps[0].(kitspec.Doc)
-	if !strings.Contains(first["description"].(string), "setup log") {
-		t.Errorf("expected defaults' start-log step first, got %+v", first)
+	if !strings.Contains(strings.ToLower(first["description"].(string)), "apt") {
+		t.Errorf("expected defaults' apt-refresh step first, got %+v", first)
 	}
 	firstProfileStep := installSteps[defaultSteps].(kitspec.Doc)
 	if !strings.Contains(strings.ToLower(firstProfileStep["description"].(string)), "apt") {
 		t.Errorf("expected profile's apt-refresh step right after %d default steps, got %+v", defaultSteps, firstProfileStep)
 	}
+	// diffity is a library feature now, so the template profile carries its
+	// steps itself rather than getting them from the defaults
+	var sawDiffityCLI, sawDiffitySkills bool
+	for _, step := range installSteps {
+		switch cmd := step.(kitspec.Doc)["command"].(string); {
+		case strings.Contains(cmd, "npm install -g diffity"):
+			sawDiffityCLI = true
+		case strings.Contains(cmd, "skills add nilbuild/diffity"):
+			sawDiffitySkills = true
+		}
+	}
+	if !sawDiffityCLI || !sawDiffitySkills {
+		t.Errorf("diffity steps missing from the template profile: cli=%v skills=%v", sawDiffityCLI, sawDiffitySkills)
+	}
 
 	files, _ := setup["files"].([]interface{})
 	wantPaths := map[string]bool{
-		"/home/agent/.local/bin/install-diffity":     false,
-		"/home/agent/.local/bin/add-diffity-skills":  false,
 		"/home/agent/.claude/settings.json":          false,
 		"/home/agent/.local/bin/start-rabbit":        false,
 		"/home/agent/.local/bin/link-nuget":          false,
@@ -343,6 +355,33 @@ func TestLoadKitOverlayWins(t *testing.T) {
 	want := []string{"my own setup log", "99-extra"}
 	if !reflect.DeepEqual(descriptions, want) {
 		t.Errorf("install steps = %v, want exactly the overlay's %v", descriptions, want)
+	}
+}
+
+// TestGuidedProfileChecksDefaultFeatures covers the two ways settings.yaml's
+// defaultFeatures list is read before the picker is ever drawn: a name the
+// library doesn't have stops everything with the closest real name
+// suggested, and a name it does have gets through to the prompt (which there
+// is no terminal for here, so it aborts — the point is that it got that far).
+func TestGuidedProfileChecksDefaultFeatures(t *testing.T) {
+	for _, tc := range []struct{ name, wanted, wantErr string }{
+		{"typo", "diffty", "did you mean 'diffity'?"},
+		{"unknown", "postgres", "the library has: diffity"},
+		{"known", "diffity", "aborted"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lay := layout.New(t.TempDir(), t.TempDir())
+			writeFile(t, lay.BundlePath("library", "diffity", "install-scripts", "01-install"), "#!/bin/sh\necho hi\n")
+			writeFile(t, lay.HomePath("settings.yaml"), "defaultFeatures:\n  - "+tc.wanted+"\n")
+
+			err := ensureGuidedProfile(lay, "demo")
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error = %v, want it to mention %q", err, tc.wantErr)
+			}
+		})
 	}
 }
 

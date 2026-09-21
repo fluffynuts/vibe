@@ -1,1 +1,6 @@
 nugetDir: ~/.nuget
+publish:
+  - name: diffity
+    ports:
+      - 5391
+    urlEnv: VIBE_DIFFITY_URL

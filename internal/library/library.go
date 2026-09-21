@@ -1,7 +1,8 @@
 // Package library discovers vibe's feature library — a directory of named
 // folders (mysql, rabbitmq, dotnet, ...), each providing one selectable
-// feature — and composes a chosen, ordered subset of them into a profile's
-// install-scripts and agent-files.
+// feature — and composes a chosen, ordered subset of them into a profile:
+// its install-scripts and agent-files, plus the config.yaml, settings.yaml
+// and agent-instructions.md fragments a feature may carry.
 package library
 
 import (
@@ -97,6 +98,75 @@ func firstAgentFileDescription(dir string) string {
 	return directive.Parse(content).String("description", "")
 }
 
+// Validate checks that every name in wanted is a feature the library
+// actually has, failing on the first one that isn't. A name that is only a
+// typo away from a real feature is reported with that feature suggested,
+// since the usual source of this is a settings.yaml defaultFeatures entry
+// written from memory.
+func Validate(wanted, available []string) error {
+	have := make(map[string]bool, len(available))
+	for _, name := range available {
+		have[name] = true
+	}
+	for _, name := range wanted {
+		if have[name] {
+			continue
+		}
+		if s := suggest(name, available); s != "" {
+			return fmt.Errorf("no library feature '%s' — did you mean '%s'?", name, s)
+		}
+		if len(available) == 0 {
+			return fmt.Errorf("no library feature '%s' — the library is empty", name)
+		}
+		return fmt.Errorf("no library feature '%s' — the library has: %s", name, strings.Join(available, ", "))
+	}
+	return nil
+}
+
+// suggest returns the closest of available to name, or "" when nothing is
+// close enough to be worth guessing at. The allowance grows with the length
+// of the name typed, so a long name may be a couple of letters out while a
+// short one has to be nearly exact.
+func suggest(name string, available []string) string {
+	limit := len([]rune(name))/3 + 1
+	best, bestDistance := "", 0
+	for _, candidate := range available {
+		d := distance(strings.ToLower(name), strings.ToLower(candidate))
+		if d > limit {
+			continue
+		}
+		if best == "" || d < bestDistance {
+			best, bestDistance = candidate, d
+		}
+	}
+	return best
+}
+
+// distance is the Levenshtein edit distance between a and b, counting the
+// single-character insertions, deletions and substitutions a typo is made
+// of. It keeps one row of the matrix rather than all of it — feature names
+// are short, but there is no reason to allocate more than this needs.
+func distance(a, b string) int {
+	ar, br := []rune(a), []rune(b)
+	prev := make([]int, len(br)+1)
+	curr := make([]int, len(br)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ar); i++ {
+		curr[0] = i
+		for j := 1; j <= len(br); j++ {
+			cost := 1
+			if ar[i-1] == br[j-1] {
+				cost = 0
+			}
+			curr[j] = min(curr[j-1]+1, prev[j]+1, prev[j-1]+cost)
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(br)]
+}
+
 // leadingDigitsRE matches a script's ordering prefix, mirroring kitspec's
 // own leading-number rule.
 var leadingDigitsRE = regexp.MustCompile(`^\d+`)
@@ -130,13 +200,44 @@ type plannedScript struct {
 //     an on-start script is generated (in the same vein as
 //     library/on-start.example) to run all of them, across every feature,
 //     in the given feature order.
+//   - Each feature's config.yaml and settings.yaml fragments are merged
+//     into the profile's own (lists append in feature order, and anything
+//     the profile itself already sets wins), and its agent-instructions.md
+//     is appended to the profile's. That is what lets a feature carry the
+//     ports, permissions and instructions its tooling needs instead of
+//     leaving them to be hand-copied into every profile that picks it.
 func Compose(features []string, dirFor DirFor, profileDir string) error {
 	var scripts []plannedScript
 	var startupScripts []string
+	config := kitspec.Doc{}
+	settings := kitspec.Doc{}
+	var instructions []string
 	counter := 0
 
 	for _, feature := range features {
 		featureDir := dirFor(feature)
+
+		for _, frag := range []struct {
+			name string
+			into *kitspec.Doc
+		}{
+			{"config.yaml", &config},
+			{"settings.yaml", &settings},
+		} {
+			doc, err := kitspec.LoadDoc(filepath.Join(featureDir, frag.name))
+			if err != nil {
+				return err
+			}
+			*frag.into = kitspec.MergeDocs(*frag.into, doc)
+		}
+
+		text, err := os.ReadFile(filepath.Join(featureDir, "agent-instructions.md"))
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if s := strings.TrimSpace(string(text)); s != "" {
+			instructions = append(instructions, s)
+		}
 
 		entries, err := kitspec.SortedDirEntries(filepath.Join(featureDir, "install-scripts"))
 		if err != nil {
@@ -184,7 +285,68 @@ func Compose(features []string, dirFor DirFor, profileDir string) error {
 			return err
 		}
 	}
+	for _, frag := range []struct {
+		name string
+		doc  kitspec.Doc
+	}{
+		{"config.yaml", config},
+		{"settings.yaml", settings},
+	} {
+		if len(frag.doc) == 0 {
+			continue
+		}
+		if err := mergeUnderProfile(filepath.Join(profileDir, frag.name), frag.doc); err != nil {
+			return err
+		}
+	}
+	if len(instructions) > 0 {
+		if err := appendInstructions(filepath.Join(profileDir, "agent-instructions.md"), instructions); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// commentHeaderRE matches the leading comment block a generated profile file
+// opens with, so merging a feature's fragment in doesn't throw away the
+// explanation of what the file is.
+var commentHeaderRE = regexp.MustCompile(`\A(?:[ \t]*(?:#[^\n]*)?\n)*`)
+
+// mergeUnderProfile merges fragment into the YAML document at path, with
+// whatever the profile already set winning over it — the profile's own
+// name and description are not something a feature gets to replace. The
+// file's leading comment block is kept; comments further down (and inside
+// the fragment) are lost to the YAML round-trip, which is why the library's
+// copy stays the readable one.
+func mergeUnderProfile(path string, fragment kitspec.Doc) error {
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+	header := commentHeaderRE.FindString(string(data))
+	own, err := kitspec.LoadDoc(path)
+	if err != nil {
+		return err
+	}
+	merged, err := kitspec.Marshal(kitspec.MergeDocs(fragment, own))
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append([]byte(header), merged...), 0o644)
+}
+
+// appendInstructions adds each feature's agent-instructions.md to the
+// profile's, after anything already there.
+func appendInstructions(path string, instructions []string) error {
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+	blocks := instructions
+	if s := strings.TrimSpace(string(existing)); s != "" {
+		blocks = append([]string{s}, instructions...)
+	}
+	return os.WriteFile(path, []byte(strings.Join(blocks, "\n\n")+"\n"), 0o644)
 }
 
 // writeInstallScripts writes the planned scripts into profileDir's

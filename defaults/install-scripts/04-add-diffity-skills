@@ -1,5 +1,0 @@
-#!/bin/sh
-# vibe: description: Install diffity agent skills (non-interactive, non-fatal)
-# vibe: user: 1000
-/home/agent/.local/bin/add-diffity-skills || echo "WARN: skills add failed" >>/tmp/sbx-setup.log
-true
