@@ -1,0 +1,19 @@
+#!/bin/sh
+# vibe: description: Print the host URL for the diffity viewer, for a ref if given
+# vibe: startup: false
+# The viewer listens on 5391 inside the sandbox, but the port the user reaches
+# it on is allocated on the host when the sandbox is created and differs
+# between sandboxes — so the only place the real URL is knowable from is the
+# environment vibe set at creation.
+url=$VIBE_DIFFITY_URL
+[ -n "$url" ] || url=$SBX_CC_DIFFITY_URL # sandboxes created by the old vibe.sh
+if [ -z "$url" ]; then
+  url=http://localhost:5391
+  echo "warning: VIBE_DIFFITY_URL is not set — this is the container's own port," >&2
+  echo "         which is not necessarily what the host publishes it on" >&2
+fi
+if [ -n "$1" ]; then
+  printf '%s?ref=%s\n' "$url" "$1"
+else
+  printf '%s\n' "$url"
+fi

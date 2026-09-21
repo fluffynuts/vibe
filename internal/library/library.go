@@ -261,15 +261,28 @@ func Compose(features []string, dirFor DirFor, profileDir string) error {
 			return statErr
 		}
 
-		binEntries, err := os.ReadDir(filepath.Join(agentDir, ".local", "bin"))
+		binDir := filepath.Join(agentDir, ".local", "bin")
+		binEntries, err := os.ReadDir(binDir)
 		if err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		var names []string
 		for _, be := range binEntries {
-			if !be.IsDir() {
-				names = append(names, be.Name())
+			if be.IsDir() || kitspec.IsSidecar(be.Name()) {
+				continue
 			}
+			// Everything a feature puts on the agent's PATH is a startup
+			// script unless it says otherwise: a helper meant for the agent
+			// or the user to run on demand marks itself
+			// "# vibe: startup: false" and stays out of on-start.
+			content, err := os.ReadFile(filepath.Join(binDir, be.Name()))
+			if err != nil {
+				return err
+			}
+			if !directive.Parse(content).Bool("startup", true) {
+				continue
+			}
+			names = append(names, be.Name())
 		}
 		sort.Strings(names)
 		startupScripts = append(startupScripts, names...)

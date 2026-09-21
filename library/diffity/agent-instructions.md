@@ -13,13 +13,25 @@ session when review is wanted.
 - `diffity agent list --status open --json` reads the current session's
   comments directly.
 
-There is no browser in this sandbox: always pass `--no-open`, and use the
-default port 5391, which is the only port published to the host.
+There is no browser in this sandbox: always pass `--no-open`, and let the
+viewer bind its default port 5391, which is the only container port published
+to the host.
 
-After starting a session, tell the user the URL to open. It is in the
-environment variable `VIBE_DIFFITY_URL` — the host port may differ from
-5391 when several sandboxes are running, so report that variable's value
-rather than assuming.
+5391 is not the port the user reaches it on. It is published to a host port
+allocated when the sandbox was created, which differs between sandboxes — so
+never quote 5391 to the user, and never guess the URL.
+
+End every command that produces something to look at — `/diffity-diff`,
+`/diffity-review`, `/diffity-tree`, `/diffity-tour` — by running:
+
+    diffity-url <ref>
+
+and giving the user exactly what it prints, e.g. after reviewing against
+master: `http://localhost:5396?ref=master`. Pass the same ref the command
+used, and no argument when it had none. The script reads `VIBE_DIFFITY_URL`,
+which is where the real host port is; it warns on stderr when that variable
+is missing, and a URL printed with that warning should not be handed over as
+if it were right.
 
 If the user says they left comments but `diffity agent list` shows none,
 the session's ref no longer matches the diff they commented on (usually

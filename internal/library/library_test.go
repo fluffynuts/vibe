@@ -337,3 +337,29 @@ func TestValidateListsTheLibraryWhenNothingIsClose(t *testing.T) {
 		t.Errorf("empty library error = %v", err)
 	}
 }
+
+// TestComposeKeepsOptedOutHelpersOutOfOnStart covers the escape hatch a
+// feature needs for a script that belongs on the agent's PATH but is not a
+// service to start: without it, every helper would be run once at boot.
+func TestComposeKeepsOptedOutHelpersOutOfOnStart(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "diffity", "agent-files", ".local", "bin")
+	write(t, filepath.Join(bin, "start-viewer"), "#!/bin/sh\necho service\n")
+	write(t, filepath.Join(bin, "diffity-url"), "#!/bin/sh\n# vibe: startup: false\necho url\n")
+	write(t, filepath.Join(bin, "start-viewer.vibe"), "description: a sidecar, never deployed\n")
+
+	profile := filepath.Join(t.TempDir(), "demo")
+	if err := Compose([]string{"diffity"}, flatDirFor(dir), profile); err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	onStart := read(t, filepath.Join(profile, "agent-files", ".local", "bin", "on-start"))
+	if !strings.Contains(onStart, "start-viewer") {
+		t.Errorf("on-start should run the feature's service script:\n%s", onStart)
+	}
+	if strings.Contains(onStart, "diffity-url") {
+		t.Errorf("on-start runs a helper that opted out:\n%s", onStart)
+	}
+	if strings.Contains(onStart, ".vibe") {
+		t.Errorf("on-start runs a directive sidecar:\n%s", onStart)
+	}
+}

@@ -150,6 +150,9 @@ work the same way, plus:
   under a `bin/` directory, else `0644`)
 - `# vibe: onlyIfMissing: true` — only deploy if the destination doesn't already exist (defaults
   to always overwriting)
+- `# vibe: startup: false` — for a script in `.local/bin`, keep it out of the generated `on-start`
+  (defaults to true, so a feature's service scripts are started without having to say so). Mark a
+  helper the agent or the user runs on demand — like diffity's `diffity-url` — with this.
 
 For a file whose format can't carry a `#` comment (JSON, binary, ...), put the same `key: value`
 lines in a sidecar file named `<file>.vibe` next to it instead — e.g. `settings.json.vibe`. The
