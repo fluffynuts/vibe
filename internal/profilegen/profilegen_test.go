@@ -3,6 +3,7 @@ package profilegen
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -200,4 +201,70 @@ func TestValidateRejectsPathEscapes(t *testing.T) {
 			t.Errorf("Validate(%q) = %v, want nil", good, err)
 		}
 	}
+}
+
+// TestComposedFromRoundTrips is what --re-compose stands on: a guided
+// profile has to be able to say later which features it was made of, in the
+// order they were composed, and composing must not lose the record.
+func TestComposedFromRoundTrips(t *testing.T) {
+	l := testLayout(t)
+	write(t, mkdirAndPath(t, l.BundlePath("library", "mysql", "install-scripts"), "01-install-mysql"),
+		"#!/bin/sh\necho install-mysql\n", 0o644)
+	write(t, mkdirAndPath(t, l.BundlePath("library", "diffity"), "config.yaml"),
+		"ports:\n  - container: 5391\n", 0o644)
+
+	dir, err := CreateGuided(l, "phoenix", []string{"diffity", "mysql"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := ComposedFrom(dir), []string{"diffity", "mysql"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("ComposedFrom = %v, want %v", got, want)
+	}
+	config := read(t, filepath.Join(dir, "config.yaml"))
+	if !strings.Contains(config, "# vibe: features: diffity, mysql") {
+		t.Errorf("the record should be readable in the file itself:\n%s", config)
+	}
+	// it is a comment, so it must not have become a YAML key
+	if strings.Contains(config, "features:\n") {
+		t.Errorf("the record leaked into the kit fragment:\n%s", config)
+	}
+
+	// re-composing replaces the record rather than stacking another one
+	if _, err := CreateGuided(l, "phoenix", []string{"mysql"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := ComposedFrom(dir), []string{"mysql"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("ComposedFrom after re-composing = %v, want %v", got, want)
+	}
+	if n := strings.Count(read(t, filepath.Join(dir, "config.yaml")), "# vibe: features:"); n != 1 {
+		t.Errorf("found %d feature records, want exactly 1", n)
+	}
+}
+
+// TestComposedFromIsEmptyForAProfileThatWasNotComposed keeps --re-compose
+// from guessing at a profile written by hand or created blank.
+func TestComposedFromIsEmptyForAProfileThatWasNotComposed(t *testing.T) {
+	l := testLayout(t)
+	dir, err := CreateBlank(l, "phoenix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ComposedFrom(dir); got != nil {
+		t.Errorf("ComposedFrom on a blank profile = %v, want nil", got)
+	}
+	if got := ComposedFrom(l.BundlePath("profiles", "yumbi")); got != nil {
+		t.Errorf("ComposedFrom on a hand-written profile = %v, want nil", got)
+	}
+	if got := ComposedFrom(filepath.Join(t.TempDir(), "nope")); got != nil {
+		t.Errorf("ComposedFrom on a missing profile = %v, want nil", got)
+	}
+}
+
+func read(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }

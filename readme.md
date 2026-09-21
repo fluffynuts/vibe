@@ -214,6 +214,22 @@ feature therefore carries the ports, permissions and instructions its tooling ne
 the `registry.npmjs.org` egress rule and the agent instructions for using it.
 
 The profile that comes out is an ordinary profile directory: edit it afterwards like any other.
+Composing happens **once**, when the profile is created — the library is never read again, so a
+profile carries the version of its features that existed the day it was generated. A generated
+profile records what it was made of in its `config.yaml`:
+
+```yaml
+# vibe: features: diffity, dotnet
+```
+
+which is what `vibe -C/--re-compose` works from: it rebuilds the profile from those features as
+they are *now* and re-inits the sandbox, so a feature that has since gained an egress rule, a
+published port or an instruction reaches the profiles built from it. The profile is regenerated
+rather than merged into — re-running the composition over the existing files would append every
+fragment a second time, duplicating permissions and published ports — so hand-edits to it are
+lost, and it asks before doing that (`-f` answers yes). Profiles written by hand, copied or
+created blank record nothing and are refused rather than guessed at; add the comment line above
+to adopt one.
 Overriding one bundled feature means dropping your own `~/.vibe/library/<feature>/` next to it —
 unlike `defaults/`, that replaces only the feature you copied, so features the bundle adds later
 still show up.

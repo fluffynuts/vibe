@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 
+	"vibe/internal/directive"
 	"vibe/internal/fscopy"
 	"vibe/internal/layout"
 	"vibe/internal/library"
@@ -71,16 +72,87 @@ func CreateBlank(l layout.Layout, profile string) (string, error) {
 // feature's own scripts renumbered to run in this order, one feature block
 // after another) and agent-files (a later feature's file overrides an
 // earlier one's at the same path), generating an on-start script when any
-// feature needs one. It returns the created profile directory.
+// feature needs one, and merging in each feature's config, settings and
+// instruction fragments. It returns the created profile directory.
+//
+// The feature list is recorded in the profile's config.yaml before
+// composing, so the profile can say later what it was made of — see
+// ComposedFrom, which is what re-composing it against a changed library
+// works from.
 func CreateGuided(l layout.Layout, profile string, features []string) (string, error) {
 	dir, err := CreateBlank(l, profile)
 	if err != nil {
 		return "", err
 	}
+	if err := recordComposedFrom(dir, features); err != nil {
+		return "", createErr(dir, err)
+	}
 	if err := library.Compose(features, l.FeatureDir, dir); err != nil {
 		return "", createErr(dir, err)
 	}
 	return dir, nil
+}
+
+// composedFromKey is the directive a generated profile records its feature
+// list under, in its config.yaml's leading comment block — where composing
+// preserves it, and where anyone reading the file can see it.
+const composedFromKey = "features"
+
+// headerEnd returns the offset in a config.yaml where its leading block of
+// comment and blank lines ends, which is where a recorded directive goes.
+func headerEnd(data []byte) int {
+	offset := 0
+	for _, line := range strings.SplitAfter(string(data), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			break
+		}
+		offset += len(line)
+	}
+	return offset
+}
+
+// recordComposedFrom writes (or replaces) the "# vibe: features: ..." line in
+// a profile's config.yaml. An empty list records nothing, so a profile
+// composed from no features at all doesn't claim to have been.
+func recordComposedFrom(dir string, features []string) error {
+	if len(features) == 0 {
+		return nil
+	}
+	path := filepath.Join(dir, "config.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	var kept []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if _, found := directive.Parse([]byte(line))[composedFromKey]; !found {
+			kept = append(kept, line)
+		}
+	}
+	data = []byte(strings.Join(kept, "\n"))
+	at := headerEnd(data)
+	line := fmt.Sprintf("# vibe: %s: %s\n", composedFromKey, strings.Join(features, ", "))
+	out := append([]byte{}, data[:at]...)
+	out = append(out, []byte(line)...)
+	out = append(out, data[at:]...)
+	return os.WriteFile(path, out, 0o644)
+}
+
+// ComposedFrom returns the library features a profile was composed from, in
+// the order they were composed in, or nil for a profile that records none —
+// one written by hand, copied, or created blank.
+func ComposedFrom(profileDir string) []string {
+	data, err := os.ReadFile(filepath.Join(profileDir, "config.yaml"))
+	if err != nil {
+		return nil
+	}
+	var features []string
+	for _, name := range strings.Split(directive.Parse(data).String(composedFromKey, ""), ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			features = append(features, name)
+		}
+	}
+	return features
 }
 
 // CopyFrom creates a profile as a copy of an existing one — wherever that

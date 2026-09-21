@@ -75,3 +75,25 @@ func TestTooManyPaths(t *testing.T) {
 		t.Error("expected error for two positional paths")
 	}
 }
+
+func TestParseReCompose(t *testing.T) {
+	for _, arg := range []string{"-C", "--re-compose", "--recompose"} {
+		got, err := Parse([]string{arg})
+		if err != nil {
+			t.Fatalf("Parse(%s): %v", arg, err)
+		}
+		if !got.ReCompose {
+			t.Errorf("Parse(%s) did not set ReCompose", arg)
+		}
+		if got.ExclusiveActions() != 1 {
+			t.Errorf("Parse(%s): ExclusiveActions = %d, want 1", arg, got.ExclusiveActions())
+		}
+	}
+	both, err := Parse([]string{"-C", "-R"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if both.ExclusiveActions() != 2 {
+		t.Errorf("-C with -R should count as two actions, got %d", both.ExclusiveActions())
+	}
+}

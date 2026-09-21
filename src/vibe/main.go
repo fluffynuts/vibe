@@ -42,13 +42,16 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              one instead of asking
   vibe -R/--re-create [path] delete the profile too, then re-init — the
                              profile is gone, so this always re-prompts
+  vibe -C/--re-compose [path] rebuild a guided profile from the library
+                             features it was composed from, picking up
+                             whatever they have gained since, then re-init
   vibe -l/--list             list every known sandbox and its status
   vibe -i/--install          copy defaults/profiles/library, config.yaml and
                              settings.yaml into ~/.vibe, and the vibe binary
                              into ~/.local/bin, so the unpacked bundle this
                              was run from can be deleted afterward
 
--s, -c, -r, -R and -l resolve the sandbox name exactly as a normal run
+-s, -c, -r, -R, -C and -l resolve the sandbox name exactly as a normal run
 would, so "vibe -s && vibe" restarts whatever you were working on.
 
 When a folder has no profile yet, vibe offers to create one: a copy of an
@@ -83,7 +86,7 @@ func run(argv []string) error {
 		return nil
 	}
 	if args.ExclusiveActions() > 1 {
-		return fmt.Errorf("--stop, --ssh, --re-init, --re-create, --list and --install are mutually exclusive")
+		return fmt.Errorf("--stop, --ssh, --re-init, --re-create, --re-compose, --list and --install are mutually exclusive")
 	}
 
 	vibeHome := vibeHomeDir()
@@ -155,6 +158,8 @@ func run(argv []string) error {
 		return doReInit(lay, args, name, target)
 	case args.ReCreate:
 		return doReCreate(lay, args, name, target)
+	case args.ReCompose:
+		return doReCompose(lay, args, name, target)
 	default:
 		return doCreateOrAttach(lay, args, name, target)
 	}
@@ -757,6 +762,61 @@ func doReCreate(lay layout.Layout, args cliargs.Args, name, target string) error
 	} else {
 		note("no overlay profile '%s' to delete", profile)
 	}
+
+	return reInit(lay, args, name, target, true)
+}
+
+// --- re-compose -------------------------------------------------------------
+
+// doReCompose rebuilds a guided profile from the library features it records
+// having been composed from, then re-inits its sandbox so the result is
+// actually in effect. It is the answer to a feature gaining something after
+// the profiles built from it were generated: composing happens once, at
+// creation, and nothing reads the library again afterwards — so a profile
+// generated last week carries last week's version of its features, whatever
+// library/ says today.
+//
+// The profile is regenerated rather than merged into: re-running the
+// composition over the existing files would append each feature's fragments
+// a second time, duplicating its permissions, its published ports and its
+// instructions. That means hand-edits to the profile are lost, so this asks
+// first.
+func doReCompose(lay layout.Layout, args cliargs.Args, name, target string) error {
+	profile, err := resolveReInitProfile(lay.Home, args, name, target)
+	if err != nil {
+		return err
+	}
+	if !lay.ProfileExists(profile) {
+		return fmt.Errorf("no profile '%s' to re-compose — run vibe -R to create one", profile)
+	}
+	features := profilegen.ComposedFrom(lay.ProfileDir(profile))
+	if len(features) == 0 {
+		return fmt.Errorf("profile '%s' does not record which features it was composed from.\n"+
+			"Only profiles from guided creation do — add a '# vibe: features: a, b' line to\n"+
+			"%s to adopt one, or use vibe -R to build a fresh profile from the library.",
+			profile, filepath.Join(lay.ProfileDir(profile), "config.yaml"))
+	}
+	if err := library.Validate(features, lay.Features()); err != nil {
+		return fmt.Errorf("profile '%s' was composed from a feature that is no longer there: %w", profile, err)
+	}
+
+	note("profile '%s' was composed from: %s", profile, strings.Join(features, ", "))
+	if !confirmDefault(args.Force, false, fmt.Sprintf(
+		"Rebuild profile '%s' from those features (losing any edits to it) and re-init its sandbox?", profile)) {
+		return fmt.Errorf("aborted — nothing changed")
+	}
+
+	dir := lay.HomePath("profiles", profile)
+	if info, err := os.Stat(dir); dir != "" && err == nil && info.IsDir() {
+		if err := os.RemoveAll(dir); err != nil {
+			return err
+		}
+	}
+	created, err := profilegen.CreateGuided(lay, profile, features)
+	if err != nil {
+		return err
+	}
+	note("re-composed profile '%s' (%s) in %s", profile, strings.Join(features, ", "), created)
 
 	return reInit(lay, args, name, target, true)
 }

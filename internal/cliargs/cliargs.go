@@ -9,17 +9,18 @@ import (
 
 // Args holds the parsed command line.
 type Args struct {
-	Name     string
-	Profile  string
-	Path     string
-	Stop     bool
-	Ssh      bool
-	ReInit   bool
-	ReCreate bool
-	Force    bool
-	List     bool
-	Install  bool
-	Help     bool
+	Name      string
+	Profile   string
+	Path      string
+	Stop      bool
+	Ssh       bool
+	ReInit    bool
+	ReCreate  bool
+	ReCompose bool
+	Force     bool
+	List      bool
+	Install   bool
+	Help      bool
 }
 
 // Parse parses argv (excluding the program name).
@@ -43,6 +44,9 @@ func Parse(argv []string) (Args, error) {
 			i++
 		case arg == "-R" || arg == "--re-create" || arg == "--recreate":
 			a.ReCreate = true
+			i++
+		case arg == "-C" || arg == "--re-compose" || arg == "--recompose":
+			a.ReCompose = true
 			i++
 		case arg == "-f" || arg == "--force":
 			a.Force = true
@@ -114,10 +118,10 @@ func setPath(a *Args, v string) error {
 }
 
 // ExclusiveActions counts how many of the mutually-exclusive action flags
-// (stop/ssh/re-init/re-create/list/install) are set.
+// (stop/ssh/re-init/re-create/re-compose/list/install) are set.
 func (a Args) ExclusiveActions() int {
 	n := 0
-	for _, b := range []bool{a.Stop, a.Ssh, a.ReInit, a.ReCreate, a.List, a.Install} {
+	for _, b := range []bool{a.Stop, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.List, a.Install} {
 		if b {
 			n++
 		}
