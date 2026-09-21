@@ -675,8 +675,22 @@ func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandb
 			return fmt.Errorf("aborted — sandbox left alone")
 		}
 		if agentmem.Supported(agent) {
+			// Memories can only be read out of a running sandbox, and the
+			// one being replaced is often stopped. Since removing it is
+			// already agreed, boot it just long enough to ask — otherwise a
+			// stopped sandbox's memories would be reported as absent and
+			// then destroyed along with it.
+			presence := agentmem.Probe(name)
+			if presence == agentmem.Unknown {
+				note("  '%s' is not running — starting it to check for memories", name)
+				if sbxrun.Start(name) {
+					presence = agentmem.Probe(name)
+				}
+			}
 			switch {
-			case !agentmem.HasMemories(name):
+			case presence == agentmem.Unknown:
+				note("  WARNING: could not start '%s' to check for memories — any it holds will go with it", name)
+			case presence == agentmem.None:
 				note("  no memories found in '%s' — nothing to preserve", name)
 			case confirmDefault(args.Force, true, fmt.Sprintf("Preserve agent memories from '%s'?", name)):
 				root := merged.MemoryRoot

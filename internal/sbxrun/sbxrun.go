@@ -200,6 +200,30 @@ func WaitReachable(name string, limit int) bool {
 	return false
 }
 
+// Start boots a stopped sandbox without attaching a session to it, and
+// reports whether it ended up reachable. It is what lets vibe ask a stopped
+// sandbox a question — for its agent memories, say — before destroying it.
+//
+// `sbx run` is no use here: it boots the sandbox and hands the terminal to
+// the agent, blocking until that session ends. An sbx without a `start`
+// command leaves Start returning false rather than pretending, so callers
+// can say what they could not do instead of assuming an answer.
+func Start(name string) bool {
+	if Reachable(name) {
+		return true
+	}
+	cmd := exec.Command("sbx", "start", name)
+	if err := cmd.Run(); err != nil {
+		return Reachable(name)
+	}
+	return WaitReachable(name, startTimeout)
+}
+
+// startTimeout is how long Start waits for a booting sandbox to accept an
+// exec, in seconds — generous, since it is only ever reached when the user
+// has already committed to the operation the start is for.
+const startTimeout = 60
+
 // Remove deletes a sandbox. force maps to `sbx rm -f`.
 func Remove(name string, force bool) error {
 	args := []string{"rm"}

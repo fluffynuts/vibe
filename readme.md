@@ -231,7 +231,8 @@ state:
   `--re-init` reads the profile back so it doesn't need `--profile` repeated, and re-claims the
   recorded host ports so a sandbox's URL stays stable across a rebuild.
 - `memories/<name>/` — an agent's backed-up memories across a `--re-init`, when the profile's
-  agent supports it.
+  agent supports it. They can only be read out of a *running* sandbox, so once you have agreed to
+  remove it, vibe starts a stopped one just long enough to ask whether it holds any before it goes.
 
 A record outlives the sandbox it describes — `--re-init` tears the sandbox down but keeps the
 record, since the ports it remembers are what the rebuild re-claims.

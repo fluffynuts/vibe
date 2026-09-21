@@ -25,11 +25,32 @@ func StoreFor(memoryRoot, name string) string {
 	return filepath.Join(memoryRoot, name)
 }
 
-// HasMemories reports whether the running sandbox has any agent memories
-// worth offering to preserve — a missing or empty AgentPath doesn't count.
-func HasMemories(sandboxName string) bool {
-	return sbxrun.ExecSilent(sandboxName, "sh", "-c",
-		fmt.Sprintf("test -d '%s' && [ -n \"$(ls -A '%s' 2>/dev/null)\" ]", AgentPath, AgentPath))
+// Presence is what asking a sandbox about its memories established.
+type Presence int
+
+const (
+	// None: the sandbox answered, and has no memories worth preserving.
+	None Presence = iota
+	// Some: the sandbox answered, and has memories.
+	Some
+	// Unknown: the sandbox could not be asked — it is stopped, or the exec
+	// failed. Distinct from None on purpose: reporting "no memories" for a
+	// sandbox that was never asked loses them silently at the next remove.
+	Unknown
+)
+
+// Probe asks a sandbox whether it holds any agent memories worth offering to
+// preserve — a missing or empty AgentPath counts as None. A sandbox that
+// isn't running cannot be asked; see sbxrun.Start for booting one first.
+func Probe(sandboxName string) Presence {
+	if !sbxrun.Reachable(sandboxName) {
+		return Unknown
+	}
+	if sbxrun.ExecSilent(sandboxName, "sh", "-c",
+		fmt.Sprintf("test -d '%s' && [ -n \"$(ls -A '%s' 2>/dev/null)\" ]", AgentPath, AgentPath)) {
+		return Some
+	}
+	return None
 }
 
 // Backup copies memories out of a running sandbox into store, before it is
@@ -39,7 +60,7 @@ func Backup(sandboxName, store string) (bool, error) {
 	if err := os.MkdirAll(store, 0o755); err != nil {
 		return false, fmt.Errorf("creating memory store: %w", err)
 	}
-	if !HasMemories(sandboxName) {
+	if Probe(sandboxName) != Some {
 		return false, nil
 	}
 	ok := sbxrun.ExecSilent(sandboxName, "sh", "-c",
