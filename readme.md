@@ -21,10 +21,27 @@ vibe -f                    # ...and, for an unknown profile, create a blank one
 vibe -R/--re-create [path] # delete the profile too, then re-init — the profile
                            #    is gone, so this always re-prompts
 vibe -l/--list             # list every known sandbox and its status
+vibe -x/--cleanup          # pick sandboxes from a checklist and delete them;
+                           #    the profiles they were built from are kept
 ```
 
 Every option has a long and a short form. `-s`, `-c`, `-r`, `-R` and `-l` resolve the sandbox
 name exactly as a normal run would, so `vibe -s && vibe` restarts whatever you were working on.
+`-l` and `-x` work on every sandbox at once and take no path.
+
+`-x`/`--cleanup` is for the sandboxes a machine accumulates. It lists everything `sbx` knows
+about — each with its status and, where vibe has a record of it, the profile and folder it was
+built for — as a checkbox list; space checks, enter is done. What you checked is then listed back
+to confirm (see [Checkbox prompts](#checkbox-prompts)), and that is the only question asked —
+you came here to delete sandboxes and have just read back which ones. Sandboxes vibe has no
+record of are offered too, since those are the ones most likely to be forgotten. There is no
+unattended form of this: `-x` always asks, and `-f` has nothing to skip.
+
+**Profiles are never deleted by `-x`.** A profile outlives the sandboxes built from it, so
+cleaning up a sandbox leaves the next `vibe` in that folder able to rebuild it unchanged. Deleting
+a profile is `-R`/`--re-create`'s job. What a cleanup does discard is vibe's *instance record* for
+the sandbox — it has to, because a record claims its published host ports whether or not anything
+is listening, so one left behind would reserve those ports against every sandbox made afterwards.
 
 `-c`/`--ssh` requires `sbx setup ssh` to have been run once on this machine.
 
@@ -83,6 +100,24 @@ otherwise.
 `vibe -f` skips the question and creates a blank profile; `vibe -p <existing>` uses a profile you
 already have without creating anything. With no terminal to ask on, vibe says so instead of
 guessing.
+
+### Checkbox prompts
+
+Anywhere vibe asks you to check several things — the guided feature picker, `-x`/`--cleanup` —
+enter doesn't answer straight away. What you checked is listed back, one item per line, and the
+list is still there to go back to:
+
+```
+Confirm selection:
+  - diffity: review viewer
+  - dotnet: the .NET SDK
+
+Continue? [Y/n]
+```
+
+Enter takes the default and goes ahead; `n` returns to the checklist with everything still
+checked, so fixing a near-miss costs one keypress instead of the whole selection; Esc or Ctrl-C
+abandon the prompt altogether.
 
 ## How a sandbox is built
 

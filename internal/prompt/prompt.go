@@ -90,8 +90,15 @@ func Select(rw *os.File, labels []string, def int) (choice int, ok bool) {
 // (same terminal requirements as Select). checked is the initial checked
 // state, matched index-for-index with labels (a shorter or nil slice is
 // treated as all-unchecked). Up/Down (and k/j) move the cursor, Space
-// toggles the item under it, enter confirms — returning the checked
-// indices in ascending order — q/Esc/Ctrl-C cancel (ok=false).
+// toggles the item under it, q/Esc/Ctrl-C cancel (ok=false).
+//
+// Enter does not answer straight away: it shows what is checked, one item
+// per line, and asks whether to go ahead. Enter again (the default) returns
+// the checked indices in ascending order; "n" goes back to the list with
+// everything still checked, so a near-miss costs one keypress rather than
+// the whole selection. A checklist's answer is a list, and the single line
+// it used to collapse to was unreadable the moment more than one short
+// label was checked.
 func MultiSelect(rw *os.File, labels []string, checked []bool) (selected []int, ok bool) {
 	if len(labels) == 0 {
 		return nil, false
@@ -131,12 +138,16 @@ func MultiSelect(rw *os.File, labels []string, checked []bool) (selected []int, 
 					picked = append(picked, labels[i])
 				}
 			}
-			summary := "(nothing)"
-			if len(picked) > 0 {
-				summary = strings.Join(picked, ", ")
+			switch confirmSelection(rw, picked) {
+			case confirmYes:
+				writeSelectionRecord(rw, picked)
+				return idxs, true
+			case confirmCancel:
+				return nil, false
 			}
-			fmt.Fprintf(rw, "  \x1b[32m✔\x1b[0m %s\r\n", summary)
-			return idxs, true
+			// Back to the list, exactly as it was left — cursor included.
+			drawChecklist(rw, labels, marks, cursor)
+			continue
 		case ' ':
 			marks[cursor] = !marks[cursor]
 		case 'k':
@@ -168,6 +179,123 @@ func MultiSelect(rw *os.File, labels []string, checked []bool) (selected []int, 
 		}
 		up(rw, lines)
 		drawChecklist(rw, labels, marks, cursor)
+	}
+}
+
+// confirmAnswer is what the user did with a checklist's confirmation step.
+type confirmAnswer int
+
+const (
+	confirmYes confirmAnswer = iota
+	confirmBack
+	confirmCancel
+)
+
+// noneSelected is how an empty selection is described, so "you checked
+// nothing" is something the user confirms rather than something that
+// happens silently on a mis-hit enter.
+const noneSelected = "(nothing selected)"
+
+// selectionBlock renders the confirmation a checklist shows once enter is
+// pressed: the checked labels, one per line, then the question. It returns
+// the text — raw mode, so every break is CRLF — together with the number of
+// terminal lines it occupies, which is what clear needs to wipe it again.
+// Both come from here so the two cannot drift apart.
+func selectionBlock(picked []string) (text string, lines int) {
+	var b strings.Builder
+	b.WriteString("Confirm selection:\r\n")
+	items := len(picked)
+	if items == 0 {
+		fmt.Fprintf(&b, "  %s\r\n", noneSelected)
+		items = 1
+	}
+	for _, p := range picked {
+		fmt.Fprintf(&b, "  - %s\r\n", p)
+	}
+	b.WriteString("\r\n")
+	b.WriteString(questionLine)
+	// Header, one line per item, a blank line, and the question — which is
+	// left without a break, for the answer to land on.
+	return b.String(), items + 3
+}
+
+// questionLine is the confirmation's last line, printed by selectionBlock
+// and reprinted by confirmSelection when it has to ask again.
+const questionLine = "Continue? [Y/n] "
+
+// typedAnswerLimit caps how much of an answer is kept and echoed. The
+// question sits on the last line of the block, and clear only knows how
+// many lines that block is: let an answer run long enough to wrap and the
+// wiping would miss a line. No answer this prompt accepts is near it.
+const typedAnswerLimit = 16
+
+// confirmSelection shows what is checked and asks whether to go ahead. It
+// reads a whole line rather than a single keypress, which is what "[Y/n]"
+// invites and, more to the point, is what consumes the enter that follows a
+// typed "y": on a single-key read that enter would be left in the
+// terminal's input queue for the caller's *next* question to read as a
+// blank line, silently answering it with its default.
+//
+// Enter alone takes the default, yes; "n" goes back to the list with
+// everything still checked; Esc and Ctrl-C abandon the prompt (ok=false
+// from MultiSelect). Anything else is asked again rather than guessed at.
+// It wipes its own block before returning, leaving the terminal where it
+// found it.
+func confirmSelection(rw *os.File, picked []string) confirmAnswer {
+	text, lines := selectionBlock(picked)
+	fmt.Fprint(rw, text)
+	defer clear(rw, lines)
+
+	var typed []byte
+	buf := make([]byte, 1)
+	for {
+		n, err := rw.Read(buf)
+		if err != nil || n == 0 {
+			return confirmCancel
+		}
+		c := buf[0]
+		switch {
+		case c == 3: // Ctrl-C
+			return confirmCancel
+		case c == 0x1b:
+			// An arrow key here is a stray keypress: only a bare Escape
+			// cancels.
+			if readEscape(rw) == escBare {
+				return confirmCancel
+			}
+		case c == '\r' || c == '\n':
+			switch strings.ToLower(strings.TrimSpace(string(typed))) {
+			case "", "y", "yes":
+				return confirmYes
+			case "n", "no":
+				return confirmBack
+			}
+			typed = typed[:0]
+			fmt.Fprint(rw, "\r\x1b[2K"+questionLine)
+		case c == 127 || c == 8: // backspace, delete
+			if len(typed) > 0 {
+				typed = typed[:len(typed)-1]
+				fmt.Fprint(rw, "\b \b")
+			}
+		case c >= ' ' && c < 127 && len(typed) < typedAnswerLimit:
+			typed = append(typed, c)
+			// Raw mode means nothing is echoed for us.
+			fmt.Fprintf(rw, "%c", c)
+		}
+	}
+}
+
+// writeSelectionRecord leaves the confirmed answer in the scrollback, one
+// item per line, so what was chosen is still legible after the prompt has
+// cleared itself away.
+func writeSelectionRecord(w *os.File, picked []string) {
+	if len(picked) == 0 {
+		fmt.Fprintf(w, "  \x1b[32m✔\x1b[0m %s\r\n", noneSelected)
+		return
+	}
+	fmt.Fprint(w, "  \x1b[32m✔\x1b[0m selected:\r\n")
+	for _, p := range picked {
+		fmt.Fprintf(w, "    - %s\r\n", p)
 	}
 }
 
@@ -380,7 +508,7 @@ func drawChecklist(w *os.File, labels []string, marks []bool, cursor int) {
 			fmt.Fprintf(w, "  %s %s\r\n", box, label)
 		}
 	}
-	fmt.Fprint(w, "\x1b[2K\r\x1b[2m(↑/↓ to move, space to toggle, enter to confirm, q to quit)\x1b[0m")
+	fmt.Fprint(w, "\x1b[2K\r\x1b[2m(↑/↓ to move, space to toggle, enter when done, q to quit)\x1b[0m")
 }
 
 func drawReorder(w *os.File, labels []string, cursor int) {

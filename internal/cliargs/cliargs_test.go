@@ -97,3 +97,34 @@ func TestParseReCompose(t *testing.T) {
 		t.Errorf("-C with -R should count as two actions, got %d", both.ExclusiveActions())
 	}
 }
+
+func TestParseCleanup(t *testing.T) {
+	for _, arg := range []string{"-x", "--cleanup"} {
+		got, err := Parse([]string{arg})
+		if err != nil {
+			t.Fatalf("Parse(%s): %v", arg, err)
+		}
+		if !got.Cleanup {
+			t.Errorf("Parse(%s) did not set Cleanup", arg)
+		}
+		if got.ExclusiveActions() != 1 {
+			t.Errorf("Parse(%s): ExclusiveActions = %d, want 1", arg, got.ExclusiveActions())
+		}
+	}
+	// -f is cleanup's own modifier (skip the confirmation), not a second
+	// action, so it must not trip the mutual-exclusion check.
+	forced, err := Parse([]string{"--cleanup", "-f"})
+	if err != nil || !forced.Cleanup || !forced.Force {
+		t.Fatalf("expected Cleanup+Force, got %+v err=%v", forced, err)
+	}
+	if forced.ExclusiveActions() != 1 {
+		t.Errorf("--cleanup -f: ExclusiveActions = %d, want 1", forced.ExclusiveActions())
+	}
+	both, err := Parse([]string{"-x", "-l"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if both.ExclusiveActions() != 2 {
+		t.Errorf("-x with -l should count as two actions, got %d", both.ExclusiveActions())
+	}
+}
