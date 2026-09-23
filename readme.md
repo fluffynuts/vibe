@@ -213,6 +213,14 @@ feature therefore carries the ports, permissions and instructions its tooling ne
 `diffity` is what gives a sandbox the review viewer, its published port and `$VIBE_DIFFITY_URL`,
 the `registry.npmjs.org` egress rule and the agent instructions for using it.
 
+A startup script is also how a feature keeps itself current: install scripts run once, when the
+sandbox is created, so `diffity` ships an `update-diffity` and an `update-diffity-skills` that the
+generated `on-start` runs. Every sandbox start pulls the latest CLI from npm and re-adds the
+matching agent skills — the two are released together — non-fatally, logging to
+`/tmp/update-diffity.log` and `/tmp/update-diffity-skills.log`. The skills half re-enters as the
+agent user, since `on-start` runs as root and nothing root writes under `/home/agent` can be
+replaced by the agent later.
+
 The profile that comes out is an ordinary profile directory: edit it afterwards like any other.
 Composing happens **once**, when the profile is created — the library is never read again, so a
 profile carries the version of its features that existed the day it was generated. A generated

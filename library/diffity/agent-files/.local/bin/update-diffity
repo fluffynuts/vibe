@@ -1,0 +1,52 @@
+#!/bin/sh
+# vibe: description: Update the diffity review viewer CLI to the latest release
+# The install step runs exactly once, when the sandbox is created, so without
+# this a sandbox keeps whatever diffity it was born with however many releases
+# go by. Running from on-start makes every start an update. Deliberately
+# non-fatal: a sandbox with no egress, or a registry having a bad day, must
+# not hold up the rest of startup.
+# No braced shell expansions here: sbx validates every brace-form
+# substitution in file content against its own placeholder list.
+exec >>/tmp/update-diffity.log 2>&1
+echo "=== update-diffity at $(date -Is) ==="
+
+# on-start is run with a minimal environment, so npm may not be on PATH even
+# though it is installed — the persistent env file is where a node version
+# manager records where it put itself.
+if ! command -v npm >/dev/null 2>&1 && [ -f /etc/sandbox-persistent.sh ]; then
+  . /etc/sandbox-persistent.sh
+fi
+if ! command -v npm >/dev/null 2>&1; then
+  echo "WARN: no npm on PATH — leaving diffity as it is"
+  exit 0
+fi
+
+# on-start runs this as root, who owns the global npm prefix; run by hand it
+# runs as the agent user, who needs sudo to write there. Passing PATH through
+# keeps a node manager's npm reachable under sudo's own environment.
+if [ "$(id -u)" = 0 ]; then
+  npm_g() { npm "$@"; }
+else
+  npm_g() { sudo -n env PATH="$PATH" npm "$@"; }
+fi
+
+version() {
+  npm_g ls -g --depth 0 diffity 2>/dev/null | sed -n 's/.*diffity@//p' | head -1
+}
+
+before=$(version)
+[ -n "$before" ] || before=none
+echo "installed: $before"
+if npm_g install -g diffity@latest; then
+  after=$(version)
+  [ -n "$after" ] || after=unknown
+  if [ "$after" = "$before" ]; then
+    echo "up to date: $after"
+  else
+    echo "updated: $before -> $after"
+  fi
+else
+  echo "WARN: could not update diffity — staying on $before"
+fi
+echo "=== done at $(date -Is) ==="
+exit 0

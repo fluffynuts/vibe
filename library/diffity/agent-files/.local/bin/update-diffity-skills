@@ -1,0 +1,74 @@
+#!/bin/sh
+# vibe: description: Refresh diffity's agent skills so they match the installed CLI
+# The viewer and its skills are released together, so updating the CLI on its
+# own leaves the agent driving a new diffity with old instructions. This is
+# the startup half of install-scripts/02-add-diffity-skills — the two cannot
+# share code, because agent-files are not on disk while install steps run, so
+# keep them in step by hand.
+# No braced shell expansions here: sbx validates every brace-form
+# substitution in file content against its own placeholder list.
+
+SELF=/home/agent/.local/bin/update-diffity-skills
+
+# on-start runs this as root, but every path below lives under the agent's
+# home and the whole point is that the agent can read — and next time
+# replace — what lands there. Anything root writes is a file the agent user
+# cannot overwrite, so drop to that user before touching a single path, and
+# do it before opening the log so the log itself is not left root-owned. A
+# login shell, because that is what puts npx on PATH.
+if [ "$(id -u)" = 0 ]; then
+  AGENT=$(id -un 1000 2>/dev/null)
+  [ -n "$AGENT" ] || AGENT=agent
+  su - "$AGENT" -c "$SELF" && exit 0
+  # stdout here is on-start's own log, which is the right place to say so.
+  echo "WARN: could not refresh the diffity skills as $AGENT"
+  exit 0
+fi
+
+exec >>/tmp/update-diffity-skills.log 2>&1
+echo "=== update-diffity-skills at $(date -Is) ==="
+
+SKILLS=/home/agent/.claude/skills
+
+if ! command -v npx >/dev/null 2>&1; then
+  echo "WARN: no npx on PATH — leaving the skills as they are"
+  exit 0
+fi
+
+cd /home/agent || exit 0
+npx -y skills add nilbuild/diffity -- -y </dev/null \
+  || echo "WARN: skills add failed — keeping what is already installed"
+
+mkdir -p "$SKILLS"
+
+# The home directory outlives the sandbox, so an earlier install may have left
+# symlinks pointing at a skills tree that is no longer there: they look like
+# installed skills but resolve nowhere. Drop them before consolidating.
+for l in "$SKILLS"/*; do
+  if [ -L "$l" ] && [ ! -e "$l" ]; then
+    rm -f "$l"
+  fi
+done
+
+# The installer unpacks the skills under ~/.agents/skills and symlinks them
+# into ~/.claude/skills for Claude Code; older versions put them elsewhere, so
+# copy in anything found outside. Skipping entries that already resolve to the
+# same tree matters: copying a directory onto itself is a cp error.
+for d in /home/agent/.agents/skills /home/agent/workspace/.agents/skills /home/agent/workspace/.claude/skills; do
+  [ -d "$d" ] || continue
+  for s in "$d"/*; do
+    [ -e "$s" ] || continue
+    name=$(basename "$s")
+    dest=$SKILLS/$name
+    if [ -e "$dest" ] && [ "$(readlink -f "$dest")" = "$(readlink -f "$s")" ]; then
+      continue
+    fi
+    cp -a "$s" "$SKILLS/" || echo "WARN: could not add skill $name"
+  done
+done
+
+echo "--- skills present:"
+ls "$SKILLS" 2>/dev/null
+ls "$SKILLS" 2>/dev/null | grep -q . || echo "WARN: no diffity skills installed"
+echo "=== done at $(date -Is) ==="
+exit 0

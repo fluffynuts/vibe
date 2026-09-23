@@ -3,6 +3,8 @@
 # vibe: user: 1000
 # Self-contained for the same reason as 01-install-diffity-cli: agent-files
 # are not on disk yet while install steps run.
+# Its startup counterpart is agent-files/.local/bin/update-diffity-skills,
+# which repeats this work on every start; keep the two in step.
 LOG=/tmp/sbx-setup.log
 SKILLS=/home/agent/.claude/skills
 
