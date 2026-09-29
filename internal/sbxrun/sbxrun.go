@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -29,13 +31,27 @@ func captureOut(args ...string) (string, error) {
 }
 
 // runInherit runs sbx with stdio connected to the current process, returning
-// the exit code (0 on success).
+// the exit code (0 on success). A SIGTERM sent to vibe is passed on to sbx
+// rather than killing vibe outright, so vibe gets to finish up (saving the
+// agent's memories, say) once sbx has gone.
 func runInherit(args ...string) (int, error) {
 	cmd := exec.Command("sbx", args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	err := cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return -1, err
+	}
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM)
+	go func() {
+		for sig := range sigs {
+			cmd.Process.Signal(sig)
+		}
+	}()
+	err := cmd.Wait()
+	signal.Stop(sigs)
+	close(sigs)
 	if err == nil {
 		return 0, nil
 	}

@@ -295,6 +295,11 @@ state:
 - `memories/<name>/` — an agent's backed-up memories across a `--re-init`, when the profile's
   agent supports it. They can only be read out of a *running* sandbox, so once you have agreed to
   remove it, vibe starts a stopped one just long enough to ask whether it holds any before it goes.
+  They are also copied back out each time a session ends, so the host copy keeps up.
+- `running/<pid>.lock` — one per vibe process with a folder open (anything but `--ssh`, `--stop`,
+  `--list`, `--install` and `--cleanup`), locked for as long as that process lives. A second vibe
+  for the same folder warns that one is already running, gives its PID, and offers to exit,
+  continue anyway, or stop the other one first. `-f` continues anyway without asking.
 
 A record outlives the sandbox it describes — `--re-init` tears the sandbox down but keeps the
 record, since the ports it remembers are what the rebuild re-claims.

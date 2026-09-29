@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"vibe/internal/cliargs"
@@ -23,6 +25,7 @@ import (
 	"vibe/internal/portalloc"
 	"vibe/internal/profilegen"
 	"vibe/internal/prompt"
+	"vibe/internal/running"
 	"vibe/internal/sbxrun"
 	"vibe/internal/settings"
 	"vibe/internal/state"
@@ -68,8 +71,14 @@ any other, and pick up new ones the bundle adds later.
 -c requires 'sbx setup ssh' to have been run once on this machine.
 `
 
+// session is this process's claim on the folder it has open, if any; see
+// guardFolder. It lives for the whole run, since dropping it drops the claim.
+var session *running.Session
+
 func main() {
-	if err := run(os.Args[1:]); err != nil {
+	err := run(os.Args[1:])
+	session.Release()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "vibe: %s\n", err)
 		os.Exit(1)
 	}
@@ -166,6 +175,13 @@ func run(argv []string) error {
 		return doStop(name, target)
 	case args.Ssh:
 		return doSsh(name, target)
+	}
+
+	if err := guardFolder(vibeHome, target, args.Force); err != nil {
+		return err
+	}
+
+	switch {
 	case args.ReInit:
 		return doReInit(lay, args, name, target)
 	case args.ReCreate:
@@ -214,6 +230,73 @@ func resolveProfileName(args cliargs.Args, target string) string {
 		return args.Name
 	}
 	return pathresolve.DeriveName(target)
+}
+
+// --- one vibe per folder ----------------------------------------------
+
+// stopOtherTimeout is how long to wait for another vibe to wind down after
+// being asked to stop: long enough for it to save its agent's memories.
+const stopOtherTimeout = 60 * time.Second
+
+// guardFolder checks for other vibe processes with target open — two agents
+// taking instructions against one workspace is easy to do by accident — and
+// asks what to do if there are any. It then claims target for this process.
+// With force, or no terminal to ask on, it says so and carries on.
+func guardFolder(vibeHome, target string, force bool) error {
+	if others := running.Others(vibeHome, target); len(others) > 0 {
+		if err := resolveOthers(vibeHome, target, others, force); err != nil {
+			return err
+		}
+	}
+	s, err := running.Register(vibeHome, target)
+	if err != nil {
+		note("WARNING: could not record this vibe as running for %s: %s", target, err)
+		return nil
+	}
+	session = s
+	return nil
+}
+
+func resolveOthers(vibeHome, target string, others []int, force bool) error {
+	pids := make([]string, len(others))
+	for i, pid := range others {
+		pids[i] = fmt.Sprint(pid)
+	}
+	which, instance := "PID", "that instance"
+	if len(others) > 1 {
+		which, instance = "PIDs", "those instances"
+	}
+	already := fmt.Sprintf("vibe is already running for %s (%s %s)", target, which, strings.Join(pids, ", "))
+
+	if force {
+		note("WARNING: %s — continuing anyway (--force)", already)
+		return nil
+	}
+	if !interactive() {
+		return fmt.Errorf("%s", already)
+	}
+	note("%s", already)
+	choice, ok := chooseFrom("WARNING: vibe is already running in this folder! What would you like to do?", []string{
+		"exit",
+		"continue anyway",
+		"stop " + instance + ", then continue",
+	}, 0)
+	switch {
+	case !ok || choice == 0:
+		return fmt.Errorf("already running for %s — exiting", target)
+	case choice == 1:
+		return nil
+	}
+	for _, pid := range others {
+		status := newStatusLine()
+		status.show("Stopping vibe (PID %d)", pid)
+		if err := running.Stop(vibeHome, pid, stopOtherTimeout); err != nil {
+			status.done("Stopping vibe (PID %d) failed: %s", pid, err)
+			return fmt.Errorf("could not stop the other vibe for %s", target)
+		}
+		status.done("Stopped vibe (PID %d)", pid)
+	}
+	return nil
 }
 
 // --- stop / ssh -------------------------------------------------------
@@ -1282,11 +1365,19 @@ func reorderFrom(question string, labels []string) ([]string, bool) {
 // foreground.
 func finish(vibeHome, name string) error {
 	go nudgeOnStart(name)
+	stopped := make(chan os.Signal, 1)
+	signal.Notify(stopped, syscall.SIGTERM)
 	code, err := sbxrun.Run(name)
 	if err != nil {
 		return err
 	}
+	select {
+	case <-stopped:
+		note("session ended: asked to stop (by another vibe for this folder, most likely)")
+	default:
+	}
 	saveMemoriesOnExit(vibeHome, name)
+	session.Release()
 	os.Exit(code)
 	return nil
 }
