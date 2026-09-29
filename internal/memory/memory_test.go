@@ -1,6 +1,10 @@
 package memory
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 // nonexistentSandbox is a name no sandbox on this machine can have, so
 // asking about it always fails the same way whether or not sbx is installed.
@@ -40,5 +44,84 @@ func TestBackupOfAnUnreachableSandboxReportsNothingSaved(t *testing.T) {
 func TestStoreForIsPerSandbox(t *testing.T) {
 	if got, want := StoreFor("/root", "alpha"), "/root/alpha"; got != want {
 		t.Errorf("StoreFor = %q, want %q", got, want)
+	}
+}
+
+// fakeSbx puts an `sbx` on PATH whose exec runs the command on this machine.
+// joined makes it pass the command on as one space-joined line to a shell,
+// the way ssh does — the behaviour that broke a `sh -c "<script>"` probe.
+func fakeSbx(t *testing.T, joined bool) {
+	t.Helper()
+	run := `"$@"`
+	if joined {
+		run = `sh -c "$*"`
+	}
+	dir := t.TempDir()
+	script := "#!/bin/sh\n[ \"$1\" = exec ] || exit 1\nshift 3\n" + run + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "sbx"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// useAgentPath points the package at a stand-in for the sandbox's memories.
+func useAgentPath(t *testing.T, path string) {
+	t.Helper()
+	old := agentPath
+	agentPath = path
+	t.Cleanup(func() { agentPath = old })
+}
+
+func TestProbeAndBackupFindMemoriesHoweverSbxPassesArgs(t *testing.T) {
+	for _, joined := range []bool{false, true} {
+		name := "argv"
+		if joined {
+			name = "joined"
+		}
+		t.Run(name, func(t *testing.T) {
+			fakeSbx(t, joined)
+			agent := filepath.Join(t.TempDir(), "projects")
+			useAgentPath(t, agent)
+
+			if got := Probe("any"); got != None {
+				t.Errorf("Probe with no memory dir = %v, want None", got)
+			}
+			if err := os.MkdirAll(agent, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if got := Probe("any"); got != None {
+				t.Errorf("Probe with empty memory dir = %v, want None", got)
+			}
+
+			mem := filepath.Join(agent, "-proj", "memory", "MEMORY.md")
+			if err := os.MkdirAll(filepath.Dir(mem), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(mem, []byte("- a memory\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got := Probe("any"); got != Some {
+				t.Fatalf("Probe with memories = %v, want Some", got)
+			}
+
+			store := filepath.Join(t.TempDir(), "store")
+			saved, err := Backup("any", store)
+			if err != nil || !saved {
+				t.Fatalf("Backup = %v, %v; want true, nil", saved, err)
+			}
+			if _, err := os.Stat(filepath.Join(store, "-proj", "memory", "MEMORY.md")); err != nil {
+				t.Errorf("memory not backed up: %v", err)
+			}
+
+			if err := os.RemoveAll(agent); err != nil {
+				t.Fatal(err)
+			}
+			if err := Restore("any", store); err != nil {
+				t.Fatalf("Restore: %v", err)
+			}
+			if _, err := os.Stat(mem); err != nil {
+				t.Errorf("memory not restored: %v", err)
+			}
+		})
 	}
 }

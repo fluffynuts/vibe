@@ -1,0 +1,19 @@
+#!/bin/sh
+# vibe: description: Update Claude Code to the latest release (non-fatal)
+# vibe: user: 1000
+# The sandbox image ships whatever Claude Code release it was built with, and
+# releases land every few days, so a fresh sandbox is usually behind — which
+# the agent's own auto-updater then fixes on first launch, mid-session.
+# Updating here moves that to create time. Runs as the agent so the new
+# version lands in its ~/.local/share/claude, owned by it. Sandboxes for
+# other agents have no claude binary, and skip this.
+LOG=/tmp/sbx-setup.log
+CLAUDE=/home/agent/.local/bin/claude
+[ -x "$CLAUDE" ] || exit 0
+
+echo "--- claude update $(date -Is) (from $("$CLAUDE" --version 2>/dev/null))" >>$LOG
+cd /home/agent || exit 0
+HOME=/home/agent timeout 300 "$CLAUDE" update </dev/null >>$LOG 2>&1 \
+  || echo "WARN: claude update failed — the agent will update itself on first launch" >>$LOG
+echo "claude now at $("$CLAUDE" --version 2>/dev/null)" >>$LOG
+true

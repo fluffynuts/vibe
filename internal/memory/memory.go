@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"vibe/internal/sbxrun"
 )
@@ -14,6 +15,9 @@ import (
 // AgentPath is where Claude Code keeps its memories inside the sandbox. Memory
 // preservation is Claude-specific: other agents have no equivalent path.
 const AgentPath = "/home/agent/.claude/projects"
+
+// agentPath is AgentPath, as a variable so tests can point it elsewhere.
+var agentPath = AgentPath
 
 // Supported reports whether the given agent supports memory preservation.
 func Supported(agent string) bool {
@@ -46,11 +50,28 @@ func Probe(sandboxName string) Presence {
 	if !sbxrun.Reachable(sandboxName) {
 		return Unknown
 	}
-	if sbxrun.ExecSilent(sandboxName, "sh", "-c",
-		fmt.Sprintf("test -d '%s' && [ -n \"$(ls -A '%s' 2>/dev/null)\" ]", AgentPath, AgentPath)) {
+	// Every exec here is a plain argv with no shell script in it: sbx exec
+	// may join its arguments into one command line, and a `sh -c "<script>"`
+	// that gets split that way runs only the script's first word — which
+	// fails, and so reported every sandbox as having no memories.
+	if !sbxrun.ExecSilent(sandboxName, "test", "-d", agentPath) {
+		return None
+	}
+	out, err := sbxrun.ExecCapture(sandboxName, "find", agentPath, "-mindepth", "1", "-maxdepth", "1", "-print", "-quit")
+	if err != nil {
+		return Unknown
+	}
+	if strings.Contains(out, agentPath+"/") {
 		return Some
 	}
 	return None
+}
+
+// copyInSandbox copies the contents of dir src into dir dst, inside the
+// sandbox, creating dst if need be.
+func copyInSandbox(sandboxName, src, dst string) bool {
+	return sbxrun.ExecSilent(sandboxName, "mkdir", "-p", dst) &&
+		sbxrun.ExecSilent(sandboxName, "cp", "-a", src+"/.", dst+"/")
 }
 
 // Backup copies memories out of a running sandbox into store, before it is
@@ -63,9 +84,7 @@ func Backup(sandboxName, store string) (bool, error) {
 	if Probe(sandboxName) != Some {
 		return false, nil
 	}
-	ok := sbxrun.ExecSilent(sandboxName, "sh", "-c",
-		fmt.Sprintf("mkdir -p '%s' && cp -a '%s'/. '%s'/", store, AgentPath, store))
-	return ok, nil
+	return copyInSandbox(sandboxName, agentPath, store), nil
 }
 
 // Restore waits for the (re-created) sandbox to come up and copies memories
@@ -78,9 +97,7 @@ func Restore(sandboxName, store string) error {
 	if !sbxrun.WaitReachable(sandboxName, 120) {
 		return fmt.Errorf("sandbox not reachable — memories left in %s", store)
 	}
-	ok := sbxrun.ExecSilent(sandboxName, "sh", "-c",
-		fmt.Sprintf("mkdir -p '%s' && cp -a '%s'/. '%s'/", AgentPath, store, AgentPath))
-	if !ok {
+	if !copyInSandbox(sandboxName, store, agentPath) {
 		return fmt.Errorf("restore failed — memories left in %s", store)
 	}
 	return nil

@@ -19,8 +19,13 @@ import (
 // every time — silently, since setup steps are deliberately non-fatal. The
 // diffity CLI and its skills were installed that way and never landed in any
 // sandbox. agent-files scripts belong to on-start, not to install steps.
+//
+// Only names some agent-files tree actually ships count: ~/.local/bin also
+// holds what the sandbox image put there (the claude binary, say), which is
+// present before any install step runs.
 func TestInstallScriptsDoNotCallAgentFiles(t *testing.T) {
 	root := repoRoot(t)
+	helpers := agentFilesHelpers(t, root)
 	for _, tree := range []string{"defaults", "library", "profiles"} {
 		err := filepath.WalkDir(filepath.Join(root, tree), func(path string, d os.DirEntry, err error) error {
 			if err != nil || d.IsDir() || kitspec.IsSidecar(d.Name()) {
@@ -38,10 +43,12 @@ func TestInstallScriptsDoNotCallAgentFiles(t *testing.T) {
 				if code == "" || strings.HasPrefix(code, "#") {
 					continue // a comment may well explain this very rule
 				}
-				if strings.Contains(code, kitspec.AgentHome+"/.local/bin/") {
-					rel, _ := filepath.Rel(root, path)
-					t.Errorf("%s calls an agent-files helper: %s\n"+
-						"install scripts run before agent-files are deployed — inline the work instead", rel, code)
+				for _, helper := range helpers {
+					if strings.Contains(code, kitspec.AgentHome+"/.local/bin/"+helper) {
+						rel, _ := filepath.Rel(root, path)
+						t.Errorf("%s calls an agent-files helper: %s\n"+
+							"install scripts run before agent-files are deployed — inline the work instead", rel, code)
+					}
 				}
 			}
 			return nil
@@ -50,6 +57,36 @@ func TestInstallScriptsDoNotCallAgentFiles(t *testing.T) {
 			t.Fatalf("walking %s: %v", tree, err)
 		}
 	}
+}
+
+// agentFilesHelpers lists the names every agent-files tree in the bundle
+// deploys into ~/.local/bin.
+func agentFilesHelpers(t *testing.T, root string) []string {
+	t.Helper()
+	seen := map[string]bool{}
+	var names []string
+	for _, tree := range []string{"defaults", "library", "profiles"} {
+		err := filepath.WalkDir(filepath.Join(root, tree), func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || kitspec.IsSidecar(d.Name()) {
+				return err
+			}
+			if !strings.HasSuffix(filepath.ToSlash(filepath.Dir(path)), "/agent-files/.local/bin") {
+				return nil
+			}
+			if !seen[d.Name()] {
+				seen[d.Name()] = true
+				names = append(names, d.Name())
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walking %s: %v", tree, err)
+		}
+	}
+	if len(names) == 0 {
+		t.Fatal("found no agent-files helpers in the bundle — has the layout changed?")
+	}
+	return names
 }
 
 // TestBundleDefaultFeaturesExist keeps the shipped settings.yaml honest: a
