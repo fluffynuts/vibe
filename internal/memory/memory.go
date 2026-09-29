@@ -74,9 +74,9 @@ func copyInSandbox(sandboxName, src, dst string) bool {
 		sbxrun.ExecSilent(sandboxName, "cp", "-a", src+"/.", dst+"/")
 }
 
-// Backup copies memories out of a running sandbox into store, before it is
-// destroyed. Returns false (no error) when the sandbox has no memories to
-// preserve.
+// Backup copies memories out of a running sandbox into store — before it is
+// destroyed, or when a session ends. Returns false (no error) when the
+// sandbox has no memories to preserve, or cannot be asked.
 func Backup(sandboxName, store string) (bool, error) {
 	if err := os.MkdirAll(store, 0o755); err != nil {
 		return false, fmt.Errorf("creating memory store: %w", err)
@@ -84,7 +84,10 @@ func Backup(sandboxName, store string) (bool, error) {
 	if Probe(sandboxName) != Some {
 		return false, nil
 	}
-	return copyInSandbox(sandboxName, agentPath, store), nil
+	if !copyInSandbox(sandboxName, agentPath, store) {
+		return false, fmt.Errorf("could not copy memories to %s", store)
+	}
+	return true, nil
 }
 
 // Restore waits for the (re-created) sandbox to come up and copies memories

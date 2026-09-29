@@ -778,7 +778,7 @@ func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merg
 	}
 
 	if err := state.Save(vibeHome, state.Instance{
-		Name: name, Profile: profile, Target: target, Publish: publishRecords, CreatedAt: time.Now(),
+		Name: name, Profile: profile, Target: target, Publish: publishRecords, MemoryStore: memoryStore, CreatedAt: time.Now(),
 	}); err != nil {
 		return err
 	}
@@ -1286,8 +1286,65 @@ func finish(vibeHome, name string) error {
 	if err != nil {
 		return err
 	}
+	saveMemoriesOnExit(vibeHome, name)
 	os.Exit(code)
 	return nil
+}
+
+// saveMemoriesOnExit copies the agent's memories back out to the sandbox's
+// host store once a session ends, so the host copy tracks the sandbox rather
+// than only being refreshed by a --re-init.
+func saveMemoriesOnExit(vibeHome, name string) {
+	inst, found, err := state.Load(vibeHome, name)
+	if err != nil || !found {
+		return
+	}
+	store := inst.MemoryStore
+	if store == "" {
+		// Records written before the store was remembered: the default
+		// location is the one such a sandbox will have had mounted.
+		store = agentmem.StoreFor(filepath.Join(vibeHome, "memories"), name)
+		if info, err := os.Stat(store); err != nil || !info.IsDir() {
+			return
+		}
+	}
+	status := newStatusLine()
+	status.show("Backing up memories to %s", store)
+	saved, err := agentmem.Backup(name, store)
+	switch {
+	case err != nil:
+		status.done("Backup of memories failed: %s", err)
+	case saved:
+		status.done("Backed up memories to %s", store)
+	default:
+		status.done("No memories to back up to %s", store)
+	}
+}
+
+// statusLine is a single vibe: line on stderr that is shown while work runs
+// and then replaced in place by its outcome. Off a terminal, where the line
+// can't be rewritten, the outcome is simply printed on the next line.
+type statusLine struct {
+	tty bool
+}
+
+func newStatusLine() statusLine {
+	return statusLine{tty: isTerminal(os.Stderr)}
+}
+
+func (s statusLine) show(format string, a ...interface{}) {
+	if s.tty {
+		fmt.Fprintf(os.Stderr, "vibe: "+format, a...)
+		return
+	}
+	note(format, a...)
+}
+
+func (s statusLine) done(format string, a ...interface{}) {
+	if s.tty {
+		fmt.Fprint(os.Stderr, "\r\x1b[2K")
+	}
+	note(format, a...)
 }
 
 func nudgeOnStart(name string) {

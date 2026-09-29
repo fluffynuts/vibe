@@ -23,11 +23,14 @@ type PublishRecord struct {
 
 // Instance records how a sandbox was created.
 type Instance struct {
-	Name      string          `yaml:"name"`
-	Profile   string          `yaml:"profile"`
-	Target    string          `yaml:"target"`
-	Publish   []PublishRecord `yaml:"publish,omitempty"`
-	CreatedAt time.Time       `yaml:"createdAt"`
+	Name    string          `yaml:"name"`
+	Profile string          `yaml:"profile"`
+	Target  string          `yaml:"target"`
+	Publish []PublishRecord `yaml:"publish,omitempty"`
+	// MemoryStore is the host directory mounted in for the agent's
+	// memories, so they can be copied back out when a session ends.
+	MemoryStore string    `yaml:"memoryStore,omitempty"`
+	CreatedAt   time.Time `yaml:"createdAt"`
 }
 
 // Dir returns the instances directory under the given vibe home.
