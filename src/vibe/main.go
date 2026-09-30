@@ -4,9 +4,11 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -1433,8 +1435,69 @@ func saveMemoriesOnExit(vibeHome, name string) {
 		}
 	}
 	status := newStatusLine()
+	snap, err := agentmem.TakeSnapshot(store)
+	if err != nil {
+		status.done("Memories not backed up: could not first keep a copy of the ones in %s: %s", store, err)
+		return
+	}
+
+	// Ctrl-C is how a session is left, so it is easily still being pressed
+	// once the backup has started. Rather than dying half-way through the
+	// copy, vibe asks; quitting puts back what the store held before.
+	interrupts := make(chan os.Signal, 1)
+	signal.Notify(interrupts, os.Interrupt)
+	defer signal.Stop(interrupts)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	type outcome struct {
+		saved bool
+		err   error
+	}
+	finished := make(chan outcome, 1)
 	status.show("Backing up memories to %s", store)
-	saved, err := agentmem.Backup(name, store)
+	go func() {
+		saved, err := agentmem.BackupContext(ctx, name, store)
+		finished <- outcome{saved, err}
+	}()
+
+	for {
+		select {
+		case o := <-finished:
+			snap.Discard()
+			reportMemoryBackup(status, store, o.saved, o.err)
+			return
+		case <-interrupts:
+			if status.tty {
+				fmt.Fprint(os.Stderr, "\r\x1b[2K")
+			}
+			if confirmQuitDuringBackup(interrupts) {
+				cancel()
+				<-finished
+				if err := snap.Restore(); err != nil {
+					note("Could not restore the original local memories: %s", err)
+					return
+				}
+				note("Original local memories restored")
+				return
+			}
+			select {
+			case o := <-finished:
+				snap.Discard()
+				if o.saved {
+					note("Memories were saved to %s", store)
+				} else {
+					reportMemoryBackup(status, store, o.saved, o.err)
+				}
+				return
+			default:
+				status.show("Backing up memories to %s", store)
+			}
+		}
+	}
+}
+
+func reportMemoryBackup(status statusLine, store string, saved bool, err error) {
 	switch {
 	case err != nil:
 		status.done("Backup of memories failed: %s", err)
@@ -1442,6 +1505,62 @@ func saveMemoriesOnExit(vibeHome, name string) {
 		status.done("Backed up memories to %s", store)
 	default:
 		status.done("No memories to back up to %s", store)
+	}
+}
+
+// confirmQuitDuringBackup asks whether to abandon the memory backup,
+// defaulting to no. Further Ctrl-Cs while it waits only ask again: whoever
+// is still pressing the key that left the sandbox hasn't read the question
+// yet. With no terminal to ask on, the interrupt came from somewhere that
+// meant it, and is taken as a yes.
+func confirmQuitDuringBackup(interrupts <-chan os.Signal) bool {
+	reader, closeFn, ok := ttyReader()
+	if !ok {
+		return true
+	}
+	defer closeFn()
+	ask := func() {
+		fmt.Fprint(os.Stderr, "vibe: vibe is currently exporting memories from the sandbox - are you sure you want to quit? [y/N] ")
+	}
+	type answer struct {
+		line string
+		err  error
+	}
+	answers := make(chan answer, 1)
+	read := func() {
+		go func() {
+			line, err := reader.ReadString('\n')
+			answers <- answer{line, err}
+		}()
+	}
+
+	ask()
+	read()
+	for {
+		select {
+		case <-interrupts:
+			fmt.Fprintln(os.Stderr)
+			ask()
+		case a := <-answers:
+			if a.err != nil && a.line == "" {
+				// A Windows console read ends on Ctrl-C rather than
+				// carrying on; if that is what ended this one, ask again.
+				select {
+				case <-interrupts:
+					fmt.Fprintln(os.Stderr)
+					ask()
+					read()
+					continue
+				case <-time.After(100 * time.Millisecond):
+					return false
+				}
+			}
+			switch strings.ToLower(strings.TrimSpace(a.line)) {
+			case "y", "yes":
+				return true
+			}
+			return false
+		}
 	}
 }
 

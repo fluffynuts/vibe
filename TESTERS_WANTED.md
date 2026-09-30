@@ -71,6 +71,30 @@ Use `vibe -x` (cleanup): it shows a checklist and asks you to confirm.
 run `vibe -r` (re-init) in the same folder, and in the new session ask the agent what your
 favourite colour is. It should remember.
 
+### 3a. Ctrl-C while memories are being saved
+
+Ctrl-C is how you leave a session, so it's easy to keep pressing it after the session has ended,
+while vibe is saving the agent's memories. vibe should ask before quitting.
+
+1. Start a session, make sure the agent has a memory saved (as in test 3), and note what's in
+   `~/.vibe/memories/<sandbox>/`.
+2. Leave the session with Ctrl-C and **keep pressing Ctrl-C** a few times.
+
+**Expect:** once *"Backing up memories to …"* appears, Ctrl-C does not kill vibe. Instead it asks
+*"vibe is currently exporting memories from the sandbox - are you sure you want to quit? [y/N]"*.
+Pressing Ctrl-C again at that question just asks again.
+
+- Answer **`n`** (or just press Enter). vibe carries on and finishes with *"Backed up memories to
+  …"*. If the copy had already finished while the question was up, it says *"Memories were saved
+  to …"* instead.
+- Run it again and answer **`y`**. vibe prints *"Original local memories restored"* and exits.
+  `~/.vibe/memories/<sandbox>/` should hold exactly what it did before this session: nothing from
+  the interrupted copy. No `.<sandbox>.before-save-*` folder should be left in
+  `~/.vibe/memories/`.
+
+The copy is often quick, so you may need to press Ctrl-C promptly to catch it. With a lot of
+memories, or a slow machine, it's easier.
+
 ### 4. A second vibe in the same folder
 
 1. Start `vibe` in the throwaway folder, in terminal A.
@@ -122,6 +146,9 @@ cmd).
 - **Colours and redraws:** does any output show raw escape codes like `←[2K` or `\x1b[32m`
   instead of colour? If so, note which terminal it was. vibe turns on escape-code (VT) handling
   itself, but older consoles may not support it.
+- **Ctrl-C at the memory-save question** (test 3a): Windows ends a console read on Ctrl-C
+  instead of carrying on, and vibe handles that separately. Check that Ctrl-C at the question asks
+  again rather than being taken as an answer.
 - **Arrow keys, Esc, Shift+arrows** (test 2) are the riskiest part on Windows. The console reports
   keys differently from Unix terminals. Please try a lone Esc several times.
 - **Resizing the window while a picker is open** shouldn't change the selection or break the

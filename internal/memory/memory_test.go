@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -161,7 +162,7 @@ func TestSandboxPathOnWindowsFindsTheMountByItsMarker(t *testing.T) {
 	// The fake sbx runs commands on this machine, where the store's own
 	// path is where its marker shows up.
 	store := t.TempDir()
-	got, err := sandboxPath("any", store)
+	got, err := sandboxPath(context.Background(), "any", store)
 	if err != nil || got != store {
 		t.Errorf("sandboxPath(%q) = %q, %v; want the path itself", store, got, err)
 	}
@@ -172,7 +173,7 @@ func TestSandboxPathOnWindowsFindsTheMountByItsMarker(t *testing.T) {
 
 	// A store the sandbox can't see is an error, not a guess.
 	t.Setenv("PATH", t.TempDir())
-	if got, err := sandboxPath("any", store); err == nil {
+	if got, err := sandboxPath(context.Background(), "any", store); err == nil {
 		t.Errorf("sandboxPath with nothing mounted = %q, want an error", got)
 	}
 }

@@ -4,6 +4,7 @@
 package memory
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -50,17 +51,21 @@ const (
 // preserve — a missing or empty AgentPath counts as None. A sandbox that
 // isn't running cannot be asked; see sbxrun.Start for booting one first.
 func Probe(sandboxName string) Presence {
-	if !sbxrun.Reachable(sandboxName) {
+	return probe(context.Background(), sandboxName)
+}
+
+func probe(ctx context.Context, sandboxName string) Presence {
+	if !sbxrun.ReachableContext(ctx, sandboxName) {
 		return Unknown
 	}
 	// Every exec here is a plain argv with no shell script in it: sbx exec
 	// may join its arguments into one command line, and a `sh -c "<script>"`
 	// that gets split that way runs only the script's first word — which
 	// fails, and so reported every sandbox as having no memories.
-	if !sbxrun.ExecSilent(sandboxName, "test", "-d", agentPath) {
+	if !sbxrun.ExecSilentContext(ctx, sandboxName, "test", "-d", agentPath) {
 		return None
 	}
-	out, err := sbxrun.ExecCapture(sandboxName, "find", agentPath, "-mindepth", "1", "-maxdepth", "1", "-print", "-quit")
+	out, err := sbxrun.ExecCaptureContext(ctx, sandboxName, "find", agentPath, "-mindepth", "1", "-maxdepth", "1", "-print", "-quit")
 	if err != nil {
 		return Unknown
 	}
@@ -72,26 +77,37 @@ func Probe(sandboxName string) Presence {
 
 // copyInSandbox copies the contents of dir src into dir dst, inside the
 // sandbox, creating dst if need be.
-func copyInSandbox(sandboxName, src, dst string) bool {
-	return sbxrun.ExecSilent(sandboxName, "mkdir", "-p", dst) &&
-		sbxrun.ExecSilent(sandboxName, "cp", "-a", src+"/.", dst+"/")
+func copyInSandbox(ctx context.Context, sandboxName, src, dst string) bool {
+	return sbxrun.ExecSilentContext(ctx, sandboxName, "mkdir", "-p", dst) &&
+		sbxrun.ExecSilentContext(ctx, sandboxName, "cp", "-a", src+"/.", dst+"/")
 }
 
 // Backup copies memories out of a running sandbox into store — before it is
 // destroyed, or when a session ends. Returns false (no error) when the
 // sandbox has no memories to preserve, or cannot be asked.
 func Backup(sandboxName, store string) (bool, error) {
+	return BackupContext(context.Background(), sandboxName, store)
+}
+
+// BackupContext is Backup, abandoned part-way if ctx is cancelled — in which
+// case store may hold some of the sandbox's memories and not others (see
+// Snapshot). The sbx calls it makes don't see the terminal's Ctrl-C: with a
+// cancellable ctx, interrupting is the caller's to decide.
+func BackupContext(ctx context.Context, sandboxName, store string) (bool, error) {
 	if err := os.MkdirAll(store, 0o755); err != nil {
 		return false, fmt.Errorf("creating memory store: %w", err)
 	}
-	if Probe(sandboxName) != Some {
-		return false, nil
+	if probe(ctx, sandboxName) != Some {
+		return false, ctx.Err()
 	}
-	inside, err := sandboxPath(sandboxName, store)
+	inside, err := sandboxPath(ctx, sandboxName, store)
 	if err != nil {
 		return false, err
 	}
-	if !copyInSandbox(sandboxName, agentPath, inside) {
+	if !copyInSandbox(ctx, sandboxName, agentPath, inside) {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
 		return false, fmt.Errorf("could not copy memories to %s", store)
 	}
 	return true, nil
@@ -107,11 +123,11 @@ func Restore(sandboxName, store string) error {
 	if !sbxrun.WaitReachable(sandboxName, 120) {
 		return fmt.Errorf("sandbox not reachable — memories left in %s", store)
 	}
-	inside, err := sandboxPath(sandboxName, store)
+	inside, err := sandboxPath(context.Background(), sandboxName, store)
 	if err != nil {
 		return fmt.Errorf("%w — memories left in %s", err, store)
 	}
-	if !copyInSandbox(sandboxName, inside, agentPath) {
+	if !copyInSandbox(context.Background(), sandboxName, inside, agentPath) {
 		return fmt.Errorf("restore failed — memories left in %s", store)
 	}
 	return nil
@@ -126,7 +142,7 @@ var hostOS = runtime.GOOS
 // Linux sandbox, and sbx doesn't document what it becomes. So on Windows
 // the likely spellings are tried in turn, each checked against a marker file
 // dropped into store on the host, rather than guessing.
-func sandboxPath(sandboxName, store string) (string, error) {
+func sandboxPath(ctx context.Context, sandboxName, store string) (string, error) {
 	if hostOS != "windows" {
 		return store, nil
 	}
@@ -140,9 +156,12 @@ func sandboxPath(sandboxName, store string) (string, error) {
 	}
 	defer os.Remove(filepath.Join(store, marker))
 	for _, candidate := range windowsMountCandidates(store) {
-		if sbxrun.ExecSilent(sandboxName, "test", "-e", candidate+"/"+marker) {
+		if sbxrun.ExecSilentContext(ctx, sandboxName, "test", "-e", candidate+"/"+marker) {
 			return candidate, nil
 		}
+	}
+	if ctx.Err() != nil {
+		return "", ctx.Err()
 	}
 	return "", fmt.Errorf("could not find %s inside the sandbox", store)
 }

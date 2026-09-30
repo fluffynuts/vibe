@@ -4,6 +4,7 @@ package sbxrun
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,7 +23,19 @@ func Available() bool {
 
 // captureOut runs sbx with the given args and returns combined stdout.
 func captureOut(args ...string) (string, error) {
-	cmd := exec.Command("sbx", args...)
+	return captureOutContext(context.Background(), args...)
+}
+
+// captureOutContext is captureOut, killing sbx if ctx is cancelled. An sbx
+// run with a cancellable ctx is also kept apart from the terminal's Ctrl-C:
+// the caller has taken on deciding when it ends, and a Ctrl-C would
+// otherwise reach sbx before the caller could ask what was meant.
+func captureOutContext(ctx context.Context, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "sbx", args...)
+	if ctx.Done() != nil {
+		ignoreTerminalInterrupt(cmd)
+		cmd.WaitDelay = time.Second
+	}
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -92,8 +105,13 @@ func Exists(name string) bool {
 
 // Reachable reports whether the sandbox will currently accept an exec.
 func Reachable(name string) bool {
-	cmd := exec.Command("sbx", "exec", name, "--", "/bin/true")
-	return cmd.Run() == nil
+	return ReachableContext(context.Background(), name)
+}
+
+// ReachableContext is Reachable, giving up if ctx is cancelled.
+func ReachableContext(ctx context.Context, name string) bool {
+	_, err := captureOutContext(ctx, "exec", name, "--", "/bin/true")
+	return err == nil
 }
 
 // Status is one row of `sbx ls`.
@@ -270,14 +288,24 @@ func Remove(name string, force bool) error {
 
 // ExecCapture runs a command inside the sandbox and returns combined output.
 func ExecCapture(name string, args ...string) (string, error) {
+	return ExecCaptureContext(context.Background(), name, args...)
+}
+
+// ExecCaptureContext is ExecCapture, ending the exec if ctx is cancelled.
+func ExecCaptureContext(ctx context.Context, name string, args ...string) (string, error) {
 	full := append([]string{"exec", name, "--"}, args...)
-	return captureOut(full...)
+	return captureOutContext(ctx, full...)
 }
 
 // ExecSilent runs a command inside the sandbox, discarding output, and
 // reports only success/failure.
 func ExecSilent(name string, args ...string) bool {
-	_, err := ExecCapture(name, args...)
+	return ExecSilentContext(context.Background(), name, args...)
+}
+
+// ExecSilentContext is ExecSilent, ending the exec if ctx is cancelled.
+func ExecSilentContext(ctx context.Context, name string, args ...string) bool {
+	_, err := ExecCaptureContext(ctx, name, args...)
 	return err == nil
 }
 
