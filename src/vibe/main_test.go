@@ -606,6 +606,9 @@ func TestReplaceFileWhileTheTargetIsRunning(t *testing.T) {
 	}
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "vibe")
+	if runtime.GOOS == "windows" {
+		dest += ".exe" // Windows only runs what's named like a program
+	}
 	if err := fscopy.File(self, dest); err != nil {
 		t.Fatal(err)
 	}

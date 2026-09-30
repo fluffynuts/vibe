@@ -1085,7 +1085,8 @@ func setClaudeTheme(lay layout.Layout, profile string, doc kitspec.Doc, fromSand
 	if preferred != "" {
 		resolved, ok := claudetheme.Resolve(preferred, known)
 		if !ok {
-			note("  claude theme '%s' (from %s) is no longer in the kit — using the default", preferred, source)
+			note("  claude theme '%s' (from %s) isn't among the themes in %s — using the default",
+				preferred, source, displayPath(filepath.Join(lay.DefaultsDir(), "agent-files", ".claude", "themes")))
 		}
 		choice = resolved
 	}
