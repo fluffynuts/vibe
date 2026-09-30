@@ -68,9 +68,12 @@ type Strategy struct {
 // StrategyValues are the --update-strategy values ParseStrategy accepts.
 const StrategyValues = "keep, update, merge,keep or merge,update (merge alone means merge,keep)"
 
-// ParseStrategy reads an --update-strategy value.
+// ParseStrategy reads an --update-strategy value. Spaces separate as well
+// as commas: PowerShell turns an unquoted merge,keep into an array, which
+// reaches vibe as "merge keep".
 func ParseStrategy(s string) (Strategy, error) {
-	switch strings.ReplaceAll(strings.ToLower(s), " ", "") {
+	words := strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return r == ',' || r == ' ' || r == '\t' })
+	switch strings.Join(words, ",") {
 	case "keep":
 		return Strategy{Given: true, Otherwise: Keep}, nil
 	case "update":

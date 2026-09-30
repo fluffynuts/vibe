@@ -111,23 +111,35 @@ jobs:
             find dist -ls
             exit 1
           fi
+          # Published under fixed names (vibe-linux-amd64.zip, ...), so
+          # releases/latest/download/<name> always works for the install
+          # scripts and vibe --upgrade; the version is in the tag, in the
+          # folder inside each zip, and in vibe --version. SHA256SUMS lets
+          # them check a download before unpacking it.
+          mkdir -p release
           for zip in "${zips[@]}"; do
             unzip -tq "$zip" >/dev/null || { echo "::error::$zip is not a valid zip"; exit 1; }
-            echo "$zip"
+            name=$(basename "$zip")
+            cp "$zip" "release/${name/-$version/}"
           done
+          (cd release && sha256sum vibe-*.zip >SHA256SUMS)
+          cat release/SHA256SUMS
+          assets=(release/vibe-*.zip release/SHA256SUMS)
           notes=$(cat <<EOF
-          Download the zip for your platform, unzip it anywhere, and run \`vibe\` from the folder
-          it makes (or \`vibe --install\` to copy it into place). The binary finds everything it
-          needs beside itself, so keep the folder's contents together.
+          Install or upgrade with the install script (see the readme), or \`vibe --upgrade\` once vibe
+          is installed. Or by hand: download the zip for your platform, unzip it anywhere, and run
+          \`vibe --install\` from the folder it makes.
 
           | Platform | Zip |
           |---|---|
-          | Linux (x86-64) | \`vibe-$version-linux-amd64.zip\` |
-          | Linux (ARM) | \`vibe-$version-linux-arm64.zip\` |
-          | macOS (Apple Silicon) | \`vibe-$version-macos-arm64.zip\` |
-          | macOS (Intel) | \`vibe-$version-macos-amd64.zip\` |
-          | Windows (x86-64) | \`vibe-$version-windows-amd64.zip\` |
-          | Windows (ARM) | \`vibe-$version-windows-arm64.zip\` |
+          | Linux (x86-64) | \`vibe-linux-amd64.zip\` |
+          | Linux (ARM) | \`vibe-linux-arm64.zip\` |
+          | macOS (Apple Silicon) | \`vibe-macos-arm64.zip\` |
+          | macOS (Intel) | \`vibe-macos-amd64.zip\` |
+          | Windows (x86-64) | \`vibe-windows-amd64.zip\` |
+          | Windows (ARM) | \`vibe-windows-arm64.zip\` |
+
+          \`SHA256SUMS\` holds each zip's checksum. The install scripts and \`vibe --upgrade\` check it.
 
           macOS: the binary isn't signed, so if it's blocked after downloading in a browser, run
           \`xattr -dr com.apple.quarantine <folder>\` once.
@@ -136,9 +148,9 @@ jobs:
           # A re-run of the same workflow run finds its release already made,
           # and replaces the zips rather than failing.
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "${zips[@]}" --clobber
+            gh release upload "$tag" "${assets[@]}" --clobber
           else
-            gh release create "$tag" "${zips[@]}" \
+            gh release create "$tag" "${assets[@]}" \
               --target "$GITHUB_SHA" \
               --title "vibe $version" \
               --notes "$notes" \

@@ -12,17 +12,65 @@ in theory, any agent supported by sbx can be used.
 
 This software is in alpha state. It works reasonably well for me, but I make no guarantees.
 
+## Install
+
+vibe needs [Docker Sandboxes (`sbx`)](https://github.com/docker/sbx-releases) installed.
+
+**Linux and macOS:**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/fluffynuts/vibe/master/install.sh | sh
+```
+
+**Windows** (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/fluffynuts/vibe/master/install.ps1 | iex
+```
+
+Either one downloads the latest release for your machine, checks it against the release's
+checksums, and runs `vibe --install` from it. That puts the `vibe` binary in `~/.local/bin` and
+its configuration in `~/.vibe`, and tells you if `~/.local/bin` needs adding to your `PATH`.
+`install.sh` needs `curl` or `wget`, and `unzip` (or `python3`).
+
+Run the same command again to upgrade, or, once vibe is installed:
+
+```sh
+vibe --upgrade
+```
+
+To pass options to the `vibe --install` they run, such as an `--update-strategy` (see
+[Upgrading](#upgrading)):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/fluffynuts/vibe/master/install.sh | sh -s -- --update-strategy merge,keep
+```
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/fluffynuts/vibe/master/install.ps1))) --update-strategy 'merge,keep'
+```
+
 ## Download
 
 Every push to master publishes a [release](https://github.com/fluffynuts/vibe/releases/latest)
-with a zip per platform: Linux, macOS and Windows, each for x86-64 and ARM. Unzip it anywhere and
-run `vibe` from the folder it makes, or `vibe --install` to copy it into `~/.vibe` and
-`~/.local/bin`. The binary reads its bundle from beside itself, so keep the folder together.
+with a zip per platform, each for x86-64 and ARM: `vibe-linux-amd64.zip`,
+`vibe-macos-arm64.zip`, `vibe-windows-amd64.zip` and so on, plus a `SHA256SUMS`. The names don't
+change between releases, so `https://github.com/fluffynuts/vibe/releases/latest/download/<name>`
+always gets the newest. To install by hand, unzip it anywhere and run `vibe --install` from the
+folder it makes. The binary reads its bundle from beside itself, so keep the folder together.
 macOS may block the unsigned binary the first time: `xattr -dr com.apple.quarantine <folder>`.
 
 ### Upgrading
 
-Run `vibe --install` from the new release's folder. It goes through every file the package ships
+`vibe --upgrade` (`-U`) checks GitHub for a newer release. If there is one, it downloads this
+machine's zip into a temporary folder, checks it against the release's `SHA256SUMS`, unpacks it
+into another, and runs `vibe --install` from there. That replaces the installed `vibe`, even
+while another vibe session is running it. It says "already up to date" when there's nothing
+newer, and `-f` reinstalls anyway. `-f` and `--update-strategy` are passed on to the
+`--install` it runs.
+
+`vibe --install`, run from a release's folder (which is all the install scripts and `--upgrade`
+do), goes through every file the package ships
 into `~/.vibe` (`config.yaml`, `settings.yaml`, `defaults/`, `profiles/`, `library/`) and keeps
 your edits:
 
@@ -100,6 +148,8 @@ vibe -i/--install          # copy the bundle into ~/.vibe and the binary into
 vibe -i -u/--update-strategy merge,keep
                            # ...settling files changed on both sides without
                            #    asking: keep, update, merge,keep, merge,update
+vibe -U/--upgrade          # download the latest release from GitHub and
+                           #    --install it (-f: even when up to date)
 vibe -v/--version          # print the version, commit and build date
 ```
 

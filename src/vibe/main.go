@@ -31,6 +31,7 @@ import (
 	"vibe/internal/prompt"
 	"vibe/internal/running"
 	"vibe/internal/sbxrun"
+	"vibe/internal/selfupdate"
 	"vibe/internal/settings"
 	"vibe/internal/sidebyside"
 	"vibe/internal/state"
@@ -57,6 +58,9 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe -l/--list             list every known sandbox and its status
   vibe -x/--cleanup          pick sandboxes from a checklist and delete them;
                              the profiles they were built from are kept
+  vibe -U/--upgrade          download the latest release for this machine
+                             from GitHub and --install it (-f reinstalls
+                             when already up to date; -u is passed on)
   vibe -v/--version          print the version and the commit it was built from
   vibe -i/--install          copy defaults/profiles/library, config.yaml and
                              settings.yaml into ~/.vibe, and the vibe binary
@@ -117,11 +121,11 @@ func run(argv []string) error {
 		fmt.Println(vibe.String())
 		return nil
 	}
-	if args.UpdateStrategy != "" && !args.Install {
-		return fmt.Errorf("--update-strategy only applies to --install")
+	if args.UpdateStrategy != "" && !args.Install && !args.Upgrade {
+		return fmt.Errorf("--update-strategy only applies to --install and --upgrade")
 	}
 	if args.ExclusiveActions() > 1 {
-		return fmt.Errorf("--stop, --ssh, --re-init, --re-create, --re-compose, --list, --install and --cleanup are mutually exclusive")
+		return fmt.Errorf("--stop, --ssh, --re-init, --re-create, --re-compose, --list, --install, --upgrade and --cleanup are mutually exclusive")
 	}
 
 	vibeHome := vibeHomeDir()
@@ -131,6 +135,13 @@ func run(argv []string) error {
 			return fmt.Errorf("--list takes no path argument")
 		}
 		return doList()
+	}
+
+	if args.Upgrade {
+		if args.Path != "" {
+			return fmt.Errorf("--upgrade takes no path argument")
+		}
+		return doUpgrade(args.Force, args.UpdateStrategy)
 	}
 
 	if args.Install {
@@ -624,6 +635,74 @@ func doInstall(lay layout.Layout, force bool, strategyValue string) error {
 		return fmt.Errorf("upstream changes left unmerged in %d file(s)", len(res.Unresolved))
 	}
 	return binErr
+}
+
+// doUpgrade fetches the latest release for this machine from GitHub into a
+// temporary folder, checks it against the release's checksums, unpacks it
+// into another, and runs --install from there — which replaces this vibe
+// and upgrades ~/.vibe. -f reinstalls even when already up to date, and it
+// and --update-strategy are passed on to that --install.
+func doUpgrade(force bool, strategyValue string) error {
+	if strategyValue != "" {
+		if _, err := upgrade.ParseStrategy(strategyValue); err != nil {
+			return err // before downloading anything
+		}
+	}
+	tag, err := selfupdate.LatestTag()
+	if err != nil {
+		return err
+	}
+	latest := strings.TrimPrefix(tag, "v")
+	running := vibe.FullVersion()
+	if !force && !selfupdate.Newer(latest, running) {
+		note("already up to date (%s)", running)
+		return nil
+	}
+	note("upgrading vibe %s to %s", running, latest)
+
+	downloads, err := os.MkdirTemp("", "vibe-download-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(downloads)
+	asset := selfupdate.AssetName(runtime.GOOS, runtime.GOARCH)
+	status := newStatusLine()
+	status.show("Downloading %s", asset)
+	zipPath, err := selfupdate.Download(tag, asset, downloads)
+	if err != nil {
+		status.done("Downloading %s failed", asset)
+		return err
+	}
+	status.done("Downloaded %s and checked it against %s", asset, selfupdate.SumsFile)
+
+	unpacked, err := os.MkdirTemp("", "vibe-upgrade-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(unpacked)
+	bundle, err := selfupdate.Unzip(zipPath, unpacked)
+	if err != nil {
+		return err
+	}
+	exe := filepath.Join(bundle, "vibe")
+	if runtime.GOOS == "windows" {
+		exe += ".exe"
+	}
+
+	args := []string{"--install"}
+	if force {
+		args = append(args, "--force")
+	}
+	if strategyValue != "" {
+		args = append(args, "--update-strategy", strategyValue)
+	}
+	note("running %s from the new release", strings.Join(args, " "))
+	cmd := exec.Command(exe, args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("the new release's --install didn't finish cleanly (see above): %w", err)
+	}
+	return nil
 }
 
 // decideConflict asks the user to settle a file both they and the package

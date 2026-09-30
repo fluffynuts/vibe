@@ -268,6 +268,7 @@ func TestParseStrategy(t *testing.T) {
 		"merge":         {Given: true, Merge: true, Otherwise: Keep},
 		"merge,keep":    {Given: true, Merge: true, Otherwise: Keep},
 		"Merge, Update": {Given: true, Merge: true, Otherwise: Update},
+		"merge keep":    {Given: true, Merge: true, Otherwise: Keep}, // PowerShell's unquoted merge,keep
 	} {
 		if got, err := ParseStrategy(in); err != nil || got != want {
 			t.Errorf("ParseStrategy(%q) = %+v, %v; want %+v", in, got, err, want)

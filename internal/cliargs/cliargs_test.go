@@ -163,3 +163,18 @@ func TestParseUpdateStrategy(t *testing.T) {
 		t.Error("--update-strategy with no value was accepted")
 	}
 }
+
+func TestParseUpgrade(t *testing.T) {
+	for _, arg := range []string{"-U", "--upgrade"} {
+		got, err := Parse([]string{arg, "-u", "merge,keep"})
+		if err != nil || !got.Upgrade || got.UpdateStrategy != "merge,keep" {
+			t.Errorf("Parse(%s -u merge,keep) = %+v, %v", arg, got, err)
+		}
+		if got.ExclusiveActions() != 1 {
+			t.Errorf("--upgrade counts as %d actions, want 1", got.ExclusiveActions())
+		}
+	}
+	if both, _ := Parse([]string{"-U", "-i"}); both.ExclusiveActions() != 2 {
+		t.Error("--upgrade with --install should be rejected as two actions")
+	}
+}
