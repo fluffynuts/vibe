@@ -1,0 +1,31 @@
+#!/bin/sh
+# vibe: description: Register the Claude Code hooks that make the agent always give diffity's real URL
+# vibe: user: 0
+# vibe: registers: diffity-url-hook
+# Managed settings rather than ~/.claude/settings.json: that file is the
+# user's, deployed only-if-missing after install steps have run, so writing
+# it here would stop the defaults' own copy from ever being deployed. Claude
+# Code merges the hooks of every managed-settings.d drop-in with the user's.
+# The hook script itself is an agent-file, not on disk yet — which is fine,
+# since nothing runs it until the agent's first session.
+DIR=/etc/claude-code/managed-settings.d
+mkdir -p "$DIR" || { echo "WARN: could not create $DIR" >>/tmp/sbx-setup.log; exit 0; }
+cat >"$DIR/50-vibe-diffity-url.json" <<'JSON' || echo "WARN: could not register the diffity URL hooks" >>/tmp/sbx-setup.log
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Skill",
+        "hooks": [{ "type": "command", "command": "/home/agent/.local/bin/diffity-url-hook", "timeout": 15 }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "/home/agent/.local/bin/diffity-url-hook", "timeout": 15 }]
+      }
+    ]
+  }
+}
+JSON
+chmod 644 "$DIR/50-vibe-diffity-url.json" 2>/dev/null
+true

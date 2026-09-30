@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"vibe/internal/directive"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
 	"vibe/internal/library"
@@ -22,7 +23,9 @@ import (
 //
 // Only names some agent-files tree actually ships count: ~/.local/bin also
 // holds what the sandbox image put there (the claude binary, say), which is
-// present before any install step runs.
+// present before any install step runs. A step that only writes a helper's
+// path into configuration — registering a hook that runs long after setup,
+// say — names it in a "# vibe: registers: <helper>, ..." directive.
 func TestInstallScriptsDoNotCallAgentFiles(t *testing.T) {
 	root := repoRoot(t)
 	helpers := agentFilesHelpers(t, root)
@@ -38,13 +41,20 @@ func TestInstallScriptsDoNotCallAgentFiles(t *testing.T) {
 			if readErr != nil {
 				return readErr
 			}
+			registered := map[string]bool{}
+			for _, name := range strings.Split(directive.Parse(content)["registers"], ",") {
+				registered[strings.TrimSpace(name)] = true
+			}
 			for _, line := range strings.Split(string(content), "\n") {
 				code := strings.TrimSpace(line)
 				if code == "" || strings.HasPrefix(code, "#") {
 					continue // a comment may well explain this very rule
 				}
 				for _, helper := range helpers {
-					if strings.Contains(code, kitspec.AgentHome+"/.local/bin/"+helper) {
+					if registered[helper] {
+						continue
+					}
+					if namesHelper(code, kitspec.AgentHome+"/.local/bin/"+helper) {
 						rel, _ := filepath.Rel(root, path)
 						t.Errorf("%s calls an agent-files helper: %s\n"+
 							"install scripts run before agent-files are deployed — inline the work instead", rel, code)
@@ -55,6 +65,21 @@ func TestInstallScriptsDoNotCallAgentFiles(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatalf("walking %s: %v", tree, err)
+		}
+	}
+}
+
+// namesHelper reports whether code mentions path as a whole name — not as
+// the start of a longer one (diffity-url within diffity-url-hook).
+func namesHelper(code, path string) bool {
+	for rest := code; ; {
+		i := strings.Index(rest, path)
+		if i < 0 {
+			return false
+		}
+		rest = rest[i+len(path):]
+		if rest == "" || !strings.ContainsAny(rest[:1], "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.") {
+			return true
 		}
 	}
 }

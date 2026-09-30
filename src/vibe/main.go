@@ -1398,7 +1398,7 @@ func reorderFrom(question string, labels []string) ([]string, bool) {
 // before the launcher is on disk) then hands off to `sbx run` in the
 // foreground.
 func finish(vibeHome, name string) error {
-	go nudgeOnStart(name)
+	go nudgeOnStart(vibeHome, name)
 	sessionMu.Lock()
 	inSession = true
 	sessionMu.Unlock()
@@ -1590,7 +1590,7 @@ func (s statusLine) done(format string, a ...interface{}) {
 	note(format, a...)
 }
 
-func nudgeOnStart(name string) {
+func nudgeOnStart(vibeHome, name string) {
 	logPath := filepath.Join(os.TempDir(), "vibe-nudge.log")
 	logf := func(format string, a ...interface{}) {
 		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
@@ -1605,11 +1605,89 @@ func nudgeOnStart(name string) {
 		logf("gave up waiting for reachability")
 		return
 	}
+	writePublishedURLs(vibeHome, name, logf)
 	if err := sbxrun.ExecDetached(name, "/home/agent/.local/bin/on-start"); err != nil {
 		logf("on-start nudge failed: %v", err)
 		return
 	}
 	logf("on-start nudge dispatched")
+}
+
+// publishedURLDir is where, inside the sandbox, each published service's
+// URL is written at every session start — one file per publish entry,
+// named after it (".../published/diffity"), holding the URL the host
+// reaches it on (and a second, "unverified: ..." line when sbx couldn't
+// confirm it). It is what the sandbox's own helpers (diffity-url) read
+// first: unlike the urlEnv variable, fixed when the sandbox was created, it
+// is checked against sbx's live port mappings every time.
+const publishedURLDir = kitspec.AgentHome + "/.local/state/vibe/published"
+
+// writePublishedURLs writes publishedURLDir for a running sandbox. Each URL
+// is built from the host port sbx reports the mapping actually has; the
+// port vibe recorded at creation is used only when sbx can't say, and the
+// log records which it was.
+func writePublishedURLs(vibeHome, name string, logf func(string, ...interface{})) {
+	inst, found, err := state.Load(vibeHome, name)
+	if err != nil || !found || len(inst.Publish) == 0 {
+		return
+	}
+	live, err := sbxrun.PublishedPorts(name)
+	if err != nil {
+		logf("could not read live port mappings, using recorded ones: %v", err)
+	}
+	for _, u := range publishedURLs(inst.Publish, live) {
+		switch {
+		case u.unverified:
+			logf("%s: sbx reports no mapping for %d; using recorded host port %d", u.name, u.containerPort, u.hostPort)
+		case u.hostPort != u.recordedPort:
+			logf("%s: sbx maps %d to host port %d, not the recorded %d", u.name, u.containerPort, u.hostPort, u.recordedPort)
+		}
+		if err := sbxrun.WriteFile(name, publishedURLDir+"/"+u.name, u.fileContent()); err != nil {
+			logf("%s: %v", u.name, err)
+		}
+	}
+}
+
+type publishedURL struct {
+	name                    string
+	containerPort, hostPort int
+	recordedPort            int
+	unverified              bool
+}
+
+func (u publishedURL) url() string {
+	return fmt.Sprintf("http://localhost:%d", u.hostPort)
+}
+
+// fileContent is the URL on the first line, followed — when sbx couldn't
+// confirm the port — by a line saying so, which the sandbox's helpers pass
+// on as a warning rather than presenting the URL as certain.
+func (u publishedURL) fileContent() string {
+	if u.unverified {
+		return u.url() + "\nunverified: sbx did not report this mapping; this is the port recorded at creation\n"
+	}
+	return u.url() + "\n"
+}
+
+// publishedURLs picks, for each publish entry, the URL of its first port —
+// the one urlEnv names — preferring the live mapping over the recorded one.
+func publishedURLs(records []state.PublishRecord, live map[int]int) []publishedURL {
+	var urls []publishedURL
+	seen := map[string]bool{}
+	for _, rec := range records {
+		if rec.Name == "" || seen[rec.Name] {
+			continue
+		}
+		seen[rec.Name] = true
+		u := publishedURL{name: rec.Name, containerPort: rec.ContainerPort, hostPort: rec.HostPort, recordedPort: rec.HostPort}
+		if hostPort, ok := live[rec.ContainerPort]; ok {
+			u.hostPort = hostPort
+		} else {
+			u.unverified = true
+		}
+		urls = append(urls, u)
+	}
+	return urls
 }
 
 func reportPortHolder(port int) {

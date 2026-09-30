@@ -11,6 +11,7 @@ import (
 	"vibe/internal/cliargs"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
+	"vibe/internal/state"
 )
 
 // bundledProfile is the profile the repo ships that the golden-path tests
@@ -59,7 +60,7 @@ func TestLoadKitBundledProfile(t *testing.T) {
 
 	installSteps, _ := setup["install"].([]interface{})
 	const defaultSteps = 4
-	const wantSteps = defaultSteps + 11 // default scripts + the profile's own
+	const wantSteps = defaultSteps + 12 // default scripts + the profile's own
 	if len(installSteps) != wantSteps {
 		t.Fatalf("expected %d install steps, got %d", wantSteps, len(installSteps))
 	}
@@ -429,5 +430,30 @@ func TestReComposeRejectsAFeatureThatIsGone(t *testing.T) {
 	err := doReCompose(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "foo-browser", t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "did you mean 'diffity'?") {
 		t.Errorf("error for a vanished feature = %v", err)
+	}
+}
+
+func TestPublishedURLsPreferTheLiveMapping(t *testing.T) {
+	records := []state.PublishRecord{
+		{Name: "diffity", ContainerPort: 5391, HostPort: 5396},
+		{Name: "api", ContainerPort: 8080, HostPort: 8080},
+		{Name: "api", ContainerPort: 8081, HostPort: 8082}, // not the entry's first port
+	}
+	live := map[int]int{5391: 5399}
+	got := publishedURLs(records, live)
+	if len(got) != 2 {
+		t.Fatalf("publishedURLs = %+v, want one per publish entry", got)
+	}
+	if got[0].name != "diffity" || got[0].url() != "http://localhost:5399" || got[0].unverified {
+		t.Errorf("diffity = %+v, want the live port 5399, verified", got[0])
+	}
+	if got[0].fileContent() != "http://localhost:5399\n" {
+		t.Errorf("verified file content = %q", got[0].fileContent())
+	}
+	if got[1].name != "api" || got[1].url() != "http://localhost:8080" || !got[1].unverified {
+		t.Errorf("api = %+v, want the recorded port 8080, marked unverified", got[1])
+	}
+	if c := got[1].fileContent(); !strings.HasPrefix(c, "http://localhost:8080\nunverified: ") {
+		t.Errorf("unverified file content = %q", c)
 	}
 }

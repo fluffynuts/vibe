@@ -28,10 +28,19 @@ End every command that produces something to look at — `/diffity-diff`,
 
 and giving the user exactly what it prints, e.g. after reviewing against
 master: `http://localhost:5396?ref=master`. Pass the same ref the command
-used, and no argument when it had none. The script reads `VIBE_DIFFITY_URL`,
-which is where the real host port is; it warns on stderr when that variable
-is missing, and a URL printed with that warning should not be handed over as
-if it were right.
+used, and no argument when it had none. Do the same after anything that
+changes a review — resolving, replying to or dismissing comments — so the
+user always has the link to go and look. This overrides the diffity skills'
+own "running at http://localhost:5391" and "check your browser" endings.
+
+The script reads the URL vibe checks against sbx's live port mapping at
+every session start, falling back to `VIBE_DIFFITY_URL` from when the sandbox
+was created. It warns on stderr whenever it can't vouch for the port; pass
+that warning on with the URL rather than presenting it as certain.
+
+A hook holds you to this: a reply in a turn that used diffity, while a
+viewer is running, is sent back if it lacks the URL or quotes another
+localhost port.
 
 If the user says they left comments but `diffity agent list` shows none,
 the session's ref no longer matches the diff they commented on (usually

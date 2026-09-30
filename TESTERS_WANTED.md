@@ -135,6 +135,22 @@ profile's sandbox. When vibe reports the clash, it should list which process hol
 the platform sections for which tool it uses). If the tool is missing it should skip that part
 quietly, never fail.
 
+### 8. The diffity review URL
+
+This needs a profile with the diffity feature, recreated with `vibe -r` (or `vibe -C` for a guided
+profile made before this change).
+
+1. Start a session and run `sbx ports <sandbox>` in another terminal. Note the host port mapped to
+   5391.
+2. Ask the agent for `/diffity-diff`, then `/diffity-review`, then `/diffity-resolve` after
+   leaving a comment in the viewer.
+
+**Expect:** every one of those replies ends with a `http://localhost:<port>…` URL whose port is
+the one `sbx ports` showed (not 5391, unless that really is the mapping), and the URL opens in your
+browser. Inside the sandbox, `cat ~/.local/state/vibe/published/diffity` should show the same URL
+with no `unverified:` line. If there is one, or the file is missing, please include the output of
+`sbx ports <sandbox> --json`: vibe has to guess that format, since sbx doesn't document it.
+
 ## Windows
 
 This platform is the priority. Please say which terminal you used (Windows Terminal, the old

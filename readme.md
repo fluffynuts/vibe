@@ -222,6 +222,13 @@ publish:              # ports to publish, and (optionally) a stable URL env var 
     urlEnv: VIBE_DIFFITY_URL   # sandbox env var set to http://localhost:<host port>
 ```
 
+The host port behind each `publish` entry is fixed in `urlEnv` when the sandbox is created, but a
+mapping can change afterwards (`sbx ports --publish`). So at every session start vibe also asks
+`sbx ports` for the live mappings and writes each entry's URL to
+`/home/agent/.local/state/vibe/published/<name>` inside the sandbox, for helpers there to read in
+preference to the variable. If sbx can't confirm a port, the file says so on a second
+`unverified:` line.
+
 `publish` entries append across base → profile, so a profile only needs to list what it's adding.
 `defaultFeatures` is the exception that replaces rather than appends, and it is read from the base
 settings only — it is what the guided picker starts with ticked, so it is consulted before the
@@ -256,6 +263,16 @@ the profile's own (lists append in feature order; anything the profile itself se
 feature therefore carries the ports, permissions and instructions its tooling needs — picking
 `diffity` is what gives a sandbox the review viewer, its published port and `$VIBE_DIFFITY_URL`,
 the `registry.npmjs.org` egress rule and the agent instructions for using it.
+
+It also makes sure the agent gives you the review URL, and that it's the right one. The diffity
+skills tell the agent the viewer is "running at http://localhost:5391", which is the sandbox's
+side of the port mapping, or just to "check your browser". So `diffity` registers two Claude Code
+hooks, in `/etc/claude-code/managed-settings.d/` so that your own `~/.claude/settings.json` is
+left alone. The first time a turn touches diffity, the agent is told the URL your browser can
+open, which `diffity-url` reads from the live-checked `published/diffity` file. When the agent
+tries to finish a turn that used diffity while a viewer is running, a reply that lacks that URL,
+or quotes another localhost port, is sent back to be fixed. This happens once per turn, so it
+can't loop. A profile composed before this existed picks it up with `vibe -C`.
 
 A startup script is also how a feature keeps itself current: install scripts run once, when the
 sandbox is created, so `diffity` ships an `update-diffity` and an `update-diffity-skills` that the
