@@ -29,6 +29,12 @@ vet:
 .PHONY: check
 check: vet test
 
+# A release zip for GOOS/GOARCH (default: this machine) in dist/ — see
+# make.sh, which does the packaging for both.
+.PHONY: dist
+dist:
+	./make.sh dist
+
 .PHONY: clean
 clean:
 	rm -f $(BINARY)

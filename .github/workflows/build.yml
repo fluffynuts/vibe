@@ -1,0 +1,69 @@
+# Builds a zip for every platform on every push: the vibe binary plus the
+# bundle it reads from beside itself (see make.sh's dist target, which does
+# the packaging). The zips are attached to the workflow run as artifacts.
+name: build
+
+on:
+  push:
+  workflow_dispatch:
+
+# Reading the repo is all this needs: uploading a run's artifacts is
+# authorised by the run itself, not by the token's permissions.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+
+  package:
+    name: package (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+    # Every target is cross-compiled from Linux: vibe has no cgo, and zip(1)
+    # there is what keeps the binary's executable bit in the archive.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Package
+        id: dist
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          # The commit goes into the name so zips from different pushes
+          # can't be confused once downloaded.
+          DIST_LABEL: ${{ github.sha }}
+        run: |
+          DIST_LABEL="${DIST_LABEL:0:7}"
+          zip=$(DIST_LABEL="$DIST_LABEL" ./make.sh dist | tail -n 1)
+          echo "zip=$zip" >>"$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.dist.outputs.zip }}
+          # Upload the zip as it is: the artifact's own zipping would wrap it
+          # in a second zip, and drops file permissions besides.
+          archive: false
+          if-no-files-found: error

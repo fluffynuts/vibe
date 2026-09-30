@@ -14,6 +14,11 @@ do what they say). Without make, `./make.sh` (bash) and `./make.ps1` (PowerShell
 targets. The binary finds its bundle relative to its own location, so leave it where it is built
 and put it on `PATH` with a symlink — or use `vibe --install`.
 
+`make dist` (or `./make.sh dist`) packages a zip in `dist/` holding the binary and that bundle,
+for this machine or for whatever `GOOS`/`GOARCH` are set to. Every push to GitHub does this for
+Linux, macOS and Windows on both amd64 and arm64 (`.github/workflows/build.yml`), after running
+the tests on all three, and attaches the zips to the workflow run.
+
 The version lives in one place: the `VERSION` file at the repo root, a bare semantic version
 (`1.4.0`) that is bumped by hand for a release. It is embedded into the binary, and `vibe
 --version` prints it along with the commit it was built from, which `go build` records by itself

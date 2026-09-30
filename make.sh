@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 # vibe — build, test and tidy the CLI, for machines without make.
-# Mirrors the Makefile: ./make.sh [build|test|vet|check|clean]... (default: build)
+# Mirrors the Makefile: ./make.sh [build|test|vet|check|clean|dist]... (default: build)
 #
 # The binary resolves its bundle (defaults/, profiles/, config.yaml,
 # settings.yaml) relative to its own location, so it is built into the repo
 # root and must stay there. Put it on $PATH with a symlink, never a copy.
 #
 # GO and BINARY can be overridden from the environment, as with make.
+#
+# dist packages a release zip in dist/: the binary plus the bundle it needs
+# beside it, under one top-level folder. It builds for GOOS/GOARCH when those
+# are set (cross-compiling, with cgo off), else for this machine, and puts
+# DIST_LABEL, when set, into the name: vibe-<version>[-<label>]-<os>-<arch>.
+# The zip is made with zip(1) so the binary keeps its executable bit.
 
 set -euo pipefail
 
@@ -42,6 +48,32 @@ target_check() {
   target_test
 }
 
+# The files the binary reads from beside itself (see pathresolve.BundleRoot),
+# plus what a person unpacking the zip wants to read.
+BUNDLE=(config.yaml settings.yaml defaults profiles library readme.md VERSION)
+
+target_dist() {
+  local goos goarch os_name version name exe stage
+  goos="${GOOS:-$("$GO" env GOOS)}"
+  goarch="${GOARCH:-$("$GO" env GOARCH)}"
+  os_name="$goos"
+  [[ "$goos" == darwin ]] && os_name=macos
+  version="$(tr -d '[:space:]' <VERSION)"
+  name="vibe-$version${DIST_LABEL:+-$DIST_LABEL}-$os_name-$goarch"
+  exe=vibe
+  [[ "$goos" == windows ]] && exe=vibe.exe
+  stage="dist/$name"
+
+  rm -rf "$stage" "$stage.zip"
+  mkdir -p "$stage"
+  echo "GOOS=$goos GOARCH=$goarch $GO build -o $stage/$exe $PKG"
+  CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" "$GO" build -trimpath -o "$stage/$exe" "$PKG"
+  cp -R "${BUNDLE[@]}" "$stage/"
+  (cd dist && zip -qrX "$name.zip" "$name")
+  rm -rf "$stage"
+  echo "dist/$name.zip"
+}
+
 target_clean() {
   echo "rm -f $BINARY"
   rm -f "$BINARY"
@@ -53,9 +85,9 @@ target_clean() {
 
 for target in "$@"; do
   case "$target" in
-    build | test | vet | check | clean) "target_$target" ;;
+    build | test | vet | check | clean | dist) "target_$target" ;;
     *)
-      echo "make.sh: no such target '$target' (build, test, vet, check, clean)" >&2
+      echo "make.sh: no such target '$target' (build, test, vet, check, clean, dist)" >&2
       exit 2
       ;;
   esac
