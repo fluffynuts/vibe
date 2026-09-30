@@ -34,7 +34,7 @@ check() {
   [[ $code -eq 124 ]] && out="$out"$'\n'"(timed out after $STEP_TIMEOUT s)"
   say "### $title"
   say ""
-  say "\`$*\` → exit $code"
+  say "\`$*\` -> exit $code"
   say ""
   say '```'
   say "$(printf '%s' "$out" | tail -n 60)"

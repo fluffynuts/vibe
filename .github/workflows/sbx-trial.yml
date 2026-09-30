@@ -43,16 +43,29 @@ jobs:
           command -v sbx
           sbx version
 
-      # Optional: with DOCKER_USERNAME and DOCKER_TOKEN secrets set, sign in
-      # first. Without them the trial runs signed out, which is itself worth
-      # knowing.
+      # Nothing starts sandboxd on a runner, and the first trial found it not
+      # running. --policy sets the global network policy up front, so it
+      # can't stop to ask; allow-all, since this runner is thrown away and
+      # the trial shouldn't fail on an egress rule.
+      - name: Start the sbx daemon
+        run: |
+          sbx daemon start --detach --policy allow-all
+          for _ in $(seq 1 30); do
+            sbx daemon status && exit 0
+            sleep 2
+          done
+          echo "::warning::sandboxd did not report healthy within a minute"
+
+      # Every sandbox command needs a Docker sign-in (the first trial stopped
+      # at "Not authenticated to Docker"), which the DOCKER_USERNAME and
+      # DOCKER_TOKEN secrets provide.
       - name: Sign in to Docker
         env:
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
           DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
         run: |
           if [ -z "$DOCKER_USERNAME" ] || [ -z "$DOCKER_TOKEN" ]; then
-            echo "no DOCKER_USERNAME/DOCKER_TOKEN secrets — running signed out"
+            echo "::warning::no DOCKER_USERNAME/DOCKER_TOKEN secrets — every sandbox check will fail signed out"
             exit 0
           fi
           printf '%s' "$DOCKER_TOKEN" | sbx login --username "$DOCKER_USERNAME" --password-stdin \
