@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -226,5 +227,30 @@ func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A .updated copy left by vibe --install must never run or be deployed.
+func TestUpdatedCopiesAreLeftOutOfTheKit(t *testing.T) {
+	dir := t.TempDir()
+	for _, rel := range []string{
+		"install-scripts/01-real", "install-scripts/01-real.updated",
+		"agent-files/.local/bin/tool", "agent-files/.local/bin/tool.updated",
+	} {
+		path := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("#!/bin/sh\necho hi\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	steps, err := InstallSteps(filepath.Join(dir, "install-scripts"))
+	if err != nil || len(steps) != 1 {
+		t.Errorf("install steps = %d (%v), want just the real one", len(steps), err)
+	}
+	files, err := FileEntries(filepath.Join(dir, "agent-files"))
+	if err != nil || len(files) != 1 || !strings.HasSuffix(files[0].(Doc)["path"].(string), "/tool") {
+		t.Errorf("files = %v (%v), want just the real tool", files, err)
 	}
 }

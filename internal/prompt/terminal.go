@@ -102,3 +102,12 @@ func IsTerminal(f *os.File) bool {
 func EnableVT(f *os.File) {
 	enableVT(f)
 }
+
+// Width is how many columns wide the terminal f is, or fallback when f
+// isn't a terminal or won't say.
+func Width(f *os.File, fallback int) int {
+	if w, _, err := term.GetSize(int(f.Fd())); err == nil && w > 0 {
+		return w
+	}
+	return fallback
+}

@@ -103,9 +103,9 @@ func leadingNumber(name string) int {
 	return n
 }
 
-// SortedDirEntries returns dir's non-directory, non-sidecar entries in the
-// order install scripts and agent files are applied in: by leading number,
-// then by name. A missing directory yields no entries rather than an
+// SortedDirEntries returns dir's non-directory entries, bar the ignored ones
+// (see IsIgnored), in the order install scripts and agent files are applied
+// in: by leading number, then by name. A missing directory yields no entries rather than an
 // error, since not every profile or feature has one. Exported so the
 // library package can plan a combined, renumbered install-scripts sequence
 // using the exact same ordering rules InstallSteps applies.
@@ -119,7 +119,7 @@ func SortedDirEntries(dir string) ([]os.DirEntry, error) {
 	}
 	files := make([]os.DirEntry, 0, len(entries))
 	for _, e := range entries {
-		if !e.IsDir() && !IsSidecar(e.Name()) {
+		if !e.IsDir() && !IsIgnored(e.Name()) {
 			files = append(files, e)
 		}
 	}
@@ -138,6 +138,14 @@ func SortedDirEntries(dir string) ([]os.DirEntry, error) {
 // (e.g. JSON) and is never itself deployed.
 func IsSidecar(name string) bool {
 	return strings.HasSuffix(name, ".vibe")
+}
+
+// IsIgnored reports whether a file in an install-scripts or agent-files tree
+// is left out of the kit: a sidecar, or a ".updated" copy that vibe --install
+// wrote beside a file it couldn't merge. That copy is there for the user to
+// merge by hand, and must never run as an install step or land in a sandbox.
+func IsIgnored(name string) bool {
+	return IsSidecar(name) || strings.HasSuffix(name, ".updated")
 }
 
 // directivesFor reads the directives that apply to a file: those embedded in
@@ -212,7 +220,7 @@ func FileEntries(dirs ...string) ([]interface{}, error) {
 			if d.IsDir() {
 				return nil
 			}
-			if IsSidecar(d.Name()) {
+			if IsIgnored(d.Name()) {
 				return nil
 			}
 			rel, err := filepath.Rel(dir, path)

@@ -32,7 +32,9 @@ import (
 	"vibe/internal/running"
 	"vibe/internal/sbxrun"
 	"vibe/internal/settings"
+	"vibe/internal/sidebyside"
 	"vibe/internal/state"
+	"vibe/internal/upgrade"
 )
 
 const usage = `vibe — open (creating if needed) a sandbox for a project folder.
@@ -59,7 +61,14 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe -i/--install          copy defaults/profiles/library, config.yaml and
                              settings.yaml into ~/.vibe, and the vibe binary
                              into ~/.local/bin, so the unpacked bundle this
-                             was run from can be deleted afterward
+                             was run from can be deleted afterward. Run from
+                             a newer release, it upgrades: new files are
+                             copied, files you never edited are updated, and
+                             ones changed on both sides are merged or asked
+                             about
+  vibe -i -u/--update-strategy S
+                             settle files changed on both sides without
+                             asking: keep, update, merge,keep or merge,update
 
 -s, -c, -r, -R and -C resolve the sandbox name exactly as a normal run
 would, so "vibe -s && vibe" restarts whatever you were working on. -l and -x
@@ -108,6 +117,9 @@ func run(argv []string) error {
 		fmt.Println(vibe.String())
 		return nil
 	}
+	if args.UpdateStrategy != "" && !args.Install {
+		return fmt.Errorf("--update-strategy only applies to --install")
+	}
 	if args.ExclusiveActions() > 1 {
 		return fmt.Errorf("--stop, --ssh, --re-init, --re-create, --re-compose, --list, --install and --cleanup are mutually exclusive")
 	}
@@ -129,7 +141,7 @@ func run(argv []string) error {
 		if err != nil {
 			return err
 		}
-		return doInstall(layout.New(vibeHome, bundleRoot), args.Force)
+		return doInstall(layout.New(vibeHome, bundleRoot), args.Force, args.UpdateStrategy)
 	}
 
 	if !sbxrun.Available() {
@@ -549,50 +561,146 @@ func removeSandboxes(vibeHome string, names []string, remove func(name string, f
 // overwrites anything already at the destination, so it's safe to re-run
 // (e.g. after fetching a newer bundle release) without losing local edits;
 // re-running only fills in what's missing.
-func doInstall(lay layout.Layout, force bool) error {
+func doInstall(lay layout.Layout, force bool, strategyValue string) error {
 	if lay.Home == "" {
 		return fmt.Errorf("no home directory to install into, and $VIBE_HOME is not set")
+	}
+	var strategy upgrade.Strategy
+	if strategyValue != "" {
+		var err error
+		if strategy, err = upgrade.ParseStrategy(strategyValue); err != nil {
+			return err
+		}
 	}
 	if err := os.MkdirAll(lay.Home, 0o755); err != nil {
 		return err
 	}
 	note("installing into %s", lay.Home)
 
-	for _, rel := range []string{"config.yaml", "settings.yaml"} {
-		src := lay.BundlePath(rel)
-		if _, err := os.Stat(src); err != nil {
-			continue // the bundle doesn't ship it — nothing to install
-		}
-		dst := filepath.Join(lay.Home, rel)
-		if _, err := os.Stat(dst); err == nil {
-			note("  %s: already present, left alone", rel)
-			continue
-		}
-		if err := fscopy.File(src, dst); err != nil {
-			return fmt.Errorf("copying %s: %w", rel, err)
-		}
-		note("  copied %s", rel)
+	// A file changed both in ~/.vibe and in the package is settled by the
+	// strategy if one was given, else by asking — and with -f, or nobody
+	// to ask, it's left alone and reported below.
+	var decide func(upgrade.Conflict) (upgrade.Choice, error)
+	if !strategy.Given && !force && interactive() {
+		decide = decideConflict
+	}
+	res, err := upgrade.Run(upgrade.Options{
+		Package:  lay.Bundle,
+		Home:     lay.Home,
+		Strategy: strategy,
+		Decide:   decide,
+		Log:      func(format string, a ...interface{}) { note("  "+format, a...) },
+	})
+	if err != nil {
+		return err
+	}
+	if res.Identical > 0 {
+		note("  %d file(s) already up to date", res.Identical)
 	}
 
-	for _, rel := range []string{"defaults", "profiles", "library"} {
-		src := lay.BundlePath(rel)
-		if info, err := os.Stat(src); err != nil || !info.IsDir() {
-			continue // the bundle doesn't ship it — nothing to install
-		}
-		if err := fscopy.TreeMerge(src, filepath.Join(lay.Home, rel)); err != nil {
-			return fmt.Errorf("copying %s/: %w", rel, err)
-		}
-		note("  merged %s/ (any files already there were left alone)", rel)
-	}
+	binErr := installBinary()
 
-	return installBinary(force)
+	if len(res.UpdatedCopies) > 0 {
+		note("")
+		note("these couldn't be merged automatically — merge each by hand, then delete the .updated copy:")
+		for _, rel := range res.UpdatedCopies {
+			mine := filepath.Join(lay.Home, strings.TrimSuffix(rel, upgrade.UpdatedSuffix))
+			note("  yours: %s", displayPath(mine))
+			note("  new:   %s", displayPath(mine+upgrade.UpdatedSuffix))
+		}
+	}
+	if len(res.Unresolved) > 0 {
+		note("")
+		note("WARNING: %d file(s) changed both in %s and upstream in the package were left as they are:",
+			len(res.Unresolved), displayPath(lay.Home))
+		for _, rel := range res.Unresolved {
+			note("  %s", displayPath(filepath.Join(lay.Home, rel)))
+		}
+		note("re-run with --update-strategy to settle them: %s", upgrade.StrategyValues)
+		note("  merge,keep    merge what merges; keep yours for the rest, with the new version beside it as .updated")
+		note("  merge,update  merge what merges; take the package's version for the rest")
+		note("  update        take the package's version of every one")
+		note("  keep          keep yours (re-run with another strategy to take the changes later)")
+		return fmt.Errorf("upstream changes left unmerged in %d file(s)", len(res.Unresolved))
+	}
+	return binErr
+}
+
+// decideConflict asks the user to settle a file both they and the package
+// have changed. It first finds out whether the two merge (upgrade has
+// already tried), and offers what that allows: with a clean merge, their
+// file beside the merged result; without one, their file beside the
+// package's. Taking the package's version wholesale shows those two side by
+// side first, to confirm.
+func decideConflict(c upgrade.Conflict) (upgrade.Choice, error) {
+	path := displayPath(c.Mine)
+	for {
+		if c.CanMerge {
+			note("%s already exists and is different from the package source.", path)
+			note("Your changes and the package's merge cleanly — here is your version beside the merged result:")
+			showSideBySide("your version", "merged result", c.MineText, c.Merged)
+			picked, ok := chooseFrom("What would you like to do?",
+				[]string{"keep my version", "use the merged version", "overwrite my version with the updated version"}, 0)
+			switch {
+			case !ok:
+				return 0, fmt.Errorf("aborted — %s and any files after it left as they were", path)
+			case picked == 0:
+				return upgrade.KeepMine, nil
+			case picked == 1:
+				return upgrade.TakeMerged, nil
+			}
+			note("Your version beside the updated package version, which would replace it:")
+			showSideBySide("your version", "updated package version", c.MineText, c.TheirsText)
+			yes, ok := chooseFrom("Overwrite your version with the updated version?", []string{"yes", "no"}, 1)
+			if ok && yes == 0 {
+				return upgrade.TakeTheirs, nil
+			}
+			continue // back to the choice above
+		}
+
+		note("%s already exists and is different from the package source,", path)
+		note("and can't be merged automatically: %s.", c.Why)
+		showSideBySide("your version", "updated package version", c.MineText, c.TheirsText)
+		picked, ok := chooseFrom("What would you like to do?",
+			[]string{"keep my version", "overwrite my version with the updated version"}, 0)
+		switch {
+		case !ok:
+			return 0, fmt.Errorf("aborted — %s and any files after it left as they were", path)
+		case picked == 1:
+			return upgrade.TakeTheirs, nil
+		default:
+			return upgrade.KeepMine, nil
+		}
+	}
+}
+
+// showSideBySide prints two versions of a file side by side, as wide as the
+// terminal allows.
+func showSideBySide(leftName, rightName string, left, right []byte) {
+	color := prompt.IsTerminal(os.Stderr)
+	fmt.Fprint(os.Stderr, sidebyside.Render(leftName, rightName, string(left), string(right),
+		prompt.Width(os.Stderr, 120), color))
+}
+
+// displayPath shortens a path under the home directory to ~/..., the way
+// the user thinks of it.
+func displayPath(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if rel, err := filepath.Rel(home, path); err == nil && !strings.HasPrefix(rel, "..") {
+		return filepath.Join("~", rel)
+	}
+	return path
 }
 
 // installBinary copies the running executable to ~/.local/bin, creating
 // that directory if needed, then warns (without failing) if it isn't on
 // $PATH — the freshly installed binary would otherwise be invisible to the
-// shell with no explanation why.
-func installBinary(force bool) error {
+// shell with no explanation why. An existing one is replaced without
+// asking: installing or upgrading vibe is what --install is for.
+func installBinary() error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("locating vibe executable: %w", err)
@@ -619,20 +727,53 @@ func installBinary(force bool) error {
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		return err
 	}
-	if _, err := os.Stat(dest); err == nil {
-		if !confirmDefault(force, true, fmt.Sprintf("Overwrite existing %s?", dest)) {
-			note("  left %s as-is", dest)
-			return warnIfNotOnPath(binDir)
-		}
-	}
-	if err := fscopy.File(exe, dest); err != nil {
+	_, statErr := os.Stat(dest)
+	replacing := statErr == nil
+	if err := replaceFile(exe, dest); err != nil {
 		return fmt.Errorf("copying the vibe binary to %s: %w", dest, err)
 	}
-	if err := os.Chmod(dest, 0o755); err != nil {
+	if replacing {
+		note("  replaced the vibe binary at %s", dest)
+	} else {
+		note("  copied the vibe binary to %s", dest)
+	}
+	return warnIfNotOnPath(binDir)
+}
+
+// replaceFile puts a copy of src at dest, safely even while dest is running
+// — another vibe session, say, which an upgrade can't expect to be closed.
+// Writing into a running binary fails ("text file busy" on Linux, a sharing
+// violation on Windows), so the copy is written beside dest and renamed into
+// place. Windows won't rename onto a running executable either, but it will
+// rename one out of the way, so the old binary is moved aside first there;
+// it is removed if it can be, and otherwise left as dest+".old" to go the
+// next time.
+func replaceFile(src, dest string) error {
+	tmp := dest + ".new"
+	if err := fscopy.File(src, tmp); err != nil {
+		os.Remove(tmp)
 		return err
 	}
-	note("  copied the vibe binary to %s", dest)
-	return warnIfNotOnPath(binDir)
+	if err := os.Chmod(tmp, 0o755); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dest); err == nil {
+		return nil
+	}
+	old := dest + ".old"
+	os.Remove(old)
+	if err := os.Rename(dest, old); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		os.Rename(old, dest) // put the old one back
+		os.Remove(tmp)
+		return err
+	}
+	os.Remove(old)
+	return nil
 }
 
 // warnIfNotOnPath reports whether dir is on $PATH, warning (never failing)
@@ -1344,6 +1485,12 @@ func initHome(lay layout.Layout, force bool) error {
 	}
 	for _, profile := range res.Profiles {
 		note("  copied profile '%s'", profile)
+	}
+	// What was just copied is the package's version, so it is also the
+	// original the next vibe --install merges against.
+	if err := upgrade.SeedBase(lay.Bundle, lay.Home); err != nil {
+		note("  WARNING: could not record the package's files in %s: %s",
+			filepath.Join(lay.Home, upgrade.BaseDir), err)
 	}
 	note("  %s now overrides the bundle at %s — edit it, not the bundle", lay.Home, lay.Bundle)
 	return nil

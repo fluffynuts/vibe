@@ -23,6 +23,8 @@ type Args struct {
 	Cleanup   bool
 	Help      bool
 	Version   bool
+	// UpdateStrategy is --install's --update-strategy value, unparsed.
+	UpdateStrategy string
 }
 
 // Parse parses argv (excluding the program name).
@@ -77,6 +79,19 @@ func Parse(argv []string) (Args, error) {
 			i++
 		case strings.HasPrefix(arg, "-n") && len(arg) > 2:
 			a.Name = arg[2:]
+			i++
+		case arg == "-u" || arg == "--update-strategy":
+			v, n, err := valueArg(argv, i)
+			if err != nil {
+				return a, err
+			}
+			a.UpdateStrategy = v
+			i += n
+		case strings.HasPrefix(arg, "--update-strategy="):
+			a.UpdateStrategy = strings.TrimPrefix(arg, "--update-strategy=")
+			i++
+		case strings.HasPrefix(arg, "-u") && len(arg) > 2:
+			a.UpdateStrategy = arg[2:]
 			i++
 		case arg == "-p" || arg == "--profile":
 			v, n, err := valueArg(argv, i)

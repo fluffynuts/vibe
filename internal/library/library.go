@@ -79,7 +79,7 @@ func firstScriptDescription(dir string) string {
 func firstAgentFileDescription(dir string) string {
 	var rels []string
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || kitspec.IsSidecar(d.Name()) {
+		if err != nil || d.IsDir() || kitspec.IsIgnored(d.Name()) {
 			return nil
 		}
 		if rel, relErr := filepath.Rel(dir, path); relErr == nil {
@@ -268,7 +268,7 @@ func Compose(features []string, dirFor DirFor, profileDir string) error {
 		}
 		var names []string
 		for _, be := range binEntries {
-			if be.IsDir() || kitspec.IsSidecar(be.Name()) {
+			if be.IsDir() || kitspec.IsIgnored(be.Name()) {
 				continue
 			}
 			// Everything a feature puts on the agent's PATH is a startup

@@ -143,3 +143,23 @@ func TestParseVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestParseUpdateStrategy(t *testing.T) {
+	for _, argv := range [][]string{
+		{"-i", "-u", "merge,keep"},
+		{"-i", "--update-strategy", "merge,keep"},
+		{"-i", "--update-strategy=merge,keep"},
+		{"-i", "-umerge,keep"},
+	} {
+		got, err := Parse(argv)
+		if err != nil {
+			t.Fatalf("Parse(%v): %v", argv, err)
+		}
+		if !got.Install || got.UpdateStrategy != "merge,keep" {
+			t.Errorf("Parse(%v) = %+v, want Install with strategy merge,keep", argv, got)
+		}
+	}
+	if _, err := Parse([]string{"-i", "--update-strategy"}); err == nil {
+		t.Error("--update-strategy with no value was accepted")
+	}
+}

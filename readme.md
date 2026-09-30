@@ -20,6 +20,44 @@ run `vibe` from the folder it makes, or `vibe --install` to copy it into `~/.vib
 `~/.local/bin`. The binary reads its bundle from beside itself, so keep the folder together.
 macOS may block the unsigned binary the first time: `xattr -dr com.apple.quarantine <folder>`.
 
+### Upgrading
+
+Run `vibe --install` from the new release's folder. It goes through every file the package ships
+into `~/.vibe` (`config.yaml`, `settings.yaml`, `defaults/`, `profiles/`, `library/`) and keeps
+your edits:
+
+- **New in this release:** copied, and listed.
+- **You never edited it:** updated to the new version without asking.
+- **Only you changed it:** kept as it is.
+- **You deleted it:** stays deleted.
+- **Changed by both you and the release:** you're asked. If the two sets of changes merge
+  cleanly (git's three-way merge, so git needs to be installed), you see your file beside the
+  merged result and choose between keeping yours, using the merged version, or overwriting yours
+  with the new one. That last choice first shows your file beside the new one, to confirm. If they
+  don't merge, you see your file beside the new one and choose between keeping yours and
+  overwriting it.
+
+This works by keeping the package's version of every file from the last install in
+`~/.vibe/package-files/`. That's what tells your edits apart from the release's, the way git uses
+a merge base. A file you keep holds on to its old original, so a later upgrade can still merge
+it. Files installed before `package-files` existed have no original, so the first upgrade can't
+merge them and asks you to keep or overwrite each one that differs. Your own files in `~/.vibe`
+are never touched: `instances/`, `memories/`, profiles vibe generated for you, and so on.
+
+With `-f`, or with no terminal to ask on, a file changed on both sides is left as it is, and the
+install ends with a warning and a non-zero exit. `--update-strategy` (`-u`) settles those files
+without asking, and also runs unattended:
+
+| Strategy | Merges what merges | Everything else |
+|---|---|---|
+| `merge,keep` (or `merge`) | yes | yours is kept, with the new version beside it as `<file>.updated` to merge by hand |
+| `merge,update` | yes | overwritten with the new version |
+| `update` | no | overwritten with the new version |
+| `keep` | no | yours is kept, and no `.updated` files are written; run again with another strategy to take the changes later |
+
+A `.updated` file is never used by vibe itself: it doesn't run as an install script or get
+copied into a sandbox.
+
 ## Building
 
 `make` builds `vibe` into the repo root (and `make test`, `make vet`, `make check`, `make clean`
@@ -57,6 +95,12 @@ vibe -R/--re-create [path] # delete the profile too, then re-init — the profil
 vibe -l/--list             # list every known sandbox and its status
 vibe -x/--cleanup          # pick sandboxes from a checklist and delete them;
                            #    the profiles they were built from are kept
+vibe -i/--install          # copy the bundle into ~/.vibe and the binary into
+                           #    ~/.local/bin; from a newer release, upgrade
+vibe -i -u/--update-strategy merge,keep
+                           # ...settling files changed on both sides without
+                           #    asking: keep, update, merge,keep, merge,update
+vibe -v/--version          # print the version, commit and build date
 ```
 
 Every option has a long and a short form. `-s`, `-c`, `-r`, `-R` and `-l` resolve the sandbox
