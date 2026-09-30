@@ -3,7 +3,7 @@
 Create, start and attach to [Docker Sandboxes](https://github.com/docker/sbx-releases) for
 contained agentic coding — driven by **profiles**, so different teams/repos can bring their
 own tooling (a .NET + Elasticsearch profile, a Rails profile, whatever a repo needs) without
-touching the tool itself.
+touching the tool itself. 
 
 It runs on Linux, macOS and Windows — wherever `sbx` does.
 
