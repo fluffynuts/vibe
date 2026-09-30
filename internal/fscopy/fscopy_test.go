@@ -3,6 +3,7 @@ package fscopy
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -38,6 +39,9 @@ func TestTreeMergeAddsNewFilesWithoutOverwritingExisting(t *testing.T) {
 }
 
 func TestTreeMergePreservesExecutableBitOnNewFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows files have no executable bit")
+	}
 	src := t.TempDir()
 	dst := t.TempDir()
 	write(t, filepath.Join(src, "run"), "#!/bin/sh\necho hi\n")

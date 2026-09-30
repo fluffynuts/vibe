@@ -4,12 +4,9 @@ package prompt
 
 import (
 	"fmt"
-	"os"
+	"io"
 	"strconv"
 	"strings"
-
-	"golang.org/x/sys/unix"
-	"golang.org/x/term"
 )
 
 // Select renders labels as an arrow-key-navigable list on rw — which must be
@@ -21,16 +18,15 @@ import (
 // The caller is expected to have already printed the question above the
 // list; Select only draws the options and collapses them to the chosen
 // answer once the user is done.
-func Select(rw *os.File, labels []string, def int) (choice int, ok bool) {
+func Select(rw *Terminal, labels []string, def int) (choice int, ok bool) {
 	if len(labels) == 0 {
 		return 0, false
 	}
-	fd := int(rw.Fd())
-	state, err := term.MakeRaw(fd)
+	restore, err := rw.makeRaw()
 	if err != nil {
 		return 0, false
 	}
-	defer term.Restore(fd, state)
+	defer restore()
 
 	sel := def
 	if sel < 0 || sel >= len(labels) {
@@ -39,14 +35,13 @@ func Select(rw *os.File, labels []string, def int) (choice int, ok bool) {
 	lines := len(labels) + 1
 	draw(rw, labels, sel)
 
-	buf := make([]byte, 1)
 	for {
-		n, err := rw.Read(buf)
-		if err != nil || n == 0 {
+		key, ok := rw.readByte()
+		if !ok {
 			clear(rw, lines)
 			return 0, false
 		}
-		switch buf[0] {
+		switch key {
 		case 3, 'q', 'Q': // Ctrl-C, q
 			clear(rw, lines)
 			return 0, false
@@ -99,16 +94,15 @@ func Select(rw *os.File, labels []string, def int) (choice int, ok bool) {
 // the whole selection. A checklist's answer is a list, and the single line
 // it used to collapse to was unreadable the moment more than one short
 // label was checked.
-func MultiSelect(rw *os.File, labels []string, checked []bool) (selected []int, ok bool) {
+func MultiSelect(rw *Terminal, labels []string, checked []bool) (selected []int, ok bool) {
 	if len(labels) == 0 {
 		return nil, false
 	}
-	fd := int(rw.Fd())
-	state, err := term.MakeRaw(fd)
+	restore, err := rw.makeRaw()
 	if err != nil {
 		return nil, false
 	}
-	defer term.Restore(fd, state)
+	defer restore()
 
 	marks := make([]bool, len(labels))
 	copy(marks, checked)
@@ -117,14 +111,13 @@ func MultiSelect(rw *os.File, labels []string, checked []bool) (selected []int, 
 	lines := len(labels) + 1
 	drawChecklist(rw, labels, marks, cursor)
 
-	buf := make([]byte, 1)
 	for {
-		n, err := rw.Read(buf)
-		if err != nil || n == 0 {
+		key, ok := rw.readByte()
+		if !ok {
 			clear(rw, lines)
 			return nil, false
 		}
-		switch buf[0] {
+		switch key {
 		case 3, 'q', 'Q': // Ctrl-C, q
 			clear(rw, lines)
 			return nil, false
@@ -241,19 +234,18 @@ const typedAnswerLimit = 16
 // from MultiSelect). Anything else is asked again rather than guessed at.
 // It wipes its own block before returning, leaving the terminal where it
 // found it.
-func confirmSelection(rw *os.File, picked []string) confirmAnswer {
+func confirmSelection(rw *Terminal, picked []string) confirmAnswer {
 	text, lines := selectionBlock(picked)
 	fmt.Fprint(rw, text)
 	defer clear(rw, lines)
 
 	var typed []byte
-	buf := make([]byte, 1)
 	for {
-		n, err := rw.Read(buf)
-		if err != nil || n == 0 {
+		key, ok := rw.readByte()
+		if !ok {
 			return confirmCancel
 		}
-		c := buf[0]
+		c := key
 		switch {
 		case c == 3: // Ctrl-C
 			return confirmCancel
@@ -288,7 +280,7 @@ func confirmSelection(rw *os.File, picked []string) confirmAnswer {
 // writeSelectionRecord leaves the confirmed answer in the scrollback, one
 // item per line, so what was chosen is still legible after the prompt has
 // cleared itself away.
-func writeSelectionRecord(w *os.File, picked []string) {
+func writeSelectionRecord(w io.Writer, picked []string) {
 	if len(picked) == 0 {
 		fmt.Fprintf(w, "  \x1b[32m✔\x1b[0m %s\r\n", noneSelected)
 		return
@@ -305,16 +297,15 @@ func writeSelectionRecord(w *os.File, picked []string) {
 // doesn't pass the shift modifier through) move the selected item,
 // swapping it with its neighbor and following it. Enter confirms the final
 // order, q/Esc/Ctrl-C cancel (ok=false).
-func Reorder(rw *os.File, labels []string) (ordered []string, ok bool) {
+func Reorder(rw *Terminal, labels []string) (ordered []string, ok bool) {
 	if len(labels) == 0 {
 		return nil, false
 	}
-	fd := int(rw.Fd())
-	state, err := term.MakeRaw(fd)
+	restore, err := rw.makeRaw()
 	if err != nil {
 		return nil, false
 	}
-	defer term.Restore(fd, state)
+	defer restore()
 
 	order := make([]string, len(labels))
 	copy(order, labels)
@@ -345,14 +336,13 @@ func Reorder(rw *os.File, labels []string) (ordered []string, ok bool) {
 		}
 	}
 
-	buf := make([]byte, 1)
 	for {
-		n, err := rw.Read(buf)
-		if err != nil || n == 0 {
+		key, ok := rw.readByte()
+		if !ok {
 			clear(rw, lines)
 			return nil, false
 		}
-		switch buf[0] {
+		switch key {
 		case 3, 'q', 'Q': // Ctrl-C, q
 			clear(rw, lines)
 			return nil, false
@@ -407,26 +397,21 @@ const (
 // arrow-key sequence before giving up and treating the ESC as a bare
 // Escape keypress. Real terminals emit the whole sequence in one burst, so
 // this only ever matters for a genuine standalone Escape.
-//
-// os.File's own read deadline isn't used here: on at least one platform
-// this was tested on, a raw-mode tty fd's Read never woke up on its
-// deadline, hanging indefinitely on a lone Escape. Polling the fd directly
-// sidesteps that.
 const escapeWait = 30 // milliseconds
 
 // readEscape reads what follows an already-consumed ESC byte: a bare
 // Escape keypress, a plain arrow ("ESC [ A/B"), or an arrow held with a
 // modifier key ("ESC [ 1 ; <modifier> A/B", xterm's scheme for Shift,
 // Alt, Ctrl and combinations of them on a cursor key).
-func readEscape(rw *os.File) escKey {
-	b1, ok := pollByte(rw)
+func readEscape(rw *Terminal) escKey {
+	b1, ok := rw.pollByte()
 	if !ok || b1 != '[' {
 		return escBare
 	}
 	var params []byte
 	var final byte
 	for {
-		b, ok := pollByte(rw)
+		b, ok := rw.pollByte()
 		if !ok {
 			return escBare
 		}
@@ -469,21 +454,7 @@ func hasShiftModifier(params []byte) bool {
 	return (mod-1)&1 == 1
 }
 
-// pollByte waits up to escapeWait for rw to become readable and reads a
-// single byte from it. ok is false on timeout or read error.
-func pollByte(rw *os.File) (b byte, ok bool) {
-	pfd := []unix.PollFd{{Fd: int32(rw.Fd()), Events: unix.POLLIN}}
-	if n, err := unix.Poll(pfd, escapeWait); err != nil || n == 0 {
-		return 0, false
-	}
-	buf := make([]byte, 1)
-	if n, err := rw.Read(buf); err != nil || n == 0 {
-		return 0, false
-	}
-	return buf[0], true
-}
-
-func draw(w *os.File, labels []string, sel int) {
+func draw(w io.Writer, labels []string, sel int) {
 	for i, label := range labels {
 		fmt.Fprint(w, "\x1b[2K\r")
 		if i == sel {
@@ -495,7 +466,7 @@ func draw(w *os.File, labels []string, sel int) {
 	fmt.Fprint(w, "\x1b[2K\r\x1b[2m(↑/↓ to move, enter to select, q to quit)\x1b[0m")
 }
 
-func drawChecklist(w *os.File, labels []string, marks []bool, cursor int) {
+func drawChecklist(w io.Writer, labels []string, marks []bool, cursor int) {
 	for i, label := range labels {
 		fmt.Fprint(w, "\x1b[2K\r")
 		box := "[ ]"
@@ -511,7 +482,7 @@ func drawChecklist(w *os.File, labels []string, marks []bool, cursor int) {
 	fmt.Fprint(w, "\x1b[2K\r\x1b[2m(↑/↓ to move, space to toggle, enter when done, q to quit)\x1b[0m")
 }
 
-func drawReorder(w *os.File, labels []string, cursor int) {
+func drawReorder(w io.Writer, labels []string, cursor int) {
 	for i, label := range labels {
 		fmt.Fprint(w, "\x1b[2K\r")
 		if i == cursor {
@@ -526,13 +497,13 @@ func drawReorder(w *os.File, labels []string, cursor int) {
 // up moves the cursor back to the first drawn line, ready to redraw in
 // place. lines is the total number of lines draw prints, including the
 // trailing hint line.
-func up(w *os.File, lines int) {
+func up(w io.Writer, lines int) {
 	fmt.Fprintf(w, "\r\x1b[%dA", lines-1)
 }
 
 // clear wipes every line draw printed and leaves the cursor at column 0 of
 // what was the first line.
-func clear(w *os.File, lines int) {
+func clear(w io.Writer, lines int) {
 	fmt.Fprintf(w, "\r\x1b[%dA", lines-1)
 	for i := 0; i < lines; i++ {
 		fmt.Fprint(w, "\x1b[2K")

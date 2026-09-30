@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -228,7 +229,8 @@ func TestDoReCreateDeletesTheOverlayProfileThenRebuilds(t *testing.T) {
 func TestDoInstallCopiesEverythingAndLeavesCustomizationsAlone(t *testing.T) {
 	home := t.TempDir()
 	bundle := t.TempDir()
-	t.Setenv("HOME", home) // installBinary resolves ~/.local/bin from this
+	t.Setenv("HOME", home)        // installBinary resolves ~/.local/bin from this
+	t.Setenv("USERPROFILE", home) // ...or, on Windows, this
 
 	writeFile(t, filepath.Join(bundle, "config.yaml"), "name: vibe\n")
 	writeFile(t, filepath.Join(bundle, "settings.yaml"), "memory: 12g\n")
@@ -271,7 +273,7 @@ func TestDoInstallCopiesEverythingAndLeavesCustomizationsAlone(t *testing.T) {
 	dest := filepath.Join(home, ".local", "bin", filepath.Base(exe))
 	if info, err := os.Stat(dest); err != nil {
 		t.Errorf("expected the binary copied to %s: %v", dest, err)
-	} else if info.Mode().Perm()&0o100 == 0 {
+	} else if runtime.GOOS != "windows" && info.Mode().Perm()&0o100 == 0 {
 		t.Errorf("expected the copied binary to be executable, got %v", info.Mode())
 	}
 }
@@ -283,6 +285,7 @@ func TestDoInstallIsSafeToRunTwice(t *testing.T) {
 	home := t.TempDir()
 	bundle := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	writeFile(t, filepath.Join(bundle, "config.yaml"), "name: vibe\n")
 
 	lay := layout.New(filepath.Join(home, ".vibe"), bundle)

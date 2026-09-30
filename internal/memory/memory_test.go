@@ -3,6 +3,7 @@ package memory
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -42,7 +43,7 @@ func TestBackupOfAnUnreachableSandboxReportsNothingSaved(t *testing.T) {
 }
 
 func TestStoreForIsPerSandbox(t *testing.T) {
-	if got, want := StoreFor("/root", "alpha"), "/root/alpha"; got != want {
+	if got, want := StoreFor("/root", "alpha"), filepath.Join("/root", "alpha"); got != want {
 		t.Errorf("StoreFor = %q, want %q", got, want)
 	}
 }
@@ -52,6 +53,9 @@ func TestStoreForIsPerSandbox(t *testing.T) {
 // the way ssh does — the behaviour that broke a `sh -c "<script>"` probe.
 func fakeSbx(t *testing.T, joined bool) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake sbx is a shell script")
+	}
 	run := `"$@"`
 	if joined {
 		run = `sh -c "$*"`
@@ -123,5 +127,52 @@ func TestProbeAndBackupFindMemoriesHoweverSbxPassesArgs(t *testing.T) {
 				t.Errorf("memory not restored: %v", err)
 			}
 		})
+	}
+}
+
+func TestWindowsMountCandidatesCoverTheUsualSpellings(t *testing.T) {
+	got := windowsMountCandidates(`C:\Users\me\.vibe\memories\proj`)
+	want := []string{
+		"C:/Users/me/.vibe/memories/proj",
+		"/c/Users/me/.vibe/memories/proj",
+		"/mnt/c/Users/me/.vibe/memories/proj",
+		"/run/desktop/mnt/host/c/Users/me/.vibe/memories/proj",
+		"/host_mnt/c/Users/me/.vibe/memories/proj",
+		"/Users/me/.vibe/memories/proj",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("candidates = %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("candidate %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// On Windows the store's path inside the sandbox is found, not assumed:
+// only a candidate where the host's marker file shows up is accepted.
+func TestSandboxPathOnWindowsFindsTheMountByItsMarker(t *testing.T) {
+	fakeSbx(t, false)
+	old := hostOS
+	hostOS = "windows"
+	t.Cleanup(func() { hostOS = old })
+
+	// The fake sbx runs commands on this machine, where the store's own
+	// path is where its marker shows up.
+	store := t.TempDir()
+	got, err := sandboxPath("any", store)
+	if err != nil || got != store {
+		t.Errorf("sandboxPath(%q) = %q, %v; want the path itself", store, got, err)
+	}
+	entries, _ := os.ReadDir(store)
+	if len(entries) != 0 {
+		t.Errorf("marker left behind in the store: %v", entries)
+	}
+
+	// A store the sandbox can't see is an error, not a guess.
+	t.Setenv("PATH", t.TempDir())
+	if got, err := sandboxPath("any", store); err == nil {
+		t.Errorf("sandboxPath with nothing mounted = %q, want an error", got)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -84,7 +85,7 @@ func TestCopyFromBundleIntoTheOverlay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install script not copied: %v", err)
 	}
-	if info.Mode().Perm()&0o100 == 0 {
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o100 == 0 {
 		t.Errorf("install script lost its executable bit: %v", info.Mode())
 	}
 	orig, err := os.ReadFile(l.BundlePath("profiles", "yumbi", "config.yaml"))

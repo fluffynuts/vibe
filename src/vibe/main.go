@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
-	"syscall"
+	"sync"
 	"time"
 
 	"vibe/internal/cliargs"
@@ -76,6 +76,8 @@ any other, and pick up new ones the bundle adds later.
 var session *running.Session
 
 func main() {
+	prompt.EnableVT(os.Stdout)
+	prompt.EnableVT(os.Stderr)
 	err := run(os.Args[1:])
 	session.Release()
 	if err != nil {
@@ -216,7 +218,7 @@ func expandHome(path string) string {
 	if path == "~" {
 		return home
 	}
-	if strings.HasPrefix(path, "~/") {
+	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
 		return filepath.Join(home, path[2:])
 	}
 	return path
@@ -254,7 +256,30 @@ func guardFolder(vibeHome, target string, force bool) error {
 		return nil
 	}
 	session = s
+	go exitOnStopRequest(s)
 	return nil
+}
+
+// sessionMu guards inSession, which records whether finish has handed the
+// terminal to sbx: from then on, a stop request is finish's to act on.
+var (
+	sessionMu sync.Mutex
+	inSession bool
+)
+
+// exitOnStopRequest handles another vibe asking this one to stop before its
+// session has started — at a prompt, say — by simply exiting. Once the
+// session is running, finish ends it properly instead.
+func exitOnStopRequest(s *running.Session) {
+	<-s.StopRequested()
+	sessionMu.Lock()
+	defer sessionMu.Unlock()
+	if inSession {
+		return
+	}
+	note("asked to stop by another vibe for this folder — exiting")
+	s.Release()
+	os.Exit(1)
 }
 
 func resolveOthers(vibeHome, target string, others []int, force bool) error {
@@ -290,11 +315,16 @@ func resolveOthers(vibeHome, target string, others []int, force bool) error {
 	for _, pid := range others {
 		status := newStatusLine()
 		status.show("Stopping vibe (PID %d)", pid)
-		if err := running.Stop(vibeHome, pid, stopOtherTimeout); err != nil {
+		killed, err := running.Stop(vibeHome, pid, stopOtherTimeout)
+		switch {
+		case err != nil:
 			status.done("Stopping vibe (PID %d) failed: %s", pid, err)
 			return fmt.Errorf("could not stop the other vibe for %s", target)
+		case killed:
+			status.done("Killed vibe (PID %d): it did not stop within %s, so its memories may not have been saved", pid, stopOtherTimeout)
+		default:
+			status.done("Stopped vibe (PID %d)", pid)
 		}
-		status.done("Stopped vibe (PID %d)", pid)
 	}
 	return nil
 }
@@ -599,14 +629,35 @@ func installBinary(force bool) error {
 // warnIfNotOnPath reports whether dir is on $PATH, warning (never failing)
 // when it isn't.
 func warnIfNotOnPath(dir string) error {
-	for _, entry := range filepath.SplitList(os.Getenv("PATH")) {
-		if filepath.Clean(entry) == dir {
-			return nil
-		}
+	if onPath(runtime.GOOS, os.Getenv("PATH"), dir) {
+		return nil
 	}
 	note("  WARNING: %s is not on your PATH", dir)
-	note("  add it, e.g. in ~/.bashrc or ~/.zshrc:  export PATH=\"%s:$PATH\"", dir)
+	if runtime.GOOS == "windows" {
+		note("  add it for your user, e.g. in PowerShell:")
+		note("    [Environment]::SetEnvironmentVariable('Path', \"$([Environment]::GetEnvironmentVariable('Path', 'User'));%s\", 'User')", dir)
+		note("  then open a new terminal")
+	} else {
+		note("  add it, e.g. in ~/.bashrc or ~/.zshrc:  export PATH=\"%s:$PATH\"", dir)
+	}
 	return nil
+}
+
+// onPath reports whether dir is one of the entries in pathList. Windows
+// paths are case-insensitive, and its PATH entries often carry a trailing
+// separator.
+func onPath(goos, pathList, dir string) bool {
+	dir = filepath.Clean(dir)
+	for _, entry := range filepath.SplitList(pathList) {
+		if entry == "" {
+			continue
+		}
+		entry = filepath.Clean(entry)
+		if entry == dir || (goos == "windows" && strings.EqualFold(entry, dir)) {
+			return true
+		}
+	}
+	return false
 }
 
 // --- kit loading ----------------------------------------------------------
@@ -1063,34 +1114,17 @@ func doReCompose(lay layout.Layout, args cliargs.Args, name, target string) erro
 	return reInit(lay, args, name, target, true)
 }
 
-// ttyReader opens whatever this process can ask a question on: /dev/tty so a
-// redirected stdin can't silently answer for the user, falling back (e.g. on
-// Windows) to stdin when that is itself a terminal. The returned close
-// function must be called once the answer has been read; ok is false when
-// there is no terminal at all.
+// ttyReader opens whatever this process can ask a question on: the
+// terminal itself (/dev/tty, or the Windows console), so a redirected stdin
+// can't silently answer for the user. The returned close function must be
+// called once the answer has been read; ok is false when there is no
+// terminal at all.
 func ttyReader() (reader *bufio.Reader, closeFn func(), ok bool) {
-	if tty, err := os.Open("/dev/tty"); err == nil {
-		return bufio.NewReader(tty), func() { tty.Close() }, true
+	in, closeFn, ok := prompt.OpenInput()
+	if !ok {
+		return nil, closeFn, false
 	}
-	if !isTerminal(os.Stdin) {
-		return nil, func() {}, false
-	}
-	return bufio.NewReader(os.Stdin), func() {}, true
-}
-
-// isTerminal reports whether f looks like a terminal we can ask a question
-// on. Without a cgo/x-term isatty, a character device is the best signal the
-// standard library offers — minus /dev/null, which is a character device
-// that answers every read with EOF and is what a daemonised run gets.
-func isTerminal(f *os.File) bool {
-	info, err := f.Stat()
-	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
-		return false
-	}
-	if null, err := os.Stat(os.DevNull); err == nil && os.SameFile(info, null) {
-		return false
-	}
-	return true
+	return bufio.NewReader(in), closeFn, true
 }
 
 // confirm asks a yes/no question on the terminal, defaulting to no. force
@@ -1135,17 +1169,15 @@ func interactive() bool {
 	return ok
 }
 
-// ttyRW opens the same terminal ttyReader would, but for reading and writing
-// raw bytes on one *os.File — what an interactive list picker needs to put
-// the terminal into raw mode and redraw itself in place.
-func ttyRW() (rw *os.File, closeFn func(), ok bool) {
-	if tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0); err == nil {
-		return tty, func() { tty.Close() }, true
-	}
-	if !isTerminal(os.Stdin) {
+// ttyRW opens the same terminal ttyReader would, for reading keys and
+// drawing — what an interactive list picker needs to put the terminal into
+// raw mode and redraw itself in place.
+func ttyRW() (tty *prompt.Terminal, closeFn func(), ok bool) {
+	tty, ok = prompt.Open()
+	if !ok {
 		return nil, func() {}, false
 	}
-	return os.Stdin, func() {}, true
+	return tty, tty.Close, true
 }
 
 // chooseFrom asks the user to pick one of labels with an interactive,
@@ -1365,15 +1397,16 @@ func reorderFrom(question string, labels []string) ([]string, bool) {
 // foreground.
 func finish(vibeHome, name string) error {
 	go nudgeOnStart(name)
-	stopped := make(chan os.Signal, 1)
-	signal.Notify(stopped, syscall.SIGTERM)
-	code, err := sbxrun.Run(name)
+	sessionMu.Lock()
+	inSession = true
+	sessionMu.Unlock()
+	code, err := sbxrun.Run(name, session.StopRequested())
 	if err != nil {
 		return err
 	}
 	select {
-	case <-stopped:
-		note("session ended: asked to stop (by another vibe for this folder, most likely)")
+	case <-session.StopRequested():
+		note("session ended: asked to stop by another vibe for this folder")
 	default:
 	}
 	saveMemoriesOnExit(vibeHome, name)
@@ -1420,7 +1453,7 @@ type statusLine struct {
 }
 
 func newStatusLine() statusLine {
-	return statusLine{tty: isTerminal(os.Stderr)}
+	return statusLine{tty: prompt.IsTerminal(os.Stderr)}
 }
 
 func (s statusLine) show(format string, a ...interface{}) {
@@ -1462,12 +1495,55 @@ func nudgeOnStart(name string) {
 
 func reportPortHolder(port int) {
 	note("  processes holding %d:", port)
-	if out, err := exec.Command("ss", "-tlnp", fmt.Sprintf("sport = :%d", port)).CombinedOutput(); err == nil {
-		fmt.Fprintln(os.Stderr, string(out))
+	for _, out := range portHolders(runtime.GOOS, port) {
+		fmt.Fprintln(os.Stderr, out)
 	}
-	if _, err := exec.LookPath("fuser"); err == nil {
-		if out, err := exec.Command("fuser", "-v", fmt.Sprintf("%d/tcp", port)).CombinedOutput(); err == nil {
-			fmt.Fprintln(os.Stderr, string(out))
+}
+
+// portHolders asks whatever this OS offers which processes listen on port.
+// Each tool that is present and answers contributes its output; one that
+// isn't is skipped quietly, since this is only ever a diagnostic aside.
+func portHolders(goos string, port int) []string {
+	var outputs []string
+	try := func(name string, args ...string) {
+		if _, err := exec.LookPath(name); err != nil {
+			return
+		}
+		if out, err := exec.Command(name, args...).CombinedOutput(); err == nil {
+			outputs = append(outputs, string(out))
 		}
 	}
+	switch goos {
+	case "windows":
+		if _, err := exec.LookPath("netstat"); err == nil {
+			if out, err := exec.Command("netstat", "-ano", "-p", "TCP").CombinedOutput(); err == nil {
+				if lines := netstatListeners(string(out), port); lines != "" {
+					outputs = append(outputs, "  Proto  Local Address  Foreign Address  State  PID\n"+lines)
+				}
+			}
+		}
+	case "linux":
+		try("ss", "-tlnp", fmt.Sprintf("sport = :%d", port))
+		try("fuser", "-v", fmt.Sprintf("%d/tcp", port))
+	default: // macOS and the BSDs
+		try("lsof", "-nP", fmt.Sprintf("-iTCP:%d", port), "-sTCP:LISTEN")
+	}
+	return outputs
+}
+
+// netstatListeners picks, out of `netstat -ano` output, the lines for a
+// socket listening on port — its PID is the last field.
+func netstatListeners(out string, port int) string {
+	suffix := fmt.Sprintf(":%d", port)
+	var b strings.Builder
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 || !strings.EqualFold(fields[3], "LISTENING") {
+			continue
+		}
+		if strings.HasSuffix(fields[1], suffix) {
+			b.WriteString(strings.TrimRight(line, "\r") + "\n")
+		}
+	}
+	return b.String()
 }

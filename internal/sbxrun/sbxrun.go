@@ -31,10 +31,16 @@ func captureOut(args ...string) (string, error) {
 }
 
 // runInherit runs sbx with stdio connected to the current process, returning
-// the exit code (0 on success). A SIGTERM sent to vibe is passed on to sbx
-// rather than killing vibe outright, so vibe gets to finish up (saving the
-// agent's memories, say) once sbx has gone.
+// the exit code (0 on success).
 func runInherit(args ...string) (int, error) {
+	return runInheritUntil(nil, args...)
+}
+
+// runInheritUntil is runInherit, ending sbx early if stop is closed. A
+// SIGTERM sent to vibe is passed on to sbx rather than killing vibe
+// outright. Either way vibe gets to finish up (saving the agent's memories,
+// say) once sbx has gone.
+func runInheritUntil(stop <-chan struct{}, args ...string) (int, error) {
 	cmd := exec.Command("sbx", args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -44,14 +50,23 @@ func runInherit(args ...string) (int, error) {
 	}
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM)
+	exited := make(chan struct{})
 	go func() {
-		for sig := range sigs {
-			cmd.Process.Signal(sig)
+		for {
+			select {
+			case sig := <-sigs:
+				cmd.Process.Signal(sig)
+			case <-stop:
+				terminate(cmd.Process)
+				stop = nil
+			case <-exited:
+				return
+			}
 		}
 	}()
 	err := cmd.Wait()
+	close(exited)
 	signal.Stop(sigs)
-	close(sigs)
 	if err == nil {
 		return 0, nil
 	}
@@ -155,10 +170,10 @@ func Create(opts CreateOpts) error {
 	return cmd.Run()
 }
 
-// Run boots (or attaches to) a sandbox, blocking until the session ends, and
-// returns its exit code.
-func Run(name string) (int, error) {
-	return runInherit("run", "--name", name)
+// Run boots (or attaches to) a sandbox, blocking until the session ends —
+// or until stop is closed, which ends it — and returns its exit code.
+func Run(name string, stop <-chan struct{}) (int, error) {
+	return runInheritUntil(stop, "run", "--name", name)
 }
 
 // Stop stops a running sandbox.

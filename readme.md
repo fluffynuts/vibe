@@ -5,6 +5,15 @@ contained agentic coding — driven by **profiles**, so different teams/repos ca
 own tooling (a .NET + Elasticsearch profile, a Rails profile, whatever a repo needs) without
 touching the tool itself.
 
+It runs on Linux, macOS and Windows — wherever `sbx` does.
+
+## Building
+
+`make` builds `vibe` into the repo root (and `make test`, `make vet`, `make check`, `make clean`
+do what they say). Without make, `./make.sh` (bash) and `./make.ps1` (PowerShell) take the same
+targets. The binary finds its bundle relative to its own location, so leave it where it is built
+and put it on `PATH` with a symlink — or use `vibe --install`.
+
 ## Usage
 
 ```

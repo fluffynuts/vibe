@@ -3,31 +3,52 @@ package running
 import (
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"reflect"
-	"syscall"
 	"testing"
 	"time"
 )
 
 // TestMain doubles as a stand-in for another vibe: re-run with
 // RUNNING_TEST_HOLD set, the test binary claims a folder and sits on it
-// until SIGTERM, the way vibe does during a session.
+// until asked to stop, the way vibe does during a session — or, with
+// RUNNING_TEST_STUBBORN set too, ignores the request.
 func TestMain(m *testing.M) {
 	if home := os.Getenv("RUNNING_TEST_HOLD"); home != "" {
-		sigs := make(chan os.Signal, 1)
-		signal.Notify(sigs, syscall.SIGTERM)
 		s, err := Register(home, os.Getenv("RUNNING_TEST_TARGET"))
 		if err != nil {
 			os.Exit(2)
 		}
 		os.Stdout.WriteString("ready\n")
-		<-sigs
+		if os.Getenv("RUNNING_TEST_STUBBORN") != "" {
+			time.Sleep(time.Hour)
+		}
+		<-s.StopRequested()
 		s.Release()
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
+}
+
+// startHolder runs the stand-in, waiting until it has claimed /work/a.
+func startHolder(t *testing.T, home string, extraEnv ...string) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = append(os.Environ(), "RUNNING_TEST_HOLD="+home, "RUNNING_TEST_TARGET=/work/a")
+	cmd.Env = append(cmd.Env, extraEnv...)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	buf := make([]byte, 6)
+	if _, err := out.Read(buf); err != nil {
+		t.Fatalf("helper never came up: %v", err)
+	}
+	return cmd
 }
 
 func TestOthersFindsLiveClaimsOnTheSameFolderOnly(t *testing.T) {
@@ -97,37 +118,50 @@ func TestReleaseDropsTheClaim(t *testing.T) {
 
 func TestStopEndsTheOtherProcessAndWaitsForIt(t *testing.T) {
 	home := t.TempDir()
-	cmd := exec.Command(os.Args[0])
-	cmd.Env = append(os.Environ(), "RUNNING_TEST_HOLD="+home, "RUNNING_TEST_TARGET=/work/a")
-	out, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer cmd.Process.Kill()
-	buf := make([]byte, 6)
-	if _, err := out.Read(buf); err != nil {
-		t.Fatalf("helper never came up: %v", err)
-	}
-
-	pid := cmd.Process.Pid
+	pid := startHolder(t, home).Process.Pid
 	if got := Others(home, "/work/a"); !reflect.DeepEqual(got, []int{pid}) {
 		t.Fatalf("Others = %v, want [%d]", got, pid)
 	}
-	if err := Stop(home, pid, 10*time.Second); err != nil {
-		t.Fatalf("Stop: %v", err)
+	killed, err := Stop(home, pid, 10*time.Second)
+	if err != nil || killed {
+		t.Fatalf("Stop = %v, %v; want a clean stop", killed, err)
 	}
 	if got := Others(home, "/work/a"); len(got) != 0 {
 		t.Errorf("Others after Stop = %v, want none", got)
 	}
-	cmd.Wait()
 }
 
-func TestStopOfAGonePIDSucceeds(t *testing.T) {
-	// Well past any real pid_max, so nothing can be signalled.
-	if err := Stop(t.TempDir(), 1<<30, time.Second); err != nil {
-		t.Errorf("Stop of a PID that is not running = %v, want nil", err)
+func TestStopKillsAProcessThatIgnoresTheRequest(t *testing.T) {
+	home := t.TempDir()
+	pid := startHolder(t, home, "RUNNING_TEST_STUBBORN=1").Process.Pid
+	killed, err := Stop(home, pid, 500*time.Millisecond)
+	if err != nil || !killed {
+		t.Fatalf("Stop = %v, %v; want it killed", killed, err)
+	}
+	if got := Others(home, "/work/a"); len(got) != 0 {
+		t.Errorf("Others after Stop = %v, want none", got)
+	}
+}
+
+func TestStopOfAGoneProcessSucceeds(t *testing.T) {
+	if killed, err := Stop(t.TempDir(), 1<<30, time.Second); err != nil || killed {
+		t.Errorf("Stop of a vibe that is not running = %v, %v; want false, nil", killed, err)
+	}
+}
+
+func TestStopRequestedFiresOnRequest(t *testing.T) {
+	home := t.TempDir()
+	s, err := register(home, "/work/a", 105)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Release()
+	if err := os.WriteFile(stopPath(home, 105), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-s.StopRequested():
+	case <-time.After(5 * time.Second):
+		t.Fatal("stop request never noticed")
 	}
 }
