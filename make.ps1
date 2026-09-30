@@ -25,7 +25,7 @@ function Invoke-Step([string]$Command, [string[]]$Arguments) {
 function Invoke-Build {
     if (Test-Path $Binary -PathType Leaf) {
         $built = (Get-Item $Binary).LastWriteTimeUtc
-        $newer = Get-ChildItem -Recurse -File -Include '*.go', 'go.mod', 'go.sum' |
+        $newer = Get-ChildItem -Recurse -File -Include '*.go', 'go.mod', 'go.sum', 'VERSION' |
             Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' -and $_.LastWriteTimeUtc -gt $built } |
             Select-Object -First 1
         if (-not $newer) {

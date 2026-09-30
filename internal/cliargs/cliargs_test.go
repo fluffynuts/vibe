@@ -128,3 +128,18 @@ func TestParseCleanup(t *testing.T) {
 		t.Errorf("-x with -l should count as two actions, got %d", both.ExclusiveActions())
 	}
 }
+
+func TestParseVersion(t *testing.T) {
+	for _, arg := range []string{"-v", "--version"} {
+		got, err := Parse([]string{arg})
+		if err != nil {
+			t.Fatalf("Parse(%s): %v", arg, err)
+		}
+		if !got.Version {
+			t.Errorf("Parse(%s) did not set Version", arg)
+		}
+		if got.ExclusiveActions() != 0 {
+			t.Errorf("Parse(%s): ExclusiveActions = %d, want 0 — like --help, it just answers", arg, got.ExclusiveActions())
+		}
+	}
+}

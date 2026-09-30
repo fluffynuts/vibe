@@ -18,7 +18,7 @@ PKG="./src/vibe"
 
 # build only when a source is newer than the binary, as make would.
 target_build() {
-  if [[ -f "$BINARY" ]] && [[ -z "$(find . \( -name '*.go' -o -name go.mod -o -name go.sum \) \
+  if [[ -f "$BINARY" ]] && [[ -z "$(find . \( -name '*.go' -o -name go.mod -o -name go.sum -o -name VERSION \) \
       -not -path './.git/*' -newer "$BINARY" -print -quit)" ]]; then
     echo "'$BINARY' is up to date."
     return

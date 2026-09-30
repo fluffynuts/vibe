@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"vibe"
 	"vibe/internal/cliargs"
 	"vibe/internal/fscopy"
 	"vibe/internal/homeinit"
@@ -53,6 +54,7 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe -l/--list             list every known sandbox and its status
   vibe -x/--cleanup          pick sandboxes from a checklist and delete them;
                              the profiles they were built from are kept
+  vibe -v/--version          print the version and the commit it was built from
   vibe -i/--install          copy defaults/profiles/library, config.yaml and
                              settings.yaml into ~/.vibe, and the vibe binary
                              into ~/.local/bin, so the unpacked bundle this
@@ -99,6 +101,10 @@ func run(argv []string) error {
 	}
 	if args.Help {
 		fmt.Print(usage)
+		return nil
+	}
+	if args.Version {
+		fmt.Println(vibe.String())
 		return nil
 	}
 	if args.ExclusiveActions() > 1 {

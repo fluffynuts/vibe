@@ -14,6 +14,11 @@ do what they say). Without make, `./make.sh` (bash) and `./make.ps1` (PowerShell
 targets. The binary finds its bundle relative to its own location, so leave it where it is built
 and put it on `PATH` with a symlink — or use `vibe --install`.
 
+The version lives in one place: the `VERSION` file at the repo root, a bare semantic version
+(`1.4.0`) that is bumped by hand for a release. It is embedded into the binary, and `vibe
+--version` prints it along with the commit it was built from, which `go build` records by itself
+(`-dirty` when there were uncommitted changes).
+
 ## Usage
 
 ```

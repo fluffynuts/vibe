@@ -22,6 +22,7 @@ type Args struct {
 	Install   bool
 	Cleanup   bool
 	Help      bool
+	Version   bool
 }
 
 // Parse parses argv (excluding the program name).
@@ -33,6 +34,9 @@ func Parse(argv []string) (Args, error) {
 		switch {
 		case arg == "-h" || arg == "--help":
 			a.Help = true
+			i++
+		case arg == "-v" || arg == "--version":
+			a.Version = true
 			i++
 		case arg == "-s" || arg == "--stop":
 			a.Stop = true

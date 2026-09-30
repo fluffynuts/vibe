@@ -15,7 +15,7 @@ SOURCES := $(shell find . -name '*.go' -not -path './.git/*')
 .PHONY: build
 build: $(BINARY)
 
-$(BINARY): $(SOURCES) go.mod go.sum
+$(BINARY): $(SOURCES) go.mod go.sum VERSION
 	$(GO) build -o $@ $(PKG)
 
 .PHONY: test
