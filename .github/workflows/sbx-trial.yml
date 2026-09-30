@@ -1,0 +1,73 @@
+# A one-off trial, run by hand: can a real sbx run on a GitHub runner, and
+# what does it actually do for the things vibe has to guess about? The
+# findings land in the run's summary page and in an artifact. Nothing here
+# gates a build.
+name: sbx trial
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trial:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      # sbx runs each sandbox in a microVM, which needs KVM. GitHub's Linux
+      # runners have /dev/kvm, but only root can open it until a udev rule
+      # says otherwise — the same fix GitHub gives for Android emulators.
+      - name: Let the runner user use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      # The apt route is what sbx's own README gives for Ubuntu; the release's
+      # .deb is the fall-back if Docker's apt repository won't cooperate.
+      - name: Install sbx
+        run: |
+          if curl -fsSL https://get.docker.com | sudo REPO_ONLY=1 sh \
+             && sudo apt-get install -y docker-sbx; then
+            echo "installed from Docker's apt repository"
+          else
+            curl -fsSLO https://github.com/docker/sbx-releases/releases/latest/download/DockerSandboxes-linux-amd64-ubuntu2404.deb
+            sudo apt-get install -y ./DockerSandboxes-linux-amd64-ubuntu2404.deb
+            echo "installed from the release's .deb"
+          fi
+          command -v sbx
+          sbx version
+
+      # Optional: with DOCKER_USERNAME and DOCKER_TOKEN secrets set, sign in
+      # first. Without them the trial runs signed out, which is itself worth
+      # knowing.
+      - name: Sign in to Docker
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
+        run: |
+          if [ -z "$DOCKER_USERNAME" ] || [ -z "$DOCKER_TOKEN" ]; then
+            echo "no DOCKER_USERNAME/DOCKER_TOKEN secrets — running signed out"
+            exit 0
+          fi
+          printf '%s' "$DOCKER_TOKEN" | sbx login --username "$DOCKER_USERNAME" --password-stdin \
+            || echo "::warning::sbx login failed — carrying on signed out"
+
+      - name: Run the trial
+        run: |
+          chmod +x .github/scripts/sbx-trial.sh
+          .github/scripts/sbx-trial.sh sbx-trial-report.md
+          cat sbx-trial-report.md >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          path: sbx-trial-report.md
+          archive: false
+          if-no-files-found: warn

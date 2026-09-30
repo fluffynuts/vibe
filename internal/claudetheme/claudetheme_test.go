@@ -208,7 +208,10 @@ func fakeSandbox(t *testing.T) string {
 	}
 	root := t.TempDir()
 	bin := t.TempDir()
+	// The reachability check execs /bin/true, which macOS doesn't have (only
+	// /usr/bin/true), so the fake answers it itself.
 	script := "#!/bin/sh\n[ \"$1\" = exec ] || exit 1\nshift 3\n" +
+		"[ \"$1\" = /bin/true ] && exit 0\n" +
 		"for a; do shift; set -- \"$@\" \"$(printf %s \"$a\" | sed \"s#^/home/agent#" + root + "#\")\"; done\n" +
 		"exec \"$@\"\n"
 	if err := os.WriteFile(filepath.Join(bin, "sbx"), []byte(script), 0o755); err != nil {

@@ -62,7 +62,11 @@ func fakeSbx(t *testing.T, joined bool) {
 		run = `sh -c "$*"`
 	}
 	dir := t.TempDir()
-	script := "#!/bin/sh\n[ \"$1\" = exec ] || exit 1\nshift 3\n" + run + "\n"
+	// The reachability check execs /bin/true, which is right inside a Linux
+	// sandbox but not here on every host: macOS only has /usr/bin/true. So
+	// the fake answers it itself rather than running it.
+	script := "#!/bin/sh\n[ \"$1\" = exec ] || exit 1\nshift 3\n" +
+		"[ \"$1\" = /bin/true ] && exit 0\n" + run + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "sbx"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
