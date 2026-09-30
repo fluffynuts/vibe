@@ -10,8 +10,10 @@
 #
 # dist packages a release zip in dist/: the binary plus the bundle it needs
 # beside it, under one top-level folder. It builds for GOOS/GOARCH when those
-# are set (cross-compiling, with cgo off), else for this machine, and puts
-# DIST_LABEL, when set, into the name: vibe-<version>[-<label>]-<os>-<arch>.
+# are set (cross-compiling, with cgo off), else for this machine. BUILD, when
+# set, is the CI build number: it becomes the version's fourth part, in the
+# name and in the binary (vibe --version). DIST_LABEL, when set, goes into
+# the name too: vibe-<version>[.<build>][-<label>]-<os>-<arch>.
 # The zip is made with zip(1) so the binary keeps its executable bit.
 
 set -euo pipefail
@@ -58,7 +60,7 @@ target_dist() {
   goarch="${GOARCH:-$("$GO" env GOARCH)}"
   os_name="$goos"
   [[ "$goos" == darwin ]] && os_name=macos
-  version="$(tr -d '[:space:]' <VERSION)"
+  version="$(tr -d '[:space:]' <VERSION)${BUILD:+.$BUILD}"
   name="vibe-$version${DIST_LABEL:+-$DIST_LABEL}-$os_name-$goarch"
   exe=vibe
   [[ "$goos" == windows ]] && exe=vibe.exe
@@ -67,7 +69,8 @@ target_dist() {
   rm -rf "$stage" "$stage.zip"
   mkdir -p "$stage"
   echo "GOOS=$goos GOARCH=$goarch $GO build -o $stage/$exe $PKG"
-  CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" "$GO" build -trimpath -o "$stage/$exe" "$PKG"
+  CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" "$GO" build -trimpath \
+    -ldflags "-X vibe.Build=${BUILD:-}" -o "$stage/$exe" "$PKG"
   cp -R "${BUNDLE[@]}" "$stage/"
   (cd dist && zip -qrX "$name.zip" "$name")
   rm -rf "$stage"

@@ -1,6 +1,11 @@
 # Builds a zip for every platform on every push: the vibe binary plus the
 # bundle it reads from beside itself (see make.sh's dist target, which does
-# the packaging). The zips are attached to the workflow run as artifacts.
+# the packaging). The zips are attached to the workflow run as artifacts,
+# and a push to master also publishes them as a GitHub release.
+#
+# Release versions are VERSION plus the run number as a fourth part
+# (0.1.0.57): VERSION is bumped by hand, and every push to master is
+# released, so the run number is what tells those releases apart.
 name: build
 
 on:
@@ -53,12 +58,10 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          # The commit goes into the name so zips from different pushes
-          # can't be confused once downloaded.
-          DIST_LABEL: ${{ github.sha }}
+          # The version's fourth part, in the zip's name and in the binary.
+          BUILD: ${{ github.run_number }}
         run: |
-          DIST_LABEL="${DIST_LABEL:0:7}"
-          zip=$(DIST_LABEL="$DIST_LABEL" ./make.sh dist | tail -n 1)
+          zip=$(./make.sh dist | tail -n 1)
           echo "zip=$zip" >>"$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7
         with:
@@ -67,3 +70,62 @@ jobs:
           # in a second zip, and drops file permissions besides.
           archive: false
           if-no-files-found: error
+
+  release:
+    name: release
+    needs: package
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    # Publishing a release creates its tag, which is a write to the repo;
+    # only this job asks for that.
+    permissions:
+      contents: write
+    # Two quick pushes must not race to publish.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: vibe-*.zip
+          merge-multiple: true
+          path: dist
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD: ${{ github.run_number }}
+        run: |
+          version="$(tr -d '[:space:]' <VERSION).$BUILD"
+          tag="v$version"
+          ls -l dist
+          notes=$(cat <<EOF
+          Download the zip for your platform, unzip it anywhere, and run \`vibe\` from the folder
+          it makes (or \`vibe --install\` to copy it into place). The binary finds everything it
+          needs beside itself, so keep the folder's contents together.
+
+          | Platform | Zip |
+          |---|---|
+          | Linux (x86-64) | \`vibe-$version-linux-amd64.zip\` |
+          | Linux (ARM) | \`vibe-$version-linux-arm64.zip\` |
+          | macOS (Apple Silicon) | \`vibe-$version-macos-arm64.zip\` |
+          | macOS (Intel) | \`vibe-$version-macos-amd64.zip\` |
+          | Windows (x86-64) | \`vibe-$version-windows-amd64.zip\` |
+          | Windows (ARM) | \`vibe-$version-windows-arm64.zip\` |
+
+          macOS: the binary isn't signed, so if it's blocked after downloading in a browser, run
+          \`xattr -dr com.apple.quarantine <folder>\` once.
+          EOF
+          )
+          # A re-run of the same workflow run finds its release already made,
+          # and replaces the zips rather than failing.
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/*.zip --clobber
+          else
+            gh release create "$tag" dist/*.zip \
+              --target "$GITHUB_SHA" \
+              --title "vibe $version" \
+              --notes "$notes" \
+              --generate-notes \
+              --latest
+          fi

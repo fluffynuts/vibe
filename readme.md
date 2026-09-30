@@ -12,6 +12,14 @@ in theory, any agent supported by sbx can be used.
 
 This software is in alpha state. It works reasonably well for me, but I make no guarantees.
 
+## Download
+
+Every push to master publishes a [release](https://github.com/fluffynuts/vibe/releases/latest)
+with a zip per platform: Linux, macOS and Windows, each for x86-64 and ARM. Unzip it anywhere and
+run `vibe` from the folder it makes, or `vibe --install` to copy it into `~/.vibe` and
+`~/.local/bin`. The binary reads its bundle from beside itself, so keep the folder together.
+macOS may block the unsigned binary the first time: `xattr -dr com.apple.quarantine <folder>`.
+
 ## Building
 
 `make` builds `vibe` into the repo root (and `make test`, `make vet`, `make check`, `make clean`
@@ -22,7 +30,9 @@ and put it on `PATH` with a symlink — or use `vibe --install`.
 `make dist` (or `./make.sh dist`) packages a zip in `dist/` holding the binary and that bundle,
 for this machine or for whatever `GOOS`/`GOARCH` are set to. Every push to GitHub does this for
 Linux, macOS and Windows on both amd64 and arm64 (`.github/workflows/build.yml`), after running
-the tests on all three, and attaches the zips to the workflow run.
+the tests on all three, and attaches the zips to the workflow run. A push to master also
+publishes them as a GitHub release, versioned as `VERSION` plus the run number (`0.1.0.57`,
+which `vibe --version` reports too). Setting `BUILD` does the same for `make dist`.
 
 The version lives in one place: the `VERSION` file at the repo root, a bare semantic version
 (`1.4.0`) that is bumped by hand for a release. It is embedded into the binary, and `vibe

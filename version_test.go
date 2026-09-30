@@ -27,3 +27,17 @@ func TestStringNamesTheVersionAndCommit(t *testing.T) {
 		t.Errorf("String() with a commit = %q", got)
 	}
 }
+
+func TestFullVersionAddsTheBuildNumber(t *testing.T) {
+	old := Build
+	t.Cleanup(func() { Build = old })
+
+	Build = ""
+	if got := FullVersion(); got != Version {
+		t.Errorf("FullVersion() without a build = %q, want %q", got, Version)
+	}
+	Build = "57"
+	if got := FullVersion(); got != Version+".57" {
+		t.Errorf("FullVersion() with build 57 = %q", got)
+	}
+}

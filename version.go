@@ -17,6 +17,20 @@ var versionFile string
 // is set is the VERSION file, which is bumped by hand for a release.
 var Version = strings.TrimSpace(versionFile)
 
+// Build is the CI build number a release was made from, appended to Version
+// as a fourth part ("1.4.0.57") — set with -ldflags "-X vibe.Build=57", and
+// empty for any other build. VERSION is bumped by hand and every push to
+// master is released, so this is what tells those releases apart.
+var Build string
+
+// FullVersion is Version with the build number, when there is one.
+func FullVersion() string {
+	if Build == "" {
+		return Version
+	}
+	return Version + "." + Build
+}
+
 // Commit is the git commit this binary was built from, short form, with a
 // "-dirty" suffix when the working tree had uncommitted changes — or empty
 // when that isn't known (a build outside a git checkout, or with
@@ -56,10 +70,10 @@ func vcsCommit() string {
 	return revision
 }
 
-// String is how vibe describes itself: "vibe 1.4.0 (a1b2c3d4e5f6)".
+// String is how vibe describes itself: "vibe 1.4.0.57 (a1b2c3d4e5f6)".
 func String() string {
 	if Commit == "" {
-		return "vibe " + Version
+		return "vibe " + FullVersion()
 	}
-	return "vibe " + Version + " (" + Commit + ")"
+	return "vibe " + FullVersion() + " (" + Commit + ")"
 }
