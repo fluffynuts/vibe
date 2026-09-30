@@ -1122,13 +1122,22 @@ func doReCompose(lay layout.Layout, args cliargs.Args, name, target string) erro
 	return reInit(lay, args, name, target, true)
 }
 
+// openTerminal and openTerminalInput are how vibe reaches the terminal to
+// ask a question on. They are variables so the tests can take the terminal
+// away: whether one is there otherwise depends on how the tests were run — a
+// Windows CI runner has a console, and a question asked on it waits forever.
+var (
+	openTerminal      = prompt.Open
+	openTerminalInput = prompt.OpenInput
+)
+
 // ttyReader opens whatever this process can ask a question on: the
 // terminal itself (/dev/tty, or the Windows console), so a redirected stdin
 // can't silently answer for the user. The returned close function must be
 // called once the answer has been read; ok is false when there is no
 // terminal at all.
 func ttyReader() (reader *bufio.Reader, closeFn func(), ok bool) {
-	in, closeFn, ok := prompt.OpenInput()
+	in, closeFn, ok := openTerminalInput()
 	if !ok {
 		return nil, closeFn, false
 	}
@@ -1181,7 +1190,7 @@ func interactive() bool {
 // drawing — what an interactive list picker needs to put the terminal into
 // raw mode and redraw itself in place.
 func ttyRW() (tty *prompt.Terminal, closeFn func(), ok bool) {
-	tty, ok = prompt.Open()
+	tty, ok = openTerminal()
 	if !ok {
 		return nil, func() {}, false
 	}
