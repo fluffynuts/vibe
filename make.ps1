@@ -33,7 +33,9 @@ function Invoke-Build {
             return
         }
     }
-    Invoke-Step $Go @('build', '-o', $Binary, $Pkg)
+    # The build date goes into vibe --version; Go doesn't record it itself.
+    $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")
+    Invoke-Step $Go @('build', '-ldflags', "-X vibe.BuildDate=$date", '-o', $Binary, $Pkg)
 }
 
 function Invoke-Test { Invoke-Step $Go @('test', './...') }

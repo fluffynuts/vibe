@@ -91,6 +91,10 @@ jobs:
           pattern: vibe-*.zip
           merge-multiple: true
           path: dist
+          # Keep the zips as they are. Left to itself this unpacks each one
+          # into a folder, and re-zipping those would lose the executable
+          # bit the package job's zip(1) kept.
+          skip-decompress: true
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -98,7 +102,19 @@ jobs:
         run: |
           version="$(tr -d '[:space:]' <VERSION).$BUILD"
           tag="v$version"
-          ls -l dist
+          # Found rather than globbed at dist/*.zip, so it doesn't matter
+          # exactly where download-artifact puts them — and each one is
+          # checked to be a zip before anything is published.
+          mapfile -t zips < <(find dist -type f -name 'vibe-*.zip' | sort)
+          if [ "${#zips[@]}" -eq 0 ]; then
+            echo "::error::no release zips found under dist/"
+            find dist -ls
+            exit 1
+          fi
+          for zip in "${zips[@]}"; do
+            unzip -tq "$zip" >/dev/null || { echo "::error::$zip is not a valid zip"; exit 1; }
+            echo "$zip"
+          done
           notes=$(cat <<EOF
           Download the zip for your platform, unzip it anywhere, and run \`vibe\` from the folder
           it makes (or \`vibe --install\` to copy it into place). The binary finds everything it
@@ -120,9 +136,9 @@ jobs:
           # A re-run of the same workflow run finds its release already made,
           # and replaces the zips rather than failing.
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" dist/*.zip --clobber
+            gh release upload "$tag" "${zips[@]}" --clobber
           else
-            gh release create "$tag" dist/*.zip \
+            gh release create "$tag" "${zips[@]}" \
               --target "$GITHUB_SHA" \
               --title "vibe $version" \
               --notes "$notes" \

@@ -23,6 +23,12 @@ var Version = strings.TrimSpace(versionFile)
 // master is released, so this is what tells those releases apart.
 var Build string
 
+// BuildDate is when this binary was built, in UTC ("2026-09-30T11:22:05Z").
+// Go doesn't record it — builds are reproducible on purpose — so the build
+// scripts pass it in with -ldflags "-X vibe.BuildDate=..."; a plain go
+// build leaves it empty, and --version then leaves it out.
+var BuildDate string
+
 // FullVersion is Version with the build number, when there is one.
 func FullVersion() string {
 	if Build == "" {
@@ -70,10 +76,19 @@ func vcsCommit() string {
 	return revision
 }
 
-// String is how vibe describes itself: "vibe 1.4.0.57 (a1b2c3d4e5f6)".
+// String is how vibe describes itself:
+// "vibe 1.4.0.57 (a1b2c3d4e5f6, built 2026-09-30T11:22:05Z)", leaving out
+// whatever this build doesn't know.
 func String() string {
-	if Commit == "" {
+	var details []string
+	if Commit != "" {
+		details = append(details, Commit)
+	}
+	if BuildDate != "" {
+		details = append(details, "built "+BuildDate)
+	}
+	if len(details) == 0 {
 		return "vibe " + FullVersion()
 	}
-	return "vibe " + FullVersion() + " (" + Commit + ")"
+	return "vibe " + FullVersion() + " (" + strings.Join(details, ", ") + ")"
 }

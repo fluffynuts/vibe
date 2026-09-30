@@ -15,8 +15,9 @@ SOURCES := $(shell find . -name '*.go' -not -path './.git/*')
 .PHONY: build
 build: $(BINARY)
 
+# The build date goes into vibe --version; Go doesn't record it itself.
 $(BINARY): $(SOURCES) go.mod go.sum VERSION
-	$(GO) build -o $@ $(PKG)
+	$(GO) build -ldflags "-X vibe.BuildDate=$$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o $@ $(PKG)
 
 .PHONY: test
 test:

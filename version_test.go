@@ -2,7 +2,6 @@ package vibe
 
 import (
 	"regexp"
-	"strings"
 	"testing"
 )
 
@@ -14,17 +13,20 @@ func TestVersionIsBareSemver(t *testing.T) {
 	}
 }
 
-func TestStringNamesTheVersionAndCommit(t *testing.T) {
-	old := Commit
-	t.Cleanup(func() { Commit = old })
+func TestStringNamesTheVersionCommitAndBuildDate(t *testing.T) {
+	oldCommit, oldDate := Commit, BuildDate
+	t.Cleanup(func() { Commit, BuildDate = oldCommit, oldDate })
 
-	Commit = ""
-	if got := String(); got != "vibe "+Version {
-		t.Errorf("String() without a commit = %q", got)
-	}
-	Commit = "a1b2c3d4e5f6"
-	if got := String(); !strings.HasSuffix(got, " (a1b2c3d4e5f6)") {
-		t.Errorf("String() with a commit = %q", got)
+	for _, tt := range []struct{ commit, date, want string }{
+		{"", "", "vibe " + Version},
+		{"a1b2c3d4e5f6", "", "vibe " + Version + " (a1b2c3d4e5f6)"},
+		{"", "2026-09-30T11:22:05Z", "vibe " + Version + " (built 2026-09-30T11:22:05Z)"},
+		{"a1b2c3d4e5f6", "2026-09-30T11:22:05Z", "vibe " + Version + " (a1b2c3d4e5f6, built 2026-09-30T11:22:05Z)"},
+	} {
+		Commit, BuildDate = tt.commit, tt.date
+		if got := String(); got != tt.want {
+			t.Errorf("String() with commit %q, date %q = %q, want %q", tt.commit, tt.date, got, tt.want)
+		}
 	}
 }
 

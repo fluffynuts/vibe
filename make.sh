@@ -24,6 +24,9 @@ GO="${GO:-go}"
 BINARY="${BINARY:-vibe}"
 PKG="./src/vibe"
 
+# When this build ran, for vibe --version: Go doesn't record it itself.
+build_date() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
 # build only when a source is newer than the binary, as make would.
 target_build() {
   if [[ -f "$BINARY" ]] && [[ -z "$(find . \( -name '*.go' -o -name go.mod -o -name go.sum -o -name VERSION \) \
@@ -32,7 +35,7 @@ target_build() {
     return
   fi
   echo "$GO build -o $BINARY $PKG"
-  "$GO" build -o "$BINARY" "$PKG"
+  "$GO" build -ldflags "-X vibe.BuildDate=$(build_date)" -o "$BINARY" "$PKG"
 }
 
 target_test() {
@@ -70,7 +73,7 @@ target_dist() {
   mkdir -p "$stage"
   echo "GOOS=$goos GOARCH=$goarch $GO build -o $stage/$exe $PKG"
   CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" "$GO" build -trimpath \
-    -ldflags "-X vibe.Build=${BUILD:-}" -o "$stage/$exe" "$PKG"
+    -ldflags "-X vibe.Build=${BUILD:-} -X vibe.BuildDate=$(build_date)" -o "$stage/$exe" "$PKG"
   cp -R "${BUNDLE[@]}" "$stage/"
   (cd dist && zip -qrX "$name.zip" "$name")
   rm -rf "$stage"
