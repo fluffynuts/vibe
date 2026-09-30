@@ -117,13 +117,15 @@ and put it on `PATH` with a symlink — or use `vibe --install`.
 for this machine or for whatever `GOOS`/`GOARCH` are set to. Every push to GitHub does this for
 Linux, macOS and Windows on both amd64 and arm64 (`.github/workflows/build.yml`), after running
 the tests on all three, and attaches the zips to the workflow run. A push to master also
-publishes them as a GitHub release, versioned as `VERSION` plus the run number (`0.1.0.57`,
+publishes them as a GitHub release, versioned as `VERSION` plus the run number (`0.1.57`,
 which `vibe --version` reports too). Setting `BUILD` does the same for `make dist`.
 
-The version lives in one place: the `VERSION` file at the repo root, a bare semantic version
-(`1.4.0`) that is bumped by hand for a release. It is embedded into the binary, and `vibe
---version` prints it along with the commit it was built from, which `go build` records by itself
-(`-dirty` when there were uncommitted changes).
+The version lives in one place: the `VERSION` file at the repo root, which holds major.minor
+(`1.4`) and is bumped by hand. The third part is the CI run number, so every release is a
+valid semantic version newer than the last (`1.4.57`), and GitHub lists the newest first. The
+version is embedded into the binary, and `vibe --version` prints it with the commit it was built
+from, which `go build` records by itself (`-dirty` when there were uncommitted changes), and the
+build date.
 
 ## Usage
 

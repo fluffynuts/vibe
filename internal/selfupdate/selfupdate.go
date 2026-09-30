@@ -44,7 +44,7 @@ func AssetName(goos, goarch string) string {
 	return "vibe-" + goos + "-" + goarch + ".zip"
 }
 
-// LatestTag returns the latest release's tag ("v0.1.0.57"), read from where
+// LatestTag returns the latest release's tag ("v0.1.57"), read from where
 // the releases/latest page redirects to.
 func LatestTag() (string, error) {
 	noRedirect := *client
@@ -65,8 +65,8 @@ func LatestTag() (string, error) {
 	return tag, nil
 }
 
-// Newer reports whether release version latest ("0.1.0.57") is newer than
-// running, which lacks a fourth part when it wasn't built by CI — a local
+// Newer reports whether release version latest ("0.1.57") is newer than
+// running, which lacks its third part when it wasn't built by CI — a local
 // build, which any release of the same version counts as newer than.
 func Newer(latest, running string) bool {
 	l, r := parts(latest), parts(running)

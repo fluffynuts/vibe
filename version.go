@@ -13,12 +13,15 @@ import (
 //go:embed VERSION
 var versionFile string
 
-// Version is this build's release version (e.g. "1.4.0"): the one place it
-// is set is the VERSION file, which is bumped by hand for a release.
+// Version is the major.minor part of this build's version (e.g. "1.4"): the
+// one place it is set is the VERSION file, bumped by hand. The third part is
+// the CI build number (see Build), so every release is a valid semantic
+// version that sorts after the last — which GitHub's releases page, among
+// others, relies on.
 var Version = strings.TrimSpace(versionFile)
 
 // Build is the CI build number a release was made from, appended to Version
-// as a fourth part ("1.4.0.57") — set with -ldflags "-X vibe.Build=57", and
+// as its third part ("1.4.57") — set with -ldflags "-X vibe.Build=57", and
 // empty for any other build. VERSION is bumped by hand and every push to
 // master is released, so this is what tells those releases apart.
 var Build string
@@ -77,7 +80,7 @@ func vcsCommit() string {
 }
 
 // String is how vibe describes itself:
-// "vibe 1.4.0.57 (a1b2c3d4e5f6, built 2026-09-30T11:22:05Z)", leaving out
+// "vibe 1.4.57 (a1b2c3d4e5f6, built 2026-09-30T11:22:05Z)", leaving out
 // whatever this build doesn't know.
 func String() string {
 	var details []string

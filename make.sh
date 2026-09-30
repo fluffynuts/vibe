@@ -11,7 +11,7 @@
 # dist packages a release zip in dist/: the binary plus the bundle it needs
 # beside it, under one top-level folder. It builds for GOOS/GOARCH when those
 # are set (cross-compiling, with cgo off), else for this machine. BUILD, when
-# set, is the CI build number: it becomes the version's fourth part, in the
+# set, is the CI build number: it becomes the version's third part, in the
 # name and in the binary (vibe --version). DIST_LABEL, when set, goes into
 # the name too: vibe-<version>[.<build>][-<label>]-<os>-<arch>.
 # The zip is made with zip(1) so the binary keeps its executable bit.

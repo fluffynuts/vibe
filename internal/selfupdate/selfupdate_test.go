@@ -94,6 +94,12 @@ func TestNewer(t *testing.T) {
 		{"0.2.0.1", "0.1.0.99", true},
 		{"0.1.0.1", "0.1.0", true}, // a local build, with no build number
 		{"v0.1.0.1", "0.1.0.1", false},
+		// VERSION became major.minor, the build number the third part: the
+		// first such release has to count as newer than the old four-part ones.
+		{"0.1.11", "0.1.0.10", true},
+		{"0.1.12", "0.1.11", true},
+		{"0.1.11", "0.1", true}, // a local build under the new scheme
+		{"0.2.13", "0.1.99", true},
 	} {
 		if got := Newer(tt.latest, tt.running); got != tt.want {
 			t.Errorf("Newer(%s, %s) = %v, want %v", tt.latest, tt.running, got, tt.want)

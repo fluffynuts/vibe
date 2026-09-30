@@ -3,9 +3,10 @@
 # the packaging). The zips are attached to the workflow run as artifacts,
 # and a push to master also publishes them as a GitHub release.
 #
-# Release versions are VERSION plus the run number as a fourth part
-# (0.1.0.57): VERSION is bumped by hand, and every push to master is
-# released, so the run number is what tells those releases apart.
+# Release versions are VERSION (major.minor, bumped by hand) plus the run
+# number as the third part: 0.1.57. Every push to master is released, so the
+# run number is what tells those releases apart, and it keeps each release a
+# valid semantic version that GitHub sorts above the last.
 name: build
 
 on:
@@ -58,7 +59,7 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          # The version's fourth part, in the zip's name and in the binary.
+          # The version's third part, in the zip's name and in the binary.
           BUILD: ${{ github.run_number }}
         run: |
           zip=$(./make.sh dist | tail -n 1)

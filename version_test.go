@@ -6,10 +6,12 @@ import (
 )
 
 // The VERSION file is read by CI as well as embedded here, so it has to stay
-// a bare semantic version: no "v" prefix, no trailing text.
-func TestVersionIsBareSemver(t *testing.T) {
-	if !regexp.MustCompile(`^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$`).MatchString(Version) {
-		t.Errorf("VERSION = %q, want a bare semantic version like 1.4.0", Version)
+// a bare major.minor: no "v" prefix, no trailing text, and no third part —
+// that's the build number, and a release with four parts isn't a semantic
+// version, which GitHub then sorts as text (v0.1.0.6 above v0.1.0.10).
+func TestVersionIsMajorMinor(t *testing.T) {
+	if !regexp.MustCompile(`^\d+\.\d+$`).MatchString(Version) {
+		t.Errorf("VERSION = %q, want major.minor, like 1.4", Version)
 	}
 }
 
