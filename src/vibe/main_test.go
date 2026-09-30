@@ -639,7 +639,7 @@ func TestReplaceFileWhileTheTargetIsRunning(t *testing.T) {
 	if data, _ := os.ReadFile(dest); string(data) != "#!/bin/sh\necho new\n" {
 		t.Errorf("dest wasn't replaced: %q", data)
 	}
-	if info, _ := os.Stat(dest); info.Mode().Perm()&0o100 == 0 {
+	if info, _ := os.Stat(dest); runtime.GOOS != "windows" && info.Mode().Perm()&0o100 == 0 {
 		t.Errorf("the replaced binary isn't executable: %v", info.Mode())
 	}
 	leftovers := []string{dest + ".new"}
