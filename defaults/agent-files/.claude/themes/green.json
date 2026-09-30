@@ -1,0 +1,16 @@
+{
+  "name": "Green",
+  "base": "dark",
+  "overrides": {
+    "permission": "rgb(110,231,140)",
+    "permissionShimmer": "rgb(170,255,190)",
+    "promptBorder": "rgb(46,160,80)",
+    "promptBorderShimmer": "rgb(110,231,140)",
+    "claude": "rgb(74,222,128)",
+    "claudeShimmer": "rgb(160,255,190)",
+    "suggestion": "rgb(134,239,172)",
+    "remember": "rgb(134,239,172)",
+    "autoAccept": "rgb(190,242,100)",
+    "planMode": "rgb(45,212,191)"
+  }
+}

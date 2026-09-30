@@ -1,0 +1,16 @@
+{
+  "name": "Orange",
+  "base": "dark",
+  "overrides": {
+    "permission": "rgb(255,160,80)",
+    "permissionShimmer": "rgb(255,200,150)",
+    "promptBorder": "rgb(200,95,20)",
+    "promptBorderShimmer": "rgb(255,150,60)",
+    "claude": "rgb(255,130,30)",
+    "claudeShimmer": "rgb(255,185,120)",
+    "suggestion": "rgb(255,190,130)",
+    "remember": "rgb(255,190,130)",
+    "autoAccept": "rgb(255,120,100)",
+    "planMode": "rgb(240,190,80)"
+  }
+}

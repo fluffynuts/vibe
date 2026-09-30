@@ -3,3 +3,5 @@
 *.exe
 .idea/
 /src/vibe/vibe
+# the claude theme last chosen for a profile's sandbox — a per-machine preference
+/profiles/*/claude-theme

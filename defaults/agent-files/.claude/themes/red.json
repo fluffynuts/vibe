@@ -1,0 +1,16 @@
+{
+  "name": "Red",
+  "base": "dark",
+  "overrides": {
+    "permission": "rgb(255,120,120)",
+    "permissionShimmer": "rgb(255,170,170)",
+    "promptBorder": "rgb(178,40,48)",
+    "promptBorderShimmer": "rgb(255,100,100)",
+    "claude": "rgb(255,85,85)",
+    "claudeShimmer": "rgb(255,150,150)",
+    "suggestion": "rgb(255,150,150)",
+    "remember": "rgb(255,150,150)",
+    "autoAccept": "rgb(255,130,170)",
+    "planMode": "rgb(240,120,90)"
+  }
+}

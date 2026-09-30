@@ -1,0 +1,16 @@
+{
+  "name": "Yellow",
+  "base": "dark",
+  "overrides": {
+    "permission": "rgb(253,230,90)",
+    "permissionShimmer": "rgb(254,243,160)",
+    "promptBorder": "rgb(180,160,20)",
+    "promptBorderShimmer": "rgb(253,230,90)",
+    "claude": "rgb(250,215,40)",
+    "claudeShimmer": "rgb(254,240,138)",
+    "suggestion": "rgb(254,240,138)",
+    "remember": "rgb(254,240,138)",
+    "autoAccept": "rgb(217,249,100)",
+    "planMode": "rgb(255,200,90)"
+  }
+}

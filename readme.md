@@ -7,6 +7,11 @@ touching the tool itself.
 
 It runs on Linux, macOS and Windows — wherever `sbx` does.
 
+Whilst the initial implementation is focused around using Claude within the container,
+in theory, any agent supported by sbx can be used.
+
+This software is in alpha state. It works reasonably well for me, but I make no guarantees.
+
 ## Building
 
 `make` builds `vibe` into the repo root (and `make test`, `make vet`, `make check`, `make clean`
@@ -119,6 +124,40 @@ otherwise.
 `vibe -f` skips the question and creates a blank profile; `vibe -p <existing>` uses a profile you
 already have without creating anything. With no terminal to ask on, vibe says so instead of
 guessing.
+
+### Claude colour themes
+
+Every sandbox ships vibe's Claude Code colour themes, Amber, Blue, Cyan, Green, Orange, Red and
+Yellow, from `defaults/agent-files/.claude/themes/`. They keep Claude's reply text white and
+colour the accents: highlighted `code` in replies, the lines around your input, Claude's spinner
+and the mode indicators. The exception is "bypass
+permissions", which uses the same colour as real errors and so stays red. `/theme` switches
+between them at any time.
+
+Creating a sandbox asks which one the agent starts with. The list is exactly the themes in
+`~/.vibe/defaults/agent-files/.claude/themes/` (or the bundle's defaults, if there's no
+`~/.vibe/defaults`), so adding or deleting a theme file there changes what is offered. A
+`~/.vibe/defaults` seeded before themes existed has none, and the question is then skipped; copy
+the bundle's `themes` folder in to get them. A profile's own `agent-files/.claude/themes/` are
+deployed as well, and `/theme` can switch to them, but they aren't offered here:
+
+```
+vibe: select claude theme
+❯ default
+  amber
+  blue
+  cyan
+  green
+  orange
+  red
+  yellow
+```
+
+The answer is recorded in the profile's folder as `claude-theme`. A rebuild (`-r`, `-R` or `-C`)
+doesn't ask again. It reads the theme the old sandbox's agent is actually set to, including any
+change made with `/theme` since, before removing it. If it can't, it uses what the profile
+recorded, and it asks only when neither is known. `-f`, or running without a terminal, takes that
+answer, or Claude's default, without asking.
 
 ### Checkbox prompts
 

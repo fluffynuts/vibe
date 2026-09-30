@@ -1,0 +1,16 @@
+{
+  "name": "Amber",
+  "base": "dark",
+  "overrides": {
+    "permission": "rgb(255,196,64)",
+    "permissionShimmer": "rgb(255,224,140)",
+    "promptBorder": "rgb(184,128,20)",
+    "promptBorderShimmer": "rgb(255,196,64)",
+    "claude": "rgb(255,176,0)",
+    "claudeShimmer": "rgb(255,215,110)",
+    "suggestion": "rgb(255,210,120)",
+    "remember": "rgb(255,210,120)",
+    "autoAccept": "rgb(255,160,60)",
+    "planMode": "rgb(230,200,90)"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "Cyan",
+  "base": "dark",
+  "overrides": {
+    "permission": "rgb(103,232,249)",
+    "permissionShimmer": "rgb(165,243,252)",
+    "promptBorder": "rgb(8,145,178)",
+    "promptBorderShimmer": "rgb(103,232,249)",
+    "claude": "rgb(34,211,238)",
+    "claudeShimmer": "rgb(165,243,252)",
+    "suggestion": "rgb(125,230,245)",
+    "remember": "rgb(125,230,245)",
+    "autoAccept": "rgb(94,234,212)",
+    "planMode": "rgb(125,211,252)"
+  }
+}

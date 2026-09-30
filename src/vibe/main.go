@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"vibe"
+	"vibe/internal/claudetheme"
 	"vibe/internal/cliargs"
 	"vibe/internal/fscopy"
 	"vibe/internal/homeinit"
@@ -821,10 +822,87 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 	if err != nil {
 		return err
 	}
+	if agentOf(merged) == "claude" {
+		if doc, err = setClaudeTheme(lay, profile, doc, "", true, args.Force); err != nil {
+			return err
+		}
+	}
 	if err := createSandbox(vibeHome, name, target, profile, doc, merged, false, ""); err != nil {
 		return err
 	}
 	return finish(vibeHome, name)
+}
+
+func agentOf(merged settings.Settings) string {
+	if merged.Agent == "" {
+		return "claude"
+	}
+	return merged.Agent
+}
+
+// setClaudeTheme settles which Claude theme a sandbox about to be created
+// starts with, sets it in doc, and records it in the profile's directory.
+//
+// The preference comes from the sandbox being replaced (fromSandbox, read
+// before it was removed — the truest answer, since /theme may have changed
+// it since), else from what the profile last recorded. ask says to ask
+// anyway, starting on that preference: a brand new sandbox always asks,
+// while a rebuild asks only when nothing is known. -f, or no terminal,
+// takes the preference (or the default) without asking.
+func setClaudeTheme(lay layout.Layout, profile string, doc kitspec.Doc, fromSandbox string, ask, force bool) (kitspec.Doc, error) {
+	// ~/.vibe/defaults (or, without one, the bundle's) is the source of
+	// truth for which themes are offered.
+	known := claudetheme.Available(lay.DefaultsDir())
+	profileDir := lay.ProfileDir(profile)
+
+	preferred, source := fromSandbox, "the sandbox being replaced"
+	if preferred == "" {
+		if c, ok := claudetheme.FromProfile(profileDir); ok {
+			preferred, source = c, "profile '"+profile+"'"
+		}
+	}
+	choice := claudetheme.Default
+	if preferred != "" {
+		resolved, ok := claudetheme.Resolve(preferred, known)
+		if !ok {
+			note("  claude theme '%s' (from %s) is no longer in the kit — using the default", preferred, source)
+		}
+		choice = resolved
+	}
+
+	choices := claudetheme.Choices(known)
+	if indexOf(choices, choice) < 0 {
+		// A built-in theme the sandbox was switched to: offer to keep it.
+		choices = append([]string{choices[0], choice}, choices[1:]...)
+	}
+	switch {
+	case (ask || preferred == "") && len(choices) > 1 && !force && interactive():
+		picked, ok := chooseFrom("select claude theme", choices, indexOf(choices, choice))
+		if !ok {
+			return nil, fmt.Errorf("aborted — no theme chosen")
+		}
+		choice = choices[picked]
+	case preferred != "":
+		note("  claude theme: %s (from %s)", choice, source)
+	}
+
+	doc, err := claudetheme.Apply(doc, choice)
+	if err != nil {
+		return nil, err
+	}
+	if err := claudetheme.SaveToProfile(profileDir, choice); err != nil {
+		note("  WARNING: could not record the claude theme in %s: %s", profileDir, err)
+	}
+	return doc, nil
+}
+
+func indexOf(list []string, s string) int {
+	for i, v := range list {
+		if v == s {
+			return i
+		}
+	}
+	return -1
 }
 
 func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merged settings.Settings, restoreAfterCreate bool, memoryStore string) error {
@@ -968,13 +1046,11 @@ func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandb
 	if err != nil {
 		return err
 	}
-	agent := merged.Agent
-	if agent == "" {
-		agent = "claude"
-	}
+	agent := agentOf(merged)
 
 	restoreAfterCreate := false
 	var memoryStore string
+	var themeFromSandbox string
 
 	if sbxrun.Exists(name) {
 		if !skipSandboxConfirm && !confirmDefault(args.Force, true, fmt.Sprintf("Remove sandbox '%s' (workspace %s)?", name, target)) {
@@ -1015,6 +1091,13 @@ func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandb
 				}
 			}
 		}
+		// Read after the memories: checking for those will have started a
+		// stopped sandbox, which is the only kind that can be asked.
+		if agent == "claude" && sbxrun.Reachable(name) {
+			if c, ok := claudetheme.FromSandbox(name); ok {
+				themeFromSandbox = c
+			}
+		}
 		note("removing sandbox '%s'", name)
 		if err := sbxrun.Remove(name, true); err != nil {
 			return err
@@ -1025,6 +1108,12 @@ func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandb
 		// overwrites it once the new sandbox is up.
 	} else {
 		note("no existing sandbox '%s' — nothing to remove", name)
+	}
+
+	if agent == "claude" {
+		if doc, err = setClaudeTheme(lay, profile, doc, themeFromSandbox, false, args.Force); err != nil {
+			return err
+		}
 	}
 
 	note("rebuilding '%s' from profile '%s'", name, profile)
@@ -1107,6 +1196,9 @@ func doReCompose(lay layout.Layout, args cliargs.Args, name, target string) erro
 		return fmt.Errorf("aborted — nothing changed")
 	}
 
+	// The recorded theme isn't something the features produce, so it would
+	// go with the rest of the old profile; carry it across.
+	theme, hadTheme := claudetheme.FromProfile(lay.ProfileDir(profile))
 	dir := lay.HomePath("profiles", profile)
 	if info, err := os.Stat(dir); dir != "" && err == nil && info.IsDir() {
 		if err := os.RemoveAll(dir); err != nil {
@@ -1116,6 +1208,11 @@ func doReCompose(lay layout.Layout, args cliargs.Args, name, target string) erro
 	created, err := profilegen.CreateGuided(lay, profile, features)
 	if err != nil {
 		return err
+	}
+	if hadTheme {
+		if err := claudetheme.SaveToProfile(created, theme); err != nil {
+			note("  WARNING: could not carry the claude theme across: %s", err)
+		}
 	}
 	note("re-composed profile '%s' (%s) in %s", profile, strings.Join(features, ", "), created)
 
