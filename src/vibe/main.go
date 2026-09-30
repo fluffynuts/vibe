@@ -1732,6 +1732,10 @@ func reorderFrom(question string, labels []string) ([]string, bool) {
 
 // --- finishing the foreground session --------------------------------------
 
+// sbxFailureHint is shown when sbx exits non-zero, which is most often a
+// sandbox that failed to start.
+const sbxFailureHint = "sbx will fail to start if other virtualisation (eg virtualbox) is running - check that you have no such process running"
+
 // finish nudges the on-start script (idempotent — safe on every attach, and
 // needed because setup.startup does not fire on a sandbox's very first boot,
 // before the launcher is on disk) then hands off to `sbx run` in the
@@ -1745,12 +1749,22 @@ func finish(vibeHome, name string) error {
 	if err != nil {
 		return err
 	}
+	stopped := false
 	select {
 	case <-session.StopRequested():
+		stopped = true
 		note("session ended: asked to stop by another vibe for this folder")
 	default:
 	}
-	saveMemoriesOnExit(vibeHome, name)
+	// A session we ended ourselves exits non-zero, but its sandbox is fine
+	// to copy from; any other non-zero exit means sbx failed, and the
+	// sandbox is likely unreachable.
+	if code == 0 || stopped {
+		saveMemoriesOnExit(vibeHome, name)
+	} else {
+		note("cannot copy memories: sbx exited with code %d", code)
+		note("%s", sbxFailureHint)
+	}
 	session.Release()
 	os.Exit(code)
 	return nil
