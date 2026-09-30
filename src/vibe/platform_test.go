@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -55,5 +56,47 @@ func TestNetstatListenersPicksTheListeningPort(t *testing.T) {
 		if !strings.HasSuffix(line, "4242") || strings.Contains(line, "\r") {
 			t.Errorf("unexpected line %q", line)
 		}
+	}
+}
+
+func TestTasklistImagesPicksTheImageNames(t *testing.T) {
+	out := "\r\n" +
+		"\"System Idle Process\",\"0\",\"Services\",\"0\",\"8 K\"\r\n" +
+		"\"VBoxHeadless.exe\",\"4242\",\"Console\",\"1\",\"52,120 K\"\r\n" +
+		"INFO: some noise\r\n"
+	got := tasklistImages(out)
+	want := []string{"System Idle Process", "VBoxHeadless.exe"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("tasklistImages = %q, want %q", got, want)
+	}
+}
+
+func TestMatchProcesses(t *testing.T) {
+	names := []string{"VBoxHeadless", "VirtualBoxVM"}
+	tests := []struct {
+		name   string
+		listed []string
+		want   []string
+	}{
+		{"none running", []string{"bash", "sbx", "VBoxSVC"}, nil},
+		{"linux comm", []string{"bash", "VBoxHeadless"}, []string{"VBoxHeadless"}},
+		{"windows image", []string{"vboxheadless.EXE"}, []string{"VBoxHeadless"}},
+		{"macOS path", []string{"/Applications/VirtualBox.app/Contents/Resources/VirtualBoxVM.app/Contents/MacOS/VirtualBoxVM"}, []string{"VirtualBoxVM"}},
+		{"windows path", []string{`C:\Program Files\Oracle\VirtualBox\VirtualBoxVM.exe`, "VBoxHeadless"}, []string{"VBoxHeadless", "VirtualBoxVM"}},
+		{"prefix is not a match", []string{"VBoxHeadlessTray"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchProcesses(tt.listed, names)
+			if strings.Join(got, "|") != strings.Join(tt.want, "|") {
+				t.Errorf("matchProcesses = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunningProcessesFindsNothingMadeUp(t *testing.T) {
+	if got := runningProcesses(runtime.GOOS, []string{"no-such-process-vibe-test"}); len(got) != 0 {
+		t.Errorf("runningProcesses = %q, want none", got)
 	}
 }

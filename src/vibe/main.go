@@ -1736,6 +1736,12 @@ func reorderFrom(question string, labels []string) ([]string, bool) {
 // sandbox that failed to start.
 const sbxFailureHint = "sbx will fail to start if other virtualisation (eg virtualbox) is running - check that you have no such process running"
 
+// virtualBoxProcesses are the names of processes that mean a VirtualBox VM
+// is running, and so holding the CPU virtualisation sbx needs.
+var virtualBoxProcesses = []string{"VBoxHeadless", "VirtualBoxVM"}
+
+const virtualBoxHint = "You should stop VirtualBox - sbx and virtualbox do not play well together without cpu pinning"
+
 // finish nudges the on-start script (idempotent — safe on every attach, and
 // needed because setup.startup does not fire on a sandbox's very first boot,
 // before the launcher is on disk) then hands off to `sbx run` in the
@@ -1764,6 +1770,9 @@ func finish(vibeHome, name string) error {
 	} else {
 		note("cannot copy memories: sbx exited with code %d", code)
 		note("%s", sbxFailureHint)
+		if len(runningProcesses(runtime.GOOS, virtualBoxProcesses)) > 0 {
+			note("%s", virtualBoxHint)
+		}
 	}
 	session.Release()
 	os.Exit(code)
@@ -2079,6 +2088,75 @@ func portHolders(goos string, port int) []string {
 		try("lsof", "-nP", fmt.Sprintf("-iTCP:%d", port), "-sTCP:LISTEN")
 	}
 	return outputs
+}
+
+// runningProcesses returns which of names are running as processes, asking
+// whatever this OS offers. Like portHolders it is only a diagnostic aside, so
+// a process list it cannot get just finds nothing.
+func runningProcesses(goos string, names []string) []string {
+	var listed []string
+	switch goos {
+	case "windows":
+		out, err := exec.Command("tasklist", "/FO", "CSV", "/NH").Output()
+		if err != nil {
+			return nil
+		}
+		listed = tasklistImages(string(out))
+	case "linux":
+		// /proc needs no tool; comm is the name truncated to 15 bytes,
+		// which is long enough for the names asked about here.
+		comms, _ := filepath.Glob("/proc/[0-9]*/comm")
+		for _, comm := range comms {
+			if b, err := os.ReadFile(comm); err == nil {
+				listed = append(listed, strings.TrimSpace(string(b)))
+			}
+		}
+	default: // macOS and the BSDs
+		out, err := exec.Command("ps", "-A", "-o", "comm=").Output()
+		if err != nil {
+			return nil
+		}
+		listed = strings.Split(string(out), "\n")
+	}
+	return matchProcesses(listed, names)
+}
+
+// tasklistImages picks the image names out of `tasklist /FO CSV /NH`
+// output, where each line starts with the quoted image name.
+func tasklistImages(out string) []string {
+	var images []string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, `"`) {
+			continue
+		}
+		if end := strings.Index(line[1:], `"`); end >= 0 {
+			images = append(images, line[1:end+1])
+		}
+	}
+	return images
+}
+
+// matchProcesses returns which of names appear in listed, a list of process
+// names or paths (macOS's ps gives the full executable path). Names match
+// case-insensitively and ignore a Windows .exe suffix.
+func matchProcesses(listed, names []string) []string {
+	seen := map[string]bool{}
+	for _, p := range listed {
+		p = strings.TrimSpace(p)
+		if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+			p = p[i+1:]
+		}
+		p = strings.TrimSuffix(strings.ToLower(p), ".exe")
+		seen[p] = true
+	}
+	var found []string
+	for _, n := range names {
+		if seen[strings.ToLower(n)] {
+			found = append(found, n)
+		}
+	}
+	return found
 }
 
 // netstatListeners picks, out of `netstat -ano` output, the lines for a
