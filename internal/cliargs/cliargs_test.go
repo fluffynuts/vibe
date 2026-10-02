@@ -129,6 +129,47 @@ func TestParseCleanup(t *testing.T) {
 	}
 }
 
+func TestParseDelete(t *testing.T) {
+	for _, argv := range [][]string{{"-d"}, {"--delete"}, {"--delete", "-f", "some/path"}} {
+		got, err := Parse(argv)
+		if err != nil {
+			t.Fatalf("Parse(%v): %v", argv, err)
+		}
+		if !got.Delete {
+			t.Errorf("Parse(%v) did not set Delete", argv)
+		}
+		if got.ExclusiveActions() != 1 {
+			t.Errorf("Parse(%v): ExclusiveActions = %d, want 1", argv, got.ExclusiveActions())
+		}
+	}
+	both, err := Parse([]string{"-d", "-r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if both.ExclusiveActions() != 2 {
+		t.Errorf("-d with -r should count as two actions, got %d", both.ExclusiveActions())
+	}
+}
+
+func TestParseInfo(t *testing.T) {
+	for _, argv := range [][]string{{"-a"}, {"--info"}, {"--info", "some/path"}} {
+		got, err := Parse(argv)
+		if err != nil {
+			t.Fatalf("Parse(%v): %v", argv, err)
+		}
+		if !got.Info || got.ExclusiveActions() != 1 {
+			t.Errorf("Parse(%v) = %+v; want Info, as the one action", argv, got)
+		}
+	}
+	both, err := Parse([]string{"-a", "-d"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if both.ExclusiveActions() != 2 {
+		t.Errorf("-a with -d should count as two actions, got %d", both.ExclusiveActions())
+	}
+}
+
 func TestParseVersion(t *testing.T) {
 	for _, arg := range []string{"-v", "--version"} {
 		got, err := Parse([]string{arg})

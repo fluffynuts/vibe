@@ -23,6 +23,8 @@ type Args struct {
 	Upgrade    bool
 	InstallSbx bool
 	Cleanup    bool
+	Delete     bool
+	Info       bool
 	Help       bool
 	Version    bool
 	// UpdateStrategy is --install's --update-strategy value, unparsed.
@@ -74,6 +76,12 @@ func Parse(argv []string) (Args, error) {
 			i++
 		case arg == "-x" || arg == "--cleanup":
 			a.Cleanup = true
+			i++
+		case arg == "-d" || arg == "--delete":
+			a.Delete = true
+			i++
+		case arg == "-a" || arg == "--info":
+			a.Info = true
 			i++
 		case arg == "-n" || arg == "--name":
 			v, n, err := valueArg(argv, i)
@@ -150,10 +158,10 @@ func setPath(a *Args, v string) error {
 
 // ExclusiveActions counts how many of the mutually-exclusive action flags
 // (stop/ssh/re-init/re-create/re-compose/list/install/upgrade/install-sbx/
-// cleanup) are set.
+// cleanup/delete/info) are set.
 func (a Args) ExclusiveActions() int {
 	n := 0
-	for _, b := range []bool{a.Stop, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup} {
+	for _, b := range []bool{a.Stop, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info} {
 		if b {
 			n++
 		}

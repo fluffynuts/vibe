@@ -177,8 +177,12 @@ vibe -f                    # ...and, for an unknown profile, create a blank one
 vibe -R/--re-create [path] # delete the profile too, then re-init — the profile
                            #    is gone, so this always re-prompts
 vibe -l/--list             # list every known sandbox and its status
+vibe -a/--info [path]      # show the sandbox's settings and, while it runs,
+                           #    its memory and disk use
 vibe -x/--cleanup          # pick sandboxes from a checklist and delete them;
                            #    the profiles they were built from are kept
+vibe -d/--delete [path]    # pick whether to delete the sandbox for path, its
+                           #    profile, or both (-f: both, without asking)
 vibe -i/--install          # copy the bundle into ~/.vibe and the binary into
                            #    ~/.local/bin; from a newer release, upgrade
 vibe -i -u/--update-strategy merge,keep
@@ -192,7 +196,7 @@ vibe -I/--install-sbx      # install the latest stable Docker Sandboxes (sbx);
 vibe -v/--version          # print the version, commit and build date
 ```
 
-Every option has a long and a short form. `-s`, `-c`, `-r`, `-R` and `-l` resolve the sandbox
+Every option has a long and a short form. `-s`, `-c`, `-a`, `-r`, `-R`, `-C` and `-d` resolve the sandbox
 name exactly as a normal run would, so `vibe -s && vibe` restarts whatever you were working on.
 `-l` and `-x` work on every sandbox at once and take no path.
 
@@ -206,9 +210,46 @@ unattended form of this: `-x` always asks, and `-f` has nothing to skip.
 
 **Profiles are never deleted by `-x`.** A profile outlives the sandboxes built from it, so
 cleaning up a sandbox leaves the next `vibe` in that folder able to rebuild it unchanged. Deleting
-a profile is `-R`/`--re-create`'s job. What a cleanup does discard is vibe's *instance record* for
+a profile is the job of `-d`/`--delete` or `-R`/`--re-create`. What a cleanup does discard is vibe's *instance record* for
 the sandbox — it has to, because a record claims its published host ports whether or not anything
 is listening, so one left behind would reserve those ports against every sandbox made afterwards.
+
+`-a`/`--info` shows the sandbox's profile, agent, memory setting and, for a guided profile, the
+library features it was composed from. While the sandbox is running, it also shows the memory and
+disk the sandbox is using, read from inside it:
+
+```
+sandbox   vibe
+folder    ~/code/opensource/vibe
+profile   vibe
+agent     claude
+memory    12g
+features  go, node
+status    running
+mem used  1.9 GiB of 11.8 GiB (16%)
+disk used 1.5 GiB of 19.5 GiB (7%)
+docker    340.0 KiB of 48.9 GiB (0%), on a disk of its own
+```
+
+"mem used" counts what the sandbox can't hand back on demand, so the page cache isn't included.
+It's a snapshot, so check it while the sandbox is at its busiest (building, running tests) before
+deciding to give it less memory. "disk used" covers the sandbox's image and everything written
+over it. Docker inside the sandbox keeps its images on a separate disk, shown as "docker". A
+stopped sandbox isn't started just to answer: you get its settings only.
+
+`-d`/`--delete` is for one folder's sandbox and profile. It offers both in a checklist:
+
+```
+[x] remove the sandbox <sandbox name>
+[ ] remove the profile <profile name>
+```
+
+The sandbox starts ticked, because the next `vibe` in that folder rebuilds it. The profile starts
+unticked, because it can hold work that's harder to redo. If other sandboxes use the profile, its
+line names them. Only things that exist are offered. A profile that only ships with vibe has no
+copy in `~/.vibe` to delete, so it isn't offered. `-f` deletes both without asking. With no
+terminal and no `-f`, nothing is deleted. vibe logs what it removed and what it kept. As with
+`-x`, removing the sandbox drops vibe's instance record for it too.
 
 `-c`/`--ssh` requires `sbx setup ssh` to have been run once on this machine.
 
@@ -304,7 +345,7 @@ answer, or Claude's default, without asking.
 
 ### Checkbox prompts
 
-Anywhere vibe asks you to check several things — the guided feature picker, `-x`/`--cleanup` —
+Anywhere vibe asks you to check several things — the guided feature picker, `-x`/`--cleanup`, `-d`/`--delete` —
 enter doesn't answer straight away. What you checked is listed back, one item per line, and the
 list is still there to go back to:
 

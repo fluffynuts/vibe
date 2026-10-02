@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -61,8 +62,14 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              features it was composed from, picking up
                              whatever they have gained since, then re-init
   vibe -l/--list             list every known sandbox and its status
+  vibe -a/--info [path]      show the sandbox's settings (memory, agent,
+                             features) and, while it runs, how much memory
+                             and disk it is using
   vibe -x/--cleanup          pick sandboxes from a checklist and delete them;
                              the profiles they were built from are kept
+  vibe -d/--delete [path]    pick from a checklist whether to delete the
+                             sandbox for path (ticked), its profile
+                             (unticked), or both; -f deletes both unasked
   vibe -U/--upgrade          check GitHub for newer releases of vibe and
                              Docker SBX, pick which to upgrade (all are
                              ticked), and install them; -f upgrades them all
@@ -86,7 +93,7 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              settle files changed on both sides without
                              asking: keep, update, merge,keep or merge,update
 
--s, -c, -r, -R and -C resolve the sandbox name exactly as a normal run
+-s, -c, -a, -r, -R, -C and -d resolve the sandbox name exactly as a normal run
 would, so "vibe -s && vibe" restarts whatever you were working on. -l and -x
 work on every sandbox at once and take no path.
 
@@ -137,7 +144,7 @@ func run(argv []string) error {
 		return fmt.Errorf("--update-strategy only applies to --install and --upgrade")
 	}
 	if args.ExclusiveActions() > 1 {
-		return fmt.Errorf("--stop, --ssh, --re-init, --re-create, --re-compose, --list, --install, --upgrade, --install-sbx and --cleanup are mutually exclusive")
+		return fmt.Errorf("--stop, --ssh, --re-init, --re-create, --re-compose, --list, --install, --upgrade, --install-sbx, --cleanup, --delete and --info are mutually exclusive")
 	}
 
 	vibeHome := vibeHomeDir()
@@ -231,6 +238,8 @@ func run(argv []string) error {
 		return doStop(name, target)
 	case args.Ssh:
 		return doSsh(name, target)
+	case args.Info:
+		return doInfo(lay, args, name, target)
 	}
 
 	if err := guardFolder(vibeHome, target, args.Force); err != nil {
@@ -244,6 +253,8 @@ func run(argv []string) error {
 		return doReCreate(lay, args, name, target)
 	case args.ReCompose:
 		return doReCompose(lay, args, name, target)
+	case args.Delete:
+		return doDelete(lay, args, name, target)
 	default:
 		return doCreateOrAttach(lay, args, name, target)
 	}
@@ -437,6 +448,213 @@ func doList() error {
 		fmt.Printf("%-16s%s\n", s.Name, text)
 	}
 	return nil
+}
+
+// --- info -------------------------------------------------------------------
+
+// sandboxInfo is what --info shows about one folder's sandbox.
+type sandboxInfo struct {
+	name, target, profile string
+	exists, running       bool
+	agent                 string
+	memory                string   // the memory setting; empty for sbx's default
+	features              []string // what a guided profile was composed from
+	usage                 *sandboxUsage
+	usageErr              error
+}
+
+// sandboxUsage is what a running sandbox reports of its memory and disk, in
+// bytes. Memory in use is what the kernel couldn't hand back on demand —
+// MemTotal less MemAvailable — so the page cache, which grows to fill
+// whatever it is given, doesn't count against it.
+//
+// Disk is the root filesystem: the sandbox's image and everything written
+// over it. Docker inside the sandbox keeps its images and containers on a
+// disk of their own, reported apart when it has one (dockerSize non-zero).
+type sandboxUsage struct {
+	memTotal, memAvailable uint64
+	diskSize, diskUsed     uint64
+	dockerSize, dockerUsed uint64
+}
+
+// doInfo prints the settings of the sandbox for target and, if it is
+// running, its memory and disk use. A stopped sandbox isn't started: that
+// would be a slow and surprising side effect of asking a question.
+func doInfo(lay layout.Layout, args cliargs.Args, name, target string) error {
+	profile, err := resolveReInitProfile(lay.Home, args, name, target)
+	if err != nil {
+		return err
+	}
+	info := sandboxInfo{name: name, target: target, profile: profile}
+	if lay.ProfileExists(profile) {
+		_, merged, err := loadKit(lay, profile)
+		if err != nil {
+			return err
+		}
+		info.agent = agentOf(merged)
+		info.memory = merged.Memory
+		info.features = profilegen.ComposedFrom(lay.ProfileDir(profile))
+	}
+	statuses, err := sbxrun.List()
+	if err != nil {
+		return err
+	}
+	for _, s := range statuses {
+		if s.Name == name {
+			info.exists, info.running = true, s.Running
+		}
+	}
+	if info.running {
+		u, err := liveUsage(name)
+		if err != nil {
+			info.usageErr = err
+		} else {
+			info.usage = &u
+		}
+	}
+	printInfo(os.Stdout, info, lay.ProfileExists(profile))
+	return nil
+}
+
+// liveUsage reads a running sandbox's memory and root disk use from inside it.
+func liveUsage(name string) (sandboxUsage, error) {
+	var u sandboxUsage
+	out, err := sbxrun.ExecCapture(name, "cat", "/proc/meminfo")
+	if err != nil {
+		return u, fmt.Errorf("reading /proc/meminfo: %w", err)
+	}
+	if u.memTotal, u.memAvailable, err = parseMeminfo(out); err != nil {
+		return u, err
+	}
+	out, err = sbxrun.ExecCapture(name, "df", "-Pk", "/")
+	if err != nil {
+		return u, fmt.Errorf("running df: %w", err)
+	}
+	if u.diskSize, u.diskUsed, _, err = parseDf(out); err != nil {
+		return u, err
+	}
+	// No Docker in the sandbox, or Docker's data on the root filesystem:
+	// either way, nothing to report apart.
+	if out, err := sbxrun.ExecCapture(name, "df", "-Pk", dockerDataDir); err == nil {
+		if size, used, mount, err := parseDf(out); err == nil && mount == dockerDataDir {
+			u.dockerSize, u.dockerUsed = size, used
+		}
+	}
+	return u, nil
+}
+
+// dockerDataDir is where Docker inside a sandbox keeps its images.
+const dockerDataDir = "/var/lib/docker"
+
+// parseMeminfo reads MemTotal and MemAvailable, in bytes, from /proc/meminfo.
+func parseMeminfo(out string) (total, available uint64, err error) {
+	var haveTotal, haveAvailable bool
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		n, err := strconv.ParseUint(fields[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		switch fields[0] {
+		case "MemTotal:":
+			total, haveTotal = n*1024, true
+		case "MemAvailable:":
+			available, haveAvailable = n*1024, true
+		}
+	}
+	if !haveTotal || !haveAvailable {
+		return 0, 0, fmt.Errorf("no MemTotal and MemAvailable in /proc/meminfo")
+	}
+	return total, available, nil
+}
+
+// parseDf reads the size and use, in bytes, of the one filesystem
+// `df -Pk` was asked about, and where it is mounted.
+func parseDf(out string) (size, used uint64, mount string, err error) {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	fields := strings.Fields(lines[len(lines)-1])
+	if len(lines) < 2 || len(fields) < 6 {
+		return 0, 0, "", fmt.Errorf("can't read df's output: %q", out)
+	}
+	size, err1 := strconv.ParseUint(fields[1], 10, 64)
+	used, err2 := strconv.ParseUint(fields[2], 10, 64)
+	if err1 != nil || err2 != nil {
+		return 0, 0, "", fmt.Errorf("can't read df's output: %q", out)
+	}
+	return size * 1024, used * 1024, fields[len(fields)-1], nil
+}
+
+// printInfo writes info to w; profileKnown says whether the profile exists
+// to have settings.
+func printInfo(w io.Writer, info sandboxInfo, profileKnown bool) {
+	row := func(label, format string, a ...interface{}) {
+		fmt.Fprintf(w, "%-10s%s\n", label, fmt.Sprintf(format, a...))
+	}
+	row("sandbox", "%s", info.name)
+	row("folder", "%s", displayPath(info.target))
+	if !profileKnown {
+		row("profile", "%s (doesn't exist yet: vibe will offer to create it)", info.profile)
+	} else {
+		row("profile", "%s", info.profile)
+		row("agent", "%s", info.agent)
+		if info.memory == "" {
+			row("memory", "sbx's default")
+		} else {
+			row("memory", "%s", info.memory)
+		}
+		if len(info.features) == 0 {
+			row("features", "none recorded (not a guided profile)")
+		} else {
+			row("features", "%s", strings.Join(info.features, ", "))
+		}
+	}
+
+	switch {
+	case !info.exists:
+		row("status", "no sandbox yet: running vibe here creates one")
+		return
+	case !info.running:
+		row("status", "not running: start it to see its memory and disk use")
+		return
+	case info.usageErr != nil:
+		row("status", "running, but its use couldn't be read: %s", info.usageErr)
+		return
+	}
+	row("status", "running")
+	u := info.usage
+	memUsed := u.memTotal - u.memAvailable
+	row("mem used", "%s of %s (%d%%)", formatBytes(memUsed), formatBytes(u.memTotal), percent(memUsed, u.memTotal))
+	row("disk used", "%s of %s (%d%%)", formatBytes(u.diskUsed), formatBytes(u.diskSize), percent(u.diskUsed, u.diskSize))
+	if u.dockerSize > 0 {
+		row("docker", "%s of %s (%d%%), on a disk of its own", formatBytes(u.dockerUsed), formatBytes(u.dockerSize), percent(u.dockerUsed, u.dockerSize))
+	}
+	fmt.Fprintln(w, "\nmemory use is a snapshot: check it while the sandbox is at its busiest\n"+
+		"(building, running tests) before deciding it needs less")
+}
+
+func percent(part, whole uint64) uint64 {
+	if whole == 0 {
+		return 0
+	}
+	return part * 100 / whole
+}
+
+// formatBytes writes n in the largest binary unit it reaches, to one
+// decimal place ("1.9 GiB", "512.0 MiB").
+func formatBytes(n uint64) string {
+	units := []string{"B", "KiB", "MiB", "GiB", "TiB"}
+	v, i := float64(n), 0
+	for v >= 1024 && i < len(units)-1 {
+		v /= 1024
+		i++
+	}
+	if i == 0 {
+		return fmt.Sprintf("%d B", n)
+	}
+	return fmt.Sprintf("%.1f %s", v, units[i])
 }
 
 // --- cleanup ----------------------------------------------------------------
@@ -1604,6 +1822,148 @@ func doReCreate(lay layout.Layout, args cliargs.Args, name, target string) error
 	}
 
 	return reInit(lay, args, name, target, true)
+}
+
+// --- delete -----------------------------------------------------------------
+
+// deletion is what --delete can remove for one folder: its sandbox, when sbx
+// has it, and its profile, when ~/.vibe has a copy to delete — a profile that
+// only ships with vibe would come straight back with the next upgrade.
+type deletion struct {
+	name       string
+	sandbox    bool   // sbx has a sandbox called name
+	profile    string // the profile name was (or would be) built from
+	profileDir string // the overlay copy of profile; empty when there is none
+	sharedWith []string
+}
+
+// options lists what d offers, as checklist labels with whether each starts
+// ticked, and which it is: the sandbox, ticked, since a re-run of vibe
+// rebuilds it; the profile, not, since that is work that can't be redone
+// as easily.
+func (d deletion) options() (labels []string, checked []bool, isSandbox []bool) {
+	if d.sandbox {
+		labels = append(labels, fmt.Sprintf("remove the sandbox %s", d.name))
+		checked = append(checked, true)
+		isSandbox = append(isSandbox, true)
+	}
+	if d.profileDir != "" {
+		label := fmt.Sprintf("remove the profile %s", d.profile)
+		if len(d.sharedWith) > 0 {
+			label += fmt.Sprintf(" (also used by %s)", strings.Join(d.sharedWith, ", "))
+		}
+		labels = append(labels, label)
+		checked = append(checked, false)
+		isSandbox = append(isSandbox, false)
+	}
+	return labels, checked, isSandbox
+}
+
+// pickDeletions asks which of labels to delete, starting from checked,
+// returning the indices picked; ok is false when the user quit. A variable
+// so tests can stand in for the user.
+var pickDeletions = func(labels []string, checked []bool) ([]int, bool) {
+	return checklistFrom("Check what to delete (this cannot be undone):", labels, checked)
+}
+
+// choose settles what to delete: everything d offers with -f, else what
+// the user ticks.
+func (d deletion) choose(force bool) (sandbox, profile bool, err error) {
+	labels, checked, isSandbox := d.options()
+	if len(labels) == 0 {
+		return false, false, nil
+	}
+	if force {
+		return d.sandbox, d.profileDir != "", nil
+	}
+	if !interactive() {
+		return false, false, fmt.Errorf("--delete needs a terminal to confirm on, or -f to delete the sandbox and its profile unasked")
+	}
+	picked, ok := pickDeletions(labels, checked)
+	if !ok {
+		return false, false, fmt.Errorf("aborted — nothing deleted")
+	}
+	for _, i := range picked {
+		if isSandbox[i] {
+			sandbox = true
+		} else {
+			profile = true
+		}
+	}
+	return sandbox, profile, nil
+}
+
+// run deletes the sandbox and/or profile, saying what it removed and what it
+// left. The sandbox's instance record goes with it, as with --cleanup, so
+// it doesn't hold on to its published ports. remove is sbxrun.Remove in
+// production, and a stub under test.
+func (d deletion) run(vibeHome string, sandbox, profile bool, remove func(name string, force bool) error) error {
+	if sandbox {
+		note("removing sandbox '%s'", d.name)
+		// Force: the user has just ticked it, and doesn't want to be told
+		// it is running.
+		if err := remove(d.name, true); err != nil {
+			return fmt.Errorf("could not remove sandbox '%s': %w", d.name, err)
+		}
+		if err := state.Remove(vibeHome, d.name); err != nil {
+			note("WARNING: %s", err)
+		}
+		note("removed sandbox '%s'", d.name)
+	} else if d.sandbox {
+		note("kept sandbox '%s'", d.name)
+	}
+	if profile {
+		if err := os.RemoveAll(d.profileDir); err != nil {
+			return fmt.Errorf("could not delete profile '%s': %w", d.profile, err)
+		}
+		note("deleted profile '%s' from %s", d.profile, displayPath(d.profileDir))
+	} else if d.profileDir != "" {
+		note("kept profile '%s'", d.profile)
+	}
+	return nil
+}
+
+// doDelete deletes the sandbox for target, its profile, or both, as picked
+// from a checklist — or both with -f.
+func doDelete(lay layout.Layout, args cliargs.Args, name, target string) error {
+	profile, err := resolveReInitProfile(lay.Home, args, name, target)
+	if err != nil {
+		return err
+	}
+	d := deletion{name: name, sandbox: sbxrun.Exists(name), profile: profile}
+	if dir := lay.HomePath("profiles", profile); dir != "" {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			d.profileDir = dir
+		}
+	}
+	if d.profileDir == "" {
+		if info, err := os.Stat(lay.BundlePath("profiles", profile)); err == nil && info.IsDir() {
+			note("profile '%s' ships with vibe, so it isn't offered for deletion", profile)
+		}
+	}
+	instances, err := state.List(lay.Home)
+	if err != nil {
+		return err
+	}
+	for _, inst := range instances {
+		if inst.Profile == profile && inst.Name != name {
+			d.sharedWith = append(d.sharedWith, inst.Name)
+		}
+	}
+
+	sandbox, prof, err := d.choose(args.Force)
+	if err != nil {
+		return err
+	}
+	if !sandbox && !prof {
+		if !d.sandbox && d.profileDir == "" {
+			note("no sandbox '%s' and no profile '%s' in %s — nothing to delete", name, profile, displayPath(lay.HomePath("profiles")))
+		} else {
+			note("nothing checked — nothing deleted")
+		}
+		return nil
+	}
+	return d.run(lay.Home, sandbox, prof, sbxrun.Remove)
 }
 
 // --- re-compose -------------------------------------------------------------
