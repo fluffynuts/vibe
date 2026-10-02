@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 
 	"vibe/internal/cliargs"
 	"vibe/internal/fscopy"
+	"vibe/internal/hostmem"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
 	"vibe/internal/state"
@@ -650,5 +652,92 @@ func TestReplaceFileWhileTheTargetIsRunning(t *testing.T) {
 		if _, err := os.Stat(leftover); err == nil {
 			t.Errorf("left behind %s", leftover)
 		}
+	}
+}
+
+// onHost stands in a machine with gib GB installed — reporting a little
+// under that, as an OS does — for the rest of the test.
+func onHost(t *testing.T, gib uint64) {
+	t.Helper()
+	old := hostmem.Total
+	hostmem.Total = func() (uint64, error) { return gib*hostmem.GiB - 400<<20, nil }
+	t.Cleanup(func() { hostmem.Total = old })
+}
+
+const shippedSettings = `memory: 12g
+agent: claude
+# ticked by default when a guided profile is created
+defaultFeatures:
+  - diffity
+`
+
+// TestDoInstallFirstTimeSetsMemoryForThisMachine: with nobody to ask, a
+// first install keeps the package's settings, but with no more memory than
+// half of this machine's.
+func TestDoInstallFirstTimeSetsMemoryForThisMachine(t *testing.T) {
+	onHost(t, 16)
+	home := t.TempDir()
+	bundle := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	writeFile(t, filepath.Join(bundle, "settings.yaml"), shippedSettings)
+
+	vibeHome := filepath.Join(home, ".vibe")
+	if err := doInstall(layout.New(vibeHome, bundle), true, ""); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(vibeHome, "settings.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := strings.Replace(shippedSettings, "memory: 12g", "memory: 8g", 1); string(data) != want {
+		t.Errorf("settings.yaml after a first install on 16 GB:\n%s\nwant:\n%s", data, want)
+	}
+}
+
+// TestDoInstallLowersAMemorySettingThisMachineCantGive: a later install
+// leaves the user's settings alone, but for a memory setting over half
+// this machine's.
+func TestDoInstallLowersAMemorySettingThisMachineCantGive(t *testing.T) {
+	home := t.TempDir()
+	bundle := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	writeFile(t, filepath.Join(bundle, "settings.yaml"), shippedSettings)
+	vibeHome := filepath.Join(home, ".vibe")
+	lay := layout.New(vibeHome, bundle)
+	if err := doInstall(lay, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	mine := strings.Replace(shippedSettings, "agent: claude", "agent: codex", 1)
+	writeFile(t, filepath.Join(vibeHome, "settings.yaml"), mine)
+
+	if err := doInstall(lay, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(vibeHome, "settings.yaml")); string(data) != mine {
+		t.Errorf("a later install on a big machine changed settings.yaml:\n%s", data)
+	}
+
+	onHost(t, 16)
+	if err := doInstall(lay, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(vibeHome, "settings.yaml"))
+	if want := strings.Replace(mine, "memory: 12g", "memory: 8g", 1); string(data) != want {
+		t.Errorf("settings.yaml after a later install on 16 GB:\n%s\nwant:\n%s", data, want)
+	}
+}
+
+func TestPickMemoryWithoutAsking(t *testing.T) {
+	onHost(t, 32)
+	for want, got := range map[string]string{"12g": "12g", "6g": "6g", "24g": "16g", "lots": "16g"} {
+		if m := pickMemory(want, false, ""); m != got {
+			t.Errorf("pickMemory(%q) on 32 GB = %q, want %q", want, m, got)
+		}
+	}
+	hostmem.Total = func() (uint64, error) { return 0, errors.New("no idea") }
+	if m := pickMemory("24g", false, ""); m != "24g" {
+		t.Errorf("pickMemory on an unknown machine = %q, want it kept", m)
 	}
 }

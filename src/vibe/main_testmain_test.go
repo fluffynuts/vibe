@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"vibe/internal/hostmem"
 	"vibe/internal/prompt"
 )
 
@@ -22,5 +23,8 @@ func TestMain(m *testing.M) {
 	}
 	openTerminal = func() (*prompt.Terminal, bool) { return nil, false }
 	openTerminalInput = func() (*os.File, func(), bool) { return nil, func() {}, false }
+	// And on the same machine, whatever it really is: one big enough for
+	// any memory setting the tests use, so none is lowered unasked.
+	hostmem.Total = func() (uint64, error) { return 64 * hostmem.GiB, nil }
 	os.Exit(m.Run())
 }

@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"vibe/internal/cliargs"
 	"vibe/internal/fscopy"
 	"vibe/internal/homeinit"
+	"vibe/internal/hostmem"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
 	"vibe/internal/library"
@@ -602,6 +604,8 @@ func doInstall(lay layout.Layout, force bool, strategyValue string) error {
 		return err
 	}
 	note("installing into %s", lay.Home)
+	_, statErr := os.Stat(lay.HomePath("settings.yaml"))
+	firstInstall := os.IsNotExist(statErr)
 
 	// A file changed both in ~/.vibe and in the package is settled by the
 	// strategy if one was given, else by asking — and with -f, or nobody
@@ -622,6 +626,17 @@ func doInstall(lay layout.Layout, force bool, strategyValue string) error {
 	}
 	if res.Identical > 0 {
 		note("  %d file(s) already up to date", res.Identical)
+	}
+
+	// A first install sets up ~/.vibe/settings.yaml for this machine; a
+	// later one only makes sure its memory is still something this
+	// machine can give a sandbox.
+	if firstInstall {
+		if err := setUpSettings(lay, !force); err != nil {
+			return err
+		}
+	} else if err := lowerMemorySetting(lay.HomePath("settings.yaml")); err != nil {
+		note("  WARNING: couldn't check the memory setting in %s: %s", displayPath(lay.HomePath("settings.yaml")), err)
 	}
 
 	binErr := installBinary()
@@ -1183,7 +1198,7 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 			return err
 		}
 	}
-	if err := createSandbox(vibeHome, name, target, profile, doc, merged, false, ""); err != nil {
+	if err := createSandbox(vibeHome, name, target, profile, doc, merged, !args.Force, false, ""); err != nil {
 		return err
 	}
 	return finish(vibeHome, name)
@@ -1262,7 +1277,10 @@ func indexOf(list []string, s string) int {
 	return -1
 }
 
-func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merged settings.Settings, restoreAfterCreate bool, memoryStore string) error {
+// askMemory offers a choice of how much memory the sandbox gets, starting
+// on the memory setting; without it, that setting is used as long as this
+// machine can give it.
+func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merged settings.Settings, askMemory, restoreAfterCreate bool, memoryStore string) error {
 	kitDir, err := writeKit(doc, name)
 	if err != nil {
 		return err
@@ -1277,6 +1295,7 @@ func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merg
 	if memSize == "" {
 		memSize = "12g"
 	}
+	memSize = pickMemory(memSize, askMemory && interactive(), fmt.Sprintf("how much memory should sandbox '%s' get?", name))
 
 	note("creating sandbox '%s'", name)
 	note("  workspace: %s", target)
@@ -1474,7 +1493,7 @@ func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandb
 	}
 
 	note("rebuilding '%s' from profile '%s'", name, profile)
-	if err := createSandbox(vibeHome, name, target, profile, doc, merged, restoreAfterCreate, memoryStore); err != nil {
+	if err := createSandbox(vibeHome, name, target, profile, doc, merged, false, restoreAfterCreate, memoryStore); err != nil {
 		return err
 	}
 	return finish(vibeHome, name)
@@ -1708,6 +1727,11 @@ func initHome(lay layout.Layout, force bool) error {
 		note("  WARNING: could not record the package's files in %s: %s",
 			filepath.Join(lay.Home, upgrade.BaseDir), err)
 	}
+	if indexOf(res.Files, "settings.yaml") >= 0 {
+		if err := setUpSettings(lay, !force); err != nil {
+			return err
+		}
+	}
 	note("  %s now overrides the bundle at %s — edit it, not the bundle", lay.Home, lay.Bundle)
 	return nil
 }
@@ -1795,17 +1819,7 @@ func ensureGuidedProfile(lay layout.Layout, profile string) error {
 		return fmt.Errorf("defaultFeatures in %s: %w", settingsPath, err)
 	}
 
-	features := library.List(names, lay.FeatureDir)
-	labels := make([]string, len(features))
-	checked := make([]bool, len(features))
-	wanted := make(map[string]bool, len(base.DefaultFeatures))
-	for _, name := range base.DefaultFeatures {
-		wanted[name] = true
-	}
-	for i, f := range features {
-		labels[i] = f.Label()
-		checked[i] = wanted[f.Name]
-	}
+	features, labels, checked := featureChecklist(lay, names, base.DefaultFeatures)
 	if len(base.DefaultFeatures) > 0 {
 		note("ticked from defaultFeatures (untick any you don't want): %s", strings.Join(base.DefaultFeatures, ", "))
 	}
@@ -1837,6 +1851,190 @@ func ensureGuidedProfile(lay layout.Layout, profile string) error {
 		note("created guided profile '%s' (no features picked) in %s", profile, dir)
 	}
 	return nil
+}
+
+// featureChecklist lists the library features names for a checkbox list:
+// each one's label, and whether it starts ticked — the ones in ticked.
+func featureChecklist(lay layout.Layout, names, ticked []string) (features []library.Feature, labels []string, checked []bool) {
+	features = library.List(names, lay.FeatureDir)
+	labels = make([]string, len(features))
+	checked = make([]bool, len(features))
+	for i, f := range features {
+		labels[i] = f.Label()
+		checked[i] = indexOf(ticked, f.Name) >= 0
+	}
+	return features, labels, checked
+}
+
+// --- settings.yaml ---------------------------------------------------------
+
+// fallbackAgents are offered when sbx can't be asked which agents it runs —
+// as on a first --install, which can come before --install-sbx. The list is
+// sbx v0.46.0's.
+var fallbackAgents = []string{"claude", "codex", "copilot", "cursor", "devin", "docker-agent", "droid", "gemini", "kiro", "opencode", "shell"}
+
+// setUpSettings writes ~/.vibe/settings.yaml for this machine, from the
+// copy just put there (the package's). With ask and a terminal, it asks how
+// much memory sandboxes get, which agent they run, and which features a
+// guided profile starts with ticked, starting on the package's choices;
+// otherwise it keeps those, with the memory lowered to what this machine
+// can give. Everything else in the file is left as it is.
+func setUpSettings(lay layout.Layout, ask bool) error {
+	path := lay.HomePath("settings.yaml")
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil // the package ships none, so there's nothing to set up
+	}
+	if err != nil {
+		return err
+	}
+	current, err := settings.Parse(data)
+	if err != nil {
+		note("  WARNING: can't set up %s, which doesn't parse: %s", displayPath(path), err)
+		return nil
+	}
+	ask = ask && interactive()
+	if ask {
+		note("setting up %s: the defaults every sandbox starts from", displayPath(path))
+	}
+
+	values := []struct {
+		key   string
+		value interface{}
+	}{
+		{"memory", pickMemory(current.Memory, ask, "how much memory should each sandbox get? (you're asked again for each new sandbox)")},
+		{"agent", pickAgent(current.Agent, ask)},
+	}
+	if ask {
+		features, err := pickDefaultFeatures(lay, current.DefaultFeatures)
+		if err != nil {
+			return err
+		}
+		values = append(values, struct {
+			key   string
+			value interface{}
+		}{"defaultFeatures", features})
+	}
+
+	changed := data
+	for _, v := range values {
+		if changed, err = settings.Set(changed, v.key, v.value); err != nil {
+			return fmt.Errorf("updating %s: %w", path, err)
+		}
+	}
+	if bytes.Equal(changed, data) {
+		return nil
+	}
+	if err := os.WriteFile(path, changed, 0o644); err != nil {
+		return err
+	}
+	note("  saved your choices in %s", displayPath(path))
+	return nil
+}
+
+// lowerMemorySetting lowers the memory setting in the settings.yaml at path
+// to what this machine can give a sandbox, when it's more than that.
+func lowerMemorySetting(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	current, err := settings.Parse(data)
+	if err != nil || current.Memory == "" {
+		return err
+	}
+	memory := pickMemory(current.Memory, false, "")
+	if memory == current.Memory {
+		return nil
+	}
+	if data, err = settings.Set(data, "memory", memory); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return err
+	}
+	note("  saved memory: %s in %s", memory, displayPath(path))
+	return nil
+}
+
+// pickMemory settles how much memory a sandbox gets, starting from want:
+// with ask, the user picks from 4g steps up to half this machine's memory
+// (see hostmem.Options); without, want is kept unless it's more than that,
+// when it's lowered to the largest step. A machine whose memory can't be
+// read keeps want as it is.
+func pickMemory(want string, ask bool, question string) string {
+	total, err := hostmem.Total()
+	if err != nil {
+		note("  WARNING: can't tell how much memory this machine has (%s) — using memory: %s", err, want)
+		return want
+	}
+	options, idx, over := hostmem.Pick(total, want)
+	host := hostmem.Format(2 * hostmem.Limit(total))
+	switch {
+	case over:
+		note("  memory: %s is more than half this machine's %s — lowering it to %s", want, host, options[idx])
+	case want != "" && options[idx] != want:
+		note("  memory: can't read %q as a size — using %s", want, options[idx])
+	}
+	if !ask {
+		return options[idx]
+	}
+	i, ok := chooseFrom(fmt.Sprintf("%s (this machine has %s)", question, host), options, idx)
+	if !ok {
+		note("  keeping memory: %s", options[idx])
+		return options[idx]
+	}
+	return options[i]
+}
+
+// pickAgent asks which agent sandboxes run, from the ones sbx lists,
+// starting on current (claude when unset). Without ask, current is kept.
+func pickAgent(current string, ask bool) string {
+	if current == "" {
+		current = "claude"
+	}
+	if !ask {
+		return current
+	}
+	agents, err := sbxrun.Agents()
+	if err != nil {
+		agents = fallbackAgents
+	}
+	idx := indexOf(agents, current)
+	if idx < 0 {
+		agents = append([]string{current}, agents...)
+		idx = 0
+	}
+	i, ok := chooseFrom("which agent should sandboxes run?", agents, idx)
+	if !ok {
+		note("  keeping agent: %s", current)
+		return current
+	}
+	return agents[i]
+}
+
+// pickDefaultFeatures asks which library features a guided profile should
+// start with ticked, starting with defaults ticked. Quitting keeps
+// defaults.
+func pickDefaultFeatures(lay layout.Layout, defaults []string) ([]string, error) {
+	names := lay.Features()
+	if len(names) == 0 {
+		return defaults, nil
+	}
+	if err := library.Validate(defaults, names); err != nil {
+		return nil, fmt.Errorf("defaultFeatures in %s: %w", displayPath(lay.HomePath("settings.yaml")), err)
+	}
+	features, labels, checked := featureChecklist(lay, names, defaults)
+	idxs, ok := checklistFrom("which features should a guided profile start with ticked?", labels, checked)
+	if !ok {
+		note("  keeping defaultFeatures: %s", strings.Join(defaults, ", "))
+		return defaults, nil
+	}
+	chosen := make([]string, len(idxs))
+	for i, idx := range idxs {
+		chosen[i] = features[idx].Name
+	}
+	return chosen, nil
 }
 
 // checklistFrom asks the user to check zero or more of labels with an

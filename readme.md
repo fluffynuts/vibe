@@ -73,6 +73,14 @@ while another vibe session is running it. It says "already up to date" when ther
 newer, and `-f` reinstalls anyway. `-f` and `--update-strategy` are passed on to the
 `--install` it runs.
 
+The first `vibe --install` (and vibe's first run, if you skip `--install`) also sets up
+`~/.vibe/settings.yaml` for your machine. It asks how much memory each sandbox gets, in 4g steps
+up to half your machine's memory. It asks which agent sandboxes run, from the agents `sbx run
+--help` lists, and which library features a guided profile starts with ticked. Each question
+starts on the package's choice. With `-f`, or no terminal, it keeps the package's choices and only
+lowers the memory, if it's more than your machine can give. Every later `--install` makes the same
+memory check on your `settings.yaml`, and changes nothing else in it.
+
 `vibe --install`, run from a release's folder (which is all the install scripts and `--upgrade`
 do), goes through every file the package ships
 into `~/.vibe` (`config.yaml`, `settings.yaml`, `defaults/`, `profiles/`, `library/`) and keeps
@@ -370,7 +378,8 @@ into a real script or config file.
 **`settings.yaml`** merges these fields (all optional):
 
 ```yaml
-memory: 12g          # sandbox memory limit
+memory: 12g          # sandbox memory limit; a new sandbox asks, starting here, capped at
+                     #    half the host's memory
 agent: claude         # which coding agent to run
 nugetDir: ~/.nuget    # mounted into the sandbox and symlinked in, if it exists on the host
 memoryRoot: ~/.vibe/memories   # where per-sandbox agent memories are backed up

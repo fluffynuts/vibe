@@ -3,6 +3,7 @@
 package settings
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 
@@ -47,10 +48,17 @@ func Load(path string) (Settings, error) {
 		}
 		return s, fmt.Errorf("reading %s: %w", path, err)
 	}
-	if err := yaml.Unmarshal(data, &s); err != nil {
+	if s, err = Parse(data); err != nil {
 		return s, fmt.Errorf("parsing %s: %w", path, err)
 	}
 	return s, nil
+}
+
+// Parse reads the settings in a settings.yaml's content.
+func Parse(data []byte) (Settings, error) {
+	var s Settings
+	err := yaml.Unmarshal(data, &s)
+	return s, err
 }
 
 // Merge overlays override on top of base: scalars are replaced when the
@@ -96,4 +104,50 @@ func Merge(base, override Settings) Settings {
 	}
 
 	return out
+}
+
+// Set returns the settings.yaml in data with key set to value, keeping
+// everything else in the file — other settings, and the comments — as it
+// was. A key the file doesn't have is added at the end; an empty data is a
+// file with nothing in it yet.
+func Set(data []byte, key string, value interface{}) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	if doc.Kind == 0 {
+		doc = yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode}}}
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("not a settings file: expected a mapping of settings")
+	}
+	var v yaml.Node
+	if err := v.Encode(value); err != nil {
+		return nil, err
+	}
+	m := doc.Content[0]
+	found := false
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value != key {
+			continue
+		}
+		old := m.Content[i+1]
+		v.HeadComment, v.LineComment, v.FootComment = old.HeadComment, old.LineComment, old.FootComment
+		m.Content[i+1] = &v
+		found = true
+		break
+	}
+	if !found {
+		m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: key}, &v)
+	}
+	var out bytes.Buffer
+	enc := yaml.NewEncoder(&out)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
 }

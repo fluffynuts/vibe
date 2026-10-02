@@ -1,6 +1,7 @@
 package sbxrun
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -18,5 +19,18 @@ func TestStartGivesUpOnASandboxItCannotBoot(t *testing.T) {
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("Start hung on a sandbox that cannot boot")
+	}
+}
+
+func TestParseAgents(t *testing.T) {
+	help := "Omit the path to mount the current directory.\n\n" +
+		"Available agents: claude, codex, copilot, cursor, devin, docker-agent, droid, gemini, kiro, opencode, shell\n\n" +
+		"With --cloud:\n"
+	want := []string{"claude", "codex", "copilot", "cursor", "devin", "docker-agent", "droid", "gemini", "kiro", "opencode", "shell"}
+	if got := ParseAgents(help); !reflect.DeepEqual(got, want) {
+		t.Errorf("ParseAgents = %v, want %v", got, want)
+	}
+	if got := ParseAgents("no agents here\n"); got != nil {
+		t.Errorf("ParseAgents of help without the line = %v", got)
 	}
 }

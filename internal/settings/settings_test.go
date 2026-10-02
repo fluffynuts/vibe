@@ -2,6 +2,7 @@ package settings
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -49,5 +50,64 @@ func TestMergeReplacesDefaultFeatures(t *testing.T) {
 	got := Merge(base, Settings{DefaultFeatures: []string{"dotnet", "mysql"}}).DefaultFeatures
 	if !reflect.DeepEqual(got, []string{"dotnet", "mysql"}) {
 		t.Errorf("DefaultFeatures = %v, want the override's outright", got)
+	}
+}
+
+const shipped = `memory: 12g
+agent: claude
+# ticked by default when a guided profile is created
+defaultFeatures:
+  - diffity
+`
+
+func TestSetReplacesKeepingTheRest(t *testing.T) {
+	data := []byte(shipped)
+	var err error
+	for _, kv := range []struct {
+		key   string
+		value interface{}
+	}{{"memory", "8g"}, {"agent", "codex"}, {"defaultFeatures", []string{"diffity", "mysql"}}} {
+		if data, err = Set(data, kv.key, kv.value); err != nil {
+			t.Fatalf("Set(%s): %v", kv.key, err)
+		}
+	}
+	want := `memory: 8g
+agent: codex
+# ticked by default when a guided profile is created
+defaultFeatures:
+  - diffity
+  - mysql
+`
+	if string(data) != want {
+		t.Errorf("Set gave:\n%s\nwant:\n%s", data, want)
+	}
+}
+
+func TestSetToNoFeatures(t *testing.T) {
+	data, err := Set([]byte(shipped), "defaultFeatures", []string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "defaultFeatures: []") {
+		t.Errorf("Set to no features gave:\n%s", data)
+	}
+}
+
+func TestSetAddsAMissingKey(t *testing.T) {
+	data, err := Set([]byte("agent: claude\n"), "memory", "4g")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "agent: claude\nmemory: 4g\n" {
+		t.Errorf("Set gave %q", data)
+	}
+	if data, err = Set(nil, "memory", "4g"); err != nil || string(data) != "memory: 4g\n" {
+		t.Errorf("Set on an empty file gave %q, %v", data, err)
+	}
+}
+
+func TestSetRefusesANonMapping(t *testing.T) {
+	if _, err := Set([]byte("- a\n- b\n"), "memory", "4g"); err == nil {
+		t.Error("Set on a list succeeded")
 	}
 }

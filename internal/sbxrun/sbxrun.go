@@ -21,6 +21,39 @@ func Available() bool {
 	return cmd.Run() == nil
 }
 
+// Agents lists the agents sbx can run, read from the "Available agents:"
+// line of sbx run --help.
+func Agents() ([]string, error) {
+	out, err := exec.Command("sbx", "run", "--help").CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("sbx run --help: %w", err)
+	}
+	agents := ParseAgents(string(out))
+	if len(agents) == 0 {
+		return nil, fmt.Errorf("sbx run --help lists no agents")
+	}
+	return agents, nil
+}
+
+// ParseAgents reads the agents from sbx run --help's output, whose line
+// "Available agents: claude, codex, ..." lists them.
+func ParseAgents(help string) []string {
+	for _, line := range strings.Split(help, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "Available agents:")
+		if !ok {
+			continue
+		}
+		var agents []string
+		for _, a := range strings.Split(rest, ",") {
+			if a = strings.TrimSpace(a); a != "" {
+				agents = append(agents, a)
+			}
+		}
+		return agents
+	}
+	return nil
+}
+
 // captureOut runs sbx with the given args and returns combined stdout.
 func captureOut(args ...string) (string, error) {
 	return captureOutContext(context.Background(), args...)
