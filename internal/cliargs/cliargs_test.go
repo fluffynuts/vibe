@@ -178,3 +178,25 @@ func TestParseUpgrade(t *testing.T) {
 		t.Error("--upgrade with --install should be rejected as two actions")
 	}
 }
+
+func TestParseInstallSbx(t *testing.T) {
+	for _, arg := range []string{"-I", "--install-sbx"} {
+		got, err := Parse([]string{arg})
+		if err != nil {
+			t.Fatalf("Parse(%s): %v", arg, err)
+		}
+		if !got.InstallSbx {
+			t.Errorf("Parse(%s) did not set InstallSbx", arg)
+		}
+		if got.ExclusiveActions() != 1 {
+			t.Errorf("Parse(%s): ExclusiveActions = %d, want 1", arg, got.ExclusiveActions())
+		}
+	}
+	both, err := Parse([]string{"-I", "-U"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if both.ExclusiveActions() != 2 {
+		t.Errorf("-I with -U should count as two actions, got %d", both.ExclusiveActions())
+	}
+}

@@ -9,21 +9,22 @@ import (
 
 // Args holds the parsed command line.
 type Args struct {
-	Name      string
-	Profile   string
-	Path      string
-	Stop      bool
-	Ssh       bool
-	ReInit    bool
-	ReCreate  bool
-	ReCompose bool
-	Force     bool
-	List      bool
-	Install   bool
-	Upgrade   bool
-	Cleanup   bool
-	Help      bool
-	Version   bool
+	Name       string
+	Profile    string
+	Path       string
+	Stop       bool
+	Ssh        bool
+	ReInit     bool
+	ReCreate   bool
+	ReCompose  bool
+	Force      bool
+	List       bool
+	Install    bool
+	Upgrade    bool
+	InstallSbx bool
+	Cleanup    bool
+	Help       bool
+	Version    bool
 	// UpdateStrategy is --install's --update-strategy value, unparsed.
 	UpdateStrategy string
 }
@@ -67,6 +68,9 @@ func Parse(argv []string) (Args, error) {
 			i++
 		case arg == "-U" || arg == "--upgrade":
 			a.Upgrade = true
+			i++
+		case arg == "-I" || arg == "--install-sbx":
+			a.InstallSbx = true
 			i++
 		case arg == "-x" || arg == "--cleanup":
 			a.Cleanup = true
@@ -145,10 +149,11 @@ func setPath(a *Args, v string) error {
 }
 
 // ExclusiveActions counts how many of the mutually-exclusive action flags
-// (stop/ssh/re-init/re-create/re-compose/list/install/upgrade/cleanup) are set.
+// (stop/ssh/re-init/re-create/re-compose/list/install/upgrade/install-sbx/
+// cleanup) are set.
 func (a Args) ExclusiveActions() int {
 	n := 0
-	for _, b := range []bool{a.Stop, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.List, a.Install, a.Upgrade, a.Cleanup} {
+	for _, b := range []bool{a.Stop, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup} {
 		if b {
 			n++
 		}

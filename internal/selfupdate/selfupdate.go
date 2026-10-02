@@ -47,9 +47,16 @@ func AssetName(goos, goarch string) string {
 // LatestTag returns the latest release's tag ("v0.1.57"), read from where
 // the releases/latest page redirects to.
 func LatestTag() (string, error) {
+	return LatestTagAt(Releases)
+}
+
+// LatestTagAt is LatestTag for any GitHub repo's releases page
+// ("https://github.com/<owner>/<repo>/releases"). GitHub's latest release is
+// never one marked as a prerelease.
+func LatestTagAt(releases string) (string, error) {
 	noRedirect := *client
 	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	resp, err := noRedirect.Get(Releases + "/latest")
+	resp, err := noRedirect.Get(releases + "/latest")
 	if err != nil {
 		return "", fmt.Errorf("asking GitHub for the latest release: %w", err)
 	}
@@ -111,7 +118,7 @@ func Download(tag, asset, dir string) (string, error) {
 		return "", fmt.Errorf("release %s has no %s — is this platform built?", tag, asset)
 	}
 	dest := filepath.Join(dir, asset)
-	if err := fetch(Releases+"/download/"+tag+"/"+asset, dest); err != nil {
+	if err := Fetch(Releases+"/download/"+tag+"/"+asset, dest); err != nil {
 		return "", err
 	}
 	got, err := sha256File(dest)
@@ -145,7 +152,8 @@ func fetchSums(tag string) (map[string]string, error) {
 	return sums, scanner.Err()
 }
 
-func fetch(url, dest string) error {
+// Fetch downloads url into the file dest.
+func Fetch(url, dest string) error {
 	resp, err := client.Get(url)
 	if err != nil {
 		return fmt.Errorf("downloading %s: %w", url, err)

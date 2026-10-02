@@ -30,6 +30,7 @@ import (
 	"vibe/internal/profilegen"
 	"vibe/internal/prompt"
 	"vibe/internal/running"
+	"vibe/internal/sbxinstall"
 	"vibe/internal/sbxrun"
 	"vibe/internal/selfupdate"
 	"vibe/internal/settings"
@@ -61,6 +62,10 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe -U/--upgrade          download the latest release for this machine
                              from GitHub and --install it (-f reinstalls
                              when already up to date; -u is passed on)
+  vibe -I/--install-sbx      download the latest stable Docker Sandboxes (sbx)
+                             release and install it into ~/.docker/sbx
+                             (Linux only so far; -f reinstalls when already
+                             up to date)
   vibe -v/--version          print the version and the commit it was built from
   vibe -i/--install          copy defaults/profiles/library, config.yaml and
                              settings.yaml into ~/.vibe, and the vibe binary
@@ -125,7 +130,7 @@ func run(argv []string) error {
 		return fmt.Errorf("--update-strategy only applies to --install and --upgrade")
 	}
 	if args.ExclusiveActions() > 1 {
-		return fmt.Errorf("--stop, --ssh, --re-init, --re-create, --re-compose, --list, --install, --upgrade and --cleanup are mutually exclusive")
+		return fmt.Errorf("--stop, --ssh, --re-init, --re-create, --re-compose, --list, --install, --upgrade, --install-sbx and --cleanup are mutually exclusive")
 	}
 
 	vibeHome := vibeHomeDir()
@@ -144,6 +149,13 @@ func run(argv []string) error {
 		return doUpgrade(args.Force, args.UpdateStrategy)
 	}
 
+	if args.InstallSbx {
+		if args.Path != "" {
+			return fmt.Errorf("--install-sbx takes no path argument")
+		}
+		return doInstallSbx(args.Force)
+	}
+
 	if args.Install {
 		if args.Path != "" {
 			return fmt.Errorf("--install takes no path argument")
@@ -156,9 +168,12 @@ func run(argv []string) error {
 	}
 
 	if !sbxrun.Available() {
-		return fmt.Errorf("'sbx' is not on PATH — vibe needs Docker Sandboxes.\n" +
-			"Install it from https://github.com/docker/sbx-releases/releases,\n" +
-			"then make sure its bin directory is on PATH (e.g. ${HOME}/.docker/sbx/bin).")
+		hint := "Install it from " + sbxinstall.Releases + ",\n"
+		if runtime.GOOS == "linux" {
+			hint = "Install it with 'vibe --install-sbx', or from " + sbxinstall.Releases + ",\n"
+		}
+		return fmt.Errorf("'sbx' is not on PATH — vibe needs Docker Sandboxes.\n%s"+
+			"then make sure its bin directory is on PATH (e.g. ${HOME}/.docker/sbx/bin).", hint)
 	}
 
 	// Before the bundle is resolved and ~/.vibe is seeded: cleanup is about
@@ -703,6 +718,127 @@ func doUpgrade(force bool, strategyValue string) error {
 		return fmt.Errorf("the new release's --install didn't finish cleanly (see above): %w", err)
 	}
 	return nil
+}
+
+// doInstallSbx installs the latest stable release of Docker Sandboxes (sbx)
+// into ~/.docker/sbx: it downloads the release's tarball into a temporary
+// folder, unpacks it into another, and runs the install.sh it holds — patched
+// to run its AppArmor steps with sudo (see sbxinstall.PatchInstaller). -f
+// reinstalls even when that release is already installed.
+func doInstallSbx(force bool) error {
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("--install-sbx only supports Linux so far — on %s, install sbx from %s", runtime.GOOS, sbxinstall.Releases)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	prefix := sbxinstall.Prefix(home)
+	binDir := filepath.Join(prefix, "bin")
+	sbxPath := filepath.Join(binDir, "sbx")
+
+	tag, err := sbxinstall.LatestStableTag()
+	if err != nil {
+		return err
+	}
+	installed, err := sbxinstall.Version(sbxPath)
+	if err == nil && !force && installed == tag {
+		note("Docker SBX is already at the latest release (%s); -f reinstalls it", tag)
+		return nil
+	}
+	switch {
+	case err == nil && installed == tag:
+		note("reinstalling Docker SBX %s", tag)
+	case err == nil:
+		note("upgrading Docker SBX %s to %s", installed, tag)
+	default:
+		note("installing Docker SBX %s", tag)
+	}
+
+	downloads, err := os.MkdirTemp("", "vibe-sbx-download-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(downloads)
+	asset := sbxinstall.AssetName(runtime.GOARCH)
+	status := newStatusLine()
+	status.show("Downloading %s", asset)
+	tarball, err := sbxinstall.Download(tag, asset, downloads)
+	if err != nil {
+		status.done("Downloading %s failed", asset)
+		return err
+	}
+	status.done("Downloaded %s", asset)
+
+	unpacked, err := os.MkdirTemp("", "vibe-sbx-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(unpacked)
+	bundle, err := sbxinstall.Untar(tarball, unpacked)
+	if err != nil {
+		return err
+	}
+	script := filepath.Join(bundle, sbxinstall.Installer)
+	original, err := os.ReadFile(script)
+	if err != nil {
+		return fmt.Errorf("the sbx release has no %s: %w", sbxinstall.Installer, err)
+	}
+	patched, err := sbxinstall.PatchInstaller(string(original))
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(script, []byte(patched), 0o755); err != nil {
+		return err
+	}
+
+	if sbxinstall.NeedsSudo(bundle) {
+		note("the installer adds an AppArmor profile for sbx to /etc/apparmor.d, which needs root:")
+		note("you'll be asked for your password, so that just that step can run with sudo")
+		sudo := exec.Command("sudo", "-v")
+		sudo.Stdin, sudo.Stdout, sudo.Stderr = os.Stdin, os.Stdout, os.Stderr
+		if err := sudo.Run(); err != nil {
+			return fmt.Errorf("couldn't get sudo for the AppArmor step, so sbx isn't installed: %w", err)
+		}
+	}
+
+	cmd := exec.Command(script)
+	cmd.Env = append(os.Environ(), "PREFIX="+prefix)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("sbx's %s didn't finish cleanly (see above): %w", sbxinstall.Installer, err)
+	}
+
+	warnIfNotOnPath(binDir)
+	warnIfShadowed("sbx", sbxPath)
+	version, err := sbxinstall.Version(sbxPath)
+	if err != nil {
+		return fmt.Errorf("installed sbx, but '%s version' failed: %w", sbxPath, err)
+	}
+	fmt.Printf("Installed Docker SBX at version: %s\n", version)
+	return nil
+}
+
+// warnIfShadowed warns when running name from PATH would find something
+// other than want — another copy installed elsewhere, earlier on PATH.
+func warnIfShadowed(name, want string) {
+	found, err := exec.LookPath(name)
+	if err != nil {
+		return
+	}
+	if sameFile(found, want) {
+		return
+	}
+	note("  WARNING: '%s' on your PATH is %s, not the %s just installed", name, found, want)
+}
+
+func sameFile(a, b string) bool {
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bi, err := os.Stat(b)
+	return err == nil && os.SameFile(ai, bi)
 }
 
 // decideConflict asks the user to settle a file both they and the package
