@@ -172,7 +172,7 @@ func Unpack(tarGz, dir string) ([]string, error) {
 				return nil, err
 			}
 		case tar.TypeSymlink:
-			if filepath.IsAbs(h.Linkname) || !within(dir, filepath.Join(filepath.Dir(target), filepath.FromSlash(h.Linkname))) {
+			if rooted(h.Linkname) || !within(dir, filepath.Join(filepath.Dir(target), filepath.FromSlash(h.Linkname))) {
 				return nil, fmt.Errorf("%s: link %q points outside %s", tarGz, h.Name, dir)
 			}
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
@@ -189,6 +189,13 @@ func Unpack(tarGz, dir string) ([]string, error) {
 		return nil, errors.New(tarGz + " is empty")
 	}
 	return tops, nil
+}
+
+// rooted reports whether a link's target leaves its folder's tree outright:
+// absolute, or, on Windows, starting at a drive's root (\x) or naming a
+// drive (C:x), neither of which filepath.IsAbs counts.
+func rooted(link string) bool {
+	return filepath.IsAbs(link) || filepath.VolumeName(link) != "" || strings.HasPrefix(filepath.ToSlash(link), "/")
 }
 
 // within reports whether path is dir or somewhere under it.

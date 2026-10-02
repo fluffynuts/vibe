@@ -283,7 +283,11 @@ func TestUnpackTheMacOSTarball(t *testing.T) {
 }
 
 func TestUnpackRefusesLinksOut(t *testing.T) {
-	for _, link := range []string{"../../etc/passwd", "/etc/passwd"} {
+	links := []string{"../../etc/passwd", "/etc/passwd"}
+	if runtime.GOOS == "windows" {
+		links = append(links, `\Windows\System32`, `C:\Windows\System32`, `C:Windows`)
+	}
+	for _, link := range links {
 		p := filepath.Join(t.TempDir(), "bad.tar.gz")
 		os.WriteFile(p, makeTarGz(t, map[string]string{"bin/sbx@": link}, nil), 0o644)
 		if _, err := Unpack(p, t.TempDir()); err == nil {
