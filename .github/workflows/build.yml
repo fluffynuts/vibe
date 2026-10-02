@@ -127,9 +127,13 @@ jobs:
           cat release/SHA256SUMS
           assets=(release/vibe-*.zip release/SHA256SUMS)
           notes=$(cat <<EOF
-          Install or upgrade with the install script (see the readme), or \`vibe --upgrade\` once vibe
-          is installed. Or by hand: download the zip for your platform, unzip it anywhere, and run
-          \`vibe --install\` from the folder it makes.
+          To install:
+          - Linux/macOS: \`curl -fsSL https://raw.githubusercontent.com/fluffynuts/vibe/master/install.sh | sh\`
+          - Windows: \`irm https://raw.githubusercontent.com/fluffynuts/vibe/master/install.ps1 | iex\`
+          - Manual: download the zip for your platform (below), unzip it anywhere, and run
+            \`vibe --install\` from the folder it makes.
+
+          To upgrade, run the same command again, or \`vibe --upgrade\` once vibe is installed.
 
           | Platform | Zip |
           |---|---|
