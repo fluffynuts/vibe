@@ -14,7 +14,7 @@ import (
 )
 
 // makeTarGz builds a .tar.gz in memory: name → content, with modes; a name
-// ending in "/" is a folder.
+// ending in "/" is a folder, and one ending in "@" a link to its content.
 func makeTarGz(t *testing.T, files map[string]string, modes map[string]int64) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -24,6 +24,10 @@ func makeTarGz(t *testing.T, files map[string]string, modes map[string]int64) []
 		h := &tar.Header{Name: name, Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg}
 		if strings.HasSuffix(name, "/") {
 			h.Typeflag, h.Mode, h.Size = tar.TypeDir, 0o755, 0
+		}
+		if link, ok := strings.CutSuffix(name, "@"); ok {
+			h.Name, h.Typeflag, h.Linkname, h.Mode, h.Size = link, tar.TypeSymlink, content, 0o755, 0
+			content = ""
 		}
 		if m, ok := modes[name]; ok {
 			h.Mode = m
@@ -243,6 +247,137 @@ func TestParseVersion(t *testing.T) {
 	} {
 		if got := ParseVersion(out); got != want {
 			t.Errorf("ParseVersion(%q) = %q, want %q", out, got, want)
+		}
+	}
+}
+
+// TestUnpackTheMacOSTarball unpacks the shape of sbx's macOS tarball: an
+// app, a bin/ of links into it, and loose files at the top.
+func TestUnpackTheMacOSTarball(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("making symbolic links on Windows needs privileges")
+	}
+	p := filepath.Join(t.TempDir(), DarwinTarball)
+	os.WriteFile(p, makeTarGz(t, map[string]string{
+		"Sbx.app/Contents/MacOS/sbx": "binary",
+		"Sbx.app/Contents/libexec@":  "Helpers",
+		"bin/sbx@":                   "../Sbx.app/Contents/MacOS/sbx",
+		"LICENSE":                    "license",
+	}, map[string]int64{"Sbx.app/Contents/MacOS/sbx": 0o755}), 0o644)
+	dir := t.TempDir()
+	tops, err := Unpack(p, dir)
+	if err != nil {
+		t.Fatalf("Unpack: %v", err)
+	}
+	for _, want := range []string{"Sbx.app", "bin", "LICENSE"} {
+		if !contains(tops, want) {
+			t.Errorf("Unpack's top-level entries %v lack %s", tops, want)
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "bin", "sbx")); err != nil || string(data) != "binary" {
+		t.Errorf("bin/sbx, through its link: %q, %v", data, err)
+	}
+	if _, err := Untar(p, t.TempDir()); err == nil {
+		t.Error("Untar accepted a tarball with more than one top-level entry")
+	}
+}
+
+func TestUnpackRefusesLinksOut(t *testing.T) {
+	for _, link := range []string{"../../etc/passwd", "/etc/passwd"} {
+		p := filepath.Join(t.TempDir(), "bad.tar.gz")
+		os.WriteFile(p, makeTarGz(t, map[string]string{"bin/sbx@": link}, nil), 0o644)
+		if _, err := Unpack(p, t.TempDir()); err == nil {
+			t.Errorf("Unpack made a link to %s", link)
+		}
+	}
+}
+
+func TestReplace(t *testing.T) {
+	from, to := t.TempDir(), t.TempDir()
+	os.MkdirAll(filepath.Join(from, "Sbx.app", "Contents"), 0o755)
+	os.WriteFile(filepath.Join(from, "Sbx.app", "Contents", "new"), []byte("new"), 0o644)
+	os.WriteFile(filepath.Join(from, "LICENSE"), []byte("new license"), 0o644)
+	os.MkdirAll(filepath.Join(to, "Sbx.app", "Contents"), 0o755)
+	os.WriteFile(filepath.Join(to, "Sbx.app", "Contents", "old"), []byte("old"), 0o644)
+	os.WriteFile(filepath.Join(to, "keep-me"), []byte("state"), 0o644)
+
+	if err := Replace(from, to, []string{"Sbx.app", "LICENSE"}); err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(to, "Sbx.app", "Contents", "old")); err == nil {
+		t.Error("the old app's files are still there")
+	}
+	if data, _ := os.ReadFile(filepath.Join(to, "Sbx.app", "Contents", "new")); string(data) != "new" {
+		t.Error("the new app wasn't moved in")
+	}
+	if data, _ := os.ReadFile(filepath.Join(to, "LICENSE")); string(data) != "new license" {
+		t.Error("LICENSE wasn't moved in")
+	}
+	if data, _ := os.ReadFile(filepath.Join(to, "keep-me")); string(data) != "state" {
+		t.Error("Replace touched an entry it wasn't given")
+	}
+	if entries, _ := os.ReadDir(to); len(entries) != 3 {
+		t.Errorf("left behind in %s: %v", to, entries)
+	}
+}
+
+func TestReplacePutsBackWhatCantBeMovedIn(t *testing.T) {
+	from, to := t.TempDir(), t.TempDir()
+	os.WriteFile(filepath.Join(to, "Sbx.app"), []byte("old"), 0o644)
+	if err := Replace(from, to, []string{"Sbx.app"}); err == nil {
+		t.Fatal("Replace of a missing entry succeeded")
+	}
+	if data, _ := os.ReadFile(filepath.Join(to, "Sbx.app")); string(data) != "old" {
+		t.Error("the old entry wasn't put back")
+	}
+}
+
+func TestLink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("making symbolic links on Windows needs privileges")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "sbx")
+	os.WriteFile(target, []byte("binary"), 0o755)
+	link := filepath.Join(dir, "bin", "sbx")
+	os.MkdirAll(filepath.Dir(link), 0o755)
+	os.WriteFile(link, []byte("an old copy"), 0o755)
+	if err := Link(target, link); err != nil {
+		t.Fatalf("Link: %v", err)
+	}
+	if got, err := os.Readlink(link); err != nil || got != target {
+		t.Errorf("link points at %q, %v", got, err)
+	}
+}
+
+func TestMSIOutcome(t *testing.T) {
+	for code, want := range map[int][2]bool{0: {true, false}, 3010: {true, true}, 1641: {true, true}, 1602: {false, false}, 1603: {false, false}} {
+		ok, restart, why := MSIOutcome(code)
+		if ok != want[0] || restart != want[1] || ok == (why != "") {
+			t.Errorf("MSIOutcome(%d) = %v, %v, %q", code, ok, restart, why)
+		}
+	}
+}
+
+func TestSupported(t *testing.T) {
+	for _, tt := range []struct {
+		goos, goarch string
+		want         bool
+	}{
+		{"linux", "amd64", true}, {"linux", "arm64", true}, {"darwin", "arm64", true},
+		{"darwin", "amd64", false}, {"windows", "amd64", true}, {"windows", "arm64", false},
+		{"freebsd", "amd64", false},
+	} {
+		if got := Supported(tt.goos, tt.goarch); got != tt.want {
+			t.Errorf("Supported(%s, %s) = %v", tt.goos, tt.goarch, got)
+		}
+	}
+}
+
+func TestSupportedMacOS(t *testing.T) {
+	for v, want := range map[string]bool{"14.5": true, "15.0.1": true, "26.0\n": true, "13.6.7": false, "11": false, "": true} {
+		if got := SupportedMacOS(v); got != want {
+			t.Errorf("SupportedMacOS(%q) = %v", v, got)
 		}
 	}
 }

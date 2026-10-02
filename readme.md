@@ -14,11 +14,22 @@ This software is in alpha state. It works reasonably well for me, but I make no 
 
 ## Install
 
-vibe needs [Docker Sandboxes (`sbx`)](https://github.com/docker/sbx-releases) installed. On
-Linux, once vibe is installed, `vibe --install-sbx` installs (or upgrades) it for you: it
-downloads sbx's latest stable release (never an RC or nightly), runs the install script inside
-it with only its AppArmor step under `sudo` (so sbx still lands in your own `~/.docker/sbx`,
-not root's), and tells you if `~/.docker/sbx/bin` isn't on your `PATH`.
+vibe needs [Docker Sandboxes (`sbx`)](https://github.com/docker/sbx-releases) installed. Once vibe is
+installed, `vibe --install-sbx` installs (or upgrades) it for you, from sbx's latest stable
+release (never an RC or nightly):
+
+- **Linux:** it runs the install script inside the release, with only its AppArmor step under
+  `sudo`, so sbx still lands in your own `~/.docker/sbx`, not root's.
+- **macOS** (Apple Silicon, Sonoma or newer): it asks how. It can unpack the release into
+  `~/.docker/sbx` (no admin rights needed). It can copy `Sbx.app` from the release's `.dmg` into
+  `/Applications`, linking `sbx` into `~/.docker/sbx/bin`. Or, when Homebrew is installed, it can
+  run `brew install --cask docker/tap/sbx`.
+- **Windows** (x64): it asks whether to run the release's MSI just for you (no admin rights
+  needed) or for every user (Windows asks for admin rights).
+
+Either way it tells you if sbx's folder isn't on your `PATH` (on Windows, the MSI adds it, so
+you open a new terminal), and prints the version it installed. `-f` takes the first option
+without asking, and reinstalls when the latest release is already installed.
 
 **Linux and macOS:**
 
@@ -164,9 +175,9 @@ vibe -i -u/--update-strategy merge,keep
                            #    asking: keep, update, merge,keep, merge,update
 vibe -U/--upgrade          # download the latest release from GitHub and
                            #    --install it (-f: even when up to date)
-vibe -I/--install-sbx      # install the latest stable Docker Sandboxes (sbx)
-                           #    into ~/.docker/sbx (Linux only so far; -f:
-                           #    even when up to date)
+vibe -I/--install-sbx      # install the latest stable Docker Sandboxes (sbx);
+                           #    on macOS and Windows, asking how (-f: the first
+                           #    way, even when up to date)
 vibe -v/--version          # print the version, commit and build date
 ```
 

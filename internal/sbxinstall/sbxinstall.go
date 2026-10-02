@@ -1,7 +1,12 @@
 // Package sbxinstall installs Docker Sandboxes (sbx) from its latest stable
-// GitHub release, for vibe --install-sbx. Only Linux so far: its release is a
-// tarball holding sbx and an install.sh that copies it into ~/.docker/sbx,
-// which is patched before it runs (see PatchInstaller).
+// GitHub release, for vibe --install-sbx. Each platform's release differs:
+//
+//   - Linux: a tarball holding sbx and an install.sh that copies it into
+//     ~/.docker/sbx, which is patched before it runs (see PatchInstaller).
+//   - macOS (Apple Silicon only): a tarball of Sbx.app and a bin/ of links
+//     into it, a .dmg holding just Sbx.app, and a Homebrew cask of the .dmg.
+//   - Windows (x64 only): an MSI installing for the user, and one
+//     installing for every user.
 //
 // Like selfupdate, nothing here needs a GitHub login or GitHub's API.
 package sbxinstall
@@ -16,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"vibe/internal/selfupdate"
@@ -52,6 +58,44 @@ func LatestStableTag() (string, error) {
 	return tag, nil
 }
 
+// The macOS and Windows release assets.
+const (
+	DarwinTarball     = "DockerSandboxes-darwin.tar.gz"
+	DarwinDMG         = "DockerSandboxes-darwin.dmg"
+	WindowsMSI        = "DockerSandboxes.msi"        // for the user, in %LOCALAPPDATA%
+	WindowsMachineMSI = "DockerSandboxesMachine.msi" // for every user, in Program Files
+)
+
+// BrewCask is Docker's Homebrew cask of sbx's .dmg.
+const BrewCask = "docker/tap/sbx"
+
+// Supported reports whether sbx's releases have a build vibe can install for
+// an OS and architecture: macOS's are Apple Silicon only, and Windows' x64
+// only.
+func Supported(goos, goarch string) bool {
+	switch goos {
+	case "linux":
+		return goarch == "amd64" || goarch == "arm64"
+	case "darwin":
+		return goarch == "arm64"
+	case "windows":
+		return goarch == "amd64"
+	}
+	return false
+}
+
+// MinMacOS is the oldest macOS sbx runs on: 14, Sonoma — what Docker's
+// cask requires.
+const MinMacOS = 14
+
+// SupportedMacOS reports whether a macOS version, as sw_vers
+// -productVersion prints it ("14.5"), is new enough for sbx. One that can't
+// be read is given the benefit of the doubt.
+func SupportedMacOS(version string) bool {
+	major, err := strconv.Atoi(strings.SplitN(strings.TrimSpace(version), ".", 2)[0])
+	return err != nil || major >= MinMacOS
+}
+
 // AssetName is the Linux release tarball for an architecture:
 // DockerSandboxes-linux-amd64.tar.gz or DockerSandboxes-linux-arm64.tar.gz.
 func AssetName(goarch string) string {
@@ -72,58 +116,163 @@ func Download(tag, asset, dir string) (string, error) {
 // Untar unpacks a .tar.gz into dir, keeping file modes, and returns the one
 // top-level folder it holds (docker-sbx).
 func Untar(tarGz, dir string) (string, error) {
-	f, err := os.Open(tarGz)
+	tops, err := Unpack(tarGz, dir)
 	if err != nil {
 		return "", err
+	}
+	if len(tops) != 1 {
+		return "", fmt.Errorf("%s holds more than one top-level entry (%s)", tarGz, strings.Join(tops, ", "))
+	}
+	return filepath.Join(dir, tops[0]), nil
+}
+
+// Unpack unpacks a .tar.gz into dir, keeping file modes and symbolic links,
+// and returns the names of the entries at its top level, in the order they
+// first appear. Nothing in it may land outside dir: not a "../" in a name,
+// nor a link pointing out.
+func Unpack(tarGz, dir string) ([]string, error) {
+	f, err := os.Open(tarGz)
+	if err != nil {
+		return nil, err
 	}
 	defer f.Close()
 	gz, err := gzip.NewReader(f)
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", tarGz, err)
+		return nil, fmt.Errorf("%s: %w", tarGz, err)
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
-	top := ""
+	var tops []string
 	for {
 		h, err := tr.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return "", fmt.Errorf("%s: %w", tarGz, err)
+			return nil, fmt.Errorf("%s: %w", tarGz, err)
 		}
 		name := filepath.FromSlash(strings.TrimPrefix(h.Name, "./"))
 		if name == "" || name == "." {
 			continue
 		}
-		// Every entry must land inside dir: a "../" in a name is refused,
-		// not followed.
 		target := filepath.Join(dir, name)
-		if rel, err := filepath.Rel(dir, target); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return "", fmt.Errorf("%s: entry %q would land outside %s", tarGz, h.Name, dir)
+		if !within(dir, target) {
+			return nil, fmt.Errorf("%s: entry %q would land outside %s", tarGz, h.Name, dir)
 		}
-		if first := strings.SplitN(filepath.ToSlash(name), "/", 2)[0]; top == "" {
-			top = first
-		} else if first != top {
-			return "", fmt.Errorf("%s holds more than one top-level folder (%s, %s)", tarGz, top, first)
+		if top := strings.SplitN(filepath.ToSlash(name), "/", 2)[0]; !contains(tops, top) {
+			tops = append(tops, top)
 		}
 		switch h.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0o755); err != nil {
-				return "", err
+				return nil, err
 			}
 		case tar.TypeReg:
 			if err := extract(tr, target, os.FileMode(h.Mode).Perm()); err != nil {
-				return "", err
+				return nil, err
+			}
+		case tar.TypeSymlink:
+			if filepath.IsAbs(h.Linkname) || !within(dir, filepath.Join(filepath.Dir(target), filepath.FromSlash(h.Linkname))) {
+				return nil, fmt.Errorf("%s: link %q points outside %s", tarGz, h.Name, dir)
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return nil, err
+			}
+			if err := os.Symlink(h.Linkname, target); err != nil {
+				return nil, err
 			}
 		default:
-			return "", fmt.Errorf("%s: entry %q isn't a plain file or folder", tarGz, h.Name)
+			return nil, fmt.Errorf("%s: entry %q isn't a file, folder or link", tarGz, h.Name)
 		}
 	}
-	if top == "" {
-		return "", errors.New(tarGz + " is empty")
+	if len(tops) == 0 {
+		return nil, errors.New(tarGz + " is empty")
 	}
-	return filepath.Join(dir, top), nil
+	return tops, nil
+}
+
+// within reports whether path is dir or somewhere under it.
+func within(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// Replace moves each of names from the folder from into the folder to,
+// replacing whatever to already has by that name. Each one is swapped in
+// with renames, so from must be on the same filesystem as to; an entry that
+// can't be moved in is put back as it was.
+func Replace(from, to string, names []string) error {
+	if err := os.MkdirAll(to, 0o755); err != nil {
+		return err
+	}
+	for _, name := range names {
+		src, dst := filepath.Join(from, name), filepath.Join(to, name)
+		old := ""
+		if _, err := os.Lstat(dst); err == nil {
+			old = dst + ".vibe-old"
+			if err := os.RemoveAll(old); err != nil {
+				return err
+			}
+			if err := os.Rename(dst, old); err != nil {
+				return err
+			}
+		}
+		if err := os.Rename(src, dst); err != nil {
+			if old != "" {
+				os.Rename(old, dst)
+			}
+			return err
+		}
+		if old != "" {
+			if err := os.RemoveAll(old); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// Link makes link a symbolic link to target, replacing whatever link was.
+func Link(target, link string) error {
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		return err
+	}
+	if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Symlink(target, link)
+}
+
+// MSIOutcome reads msiexec's exit code: whether the install went through,
+// whether Windows needs a restart to finish it, and, when it didn't go
+// through, why.
+func MSIOutcome(code int) (ok, restart bool, why string) {
+	switch code {
+	case 0:
+		return true, false, ""
+	case 3010:
+		return true, true, ""
+	case 1641:
+		return true, true, "" // and Windows is restarting now
+	case 1602:
+		return false, false, "the install was cancelled"
+	case 1618:
+		return false, false, "another install is already running — wait for it to finish, then try again"
+	case 1625, 1925:
+		return false, false, "Windows didn't allow the install — it needs an administrator"
+	case 1638:
+		return false, false, "another version of Docker Sandboxes is already installed"
+	}
+	return false, false, fmt.Sprintf("msiexec exited with code %d", code)
 }
 
 func extract(r io.Reader, target string, mode os.FileMode) error {
