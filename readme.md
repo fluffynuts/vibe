@@ -77,12 +77,19 @@ macOS may block the unsigned binary the first time: `xattr -dr com.apple.quarant
 
 ### Upgrading
 
-`vibe --upgrade` (`-U`) checks GitHub for a newer release. If there is one, it downloads this
-machine's zip into a temporary folder, checks it against the release's `SHA256SUMS`, unpacks it
-into another, and runs `vibe --install` from there. That replaces the installed `vibe`, even
-while another vibe session is running it. It says "already up to date" when there's nothing
-newer, and `-f` reinstalls anyway. `-f` and `--update-strategy` are passed on to the
-`--install` it runs.
+`vibe --upgrade` (`-U`) checks GitHub for newer releases of vibe and of Docker SBX, then lists
+what it found with everything ticked, for you to untick what you'd rather leave. When there's
+nothing newer, it says "vibe and sbx are up to date". Unticking everything stops with "nothing
+selected to update" and a non-zero exit. `-f`, or running with no terminal, upgrades everything
+it found without asking.
+
+- **vibe:** it downloads this machine's zip into a temporary folder, checks it against the
+  release's `SHA256SUMS`, unpacks it into another, and runs `vibe --install` from there. That
+  replaces the installed `vibe`, even while another vibe session is running it. `-f` and
+  `--update-strategy` are passed on to that `--install`.
+- **Docker SBX:** it's upgraded to its latest stable release, the same way `--install-sbx` installed
+  it (on macOS and Windows, whichever way you picked). An sbx that `--install-sbx` didn't
+  install, such as one from a `.deb`, is left for you to upgrade the way you installed it.
 
 The first `vibe --install` (and vibe's first run, if you skip `--install`) also sets up
 `~/.vibe/settings.yaml` for your machine. It asks how much memory each sandbox gets, in 4g steps
@@ -173,8 +180,8 @@ vibe -i/--install          # copy the bundle into ~/.vibe and the binary into
 vibe -i -u/--update-strategy merge,keep
                            # ...settling files changed on both sides without
                            #    asking: keep, update, merge,keep, merge,update
-vibe -U/--upgrade          # download the latest release from GitHub and
-                           #    --install it (-f: even when up to date)
+vibe -U/--upgrade          # check for newer vibe and sbx releases, pick which
+                           #    to install (-f: all of them, without asking)
 vibe -I/--install-sbx      # install the latest stable Docker Sandboxes (sbx);
                            #    on macOS and Windows, asking how (-f: the first
                            #    way, even when up to date)

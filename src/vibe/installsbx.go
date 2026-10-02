@@ -24,6 +24,8 @@ type sbxMethod struct {
 	// install installs from the downloaded asset (file) of release tag —
 	// reinstalling when that release is already in place.
 	install func(tag, file string, reinstall bool) error
+	// installed reports whether sbx is installed this way.
+	installed func() bool
 }
 
 // doInstallSbx installs the latest stable release of Docker Sandboxes (sbx).
@@ -49,6 +51,10 @@ func doInstallSbx(force bool) error {
 		m = methods[i]
 	}
 
+	if runtime.GOOS == "darwin" && len(methods) < 3 {
+		note("(Homebrew isn't on your PATH, so installing through it isn't offered)")
+	}
+
 	if m.asset == "" {
 		if err := m.install("", "", force); err != nil {
 			return err
@@ -72,7 +78,12 @@ func doInstallSbx(force bool) error {
 	default:
 		note("installing Docker SBX %s", tag)
 	}
+	return installSbxRelease(m, tag, installed == tag)
+}
 
+// installSbxRelease downloads m's asset of release tag into a temporary
+// folder, installs sbx from it, and reports on the result.
+func installSbxRelease(m sbxMethod, tag string, reinstall bool) error {
 	downloads, err := os.MkdirTemp("", "vibe-sbx-download-")
 	if err != nil {
 		return err
@@ -87,10 +98,32 @@ func doInstallSbx(force bool) error {
 	}
 	status.done("Downloaded %s", m.asset)
 
-	if err := m.install(tag, file, installed == tag); err != nil {
+	if err := m.install(tag, file, reinstall); err != nil {
 		return err
 	}
 	return reportSbx(m)
+}
+
+// installedSbxMethod finds which of methods sbx is installed by: the one
+// whose sbx is what PATH runs, else the first that's installed at all.
+func installedSbxMethod(methods []sbxMethod) (sbxMethod, bool) {
+	onPath, _ := exec.LookPath("sbx")
+	var first *sbxMethod
+	for i, m := range methods {
+		if !m.installed() {
+			continue
+		}
+		if onPath != "" && sameFile(onPath, m.sbx) {
+			return m, true
+		}
+		if first == nil {
+			first = &methods[i]
+		}
+	}
+	if first == nil {
+		return sbxMethod{}, false
+	}
+	return *first, true
 }
 
 // sbxMethods lists the ways sbx can be installed on this machine, the one
@@ -112,7 +145,8 @@ func sbxMethods() ([]sbxMethod, error) {
 		return []sbxMethod{{
 			label: "the release's install script, into " + displayPath(prefix),
 			asset: sbxinstall.AssetName(runtime.GOARCH), sbx: sbx, binDir: binDir,
-			install: func(_, file string, _ bool) error { return installSbxLinux(file, prefix) },
+			install:   func(_, file string, _ bool) error { return installSbxLinux(file, prefix) },
+			installed: func() bool { return exists(sbx) },
 		}}, nil
 
 	case "darwin":
@@ -123,12 +157,14 @@ func sbxMethods() ([]sbxMethod, error) {
 			{
 				label: "unpack the release into " + displayPath(prefix) + " (no admin rights needed)",
 				asset: sbxinstall.DarwinTarball, sbx: sbx, binDir: binDir,
-				install: func(_, file string, _ bool) error { return installSbxMacTarball(file, prefix) },
+				install:   func(_, file string, _ bool) error { return installSbxMacTarball(file, prefix) },
+				installed: func() bool { return resolvesInto(sbx, prefix) },
 			},
 			{
 				label: "install Sbx.app from the release's .dmg into /Applications, linking sbx into " + displayPath(binDir),
 				asset: sbxinstall.DarwinDMG, sbx: sbx, binDir: binDir,
-				install: func(_, file string, _ bool) error { return installSbxMacDMG(file, binDir) },
+				install:   func(_, file string, _ bool) error { return installSbxMacDMG(file, binDir) },
+				installed: func() bool { return resolvesInto(sbx, filepath.Join(macApplications, "Sbx.app")) },
 			},
 		}
 		if brew, err := exec.LookPath("brew"); err == nil {
@@ -140,9 +176,10 @@ func sbxMethods() ([]sbxMethod, error) {
 				label: "Homebrew: brew install --cask " + sbxinstall.BrewCask + " (brew upgrades it from then on)",
 				sbx:   filepath.Join(brewBin, "sbx"), binDir: brewBin,
 				install: func(_, _ string, reinstall bool) error { return installSbxBrew(brew, reinstall) },
+				installed: func() bool {
+					return exec.Command(brew, "list", "--cask", sbxinstall.BrewCask).Run() == nil
+				},
 			})
-		} else {
-			note("(Homebrew isn't on your PATH, so installing through it isn't offered)")
 		}
 		return methods, nil
 
@@ -153,12 +190,14 @@ func sbxMethods() ([]sbxMethod, error) {
 			{
 				label: "just for you, in " + user + " (no admin rights needed)",
 				asset: sbxinstall.WindowsMSI, sbx: filepath.Join(user, "sbx.exe"), binDir: user,
-				install: func(_, file string, reinstall bool) error { return installSbxMSI(file, false, reinstall) },
+				install:   func(_, file string, reinstall bool) error { return installSbxMSI(file, false, reinstall) },
+				installed: func() bool { return exists(filepath.Join(user, "sbx.exe")) },
 			},
 			{
 				label: "for every user, in " + machine + " (Windows asks for admin rights)",
 				asset: sbxinstall.WindowsMachineMSI, sbx: filepath.Join(machine, "sbx.exe"), binDir: machine,
-				install: func(_, file string, reinstall bool) error { return installSbxMSI(file, true, reinstall) },
+				install:   func(_, file string, reinstall bool) error { return installSbxMSI(file, true, reinstall) },
+				installed: func() bool { return exists(filepath.Join(machine, "sbx.exe")) },
 			},
 		}, nil
 	}
@@ -401,6 +440,25 @@ func sameFile(a, b string) bool {
 	}
 	bi, err := os.Stat(b)
 	return err == nil && os.SameFile(ai, bi)
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// resolvesInto reports whether path, with its links followed, is a file
+// somewhere under dir.
+func resolvesInto(path, dir string) bool {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	if d, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = d
+	}
+	rel, err := filepath.Rel(dir, resolved)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func isDir(path string) bool {

@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -61,9 +62,11 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe -l/--list             list every known sandbox and its status
   vibe -x/--cleanup          pick sandboxes from a checklist and delete them;
                              the profiles they were built from are kept
-  vibe -U/--upgrade          download the latest release for this machine
-                             from GitHub and --install it (-f reinstalls
-                             when already up to date; -u is passed on)
+  vibe -U/--upgrade          check GitHub for newer releases of vibe and
+                             Docker SBX, pick which to upgrade (all are
+                             ticked), and install them; -f upgrades them all
+                             without asking (-f and -u are passed on to
+                             vibe's --install)
   vibe -I/--install-sbx      download the latest stable Docker Sandboxes (sbx)
                              release and install it: on Linux into
                              ~/.docker/sbx; on macOS (Apple Silicon) and
@@ -668,29 +671,177 @@ func doInstall(lay layout.Layout, force bool, strategyValue string) error {
 	return binErr
 }
 
-// doUpgrade fetches the latest release for this machine from GitHub into a
-// temporary folder, checks it against the release's checksums, unpacks it
-// into another, and runs --install from there — which replaces this vibe
-// and upgrades ~/.vibe. -f reinstalls even when already up to date, and it
-// and --update-strategy are passed on to that --install.
+// pendingUpgrade is something --upgrade found a newer release of, and how to
+// install it.
+type pendingUpgrade struct {
+	label string
+	run   func() error
+}
+
+// doUpgrade checks GitHub for newer releases of vibe and of Docker SBX,
+// offers whichever there are in a checklist (all ticked), and installs the
+// ones picked. With -f, or no terminal to ask on, it installs them all; -f
+// and --update-strategy are passed on to the --install that upgrades vibe.
 func doUpgrade(force bool, strategyValue string) error {
 	if strategyValue != "" {
 		if _, err := upgrade.ParseStrategy(strategyValue); err != nil {
 			return err // before downloading anything
 		}
 	}
-	tag, err := selfupdate.LatestTag()
+	var found []pendingUpgrade
+	var unchecked []string
+	status := newStatusLine()
+
+	status.show("Checking for a newer vibe")
+	if u, summary, err := checkVibeUpgrade(force, strategyValue); err != nil {
+		status.done("Checking for a newer vibe failed: %s", err)
+		unchecked = append(unchecked, "vibe")
+	} else {
+		status.done("%s", summary)
+		if u != nil {
+			found = append(found, *u)
+		}
+	}
+
+	status.show("Checking for a newer Docker SBX")
+	if u, summary, err := checkSbxUpgrade(); err != nil {
+		status.done("Checking for a newer Docker SBX failed: %s", err)
+		unchecked = append(unchecked, "sbx")
+	} else {
+		status.done("%s", summary)
+		if u != nil {
+			found = append(found, *u)
+		}
+	}
+
+	if len(found) == 0 {
+		if len(unchecked) > 0 {
+			return fmt.Errorf("couldn't check for a newer %s (see above)", strings.Join(unchecked, " or "))
+		}
+		fmt.Println("vibe and sbx are up to date")
+		return nil
+	}
+
+	chosen, err := chooseUpgrades(found, force)
 	if err != nil {
 		return err
 	}
+	var errs []error
+	for _, u := range chosen {
+		if err := u.run(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// pickUpgrades asks which of labels to upgrade, all ticked to start with,
+// returning the indices picked; ok is false when the user quit. A variable
+// so tests can stand in for the user.
+var pickUpgrades = func(labels []string) ([]int, bool) {
+	checked := make([]bool, len(labels))
+	for i := range checked {
+		checked[i] = true
+	}
+	return checklistFrom("pick what to upgrade", labels, checked)
+}
+
+// chooseUpgrades settles which of found to install: all of them with -f
+// or no terminal to ask on, else the ones the user picks.
+func chooseUpgrades(found []pendingUpgrade, force bool) ([]pendingUpgrade, error) {
+	if force || !interactive() {
+		return found, nil
+	}
+	labels := make([]string, len(found))
+	for i, u := range found {
+		labels[i] = u.label
+	}
+	idxs, ok := pickUpgrades(labels)
+	if !ok {
+		return nil, fmt.Errorf("aborted — nothing upgraded")
+	}
+	if len(idxs) == 0 {
+		return nil, errors.New("nothing selected to update")
+	}
+	chosen := make([]pendingUpgrade, len(idxs))
+	for i, idx := range idxs {
+		chosen[i] = found[idx]
+	}
+	return chosen, nil
+}
+
+// checkVibeUpgrade checks for a newer release of vibe, returning how to
+// upgrade to it (nil when there's none) and a line saying what was found.
+func checkVibeUpgrade(force bool, strategyValue string) (*pendingUpgrade, string, error) {
+	tag, err := selfupdate.LatestTag()
+	if err != nil {
+		return nil, "", err
+	}
 	latest := strings.TrimPrefix(tag, "v")
 	running := vibe.FullVersion()
-	if !force && !selfupdate.Newer(latest, running) {
-		note("already up to date (%s)", running)
-		return nil
+	if !selfupdate.Newer(latest, running) {
+		return nil, fmt.Sprintf("vibe %s is the latest", running), nil
 	}
-	note("upgrading vibe %s to %s", running, latest)
+	return &pendingUpgrade{
+		label: fmt.Sprintf("vibe %s → %s", running, latest),
+		run: func() error {
+			note("upgrading vibe %s to %s", running, latest)
+			return upgradeVibe(tag, force, strategyValue)
+		},
+	}, fmt.Sprintf("vibe %s is available (you have %s)", latest, running), nil
+}
 
+// checkSbxUpgrade checks for a newer stable release of Docker SBX than the
+// one installed, returning how to upgrade to it — the same way it was
+// installed — (nil when there's none, or vibe can't) and a line saying
+// what was found.
+func checkSbxUpgrade() (*pendingUpgrade, string, error) {
+	if !sbxinstall.Supported(runtime.GOOS, runtime.GOARCH) {
+		return nil, fmt.Sprintf("Docker SBX has no release for %s/%s to upgrade to", runtime.GOOS, runtime.GOARCH), nil
+	}
+	methods, err := sbxMethods()
+	if err != nil {
+		return nil, "", err
+	}
+	m, ok := installedSbxMethod(methods)
+	if !ok {
+		if p, err := exec.LookPath("sbx"); err == nil {
+			return nil, fmt.Sprintf("Docker SBX at %s wasn't installed by vibe --install-sbx — upgrade it the way it was installed", p), nil
+		}
+		return nil, "Docker SBX isn't installed — vibe --install-sbx installs it", nil
+	}
+	installed, err := sbxinstall.Version(m.sbx)
+	if err != nil {
+		return nil, "", fmt.Errorf("'%s version' failed: %w", m.sbx, err)
+	}
+	tag, err := sbxinstall.LatestStableTag()
+	if err != nil {
+		return nil, "", err
+	}
+	if !selfupdate.Newer(tag, installed) {
+		return nil, fmt.Sprintf("Docker SBX %s is the latest", installed), nil
+	}
+	return &pendingUpgrade{
+		label: fmt.Sprintf("Docker SBX %s → %s", installed, tag),
+		run: func() error {
+			note("upgrading Docker SBX %s to %s", installed, tag)
+			if m.asset == "" {
+				if err := m.install("", "", false); err != nil {
+					return err
+				}
+				return reportSbx(m)
+			}
+			return installSbxRelease(m, tag, false)
+		},
+	}, fmt.Sprintf("Docker SBX %s is available (you have %s)", tag, installed), nil
+}
+
+// upgradeVibe fetches release tag for this machine from GitHub into a
+// temporary folder, checks it against the release's checksums, unpacks it
+// into another, and runs --install from there — which replaces this vibe
+// and upgrades ~/.vibe. -f and --update-strategy are passed on to that
+// --install.
+func upgradeVibe(tag string, force bool, strategyValue string) error {
 	downloads, err := os.MkdirTemp("", "vibe-download-")
 	if err != nil {
 		return err
