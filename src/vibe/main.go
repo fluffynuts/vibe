@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -733,6 +734,48 @@ func doUpgrade(force bool, strategyValue string) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// availableUpgrades checks, quietly, for newer releases of vibe and of
+// Docker SBX, returning the labels of those found. A check that fails finds
+// nothing: this only ever offers a hint, so it never complains.
+func availableUpgrades() []string {
+	var labels []string
+	if u, _, err := checkVibeUpgrade(false, ""); err == nil && u != nil {
+		labels = append(labels, u.label)
+	}
+	if u, _, err := checkSbxUpgrade(); err == nil && u != nil {
+		labels = append(labels, u.label)
+	}
+	return labels
+}
+
+// checkUpgradesInBackground starts availableUpgrades while a session runs,
+// returning a function to call once it has ended, which says what's newer
+// and recommends --upgrade. It says nothing when there's nothing newer, or
+// the check hasn't finished: a session isn't kept waiting on GitHub.
+func checkUpgradesInBackground() (report func()) {
+	found := make(chan []string, 1)
+	go func() { found <- availableUpgrades() }()
+	return func() {
+		select {
+		case labels := <-found:
+			reportUpgrades(os.Stderr, labels)
+		default:
+		}
+	}
+}
+
+// reportUpgrades tells w of the upgrades labels lists, if any.
+func reportUpgrades(w io.Writer, labels []string) {
+	if len(labels) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "vibe: newer releases are available:")
+	for _, l := range labels {
+		fmt.Fprintf(w, "vibe:   %s\n", l)
+	}
+	fmt.Fprintln(w, "vibe: run 'vibe --upgrade' to install them")
 }
 
 // pickUpgrades asks which of labels to upgrade, all ticked to start with,
@@ -2113,6 +2156,7 @@ const virtualBoxHint = "You should stop VirtualBox - sbx and virtualbox do not p
 // foreground.
 func finish(vibeHome, name string) error {
 	go nudgeOnStart(vibeHome, name)
+	noteUpgrades := checkUpgradesInBackground()
 	sessionMu.Lock()
 	inSession = true
 	sessionMu.Unlock()
@@ -2139,6 +2183,7 @@ func finish(vibeHome, name string) error {
 			note("%s", virtualBoxHint)
 		}
 	}
+	noteUpgrades()
 	session.Release()
 	os.Exit(code)
 	return nil

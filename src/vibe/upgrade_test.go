@@ -211,3 +211,45 @@ func TestChooseUpgrades(t *testing.T) {
 		t.Errorf("chooseUpgrades when the user quits = %v", err)
 	}
 }
+
+func TestAvailableUpgrades(t *testing.T) {
+	asBuild(t, "50")
+	onReleases(t, "v"+vibe.Version+".51", "v0.46.0")
+	withSbx(t, "v0.45.1")
+	want := []string{"vibe " + vibe.Version + ".50 → " + vibe.Version + ".51", "Docker SBX v0.45.1 → v0.46.0"}
+	if got := availableUpgrades(); !reflect.DeepEqual(got, want) {
+		t.Errorf("availableUpgrades = %q, want %q", got, want)
+	}
+
+	asBuild(t, "51")
+	withSbx(t, "v0.46.0")
+	if got := availableUpgrades(); len(got) != 0 {
+		t.Errorf("availableUpgrades when up to date = %q, want nothing", got)
+	}
+}
+
+func TestAvailableUpgradesSaysNothingOfFailedChecks(t *testing.T) {
+	asBuild(t, "50")
+	onReleases(t, "v"+vibe.Version+".51", "v0.46.0")
+	selfupdate.Releases = "http://127.0.0.1:1/releases" // nothing listens here
+	withSbx(t, "v0.45.1")
+	if got, want := availableUpgrades(), []string{"Docker SBX v0.45.1 → v0.46.0"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("availableUpgrades with vibe's check failing = %q, want %q", got, want)
+	}
+}
+
+func TestReportUpgrades(t *testing.T) {
+	var out strings.Builder
+	reportUpgrades(&out, nil)
+	if out.String() != "" {
+		t.Errorf("reportUpgrades with nothing newer printed %q", out.String())
+	}
+	reportUpgrades(&out, []string{"vibe 0.1.1 → 0.1.2", "Docker SBX v0.45.1 → v0.46.0"})
+	want := "vibe: newer releases are available:\n" +
+		"vibe:   vibe 0.1.1 → 0.1.2\n" +
+		"vibe:   Docker SBX v0.45.1 → v0.46.0\n" +
+		"vibe: run 'vibe --upgrade' to install them\n"
+	if out.String() != want {
+		t.Errorf("reportUpgrades printed %q, want %q", out.String(), want)
+	}
+}

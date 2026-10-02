@@ -91,6 +91,10 @@ it found without asking.
   it (on macOS and Windows, whichever way you picked). An sbx that `--install-sbx` didn't
   install, such as one from a `.deb`, is left for you to upgrade the way you installed it.
 
+While a sandbox session runs, vibe makes the same checks in the background. When the session ends,
+it lists anything newer it found and suggests `vibe --upgrade`. It says nothing when everything is up
+to date, when a check fails, or when the checks haven't finished by the time you exit.
+
 The first `vibe --install` (and vibe's first run, if you skip `--install`) also sets up
 `~/.vibe/settings.yaml` for your machine. It asks how much memory each sandbox gets, in 4g steps
 up to half your machine's memory. It asks which agent sandboxes run, from the agents `sbx run
