@@ -23,6 +23,7 @@ import (
 	"vibe"
 	"vibe/internal/claudetheme"
 	"vibe/internal/cliargs"
+	"vibe/internal/clockskew"
 	"vibe/internal/fscopy"
 	"vibe/internal/homeinit"
 	"vibe/internal/hostmem"
@@ -1729,6 +1730,7 @@ func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merg
 		Target:  target,
 		Mounts:  mounts,
 	}); err != nil {
+		warnIfClockIsOff()
 		return err
 	}
 
@@ -2624,6 +2626,7 @@ func finish(vibeHome, name string) error {
 	} else {
 		note("cannot copy memories: sbx exited with code %d", code)
 		note("%s", sbxFailureHint)
+		warnIfClockIsOff()
 		if len(runningProcesses(runtime.GOOS, virtualBoxProcesses)) > 0 {
 			note("%s", virtualBoxHint)
 		}
@@ -2632,6 +2635,20 @@ func finish(vibeHome, name string) error {
 	session.Release()
 	os.Exit(code)
 	return nil
+}
+
+// warnIfClockIsOff, run when sbx has failed, says so if this machine's clock
+// is off the real time: sbx's sign-in to Docker then fails with only "token
+// has invalid claims: token is expired" to go on. A check that can't be made
+// says nothing — it's only ever a hint.
+func warnIfClockIsOff() {
+	skew, err := clockskew.Skew()
+	if err != nil {
+		return
+	}
+	if w := clockskew.Warning(skew); w != "" {
+		note("WARNING: %s", w)
+	}
 }
 
 // saveMemoriesOnExit copies the agent's memories back out to the sandbox's
