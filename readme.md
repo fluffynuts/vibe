@@ -49,7 +49,8 @@ Either one downloads the latest release for your machine, checks it against the 
 checksums, and runs `vibe --install` from it. That puts the `vibe` binary in `~/.local/bin` and
 its configuration in `~/.vibe`. On Windows it adds `~\.local\bin` to your user `PATH` if it isn't
 there already (open a new terminal to pick it up); on Linux and macOS, where that depends on your
-shell's profile, it tells you what to add.
+shell's profile, it tells you what to add. If `sbx` isn't on your `PATH`, it offers to install it for you
+(with `-f`, or no terminal to ask on, it only tells you to run `vibe --install-sbx`).
 `install.sh` needs `curl` or `wget`, and `unzip` (or `python3`).
 
 Run the same command again to upgrade, or, once vibe is installed:

@@ -376,6 +376,19 @@ func TestInstallUpdateStrategyIsCheckedFirst(t *testing.T) {
 	}
 }
 
+func TestOfferSbxInstallOnlyHintsWithForce(t *testing.T) {
+	old := sbxOnPath
+	defer func() { sbxOnPath = old }()
+	for _, onPath := range []bool{true, false} {
+		sbxOnPath = func() bool { return onPath }
+		// With -f nothing is asked and nothing is downloaded: a missing sbx
+		// only gets a hint.
+		if err := offerSbxInstall(true); err != nil {
+			t.Errorf("offerSbxInstall(force) with sbx on PATH=%v = %v", onPath, err)
+		}
+	}
+}
+
 func TestWarnIfNotOnPathNeverFails(t *testing.T) {
 	old := addToUserPath
 	addToUserPath = func(string) (bool, error) { return false, errors.New("no registry here") }

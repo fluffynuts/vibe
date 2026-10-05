@@ -178,7 +178,10 @@ func run(argv []string) error {
 		if err != nil {
 			return err
 		}
-		return doInstall(layout.New(vibeHome, bundleRoot), args.Force, args.UpdateStrategy)
+		if err := doInstall(layout.New(vibeHome, bundleRoot), args.Force, args.UpdateStrategy); err != nil {
+			return err
+		}
+		return offerSbxInstall(args.Force)
 	}
 
 	if !sbxrun.Available() {
@@ -897,6 +900,35 @@ func doInstall(lay layout.Layout, force bool, strategyValue string) error {
 		return fmt.Errorf("upstream changes left unmerged in %d file(s)", len(res.Unresolved))
 	}
 	return binErr
+}
+
+// sbxOnPath reports whether sbx is on PATH. A variable so tests can say
+// either way.
+var sbxOnPath = func() bool {
+	_, err := exec.LookPath("sbx")
+	return err == nil
+}
+
+// offerSbxInstall, run after --install, offers to install Docker SBX when
+// sbx isn't on PATH, since vibe can't start a sandbox without it. With -f,
+// or no terminal to ask on, it only says how.
+func offerSbxInstall(force bool) error {
+	if sbxOnPath() {
+		return nil
+	}
+	if !sbxinstall.Supported(runtime.GOOS, runtime.GOARCH) {
+		note("sbx was not found on your PATH — install it from %s", sbxinstall.Releases)
+		return nil
+	}
+	if force || !interactive() {
+		note("sbx was not found on your PATH — 'vibe --install-sbx' installs it")
+		return nil
+	}
+	if !confirmDefault(false, true, "sbx was not found on your PATH — install now?") {
+		note("not installing sbx — 'vibe --install-sbx' installs it later")
+		return nil
+	}
+	return doInstallSbx(false)
 }
 
 // pendingUpgrade is something --upgrade found a newer release of, and how to
