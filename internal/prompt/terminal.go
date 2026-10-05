@@ -103,6 +103,13 @@ func EnableVT(f *os.File) {
 	enableVT(f)
 }
 
+// width is how many columns wide the terminal is, or 0 when it won't say.
+// It is asked afresh on every redraw, since the window can be resized
+// while a prompt is up.
+func (t *Terminal) width() int {
+	return Width(t.out, 0)
+}
+
 // Width is how many columns wide the terminal f is, or fallback when f
 // isn't a terminal or won't say.
 func Width(f *os.File, fallback int) int {

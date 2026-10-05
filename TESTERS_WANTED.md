@@ -29,7 +29,10 @@ Build from the repo root:
 if it passes.** Some tests skip on Windows because they rely on shell scripts or executable bits;
 skips are expected, failures are not.
 
-vibe keeps its state in `~/.vibe` (on Windows, `%USERPROFILE%\.vibe`). Two folders there matter
+vibe keeps its state in `~/.vibe` (on Windows, `%USERPROFILE%\.vibe`). To test without touching
+yours, point `VIBE_HOME` at a scratch folder first (`export VIBE_HOME=~/vibe-test-home`, or in
+PowerShell `$env:VIBE_HOME = "$env:USERPROFILE\vibe-test-home"`); every terminal you test in needs
+the same setting, or test 4 can't see the other vibe. Two folders there matter
 for these tests:
 
 - `running/` holds a `<pid>.lock` file for each vibe that is running, and briefly a `<pid>.stop`
@@ -41,8 +44,9 @@ for these tests:
 ### 1. First run and profile creation
 
 1. Run `vibe` in your throwaway folder.
-2. On a first run it asks whether to copy each bundled profile. Answer `y` and `n` at least once
-   each.
+2. On a first run it asks, one at a time, whether to copy each bundled profile. The bundle ships
+   only one at the moment, so you'll get a single question; to try both answers, run vibe a second
+   time with an empty `VIBE_HOME` (see [Before you start](#before-you-start)) and give the other.
 3. When it says there is no profile yet, use the arrow-key list to pick "create a new blank
    profile".
 

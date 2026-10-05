@@ -2,10 +2,14 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+
+	"vibe/internal/fscopy"
 )
 
 // nonexistentSandbox is a name no sandbox on this machine can have, so
@@ -49,28 +53,109 @@ func TestStoreForIsPerSandbox(t *testing.T) {
 	}
 }
 
-// fakeSbx puts an `sbx` on PATH whose exec runs the command on this machine.
-// joined makes it pass the command on as one space-joined line to a shell,
-// the way ssh does — the behaviour that broke a `sh -c "<script>"` probe.
+// fakeSbxEnv, set to "argv" or "joined", makes the test binary stand in for
+// sbx (see TestMain and fakeSbx).
+const fakeSbxEnv = "VIBE_MEMORY_TEST_FAKE_SBX"
+
+func TestMain(m *testing.M) {
+	if mode := os.Getenv(fakeSbxEnv); mode != "" {
+		os.Exit(runFakeSbx(mode == "joined", os.Args[1:]))
+	}
+	os.Exit(m.Run())
+}
+
+// fakeSbx puts an `sbx` on PATH whose exec runs the command on this machine
+// — a copy of this test binary, so it works on Windows too, where the
+// commands the package runs in a sandbox are carried out by runFakeSbx.
+// joined makes it treat the command as one space-joined line, the way ssh
+// does — the behaviour that broke a `sh -c "<script>"` probe.
 func fakeSbx(t *testing.T, joined bool) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the fake sbx is a shell script")
-	}
-	run := `"$@"`
-	if joined {
-		run = `sh -c "$*"`
-	}
-	dir := t.TempDir()
-	// The reachability check execs /bin/true, which is right inside a Linux
-	// sandbox but not here on every host: macOS only has /usr/bin/true. So
-	// the fake answers it itself rather than running it.
-	script := "#!/bin/sh\n[ \"$1\" = exec ] || exit 1\nshift 3\n" +
-		"[ \"$1\" = /bin/true ] && exit 0\n" + run + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "sbx"), []byte(script), 0o755); err != nil {
+	self, err := os.Executable()
+	if err != nil {
 		t.Fatal(err)
 	}
+	bin, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if joined && strings.Contains(dir, " ") {
+		t.Skip("a joined command line can't carry a temp dir with a space in it")
+	}
+	name := "sbx"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mode := "argv"
+	if joined {
+		mode = "joined"
+	}
+	t.Setenv(fakeSbxEnv, mode)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// runFakeSbx is the fake sbx: `sbx exec <name> -- <command>`, for just the
+// commands this package runs, carried out here with the same meaning they
+// have in the sandbox. It returns the exit code.
+func runFakeSbx(joined bool, args []string) int {
+	if len(args) < 4 || args[0] != "exec" || args[2] != "--" {
+		return 1
+	}
+	cmd := args[3:]
+	if joined {
+		cmd = strings.Fields(strings.Join(cmd, " "))
+	}
+	// is matches cmd's every word but the last, a path; "" matches any word.
+	is := func(want ...string) bool {
+		if len(cmd) != len(want)+1 {
+			return false
+		}
+		for i, w := range want {
+			if w != "" && cmd[i] != w {
+				return false
+			}
+		}
+		return true
+	}
+	fail := func(err error) int {
+		if err != nil {
+			return 1
+		}
+		return 0
+	}
+	path := cmd[len(cmd)-1]
+	switch {
+	case len(cmd) == 1 && cmd[0] == "/bin/true":
+		return 0
+	case is("test", "-d"):
+		if info, err := os.Stat(path); err != nil || !info.IsDir() {
+			return 1
+		}
+		return 0
+	case is("test", "-e"):
+		_, err := os.Stat(path)
+		return fail(err)
+	case is("mkdir", "-p"):
+		return fail(os.MkdirAll(path, 0o755))
+	case is("cp", "-a", ""):
+		src := strings.TrimSuffix(cmd[2], ".")
+		return fail(fscopy.TreeKeepTimes(filepath.Clean(src), filepath.Clean(path)))
+	case len(cmd) == 8 && cmd[0] == "find" && strings.Join(cmd[2:], " ") == "-mindepth 1 -maxdepth 1 -print -quit":
+		entries, err := os.ReadDir(cmd[1])
+		if err != nil {
+			return 1
+		}
+		if len(entries) > 0 {
+			fmt.Println(cmd[1] + "/" + entries[0].Name())
+		}
+		return 0
+	}
+	fmt.Fprintf(os.Stderr, "fake sbx: can't run %q\n", cmd)
+	return 127
 }
 
 // useAgentPath points the package at a stand-in for the sandbox's memories.
@@ -113,6 +198,11 @@ func TestProbeAndBackupFindMemoriesHoweverSbxPassesArgs(t *testing.T) {
 				t.Fatalf("Probe with memories = %v, want Some", got)
 			}
 
+			// Where the sandbox keeps AgentPath on a filesystem of its own.
+			if err := os.MkdirAll(filepath.Join(agent, lostFound), 0o755); err != nil {
+				t.Fatal(err)
+			}
+
 			store := filepath.Join(t.TempDir(), "store")
 			saved, err := Backup("any", store)
 			if err != nil || !saved {
@@ -120,6 +210,9 @@ func TestProbeAndBackupFindMemoriesHoweverSbxPassesArgs(t *testing.T) {
 			}
 			if _, err := os.Stat(filepath.Join(store, "-proj", "memory", "MEMORY.md")); err != nil {
 				t.Errorf("memory not backed up: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(store, lostFound)); !os.IsNotExist(err) {
+				t.Errorf("lost+found was backed up with the memories")
 			}
 
 			if err := os.RemoveAll(agent); err != nil {
@@ -167,7 +260,7 @@ func TestSandboxPathOnWindowsFindsTheMountByItsMarker(t *testing.T) {
 	// path is where its marker shows up.
 	store := t.TempDir()
 	got, err := sandboxPath(context.Background(), "any", store)
-	if err != nil || got != store {
+	if err != nil || filepath.Clean(got) != filepath.Clean(store) {
 		t.Errorf("sandboxPath(%q) = %q, %v; want the path itself", store, got, err)
 	}
 	entries, _ := os.ReadDir(store)

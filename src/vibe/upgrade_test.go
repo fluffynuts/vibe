@@ -228,6 +228,18 @@ func TestAvailableUpgrades(t *testing.T) {
 	}
 }
 
+// A local build has no build number, so every release of its version counts
+// as newer — right for --upgrade, but the hint after every session would
+// tell anyone building from source to "upgrade" to what they already have.
+func TestAvailableUpgradesLeavesLocalBuildsAlone(t *testing.T) {
+	asBuild(t, "")
+	onReleases(t, "v"+vibe.Version+".51", "v0.46.0")
+	withSbx(t, "v0.45.1")
+	if got, want := availableUpgrades(), []string{"Docker SBX v0.45.1 → v0.46.0"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("availableUpgrades from a local build = %q, want %q", got, want)
+	}
+}
+
 func TestAvailableUpgradesSaysNothingOfFailedChecks(t *testing.T) {
 	asBuild(t, "50")
 	onReleases(t, "v"+vibe.Version+".51", "v0.46.0")

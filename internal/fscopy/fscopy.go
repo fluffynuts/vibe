@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // File copies src to dst, creating dst's parent directory and giving dst
@@ -66,6 +67,45 @@ func Tree(src, dst string) error {
 			return fileWithMode(path, target, info.Mode().Perm())
 		}
 	})
+}
+
+// TreeKeepTimes is Tree, giving every file and directory copied its
+// source's modification time too — for a copy that stands in for the
+// original, such as a backup put back.
+func TreeKeepTimes(src, dst string) error {
+	if err := Tree(src, dst); err != nil {
+		return err
+	}
+	type stamp struct {
+		path string
+		mod  time.Time
+	}
+	var stamps []stamp
+	err := filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !(info.IsDir() || info.Mode().IsRegular()) {
+			return nil // a symlink's time can't be set portably; the rest weren't copied
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		stamps = append(stamps, stamp{filepath.Join(dst, rel), info.ModTime()})
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	// Only once everything is copied: copying into a directory updates its
+	// modification time.
+	for _, s := range stamps {
+		if err := os.Chtimes(s.path, s.mod, s.mod); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // TreeMerge copies the directory tree rooted at src into dst like Tree,

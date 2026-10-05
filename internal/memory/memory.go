@@ -110,12 +110,26 @@ func BackupContext(ctx context.Context, sandboxName, store string) (bool, error)
 		}
 		return false, fmt.Errorf("could not copy memories to %s", store)
 	}
+	dropLostFound(store)
 	return true, nil
+}
+
+// lostFound is the directory fsck keeps at the root of an ext filesystem.
+// The sandbox can keep AgentPath on a filesystem of its own, and copying
+// AgentPath's contents out then brings lost+found along with them.
+const lostFound = "lost+found"
+
+// dropLostFound removes the lost+found a backup copied into store along
+// with the memories: it is no memory of the agent's, and copied back into
+// the sandbox it would land on the root-owned one already there.
+func dropLostFound(store string) {
+	os.RemoveAll(filepath.Join(store, lostFound))
 }
 
 // Restore waits for the (re-created) sandbox to come up and copies memories
 // back in from store, before the agent starts.
 func Restore(sandboxName, store string) error {
+	dropLostFound(store) // from a backup made before BackupContext dropped it
 	entries, err := os.ReadDir(store)
 	if err != nil || len(entries) == 0 {
 		return nil

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/term"
 )
 
 // Available reports whether sbx is on PATH and responds.
@@ -91,18 +93,25 @@ func runInheritUntil(stop <-chan struct{}, args ...string) (int, error) {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	var tty *term.State
+	if stop != nil {
+		tty, _ = term.GetState(int(os.Stdin.Fd()))
+	}
 	if err := cmd.Start(); err != nil {
 		return -1, err
 	}
+	stopped := false
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM)
-	exited := make(chan struct{})
+	exited, done := make(chan struct{}), make(chan struct{})
 	go func() {
+		defer close(done)
 		for {
 			select {
 			case sig := <-sigs:
 				cmd.Process.Signal(sig)
 			case <-stop:
+				stopped = true
 				terminate(cmd.Process)
 				stop = nil
 			case <-exited:
@@ -112,7 +121,11 @@ func runInheritUntil(stop <-chan struct{}, args ...string) (int, error) {
 	}()
 	err := cmd.Wait()
 	close(exited)
+	<-done
 	signal.Stop(sigs)
+	if stopped {
+		resetTerminal(tty)
+	}
 	if err == nil {
 		return 0, nil
 	}
@@ -120,6 +133,33 @@ func runInheritUntil(stop <-chan struct{}, args ...string) (int, error) {
 		return exitErr.ExitCode(), nil
 	}
 	return -1, err
+}
+
+// terminalModeResets turns off what a full-screen terminal program such as
+// the agent may have turned on, and would have turned off again itself had
+// it been allowed to finish: mouse tracking in all its encodings, focus
+// reporting, bracketed paste, extended keyboard reporting (the kitty
+// protocol, xterm's modifyOtherKeys, Windows Terminal's win32-input-mode),
+// a hidden cursor and any colour left set. Left on, the shell the user goes
+// back to gets every mouse movement and window switch typed into it.
+//
+// The alternate screen is left alone: leaving it when it isn't in use also
+// restores a cursor position that was never saved, which on some terminals
+// is the top left of the screen.
+const terminalModeResets = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l" +
+	"\x1b[?1004l\x1b[?2004l\x1b[<u\x1b[>4m\x1b[?9001l\x1b[?25h\x1b[0m"
+
+// resetTerminal tidies up after an sbx session vibe ended itself. Killed
+// (on Windows) or cut short, neither sbx nor the agent inside it gets to put
+// the terminal back as it found it, so vibe does: the input mode it had
+// before sbx started (tty, when known), and terminalModeResets.
+func resetTerminal(tty *term.State) {
+	if tty != nil {
+		term.Restore(int(os.Stdin.Fd()), tty)
+	}
+	if term.IsTerminal(int(os.Stdout.Fd())) {
+		os.Stdout.WriteString(terminalModeResets + "\r\n")
+	}
 }
 
 // Exists reports whether a sandbox with the given name exists.

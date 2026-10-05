@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func readFile(t *testing.T, path string) string {
@@ -33,6 +34,10 @@ func TestSnapshotRestoreUndoesAPartialBackup(t *testing.T) {
 	store := filepath.Join(t.TempDir(), "proj")
 	writeFile(t, filepath.Join(store, "-a", "memory", "MEMORY.md"), "original")
 	writeFile(t, filepath.Join(store, "-a", "memory", "kept.md"), "kept")
+	then := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := os.Chtimes(filepath.Join(store, "-a", "memory", "kept.md"), then, then); err != nil {
+		t.Fatal(err)
+	}
 
 	snap, err := TakeSnapshot(store)
 	if err != nil {
@@ -50,6 +55,10 @@ func TestSnapshotRestoreUndoesAPartialBackup(t *testing.T) {
 	}
 	if got := readFile(t, filepath.Join(store, "-a", "memory", "kept.md")); got != "kept" {
 		t.Errorf("kept.md = %q, want it back", got)
+	}
+	// Back as it was means when it was last changed, too.
+	if info, err := os.Stat(filepath.Join(store, "-a", "memory", "kept.md")); err != nil || !info.ModTime().Equal(then) {
+		t.Errorf("kept.md restored as modified %v (%v), want %s", info.ModTime(), err, then)
 	}
 	if _, err := os.Stat(filepath.Join(store, "-b")); !os.IsNotExist(err) {
 		t.Errorf("memories added by the interrupted backup survived the restore")

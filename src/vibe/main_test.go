@@ -741,3 +741,29 @@ func TestPickMemoryWithoutAsking(t *testing.T) {
 		t.Errorf("pickMemory on an unknown machine = %q, want it kept", m)
 	}
 }
+
+// Windows PowerShell passes "~\project" to vibe unexpanded, and vibe shows
+// folders that way itself, so it has to expand both spellings.
+func TestExpandHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	// A backslash is only a separator on Windows; elsewhere it is part of
+	// the name, and stays that way.
+	backslashed := filepath.Join(home, `code\project`)
+	if runtime.GOOS == "windows" {
+		backslashed = filepath.Join(home, "code", "project")
+	}
+	for _, tt := range []struct{ in, want string }{
+		{"", ""},
+		{"~", home},
+		{"~/code/project", filepath.Join(home, "code", "project")},
+		{`~\code\project`, backslashed},
+		{"~other/project", "~other/project"},
+		{"/abs/path", "/abs/path"},
+	} {
+		if got := expandHome(tt.in); got != tt.want {
+			t.Errorf("expandHome(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}

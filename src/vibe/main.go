@@ -208,7 +208,9 @@ func run(argv []string) error {
 		return err
 	}
 
-	target := args.Path
+	// Windows PowerShell hands "~\project" over as it is, and vibe shows
+	// folders that way itself, so the "~" is vibe's to expand.
+	target := expandHome(args.Path)
 	if target == "" {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -271,7 +273,8 @@ func vibeHomeDir() string {
 	return filepath.Join(home, ".vibe")
 }
 
-// expandHome expands a leading "~" or "~/" in a settings.yaml path value.
+// expandHome expands a leading "~", "~/" or "~\" in a path: a settings.yaml
+// value, or a folder given on the command line.
 func expandHome(path string) string {
 	if path == "" || path[0] != '~' {
 		return path
@@ -341,6 +344,12 @@ func exitOnStopRequest(s *running.Session) {
 	defer sessionMu.Unlock()
 	if inSession {
 		return
+	}
+	// A picker waiting on a keypress has the terminal in raw mode, with the
+	// cursor at the end of its hint line: wipe it and put the terminal back
+	// before saying why. Any other question has the cursor after it.
+	if !prompt.Abort() {
+		fmt.Fprintln(os.Stderr)
 	}
 	note("asked to stop by another vibe for this folder — exiting")
 	s.Release()
@@ -959,8 +968,14 @@ func doUpgrade(force bool, strategyValue string) error {
 // nothing: this only ever offers a hint, so it never complains.
 func availableUpgrades() []string {
 	var labels []string
-	if u, _, err := checkVibeUpgrade(false, ""); err == nil && u != nil {
-		labels = append(labels, u.label)
+	// A build with no build number was made from source, not released: any
+	// release of the same version counts as newer than it (which is right
+	// for an explicit --upgrade), so suggesting one would be noise to anyone
+	// building vibe themselves — very likely of the commit just released.
+	if vibe.Build != "" {
+		if u, _, err := checkVibeUpgrade(false, ""); err == nil && u != nil {
+			labels = append(labels, u.label)
+		}
 	}
 	if u, _, err := checkSbxUpgrade(); err == nil && u != nil {
 		labels = append(labels, u.label)

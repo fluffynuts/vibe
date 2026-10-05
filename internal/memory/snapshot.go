@@ -15,8 +15,9 @@ type Snapshot struct {
 	store, copy string
 }
 
-// TakeSnapshot copies what store holds now to a directory beside it. A
-// store that doesn't exist yet is snapshotted as empty.
+// TakeSnapshot copies what store holds now to a directory beside it,
+// modification times and all, so putting it back leaves no trace. A store
+// that doesn't exist yet is snapshotted as empty.
 func TakeSnapshot(store string) (*Snapshot, error) {
 	parent := filepath.Dir(store)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
@@ -27,7 +28,7 @@ func TakeSnapshot(store string) (*Snapshot, error) {
 		return nil, fmt.Errorf("making room for a copy of %s: %w", store, err)
 	}
 	if _, err := os.Stat(store); err == nil {
-		if err := fscopy.Tree(store, copyDir); err != nil {
+		if err := fscopy.TreeKeepTimes(store, copyDir); err != nil {
 			os.RemoveAll(copyDir)
 			return nil, fmt.Errorf("copying %s: %w", store, err)
 		}
@@ -52,7 +53,7 @@ func (s *Snapshot) Restore() error {
 			return err
 		}
 	}
-	if err := fscopy.Tree(s.copy, s.store); err != nil {
+	if err := fscopy.TreeKeepTimes(s.copy, s.store); err != nil {
 		return fmt.Errorf("%w — the original memories are still in %s", err, s.copy)
 	}
 	s.Discard()

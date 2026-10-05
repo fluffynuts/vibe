@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -28,39 +29,18 @@ func TestHasShiftModifier(t *testing.T) {
 	}
 }
 
-// TestSelectionBlockLineCount pins the one thing that silently breaks the
-// confirmation: clear wipes exactly the number of lines it is told, so a
-// block that reports fewer lines than it prints leaves residue on screen and
-// one that reports more eats the caller's own output above it.
-func TestSelectionBlockLineCount(t *testing.T) {
-	for _, picked := range [][]string{nil, {"one"}, {"one", "two"}, {"a", "b", "c", "d"}} {
-		text, lines := selectionBlock(picked)
-		printed := strings.Count(text, "\r\n") + 1 // the question has no break
-		if printed != lines {
-			t.Errorf("selectionBlock(%v) prints %d lines but reports %d:\n%q", picked, printed, lines, text)
-		}
-		if !strings.HasSuffix(text, questionLine) {
-			t.Errorf("selectionBlock(%v) should end on the question, got %q", picked, text)
-		}
-	}
-}
-
-// TestSelectionBlockListsOneItemPerLine is the point of the whole exercise:
+// TestSelectionLinesListOneItemPerLine is the point of the whole exercise:
 // a checklist's answer is a list, and it used to be joined onto one line.
-func TestSelectionBlockListsOneItemPerLine(t *testing.T) {
-	text, _ := selectionBlock([]string{"alpha", "bravo"})
-	for _, want := range []string{"Confirm selection:\r\n", "  - alpha\r\n", "  - bravo\r\n"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("block %q does not contain %q", text, want)
-		}
-	}
-	if strings.Contains(text, "alpha, bravo") {
-		t.Errorf("the items were joined onto one line: %q", text)
+func TestSelectionLinesListOneItemPerLine(t *testing.T) {
+	got := selectionLines([]string{"alpha", "bravo"}, "n")
+	want := []string{"Confirm selection:", "  - alpha", "  - bravo", "", questionLine + "n"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("selectionLines = %q, want %q", got, want)
 	}
 
 	// Nothing checked is still something to confirm, not a silent answer.
-	empty, _ := selectionBlock(nil)
-	if !strings.Contains(empty, noneSelected) {
+	empty := selectionLines(nil, "")
+	if len(empty) < 2 || !strings.Contains(empty[1], noneSelected) {
 		t.Errorf("an empty selection should say so: %q", empty)
 	}
 }
