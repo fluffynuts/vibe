@@ -45,7 +45,9 @@ irm https://raw.githubusercontent.com/fluffynuts/vibe/master/install.ps1 | iex
 
 Either one downloads the latest release for your machine, checks it against the release's
 checksums, and runs `vibe --install` from it. That puts the `vibe` binary in `~/.local/bin` and
-its configuration in `~/.vibe`, and tells you if `~/.local/bin` needs adding to your `PATH`.
+its configuration in `~/.vibe`. On Windows it adds `~\.local\bin` to your user `PATH` if it isn't
+there already (open a new terminal to pick it up); on Linux and macOS, where that depends on your
+shell's profile, it tells you what to add.
 `install.sh` needs `curl` or `wget`, and `unzip` (or `python3`).
 
 Run the same command again to upgrade, or, once vibe is installed:

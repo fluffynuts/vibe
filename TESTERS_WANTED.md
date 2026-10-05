@@ -128,9 +128,9 @@ leftover `.lock` in `~/.vibe/running/` is fine as long as vibe doesn't treat it 
 
 Run `vibe --install`, then open a new terminal and run `vibe --help` from any directory.
 
-**Expect:** the binary is copied to `~/.local/bin`. If that folder isn't on your PATH, vibe warns
-you and shows how to add it, and the example it gives suits your shell (see the platform
-sections).
+**Expect:** the binary is copied to `~/.local/bin`. If that folder isn't on your PATH, vibe adds it
+on Windows; elsewhere it warns you and shows how to add it, with an example that suits your shell
+(see the platform sections).
 
 ### 7. Port conflict diagnostics
 
@@ -202,8 +202,11 @@ gentle equivalent of SIGTERM). Please check:
 
 ### PATH and install (test 6)
 
-- `vibe --install` should suggest a PowerShell `[Environment]::SetEnvironmentVariable(...)`
-  command. Run it, open a **new** terminal, and check that `vibe` is found.
+- If `~\.local\bin` isn't on your PATH, `vibe --install` should add it for your user and say
+  *"added … to your PATH — open a new terminal to use vibe"*. Open a **new** terminal and check
+  that `vibe` is found, and that `[Environment]::GetEnvironmentVariable('Path', 'User')` shows the
+  folder once, at the end, with the rest of your PATH intact. Run `vibe --install` again: it should
+  not add it a second time.
 - If `~\.local\bin` is already on PATH but spelled differently (different case, or a trailing
   `\`), vibe should **not** warn.
 - Paths starting with `~\` (e.g. `vibe ~\code\project`) should resolve under your user folder.

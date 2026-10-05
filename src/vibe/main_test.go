@@ -377,7 +377,10 @@ func TestInstallUpdateStrategyIsCheckedFirst(t *testing.T) {
 }
 
 func TestWarnIfNotOnPathNeverFails(t *testing.T) {
-	if err := warnIfNotOnPath(t.TempDir()); err != nil {
+	old := addToUserPath
+	addToUserPath = func(string) (bool, error) { return false, errors.New("no registry here") }
+	t.Cleanup(func() { addToUserPath = old })
+	if err := warnIfNotOnPath(t.TempDir(), "vibe"); err != nil {
 		t.Errorf("warnIfNotOnPath must never fail: %v", err)
 	}
 }

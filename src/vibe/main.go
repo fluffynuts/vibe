@@ -1257,7 +1257,7 @@ func installBinary() error {
 	if srcInfo, err := os.Stat(exe); err == nil {
 		if dstInfo, err := os.Stat(dest); err == nil && os.SameFile(srcInfo, dstInfo) {
 			note("  already installed at %s", dest)
-			return warnIfNotOnPath(binDir)
+			return warnIfNotOnPath(binDir, "vibe")
 		}
 	}
 
@@ -1274,7 +1274,7 @@ func installBinary() error {
 	} else {
 		note("  copied the vibe binary to %s", dest)
 	}
-	return warnIfNotOnPath(binDir)
+	return warnIfNotOnPath(binDir, "vibe")
 }
 
 // replaceFile puts a copy of src at dest, safely even while dest is running
@@ -1313,22 +1313,46 @@ func replaceFile(src, dest string) error {
 	return nil
 }
 
-// warnIfNotOnPath reports whether dir is on $PATH, warning (never failing)
-// when it isn't.
-func warnIfNotOnPath(dir string) error {
+// warnIfNotOnPath makes sure dir — where cmd was just installed — is on
+// PATH, warning (never failing) when it isn't. On Windows there's one place
+// a user's PATH is kept, so it's added there if need be; that, like any
+// installer's change to PATH, only reaches terminals opened from now on.
+// Elsewhere PATH is whatever the user's shell profile makes it, so vibe
+// only says what to add.
+func warnIfNotOnPath(dir, cmd string) error {
 	if onPath(runtime.GOOS, os.Getenv("PATH"), dir) {
 		return nil
 	}
-	note("  WARNING: %s is not on your PATH", dir)
 	if runtime.GOOS == "windows" {
+		if onPath(runtime.GOOS, sbxinstall.PersistentPath(), dir) {
+			note("  %s is on your PATH, but only for terminals opened from here on — open a new one to use %s", dir, cmd)
+			return nil
+		}
+		added, err := addToUserPath(dir)
+		switch {
+		case err == nil && added:
+			note("  added %s to your PATH — open a new terminal to use %s", dir, cmd)
+			return nil
+		case err == nil:
+			// Already in the user's PATH, but PersistentPath didn't see it:
+			// spelled in a way only the registry check understood.
+			note("  %s is on your PATH, but only for terminals opened from here on — open a new one to use %s", dir, cmd)
+			return nil
+		}
+		note("  WARNING: %s is not on your PATH, and adding it failed: %s", dir, err)
 		note("  add it for your user, e.g. in PowerShell:")
 		note("    [Environment]::SetEnvironmentVariable('Path', \"$([Environment]::GetEnvironmentVariable('Path', 'User'));%s\", 'User')", dir)
 		note("  then open a new terminal")
-	} else {
-		note("  add it, e.g. in ~/.bashrc or ~/.zshrc:  export PATH=\"%s:$PATH\"", dir)
+		return nil
 	}
+	note("  WARNING: %s is not on your PATH", dir)
+	note("  add it, e.g. in ~/.bashrc or ~/.zshrc:  export PATH=\"%s:$PATH\"", dir)
 	return nil
 }
+
+// addToUserPath is sbxinstall.AddToUserPath, as a variable so tests never
+// touch the real registry.
+var addToUserPath = sbxinstall.AddToUserPath
 
 // onPath reports whether dir is one of the entries in pathList. Windows
 // paths are case-insensitive, and its PATH entries often carry a trailing

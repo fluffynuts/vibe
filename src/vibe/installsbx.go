@@ -396,7 +396,7 @@ func stopSbxDaemon(path string) {
 // reportSbx checks the sbx just installed: that it's what PATH runs, and
 // which version it is.
 func reportSbx(m sbxMethod) error {
-	checkSbxOnPath(m.binDir)
+	warnIfNotOnPath(m.binDir, "sbx")
 	warnIfShadowed("sbx", m.sbx)
 	version, err := sbxinstall.Version(m.sbx)
 	if err != nil {
@@ -404,20 +404,6 @@ func reportSbx(m sbxMethod) error {
 	}
 	fmt.Printf("Installed Docker SBX at version: %s\n", version)
 	return nil
-}
-
-// checkSbxOnPath warns when binDir isn't on PATH. On Windows the installer
-// adds it to the PATH in the registry, which only terminals opened from now
-// on see — so that's checked too, and what to do differs.
-func checkSbxOnPath(binDir string) {
-	if onPath(runtime.GOOS, os.Getenv("PATH"), binDir) {
-		return
-	}
-	if runtime.GOOS == "windows" && onPath(runtime.GOOS, sbxinstall.PersistentPath(), binDir) {
-		note("  %s is on your PATH now, but only for terminals opened from here on — open a new one to use sbx", binDir)
-		return
-	}
-	warnIfNotOnPath(binDir)
 }
 
 // warnIfShadowed warns when running name from PATH would find something
