@@ -22,6 +22,18 @@ func TestParseLongForms(t *testing.T) {
 	}
 }
 
+func TestParseStopAll(t *testing.T) {
+	for _, flag := range []string{"-S", "--stop-all"} {
+		a, err := Parse([]string{flag, "-f"})
+		if err != nil || !a.StopAll || !a.Force {
+			t.Fatalf("%s: expected StopAll+Force, got %+v err=%v", flag, a, err)
+		}
+	}
+	if a, _ := Parse([]string{"--stop-all", "--stop"}); a.ExclusiveActions() != 2 {
+		t.Errorf("--stop-all should count as an exclusive action: %+v", a)
+	}
+}
+
 func TestParseActionFlags(t *testing.T) {
 	a, err := Parse([]string{"-s"})
 	if err != nil || !a.Stop {

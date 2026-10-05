@@ -272,6 +272,19 @@ func Stop(name string) (int, error) {
 	return runInherit("stop", name)
 }
 
+// StopQuiet stops a running sandbox without touching the terminal, so several
+// can be stopped at once. A failure carries sbx's output.
+func StopQuiet(name string) error {
+	out, err := captureOut("stop", name)
+	if err != nil {
+		if msg := strings.TrimSpace(out); msg != "" {
+			return fmt.Errorf("%s", msg)
+		}
+		return err
+	}
+	return nil
+}
+
 // Ssh connects an ssh session to the sandbox's host alias.
 func Ssh(host string) (int, error) {
 	cmd := exec.Command("ssh", host)

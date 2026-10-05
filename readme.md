@@ -175,6 +175,8 @@ vibe /path/to/code         # use an explicit folder
 vibe -n/--name custom .    # override the derived sandbox name
 vibe -p/--profile foo      # use profile "foo" instead of the derived one
 vibe -s/--stop [path]      # stop the sandbox for path (default: $PWD)
+vibe -S/--stop-all         # stop every running sandbox, in parallel, showing each
+                           #    one's progress (asks first; -f: without asking)
 vibe -c/--ssh [path]       # ssh into the sandbox for path
 vibe -r/--re-init [path]   # remove and recreate the sandbox from its profile
 vibe -r -f/--force         # ...without prompting
@@ -580,7 +582,7 @@ state:
   during that copy asks before quitting. Answering yes puts back the memories the store held
   before the copy started, so an interrupted copy never leaves a mix of old and new ones.
 - `running/<pid>.lock` — one per vibe process with a folder open (anything but `--ssh`, `--stop`,
-  `--list`, `--install` and `--cleanup`), locked for as long as that process lives. A second vibe
+  `--stop-all`, `--list`, `--install` and `--cleanup`), locked for as long as that process lives. A second vibe
   for the same folder warns that one is already running, gives its PID, and offers to exit,
   continue anyway, or stop the other one first. `-f` continues anyway without asking.
 

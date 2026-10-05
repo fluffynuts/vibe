@@ -13,6 +13,7 @@ type Args struct {
 	Profile    string
 	Path       string
 	Stop       bool
+	StopAll    bool
 	Ssh        bool
 	ReInit     bool
 	ReCreate   bool
@@ -46,6 +47,9 @@ func Parse(argv []string) (Args, error) {
 			i++
 		case arg == "-s" || arg == "--stop":
 			a.Stop = true
+			i++
+		case arg == "-S" || arg == "--stop-all":
+			a.StopAll = true
 			i++
 		case arg == "-c" || arg == "--ssh":
 			a.Ssh = true
@@ -157,11 +161,11 @@ func setPath(a *Args, v string) error {
 }
 
 // ExclusiveActions counts how many of the mutually-exclusive action flags
-// (stop/ssh/re-init/re-create/re-compose/list/install/upgrade/install-sbx/
+// (stop/stop-all/ssh/re-init/re-create/re-compose/list/install/upgrade/install-sbx/
 // cleanup/delete/info) are set.
 func (a Args) ExclusiveActions() int {
 	n := 0
-	for _, b := range []bool{a.Stop, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info} {
+	for _, b := range []bool{a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info} {
 		if b {
 			n++
 		}

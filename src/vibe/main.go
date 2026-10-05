@@ -53,6 +53,8 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe -n/--name custom .    override the derived sandbox name
   vibe -p/--profile foo      use profile "foo" instead of the derived one
   vibe -s/--stop [path]      stop the sandbox for path (default: $PWD)
+  vibe -S/--stop-all         stop every running sandbox, in parallel (asks
+                             first; -f stops them without asking)
   vibe -c/--ssh [path]       ssh into the sandbox for path
   vibe -r/--re-init [path]   remove and recreate the sandbox from its profile
   vibe -r -f/--force         ...without prompting
@@ -147,7 +149,7 @@ func run(argv []string) error {
 		return fmt.Errorf("--update-strategy only applies to --install and --upgrade")
 	}
 	if args.ExclusiveActions() > 1 {
-		return fmt.Errorf("--stop, --ssh, --re-init, --re-create, --re-compose, --list, --install, --upgrade, --install-sbx, --cleanup, --delete and --info are mutually exclusive")
+		return fmt.Errorf("--stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --list, --install, --upgrade, --install-sbx, --cleanup, --delete and --info are mutually exclusive")
 	}
 
 	vibeHome := vibeHomeDir()
@@ -203,6 +205,14 @@ func run(argv []string) error {
 			return fmt.Errorf("--cleanup takes no path argument")
 		}
 		return doCleanup(vibeHome)
+	}
+
+	// Like cleanup, this is about sandboxes sbx holds, not a folder.
+	if args.StopAll {
+		if args.Path != "" {
+			return fmt.Errorf("--stop-all takes no path argument")
+		}
+		return doStopAll(args.Force)
 	}
 
 	bundleRoot, err := pathresolve.BundleRoot()
