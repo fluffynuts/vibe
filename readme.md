@@ -39,6 +39,8 @@ curl -fsSL https://raw.githubusercontent.com/fluffynuts/vibe/master/install.sh |
 
 **Windows** (PowerShell):
 
+NB: docker sandboxes do not support windows 10. You will need at windows 11.
+
 ```powershell
 irm https://raw.githubusercontent.com/fluffynuts/vibe/master/install.ps1 | iex
 ```
