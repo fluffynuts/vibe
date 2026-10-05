@@ -317,8 +317,8 @@ guessing.
 
 ### Claude colour themes
 
-Every sandbox ships vibe's Claude Code colour themes, Amber, Blue, Cyan, Green, Orange, Red and
-Yellow, from `defaults/agent-files/.claude/themes/`. They keep Claude's reply text white and
+Every sandbox ships vibe's Claude Code colour themes, Amber, Blue, Cyan, Green, Orange, Purple,
+Red and Yellow, from `defaults/agent-files/.claude/themes/`. They keep Claude's reply text white and
 colour the accents: highlighted `code` in replies, the lines around your input, Claude's spinner
 and the mode indicators. The exception is "bypass
 permissions", which uses the same colour as real errors and so stays red. `/theme` switches
@@ -339,6 +339,7 @@ vibe: select claude theme
   cyan
   green
   orange
+  purple
   red
   yellow
 ```

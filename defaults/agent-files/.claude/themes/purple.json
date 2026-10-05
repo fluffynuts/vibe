@@ -1,0 +1,16 @@
+{
+  "name": "Purple",
+  "base": "dark",
+  "overrides": {
+    "permission": "rgb(196,150,255)",
+    "permissionShimmer": "rgb(225,200,255)",
+    "promptBorder": "rgb(120,60,200)",
+    "promptBorderShimmer": "rgb(196,150,255)",
+    "claude": "rgb(170,110,255)",
+    "claudeShimmer": "rgb(215,180,255)",
+    "suggestion": "rgb(210,175,255)",
+    "remember": "rgb(210,175,255)",
+    "autoAccept": "rgb(240,130,230)",
+    "planMode": "rgb(140,150,255)"
+  }
+}

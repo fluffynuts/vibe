@@ -47,7 +47,7 @@ func TestAvailableListsTheDefaultsThemesOnly(t *testing.T) {
 // The bundle's own defaults are what seed ~/.vibe/defaults.
 func TestAvailableFindsTheBundledThemes(t *testing.T) {
 	root, _ := filepath.Abs("../..")
-	if got, want := Available(filepath.Join(root, "defaults")), []string{"amber", "blue", "cyan", "green", "orange", "red", "yellow"}; !reflect.DeepEqual(got, want) {
+	if got, want := Available(filepath.Join(root, "defaults")), []string{"amber", "blue", "cyan", "green", "orange", "purple", "red", "yellow"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Available(bundled defaults) = %v, want %v", got, want)
 	}
 }
