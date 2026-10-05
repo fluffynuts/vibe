@@ -42,6 +42,7 @@ import (
 	"vibe/internal/settings"
 	"vibe/internal/sidebyside"
 	"vibe/internal/state"
+	"vibe/internal/termtitle"
 	"vibe/internal/upgrade"
 )
 
@@ -117,6 +118,7 @@ func main() {
 	prompt.EnableVT(os.Stdout)
 	prompt.EnableVT(os.Stderr)
 	err := run(os.Args[1:])
+	termtitle.Restore()
 	session.Release()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "vibe: %s\n", err)
@@ -250,6 +252,9 @@ func run(argv []string) error {
 
 	if err := guardFolder(vibeHome, target, args.Force); err != nil {
 		return err
+	}
+	if !args.Delete {
+		termtitle.Set("VIBE: " + displayPath(target))
 	}
 
 	switch {
@@ -1711,6 +1716,13 @@ func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merg
 		note("  %s: http://localhost:%d", m.name, m.hostPort)
 	}
 
+	// Claude Code retitles the terminal after the conversation; that would
+	// replace vibe's title, which says which project the tab is for. Before
+	// the profile's env, which can turn it back on.
+	if agent == "claude" {
+		env = append(env, "CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1")
+	}
+
 	envKeys := make([]string, 0, len(merged.Env))
 	for k := range merged.Env {
 		envKeys = append(envKeys, k)
@@ -2632,6 +2644,7 @@ func finish(vibeHome, name string) error {
 		}
 	}
 	noteUpgrades()
+	termtitle.Restore()
 	session.Release()
 	os.Exit(code)
 	return nil

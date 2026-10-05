@@ -259,6 +259,15 @@ terminal and no `-f`, nothing is deleted. vibe logs what it removed and what it 
 
 `-c`/`--ssh` requires `sbx setup ssh` to have been run once on this machine.
 
+While vibe runs, it titles your terminal tab `VIBE: <folder>` (e.g. `VIBE: ~/code/vibe`), so you
+can tell which tab is which project. Most terminals show this as-is, including Konsole, Terminator,
+Windows Terminal and iTerm2. Konsole only shows it if its tab title format includes `%w`. Inside
+tmux or screen, it names the pane unless they're set to pass titles on. Terminals that can save a
+title (xterm, GNOME Terminal and others) get theirs back when vibe exits. Elsewhere vibe's title
+stays until something else, usually your shell's prompt, sets another. Sandboxes created for
+Claude Code get `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1`, so Claude doesn't replace the title with
+the conversation's. Set it to `0` in a profile's `env` to let Claude set it again.
+
 ## Where the configuration lives
 
 There are two layers. `~/.vibe` (override with `$VIBE_HOME`) is the master copy, and the bundle
