@@ -93,6 +93,18 @@ func Select(rw *Terminal, labels []string, def int) (choice int, ok bool) {
 // it used to collapse to was unreadable the moment more than one short
 // label was checked.
 func MultiSelect(rw *Terminal, labels []string, checked []bool) (selected []int, ok bool) {
+	return multiSelect(rw, labels, checked, true)
+}
+
+// MultiSelectNoConfirm is MultiSelect without the confirmation step: enter
+// answers straight away. It suits a checklist whose answer is acted on at
+// once and whose items say plainly what each one does — a list of upgrades
+// to install, say — where asking again only costs the user a keypress.
+func MultiSelectNoConfirm(rw *Terminal, labels []string, checked []bool) (selected []int, ok bool) {
+	return multiSelect(rw, labels, checked, false)
+}
+
+func multiSelect(rw *Terminal, labels []string, checked []bool, confirm bool) (selected []int, ok bool) {
 	if len(labels) == 0 {
 		return nil, false
 	}
@@ -126,6 +138,11 @@ func MultiSelect(rw *Terminal, labels []string, checked []bool) (selected []int,
 					idxs = append(idxs, i)
 					picked = append(picked, labels[i])
 				}
+			}
+			if !confirm {
+				f.clear()
+				writeSelectionRecord(rw, picked)
+				return idxs, true
 			}
 			switch confirmSelection(f, rw, picked) {
 			case confirmYes:

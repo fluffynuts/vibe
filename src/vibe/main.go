@@ -1019,7 +1019,9 @@ var pickUpgrades = func(labels []string) ([]int, bool) {
 	for i := range checked {
 		checked[i] = true
 	}
-	return checklistFrom("pick what to upgrade", labels, checked)
+	// Each item is the upgrade itself, done as soon as it's picked: a
+	// "continue?" after that would only repeat the list.
+	return checklistNoConfirmFrom("pick what to upgrade", labels, checked)
 }
 
 // chooseUpgrades settles which of found to install: all of them with -f
@@ -2522,6 +2524,18 @@ func checklistFrom(question string, labels []string, checked []bool) ([]int, boo
 	defer closeFn()
 	note("%s", question)
 	return prompt.MultiSelect(tty, labels, checked)
+}
+
+// checklistNoConfirmFrom is checklistFrom without the step confirming the
+// selection: enter answers straight away.
+func checklistNoConfirmFrom(question string, labels []string, checked []bool) ([]int, bool) {
+	tty, closeFn, ok := ttyRW()
+	if !ok {
+		return nil, false
+	}
+	defer closeFn()
+	note("%s", question)
+	return prompt.MultiSelectNoConfirm(tty, labels, checked)
 }
 
 // reorderFrom asks the user to rearrange labels with an interactive,

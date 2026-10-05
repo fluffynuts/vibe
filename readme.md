@@ -80,7 +80,8 @@ macOS may block the unsigned binary the first time: `xattr -dr com.apple.quarant
 ### Upgrading
 
 `vibe --upgrade` (`-U`) checks GitHub for newer releases of vibe and of Docker SBX, then lists
-what it found with everything ticked, for you to untick what you'd rather leave. When there's
+what it found with everything ticked, for you to untick what you'd rather leave; enter starts the
+upgrades straight away, with no confirmation step. When there's
 nothing newer, it says "vibe and sbx are up to date". Unticking everything stops with "nothing
 selected to update" and a non-zero exit. `-f`, or running with no terminal, upgrades everything
 it found without asking.
@@ -348,7 +349,7 @@ answer, or Claude's default, without asking.
 ### Checkbox prompts
 
 Anywhere vibe asks you to check several things — the guided feature picker, `-x`/`--cleanup`, `-d`/`--delete` —
-enter doesn't answer straight away. What you checked is listed back, one item per line, and the
+enter doesn't answer straight away (`--upgrade`'s list is the exception: it just goes ahead). What you checked is listed back, one item per line, and the
 list is still there to go back to:
 
 ```
