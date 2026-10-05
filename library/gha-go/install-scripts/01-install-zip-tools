@@ -1,5 +1,5 @@
 #!/bin/sh
-# vibe: description: Adds /setup-gha-go (GitHub Actions + make scripts for Go projects); installs zip & unzip
+# vibe: description: Adds /setup-gha-go (GitHub Actions, make scripts, --install/--upgrade for Go CLIs); installs zip & unzip
 # vibe: user: 0
 # make.sh's dist target packages release zips with zip(1), and the skill
 # checks them with unzip; neither is in the base image.
