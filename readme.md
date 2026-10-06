@@ -355,6 +355,7 @@ vibe: select claude theme
   cyan
   green
   orange
+  pink
   purple
   red
   yellow

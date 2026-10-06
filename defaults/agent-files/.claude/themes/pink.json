@@ -1,0 +1,16 @@
+{
+  "name": "Pink",
+  "base": "dark",
+  "overrides": {
+    "permission": "rgb(255,120,200)",
+    "permissionShimmer": "rgb(255,180,230)",
+    "promptBorder": "rgb(230,20,140)",
+    "promptBorderShimmer": "rgb(255,105,190)",
+    "claude": "rgb(255,40,170)",
+    "claudeShimmer": "rgb(255,150,215)",
+    "suggestion": "rgb(255,160,220)",
+    "remember": "rgb(255,160,220)",
+    "autoAccept": "rgb(255,110,150)",
+    "planMode": "rgb(200,120,255)"
+  }
+}
