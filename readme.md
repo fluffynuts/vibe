@@ -12,6 +12,15 @@ in theory, any agent supported by sbx can be used.
 
 This software is in alpha state. It works reasonably well for me, but I make no guarantees.
 
+## Requirements
+
+Vibe uses Docker Sandboxes (sbx) under the hood. This immediately sets limitations on
+supported installation targets:
+
+1. Linux: just about any distro with kvm enabled
+2. Windows: at least windows 11
+3. OSX: requires Apple silicon
+
 ## Install
 
 vibe needs [Docker Sandboxes (`sbx`)](https://github.com/docker/sbx-releases) installed. Once vibe is
