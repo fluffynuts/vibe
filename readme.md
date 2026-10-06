@@ -51,6 +51,11 @@ its configuration in `~/.vibe`. On Windows it adds `~\.local\bin` to your user `
 there already (open a new terminal to pick it up); on Linux and macOS, where that depends on your
 shell's profile, it tells you what to add. If `sbx` isn't on your `PATH`, it offers to install it for you
 (with `-f`, or no terminal to ask on, it only tells you to run `vibe --install-sbx`).
+On Windows, it also checks that the Windows features sbx needs, `HypervisorPlatform` and
+`VirtualMachinePlatform`, are on, and enables them with `dism` if they aren't. `dism` needs admin
+rights even to look, so unless vibe is already running as administrator, it asks first and Windows
+asks for admin rights. If it had to enable them, **restart Windows** before using vibe. Once they're
+found on, later installs don't check again.
 `install.sh` needs `curl` or `wget`, and `unzip` (or `python3`).
 
 Run the same command again to upgrade, or, once vibe is installed:

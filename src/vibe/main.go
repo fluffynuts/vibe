@@ -183,9 +183,11 @@ func run(argv []string) error {
 		if err != nil {
 			return err
 		}
-		if err := doInstall(layout.New(vibeHome, bundleRoot), args.Force, args.UpdateStrategy); err != nil {
+		lay := layout.New(vibeHome, bundleRoot)
+		if err := doInstall(lay, args.Force, args.UpdateStrategy); err != nil {
 			return err
 		}
+		ensureWindowsFeatures(lay, args.Force)
 		return offerSbxInstall(args.Force)
 	}
 
