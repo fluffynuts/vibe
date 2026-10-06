@@ -31,8 +31,11 @@ if [ -z "$url" ]; then
   echo "warning: no host URL is known — this is the container's own port," >&2
   echo "         which is not necessarily what the host publishes it on" >&2
 fi
+# The ref goes on /diff, not the root: the root redirects to /diff and drops
+# the query, and terminals stop linkifying a path-less URL at the ".." of a
+# range like master..HEAD.
 if [ -n "$1" ]; then
-  printf '%s?ref=%s\n' "$url" "$1"
+  printf '%s/diff?ref=%s\n' "$url" "$1"
 else
   printf '%s\n' "$url"
 fi
