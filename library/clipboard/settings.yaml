@@ -1,0 +1,8 @@
+# Settings for the clipboard feature, merged into the settings.yaml of any
+# profile composed with it: the page's port is published to the host, and
+# the sandbox gets its URL in $VIBE_CLIPBOARD_URL.
+publish:
+  - name: clipboard
+    ports:
+      - 5390
+    urlEnv: VIBE_CLIPBOARD_URL

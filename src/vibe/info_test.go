@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Read from inside a 12g sandbox.
@@ -20,6 +21,31 @@ func TestParseMeminfo(t *testing.T) {
 	}
 	if _, _, err := parseMeminfo("MemTotal: 1 kB\n"); err == nil {
 		t.Error("parseMeminfo accepted output with no MemAvailable")
+	}
+}
+
+func TestParseUptime(t *testing.T) {
+	got, err := parseUptime("12948.18 310606.19\n")
+	if err != nil || got != 12948180*time.Millisecond {
+		t.Errorf("parseUptime = %v, %v", got, err)
+	}
+	for _, bad := range []string{"", "cat: /proc/uptime: No such file or directory\n", "-5 1\n"} {
+		if _, err := parseUptime(bad); err == nil {
+			t.Errorf("parseUptime(%q) accepted it", bad)
+		}
+	}
+}
+
+func TestFormatUptime(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		30 * time.Second: "under a minute",
+		7 * time.Minute:  "7m",
+		3*time.Hour + 35*time.Minute + 48*time.Second: "3h 35m",
+		48*time.Hour + 7*time.Minute:                  "2d 0h 7m",
+	} {
+		if got := formatUptime(d); got != want {
+			t.Errorf("formatUptime(%v) = %q, want %q", d, got, want)
+		}
 	}
 }
 
@@ -74,6 +100,7 @@ func TestPrintInfo(t *testing.T) {
 	running := base
 	running.exists, running.running = true, true
 	running.usage = &sandboxUsage{
+		uptime:   3*time.Hour + 35*time.Minute,
 		memTotal: 12 << 30, memAvailable: 9 << 30,
 		diskSize: 20 << 30, diskUsed: 5 << 30,
 		dockerSize: 50 << 30, dockerUsed: 10 << 30,
@@ -81,7 +108,7 @@ func TestPrintInfo(t *testing.T) {
 	got := print(running, true)
 	for _, want := range []string{
 		"sandbox   proj\n", "profile   yumbi\n", "agent     claude\n", "memory    12g\n",
-		"features  go, node\n", "status    running\n",
+		"features  go, node\n", "status    running\n", "uptime    3h 35m\n",
 		"mem used  3.0 GiB of 12.0 GiB (25%)\n",
 		"disk used 5.0 GiB of 20.0 GiB (25%)\n",
 		"docker    10.0 GiB of 50.0 GiB (20%), on a disk of its own\n",
@@ -95,6 +122,11 @@ func TestPrintInfo(t *testing.T) {
 	running.usage.dockerSize = 0
 	if got := print(running, true); strings.Contains(got, "docker") {
 		t.Errorf("a sandbox with no Docker disk of its own shows one:\n%s", got)
+	}
+
+	running.usage.uptime = 0
+	if got := print(running, true); strings.Contains(got, "uptime") {
+		t.Errorf("a sandbox whose uptime couldn't be read shows one:\n%s", got)
 	}
 
 	plain := base

@@ -157,3 +157,33 @@ func TestDiffityFeatureUpdatesOnStart(t *testing.T) {
 		t.Errorf("on-start runs the on-demand URL helper:\n%s", onStart)
 	}
 }
+
+// TestClipboardFeatureStartsOnStart pins what the clipboard feature needs
+// from composition: the page's server is only ever started by on-start, so
+// the generated on-start has to run start-clipboard — and has to leave the
+// on-demand URL helper and the hook, which Claude Code runs itself, out of
+// it. The hooks have to be registered by an install step, named in its
+// registers directive since it only writes the hook's path into settings.
+func TestClipboardFeatureStartsOnStart(t *testing.T) {
+	lay := layout.New(t.TempDir(), repoRoot(t))
+	profile := filepath.Join(t.TempDir(), "demo")
+	if err := library.Compose([]string{"clipboard"}, lay.FeatureDir, profile); err != nil {
+		t.Fatalf("composing the clipboard feature: %v", err)
+	}
+	onStart, err := os.ReadFile(filepath.Join(profile, "agent-files", ".local", "bin", "on-start"))
+	if err != nil {
+		t.Fatalf("the clipboard feature generated no on-start: %v", err)
+	}
+	if !strings.Contains(string(onStart), "start-clipboard") {
+		t.Errorf("on-start does not run start-clipboard:\n%s", onStart)
+	}
+	for _, unwanted := range []string{"clipboard-url", "clipboard-hook"} {
+		if strings.Contains(string(onStart), unwanted) {
+			t.Errorf("on-start runs %s, which isn't a startup step:\n%s", unwanted, onStart)
+		}
+	}
+	settings, err := os.ReadFile(filepath.Join(profile, "settings.yaml"))
+	if err != nil || !strings.Contains(string(settings), "VIBE_CLIPBOARD_URL") {
+		t.Errorf("the profile's settings.yaml doesn't publish the clipboard page:\n%s", settings)
+	}
+}

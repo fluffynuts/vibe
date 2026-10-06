@@ -1,0 +1,33 @@
+#!/bin/sh
+# vibe: description: clipboard page — paste images or text in your browser and they reach the agent
+# vibe: user: 0
+# vibe: registers: clipboard-hook
+# Managed settings rather than ~/.claude/settings.json, for the same reason
+# as diffity's URL hooks: that file is the user's, deployed only-if-missing
+# after install steps have run. Claude Code merges the hooks of every
+# managed-settings.d drop-in with the user's.
+# UserPromptSubmit hands over what was pasted with the user's next message;
+# PostToolUse, after any tool, reaches an agent that is already working.
+# The hook script itself is an agent-file, not on disk yet — which is fine,
+# since nothing runs it until the agent's first session.
+DIR=/etc/claude-code/managed-settings.d
+mkdir -p "$DIR" || { echo "WARN: could not create $DIR" >>/tmp/sbx-setup.log; exit 0; }
+cat >"$DIR/50-vibe-clipboard.json" <<'JSON' || echo "WARN: could not register the clipboard hooks" >>/tmp/sbx-setup.log
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [{ "type": "command", "command": "/home/agent/.local/bin/clipboard-hook", "timeout": 5 }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [{ "type": "command", "command": "/home/agent/.local/bin/clipboard-hook", "timeout": 5 }]
+      }
+    ]
+  }
+}
+JSON
+chmod 644 "$DIR/50-vibe-clipboard.json" 2>/dev/null
+true

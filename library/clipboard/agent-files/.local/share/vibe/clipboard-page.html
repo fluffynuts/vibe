@@ -1,0 +1,341 @@
+<!doctype html>
+<!-- The clipboard page, served by clipboard-server.js: paste here and it
+     reaches the agent.
+     No template literals or dollar-brace forms anywhere in this file: sbx
+     validates them in a kit's file content against its own placeholder list. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vibe clipboard</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #5d6677;
+    --border: #d9dde5; --accent: #2f6fde; --accent-text: #ffffff;
+    --pending: #b26a00; --pending-bg: #fff3dd; --sent: #23794a; --sent-bg: #e3f5ea;
+    --danger: #b3261e; --drop: #e9f0fd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171d; --panel: #1d2129; --text: #e6e9ef; --muted: #9aa3b2;
+      --border: #333a46; --accent: #6b9cf5; --accent-text: #0d1220;
+      --pending: #f0b35a; --pending-bg: #3a2d14; --sent: #6dd39b; --sent-bg: #173324;
+      --danger: #f2817a; --drop: #1d2a42;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; }
+  .host { color: var(--muted); font-size: 14px; }
+  #drop {
+    border: 2px dashed var(--border); border-radius: 12px; background: var(--panel);
+    padding: 28px 16px; text-align: center; transition: background .15s, border-color .15s;
+  }
+  #drop.over { background: var(--drop); border-color: var(--accent); }
+  #drop strong { display: block; font-size: 17px; margin-bottom: 4px; }
+  #drop p { margin: 4px 0; color: var(--muted); }
+  kbd {
+    font: 12px ui-monospace, monospace; border: 1px solid var(--border); border-bottom-width: 2px;
+    border-radius: 4px; padding: 1px 5px; background: var(--bg);
+  }
+  button, .button {
+    font: inherit; font-size: 14px; border: 1px solid var(--border); background: var(--panel);
+    color: var(--text); border-radius: 8px; padding: 5px 12px; cursor: pointer;
+  }
+  button:hover, .button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button.danger { color: var(--danger); }
+  #status { min-height: 1.5em; margin: 10px 2px; color: var(--muted); font-size: 14px; }
+  #status.error { color: var(--danger); }
+  #items { display: grid; gap: 12px; }
+  .item {
+    display: grid; grid-template-columns: 160px 1fr; gap: 14px; align-items: start;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px;
+  }
+  .item.current { border-color: var(--accent); }
+  .preview {
+    width: 160px; height: 110px; border-radius: 8px; overflow: hidden; background: var(--bg);
+    display: flex; align-items: center; justify-content: center; border: 1px solid var(--border);
+  }
+  .preview img { max-width: 100%; max-height: 100%; object-fit: contain; cursor: zoom-in; }
+  .preview pre {
+    margin: 0; padding: 8px; width: 100%; height: 100%; overflow: hidden; font-size: 11px;
+    white-space: pre-wrap; word-break: break-word; color: var(--muted);
+  }
+  .preview .ext { font: 600 18px ui-monospace, monospace; color: var(--muted); }
+  .meta { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .details { color: var(--muted); font-size: 13px; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; }
+  .badge { font-size: 12px; border-radius: 999px; padding: 1px 9px; }
+  .badge.pending { color: var(--pending); background: var(--pending-bg); }
+  .badge.sent { color: var(--sent); background: var(--sent-bg); }
+  .badge.cur { color: var(--accent); border: 1px solid var(--accent); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .empty { color: var(--muted); text-align: center; padding: 24px; }
+  #zoom {
+    position: fixed; inset: 0; background: rgba(0,0,0,.8); display: none;
+    align-items: center; justify-content: center; padding: 16px; cursor: zoom-out;
+  }
+  #zoom.open { display: flex; }
+  #zoom img { max-width: 100%; max-height: 100%; }
+  @media (max-width: 560px) {
+    .item { grid-template-columns: 1fr; }
+    .preview { width: 100%; height: 180px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>vibe clipboard</h1>
+    <span class="host" id="host"></span>
+  </header>
+
+  <section id="drop">
+    <strong>Paste anywhere on this page (<kbd>Ctrl</kbd>+<kbd>V</kbd>), or drop files here</strong>
+    <p>It goes to the agent with your next message, or at its next step if it's already working.</p>
+    <p><kbd>Ctrl</kbd>+<kbd>V</kbd> in the agent's terminal also attaches the item marked <em>current</em>.</p>
+    <p><label class="button">Choose files<input id="picker" type="file" multiple hidden></label></p>
+  </section>
+
+  <div id="status" role="status"></div>
+  <section id="items" aria-live="polite"></section>
+</main>
+<div id="zoom"><img alt=""></div>
+
+<script>
+"use strict";
+var itemsEl = document.getElementById("items");
+var statusEl = document.getElementById("status");
+var dropEl = document.getElementById("drop");
+var zoomEl = document.getElementById("zoom");
+var lastRendered = "";
+var textCache = {};
+
+function setStatus(message, isError) {
+  statusEl.textContent = message || "";
+  statusEl.className = isError ? "error" : "";
+}
+
+function formatSize(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / 1024 / 1024).toFixed(1) + " MB";
+}
+
+function formatTime(iso) {
+  var d = new Date(iso);
+  var sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay ? d.toLocaleTimeString() : d.toLocaleString();
+}
+
+function el(tag, attrs, children) {
+  var node = document.createElement(tag);
+  Object.keys(attrs || {}).forEach(function (k) {
+    if (k === "text") node.textContent = attrs[k];
+    else if (k === "onclick") node.addEventListener("click", attrs[k]);
+    else node.setAttribute(k, attrs[k]);
+  });
+  (children || []).forEach(function (c) { if (c) node.appendChild(c); });
+  return node;
+}
+
+function contentURL(item) {
+  return "/api/items/" + item.id + "/content";
+}
+
+function loadText(item, pre) {
+  if (textCache[item.id] !== undefined) { pre.textContent = textCache[item.id]; return; }
+  fetch(contentURL(item)).then(function (r) { return r.text(); }).then(function (t) {
+    textCache[item.id] = t;
+    pre.textContent = t;
+  });
+}
+
+function preview(item) {
+  if (item.kind === "image") {
+    var img = el("img", { src: contentURL(item), alt: item.name || "pasted image", loading: "lazy" });
+    img.addEventListener("click", function () {
+      zoomEl.querySelector("img").src = contentURL(item);
+      zoomEl.classList.add("open");
+    });
+    return el("div", { class: "preview" }, [img]);
+  }
+  if (item.kind === "text") {
+    var pre = el("pre");
+    loadText(item, pre);
+    return el("div", { class: "preview" }, [pre]);
+  }
+  var ext = (item.path.split(".").pop() || "file").toUpperCase();
+  return el("div", { class: "preview" }, [el("span", { class: "ext", text: ext })]);
+}
+
+function title(item) {
+  if (item.name) return item.name;
+  if (item.kind === "image") return "Pasted image";
+  if (item.kind === "text") return "Pasted text";
+  return "File";
+}
+
+function render(data) {
+  document.getElementById("host").textContent = data.host ? "sandbox: " + data.host : "";
+  var key = JSON.stringify(data);
+  if (key === lastRendered) return;
+  lastRendered = key;
+  itemsEl.textContent = "";
+  if (!data.items.length) {
+    itemsEl.appendChild(el("div", { class: "empty", text: "Nothing here yet." }));
+    return;
+  }
+  data.items.forEach(function (item) {
+    var badges = [
+      item.delivered
+        ? el("span", { class: "badge sent", text: "sent to agent", title: "at " + formatTime(item.delivered) })
+        : el("span", { class: "badge pending", text: "waiting for the agent" }),
+    ];
+    if (item.id === data.current) badges.push(el("span", { class: "badge cur", text: "current" }));
+    var card = el("article", { class: "item" + (item.id === data.current ? " current" : "") }, [
+      preview(item),
+      el("div", { class: "meta" }, [
+        el("div", { class: "title", text: title(item), title: item.path }),
+        el("div", { class: "details", text: item.type + " · " + formatSize(item.size) + " · " + formatTime(item.created) }),
+        el("div", { class: "badges" }, badges),
+        el("div", { class: "actions" }, [
+          el("button", { class: "primary", text: "Copy", onclick: function () { copy(item); } }),
+          el("button", { class: "danger", text: "Delete", onclick: function () { remove(item); } }),
+        ]),
+      ]),
+    ]);
+    itemsEl.appendChild(card);
+  });
+}
+
+function refresh() {
+  return fetch("/api/items").then(function (r) { return r.json(); }).then(render).catch(function () {
+    setStatus("Can't reach the clipboard server — is the sandbox running?", true);
+  });
+}
+
+function upload(blob, name) {
+  var headers = { "Content-Type": blob.type || "application/octet-stream" };
+  if (name) headers["X-Filename"] = encodeURIComponent(name);
+  return fetch("/api/items", { method: "POST", headers: headers, body: blob }).then(function (r) {
+    if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || r.statusText); });
+    return r.json();
+  });
+}
+
+function uploadAll(entries) {
+  if (!entries.length) return;
+  setStatus("Sending " + entries.length + (entries.length === 1 ? " item…" : " items…"));
+  Promise.all(entries.map(function (e) { return upload(e.blob, e.name); })).then(function () {
+    setStatus(entries.length === 1 ? "Added — it'll reach the agent with your next message." : "Added " + entries.length + " items.");
+    return refresh();
+  }).catch(function (err) {
+    setStatus("Couldn't add that: " + err.message, true);
+  });
+}
+
+// fromTransfer collects what a paste or a drop carried: files (which is how
+// browsers hand over pasted images), or else the text on its own.
+function fromTransfer(dt) {
+  var entries = [];
+  Array.prototype.forEach.call(dt.files || [], function (f) {
+    entries.push({ blob: f, name: f.name && !/^image\.\w+$/.test(f.name) ? f.name : "" });
+  });
+  if (!entries.length) {
+    var text = dt.getData("text/plain");
+    if (text) entries.push({ blob: new Blob([text], { type: "text/plain;charset=utf-8" }), name: "" });
+  }
+  return entries;
+}
+
+document.addEventListener("paste", function (e) {
+  var entries = fromTransfer(e.clipboardData);
+  if (!entries.length) { setStatus("The clipboard had nothing this page can take.", true); return; }
+  e.preventDefault();
+  uploadAll(entries);
+});
+
+["dragenter", "dragover"].forEach(function (type) {
+  document.addEventListener(type, function (e) { e.preventDefault(); dropEl.classList.add("over"); });
+});
+["dragleave", "drop"].forEach(function (type) {
+  document.addEventListener(type, function (e) {
+    if (type === "dragleave" && e.relatedTarget) return;
+    dropEl.classList.remove("over");
+  });
+});
+document.addEventListener("drop", function (e) {
+  e.preventDefault();
+  uploadAll(fromTransfer(e.dataTransfer));
+});
+
+document.getElementById("picker").addEventListener("change", function (e) {
+  uploadAll(Array.prototype.map.call(e.target.files, function (f) { return { blob: f, name: f.name }; }));
+  e.target.value = "";
+});
+
+zoomEl.addEventListener("click", function () { zoomEl.classList.remove("open"); });
+document.addEventListener("keydown", function (e) { if (e.key === "Escape") zoomEl.classList.remove("open"); });
+
+// asPNG converts an image blob to PNG: the one image type every browser's
+// clipboard accepts.
+function asPNG(blob) {
+  if (blob.type === "image/png") return Promise.resolve(blob);
+  return createImageBitmap(blob).then(function (bitmap) {
+    var canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext("2d").drawImage(bitmap, 0, 0);
+    return new Promise(function (resolve) { canvas.toBlob(resolve, "image/png"); });
+  });
+}
+
+// copy puts the item on the user's own clipboard, and makes it the item
+// Ctrl-V in the agent's terminal attaches.
+function copy(item) {
+  fetch("/api/items/" + item.id + "/current", { method: "POST" }).then(refresh);
+  if (!navigator.clipboard || !window.ClipboardItem) {
+    setStatus("This browser won't let the page write to the clipboard here — open it as http://localhost:… rather than by IP address.", true);
+    return;
+  }
+  var done;
+  if (item.kind === "image") {
+    // The blob is handed over as a promise so the write still counts as part
+    // of the click, which Safari insists on.
+    var png = fetch(contentURL(item)).then(function (r) { return r.blob(); }).then(asPNG);
+    done = navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+  } else if (item.kind === "text") {
+    var text = fetch(contentURL(item)).then(function (r) { return r.text(); }).then(function (t) {
+      return new Blob([t], { type: "text/plain" });
+    });
+    done = navigator.clipboard.write([new ClipboardItem({ "text/plain": text })]);
+  } else {
+    setStatus("Only images and text can go on the clipboard — this one is at " + item.path + " in the sandbox.", true);
+    return;
+  }
+  done.then(function () { setStatus("Copied to your clipboard."); }).catch(function (err) {
+    setStatus("Couldn't copy: " + err.message, true);
+  });
+}
+
+function remove(item) {
+  fetch("/api/items/" + item.id, { method: "DELETE" }).then(function () {
+    delete textCache[item.id];
+    setStatus("Deleted.");
+    return refresh();
+  });
+}
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

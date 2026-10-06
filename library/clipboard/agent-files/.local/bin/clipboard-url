@@ -1,0 +1,33 @@
+#!/bin/sh
+# vibe: description: Print the host URL of the clipboard page
+# vibe: startup: false
+# The page listens on 5390 inside the sandbox, but the port the user reaches
+# it on is allocated on the host and differs between sandboxes, so it can
+# only be known from outside. vibe writes it, checked against sbx's live port
+# mappings, to the published/clipboard file below at every session start;
+# VIBE_CLIPBOARD_URL, fixed when the sandbox was created, is the fall-back.
+# Anything short of a confirmed URL is printed with a warning on stderr.
+# No braced shell expansions here: sbx validates every brace-form
+# substitution in file content against its own placeholder list.
+published=/home/agent/.local/state/vibe/published/clipboard
+url=
+if [ -s "$published" ]; then
+  url=$(sed -n 1p "$published")
+  note=$(sed -n 's/^unverified: //p' "$published")
+  if [ -n "$note" ]; then
+    echo "warning: unverified — $note" >&2
+  fi
+fi
+if [ -z "$url" ]; then
+  url=$VIBE_CLIPBOARD_URL
+  if [ -n "$url" ]; then
+    echo "warning: unverified — vibe has not confirmed this port with sbx this session;" >&2
+    echo "         it is the one recorded when the sandbox was created" >&2
+  fi
+fi
+if [ -z "$url" ]; then
+  url=http://localhost:5390
+  echo "warning: no host URL is known — this is the container's own port," >&2
+  echo "         which is not necessarily what the host publishes it on" >&2
+fi
+printf '%s\n' "$url"

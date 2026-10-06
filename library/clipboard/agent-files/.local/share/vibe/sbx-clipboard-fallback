@@ -1,0 +1,25 @@
+#!/bin/sh
+# vibe: description: sbx-clipboard with the clipboard page as its fall-back
+# vibe-clipboard-fallback — the marker start-clipboard looks for.
+# start-clipboard installs this over /usr/local/bin/sbx-clipboard, keeping
+# sbx's own as sbx-clipboard.sbx. sbx's wl-paste/xclip shims call it with a
+# MIME type to read the host clipboard, or with "" to list what's on it.
+# sbx's answer wins whenever it has one; when it comes back empty — as it
+# does on Linux hosts — the clipboard page's current item is the answer
+# instead, so Ctrl-V in the agent's terminal still attaches what the user
+# pasted there.
+# No braced shell expansions here: sbx validates every brace-form
+# substitution in file content against its own placeholder list.
+mime=$1
+real=/usr/local/bin/sbx-clipboard.sbx
+tmp=$(mktemp) || exit 0
+if [ -x "$real" ]; then
+  "$real" "$mime" >"$tmp" 2>/dev/null
+fi
+if [ ! -s "$tmp" ]; then
+  curl -sf --noproxy '*' --max-time 3 -G "http://127.0.0.1:5390/api/clipboard" \
+    --data-urlencode "type=$mime" >"$tmp" 2>/dev/null
+fi
+cat "$tmp"
+rm -f "$tmp"
+exit 0

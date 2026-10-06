@@ -204,7 +204,7 @@ vibe -R/--re-create [path] # delete the profile too, then re-init — the profil
                            #    is gone, so this always re-prompts
 vibe -l/--list             # list every known sandbox and its status
 vibe -a/--info [path]      # show the sandbox's settings and, while it runs,
-                           #    its memory and disk use
+                           #    its uptime and memory and disk use
 vibe -x/--cleanup          # pick sandboxes from a checklist and delete them;
                            #    the profiles they were built from are kept
 vibe -d/--delete [path]    # pick whether to delete the sandbox for path, its
@@ -241,8 +241,8 @@ the sandbox — it has to, because a record claims its published host ports whet
 is listening, so one left behind would reserve those ports against every sandbox made afterwards.
 
 `-a`/`--info` shows the sandbox's profile, agent, memory setting and, for a guided profile, the
-library features it was composed from. While the sandbox is running, it also shows the memory and
-disk the sandbox is using, read from inside it:
+library features it was composed from. While the sandbox is running, it also shows how long it
+has been up (since it was last started) and the memory and disk it is using, read from inside it:
 
 ```
 sandbox   vibe
@@ -252,6 +252,7 @@ agent     claude
 memory    12g
 features  go, node
 status    running
+uptime    3h 35m
 mem used  1.9 GiB of 11.8 GiB (16%)
 disk used 1.5 GiB of 19.5 GiB (7%)
 docker    340.0 KiB of 48.9 GiB (0%), on a disk of its own
@@ -485,6 +486,7 @@ nugetDir: ~/.nuget    # mounted into the sandbox and symlinked in, if it exists 
 memoryRoot: ~/.vibe/memories   # where per-sandbox agent memories are backed up
 defaultFeatures:      # library features a guided profile starts with ticked
   - diffity
+  - clipboard
 env:                  # extra environment variables passed to `sbx create -e`
   SOME_VAR: value
 publish:              # ports to publish, and (optionally) a stable URL env var for each
@@ -552,6 +554,20 @@ matching agent skills — the two are released together — non-fatally, logging
 `/tmp/update-diffity.log` and `/tmp/update-diffity-skills.log`. The skills half re-enters as the
 agent user, since `on-start` runs as root and nothing root writes under `/home/agent` can be
 replaced by the agent later.
+
+`clipboard`, also ticked by default, is for sharing images (and text) with the agent. Pasting an
+image into the agent's terminal goes through sbx's clipboard bridge, which comes back empty on
+Linux hosts, so the feature gives you a page in your browser instead (the agent gives you its URL
+via `clipboard-url`, or open `$VIBE_CLIPBOARD_URL`). Paste on it, drop files on it, or pick them,
+and each item reaches the agent with your next message, or at its next step if it's already
+working: two Claude Code hooks (`UserPromptSubmit` and `PostToolUse`, in
+`/etc/claude-code/managed-settings.d/`) hand over anything not yet delivered, with short text
+inline and images as paths for the agent to read. Every item on the page shows whether it has
+been sent yet, and has **Copy** (to put it back on your own clipboard) and **Delete** buttons.
+The item you pasted or copied last is also what Ctrl-V in the agent's terminal attaches: at every
+start, `start-clipboard` puts a fallback in front of sbx's `sbx-clipboard` shim that serves that
+item whenever sbx's answer is empty. The history lives in `~/.local/state/vibe/clipboard/` in the
+sandbox, and the server logs to `/tmp/clipboard.log` and `/tmp/clipboard-server.log`.
 
 The profile that comes out is an ordinary profile directory: edit it afterwards like any other.
 Composing happens **once**, when the profile is created — the library is never read again, so a

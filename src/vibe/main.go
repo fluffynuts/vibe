@@ -67,8 +67,8 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              whatever they have gained since, then re-init
   vibe -l/--list             list every known sandbox and its status
   vibe -a/--info [path]      show the sandbox's settings (memory, agent,
-                             features) and, while it runs, how much memory
-                             and disk it is using
+                             features) and, while it runs, its uptime and
+                             how much memory and disk it is using
   vibe -x/--cleanup          pick sandboxes from a checklist and delete them;
                              the profiles they were built from are kept
   vibe -d/--delete [path]    pick from a checklist whether to delete the
@@ -494,15 +494,19 @@ type sandboxInfo struct {
 	usageErr              error
 }
 
-// sandboxUsage is what a running sandbox reports of its memory and disk, in
-// bytes. Memory in use is what the kernel couldn't hand back on demand —
+// sandboxUsage is what a running sandbox reports of how long it has been up,
+// and of its memory and disk, in bytes. Memory in use is what the kernel couldn't hand back on demand —
 // MemTotal less MemAvailable — so the page cache, which grows to fill
 // whatever it is given, doesn't count against it.
 //
 // Disk is the root filesystem: the sandbox's image and everything written
 // over it. Docker inside the sandbox keeps its images and containers on a
 // disk of their own, reported apart when it has one (dockerSize non-zero).
+//
+// Uptime is the sandbox's own kernel's, since each sandbox is a VM of its
+// own: how long since it was last started. Zero when it couldn't be read.
 type sandboxUsage struct {
+	uptime                 time.Duration
 	memTotal, memAvailable uint64
 	diskSize, diskUsed     uint64
 	dockerSize, dockerUsed uint64
@@ -547,9 +551,15 @@ func doInfo(lay layout.Layout, args cliargs.Args, name, target string) error {
 	return nil
 }
 
-// liveUsage reads a running sandbox's memory and root disk use from inside it.
+// liveUsage reads a running sandbox's uptime, memory and root disk use from
+// inside it.
 func liveUsage(name string) (sandboxUsage, error) {
 	var u sandboxUsage
+	// Uptime is a nicety: not being able to read it is no reason to hide the
+	// memory and disk figures, which are what --info is for.
+	if out, err := sbxrun.ExecCapture(name, "cat", "/proc/uptime"); err == nil {
+		u.uptime, _ = parseUptime(out)
+	}
 	out, err := sbxrun.ExecCapture(name, "cat", "/proc/meminfo")
 	if err != nil {
 		return u, fmt.Errorf("reading /proc/meminfo: %w", err)
@@ -576,6 +586,19 @@ func liveUsage(name string) (sandboxUsage, error) {
 
 // dockerDataDir is where Docker inside a sandbox keeps its images.
 const dockerDataDir = "/var/lib/docker"
+
+// parseUptime reads the first field of /proc/uptime: seconds since boot.
+func parseUptime(out string) (time.Duration, error) {
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		return 0, fmt.Errorf("can't read /proc/uptime: %q", out)
+	}
+	secs, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil || secs < 0 {
+		return 0, fmt.Errorf("can't read /proc/uptime: %q", out)
+	}
+	return time.Duration(secs * float64(time.Second)), nil
+}
 
 // parseMeminfo reads MemTotal and MemAvailable, in bytes, from /proc/meminfo.
 func parseMeminfo(out string) (total, available uint64, err error) {
@@ -656,6 +679,9 @@ func printInfo(w io.Writer, info sandboxInfo, profileKnown bool) {
 	}
 	row("status", "running")
 	u := info.usage
+	if u.uptime > 0 {
+		row("uptime", "%s", formatUptime(u.uptime))
+	}
 	memUsed := u.memTotal - u.memAvailable
 	row("mem used", "%s of %s (%d%%)", formatBytes(memUsed), formatBytes(u.memTotal), percent(memUsed, u.memTotal))
 	row("disk used", "%s of %s (%d%%)", formatBytes(u.diskUsed), formatBytes(u.diskSize), percent(u.diskUsed, u.diskSize))
@@ -671,6 +697,22 @@ func percent(part, whole uint64) uint64 {
 		return 0
 	}
 	return part * 100 / whole
+}
+
+// formatUptime writes d to the minute, leaving out leading units it doesn't
+// reach ("3h 35m", "2d 0h 7m", "under a minute").
+func formatUptime(d time.Duration) string {
+	mins := int64(d / time.Minute)
+	days, hours, mins := mins/(24*60), mins/60%24, mins%60
+	switch {
+	case days > 0:
+		return fmt.Sprintf("%dd %dh %dm", days, hours, mins)
+	case hours > 0:
+		return fmt.Sprintf("%dh %dm", hours, mins)
+	case mins > 0:
+		return fmt.Sprintf("%dm", mins)
+	}
+	return "under a minute"
 }
 
 // formatBytes writes n in the largest binary unit it reaches, to one

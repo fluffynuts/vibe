@@ -5,3 +5,4 @@ agent: claude
 # is an error rather than a silent no-op
 defaultFeatures:
   - diffity
+  - clipboard

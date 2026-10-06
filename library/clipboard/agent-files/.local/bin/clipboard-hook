@@ -1,0 +1,16 @@
+#!/bin/sh
+# vibe: description: Claude Code hook: hand the agent whatever the user pasted on the clipboard page
+# vibe: startup: false
+# Registered for every session by install-scripts/01-add-clipboard-hooks;
+# the work is done by ~/.local/share/vibe/clipboard-hook.js. Always exits
+# 0: a hook that fails must not get in the agent's way.
+script=/home/agent/.local/share/vibe/clipboard-hook.js
+[ -f "$script" ] || exit 0
+# Hooks inherit the agent's environment, which may not have been through
+# the persistent env file where a node version manager records itself.
+if ! command -v node >/dev/null 2>&1 && [ -f /etc/sandbox-persistent.sh ]; then
+  . /etc/sandbox-persistent.sh >/dev/null 2>&1
+fi
+command -v node >/dev/null 2>&1 || exit 0
+node "$script"
+exit 0

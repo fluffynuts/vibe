@@ -1,0 +1,85 @@
+#!/bin/sh
+# vibe: description: Start the clipboard page's server, and give the sandbox's clipboard shims its fall-back
+# Run by on-start at every sandbox start (as root), and safe to run by hand.
+# Two jobs:
+#
+#   1. Put sbx-clipboard-fallback in front of sbx's own sbx-clipboard, so
+#      the wl-paste/xclip shims fall back to the clipboard page whenever
+#      sbx's host clipboard bridge comes back empty. Redone every start in
+#      case sbx has put its own back; sbx's is kept as sbx-clipboard.sbx.
+#   2. Start clipboard-server.js as the agent user, unless something is
+#      already listening on 5390.
+#
+# No braced shell expansions here: sbx validates every brace-form
+# substitution in file content against its own placeholder list.
+
+SELF=/home/agent/.local/bin/start-clipboard
+SHARE=/home/agent/.local/share/vibe
+SHIM=/usr/local/bin/sbx-clipboard
+MARKER=vibe-clipboard-fallback
+
+as_root() {
+  if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi
+}
+
+install_fallback() {
+  if [ ! -f "$SHIM" ]; then
+    echo "no $SHIM — no sbx clipboard shims to fall back from"
+    return
+  fi
+  if ! grep -q "$MARKER" "$SHIM" 2>/dev/null; then
+    as_root mv -f "$SHIM" "$SHIM.sbx" || { echo "WARN: could not move $SHIM aside"; return; }
+  fi
+  as_root install -m 755 "$SHARE/sbx-clipboard-fallback" "$SHIM" \
+    || echo "WARN: could not install the clipboard fall-back"
+}
+
+# listening reports whether anything listens on 5390 (150E in hex; 0A is
+# LISTEN), over IPv4 or IPv6.
+listening() {
+  cat /proc/net/tcp /proc/net/tcp6 2>/dev/null \
+    | awk '$2 ~ /:150E$/ && $4 == "0A" { f = 1 } END { exit f ? 0 : 1 }'
+}
+
+if [ "$(id -u)" = 0 ]; then
+  # stdout here is on-start's own log.
+  install_fallback
+  # Everything from here on writes under the agent's home, which root must
+  # not leave files in that the agent can't replace. A login shell, because
+  # that is what puts node on PATH.
+  AGENT=$(id -un 1000 2>/dev/null)
+  [ -n "$AGENT" ] || AGENT=agent
+  su - "$AGENT" -c "$SELF" || echo "WARN: could not start the clipboard server as $AGENT"
+  exit 0
+fi
+
+exec >>/tmp/clipboard.log 2>&1
+echo "=== start-clipboard at $(date -Is) ==="
+install_fallback
+
+if listening; then
+  echo "clipboard server already listening on 5390"
+  exit 0
+fi
+if ! command -v node >/dev/null 2>&1 && [ -f /etc/sandbox-persistent.sh ]; then
+  . /etc/sandbox-persistent.sh
+fi
+if ! command -v node >/dev/null 2>&1; then
+  echo "ERROR: no node on PATH — the clipboard page needs it"
+  exit 1
+fi
+
+echo "starting the clipboard server"
+setsid nohup node "$SHARE/clipboard-server.js" >>/tmp/clipboard-server.log 2>&1 </dev/null &
+
+i=0
+while [ $i -lt 20 ]; do
+  if listening; then
+    echo "clipboard server ready"
+    exit 0
+  fi
+  i=$((i + 1))
+  sleep 0.5
+done
+echo "ERROR: the clipboard server isn't listening — see /tmp/clipboard-server.log"
+exit 1

@@ -1,0 +1,7 @@
+# Kit fragment for the clipboard feature, merged into the config.yaml of any
+# profile composed with it. 5390 sits just below diffity's 5391, out of the
+# way of the ports diffity counts upwards through when 5391 is taken.
+ports:
+  - container: 5390
+    protocol: tcp
+    name: clipboard
