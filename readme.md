@@ -56,6 +56,10 @@ On Windows, it also checks that the Windows features sbx needs, `HypervisorPlatf
 rights even to look, so unless vibe is already running as administrator, it asks first and Windows
 asks for admin rights. If it had to enable them, **restart Windows** before using vibe. Once they're
 found on, later installs don't check again.
+On Linux, it checks that `/dev/kvm` exists (if not, the kvm kernel modules aren't loaded, or
+virtualization is off in your BIOS/UEFI) and that you can read and write it. If you can't, it names
+the group to add yourself to (usually `kvm`), or tells you to log out and back in if you've been
+added since you logged in.
 `install.sh` needs `curl` or `wget`, and `unzip` (or `python3`).
 
 Run the same command again to upgrade, or, once vibe is installed:

@@ -188,6 +188,7 @@ func run(argv []string) error {
 			return err
 		}
 		ensureWindowsFeatures(lay, args.Force)
+		checkKVM()
 		return offerSbxInstall(args.Force)
 	}
 
