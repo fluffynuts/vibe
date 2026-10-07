@@ -4,9 +4,8 @@ description: .NET SDK, MySQL/Redis/RabbitMQ and Elasticsearch for the yumbi code
 permissions:
   network:
     allow:
-      # diffity: the CLI from npm, its skills from the skills CLI
+      # diffity: the CLI and its bundled skills, from npm
       - registry.npmjs.org
-      - add-skill.vercel.sh
       # apt
       - archive.ubuntu.com
       - security.ubuntu.com

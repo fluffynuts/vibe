@@ -3,10 +3,8 @@
 permissions:
   network:
     allow:
-      # npm — the diffity CLI itself
+      # npm — the diffity CLI (@naturalcycles/diffity) and its bundled skills
       - registry.npmjs.org
-      # the skills CLI
-      - add-skill.vercel.sh
 ports:
   - container: 5391
     protocol: tcp

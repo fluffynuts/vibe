@@ -84,9 +84,9 @@ func TestLoadKitBundledProfile(t *testing.T) {
 	var sawDiffityCLI, sawDiffitySkills bool
 	for _, step := range installSteps {
 		switch cmd := step.(kitspec.Doc)["command"].(string); {
-		case strings.Contains(cmd, "npm install -g diffity"):
+		case strings.Contains(cmd, "npm install -g @naturalcycles/diffity"):
 			sawDiffityCLI = true
-		case strings.Contains(cmd, "skills add nilbuild/diffity"):
+		case strings.Contains(cmd, "diffity skills install"):
 			sawDiffitySkills = true
 		}
 	}

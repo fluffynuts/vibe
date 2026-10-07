@@ -31,13 +31,13 @@ else
 fi
 
 version() {
-  npm_g ls -g --depth 0 diffity 2>/dev/null | sed -n 's/.*diffity@//p' | head -1
+  npm_g ls -g --depth 0 @naturalcycles/diffity 2>/dev/null | sed -n 's/.*diffity@//p' | head -1
 }
 
 before=$(version)
 [ -n "$before" ] || before=none
 echo "installed: $before"
-if npm_g install -g diffity@latest; then
+if npm_g install -g @naturalcycles/diffity@latest; then
   after=$(version)
   [ -n "$after" ] || after=unknown
   if [ "$after" = "$before" ]; then

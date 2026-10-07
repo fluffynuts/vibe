@@ -79,7 +79,7 @@ kind: mixin
 name: diffity-dotnet
 displayName: Diffity review tooling + .NET SDK
 description: GitHub-style diff viewer, agent review skills, and the .NET 8 SDK
-sourceURL: https://github.com/nilbuild/diffity
+sourceURL: https://github.com/NaturalCycles/diffity
 requires:
   agent: claude
 permissions:
@@ -90,8 +90,6 @@ permissions:
       - "*.pkg.github.com"
       - codeload.github.com
       - objects.githubusercontent.com
-      # skills CLI
-      - add-skill.vercel.sh
       # apt
       - archive.ubuntu.com
       - security.ubuntu.com
@@ -141,13 +139,13 @@ setup:
     - command: 'echo "--- dotnet inventory $(date -Is)" >>/tmp/sbx-setup.log; { echo "SDKs:"; dotnet --list-sdks; echo "Runtimes:"; dotnet --list-runtimes; } >>/tmp/sbx-setup.log 2>&1 || echo "WARN: dotnet not usable" >>/tmp/sbx-setup.log; true'
       user: "0"
       description: Record which SDKs and runtimes ended up installed
-    - command: 'echo "--- npm install -g diffity $(date -Is)" >>/tmp/sbx-setup.log; npm install -g diffity >>/tmp/sbx-setup.log 2>&1 || echo "WARN: diffity install failed" >>/tmp/sbx-setup.log; true'
+    - command: 'echo "--- npm install -g @naturalcycles/diffity $(date -Is)" >>/tmp/sbx-setup.log; npm install -g @naturalcycles/diffity >>/tmp/sbx-setup.log 2>&1 || echo "WARN: diffity install failed" >>/tmp/sbx-setup.log; true'
       user: "0"
       description: Install diffity globally (non-fatal)
     - command: "install -d -o agent -g agent -m 0755 /home/agent/.local/bin"
       user: "0"
       description: Ensure the launcher's parent directory exists
-    - command: 'echo "--- skills add $(date -Is)" >>/tmp/sbx-setup.log; cd /home/agent && npx -y skills add nilbuild/diffity -- -y </dev/null >>/tmp/sbx-setup.log 2>&1 || echo "WARN: skills add failed" >>/tmp/sbx-setup.log; true'
+    - command: 'echo "--- diffity skills install $(date -Is)" >>/tmp/sbx-setup.log; cd /home/agent && diffity skills install >>/tmp/sbx-setup.log 2>&1 || echo "WARN: diffity skills install failed" >>/tmp/sbx-setup.log; true'
       user: "1000"
       description: Install diffity agent skills for the agent user (non-interactive, non-fatal)
     - command: 'mkdir -p /home/agent/.claude/skills; for d in /home/agent/.agents/skills /home/agent/workspace/.agents/skills /home/agent/workspace/.claude/skills; do [ -d "$d" ] && cp -a "$d"/. /home/agent/.claude/skills/; done; { echo "--- skills present:"; ls /home/agent/.claude/skills; } >>/tmp/sbx-setup.log 2>&1; ls /home/agent/.claude/skills; true'

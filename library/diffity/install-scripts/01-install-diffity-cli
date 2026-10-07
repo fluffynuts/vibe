@@ -7,7 +7,7 @@
 # agent-files scripts are for startup (on-start) and for running by hand.
 # Its startup counterpart is agent-files/.local/bin/update-diffity, which
 # keeps the version current for the life of the sandbox; keep the two in step.
-echo "--- npm install -g diffity $(date -Is)" >>/tmp/sbx-setup.log
-npm install -g diffity >>/tmp/sbx-setup.log 2>&1 \
+echo "--- npm install -g @naturalcycles/diffity $(date -Is)" >>/tmp/sbx-setup.log
+npm install -g @naturalcycles/diffity >>/tmp/sbx-setup.log 2>&1 \
   || echo "WARN: diffity install failed" >>/tmp/sbx-setup.log
 true
