@@ -1,5 +1,5 @@
 #!/bin/sh
-# vibe: description: Register the Claude Code hooks that make the agent always give diffity's real URL
+# vibe: description: Register the Claude Code hooks that send reviews to diffity and make the agent give its real URL
 # vibe: user: 0
 # vibe: registers: diffity-url-hook
 # Managed settings rather than ~/.claude/settings.json: that file is the
@@ -13,6 +13,11 @@ mkdir -p "$DIR" || { echo "WARN: could not create $DIR" >>/tmp/sbx-setup.log; ex
 cat >"$DIR/50-vibe-diffity-url.json" <<'JSON' || echo "WARN: could not register the diffity URL hooks" >>/tmp/sbx-setup.log
 {
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [{ "type": "command", "command": "/home/agent/.local/bin/diffity-url-hook", "timeout": 15 }]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Bash|Skill",

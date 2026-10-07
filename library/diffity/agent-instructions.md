@@ -7,7 +7,10 @@ started before a commit goes stale as soon as one is made — start a fresh
 session when review is wanted.
 
 When the user asks for a code review, do it with diffity: run `/diffity-review`
-rather than only replying in chat, and give them the viewer link.
+rather than only replying in chat or using another review tool, and give them
+the viewer link. "Review uncommitted code" takes no ref (and stays on the
+working tree even if the branch has a pull request); "review against master"
+takes `master` as the ref; a commit or range takes that ref.
 
 - `/diffity-diff <ref>` starts a session and opens the diff viewer.
 - `/diffity-review <ref>` leaves your own inline comments, tagged

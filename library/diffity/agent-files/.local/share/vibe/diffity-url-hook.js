@@ -1,6 +1,6 @@
 "use strict";
 // vibe: description: Claude Code hook logic behind diffity-url-hook
-// Claude Code hook (PostToolUse and Stop), run through
+// Claude Code hook (UserPromptSubmit, PostToolUse and Stop), run through
 // ~/.local/bin/diffity-url-hook and registered for every session in
 // /etc/claude-code/managed-settings.d by the diffity feature's install step.
 //
@@ -9,6 +9,10 @@
 // and in the moment the skill wins: the user gets the sandbox's own port,
 // which their browser can't reach, or no URL at all. So:
 //
+//   - UserPromptSubmit: a prompt asking for a review is told to do it with
+//     diffity. The feature's agent instructions say so too, but they live in
+//     a kit context file the agent only reads when it thinks the kit is
+//     relevant, and "review my changes" doesn't look like it is.
 //   - PostToolUse: the first time a turn touches diffity, tell the agent the
 //     URL the user can actually open (from diffity-url, which vibe keeps in
 //     step with sbx's live port mapping).
@@ -37,6 +41,11 @@ const DIFFITY_COMMAND = /(^|[\s;&|(`])(npx\s+(-y\s+)?)?diffity(?![\w-])/;
 
 // A slash command, as it is recorded in the prompt that ran it.
 const DIFFITY_SLASH_COMMAND = /<command-name>\/?diffity-[\w-]+<\/command-name>|^\s*\/diffity-[\w-]+/;
+
+// A prompt asking for a review: "review uncommitted code", "review against
+// master", "code review this branch". Any other slash command is the user
+// choosing a tool themselves, so it is left alone.
+const REVIEW_REQUEST = /\b(code[\s-]?)?review\b/i;
 
 // Any URL on this machine: the only ports a reply could quote wrongly.
 const LOCAL_URL = /\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):(\d+)/g;
@@ -149,6 +158,24 @@ function howToGiveTheURL(u) {
     "reports: that is the sandbox's side of the port mapping, and the user's browser can't reach it.";
 }
 
+// onUserPromptSubmit steers a review request to diffity, before the agent
+// has picked another way to do it.
+function onUserPromptSubmit(input) {
+  const prompt = typeof input.prompt === "string" ? input.prompt : "";
+  if (!REVIEW_REQUEST.test(prompt) || /^\s*\//.test(prompt)) return null;
+  return {
+    hookSpecificOutput: {
+      hookEventName: "UserPromptSubmit",
+      additionalContext: "If the user is asking for a review of code changes, do it with diffity: run the " +
+        "diffity-review skill, so the findings land as inline comments in the viewer, rather than reviewing " +
+        "only in chat or with another review tool. Choose the ref from what they asked for: uncommitted or " +
+        "working-tree changes take no ref, and stay on the working tree even when the branch has a pull " +
+        "request; \"against master\" (or main, or another branch) takes that branch as the ref; a commit or " +
+        "range takes that ref. If they are not asking for a code review, ignore this.",
+    },
+  };
+}
+
 // onPostToolUse briefs the agent, once per turn, when it first touches
 // diffity.
 function onPostToolUse(input) {
@@ -209,7 +236,8 @@ function main() {
     return;
   }
   let out = null;
-  if (input.hook_event_name === "PostToolUse") out = onPostToolUse(input);
+  if (input.hook_event_name === "UserPromptSubmit") out = onUserPromptSubmit(input);
+  else if (input.hook_event_name === "PostToolUse") out = onPostToolUse(input);
   else if (input.hook_event_name === "Stop") out = onStop(input);
   if (out) process.stdout.write(JSON.stringify(out));
 }
@@ -222,6 +250,7 @@ if (require.main === module) {
     isDiffityToolUse: isDiffityToolUse,
     currentTurn: currentTurn,
     turnUsedDiffity: turnUsedDiffity,
+    onUserPromptSubmit: onUserPromptSubmit,
     onStop: onStop,
     onPostToolUse: onPostToolUse,
   };
