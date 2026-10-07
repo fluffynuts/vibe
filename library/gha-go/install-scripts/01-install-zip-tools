@@ -1,9 +1,0 @@
-#!/bin/sh
-# vibe: description: Adds /setup-gha-go (GitHub Actions, make scripts, --install/--upgrade for Go CLIs); installs zip & unzip
-# vibe: user: 0
-# make.sh's dist target packages release zips with zip(1), and the skill
-# checks them with unzip; neither is in the base image.
-echo "--- installing zip, unzip $(date -Is)" >>/tmp/sbx-setup.log
-sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y zip unzip </dev/null >>/tmp/sbx-setup.log 2>&1 \
-  || echo "WARN: zip/unzip install failed" >>/tmp/sbx-setup.log
-true

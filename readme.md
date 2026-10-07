@@ -601,10 +601,6 @@ checklist as guided creation, with the profile's current features ticked, so you
 drop one you no longer use (and reorder them); with `-f` the recorded features are kept as they are. Profiles written by hand, copied or
 created blank record nothing and are refused rather than guessed at; add the comment line above
 to adopt one.
-The bundled `gha-go` feature adds a `/setup-gha-go` skill: ask for "prepare this go project for github"
-and the agent copies vetted templates (a build/test/release GitHub Actions workflow, `Makefile`,
-`make.sh`, `make.ps1`, plus `--install`/`--upgrade` flags in the program), filling in the project's name and main package, then verifies the build.
-Other `gha-*` features can follow the same shape.
 
 Overriding one bundled feature means dropping your own `~/.vibe/library/<feature>/` next to it —
 unlike `defaults/`, that replaces only the feature you copied, so features the bundle adds later
