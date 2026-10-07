@@ -33,9 +33,17 @@ if [ -z "$url" ]; then
 fi
 # The ref goes on /diff, not the root: the root redirects to /diff and drops
 # the query, and terminals stop linkifying a path-less URL at the ".." of a
-# range like master..HEAD.
+# range like master..HEAD. With no ref it is still /diff: the full address,
+# for the uncommitted changes.
 if [ -n "$1" ]; then
-  printf '%s/diff?ref=%s\n' "$url" "$1"
+  out=$url/diff?ref=$1
 else
-  printf '%s\n' "$url"
+  out=$url/diff
 fi
+# The latest URL given out is what vibe-band shows as "review at:". The hook
+# asks for the base URL to brief the agent; that is not one given to the user.
+if [ -z "$VIBE_DIFFITY_URL_NO_RECORD" ]; then
+  mkdir -p /home/agent/.local/state/vibe 2>/dev/null &&
+    printf '%s\n' "$out" > /home/agent/.local/state/vibe/diffity-review-url 2>/dev/null
+fi
+printf '%s\n' "$out"

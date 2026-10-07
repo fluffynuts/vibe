@@ -30,7 +30,8 @@ End every command that produces something to look at — `/diffity-diff`,
 
     diffity-url <ref>
 
-and giving the user exactly what it prints, e.g. after reviewing against
+and giving the user exactly what it prints, e.g. `http://localhost:5396/diff` for the
+uncommitted changes, or, after reviewing against
 master: `http://localhost:5396/diff?ref=master`. Pass the same ref the
 command used, and no argument when it had none. Don't rewrite it into
 `http://localhost:5396?ref=...`: the root drops the ref on its way to

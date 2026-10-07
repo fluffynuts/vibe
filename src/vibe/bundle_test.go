@@ -167,7 +167,7 @@ func TestDiffityFeatureUpdatesOnStart(t *testing.T) {
 func TestClipboardFeatureStartsOnStart(t *testing.T) {
 	lay := layout.New(t.TempDir(), repoRoot(t))
 	profile := filepath.Join(t.TempDir(), "demo")
-	if err := library.Compose([]string{"clipboard"}, lay.FeatureDir, profile); err != nil {
+	if err := library.Compose([]string{"clipboard-bridge"}, lay.FeatureDir, profile); err != nil {
 		t.Fatalf("composing the clipboard feature: %v", err)
 	}
 	onStart, err := os.ReadFile(filepath.Join(profile, "agent-files", ".local", "bin", "on-start"))

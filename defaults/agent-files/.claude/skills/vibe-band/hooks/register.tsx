@@ -16,21 +16,53 @@ async function git($: EngineInterface, args: string[]) {
   return ran.exitCode === 0 ? ran.stdout : null
 }
 
+// The clipboard feature's `clipboard-url`, when that feature is installed.
+async function clipboardUrl($: EngineInterface, home: string | undefined) {
+  try {
+    const ran = await $.process.run([`${home ?? '/home/agent'}/.local/bin/clipboard-url`], { timeoutMs: 5_000 })
+    const url = ran.exitCode === 0 ? ran.stdout.trim() : ''
+
+    return url === '' ? null : url
+  } catch {
+    return null
+  }
+}
+
+// The latest URL diffity-url gave the user, while a diffity viewer is still
+// running (the file outlives the viewer, so a stale one isn't shown).
+async function reviewUrl($: EngineInterface, home: string | undefined) {
+  try {
+    const url = (await $.fs.read(`${home ?? '/home/agent'}/.local/state/vibe/diffity-review-url`)).trim()
+    if (url === '') return null
+    const ran = await $.process.run(['diffity', 'list', '--json'], { timeoutMs: 5_000 })
+    const sessions = ran.exitCode === 0 ? JSON.parse(ran.stdout) : null
+
+    return Array.isArray(sessions) && sessions.length > 0 ? url : null
+  } catch {
+    return null
+  }
+}
+
 async function refresh($: EngineInterface) {
   if (isRefreshing) return
   isRefreshing = true
   try {
     const cwd = await $.session.cwd()
     const workspace = await $.env.get('WORKSPACE_DIR')
+    // the title names the project, so it follows the workspace, not wherever the agent has cd'd to
+    const projectDir = workspace ?? cwd
     const project =
       (await $.env.get('SANDBOX_NAME')) ??
-      (workspace ?? cwd).split('/').filter(Boolean).pop() ??
+      projectDir.split('/').filter(Boolean).pop() ??
       ''
+    const home = await $.env.get('HOME')
     const status = await git($, ['--no-optional-locks', 'status', '--porcelain=v2', '--branch', '--show-stash'])
     const next: BandInfo = {
       project,
-      folder: shortenPath(cwd, await $.env.get('HOME')),
+      folder: shortenPath(projectDir, home),
       git: status === null ? null : parseStatus(status),
+      clipboardUrl: await clipboardUrl($, home),
+      reviewUrl: await reviewUrl($, home),
     }
     const prev = await read($, info)
     if (JSON.stringify(prev) !== JSON.stringify(next)) {
@@ -67,14 +99,28 @@ export const register: Register = on => {
     const { Box, Text } = $.ui.resolve(e)
 
     return (
-      <Box flexDirection="row" flexWrap="wrap">
-        <Text color="magenta" bold>
-          ⬢ {band.project}
-        </Text>
-        <Text dimColor> │ </Text>
-        <Text color="cyan">{band.folder}</Text>
-        {band.git && <Text dimColor> │ </Text>}
-        {band.git && <Git Text={Text} git={band.git} />}
+      <Box flexDirection="column">
+        <Box flexDirection="row" flexWrap="wrap">
+          <Text color="magenta" bold>
+            ⬢ {band.project}
+          </Text>
+          <Text dimColor> │ </Text>
+          <Text color="cyan">{band.folder}</Text>
+          {band.git && <Text dimColor> │ </Text>}
+          {band.git && <Git Text={Text} git={band.git} />}
+        </Box>
+        {band.reviewUrl && (
+          <Text>
+            <Text dimColor>review at: </Text>
+            <Text color="cyan">{band.reviewUrl}</Text>
+          </Text>
+        )}
+        {band.clipboardUrl && (
+          <Text>
+            <Text dimColor>copy-paste at: </Text>
+            <Text color="cyan">{band.clipboardUrl}</Text>
+          </Text>
+        )}
       </Box>
     )
   })

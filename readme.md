@@ -385,9 +385,12 @@ answer, or Claude's default, without asking.
 
 Every sandbox also ships `vibe-band`, a Claude Code plugin from
 `defaults/agent-files/.claude/skills/vibe-band/` that draws a line above the prompt: the sandbox
-name, the working folder, and git status in powerline style (branch, then `+` staged, `~` modified,
+name, the project folder (the workspace, which doesn't follow the agent's `cd`), and git status in powerline style (branch, then `+` staged, `~` modified,
 `?` untracked, `✘` conflicted, `↑`/`↓` ahead/behind, `#` stash count). It refreshes every 2 seconds and after each
-turn. Claude Code loads it automatically from `~/.claude/skills/`, so nothing needs configuring; delete
+turn. When the `clipboard-bridge` feature is installed, a second line, `copy-paste at: <url>`, shows the
+clipboard page's address (from `clipboard-url`). Once the agent has run a diffity review, a
+`review at: <url>` line sits above it: the latest URL `diffity-url` gave out, shown while a diffity viewer is
+running. Claude Code loads it automatically from `~/.claude/skills/`, so nothing needs configuring; delete
 the folder from `~/.vibe/defaults/agent-files/.claude/skills/` to leave it out. As with themes, a
 `~/.vibe/defaults` seeded before it existed won't have it until the bundle's copy is added.
 
@@ -496,7 +499,7 @@ nugetDir: ~/.nuget    # mounted into the sandbox and symlinked in, if it exists 
 memoryRoot: ~/.vibe/memories   # where per-sandbox agent memories are backed up
 defaultFeatures:      # library features a guided profile starts with ticked
   - diffity
-  - clipboard
+  - clipboard-bridge
 env:                  # extra environment variables passed to `sbx create -e`
   SOME_VAR: value
 publish:              # ports to publish, and (optionally) a stable URL env var for each
@@ -565,7 +568,7 @@ matching agent skills — the two are released together — non-fatally, logging
 agent user, since `on-start` runs as root and nothing root writes under `/home/agent` can be
 replaced by the agent later.
 
-`clipboard`, also ticked by default, is for sharing images (and text) with the agent. Pasting an
+`clipboard-bridge`, also ticked by default, is for sharing images (and text) with the agent. Pasting an
 image into the agent's terminal goes through sbx's clipboard bridge, which comes back empty on
 Linux hosts, so the feature gives you a page in your browser instead (the agent gives you its URL
 via `clipboard-url`, or open `$VIBE_CLIPBOARD_URL`). Paste on it, drop files on it, or pick them,
@@ -593,7 +596,9 @@ they are *now* and re-inits the sandbox, so a feature that has since gained an e
 published port or an instruction reaches the profiles built from it. The profile is regenerated
 rather than merged into — re-running the composition over the existing files would append every
 fragment a second time, duplicating permissions and published ports — so hand-edits to it are
-lost, and it asks before doing that (`-f` answers yes). Profiles written by hand, copied or
+lost, and it asks before doing that (`-f` answers yes). Before rebuilding it shows the same feature
+checklist as guided creation, with the profile's current features ticked, so you can add a feature or
+drop one you no longer use (and reorder them); with `-f` the recorded features are kept as they are. Profiles written by hand, copied or
 created blank record nothing and are refused rather than guessed at; add the comment line above
 to adopt one.
 The bundled `gha-go` feature adds a `/setup-gha-go` skill: ask for "prepare this go project for github"

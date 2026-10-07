@@ -1,5 +1,5 @@
 #!/bin/sh
-# vibe: description: clipboard page — paste images or text in your browser and they reach the agent
+# vibe: description: web-based clipboard bridge - use if you have trouble pasting into the agent console
 # vibe: user: 0
 # vibe: registers: clipboard-hook
 # Managed settings rather than ~/.claude/settings.json, for the same reason

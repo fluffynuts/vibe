@@ -14,6 +14,8 @@ export type BandInfo = {
   project: string
   folder: string
   git: GitInfo | null
+  clipboardUrl: string | null
+  reviewUrl: string | null
 }
 
 declare module 'claude-code' {

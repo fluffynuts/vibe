@@ -58,10 +58,16 @@ function isDiffityToolUse(name, input) {
 
 // diffityURL runs diffity-url for the base URL, and whatever it warned.
 function diffityURL() {
-  const r = spawnSync(DIFFITY_URL, [], { encoding: "utf8", timeout: 5000 });
+  const r = spawnSync(DIFFITY_URL, [], {
+    encoding: "utf8",
+    timeout: 5000,
+    // the base URL is for briefing the agent, not one handed to the user
+    env: Object.assign({}, process.env, { VIBE_DIFFITY_URL_NO_RECORD: "1" }),
+  });
   const url = (r.stdout || "").trim().split("\n")[0];
   if (r.status !== 0 || !url) return null;
-  const base = url.replace(/[?#].*$/, "").replace(/\/+$/, "");
+  // the origin alone: diffity-url's answer may carry /diff and a ref
+  const base = url.replace(/^(https?:\/\/[^/?#]+).*$/, "$1");
   const m = /:(\d+)$/.exec(base);
   return { base: base, port: m ? m[1] : "", warning: (r.stderr || "").trim() };
 }

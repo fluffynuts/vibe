@@ -63,8 +63,9 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe -R/--re-create [path] delete the profile too, then re-init — the
                              profile is gone, so this always re-prompts
   vibe -C/--re-compose [path] rebuild a guided profile from the library
-                             features it was composed from, picking up
-                             whatever they have gained since, then re-init
+                             features it was composed from (pick which to
+                             keep, add or drop), picking up whatever they
+                             have gained since, then re-init
   vibe -l/--list             list every known sandbox and its status
   vibe -a/--info [path]      show the sandbox's settings (memory, agent,
                              features) and, while it runs, its uptime and
@@ -2143,8 +2144,15 @@ func doReCompose(lay layout.Layout, args cliargs.Args, name, target string) erro
 	}
 
 	note("profile '%s' was composed from: %s", profile, strings.Join(features, ", "))
+	if !args.Force {
+		features, err = pickReComposeFeatures(lay, profile, features)
+		if err != nil {
+			return err
+		}
+	}
 	if !confirmDefault(args.Force, false, fmt.Sprintf(
-		"Rebuild profile '%s' from those features (losing any edits to it) and re-init its sandbox?", profile)) {
+		"Rebuild profile '%s' from %s (losing any edits to it) and re-init its sandbox?",
+		profile, describeFeatures(features))) {
 		return fmt.Errorf("aborted — nothing changed")
 	}
 
@@ -2169,6 +2177,52 @@ func doReCompose(lay layout.Layout, args cliargs.Args, name, target string) erro
 	note("re-composed profile '%s' (%s) in %s", profile, strings.Join(features, ", "), created)
 
 	return reInit(lay, args, name, target, true)
+}
+
+// describeFeatures names features for a sentence, allowing for none.
+func describeFeatures(features []string) string {
+	if len(features) == 0 {
+		return "no features"
+	}
+	return strings.Join(features, ", ")
+}
+
+// pickReComposeFeatures lets the user change which library features a
+// profile is rebuilt from: the checklist of the whole library, with the ones
+// the profile already has ticked. Features already in the profile keep their
+// order, and newly ticked ones follow in library order; with more than one
+// the user can then reorder them, as in guided creation.
+var pickReComposeFeatures = func(lay layout.Layout, profile string, current []string) ([]string, error) {
+	names := lay.Features()
+	features, labels, checked := featureChecklist(lay, names, current)
+	idxs, ok := checklistFrom("pick the features this sandbox needs (untick any you no longer use)", labels, checked)
+	if !ok {
+		return nil, fmt.Errorf("aborted — profile '%s' not changed", profile)
+	}
+	picked := make(map[string]bool, len(idxs))
+	for _, idx := range idxs {
+		picked[features[idx].Name] = true
+	}
+	var chosen []string
+	for _, name := range current {
+		if picked[name] {
+			chosen = append(chosen, name)
+			delete(picked, name)
+		}
+	}
+	for _, idx := range idxs {
+		if name := features[idx].Name; picked[name] {
+			chosen = append(chosen, name)
+		}
+	}
+	if len(chosen) > 1 {
+		ordered, ok := reorderFrom("order the features — they install and start in this order", chosen)
+		if !ok {
+			return nil, fmt.Errorf("aborted — profile '%s' not changed", profile)
+		}
+		chosen = ordered
+	}
+	return chosen, nil
 }
 
 // openTerminal and openTerminalInput are how vibe reaches the terminal to
