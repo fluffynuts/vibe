@@ -6,6 +6,7 @@ export type GitInfo = {
   conflicted: number
   ahead: number
   behind: number
+  stashed: number
   hasUpstream: boolean
 }
 

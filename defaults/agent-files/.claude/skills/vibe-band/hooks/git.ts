@@ -1,6 +1,6 @@
 import type { GitInfo } from '../types'
 
-// Parses `git status --porcelain=v2 --branch` output.
+// Parses `git status --porcelain=v2 --branch --show-stash` output.
 export const parseStatus = (out: string): GitInfo => {
   const info: GitInfo = {
     branch: '',
@@ -10,6 +10,7 @@ export const parseStatus = (out: string): GitInfo => {
     conflicted: 0,
     ahead: 0,
     behind: 0,
+    stashed: 0,
     hasUpstream: false,
   }
   let oid = ''
@@ -27,6 +28,8 @@ export const parseStatus = (out: string): GitInfo => {
         info.ahead = Number(match[1])
         info.behind = Number(match[2])
       }
+    } else if (line.startsWith('# stash ')) {
+      info.stashed = Number(line.slice(8)) || 0
     } else if (line.startsWith('? ')) {
       info.untracked += 1
     } else if (line.startsWith('u ')) {

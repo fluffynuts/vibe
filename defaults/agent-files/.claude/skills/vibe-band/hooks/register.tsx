@@ -26,7 +26,7 @@ async function refresh($: EngineInterface) {
       (await $.env.get('SANDBOX_NAME')) ??
       (workspace ?? cwd).split('/').filter(Boolean).pop() ??
       ''
-    const status = await git($, ['--no-optional-locks', 'status', '--porcelain=v2', '--branch'])
+    const status = await git($, ['--no-optional-locks', 'status', '--porcelain=v2', '--branch', '--show-stash'])
     const next: BandInfo = {
       project,
       folder: shortenPath(cwd, await $.env.get('HOME')),
@@ -88,6 +88,7 @@ const Git = ({ Text, git }: { Text: any; git: GitInfo }) => {
   if (git.conflicted) parts.push(['magenta', `✘${git.conflicted}`])
   if (git.ahead) parts.push(['yellow', `↑${git.ahead}`])
   if (git.behind) parts.push(['yellow', `↓${git.behind}`])
+  if (git.stashed) parts.push(['green', `#${git.stashed}`])
 
   return (
     <Text>

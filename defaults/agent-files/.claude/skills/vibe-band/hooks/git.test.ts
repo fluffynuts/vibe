@@ -8,6 +8,7 @@ test('parses branch, counts and ahead/behind', async () => {
     '# branch.head master',
     '# branch.upstream origin/master',
     '# branch.ab +3 -1',
+    '# stash 2',
     '1 M. N... 100644 100644 100644 a b staged.go',
     '1 .M N... 100644 100644 100644 a b modified.go',
     '1 MM N... 100644 100644 100644 a b both.go',
@@ -26,6 +27,7 @@ test('parses branch, counts and ahead/behind', async () => {
     conflicted: 1,
     ahead: 3,
     behind: 1,
+    stashed: 2,
     hasUpstream: true,
   })
 })

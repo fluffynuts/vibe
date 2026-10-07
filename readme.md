@@ -386,7 +386,7 @@ answer, or Claude's default, without asking.
 Every sandbox also ships `vibe-band`, a Claude Code plugin from
 `defaults/agent-files/.claude/skills/vibe-band/` that draws a line above the prompt: the sandbox
 name, the working folder, and git status in powerline style (branch, then `+` staged, `~` modified,
-`?` untracked, `✘` conflicted, `↑`/`↓` ahead/behind). It refreshes every 2 seconds and after each
+`?` untracked, `✘` conflicted, `↑`/`↓` ahead/behind, `#` stash count). It refreshes every 2 seconds and after each
 turn. Claude Code loads it automatically from `~/.claude/skills/`, so nothing needs configuring; delete
 the folder from `~/.vibe/defaults/agent-files/.claude/skills/` to leave it out. As with themes, a
 `~/.vibe/defaults` seeded before it existed won't have it until the bundle's copy is added.
