@@ -1105,7 +1105,11 @@ func reportUpgrades(w io.Writer, labels []string) {
 	for _, l := range labels {
 		fmt.Fprintf(w, "vibe:   %s\n", l)
 	}
-	fmt.Fprintln(w, "vibe: run 'vibe --upgrade' to install them")
+	it_or_them := "it"
+	if len(labels) > 0 {
+		it_or_them = "them"
+	}
+	fmt.Fprintln(w, "vibe: run 'vibe --upgrade' to install "+it_or_them)
 }
 
 // pickUpgrades asks which of labels to upgrade, all ticked to start with,
