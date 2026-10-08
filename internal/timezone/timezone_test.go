@@ -85,3 +85,21 @@ func TestFromWindows(t *testing.T) {
 		}
 	}
 }
+
+func TestWithTZ(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", "export TZ=Africa/Johannesburg # vibe: timezone\n"},
+		{"export A=1\n\nexport B=2\n", "export A=1\n\nexport B=2\nexport TZ=Africa/Johannesburg # vibe: timezone\n"},
+		// The old line goes, wherever it was, and the new one is at the end.
+		{"export TZ=UTC # vibe: timezone\nexport A=1\n", "export A=1\nexport TZ=Africa/Johannesburg # vibe: timezone\n"},
+	}
+	for _, c := range cases {
+		if got := withTZ(c.in, "Africa/Johannesburg"); got != c.want {
+			t.Errorf("withTZ(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	once := withTZ("export A=1\n", "Europe/London")
+	if withTZ(once, "Europe/London") != once {
+		t.Errorf("withTZ should leave a file already on the zone as it is")
+	}
+}

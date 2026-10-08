@@ -391,8 +391,13 @@ zone). There are a few hundred zones, so the list scrolls: type to narrow it (`j
 running without a terminal, takes this machine's without asking.
 
 The answer is recorded in the sandbox's `instances/<name>.yaml`, and vibe puts the sandbox back on
-it at every session start (pointing `/etc/localtime` at the zone and writing `/etc/timezone`), so
-it holds even if something in the sandbox changes it. `-C/--re-compose` and `-R/--re-create` ask
+it at every session start, so it holds even if something in the sandbox changes it. That means
+pointing `/etc/localtime` at the zone, writing `/etc/timezone`, and exporting `TZ` from
+`/etc/sandbox-persistent.sh`. The last of these matters most: sbx starts the sandbox's processes with
+`TZ` set to a bare offset (`SAST-2`, say), which overrides `/etc/localtime` and names no zone, so
+anything asking for the zone's name (Node's `Intl`, .NET's `TimeZoneInfo.Local`) gets nothing
+useful. Every shell the agent runs sources that file first, so tests and tools it runs see the
+real zone. `-C/--re-compose` and `-R/--re-create` ask
 again, starting on the recorded zone; `-r/--re-init` keeps it. A sandbox from before vibe recorded
 one is put on this machine's.
 
