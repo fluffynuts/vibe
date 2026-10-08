@@ -240,7 +240,7 @@ a profile is the job of `-d`/`--delete` or `-R`/`--re-create`. What a cleanup do
 the sandbox — it has to, because a record claims its published host ports whether or not anything
 is listening, so one left behind would reserve those ports against every sandbox made afterwards.
 
-`-a`/`--info` shows the sandbox's profile, agent, memory setting and, for a guided profile, the
+`-a`/`--info` shows the sandbox's profile, agent, memory setting, timezone and, for a guided profile, the
 library features it was composed from. While the sandbox is running, it also shows how long it
 has been up (since it was last started) and the memory and disk it is using, read from inside it:
 
@@ -250,6 +250,7 @@ folder    ~/code/opensource/vibe
 profile   vibe
 agent     claude
 memory    12g
+timezone  Africa/Johannesburg
 features  go, node
 status    running
 uptime    3h 35m
@@ -380,6 +381,20 @@ doesn't ask again. It reads the theme the old sandbox's agent is actually set to
 change made with `/theme` since, before removing it. If it can't, it uses what the profile
 recorded, and it asks only when neither is known. `-f`, or running without a terminal, takes that
 answer, or Claude's default, without asking.
+
+### Timezone
+
+Creating a sandbox asks which timezone it keeps its local time in, starting on this machine's
+(from `TZ`, `/etc/localtime`, or on Windows, its timezone setting mapped to the matching IANA
+zone). There are a few hundred zones, so the list scrolls: type to narrow it (`johan` finds
+`Africa/Johannesburg`), ↑/↓ to move, enter to choose and Esc to keep the default. `-f`, or
+running without a terminal, takes this machine's without asking.
+
+The answer is recorded in the sandbox's `instances/<name>.yaml`, and vibe puts the sandbox back on
+it at every session start (pointing `/etc/localtime` at the zone and writing `/etc/timezone`), so
+it holds even if something in the sandbox changes it. `-C/--re-compose` and `-R/--re-create` ask
+again, starting on the recorded zone; `-r/--re-init` keeps it. A sandbox from before vibe recorded
+one is put on this machine's.
 
 ### Status band
 
@@ -617,8 +632,8 @@ way a guided profile does. Copy it as a starting point for a new profile.
 Alongside the configuration, `~/.vibe` (override with `$VIBE_HOME`) is where `vibe` keeps its own
 state:
 
-- `instances/<name>.yaml` — which profile and target folder created a sandbox, and the host port
-  each of its published container ports was given. It is the single source of truth for both:
+- `instances/<name>.yaml` — which profile and target folder created a sandbox, its timezone, and
+  the host port each of its published container ports was given. It is the single source of truth for both:
   `--re-init` reads the profile back so it doesn't need `--profile` repeated, and re-claims the
   recorded host ports so a sandbox's URL stays stable across a rebuild.
 - `memories/<name>/` — an agent's backed-up memories across a `--re-init`, when the profile's

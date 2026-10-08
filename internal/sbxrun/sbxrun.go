@@ -395,6 +395,18 @@ func ExecSilentContext(ctx context.Context, name string, args ...string) bool {
 	return err == nil
 }
 
+// ExecInput runs a command inside the sandbox with input on its stdin, so
+// content gets there with no shell in the sandbox to put it there.
+func ExecInput(name, input string, args ...string) error {
+	full := append([]string{"exec", "-i", name, "--"}, args...)
+	cmd := exec.Command("sbx", full...)
+	cmd.Stdin = strings.NewReader(input)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // ExecDetached dispatches a command inside the sandbox in the background
 // (`sbx exec -d`).
 func ExecDetached(name string, args ...string) error {

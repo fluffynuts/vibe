@@ -43,6 +43,7 @@ import (
 	"vibe/internal/sidebyside"
 	"vibe/internal/state"
 	"vibe/internal/termtitle"
+	"vibe/internal/timezone"
 	"vibe/internal/upgrade"
 )
 
@@ -490,6 +491,7 @@ type sandboxInfo struct {
 	exists, running       bool
 	agent                 string
 	memory                string   // the memory setting; empty for sbx's default
+	timezone              string   // the zone the sandbox keeps its time in
 	features              []string // what a guided profile was composed from
 	usage                 *sandboxUsage
 	usageErr              error
@@ -521,7 +523,7 @@ func doInfo(lay layout.Layout, args cliargs.Args, name, target string) error {
 	if err != nil {
 		return err
 	}
-	info := sandboxInfo{name: name, target: target, profile: profile}
+	info := sandboxInfo{name: name, target: target, profile: profile, timezone: recordedTimezone(lay.Home, name)}
 	if lay.ProfileExists(profile) {
 		_, merged, err := loadKit(lay, profile)
 		if err != nil {
@@ -660,6 +662,7 @@ func printInfo(w io.Writer, info sandboxInfo, profileKnown bool) {
 		} else {
 			row("memory", "%s", info.memory)
 		}
+		row("timezone", "%s", info.timezone)
 		if len(info.features) == 0 {
 			row("features", "none recorded (not a guided profile)")
 		} else {
@@ -1625,7 +1628,7 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 			return err
 		}
 	}
-	if err := createSandbox(vibeHome, name, target, profile, doc, merged, !args.Force, false, ""); err != nil {
+	if err := createSandbox(vibeHome, name, target, profile, doc, merged, !args.Force, timezone.Host(), !args.Force, false, ""); err != nil {
 		return err
 	}
 	return finish(vibeHome, name)
@@ -1707,7 +1710,7 @@ func indexOf(list []string, s string) int {
 // askMemory offers a choice of how much memory the sandbox gets, starting
 // on the memory setting; without it, that setting is used as long as this
 // machine can give it.
-func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merged settings.Settings, askMemory, restoreAfterCreate bool, memoryStore string) error {
+func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merged settings.Settings, askMemory bool, zone string, askZone, restoreAfterCreate bool, memoryStore string) error {
 	kitDir, err := writeKit(doc, name)
 	if err != nil {
 		return err
@@ -1723,10 +1726,12 @@ func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merg
 		memSize = "12g"
 	}
 	memSize = pickMemory(memSize, askMemory && interactive(), fmt.Sprintf("how much memory should sandbox '%s' get?", name))
+	zone = pickTimezone(zone, askZone && interactive(), fmt.Sprintf("which timezone should sandbox '%s' keep its time in?", name))
 
 	note("creating sandbox '%s'", name)
 	note("  workspace: %s", target)
 	note("  memory:    %s", memSize)
+	note("  timezone:  %s", zone)
 
 	var mounts []string
 	var env []string
@@ -1802,6 +1807,12 @@ func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merg
 		return err
 	}
 
+	// Before the agent starts, so it starts on the sandbox's local time;
+	// on-start puts it back at every later session.
+	if err := timezone.Apply(name, zone); err != nil {
+		note("WARNING: could not set the sandbox's timezone: %s", err)
+	}
+
 	if restoreAfterCreate {
 		if err := agentmem.Restore(name, memoryStore); err != nil {
 			note("WARNING: %s", err)
@@ -1809,7 +1820,7 @@ func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merg
 	}
 
 	if err := state.Save(vibeHome, state.Instance{
-		Name: name, Profile: profile, Target: target, Publish: publishRecords, MemoryStore: memoryStore, CreatedAt: time.Now(),
+		Name: name, Profile: profile, Target: target, Publish: publishRecords, MemoryStore: memoryStore, Timezone: zone, CreatedAt: time.Now(),
 	}); err != nil {
 		return err
 	}
@@ -1836,14 +1847,15 @@ func resolveReInitProfile(vibeHome string, args cliargs.Args, name, target strin
 }
 
 func doReInit(lay layout.Layout, args cliargs.Args, name, target string) error {
-	return reInit(lay, args, name, target, false)
+	return reInit(lay, args, name, target, false, false)
 }
 
 // reInit is --re-init's implementation. skipSandboxConfirm is set by
 // doReCreate, which already got one confirmation up front covering both
 // the profile and the sandbox, so this must not ask about the sandbox a
-// second time.
-func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm bool) error {
+// second time. askZone asks which timezone the rebuilt sandbox should be
+// on, rather than keeping the one it had.
+func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool) error {
 	vibeHome := lay.Home
 	profile, err := resolveReInitProfile(vibeHome, args, name, target)
 	if err != nil {
@@ -1862,6 +1874,7 @@ func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandb
 	restoreAfterCreate := false
 	var memoryStore string
 	var themeFromSandbox string
+	zone := recordedTimezone(vibeHome, name)
 
 	if sbxrun.Exists(name) {
 		if !skipSandboxConfirm && !confirmDefault(args.Force, true, fmt.Sprintf("Remove sandbox '%s' (workspace %s)?", name, target)) {
@@ -1928,7 +1941,7 @@ func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandb
 	}
 
 	note("rebuilding '%s' from profile '%s'", name, profile)
-	if err := createSandbox(vibeHome, name, target, profile, doc, merged, false, restoreAfterCreate, memoryStore); err != nil {
+	if err := createSandbox(vibeHome, name, target, profile, doc, merged, false, zone, askZone, restoreAfterCreate, memoryStore); err != nil {
 		return err
 	}
 	return finish(vibeHome, name)
@@ -1964,7 +1977,7 @@ func doReCreate(lay layout.Layout, args cliargs.Args, name, target string) error
 		note("no overlay profile '%s' to delete", profile)
 	}
 
-	return reInit(lay, args, name, target, true)
+	return reInit(lay, args, name, target, true, !args.Force)
 }
 
 // --- delete -----------------------------------------------------------------
@@ -2176,7 +2189,7 @@ func doReCompose(lay layout.Layout, args cliargs.Args, name, target string) erro
 	}
 	note("re-composed profile '%s' (%s) in %s", profile, strings.Join(features, ", "), created)
 
-	return reInit(lay, args, name, target, true)
+	return reInit(lay, args, name, target, true, !args.Force)
 }
 
 // describeFeatures names features for a sentence, allowing for none.
@@ -2643,6 +2656,36 @@ func pickAgent(current string, ask bool) string {
 	return agents[i]
 }
 
+// pickTimezone asks which timezone a sandbox should keep its time in, from
+// tzdata's list, starting on current. Without ask, current is kept.
+func pickTimezone(current string, ask bool, question string) string {
+	if !ask {
+		return current
+	}
+	zones := timezone.Zones(current)
+	tty, closeFn, ok := ttyRW()
+	if !ok {
+		return current
+	}
+	defer closeFn()
+	note("%s (this machine's is %s)", question, timezone.Host())
+	i, ok := prompt.Filter(tty, zones, indexOf(zones, current))
+	if !ok {
+		note("  keeping timezone: %s", current)
+		return current
+	}
+	return zones[i]
+}
+
+// recordedTimezone is the timezone sandbox name was created with, or the
+// host's when there's no record of one.
+func recordedTimezone(vibeHome, name string) string {
+	if inst, found, err := state.Load(vibeHome, name); err == nil && found && inst.Timezone != "" {
+		return inst.Timezone
+	}
+	return timezone.Host()
+}
+
 // pickDefaultFeatures asks which library features a guided profile should
 // start with ticked, starting with defaults ticked. Quitting keeps
 // defaults.
@@ -2962,6 +3005,12 @@ func nudgeOnStart(vibeHome, name string) {
 		return
 	}
 	writePublishedURLs(vibeHome, name, logf)
+	zone := recordedTimezone(vibeHome, name)
+	if err := timezone.Apply(name, zone); err != nil {
+		logf("setting the timezone to %s failed: %v", zone, err)
+	} else {
+		logf("timezone is %s", zone)
+	}
 	if err := sbxrun.ExecDetached(name, "/home/agent/.local/bin/on-start"); err != nil {
 		logf("on-start nudge failed: %v", err)
 		return

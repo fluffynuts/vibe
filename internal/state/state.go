@@ -29,8 +29,12 @@ type Instance struct {
 	Publish []PublishRecord `yaml:"publish,omitempty"`
 	// MemoryStore is the host directory mounted in for the agent's
 	// memories, so they can be copied back out when a session ends.
-	MemoryStore string    `yaml:"memoryStore,omitempty"`
-	CreatedAt   time.Time `yaml:"createdAt"`
+	MemoryStore string `yaml:"memoryStore,omitempty"`
+	// Timezone is the zone the sandbox keeps its local time in, put back
+	// at every session start. Empty in records from before it was chosen,
+	// which are put on the host's.
+	Timezone  string    `yaml:"timezone,omitempty"`
+	CreatedAt time.Time `yaml:"createdAt"`
 }
 
 // Dir returns the instances directory under the given vibe home.
