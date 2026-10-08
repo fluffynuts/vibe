@@ -2407,19 +2407,24 @@ func ensureProfile(lay layout.Layout, profile string, force bool) error {
 				strings.Join(existing, ", "),
 				filepath.Join(lay.NewProfileDir(profile), "config.yaml"))
 		}
+		const (
+			guided = iota
+			copyExisting
+			blank
+		)
 		choice, ok := chooseFrom("create it how?",
-			[]string{"copy an existing profile", "create a new blank profile", "guided profile creation"}, 0)
+			[]string{"guided profile creation", "copy an existing profile", "create a new blank profile"}, guided)
 		if !ok {
 			return fmt.Errorf("aborted — no profile '%s' created", profile)
 		}
 		switch choice {
-		case 0:
+		case copyExisting:
 			pick, ok := chooseFrom(fmt.Sprintf("which profile should '%s' start from?", profile), existing, 0)
 			if !ok {
 				return fmt.Errorf("aborted — no profile '%s' created", profile)
 			}
 			source = existing[pick]
-		case 2:
+		case guided:
 			return ensureGuidedProfile(lay, profile)
 		}
 	}

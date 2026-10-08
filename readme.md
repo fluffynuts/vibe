@@ -328,7 +328,8 @@ than failing, vibe offers to create it:
 ```
 vibe: no profile 'foo-browser' yet in /home/me/.vibe/profiles
 vibe: create it how?
-❯ copy an existing profile
+❯ guided profile creation
+  copy an existing profile
   create a new blank profile
 (↑/↓ to move, enter to select, q to quit)
 ```
