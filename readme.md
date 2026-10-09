@@ -299,6 +299,11 @@ stays until something else, usually your shell's prompt, sets another. Sandboxes
 Claude Code get `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1`, so Claude doesn't replace the title with
 the conversation's. Set it to `0` in a profile's `env` to let Claude set it again.
 
+## I don't have access to a paid model - can I still use vibe?
+
+Yes! Select OpenCode as the agent during setup, and once the sandbox has started, select a
+free model with the `/models` command. Zen and Miro models should work.
+
 ## Where the configuration lives
 
 There are two layers. `~/.vibe` (override with `$VIBE_HOME`) is the master copy, and the bundle

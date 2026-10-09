@@ -479,3 +479,27 @@ func Build(baseConfig, profileConfig Doc, defaultsDir, profileDir string, agentI
 func Marshal(d Doc) ([]byte, error) {
 	return yaml.Marshal(map[string]interface{}(d))
 }
+
+// ClaudeFilesDir is where Claude Code's own files (settings, skills, themes)
+// live inside the sandbox.
+const ClaudeFilesDir = AgentHome + "/.claude/"
+
+// DropClaudeFiles removes every setup.files entry under ~/.claude from doc,
+// for a sandbox whose agent isn't Claude Code: nothing reads them there.
+func DropClaudeFiles(doc Doc) {
+	setup, _ := doc["setup"].(Doc)
+	if setup == nil {
+		return
+	}
+	files, _ := setup["files"].([]interface{})
+	kept := make([]interface{}, 0, len(files))
+	for _, e := range files {
+		if entry, ok := e.(Doc); ok {
+			if path, _ := entry["path"].(string); strings.HasPrefix(path, ClaudeFilesDir) {
+				continue
+			}
+		}
+		kept = append(kept, e)
+	}
+	setup["files"] = kept
+}

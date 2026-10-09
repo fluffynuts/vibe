@@ -254,3 +254,15 @@ func TestUpdatedCopiesAreLeftOutOfTheKit(t *testing.T) {
 		t.Errorf("files = %v (%v), want just the real tool", files, err)
 	}
 }
+
+func TestDropClaudeFilesKeepsOtherFiles(t *testing.T) {
+	doc := Doc{"setup": Doc{"files": []interface{}{
+		Doc{"path": AgentHome + "/.claude/settings.json"},
+		Doc{"path": AgentHome + "/.local/bin/on-start"},
+	}}}
+	DropClaudeFiles(doc)
+	files := doc["setup"].(Doc)["files"].([]interface{})
+	if len(files) != 1 || files[0].(Doc)["path"] != AgentHome+"/.local/bin/on-start" {
+		t.Fatalf("unexpected files: %v", files)
+	}
+}

@@ -1675,6 +1675,8 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 		if doc, err = setClaudeTheme(lay, profile, doc, "", true, args.Force); err != nil {
 			return err
 		}
+	} else {
+		kitspec.DropClaudeFiles(doc)
 	}
 	if err := createSandbox(vibeHome, name, target, profile, doc, merged, !args.Force, timezone.Host(), !args.Force, false, ""); err != nil {
 		return err
@@ -1989,6 +1991,8 @@ func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandb
 		if doc, err = setClaudeTheme(lay, profile, doc, themeFromSandbox, false, args.Force); err != nil {
 			return err
 		}
+	} else {
+		kitspec.DropClaudeFiles(doc)
 	}
 
 	note("rebuilding '%s' from profile '%s'", name, profile)

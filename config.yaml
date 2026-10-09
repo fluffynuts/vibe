@@ -4,8 +4,6 @@ name: vibe
 displayName: vibe base kit
 description: Permissions and tooling shared by every vibe profile
 sourceURL: https://github.com/fluffynuts/vibe
-requires:
-  agent: claude
 permissions:
   network:
     allow:
