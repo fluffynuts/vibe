@@ -406,11 +406,3 @@ func ExecInput(name, input string, args ...string) error {
 	}
 	return nil
 }
-
-// ExecDetached dispatches a command inside the sandbox in the background
-// (`sbx exec -d`).
-func ExecDetached(name string, args ...string) error {
-	full := append([]string{"exec", "-d", name, "--"}, args...)
-	cmd := exec.Command("sbx", full...)
-	return cmd.Run()
-}

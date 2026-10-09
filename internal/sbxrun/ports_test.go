@@ -8,7 +8,7 @@ import (
 // sbx doesn't document its `ports --json` shape, so these are the shapes a
 // ports listing plausibly takes; each has to come out the same way.
 func TestParsePortsReadsTheLikelyShapes(t *testing.T) {
-	want := map[int]int{5391: 5396, 8080: 8081}
+	want := map[int][]int{5391: {5396}, 8080: {8081}}
 	tests := []struct{ name, json string }{
 		{"flat list, camelCase", `[{"sandboxPort":5391,"hostPort":5396,"hostIP":"127.0.0.1","protocol":"tcp"},
 			{"sandboxPort":8080,"hostPort":8081,"hostIP":"127.0.0.1","protocol":"tcp"}]`},
@@ -30,6 +30,28 @@ func TestParsePortsReadsTheLikelyShapes(t *testing.T) {
 				t.Errorf("parsePorts = %v, want %v", got, want)
 			}
 		})
+	}
+}
+
+// What sbx really prints: the tcp4 mapping asked for at creation, then
+// the dual-stack one sbx adds on an ephemeral port at every start. Both
+// are kept, in order, and the second's IPv4 and IPv6 rows count once.
+func TestParsePortsKeepsEveryMappingOfAPort(t *testing.T) {
+	doc := `[
+  {"host_ip": "127.0.0.1", "host_port": 5391, "sandbox_port": 5391, "protocol": "tcp4"},
+  {"host_ip": "127.0.0.1", "host_port": 5405, "sandbox_port": 5390, "protocol": "tcp4"},
+  {"host_ip": "127.0.0.1", "host_port": 32777, "sandbox_port": 5391, "protocol": "tcp"},
+  {"host_ip": "::1", "host_port": 32777, "sandbox_port": 5391, "protocol": "tcp"},
+  {"host_ip": "127.0.0.1", "host_port": 32778, "sandbox_port": 5390, "protocol": "tcp"},
+  {"host_ip": "::1", "host_port": 32778, "sandbox_port": 5390, "protocol": "tcp"}
+]`
+	got, err := parsePorts([]byte(doc))
+	if err != nil {
+		t.Fatalf("parsePorts: %v", err)
+	}
+	want := map[int][]int{5391: {5391, 32777}, 5390: {5405, 32778}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("parsePorts = %v, want %v", got, want)
 	}
 }
 

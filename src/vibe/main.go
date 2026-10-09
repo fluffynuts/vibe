@@ -2156,11 +2156,24 @@ func doReCompose(lay layout.Layout, args cliargs.Args, name, target string) erro
 			"%s to adopt one, or use vibe -R to build a fresh profile from the library.",
 			profile, filepath.Join(lay.ProfileDir(profile), "config.yaml"))
 	}
-	if err := library.Validate(features, lay.Features()); err != nil {
+	available := lay.Features()
+	present, missing := splitMissingFeatures(features, available)
+	if len(missing) > 0 && args.Force {
+		// Nobody to ask, and silently rebuilding without a feature would
+		// drop something the profile needs.
+		err := library.Validate(missing, available)
 		return fmt.Errorf("profile '%s' was composed from a feature that is no longer there: %w", profile, err)
 	}
 
 	note("profile '%s' was composed from: %s", profile, strings.Join(features, ", "))
+	if len(missing) > 0 {
+		note("This sandbox profile refers to features which can no longer be located:")
+		for _, name := range missing {
+			note("  - %s", name)
+		}
+		note("Please verify which features are required (the ones still available are ticked):")
+		features = present
+	}
 	if !args.Force {
 		features, err = pickReComposeFeatures(lay, profile, features)
 		if err != nil {
@@ -2194,6 +2207,23 @@ func doReCompose(lay layout.Layout, args cliargs.Args, name, target string) erro
 	note("re-composed profile '%s' (%s) in %s", profile, strings.Join(features, ", "), created)
 
 	return reInit(lay, args, name, target, true, !args.Force)
+}
+
+// splitMissingFeatures separates the wanted features that the library still
+// has (in their original order) from those it no longer does.
+func splitMissingFeatures(wanted, available []string) (present, missing []string) {
+	have := make(map[string]bool, len(available))
+	for _, name := range available {
+		have[name] = true
+	}
+	for _, name := range wanted {
+		if have[name] {
+			present = append(present, name)
+		} else {
+			missing = append(missing, name)
+		}
+	}
+	return present, missing
 }
 
 // describeFeatures names features for a sentence, allowing for none.
@@ -3020,11 +3050,17 @@ func nudgeOnStart(vibeHome, name string) {
 	} else {
 		logf("timezone is %s", zone)
 	}
-	if err := sbxrun.ExecDetached(name, "/home/agent/.local/bin/on-start"); err != nil {
-		logf("on-start nudge failed: %v", err)
+	// sbx exec runs as the agent user, but on-start is written to run as
+	// root, as setup.startup runs it at first boot: its logs in /tmp are
+	// root's from then on, and as the agent it dies on the first of them
+	// without starting anything. It runs in the foreground — sbx exec has
+	// no --detach — which is fine here, off the session's own goroutine:
+	// what it starts to keep running (the clipboard server) detaches itself.
+	if out, err := sbxrun.ExecCapture(name, "sudo", "-n", "/home/agent/.local/bin/on-start"); err != nil {
+		logf("on-start nudge failed: %v: %s", err, strings.TrimSpace(out))
 		return
 	}
-	logf("on-start nudge dispatched")
+	logf("on-start nudge ran")
 }
 
 // publishedURLDir is where, inside the sandbox, each published service's
@@ -3084,8 +3120,12 @@ func (u publishedURL) fileContent() string {
 }
 
 // publishedURLs picks, for each publish entry, the URL of its first port —
-// the one urlEnv names — preferring the live mapping over the recorded one.
-func publishedURLs(records []state.PublishRecord, live map[int]int) []publishedURL {
+// the one urlEnv names. The recorded host port wins while sbx still lists
+// it: sbx adds a mapping of its own, on a fresh ephemeral port, at every
+// start, and that one doesn't reach the service. Only when the recorded
+// mapping is gone (changed since with `sbx ports --publish`) is the first
+// live one used instead.
+func publishedURLs(records []state.PublishRecord, live map[int][]int) []publishedURL {
 	var urls []publishedURL
 	seen := map[string]bool{}
 	for _, rec := range records {
@@ -3094,14 +3134,25 @@ func publishedURLs(records []state.PublishRecord, live map[int]int) []publishedU
 		}
 		seen[rec.Name] = true
 		u := publishedURL{name: rec.Name, containerPort: rec.ContainerPort, hostPort: rec.HostPort, recordedPort: rec.HostPort}
-		if hostPort, ok := live[rec.ContainerPort]; ok {
-			u.hostPort = hostPort
-		} else {
+		switch hostPorts := live[rec.ContainerPort]; {
+		case containsPort(hostPorts, rec.HostPort):
+		case len(hostPorts) > 0:
+			u.hostPort = hostPorts[0]
+		default:
 			u.unverified = true
 		}
 		urls = append(urls, u)
 	}
 	return urls
+}
+
+func containsPort(ports []int, port int) bool {
+	for _, p := range ports {
+		if p == port {
+			return true
+		}
+	}
+	return false
 }
 
 func reportPortHolder(port int) {

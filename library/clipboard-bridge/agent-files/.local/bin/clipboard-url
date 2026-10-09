@@ -9,7 +9,22 @@
 # Anything short of a confirmed URL is printed with a warning on stderr.
 # No braced shell expansions here: sbx validates every brace-form
 # substitution in file content against its own placeholder list.
+#
+# With --if-ready it first checks the page is up: that the server listens on
+# 5390, and that vibe has written the URL since the sandbox booted (a file
+# from an earlier boot may name a port that has since changed). Until both
+# hold it prints nothing and exits 3, so the status band can say the page is
+# still starting rather than hand out a URL that doesn't load yet.
 published=/home/agent/.local/state/vibe/published/clipboard
+if [ "$1" = --if-ready ]; then
+  # 5390 is 150E in hex; 0A is LISTEN.
+  cat /proc/net/tcp /proc/net/tcp6 2>/dev/null \
+    | awk '$2 ~ /:150E$/ && $4 == "0A" { f = 1 } END { exit f ? 0 : 1 }' \
+    || exit 3
+  booted=$(awk '$1 == "btime" { print $2 }' /proc/stat)
+  written=$(stat -c %Y "$published" 2>/dev/null)
+  [ -n "$written" ] && [ "$written" -ge "$booted" ] || exit 3
+fi
 url=
 if [ -s "$published" ]; then
   url=$(sed -n 1p "$published")

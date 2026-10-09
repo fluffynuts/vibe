@@ -16,13 +16,19 @@ async function git($: EngineInterface, args: string[]) {
   return ran.exitCode === 0 ? ran.stdout : null
 }
 
-// The clipboard feature's `clipboard-url`, when that feature is installed.
-async function clipboardUrl($: EngineInterface, home: string | undefined) {
+// The clipboard page, when that feature is installed: its URL once
+// `clipboard-url --if-ready` says the server is up and vibe has confirmed
+// the URL this boot, or 'starting' until then (exit 3). A clipboard-url from
+// before --if-ready ignores it and just prints the URL.
+async function clipboard($: EngineInterface, home: string | undefined): Promise<BandInfo['clipboard']> {
   try {
-    const ran = await $.process.run([`${home ?? '/home/agent'}/.local/bin/clipboard-url`], { timeoutMs: 5_000 })
+    const ran = await $.process.run([`${home ?? '/home/agent'}/.local/bin/clipboard-url`, '--if-ready'], {
+      timeoutMs: 5_000,
+    })
+    if (ran.exitCode === 3) return 'starting'
     const url = ran.exitCode === 0 ? ran.stdout.trim() : ''
 
-    return url === '' ? null : url
+    return url === '' ? null : { url }
   } catch {
     return null
   }
@@ -61,7 +67,7 @@ async function refresh($: EngineInterface) {
       project,
       folder: shortenPath(projectDir, home),
       git: status === null ? null : parseStatus(status),
-      clipboardUrl: await clipboardUrl($, home),
+      clipboard: await clipboard($, home),
       reviewUrl: await reviewUrl($, home),
     }
     const prev = await read($, info)
@@ -115,10 +121,14 @@ export const register: Register = on => {
             <Text color="cyan">{band.reviewUrl}</Text>
           </Text>
         )}
-        {band.clipboardUrl && (
+        {band.clipboard && (
           <Text>
             <Text dimColor>copy-paste at: </Text>
-            <Text color="cyan">{band.clipboardUrl}</Text>
+            {band.clipboard === 'starting' ? (
+              <Text dimColor italic>(starting)</Text>
+            ) : (
+              <Text color="cyan">{band.clipboard.url}</Text>
+            )}
           </Text>
         )}
       </Box>

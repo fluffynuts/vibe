@@ -397,6 +397,16 @@ func writeInstallScripts(profileDir string, scripts []plannedScript, highest int
 	return nil
 }
 
+// onStartAsRoot opens every generated on-start. setup.startup runs it as
+// root, so the logs it and its scripts write in /tmp are root's from the
+// first boot on; run as the agent user (by hand, or by an `sbx exec`) it
+// would die redirecting into the first of them. So it re-runs itself as
+// root when it can.
+const onStartAsRoot = `if [ "$(id -u)" != 0 ] && sudo -n true 2>/dev/null; then
+  exec sudo -n "$0" "$@"
+fi
+`
+
 // writeOnStart generates a startup script — in the same vein as
 // library/on-start.example — that runs every given agent-files/.local/bin
 // script, in order, and reports which ones failed without stopping the
@@ -410,6 +420,7 @@ func writeOnStart(profileDir string, scripts []string) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "#!/bin/sh\n")
 	fmt.Fprintf(&b, "# vibe: description: Run the startup scripts for: %s\n", strings.Join(scripts, ", "))
+	b.WriteString(onStartAsRoot)
 	b.WriteString("exec >>/tmp/start-services.log 2>&1\n")
 	b.WriteString("echo \"=== start-services at $(date -Is) ===\"\n")
 	fmt.Fprintf(&b, "for s in %s; do\n", strings.Join(scripts, " "))

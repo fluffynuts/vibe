@@ -409,7 +409,8 @@ Every sandbox also ships `vibe-band`, a Claude Code plugin from
 name, the project folder (the workspace, which doesn't follow the agent's `cd`), and git status in powerline style (branch, then `+` staged, `~` modified,
 `?` untracked, `✘` conflicted, `↑`/`↓` ahead/behind, `#` stash count). It refreshes every 2 seconds and after each
 turn. When the `clipboard-bridge` feature is installed, a second line, `copy-paste at: <url>`, shows the
-clipboard page's address (from `clipboard-url`). Once the agent has run a diffity review, a
+clipboard page's address (from `clipboard-url`), or `copy-paste at: (starting)` until the clipboard server is
+listening and vibe has confirmed its host port for this boot. Once the agent has run a diffity review, a
 `review at: <url>` line sits above it: the latest URL `diffity-url` gave out, shown while a diffity viewer is
 running. Claude Code loads it automatically from `~/.claude/skills/`, so nothing needs configuring; delete
 the folder from `~/.vibe/defaults/agent-files/.claude/skills/` to leave it out. As with themes, a

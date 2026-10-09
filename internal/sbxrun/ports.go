@@ -11,12 +11,15 @@ import (
 	"strings"
 )
 
-// PublishedPorts asks sbx which host port each of a sandbox's published
-// ports is actually bound to right now, as sandbox port → host port. It is
-// what a URL handed to the user should be built from: the port vibe asked
-// for at creation is only what it asked for, and a mapping can be changed
-// since with `sbx ports --publish`.
-func PublishedPorts(name string) (map[int]int, error) {
+// PublishedPorts asks sbx which host ports each of a sandbox's published
+// ports is actually bound to right now, as sandbox port → host ports, in
+// the order sbx lists them. It is what a URL handed to the user should be
+// built from: the port vibe asked for at creation is only what it asked
+// for, and a mapping can be changed since with `sbx ports --publish`. A
+// sandbox port can have more than one: besides the mapping asked for at
+// creation, sbx adds one of its own on a fresh ephemeral port at every
+// start.
+func PublishedPorts(name string) (map[int][]int, error) {
 	out, err := captureStdout("ports", name, "--json")
 	if err != nil {
 		return nil, err
@@ -44,12 +47,12 @@ func captureStdout(args ...string) ([]byte, error) {
 // sbx uses — and for Docker's own {"5391/tcp": [{"HostPort": "5396"}]}. A
 // document where neither turns up is an error, never an empty answer: an
 // empty answer would read as "nothing is published".
-func parsePorts(out []byte) (map[int]int, error) {
+func parsePorts(out []byte) (map[int][]int, error) {
 	var doc interface{}
 	if err := json.Unmarshal(out, &doc); err != nil {
 		return nil, fmt.Errorf("reading sbx ports output: %w", err)
 	}
-	ports := map[int]int{}
+	ports := map[int][]int{}
 	walkPorts(doc, ports)
 	if len(ports) == 0 && !emptyDoc(doc) {
 		return nil, fmt.Errorf("found no port mappings in sbx ports output: %s", strings.TrimSpace(string(out)))
@@ -80,7 +83,18 @@ var (
 	portSpecKey    = regexp.MustCompile(`^(\d+)(/[a-z0-9]+)?$`)
 )
 
-func walkPorts(node interface{}, ports map[int]int) {
+// addPort records hostPort for sandboxPort, once: sbx lists a dual-stack
+// mapping once per address family, on the same port.
+func addPort(ports map[int][]int, sandboxPort, hostPort int) {
+	for _, p := range ports[sandboxPort] {
+		if p == hostPort {
+			return
+		}
+	}
+	ports[sandboxPort] = append(ports[sandboxPort], hostPort)
+}
+
+func walkPorts(node interface{}, ports map[int][]int) {
 	switch v := node.(type) {
 	case []interface{}:
 		for _, child := range v {
@@ -98,14 +112,14 @@ func walkPorts(node interface{}, ports map[int]int) {
 			}
 		}
 		if sandbox != 0 && host != 0 {
-			ports[sandbox] = host
+			addPort(ports, sandbox, host)
 		}
 		for key, val := range v {
 			// Docker's shape: the sandbox port is the key itself.
 			if m := portSpecKey.FindStringSubmatch(key); m != nil {
 				sandboxPort, _ := strconv.Atoi(m[1])
 				if hostPort := firstHostPort(val); hostPort != 0 {
-					ports[sandboxPort] = hostPort
+					addPort(ports, sandboxPort, hostPort)
 					continue
 				}
 			}

@@ -507,9 +507,10 @@ func TestReComposeNeedsAProfileThatRecordsItsFeatures(t *testing.T) {
 	}
 }
 
-// TestReComposeRejectsAFeatureThatIsGone keeps a renamed or removed feature
-// from silently dropping out of a rebuilt profile.
-func TestReComposeRejectsAFeatureThatIsGone(t *testing.T) {
+// TestReComposeRejectsAFeatureThatIsGoneWhenNotAsking keeps a renamed or
+// removed feature from silently dropping out of a rebuilt profile when there
+// is no one to ask (--force).
+func TestReComposeRejectsAFeatureThatIsGoneWhenNotAsking(t *testing.T) {
 	lay := layout.New(t.TempDir(), t.TempDir())
 	writeFile(t, lay.BundlePath("library", "diffity", "install-scripts", "01-install"), "#!/bin/sh\necho hi\n")
 	writeFile(t, lay.HomePath("profiles", "foo-browser", "config.yaml"),
@@ -521,13 +522,24 @@ func TestReComposeRejectsAFeatureThatIsGone(t *testing.T) {
 	}
 }
 
+func TestSplitMissingFeaturesKeepsWhatIsStillThere(t *testing.T) {
+	present, missing := splitMissingFeatures(
+		[]string{"clipboard", "diffity", "mysql"}, []string{"diffity", "mysql", "redis"})
+	if got := strings.Join(present, ","); got != "diffity,mysql" {
+		t.Errorf("present = %s", got)
+	}
+	if got := strings.Join(missing, ","); got != "clipboard" {
+		t.Errorf("missing = %s", got)
+	}
+}
+
 func TestPublishedURLsPreferTheLiveMapping(t *testing.T) {
 	records := []state.PublishRecord{
 		{Name: "diffity", ContainerPort: 5391, HostPort: 5396},
 		{Name: "api", ContainerPort: 8080, HostPort: 8080},
 		{Name: "api", ContainerPort: 8081, HostPort: 8082}, // not the entry's first port
 	}
-	live := map[int]int{5391: 5399}
+	live := map[int][]int{5391: {5399}}
 	got := publishedURLs(records, live)
 	if len(got) != 2 {
 		t.Fatalf("publishedURLs = %+v, want one per publish entry", got)
@@ -543,6 +555,22 @@ func TestPublishedURLsPreferTheLiveMapping(t *testing.T) {
 	}
 	if c := got[1].fileContent(); !strings.HasPrefix(c, "http://localhost:8080\nunverified: ") {
 		t.Errorf("unverified file content = %q", c)
+	}
+}
+
+// sbx adds a mapping of its own on an ephemeral port at every start, which
+// doesn't reach the service; while the recorded one is still listed, it is
+// the one to hand out.
+func TestPublishedURLsKeepTheRecordedMappingWhileSbxListsIt(t *testing.T) {
+	records := []state.PublishRecord{{Name: "clipboard", ContainerPort: 5390, HostPort: 5405}}
+	for _, live := range []map[int][]int{
+		{5390: {5405, 32778}},
+		{5390: {32778, 5405}},
+	} {
+		got := publishedURLs(records, live)
+		if len(got) != 1 || got[0].url() != "http://localhost:5405" || got[0].unverified {
+			t.Errorf("publishedURLs with %v = %+v, want the recorded port 5405, verified", live, got)
+		}
 	}
 }
 
