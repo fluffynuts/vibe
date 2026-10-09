@@ -27,10 +27,14 @@ type Args struct {
 	Cleanup    bool
 	Delete     bool
 	Info       bool
+	Setup      bool
 	// NoCompanion is -N: don't serve the companion page this run.
 	NoCompanion bool
-	Help        bool
-	Version     bool
+	// NoStart is --no-start: do all the setup, but stop short of starting
+	// the sandbox and companion.
+	NoStart bool
+	Help    bool
+	Version bool
 	// UpdateStrategy is --install's --update-strategy value, unparsed.
 	UpdateStrategy string
 }
@@ -93,8 +97,14 @@ func Parse(argv []string) (Args, error) {
 		case arg == "-a" || arg == "--info":
 			a.Info = true
 			i++
+		case arg == "--setup":
+			a.Setup = true
+			i++
 		case arg == "-N" || arg == "--no-companion":
 			a.NoCompanion = true
+			i++
+		case arg == "--no-start":
+			a.NoStart = true
 			i++
 		case arg == "-n" || arg == "--name":
 			v, n, err := valueArg(argv, i)
@@ -170,11 +180,11 @@ func setPath(a *Args, v string) error {
 }
 
 // ExclusiveActions counts how many of the mutually-exclusive action flags
-// (stop/stop-all/ssh/re-init/re-create/re-compose/restore/list/install/upgrade/install-sbx/
+// (stop/stop-all/ssh/re-init/re-create/re-compose/restore/list/install/upgrade/install-sbx/setup/
 // cleanup/delete/info) are set.
 func (a Args) ExclusiveActions() int {
 	n := 0
-	for _, b := range []bool{a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info} {
+	for _, b := range []bool{a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info, a.Setup} {
 		if b {
 			n++
 		}

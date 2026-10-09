@@ -265,3 +265,33 @@ func TestParseNoCompanion(t *testing.T) {
 		}
 	}
 }
+
+func TestParseSetup(t *testing.T) {
+	got, err := Parse([]string{"--setup"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Setup || got.ExclusiveActions() != 1 {
+		t.Errorf("Parse(--setup) = %+v; want Setup, as the one action", got)
+	}
+	both, err := Parse([]string{"--setup", "-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if both.ExclusiveActions() != 2 {
+		t.Errorf("--setup with -a should count as two actions, got %d", both.ExclusiveActions())
+	}
+}
+
+func TestParseNoStart(t *testing.T) {
+	got, err := Parse([]string{"--no-start", "-C", "-f"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !got.NoStart || !got.ReCompose || !got.Force {
+		t.Errorf("got %+v, want NoStart, ReCompose and Force set", got)
+	}
+	if got.ExclusiveActions() != 1 {
+		t.Errorf("--no-start should not count as an action, got %d", got.ExclusiveActions())
+	}
+}

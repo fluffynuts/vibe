@@ -121,11 +121,17 @@ to date, when a check fails, or when the checks haven't finished by the time you
 
 The first `vibe --install` (and vibe's first run, if you skip `--install`) also sets up
 `~/.vibe/settings.yaml` for your machine. It asks how much memory each sandbox gets, in 4g steps
-up to half your machine's memory. It asks which agent sandboxes run, from the agents `sbx run
+up to half your machine's memory. It asks which agent sandboxes run by default, from the agents `sbx run
 --help` lists, and which library features a guided profile starts with ticked. Each question
-starts on the package's choice. With `-f`, or no terminal, it keeps the package's choices and only
+starts on the package's choice. Creating a new sandbox asks again which agent it should run,
+starting on that default; a re-init or re-create keeps the agent the sandbox was created with. With `-f`, or no terminal, it keeps the package's choices and only
 lowers the memory, if it's more than your machine can give. Every later `--install` makes the same
 memory check on your `settings.yaml`, and changes nothing else in it.
+
+`vibe --setup` asks those questions again (default memory, default agent, and the features a guided
+profile starts with ticked), starting on your current choices, and saves the answers in
+`~/.vibe/settings.yaml`. It needs a terminal, and `~/.vibe/settings.yaml` to exist (so run
+`vibe --install` first).
 
 `vibe --install`, run from a release's folder (which is all the install scripts and `--upgrade`
 do), goes through every file the package ships
@@ -203,6 +209,8 @@ vibe -f                    # ...and, for an unknown profile, create a blank one
 vibe -R/--re-create [path] # delete the profile too, then re-init — the profile
                            #    is gone, so this always re-prompts
 vibe -N/--no-companion     # ...without serving the companion page this run
+vibe --no-start            # ...doing the setup (create, -r, -R, -C) but not starting the sandbox or companion;
+                           # prints "type vibe to get started" unless -f is given (handy for cron)
 vibe -l/--list             # list every known sandbox and its status
 vibe -a/--info [path]      # show the sandbox's settings and, while it runs,
                            #    its uptime and memory and disk use

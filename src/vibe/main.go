@@ -92,6 +92,14 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              Windows, asking how (-f takes the first way,
                              and reinstalls when already up to date)
   vibe -N/--no-companion     ...without serving the companion page this run
+  vibe --no-start            ...doing all the setup (create, -r, -R, -C...) but
+                             stopping short of starting the sandbox and
+                             companion; prints "type vibe to get started"
+                             unless -f is given (for scripts and cron)
+  vibe --setup               go through the questions --install asks again
+                             (default memory, agent and guided-profile
+                             features), saving the answers in
+                             ~/.vibe/settings.yaml
   vibe -v/--version          print the version and the commit it was built from
   vibe -i/--install          copy defaults/profiles/library, config.yaml and
                              settings.yaml into ~/.vibe, and the vibe binary
@@ -164,7 +172,7 @@ func run(argv []string) error {
 		return fmt.Errorf("--update-strategy only applies to --install and --upgrade")
 	}
 	if args.ExclusiveActions() > 1 {
-		return fmt.Errorf("--stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete and --info are mutually exclusive")
+		return fmt.Errorf("--stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info and --setup are mutually exclusive")
 	}
 
 	vibeHome := vibeHomeDir()
@@ -188,6 +196,13 @@ func run(argv []string) error {
 			return fmt.Errorf("--install-sbx takes no path argument")
 		}
 		return doInstallSbx(args.Force)
+	}
+
+	if args.Setup {
+		if args.Path != "" {
+			return fmt.Errorf("--setup takes no path argument")
+		}
+		return doSetup(vibeHome, args.Force)
 	}
 
 	if args.Install {
@@ -544,7 +559,7 @@ func doInfo(lay layout.Layout, args cliargs.Args, name, target string) error {
 		if err != nil {
 			return err
 		}
-		info.agent = agentOf(merged)
+		info.agent = recordedAgent(lay.Home, name, agentOf(merged))
 		info.memory = merged.Memory
 		info.features = profilegen.ComposedFrom(lay.ProfileDir(profile))
 	}
@@ -1620,6 +1635,10 @@ func allocatePublish(vibeHome, name string, merged settings.Settings) ([]publish
 func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string) error {
 	vibeHome := lay.Home
 	if sbxrun.Exists(name) {
+		if args.NoStart {
+			note("sandbox '%s' already exists — nothing to set up", name)
+			return finish(lay, args, name)
+		}
 		note("attaching to existing sandbox '%s'", name)
 		inst, found, err := state.Load(vibeHome, name)
 		if err != nil {
@@ -1651,6 +1670,7 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 	if err != nil {
 		return err
 	}
+	merged.Agent = pickAgent(agentOf(merged), !args.Force && interactive(), fmt.Sprintf("which agent should sandbox '%s' run?", name))
 	if agentOf(merged) == "claude" {
 		if doc, err = setClaudeTheme(lay, profile, doc, "", true, args.Force); err != nil {
 			return err
@@ -1848,7 +1868,7 @@ func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merg
 	}
 
 	if err := state.Save(vibeHome, state.Instance{
-		Name: name, Profile: profile, Target: target, Publish: publishRecords, MemoryStore: memoryStore, Timezone: zone, CreatedAt: time.Now(),
+		Name: name, Profile: profile, Target: target, Publish: publishRecords, MemoryStore: memoryStore, Timezone: zone, Agent: agent, CreatedAt: time.Now(),
 	}); err != nil {
 		return err
 	}
@@ -1897,7 +1917,10 @@ func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandb
 	if err != nil {
 		return err
 	}
-	agent := agentOf(merged)
+	// A rebuild keeps the agent the sandbox was created with; it isn't asked
+	// again.
+	merged.Agent = recordedAgent(vibeHome, name, agentOf(merged))
+	agent := merged.Agent
 
 	restoreAfterCreate := false
 	var memoryStore string
@@ -2668,7 +2691,7 @@ func setUpSettings(lay layout.Layout, ask bool) error {
 		value interface{}
 	}{
 		{"memory", pickMemory(current.Memory, ask, "how much memory should each sandbox get? (you're asked again for each new sandbox)")},
-		{"agent", pickAgent(current.Agent, ask)},
+		{"agent", pickAgent(current.Agent, ask, "which agent should sandboxes run by default?")},
 	}
 	if ask {
 		features, err := pickDefaultFeatures(lay, current.DefaultFeatures)
@@ -2695,6 +2718,24 @@ func setUpSettings(lay layout.Layout, ask bool) error {
 	}
 	note("  saved your choices in %s", displayPath(path))
 	return nil
+}
+
+// doSetup is --setup: it asks again the questions a first --install asks,
+// so the defaults in ~/.vibe/settings.yaml can be changed. It has nothing to
+// ask on without a terminal, which -f would only make more so.
+func doSetup(vibeHome string, force bool) error {
+	if force || !interactive() {
+		return fmt.Errorf("--setup asks questions, so it needs a terminal (and no -f)")
+	}
+	bundleRoot, err := pathresolve.BundleRoot()
+	if err != nil {
+		return err
+	}
+	lay := layout.New(vibeHome, bundleRoot)
+	if _, err := os.Stat(lay.HomePath("settings.yaml")); os.IsNotExist(err) {
+		return fmt.Errorf("%s doesn't exist yet — run 'vibe --install' first", displayPath(lay.HomePath("settings.yaml")))
+	}
+	return setUpSettings(lay, true)
 }
 
 // lowerMemorySetting lowers the memory setting in the settings.yaml at path
@@ -2752,9 +2793,9 @@ func pickMemory(want string, ask bool, question string) string {
 	return options[i]
 }
 
-// pickAgent asks which agent sandboxes run, from the ones sbx lists,
+// pickAgent asks which agent a sandbox runs, from the ones sbx lists,
 // starting on current (claude when unset). Without ask, current is kept.
-func pickAgent(current string, ask bool) string {
+func pickAgent(current string, ask bool, question string) string {
 	if current == "" {
 		current = "claude"
 	}
@@ -2770,7 +2811,7 @@ func pickAgent(current string, ask bool) string {
 		agents = append([]string{current}, agents...)
 		idx = 0
 	}
-	i, ok := chooseFrom("which agent should sandboxes run?", agents, idx)
+	i, ok := chooseFrom(question, agents, idx)
 	if !ok {
 		note("  keeping agent: %s", current)
 		return current
@@ -2801,6 +2842,15 @@ func pickTimezone(current string, ask bool, question string) string {
 
 // recordedTimezone is the timezone sandbox name was created with, or the
 // host's when there's no record of one.
+// recordedAgent is the agent the sandbox name was created to run, or def
+// when no record says.
+func recordedAgent(vibeHome, name, def string) string {
+	if inst, found, err := state.Load(vibeHome, name); err == nil && found && inst.Agent != "" {
+		return inst.Agent
+	}
+	return def
+}
+
 func recordedTimezone(vibeHome, name string) string {
 	if inst, found, err := state.Load(vibeHome, name); err == nil && found && inst.Timezone != "" {
 		return inst.Timezone
@@ -2889,6 +2939,12 @@ const virtualBoxHint = "You should stop VirtualBox - sbx and virtualbox do not p
 // foreground.
 func finish(lay layout.Layout, args cliargs.Args, name string) error {
 	vibeHome := lay.Home
+	if args.NoStart {
+		if !args.Force {
+			note("type vibe to get started")
+		}
+		return nil
+	}
 	go nudgeOnStart(vibeHome, name)
 	stopCompanion := startCompanion(lay, args, name)
 	noteUpgrades := checkUpgradesInBackground()

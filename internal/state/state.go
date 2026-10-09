@@ -37,6 +37,10 @@ type Instance struct {
 	// at every session start. Empty in records from before it was chosen,
 	// which are put on the host's.
 	Timezone string `yaml:"timezone,omitempty"`
+	// Agent is the agent the sandbox was created to run, so a rebuild keeps
+	// it rather than falling back to the settings' default. Empty in records
+	// from before it was chosen per sandbox, which use the settings'.
+	Agent string `yaml:"agent,omitempty"`
 	// CompanionPort is the host port the companion page is served on, kept
 	// so its URL (and a bookmark of it) survives restarts. Zero until the
 	// page has first been served.
