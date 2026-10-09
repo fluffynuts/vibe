@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>vibe companion</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">vibe <span id="sandbox" class="sandbox"></span></div>
+    <div id="link" class="link" role="status"><span class="dot"></span><span id="link-text">connecting…</span></div>
+  </header>
+
+  <nav class="tabs" role="tablist" id="tabs">
+    <button role="tab" data-tab="clipboard" id="tab-clipboard" hidden>Clipboard</button>
+    <button role="tab" data-tab="log" id="tab-log">Network log</button>
+    <button role="tab" data-tab="rules" id="tab-rules">Network rules</button>
+    <button role="tab" data-tab="fs" id="tab-fs">Filesystem rules</button>
+  </nav>
+
+  <div id="banner" class="banner" role="alert" hidden></div>
+
+  <main>
+    <section id="panel-clipboard" class="panel panel-clipboard" hidden>
+      <div class="bar">
+        <span class="muted">The sandbox's clipboard page — paste images and text to the agent here.</span>
+        <span class="spacer"></span>
+        <button type="button" id="clipboard-reload" class="ghost">Reload</button>
+        <a id="clipboard-open" class="button ghost" target="_blank" rel="noopener noreferrer">Open on its own</a>
+      </div>
+      <iframe id="clipboard-frame" title="Clipboard" allow="clipboard-read; clipboard-write"></iframe>
+    </section>
+
+    <section id="panel-log" class="panel" hidden>
+      <div class="bar">
+        <span id="log-summary" class="summary"></span>
+        <span class="spacer"></span>
+        <div class="seg" id="log-filter" role="group" aria-label="Show">
+          <button type="button" data-filter="all" aria-pressed="true">All</button>
+          <button type="button" data-filter="blocked" aria-pressed="false">Blocked</button>
+          <button type="button" data-filter="unblocked" aria-pressed="false">Unblocked</button>
+          <button type="button" data-filter="allowed" aria-pressed="false">Allowed</button>
+        </div>
+        <input id="log-search" type="search" placeholder="Filter hosts" aria-label="Filter hosts" autocomplete="off">
+      </div>
+      <div class="scroll"><table id="log-table">
+        <thead><tr><th>Last seen</th><th>Host</th><th class="num">Hits</th><th>Status</th><th>Rule</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <p id="log-note" class="muted note"></p>
+    </section>
+
+    <section id="panel-rules" class="panel" hidden>
+      <form id="rule-form" class="bar" autocomplete="off">
+        <input id="rule-host" type="text" placeholder="host, *.domain, or CIDR" aria-label="Host to allow or block" spellcheck="false">
+        <button type="submit" data-decision="allow">Allow</button>
+        <button type="submit" data-decision="deny" class="danger">Block</button>
+        <span class="muted">for this sandbox only</span>
+      </form>
+      <div class="scroll"><table id="rules-table">
+        <thead><tr><th>Decision</th><th>Resources</th><th>Source</th><th>Applies to</th><th>Protocol</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <p id="rules-note" class="muted note"></p>
+    </section>
+
+    <section id="panel-fs" class="panel" hidden>
+      <div class="scroll"><table id="fs-table">
+        <thead><tr><th>Decision</th><th>Resources</th><th>Source</th><th>Applies to</th><th>Status</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <p id="fs-note" class="muted note">Read-only: sbx doesn't log filesystem access yet, so there is only the rules to show.</p>
+    </section>
+  </main>
+
+  <dialog id="confirm">
+    <form method="dialog">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-text"></p>
+      <p class="muted">This runs, on your machine:</p>
+      <code id="confirm-command"></code>
+      <div class="actions">
+        <button value="cancel" class="ghost">Cancel</button>
+        <button value="run" id="confirm-run" autofocus>Run</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -253,3 +253,15 @@ func TestParseInstallSbx(t *testing.T) {
 		t.Errorf("-I with -U should count as two actions, got %d", both.ExclusiveActions())
 	}
 }
+
+func TestParseNoCompanion(t *testing.T) {
+	for _, flag := range []string{"-N", "--no-companion"} {
+		a, err := Parse([]string{flag, "/path/to/code"})
+		if err != nil || !a.NoCompanion || a.Path != "/path/to/code" {
+			t.Fatalf("%s: expected NoCompanion and the path, got %+v err=%v", flag, a, err)
+		}
+		if a.ExclusiveActions() != 0 {
+			t.Errorf("%s is not an action", flag)
+		}
+	}
+}

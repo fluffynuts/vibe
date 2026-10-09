@@ -24,13 +24,18 @@ type PublishEntry struct {
 // Settings is the merged configuration used to drive sandbox creation.
 // Zero values mean "unset" for every scalar field.
 type Settings struct {
-	Memory     string            `yaml:"memory,omitempty"`
-	BasePort   int               `yaml:"basePort,omitempty"`
-	Agent      string            `yaml:"agent,omitempty"`
-	NugetDir   string            `yaml:"nugetDir,omitempty"`
-	MemoryRoot string            `yaml:"memoryRoot,omitempty"`
-	Publish    []PublishEntry    `yaml:"publish,omitempty"`
-	Env        map[string]string `yaml:"env,omitempty"`
+	Memory     string `yaml:"memory,omitempty"`
+	BasePort   int    `yaml:"basePort,omitempty"`
+	Agent      string `yaml:"agent,omitempty"`
+	NugetDir   string `yaml:"nugetDir,omitempty"`
+	MemoryRoot string `yaml:"memoryRoot,omitempty"`
+	// Companion says what vibe does about the companion page it serves for
+	// a running sandbox: "open" serves it and opens it in the browser,
+	// "serve" serves it and only prints the URL, "off" doesn't serve it.
+	// Unset means "open".
+	Companion string            `yaml:"companion,omitempty"`
+	Publish   []PublishEntry    `yaml:"publish,omitempty"`
+	Env       map[string]string `yaml:"env,omitempty"`
 	// DefaultFeatures are the library features a guided profile starts with
 	// them ticked. They are a starting point, not a requirement: the user
 	// can untick any of them while picking.
@@ -82,6 +87,9 @@ func Merge(base, override Settings) Settings {
 	}
 	if override.MemoryRoot != "" {
 		out.MemoryRoot = override.MemoryRoot
+	}
+	if override.Companion != "" {
+		out.Companion = override.Companion
 	}
 
 	out.Publish = append(append([]PublishEntry{}, base.Publish...), override.Publish...)

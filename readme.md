@@ -202,6 +202,7 @@ vibe -f                    # ...and, for an unknown profile, create a blank one
                            #    instead of asking
 vibe -R/--re-create [path] # delete the profile too, then re-init — the profile
                            #    is gone, so this always re-prompts
+vibe -N/--no-companion     # ...without serving the companion page this run
 vibe -l/--list             # list every known sandbox and its status
 vibe -a/--info [path]      # show the sandbox's settings and, while it runs,
                            #    its uptime and memory and disk use
@@ -416,6 +417,46 @@ running. Claude Code loads it automatically from `~/.claude/skills/`, so nothing
 the folder from `~/.vibe/defaults/agent-files/.claude/skills/` to leave it out. As with themes, a
 `~/.vibe/defaults` seeded before it existed won't have it until the bundle's copy is added.
 
+### Companion page
+
+Whenever vibe opens a sandbox it also serves a page for it on your own machine, prints its address
+(`companion page: http://localhost:10000/#…`) and opens it in your browser. It is what you'd otherwise
+reach for the sbx TUI for, scoped to the sandbox you're working in, with tabs:
+
+- **Clipboard** — the sandbox's clipboard page (see `clipboard-bridge` below), embedded; there only when
+  the profile has that feature.
+- **Network log** — every host the sandbox has tried to reach, with hit counts and whether it was
+  allowed or blocked, refreshing every couple of seconds while the tab is showing. Filter by status or
+  search for a host. A blocked host has an **Allow** button, an allowed one a **Block** button; click
+  a row to see everything sbx said about it.
+- **Network rules** — the rules that apply to the sandbox, a box to allow or block a host, and
+  **Remove** for the sandbox's own rules.
+- **Filesystem rules** — the same, read-only (sbx doesn't log filesystem access yet).
+
+Every change shows the exact `sbx` command it will run and waits for you to confirm. A change only ever
+adds or removes a rule scoped to *this* sandbox: global and org rules are listed but not touched, and a
+rule that would match every host (`*`, `**`) is refused — that is for the sbx CLI.
+
+The page needs `sbx` to be signed in (`sbx login`), the same as `sbx policy` does; until then it says so.
+
+Its address is the same at every start (the port is kept in the sandbox's instance record, and so is a
+secret token, in `~/.vibe/companion/<name>.token`), so a bookmark keeps working. The page lives as
+long as vibe does: when the session ends it shows "vibe is not running for this sandbox", and
+reconnects by itself when you run vibe again. A second vibe for the same sandbox leaves the first's page
+be and just prints its address.
+
+Because the page can change what the sandbox may reach, it is built to be out of the sandbox's reach: it
+listens on `127.0.0.1` only, answers only requests for `localhost`/`127.0.0.1`/`::1` on its own port (so
+not DNS rebinding, and not anything sent through `host.docker.internal`), needs the token on every call
+(it rides in the URL's `#fragment`, which browsers keep from servers and logs), takes changes only as
+same-origin JSON POSTs, and shows host names as text, never markup. The token is never written into the
+sandbox.
+
+`companion:` in `settings.yaml` (bundle or profile) sets what happens by default: `open` (the default —
+serve it and open the browser), `serve` (serve it and only print the address — for when you have a bookmark,
+or no desktop), or `off`. `-N/--no-companion` turns it off for one run. vibe doesn't open a browser
+over ssh, or on Linux without a display; it prints the address instead.
+
 ### Checkbox prompts
 
 Anywhere vibe asks you to check several things — the guided feature picker, `-x`/`--cleanup`, `-d`/`--delete` —
@@ -618,7 +659,7 @@ they are *now* and re-inits the sandbox, so a feature that has since gained an e
 published port or an instruction reaches the profiles built from it. The profile is regenerated
 rather than merged into — re-running the composition over the existing files would append every
 fragment a second time, duplicating permissions and published ports — so hand-edits to it are
-lost, and it asks before doing that (`-f` answers yes). Before rebuilding it shows the same feature
+lost, and it warns of that up front, in yellow, before anything else (enter accepts; `-f` skips the question). The profile is zipped into `~/.vibe/backup/<sandbox>-<date>_<time>.zip` first (the last three per sandbox are kept), and `vibe --restore [path]` lists them, rolls the profile back to the one you pick (after confirming) and offers to re-compose from it; `-f` restores the newest without asking. Before rebuilding it shows the same feature
 checklist as guided creation, with the profile's current features ticked, so you can add a feature or
 drop one you no longer use (and reorder them); with `-f` the recorded features are kept as they are. Profiles written by hand, copied or
 created blank record nothing and are refused rather than guessed at; add the comment line above
@@ -643,6 +684,8 @@ state:
   the host port each of its published container ports was given. It is the single source of truth for both:
   `--re-init` reads the profile back so it doesn't need `--profile` repeated, and re-claims the
   recorded host ports so a sandbox's URL stays stable across a rebuild.
+- `companion/<name>.token` — the secret token for a sandbox's companion page (readable only by you),
+  removed with the sandbox. Its port is in the instance record, as `companionPort`.
 - `memories/<name>/` — an agent's backed-up memories across a `--re-init`, when the profile's
   agent supports it. They can only be read out of a *running* sandbox, so once you have agreed to
   remove it, vibe starts a stopped one just long enough to ask whether it holds any before it goes.

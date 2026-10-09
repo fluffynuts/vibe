@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"vibe"
+	"vibe/internal/backup"
 	"vibe/internal/claudetheme"
 	"vibe/internal/cliargs"
 	"vibe/internal/clockskew"
@@ -67,6 +68,10 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              features it was composed from (pick which to
                              keep, add or drop), picking up whatever they
                              have gained since, then re-init
+  vibe --restore [path]      pick one of the last three backups of the
+                             profile (taken before each re-compose) to roll
+                             back to, then offer to re-compose from it;
+                             -f restores the newest, unasked
   vibe -l/--list             list every known sandbox and its status
   vibe -a/--info [path]      show the sandbox's settings (memory, agent,
                              features) and, while it runs, its uptime and
@@ -86,6 +91,7 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              ~/.docker/sbx; on macOS (Apple Silicon) and
                              Windows, asking how (-f takes the first way,
                              and reinstalls when already up to date)
+  vibe -N/--no-companion     ...without serving the companion page this run
   vibe -v/--version          print the version and the commit it was built from
   vibe -i/--install          copy defaults/profiles/library, config.yaml and
                              settings.yaml into ~/.vibe, and the vibe binary
@@ -98,6 +104,13 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe -i -u/--update-strategy S
                              settle files changed on both sides without
                              asking: keep, update, merge,keep or merge,update
+
+Every run that opens a sandbox also serves a companion page on this machine
+(localhost, only): tabs for the sandbox's clipboard page, network log, network
+rules and filesystem rules, so none of that needs the sbx TUI. Its URL is
+printed, and it opens in your browser. -N/--no-companion skips it for one run;
+"companion: open|serve|off" in settings.yaml sets the default (serve: print
+the URL, don't open it).
 
 -s, -c, -a, -r, -R, -C and -d resolve the sandbox name exactly as a normal run
 would, so "vibe -s && vibe" restarts whatever you were working on. -l and -x
@@ -151,7 +164,7 @@ func run(argv []string) error {
 		return fmt.Errorf("--update-strategy only applies to --install and --upgrade")
 	}
 	if args.ExclusiveActions() > 1 {
-		return fmt.Errorf("--stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --list, --install, --upgrade, --install-sbx, --cleanup, --delete and --info are mutually exclusive")
+		return fmt.Errorf("--stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete and --info are mutually exclusive")
 	}
 
 	vibeHome := vibeHomeDir()
@@ -263,6 +276,8 @@ func run(argv []string) error {
 		return doSsh(name, target)
 	case args.Info:
 		return doInfo(lay, args, name, target)
+	case args.Restore:
+		return doRestore(lay, args, name, target)
 	}
 
 	if err := guardFolder(vibeHome, target, args.Force); err != nil {
@@ -1476,6 +1491,22 @@ func onPath(goos, pathList, dir string) bool {
 
 // --- kit loading ----------------------------------------------------------
 
+// loadSettings merges the bundle's settings.yaml with the profile's.
+func loadSettings(lay layout.Layout, profile string) (settings.Settings, error) {
+	baseSettings, err := settings.Load(lay.File("settings.yaml"))
+	if err != nil {
+		return settings.Settings{}, err
+	}
+	profileSettings, err := settings.Load(filepath.Join(lay.ProfileDir(profile), "settings.yaml"))
+	if err != nil {
+		return settings.Settings{}, err
+	}
+	merged := settings.Merge(baseSettings, profileSettings)
+	merged.NugetDir = expandHome(merged.NugetDir)
+	merged.MemoryRoot = expandHome(merged.MemoryRoot)
+	return merged, nil
+}
+
 func loadKit(lay layout.Layout, profile string) (kitspec.Doc, settings.Settings, error) {
 	if !lay.ProfileExists(profile) {
 		return nil, settings.Settings{}, fmt.Errorf(
@@ -1483,17 +1514,10 @@ func loadKit(lay layout.Layout, profile string) (kitspec.Doc, settings.Settings,
 	}
 	profileDir := lay.ProfileDir(profile)
 
-	baseSettings, err := settings.Load(lay.File("settings.yaml"))
+	merged, err := loadSettings(lay, profile)
 	if err != nil {
 		return nil, settings.Settings{}, err
 	}
-	profileSettings, err := settings.Load(filepath.Join(profileDir, "settings.yaml"))
-	if err != nil {
-		return nil, settings.Settings{}, err
-	}
-	merged := settings.Merge(baseSettings, profileSettings)
-	merged.NugetDir = expandHome(merged.NugetDir)
-	merged.MemoryRoot = expandHome(merged.MemoryRoot)
 
 	baseConfig, err := kitspec.LoadDoc(lay.File("config.yaml"))
 	if err != nil {
@@ -1616,7 +1640,7 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 				note("  %s: http://localhost:%d", rec.Name, rec.HostPort)
 			}
 		}
-		return finish(vibeHome, name)
+		return finish(lay, args, name)
 	}
 
 	profile := resolveProfileName(args, target)
@@ -1635,7 +1659,7 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 	if err := createSandbox(vibeHome, name, target, profile, doc, merged, !args.Force, timezone.Host(), !args.Force, false, ""); err != nil {
 		return err
 	}
-	return finish(vibeHome, name)
+	return finish(lay, args, name)
 }
 
 func agentOf(merged settings.Settings) string {
@@ -1948,7 +1972,7 @@ func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandb
 	if err := createSandbox(vibeHome, name, target, profile, doc, merged, false, zone, askZone, restoreAfterCreate, memoryStore); err != nil {
 		return err
 	}
-	return finish(vibeHome, name)
+	return finish(lay, args, name)
 }
 
 // --- re-create --------------------------------------------------------------
@@ -2142,6 +2166,12 @@ func doDelete(lay layout.Layout, args cliargs.Args, name, target string) error {
 // instructions. That means hand-edits to the profile are lost, so this asks
 // first.
 func doReCompose(lay layout.Layout, args cliargs.Args, name, target string) error {
+	return reCompose(lay, args, name, target, true)
+}
+
+// reCompose is --re-compose's implementation. warn is off when the user has
+// just agreed to a rollback, which this follows on from.
+func reCompose(lay layout.Layout, args cliargs.Args, name, target string, warn bool) error {
 	profile, err := resolveReInitProfile(lay.Home, args, name, target)
 	if err != nil {
 		return err
@@ -2165,6 +2195,17 @@ func doReCompose(lay layout.Layout, args cliargs.Args, name, target string) erro
 		return fmt.Errorf("profile '%s' was composed from a feature that is no longer there: %w", profile, err)
 	}
 
+	// Asked first, and defaulting to yes: re-composing is nearly always
+	// safe, so the rest of the flow can be a matter of pressing enter.
+	if warn && !args.Force {
+		fmt.Fprintf(os.Stderr, "\x1b[1;93mvibe: WARNING: this rebuilds profile '%s' and destroys its sandbox '%s'.\x1b[0m\n", profile, name)
+		fmt.Fprintf(os.Stderr, "\x1b[1;93m  Your existing profile will be backed up (restore with --restore)\x1b[0m\n")
+		fmt.Fprintf(os.Stderr, "\x1b[1;93m  The existing sandbox will be destroyed and cannot be restored\x1b[0m\n")
+	}
+	if warn && !confirmDefault(args.Force, true, "Continue?") {
+		return fmt.Errorf("aborted — nothing changed")
+	}
+
 	note("profile '%s' was composed from: %s", profile, strings.Join(features, ", "))
 	if len(missing) > 0 {
 		note("This sandbox profile refers to features which can no longer be located:")
@@ -2180,16 +2221,17 @@ func doReCompose(lay layout.Layout, args cliargs.Args, name, target string) erro
 			return err
 		}
 	}
-	if !confirmDefault(args.Force, false, fmt.Sprintf(
-		"Rebuild profile '%s' from %s (losing any edits to it) and re-init its sandbox?",
-		profile, describeFeatures(features))) {
-		return fmt.Errorf("aborted — nothing changed")
-	}
-
 	// The recorded theme isn't something the features produce, so it would
 	// go with the rest of the old profile; carry it across.
 	theme, hadTheme := claudetheme.FromProfile(lay.ProfileDir(profile))
 	dir := lay.HomePath("profiles", profile)
+	if info, err := os.Stat(dir); dir != "" && err == nil && info.IsDir() {
+		if zip, err := backup.Create(lay.HomePath("backup"), name, dir, time.Now()); err != nil {
+			return fmt.Errorf("could not back up profile '%s' first (nothing changed): %w", profile, err)
+		} else {
+			note("backed up profile '%s' to %s", profile, zip)
+		}
+	}
 	if info, err := os.Stat(dir); dir != "" && err == nil && info.IsDir() {
 		if err := os.RemoveAll(dir); err != nil {
 			return err
@@ -2207,6 +2249,47 @@ func doReCompose(lay layout.Layout, args cliargs.Args, name, target string) erro
 	note("re-composed profile '%s' (%s) in %s", profile, strings.Join(features, ", "), created)
 
 	return reInit(lay, args, name, target, true, !args.Force)
+}
+
+// doRestore is --restore: roll the profile back to one of its backups, then
+// offer to re-compose from it.
+func doRestore(lay layout.Layout, args cliargs.Args, name, target string) error {
+	profile, err := resolveReInitProfile(lay.Home, args, name, target)
+	if err != nil {
+		return err
+	}
+	backups, err := backup.List(lay.HomePath("backup"), name)
+	if err != nil {
+		return err
+	}
+	if len(backups) == 0 {
+		note("There are no backups to restore")
+		return nil
+	}
+	chosen := backups[0]
+	if !args.Force {
+		labels := make([]string, len(backups))
+		for i, b := range backups {
+			labels[i] = b.Label()
+		}
+		idx, ok := chooseFrom(fmt.Sprintf("Backups of profile '%s' (newest first):", profile), labels, 0)
+		if !ok {
+			return fmt.Errorf("nothing chosen — nothing changed")
+		}
+		chosen = backups[idx]
+	}
+	if !confirmDefault(args.Force, true, "Are you sure you want to roll back to this backup? This action cannot be undone") {
+		return fmt.Errorf("aborted — nothing changed")
+	}
+	dir := lay.NewProfileDir(profile)
+	if err := backup.Restore(chosen.Path, dir); err != nil {
+		return err
+	}
+	note("restored profile '%s' from the backup of %s", profile, chosen.Label())
+	if !confirmDefault(args.Force, true, "Re-compose now?") {
+		return nil
+	}
+	return reCompose(lay, args, name, target, false)
 }
 
 // splitMissingFeatures separates the wanted features that the library still
@@ -2804,13 +2887,16 @@ const virtualBoxHint = "You should stop VirtualBox - sbx and virtualbox do not p
 // needed because setup.startup does not fire on a sandbox's very first boot,
 // before the launcher is on disk) then hands off to `sbx run` in the
 // foreground.
-func finish(vibeHome, name string) error {
+func finish(lay layout.Layout, args cliargs.Args, name string) error {
+	vibeHome := lay.Home
 	go nudgeOnStart(vibeHome, name)
+	stopCompanion := startCompanion(lay, args, name)
 	noteUpgrades := checkUpgradesInBackground()
 	sessionMu.Lock()
 	inSession = true
 	sessionMu.Unlock()
 	code, err := sbxrun.Run(name, session.StopRequested())
+	stopCompanion()
 	if err != nil {
 		return err
 	}

@@ -152,3 +152,52 @@ which configures the sandbox memory max to 12 gig and opens the two ports 1234 a
     agent memories, so these have to be gleaned from the sandbox before attempting re-initialisation,
     if the sandbox can be found
 
+
+Companion page
+---
+
+While a sandbox is open, vibe serves a small web page for it on the host, so the user doesn't have to
+open the sbx TUI (crowded when they have many sandboxes) to see the sandbox's network log, change its
+rules, or reach its clipboard page. Code: `internal/companion` (server + `ui/`), `internal/policy`
+(the `sbx policy` wrapper), `internal/browser`, `src/vibe/companion.go` (settings, port, lifecycle).
+
+Decisions, and why:
+- One page per sandbox, not one global page. It opens exactly when the user starts the sandbox they're
+  working in, it needs no "which sandbox" selector (so no wrong-sandbox mistakes), and its lifetime is its
+  vibe session's: no owner election between vibes, and recovery from a lost tab is "run vibe again".
+  A global overview (`vibe --dashboard`?) may come later, and would be a separate, explicitly-launched thing.
+- Runs in the vibe process on the host, never in the sandbox: it drives the host's `sbx`, and the agent
+  must not be able to widen its own network access. Security model is in `internal/companion/server.go`'s
+  package comment: 127.0.0.1 only; Host allow-list (DNS rebinding, `host.docker.internal`); a per-sandbox
+  secret token in the `X-Vibe-Token` header (kept in the URL fragment, in `~/.vibe/companion/<name>.token`,
+  mode 0600, removed with the sandbox, never written into the sandbox); same-origin JSON POST for changes;
+  strict CSP with no inline script; sbx output (host names are chosen by the sandbox!) only ever rendered as
+  text. Tests for each live in `server_test.go`.
+- Stable URL: the port is allocated once (from 10000, avoiding every other sandbox's publish and companion
+  ports) and kept in the instance record (`companionPort`); the token is stable too. A second vibe on the same
+  sandbox finds the first one's page (`/api/ping`) and doesn't start another.
+- Changes only ever add/remove a rule scoped to this sandbox (`--sandbox NAME`); global/org rules are shown
+  and never touched. Rules that match everything (`*`, `**`) are refused by the server. Every change is
+  confirmed in a dialog showing the exact `sbx` command.
+- `settings.yaml` `companion: open|serve|off` (default open); `-N/--no-companion` for one run. The browser
+  isn't opened over ssh or on a display-less Linux box (xdg-open would fall back to a text browser over vibe's TUI).
+- No live stream exists (`sbx policy log` has no `--follow`), so the page polls ~2s while its tab is showing
+  and the browser tab is visible; the server caches reads for 1s and shares one sbx call among simultaneous
+  requests.
+
+Not verified against a real signed-in sbx (the sandbox this was built in can't `sbx login`): the shape of
+`sbx policy log --json` and `sbx policy ls --json --wide`. `internal/policy` therefore reads them
+tolerantly — each field under every name sbx is known (it has a protobuf `PolicyLogEntry`: resource,
+decision, proxy_type, rule, reason, count, first_seen, last_seen) or likely to use — keeps the raw entry
+(click a row to see it), and counts entries it couldn't read a host from (the page says how many). First thing
+to do with a signed-in sbx: capture real output into fixtures in `policy_test.go` and tighten the parser, and
+check `Removable` (needs an id, and a source that isn't org/kit) against real rules.
+
+Deliberately left out, for later:
+- Pending approvals (`sbx policy approval ls/respond`): the CLI has no `--json` for them; wants real output
+  first. Would give "blocked — allow?" as sbx's own flow.
+- Global overview across sandboxes.
+- "Why is this blocked / what is sending to it" hints (e.g. the Datadog telemetry).
+- Filesystem access log (sbx doesn't support `policy log --type filesystem` yet).
+- Visual check in a real browser: the page was exercised in jsdom (rendering, escaping, dialog flow, the
+  commands it builds) but not looked at.

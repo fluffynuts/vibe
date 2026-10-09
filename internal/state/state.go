@@ -4,9 +4,12 @@
 package state
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -33,8 +36,12 @@ type Instance struct {
 	// Timezone is the zone the sandbox keeps its local time in, put back
 	// at every session start. Empty in records from before it was chosen,
 	// which are put on the host's.
-	Timezone  string    `yaml:"timezone,omitempty"`
-	CreatedAt time.Time `yaml:"createdAt"`
+	Timezone string `yaml:"timezone,omitempty"`
+	// CompanionPort is the host port the companion page is served on, kept
+	// so its URL (and a bookmark of it) survives restarts. Zero until the
+	// page has first been served.
+	CompanionPort int       `yaml:"companionPort,omitempty"`
+	CreatedAt     time.Time `yaml:"createdAt"`
 }
 
 // Dir returns the instances directory under the given vibe home.
@@ -78,13 +85,50 @@ func Load(vibeHome, name string) (Instance, bool, error) {
 	return inst, true, nil
 }
 
-// Remove deletes a sandbox's instance record, if any.
+// Remove deletes a sandbox's instance record, and its companion token, if
+// any.
 func Remove(vibeHome, name string) error {
 	err := os.Remove(path(vibeHome, name))
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing instance record: %w", err)
 	}
+	err = os.Remove(tokenPath(vibeHome, name))
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing companion token: %w", err)
+	}
 	return nil
+}
+
+func tokenPath(vibeHome, name string) string {
+	return filepath.Join(vibeHome, "companion", name+".token")
+}
+
+// CompanionToken returns the secret the companion page for a sandbox asks
+// for, making one the first time. It is the same every time, so a bookmark
+// of the page keeps working across restarts. It lives only on the host, in
+// a file only the user can read: the page can change the sandbox's network
+// rules, so the sandbox itself must never learn it.
+func CompanionToken(vibeHome, name string) (string, error) {
+	file := tokenPath(vibeHome, name)
+	if data, err := os.ReadFile(file); err == nil {
+		if token := strings.TrimSpace(string(data)); len(token) >= 32 {
+			return token, nil
+		}
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("reading companion token: %w", err)
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("making a companion token: %w", err)
+	}
+	token := hex.EncodeToString(raw)
+	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+		return "", fmt.Errorf("creating companion dir: %w", err)
+	}
+	if err := os.WriteFile(file, []byte(token+"\n"), 0o600); err != nil {
+		return "", fmt.Errorf("writing companion token: %w", err)
+	}
+	return token, nil
 }
 
 // List returns every known instance record.

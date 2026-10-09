@@ -111,3 +111,14 @@ func TestSetRefusesANonMapping(t *testing.T) {
 		t.Error("Set on a list succeeded")
 	}
 }
+
+func TestMergeCompanionOverrides(t *testing.T) {
+	got := Merge(Settings{Companion: "open"}, Settings{Companion: "off"})
+	if got.Companion != "off" {
+		t.Errorf("Companion = %q, want off", got.Companion)
+	}
+	got = Merge(Settings{Companion: "serve"}, Settings{})
+	if got.Companion != "serve" {
+		t.Errorf("Companion = %q, want serve (unset override should not clobber base)", got.Companion)
+	}
+}
