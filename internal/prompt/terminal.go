@@ -49,6 +49,21 @@ func (t *Terminal) Write(p []byte) (int, error) {
 
 var _ io.Writer = (*Terminal)(nil)
 
+// ReadMasked reads a line typed or pasted on the terminal, showing a * for
+// each character rather than the character itself — for a token, which
+// shouldn't be left on the screen or in its scrollback, but whose length
+// is worth seeing: a paste that came out short, or twice over, shows.
+// Backspace takes the last character back, Ctrl-U all of them; Ctrl-C or
+// Esc gives up (ok=false). The caller prints the question first.
+func (t *Terminal) ReadMasked() (line string, ok bool) {
+	restore, err := t.makeRaw()
+	if err != nil {
+		return "", false
+	}
+	defer restore()
+	return readMasked(t, t)
+}
+
 // makeRaw puts the terminal's input into raw mode, returning the function
 // that puts it back.
 func (t *Terminal) makeRaw() (restore func(), err error) {

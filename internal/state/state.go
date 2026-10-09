@@ -44,8 +44,21 @@ type Instance struct {
 	// CompanionPort is the host port the companion page is served on, kept
 	// so its URL (and a bookmark of it) survives restarts. Zero until the
 	// page has first been served.
-	CompanionPort int       `yaml:"companionPort,omitempty"`
-	CreatedAt     time.Time `yaml:"createdAt"`
+	CompanionPort int `yaml:"companionPort,omitempty"`
+	// GitToken says where the GitHub token the agent pushes with came
+	// from — "default" (the one --setup stored) or "own" (one given for
+	// this sandbox) — or is empty when the sandbox has none, which is how
+	// every sandbox starts. The token itself is kept apart, in
+	// GitTokenPath, readable by the user alone.
+	GitToken string `yaml:"gitToken,omitempty"`
+	// GitRules are the rules the agent was given for pushing, besides
+	// never force-pushing (see gittoken.RuleOrder).
+	GitRules []string `yaml:"gitRules,omitempty"`
+	// GitTokenExpires is when the token stops working, as GitHub said when
+	// it was given; zero when it never does, or GitHub didn't say. vibe
+	// warns as it nears, at every session start.
+	GitTokenExpires time.Time `yaml:"gitTokenExpires,omitempty"`
+	CreatedAt       time.Time `yaml:"createdAt"`
 }
 
 // Dir returns the instances directory under the given vibe home.
@@ -89,8 +102,8 @@ func Load(vibeHome, name string) (Instance, bool, error) {
 	return inst, true, nil
 }
 
-// Remove deletes a sandbox's instance record, and its companion token, if
-// any.
+// Remove deletes a sandbox's instance record, and its companion and git
+// tokens, if any.
 func Remove(vibeHome, name string) error {
 	err := os.Remove(path(vibeHome, name))
 	if err != nil && !os.IsNotExist(err) {
@@ -100,7 +113,23 @@ func Remove(vibeHome, name string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing companion token: %w", err)
 	}
+	err = os.Remove(GitTokenPath(vibeHome, name))
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing git token: %w", err)
+	}
 	return nil
+}
+
+// GitTokenPath is where the GitHub token a sandbox's agent pushes with is
+// kept on the host, so a rebuild can hand it to the new sandbox.
+func GitTokenPath(vibeHome, name string) string {
+	return filepath.Join(vibeHome, "git", "sandboxes", name+".token")
+}
+
+// DefaultGitTokenPath is where the token --setup stores for sandboxes to
+// use is kept.
+func DefaultGitTokenPath(vibeHome string) string {
+	return filepath.Join(vibeHome, "git", "default.token")
 }
 
 func tokenPath(vibeHome, name string) string {

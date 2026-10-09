@@ -33,8 +33,21 @@ type Args struct {
 	// NoStart is --no-start: do all the setup, but stop short of starting
 	// the sandbox and companion.
 	NoStart bool
-	Help    bool
-	Version bool
+	// GitToken is --git-token: give the sandbox for the folder a GitHub
+	// token to push with, change the one it has, or take it away.
+	GitToken bool
+	// GitTokenEnv is --git-token-env: the environment variable holding the
+	// token to give a sandbox, so it needn't be typed (or be in argv, where
+	// anyone on the machine could read it).
+	GitTokenEnv string
+	// NoGitToken is --no-git-token: no token for a new sandbox, without
+	// asking; with --git-token, take the sandbox's away.
+	NoGitToken bool
+	// GitRules is --git-rules: the rules the agent is given for pushing,
+	// comma-separated and unparsed, for when there's no one to ask.
+	GitRules string
+	Help     bool
+	Version  bool
 	// UpdateStrategy is --install's --update-strategy value, unparsed.
 	UpdateStrategy string
 }
@@ -105,6 +118,32 @@ func Parse(argv []string) (Args, error) {
 			i++
 		case arg == "--no-start":
 			a.NoStart = true
+			i++
+		case arg == "--git-token":
+			a.GitToken = true
+			i++
+		case arg == "--no-git-token":
+			a.NoGitToken = true
+			i++
+		case arg == "--git-token-env":
+			v, n, err := valueArg(argv, i)
+			if err != nil {
+				return a, err
+			}
+			a.GitTokenEnv = v
+			i += n
+		case strings.HasPrefix(arg, "--git-token-env="):
+			a.GitTokenEnv = strings.TrimPrefix(arg, "--git-token-env=")
+			i++
+		case arg == "--git-rules":
+			v, n, err := valueArg(argv, i)
+			if err != nil {
+				return a, err
+			}
+			a.GitRules = v
+			i += n
+		case strings.HasPrefix(arg, "--git-rules="):
+			a.GitRules = strings.TrimPrefix(arg, "--git-rules=")
 			i++
 		case arg == "-n" || arg == "--name":
 			v, n, err := valueArg(argv, i)
@@ -181,10 +220,10 @@ func setPath(a *Args, v string) error {
 
 // ExclusiveActions counts how many of the mutually-exclusive action flags
 // (stop/stop-all/ssh/re-init/re-create/re-compose/restore/list/install/upgrade/install-sbx/setup/
-// cleanup/delete/info) are set.
+// cleanup/delete/info/git-token) are set.
 func (a Args) ExclusiveActions() int {
 	n := 0
-	for _, b := range []bool{a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info, a.Setup} {
+	for _, b := range []bool{a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info, a.Setup, a.GitToken} {
 		if b {
 			n++
 		}

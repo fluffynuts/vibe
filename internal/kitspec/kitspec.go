@@ -458,21 +458,28 @@ func Build(baseConfig, profileConfig Doc, defaultsDir, profileDir string, agentI
 
 	mergeDiscoveredDomains(merged, discoverDomains(installSteps, fileEntries))
 
-	if agentInstructionsProfile != "" {
-		agentInstructions, _ := merged["agentInstructions"].(Doc)
-		if agentInstructions == nil {
-			agentInstructions = Doc{}
-		}
-		existing, _ := agentInstructions["content"].(string)
-		if existing != "" {
-			agentInstructions["content"] = existing + "\n" + agentInstructionsProfile
-		} else {
-			agentInstructions["content"] = agentInstructionsProfile
-		}
-		merged["agentInstructions"] = agentInstructions
-	}
+	AppendAgentInstructions(merged, agentInstructionsProfile)
 
 	return merged, nil
+}
+
+// AppendAgentInstructions adds text to the end of the doc's
+// agentInstructions.content, on a line of its own.
+func AppendAgentInstructions(doc Doc, text string) {
+	if text == "" {
+		return
+	}
+	agentInstructions, _ := doc["agentInstructions"].(Doc)
+	if agentInstructions == nil {
+		agentInstructions = Doc{}
+	}
+	existing, _ := agentInstructions["content"].(string)
+	if existing != "" {
+		agentInstructions["content"] = existing + "\n" + text
+	} else {
+		agentInstructions["content"] = text
+	}
+	doc["agentInstructions"] = agentInstructions
 }
 
 // Marshal renders the document as YAML.

@@ -486,3 +486,55 @@ func checklistLines(labels []string, marks []bool, cursor int) []string {
 func reorderLines(labels []string, cursor int) []string {
 	return listLines(labels, cursor, noPrefix, "(↑/↓ to select, shift+↑/↓ to move the selected item, enter to confirm, q to quit)")
 }
+
+// readMasked is ReadMasked's loop, echoing to echo: kept apart from raw
+// mode so it can be fed keys under test.
+func readMasked(rw *Terminal, echo io.Writer) (string, bool) {
+	var line []byte
+	erase := func() {
+		// Back up over the last character: its bytes, as UTF-8, but one *.
+		i := len(line) - 1
+		for i > 0 && line[i]&0xC0 == 0x80 {
+			i--
+		}
+		line = line[:i]
+		io.WriteString(echo, "\b \b")
+	}
+	for {
+		b, ok := rw.readByte()
+		if !ok {
+			return "", false
+		}
+		switch {
+		case b == '\r' || b == '\n':
+			io.WriteString(echo, "\r\n")
+			return string(line), true
+		case b == 3: // Ctrl-C
+			io.WriteString(echo, "\r\n")
+			return "", false
+		case b == 0x1b:
+			// A key with an escape sequence, or a bracketed paste's
+			// markers, is skipped; Esc on its own gives up.
+			if readEscape(rw) == escBare {
+				io.WriteString(echo, "\r\n")
+				return "", false
+			}
+		case b == 0x7f || b == 0x08: // Backspace
+			if len(line) > 0 {
+				erase()
+			}
+		case b == 0x15: // Ctrl-U
+			for len(line) > 0 {
+				erase()
+			}
+		case b < 0x20:
+			// Any other control character (a tab, say) isn't part of a
+			// token.
+		default:
+			line = append(line, b)
+			if b&0xC0 != 0x80 {
+				io.WriteString(echo, "*")
+			}
+		}
+	}
+}

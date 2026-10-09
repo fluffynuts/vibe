@@ -26,6 +26,7 @@ import (
 	"vibe/internal/cliargs"
 	"vibe/internal/clockskew"
 	"vibe/internal/fscopy"
+	"vibe/internal/gittoken"
 	"vibe/internal/homeinit"
 	"vibe/internal/hostmem"
 	"vibe/internal/kitspec"
@@ -99,7 +100,16 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe --setup               go through the questions --install asks again
                              (default memory, agent and guided-profile
                              features), saving the answers in
-                             ~/.vibe/settings.yaml
+                             ~/.vibe/settings.yaml, and offer to store a
+                             default GitHub token for sandboxes to push with
+  vibe --git-token [path]    give the sandbox for path a GitHub token to
+                             push with, renew or change it, or take it away
+  vibe --git-token-env VAR   ...a new sandbox (or --git-token) the token in
+                             $VAR, unasked
+  vibe --git-rules R[,R]     ...and these rules for pushing, unasked:
+                             feature-branch, no-default-branch
+  vibe --no-git-token        ...no token for a new sandbox, unasked; with
+                             --git-token, take the sandbox's away
   vibe -v/--version          print the version and the commit it was built from
   vibe -i/--install          copy defaults/profiles/library, config.yaml and
                              settings.yaml into ~/.vibe, and the vibe binary
@@ -120,7 +130,17 @@ printed, and it opens in your browser. -N/--no-companion skips it for one run;
 "companion: open|serve|off" in settings.yaml sets the default (serve: print
 the URL, don't open it).
 
--s, -c, -a, -r, -R, -C and -d resolve the sandbox name exactly as a normal run
+An agent in a vibe sandbox has no git credentials unless you give it some,
+so you commit and push — and read the code — yourself. To let it push while
+it works through a plan, a new sandbox asks whether to give it a GitHub token
+(no is the default): the default one --setup stored, or one just for the
+folder's repository, which vibe opens GitHub's token page to make. The token
+is checked with GitHub, handed to sbx as the sandbox's own secret (it never
+enters the sandbox), and the agent is told never to force-push, plus any
+rules you pick (only work in a feature branch; never push the default
+branch).
+
+-s, -c, -a, -r, -R, -C, -d and --git-token resolve the sandbox name exactly as a normal run
 would, so "vibe -s && vibe" restarts whatever you were working on. -l and -x
 work on every sandbox at once and take no path.
 
@@ -172,7 +192,11 @@ func run(argv []string) error {
 		return fmt.Errorf("--update-strategy only applies to --install and --upgrade")
 	}
 	if args.ExclusiveActions() > 1 {
-		return fmt.Errorf("--stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info and --setup are mutually exclusive")
+		return fmt.Errorf("--stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info, --setup and --git-token are mutually exclusive")
+	}
+
+	if (args.GitTokenEnv != "" || args.NoGitToken || args.GitRules != "") && args.ExclusiveActions() > 0 && !args.GitToken {
+		return fmt.Errorf("--git-token-env, --no-git-token and --git-rules only apply to a new sandbox, or with --git-token")
 	}
 
 	vibeHome := vibeHomeDir()
@@ -291,6 +315,8 @@ func run(argv []string) error {
 		return doSsh(name, target)
 	case args.Info:
 		return doInfo(lay, args, name, target)
+	case args.GitToken:
+		return doGitToken(vibeHome, args, name, target)
 	case args.Restore:
 		return doRestore(lay, args, name, target)
 	}
@@ -520,9 +546,12 @@ type sandboxInfo struct {
 	name, target, profile string
 	exists, running       bool
 	agent                 string
-	memory                string   // the memory setting; empty for sbx's default
-	timezone              string   // the zone the sandbox keeps its time in
-	features              []string // what a guided profile was composed from
+	memory                string    // the memory setting; empty for sbx's default
+	timezone              string    // the zone the sandbox keeps its time in
+	gitToken              string    // where its GitHub token came from; empty for none
+	gitRules              []string  // its agent's rules for pushing
+	gitTokenExpires       time.Time // when its GitHub token expires; zero when never, or not known
+	features              []string  // what a guided profile was composed from
 	usage                 *sandboxUsage
 	usageErr              error
 }
@@ -554,6 +583,9 @@ func doInfo(lay layout.Layout, args cliargs.Args, name, target string) error {
 		return err
 	}
 	info := sandboxInfo{name: name, target: target, profile: profile, timezone: recordedTimezone(lay.Home, name)}
+	if inst, found, err := state.Load(lay.Home, name); err == nil && found {
+		info.gitToken, info.gitRules, info.gitTokenExpires = inst.GitToken, inst.GitRules, inst.GitTokenExpires
+	}
 	if lay.ProfileExists(profile) {
 		_, merged, err := loadKit(lay, profile)
 		if err != nil {
@@ -693,6 +725,12 @@ func printInfo(w io.Writer, info sandboxInfo, profileKnown bool) {
 			row("memory", "%s", info.memory)
 		}
 		row("timezone", "%s", info.timezone)
+		if info.gitToken == "" {
+			row("github", "no token: you commit and push yourself")
+		} else {
+			row("github", "the agent can push (%s token%s); it's told never to force-push%s", info.gitToken,
+				prefixed(", ", gittoken.DescribeExpiry(info.gitTokenExpires, timeNow())), rulesSuffix(info.gitRules))
+		}
 		if len(info.features) == 0 {
 			row("features", "none recorded (not a guided profile)")
 		} else {
@@ -896,6 +934,7 @@ func removeSandboxes(vibeHome string, names []string, remove func(name string, f
 			failed = append(failed, name)
 			continue
 		}
+		forgetGitSecret(vibeHome, name)
 		if err := state.Remove(vibeHome, name); err != nil {
 			note("  WARNING: %s", err)
 		}
@@ -1640,6 +1679,9 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 			return finish(lay, args, name)
 		}
 		note("attaching to existing sandbox '%s'", name)
+		if args.GitTokenEnv != "" || args.NoGitToken || args.GitRules != "" {
+			note("  (it exists, so --git-token-env, --no-git-token and --git-rules don't apply — 'vibe --git-token' changes its token)")
+		}
 		inst, found, err := state.Load(vibeHome, name)
 		if err != nil {
 			return err
@@ -1678,7 +1720,11 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 	} else {
 		kitspec.DropClaudeFiles(doc)
 	}
-	if err := createSandbox(vibeHome, name, target, profile, doc, merged, !args.Force, timezone.Host(), !args.Force, false, ""); err != nil {
+	git, err := pickGitAccess(vibeHome, args, name, target)
+	if err != nil {
+		return err
+	}
+	if err := createSandbox(vibeHome, name, target, profile, doc, merged, !args.Force, timezone.Host(), !args.Force, false, "", git); err != nil {
 		return err
 	}
 	return finish(lay, args, name)
@@ -1759,8 +1805,12 @@ func indexOf(list []string, s string) int {
 
 // askMemory offers a choice of how much memory the sandbox gets, starting
 // on the memory setting; without it, that setting is used as long as this
-// machine can give it.
-func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merged settings.Settings, askMemory bool, zone string, askZone, restoreAfterCreate bool, memoryStore string) error {
+// machine can give it. git, when not nil, is the GitHub token the agent may
+// push with.
+func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merged settings.Settings, askMemory bool, zone string, askZone, restoreAfterCreate bool, memoryStore string, git *gitAccess) error {
+	// Every sandbox's agent is told where to look for its rules for
+	// pushing, since a token can be given to a sandbox after it's made.
+	kitspec.AppendAgentInstructions(doc, gittoken.KitInstructions)
 	kitDir, err := writeKit(doc, name)
 	if err != nil {
 		return err
@@ -1869,9 +1919,13 @@ func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merg
 		}
 	}
 
-	if err := state.Save(vibeHome, state.Instance{
+	inst := state.Instance{
 		Name: name, Profile: profile, Target: target, Publish: publishRecords, MemoryStore: memoryStore, Timezone: zone, Agent: agent, CreatedAt: time.Now(),
-	}); err != nil {
+	}
+	if git = giveGitAccess(vibeHome, name, git, repoOf(target)); git != nil {
+		inst.GitToken, inst.GitRules, inst.GitTokenExpires = git.source, git.rules, git.expires
+	}
+	if err := state.Save(vibeHome, inst); err != nil {
 		return err
 	}
 	return nil
@@ -1928,6 +1982,7 @@ func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandb
 	var memoryStore string
 	var themeFromSandbox string
 	zone := recordedTimezone(vibeHome, name)
+	git := recordedGitAccess(vibeHome, name)
 
 	if sbxrun.Exists(name) {
 		if !skipSandboxConfirm && !confirmDefault(args.Force, true, fmt.Sprintf("Remove sandbox '%s' (workspace %s)?", name, target)) {
@@ -1996,7 +2051,7 @@ func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandb
 	}
 
 	note("rebuilding '%s' from profile '%s'", name, profile)
-	if err := createSandbox(vibeHome, name, target, profile, doc, merged, false, zone, askZone, restoreAfterCreate, memoryStore); err != nil {
+	if err := createSandbox(vibeHome, name, target, profile, doc, merged, false, zone, askZone, restoreAfterCreate, memoryStore, git); err != nil {
 		return err
 	}
 	return finish(lay, args, name)
@@ -2116,6 +2171,7 @@ func (d deletion) run(vibeHome string, sandbox, profile bool, remove func(name s
 		if err := remove(d.name, true); err != nil {
 			return fmt.Errorf("could not remove sandbox '%s': %w", d.name, err)
 		}
+		forgetGitSecret(vibeHome, d.name)
 		if err := state.Remove(vibeHome, d.name); err != nil {
 			note("WARNING: %s", err)
 		}
@@ -2739,7 +2795,11 @@ func doSetup(vibeHome string, force bool) error {
 	if _, err := os.Stat(lay.HomePath("settings.yaml")); os.IsNotExist(err) {
 		return fmt.Errorf("%s doesn't exist yet — run 'vibe --install' first", displayPath(lay.HomePath("settings.yaml")))
 	}
-	return setUpSettings(lay, true)
+	if err := setUpSettings(lay, true); err != nil {
+		return err
+	}
+	setUpDefaultGitToken(vibeHome)
+	return nil
 }
 
 // lowerMemorySetting lowers the memory setting in the settings.yaml at path
@@ -2949,6 +3009,7 @@ func finish(lay layout.Layout, args cliargs.Args, name string) error {
 		}
 		return nil
 	}
+	checkGitTokenExpiry(vibeHome, args, name)
 	go nudgeOnStart(vibeHome, name)
 	stopCompanion := startCompanion(lay, args, name)
 	noteUpgrades := checkUpgradesInBackground()
@@ -3195,6 +3256,9 @@ func nudgeOnStart(vibeHome, name string) {
 		logf("setting the timezone to %s failed: %v", zone, err)
 	} else {
 		logf("timezone is %s", zone)
+	}
+	if err := syncGitInstructions(vibeHome, name); err != nil {
+		logf("writing the agent's rules for pushing failed: %v", err)
 	}
 	// sbx exec runs as the agent user, but on-start is written to run as
 	// root, as setup.startup runs it at first boot: its logs in /tmp are

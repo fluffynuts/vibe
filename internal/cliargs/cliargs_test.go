@@ -295,3 +295,26 @@ func TestParseNoStart(t *testing.T) {
 		t.Errorf("--no-start should not count as an action, got %d", got.ExclusiveActions())
 	}
 }
+
+func TestParseGitTokenFlags(t *testing.T) {
+	a, err := Parse([]string{"--git-token", "--git-token-env", "MY_TOKEN", "--git-rules=feature-branch,no-default-branch", "/code"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.GitToken || a.GitTokenEnv != "MY_TOKEN" || a.GitRules != "feature-branch,no-default-branch" || a.Path != "/code" {
+		t.Errorf("unexpected args: %+v", a)
+	}
+	if a.ExclusiveActions() != 1 {
+		t.Errorf("--git-token should count as an exclusive action: %+v", a)
+	}
+	a, err = Parse([]string{"--git-token-env=T", "--git-rules", "feature-branch", "--no-git-token"})
+	if err != nil || a.GitTokenEnv != "T" || a.GitRules != "feature-branch" || !a.NoGitToken || a.GitToken {
+		t.Errorf("unexpected args: %+v err=%v", a, err)
+	}
+	if a.ExclusiveActions() != 0 {
+		t.Errorf("only --git-token is an action: %+v", a)
+	}
+	if _, err := Parse([]string{"--git-token-env"}); err == nil {
+		t.Error("--git-token-env without a value was accepted")
+	}
+}

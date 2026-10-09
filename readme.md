@@ -130,8 +130,9 @@ memory check on your `settings.yaml`, and changes nothing else in it.
 
 `vibe --setup` asks those questions again (default memory, default agent, and the features a guided
 profile starts with ticked), starting on your current choices, and saves the answers in
-`~/.vibe/settings.yaml`. It needs a terminal, and `~/.vibe/settings.yaml` to exist (so run
-`vibe --install` first).
+`~/.vibe/settings.yaml`. It then offers to store a default GitHub token for new sandboxes to push with
+(see [Letting the agent push](#letting-the-agent-push)). It needs a terminal, and
+`~/.vibe/settings.yaml` to exist (so run `vibe --install` first).
 
 `vibe --install`, run from a release's folder (which is all the install scripts and `--upgrade`
 do), goes through every file the package ships
@@ -211,6 +212,14 @@ vibe -R/--re-create [path] # delete the profile too, then re-init — the profil
 vibe -N/--no-companion     # ...without serving the companion page this run
 vibe --no-start            # ...doing the setup (create, -r, -R, -C) but not starting the sandbox or companion;
                            # prints "type vibe to get started" unless -f is given (handy for cron)
+vibe --git-token [path]    # give the sandbox for path a GitHub token to push
+                           #    with, renew or change it, or take it away
+vibe --git-token-env VAR   # ...a new sandbox (or --git-token) the token in $VAR,
+                           #    without asking
+vibe --git-rules R[,R]     # ...and these rules for pushing, without asking:
+                           #    feature-branch, no-default-branch
+vibe --no-git-token        # ...no token for a new sandbox, without asking;
+                           #    with --git-token, take its token away
 vibe -l/--list             # list every known sandbox and its status
 vibe -a/--info [path]      # show the sandbox's settings and, while it runs,
                            #    its uptime and memory and disk use
@@ -231,7 +240,7 @@ vibe -I/--install-sbx      # install the latest stable Docker Sandboxes (sbx);
 vibe -v/--version          # print the version, commit and build date
 ```
 
-Every option has a long and a short form. `-s`, `-c`, `-a`, `-r`, `-R`, `-C` and `-d` resolve the sandbox
+Every option has a long and a short form. `-s`, `-c`, `-a`, `-r`, `-R`, `-C`, `-d` and `--git-token` resolve the sandbox
 name exactly as a normal run would, so `vibe -s && vibe` restarts whatever you were working on.
 `-l` and `-x` work on every sandbox at once and take no path.
 
@@ -470,6 +479,77 @@ serve it and open the browser), `serve` (serve it and only print the address —
 or no desktop), or `off`. `-N/--no-companion` turns it off for one run. vibe doesn't open a browser
 over ssh, or on Linux without a display; it prints the address instead.
 
+### Letting the agent push
+
+Out of the box, the agent in a vibe sandbox has no git credentials: it can commit, but you push — and
+so you read the code first. If you'd rather hand the agent a plan that takes a few commits and let it get
+on with it, a new sandbox can be given a GitHub token. It's opt-in, and never required: creating a
+sandbox asks, and no is the default answer.
+
+- **no** — you commit and push yourself.
+- **your default token** — the one `vibe --setup` stored, if you stored one.
+- **a new token just for this repository** — vibe asks how long it should last (7, 30 or 90 days;
+  7 to start with), then opens GitHub's page for a new fine-grained token, filled in with a name
+  (`vibe <sandbox>`), the repository's owner, that expiry and the permissions the agent needs
+  (Contents, Pull requests and Workflows: read and write). GitHub doesn't let a link choose the
+  repository, and its form starts on *All repositories*, so vibe lists what's left for you to do there
+  first, and waits for enter before opening it: change *Repository access* to *Only select
+  repositories* and choose the repository, check the permissions, generate the token, and paste it
+  back into vibe (each picked out in its own colour, unless `NO_COLOR` is set).
+- **a token you already have** — paste it.
+
+Whichever you pick, the token shows as a `*` per character as you paste it (so a paste that came out
+short, or twice over, is plain to see; a token pasted twice is caught and asked for again), and vibe
+checks it with GitHub. It shows whose it is and when it expires, and checks it can push to the folder's
+repository (the `origin` remote) by asking for what `git push` asks for first, which changes nothing.
+For a token GitHub turns down, or one that can't push there, vibe asks what now: *try again* (paste
+another), *use it anyway*, or *continue without a GitHub token*. A classic token (`ghp_…`) or the one `gh auth token`
+prints (`gho_…`) works, but reaches every repository your account can, so vibe warns you about it.
+A fine-grained token that can push is also checked for the owner's other repositories it was given.
+GitHub can't be asked that directly: its repository list shows every repository the token can read,
+and every token can read every public repository, your organisations' included. So vibe reads that
+list for the owner's repositories alone: a private one the token can see at all is one it was given,
+and each public one gets the same harmless push check, several at a time (up to 300 of them; vibe says
+if there were more). If the token reaches any of them (it was left on *All repositories*, or given an
+extra one), vibe warns, lists them, and asks what now: narrow it on GitHub (editing a token's
+repository access doesn't change the token) and have vibe check again, use it as it is, try a
+different token, or continue without one.
+
+vibe then asks what the agent should be told about pushing, beyond never force-pushing, which it is
+always told: *only work in a feature branch*, and *never push the default branch* (open a pull request
+instead). Both start unticked. These are instructions to the agent, not enforced by anything. If you
+need the default branch protected, set up a branch rule on GitHub.
+
+The token never enters the sandbox. vibe gives it to sbx as the sandbox's own secret
+(`sbx secret set github --sandbox <name>`, on stdin), and sbx's proxy adds it to the sandbox's requests
+to GitHub, so `git push` over HTTPS and `gh` both work in there. The agent's rules go in
+`~/.config/vibe/git-push.md` in the sandbox, and every sandbox's agent instructions point it there.
+If `origin` is an SSH URL, the agent is told to push over HTTPS, since the proxy only covers HTTPS.
+
+vibe remembers when the token expires (GitHub says, when vibe checks it). From three days before, every
+session start says so; once it has expired, the session start asks whether to renew it there and then
+(with `-f`, or no terminal, it only says so). Renewing opens GitHub's list of your tokens: click the
+sandbox's, then *Regenerate token*. That gives a new value with the same repository and permissions,
+so there's nothing to pick again; choose how long it should last, and paste it into vibe, which checks
+it and hands it to sbx. A running sandbox picks up the new token straight away. The agent's rules
+carry the expiry date too, and tell it that if GitHub stops taking the token, it should stop and ask you
+to run `vibe --git-token`, not look for another way to push. If the token has gone from GitHub's list,
+make a new one instead.
+
+The default token `--setup` stores lasts 30 days unless you pick otherwise, and `--setup` renews it
+the same way. Renewing or replacing it offers the new value to every sandbox that was given the
+default, since the token they hold stops working once it's regenerated. A new sandbox isn't offered an
+expired default.
+
+`vibe --git-token [path]` gives an existing sandbox a token, renews or changes the one it has, or
+takes it away. Renewing is its first choice, picked to start with when the token has expired or is
+about to. A rebuild
+(`-r`, `-R`, `-C`) keeps the token and rules the sandbox had; `--delete` and `--cleanup` remove them.
+`vibe --info` shows whether a sandbox has one. With no one to ask (`-f`, or no terminal), a new
+sandbox gets no token unless `--git-token-env VAR` names an environment variable holding one (never
+the token itself on the command line, where anyone on the machine can read it). That token is
+checked the same way, and turned down if GitHub won't let it push. `--git-rules` picks the rules.
+
 ### Checkbox prompts
 
 Anywhere vibe asks you to check several things — the guided feature picker, `-x`/`--cleanup`, `-d`/`--delete` —
@@ -699,6 +779,11 @@ state:
   recorded host ports so a sandbox's URL stays stable across a rebuild.
 - `companion/<name>.token` — the secret token for a sandbox's companion page (readable only by you),
   removed with the sandbox. Its port is in the instance record, as `companionPort`.
+- `git/sandboxes/<name>.token` — the GitHub token a sandbox's agent pushes with, if you gave it one
+  (readable only by you), kept so a rebuild can hand it on, and removed with the sandbox. The instance
+  record says where it came from (`gitToken: default` or `own`), when it expires (`gitTokenExpires`)
+  and the rules the agent was given (`gitRules`). `git/default.token` is the default one `--setup`
+  stored, with its expiry beside it in `git/default.token.expires`.
 - `memories/<name>/` — an agent's backed-up memories across a `--re-init`, when the profile's
   agent supports it. They can only be read out of a *running* sandbox, so once you have agreed to
   remove it, vibe starts a stopped one just long enough to ask whether it holds any before it goes.

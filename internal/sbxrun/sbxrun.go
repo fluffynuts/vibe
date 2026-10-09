@@ -406,3 +406,29 @@ func ExecInput(name, input string, args ...string) error {
 	}
 	return nil
 }
+
+// SetGitHubSecret gives the sandbox token as its own GitHub secret, which
+// sbx's proxy adds to the sandbox's requests to GitHub — the token itself
+// never enters the sandbox. It goes in on stdin, never on the command line,
+// where anyone on the machine could read it. Any secret the sandbox already
+// had is replaced.
+func SetGitHubSecret(name, token string) error {
+	// sbx only overwrites without asking when the token is given with -t,
+	// so the old one goes first; there being none to remove is fine.
+	RemoveGitHubSecret(name)
+	cmd := exec.Command("sbx", "secret", "set", "github", "--sandbox", name)
+	cmd.Stdin = strings.NewReader(token)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("sbx secret set github --sandbox %s: %w: %s", name, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// RemoveGitHubSecret takes the sandbox's own GitHub secret away. It leaves
+// a global one alone.
+func RemoveGitHubSecret(name string) error {
+	if out, err := exec.Command("sbx", "secret", "rm", "github", "--sandbox", name, "-f").CombinedOutput(); err != nil {
+		return fmt.Errorf("sbx secret rm github --sandbox %s: %w: %s", name, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
