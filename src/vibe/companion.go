@@ -187,6 +187,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		Policy:         &policy.Client{Sandbox: name},
 		ClipboardURL:   func() string { return clipboardPageURL(vibeHome, name) },
 		StartClipboard: func() ([]string, error) { return startClipboard(name) },
+		Workspace:      inst.Target,
 	})
 	if err != nil {
 		note("companion: could not serve the page on port %d: %v", port, err)

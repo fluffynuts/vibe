@@ -148,6 +148,30 @@
     }
   }
 
+  // The folder and git status, as the infobar in the sandbox shows them.
+  function renderWhere(folder, git) {
+    $('folder').textContent = folder
+    $('folder-part').hidden = !folder
+    const box = $('git')
+    box.replaceChildren()
+    $('git-part').hidden = !git
+    if (!git) return
+    const part = (cls, text) => {
+      const span = document.createElement('span')
+      span.className = cls
+      span.textContent = text
+      box.append(span)
+    }
+    part('branch', git.branch)
+    if (git.staged) part('staged', '+' + git.staged)
+    if (git.modified) part('modified', '~' + git.modified)
+    if (git.untracked) part('untracked', '?' + git.untracked)
+    if (git.conflicted) part('conflicted', '✘' + git.conflicted)
+    if (git.ahead) part('ahead', '↑' + git.ahead)
+    if (git.behind) part('behind', '↓' + git.behind)
+    if (git.stashed) part('stashed', '#' + git.stashed)
+  }
+
   async function loadState() {
     try {
       const res = await api('/api/state')
@@ -155,6 +179,7 @@
       if (!res.ok) { problem(res); return }
       state.sandbox = res.body.sandbox || ''
       $('sandbox').textContent = state.sandbox
+      renderWhere(res.body.folder || '', res.body.git || null)
       document.title = state.sandbox ? 'vibe · ' + state.sandbox : 'vibe companion'
       const url = res.body.clipboardUrl || ''
       const ready = !!(url && res.body.clipboardReady)

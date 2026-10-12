@@ -64,6 +64,11 @@ type Config struct {
 	// (it is a no-op when that is already running), returning the sbx
 	// arguments it ran; nil means the page can't offer to.
 	StartClipboard func() ([]string, error)
+	// Workspace is the host folder the sandbox works in, shown in the
+	// page's header with its git status; "" shows neither.
+	Workspace string
+	// Git reads dir's git status, nil when it has none; nil means readGit.
+	Git func(dir string) *GitInfo
 }
 
 // Server is a running companion page.
@@ -236,8 +241,21 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		})
 		ready, _ = v.(bool)
 	}
+	var git *GitInfo
+	if s.cfg.Workspace != "" {
+		read := s.cfg.Git
+		if read == nil {
+			read = readGit
+		}
+		v, _ := s.cache.get("git", 2*time.Second, func() (interface{}, error) {
+			return read(s.cfg.Workspace), nil
+		})
+		git, _ = v.(*GitInfo)
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"sandbox":           s.cfg.Sandbox,
+		"folder":            shortenPath(s.cfg.Workspace, homeDir()),
+		"git":               git,
 		"clipboardUrl":      clipboard,
 		"clipboardReady":    ready,
 		"clipboardCanStart": clipboard != "" && s.cfg.StartClipboard != nil,

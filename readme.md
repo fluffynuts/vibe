@@ -443,7 +443,9 @@ the folder from `~/.vibe/defaults/agent-files/.claude/skills/` to leave it out. 
 
 Whenever vibe opens a sandbox it also serves a page for it on your own machine, prints its address
 (`companion page: http://localhost:10000/#…`) and opens it in your browser. It is what you'd otherwise
-reach for the sbx TUI for, scoped to the sandbox you're working in, with tabs:
+reach for the sbx TUI for, scoped to the sandbox you're working in. Its header shows what the infobar
+in the sandbox does — the sandbox, its folder, and the folder's git branch and status — and below that
+are tabs:
 
 - **Clipboard** — the sandbox's clipboard page (see `clipboard-bridge` below), embedded; there only when
   the profile has that feature. Until vibe sees the page answer, the tab reads **Clipboard (starting)**
