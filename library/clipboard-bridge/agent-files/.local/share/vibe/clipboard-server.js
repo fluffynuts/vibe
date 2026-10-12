@@ -49,6 +49,8 @@ const EXTENSIONS = {
   "application/pdf": ".pdf",
 };
 
+const MAX_DESCRIPTION = 4000;
+
 fs.mkdirSync(ITEMS, { recursive: true });
 
 function load() {
@@ -101,6 +103,7 @@ function describe(item) {
     kind: item.kind,
     type: item.type,
     name: item.name,
+    description: item.description || "",
     size: item.size,
     created: item.created,
     delivered: item.delivered,
@@ -237,6 +240,16 @@ function handle(req, res) {
       let body;
       try { body = fs.readFileSync(itemPath(item)); } catch (e) { return sendJSON(res, 410, { error: "content is gone" }); }
       return send(res, 200, body, { "Content-Type": item.type });
+    }
+    if (req.method === "PATCH" && parts.length === 3) {
+      return readBody(req, res, function (body) {
+        let patch;
+        try { patch = JSON.parse(body.toString("utf8")); } catch (e) { return sendJSON(res, 400, { error: "not JSON" }); }
+        if (typeof patch.description !== "string") return sendJSON(res, 400, { error: "description must be a string" });
+        item.description = patch.description.slice(0, MAX_DESCRIPTION);
+        save();
+        sendJSON(res, 200, describe(item));
+      });
     }
     if (req.method === "POST" && parts[3] === "current") {
       state.current = item.id;

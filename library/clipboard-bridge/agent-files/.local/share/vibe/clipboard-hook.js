@@ -58,14 +58,15 @@ function fence(text) {
 
 function describe(item) {
   const what = item.name ? "\"" + item.name + "\" " : "";
+  const note = item.description ? "\n  the user's title for it: " + item.description.replace(/\n/g, "\n  ") : "";
   if (typeof item.text === "string") {
     const f = fence(item.text);
-    return "- text " + what + "(" + item.path + "):\n" + f + "\n" + item.text + "\n" + f;
+    return "- text " + what + "(" + item.path + "):" + note + "\n" + f + "\n" + item.text + "\n" + f;
   }
   const how = item.kind === "image"
     ? "look at it with the Read tool"
     : "read it if it's relevant";
-  return "- " + item.kind + " " + what + "at " + item.path + " (" + item.type + ", " + size(item.size) + ") — " + how;
+  return "- " + item.kind + " " + what + "at " + item.path + " (" + item.type + ", " + size(item.size) + ") — " + how + note;
 }
 
 function context(items, event) {

@@ -407,6 +407,79 @@ func ExecInput(name, input string, args ...string) error {
 	return nil
 }
 
+// maxStreamLine is the longest line ExecStream passes on; what is past it is
+// dropped, since a caller wanting one that long wants it whole.
+const maxStreamLine = 1 << 20
+
+// ExecStream runs a command inside the sandbox with input on its stdin,
+// calling onLine with each line it prints as it prints it, and ends the
+// exec if ctx is cancelled. A failure carries what the command said on its
+// stderr.
+func ExecStream(ctx context.Context, name, input string, onLine func(line []byte), args ...string) error {
+	full := append([]string{"exec", "-i", name, "--"}, args...)
+	cmd := exec.CommandContext(ctx, "sbx", full...)
+	return streamLines(cmd, input, onLine)
+}
+
+// streamLines runs cmd with input on its stdin, handing each line of its
+// stdout to onLine.
+func streamLines(cmd *exec.Cmd, input string, onLine func(line []byte)) error {
+	// A cmd with a context is one whose end the caller decides, and so is
+	// kept apart from the terminal's Ctrl-C.
+	if cmd.Cancel != nil {
+		ignoreTerminalInterrupt(cmd)
+		cmd.WaitDelay = time.Second
+	}
+	cmd.Stdin = strings.NewReader(input)
+	var errs tail
+	cmd.Stderr = &errs
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	r := bufio.NewReaderSize(out, 64*1024)
+	var line []byte
+	for {
+		chunk, prefix, err := r.ReadLine()
+		if err != nil {
+			break
+		}
+		if len(line)+len(chunk) <= maxStreamLine {
+			line = append(line, chunk...)
+		}
+		if prefix {
+			continue
+		}
+		onLine(line)
+		line = line[:0]
+	}
+	if err := cmd.Wait(); err != nil {
+		if said := strings.TrimSpace(errs.String()); said != "" {
+			return fmt.Errorf("%w: %s", err, said)
+		}
+		return err
+	}
+	return nil
+}
+
+// tail keeps the last few kilobytes written to it.
+type tail struct{ buf []byte }
+
+const tailSize = 4096
+
+func (t *tail) Write(p []byte) (int, error) {
+	t.buf = append(t.buf, p...)
+	if over := len(t.buf) - tailSize; over > 0 {
+		t.buf = t.buf[over:]
+	}
+	return len(p), nil
+}
+
+func (t *tail) String() string { return string(t.buf) }
+
 // SetGitHubSecret gives the sandbox token as its own GitHub secret, which
 // sbx's proxy adds to the sandbox's requests to GitHub — the token itself
 // never enters the sandbox. It goes in on stdin, never on the command line,

@@ -69,6 +69,10 @@ type Config struct {
 	Workspace string
 	// Git reads dir's git status, nil when it has none; nil means readGit.
 	Git func(dir string) *GitInfo
+	// Converse runs a turn of the conversation tab's talk with the agent;
+	// nil means the sandbox's agent can't be talked to this way, and the
+	// page has no such tab.
+	Converse Converser
 }
 
 // Server is a running companion page.
@@ -81,6 +85,7 @@ type Server struct {
 	// starting is held while a StartClipboard runs, so a second press of
 	// the page's button doesn't start a second one.
 	starting sync.Mutex
+	convo    conversation
 }
 
 // New makes a Server without listening, which is how tests drive Handler.
@@ -161,6 +166,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/deny", s.authed(s.changing(s.deny)))
 	mux.HandleFunc("POST /api/remove", s.authed(s.changing(s.remove)))
 	mux.HandleFunc("POST /api/clipboard/start", s.authed(s.changing(s.startClipboard)))
+	mux.HandleFunc("GET /api/conversation", s.authed(s.conversationEvents))
+	mux.HandleFunc("POST /api/conversation/send", s.conversing(s.conversationSend))
+	mux.HandleFunc("POST /api/conversation/stop", s.conversing(s.conversationStop))
+	mux.HandleFunc("POST /api/conversation/new", s.conversing(s.conversationNew))
 
 	return s.guarded(mux)
 }
@@ -254,6 +263,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"clipboardUrl":      clipboard,
 		"clipboardReady":    ready,
 		"clipboardCanStart": clipboard != "" && s.cfg.StartClipboard != nil,
+		"conversation":      s.cfg.Converse != nil,
 	})
 }
 
@@ -312,16 +322,7 @@ type change func(body []byte) (command []string, err error)
 // shows the result.
 func (s *Server) changing(do change) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if ct, _, _ := strings.Cut(r.Header.Get("Content-Type"), ";"); strings.TrimSpace(ct) != "application/json" {
-			writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "expected application/json"})
-			return
-		}
-		if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
-			return
-		}
-		if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-site request refused"})
+		if !sameOriginJSON(w, r) {
 			return
 		}
 		body, err := io.ReadAll(io.LimitReader(r.Body, 4096))

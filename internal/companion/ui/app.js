@@ -8,7 +8,18 @@
   // How long the clipboard page gets to come up before the page says so and
   // offers to start it.
   const CLIPBOARD_PATIENCE_MS = 30000
-  const TABS = ['clipboard', 'log', 'rules', 'fs']
+  const TABS = ['conversation', 'clipboard', 'log', 'rules', 'fs']
+  // How often the conversation tab asks for what the agent has said since.
+  const CONVO_POLL_MS = 700
+  // The longest a tool's result is shown, in characters.
+  const RESULT_SHOWN = 2000
+  // The clipboard page, as it is shown in the clipboard tab and beside the
+  // conversation: the same page twice, each with its own frame and waiting
+  // notice.
+  const CLIPBOARD_VIEWS = [
+    { frame: 'clipboard-frame', wait: 'clipboard-wait', text: 'clipboard-wait-text', help: 'clipboard-wait-help', start: 'clipboard-start', open: 'clipboard-open', tab: 'tab-clipboard' },
+    { frame: 'convo-clipboard-frame', wait: 'convo-clipboard-wait', text: 'convo-clipboard-wait-text', help: 'convo-clipboard-wait-help', start: 'convo-clipboard-start', open: 'convo-clipboard-open', tab: null },
+  ]
 
   const $ = (id) => document.getElementById(id)
 
@@ -33,6 +44,7 @@
     clipboardCanStart: false,
     clipboardWaitingSince: 0,
     clipboardStarting: false,
+    conversation: false,
     tab: store.get('vibe-companion-tab') || 'log',
     filter: 'all',
     search: '',
@@ -185,21 +197,25 @@
       const ready = !!(url && res.body.clipboardReady)
       state.clipboardCanStart = !!res.body.clipboardCanStart
       $('tab-clipboard').hidden = !url
+      state.conversation = !!res.body.conversation
+      $('tab-conversation').hidden = !state.conversation
       if (url !== state.clipboardUrl || ready !== state.clipboardReady) {
         if (url && !ready && (url !== state.clipboardUrl || state.clipboardReady)) {
           state.clipboardWaitingSince = Date.now()
         }
         state.clipboardUrl = url
         state.clipboardReady = ready
-        if (url) $('clipboard-open').href = url
-        // The frame only gets the page once vibe has seen it answer: a
-        // frame on another origin can't be watched, and a browser's
-        // "can't connect" page would otherwise sit there for good.
-        if (ready) $('clipboard-frame').src = url
-        else $('clipboard-frame').removeAttribute('src')
+        for (const view of CLIPBOARD_VIEWS) {
+          if (url) $(view.open).href = url
+          // The frame only gets the page once vibe has seen it answer: a
+          // frame on another origin can't be watched, and a browser's
+          // "can't connect" page would otherwise sit there for good.
+          if (ready) $(view.frame).src = url
+          else $(view.frame).removeAttribute('src')
+        }
       }
       renderClipboard()
-      if (!url && state.tab === 'clipboard') select('log')
+      if ((!url && state.tab === 'clipboard') || (!state.conversation && state.tab === 'conversation')) select('log')
     } catch (e) {
       reached(false)
     }
@@ -207,20 +223,30 @@
 
   function renderClipboard() {
     const waiting = !!state.clipboardUrl && !state.clipboardReady
-    $('tab-clipboard').textContent = waiting ? 'Clipboard (starting)' : 'Clipboard'
-    $('clipboard-frame').hidden = waiting
-    $('clipboard-wait').hidden = !waiting
-    if (!waiting) return
     const late = Date.now() - state.clipboardWaitingSince >= CLIPBOARD_PATIENCE_MS
-    $('clipboard-wait-text').textContent = state.clipboardStarting
-      ? 'Starting the clipboard page in the sandbox…'
-      : late ? "The clipboard page still isn't up." : 'Starting the clipboard page…'
-    $('clipboard-wait-help').hidden = !late || state.clipboardStarting
-    $('clipboard-wait-help').textContent = state.clipboardCanStart
-      ? 'vibe can try starting it in the sandbox — that is safe to do even if it is already on its way.'
-      : 'Check /tmp/clipboard.log and /tmp/clipboard-server.log in the sandbox.'
-    $('clipboard-start').hidden = !late || !state.clipboardCanStart
-    $('clipboard-start').disabled = state.clipboardStarting
+    for (const view of CLIPBOARD_VIEWS) {
+      if (view.tab) $(view.tab).textContent = waiting ? 'Clipboard (starting)' : 'Clipboard'
+      $(view.frame).hidden = waiting || !state.clipboardUrl
+      $(view.wait).hidden = !waiting && !!state.clipboardUrl
+      if (!state.clipboardUrl) {
+        // The sandbox has no clipboard page at all: say so beside the
+        // conversation rather than wait for one.
+        $(view.text).textContent = "This sandbox has no clipboard page, so there's nowhere to paste images to."
+        $(view.help).hidden = true
+        $(view.start).hidden = true
+        continue
+      }
+      if (!waiting) continue
+      $(view.text).textContent = state.clipboardStarting
+        ? 'Starting the clipboard page in the sandbox…'
+        : late ? "The clipboard page still isn't up." : 'Starting the clipboard page…'
+      $(view.help).hidden = !late || state.clipboardStarting
+      $(view.help).textContent = state.clipboardCanStart
+        ? 'vibe can try starting it in the sandbox — that is safe to do even if it is already on its way.'
+        : 'Check /tmp/clipboard.log and /tmp/clipboard-server.log in the sandbox.'
+      $(view.start).hidden = !late || !state.clipboardCanStart
+      $(view.start).disabled = state.clipboardStarting
+    }
   }
 
   async function startClipboard() {
@@ -248,7 +274,7 @@
 
   function tick() {
     if (document.visibilityState !== 'visible') return
-    if (state.tab === 'clipboard') { loadState(); return }
+    if (state.tab === 'clipboard' || state.tab === 'conversation') { loadState(); return }
     loadState()
     load(state.tab)
   }
@@ -258,6 +284,7 @@
   function select(tab) {
     if (!TABS.includes(tab)) tab = 'log'
     if (tab === 'clipboard' && !state.clipboardUrl) tab = 'log'
+    if (tab === 'conversation' && !state.conversation) tab = 'log'
     state.tab = tab
     store.set('vibe-companion-tab', tab)
     for (const t of TABS) {
@@ -472,6 +499,215 @@
     dialog.showModal()
   }
 
+  // --- the conversation --------------------------------------------------
+
+  const convo = { last: 0, running: false, polling: false, lastPrompt: '' }
+
+  function nearBottom(box) {
+    return box.scrollHeight - box.scrollTop - box.clientHeight < 80
+  }
+
+  function convoNote(cls, text) {
+    $('convo-log').append(el('div', { class: 'msg ' + cls, text }))
+  }
+
+  // What a tool was asked to do, in a few words: its input is the agent's
+  // own, so only ever shown as text.
+  function summarise(input) {
+    if (!input || typeof input !== 'object') return ''
+    for (const key of ['command', 'file_path', 'path', 'pattern', 'url', 'description', 'query']) {
+      if (typeof input[key] === 'string' && input[key]) return input[key].split('\n')[0].slice(0, 160)
+    }
+    let json = ''
+    try { json = JSON.stringify(input) } catch (e) { /* leave empty */ }
+    return json.slice(0, 160)
+  }
+
+  function resultText(content) {
+    if (typeof content === 'string') return content
+    if (Array.isArray(content)) {
+      return content.map((c) => (c && typeof c.text === 'string' ? c.text : '')).filter(Boolean).join('\n')
+    }
+    return ''
+  }
+
+  function showResult(block) {
+    let text = resultText(block.content)
+    if (!text) return
+    if (text.length > RESULT_SHOWN) text = text.slice(0, RESULT_SHOWN) + '\n… (' + (text.length - RESULT_SHOWN) + ' more characters)'
+    const log = $('convo-log')
+    log.append(el('details', { class: 'tool-result' + (block.is_error ? ' bad' : '') },
+      el('summary', { text: block.is_error ? 'tool error' : 'tool result' }),
+      el('pre', { text })))
+  }
+
+  function showAgent(line) {
+    if (!line || typeof line !== 'object') return
+    const content = line.message && Array.isArray(line.message.content) ? line.message.content : []
+    if (line.type === 'assistant') {
+      for (const block of content) {
+        if (block.type === 'text' && block.text) convoNote('agent', block.text)
+        else if (block.type === 'tool_use') convoNote('tool', '⚙ ' + (block.name || 'tool') + '  ' + summarise(block.input))
+      }
+    } else if (line.type === 'user') {
+      for (const block of content) if (block.type === 'tool_result') showResult(block)
+    } else if (line.type === 'result') {
+      if (line.is_error) {
+        convoNote('error', typeof line.result === 'string' && line.result ? line.result : 'The agent reported an error.')
+      }
+      const bits = []
+      if (typeof line.duration_ms === 'number') bits.push((line.duration_ms / 1000).toFixed(1) + 's')
+      if (typeof line.total_cost_usd === 'number') bits.push('$' + line.total_cost_usd.toFixed(4))
+      if (bits.length) convoNote('meta', bits.join(' · '))
+    } else if (line.type === 'truncated') {
+      convoNote('meta', '(that was too long to show)')
+    }
+  }
+
+  function showEvent(ev) {
+    if (ev.kind === 'reset') $('convo-log').replaceChildren()
+    else if (ev.kind === 'user') { convo.lastPrompt = ev.text || ''; convoNote('user', ev.text || '') }
+    else if (ev.kind === 'agent') showAgent(ev.agent)
+    else if (ev.kind === 'error') convoNote('error', ev.text || 'That failed.')
+    else if (ev.kind === 'done' && ev.text === 'stopped') convoNote('meta', 'Stopped.')
+  }
+
+  function setConvoRunning(running) {
+    convo.running = running
+    $('convo-send').disabled = running
+    $('convo-stop').hidden = !running
+    $('convo-new').disabled = running
+    $('convo-status').textContent = running ? 'The agent is working…' : ''
+  }
+
+  async function pollConversation() {
+    if (state.tab !== 'conversation' || document.visibilityState !== 'visible' || convo.polling) return
+    convo.polling = true
+    try {
+      const res = await api('/api/conversation?after=' + convo.last)
+      reached(true)
+      if (!res.ok) { problem(res); return }
+      banner('')
+      const log = $('convo-log')
+      const stick = nearBottom(log)
+      if (res.body.reset) log.replaceChildren()
+      for (const ev of res.body.events || []) showEvent(ev)
+      convo.last = res.body.last || 0
+      setConvoRunning(!!res.body.running)
+      if (stick && (res.body.events || []).length) log.scrollTop = log.scrollHeight
+    } catch (e) {
+      reached(false)
+    } finally {
+      convo.polling = false
+    }
+  }
+
+  async function sendPrompt() {
+    const input = $('convo-input')
+    const prompt = input.value.trim()
+    if (!prompt || convo.running) return
+    try {
+      const res = await post('/api/conversation/send', { prompt })
+      reached(true)
+      if (!res.ok) { toast((res.body && res.body.error) || 'That could not be sent.', true); return }
+      input.value = ''
+      setConvoRunning(true)
+      pollConversation()
+    } catch (e) {
+      reached(false)
+      toast('Could not reach vibe.', true)
+    }
+  }
+
+  async function conversationCall(path) {
+    try {
+      const res = await post(path, {})
+      reached(true)
+      if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true)
+      pollConversation()
+    } catch (e) {
+      reached(false)
+      toast('Could not reach vibe.', true)
+    }
+  }
+
+  // --- pasting into the clipboard from anywhere on the conversation tab ---
+
+  function editable(node) {
+    return !!(node && node.closest && node.closest('textarea, input, select, [contenteditable=""], [contenteditable="true"]'))
+  }
+
+  // The clipboard page is on another origin, so what was pasted here is
+  // handed to it as a message. It takes them only from the page that
+  // framed it.
+  function toClipboardPage(files, text) {
+    const frame = $('convo-clipboard-frame')
+    if (!state.clipboardUrl || !state.clipboardReady || !frame.contentWindow) {
+      toast("The clipboard page isn't up yet, so that wasn't kept.", true)
+      return
+    }
+    let origin
+    try { origin = new URL(state.clipboardUrl).origin } catch (e) { return }
+    frame.contentWindow.postMessage({ type: 'vibe-clipboard-paste', files, text }, origin)
+  }
+
+  // When the conversation stacks the clipboard under itself the frame is wide
+  // but short, so the clipboard page is asked to put its instructions beside
+  // its list instead of above it.
+  const stacked = window.matchMedia('(max-width: 900px)')
+  function sendLayout() {
+    const frame = $('convo-clipboard-frame')
+    if (!state.clipboardUrl || !frame.contentWindow) return
+    let origin
+    try { origin = new URL(state.clipboardUrl).origin } catch (e) { return }
+    frame.contentWindow.postMessage({ type: 'vibe-clipboard-layout', split: stacked.matches }, origin)
+  }
+  $('convo-clipboard-frame').addEventListener('load', sendLayout)
+  stacked.addEventListener('change', sendLayout)
+
+  // Files and images go to the clipboard; text goes into the prompt, unless
+  // it was pasted where there is nothing to type into.
+  function onPaste(ev) {
+    if (state.tab !== 'conversation' || !ev.clipboardData) return
+    // Some browsers (Linux ones especially) only list pasted images under
+    // items, not files.
+    let files = Array.from(ev.clipboardData.files || [])
+    if (!files.length) {
+      files = Array.from(ev.clipboardData.items || [])
+        .filter((item) => item.kind === 'file')
+        .map((item) => item.getAsFile())
+        .filter(Boolean)
+    }
+    const text = ev.clipboardData.getData('text/plain')
+    // Files win even when text rides along (a copied image often brings its
+    // address or file name as text, which isn't what was meant).
+    if (files.length) {
+      ev.preventDefault()
+      toClipboardPage(files, '')
+    } else if (!files.length && text && !editable(ev.target)) {
+      ev.preventDefault()
+      toClipboardPage([], text)
+    }
+  }
+
+  function setUpConversation() {
+    $('convo-form').addEventListener('submit', (ev) => { ev.preventDefault(); sendPrompt() })
+    $('convo-input').addEventListener('keydown', (ev) => {
+      if (ev.isComposing) return
+      if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); sendPrompt() }
+      else if (ev.key === 'Escape' && convo.running) { ev.preventDefault(); conversationCall('/api/conversation/stop') }
+      else if (ev.key === 'ArrowUp' && !ev.target.value && convo.lastPrompt) {
+        ev.preventDefault()
+        ev.target.value = convo.lastPrompt
+        ev.target.setSelectionRange(convo.lastPrompt.length, convo.lastPrompt.length)
+      }
+    })
+    $('convo-stop').addEventListener('click', () => conversationCall('/api/conversation/stop'))
+    $('convo-new').addEventListener('click', () => conversationCall('/api/conversation/new'))
+    document.addEventListener('paste', onPaste)
+    setInterval(pollConversation, CONVO_POLL_MS)
+  }
+
   // --- wiring -----------------------------------------------------------
 
   for (const t of TABS) $('tab-' + t).addEventListener('click', () => select(t))
@@ -506,7 +742,9 @@
   $('clipboard-reload').addEventListener('click', () => {
     if (state.clipboardUrl && state.clipboardReady) $('clipboard-frame').src = state.clipboardUrl
   })
-  $('clipboard-start').addEventListener('click', startClipboard)
+  for (const view of CLIPBOARD_VIEWS) $(view.start).addEventListener('click', startClipboard)
+
+  setUpConversation()
 
   document.addEventListener('visibilitychange', tick)
   state.timer = setInterval(tick, POLL_MS)

@@ -125,6 +125,15 @@ func startClipboard(name string) ([]string, error) {
 	return args, nil
 }
 
+// conversationFor is the companion page's way of talking to the sandbox's
+// agent, or nil when it has none: only claude can be driven this way so far.
+func conversationFor(name string, inst state.Instance) companion.Converser {
+	if agent := inst.Agent; agent != "" && agent != "claude" {
+		return nil
+	}
+	return converse(name, inst.Target)
+}
+
 // startCompanion serves the companion page for the sandbox, as the user's
 // settings say, and returns what stops it. It never stops the session
 // starting: whatever goes wrong is reported, and the session goes on
@@ -188,6 +197,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		ClipboardURL:   func() string { return clipboardPageURL(vibeHome, name) },
 		StartClipboard: func() ([]string, error) { return startClipboard(name) },
 		Workspace:      inst.Target,
+		Converse:       conversationFor(name, inst),
 	})
 	if err != nil {
 		note("companion: could not serve the page on port %d: %v", port, err)

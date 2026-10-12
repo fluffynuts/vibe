@@ -9,6 +9,8 @@ BINARY ?= vibe
 PKG    := ./src/vibe
 
 SOURCES := $(shell find . -name '*.go' -not -path './.git/*')
+# Files pulled in by go:embed; editing them must trigger a rebuild too.
+EMBEDDED := $(shell find internal/companion/ui -type f)
 
 .DEFAULT_GOAL := build
 
@@ -16,7 +18,7 @@ SOURCES := $(shell find . -name '*.go' -not -path './.git/*')
 build: $(BINARY)
 
 # The build date goes into vibe --version; Go doesn't record it itself.
-$(BINARY): $(SOURCES) go.mod go.sum VERSION
+$(BINARY): $(SOURCES) $(EMBEDDED) go.mod go.sum VERSION
 	$(GO) build -ldflags "-X vibe.BuildDate=$$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o $@ $(PKG)
 
 .PHONY: test

@@ -28,7 +28,15 @@
     margin: 0; background: var(--bg); color: var(--text);
     font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
   }
-  main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+  /* The page itself never scrolls: the instructions stay put and only the
+     list scrolls (beneath them here, beside them in the split layout). */
+  html, body { height: 100%; overflow: hidden; }
+  main {
+    max-width: 960px; margin: 0 auto; padding: 24px 16px 0; height: 100vh; height: 100dvh;
+    display: flex; flex-direction: column;
+  }
+  #top { flex: none; }
+  #list { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 24px; }
   header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
   h1 { font-size: 20px; margin: 0; }
   .host { color: var(--muted); font-size: 14px; }
@@ -76,6 +84,18 @@
   .badge.pending { color: var(--pending); background: var(--pending-bg); }
   .badge.sent { color: var(--sent); background: var(--sent-bg); }
   .badge.cur { color: var(--accent); border: 1px solid var(--accent); }
+  .title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .title-row .title { cursor: text; min-width: 0; }
+  button.edit {
+    flex: none; background: none; border: 0; padding: 2px 4px; cursor: pointer;
+    color: var(--muted); font-size: 14px; line-height: 1;
+  }
+  button.edit:hover { color: var(--accent); }
+  input.title-edit {
+    font: inherit; font-weight: 600; flex: 1; min-width: 0; padding: 2px 6px;
+    background: var(--bg); color: var(--text); border: 1px solid var(--accent); border-radius: 6px;
+  }
+  input.title-edit:focus { outline: none; }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .empty { color: var(--muted); text-align: center; padding: 24px; }
   #zoom {
@@ -88,10 +108,28 @@
     .item { grid-template-columns: 1fr; }
     .preview { width: 100%; height: 180px; }
   }
+  /* Split layout: the paste instructions take the left third, full height,
+     and only the items scroll, in the right two thirds. It is for a phone, and for
+     the companion page's conversation tab when it stacks this page under the
+     conversation (it says so by message). Left off in the companion's
+     clipboard column on a desktop, which is narrow but tall. */
+  html.split main { display: grid; grid-template-columns: 1fr 2fr; grid-template-rows: minmax(0, 1fr); gap: 12px; padding: 0 10px; }
+  html.split #top {
+    grid-column: 1; min-height: 0; overflow-y: auto;
+    padding: 12px 0; display: flex; flex-direction: column; gap: 8px;
+  }
+  html.split header { margin: 0; flex-direction: column; gap: 0; }
+  html.split h1 { font-size: 17px; }
+  html.split .host { font-size: 12px; }
+  html.split #drop { padding: 14px 10px; flex: 1; display: flex; flex-direction: column; justify-content: center; }
+  html.split #drop strong { font-size: 15px; }
+  html.split #status { font-size: 13px; margin: 6px 2px; }
+  html.split #list { grid-column: 2; padding-top: 12px; min-width: 0; }
 </style>
 </head>
 <body>
 <main>
+  <div id="top">
   <header>
     <h1>vibe clipboard</h1>
     <span class="host" id="host"></span>
@@ -99,13 +137,16 @@
 
   <section id="drop">
     <strong>Paste anywhere on this page (<kbd>Ctrl</kbd>+<kbd>V</kbd>), or drop files here</strong>
-    <p>It goes to the agent with your next message, or at its next step if it's already working.</p>
-    <p><kbd>Ctrl</kbd>+<kbd>V</kbd> in the agent's terminal also attaches the item marked <em>current</em>.</p>
+    <p class="hint">It goes to the agent with your next message, or at its next step if it's already working.</p>
+    <p class="hint"><kbd>Ctrl</kbd>+<kbd>V</kbd> in the agent's terminal also attaches the item marked <em>current</em>.</p>
     <p><label class="button">Choose files<input id="picker" type="file" multiple hidden></label></p>
   </section>
 
   <div id="status" role="status"></div>
+  </div>
+  <div id="list">
   <section id="items" aria-live="polite"></section>
+  </div>
 </main>
 <div id="zoom"><img alt=""></div>
 
@@ -183,8 +224,69 @@ function title(item) {
   return "File";
 }
 
+// editing says whether a title is being typed in: re-rendering then would
+// pull the box from under the user, so that render waits for the next poll.
+function editing() {
+  var a = document.activeElement;
+  return !!a && a.classList && a.classList.contains("title-edit");
+}
+
+function saveTitle(item, value) {
+  return fetch("/api/items/" + item.id, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ description: value }),
+  }).then(function (r) {
+    if (!r.ok) throw new Error(r.statusText);
+  }).catch(function (err) {
+    setStatus("Couldn't save that title: " + err.message, true);
+  });
+}
+
+// titleRow is the item's title, which turns into a text box when it or the
+// pencil beside it is clicked. What's typed is the item's description: the
+// label the agent is shown for it. Enter or leaving the box saves, Escape
+// abandons.
+function titleRow(item) {
+  var row = el("div", { class: "title-row" });
+  function show() {
+    row.textContent = "";
+    var label = el("div", { class: "title", text: item.description || title(item), title: "Click to rename" });
+    label.addEventListener("click", edit);
+    var pencil = el("button", { class: "edit", text: "\u270E", title: "Rename", "aria-label": "Rename" });
+    pencil.addEventListener("click", edit);
+    row.appendChild(label);
+    row.appendChild(pencil);
+  }
+  function edit() {
+    var input = el("input", { class: "title-edit", type: "text", maxlength: "200", "aria-label": "Title" });
+    input.value = item.description || title(item);
+    var done = false;
+    function finish(save) {
+      if (done) return;
+      done = true;
+      var value = input.value.trim();
+      if (!save || value === (item.description || title(item))) { show(); refresh(); return; }
+      // Clearing the box goes back to the default title.
+      saveTitle(item, value === title(item) ? "" : value).then(refresh);
+    }
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") finish(true);
+      else if (e.key === "Escape") finish(false);
+    });
+    input.addEventListener("blur", function () { finish(true); });
+    row.textContent = "";
+    row.appendChild(input);
+    input.focus();
+    input.select();
+  }
+  show();
+  return row;
+}
+
 function render(data) {
   document.getElementById("host").textContent = data.host ? "sandbox: " + data.host : "";
+  if (editing()) return;
   var key = JSON.stringify(data);
   if (key === lastRendered) return;
   lastRendered = key;
@@ -203,7 +305,7 @@ function render(data) {
     var card = el("article", { class: "item" + (item.id === data.current ? " current" : "") }, [
       preview(item),
       el("div", { class: "meta" }, [
-        el("div", { class: "title", text: title(item), title: item.path }),
+        titleRow(item),
         el("div", { class: "details", text: item.type + " · " + formatSize(item.size) + " · " + formatTime(item.created) }),
         el("div", { class: "badges" }, badges),
         el("div", { class: "actions" }, [
@@ -245,13 +347,19 @@ function uploadAll(entries) {
 // fromTransfer collects what a paste or a drop carried: files (which is how
 // browsers hand over pasted images), or else the text on its own.
 function fromTransfer(dt) {
+  return entriesFrom(dt.files, dt.getData("text/plain"));
+}
+
+// entriesFrom is the files, else the text, as things to upload. A pasted
+// image is called "image.png" or the like, which says nothing: those are
+// left for the server to name.
+function entriesFrom(files, text) {
   var entries = [];
-  Array.prototype.forEach.call(dt.files || [], function (f) {
+  Array.prototype.forEach.call(files || [], function (f) {
     entries.push({ blob: f, name: f.name && !/^image\.\w+$/.test(f.name) ? f.name : "" });
   });
-  if (!entries.length) {
-    var text = dt.getData("text/plain");
-    if (text) entries.push({ blob: new Blob([text], { type: "text/plain;charset=utf-8" }), name: "" });
+  if (!entries.length && text) {
+    entries.push({ blob: new Blob([text], { type: "text/plain;charset=utf-8" }), name: "" });
   }
   return entries;
 }
@@ -260,6 +368,33 @@ document.addEventListener("paste", function (e) {
   var entries = fromTransfer(e.clipboardData);
   if (!entries.length) { setStatus("The clipboard had nothing this page can take.", true); return; }
   e.preventDefault();
+  uploadAll(entries);
+});
+
+// The vibe companion page frames this one beside its conversation, so that
+// pasting anywhere on that tab lands here: a paste only reaches the page that
+// has focus, so the companion hands over what it carried. Taken from the
+// page that framed this one and nobody else.
+var phone = window.matchMedia("(max-width: 560px) and (pointer: coarse)");
+var framedSplit = false;
+function applyLayout() {
+  document.documentElement.classList.toggle("split", phone.matches || framedSplit);
+}
+phone.addEventListener("change", applyLayout);
+applyLayout();
+
+window.addEventListener("message", function (e) {
+  var d = e.data;
+  if (window.parent === window || e.source !== window.parent) return;
+  if (d && d.type === "vibe-clipboard-layout") {
+    framedSplit = !!d.split;
+    applyLayout();
+    return;
+  }
+  if (!d || d.type !== "vibe-clipboard-paste") return;
+  var files = Array.prototype.filter.call(d.files || [], function (f) { return f instanceof Blob; });
+  var entries = entriesFrom(files, typeof d.text === "string" ? d.text : "");
+  if (!entries.length) { setStatus("The clipboard had nothing this page can take.", true); return; }
   uploadAll(entries);
 });
 
