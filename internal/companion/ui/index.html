@@ -19,7 +19,6 @@
 
   <nav class="tabs" role="tablist" id="tabs">
     <button role="tab" data-tab="conversation" id="tab-conversation" hidden>Conversation</button>
-    <button role="tab" data-tab="clipboard" id="tab-clipboard" hidden>Clipboard</button>
     <button role="tab" data-tab="log" id="tab-log">Network log</button>
     <button role="tab" data-tab="rules" id="tab-rules">Network rules</button>
     <button role="tab" data-tab="fs" id="tab-fs">Filesystem rules</button>
@@ -60,21 +59,6 @@
           <iframe id="convo-clipboard-frame" title="Clipboard" allow="clipboard-read; clipboard-write" hidden></iframe>
         </div>
       </div>
-    </section>
-
-    <section id="panel-clipboard" class="panel panel-clipboard" hidden>
-      <div class="bar">
-        <span class="muted">The sandbox's clipboard page — paste images and text to the agent here.</span>
-        <span class="spacer"></span>
-        <button type="button" id="clipboard-reload" class="ghost">Reload</button>
-        <a id="clipboard-open" class="button ghost" target="_blank" rel="noopener noreferrer">Open on its own</a>
-      </div>
-      <div id="clipboard-wait" class="wait" role="status">
-        <p id="clipboard-wait-text">Starting the clipboard page…</p>
-        <p id="clipboard-wait-help" class="muted" hidden></p>
-        <button type="button" id="clipboard-start" hidden>Start it</button>
-      </div>
-      <iframe id="clipboard-frame" title="Clipboard" allow="clipboard-read; clipboard-write" hidden></iframe>
     </section>
 
     <section id="panel-log" class="panel" hidden>

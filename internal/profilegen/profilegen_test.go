@@ -269,3 +269,68 @@ func read(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+func baseLayout(t *testing.T) layout.Layout {
+	t.Helper()
+	l := testLayout(t)
+	write(t, filepath.Join(mkdir(t, l.BundlePath("library", "base", "clip", "agent-files")), "clip.txt"), "clip\n", 0o644)
+	write(t, filepath.Join(mkdir(t, l.BundlePath("library", "mysql")), "config.yaml"), "name: x\n", 0o644)
+	return l
+}
+
+func mkdir(t *testing.T, dir string) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestGuidedProfilesAlwaysGetTheBaseFeaturesWithoutRecordingThem(t *testing.T) {
+	l := baseLayout(t)
+	dir, err := CreateGuided(l, "g", []string{"clip", "mysql"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "agent-files", "clip.txt")); err != nil {
+		t.Errorf("the base feature's files are not in the profile: %v", err)
+	}
+	if got, want := ComposedFrom(dir), []string{"mysql"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("recorded %v, want %v", got, want)
+	}
+
+	none, err := CreateGuided(l, "n", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(none, "agent-files", "clip.txt")); err != nil {
+		t.Errorf("a profile with no picks lacks the base feature: %v", err)
+	}
+	if !IsGuided(none) {
+		t.Error("a profile composed from the base features alone should still say it was composed")
+	}
+}
+
+func TestDropBaseFromRecordRewritesTheProfile(t *testing.T) {
+	l := testLayout(t)
+	dir := l.HomePath("profiles", "old")
+	mkdir(t, dir)
+	write(t, filepath.Join(dir, "config.yaml"), "# vibe: features: clip, mysql\nname: old\n", 0o644)
+
+	got, err := DropBaseFromRecord(dir, []string{"clip"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"mysql"}; !reflect.DeepEqual(got, want) || !reflect.DeepEqual(ComposedFrom(dir), want) {
+		t.Errorf("returned %v, recorded %v, want %v", got, ComposedFrom(dir), want)
+	}
+
+	// Only the base feature recorded: the profile is still a guided one.
+	write(t, filepath.Join(dir, "config.yaml"), "# vibe: features: clip\nname: old\n", 0o644)
+	if _, err := DropBaseFromRecord(dir, []string{"clip"}); err != nil {
+		t.Fatal(err)
+	}
+	if !IsGuided(dir) || len(ComposedFrom(dir)) != 0 {
+		t.Errorf("want a guided profile recording nothing, got guided=%v recorded=%v", IsGuided(dir), ComposedFrom(dir))
+	}
+}

@@ -8,17 +8,15 @@
   // How long the clipboard page gets to come up before the page says so and
   // offers to start it.
   const CLIPBOARD_PATIENCE_MS = 30000
-  const TABS = ['conversation', 'clipboard', 'log', 'rules', 'fs']
+  const TABS = ['conversation', 'log', 'rules', 'fs']
   // How often the conversation tab asks for what the agent has said since.
   const CONVO_POLL_MS = 700
   // The longest a tool's result is shown, in characters.
   const RESULT_SHOWN = 2000
-  // The clipboard page, as it is shown in the clipboard tab and beside the
-  // conversation: the same page twice, each with its own frame and waiting
-  // notice.
+  // The clipboard page, shown beside the conversation: its frame, waiting
+  // notice and the controls that go with them.
   const CLIPBOARD_VIEWS = [
-    { frame: 'clipboard-frame', wait: 'clipboard-wait', text: 'clipboard-wait-text', help: 'clipboard-wait-help', start: 'clipboard-start', open: 'clipboard-open', tab: 'tab-clipboard' },
-    { frame: 'convo-clipboard-frame', wait: 'convo-clipboard-wait', text: 'convo-clipboard-wait-text', help: 'convo-clipboard-wait-help', start: 'convo-clipboard-start', open: 'convo-clipboard-open', tab: null },
+    { frame: 'convo-clipboard-frame', wait: 'convo-clipboard-wait', text: 'convo-clipboard-wait-text', help: 'convo-clipboard-wait-help', start: 'convo-clipboard-start', open: 'convo-clipboard-open' },
   ]
 
   const $ = (id) => document.getElementById(id)
@@ -196,7 +194,6 @@
       const url = res.body.clipboardUrl || ''
       const ready = !!(url && res.body.clipboardReady)
       state.clipboardCanStart = !!res.body.clipboardCanStart
-      $('tab-clipboard').hidden = !url
       state.conversation = !!res.body.conversation
       $('tab-conversation').hidden = !state.conversation
       if (url !== state.clipboardUrl || ready !== state.clipboardReady) {
@@ -215,7 +212,7 @@
         }
       }
       renderClipboard()
-      if ((!url && state.tab === 'clipboard') || (!state.conversation && state.tab === 'conversation')) select('log')
+      if (!state.conversation && state.tab === 'conversation') select('log')
     } catch (e) {
       reached(false)
     }
@@ -225,7 +222,6 @@
     const waiting = !!state.clipboardUrl && !state.clipboardReady
     const late = Date.now() - state.clipboardWaitingSince >= CLIPBOARD_PATIENCE_MS
     for (const view of CLIPBOARD_VIEWS) {
-      if (view.tab) $(view.tab).textContent = waiting ? 'Clipboard (starting)' : 'Clipboard'
       $(view.frame).hidden = waiting || !state.clipboardUrl
       $(view.wait).hidden = !waiting && !!state.clipboardUrl
       if (!state.clipboardUrl) {
@@ -274,7 +270,7 @@
 
   function tick() {
     if (document.visibilityState !== 'visible') return
-    if (state.tab === 'clipboard' || state.tab === 'conversation') { loadState(); return }
+    if (state.tab === 'conversation') { loadState(); return }
     loadState()
     load(state.tab)
   }
@@ -283,7 +279,6 @@
 
   function select(tab) {
     if (!TABS.includes(tab)) tab = 'log'
-    if (tab === 'clipboard' && !state.clipboardUrl) tab = 'log'
     if (tab === 'conversation' && !state.conversation) tab = 'log'
     state.tab = tab
     store.set('vibe-companion-tab', tab)
@@ -501,7 +496,7 @@
 
   // --- the conversation --------------------------------------------------
 
-  const convo = { last: 0, running: false, polling: false, lastPrompt: '' }
+  const convo = { last: 0, running: false, polling: false, lastPrompt: '', ticks: new Map() }
 
   function nearBottom(box) {
     return box.scrollHeight - box.scrollTop - box.clientHeight < 80
@@ -509,6 +504,28 @@
 
   function convoNote(cls, text) {
     $('convo-log').append(el('div', { class: 'msg ' + cls, text }))
+  }
+
+  // The ticks on what the user said, as on a chat message: one when vibe has
+  // it, two when the sandbox has it, two in blue once the agent has started
+  // answering.
+  const RECEIPT_TICKS = { sent: '✓', delivered: '✓✓', seen: '✓✓' }
+  const RECEIPT_WORDS = { sent: 'Sent', delivered: 'Delivered', seen: 'The agent is answering' }
+
+  function showReceipt(seq, receipt) {
+    const ticks = convo.ticks.get(seq)
+    if (!ticks || !RECEIPT_TICKS[receipt]) return
+    ticks.textContent = RECEIPT_TICKS[receipt]
+    ticks.className = 'ticks ' + receipt
+    ticks.title = RECEIPT_WORDS[receipt]
+    ticks.setAttribute('aria-label', RECEIPT_WORDS[receipt])
+  }
+
+  function userNote(ev) {
+    const ticks = el('span', { class: 'ticks' })
+    convo.ticks.set(ev.seq, ticks)
+    $('convo-log').append(el('div', { class: 'msg user' }, el('span', { text: ev.text || '' }), ticks))
+    showReceipt(ev.seq, ev.receipt || 'sent')
   }
 
   // What a tool was asked to do, in a few words: its input is the agent's
@@ -565,8 +582,8 @@
   }
 
   function showEvent(ev) {
-    if (ev.kind === 'reset') $('convo-log').replaceChildren()
-    else if (ev.kind === 'user') { convo.lastPrompt = ev.text || ''; convoNote('user', ev.text || '') }
+    if (ev.kind === 'reset') { $('convo-log').replaceChildren(); convo.ticks.clear() }
+    else if (ev.kind === 'user') { convo.lastPrompt = ev.text || ''; userNote(ev) }
     else if (ev.kind === 'agent') showAgent(ev.agent)
     else if (ev.kind === 'error') convoNote('error', ev.text || 'That failed.')
     else if (ev.kind === 'done' && ev.text === 'stopped') convoNote('meta', 'Stopped.')
@@ -590,8 +607,9 @@
       banner('')
       const log = $('convo-log')
       const stick = nearBottom(log)
-      if (res.body.reset) log.replaceChildren()
+      if (res.body.reset) { log.replaceChildren(); convo.ticks.clear() }
       for (const ev of res.body.events || []) showEvent(ev)
+      if (res.body.receipt) showReceipt(res.body.receipt.seq, res.body.receipt.state)
       convo.last = res.body.last || 0
       setConvoRunning(!!res.body.running)
       if (stick && (res.body.events || []).length) log.scrollTop = log.scrollHeight
@@ -739,9 +757,6 @@
     confirmChange(decision, host)
   })
 
-  $('clipboard-reload').addEventListener('click', () => {
-    if (state.clipboardUrl && state.clipboardReady) $('clipboard-frame').src = state.clipboardUrl
-  })
   for (const view of CLIPBOARD_VIEWS) $(view.start).addEventListener('click', startClipboard)
 
   setUpConversation()

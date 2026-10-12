@@ -114,3 +114,18 @@ func TestTailKeepsTheEnd(t *testing.T) {
 		t.Errorf("tail = %d bytes ending %q", len(got), got[len(got)-4:])
 	}
 }
+
+func TestStreamSaysWhenTheCommandHasTakenAllItsInput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("wants sh")
+	}
+	var order []string
+	cmd := exec.Command("sh", "-c", "cat; echo out")
+	err := stream(cmd, "typed\n", func() { order = append(order, "delivered") }, func(l []byte) { order = append(order, string(l)) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"delivered", "typed", "out"}; !reflect.DeepEqual(order, want) {
+		t.Errorf("order = %q, want %q", order, want)
+	}
+}

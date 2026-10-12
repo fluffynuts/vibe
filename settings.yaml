@@ -1,7 +1,7 @@
 memory: 12g
 agent: claude
 # what vibe does about the companion page it serves for a running sandbox
-# (network log and rules, clipboard): open — serve it and open the browser;
+# (conversation and clipboard, network log and rules): open — serve it and open the browser;
 # serve — serve it and just print the address; off — don't serve it. -N
 # turns it off for one run.
 companion: open
@@ -10,4 +10,3 @@ companion: open
 # is an error rather than a silent no-op
 defaultFeatures:
   - diffity
-  - clipboard-bridge

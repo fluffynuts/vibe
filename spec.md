@@ -158,7 +158,7 @@ Companion page
 
 While a sandbox is open, vibe serves a small web page for it on the host, so the user doesn't have to
 open the sbx TUI (crowded when they have many sandboxes) to see the sandbox's network log, change its
-rules, or reach its clipboard page. Code: `internal/companion` (server + `ui/`), `internal/policy`
+rules, or hold a conversation with the agent (the clipboard page is embedded beside it). Code: `internal/companion` (server + `ui/`), `internal/policy`
 (the `sbx policy` wrapper), `internal/browser`, `src/vibe/companion.go` (settings, port, lifecycle).
 
 Decisions, and why:

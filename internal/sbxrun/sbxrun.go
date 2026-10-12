@@ -6,10 +6,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -413,17 +415,36 @@ const maxStreamLine = 1 << 20
 
 // ExecStream runs a command inside the sandbox with input on its stdin,
 // calling onLine with each line it prints as it prints it, and ends the
-// exec if ctx is cancelled. A failure carries what the command said on its
-// stderr.
-func ExecStream(ctx context.Context, name, input string, onLine func(line []byte), args ...string) error {
+// exec if ctx is cancelled. delivered (which may be nil) is called once the
+// command has taken all of input. A failure carries what the command said on
+// its stderr.
+func ExecStream(ctx context.Context, name, input string, delivered func(), onLine func(line []byte), args ...string) error {
 	full := append([]string{"exec", "-i", name, "--"}, args...)
 	cmd := exec.CommandContext(ctx, "sbx", full...)
-	return streamLines(cmd, input, onLine)
+	return stream(cmd, input, delivered, onLine)
 }
 
 // streamLines runs cmd with input on its stdin, handing each line of its
 // stdout to onLine.
 func streamLines(cmd *exec.Cmd, input string, onLine func(line []byte)) error {
+	return stream(cmd, input, nil, onLine)
+}
+
+// signalAtEOF calls done when the reader it wraps has been read to its end.
+type signalAtEOF struct {
+	io.Reader
+	done func()
+}
+
+func (r signalAtEOF) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	if err == io.EOF && r.done != nil {
+		r.done()
+	}
+	return n, err
+}
+
+func stream(cmd *exec.Cmd, input string, delivered func(), onLine func(line []byte)) error {
 	// A cmd with a context is one whose end the caller decides, and so is
 	// kept apart from the terminal's Ctrl-C.
 	if cmd.Cancel != nil {
@@ -431,6 +452,10 @@ func streamLines(cmd *exec.Cmd, input string, onLine func(line []byte)) error {
 		cmd.WaitDelay = time.Second
 	}
 	cmd.Stdin = strings.NewReader(input)
+	if delivered != nil {
+		var once sync.Once
+		cmd.Stdin = signalAtEOF{strings.NewReader(input), func() { once.Do(delivered) }}
+	}
 	var errs tail
 	cmd.Stderr = &errs
 	out, err := cmd.StdoutPipe()

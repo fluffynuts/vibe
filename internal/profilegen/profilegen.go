@@ -84,10 +84,14 @@ func CreateGuided(l layout.Layout, profile string, features []string) (string, e
 	if err != nil {
 		return "", err
 	}
+	// The base features are always in, and are not part of what was chosen,
+	// so they are composed first but not recorded.
+	base := l.BaseFeatures()
+	features, _ = WithoutBase(features, base)
 	if err := recordComposedFrom(dir, features); err != nil {
 		return "", createErr(dir, err)
 	}
-	if err := library.Compose(features, l.FeatureDir, dir); err != nil {
+	if err := library.Compose(append(append([]string{}, base...), features...), l.FeatureDir, dir); err != nil {
 		return "", createErr(dir, err)
 	}
 	return dir, nil
@@ -112,12 +116,9 @@ func headerEnd(data []byte) int {
 }
 
 // recordComposedFrom writes (or replaces) the "# vibe: features: ..." line in
-// a profile's config.yaml. An empty list records nothing, so a profile
-// composed from no features at all doesn't claim to have been.
+// a profile's config.yaml. An empty list still writes the line, which is how
+// a profile composed from the base features alone says it was composed.
 func recordComposedFrom(dir string, features []string) error {
-	if len(features) == 0 {
-		return nil
-	}
 	path := filepath.Join(dir, "config.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
@@ -131,7 +132,7 @@ func recordComposedFrom(dir string, features []string) error {
 	}
 	data = []byte(strings.Join(kept, "\n"))
 	at := headerEnd(data)
-	line := fmt.Sprintf("# vibe: %s: %s\n", composedFromKey, strings.Join(features, ", "))
+	line := strings.TrimRight(fmt.Sprintf("# vibe: %s: %s", composedFromKey, strings.Join(features, ", ")), " ") + "\n"
 	out := append([]byte{}, data[:at]...)
 	out = append(out, []byte(line)...)
 	out = append(out, data[at:]...)
@@ -153,6 +154,47 @@ func ComposedFrom(profileDir string) []string {
 		}
 	}
 	return features
+}
+
+// IsGuided reports whether a profile records which features it was composed
+// from, even if that is none beyond the base ones.
+func IsGuided(profileDir string) bool {
+	data, err := os.ReadFile(filepath.Join(profileDir, "config.yaml"))
+	if err != nil {
+		return false
+	}
+	_, found := directive.Parse(data)[composedFromKey]
+	return found
+}
+
+// WithoutBase returns features without the base ones, and whether any were
+// there.
+func WithoutBase(features, base []string) (kept []string, removed bool) {
+	isBase := map[string]bool{}
+	for _, name := range base {
+		isBase[name] = true
+	}
+	for _, name := range features {
+		if isBase[name] {
+			removed = true
+		} else {
+			kept = append(kept, name)
+		}
+	}
+	return kept, removed
+}
+
+// DropBaseFromRecord takes the base features out of the list a profile
+// records, writing the profile back when it had any: a profile composed
+// when a base feature was still a choice names it, and it is not a choice
+// any more. It returns what the profile now records.
+func DropBaseFromRecord(profileDir string, base []string) ([]string, error) {
+	recorded := ComposedFrom(profileDir)
+	kept, removed := WithoutBase(recorded, base)
+	if !removed {
+		return recorded, nil
+	}
+	return kept, recordComposedFrom(profileDir, kept)
 }
 
 // CopyFrom creates a profile as a copy of an existing one — wherever that

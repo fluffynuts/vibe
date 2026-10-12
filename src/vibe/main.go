@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -125,8 +126,8 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              asking: keep, update, merge,keep or merge,update
 
 Every run that opens a sandbox also serves a companion page on this machine
-(localhost, only): tabs for the sandbox's clipboard page, network log, network
-rules and filesystem rules, so none of that needs the sbx TUI. Its URL is
+(localhost, only): tabs for a conversation with the agent (with the sandbox's
+clipboard page beside it), network log, network rules and filesystem rules, so none of that needs the sbx TUI. Its URL is
 printed, and it opens in your browser. -N/--no-companion skips it for one run;
 "companion: open|serve|off" in settings.yaml sets the default (serve: print
 the URL, don't open it).
@@ -552,7 +553,8 @@ type sandboxInfo struct {
 	gitToken              string    // where its GitHub token came from; empty for none
 	gitRules              []string  // its agent's rules for pushing
 	gitTokenExpires       time.Time // when its GitHub token expires; zero when never, or not known
-	features              []string  // what a guided profile was composed from
+	features              []string  // what a guided profile was composed from, base features aside
+	guided                bool      // the profile records what it was composed from
 	usage                 *sandboxUsage
 	usageErr              error
 }
@@ -594,7 +596,8 @@ func doInfo(lay layout.Layout, args cliargs.Args, name, target string) error {
 		}
 		info.agent = recordedAgent(lay.Home, name, agentOf(merged))
 		info.memory = merged.Memory
-		info.features = profilegen.ComposedFrom(lay.ProfileDir(profile))
+		info.guided = profilegen.IsGuided(lay.ProfileDir(profile))
+		info.features, _ = profilegen.WithoutBase(profilegen.ComposedFrom(lay.ProfileDir(profile)), lay.BaseFeatures())
 	}
 	statuses, err := sbxrun.List()
 	if err != nil {
@@ -732,7 +735,9 @@ func printInfo(w io.Writer, info sandboxInfo, profileKnown bool) {
 			row("github", "the agent can push (%s token%s); it's told never to force-push%s", info.gitToken,
 				prefixed(", ", gittoken.DescribeExpiry(info.gitTokenExpires, timeNow())), rulesSuffix(info.gitRules))
 		}
-		if len(info.features) == 0 {
+		if len(info.features) == 0 && info.guided {
+			row("features", "none beyond the base ones")
+		} else if len(info.features) == 0 {
 			row("features", "none recorded (not a guided profile)")
 		} else {
 			row("features", "%s", strings.Join(info.features, ", "))
@@ -1709,6 +1714,8 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 	if err := ensureProfile(lay, profile, args.Force); err != nil {
 		return err
 	}
+	settleBaseFeatures(lay, profile)
+	noteMissingBase(lay, profile)
 	doc, merged, err := loadKit(lay, profile)
 	if err != nil {
 		return err
@@ -2254,8 +2261,8 @@ func reCompose(lay layout.Layout, args cliargs.Args, name, target string, warn b
 	if !lay.ProfileExists(profile) {
 		return fmt.Errorf("no profile '%s' to re-compose — run vibe -R to create one", profile)
 	}
-	features := profilegen.ComposedFrom(lay.ProfileDir(profile))
-	if len(features) == 0 {
+	features := settleBaseFeatures(lay, profile)
+	if !profilegen.IsGuided(lay.ProfileDir(profile)) {
 		return fmt.Errorf("profile '%s' does not record which features it was composed from.\n"+
 			"Only profiles from guided creation do — add a '# vibe: features: a, b' line to\n"+
 			"%s to adopt one, or use vibe -R to build a fresh profile from the library.",
@@ -2281,7 +2288,7 @@ func reCompose(lay layout.Layout, args cliargs.Args, name, target string, warn b
 		return fmt.Errorf("aborted — nothing changed")
 	}
 
-	note("profile '%s' was composed from: %s", profile, strings.Join(features, ", "))
+	note("profile '%s' was composed from: %s", profile, describeFeatures(features))
 	if len(missing) > 0 {
 		note("This sandbox profile refers to features which can no longer be located:")
 		for _, name := range missing {
@@ -2365,6 +2372,61 @@ func doRestore(lay layout.Layout, args cliargs.Args, name, target string) error 
 		return nil
 	}
 	return reCompose(lay, args, name, target, false)
+}
+
+// settleBaseFeatures makes a profile's record of its features agree with
+// the base features being always on: a profile that names one (it was a
+// choice once) has the name taken out, silently. It returns the features the
+// profile records, base ones excluded.
+func settleBaseFeatures(lay layout.Layout, profile string) []string {
+	dir := lay.ProfileDir(profile)
+	base := lay.BaseFeatures()
+	features, err := profilegen.DropBaseFromRecord(dir, base)
+	if err != nil {
+		// Not worth stopping for: the same strip happens next time.
+		features, _ = profilegen.WithoutBase(profilegen.ComposedFrom(dir), base)
+	}
+	return features
+}
+
+// noteMissingBase tells the user, at creation, when a profile was built
+// without a base feature's files, and how to get them.
+func noteMissingBase(lay layout.Layout, profile string) {
+	dir := lay.ProfileDir(profile)
+	missing := missingBaseFeatures(lay, dir, lay.BaseFeatures())
+	if len(missing) == 0 {
+		return
+	}
+	note("clipboard is always enabled now, and has been upgraded to live in a conversation view.")
+	if profilegen.IsGuided(dir) {
+		note("  profile '%s' was built without it: run 'vibe --re-compose' to rebuild the profile with it", profile)
+		note("  (that recreates the sandbox, so anything that isn't in your workspace is lost)")
+	} else {
+		note("  profile '%s' was not composed from the library, so it has none of it: 'vibe -R' builds a fresh profile that does", profile)
+	}
+}
+
+// missingBaseFeatures names the base features whose agent-files are not all
+// in the profile.
+func missingBaseFeatures(lay layout.Layout, profileDir string, base []string) (missing []string) {
+	for _, name := range base {
+		root := filepath.Join(lay.FeatureDir(name), "agent-files")
+		complete := true
+		filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			rel, _ := filepath.Rel(root, path)
+			if _, err := os.Stat(filepath.Join(profileDir, "agent-files", rel)); err != nil {
+				complete = false
+			}
+			return nil
+		})
+		if !complete {
+			missing = append(missing, name)
+		}
+	}
+	return missing
 }
 
 // splitMissingFeatures separates the wanted features that the library still
@@ -2663,6 +2725,7 @@ func ensureGuidedProfile(lay layout.Layout, profile string) error {
 	// A defaultFeatures entry naming a feature that isn't there is a
 	// mistake worth stopping for: carrying on would quietly build a
 	// sandbox without the tooling it was told to always start with.
+	base.DefaultFeatures, _ = profilegen.WithoutBase(base.DefaultFeatures, lay.BaseFeatures())
 	if err := library.Validate(base.DefaultFeatures, names); err != nil {
 		return fmt.Errorf("defaultFeatures in %s: %w", settingsPath, err)
 	}
@@ -2935,6 +2998,7 @@ func pickDefaultFeatures(lay layout.Layout, defaults []string) ([]string, error)
 	if len(names) == 0 {
 		return defaults, nil
 	}
+	defaults, _ = profilegen.WithoutBase(defaults, lay.BaseFeatures())
 	if err := library.Validate(defaults, names); err != nil {
 		return nil, fmt.Errorf("defaultFeatures in %s: %w", displayPath(lay.HomePath("settings.yaml")), err)
 	}

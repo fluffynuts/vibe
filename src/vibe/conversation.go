@@ -49,7 +49,7 @@ func conversationCommand(workspace, session string) []string {
 // converse is the companion page's conversation with the agent of sandbox
 // name, which works in workspace (the same path inside as out).
 func converse(name, workspace string) companion.Converser {
-	return func(ctx context.Context, prompt, session string, onLine func([]byte)) error {
-		return sbxrun.ExecStream(ctx, name, prompt, onLine, conversationCommand(workspace, session)...)
+	return func(ctx context.Context, prompt, session string, delivered func(), onLine func([]byte)) error {
+		return sbxrun.ExecStream(ctx, name, prompt, delivered, onLine, conversationCommand(workspace, session)...)
 	}
 }

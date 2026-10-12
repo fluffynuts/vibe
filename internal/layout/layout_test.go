@@ -155,3 +155,23 @@ func TestNoOverlay(t *testing.T) {
 		t.Errorf("Profiles = %v, want %v", got, want)
 	}
 }
+
+func TestBaseFeaturesAreNotSelectableButResolve(t *testing.T) {
+	l := New(t.TempDir(), t.TempDir())
+	write(t, l.BundlePath("library", "mysql", "config.yaml"), "")
+	write(t, l.BundlePath("library", "base", "clipboard-bridge", "config.yaml"), "")
+	write(t, l.HomePath("library", "base", "extra", "config.yaml"), "")
+
+	if got, want := l.Features(), []string{"mysql"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Features() = %v, want %v", got, want)
+	}
+	if got, want := l.BaseFeatures(), []string{"clipboard-bridge", "extra"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("BaseFeatures() = %v, want %v", got, want)
+	}
+	if got, want := l.FeatureDir("clipboard-bridge"), l.BundlePath("library", "base", "clipboard-bridge"); got != want {
+		t.Errorf("FeatureDir(clipboard-bridge) = %s, want %s", got, want)
+	}
+	if got, want := l.FeatureDir("extra"), l.HomePath("library", "base", "extra"); got != want {
+		t.Errorf("FeatureDir(extra) = %s, want %s", got, want)
+	}
+}

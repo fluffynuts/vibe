@@ -66,17 +66,44 @@ func (l Layout) DefaultsDir() string {
 // creating their own ~/.vibe/library/mysql without that also hiding every
 // other feature the bundle ships.
 func (l Layout) FeatureDir(feature string) string {
+	for _, p := range []string{l.HomePath("library", BaseDir, feature), l.BundlePath("library", BaseDir, feature)} {
+		if p != "" && isDir(p) {
+			return p
+		}
+	}
 	if p := l.HomePath("library", feature); p != "" && isDir(p) {
 		return p
 	}
 	return l.BundlePath("library", feature)
 }
 
-// Features returns the names of every feature in the library across both
-// layers, sorted and de-duplicated — mirroring Profiles().
+// BaseDir is the folder under library/ holding the base features: the ones
+// every profile is composed with, which are never offered as a choice.
+const BaseDir = "base"
+
+// BaseFeatures returns the names of the base features across both layers,
+// sorted and de-duplicated.
+func (l Layout) BaseFeatures() []string {
+	return l.featureNames(BaseDir)
+}
+
+// Features returns the names of every selectable feature in the library
+// across both layers, sorted and de-duplicated — mirroring Profiles(). The
+// base features are not among them.
 func (l Layout) Features() []string {
+	var names []string
+	for _, name := range l.featureNames() {
+		if name != BaseDir {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// featureNames lists the folders under library/sub... in both layers.
+func (l Layout) featureNames(sub ...string) []string {
 	seen := map[string]bool{}
-	for _, dir := range []string{l.BundlePath("library"), l.HomePath("library")} {
+	for _, dir := range []string{l.BundlePath(append([]string{"library"}, sub...)...), l.HomePath(append([]string{"library"}, sub...)...)} {
 		if dir == "" {
 			continue
 		}

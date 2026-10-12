@@ -20,7 +20,8 @@ type fakeAgent struct {
 	err      error
 }
 
-func (f *fakeAgent) converse(ctx context.Context, prompt, session string, onLine func([]byte)) error {
+func (f *fakeAgent) converse(ctx context.Context, prompt, session string, delivered func(), onLine func([]byte)) error {
+	delivered()
 	f.mu.Lock()
 	f.prompts = append(f.prompts, prompt)
 	f.sessions = append(f.sessions, session)
@@ -54,10 +55,11 @@ func send(t *testing.T, s *Server, path, body string) (code int, out map[string]
 }
 
 type pollResult struct {
-	Events  []event `json:"events"`
-	Last    int     `json:"last"`
-	Running bool    `json:"running"`
-	Reset   bool    `json:"reset"`
+	Events  []event                `json:"events"`
+	Last    int                    `json:"last"`
+	Running bool                   `json:"running"`
+	Reset   bool                   `json:"reset"`
+	Receipt map[string]interface{} `json:"receipt"`
 }
 
 func poll(t *testing.T, s *Server, after int) (p pollResult) {
@@ -314,5 +316,38 @@ func TestALongConversationKeepsOnlyTheLastEvents(t *testing.T) {
 	}
 	if len(c.events) != maxEvents || c.events[len(c.events)-1].Seq != maxEvents+50 {
 		t.Errorf("kept %d events, last seq %d", len(c.events), c.events[len(c.events)-1].Seq)
+	}
+}
+
+func TestAPromptsReceiptAdvancesFromSentToDeliveredToSeen(t *testing.T) {
+	var c conversation
+	c.begin("hello")
+	if got := c.latestReceipt()["state"]; got != receiptSent {
+		t.Errorf("after begin: %v", got)
+	}
+	c.receipt(receiptDelivered)
+	if got := c.latestReceipt()["state"]; got != receiptDelivered {
+		t.Errorf("after delivery: %v", got)
+	}
+	c.line([]byte(`{"type":"system","subtype":"init"}`))
+	if got := c.latestReceipt()["state"]; got != receiptSeen {
+		t.Errorf("after the agent's first line: %v", got)
+	}
+	// Never backwards, whatever order the news arrives in.
+	c.receipt(receiptDelivered)
+	if got := c.latestReceipt()["state"]; got != receiptSeen {
+		t.Errorf("went back to %v", got)
+	}
+}
+
+func TestTheReceiptIsInThePollAndOnTheUserEvent(t *testing.T) {
+	s := converseServer(&fakeAgent{})
+	send(t, s, "/api/conversation/send", `{"prompt":"hello"}`)
+	p := idle(t, s)
+	if p.Events[0].Receipt != receiptSeen {
+		t.Errorf("the user event's receipt = %q", p.Events[0].Receipt)
+	}
+	if p.Receipt["state"] != receiptSeen || int(p.Receipt["seq"].(float64)) != p.Events[0].Seq {
+		t.Errorf("the poll's receipt = %v", p.Receipt)
 	}
 }

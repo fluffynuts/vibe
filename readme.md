@@ -431,7 +431,7 @@ Every sandbox also ships `vibe-band`, a Claude Code plugin from
 `defaults/agent-files/.claude/skills/vibe-band/` that draws a line above the prompt: the sandbox
 name, the project folder (the workspace, which doesn't follow the agent's `cd`), and git status in powerline style (branch, then `+` staged, `~` modified,
 `?` untracked, `✘` conflicted, `↑`/`↓` ahead/behind, `#` stash count). It refreshes every 2 seconds and after each
-turn. When the `clipboard-bridge` feature is installed, a second line, `copy-paste at: <url>`, shows the
+turn. A second line, `copy-paste at: <url>`, shows the
 clipboard page's address (from `clipboard-url`), or `copy-paste at: (starting)` until the clipboard server is
 listening and vibe has confirmed its host port for this boot. Once the agent has run a diffity review, a
 `review at: <url>` line sits above it: the latest URL `diffity-url` gave out, shown while a diffity viewer is
@@ -447,10 +447,13 @@ reach for the sbx TUI for, scoped to the sandbox you're working in. Its header s
 in the sandbox does — the sandbox, its folder, and the folder's git branch and status — and below that
 are tabs:
 
-- **Clipboard** — the sandbox's clipboard page (see `clipboard-bridge` below), embedded; there only when
-  the profile has that feature. Until vibe sees the page answer, the tab reads **Clipboard (starting)**
-  and shows a placeholder instead of the page; if it still isn't up after 30 seconds, a **Start it**
-  button runs the kit's `start-clipboard` in the sandbox (harmless if it is already running).
+- **Conversation** — talk to the agent from the page, with the sandbox's clipboard page (see
+  `clipboard-bridge` below) embedded beside it: paste images and files anywhere on the tab and they go
+  to the clipboard. Each prompt you send carries ticks like a chat message: one grey tick once vibe has
+  it, two grey ticks once it has reached the sandbox, and two blue ticks once the agent has started
+  answering. Until vibe sees the clipboard page answer the pane shows a placeholder; if it still isn't
+  up after 30 seconds, a **Start it** button runs the kit's `start-clipboard` in the sandbox (harmless
+  if it is already running).
 - **Network log** — every host the sandbox has tried to reach, with hit counts and whether it was
   allowed or blocked, refreshing every couple of seconds while the tab is showing. Filter by status or
   search for a host. A blocked host has an **Allow** button, an allowed one a **Block** button; click
@@ -588,6 +591,7 @@ defaults/             # tooling applied to every profile, regardless of tech sta
   agent-files/
 library/              # selectable features a guided profile is composed from
   <feature-name>/     # same shape as a profile — see "Library features"
+  base/               # features every guided profile always gets (clipboard-bridge)
 profiles/
   <profile-name>/
     config.yaml          # profile-specific kit fragment, merged over the base one
@@ -659,7 +663,6 @@ nugetDir: ~/.nuget    # mounted into the sandbox and symlinked in, if it exists 
 memoryRoot: ~/.vibe/memories   # where per-sandbox agent memories are backed up
 defaultFeatures:      # library features a guided profile starts with ticked
   - diffity
-  - clipboard-bridge
 env:                  # extra environment variables passed to `sbx create -e`
   SOME_VAR: value
 publish:              # ports to publish, and (optionally) a stable URL env var for each
@@ -728,7 +731,11 @@ matching agent skills — the two are released together — non-fatally, logging
 agent user, since `on-start` runs as root and nothing root writes under `/home/agent` can be
 replaced by the agent later.
 
-`clipboard-bridge`, also ticked by default, is for sharing images (and text) with the agent. Pasting an
+`clipboard-bridge` lives in `library/base/`: a **base feature**, which every guided profile is
+composed with and which is never offered as a choice (a `defaultFeatures` entry, or a recorded
+`# vibe: features:` entry, that names it is dropped silently). A profile composed before that, or
+by hand, has none of it, and says so when a sandbox is created from it: `vibe --re-compose` rebuilds
+a guided profile with it (and recreates the sandbox). It is for sharing images (and text) with the agent. Pasting an
 image into the agent's terminal goes through sbx's clipboard bridge, which comes back empty on
 Linux hosts, so the feature gives you a page in your browser instead (the agent gives you its URL
 via `clipboard-url`, or open `$VIBE_CLIPBOARD_URL`). Paste on it, drop files on it, or pick them,
@@ -762,7 +769,7 @@ drop one you no longer use (and reorder them); with `-f` the recorded features a
 created blank record nothing and are refused rather than guessed at; add the comment line above
 to adopt one.
 
-Overriding one bundled feature means dropping your own `~/.vibe/library/<feature>/` next to it —
+Overriding one bundled feature (a base one too, as `~/.vibe/library/base/<feature>/`) means dropping your own `~/.vibe/library/<feature>/` next to it —
 unlike `defaults/`, that replaces only the feature you copied, so features the bundle adds later
 still show up.
 
