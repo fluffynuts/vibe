@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -113,6 +114,19 @@ func TestAPromptReachesTheAgentAndItsAnswerComesBack(t *testing.T) {
 	}
 	if !strings.Contains(string(p.Events[1].Agent), "echo: hello") {
 		t.Errorf("the agent's event = %s", p.Events[1].Agent)
+	}
+}
+
+func TestEveryEventSaysWhenItHappened(t *testing.T) {
+	s := converseServer(&fakeAgent{})
+	before := time.Now().UnixMilli()
+	send(t, s, "/api/conversation/send", `{"prompt":"hello"}`)
+	p := idle(t, s)
+	after := time.Now().UnixMilli()
+	for _, e := range p.Events {
+		if e.At < before || e.At > after {
+			t.Errorf("%s event at %d, want between %d and %d", e.Kind, e.At, before, after)
+		}
 	}
 }
 
@@ -349,5 +363,70 @@ func TestTheReceiptIsInThePollAndOnTheUserEvent(t *testing.T) {
 	}
 	if p.Receipt["state"] != receiptSeen || int(p.Receipt["seq"].(float64)) != p.Events[0].Seq {
 		t.Errorf("the poll's receipt = %v", p.Receipt)
+	}
+}
+
+// historyServer is converseServer keeping its conversation in file, the way
+// Start sets one up.
+func historyServer(t *testing.T, f *fakeAgent, file string) *Server {
+	t.Helper()
+	s := converseServer(f)
+	if err := s.convo.load(file); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestTheConversationOutlivesTheServer(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "box.conversation.json")
+	f := &fakeAgent{}
+	first := historyServer(t, f, file)
+	send(t, first, "/api/conversation/send", `{"prompt":"one"}`)
+	was := idle(t, first)
+	first.Close()
+
+	second := historyServer(t, f, file)
+	// A page that was showing the conversation carries on, without being
+	// told to begin again.
+	if p := poll(t, second, was.Last); p.Reset || len(p.Events) != 0 || p.Last != was.Last {
+		t.Errorf("a page that had it all: %+v", p)
+	}
+	if got := kinds(poll(t, second, 0)); got != "user,agent,agent,done" {
+		t.Errorf("a page that had none: %s", got)
+	}
+	send(t, second, "/api/conversation/send", `{"prompt":"two"}`)
+	idle(t, second)
+	if f.sessions[1] != "sess-1" {
+		t.Errorf("the next turn resumed %q", f.sessions[1])
+	}
+}
+
+func TestATurnCutShortByVibeStoppingIsSaidToHaveBeen(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "box.conversation.json")
+	f := &fakeAgent{release: make(chan struct{})}
+	first := historyServer(t, f, file)
+	send(t, first, "/api/conversation/send", `{"prompt":"one"}`)
+	first.Close() // the turn is still running
+
+	second := historyServer(t, &fakeAgent{}, file)
+	p := poll(t, second, 0)
+	if p.Running || p.Events[0].Text != "one" || p.Events[len(p.Events)-1].Kind != "error" {
+		t.Errorf("after the restart: running=%v %s", p.Running, kinds(p))
+	}
+	// The first vibe's turn ends, and saves, before the test does.
+	close(f.release)
+	idle(t, first)
+}
+
+func TestBeginningAnewIsKept(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "box.conversation.json")
+	first := historyServer(t, &fakeAgent{}, file)
+	send(t, first, "/api/conversation/send", `{"prompt":"one"}`)
+	idle(t, first)
+	send(t, first, "/api/conversation/new", `{}`)
+
+	second := historyServer(t, &fakeAgent{}, file)
+	if got := kinds(poll(t, second, 0)); got != "reset" || second.convo.session != "" {
+		t.Errorf("after the restart: %s, session %q", got, second.convo.session)
 	}
 }

@@ -83,3 +83,24 @@ func TestCompanionPortIsRemembered(t *testing.T) {
 		t.Errorf("port = %d", inst.CompanionPort)
 	}
 }
+
+func TestRemoveDeletesTheConversation(t *testing.T) {
+	home := t.TempDir()
+	if err := Save(home, Instance{Name: "vibe"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{ConversationPath(home, "vibe"), TranscriptPath(home, "vibe")} {
+		os.MkdirAll(filepath.Dir(file), 0o700)
+		if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Remove(home, "vibe"); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{ConversationPath(home, "vibe"), TranscriptPath(home, "vibe")} {
+		if _, err := os.Stat(file); !os.IsNotExist(err) {
+			t.Errorf("%s is still there", file)
+		}
+	}
+}

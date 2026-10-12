@@ -102,8 +102,8 @@ func Load(vibeHome, name string) (Instance, bool, error) {
 	return inst, true, nil
 }
 
-// Remove deletes a sandbox's instance record, and its companion and git
-// tokens, if any.
+// Remove deletes a sandbox's instance record, its companion and git
+// tokens, and what its companion page keeps of the conversation, if any.
 func Remove(vibeHome, name string) error {
 	err := os.Remove(path(vibeHome, name))
 	if err != nil && !os.IsNotExist(err) {
@@ -116,6 +116,11 @@ func Remove(vibeHome, name string) error {
 	err = os.Remove(GitTokenPath(vibeHome, name))
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing git token: %w", err)
+	}
+	for _, file := range []string{ConversationPath(vibeHome, name), TranscriptPath(vibeHome, name)} {
+		if err := os.Remove(file); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("removing companion conversation: %w", err)
+		}
 	}
 	return nil
 }
@@ -130,6 +135,18 @@ func GitTokenPath(vibeHome, name string) string {
 // use is kept.
 func DefaultGitTokenPath(vibeHome string) string {
 	return filepath.Join(vibeHome, "git", "default.token")
+}
+
+// ConversationPath is where the companion page keeps its conversation with
+// a sandbox's agent between runs of vibe.
+func ConversationPath(vibeHome, name string) string {
+	return filepath.Join(vibeHome, "companion", name+".conversation.json")
+}
+
+// TranscriptPath is where the agent's own record of that conversation is
+// kept on the host, so a rebuilt sandbox's agent can be handed it back.
+func TranscriptPath(vibeHome, name string) string {
+	return filepath.Join(vibeHome, "companion", name+".transcript.tgz")
 }
 
 func tokenPath(vibeHome, name string) string {

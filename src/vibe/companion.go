@@ -127,11 +127,11 @@ func startClipboard(name string) ([]string, error) {
 
 // conversationFor is the companion page's way of talking to the sandbox's
 // agent, or nil when it has none: only claude can be driven this way so far.
-func conversationFor(name string, inst state.Instance) companion.Converser {
+func conversationFor(vibeHome, name string, inst state.Instance) companion.Converser {
 	if agent := inst.Agent; agent != "" && agent != "claude" {
 		return nil
 	}
-	return converse(name, inst.Target)
+	return keepingTranscript(converse(name, inst.Target), sandboxTranscripts(name), state.TranscriptPath(vibeHome, name))
 }
 
 // startCompanion serves the companion page for the sandbox, as the user's
@@ -147,9 +147,13 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		return stop
 	}
 	setting := ""
+	agent := inst.Agent
 	if found && lay.ProfileExists(inst.Profile) {
 		if merged, err := loadSettings(lay, inst.Profile); err == nil {
 			setting = merged.Companion
+			if agent == "" {
+				agent = agentOf(merged)
+			}
 		}
 	}
 	mode, err := companionMode(args.NoCompanion, setting)
@@ -191,13 +195,15 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 
 	srv, err := companion.Start(companion.Config{
 		Sandbox:        name,
+		Agent:          agent,
 		Token:          token,
 		Port:           port,
 		Policy:         &policy.Client{Sandbox: name},
 		ClipboardURL:   func() string { return clipboardPageURL(vibeHome, name) },
 		StartClipboard: func() ([]string, error) { return startClipboard(name) },
 		Workspace:      inst.Target,
-		Converse:       conversationFor(name, inst),
+		Converse:       conversationFor(vibeHome, name, inst),
+		History:        state.ConversationPath(vibeHome, name),
 	})
 	if err != nil {
 		note("companion: could not serve the page on port %d: %v", port, err)

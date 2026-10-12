@@ -1,0 +1,7 @@
+#!/bin/bash
+# Rebuild vibe from this checkout, refresh ~/.vibe from it, and re-compose
+# the sandbox for the folder this is run from.
+VIBE_FOLDER="$(dirname "$(readlink -f "$0")")"
+VIBE="$VIBE_FOLDER/vibe"
+
+make -C "$VIBE_FOLDER" && "$VIBE" --stop && "$VIBE" --install && "$VIBE" -C -f "$@"

@@ -1,8 +1,15 @@
 package main
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"vibe/internal/companion"
 )
 
 func TestShellQuote(t *testing.T) {
@@ -59,5 +66,100 @@ func TestConversationCommandQuotesAWorkspaceThatTriesToBeShell(t *testing.T) {
 func TestConversationCommandWithoutAWorkspaceStaysWhereItIs(t *testing.T) {
 	if inner := conversationCommand("", "")[4]; strings.Contains(inner, "cd ") {
 		t.Errorf("inner = %s", inner)
+	}
+}
+
+// fakeSandbox is a sandbox's ~/.claude, as far as keepingTranscript sees it:
+// the sessions it has transcripts for, and what was put into it.
+type fakeSandbox struct {
+	mu       sync.Mutex
+	sessions map[string]bool
+	puts     [][]byte
+	fetched  chan string
+}
+
+func (f *fakeSandbox) transcripts() transcripts {
+	return transcripts{
+		has: func(_ context.Context, session string) bool {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			return f.sessions[session]
+		},
+		fetch: func(_ context.Context, session string) ([]byte, error) {
+			defer func() { f.fetched <- session }()
+			return []byte("tgz of " + session), nil
+		},
+		put: func(_ context.Context, tgz []byte) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			f.puts = append(f.puts, tgz)
+			return nil
+		},
+	}
+}
+
+// agentSaying is a converser whose agent reports being in session.
+func agentSaying(session string) companion.Converser {
+	return func(_ context.Context, _, _ string, _ func(), onLine func([]byte)) error {
+		onLine([]byte(`{"type":"result","session_id":"` + session + `"}`))
+		return nil
+	}
+}
+
+func turn(t *testing.T, c companion.Converser, session string) {
+	t.Helper()
+	if err := c(context.Background(), "hi", session, func() {}, func([]byte) {}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestATurnsTranscriptIsKeptOnTheHost(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "box.transcript.tgz")
+	box := &fakeSandbox{sessions: map[string]bool{}, fetched: make(chan string, 1)}
+	turn(t, keepingTranscript(agentSaying("sess-1"), box.transcripts(), file), "")
+	if got := <-box.fetched; got != "sess-1" {
+		t.Errorf("fetched %q", got)
+	}
+	// The copy is written just after the fetch returns.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if data, err := os.ReadFile(file); err == nil {
+			if string(data) != "tgz of sess-1" {
+				t.Errorf("kept %q", data)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no copy was kept")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(box.puts) != 0 {
+		t.Errorf("a new session was handed a transcript: %q", box.puts)
+	}
+}
+
+func TestARebuiltSandboxIsHandedTheTranscriptOnce(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "box.transcript.tgz")
+	os.WriteFile(file, []byte("kept"), 0o600)
+	box := &fakeSandbox{sessions: map[string]bool{}, fetched: make(chan string, 2)}
+	c := keepingTranscript(agentSaying("sess-1"), box.transcripts(), file)
+	turn(t, c, "sess-1")
+	<-box.fetched
+	turn(t, c, "sess-1")
+	<-box.fetched
+	if len(box.puts) != 1 || string(box.puts[0]) != "kept" {
+		t.Errorf("puts = %q", box.puts)
+	}
+}
+
+func TestASandboxThatHasTheTranscriptIsLeftAlone(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "box.transcript.tgz")
+	os.WriteFile(file, []byte("kept"), 0o600)
+	box := &fakeSandbox{sessions: map[string]bool{"sess-1": true}, fetched: make(chan string, 1)}
+	turn(t, keepingTranscript(agentSaying("sess-1"), box.transcripts(), file), "sess-1")
+	<-box.fetched
+	if len(box.puts) != 0 {
+		t.Errorf("puts = %q", box.puts)
 	}
 }

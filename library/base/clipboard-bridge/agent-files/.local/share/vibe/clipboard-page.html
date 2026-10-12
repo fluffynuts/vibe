@@ -267,12 +267,16 @@ function titleRow(item) {
       done = true;
       var value = input.value.trim();
       if (!save || value === (item.description || title(item))) { show(); refresh(); return; }
-      // Clearing the box goes back to the default title.
-      saveTitle(item, value === title(item) ? "" : value).then(refresh);
+      // Clearing the box goes back to the default title. The box goes as
+      // soon as it's done with: while it has the focus, nothing re-renders.
+      item.description = value === title(item) ? "" : value;
+      show();
+      saveTitle(item, item.description).then(refresh);
     }
     input.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") finish(true);
-      else if (e.key === "Escape") finish(false);
+      if (e.isComposing) return;
+      if (e.key === "Enter") { e.preventDefault(); finish(true); }
+      else if (e.key === "Escape") { e.preventDefault(); finish(false); }
     });
     input.addEventListener("blur", function () { finish(true); });
     row.textContent = "";

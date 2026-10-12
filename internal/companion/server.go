@@ -48,6 +48,9 @@ var uiFiles embed.FS
 // Config is what the page is served for.
 type Config struct {
 	Sandbox string
+	// Agent is the agent the sandbox runs (claude, codex, …), which picks
+	// the page's icon; "" gets vibe's own.
+	Agent string
 	// Token is the secret every /api call must carry.
 	Token string
 	// Port is the host port to listen on, on 127.0.0.1.
@@ -73,6 +76,9 @@ type Config struct {
 	// nil means the sandbox's agent can't be talked to this way, and the
 	// page has no such tab.
 	Converse Converser
+	// History is the file the conversation is kept in between runs, so it
+	// survives vibe being started again; "" keeps it only in memory.
+	History string
 }
 
 // Server is a running companion page.
@@ -104,6 +110,13 @@ func Start(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	s := New(cfg)
+	if cfg.History != "" {
+		if err := s.convo.load(cfg.History); err != nil {
+			// A conversation that can't be read is begun anew rather than
+			// keeping the page from being served; the file is left as it is.
+			s.convo.file = ""
+		}
+	}
 	s.ln = ln
 	s.cfg.Port = ln.Addr().(*net.TCPAddr).Port
 	s.http = &http.Server{
@@ -114,8 +127,9 @@ func Start(cfg Config) (*Server, error) {
 	return s, nil
 }
 
-// Close stops serving.
+// Close stops serving, saving the conversation for the next vibe.
 func (s *Server) Close() error {
+	s.convo.close()
 	if s.http == nil {
 		return nil
 	}
@@ -189,7 +203,7 @@ func (s *Server) guarded(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		// frame-src is for the clipboard tab: the sandbox's page, on the
 		// host's own loopback.
-		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; "+
+		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src data:; "+
 			"connect-src 'self'; frame-src http://localhost:* http://127.0.0.1:*; "+
 			"base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 		next.ServeHTTP(w, r)
@@ -258,6 +272,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"sandbox":           s.cfg.Sandbox,
+		"agent":             s.cfg.Agent,
 		"folder":            shortenPath(s.cfg.Workspace, homeDir()),
 		"git":               git,
 		"clipboardUrl":      clipboard,

@@ -449,11 +449,16 @@ are tabs:
 
 - **Conversation** — talk to the agent from the page, with the sandbox's clipboard page (see
   `clipboard-bridge` below) embedded beside it: paste images and files anywhere on the tab and they go
-  to the clipboard. Each prompt you send carries ticks like a chat message: one grey tick once vibe has
+  to the clipboard. Each message shows the time it was said, and each prompt you send carries ticks like a chat message: one grey tick once vibe has
   it, two grey ticks once it has reached the sandbox, and two blue ticks once the agent has started
   answering. Until vibe sees the clipboard page answer the pane shows a placeholder; if it still isn't
   up after 30 seconds, a **Start it** button runs the kit's `start-clipboard` in the sandbox (harmless
-  if it is already running).
+  if it is already running). The conversation, and what you are typing, outlive vibe: start it again
+  and the page carries on where it was. vibe also keeps a copy of the agent's record of the session
+  (in `~/.vibe/companion/`), and gives it back to a sandbox that has been rebuilt (by `--re-compose`,
+  say), so the new agent remembers it too. The page's tab icon is the sandbox's agent's, and it says
+  what the agent is up to even while you're on another tab: a grey dot pulses while it works, and a
+  blue dot shows it has finished, until you come back to the page.
 - **Network log** — every host the sandbox has tried to reach, with hit counts and whether it was
   allowed or blocked, refreshing every couple of seconds while the tab is showing. Filter by status or
   search for a host. A blocked host has an **Allow** button, an allowed one a **Block** button; click

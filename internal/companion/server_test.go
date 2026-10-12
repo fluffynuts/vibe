@@ -334,6 +334,25 @@ func TestStateSaysWhereTheClipboardIs(t *testing.T) {
 	}
 }
 
+func TestStateSaysWhichAgent(t *testing.T) {
+	s := New(Config{Sandbox: "vibe", Agent: "codex", Token: token, Port: testPort})
+	var got struct {
+		Agent string `json:"agent"`
+	}
+	json.Unmarshal(do(t, s, req{path: "/api/state", headers: authed(nil)}).Body.Bytes(), &got)
+	if got.Agent != "codex" {
+		t.Errorf("agent = %q, want codex (it picks the page's icon)", got.Agent)
+	}
+}
+
+func TestPageMayShowItsDrawnIcon(t *testing.T) {
+	s := newServer(&fakeSbx{})
+	csp := do(t, s, req{path: "/"}).Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "img-src data:") {
+		t.Errorf("CSP %q doesn't allow the data: favicon the page draws", csp)
+	}
+}
+
 func TestSeveralReadsShareOneSbxCall(t *testing.T) {
 	sbx := &fakeSbx{}
 	s := newServer(sbx)

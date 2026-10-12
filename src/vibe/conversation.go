@@ -2,8 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"vibe/internal/companion"
 	"vibe/internal/sbxrun"
@@ -43,7 +49,7 @@ func conversationCommand(workspace, session string) []string {
 	if workspace != "" {
 		inner = "cd " + shellQuote(workspace) + " && " + inner
 	}
-	return []string{"sh", "-c", asAgentScript, "converse", inner}
+	return asAgent(inner)
 }
 
 // converse is the companion page's conversation with the agent of sandbox
@@ -51,5 +57,130 @@ func conversationCommand(workspace, session string) []string {
 func converse(name, workspace string) companion.Converser {
 	return func(ctx context.Context, prompt, session string, delivered func(), onLine func([]byte)) error {
 		return sbxrun.ExecStream(ctx, name, prompt, delivered, onLine, conversationCommand(workspace, session)...)
+	}
+}
+
+// transcripts is how the agent's own record of a session — what --resume
+// reads — is got out of a sandbox and put back into one.
+type transcripts struct {
+	// has says whether the sandbox's agent has session's transcript.
+	has func(ctx context.Context, session string) bool
+	// fetch is session's transcript, as a gzipped tar of the agent's
+	// ~/.claude.
+	fetch func(ctx context.Context, session string) ([]byte, error)
+	// put unpacks what fetch gave into the agent's ~/.claude.
+	put func(ctx context.Context, tgz []byte) error
+}
+
+// transcriptTimeout bounds each trip to the sandbox for a transcript.
+const transcriptTimeout = 30 * time.Second
+
+// keepingTranscript is converse, keeping a copy of the agent's transcript
+// of the session in file on the host after every turn, and handing it back
+// to a sandbox that doesn't have it (one rebuilt by --re-compose, say)
+// before the turn that resumes it. Without that, the agent of a rebuilt
+// sandbox would have no idea what the page shows it was told. Nothing here
+// stops a turn: a transcript that can't be kept or put back leaves the
+// agent to say it can't find the session.
+func keepingTranscript(converse companion.Converser, t transcripts, file string) companion.Converser {
+	var (
+		mu sync.Mutex
+		// checked is the sessions known to be in the sandbox already.
+		checked = map[string]bool{}
+		// keeping is held while a copy is made, so two never race to file.
+		keeping sync.Mutex
+	)
+	keep := func(session string) {
+		keeping.Lock()
+		defer keeping.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), transcriptTimeout)
+		defer cancel()
+		tgz, err := t.fetch(ctx, session)
+		if err != nil || len(tgz) == 0 {
+			return
+		}
+		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+			return
+		}
+		tmp := file + ".tmp"
+		if err := os.WriteFile(tmp, tgz, 0o600); err == nil {
+			os.Rename(tmp, file)
+		}
+	}
+	return func(ctx context.Context, prompt, session string, delivered func(), onLine func([]byte)) error {
+		if resumableSession.MatchString(session) {
+			mu.Lock()
+			known := checked[session]
+			mu.Unlock()
+			if !known {
+				check, cancel := context.WithTimeout(ctx, transcriptTimeout)
+				if !t.has(check, session) {
+					if tgz, err := os.ReadFile(file); err == nil {
+						t.put(check, tgz)
+					}
+				}
+				cancel()
+				mu.Lock()
+				checked[session] = true
+				mu.Unlock()
+			}
+		}
+		latest := session
+		err := converse(ctx, prompt, session, delivered, func(line []byte) {
+			var head struct {
+				SessionID string `json:"session_id"`
+			}
+			if json.Unmarshal(line, &head) == nil && resumableSession.MatchString(head.SessionID) {
+				latest = head.SessionID
+			}
+			onLine(line)
+		})
+		if resumableSession.MatchString(latest) {
+			mu.Lock()
+			checked[latest] = true
+			mu.Unlock()
+			// In the background, so the page hears the turn is over now.
+			go keep(latest)
+		}
+		return err
+	}
+}
+
+// asAgent is the sbx exec arguments that run script as the sandbox's agent
+// user, in a login shell.
+func asAgent(script string) []string {
+	return []string{"sh", "-c", asAgentScript, "converse", script}
+}
+
+// sandboxTranscripts reaches into sandbox name's ~/.claude for transcripts.
+// A session id is only ever one that resumableSession passes, so it is safe
+// in a script; it is quoted all the same. Paths keep their projects/ in
+// front: claude's folders there start with a dash, which ls would take for
+// an option.
+func sandboxTranscripts(name string) transcripts {
+	pattern := func(session string) string { return shellQuote(session + ".jsonl") }
+	return transcripts{
+		has: func(ctx context.Context, session string) bool {
+			return sbxrun.ExecSilentContext(ctx, name, asAgent(
+				`cd "$HOME/.claude" 2>/dev/null && ls projects/*/`+pattern(session)+` >/dev/null 2>&1`)...)
+		},
+		fetch: func(ctx context.Context, session string) ([]byte, error) {
+			// The transcript, and the folder of whatever it refers out to,
+			// as one line of base64: the last line, should a login shell
+			// say anything first.
+			out, err := sbxrun.ExecCaptureContext(ctx, name, asAgent(
+				`cd "$HOME/.claude" && ls projects/*/`+pattern(session)+` >/dev/null 2>&1 && `+
+					`find projects -mindepth 2 -maxdepth 2 \( -name `+pattern(session)+` -o -name `+shellQuote(session)+` \) -print0 | `+
+					`tar --null -czf - -T - 2>/dev/null | base64 -w0`)...)
+			if err != nil {
+				return nil, err
+			}
+			lines := strings.Split(strings.TrimSpace(out), "\n")
+			return base64.StdEncoding.DecodeString(strings.TrimSpace(lines[len(lines)-1]))
+		},
+		put: func(ctx context.Context, tgz []byte) error {
+			return sbxrun.ExecInput(name, base64.StdEncoding.EncodeToString(tgz), asAgent(
+				`mkdir -p "$HOME/.claude" && cd "$HOME/.claude" && base64 -d | tar -xzf -`)...)
+		},
 	}
 }

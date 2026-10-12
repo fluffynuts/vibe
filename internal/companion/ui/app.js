@@ -4,6 +4,47 @@
 (function () {
   'use strict'
 
+  // One companion tab per sandbox. The tab that is open holds a Web Lock for
+  // as long as it lives; a tab that finds the lock taken tells the open one
+  // (over a BroadcastChannel) to reload, then steps aside: it tries to close
+  // itself, which browsers allow only for tabs a script opened, and failing
+  // that says so. Raising the old tab is not something a page may do.
+  const HANDOFF = 'vibe-companion-handoff'
+  const RELOADED = 'vibe-companion-reloaded'
+
+  function step_aside(channel) {
+    channel.postMessage('reload')
+    channel.close()
+    window.close()
+    const note = document.createElement('p')
+    note.style.cssText = 'font: 16px system-ui, sans-serif; margin: 3em auto; max-width: 32em; text-align: center'
+    note.textContent = 'The companion is already open in another tab, and has been reloaded. You can close this tab.'
+    document.body.replaceChildren(note)
+    document.title = 'Companion (already open)'
+  }
+
+  function start() {
+    if (!navigator.locks || typeof BroadcastChannel === 'undefined') return boot()
+    const channel = new BroadcastChannel(HANDOFF)
+    channel.onmessage = (ev) => {
+      if (ev.data !== 'reload') return
+      try { sessionStorage.setItem(RELOADED, '1') } catch (e) { /* carry on */ }
+      location.reload()
+    }
+    // After a reload we were asked for, the old page may not have let go
+    // of the lock yet: wait for it rather than mistake ourselves for a newcomer.
+    let reloaded = false
+    try { reloaded = sessionStorage.getItem(RELOADED) === '1'; sessionStorage.removeItem(RELOADED) } catch (e) { /* carry on */ }
+    const hold = () => { boot(); return new Promise(() => {}) } // never resolves: held until the tab goes
+    if (reloaded) { navigator.locks.request(HANDOFF, hold); return }
+    navigator.locks.request(HANDOFF, { ifAvailable: true }, (lock) => {
+      if (!lock) { step_aside(channel); return }
+      return hold()
+    })
+  }
+
+  function boot() {
+
   const POLL_MS = 2000
   // How long the clipboard page gets to come up before the page says so and
   // offers to start it.
@@ -85,6 +126,101 @@
       clearTimeout(timeout)
     }
   }
+
+  // --- the tab's icon -----------------------------------------------------
+
+  // Each agent's icon, drawn small as SVG (32 units square): a nod to the
+  // agent's own mark rather than a copy of it. An agent not here gets
+  // vibe's hexagon.
+  function rays(n, color) {
+    let d = ''
+    for (let i = 0; i < n; i++) {
+      const a = (i * 2 * Math.PI) / n
+      const r = i % 2 ? 11 : 14
+      d += 'M16 16L' + (16 + r * Math.cos(a)).toFixed(1) + ' ' + (16 + r * Math.sin(a)).toFixed(1)
+    }
+    return '<path d="' + d + '" stroke="' + color + '" stroke-width="3.2" stroke-linecap="round"/>'
+  }
+  const AGENT_ICONS = {
+    claude: rays(12, '#d97757'),
+    codex: '<circle cx="16" cy="16" r="15" fill="#0d0d0d"/><g fill="none" stroke="#fff" stroke-width="2">' +
+      '<ellipse cx="16" cy="16" rx="10" ry="4.5"/><ellipse cx="16" cy="16" rx="10" ry="4.5" transform="rotate(60 16 16)"/>' +
+      '<ellipse cx="16" cy="16" rx="10" ry="4.5" transform="rotate(120 16 16)"/></g>',
+    copilot: '<rect x="1" y="1" width="30" height="30" rx="7" fill="#24292f"/>' +
+      '<path d="M5 15a11 9 0 0 1 22 0v6c0 3-5 6-11 6S5 24 5 21z" fill="#fff"/>' +
+      '<g fill="#fff" stroke="#24292f" stroke-width="1.8"><rect x="6" y="8" width="9.5" height="8" rx="4"/><rect x="16.5" y="8" width="9.5" height="8" rx="4"/></g>' +
+      '<rect x="12" y="19" width="2.2" height="4.5" rx="1.1" fill="#24292f"/><rect x="17.8" y="19" width="2.2" height="4.5" rx="1.1" fill="#24292f"/>',
+    cursor: '<path d="M16 2l13 7.5L16 17 3 9.5z" fill="#d4d4d4"/><path d="M3 9.5L16 17v14L3 23.5z" fill="#8a8a8a"/>' +
+      '<path d="M29 9.5L16 17v14l13-7.5z" fill="#3a3a3a"/><path d="M16 2l13 7.5v14L16 31 3 23.5v-14z" fill="none" stroke="#1a1a1a" stroke-width="1.2" stroke-linejoin="round"/>',
+    devin: '<rect x="1" y="1" width="30" height="30" rx="7" fill="#0f766e"/>' +
+      '<path d="M10 8h5a8 8 0 0 1 0 16h-5z" fill="none" stroke="#fff" stroke-width="3" stroke-linejoin="round"/>',
+    'docker-agent': '<rect x="1" y="1" width="30" height="30" rx="7" fill="#1d63ed"/><g fill="#fff">' +
+      '<rect x="5" y="16" width="5" height="4"/><rect x="11" y="16" width="5" height="4"/><rect x="17" y="16" width="5" height="4"/>' +
+      '<rect x="11" y="11" width="5" height="4"/><rect x="17" y="11" width="5" height="4"/><rect x="17" y="6" width="5" height="4"/>' +
+      '<path d="M4 21h22c2 0 2.5-2 2.5-3 0 5-5 9-13 9-6 0-9.5-3-11.5-6z"/></g>',
+    droid: '<rect x="1" y="1" width="30" height="30" rx="7" fill="#1c1917"/>' +
+      '<path d="M16 4v4" stroke="#f97316" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="4" r="2" fill="#f97316"/>' +
+      '<rect x="6" y="9" width="20" height="16" rx="4" fill="#f97316"/>' +
+      '<circle cx="12" cy="16" r="2.5" fill="#1c1917"/><circle cx="20" cy="16" r="2.5" fill="#1c1917"/>' +
+      '<rect x="11" y="21" width="10" height="1.8" rx="0.9" fill="#1c1917"/>',
+    gemini: '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">' +
+      '<stop offset="0" stop-color="#4285f4"/><stop offset=".6" stop-color="#9b72cb"/><stop offset="1" stop-color="#d96570"/></linearGradient></defs>' +
+      '<path d="M16 1C16 9 23 16 31 16 23 16 16 23 16 31 16 23 9 16 1 16 9 16 16 9 16 1z" fill="url(#g)"/>',
+    kiro: '<path d="M6 15a10 10 0 0 1 20 0v14l-3.3-2.5L19.3 29 16 26.5 12.7 29l-3.4-2.5L6 29z" fill="#7c3aed"/>' +
+      '<ellipse cx="12.5" cy="15" rx="2" ry="3" fill="#fff"/><ellipse cx="19.5" cy="15" rx="2" ry="3" fill="#fff"/>',
+    opencode: '<rect x="1" y="1" width="30" height="30" rx="5" fill="#0a0a0a"/>' +
+      '<rect x="8" y="8" width="16" height="16" fill="none" stroke="#fff" stroke-width="3.5"/><rect x="12" y="12" width="8" height="8" fill="#6b6b6b"/>',
+    shell: '<rect x="1" y="3" width="30" height="26" rx="5" fill="#1f2937"/>' +
+      '<path d="M7 11l5 5-5 5" fill="none" stroke="#4ade80" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '<path d="M15 22h9" stroke="#4ade80" stroke-width="2.8" stroke-linecap="round"/>',
+  }
+  const VIBE_ICON = '<path d="M16 2l12.1 7v14L16 30 3.9 23V9z" fill="#a626a4"/>'
+
+  // The dot on the icon: grey, pulsing, while the agent works; blue once it
+  // has finished, until the tab is looked at again.
+  const DOT = { working: ['#5f6368', '#b0b3b8'], done: ['#1d9bd8'] }
+  const PULSE_MS = 1000 // a step each way, so a two-second pulse
+
+  const favicon = { agent: '', dot: '', step: 0, timer: null, shown: '' }
+
+  function drawFavicon() {
+    let svg = AGENT_ICONS[favicon.agent] || VIBE_ICON
+    const colors = DOT[favicon.dot]
+    if (colors) {
+      svg += '<circle cx="24" cy="24" r="7.5" fill="' + colors[favicon.step % colors.length] +
+        '" stroke="#fff" stroke-width="2"/>'
+    }
+    const href = 'data:image/svg+xml,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">' + svg + '</svg>')
+    if (href === favicon.shown) return
+    favicon.shown = href
+    $('favicon').href = href
+  }
+
+  function setFaviconAgent(agent) {
+    if (agent === favicon.agent && favicon.shown) return
+    favicon.agent = agent
+    drawFavicon()
+  }
+
+  function setFaviconDot(dot) {
+    if (dot === favicon.dot) return
+    favicon.dot = dot
+    favicon.step = 0
+    clearInterval(favicon.timer)
+    favicon.timer = null
+    if (dot === 'working') {
+      favicon.timer = setInterval(() => { favicon.step += 1; drawFavicon() }, PULSE_MS)
+    }
+    drawFavicon()
+  }
+
+  // Looking at the tab again is what clears a finished turn's blue dot.
+  function seen() {
+    if (favicon.dot === 'done' && document.visibilityState === 'visible' && document.hasFocus()) setFaviconDot('')
+  }
+  window.addEventListener('focus', seen)
+  document.addEventListener('visibilitychange', seen)
 
   // --- the link to vibe -------------------------------------------------
 
@@ -191,6 +327,7 @@
       $('sandbox').textContent = state.sandbox
       renderWhere(res.body.folder || '', res.body.git || null)
       document.title = state.sandbox ? 'vibe · ' + state.sandbox : 'vibe companion'
+      setFaviconAgent(res.body.agent || '')
       const url = res.body.clipboardUrl || ''
       const ready = !!(url && res.body.clipboardReady)
       state.clipboardCanStart = !!res.body.clipboardCanStart
@@ -287,6 +424,11 @@
       const button = $('tab-' + t)
       button.setAttribute('aria-selected', String(t === tab))
       button.tabIndex = t === tab ? 0 : -1
+    }
+    // What the agent said while the conversation was out of sight.
+    if (tab === 'conversation' && convo.behind) {
+      convo.behind = false
+      $('convo-log').scrollTop = $('convo-log').scrollHeight
     }
     tick()
   }
@@ -496,14 +638,30 @@
 
   // --- the conversation --------------------------------------------------
 
-  const convo = { last: 0, running: false, polling: false, lastPrompt: '', ticks: new Map() }
+  const convo = { last: 0, running: false, polling: false, behind: false, lastPrompt: '', ticks: new Map() }
 
   function nearBottom(box) {
     return box.scrollHeight - box.scrollTop - box.clientHeight < 80
   }
 
-  function convoNote(cls, text) {
-    $('convo-log').append(el('div', { class: 'msg ' + cls, text }))
+  // stamp is when a message was said, in local time as 2026-10-12 14:03:
+  // the same whatever the browser's locale, and not a date anyone can read
+  // the wrong way round. at is 0 in conversations kept from before times
+  // were recorded, which get none.
+  function stamp(at) {
+    if (!at) return null
+    const d = new Date(at)
+    const two = (n) => String(n).padStart(2, '0')
+    const text = d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate()) +
+      ' ' + two(d.getHours()) + ':' + two(d.getMinutes())
+    return el('time', { class: 'stamp', datetime: d.toISOString(), title: d.toLocaleString(), text })
+  }
+
+  function convoNote(cls, text, at) {
+    const time = stamp(at)
+    $('convo-log').append(time
+      ? el('div', { class: 'msg ' + cls }, el('span', { text }), el('span', { class: 'foot' }, time))
+      : el('div', { class: 'msg ' + cls, text }))
   }
 
   // The ticks on what the user said, as on a chat message: one when vibe has
@@ -524,7 +682,8 @@
   function userNote(ev) {
     const ticks = el('span', { class: 'ticks' })
     convo.ticks.set(ev.seq, ticks)
-    $('convo-log').append(el('div', { class: 'msg user' }, el('span', { text: ev.text || '' }), ticks))
+    $('convo-log').append(el('div', { class: 'msg user' }, el('span', { text: ev.text || '' }),
+      el('span', { class: 'foot' }, stamp(ev.at), ticks)))
     showReceipt(ev.seq, ev.receipt || 'sent')
   }
 
@@ -558,19 +717,19 @@
       el('pre', { text })))
   }
 
-  function showAgent(line) {
+  function showAgent(line, at) {
     if (!line || typeof line !== 'object') return
     const content = line.message && Array.isArray(line.message.content) ? line.message.content : []
     if (line.type === 'assistant') {
       for (const block of content) {
-        if (block.type === 'text' && block.text) convoNote('agent', block.text)
+        if (block.type === 'text' && block.text) convoNote('agent', block.text, at)
         else if (block.type === 'tool_use') convoNote('tool', '⚙ ' + (block.name || 'tool') + '  ' + summarise(block.input))
       }
     } else if (line.type === 'user') {
       for (const block of content) if (block.type === 'tool_result') showResult(block)
     } else if (line.type === 'result') {
       if (line.is_error) {
-        convoNote('error', typeof line.result === 'string' && line.result ? line.result : 'The agent reported an error.')
+        convoNote('error', typeof line.result === 'string' && line.result ? line.result : 'The agent reported an error.', at)
       }
       const bits = []
       if (typeof line.duration_ms === 'number') bits.push((line.duration_ms / 1000).toFixed(1) + 's')
@@ -584,12 +743,14 @@
   function showEvent(ev) {
     if (ev.kind === 'reset') { $('convo-log').replaceChildren(); convo.ticks.clear() }
     else if (ev.kind === 'user') { convo.lastPrompt = ev.text || ''; userNote(ev) }
-    else if (ev.kind === 'agent') showAgent(ev.agent)
-    else if (ev.kind === 'error') convoNote('error', ev.text || 'That failed.')
+    else if (ev.kind === 'agent') showAgent(ev.agent, ev.at)
+    else if (ev.kind === 'error') convoNote('error', ev.text || 'That failed.', ev.at)
     else if (ev.kind === 'done' && ev.text === 'stopped') convoNote('meta', 'Stopped.')
   }
 
   function setConvoRunning(running) {
+    if (running) setFaviconDot('working')
+    else if (convo.running) setFaviconDot(document.visibilityState === 'visible' && document.hasFocus() ? '' : 'done')
     convo.running = running
     $('convo-send').disabled = running
     $('convo-stop').hidden = !running
@@ -598,7 +759,9 @@
   }
 
   async function pollConversation() {
-    if (state.tab !== 'conversation' || document.visibilityState !== 'visible' || convo.polling) return
+    // Polled from other tabs, and with the page in the background too, so
+    // the tab's icon can say when the agent is done.
+    if (!state.conversation || convo.polling) return
     convo.polling = true
     try {
       const res = await api('/api/conversation?after=' + convo.last)
@@ -612,13 +775,21 @@
       if (res.body.receipt) showReceipt(res.body.receipt.seq, res.body.receipt.state)
       convo.last = res.body.last || 0
       setConvoRunning(!!res.body.running)
-      if (stick && (res.body.events || []).length) log.scrollTop = log.scrollHeight
+      if ((res.body.events || []).length) {
+        if ($('panel-conversation').hidden) convo.behind = true
+        else if (stick) log.scrollTop = log.scrollHeight
+      }
     } catch (e) {
       reached(false)
     } finally {
       convo.polling = false
     }
   }
+
+  // What is being typed is kept as it is typed, so a reload (or vibe being
+  // started again, which reloads this page) puts it back.
+  const DRAFT = 'vibe-companion-draft'
+  const saveDraft = () => store.set(DRAFT, $('convo-input').value)
 
   async function sendPrompt() {
     const input = $('convo-input')
@@ -629,6 +800,7 @@
       reached(true)
       if (!res.ok) { toast((res.body && res.body.error) || 'That could not be sent.', true); return }
       input.value = ''
+      saveDraft()
       setConvoRunning(true)
       pollConversation()
     } catch (e) {
@@ -718,8 +890,11 @@
         ev.preventDefault()
         ev.target.value = convo.lastPrompt
         ev.target.setSelectionRange(convo.lastPrompt.length, convo.lastPrompt.length)
+        saveDraft()
       }
     })
+    $('convo-input').value = store.get(DRAFT) || ''
+    $('convo-input').addEventListener('input', saveDraft)
     $('convo-stop').addEventListener('click', () => conversationCall('/api/conversation/stop'))
     $('convo-new').addEventListener('click', () => conversationCall('/api/conversation/new'))
     document.addEventListener('paste', onPaste)
@@ -766,4 +941,7 @@
 
   setLink(false, 'connecting…')
   loadState().then(() => select(state.tab))
+}
+
+  start()
 })()

@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Converser runs one turn of the conversation: it sends prompt to the agent
@@ -55,6 +59,9 @@ type event struct {
 	Agent json.RawMessage `json:"agent,omitempty"`
 	// Receipt is how far a user event got: see receiptSent.
 	Receipt string `json:"receipt,omitempty"`
+	// At is when it happened, in milliseconds since the epoch, for the page
+	// to show; 0 in conversations kept from before it was recorded.
+	At int64 `json:"at,omitempty"`
 }
 
 // conversation is the one conversation the page has with the agent. It
@@ -69,11 +76,83 @@ type conversation struct {
 	cancel  context.CancelFunc
 	// prompt is the seq of the user event of the turn running or last run.
 	prompt int
+	// file is where the conversation is kept between runs of vibe, so a
+	// page that outlives one carries on where it was; "" keeps it only in
+	// memory.
+	file string
+}
+
+// saved is what file holds.
+type saved struct {
+	Seq     int     `json:"seq"`
+	Session string  `json:"session,omitempty"`
+	Prompt  int     `json:"prompt,omitempty"`
+	Running bool    `json:"running,omitempty"`
+	Events  []event `json:"events"`
+}
+
+// load picks up the conversation file holds, if any. A turn that was
+// running when it was saved went with the vibe that ran it, and is said to
+// have. Seq carries on from where it was, so a page that was showing the
+// conversation sees only what is new.
+func (c *conversation) load(file string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.file = file
+	data, err := os.ReadFile(file)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var was saved
+	if err := json.Unmarshal(data, &was); err != nil {
+		return fmt.Errorf("%s: %w", file, err)
+	}
+	c.events, c.seq, c.prompt = was.Events, was.Seq, was.Prompt
+	if sessionID.MatchString(was.Session) {
+		c.session = was.Session
+	}
+	if was.Running {
+		c.add("error", "vibe stopped before the agent had finished answering", nil)
+		c.save()
+	}
+	return nil
+}
+
+// save writes the conversation to file, whole, if it has one. It is called
+// with mu held, when a turn begins or ends rather than at every line: a
+// vibe that stops mid-turn loses what the agent said of it, not what came
+// before.
+func (c *conversation) save() {
+	if c.file == "" {
+		return
+	}
+	data, err := json.Marshal(saved{Seq: c.seq, Session: c.session, Prompt: c.prompt, Running: c.running, Events: c.events})
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(c.file), 0o700); err != nil {
+		return
+	}
+	tmp := c.file + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return
+	}
+	os.Rename(tmp, c.file)
+}
+
+// close saves the conversation as it is, for the next vibe to pick up.
+func (c *conversation) close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.save()
 }
 
 func (c *conversation) add(kind, text string, agent json.RawMessage) {
 	c.seq++
-	c.events = append(c.events, event{Seq: c.seq, Kind: kind, Text: text, Agent: agent})
+	c.events = append(c.events, event{Seq: c.seq, Kind: kind, Text: text, Agent: agent, At: time.Now().UnixMilli()})
 	if over := len(c.events) - maxEvents; over > 0 {
 		c.events = append([]event(nil), c.events[over:]...)
 	}
@@ -91,6 +170,7 @@ func (c *conversation) begin(prompt string) (session string, ctx context.Context
 	c.add("user", prompt, nil)
 	c.prompt = c.seq
 	c.events[len(c.events)-1].Receipt = receiptSent
+	c.save()
 	return c.session, ctx, true
 }
 
@@ -144,6 +224,7 @@ func (c *conversation) finish(err error, stopped bool) {
 	}
 	c.running = false
 	c.cancel = nil
+	c.save()
 }
 
 func (c *conversation) stop() bool {
@@ -166,6 +247,7 @@ func (c *conversation) reset() bool {
 	c.events, c.session, c.prompt = nil, "", 0
 	// Pages showing the old events are told to clear them.
 	c.add("reset", "", nil)
+	c.save()
 	return true
 }
 
