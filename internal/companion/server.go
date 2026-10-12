@@ -84,6 +84,10 @@ type Config struct {
 	// Admin is what the page's Admin tab does to the sandbox; nil means the
 	// page has no such tab.
 	Admin Admin
+	// ThemeColor is the colour of the agent's theme, for the page to pick
+	// itself out with ("" for none: the page's own); nil means none. It may
+	// be slow (it can ask the sandbox), so it is asked for seldom.
+	ThemeColor func() string
 	// History is the file the conversation is kept in between runs, so it
 	// survives vibe being started again; "" keeps it only in memory.
 	History string
@@ -286,6 +290,11 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 			return read(s.cfg.Workspace)
 		})
 	}
+	theme := ""
+	if s.cfg.ThemeColor != nil {
+		// /theme in the agent can change it at any time, but that's seldom.
+		theme = cached(s.cache, "theme", time.Minute, s.cfg.ThemeColor)
+	}
 	upgrades := 0
 	if s.cfg.Admin != nil {
 		s.admin.mu.Lock()
@@ -294,6 +303,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"upgrades":          upgrades,
+		"themeColor":        theme,
 		"sandbox":           s.cfg.Sandbox,
 		"agent":             s.cfg.Agent,
 		"folder":            shortenPath(s.cfg.Workspace, homeDir()),

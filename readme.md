@@ -452,7 +452,9 @@ Whenever vibe opens a sandbox it also serves a page for it on your own machine, 
 (`companion page: http://localhost:10000/#…`) and opens it in your browser. It is what you'd otherwise
 reach for the sbx TUI for, scoped to the sandbox you're working in. Its header shows what the infobar
 in the sandbox does — the sandbox, its folder, and the folder's git branch and status — and below that
-are tabs:
+are tabs. When the agent uses one of vibe's Claude themes, the page picks up its colour, subtly: a stripe
+along the top, the project's name, the chosen tab and focus outlines, so you can tell which sandbox's page
+you're looking at:
 
 - **Conversation** — talk to the agent from the page, with the sandbox's clipboard page (see
   `clipboard-bridge` below) embedded beside it: paste images and files anywhere on the tab and they go

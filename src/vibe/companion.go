@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"vibe/internal/browser"
+	"vibe/internal/claudetheme"
 	"vibe/internal/cliargs"
 	"vibe/internal/companion"
 	"vibe/internal/kitspec"
@@ -158,6 +159,31 @@ func lastLine(out string) string {
 	return strings.TrimSpace(lines[len(lines)-1])
 }
 
+// themeColorFor reads the colour of the theme the sandbox's agent uses, for
+// the companion page: as the agent has it now (it may have been changed with
+// /theme), else as its profile recorded it. Only claude has themes.
+func themeColorFor(lay layout.Layout, name string, inst state.Instance, agent string) func() string {
+	if agent != "" && agent != "claude" {
+		return nil
+	}
+	return func() string {
+		profileDir := lay.ProfileDir(inst.Profile)
+		choice, ok := claudetheme.FromSandbox(name)
+		if !ok {
+			if choice, ok = claudetheme.FromProfile(profileDir); !ok {
+				return ""
+			}
+		}
+		// The kit's themes, or one the profile adds.
+		for _, dir := range []string{lay.DefaultsDir(), profileDir} {
+			if color, ok := claudetheme.Accent(dir, choice); ok {
+				return color
+			}
+		}
+		return ""
+	}
+}
+
 // conversationFor is the companion page's way of talking to the sandbox's
 // agent, or nil when it has none: only claude can be driven this way so far.
 func conversationFor(vibeHome, name string, inst state.Instance) companion.Converser {
@@ -239,6 +265,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		History:        state.ConversationPath(vibeHome, name),
 		LatestReview:   latestReviewFor(name, inst),
 		Admin:          adminFor(lay, name, inst.Target),
+		ThemeColor:     themeColorFor(lay, name, inst, agent),
 	})
 	if err != nil {
 		note("companion: could not serve the page on port %d: %v", port, err)

@@ -273,3 +273,33 @@ echo "WARN: could not set the Claude theme in $F" >>/tmp/sbx-setup.log
 true
 `
 }
+
+// colorValue is what an accent may look like: rgb(r,g,b) or a hex colour.
+// It ends up in a page's CSS, so nothing else gets through.
+var colorValue = regexp.MustCompile(`^(rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)|#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})$`)
+
+// Accent is the colour a custom theme draws the agent's prompt box in (or,
+// failing that, the agent's own name), for something else to pick it out
+// by. ok is false for the default theme, Claude's built-in ones, and a
+// theme whose file is missing or has no usable colour.
+func Accent(defaultsDir, choice string) (color string, ok bool) {
+	if choice == "" || choice == Default || builtIn[choice] || !validName.MatchString(choice) {
+		return "", false
+	}
+	data, err := os.ReadFile(filepath.Join(defaultsDir, "agent-files", ".claude", "themes", choice+".json"))
+	if err != nil {
+		return "", false
+	}
+	var theme struct {
+		Overrides map[string]string `json:"overrides"`
+	}
+	if json.Unmarshal(data, &theme) != nil {
+		return "", false
+	}
+	for _, key := range []string{"promptBorder", "claude"} {
+		if c := strings.TrimSpace(theme.Overrides[key]); colorValue.MatchString(c) {
+			return c, true
+		}
+	}
+	return "", false
+}

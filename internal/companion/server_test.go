@@ -605,3 +605,16 @@ func TestCachedCallsAgainOnceTheTTLHasPassed(t *testing.T) {
 		t.Errorf("cached = %d, want a fresh 2", got)
 	}
 }
+
+func TestStateSaysTheAgentsThemeColour(t *testing.T) {
+	asked := 0
+	s := New(Config{Sandbox: "vibe", Token: token, Port: testPort, ThemeColor: func() string { asked++; return "rgb(230,20,140)" }})
+	var got struct {
+		ThemeColor string `json:"themeColor"`
+	}
+	json.Unmarshal(do(t, s, req{path: "/api/state", headers: authed(nil)}).Body.Bytes(), &got)
+	do(t, s, req{path: "/api/state", headers: authed(nil)})
+	if got.ThemeColor != "rgb(230,20,140)" || asked != 1 {
+		t.Errorf("themeColor = %q, asked %d times (it can ask the sandbox, so seldom)", got.ThemeColor, asked)
+	}
+}

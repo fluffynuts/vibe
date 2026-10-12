@@ -221,3 +221,25 @@ ol.steps code { font: 12px var(--mono); padding: 1px 4px; border: 1px solid var(
 .gh-repo { color: var(--amber); font-weight: 600; }
 .gh-perms { color: var(--project); font-weight: 600; }
 .gh-last { color: var(--folder); font-weight: 600; }
+
+/* The agent's theme colour, when vibe knows it (html.themed): a stripe along
+   the top, the project's name, the chosen tab, focus outlines and the picked
+   slash command. Subtle on purpose: nothing that means something (Send,
+   links, status colours) changes. --theme-ink is it made readable as text
+   and thin lines on the page's own background. */
+:root { --theme: var(--accent); --theme-ink: color-mix(in oklab, var(--theme) 78%, black); }
+@media (prefers-color-scheme: dark) {
+  :root { --theme-ink: color-mix(in oklab, var(--theme) 70%, white); }
+}
+html.themed body { border-top: 3px solid var(--theme); }
+html.themed .brand .project { color: var(--theme-ink); }
+html.themed .tabs button[aria-selected="true"] { border-bottom-color: var(--theme); }
+html.themed textarea:focus-visible,
+html.themed input:focus-visible,
+html.themed button:focus-visible,
+html.themed .button:focus-visible { outline-color: var(--theme-ink); }
+html.themed .commands li[aria-selected="true"] {
+  background: color-mix(in oklab, var(--theme) 22%, transparent);
+  color: var(--text);
+  box-shadow: inset 3px 0 0 var(--theme);
+}

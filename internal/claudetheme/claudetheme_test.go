@@ -258,3 +258,28 @@ func files(doc kitspec.Doc) []kitspec.Doc {
 	}
 	return out
 }
+
+func TestAccentIsTheThemesPromptBorder(t *testing.T) {
+	dir := t.TempDir()
+	themes := filepath.Join(dir, "agent-files", ".claude", "themes")
+	os.MkdirAll(themes, 0o755)
+	os.WriteFile(filepath.Join(themes, "pink.json"), []byte(`{"overrides":{"promptBorder":"rgb(230,20,140)","claude":"rgb(255,40,170)"}}`), 0o644)
+	os.WriteFile(filepath.Join(themes, "plain.json"), []byte(`{"overrides":{"claude":"#ff00aa"}}`), 0o644)
+	os.WriteFile(filepath.Join(themes, "evil.json"), []byte(`{"overrides":{"promptBorder":"red;background:url(x)"}}`), 0o644)
+	os.WriteFile(filepath.Join(themes, "broken.json"), []byte(`{`), 0o644)
+	for choice, want := range map[string]string{
+		"pink":    "rgb(230,20,140)",
+		"plain":   "#ff00aa",
+		"evil":    "",
+		"broken":  "",
+		"missing": "",
+		"default": "",
+		"dark":    "",
+		"../pink": "",
+	} {
+		got, ok := Accent(dir, choice)
+		if got != want || ok != (want != "") {
+			t.Errorf("Accent(%q) = %q, %v; want %q", choice, got, ok, want)
+		}
+	}
+}

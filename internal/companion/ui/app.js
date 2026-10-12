@@ -222,6 +222,19 @@
   window.addEventListener('focus', seen)
   document.addEventListener('visibilitychange', seen)
 
+  // applyTheme gives the page the agent's theme colour (see html.themed in
+  // app.css), or takes it away. The server only ever sends a plain rgb() or
+  // hex colour; the browser is asked anyway, so nothing else lands in the CSS.
+  function applyTheme(color) {
+    const root = document.documentElement
+    const ok = !!color && CSS.supports('color', color)
+    if (ok === root.classList.contains('themed') && (!ok || root.style.getPropertyValue('--theme') === color)) return
+    root.classList.toggle('themed', ok)
+    if (ok) root.style.setProperty('--theme', color)
+    else root.style.removeProperty('--theme')
+    $('theme-color').setAttribute('content', ok ? color : '')
+  }
+
   // --- the link to vibe -------------------------------------------------
 
   function setLink(up, text) {
@@ -328,6 +341,7 @@
       renderWhere(res.body.folder || '', res.body.git || null)
       document.title = state.sandbox ? 'vibe · ' + state.sandbox : 'vibe companion'
       setFaviconAgent(res.body.agent || '')
+      applyTheme(res.body.themeColor || '')
       const url = res.body.clipboardUrl || ''
       const ready = !!(url && res.body.clipboardReady)
       state.clipboardCanStart = !!res.body.clipboardCanStart
