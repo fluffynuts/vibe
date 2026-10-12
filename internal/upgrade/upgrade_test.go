@@ -325,10 +325,12 @@ func TestWhatThePackageNoLongerShipsGoesUnlessTheUserChangedIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"library/edited/script", "library/kit/agent-files/.local/x", "library/kit/config.yaml"}; !reflect.DeepEqual(res.Removed, want) {
+	// Paths come back as the OS writes them, as everywhere in Result.
+	p := filepath.FromSlash
+	if want := []string{p("library/edited/script"), p("library/kit/agent-files/.local/x"), p("library/kit/config.yaml")}; !reflect.DeepEqual(res.Removed, want) {
 		t.Errorf("Removed = %v, want %v", res.Removed, want)
 	}
-	if want := []string{"library/edited/config.yaml"}; !reflect.DeepEqual(res.KeptRetired, want) {
+	if want := []string{p("library/edited/config.yaml")}; !reflect.DeepEqual(res.KeptRetired, want) {
 		t.Errorf("KeptRetired = %v, want %v", res.KeptRetired, want)
 	}
 	if _, err := os.Stat(filepath.Join(home, "library", "kit")); !os.IsNotExist(err) {
@@ -394,7 +396,7 @@ func TestAChangedFileThePackageDroppedIsTheUsersToDecide(t *testing.T) {
 			if c.wantAsked {
 				o.DecideRetired = func(rel, mine string) (bool, error) {
 					asked = true
-					if rel != "library/kit/config.yaml" || mine != filepath.Join(home, "library", "kit", "config.yaml") {
+					if rel != filepath.FromSlash("library/kit/config.yaml") || mine != filepath.Join(home, "library", "kit", "config.yaml") {
 						t.Errorf("asked about %s at %s", rel, mine)
 					}
 					return c.answerRemove, nil
