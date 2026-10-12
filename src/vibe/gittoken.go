@@ -34,14 +34,10 @@ const (
 	gitTokenOwn     = "own"
 )
 
-// The lifetime first offered for a new token: a week for one sandbox's,
-// long enough for a plan the agent works through over a few days without
-// being a standing credential; a month for the default, which outlives any
-// one plan.
-const (
-	tokenDays        = 7
-	defaultTokenDays = 30
-)
+// tokenDays is the lifetime first offered for a new token, a sandbox's own
+// or the default: a month, which renewing (vibe reminds you) keeps from
+// becoming a standing credential.
+const tokenDays = 30
 
 // timeNow is the clock expiry is judged by; tests stand in for it.
 var timeNow = time.Now
@@ -844,7 +840,7 @@ func setUpDefaultGitToken(vibeHome string) {
 	case "renew":
 		openRenewPage("vibe default")
 	case "guided":
-		openTokenPage("vibe default", "Lets the agents in vibe sandboxes push.", "", pickTokenDays(defaultTokenDays), nil)
+		openTokenPage("vibe default", "Lets the agents in vibe sandboxes push.", "", pickTokenDays(tokenDays), nil)
 	}
 	token, expires, ok := enterGitToken(nil, "go on without changing the default token")
 	if !ok {

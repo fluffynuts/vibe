@@ -171,13 +171,13 @@ func conversationFor(vibeHome, name string, inst state.Instance) companion.Conve
 // settings say, and returns what stops it. It never stops the session
 // starting: whatever goes wrong is reported, and the session goes on
 // without the page.
-func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop func()) {
+func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop func(), serving bool) {
 	stop = func() {}
 	vibeHome := lay.Home
 	inst, found, err := state.Load(vibeHome, name)
 	if err != nil {
 		note("companion: %v", err)
-		return stop
+		return stop, false
 	}
 	setting := ""
 	agent := inst.Agent
@@ -192,27 +192,27 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 	mode, err := companionMode(args.NoCompanion, setting)
 	if err != nil {
 		note("%v — not serving the companion page", err)
-		return stop
+		return stop, false
 	}
 	if mode == companionOff {
-		return stop
+		return stop, false
 	}
 
 	token, err := state.CompanionToken(vibeHome, name)
 	if err != nil {
 		note("companion: %v", err)
-		return stop
+		return stop, false
 	}
 	instances, err := state.List(vibeHome)
 	if err != nil {
 		note("companion: %v", err)
-		return stop
+		return stop, false
 	}
 	port, served, err := chooseCompanionPort(instances, name, portalloc.InUse,
 		func(p int) bool { return companion.Running(p, name) })
 	if err != nil {
 		note("companion: %v", err)
-		return stop
+		return stop, false
 	}
 	if found && inst.CompanionPort != port {
 		inst.CompanionPort = port
@@ -223,7 +223,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 	url := fmt.Sprintf("http://localhost:%d/#%s", port, token)
 	if served {
 		note("companion page: %s (already being served by another vibe for this sandbox)", url)
-		return stop
+		return stop, false
 	}
 
 	srv, err := companion.Start(companion.Config{
@@ -238,14 +238,15 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		Converse:       conversationFor(vibeHome, name, inst),
 		History:        state.ConversationPath(vibeHome, name),
 		LatestReview:   latestReviewFor(name, inst),
+		Admin:          adminFor(lay, name, inst.Target),
 	})
 	if err != nil {
 		note("companion: could not serve the page on port %d: %v", port, err)
-		return stop
+		return stop, false
 	}
 	note("companion page: %s", srv.URL())
 	if mode == companionOpen && !browser.Open(srv.URL()) {
 		note("companion: no browser to open it in from here — open the URL above yourself")
 	}
-	return func() { srv.Close() }
+	return func() { srv.Close() }, true
 }

@@ -481,6 +481,14 @@ are tabs:
 - **Network rules** — the rules that apply to the sandbox, a box to allow or block a host, and
   **Remove** for the sandbox's own rules.
 - **Filesystem rules** — the same, read-only (sbx doesn't log filesystem access yet).
+- **Admin** — what `vibe --info` shows of the sandbox, and what you'd otherwise go to a terminal for:
+  start or stop it, rebuild it from its profile (`-r`), re-compose it with features added or taken away
+  (`-C`), restore a backup of its profile (`--restore`), and save the agent's memories now. It also says
+  whether newer releases of vibe or Docker SBX are out (with a dot on the tab when they are), and shows
+  the sandbox's GitHub token, read-only, with a link to make or renew one on GitHub. Each action shows the
+  command it matches and asks first, and nothing that takes the sandbox away runs while the agent is
+  answering. When the sandbox is stopped or rebuilt, from here or with `vibe --stop` or sbx, vibe keeps
+  serving the page; the terminal session attaches again once the sandbox is back (Ctrl-C ends vibe).
 
 Every change shows the exact `sbx` command it will run and waits for you to confirm. A change only ever
 adds or removes a rule scoped to *this* sandbox: global and org rules are listed but not touched, and a

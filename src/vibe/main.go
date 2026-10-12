@@ -175,7 +175,9 @@ func main() {
 }
 
 func note(format string, a ...interface{}) {
-	fmt.Fprintf(os.Stderr, "vibe: "+format+"\n", a...)
+	line := fmt.Sprintf(format, a...)
+	fmt.Fprintf(os.Stderr, "vibe: %s\n", line)
+	teeNote(line)
 }
 
 func run(argv []string) error {
@@ -634,9 +636,20 @@ type sandboxUsage struct {
 // running, its memory and disk use. A stopped sandbox isn't started: that
 // would be a slow and surprising side effect of asking a question.
 func doInfo(lay layout.Layout, args cliargs.Args, name, target string) error {
-	profile, err := resolveReInitProfile(lay.Home, args, name, target)
+	info, profileKnown, err := gatherInfo(lay, args, name, target)
 	if err != nil {
 		return err
+	}
+	printInfo(os.Stdout, info, profileKnown)
+	return nil
+}
+
+// gatherInfo is what --info shows of the sandbox for target, and whether its
+// profile is known.
+func gatherInfo(lay layout.Layout, args cliargs.Args, name, target string) (sandboxInfo, bool, error) {
+	profile, err := resolveReInitProfile(lay.Home, args, name, target)
+	if err != nil {
+		return sandboxInfo{}, false, err
 	}
 	info := sandboxInfo{name: name, target: target, profile: profile, timezone: recordedTimezone(lay.Home, name)}
 	if inst, found, err := state.Load(lay.Home, name); err == nil && found {
@@ -645,7 +658,7 @@ func doInfo(lay layout.Layout, args cliargs.Args, name, target string) error {
 	if lay.ProfileExists(profile) {
 		_, merged, err := loadKit(lay, profile)
 		if err != nil {
-			return err
+			return info, false, err
 		}
 		info.agent = recordedAgent(lay.Home, name, agentOf(merged))
 		info.memory = merged.Memory
@@ -654,7 +667,7 @@ func doInfo(lay layout.Layout, args cliargs.Args, name, target string) error {
 	}
 	statuses, err := sbxrun.List()
 	if err != nil {
-		return err
+		return info, false, err
 	}
 	for _, s := range statuses {
 		if s.Name == name {
@@ -669,8 +682,7 @@ func doInfo(lay layout.Layout, args cliargs.Args, name, target string) error {
 			info.usage = &u
 		}
 	}
-	printInfo(os.Stdout, info, lay.ProfileExists(profile))
-	return nil
+	return info, lay.ProfileExists(profile), nil
 }
 
 // liveUsage reads a running sandbox's uptime, memory and root disk use from
@@ -2091,6 +2103,15 @@ func doReInit(lay layout.Layout, args cliargs.Args, name, target string) error {
 // second time. askZone asks which timezone the rebuilt sandbox should be
 // on, rather than keeping the one it had.
 func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool) error {
+	if err := rebuildSandbox(lay, args, name, target, skipSandboxConfirm, askZone); err != nil {
+		return err
+	}
+	return finish(lay, args, name)
+}
+
+// rebuildSandbox is reInit without the session after it: the sandbox is
+// removed (its memories kept, if agreed) and created again from its profile.
+func rebuildSandbox(lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool) error {
 	vibeHome := lay.Home
 	profile, err := resolveReInitProfile(vibeHome, args, name, target)
 	if err != nil {
@@ -2182,10 +2203,7 @@ func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandb
 	}
 
 	note("rebuilding '%s' from profile '%s'", name, profile)
-	if err := createSandbox(vibeHome, name, target, profile, doc, merged, false, zone, askZone, restoreAfterCreate, memoryStore, git); err != nil {
-		return err
-	}
-	return finish(lay, args, name)
+	return createSandbox(vibeHome, name, target, profile, doc, merged, false, zone, askZone, restoreAfterCreate, memoryStore, git)
 }
 
 // --- re-create --------------------------------------------------------------
@@ -2386,6 +2404,17 @@ func doReCompose(lay layout.Layout, args cliargs.Args, name, target string) erro
 // reCompose is --re-compose's implementation. warn is off when the user has
 // just agreed to a rollback, which this follows on from.
 func reCompose(lay layout.Layout, args cliargs.Args, name, target string, warn bool) error {
+	if err := recomposeProfile(lay, args, name, target, warn, nil); err != nil {
+		return err
+	}
+	return reInit(lay, args, name, target, true, !args.Force)
+}
+
+// recomposeProfile is reCompose up to the rebuild: the profile is backed up
+// and composed afresh. chosen is the features to compose it from, already
+// picked (as the companion page does); nil asks, unless args.Force keeps
+// those it has.
+func recomposeProfile(lay layout.Layout, args cliargs.Args, name, target string, warn bool, chosen []string) error {
 	profile, err := resolveReInitProfile(lay.Home, args, name, target)
 	if err != nil {
 		return err
@@ -2402,7 +2431,7 @@ func reCompose(lay layout.Layout, args cliargs.Args, name, target string, warn b
 	}
 	available := lay.Features()
 	present, missing := splitMissingFeatures(features, available)
-	if len(missing) > 0 && args.Force {
+	if len(missing) > 0 && args.Force && chosen == nil {
 		// Nobody to ask, and silently rebuilding without a feature would
 		// drop something the profile needs.
 		err := library.Validate(missing, available)
@@ -2429,7 +2458,13 @@ func reCompose(lay layout.Layout, args cliargs.Args, name, target string, warn b
 		note("Please verify which features are required (the ones still available are ticked):")
 		features = present
 	}
-	if !args.Force {
+	switch {
+	case chosen != nil:
+		if err := library.Validate(chosen, available); err != nil {
+			return err
+		}
+		features = chosen
+	case !args.Force:
 		features, err = pickReComposeFeatures(lay, profile, features)
 		if err != nil {
 			return err
@@ -2461,8 +2496,7 @@ func reCompose(lay layout.Layout, args cliargs.Args, name, target string, warn b
 		}
 	}
 	note("re-composed profile '%s' (%s) in %s", profile, strings.Join(features, ", "), created)
-
-	return reInit(lay, args, name, target, true, !args.Force)
+	return nil
 }
 
 // doRestore is --restore: roll the profile back to one of its backups, then
@@ -3199,23 +3233,60 @@ func finish(lay layout.Layout, args cliargs.Args, name string) error {
 		return nil
 	}
 	checkGitTokenExpiry(vibeHome, args, name)
-	go nudgeOnStart(vibeHome, name)
-	stopCompanion := startCompanion(lay, args, name)
+	stopCompanion, companionUp := startCompanion(lay, args, name)
 	noteUpgrades := checkUpgradesInBackground()
 	sessionMu.Lock()
 	inSession = true
 	sessionMu.Unlock()
-	code, err := sbxrun.Run(name, session.StopRequested())
+	// The companion page's Admin tab can stop or rebuild the sandbox under
+	// the session: then the session ends, but vibe (and the page) carries
+	// on, attaching again once the sandbox is back.
+	var code int
+	var err error
+	left := false
+	for {
+		go nudgeOnStart(vibeHome, name)
+		began := time.Now()
+		code, err = sbxrun.Run(name, session.StopRequested())
+		if err != nil || stopAsked() {
+			break
+		}
+		resume := hold.waiting()
+		switch {
+		case resume != nil:
+			note("the sandbox was stopped or is being rebuilt from the companion page, which carries on;")
+		case stoppedUnderSession(name, code, time.Since(began)) && companionUp:
+			// Stopped by 'vibe --stop' or sbx: the page's Admin tab can
+			// start it again.
+			hold.begin()
+			resume = hold.waiting()
+			note("sandbox '%s' was stopped — the companion page's Admin tab can start it again;", name)
+		}
+		if resume == nil {
+			break
+		}
+		note("  this terminal attaches again once the sandbox is back (Ctrl-C ends vibe)")
+		if !awaitResume(resume, session.StopRequested()) {
+			left = true
+			break
+		}
+		note("attaching to '%s' again", name)
+	}
 	stopCompanion()
 	if err != nil {
 		return err
 	}
+	if left {
+		// The sandbox is stopped or half-rebuilt: there are no memories
+		// to copy out of it.
+		termtitle.Restore()
+		session.Release()
+		os.Exit(0)
+	}
 	stopped := false
-	select {
-	case <-session.StopRequested():
+	if stopAsked() {
 		stopped = true
 		note("session ended: asked to stop by another vibe for this folder")
-	default:
 	}
 	// A session we ended ourselves exits non-zero, but its sandbox is fine
 	// to copy from; any other non-zero exit means sbx failed, and the
@@ -3235,6 +3306,41 @@ func finish(lay layout.Layout, args cliargs.Args, name string) error {
 	session.Release()
 	os.Exit(code)
 	return nil
+}
+
+// sessionLasted is how long a session must have run for its ending in an
+// error to be taken for the sandbox being stopped under it, rather than for
+// sbx failing to start it.
+const sessionLasted = 10 * time.Second
+
+// stoppedUnderSession says a session that ended with code after lasting
+// ran ended because its sandbox was stopped (or removed) from outside: by
+// 'vibe --stop', or sbx itself. An agent quit as usual ends without an
+// error, and one sbx couldn't start fails at once.
+func stoppedUnderSession(name string, code int, ran time.Duration) bool {
+	if code == 0 || ran < sessionLasted {
+		return false
+	}
+	statuses, err := sbxrun.List()
+	if err != nil {
+		return false
+	}
+	for _, st := range statuses {
+		if st.Name == name {
+			return !st.Running
+		}
+	}
+	return true
+}
+
+// stopAsked says another vibe for this folder has asked this one to stop.
+func stopAsked() bool {
+	select {
+	case <-session.StopRequested():
+		return true
+	default:
+		return false
+	}
 }
 
 // warnIfClockIsOff, run when sbx has failed, says so if this machine's clock

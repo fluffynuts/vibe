@@ -49,7 +49,7 @@
   // How long the clipboard page gets to come up before the page says so and
   // offers to start it.
   const CLIPBOARD_PATIENCE_MS = 30000
-  const TABS = ['conversation', 'log', 'rules', 'fs']
+  const TABS = ['conversation', 'log', 'rules', 'fs', 'admin']
   // How often the conversation tab asks for what the agent has said since.
   const CONVO_POLL_MS = 700
   // The longest a tool's result is shown, in characters.
@@ -333,6 +333,9 @@
       state.clipboardCanStart = !!res.body.clipboardCanStart
       state.conversation = !!res.body.conversation
       $('tab-conversation').hidden = !state.conversation
+      state.admin = !!res.body.admin
+      $('tab-admin').hidden = !state.admin
+      $('admin-dot').hidden = !res.body.upgrades
       if (url !== state.clipboardUrl || ready !== state.clipboardReady) {
         if (url && !ready && (url !== state.clipboardUrl || state.clipboardReady)) {
           state.clipboardWaitingSince = Date.now()
@@ -350,6 +353,7 @@
       }
       renderClipboard()
       if (!state.conversation && state.tab === 'conversation') select('log')
+      if (!state.admin && state.tab === 'admin') select('log')
     } catch (e) {
       reached(false)
     }
@@ -408,6 +412,7 @@
   function tick() {
     if (document.visibilityState !== 'visible') return
     if (state.tab === 'conversation') { loadState(); return }
+    if (state.tab === 'admin') { loadState(); loadAdmin(); return }
     loadState()
     load(state.tab)
   }
@@ -417,6 +422,7 @@
   function select(tab) {
     if (!TABS.includes(tab)) tab = 'log'
     if (tab === 'conversation' && !state.conversation) tab = 'log'
+    if (tab === 'admin' && !state.admin) tab = 'log'
     state.tab = tab
     store.set('vibe-companion-tab', tab)
     for (const t of TABS) {
@@ -623,7 +629,7 @@
         const res = await opts.run()
         reached(true)
         if (res.ok) {
-          toast('Done: ' + (res.body.command || opts.command))
+          toast(opts.started ? opts.started : 'Done: ' + (res.body.command || opts.command))
         } else {
           toast((res.body && res.body.error) || 'That failed.', true)
         }
@@ -634,6 +640,249 @@
       tick()
     }
     dialog.showModal()
+  }
+
+  // --- the Admin tab ------------------------------------------------------
+
+  // What the tab last showed: the server's answer, and the features as the
+  // profile has them (to tell what the user has ticked since).
+  const adminView = { data: null, features: '', jobLines: -1 }
+
+  async function loadAdmin() {
+    try {
+      const res = await api('/api/admin')
+      reached(true)
+      if (!res.ok) { problem(res); return }
+      renderAdmin(res.body)
+    } catch (e) {
+      reached(false)
+    }
+  }
+
+  function pill(id, text, cls) {
+    const p = $(id)
+    p.textContent = text
+    p.className = 'pill' + (cls ? ' ' + cls : '')
+  }
+
+  function renderAdmin(data) {
+    adminView.data = data
+    const st = data.status || {}
+    const job = data.job
+    const busy = !!(job && job.running)
+
+    pill('admin-state', st.running ? 'running' : st.exists ? 'stopped' : 'not created',
+      st.running ? 'ok' : 'bad')
+    $('admin-start').hidden = !st.exists || st.running
+    $('admin-stop').hidden = !st.running
+    for (const id of ['admin-start', 'admin-stop', 'admin-reinit', 'admin-memories', 'admin-recompose']) {
+      $(id).disabled = busy
+    }
+    $('admin-memories').disabled = busy || !st.running
+    $('admin-reinit').disabled = busy || !st.profile
+    $('admin-info').textContent = st.info || ''
+    $('admin-error').hidden = !st.error
+    $('admin-error').textContent = st.error || ''
+
+    renderAdminJob(job)
+    renderAdminFeatures(st, busy)
+    renderAdminUpgrades(data.upgrades || {}, st.commands || {})
+    renderAdminGit(st.gitToken || {})
+    renderAdminBackups(st.backups || [], busy)
+  }
+
+  function renderAdminJob(job) {
+    $('admin-job-card').hidden = !job
+    if (!job) return
+    const words = { start: 'Start', stop: 'Stop', reinit: 'Rebuild', recompose: 'Re-compose', restore: 'Restore', memories: 'Save memories' }
+    $('admin-job-h').firstChild.textContent = (words[job.kind] || 'Last action') + ' '
+    pill('admin-job-state', job.running ? 'working…' : job.error ? 'failed' : 'done',
+      job.running ? 'busy' : job.error ? 'bad' : 'ok')
+    const lines = (job.lines || []).slice()
+    if (job.error) lines.push('', 'failed: ' + job.error)
+    if (lines.length !== adminView.jobLines) {
+      adminView.jobLines = lines.length
+      const box = $('admin-job')
+      const stick = nearBottom(box)
+      box.textContent = lines.join('\n')
+      if (stick) box.scrollTop = box.scrollHeight
+    }
+  }
+
+  // The checklist is drawn afresh only when the profile's features change
+  // (after a re-compose), so what the user is ticking isn't undone by the
+  // next poll.
+  function renderAdminFeatures(st, busy) {
+    const list = $('admin-features')
+    const note = $('admin-features-note')
+    $('admin-recompose').hidden = !st.guided
+    if (!st.guided) {
+      list.replaceChildren()
+      adminView.features = ''
+      note.textContent = st.profile
+        ? "This profile doesn't record the features it was composed from, so it can't be re-composed here (vibe -R builds a fresh one)."
+        : 'There is no profile to compose.'
+      return
+    }
+    note.textContent = 'Tick what the sandbox should have; re-composing rebuilds it. New features go after the ones it has.'
+    const features = st.features || []
+    const key = JSON.stringify(features.map((f) => [f.name, f.on]))
+    if (key === adminView.features) return
+    adminView.features = key
+    list.replaceChildren(...features.map((f) => {
+      const box = el('input', { type: 'checkbox', 'data-name': f.name, 'data-was': f.on ? '1' : '' })
+      box.checked = !!f.on
+      const was = el('span', { class: 'was' })
+      const mark = () => { was.textContent = box.checked === !!f.on ? '' : box.checked ? '(adding)' : '(removing)' }
+      box.addEventListener('change', mark)
+      return el('li', {}, el('label', {}, box, el('span', { text: f.label || f.name }), was))
+    }))
+  }
+
+  // pickedFeatures is the features ticked, those the profile has first (in
+  // its order), then those being added.
+  function pickedFeatures() {
+    const st = (adminView.data && adminView.data.status) || {}
+    const ticked = new Set(Array.from($('admin-features').querySelectorAll('input:checked')).map((b) => b.dataset.name))
+    const had = (st.features || []).filter((f) => f.on).map((f) => f.name)
+    const kept = had.filter((n) => ticked.has(n))
+    const added = (st.features || []).map((f) => f.name).filter((n) => ticked.has(n) && !had.includes(n))
+    return { features: kept.concat(added), added, removed: had.filter((n) => !ticked.has(n)) }
+  }
+
+  function renderAdminUpgrades(up, commands) {
+    const found = up.found || []
+    $('admin-upgrades').textContent = up.checking ? 'Checking for newer releases…'
+      : !up.checked ? 'Not checked yet.'
+      : found.length ? 'Newer releases are available:' : 'vibe and Docker SBX are up to date.'
+    $('admin-upgrades-list').replaceChildren(...found.map((l) => el('li', { text: l })))
+    $('admin-check').disabled = !!up.checking
+    const cmd = $('admin-upgrade-command')
+    cmd.hidden = !found.length
+    // --upgrade asks which to install; -f installs them all, unasked.
+    cmd.textContent = (commands['upgrade'] || 'vibe --upgrade') + '  ·  all of them, unasked: ' + (commands['upgrade-all'] || 'vibe --upgrade -f')
+  }
+
+  function link(href, text) {
+    return el('a', { href, target: '_blank', rel: 'noopener noreferrer', text })
+  }
+
+  // renderAdminGit says where the token stands and, when there's none or
+  // it is running out, exactly what to do on GitHub — the steps the
+  // terminal gives. Giving vibe the token stays in the terminal.
+  function renderAdminGit(git) {
+    const box = $('admin-git')
+    const steps = $('admin-git-steps')
+    const strong = (cls, text) => el('span', { class: cls, text })
+    const code = (text) => el('code', { text })
+    const step = (...parts) => el('li', {}, ...parts)
+    const command = git.command || 'vibe --git-token'
+    const repo = git.repo ? strong('gh-repo', git.repo) : strong('gh-repo', 'the repositories the agent may push to')
+
+    const status = []
+    if (git.has) {
+      status.push('The agent can push, with ' + (git.source === 'default' ? 'the default token' : 'its own token'))
+      status.push(git.expiry ? ', which ' + git.expiry + '.' : '.')
+      if (git.rules && git.rules.length) status.push(' Its rules: ' + git.rules.join(', ') + '.')
+    } else {
+      status.push("There's no token, so the agent can't push. To give it one:")
+    }
+    if (git.renewUrl) status.push(' To renew it:')
+    box.className = 'note' + (git.expired ? ' bad-text' : '')
+    box.replaceChildren(...status.map((p) => document.createTextNode(p)))
+
+    let list = []
+    if (git.newTokenUrl) {
+      list = [
+        step(link(git.newTokenUrl, "Open GitHub's form for a new token"), ' — filled in as far as GitHub allows: called ',
+          code(git.tokenName || 'vibe'), ', lasting ' + (git.days || 30) + ' days.'),
+        step('Under Repository access, change ', strong('gh-leave', '"All repositories"'), ' to ',
+          strong('gh-pick', '"Only select repositories"'), ', and choose ', repo, " — GitHub won't let vibe pick it for you."),
+        step('Check the permissions: ', strong('gh-perms', 'Contents, Pull requests and Workflows, read and write'), '.'),
+        step(strong('gh-last', 'Generate token'), ', and copy it.'),
+        step('In a terminal, run ', code(command), ' and paste the token when it asks.'),
+      ]
+    } else if (git.renewUrl) {
+      list = [
+        step(link(git.renewUrl, 'Open your tokens on GitHub'), ', and click the one called ', code(git.tokenName || 'vibe'), '.'),
+        step(strong('gh-last', 'Regenerate token'), ', pick how long it should last, and copy the new one.'),
+        step('In a terminal, run ', code(command), ' and paste it when it asks. If the token is gone from the list, the same command makes a new one.'),
+      ]
+    }
+    steps.hidden = !list.length
+    steps.replaceChildren(...list)
+  }
+
+  function renderAdminBackups(backups, busy) {
+    const list = $('admin-backups')
+    if (!backups.length) { list.replaceChildren(el('li', { class: 'muted', text: 'No backups yet.' })); return }
+    list.replaceChildren(...backups.map((b) => el('li', {},
+      el('span', { text: b.label }), el('span', { class: 'spacer' }),
+      el('button', { type: 'button', class: 'small ghost', text: 'Restore…', disabled: busy,
+        onclick: () => adminConfirm('restore', { backup: b.id }, {
+          title: 'Restore the backup of ' + b.label + '?',
+          text: "The profile goes back to how it was then, and the sandbox is rebuilt from it. The profile as it is now is backed up first. The agent's memories and this conversation are kept.",
+          danger: true,
+        }) }))))
+  }
+
+  async function adminDo(kind, extra) {
+    try {
+      const res = await post('/api/admin/do', Object.assign({ kind }, extra || {}))
+      reached(true)
+      if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true)
+      loadAdmin()
+    } catch (e) {
+      reached(false)
+      toast('Could not reach vibe.', true)
+    }
+  }
+
+  function adminConfirm(kind, extra, opts) {
+    const commands = (adminView.data && adminView.data.status && adminView.data.status.commands) || {}
+    confirmThen(Object.assign({
+      command: commands[kind] || '',
+      started: 'Started — the Last action box shows how it goes.',
+      run: () => post('/api/admin/do', Object.assign({ kind }, extra || {})),
+    }, opts))
+  }
+
+  function setUpAdmin() {
+    $('admin-start').addEventListener('click', () => adminDo('start'))
+    $('admin-memories').addEventListener('click', () => adminDo('memories'))
+    $('admin-stop').addEventListener('click', () => adminConfirm('stop', {}, {
+      title: 'Stop sandbox ' + state.sandbox + '?',
+      text: 'The agent stops, and the terminal session ends — vibe and this page stay up, and the terminal attaches again when you start the sandbox (here, or with vibe in its folder).',
+      danger: true,
+    }))
+    $('admin-reinit').addEventListener('click', () => adminConfirm('reinit', {}, {
+      title: 'Rebuild sandbox ' + state.sandbox + '?',
+      text: "It is destroyed and created again from its profile, which takes a few minutes. The agent's memories are copied out first and put back, and this conversation is kept. The terminal attaches again when it's done.",
+      danger: true,
+    }))
+    $('admin-recompose').addEventListener('click', () => {
+      const pick = pickedFeatures()
+      const change = [
+        pick.added.length ? 'adding ' + pick.added.join(', ') : '',
+        pick.removed.length ? 'removing ' + pick.removed.join(', ') : '',
+      ].filter(Boolean).join('; ')
+      adminConfirm('recompose', { features: pick.features }, {
+        title: 'Re-compose ' + state.sandbox + (change ? ', ' + change + '?' : ' with the same features?'),
+        text: "The profile is backed up, composed afresh from " + (pick.features.length ? pick.features.join(', ') : 'the base features alone') +
+          ", and the sandbox rebuilt from it — a few minutes. The agent's memories and this conversation are kept.",
+        danger: true,
+      })
+    })
+    $('admin-check').addEventListener('click', async () => {
+      try {
+        const res = await post('/api/admin/upgrades', {})
+        reached(true)
+        if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true)
+        loadAdmin()
+      } catch (e) {
+        reached(false)
+      }
+    })
   }
 
   // --- the conversation --------------------------------------------------
@@ -1158,6 +1407,7 @@
   for (const view of CLIPBOARD_VIEWS) $(view.start).addEventListener('click', startClipboard)
 
   setUpConversation()
+  setUpAdmin()
 
   document.addEventListener('visibilitychange', tick)
   state.timer = setInterval(tick, POLL_MS)

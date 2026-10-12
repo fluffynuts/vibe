@@ -23,6 +23,7 @@
     <button role="tab" data-tab="log" id="tab-log">Network log</button>
     <button role="tab" data-tab="rules" id="tab-rules">Network rules</button>
     <button role="tab" data-tab="fs" id="tab-fs">Filesystem rules</button>
+    <button role="tab" data-tab="admin" id="tab-admin" hidden>Admin<span id="admin-dot" class="tab-dot" hidden title="Upgrades are available"></span></button>
   </nav>
 
   <div id="banner" class="banner" role="alert" hidden></div>
@@ -106,6 +107,56 @@
         <tbody></tbody>
       </table></div>
       <p id="fs-note" class="muted note">Read-only: sbx doesn't log filesystem access yet, so there is only the rules to show.</p>
+    </section>
+
+    <section id="panel-admin" class="panel panel-admin" hidden>
+      <div class="admin-grid">
+        <section class="card" aria-labelledby="admin-sandbox-h">
+          <h2 id="admin-sandbox-h">Sandbox <span id="admin-state" class="pill"></span></h2>
+          <div class="bar">
+            <button type="button" id="admin-start" hidden>Start</button>
+            <button type="button" id="admin-stop" class="danger" hidden>Stop</button>
+            <button type="button" id="admin-reinit" class="ghost">Rebuild…</button>
+            <button type="button" id="admin-memories" class="ghost">Save agent memories now</button>
+          </div>
+          <pre id="admin-info" class="info"></pre>
+          <p id="admin-error" class="note bad-text" hidden></p>
+        </section>
+
+        <section class="card" id="admin-job-card" aria-labelledby="admin-job-h" hidden>
+          <h2 id="admin-job-h">Last action <span id="admin-job-state" class="pill"></span></h2>
+          <pre id="admin-job" class="info log" role="log" aria-live="polite"></pre>
+        </section>
+
+        <section class="card" aria-labelledby="admin-features-h">
+          <h2 id="admin-features-h">Features</h2>
+          <p id="admin-features-note" class="muted note"></p>
+          <ul id="admin-features" class="checks"></ul>
+          <div class="bar"><button type="button" id="admin-recompose">Re-compose with these…</button></div>
+        </section>
+
+        <section class="card" aria-labelledby="admin-upgrades-h">
+          <h2 id="admin-upgrades-h">Upgrades</h2>
+          <p id="admin-upgrades" class="note"></p>
+          <ul id="admin-upgrades-list" class="plain"></ul>
+          <div class="bar">
+            <button type="button" id="admin-check" class="ghost">Check again</button>
+            <code id="admin-upgrade-command" hidden></code>
+          </div>
+        </section>
+
+        <section class="card" aria-labelledby="admin-git-h">
+          <h2 id="admin-git-h">GitHub token</h2>
+          <p id="admin-git" class="note"></p>
+          <ol id="admin-git-steps" class="steps" hidden></ol>
+        </section>
+
+        <section class="card" aria-labelledby="admin-backups-h">
+          <h2 id="admin-backups-h">Profile backups</h2>
+          <p class="note muted">Taken each time the profile is re-composed. Restoring one re-composes from it and rebuilds the sandbox.</p>
+          <ul id="admin-backups" class="plain"></ul>
+        </section>
+      </div>
     </section>
   </main>
 

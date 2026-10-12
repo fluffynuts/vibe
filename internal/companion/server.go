@@ -81,6 +81,9 @@ type Config struct {
 	// one; nil means the sandbox has no diffity. It may be slow, but should
 	// give up within seconds.
 	LatestReview func() string
+	// Admin is what the page's Admin tab does to the sandbox; nil means the
+	// page has no such tab.
+	Admin Admin
 	// History is the file the conversation is kept in between runs, so it
 	// survives vibe being started again; "" keeps it only in memory.
 	History string
@@ -97,6 +100,7 @@ type Server struct {
 	// the page's button doesn't start a second one.
 	starting sync.Mutex
 	convo    conversation
+	admin    admin
 }
 
 // New makes a Server without listening, which is how tests drive Handler.
@@ -121,6 +125,10 @@ func Start(cfg Config) (*Server, error) {
 			// keeping the page from being served; the file is left as it is.
 			s.convo.file = ""
 		}
+	}
+	if cfg.Admin != nil {
+		// Known by the time anyone looks at the tab.
+		s.startUpgradeCheck(false)
 	}
 	s.ln = ln
 	s.cfg.Port = ln.Addr().(*net.TCPAddr).Port
@@ -189,6 +197,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/conversation/send", s.conversing(s.conversationSend))
 	mux.HandleFunc("POST /api/conversation/stop", s.conversing(s.conversationStop))
 	mux.HandleFunc("POST /api/conversation/new", s.conversing(s.conversationNew))
+	mux.HandleFunc("GET /api/admin", s.authed(s.adminState))
+	mux.HandleFunc("POST /api/admin/do", s.administering(s.adminDo))
+	mux.HandleFunc("POST /api/admin/upgrades", s.administering(s.adminCheckUpgrades))
 
 	return s.guarded(mux)
 }
@@ -275,7 +286,14 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 			return read(s.cfg.Workspace)
 		})
 	}
+	upgrades := 0
+	if s.cfg.Admin != nil {
+		s.admin.mu.Lock()
+		upgrades = len(s.admin.upgrades)
+		s.admin.mu.Unlock()
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"upgrades":          upgrades,
 		"sandbox":           s.cfg.Sandbox,
 		"agent":             s.cfg.Agent,
 		"folder":            shortenPath(s.cfg.Workspace, homeDir()),
@@ -284,6 +302,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"clipboardReady":    ready,
 		"clipboardCanStart": clipboard != "" && s.cfg.StartClipboard != nil,
 		"conversation":      s.cfg.Converse != nil,
+		"admin":             s.cfg.Admin != nil,
 	})
 }
 
@@ -486,6 +505,13 @@ func cached[T any](c *cache, key string, ttl time.Duration, fn func() T) T {
 	v, _ := c.get(key, ttl, func() (interface{}, error) { return fn(), nil })
 	t, _ := v.(T)
 	return t
+}
+
+// forget drops key, so it is made afresh when next asked for.
+func (c *cache) forget(key string) {
+	c.mu.Lock()
+	delete(c.entries, key)
+	c.mu.Unlock()
 }
 
 func (c *cache) clear() {

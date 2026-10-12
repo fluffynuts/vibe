@@ -286,6 +286,14 @@ func (c *conversation) finish(err error, stopped bool) {
 	close(c.ended)
 }
 
+// answering says the agent is answering a prompt: running, and not yet
+// answered.
+func (c *conversation) answering() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.running && !c.answered
+}
+
 // supersede makes way for a new prompt: a turn the agent has answered but
 // is still at work on in the background is ended (quietly), and waited
 // for. It says whether the way is clear — not while the agent is still
@@ -548,6 +556,22 @@ func (s *Server) conversing(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxPrompt)
+		next(w, r)
+	})
+}
+
+// administering wraps a call from the Admin tab: the same protections as
+// conversing().
+func (s *Server) administering(next http.HandlerFunc) http.HandlerFunc {
+	return s.authed(func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.Admin == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "this page has no admin tab"})
+			return
+		}
+		if !sameOriginJSON(w, r) {
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 		next(w, r)
 	})
 }
