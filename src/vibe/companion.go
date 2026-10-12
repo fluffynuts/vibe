@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"vibe/internal/browser"
 	"vibe/internal/cliargs"
@@ -103,6 +105,26 @@ func clipboardPageURL(vibeHome, name string) string {
 	return ""
 }
 
+// startClipboardScript starts the clipboard page's server in the sandbox,
+// and does nothing when it is already running (see the clipboard-bridge kit).
+const startClipboardScript = "/home/agent/.local/bin/start-clipboard"
+
+// startClipboard is the companion page's "start it" for a clipboard page
+// that hasn't come up: it runs what on-start would have, and waits for it
+// (start-clipboard itself gives the server ten seconds to listen).
+func startClipboard(name string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	args := []string{"exec", name, "--", startClipboardScript}
+	if out, err := sbxrun.ExecCaptureContext(ctx, name, startClipboardScript); err != nil {
+		if out = strings.TrimSpace(out); out != "" {
+			return args, fmt.Errorf("start-clipboard failed: %s", out)
+		}
+		return args, fmt.Errorf("start-clipboard failed: %v — see /tmp/clipboard.log in the sandbox", err)
+	}
+	return args, nil
+}
+
 // startCompanion serves the companion page for the sandbox, as the user's
 // settings say, and returns what stops it. It never stops the session
 // starting: whatever goes wrong is reported, and the session goes on
@@ -159,11 +181,12 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 	}
 
 	srv, err := companion.Start(companion.Config{
-		Sandbox:      name,
-		Token:        token,
-		Port:         port,
-		Policy:       &policy.Client{Sandbox: name},
-		ClipboardURL: func() string { return clipboardPageURL(vibeHome, name) },
+		Sandbox:        name,
+		Token:          token,
+		Port:           port,
+		Policy:         &policy.Client{Sandbox: name},
+		ClipboardURL:   func() string { return clipboardPageURL(vibeHome, name) },
+		StartClipboard: func() ([]string, error) { return startClipboard(name) },
 	})
 	if err != nil {
 		note("companion: could not serve the page on port %d: %v", port, err)

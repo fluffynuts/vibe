@@ -446,7 +446,9 @@ Whenever vibe opens a sandbox it also serves a page for it on your own machine, 
 reach for the sbx TUI for, scoped to the sandbox you're working in, with tabs:
 
 - **Clipboard** — the sandbox's clipboard page (see `clipboard-bridge` below), embedded; there only when
-  the profile has that feature.
+  the profile has that feature. Until vibe sees the page answer, the tab reads **Clipboard (starting)**
+  and shows a placeholder instead of the page; if it still isn't up after 30 seconds, a **Start it**
+  button runs the kit's `start-clipboard` in the sandbox (harmless if it is already running).
 - **Network log** — every host the sandbox has tried to reach, with hit counts and whether it was
   allowed or blocked, refreshing every couple of seconds while the tab is showing. Filter by status or
   search for a host. A blocked host has an **Allow** button, an allowed one a **Block** button; click

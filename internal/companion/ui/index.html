@@ -30,7 +30,12 @@
         <button type="button" id="clipboard-reload" class="ghost">Reload</button>
         <a id="clipboard-open" class="button ghost" target="_blank" rel="noopener noreferrer">Open on its own</a>
       </div>
-      <iframe id="clipboard-frame" title="Clipboard" allow="clipboard-read; clipboard-write"></iframe>
+      <div id="clipboard-wait" class="wait" role="status">
+        <p id="clipboard-wait-text">Starting the clipboard page…</p>
+        <p id="clipboard-wait-help" class="muted" hidden></p>
+        <button type="button" id="clipboard-start" hidden>Start it</button>
+      </div>
+      <iframe id="clipboard-frame" title="Clipboard" allow="clipboard-read; clipboard-write" hidden></iframe>
     </section>
 
     <section id="panel-log" class="panel" hidden>

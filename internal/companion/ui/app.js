@@ -5,6 +5,9 @@
   'use strict'
 
   const POLL_MS = 2000
+  // How long the clipboard page gets to come up before the page says so and
+  // offers to start it.
+  const CLIPBOARD_PATIENCE_MS = 30000
   const TABS = ['clipboard', 'log', 'rules', 'fs']
 
   const $ = (id) => document.getElementById(id)
@@ -26,6 +29,10 @@
   const state = {
     sandbox: '',
     clipboardUrl: '',
+    clipboardReady: false,
+    clipboardCanStart: false,
+    clipboardWaitingSince: 0,
+    clipboardStarting: false,
     tab: store.get('vibe-companion-tab') || 'log',
     filter: 'all',
     search: '',
@@ -150,17 +157,67 @@
       $('sandbox').textContent = state.sandbox
       document.title = state.sandbox ? 'vibe · ' + state.sandbox : 'vibe companion'
       const url = res.body.clipboardUrl || ''
+      const ready = !!(url && res.body.clipboardReady)
+      state.clipboardCanStart = !!res.body.clipboardCanStart
       $('tab-clipboard').hidden = !url
-      if (url !== state.clipboardUrl) {
-        state.clipboardUrl = url
-        if (url) {
-          $('clipboard-frame').src = url
-          $('clipboard-open').href = url
+      if (url !== state.clipboardUrl || ready !== state.clipboardReady) {
+        if (url && !ready && (url !== state.clipboardUrl || state.clipboardReady)) {
+          state.clipboardWaitingSince = Date.now()
         }
+        state.clipboardUrl = url
+        state.clipboardReady = ready
+        if (url) $('clipboard-open').href = url
+        // The frame only gets the page once vibe has seen it answer: a
+        // frame on another origin can't be watched, and a browser's
+        // "can't connect" page would otherwise sit there for good.
+        if (ready) $('clipboard-frame').src = url
+        else $('clipboard-frame').removeAttribute('src')
       }
+      renderClipboard()
       if (!url && state.tab === 'clipboard') select('log')
     } catch (e) {
       reached(false)
+    }
+  }
+
+  function renderClipboard() {
+    const waiting = !!state.clipboardUrl && !state.clipboardReady
+    $('tab-clipboard').textContent = waiting ? 'Clipboard (starting)' : 'Clipboard'
+    $('clipboard-frame').hidden = waiting
+    $('clipboard-wait').hidden = !waiting
+    if (!waiting) return
+    const late = Date.now() - state.clipboardWaitingSince >= CLIPBOARD_PATIENCE_MS
+    $('clipboard-wait-text').textContent = state.clipboardStarting
+      ? 'Starting the clipboard page in the sandbox…'
+      : late ? "The clipboard page still isn't up." : 'Starting the clipboard page…'
+    $('clipboard-wait-help').hidden = !late || state.clipboardStarting
+    $('clipboard-wait-help').textContent = state.clipboardCanStart
+      ? 'vibe can try starting it in the sandbox — that is safe to do even if it is already on its way.'
+      : 'Check /tmp/clipboard.log and /tmp/clipboard-server.log in the sandbox.'
+    $('clipboard-start').hidden = !late || !state.clipboardCanStart
+    $('clipboard-start').disabled = state.clipboardStarting
+  }
+
+  async function startClipboard() {
+    if (state.clipboardStarting) return
+    state.clipboardStarting = true
+    renderClipboard()
+    try {
+      const res = await post('/api/clipboard/start', {})
+      reached(true)
+      if (res.ok) {
+        toast('Ran: ' + (res.body.command || 'start-clipboard'))
+      } else {
+        toast((res.body && res.body.error) || 'Starting the clipboard page failed.', true)
+      }
+    } catch (e) {
+      reached(false)
+      toast('Could not reach vibe.', true)
+    } finally {
+      state.clipboardStarting = false
+      // Give it a fresh wait before offering again.
+      state.clipboardWaitingSince = Date.now()
+      loadState()
     }
   }
 
@@ -422,8 +479,9 @@
   })
 
   $('clipboard-reload').addEventListener('click', () => {
-    if (state.clipboardUrl) $('clipboard-frame').src = state.clipboardUrl
+    if (state.clipboardUrl && state.clipboardReady) $('clipboard-frame').src = state.clipboardUrl
   })
+  $('clipboard-start').addEventListener('click', startClipboard)
 
   document.addEventListener('visibilitychange', tick)
   state.timer = setInterval(tick, POLL_MS)

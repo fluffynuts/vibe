@@ -57,6 +57,13 @@ type Config struct {
 	// host, or "" when the sandbox has none; it is asked for often, so it
 	// should be quick.
 	ClipboardURL func() string
+	// ClipboardReady says whether the clipboard page at url has come up
+	// yet; nil means probeClipboard, which wants a 200 from it.
+	ClipboardReady func(url string) bool
+	// StartClipboard pokes the sandbox to start its clipboard page's server
+	// (it is a no-op when that is already running), returning the sbx
+	// arguments it ran; nil means the page can't offer to.
+	StartClipboard func() ([]string, error)
 }
 
 // Server is a running companion page.
@@ -66,6 +73,9 @@ type Server struct {
 	http  *http.Server
 	ui    fs.FS
 	cache *cache
+	// starting is held while a StartClipboard runs, so a second press of
+	// the page's button doesn't start a second one.
+	starting sync.Mutex
 }
 
 // New makes a Server without listening, which is how tests drive Handler.
@@ -145,6 +155,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/allow", s.authed(s.changing(s.allow)))
 	mux.HandleFunc("POST /api/deny", s.authed(s.changing(s.deny)))
 	mux.HandleFunc("POST /api/remove", s.authed(s.changing(s.remove)))
+	mux.HandleFunc("POST /api/clipboard/start", s.authed(s.changing(s.startClipboard)))
 
 	return s.guarded(mux)
 }
@@ -212,10 +223,60 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		})
 		clipboard, _ = v.(string)
 	}
+	ready := false
+	if clipboard != "" {
+		probe := s.cfg.ClipboardReady
+		if probe == nil {
+			probe = probeClipboard
+		}
+		// Keyed by the URL: a new one (the sandbox restarted on another
+		// port) is probed afresh.
+		v, _ := s.cache.get("clipboard-ready "+clipboard, time.Second, func() (interface{}, error) {
+			return probe(clipboard), nil
+		})
+		ready, _ = v.(bool)
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"sandbox":      s.cfg.Sandbox,
-		"clipboardUrl": clipboard,
+		"sandbox":           s.cfg.Sandbox,
+		"clipboardUrl":      clipboard,
+		"clipboardReady":    ready,
+		"clipboardCanStart": clipboard != "" && s.cfg.StartClipboard != nil,
 	})
+}
+
+// probeClient is for probeClipboard: never through a proxy (the page is on
+// the host's own loopback), and quick to give up, since the page asks again
+// a couple of seconds later.
+var probeClient = &http.Client{
+	Timeout:   time.Second,
+	Transport: &http.Transport{Proxy: nil},
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
+
+// probeClipboard says whether the clipboard page answers url with a 200:
+// until its server is up there is either no answer at all or something
+// other than the page.
+func probeClipboard(url string) bool {
+	res, err := probeClient.Get(url)
+	if err != nil {
+		return false
+	}
+	io.Copy(io.Discard, io.LimitReader(res.Body, 64*1024))
+	res.Body.Close()
+	return res.StatusCode == http.StatusOK
+}
+
+func (s *Server) startClipboard([]byte) ([]string, error) {
+	if s.cfg.StartClipboard == nil {
+		return nil, invalid{errors.New("this sandbox has no clipboard page to start")}
+	}
+	if !s.starting.TryLock() {
+		return nil, invalid{errors.New("the clipboard page is already being started")}
+	}
+	defer s.starting.Unlock()
+	return s.cfg.StartClipboard()
 }
 
 // reading serves a read of sbx's, briefly cached so several open tabs don't

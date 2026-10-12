@@ -53,11 +53,12 @@ const testPort = 5350
 
 func newServer(sbx *fakeSbx) *Server {
 	return New(Config{
-		Sandbox:      "vibe",
-		Token:        token,
-		Port:         testPort,
-		Policy:       &policy.Client{Sandbox: "vibe", Run: sbx.run},
-		ClipboardURL: func() string { return "http://localhost:5390" },
+		Sandbox:        "vibe",
+		Token:          token,
+		Port:           testPort,
+		Policy:         &policy.Client{Sandbox: "vibe", Run: sbx.run},
+		ClipboardURL:   func() string { return "http://localhost:5390" },
+		ClipboardReady: func(string) bool { return true },
 	})
 }
 
@@ -424,11 +425,125 @@ func TestTheClipboardURLIsAskedForRarely(t *testing.T) {
 	s := New(Config{Sandbox: "vibe", Token: token, Port: testPort, ClipboardURL: func() string {
 		asked.Add(1)
 		return "http://localhost:5390"
-	}})
+	}, ClipboardReady: func(string) bool { return true }})
 	for i := 0; i < 5; i++ {
 		do(t, s, req{path: "/api/state", headers: authed(nil)})
 	}
 	if n := asked.Load(); n != 1 {
 		t.Errorf("asked %d times, want 1", n)
+	}
+}
+
+func clipboardState(t *testing.T, s *Server) (ready, canStart bool) {
+	t.Helper()
+	var got struct {
+		Ready    bool `json:"clipboardReady"`
+		CanStart bool `json:"clipboardCanStart"`
+	}
+	json.Unmarshal(do(t, s, req{path: "/api/state", headers: authed(nil)}).Body.Bytes(), &got)
+	return got.Ready, got.CanStart
+}
+
+func TestTheClipboardIsReadyOnlyOnceItsPageAnswers200(t *testing.T) {
+	var status atomic.Int32
+	status.Store(http.StatusBadGateway)
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(int(status.Load()))
+	}))
+	defer page.Close()
+	if probeClipboard(page.URL) {
+		t.Error("a 502 counted as ready")
+	}
+	status.Store(http.StatusOK)
+	if !probeClipboard(page.URL) {
+		t.Error("a 200 didn't count as ready")
+	}
+	page.Close()
+	if probeClipboard(page.URL) {
+		t.Error("nothing listening counted as ready")
+	}
+}
+
+func TestStateSaysWhetherTheClipboardIsReady(t *testing.T) {
+	var up atomic.Bool
+	var probed atomic.Int32
+	s := New(Config{Sandbox: "vibe", Token: token, Port: testPort,
+		ClipboardURL: func() string { return "http://localhost:5390" },
+		ClipboardReady: func(url string) bool {
+			probed.Add(1)
+			if url != "http://localhost:5390" {
+				t.Errorf("probed %q", url)
+			}
+			return up.Load()
+		}})
+	if ready, canStart := clipboardState(t, s); ready || canStart {
+		t.Errorf("ready, canStart = %v, %v before the page is up, with nothing to start it", ready, canStart)
+	}
+	up.Store(true)
+	s.cache.clear()
+	if ready, _ := clipboardState(t, s); !ready {
+		t.Error("not ready once the page answers")
+	}
+	clipboardState(t, s)
+	if n := probed.Load(); n != 2 {
+		t.Errorf("probed %d times, want 2 (the second state read inside a second shares the probe)", n)
+	}
+
+	none := New(Config{Sandbox: "vibe", Token: token, Port: testPort,
+		ClipboardReady: func(string) bool { t.Error("probed with no clipboard page"); return true }})
+	if ready, canStart := clipboardState(t, none); ready || canStart {
+		t.Errorf("ready, canStart = %v, %v with no clipboard page", ready, canStart)
+	}
+}
+
+func TestThePageCanStartTheClipboard(t *testing.T) {
+	var started atomic.Int32
+	s := New(Config{Sandbox: "vibe", Token: token, Port: testPort,
+		ClipboardURL:   func() string { return "http://localhost:5390" },
+		ClipboardReady: func(string) bool { return false },
+		StartClipboard: func() ([]string, error) {
+			started.Add(1)
+			return []string{"exec", "vibe", "--", "start-clipboard"}, nil
+		}})
+	if _, canStart := clipboardState(t, s); !canStart {
+		t.Error("the page wasn't told it can start the clipboard")
+	}
+	w := do(t, s, post("/api/clipboard/start", "{}"))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "sbx exec vibe -- start-clipboard") {
+		t.Errorf("start = %d %s", w.Code, w.Body.String())
+	}
+	if n := started.Load(); n != 1 {
+		t.Errorf("started %d times, want 1", n)
+	}
+	if w := do(t, s, req{method: "POST", path: "/api/clipboard/start", body: "{}",
+		headers: map[string]string{"Content-Type": "application/json"}}); w.Code != http.StatusUnauthorized {
+		t.Errorf("without the token: %d", w.Code)
+	}
+
+	none := newServer(&fakeSbx{})
+	if w := do(t, none, post("/api/clipboard/start", "{}")); w.Code != http.StatusBadRequest {
+		t.Errorf("with nothing to start it: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestTheClipboardIsStartedOnceAtATime(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	s := New(Config{Sandbox: "vibe", Token: token, Port: testPort,
+		ClipboardURL: func() string { return "http://localhost:5390" },
+		StartClipboard: func() ([]string, error) {
+			close(entered)
+			<-release
+			return []string{"exec"}, nil
+		}})
+	first := make(chan int)
+	go func() { first <- do(t, s, post("/api/clipboard/start", "{}")).Code }()
+	<-entered
+	if w := do(t, s, post("/api/clipboard/start", "{}")); w.Code != http.StatusBadRequest {
+		t.Errorf("a second start while the first runs: %d", w.Code)
+	}
+	close(release)
+	if code := <-first; code != http.StatusOK {
+		t.Errorf("first start: %d", code)
 	}
 }

@@ -63,6 +63,13 @@ body {
 main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .panel { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
 .panel-clipboard { padding-bottom: 0; }
+.panel-clipboard .wait {
+  flex: 1; min-height: 360px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  border: 1px dashed var(--line); border-radius: 6px; margin-bottom: 16px; padding: 16px; text-align: center;
+}
+.panel-clipboard .wait p { margin: 0; max-width: 48em; }
+.panel-clipboard .wait button { margin-top: 10px; }
+.panel-clipboard .wait[hidden], .panel-clipboard iframe[hidden] { display: none; }
 .panel-clipboard iframe { flex: 1; width: 100%; min-height: 360px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); margin-bottom: 16px; }
 
 .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
