@@ -38,10 +38,15 @@
           </div>
           <div id="convo-log" class="convo-log" role="log" aria-live="polite"></div>
           <form id="convo-form" class="convo-form" autocomplete="off">
-            <textarea id="convo-input" rows="3" aria-label="Prompt for the agent"
-              placeholder="Ask the agent… Ctrl+Enter sends, Enter adds a line. Images and files you paste anywhere on this tab go to the clipboard on the right."></textarea>
+            <div class="prompt-wrap">
+              <ul id="convo-commands" class="commands" role="listbox" aria-label="Slash commands" hidden></ul>
+              <textarea id="convo-input" rows="3" aria-label="Prompt for the agent"
+                aria-autocomplete="list" aria-controls="convo-commands" aria-expanded="false"
+                placeholder="Ask the agent… Ctrl+Enter sends, Enter adds a line, / lists commands. Images and files you paste anywhere on this tab go to the clipboard on the right."></textarea>
+            </div>
             <div class="bar">
               <button type="button" id="convo-stop" class="danger" hidden>Stop</button>
+              <span class="spacer"></span>
               <button type="submit" id="convo-send" title="Ctrl+Enter">Send (Ctrl+Enter)</button>
             </div>
           </form>

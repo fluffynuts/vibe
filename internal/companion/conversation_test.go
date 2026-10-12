@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -601,4 +602,59 @@ func TestTheAgentAtWorkAgainIsAnsweringAgain(t *testing.T) {
 		t.Error("the agent woken again by its background work isn't answering")
 	}
 	c.finish(nil, false)
+}
+
+func pollCommands(t *testing.T, s *Server, known int) (commands []string, seq int, sent bool) {
+	t.Helper()
+	rec := do(t, s, req{path: "/api/conversation?after=0&commands=" + itoa(known), headers: authed(nil)})
+	var body struct {
+		Commands    *[]string `json:"commands"`
+		CommandsSeq int       `json:"commandsSeq"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Commands == nil {
+		return nil, 0, false
+	}
+	return *body.Commands, body.CommandsSeq, true
+}
+
+func TestThePageLearnsTheSlashCommandsTheAgentHas(t *testing.T) {
+	s := converseServer(&fakeAgent{})
+	c := &s.convo
+	if commands, _, sent := pollCommands(t, s, -1); !sent || len(commands) != 0 {
+		t.Errorf("before the agent has started: %v, sent %v", commands, sent)
+	}
+	c.line([]byte(`{"type":"system","subtype":"init","slash_commands":["diffity-review","compact","/plugin:skill","compact","bad name","<script>"]}`))
+	commands, seq, sent := pollCommands(t, s, -1)
+	if want := []string{"compact", "diffity-review", "plugin:skill"}; !sent || !slices.Equal(commands, want) {
+		t.Errorf("commands = %v (sent %v), want %v", commands, sent, want)
+	}
+	if _, _, sent := pollCommands(t, s, seq); sent {
+		t.Error("a page with the latest was sent them again")
+	}
+	// The same list again isn't news; a different one is.
+	c.line([]byte(`{"type":"system","subtype":"init","slash_commands":["compact","diffity-review","plugin:skill"]}`))
+	if _, _, sent := pollCommands(t, s, seq); sent {
+		t.Error("an unchanged list was sent again")
+	}
+	c.line([]byte(`{"type":"system","subtype":"init","slash_commands":["compact"]}`))
+	if commands, _, sent := pollCommands(t, s, seq); !sent || !slices.Equal(commands, []string{"compact"}) {
+		t.Errorf("after a change: %v, sent %v", commands, sent)
+	}
+}
+
+func TestTheSlashCommandsOutliveTheServer(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "box.conversation.json")
+	first := historyServer(t, &fakeAgent{}, file)
+	first.convo.begin("go")
+	first.convo.line([]byte(`{"type":"system","subtype":"init","slash_commands":["diffity-review"]}`))
+	first.convo.finish(nil, false)
+	first.Close()
+
+	second := historyServer(t, &fakeAgent{}, file)
+	if commands, _, sent := pollCommands(t, second, -1); !sent || !slices.Equal(commands, []string{"diffity-review"}) {
+		t.Errorf("after a restart: %v, sent %v", commands, sent)
+	}
 }

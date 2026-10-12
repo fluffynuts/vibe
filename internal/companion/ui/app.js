@@ -830,7 +830,9 @@
     else if (convo.running) setFaviconDot(document.visibilityState === 'visible' && document.hasFocus() ? '' : 'done')
     convo.running = running
     $('convo-send').disabled = running
-    $('convo-stop').hidden = !running && !background
+    // Only while it answers: what it has left running ends with the next
+    // prompt anyway.
+    $('convo-stop').hidden = !running
     $('convo-new').disabled = running
     // While it answers, the typing bubble says so.
     $('convo-status').textContent = !running && background
@@ -843,13 +845,18 @@
     if (!state.conversation || convo.polling) return
     convo.polling = true
     try {
-      const res = await api('/api/conversation?after=' + convo.last)
+      const res = await api('/api/conversation?after=' + convo.last + '&commands=' + slash.seq)
       reached(true)
       if (!res.ok) { problem(res); return }
       banner('')
       const log = $('convo-log')
       const stick = nearBottom(log)
       if (res.body.reset) { log.replaceChildren(); convo.ticks.clear() }
+      if (Array.isArray(res.body.commands)) {
+        slash.commands = res.body.commands.filter((c) => typeof c === 'string')
+        slash.seq = res.body.commandsSeq || 0
+        if (slash.open) updateCommands(false)
+      }
       if ((res.body.events || []).length) { convo.heard = Date.now(); if (convo.typing) convo.typing.remove() }
       for (const ev of res.body.events || []) showEvent(ev)
       if (res.body.receipt) showReceipt(res.body.receipt.seq, res.body.receipt.state)
@@ -882,6 +889,7 @@
       if (!res.ok) { toast((res.body && res.body.error) || 'That could not be sent.', true); return }
       input.value = ''
       saveDraft()
+      closeCommands()
       convo.heard = Date.now()
       setConvoRunning(true)
       pollConversation()
@@ -901,6 +909,138 @@
       reached(false)
       toast('Could not reach vibe.', true)
     }
+  }
+
+  // --- completing slash commands -----------------------------------------
+
+  // The slash commands the agent has (learned from it as it starts, so none
+  // until it has answered once), and the pop-over offering them while the
+  // prompt's first word is one being typed. The closest match is always the
+  // one picked, so Tab completes it; the arrow keys pick another.
+  const slash = { commands: [], seq: -1, shown: [], at: 0, open: false }
+
+  // commandWord is the command being typed: the prompt's first word, while
+  // it starts with "/" and the cursor is in it; null otherwise.
+  function commandWord(input) {
+    const v = input.value
+    if (!v.startsWith('/') || input.selectionStart !== input.selectionEnd) return null
+    const space = v.search(/\s/)
+    const end = space < 0 ? v.length : space
+    const caret = input.selectionStart
+    if (caret < 1 || caret > end) return null
+    return { query: v.slice(1, end), end }
+  }
+
+  // matching is the commands with query in them: those starting with it
+  // first, shortest first, so the closest match leads. Nothing typed yet
+  // lists them all, alphabetically.
+  function matching(query) {
+    if (!query) return slash.commands.slice().sort((a, b) => a.localeCompare(b))
+    const q = query.toLowerCase()
+    const starts = []
+    const within = []
+    for (const name of slash.commands) {
+      const at = name.toLowerCase().indexOf(q)
+      if (at === 0) starts.push(name)
+      else if (at > 0) within.push(name)
+    }
+    starts.sort((a, b) => a.length - b.length || a.localeCompare(b))
+    return starts.concat(within)
+  }
+
+  function closeCommands() {
+    slash.open = false
+    $('convo-commands').hidden = true
+    $('convo-commands').replaceChildren()
+    $('convo-input').setAttribute('aria-expanded', 'false')
+    $('convo-input').removeAttribute('aria-activedescendant')
+  }
+
+  // updateCommands shows the pop-over for what is being typed, or hides
+  // it; fresh is a change to the text, which picks the closest match again.
+  function updateCommands(fresh) {
+    const input = $('convo-input')
+    const word = commandWord(input)
+    if (!word) { closeCommands(); return }
+    const list = $('convo-commands')
+    const shown = matching(word.query)
+    if (!slash.commands.length && !word.query) {
+      list.replaceChildren(el('li', { class: 'hint', 'aria-disabled': 'true',
+        text: "The agent's slash commands show here once it has answered a prompt." }))
+      slash.shown = []
+    } else if (!shown.length) {
+      closeCommands()
+      return
+    } else {
+      if (fresh || slash.at >= shown.length) slash.at = 0
+      slash.shown = shown
+      const q = word.query.toLowerCase()
+      list.replaceChildren(...shown.map((name, i) => {
+        const at = q ? name.toLowerCase().indexOf(q) : -1
+        const label = at < 0 ? [name]
+          : [name.slice(0, at), el('mark', { text: name.slice(at, at + q.length) }), name.slice(at + q.length)]
+        const item = el('li', { id: 'convo-command-' + i, role: 'option', 'aria-selected': String(i === slash.at) },
+          '/', ...label)
+        // mousedown, not click: the prompt keeps the focus.
+        item.addEventListener('mousedown', (ev) => { ev.preventDefault(); acceptCommand(i) })
+        return item
+      }))
+    }
+    slash.open = true
+    list.hidden = false
+    input.setAttribute('aria-expanded', 'true')
+    if (slash.shown.length) {
+      input.setAttribute('aria-activedescendant', 'convo-command-' + slash.at)
+      const picked = $('convo-command-' + slash.at)
+      if (picked) picked.scrollIntoView({ block: 'nearest' })
+    } else {
+      input.removeAttribute('aria-activedescendant')
+    }
+  }
+
+  function moveCommand(by) {
+    if (!slash.shown.length) return
+    slash.at = (slash.at + by + slash.shown.length) % slash.shown.length
+    updateCommands(false)
+  }
+
+  // acceptCommand puts the picked command in place of the word being typed,
+  // with a space after it, ready for what goes with it.
+  function acceptCommand(i) {
+    const input = $('convo-input')
+    const word = commandWord(input)
+    const name = slash.shown[i]
+    if (!word || !name) { closeCommands(); return }
+    const rest = input.value.slice(word.end).replace(/^[ \t]+/, '')
+    input.value = '/' + name + ' ' + rest
+    const caret = name.length + 2
+    input.setSelectionRange(caret, caret)
+    saveDraft()
+    closeCommands()
+  }
+
+  function setUpCommands() {
+    const input = $('convo-input')
+    // Ahead of the prompt's other keys: while the pop-over is open, the
+    // arrows, Tab, Enter and Escape are its.
+    input.addEventListener('keydown', (ev) => {
+      if (!slash.open || ev.isComposing) return
+      const plain = !ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey
+      let handled = true
+      if (ev.key === 'ArrowDown' && plain) moveCommand(1)
+      else if (ev.key === 'ArrowUp' && plain) moveCommand(-1)
+      else if ((ev.key === 'Tab' || ev.key === 'Enter') && plain && slash.shown.length) acceptCommand(slash.at)
+      else if (ev.key === 'Escape') closeCommands()
+      else handled = false
+      if (handled) { ev.preventDefault(); ev.stopImmediatePropagation() }
+    })
+    input.addEventListener('input', () => updateCommands(true))
+    // The cursor moving into or out of the first word.
+    input.addEventListener('click', () => updateCommands(false))
+    input.addEventListener('keyup', (ev) => {
+      if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) updateCommands(false)
+    })
+    input.addEventListener('blur', closeCommands)
   }
 
   // --- pasting into the clipboard from anywhere on the conversation tab ---
@@ -963,6 +1103,7 @@
   }
 
   function setUpConversation() {
+    setUpCommands()
     $('convo-form').addEventListener('submit', (ev) => { ev.preventDefault(); sendPrompt() })
     $('convo-input').addEventListener('keydown', (ev) => {
       if (ev.isComposing) return

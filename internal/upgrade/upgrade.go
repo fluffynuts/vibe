@@ -149,7 +149,7 @@ type Result struct {
 	// UndecidedRetired are those of KeptRetired kept for want of anyone to
 	// ask: no strategy, and no DecideRetired.
 	UndecidedRetired []string
-	Identical   int
+	Identical        int
 	// UpdatedCopies are package versions written beside unmergeable files.
 	UpdatedCopies []string
 	// Unresolved are conflicts left alone: no strategy, and no one to ask.

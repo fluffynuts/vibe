@@ -459,7 +459,10 @@ are tabs:
   to the clipboard. Each message shows the time it was said, and each prompt you send carries ticks like a chat message: one grey tick once vibe has
   it, two grey ticks once it has reached the sandbox, and two blue ticks once the agent has started
   answering. While it works with nothing new to show for a second, three dots show it's still at it,
-  as in a chat app. Until vibe sees the clipboard page answer the pane shows a placeholder; if it still isn't
+  as in a chat app. Typing `/` at the start of a prompt lists the agent's slash commands, filtered as
+  you type with the closest match picked: Tab (or Enter) completes it, the arrow keys pick another.
+  vibe learns the list from the agent as it starts, so it shows once the agent has answered a prompt.
+  Until vibe sees the clipboard page answer the pane shows a placeholder; if it still isn't
   up after 30 seconds, a **Start it** button runs the kit's `start-clipboard` in the sandbox (harmless
   if it is already running). The conversation, and what you are typing, outlive vibe: start it again
   and the page carries on where it was. vibe also keeps a copy of the agent's record of the session

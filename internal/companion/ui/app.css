@@ -107,6 +107,12 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .tool-result.bad summary { color: var(--bad); }
 .tool-result pre { margin: 4px 0 0; padding: 8px; overflow: auto; max-height: 240px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; font: 12px var(--mono); white-space: pre-wrap; }
 .convo-form { display: flex; flex-direction: column; gap: 8px; }
+.prompt-wrap { position: relative; display: flex; flex-direction: column; }
+.commands { position: absolute; left: 0; bottom: 100%; margin: 0 0 4px; padding: 4px; list-style: none; min-width: 260px; max-width: 100%; max-height: 240px; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 16px rgba(0, 0, 0, .18); z-index: 5; }
+.commands li { padding: 4px 8px; border-radius: 4px; font-family: var(--mono); font-size: 13px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.commands li[aria-selected="true"] { background: var(--accent); color: var(--accent-text); }
+.commands li mark { background: none; color: inherit; font-weight: 700; }
+.commands li.hint { font-family: inherit; color: var(--muted); cursor: default; white-space: normal; }
 .convo-form textarea { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; resize: vertical; min-height: 64px; }
 .convo-form textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .convo-clip .wait {

@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -85,6 +87,11 @@ type conversation struct {
 	superseded bool
 	// ended is closed when the running turn has finished.
 	ended chan struct{}
+	// commands are the slash commands the agent said it has, the last time
+	// it started, for the page to offer; commandsSeq counts their changes,
+	// so a page only fetches them when it hasn't the latest.
+	commands    []string
+	commandsSeq int
 	// review is the last diffity link the page was told of, and reviewKnown
 	// whether it has been read at all: the link the sandbox already had
 	// before the page's first turn is not news.
@@ -106,6 +113,9 @@ type saved struct {
 	// Review and ReviewKnown are conversation.review and reviewKnown.
 	Review      string `json:"review,omitempty"`
 	ReviewKnown bool   `json:"reviewKnown,omitempty"`
+	// Commands and CommandsSeq are conversation.commands and commandsSeq.
+	Commands    []string `json:"commands,omitempty"`
+	CommandsSeq int      `json:"commandsSeq,omitempty"`
 }
 
 // load picks up the conversation file holds, if any. A turn that was
@@ -129,6 +139,7 @@ func (c *conversation) load(file string) error {
 	}
 	c.events, c.seq, c.prompt = was.Events, was.Seq, was.Prompt
 	c.review, c.reviewKnown = was.Review, was.ReviewKnown
+	c.commands, c.commandsSeq = slashCommands(was.Commands), was.CommandsSeq
 	if sessionID.MatchString(was.Session) {
 		c.session = was.Session
 	}
@@ -148,7 +159,7 @@ func (c *conversation) save() {
 		return
 	}
 	data, err := json.Marshal(saved{Seq: c.seq, Session: c.session, Prompt: c.prompt, Running: c.running, Events: c.events,
-		Review: c.review, ReviewKnown: c.reviewKnown})
+		Review: c.review, ReviewKnown: c.reviewKnown, Commands: c.commands, CommandsSeq: c.commandsSeq})
 	if err != nil {
 		return
 	}
@@ -223,14 +234,22 @@ func (c *conversation) line(raw []byte) string {
 		raw = []byte(`{"type":"truncated"}`)
 	}
 	var head struct {
-		Type      string `json:"type"`
-		SessionID string `json:"session_id"`
+		Type          string   `json:"type"`
+		Subtype       string   `json:"subtype"`
+		SessionID     string   `json:"session_id"`
+		SlashCommands []string `json:"slash_commands"`
 	}
 	json.Unmarshal(raw, &head)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if sessionID.MatchString(head.SessionID) {
 		c.session = head.SessionID
+	}
+	if head.Type == "system" && head.Subtype == "init" && head.SlashCommands != nil {
+		if commands := slashCommands(head.SlashCommands); !slices.Equal(commands, c.commands) {
+			c.commands = commands
+			c.commandsSeq++
+		}
 	}
 	c.advance(receiptSeen)
 	c.add("agent", "", append(json.RawMessage(nil), raw...))
@@ -398,6 +417,41 @@ func (c *conversation) watchReviews(latestReview func() string, checks <-chan st
 	}
 }
 
+// maxCommands bounds how many slash commands are kept for the page.
+const maxCommands = 500
+
+// commandName is what a slash command's name looks like: plugin commands
+// have a colon (plugin:skill). Anything else the agent sent is dropped.
+var commandName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9:._-]{0,99}$`)
+
+// slashCommands is names as the page may offer them: well-formed, without
+// their leading slash, once each, sorted.
+func slashCommands(names []string) []string {
+	seen := map[string]bool{}
+	commands := []string{}
+	for _, name := range names {
+		name = strings.TrimPrefix(strings.TrimSpace(name), "/")
+		if !commandName.MatchString(name) || seen[name] || len(commands) >= maxCommands {
+			continue
+		}
+		seen[name] = true
+		commands = append(commands, name)
+	}
+	sort.Strings(commands)
+	return commands
+}
+
+// commandsFor is the slash commands for a page that has those of seq: nil
+// when it has the latest.
+func (c *conversation) commandsFor(seq int) ([]string, int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if seq == c.commandsSeq {
+		return nil, c.commandsSeq
+	}
+	return append([]string{}, c.commands...), c.commandsSeq
+}
+
 // reviewLink is link if it is one the page may offer: plain http, on the
 // host's own loopback (where sbx publishes the sandbox's ports). Anything
 // else the sandbox wrote is ignored.
@@ -425,9 +479,19 @@ func (s *Server) conversationEvents(w http.ResponseWriter, r *http.Request) {
 		events, last, running, background = s.convo.since(0)
 		receipt = s.convo.latestReceipt()
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	body := map[string]interface{}{
 		"events": events, "last": last, "running": running, "background": background, "reset": reset, "receipt": receipt,
-	})
+	}
+	// The slash commands go only to a page without the latest (it says
+	// which it has), not with every poll.
+	known, err := strconv.Atoi(r.URL.Query().Get("commands"))
+	if err != nil {
+		known = -1
+	}
+	if commands, seq := s.convo.commandsFor(known); commands != nil {
+		body["commands"], body["commandsSeq"] = commands, seq
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 func (s *Server) conversationSend(w http.ResponseWriter, r *http.Request) {
