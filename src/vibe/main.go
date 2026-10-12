@@ -2012,6 +2012,17 @@ func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merg
 	var publishArgs []string
 	var publishRecords []state.PublishRecord
 	for _, m := range publishMappings {
+		if m.name == "clipboard" {
+			// The clipboard page's history is kept on the host, so what
+			// was pasted outlives the sandbox (see start-clipboard).
+			store := state.ClipboardPath(vibeHome, name)
+			if err := os.MkdirAll(store, 0o755); err != nil {
+				return err
+			}
+			mounts = append(mounts, store)
+			env = append(env, "VIBE_CLIPBOARD_DIR="+store)
+			note("  clipboard: %s", store)
+		}
 		publishArgs = append(publishArgs, fmt.Sprintf("%d:%d", m.hostPort, m.containerPort))
 		publishRecords = append(publishRecords, state.PublishRecord{Name: m.name, ContainerPort: m.containerPort, HostPort: m.hostPort})
 		if m.urlEnv != "" {

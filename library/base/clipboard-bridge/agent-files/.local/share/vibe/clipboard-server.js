@@ -31,6 +31,11 @@ const ITEMS = path.join(STATE, "items");
 const INDEX = path.join(STATE, "index.json");
 const PAGE = path.join(__dirname, "clipboard-page.html");
 const MAX_BYTES = 50 * 1024 * 1024;
+// The history keeps the newest MAX_ITEMS, and no more than MAX_TOTAL bytes
+// of them: it lives on the host and outlives the sandbox, so it mustn't
+// grow without end. The oldest go first.
+const MAX_ITEMS = 25;
+const MAX_TOTAL = 250 * 1024 * 1024;
 // Text short enough to quote inline in the agent's context; anything longer
 // is handed over as a file to read.
 const INLINE_TEXT = 4000;
@@ -62,6 +67,7 @@ function load() {
 }
 
 let state = load();
+if (prune()) save();
 
 function save() {
   const tmp = INDEX + ".tmp";
@@ -127,8 +133,26 @@ function addItem(body, contentType, name) {
   fs.writeFileSync(itemPath(item), body);
   state.items.push(item);
   state.current = id;
+  prune();
   save();
   return item;
+}
+
+// prune drops the oldest items past MAX_ITEMS or MAX_TOTAL, saying whether
+// it dropped any (the caller saves). The newest item always stays, however
+// big: it was let in.
+function prune() {
+  let total = state.items.reduce(function (sum, i) { return sum + (i.size || 0); }, 0);
+  let dropped = false;
+  while (state.items.length > 1 && (state.items.length > MAX_ITEMS || total > MAX_TOTAL)) {
+    const oldest = state.items[0];
+    total -= oldest.size || 0;
+    try { fs.unlinkSync(itemPath(oldest)); } catch (e) { /* already gone */ }
+    state.items.shift();
+    if (state.current === oldest.id) state.current = state.items[state.items.length - 1].id;
+    dropped = true;
+  }
+  return dropped;
 }
 
 function removeItem(item) {

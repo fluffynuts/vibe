@@ -776,8 +776,12 @@ inline and images as paths for the agent to read. Every item on the page shows w
 been sent yet, and has **Copy** (to put it back on your own clipboard) and **Delete** buttons.
 The item you pasted or copied last is also what Ctrl-V in the agent's terminal attaches: at every
 start, `start-clipboard` puts a fallback in front of sbx's `sbx-clipboard` shim that serves that
-item whenever sbx's answer is empty. The history lives in `~/.local/state/vibe/clipboard/` in the
-sandbox, and the server logs to `/tmp/clipboard.log` and `/tmp/clipboard-server.log`.
+item whenever sbx's answer is empty. The history keeps the newest 25 items (and no more than 250 MB of
+them), in `~/.vibe/clipboard/<sandbox>/` on your machine: vibe mounts that into the sandbox, where it
+shows as `~/.local/state/vibe/clipboard/`, so what you pasted survives the sandbox being rebuilt (`-r`,
+`-C`). `--delete` and `--cleanup` remove it with the sandbox. A sandbox made before this keeps its
+history inside itself until it is next rebuilt. The server logs to `/tmp/clipboard.log` and
+`/tmp/clipboard-server.log`.
 
 The profile that comes out is an ordinary profile directory: edit it afterwards like any other.
 Composing happens **once**, when the profile is created — the library is never read again, so a

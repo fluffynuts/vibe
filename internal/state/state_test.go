@@ -104,3 +104,24 @@ func TestRemoveDeletesTheConversation(t *testing.T) {
 		}
 	}
 }
+
+func TestRemoveDeletesTheClipboardHistoryButNotAnotherSandboxs(t *testing.T) {
+	home := t.TempDir()
+	for _, name := range []string{"vibe", "other"} {
+		if err := Save(home, Instance{Name: name}); err != nil {
+			t.Fatal(err)
+		}
+		item := filepath.Join(ClipboardPath(home, name), "items", "1.png")
+		os.MkdirAll(filepath.Dir(item), 0o755)
+		os.WriteFile(item, []byte("png"), 0o644)
+	}
+	if err := Remove(home, "vibe"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(ClipboardPath(home, "vibe")); !os.IsNotExist(err) {
+		t.Errorf("the clipboard history is still there: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(ClipboardPath(home, "other"), "items", "1.png")); err != nil {
+		t.Errorf("another sandbox's history went too: %v", err)
+	}
+}

@@ -122,7 +122,16 @@ func Remove(vibeHome, name string) error {
 			return fmt.Errorf("removing companion conversation: %w", err)
 		}
 	}
+	if err := os.RemoveAll(ClipboardPath(vibeHome, name)); err != nil {
+		return fmt.Errorf("removing clipboard history: %w", err)
+	}
 	return nil
+}
+
+// ClipboardPath is the folder the sandbox's clipboard history is kept in on
+// the host, mounted into the sandbox so it outlives a rebuild.
+func ClipboardPath(vibeHome, name string) string {
+	return filepath.Join(vibeHome, "clipboard", name)
 }
 
 // GitTokenPath is where the GitHub token a sandbox's agent pushes with is

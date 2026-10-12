@@ -8,7 +8,9 @@
 #      sbx's host clipboard bridge comes back empty. Redone every start in
 #      case sbx has put its own back; sbx's is kept as sbx-clipboard.sbx.
 #   2. Start clipboard-server.js as the agent user, unless something is
-#      already listening on 5390.
+#      already listening on 5390 — first pointing its history at the
+#      folder vibe keeps on the host for this sandbox, when there is one,
+#      so what was pasted outlives the sandbox being rebuilt.
 #
 # No braced shell expansions here: sbx validates every brace-form
 # substitution in file content against its own placeholder list.
@@ -32,6 +34,43 @@ install_fallback() {
   fi
   as_root install -m 755 "$SHARE/sbx-clipboard-fallback" "$SHIM" \
     || echo "WARN: could not install the clipboard fall-back"
+}
+
+STATE=/home/agent/.local/state/vibe/clipboard
+
+# hostStore is the host folder vibe mounted for the clipboard's history
+# ($VIBE_CLIPBOARD_DIR), or nothing. It is set when the sandbox is made, so
+# it's in PID 1's environment; sudo and su - have dropped it from ours.
+host_store() {
+  if [ -n "$VIBE_CLIPBOARD_DIR" ]; then
+    echo "$VIBE_CLIPBOARD_DIR"
+    return
+  fi
+  tr '\000' '\n' </proc/1/environ 2>/dev/null | sed -n 's/^VIBE_CLIPBOARD_DIR=//p' | head -n 1
+}
+
+# link_store makes $STATE a link to the host's folder for the history, so
+# the server (and the paths it hands the agent) needn't know about it. A
+# history kept in the sandbox until now goes into the host folder, if that
+# has none of its own yet.
+link_store() {
+  store=$(host_store)
+  [ -n "$store" ] || return 0
+  if [ ! -d "$store" ]; then
+    echo "WARN: $store isn't mounted — keeping the clipboard history in the sandbox"
+    return 0
+  fi
+  if [ -L "$STATE" ]; then
+    [ "$(readlink "$STATE")" = "$store" ] && return 0
+    rm -f "$STATE"
+  elif [ -d "$STATE" ]; then
+    if [ -z "$(ls -A "$store" 2>/dev/null)" ]; then
+      cp -a "$STATE/." "$store/" || echo "WARN: could not move the clipboard history to $store"
+    fi
+    rm -rf "$STATE"
+  fi
+  mkdir -p "$(dirname "$STATE")"
+  ln -s "$store" "$STATE" && echo "clipboard history kept on the host, in $store"
 }
 
 # listening reports whether anything listens on 5390 (150E in hex; 0A is
@@ -69,6 +108,7 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
+link_store
 echo "starting the clipboard server"
 setsid nohup node "$SHARE/clipboard-server.js" >>/tmp/clipboard-server.log 2>&1 </dev/null &
 
