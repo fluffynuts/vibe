@@ -90,6 +90,12 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .msg.user .ticks { margin-left: 4px; letter-spacing: -3px; }
 .msg.error .foot { color: var(--muted); }
 .msg a { color: var(--accent); }
+.typing { align-self: flex-start; display: inline-flex; gap: 4px; padding: 9px 12px; border-radius: 10px 10px 10px 2px; background: var(--row-hover); border: 1px solid var(--line); }
+.typing span { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: typing 1.2s infinite ease-in-out; }
+.typing span:nth-child(2) { animation-delay: .2s; }
+.typing span:nth-child(3) { animation-delay: .4s; }
+@keyframes typing { 0%, 60%, 100% { opacity: .3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) { .typing span { animation-duration: 2.4s; transform: none !important; } }
 .msg.review { align-self: stretch; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px; padding: 6px 10px 4px; }
 .msg.review .review-link { display: block; margin-top: 2px; word-break: break-all; }
 .msg.user .ticks.seen { color: var(--tick-seen); }

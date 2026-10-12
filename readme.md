@@ -458,7 +458,8 @@ are tabs:
   `clipboard-bridge` below) embedded beside it: paste images and files anywhere on the tab and they go
   to the clipboard. Each message shows the time it was said, and each prompt you send carries ticks like a chat message: one grey tick once vibe has
   it, two grey ticks once it has reached the sandbox, and two blue ticks once the agent has started
-  answering. Until vibe sees the clipboard page answer the pane shows a placeholder; if it still isn't
+  answering. While it works with nothing new to show for a second, three dots show it's still at it,
+  as in a chat app. Until vibe sees the clipboard page answer the pane shows a placeholder; if it still isn't
   up after 30 seconds, a **Start it** button runs the kit's `start-clipboard` in the sandbox (harmless
   if it is already running). The conversation, and what you are typing, outlive vibe: start it again
   and the page carries on where it was. vibe also keeps a copy of the agent's record of the session

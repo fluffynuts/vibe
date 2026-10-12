@@ -638,7 +638,31 @@
 
   // --- the conversation --------------------------------------------------
 
-  const convo = { last: 0, running: false, polling: false, behind: false, lastPrompt: '', ticks: new Map() }
+  const convo = { last: 0, running: false, polling: false, behind: false, lastPrompt: '', ticks: new Map(), heard: 0, typing: null }
+
+  // How long the agent may be at work with nothing new to show before the
+  // page says it is still at it, as a chat shows someone typing.
+  const QUIET_MS = 1000
+
+  // showTyping puts the "typing" bubble at the end of the conversation
+  // while the agent is answering but has shown nothing for QUIET_MS, and
+  // takes it away otherwise: anything new from it ends the quiet.
+  function showTyping() {
+    const log = $('convo-log')
+    const show = convo.running && Date.now() - convo.heard >= QUIET_MS
+    if (!convo.typing) {
+      // Hidden from screen readers: the log around it is announced, and
+      // the bubble comes and goes with every tool call. The Stop button
+      // and the ticks already say a turn is running.
+      convo.typing = el('div', { class: 'typing', 'aria-hidden': 'true' },
+        el('span'), el('span'), el('span'))
+    }
+    if (!show) { convo.typing.remove(); return }
+    if (convo.typing.parentNode === log && log.lastChild === convo.typing) return
+    const stick = nearBottom(log)
+    log.append(convo.typing)
+    if (stick && !$('panel-conversation').hidden) log.scrollTop = log.scrollHeight
+  }
 
   function nearBottom(box) {
     return box.scrollHeight - box.scrollTop - box.clientHeight < 80
@@ -808,8 +832,9 @@
     $('convo-send').disabled = running
     $('convo-stop').hidden = !running && !background
     $('convo-new').disabled = running
-    $('convo-status').textContent = running ? 'The agent is working…'
-      : background ? 'The agent has answered, and has something still running. Sending a prompt ends it.' : ''
+    // While it answers, the typing bubble says so.
+    $('convo-status').textContent = !running && background
+      ? 'The agent has answered, and has something still running. Sending a prompt ends it.' : ''
   }
 
   async function pollConversation() {
@@ -825,6 +850,7 @@
       const log = $('convo-log')
       const stick = nearBottom(log)
       if (res.body.reset) { log.replaceChildren(); convo.ticks.clear() }
+      if ((res.body.events || []).length) { convo.heard = Date.now(); if (convo.typing) convo.typing.remove() }
       for (const ev of res.body.events || []) showEvent(ev)
       if (res.body.receipt) showReceipt(res.body.receipt.seq, res.body.receipt.state)
       convo.last = res.body.last || 0
@@ -833,6 +859,7 @@
         if ($('panel-conversation').hidden) convo.behind = true
         else if (stick) log.scrollTop = log.scrollHeight
       }
+      showTyping()
     } catch (e) {
       reached(false)
     } finally {
@@ -855,6 +882,7 @@
       if (!res.ok) { toast((res.body && res.body.error) || 'That could not be sent.', true); return }
       input.value = ''
       saveDraft()
+      convo.heard = Date.now()
       setConvoRunning(true)
       pollConversation()
     } catch (e) {
