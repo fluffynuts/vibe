@@ -766,12 +766,6 @@ Overriding one bundled feature means dropping your own `~/.vibe/library/<feature
 unlike `defaults/`, that replaces only the feature you copied, so features the bundle adds later
 still show up.
 
-## The bundled template profile
-
-`profiles/template_dotnet-mysql-rabbitmq-elasticsearch-redis/` is a real example: it installs the
-.NET SDK, MySQL/Redis/RabbitMQ and Elasticsearch, and picks up the diffity review tooling the same
-way a guided profile does. Copy it as a starting point for a new profile.
-
 ## State
 
 Alongside the configuration, `~/.vibe` (override with `$VIBE_HOME`) is where `vibe` keeps its own

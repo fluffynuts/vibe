@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"vibe/internal/policy"
 )
@@ -545,5 +546,43 @@ func TestTheClipboardIsStartedOnceAtATime(t *testing.T) {
 	close(release)
 	if code := <-first; code != http.StatusOK {
 		t.Errorf("first start: %d", code)
+	}
+}
+
+func TestCachedReturnsTheTypedResultAndCallsOncePerKey(t *testing.T) {
+	c := newCache(time.Minute)
+	var calls int32
+	fn := func() string { atomic.AddInt32(&calls, 1); return "hello" }
+
+	for i := 0; i < 3; i++ {
+		if got := cached(c, "k", 0, fn); got != "hello" {
+			t.Fatalf("cached = %q", got)
+		}
+	}
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Errorf("fn ran %d times, want 1", n)
+	}
+	if got := cached(c, "other", 0, func() string { return "elsewhere" }); got != "elsewhere" {
+		t.Errorf("a second key shared the first's value: %q", got)
+	}
+}
+
+func TestCachedKeepsNilPointersNil(t *testing.T) {
+	c := newCache(time.Minute)
+	if got := cached(c, "git", 0, func() *GitInfo { return nil }); got != nil {
+		t.Errorf("cached = %+v, want nil", got)
+	}
+}
+
+func TestCachedCallsAgainOnceTheTTLHasPassed(t *testing.T) {
+	c := newCache(time.Minute)
+	n := 0
+	fn := func() int { n++; return n }
+	if cached(c, "k", time.Nanosecond, fn) != 1 {
+		t.Fatal("first call should run fn")
+	}
+	time.Sleep(5 * time.Millisecond)
+	if got := cached(c, "k", time.Nanosecond, fn); got != 2 {
+		t.Errorf("cached = %d, want a fresh 2", got)
 	}
 }

@@ -18,12 +18,39 @@ import (
 	"vibe/internal/hostmem"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
+	"vibe/internal/library"
 	"vibe/internal/state"
 )
 
-// bundledProfile is the profile the repo ships that the golden-path tests
-// build: the .NET/MySQL/RabbitMQ/Elasticsearch/Redis template.
-const bundledProfile = "template_dotnet-mysql-rabbitmq-elasticsearch-redis"
+// bundledProfile is the profile goldenBundle composes: the .NET, MySQL,
+// RabbitMQ, Elasticsearch, Redis and diffity features of the repo's library.
+const bundledProfile = "golden"
+
+// goldenBundle is a bundle made of the repo's own base config, defaults and
+// library, shipping one profile composed from the features a .NET project
+// would pick — the way a guided profile is made. It returns the bundle's root
+// and how many install scripts the profile came out with.
+func goldenBundle(t *testing.T) (root string, profileSteps int) {
+	t.Helper()
+	repo := repoRoot(t)
+	root = t.TempDir()
+	for _, name := range []string{"config.yaml", "settings.yaml", "defaults", "library"} {
+		if err := os.Symlink(filepath.Join(repo, name), filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lay := layout.New(t.TempDir(), repo)
+	dir := filepath.Join(root, "profiles", bundledProfile)
+	features := []string{"dotnet", "mysql", "rabbitmq", "elasticsearch", "redis", "diffity"}
+	if err := library.Compose(features, lay.FeatureDir, dir); err != nil {
+		t.Fatalf("composing the golden profile: %v", err)
+	}
+	scripts, err := os.ReadDir(filepath.Join(dir, "install-scripts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root, len(scripts)
+}
 
 func repoRoot(t *testing.T) string {
 	t.Helper()
@@ -36,12 +63,11 @@ func repoRoot(t *testing.T) string {
 }
 
 // TestLoadKitBundledProfile is a golden-path regression test: it builds the
-// kit spec for the bundled template profile end-to-end (base + defaults +
-// profile) and
-// checks it carries every install step, file and startup behavior the
-// original hand-written vibe.sh embedded.
+// kit spec for a profile composed from the library end-to-end (base +
+// defaults + profile) and checks it carries every install step, file and
+// startup behavior the original hand-written vibe.sh embedded.
 func TestLoadKitBundledProfile(t *testing.T) {
-	root := repoRoot(t)
+	root, profileSteps := goldenBundle(t)
 	doc, merged, err := loadKit(layout.New(t.TempDir(), root), bundledProfile)
 	if err != nil {
 		t.Fatalf("loadKit: %v", err)
@@ -67,7 +93,7 @@ func TestLoadKitBundledProfile(t *testing.T) {
 
 	installSteps, _ := setup["install"].([]interface{})
 	const defaultSteps = 4
-	const wantSteps = defaultSteps + 12 // default scripts + the profile's own
+	wantSteps := defaultSteps + profileSteps // default scripts + the profile's own
 	if len(installSteps) != wantSteps {
 		t.Fatalf("expected %d install steps, got %d", wantSteps, len(installSteps))
 	}
@@ -75,12 +101,7 @@ func TestLoadKitBundledProfile(t *testing.T) {
 	if !strings.Contains(strings.ToLower(first["description"].(string)), "apt") {
 		t.Errorf("expected defaults' apt-refresh step first, got %+v", first)
 	}
-	firstProfileStep := installSteps[defaultSteps].(kitspec.Doc)
-	if !strings.Contains(strings.ToLower(firstProfileStep["description"].(string)), "apt") {
-		t.Errorf("expected profile's apt-refresh step right after %d default steps, got %+v", defaultSteps, firstProfileStep)
-	}
-	// diffity is a library feature now, so the template profile carries its
-	// steps itself rather than getting them from the defaults
+	// diffity is a library feature, so its steps come with the profile
 	var sawDiffityCLI, sawDiffitySkills bool
 	for _, step := range installSteps {
 		switch cmd := step.(kitspec.Doc)["command"].(string); {
@@ -91,7 +112,7 @@ func TestLoadKitBundledProfile(t *testing.T) {
 		}
 	}
 	if !sawDiffityCLI || !sawDiffitySkills {
-		t.Errorf("diffity steps missing from the template profile: cli=%v skills=%v", sawDiffityCLI, sawDiffitySkills)
+		t.Errorf("diffity steps missing from the profile: cli=%v skills=%v", sawDiffityCLI, sawDiffitySkills)
 	}
 
 	files, _ := setup["files"].([]interface{})
@@ -146,8 +167,8 @@ func TestLoadKitBundledProfile(t *testing.T) {
 
 	ai, _ := doc["agentInstructions"].(kitspec.Doc)
 	content, _ := ai["content"].(string)
-	if !strings.Contains(content, "Diffity") || !strings.Contains(content, "Toolchain") {
-		t.Error("expected agentInstructions to contain both the base and profile sections")
+	if !strings.Contains(content, "Diffity") {
+		t.Error("expected agentInstructions to carry the diffity feature's section")
 	}
 
 	if _, err := kitspec.Marshal(doc); err != nil {
@@ -157,7 +178,8 @@ func TestLoadKitBundledProfile(t *testing.T) {
 
 // TestEnsureProfileExisting leaves a profile that is already there alone.
 func TestEnsureProfileExisting(t *testing.T) {
-	lay := layout.New(t.TempDir(), repoRoot(t))
+	root, _ := goldenBundle(t)
+	lay := layout.New(t.TempDir(), root)
 	if err := ensureProfile(lay, bundledProfile, false); err != nil {
 		t.Fatalf("ensureProfile on an existing profile: %v", err)
 	}
@@ -410,7 +432,8 @@ func TestEnsureProfileRejectsBadName(t *testing.T) {
 // that overrides the base settings, one default install script and the
 // profile itself, and checks each override is the one that reaches the kit.
 func TestLoadKitOverlayWins(t *testing.T) {
-	lay := layout.New(t.TempDir(), repoRoot(t))
+	root, _ := goldenBundle(t)
+	lay := layout.New(t.TempDir(), root)
 
 	writeFile(t, lay.HomePath("settings.yaml"), "memory: 24g\nagent: claude\n")
 	writeFile(t, lay.HomePath("defaults", "install-scripts", "01-ensure-local-bin"), "#!/bin/sh\n# vibe: description: my own setup log\necho mine\n")

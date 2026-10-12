@@ -223,10 +223,7 @@ func (s *Server) ping(w http.ResponseWriter, r *http.Request) {
 func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	clipboard := ""
 	if s.cfg.ClipboardURL != nil {
-		v, _ := s.cache.get("clipboard-url", 5*time.Second, func() (interface{}, error) {
-			return s.cfg.ClipboardURL(), nil
-		})
-		clipboard, _ = v.(string)
+		clipboard = cached(s.cache, "clipboard-url", 5*time.Second, s.cfg.ClipboardURL)
 	}
 	ready := false
 	if clipboard != "" {
@@ -236,10 +233,9 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		}
 		// Keyed by the URL: a new one (the sandbox restarted on another
 		// port) is probed afresh.
-		v, _ := s.cache.get("clipboard-ready "+clipboard, time.Second, func() (interface{}, error) {
-			return probe(clipboard), nil
+		ready = cached(s.cache, "clipboard-ready "+clipboard, time.Second, func() bool {
+			return probe(clipboard)
 		})
-		ready, _ = v.(bool)
 	}
 	var git *GitInfo
 	if s.cfg.Workspace != "" {
@@ -247,10 +243,9 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		if read == nil {
 			read = readGit
 		}
-		v, _ := s.cache.get("git", 2*time.Second, func() (interface{}, error) {
-			return read(s.cfg.Workspace), nil
+		git = cached(s.cache, "git", 2*time.Second, func() *GitInfo {
+			return read(s.cfg.Workspace)
 		})
-		git, _ = v.(*GitInfo)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"sandbox":           s.cfg.Sandbox,
@@ -350,21 +345,23 @@ func (s *Server) changing(do change) http.HandlerFunc {
 type invalid struct{ error }
 
 func (s *Server) allow(body []byte) ([]string, error) {
-	host, err := hostIn(body)
-	if err != nil {
-		return nil, err
-	}
 	c := s.cfg.Policy
-	return c.AllowCommand(host), c.Allow(host)
+	return forHost(body, c.AllowCommand, c.Allow)
 }
 
 func (s *Server) deny(body []byte) ([]string, error) {
+	c := s.cfg.Policy
+	return forHost(body, c.DenyCommand, c.Deny)
+}
+
+// forHost runs a change to the host named in body, returning the sbx
+// command it stands for.
+func forHost(body []byte, command func(host string) []string, do func(host string) error) ([]string, error) {
 	host, err := hostIn(body)
 	if err != nil {
 		return nil, err
 	}
-	c := s.cfg.Policy
-	return c.DenyCommand(host), c.Deny(host)
+	return command(host), do(host)
 }
 
 func (s *Server) remove(body []byte) ([]string, error) {
@@ -461,6 +458,13 @@ func (c *cache) get(key string, ttl time.Duration, fn func() (interface{}, error
 	e.at = time.Now()
 	close(e.done)
 	return e.val, e.err
+}
+
+// cached is c.get for a call that can't fail, typed.
+func cached[T any](c *cache, key string, ttl time.Duration, fn func() T) T {
+	v, _ := c.get(key, ttl, func() (interface{}, error) { return fn(), nil })
+	t, _ := v.(T)
+	return t
 }
 
 func (c *cache) clear() {

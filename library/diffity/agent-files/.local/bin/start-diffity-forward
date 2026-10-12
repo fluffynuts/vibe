@@ -1,0 +1,55 @@
+#!/bin/sh
+# vibe: description: Make diffity's port reachable from the host
+# Run by on-start at every sandbox start (as root), and safe to run by hand.
+# diffity listens on 127.0.0.1:5391 only, and the host's published port
+# reaches the sandbox through its network address, so this starts
+# diffity-forward.js as the agent user to pass one to the other, unless it
+# is already running.
+#
+# No braced shell expansions here: sbx validates every brace-form
+# substitution in file content against its own placeholder list.
+
+SELF=/home/agent/.local/bin/start-diffity-forward
+SHARE=/home/agent/.local/share/vibe
+
+running() {
+  pgrep -f "$SHARE/diffity-forward.js" >/dev/null 2>&1
+}
+
+if [ "$(id -u)" = 0 ]; then
+  # A login shell, because that is what puts node on PATH; as the agent so
+  # that nothing it later needs to replace is left owned by root.
+  AGENT=$(id -un 1000 2>/dev/null)
+  [ -n "$AGENT" ] || AGENT=agent
+  su - "$AGENT" -c "$SELF" || echo "WARN: could not start the diffity forwarder as $AGENT"
+  exit 0
+fi
+
+exec >>/tmp/diffity-forward.log 2>&1
+echo "=== start-diffity-forward at $(date -Is) ==="
+
+if running; then
+  echo "diffity forwarder already running"
+  exit 0
+fi
+if ! command -v node >/dev/null 2>&1 && [ -f /etc/sandbox-persistent.sh ]; then
+  . /etc/sandbox-persistent.sh
+fi
+if ! command -v node >/dev/null 2>&1; then
+  echo "ERROR: no node on PATH — the diffity forwarder needs it"
+  exit 1
+fi
+
+setsid nohup node "$SHARE/diffity-forward.js" >>/tmp/diffity-forward-server.log 2>&1 </dev/null &
+
+i=0
+while [ $i -lt 10 ]; do
+  sleep 0.5
+  if running; then
+    echo "diffity forwarder started"
+    exit 0
+  fi
+  i=$((i + 1))
+done
+echo "ERROR: the diffity forwarder did not stay up — see /tmp/diffity-forward-server.log"
+exit 1

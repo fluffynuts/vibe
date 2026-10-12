@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1769,13 +1770,13 @@ func setClaudeTheme(lay layout.Layout, profile string, doc kitspec.Doc, fromSand
 	}
 
 	choices := claudetheme.Choices(known)
-	if indexOf(choices, choice) < 0 {
+	if slices.Index(choices, choice) < 0 {
 		// A built-in theme the sandbox was switched to: offer to keep it.
 		choices = append([]string{choices[0], choice}, choices[1:]...)
 	}
 	switch {
 	case (ask || preferred == "") && len(choices) > 1 && !force && interactive():
-		picked, ok := chooseFrom("select claude theme", choices, indexOf(choices, choice))
+		picked, ok := chooseFrom("select claude theme", choices, slices.Index(choices, choice))
 		if !ok {
 			return nil, fmt.Errorf("aborted — no theme chosen")
 		}
@@ -1792,15 +1793,6 @@ func setClaudeTheme(lay layout.Layout, profile string, doc kitspec.Doc, fromSand
 		note("  WARNING: could not record the claude theme in %s: %s", profileDir, err)
 	}
 	return doc, nil
-}
-
-func indexOf(list []string, s string) int {
-	for i, v := range list {
-		if v == s {
-			return i
-		}
-	}
-	return -1
 }
 
 // askMemory offers a choice of how much memory the sandbox gets, starting
@@ -2524,13 +2516,21 @@ func ttyRW() (tty *prompt.Terminal, closeFn func(), ok bool) {
 // that can't go raw is rare enough (and unhelpful enough for scripting) not
 // to be worth a second input mode.
 func chooseFrom(question string, labels []string, def int) (int, bool) {
-	tty, closeFn, ok := ttyRW()
-	if !ok {
-		return 0, false
+	return asking(question, func(tty *prompt.Terminal) (int, bool) {
+		return prompt.Select(tty, labels, def)
+	})
+}
+
+// asking prints question, then lets ask drive an interactive prompt on the
+// terminal; ok is false when there is no terminal to ask on.
+func asking[T any](question string, ask func(tty *prompt.Terminal) (T, bool)) (answer T, ok bool) {
+	tty, closeFn, opened := ttyRW()
+	if !opened {
+		return answer, false
 	}
 	defer closeFn()
 	note("%s", question)
-	return prompt.Select(tty, labels, def)
+	return ask(tty)
 }
 
 // initHome seeds the user's ~/.vibe overlay on first run: it is where the
@@ -2570,7 +2570,7 @@ func initHome(lay layout.Layout, force bool) error {
 		note("  WARNING: could not record the package's files in %s: %s",
 			filepath.Join(lay.Home, upgrade.BaseDir), err)
 	}
-	if indexOf(res.Files, "settings.yaml") >= 0 {
+	if slices.Index(res.Files, "settings.yaml") >= 0 {
 		if err := setUpSettings(lay, !force); err != nil {
 			return err
 		}
@@ -2709,7 +2709,7 @@ func featureChecklist(lay layout.Layout, names, ticked []string) (features []lib
 	checked = make([]bool, len(features))
 	for i, f := range features {
 		labels[i] = f.Label()
-		checked[i] = indexOf(ticked, f.Name) >= 0
+		checked[i] = slices.Index(ticked, f.Name) >= 0
 	}
 	return features, labels, checked
 }
@@ -2870,7 +2870,7 @@ func pickAgent(current string, ask bool, question string) string {
 	if err != nil {
 		agents = fallbackAgents
 	}
-	idx := indexOf(agents, current)
+	idx := slices.Index(agents, current)
 	if idx < 0 {
 		agents = append([]string{current}, agents...)
 		idx = 0
@@ -2896,7 +2896,7 @@ func pickTimezone(current string, ask bool, question string) string {
 	}
 	defer closeFn()
 	note("%s (this machine's is %s)", question, timezone.Host())
-	i, ok := prompt.Filter(tty, zones, indexOf(zones, current))
+	i, ok := prompt.Filter(tty, zones, slices.Index(zones, current))
 	if !ok {
 		note("  keeping timezone: %s", current)
 		return current
@@ -2904,22 +2904,27 @@ func pickTimezone(current string, ask bool, question string) string {
 	return zones[i]
 }
 
-// recordedTimezone is the timezone sandbox name was created with, or the
-// host's when there's no record of one.
-// recordedAgent is the agent the sandbox name was created to run, or def
-// when no record says.
-func recordedAgent(vibeHome, name, def string) string {
-	if inst, found, err := state.Load(vibeHome, name); err == nil && found && inst.Agent != "" {
-		return inst.Agent
+// recorded is what field picks from the record of sandbox name, or def when
+// there's no record or it's empty there.
+func recorded(vibeHome, name, def string, field func(state.Instance) string) string {
+	if inst, found, err := state.Load(vibeHome, name); err == nil && found {
+		if v := field(inst); v != "" {
+			return v
+		}
 	}
 	return def
 }
 
+// recordedAgent is the agent the sandbox name was created to run, or def
+// when no record says.
+func recordedAgent(vibeHome, name, def string) string {
+	return recorded(vibeHome, name, def, func(i state.Instance) string { return i.Agent })
+}
+
+// recordedTimezone is the timezone sandbox name was created with, or the
+// host's when there's no record of one.
 func recordedTimezone(vibeHome, name string) string {
-	if inst, found, err := state.Load(vibeHome, name); err == nil && found && inst.Timezone != "" {
-		return inst.Timezone
-	}
-	return timezone.Host()
+	return recorded(vibeHome, name, timezone.Host(), func(i state.Instance) string { return i.Timezone })
 }
 
 // pickDefaultFeatures asks which library features a guided profile should
@@ -2951,38 +2956,26 @@ func pickDefaultFeatures(lay layout.Layout, defaults []string) ([]string, error)
 // returns the checked indices, and ok=false when the user quit or there is
 // no terminal to ask on.
 func checklistFrom(question string, labels []string, checked []bool) ([]int, bool) {
-	tty, closeFn, ok := ttyRW()
-	if !ok {
-		return nil, false
-	}
-	defer closeFn()
-	note("%s", question)
-	return prompt.MultiSelect(tty, labels, checked)
+	return asking(question, func(tty *prompt.Terminal) ([]int, bool) {
+		return prompt.MultiSelect(tty, labels, checked)
+	})
 }
 
 // checklistNoConfirmFrom is checklistFrom without the step confirming the
 // selection: enter answers straight away.
 func checklistNoConfirmFrom(question string, labels []string, checked []bool) ([]int, bool) {
-	tty, closeFn, ok := ttyRW()
-	if !ok {
-		return nil, false
-	}
-	defer closeFn()
-	note("%s", question)
-	return prompt.MultiSelectNoConfirm(tty, labels, checked)
+	return asking(question, func(tty *prompt.Terminal) ([]int, bool) {
+		return prompt.MultiSelectNoConfirm(tty, labels, checked)
+	})
 }
 
 // reorderFrom asks the user to rearrange labels with an interactive,
 // arrow-key-movable list. It returns the labels in their final order, and
 // ok=false when the user quit or there is no terminal to ask on.
 func reorderFrom(question string, labels []string) ([]string, bool) {
-	tty, closeFn, ok := ttyRW()
-	if !ok {
-		return nil, false
-	}
-	defer closeFn()
-	note("%s", question)
-	return prompt.Reorder(tty, labels)
+	return asking(question, func(tty *prompt.Terminal) ([]string, bool) {
+		return prompt.Reorder(tty, labels)
+	})
 }
 
 // --- finishing the foreground session --------------------------------------
@@ -3345,7 +3338,7 @@ func publishedURLs(records []state.PublishRecord, live map[int][]int) []publishe
 		seen[rec.Name] = true
 		u := publishedURL{name: rec.Name, containerPort: rec.ContainerPort, hostPort: rec.HostPort, recordedPort: rec.HostPort}
 		switch hostPorts := live[rec.ContainerPort]; {
-		case containsPort(hostPorts, rec.HostPort):
+		case slices.Contains(hostPorts, rec.HostPort):
 		case len(hostPorts) > 0:
 			u.hostPort = hostPorts[0]
 		default:
@@ -3354,15 +3347,6 @@ func publishedURLs(records []state.PublishRecord, live map[int][]int) []publishe
 		urls = append(urls, u)
 	}
 	return urls
-}
-
-func containsPort(ports []int, port int) bool {
-	for _, p := range ports {
-		if p == port {
-			return true
-		}
-	}
-	return false
 }
 
 func reportPortHolder(port int) {

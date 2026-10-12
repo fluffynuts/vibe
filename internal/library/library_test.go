@@ -368,3 +368,24 @@ func TestComposeKeepsOptedOutHelpersOutOfOnStart(t *testing.T) {
 		t.Errorf("on-start runs a directive sidecar:\n%s", onStart)
 	}
 }
+
+func TestDiffityFeatureStartsItsForwarderAtStartup(t *testing.T) {
+	lib, err := filepath.Abs(filepath.Join("..", "..", "library"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "profile")
+	if err := Compose([]string{"diffity"}, flatDirFor(lib), dest); err != nil {
+		t.Fatal(err)
+	}
+	onStart, err := os.ReadFile(filepath.Join(dest, "agent-files", ".local", "bin", "on-start"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(onStart), "start-diffity-forward") {
+		t.Errorf("on-start does not run the diffity forwarder:\n%s", onStart)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "agent-files", ".local", "share", "vibe", "diffity-forward.js")); err != nil {
+		t.Errorf("the forwarder's script is not shipped: %v", err)
+	}
+}
