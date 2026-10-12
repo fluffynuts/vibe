@@ -657,11 +657,60 @@
     return el('time', { class: 'stamp', datetime: d.toISOString(), title: d.toLocaleString(), text })
   }
 
+  // localLink is href as a link the page may offer: http(s) on this
+  // machine's own loopback, where sbx publishes the sandbox's pages. The
+  // agent's words never become a link anywhere else.
+  function localLink(href) {
+    let u
+    try { u = new URL(href) } catch (e) { return null }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
+    if (u.username || u.password) return null
+    if (u.hostname !== 'localhost' && u.hostname !== '127.0.0.1') return null
+    return el('a', { href: u.href, target: '_blank', rel: 'noopener noreferrer', text: href })
+  }
+
+  // linked is text with the local addresses in it made into links, as nodes
+  // (text stays text: there is no markup in it to read).
+  const LOCAL_URL = /\bhttps?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?(?![\w:-]|\.[\w-])(?:[/?#][^\s<>"'`]*)?/g
+  function linked(text) {
+    const nodes = []
+    let at = 0
+    for (const m of text.matchAll(LOCAL_URL)) {
+      // Sentence punctuation after an address isn't part of it.
+      const href = m[0].replace(/[.,;:!?)\]}'"]+$/, '')
+      const link = localLink(href)
+      if (!link) continue
+      if (m.index > at) nodes.push(text.slice(at, m.index))
+      nodes.push(link)
+      at = m.index + href.length
+    }
+    if (at < text.length) nodes.push(text.slice(at))
+    return nodes
+  }
+
   function convoNote(cls, text, at) {
     const time = stamp(at)
+    const words = cls === 'agent' ? el('span', {}, ...linked(text)) : el('span', { text })
     $('convo-log').append(time
-      ? el('div', { class: 'msg ' + cls }, el('span', { text }), el('span', { class: 'foot' }, time))
-      : el('div', { class: 'msg ' + cls, text }))
+      ? el('div', { class: 'msg ' + cls }, words, el('span', { class: 'foot' }, time))
+      : el('div', { class: 'msg ' + cls }, words))
+  }
+
+  // reviewNote is a card for a link diffity has for the user, saying what
+  // it is from its address: a tour, the changes against a ref, or the
+  // uncommitted ones.
+  function reviewNote(ev) {
+    const link = localLink(ev.text || '')
+    if (!link) return
+    const u = new URL(link.href)
+    const ref = u.searchParams.get('ref')
+    const what = u.pathname.startsWith('/tour/') ? 'Diffity has a code tour for you:'
+      : u.pathname.startsWith('/diff') ? (ref ? 'The changes against ' + ref + ' are ready to review in diffity:'
+        : 'The uncommitted changes are ready to review in diffity:')
+      : 'Diffity has something for you to look at:'
+    $('convo-log').append(el('div', { class: 'msg review' },
+      el('span', { text: what }), el('span', { class: 'review-link' }, link),
+      el('span', { class: 'foot' }, stamp(ev.at))))
   }
 
   // The ticks on what the user said, as on a chat message: one when vibe has
@@ -745,17 +794,22 @@
     else if (ev.kind === 'user') { convo.lastPrompt = ev.text || ''; userNote(ev) }
     else if (ev.kind === 'agent') showAgent(ev.agent, ev.at)
     else if (ev.kind === 'error') convoNote('error', ev.text || 'That failed.', ev.at)
+    else if (ev.kind === 'review') reviewNote(ev)
     else if (ev.kind === 'done' && ev.text === 'stopped') convoNote('meta', 'Stopped.')
   }
 
-  function setConvoRunning(running) {
+  // running is the agent answering; background is it having answered, but
+  // still waiting on something it left running (a review page, say). Then
+  // the page goes on as if it were done: sending ends that work.
+  function setConvoRunning(running, background) {
     if (running) setFaviconDot('working')
     else if (convo.running) setFaviconDot(document.visibilityState === 'visible' && document.hasFocus() ? '' : 'done')
     convo.running = running
     $('convo-send').disabled = running
-    $('convo-stop').hidden = !running
+    $('convo-stop').hidden = !running && !background
     $('convo-new').disabled = running
-    $('convo-status').textContent = running ? 'The agent is working…' : ''
+    $('convo-status').textContent = running ? 'The agent is working…'
+      : background ? 'The agent has answered, and has something still running. Sending a prompt ends it.' : ''
   }
 
   async function pollConversation() {
@@ -774,7 +828,7 @@
       for (const ev of res.body.events || []) showEvent(ev)
       if (res.body.receipt) showReceipt(res.body.receipt.seq, res.body.receipt.state)
       convo.last = res.body.last || 0
-      setConvoRunning(!!res.body.running)
+      setConvoRunning(!!res.body.running, !!res.body.background)
       if ((res.body.events || []).length) {
         if ($('panel-conversation').hidden) convo.behind = true
         else if (stick) log.scrollTop = log.scrollHeight

@@ -75,6 +75,11 @@ type transcripts struct {
 // transcriptTimeout bounds each trip to the sandbox for a transcript.
 const transcriptTimeout = 30 * time.Second
 
+// transcriptKept is called each time keepingTranscript is done making a
+// copy (or has given up on one): it does that in the background, and tests
+// wait for it before their folders are cleaned away.
+var transcriptKept = func() {}
+
 // keepingTranscript is converse, keeping a copy of the agent's transcript
 // of the session in file on the host after every turn, and handing it back
 // to a sandbox that doesn't have it (one rebuilt by --re-compose, say)
@@ -91,6 +96,7 @@ func keepingTranscript(converse companion.Converser, t transcripts, file string)
 		keeping sync.Mutex
 	)
 	keep := func(session string) {
+		defer transcriptKept()
 		keeping.Lock()
 		defer keeping.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), transcriptTimeout)

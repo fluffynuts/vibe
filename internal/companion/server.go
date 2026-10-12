@@ -76,6 +76,11 @@ type Config struct {
 	// nil means the sandbox's agent can't be talked to this way, and the
 	// page has no such tab.
 	Converse Converser
+	// LatestReview reads the diffity link the sandbox gave out last ("" for
+	// none), which the conversation announces when a turn has made a new
+	// one; nil means the sandbox has no diffity. It may be slow, but should
+	// give up within seconds.
+	LatestReview func() string
 	// History is the file the conversation is kept in between runs, so it
 	// survives vibe being started again; "" keeps it only in memory.
 	History string

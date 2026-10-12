@@ -9,6 +9,7 @@ import (
 	"vibe/internal/browser"
 	"vibe/internal/cliargs"
 	"vibe/internal/companion"
+	"vibe/internal/kitspec"
 	"vibe/internal/layout"
 	"vibe/internal/policy"
 	"vibe/internal/portalloc"
@@ -125,6 +126,38 @@ func startClipboard(name string) ([]string, error) {
 	return args, nil
 }
 
+// diffityReviewFile is where, in the sandbox, the diffity kit's diffity-url
+// keeps the last link it gave out.
+const diffityReviewFile = kitspec.AgentHome + "/.local/state/vibe/diffity-review-url"
+
+// latestReviewFor reads the sandbox's last diffity link for the companion
+// page's conversation, or is nil when the sandbox doesn't publish diffity.
+func latestReviewFor(name string, inst state.Instance) func() string {
+	for _, p := range inst.Publish {
+		if p.Name == "diffity" {
+			return func() string {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				// No file yet is no review yet: cat's complaint isn't an error.
+				out, err := sbxrun.ExecCaptureContext(ctx, name, "cat", diffityReviewFile)
+				if err != nil {
+					return ""
+				}
+				return lastLine(out)
+			}
+		}
+	}
+	return nil
+}
+
+// lastLine is the last line of out that isn't blank. What sbx exec gives
+// back has sbx's own stderr mixed in, ahead of the command's output, and
+// diffity-url's file is a single line.
+func lastLine(out string) string {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
+}
+
 // conversationFor is the companion page's way of talking to the sandbox's
 // agent, or nil when it has none: only claude can be driven this way so far.
 func conversationFor(vibeHome, name string, inst state.Instance) companion.Converser {
@@ -204,6 +237,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		Workspace:      inst.Target,
 		Converse:       conversationFor(vibeHome, name, inst),
 		History:        state.ConversationPath(vibeHome, name),
+		LatestReview:   latestReviewFor(name, inst),
 	})
 	if err != nil {
 		note("companion: could not serve the page on port %d: %v", port, err)

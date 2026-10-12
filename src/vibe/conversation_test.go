@@ -7,7 +7,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"vibe/internal/companion"
 )
@@ -98,6 +97,18 @@ func (f *fakeSandbox) transcripts() transcripts {
 	}
 }
 
+// keptCopies is told of each copy keepingTranscript is done making, for
+// the test to wait on: a test whose folder is cleaned away while a copy is
+// still being written fails on Windows and macOS.
+func keptCopies(t *testing.T) <-chan struct{} {
+	t.Helper()
+	kept := make(chan struct{}, 4)
+	was := transcriptKept
+	transcriptKept = func() { kept <- struct{}{} }
+	t.Cleanup(func() { transcriptKept = was })
+	return kept
+}
+
 // agentSaying is a converser whose agent reports being in session.
 func agentSaying(session string) companion.Converser {
 	return func(_ context.Context, _, _ string, _ func(), onLine func([]byte)) error {
@@ -115,24 +126,15 @@ func turn(t *testing.T, c companion.Converser, session string) {
 
 func TestATurnsTranscriptIsKeptOnTheHost(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "box.transcript.tgz")
+	kept := keptCopies(t)
 	box := &fakeSandbox{sessions: map[string]bool{}, fetched: make(chan string, 1)}
 	turn(t, keepingTranscript(agentSaying("sess-1"), box.transcripts(), file), "")
 	if got := <-box.fetched; got != "sess-1" {
 		t.Errorf("fetched %q", got)
 	}
-	// The copy is written just after the fetch returns.
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if data, err := os.ReadFile(file); err == nil {
-			if string(data) != "tgz of sess-1" {
-				t.Errorf("kept %q", data)
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("no copy was kept")
-		}
-		time.Sleep(5 * time.Millisecond)
+	<-kept
+	if data, err := os.ReadFile(file); err != nil || string(data) != "tgz of sess-1" {
+		t.Errorf("kept %q, %v", data, err)
 	}
 	if len(box.puts) != 0 {
 		t.Errorf("a new session was handed a transcript: %q", box.puts)
@@ -142,12 +144,13 @@ func TestATurnsTranscriptIsKeptOnTheHost(t *testing.T) {
 func TestARebuiltSandboxIsHandedTheTranscriptOnce(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "box.transcript.tgz")
 	os.WriteFile(file, []byte("kept"), 0o600)
+	kept := keptCopies(t)
 	box := &fakeSandbox{sessions: map[string]bool{}, fetched: make(chan string, 2)}
 	c := keepingTranscript(agentSaying("sess-1"), box.transcripts(), file)
 	turn(t, c, "sess-1")
-	<-box.fetched
+	<-kept
 	turn(t, c, "sess-1")
-	<-box.fetched
+	<-kept
 	if len(box.puts) != 1 || string(box.puts[0]) != "kept" {
 		t.Errorf("puts = %q", box.puts)
 	}
@@ -156,9 +159,10 @@ func TestARebuiltSandboxIsHandedTheTranscriptOnce(t *testing.T) {
 func TestASandboxThatHasTheTranscriptIsLeftAlone(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "box.transcript.tgz")
 	os.WriteFile(file, []byte("kept"), 0o600)
+	kept := keptCopies(t)
 	box := &fakeSandbox{sessions: map[string]bool{"sess-1": true}, fetched: make(chan string, 1)}
 	turn(t, keepingTranscript(agentSaying("sess-1"), box.transcripts(), file), "sess-1")
-	<-box.fetched
+	<-kept
 	if len(box.puts) != 0 {
 		t.Errorf("puts = %q", box.puts)
 	}

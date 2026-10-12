@@ -18,7 +18,10 @@ type fakeAgent struct {
 	prompts  []string
 	sessions []string
 	release  chan struct{} // when set, a turn waits for it (or for ctx)
-	err      error
+	// linger, when set, keeps a turn going after it has answered, as
+	// background work the agent waits on does, until it is closed (or ctx).
+	linger chan struct{}
+	err    error
 }
 
 func (f *fakeAgent) converse(ctx context.Context, prompt, session string, delivered func(), onLine func([]byte)) error {
@@ -26,7 +29,7 @@ func (f *fakeAgent) converse(ctx context.Context, prompt, session string, delive
 	f.mu.Lock()
 	f.prompts = append(f.prompts, prompt)
 	f.sessions = append(f.sessions, session)
-	release := f.release
+	release, linger := f.release, f.linger
 	f.mu.Unlock()
 	id := session
 	if id == "" {
@@ -41,6 +44,13 @@ func (f *fakeAgent) converse(ctx context.Context, prompt, session string, delive
 		}
 	}
 	onLine([]byte(`{"type":"result","session_id":"` + id + `"}`))
+	if linger != nil {
+		select {
+		case <-linger:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	return f.err
 }
 
@@ -56,11 +66,13 @@ func send(t *testing.T, s *Server, path, body string) (code int, out map[string]
 }
 
 type pollResult struct {
-	Events  []event                `json:"events"`
-	Last    int                    `json:"last"`
-	Running bool                   `json:"running"`
-	Reset   bool                   `json:"reset"`
-	Receipt map[string]interface{} `json:"receipt"`
+	Events  []event `json:"events"`
+	Last    int     `json:"last"`
+	Running bool    `json:"running"`
+	// Background is the agent having answered, but still at work.
+	Background bool                   `json:"background"`
+	Reset      bool                   `json:"reset"`
+	Receipt    map[string]interface{} `json:"receipt"`
 }
 
 func poll(t *testing.T, s *Server, after int) (p pollResult) {
@@ -82,7 +94,7 @@ func idle(t *testing.T, s *Server) pollResult {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if p := poll(t, s, 0); !p.Running {
+		if p := poll(t, s, 0); !p.Running && !p.Background {
 			return p
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -429,4 +441,164 @@ func TestBeginningAnewIsKept(t *testing.T) {
 	if got := kinds(poll(t, second, 0)); got != "reset" || second.convo.session != "" {
 		t.Errorf("after the restart: %s, session %q", got, second.convo.session)
 	}
+}
+
+// fakeReviews is the sandbox's last diffity link, as a turn leaves it.
+type fakeReviews struct {
+	mu   sync.Mutex
+	link string
+}
+
+func (r *fakeReviews) set(link string) { r.mu.Lock(); r.link = link; r.mu.Unlock() }
+func (r *fakeReviews) read() string    { r.mu.Lock(); defer r.mu.Unlock(); return r.link }
+
+func reviewServer(f *fakeAgent, r *fakeReviews, file string) *Server {
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: f.converse, LatestReview: r.read, History: file})
+	if file != "" {
+		s.convo.load(file)
+	}
+	return s
+}
+
+func reviews(p pollResult) []string {
+	var links []string
+	for _, e := range p.Events {
+		if e.Kind == "review" {
+			links = append(links, e.Text)
+		}
+	}
+	return links
+}
+
+func TestANewReviewIsAnnouncedOnceWhenTheTurnEnds(t *testing.T) {
+	r := &fakeReviews{link: "http://localhost:5396/diff"}
+	s := reviewServer(&fakeAgent{}, r, "")
+	send(t, s, "/api/conversation/send", `{"prompt":"one"}`)
+	if got := reviews(idle(t, s)); len(got) != 0 {
+		t.Errorf("the link the sandbox already had was announced: %v", got)
+	}
+
+	r.set("http://localhost:5396/diff?ref=master")
+	send(t, s, "/api/conversation/send", `{"prompt":"review against master"}`)
+	p := idle(t, s)
+	if got := reviews(p); len(got) != 1 || got[0] != "http://localhost:5396/diff?ref=master" {
+		t.Errorf("reviews = %v", got)
+	}
+	if got := kinds(p); !strings.HasSuffix(got, "agent,agent,review,done") {
+		t.Errorf("the review isn't announced as the turn ends: %s", got)
+	}
+
+	send(t, s, "/api/conversation/send", `{"prompt":"resolve them"}`)
+	if got := reviews(idle(t, s)); len(got) != 1 {
+		t.Errorf("the same link was announced again: %v", got)
+	}
+}
+
+func TestOnlyLocalReviewLinksAreAnnounced(t *testing.T) {
+	r := &fakeReviews{}
+	s := reviewServer(&fakeAgent{}, r, "")
+	send(t, s, "/api/conversation/send", `{"prompt":"one"}`)
+	idle(t, s)
+	for _, link := range []string{"https://example.com/diff", "http://evil.example/diff", "javascript:alert(1)", "http://user@localhost:5396/diff"} {
+		r.set(link)
+		send(t, s, "/api/conversation/send", `{"prompt":"again"}`)
+		if got := reviews(idle(t, s)); len(got) != 0 {
+			t.Errorf("%q was announced: %v", link, got)
+		}
+	}
+}
+
+func TestAnAnnouncedReviewIsKnownAfterARestart(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "box.conversation.json")
+	r := &fakeReviews{}
+	f := &fakeAgent{}
+	first := reviewServer(f, r, file)
+	send(t, first, "/api/conversation/send", `{"prompt":"one"}`)
+	idle(t, first)
+	r.set("http://127.0.0.1:5396/diff")
+	send(t, first, "/api/conversation/send", `{"prompt":"review"}`)
+	idle(t, first)
+	first.Close()
+
+	// A review made while vibe was down is news to the page, which only
+	// knows it if what it was last told survived the restart: otherwise the
+	// new link would be taken for what was already there.
+	r.set("http://127.0.0.1:5396/diff?ref=master")
+	second := reviewServer(f, r, file)
+	send(t, second, "/api/conversation/send", `{"prompt":"three"}`)
+	got := reviews(idle(t, second))
+	if len(got) != 2 || got[1] != "http://127.0.0.1:5396/diff?ref=master" {
+		t.Errorf("reviews after a restart = %v, want the one from before and the new one", got)
+	}
+	send(t, second, "/api/conversation/send", `{"prompt":"four"}`)
+	if got := reviews(idle(t, second)); len(got) != 2 {
+		t.Errorf("a review was announced again after a restart: %v", got)
+	}
+}
+
+// answered waits for the agent to have answered, though it may go on.
+func answered(t *testing.T, s *Server) pollResult {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if p := poll(t, s, 0); !p.Running {
+			return p
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("the agent never answered")
+	return pollResult{}
+}
+
+func TestAnAnsweredTurnLetsThePageGoOnWhileTheAgentWorksInTheBackground(t *testing.T) {
+	f := &fakeAgent{linger: make(chan struct{})}
+	defer close(f.linger)
+	s := converseServer(f)
+	send(t, s, "/api/conversation/send", `{"prompt":"review it"}`)
+	if p := answered(t, s); !p.Background {
+		t.Errorf("an answered turn still at work isn't said to be: %+v", p)
+	}
+
+	// The next prompt ends what was left running, without a "stopped".
+	f.mu.Lock()
+	f.linger = nil
+	f.mu.Unlock()
+	if code, out := send(t, s, "/api/conversation/send", `{"prompt":"next"}`); code != http.StatusAccepted {
+		t.Fatalf("send while the agent worked in the background: %d %v", code, out)
+	}
+	p := idle(t, s)
+	if got := kinds(p); got != "user,agent,agent,done,user,agent,agent,done" {
+		t.Errorf("events = %s", got)
+	}
+	for _, e := range p.Events {
+		if e.Kind == "done" && e.Text != "" {
+			t.Errorf("a superseded turn was said to be %q", e.Text)
+		}
+	}
+}
+
+func TestAPromptWaitsWhileTheAgentIsStillAnswering(t *testing.T) {
+	f := &fakeAgent{release: make(chan struct{})}
+	s := converseServer(f)
+	send(t, s, "/api/conversation/send", `{"prompt":"one"}`)
+	if code, _ := send(t, s, "/api/conversation/send", `{"prompt":"two"}`); code != http.StatusConflict {
+		t.Errorf("a prompt mid-answer: %d, want 409", code)
+	}
+	close(f.release)
+	idle(t, s)
+}
+
+func TestTheAgentAtWorkAgainIsAnsweringAgain(t *testing.T) {
+	s := converseServer(&fakeAgent{})
+	c := &s.convo
+	c.begin("go")
+	c.line([]byte(`{"type":"result"}`))
+	if _, _, running, background := c.since(0); running || !background {
+		t.Errorf("after a result: running %v, background %v", running, background)
+	}
+	c.line([]byte(`{"type":"assistant"}`))
+	if _, _, running, _ := c.since(0); !running {
+		t.Error("the agent woken again by its background work isn't answering")
+	}
+	c.finish(nil, false)
 }

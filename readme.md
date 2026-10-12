@@ -458,7 +458,11 @@ are tabs:
   (in `~/.vibe/companion/`), and gives it back to a sandbox that has been rebuilt (by `--re-compose`,
   say), so the new agent remembers it too. The page's tab icon is the sandbox's agent's, and it says
   what the agent is up to even while you're on another tab: a grey dot pulses while it works, and a
-  blue dot shows it has finished, until you come back to the page.
+  blue dot shows it has finished, until you come back to the page. Once the agent has answered you can
+  send the next prompt, even if it left something running that it is waiting on (a review page, say):
+  sending ends that. With the `diffity` kit, a turn
+  that leaves a new review (or tour) behind ends with a card linking to it, and links to pages on
+  `localhost` in what the agent says can be clicked.
 - **Network log** — every host the sandbox has tried to reach, with hit counts and whether it was
   allowed or blocked, refreshing every couple of seconds while the tab is showing. Filter by status or
   search for a host. A blocked host has an **Allow** button, an allowed one a **Block** button; click
