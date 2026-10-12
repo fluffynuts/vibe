@@ -161,6 +161,8 @@ func TestBaseFeaturesAreNotSelectableButResolve(t *testing.T) {
 	write(t, l.BundlePath("library", "mysql", "config.yaml"), "")
 	write(t, l.BundlePath("library", "base", "clipboard-bridge", "config.yaml"), "")
 	write(t, l.HomePath("library", "base", "extra", "config.yaml"), "")
+	// Left in ~/.vibe from before clipboard-bridge became a base feature.
+	write(t, l.HomePath("library", "clipboard-bridge", "config.yaml"), "")
 
 	if got, want := l.Features(), []string{"mysql"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Features() = %v, want %v", got, want)

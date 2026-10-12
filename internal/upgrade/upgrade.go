@@ -13,6 +13,12 @@
 //     user or the --update-strategy to settle — merging where git's
 //     three-way merge can, keeping or overwriting where it can't.
 //
+// A file the package no longer ships goes the same way: removed from
+// ~/.vibe if the user never changed it; if they did, the strategy or the
+// user decides, and with neither it is kept (and said so). One with no
+// original — the user's own, or from before originals were kept — is never
+// touched.
+//
 // A file's original only moves forward when the user's copy took in the
 // package's version (copied, updated, merged or overwritten, or already
 // identical). A file the user keeps holds on to its old original, so a
@@ -117,6 +123,11 @@ type Options struct {
 	// Decide asks the user to settle a conflict; nil when there's no one to
 	// ask. It isn't consulted when a Strategy is given.
 	Decide func(Conflict) (Choice, error)
+	// DecideRetired asks the user whether to remove their copy of a file
+	// they changed that the package no longer ships (at mine); nil when
+	// there's no one to ask. It isn't consulted when a Strategy is given:
+	// update removes the copy, keep keeps it.
+	DecideRetired func(rel, mine string) (remove bool, err error)
 	// Log reports each file acted on.
 	Log func(format string, a ...interface{})
 }
@@ -130,6 +141,14 @@ type Result struct {
 	Overwritten []string
 	Kept        []string // a conflict settled by keeping the user's copy
 	LeftDeleted []string // shipped before and deleted by the user since
+	// Removed were shipped before but not any more, and unedited.
+	Removed []string
+	// KeptRetired were shipped before but not any more, and kept because
+	// the user had changed them.
+	KeptRetired []string
+	// UndecidedRetired are those of KeptRetired kept for want of anyone to
+	// ask: no strategy, and no DecideRetired.
+	UndecidedRetired []string
 	Identical   int
 	// UpdatedCopies are package versions written beside unmergeable files.
 	UpdatedCopies []string
@@ -152,10 +171,101 @@ func Run(o Options) (Result, error) {
 			return res, err
 		}
 	}
+	if err := o.retire(rels, &res); err != nil {
+		return res, err
+	}
 	if err := pruneBase(filepath.Join(o.Home, BaseDir), rels); err != nil {
 		return res, err
 	}
 	return res, nil
+}
+
+// retire deals with what the package shipped last time and no longer does:
+// the user's unedited copy is removed (with any folder that leaves empty),
+// an edited one kept.
+func (o Options) retire(rels []string, res *Result) error {
+	shipped := map[string]bool{}
+	for _, rel := range rels {
+		shipped[rel] = true
+	}
+	base := filepath.Join(o.Home, BaseDir)
+	var gone []string
+	err := filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, err := filepath.Rel(base, path)
+		if err != nil || shipped[rel] {
+			return err
+		}
+		gone = append(gone, rel)
+		return nil
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	sort.Strings(gone)
+	for _, rel := range gone {
+		baseText, err := os.ReadFile(filepath.Join(base, rel))
+		if err != nil {
+			return err
+		}
+		mine := filepath.Join(o.Home, rel)
+		mineText, err := os.ReadFile(mine)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		edited := !bytes.Equal(mineText, baseText)
+		if edited {
+			remove, decided := false, true
+			switch {
+			case o.Strategy.Given:
+				remove = o.Strategy.Otherwise == Update
+			case o.DecideRetired != nil:
+				if remove, err = o.DecideRetired(rel, mine); err != nil {
+					return err
+				}
+			default:
+				decided = false
+			}
+			if !remove {
+				res.KeptRetired = append(res.KeptRetired, rel)
+				if !decided {
+					res.UndecidedRetired = append(res.UndecidedRetired, rel)
+				}
+				o.Log("kept: %s (no longer in the package, but you changed it)", rel)
+				continue
+			}
+		}
+		if err := os.Remove(mine); err != nil {
+			return err
+		}
+		res.Removed = append(res.Removed, rel)
+		if edited {
+			o.Log("removed: %s (no longer in the package; your changes to it went too)", rel)
+		} else {
+			o.Log("removed: %s (no longer in the package)", rel)
+		}
+		removeEmptyDirs(filepath.Dir(mine), o.Home)
+	}
+	return nil
+}
+
+// removeEmptyDirs removes dir, and each folder above it, while they are
+// empty, stopping at home.
+func removeEmptyDirs(dir, home string) {
+	home = filepath.Clean(home)
+	for dir = filepath.Clean(dir); dir != home && strings.HasPrefix(dir, home+string(filepath.Separator)); dir = filepath.Dir(dir) {
+		if os.Remove(dir) != nil {
+			return
+		}
+	}
 }
 
 // SeedBase records, as the original of every package file, the copy in

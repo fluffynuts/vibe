@@ -143,6 +143,12 @@ your edits:
 - **You never edited it:** updated to the new version without asking.
 - **Only you changed it:** kept as it is.
 - **You deleted it:** stays deleted.
+- **No longer in the package:** removed if you never edited it. If you did, you're asked whether to
+  keep yours or remove it. With nobody to ask it's kept, and listed at the end for you to delete if
+  you don't need it.
+- **A feature that is a base feature now** (like `clipboard-bridge`): an old copy of it still in
+  `~/.vibe/library/` is never used any more. You're asked whether to remove it or move it to
+  `~/.vibe/retired/library/`, and with nobody to ask it's moved.
 - **Changed by both you and the release:** you're asked. If the two sets of changes merge
   cleanly (git's three-way merge, so git needs to be installed), you see your file beside the
   merged result and choose between keeping yours, using the merged version, or overwriting yours
@@ -199,7 +205,8 @@ vibe                       # use $PWD, profile derived from its folder name
 vibe /path/to/code         # use an explicit folder
 vibe -n/--name custom .    # override the derived sandbox name
 vibe -p/--profile foo      # use profile "foo" instead of the derived one
-vibe -s/--stop [path]      # stop the sandbox for path (default: $PWD)
+vibe -s/--stop [path]      # stop the sandbox for path (default: $PWD); with -f,
+                           #    no sandbox there isn't an error
 vibe -S/--stop-all         # stop every running sandbox, in parallel, showing each
                            #    one's progress (asks first; -f: without asking)
 vibe -c/--ssh [path]       # ssh into the sandbox for path

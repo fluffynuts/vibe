@@ -57,7 +57,8 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe /path/to/code         use an explicit folder
   vibe -n/--name custom .    override the derived sandbox name
   vibe -p/--profile foo      use profile "foo" instead of the derived one
-  vibe -s/--stop [path]      stop the sandbox for path (default: $PWD)
+  vibe -s/--stop [path]      stop the sandbox for path (default: $PWD); with
+                             -f, no sandbox there isn't an error
   vibe -S/--stop-all         stop every running sandbox, in parallel (asks
                              first; -f stops them without asking)
   vibe -c/--ssh [path]       ssh into the sandbox for path
@@ -312,7 +313,7 @@ func run(argv []string) error {
 
 	switch {
 	case args.Stop:
-		return doStop(name, target)
+		return doStop(name, target, args.Force)
 	case args.Ssh:
 		return doSsh(name, target)
 	case args.Info:
@@ -487,17 +488,69 @@ func resolveOthers(vibeHome, target string, others []int, force bool) error {
 
 // --- stop / ssh -------------------------------------------------------
 
-func doStop(name, target string) error {
-	if !sbxrun.Exists(name) {
-		return fmt.Errorf("no sandbox named '%s' for %s — nothing to stop", name, target)
-	}
-	note("stopping sandbox '%s'", name)
-	code, err := sbxrun.Stop(name)
+func doStop(name, target string, force bool) error {
+	code, err := stopSandbox(sbxStopper, name, target, force)
 	if err != nil {
 		return err
 	}
 	os.Exit(code)
 	return nil
+}
+
+// stopper is what --stop asks of sbx: sbxStopper, or a stub under test.
+type stopper struct {
+	exists func(name string) bool
+	// running says whether the sandbox is running, and known whether sbx
+	// could say.
+	running func(name string) (running, known bool)
+	stop    func(name string) (int, error)
+}
+
+var sbxStopper = stopper{
+	exists: sbxrun.Exists,
+	running: func(name string) (bool, bool) {
+		statuses, err := sbxrun.List()
+		if err != nil {
+			return false, false
+		}
+		for _, st := range statuses {
+			if st.Name == name {
+				return st.Running, true
+			}
+		}
+		return false, true
+	},
+	stop: sbxrun.Stop,
+}
+
+// stopSandbox is --stop, returning sbx's exit code. A sandbox that isn't
+// running is already what was asked for. With force, so is one that isn't
+// there at all, or that sbx failed to stop but has stopped anyway (as one
+// half-made by an interrupted vibe can).
+func stopSandbox(s stopper, name, target string, force bool) (int, error) {
+	if !s.exists(name) {
+		if force {
+			note("no sandbox named '%s' for %s — nothing to stop", name, target)
+			return 0, nil
+		}
+		return 0, fmt.Errorf("no sandbox named '%s' for %s — nothing to stop", name, target)
+	}
+	if running, known := s.running(name); known && !running {
+		note("sandbox '%s' isn't running — nothing to stop", name)
+		return 0, nil
+	}
+	note("stopping sandbox '%s'", name)
+	code, err := s.stop(name)
+	if err == nil && code == 0 {
+		return 0, nil
+	}
+	if force {
+		if running, known := s.running(name); !s.exists(name) || (known && !running) {
+			note("sbx couldn't stop '%s', but it isn't running", name)
+			return 0, nil
+		}
+	}
+	return code, err
 }
 
 func doSsh(name, target string) error {
@@ -986,15 +1039,26 @@ func doInstall(lay layout.Layout, force bool, strategyValue string) error {
 	// strategy if one was given, else by asking — and with -f, or nobody
 	// to ask, it's left alone and reported below.
 	var decide func(upgrade.Conflict) (upgrade.Choice, error)
-	if !strategy.Given && !force && interactive() {
+	var decideRetired func(rel, mine string) (bool, error)
+	var decideShadowed func(name, dir string) bool
+	switch {
+	case strategy.Given:
+		decideShadowed = func(string, string) bool { return strategy.Otherwise == upgrade.Update }
+	case !force && interactive():
 		decide = decideConflict
+		decideRetired = decideRetiredFile
+		decideShadowed = decideShadowedFeature
 	}
+	// First, so the upgrade doesn't also ask about each file in a copy
+	// that goes as a whole.
+	retireShadowedFeatures(lay, time.Now(), decideShadowed)
 	res, err := upgrade.Run(upgrade.Options{
-		Package:  lay.Bundle,
-		Home:     lay.Home,
-		Strategy: strategy,
-		Decide:   decide,
-		Log:      func(format string, a ...interface{}) { note("  "+format, a...) },
+		Package:       lay.Bundle,
+		Home:          lay.Home,
+		Strategy:      strategy,
+		Decide:        decide,
+		DecideRetired: decideRetired,
+		Log:           func(format string, a ...interface{}) { note("  "+format, a...) },
 	})
 	if err != nil {
 		return err
@@ -1025,6 +1089,13 @@ func doInstall(lay layout.Layout, force bool, strategyValue string) error {
 			note("  new:   %s", displayPath(mine+upgrade.UpdatedSuffix))
 		}
 	}
+	if len(res.UndecidedRetired) > 0 {
+		note("")
+		note("these are no longer in the package, but you had changed them, so they were kept — delete any you don't need:")
+		for _, rel := range res.UndecidedRetired {
+			note("  %s", displayPath(filepath.Join(lay.Home, rel)))
+		}
+	}
 	if len(res.Unresolved) > 0 {
 		note("")
 		note("WARNING: %d file(s) changed both in %s and upstream in the package were left as they are:",
@@ -1040,6 +1111,67 @@ func doInstall(lay layout.Layout, force bool, strategyValue string) error {
 		return fmt.Errorf("upstream changes left unmerged in %d file(s)", len(res.Unresolved))
 	}
 	return binErr
+}
+
+// retireShadowedFeatures deals with each feature in ~/.vibe/library with
+// the name of a base feature: a copy from before that feature became a base
+// one, which nothing reads any more (the base one is always used). remove,
+// when there is one, says whether to remove it; otherwise, or when it says
+// not to, it is moved to ~/.vibe/retired, in case it held something of the
+// user's.
+func retireShadowedFeatures(lay layout.Layout, now time.Time, remove func(name, dir string) bool) {
+	for _, name := range lay.BaseFeatures() {
+		dir := lay.HomePath("library", name)
+		if info, err := os.Stat(dir); dir == "" || err != nil || !info.IsDir() {
+			continue
+		}
+		if remove != nil && remove(name, dir) {
+			if err := os.RemoveAll(dir); err != nil {
+				note("  WARNING: couldn't remove %s: %s", displayPath(dir), err)
+				continue
+			}
+			note("  removed: %s ('%s' is a base feature now)", displayPath(dir), name)
+			continue
+		}
+		to := lay.HomePath("retired", "library", name)
+		if _, err := os.Stat(to); err == nil {
+			to += "-" + now.Format("2006-01-02_150405")
+		}
+		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+			note("  WARNING: couldn't move aside %s: %s", displayPath(dir), err)
+			continue
+		}
+		if err := os.Rename(dir, to); err != nil {
+			note("  WARNING: couldn't move aside %s: %s", displayPath(dir), err)
+			continue
+		}
+		note("  moved aside: %s → %s ('%s' is a base feature now, so nothing used this copy)", displayPath(dir), displayPath(to), name)
+	}
+}
+
+// decideShadowedFeature asks what to do with a copy of a feature that is a
+// base feature now.
+func decideShadowedFeature(name, dir string) bool {
+	note("%s is an old copy of '%s', which is a base feature now: every profile has it, and this copy is never used.", displayPath(dir), name)
+	picked, ok := chooseFrom("What would you like to do with it?",
+		[]string{"move it to " + displayPath(retiredPath(dir)) + ", in case it holds anything of mine", "remove it"}, 0)
+	return ok && picked == 1
+}
+
+// retiredPath is where retireShadowedFeatures moves dir (a feature in
+// ~/.vibe/library) aside to, for saying so.
+func retiredPath(dir string) string {
+	library := filepath.Dir(dir)
+	return filepath.Join(filepath.Dir(library), "retired", "library", filepath.Base(dir))
+}
+
+// decideRetiredFile asks whether to remove the user's changed copy of a
+// file the package no longer ships.
+func decideRetiredFile(rel, mine string) (bool, error) {
+	note("%s is no longer in the package, but you have changed it.", displayPath(mine))
+	picked, ok := chooseFrom("What would you like to do?",
+		[]string{"keep my version", "remove it, as the package did"}, 0)
+	return ok && picked == 1, nil
 }
 
 // sbxOnPath reports whether sbx is on PATH. A variable so tests can say

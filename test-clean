@@ -4,4 +4,4 @@
 VIBE_FOLDER="$(dirname "$(readlink -f "$0")")"
 VIBE="$VIBE_FOLDER/vibe"
 
-make -C "$VIBE_FOLDER" && "$VIBE" --stop && "$VIBE" --install && "$VIBE" -C -f "$@"
+make -C "$VIBE_FOLDER" && "$VIBE" --stop -f && "$VIBE" --install && "$VIBE" -C -f "$@"

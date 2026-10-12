@@ -834,3 +834,102 @@ func TestExpandHome(t *testing.T) {
 		}
 	}
 }
+
+// fakeStopper is sbx as --stop sees it: whether the sandbox is there and
+// running, and what stopping it does.
+type fakeStopper struct {
+	there, running, known bool
+	code                  int
+	stopsAnyway           bool // a failed stop still leaves it stopped
+	stopped               int
+}
+
+func (f *fakeStopper) stopper() stopper {
+	return stopper{
+		exists:  func(string) bool { return f.there },
+		running: func(string) (bool, bool) { return f.running, f.known },
+		stop: func(string) (int, error) {
+			f.stopped++
+			if f.code == 0 || f.stopsAnyway {
+				f.running = false
+			}
+			return f.code, nil
+		},
+	}
+}
+
+func TestStopSucceedsWhenThereIsNothingToStopOnlyWithForce(t *testing.T) {
+	gone := &fakeStopper{}
+	if _, err := stopSandbox(gone.stopper(), "box", "/w", false); err == nil {
+		t.Error("stopping a sandbox that isn't there didn't fail without -f")
+	}
+	if code, err := stopSandbox(gone.stopper(), "box", "/w", true); err != nil || code != 0 {
+		t.Errorf("with -f: %d, %v", code, err)
+	}
+}
+
+func TestStopLeavesAStoppedSandboxAlone(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		f := &fakeStopper{there: true, known: true}
+		if code, err := stopSandbox(f.stopper(), "box", "/w", force); err != nil || code != 0 || f.stopped != 0 {
+			t.Errorf("force %v: %d, %v, stopped %d times", force, code, err, f.stopped)
+		}
+	}
+}
+
+func TestStopReportsAFailureUnlessForceFindsItStoppedAnyway(t *testing.T) {
+	stuck := &fakeStopper{there: true, running: true, known: true, code: 1}
+	if code, _ := stopSandbox(stuck.stopper(), "box", "/w", true); code != 1 {
+		t.Errorf("a sandbox still running after a failed stop: exit %d, want 1", code)
+	}
+	half := &fakeStopper{there: true, running: true, known: true, code: 1, stopsAnyway: true}
+	if code, _ := stopSandbox(half.stopper(), "box", "/w", false); code != 1 {
+		t.Errorf("without -f, a failed stop: exit %d, want 1", code)
+	}
+	half = &fakeStopper{there: true, running: true, known: true, code: 1, stopsAnyway: true}
+	if code, err := stopSandbox(half.stopper(), "box", "/w", true); code != 0 || err != nil {
+		t.Errorf("with -f, a failed stop that stopped it anyway: %d, %v", code, err)
+	}
+}
+
+func TestAFeatureThatIsABaseOneNowIsMovedAside(t *testing.T) {
+	lay := layout.New(t.TempDir(), t.TempDir())
+	writeFile(t, lay.BundlePath("library", "base", "clipboard-bridge", "config.yaml"), "new\n")
+	writeFile(t, lay.HomePath("library", "clipboard-bridge", "config.yaml"), "old, maybe edited\n")
+	writeFile(t, lay.HomePath("library", "mysql", "config.yaml"), "mine\n")
+	now := time.Date(2026, 10, 12, 13, 0, 0, 0, time.UTC)
+
+	retireShadowedFeatures(lay, now, nil)
+	if _, err := os.Stat(lay.HomePath("library", "clipboard-bridge")); !os.IsNotExist(err) {
+		t.Errorf("the old copy is still in the library: %v", err)
+	}
+	if b, err := os.ReadFile(lay.HomePath("retired", "library", "clipboard-bridge", "config.yaml")); err != nil || string(b) != "old, maybe edited\n" {
+		t.Errorf("retired copy: %q, %v", b, err)
+	}
+	if _, err := os.Stat(lay.HomePath("library", "mysql", "config.yaml")); err != nil {
+		t.Errorf("an ordinary feature was moved: %v", err)
+	}
+
+	// Another, later: the first one moved aside is kept.
+	writeFile(t, lay.HomePath("library", "clipboard-bridge", "config.yaml"), "again\n")
+	retireShadowedFeatures(lay, now, nil)
+	if b, _ := os.ReadFile(lay.HomePath("retired", "library", "clipboard-bridge-2026-10-12_130000", "config.yaml")); string(b) != "again\n" {
+		t.Errorf("the second copy moved aside: %q", b)
+	}
+}
+
+func TestAFeatureThatIsABaseOneNowCanBeRemoved(t *testing.T) {
+	lay := layout.New(t.TempDir(), t.TempDir())
+	writeFile(t, lay.BundlePath("library", "base", "clipboard-bridge", "config.yaml"), "new\n")
+	writeFile(t, lay.HomePath("library", "clipboard-bridge", "config.yaml"), "old\n")
+	var asked string
+	retireShadowedFeatures(lay, time.Now(), func(name, dir string) bool { asked = name; return true })
+	if asked != "clipboard-bridge" {
+		t.Errorf("asked about %q", asked)
+	}
+	for _, dir := range []string{lay.HomePath("library", "clipboard-bridge"), lay.HomePath("retired")} {
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Errorf("%s is there: %v", dir, err)
+		}
+	}
+}

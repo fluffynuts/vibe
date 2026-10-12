@@ -298,3 +298,121 @@ func TestSeedBaseRecordsOnlyIdenticalFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestWhatThePackageNoLongerShipsGoesUnlessTheUserChangedIt(t *testing.T) {
+	f := fixture{
+		pkg: map[string]string{
+			"library/base/kit/config.yaml": "moved here\n",
+		},
+		home: map[string]string{
+			"library/kit/config.yaml":          "as shipped\n",
+			"library/kit/agent-files/.local/x": "as shipped\n",
+			"library/edited/config.yaml":       "shipped, then mine\n",
+			"library/edited/script":            "as shipped\n",
+			"library/mine/config.yaml":         "never shipped\n",
+			"defaults/no-original":             "from before originals were kept\n",
+		},
+		base: map[string]string{
+			"library/kit/config.yaml":          "as shipped\n",
+			"library/kit/agent-files/.local/x": "as shipped\n",
+			"library/edited/config.yaml":       "shipped\n",
+			"library/edited/script":            "as shipped\n",
+			"library/gone-already/config.yaml": "shipped\n",
+		},
+	}
+	pkg, home := f.build(t)
+	res, err := Run(Options{Package: pkg, Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"library/edited/script", "library/kit/agent-files/.local/x", "library/kit/config.yaml"}; !reflect.DeepEqual(res.Removed, want) {
+		t.Errorf("Removed = %v, want %v", res.Removed, want)
+	}
+	if want := []string{"library/edited/config.yaml"}; !reflect.DeepEqual(res.KeptRetired, want) {
+		t.Errorf("KeptRetired = %v, want %v", res.KeptRetired, want)
+	}
+	if _, err := os.Stat(filepath.Join(home, "library", "kit")); !os.IsNotExist(err) {
+		t.Errorf("the emptied kit folder is still there: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "library")); err != nil {
+		t.Errorf("library itself went: %v", err)
+	}
+	for rel, want := range map[string]string{
+		"library/edited/config.yaml":   "shipped, then mine\n",
+		"library/mine/config.yaml":     "never shipped\n",
+		"defaults/no-original":         "from before originals were kept\n",
+		"library/base/kit/config.yaml": "moved here\n",
+	} {
+		if got, ok := read(t, filepath.Join(home, filepath.FromSlash(rel))); !ok || got != want {
+			t.Errorf("%s = %q, %v; want %q", rel, got, ok, want)
+		}
+	}
+	// What was retired leaves no original behind, so the next upgrade
+	// leaves the kept file alone without saying so again.
+	for _, rel := range []string{"library/kit/config.yaml", "library/edited/config.yaml"} {
+		if _, ok := read(t, filepath.Join(home, BaseDir, filepath.FromSlash(rel))); ok {
+			t.Errorf("an original of %s is still kept", rel)
+		}
+	}
+	again, err := Run(Options{Package: pkg, Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again.Removed) != 0 || len(again.KeptRetired) != 0 {
+		t.Errorf("the next upgrade: removed %v, kept %v", again.Removed, again.KeptRetired)
+	}
+}
+
+func TestAChangedFileThePackageDroppedIsTheUsersToDecide(t *testing.T) {
+	f := fixture{
+		home: map[string]string{"library/kit/config.yaml": "shipped, then mine\n"},
+		base: map[string]string{"library/kit/config.yaml": "shipped\n"},
+	}
+	gone := func(home string) bool {
+		_, ok := read(t, filepath.Join(home, "library", "kit", "config.yaml"))
+		return !ok
+	}
+	for _, c := range []struct {
+		name         string
+		opts         Options
+		removed      bool
+		undecided    bool
+		wantAsked    bool
+		answerRemove bool
+	}{
+		{name: "nobody to ask", undecided: true},
+		{name: "asked, keeps", wantAsked: true},
+		{name: "asked, removes", wantAsked: true, answerRemove: true, removed: true},
+		{name: "strategy update", opts: Options{Strategy: Strategy{Given: true, Otherwise: Update}}, removed: true},
+		{name: "strategy keep", opts: Options{Strategy: Strategy{Given: true, Otherwise: Keep}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			pkg, home := f.build(t)
+			o := c.opts
+			o.Package, o.Home = pkg, home
+			asked := false
+			if c.wantAsked {
+				o.DecideRetired = func(rel, mine string) (bool, error) {
+					asked = true
+					if rel != "library/kit/config.yaml" || mine != filepath.Join(home, "library", "kit", "config.yaml") {
+						t.Errorf("asked about %s at %s", rel, mine)
+					}
+					return c.answerRemove, nil
+				}
+			}
+			res, err := Run(o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if asked != c.wantAsked {
+				t.Errorf("asked = %v", asked)
+			}
+			if gone(home) != c.removed {
+				t.Errorf("removed = %v, want %v", gone(home), c.removed)
+			}
+			if got := len(res.UndecidedRetired) > 0; got != c.undecided {
+				t.Errorf("undecided = %v (%v)", got, res.UndecidedRetired)
+			}
+		})
+	}
+}

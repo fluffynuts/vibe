@@ -89,11 +89,17 @@ func (l Layout) BaseFeatures() []string {
 
 // Features returns the names of every selectable feature in the library
 // across both layers, sorted and de-duplicated — mirroring Profiles(). The
-// base features are not among them.
+// base features are not among them, nor is a feature of the same name as
+// one: a copy left in ~/.vibe from before a feature became a base one,
+// which every profile now has anyway.
 func (l Layout) Features() []string {
+	base := map[string]bool{}
+	for _, name := range l.BaseFeatures() {
+		base[name] = true
+	}
 	var names []string
 	for _, name := range l.featureNames() {
-		if name != BaseDir {
+		if name != BaseDir && !base[name] {
 			names = append(names, name)
 		}
 	}
