@@ -1,6 +1,7 @@
 #!/usr/bin/env pwsh
 # vibe — build, test and tidy the CLI, for machines without make.
-# Mirrors the Makefile: ./make.ps1 [build|test|vet|check|clean]... (default: build)
+# Mirrors the Makefile: ./make.ps1 [build|test|vet|check|clean|help]... (default: build)
+# (dist isn't here: it needs make.sh, as the Makefile's dist does.)
 #
 # The binary resolves its bundle (defaults/, profiles/, config.yaml,
 # settings.yaml) relative to its own location, so it is built into the repo
@@ -54,18 +55,32 @@ function Invoke-Clean {
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue 'dist'
 }
 
-$targets = if ($args.Count -gt 0) { $args } else { @('build') }
+# What ./make.ps1 can do, in order, with what help says of each (the
+# Makefile's words) and the function that does it.
+$Targets = [ordered]@{
+    'build' = @('build the vibe binary', { Invoke-Build })
+    'test'  = @('run tests', { Invoke-Test })
+    'vet'   = @('run go vet', { Invoke-Vet })
+    'check' = @('run vet and tests', { Invoke-Check })
+    'clean' = @('remove vibe binary and dist/ folder', { Invoke-Clean })
+    'help'  = @('this help', { Invoke-Help })
+}
 
-foreach ($target in $targets) {
-    switch ($target) {
-        'build' { Invoke-Build }
-        'test' { Invoke-Test }
-        'vet' { Invoke-Vet }
-        'check' { Invoke-Check }
-        'clean' { Invoke-Clean }
-        default {
-            [Console]::Error.WriteLine("make.ps1: no such target '$target' (build, test, vet, check, clean)")
-            exit 2
-        }
+function Invoke-Help {
+    $colour = -not $env:NO_COLOR -and -not [Console]::IsOutputRedirected
+    foreach ($name in $Targets.Keys) {
+        $label = $name.PadRight(20)
+        if ($colour) { $label = "$([char]27)[36m$label$([char]27)[0m" }
+        Write-Host "$label $($Targets[$name][0])"
     }
+}
+
+$requested = if ($args.Count -gt 0) { $args } else { @('build') }
+
+foreach ($target in $requested) {
+    if (-not $Targets.Contains($target)) {
+        [Console]::Error.WriteLine("make.ps1: no such target '$target' ($($Targets.Keys -join ', '))")
+        exit 2
+    }
+    & $Targets[$target][1]
 }

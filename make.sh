@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # vibe — build, test and tidy the CLI, for machines without make.
-# Mirrors the Makefile: ./make.sh [build|test|vet|check|clean|dist]... (default: build)
+# Mirrors the Makefile: ./make.sh [build|test|vet|check|clean|dist|help]... (default: build)
 #
 # The binary resolves its bundle (defaults/, profiles/, config.yaml,
 # settings.yaml) relative to its own location, so it is built into the repo
@@ -87,14 +87,39 @@ target_clean() {
   rm -rf dist
 }
 
+# TARGETS are what ./make.sh can do, with what help says of each: the
+# Makefile's targets and words.
+TARGETS=(
+  "build:build the vibe binary"
+  "test:run tests"
+  "vet:run go vet"
+  "check:run vet and tests"
+  "dist:build a release zip file in dist/"
+  "clean:remove vibe binary and dist/ folder"
+  "help:this help"
+)
+
+target_help() {
+  local cyan="" plain="" entry
+  if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+    cyan=$'\033[36m' plain=$'\033[0m'
+  fi
+  for entry in "${TARGETS[@]}"; do
+    printf "%s%-20s%s %s\n" "$cyan" "${entry%%:*}" "$plain" "${entry#*:}"
+  done
+}
+
 [[ $# -eq 0 ]] && set -- build
 
 for target in "$@"; do
-  case "$target" in
-    build | test | vet | check | clean | dist) "target_$target" ;;
-    *)
-      echo "make.sh: no such target '$target' (build, test, vet, check, clean, dist)" >&2
-      exit 2
-      ;;
-  esac
+  known=false
+  for entry in "${TARGETS[@]}"; do
+    [[ "${entry%%:*}" == "$target" ]] && known=true
+  done
+  if ! $known; then
+    names=$(printf '%s\n' "${TARGETS[@]%%:*}" | paste -sd, - | sed 's/,/, /g')
+    echo "make.sh: no such target '$target' ($names)" >&2
+    exit 2
+  fi
+  "target_$target"
 done
