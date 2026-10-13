@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"vibe/internal/instructions"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
 	"vibe/internal/portalloc"
@@ -49,8 +50,11 @@ func loadKit(lay layout.Layout, profile string) (kitspec.Doc, settings.Settings,
 		return nil, settings.Settings{}, err
 	}
 
+	// The kits' instructions go to sbx, which offers them to the agent as
+	// reading for when a kit is relevant. The user's own (instructions.File)
+	// are loaded in every session, another way.
 	var agentInstructions string
-	if data, err := os.ReadFile(filepath.Join(profileDir, "agent-instructions.md")); err == nil {
+	if data, err := os.ReadFile(filepath.Join(profileDir, instructions.KitFile)); err == nil {
 		agentInstructions = string(data)
 	} else if !os.IsNotExist(err) {
 		return nil, settings.Settings{}, err

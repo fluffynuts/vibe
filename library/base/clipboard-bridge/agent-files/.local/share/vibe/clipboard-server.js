@@ -303,4 +303,15 @@ http.createServer(function (req, res) {
   }
 }).listen(PORT, "0.0.0.0", function () {
   console.log("clipboard server listening on " + PORT + ", history in " + STATE);
+  announceReady();
 });
+
+// announceReady tells start-clipboard the server is listening, on the file
+// descriptor it named in VIBE_CLIPBOARD_READY_FD (a pipe it is reading), and
+// closes it. Started some other way (by hand, say), there is no one to tell.
+function announceReady() {
+  const fd = Number(process.env.VIBE_CLIPBOARD_READY_FD);
+  if (!Number.isInteger(fd) || fd < 3) return;
+  fs.writeSync(fd, "ready\n");
+  fs.closeSync(fd);
+}

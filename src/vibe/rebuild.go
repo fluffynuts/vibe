@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"vibe/internal/backup"
 	"vibe/internal/claudetheme"
 	"vibe/internal/cliargs"
+	"vibe/internal/instructions"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
 	"vibe/internal/library"
@@ -47,7 +49,7 @@ func doReInit(lay layout.Layout, args cliargs.Args, name, target string) error {
 // second time. askZone asks which timezone the rebuilt sandbox should be
 // on, rather than keeping the one it had.
 func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool) error {
-	if err := rebuildSandbox(lay, args, name, target, skipSandboxConfirm, askZone); err != nil {
+	if err := rebuildSandbox(context.Background(), lay, args, name, target, skipSandboxConfirm, askZone); err != nil {
 		return err
 	}
 	return finish(lay, args, name)
@@ -55,7 +57,11 @@ func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandb
 
 // rebuildSandbox is reInit without the session after it: the sandbox is
 // removed (its memories kept, if agreed) and created again from its profile.
-func rebuildSandbox(lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool) error {
+//
+// ctx ending (the companion page's Cancel) ends the sbx command under way,
+// and the rebuild stops before its next step: what is left is said by the
+// caller, which can ask sbx.
+func rebuildSandbox(ctx context.Context, lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool) error {
 	vibeHome := lay.Home
 	profile, err := resolveReInitProfile(vibeHome, args, name, target)
 	if err != nil {
@@ -93,7 +99,7 @@ func rebuildSandbox(lay layout.Layout, args cliargs.Args, name, target string, s
 			presence := agentmem.Probe(name)
 			if presence == agentmem.Unknown {
 				note("  '%s' is not running — starting it to check for memories", name)
-				if sbxrun.Start(name) {
+				if sbxrun.StartContext(ctx, name) {
 					presence = agentmem.Probe(name)
 				}
 			}
@@ -108,7 +114,7 @@ func rebuildSandbox(lay layout.Layout, args cliargs.Args, name, target string, s
 					root = filepath.Join(vibeHome, "memories")
 				}
 				memoryStore = agentmem.StoreFor(root, name)
-				ok, err := agentmem.Backup(name, memoryStore)
+				ok, err := agentmem.BackupContext(ctx, name, memoryStore)
 				if err != nil {
 					note("  WARNING: %s", err)
 				} else if !ok {
@@ -126,8 +132,11 @@ func rebuildSandbox(lay layout.Layout, args cliargs.Args, name, target string, s
 				themeFromSandbox = c
 			}
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		note("removing sandbox '%s'", name)
-		if err := sbxrun.Remove(name, true); err != nil {
+		if err := sbxrun.RemoveContext(ctx, name, true); err != nil {
 			return err
 		}
 		// The instance record deliberately outlives the sandbox: it carries
@@ -147,7 +156,10 @@ func rebuildSandbox(lay layout.Layout, args cliargs.Args, name, target string, s
 	}
 
 	note("rebuilding '%s' from profile '%s'", name, profile)
-	return createSandbox(vibeHome, name, target, profile, doc, merged, false, zone, askZone, restoreAfterCreate, memoryStore, git)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return createSandbox(ctx, vibeHome, name, target, profile, doc, merged, false, zone, askZone, restoreAfterCreate, memoryStore, git)
 }
 
 // doReCreate deletes the overlay copy of the matched profile (if there is
@@ -219,6 +231,11 @@ func recomposeProfile(lay layout.Layout, args cliargs.Args, name, target string,
 	if !lay.ProfileExists(profile) {
 		return fmt.Errorf("no profile '%s' to re-compose — run vibe -R to create one", profile)
 	}
+	// Before anything else: a profile from before the kits' instructions
+	// had a file of their own has them moved out of the user's way.
+	if err := prepareInstructions(lay, profile); err != nil {
+		return err
+	}
 	features := settleBaseFeatures(lay, profile)
 	if !profilegen.IsGuided(lay.ProfileDir(profile)) {
 		return fmt.Errorf("profile '%s' does not record which features it was composed from.\n"+
@@ -268,8 +285,14 @@ func recomposeProfile(lay layout.Layout, args cliargs.Args, name, target string,
 		}
 	}
 	// The recorded theme isn't something the features produce, so it would
-	// go with the rest of the old profile; carry it across.
+	// go with the rest of the old profile; carry it across. So too the
+	// user's own instructions for the profile — read now, before anything
+	// is removed, so that failing to read them changes nothing.
 	theme, hadTheme := claudetheme.FromProfile(lay.ProfileDir(profile))
+	userInstructions, err := os.ReadFile(filepath.Join(lay.ProfileDir(profile), instructions.File))
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("could not read profile '%s's %s (nothing changed): %w", profile, instructions.File, err)
+	}
 	dir := lay.HomePath("profiles", profile)
 	if info, err := os.Stat(dir); dir != "" && err == nil && info.IsDir() {
 		if zip, err := backup.Create(lay.HomePath("backup"), name, dir, time.Now()); err != nil {
@@ -291,6 +314,9 @@ func recomposeProfile(lay layout.Layout, args cliargs.Args, name, target string,
 		if err := claudetheme.SaveToProfile(created, theme); err != nil {
 			note("  WARNING: could not carry the claude theme across: %s", err)
 		}
+	}
+	if err := os.WriteFile(filepath.Join(created, instructions.File), userInstructions, 0o644); err != nil {
+		return fmt.Errorf("could not carry profile '%s's %s across (the backup above has it): %w", profile, instructions.File, err)
 	}
 	note("re-composed profile '%s' (%s) in %s", profile, strings.Join(features, ", "), created)
 	return nil

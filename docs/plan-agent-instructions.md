@@ -1,6 +1,6 @@
 # Plan: universal and per-profile agent instructions
 
-Status: planned, not started (2026-10-13). Open questions at the end need answers before building.
+Status: built 2026-10-13 (uncommitted at the time), steps 1–6. All questions answered the same day (see Answers, at the end). One change from the plan: Optimise takes the document from between <document> tags rather than a fenced block, since instructions often contain fenced examples.
 
 ## Goal
 
@@ -148,15 +148,40 @@ the other Admin calls (token, same-origin JSON, a size cap, say 256 KiB).
 5. Optimise, with Accept and Revert, and undo-friendly replacement.
 6. Readme: the two files, where they land per agent, and the Admin editors.
 
-## Open questions
+## Answers (2026-10-13)
 
-1. **Hand-made (non-guided) profiles:** their `agent-instructions.md` is the user's own text, not
-   kits'. Moving it to `kit-instructions.md` would demote it from always-on to read-when-relevant.
-   Proposal: migrate guided profiles only, and treat a hand-made profile's existing file as the user's
-   project instructions.
-2. **Paths:** the request mentioned `~/.vibe/projects/<project>/`; this plan assumes
-   `~/.vibe/profiles/<profile>/` is meant.
-3. **Kit instructions** stay read-when-relevant (through sbx) while the user's are always on.
-   Proposal: keep it that way, since they are "how to use diffity" material.
-4. **Merge needs git on the host**, as the upgrade does. When the changes clash, the dialog says so and
-   offers only overwrite or reload.
+1. **Hand-made profiles:** migrate guided profiles only. A hand-made profile's existing
+   `agent-instructions.md` is the user's project instructions. Dogfood it and see.
+2. **Paths:** `~/.vibe/profiles/<profile>/` it is ("project" was a slip).
+3. **Kit instructions** stay read-when-relevant, through sbx.
+4. **Merge on save** uses git on the host. On a clash, offer only overwrite or reload.
+5. **Pushing a save:** after a save, write the merged file into every sandbox vibe has a record of
+   that is running and whose agent loads these files, each with its own profile's project section.
+   Stopped ones get it at their next start. A project-file save only touches sandboxes on that
+   profile. Runs in the background, and the page reports per sandbox.
+6. **Optimise is the agent's judgement, not Go's.** Go builds the prompt (the file to optimise, plus
+   the other file as read-only context), runs it once (`claude -p`, no `--resume`, tools off), and
+   takes the result from the single fenced block in the reply, showing an error if there isn't
+   exactly one. The result only ever goes into the editor; nothing is saved until Accept.
+7. **Feedback while optimising:**
+   - Page: a spinner with elapsed seconds, the editor read-only, Cancel, and a 10-minute backstop (it was 2 minutes; changed 2026-10-13 to a backstop that says what to check, not a limit on the work).
+   - Terminal: while a session is attached, only the terminal *title* changes ("VIBE: <folder> —
+     optimising instructions…"). Printing would garble the agent's full-screen interface. When
+     nothing is attached, print as usual.
+8. **Guardrail for every Admin action, not just Optimise:** while a session is attached, report to
+   the page and the terminal title only, never print to the terminal. (Start and Save memories
+   could print over the agent's screen before this.)
+9. **Model:** Optimise uses the sandbox's own model. No per-task model choice; it gets awkward across
+   agents.
+10. **Agents:** the agent-specific parts live in one per-agent table: the instructions file, whether
+    it supports imports, and how to run a one-off, tools-off prompt. Claude gets all three. Codex and
+    Gemini get the file parts. An agent with no one-off prompt shows "Optimise isn't available for
+    <agent> yet".
+11. **Guards and tests from review:**
+    - The project editor is read-only for a profile with no copy in `~/.vibe` (bundled only), so a
+      save can't create an overlay folder that hides the bundled profile.
+    - Restoring a backup from before the migration: test that restore then re-compose moves the old
+      file to `kit-instructions.md`.
+    - The merge normalises line endings (`\r\n`).
+    - Files are written in the sandbox as the agent user (reuse the conversation code's helper), so
+      the agent can still edit them.

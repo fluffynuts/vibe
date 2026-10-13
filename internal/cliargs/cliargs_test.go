@@ -318,3 +318,10 @@ func TestParseGitTokenFlags(t *testing.T) {
 		t.Error("--git-token-env without a value was accepted")
 	}
 }
+
+func TestParseCancel(t *testing.T) {
+	a, err := Parse([]string{"--cancel", "/work/a"})
+	if err != nil || !a.Cancel || a.Path != "/work/a" {
+		t.Fatalf("got %+v err=%v", a, err)
+	}
+}

@@ -4,11 +4,27 @@ import (
 	"fmt"
 	"os"
 
+	"vibe/internal/running"
 	"vibe/internal/sbxrun"
 )
 
-func doStop(name, target string, force bool) error {
-	code, err := stopSandbox(sbxStopper, name, target, force)
+func doStop(vibeHome, name, target string, force bool) error {
+	s := sbxStopper
+	// A vibe attached to this sandbox would take its session ending for
+	// the agent being quit: tell it the stop is on purpose, so it keeps its
+	// companion page up to start the sandbox again from.
+	attached := running.Others(vibeHome, target)
+	s.hold = func() {
+		for _, pid := range attached {
+			running.AskToHold(vibeHome, pid)
+		}
+	}
+	s.unhold = func() {
+		for _, pid := range attached {
+			running.CancelHold(vibeHome, pid)
+		}
+	}
+	code, err := stopSandbox(s, name, target, force)
 	if err != nil {
 		return err
 	}
@@ -23,6 +39,10 @@ type stopper struct {
 	// could say.
 	running func(name string) (running, known bool)
 	stop    func(name string) (int, error)
+	// hold tells whatever is attached to the sandbox, just before it is
+	// stopped, that the stop is on purpose; unhold takes that back when the
+	// sandbox is still running after all. Either may be nil.
+	hold, unhold func()
 }
 
 var sbxStopper = stopper{
@@ -59,15 +79,21 @@ func stopSandbox(s stopper, name, target string, force bool) (int, error) {
 		return 0, nil
 	}
 	note("stopping sandbox '%s'", name)
+	if s.hold != nil {
+		s.hold()
+	}
 	code, err := s.stop(name)
 	if err == nil && code == 0 {
 		return 0, nil
 	}
-	if force {
-		if running, known := s.running(name); !s.exists(name) || (known && !running) {
-			note("sbx couldn't stop '%s', but it isn't running", name)
-			return 0, nil
-		}
+	running, known := s.running(name)
+	stopped := !s.exists(name) || (known && !running)
+	if !stopped && s.unhold != nil {
+		s.unhold()
+	}
+	if force && stopped {
+		note("sbx couldn't stop '%s', but it isn't running", name)
+		return 0, nil
 	}
 	return code, err
 }

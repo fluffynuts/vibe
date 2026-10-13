@@ -109,17 +109,33 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 
 link_store
-echo "starting the clipboard server"
-setsid nohup node "$SHARE/clipboard-server.js" >>/tmp/clipboard-server.log 2>&1 </dev/null &
+# The server says "ready" on a pipe once it is listening. If it dies first,
+# its end of the pipe closes and the read ends at once with nothing, so a
+# failure is reported straight away. READY_WITHIN is only a backstop, for a
+# server that is alive but never gets to listening: it starts in well under
+# a second.
+READY_WITHIN=30
 
-i=0
-while [ $i -lt 20 ]; do
-  if listening; then
-    echo "clipboard server ready"
-    exit 0
-  fi
-  i=$((i + 1))
-  sleep 0.5
-done
-echo "ERROR: the clipboard server isn't listening — see /tmp/clipboard-server.log"
+echo "starting the clipboard server"
+ready=$(mktemp -u /tmp/clipboard-ready.XXXXXX)
+if ! mkfifo -m 600 "$ready"; then
+  echo "ERROR: could not make $ready to hear from the clipboard server on"
+  exit 1
+fi
+VIBE_CLIPBOARD_READY_FD=3 setsid nohup node "$SHARE/clipboard-server.js" \
+  3>"$ready" >>/tmp/clipboard-server.log 2>&1 </dev/null &
+
+said=$(timeout "$READY_WITHIN" head -n 1 "$ready")
+waited=$?
+rm -f "$ready"
+if [ "$said" = ready ]; then
+  echo "clipboard server ready"
+  exit 0
+fi
+if [ $waited -eq 124 ]; then
+  echo "ERROR: the clipboard server didn't start within $READY_WITHIN seconds — see /tmp/clipboard-server.log"
+else
+  echo "ERROR: the clipboard server stopped before it was listening — see /tmp/clipboard-server.log"
+fi
+tail -n 5 /tmp/clipboard-server.log 2>/dev/null | sed 's/^/  /'
 exit 1

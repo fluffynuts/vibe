@@ -13,6 +13,7 @@ type Args struct {
 	Profile    string
 	Path       string
 	Stop       bool
+	Cancel     bool
 	StopAll    bool
 	Ssh        bool
 	ReInit     bool
@@ -67,6 +68,9 @@ func Parse(argv []string) (Args, error) {
 			i++
 		case arg == "-s" || arg == "--stop":
 			a.Stop = true
+			i++
+		case arg == "--cancel":
+			a.Cancel = true
 			i++
 		case arg == "-S" || arg == "--stop-all":
 			a.StopAll = true

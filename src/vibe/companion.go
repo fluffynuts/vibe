@@ -107,6 +107,19 @@ func clipboardPageURL(vibeHome, name string) string {
 	return ""
 }
 
+// clipboardTrouble is the last error start-clipboard logged in the sandbox
+// (it starts each run with a "===" line, so only this run's count), or "".
+func clipboardTrouble(name string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := sbxrun.ExecStdout(ctx, name, "sh", "-c",
+		`[ -f /tmp/clipboard.log ] && sed -n '/^=== start-clipboard/h; /^=== start-clipboard/!H; $!d; x; p' /tmp/clipboard.log | grep '^ERROR: ' | tail -n 1`)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(strings.TrimSpace(out), "ERROR: ")
+}
+
 // startClipboardScript starts the clipboard page's server in the sandbox,
 // and does nothing when it is already running (see the clipboard-bridge kit).
 const startClipboardScript = "/home/agent/.local/bin/start-clipboard"
@@ -197,13 +210,17 @@ func conversationFor(vibeHome, name string, inst state.Instance) companion.Conve
 // settings say, and returns what stops it. It never stops the session
 // starting: whatever goes wrong is reported, and the session goes on
 // without the page.
-func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop func(), serving bool) {
+//
+// cancel ends what the page has under way (see companion.Server.Cancel), for
+// 'vibe --cancel'; with no page served by this vibe, it ends nothing.
+func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop func(), serving bool, cancel func() []string) {
 	stop = func() {}
+	cancel = func() []string { return nil }
 	vibeHome := lay.Home
 	inst, found, err := state.Load(vibeHome, name)
 	if err != nil {
 		note("companion: %v", err)
-		return stop, false
+		return stop, false, cancel
 	}
 	setting := ""
 	agent := inst.Agent
@@ -218,27 +235,27 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 	mode, err := companionMode(args.NoCompanion, setting)
 	if err != nil {
 		note("%v — not serving the companion page", err)
-		return stop, false
+		return stop, false, cancel
 	}
 	if mode == companionOff {
-		return stop, false
+		return stop, false, cancel
 	}
 
 	token, err := state.CompanionToken(vibeHome, name)
 	if err != nil {
 		note("companion: %v", err)
-		return stop, false
+		return stop, false, cancel
 	}
 	instances, err := state.List(vibeHome)
 	if err != nil {
 		note("companion: %v", err)
-		return stop, false
+		return stop, false, cancel
 	}
 	port, served, err := chooseCompanionPort(instances, name, portalloc.InUse,
 		func(p int) bool { return companion.Running(p, name) })
 	if err != nil {
 		note("companion: %v", err)
-		return stop, false
+		return stop, false, cancel
 	}
 	if found && inst.CompanionPort != port {
 		inst.CompanionPort = port
@@ -249,31 +266,32 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 	url := fmt.Sprintf("http://localhost:%d/#%s", port, token)
 	if served {
 		note("companion page: %s (already being served by another vibe for this sandbox)", url)
-		return stop, false
+		return stop, false, cancel
 	}
 
 	srv, err := companion.Start(companion.Config{
-		Sandbox:        name,
-		Agent:          agent,
-		Token:          token,
-		Port:           port,
-		Policy:         &policy.Client{Sandbox: name},
-		ClipboardURL:   func() string { return clipboardPageURL(vibeHome, name) },
-		StartClipboard: func() ([]string, error) { return startClipboard(name) },
-		Workspace:      inst.Target,
-		Converse:       conversationFor(vibeHome, name, inst),
-		History:        state.ConversationPath(vibeHome, name),
-		LatestReview:   latestReviewFor(name, inst),
-		Admin:          adminFor(lay, name, inst.Target),
-		ThemeColor:     themeColorFor(lay, name, inst, agent),
+		Sandbox:          name,
+		Agent:            agent,
+		Token:            token,
+		Port:             port,
+		Policy:           &policy.Client{Sandbox: name},
+		ClipboardURL:     func() string { return clipboardPageURL(vibeHome, name) },
+		StartClipboard:   func() ([]string, error) { return startClipboard(name) },
+		ClipboardTrouble: func() string { return clipboardTrouble(name) },
+		Workspace:        inst.Target,
+		Converse:         conversationFor(vibeHome, name, inst),
+		History:          state.ConversationPath(vibeHome, name),
+		LatestReview:     latestReviewFor(name, inst),
+		Admin:            adminFor(lay, name, inst.Target),
+		ThemeColor:       themeColorFor(lay, name, inst, agent),
 	})
 	if err != nil {
 		note("companion: could not serve the page on port %d: %v", port, err)
-		return stop, false
+		return stop, false, cancel
 	}
 	note("companion page: %s", srv.URL())
 	if mode == companionOpen && !browser.Open(srv.URL()) {
 		note("companion: no browser to open it in from here — open the URL above yourself")
 	}
-	return func() { srv.Close() }, true
+	return func() { srv.Close() }, true, srv.Cancel
 }

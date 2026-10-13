@@ -1,12 +1,15 @@
 package main
 
 import (
+	"os"
+
 	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	"vibe/internal/homeinit"
+	"vibe/internal/instructions"
 	"vibe/internal/layout"
 	"vibe/internal/library"
 	"vibe/internal/profilegen"
@@ -66,6 +69,44 @@ func initHome(lay layout.Layout, force bool) error {
 // copy of an existing profile, a blank one, or a guided walk through
 // picking library features.
 func ensureProfile(lay layout.Layout, profile string, force bool) error {
+	if err := createProfileIfMissing(lay, profile, force); err != nil {
+		return err
+	}
+	return prepareInstructions(lay, profile)
+}
+
+// prepareInstructions brings the user's instructions files up to date
+// before anything is built from the profile: the universal one in ~/.vibe
+// is made if missing, and so is the profile's own — after a guided profile
+// from before has had the kits' text moved out of it (see
+// instructions.MigrateProfile). A profile that is only in vibe's bundle is
+// left alone: making a folder for it in ~/.vibe would hide the bundle's.
+func prepareInstructions(lay layout.Layout, profile string) error {
+	if path := lay.HomePath(instructions.File); path != "" {
+		if created, err := instructions.EnsureFile(path); err != nil {
+			return err
+		} else if created {
+			note("created %s: instructions for every sandbox's agent go there", displayPath(path))
+		}
+	}
+	dir := lay.HomePath("profiles", profile)
+	if info, err := os.Stat(dir); dir == "" || err != nil || !info.IsDir() {
+		return nil
+	}
+	moved, err := instructions.MigrateProfile(dir, profilegen.IsGuided(dir))
+	if err != nil {
+		return err
+	}
+	if moved {
+		note("profile '%s': the kits' instructions are in %s now; %s is yours, for this profile's agent",
+			profile, instructions.KitFile, instructions.File)
+	}
+	return nil
+}
+
+// createProfileIfMissing makes the profile when there's none, asking how
+// (guided, a copy, or blank) when there's a terminal to ask on.
+func createProfileIfMissing(lay layout.Layout, profile string, force bool) error {
 	if lay.ProfileExists(profile) {
 		return nil
 	}

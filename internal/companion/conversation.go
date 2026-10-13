@@ -87,6 +87,11 @@ type conversation struct {
 	superseded bool
 	// ended is closed when the running turn has finished.
 	ended chan struct{}
+	// heard is when the agent last said anything in the running turn (or
+	// the turn began): long quiet while it answers may mean it is stuck.
+	heard time.Time
+	// now is the clock (time.Now when nil), for tests to stand in for.
+	now func() time.Time
 	// commands are the slash commands the agent said it has, the last time
 	// it started, for the page to offer; commandsSeq counts their changes,
 	// so a page only fetches them when it hasn't the latest.
@@ -199,6 +204,7 @@ func (c *conversation) begin(prompt string) (session string, ctx context.Context
 	c.running = true
 	c.answered, c.superseded = false, false
 	c.ended = make(chan struct{})
+	c.heard = c.clock()
 	c.add("user", prompt, nil)
 	c.prompt = c.seq
 	c.events[len(c.events)-1].Receipt = receiptSent
@@ -252,6 +258,7 @@ func (c *conversation) line(raw []byte) string {
 		}
 	}
 	c.advance(receiptSeen)
+	c.heard = c.clock()
 	c.add("agent", "", append(json.RawMessage(nil), raw...))
 	switch head.Type {
 	case "result":
@@ -355,6 +362,30 @@ func (c *conversation) latestReceipt() map[string]interface{} {
 		}
 	}
 	return nil
+}
+
+// quietWarning is how long the agent may answer without a word before the
+// page says it may be stuck: one tool call can run quiet for a long while
+// (a build, a test suite), so it is generous. The turn isn't stopped: that
+// is the user's to do. A variable for tests.
+var quietWarning = 60 * time.Minute
+
+func (c *conversation) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
+// quiet is how long the agent has been answering without saying anything
+// new; 0 when it isn't answering.
+func (c *conversation) quiet() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.running || c.answered {
+		return 0
+	}
+	return c.clock().Sub(c.heard)
 }
 
 // since is the events after seq, whether the agent is answering, and
@@ -489,6 +520,9 @@ func (s *Server) conversationEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	body := map[string]interface{}{
 		"events": events, "last": last, "running": running, "background": background, "reset": reset, "receipt": receipt,
+		// Minutes the agent has been answering with nothing new, once that
+		// is long enough to say so.
+		"quietMinutes": quietMinutes(s.convo.quiet()),
 	}
 	// The slash commands go only to a page without the latest (it says
 	// which it has), not with every poll.
@@ -592,4 +626,12 @@ func sameOriginJSON(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	return true
+}
+
+// quietMinutes is d in whole minutes when it has reached quietWarning, else 0.
+func quietMinutes(d time.Duration) int {
+	if d < quietWarning {
+		return 0
+	}
+	return int(d / time.Minute)
 }

@@ -113,12 +113,18 @@
     return node
   }
 
+  // api calls vibe. options are fetch's, plus timeout (ms, 15s unless
+  // said) and cancel: an AbortController whose abort ends the call early.
   async function api(path, options) {
+    options = Object.assign({}, options || {})
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 15000)
+    const timeout = setTimeout(() => controller.abort(), options.timeout || 15000)
+    if (options.cancel) options.cancel.signal.addEventListener('abort', () => controller.abort())
+    delete options.timeout
+    delete options.cancel
     try {
-      const headers = Object.assign({ 'X-Vibe-Token': token }, options && options.body ? { 'Content-Type': 'application/json' } : {})
-      const res = await fetch(path, Object.assign({ headers, signal: controller.signal }, options || {}))
+      const headers = Object.assign({ 'X-Vibe-Token': token }, options.body ? { 'Content-Type': 'application/json' } : {})
+      const res = await fetch(path, Object.assign({ headers, signal: controller.signal }, options))
       let body = null
       try { body = await res.json() } catch (e) { /* not JSON */ }
       return { status: res.status, ok: res.ok, body: body || {} }
@@ -344,6 +350,7 @@
       applyTheme(res.body.themeColor || '')
       const url = res.body.clipboardUrl || ''
       const ready = !!(url && res.body.clipboardReady)
+      state.clipboardTrouble = res.body.clipboardTrouble || ''
       state.clipboardCanStart = !!res.body.clipboardCanStart
       state.conversation = !!res.body.conversation
       $('tab-conversation').hidden = !state.conversation
@@ -392,9 +399,11 @@
         ? 'Starting the clipboard page in the sandbox…'
         : late ? "The clipboard page still isn't up." : 'Starting the clipboard page…'
       $(view.help).hidden = !late || state.clipboardStarting
-      $(view.help).textContent = state.clipboardCanStart
+      // What start-clipboard said went wrong, when it said, comes first.
+      const why = state.clipboardTrouble ? 'The sandbox says: ' + state.clipboardTrouble + ' ' : ''
+      $(view.help).textContent = why + (state.clipboardCanStart
         ? 'vibe can try starting it in the sandbox — that is safe to do even if it is already on its way.'
-        : 'Check /tmp/clipboard.log and /tmp/clipboard-server.log in the sandbox.'
+        : 'Check /tmp/clipboard.log and /tmp/clipboard-server.log in the sandbox.')
       $(view.start).hidden = !late || !state.clipboardCanStart
       $(view.start).disabled = state.clipboardStarting
     }
@@ -426,7 +435,7 @@
   function tick() {
     if (document.visibilityState !== 'visible') return
     if (state.tab === 'conversation') { loadState(); return }
-    if (state.tab === 'admin') { loadState(); loadAdmin(); return }
+    if (state.tab === 'admin') { loadState(); loadAdmin(); loadInstructions(false); return }
     loadState()
     load(state.tab)
   }
@@ -698,6 +707,13 @@
     $('admin-error').hidden = !st.error
     $('admin-error').textContent = st.error || ''
 
+    // The editors are drawn once (so typing isn't undone by a poll), but
+    // whether Optimise can run follows the sandbox: redraw them when it
+    // starts or stops, unless one holds work not yet saved.
+    if (instr.info && instr.info.running !== !!st.running) {
+      const busy = Object.values(instr.eds).some((ed) => ed.running || ed.before !== null || ed.box.value !== ed.base)
+      if (!busy) loadInstructions(true)
+    }
     renderAdminJob(job)
     renderAdminFeatures(st, busy)
     renderAdminUpgrades(data.upgrades || {}, st.commands || {})
@@ -710,8 +726,11 @@
     if (!job) return
     const words = { start: 'Start', stop: 'Stop', reinit: 'Rebuild', recompose: 'Re-compose', restore: 'Restore', memories: 'Save memories' }
     $('admin-job-h').firstChild.textContent = (words[job.kind] || 'Last action') + ' '
-    pill('admin-job-state', job.running ? 'working…' : job.error ? 'failed' : 'done',
-      job.running ? 'busy' : job.error ? 'bad' : 'ok')
+    pill('admin-job-state', job.running ? (job.cancelled ? 'cancelling…' : job.warning ? 'taking too long' : 'working…')
+      : job.cancelled ? 'cancelled' : job.error ? 'failed' : 'done',
+      job.running ? (job.warning ? 'warn' : 'busy') : job.error || job.cancelled ? 'bad' : 'ok')
+    $('admin-cancel').hidden = !job.running || job.cancelled
+    adminView.jobKind = job.kind
     const lines = (job.lines || []).slice()
     if (job.error) lines.push('', 'failed: ' + job.error)
     if (lines.length !== adminView.jobLines) {
@@ -861,7 +880,35 @@
     }, opts))
   }
 
+  // A rebuild cancelled part-way can leave the sandbox half-made: that's
+  // asked about first. The others are safe to cancel at once.
+  const REBUILDS = ['reinit', 'recompose', 'restore']
+
+  async function cancelAdmin() {
+    try {
+      const res = await post('/api/admin/cancel', {})
+      reached(true)
+      if (!res.ok) toast((res.body && res.body.error) || 'That could not be cancelled.', true)
+      else if (!res.body.cancelled) toast('Nothing was running to cancel.')
+      loadAdmin()
+    } catch (e) {
+      reached(false)
+      toast('Could not reach vibe.', true)
+    }
+  }
+
   function setUpAdmin() {
+    $('admin-cancel').addEventListener('click', () => {
+      if (!REBUILDS.includes(adminView.jobKind)) { cancelAdmin(); return }
+      confirmThen({
+        title: 'Cancel the rebuild?',
+        text: 'Stopping part-way may leave the sandbox half-made. Afterwards, the card says what state it is in, and Rebuild makes it again from its profile.',
+        command: 'vibe --cancel',
+        danger: true,
+        started: 'Cancelling — the Last action box says how it ended.',
+        run: () => post('/api/admin/cancel', {}),
+      })
+    })
     $('admin-start').addEventListener('click', () => adminDo('start'))
     $('admin-memories').addEventListener('click', () => adminDo('memories'))
     $('admin-stop').addEventListener('click', () => adminConfirm('stop', {}, {
@@ -899,20 +946,220 @@
     })
   }
 
+  // --- the agent's instructions, on the Admin tab ------------------------
+
+  // INSTRUCTIONS_HINT is the size past which a file is worth tidying: these
+  // are loaded into every session, so their size costs on every turn.
+  const INSTRUCTIONS_HINT = 8 * 1024
+
+  // One editor per file: what it was loaded as (base, version), and the
+  // state of an Optimise — running (with its AbortController), or done and
+  // waiting for Accept or Revert (with the text from before it).
+  const instr = { loaded: false, info: null, eds: {} }
+
+  async function loadInstructions(force) {
+    if (instr.loaded && !force) return
+    try {
+      const res = await api('/api/admin/instructions')
+      reached(true)
+      if (!res.ok) { $('admin-instructions-note').textContent = (res.body && res.body.error) || "The agent's instructions can't be edited here."; return }
+      instr.loaded = true
+      renderInstructions(res.body)
+    } catch (e) {
+      reached(false)
+    }
+  }
+
+  function renderInstructions(info) {
+    instr.info = info
+    $('admin-instructions-note').textContent = !info.applies
+      ? 'The ' + (info.agent || 'sandbox') + " agent doesn't load these files yet: they're kept, and used by sandboxes whose agent does."
+      : 'Loaded by the agent at the start of every session: the universal file first, then the profile\'s.'
+    $('admin-instructions').replaceChildren(...(info.files || []).map((f) => instructionsEditor(f, info)))
+  }
+
+  function sizeText(n) {
+    return n < 1024 ? n + ' bytes' : (n / 1024).toFixed(1) + ' KB'
+  }
+
+  function instructionsEditor(file, info) {
+    const box = el('textarea', { spellcheck: 'true', 'aria-label': file.label + ' — ' + file.path, readonly: !file.editable })
+    box.value = file.text || ''
+    const meta = el('p', { class: 'meta' })
+    const status = el('p', { class: 'status', role: 'status' })
+    const save = el('button', { type: 'button', text: 'Save' })
+    const optimise = el('button', { type: 'button', class: 'ghost', text: 'Optimise' })
+    const accept = el('button', { type: 'button', text: 'Accept', hidden: true })
+    const revert = el('button', { type: 'button', class: 'ghost', text: 'Revert', hidden: true })
+    const cancel = el('button', { type: 'button', class: 'ghost', text: 'Cancel', hidden: true })
+    const ed = { file, box, meta, status, save, optimise, accept, revert, cancel,
+      base: file.text || '', version: file.version, before: null, running: null, timer: null }
+    instr.eds[file.which] = ed
+
+    const why = !file.editable ? file.note || "This file can't be edited here."
+      : !info.canOptimise ? 'Optimising isn\'t available for ' + (info.agent || 'this agent') + ' yet.'
+      : !info.running ? 'Start the sandbox to optimise: the agent does it.' : ''
+    optimise.title = why || 'Ask the agent for a tidier version, to accept or revert'
+
+    const refresh = () => {
+      const bytes = new Blob([box.value]).size
+      meta.textContent = sizeText(bytes) + (bytes > INSTRUCTIONS_HINT ? ' — large for something loaded every session: Optimise may trim it' : '') +
+        (box.value !== ed.base && !ed.before ? ' · unsaved changes' : '')
+      meta.className = 'meta' + (bytes > INSTRUCTIONS_HINT ? ' warn' : '')
+      const reviewing = ed.before !== null
+      save.hidden = reviewing
+      accept.hidden = revert.hidden = !reviewing
+      cancel.hidden = !ed.running
+      optimise.hidden = !!ed.running
+      save.disabled = !file.editable || !!ed.running || box.value === ed.base
+      optimise.disabled = !!why || reviewing || !!ed.running
+      box.readOnly = !file.editable || !!ed.running
+    }
+    ed.refresh = refresh
+    box.addEventListener('input', refresh)
+    save.addEventListener('click', () => saveInstructions(ed))
+    accept.addEventListener('click', () => saveInstructions(ed))
+    revert.addEventListener('click', () => {
+      replaceText(box, ed.before)
+      ed.before = null
+      setStatus(ed, 'Reverted to your version.')
+      refresh()
+    })
+    optimise.addEventListener('click', () => optimiseInstructions(ed))
+    cancel.addEventListener('click', () => { if (ed.running) ed.running.abort() })
+    if (file.note) setStatus(ed, file.note)
+    refresh()
+    return el('section', { class: 'instr' },
+      el('h3', {}, el('span', { text: file.label }), el('span', { class: 'path', text: file.path })),
+      box, meta, el('div', { class: 'bar' }, save, accept, revert, optimise, cancel), status)
+  }
+
+  function setStatus(ed, text, cls, spinning) {
+    ed.status.className = 'status' + (cls ? ' ' + cls : '')
+    ed.status.replaceChildren(...(spinning ? [el('span', { class: 'spinner', 'aria-hidden': 'true' })] : []), text)
+  }
+
+  // replaceText puts text in the box the way typing would, so Ctrl-Z can
+  // take it back; where the browser can't, it just sets it.
+  function replaceText(box, text) {
+    box.focus()
+    box.select()
+    let done = false
+    try { done = document.execCommand(text ? 'insertText' : 'delete', false, text) } catch (e) { /* not supported */ }
+    if (!done || box.value !== text) box.value = text
+    box.setSelectionRange(0, 0)
+    box.scrollTop = 0
+  }
+
+  async function saveInstructions(ed, resolve) {
+    const payload = { which: ed.file.which, text: ed.box.value, base: ed.base, version: ed.version }
+    if (resolve) payload.resolve = resolve
+    ed.save.disabled = ed.accept.disabled = true
+    setStatus(ed, 'Saving…', '', true)
+    try {
+      const res = await api('/api/admin/instructions', { method: 'POST', body: JSON.stringify(payload), timeout: 60000 })
+      reached(true)
+      if (res.status === 409 && res.body.conflict) { askChanged(ed, res.body); return }
+      if (!res.ok || !res.body.saved) { setStatus(ed, (res.body && res.body.error) || 'That could not be saved.', 'bad'); return }
+      ed.base = res.body.text
+      ed.version = res.body.version
+      if (ed.box.value !== res.body.text) replaceText(ed.box, res.body.text) // merged
+      ed.before = null
+      setStatus(ed, savedText(res.body), res.body.failed ? 'bad' : 'ok')
+    } catch (e) {
+      reached(false)
+      setStatus(ed, 'Could not reach vibe.', 'bad')
+    } finally {
+      ed.accept.disabled = false
+      ed.refresh()
+    }
+  }
+
+  // savedText says where a save went: which sandboxes have it now, which
+  // get it when they start, and how the terminal session picks it up.
+  function savedText(r) {
+    const parts = ['Saved.']
+    if (r.updated && r.updated.length) parts.push('In use now in: ' + r.updated.join(', ') + '.')
+    if (r.notRunning && r.notRunning.length) parts.push('When they next start: ' + r.notRunning.join(', ') + '.')
+    for (const [name, why] of Object.entries(r.failed || {})) parts.push("Couldn't give it to " + name + ': ' + why)
+    if (instr.info && instr.info.applies) {
+      parts.push('\nThe next prompt here uses it. A session in the terminal picks it up when it restarts — or ask it to re-read ~/.claude/vibe-instructions.md.')
+    }
+    return parts.join(' ')
+  }
+
+  // askChanged offers what to do about a file changed on disk since it was
+  // loaded: merge (the default, when it can), overwrite, or reload.
+  function askChanged(ed, r) {
+    const dialog = $('changed')
+    $('changed-path').textContent = ed.file.path
+    const merge = dialog.querySelector('input[value="merge"]')
+    merge.disabled = !r.canMerge
+    $('changed-why').textContent = r.canMerge ? '' : '(not possible: ' + (r.why || 'the changes overlap') + ')'
+    dialog.querySelector('input[value="' + (r.canMerge ? 'merge' : 'overwrite') + '"]').checked = true
+    dialog.returnValue = ''
+    dialog.onclose = () => {
+      ed.refresh()
+      if (dialog.returnValue !== 'go') { setStatus(ed, 'Not saved: the file changed on disk.', 'bad'); return }
+      const pick = dialog.querySelector('input[name="changed"]:checked').value
+      if (pick === 'reload') {
+        ed.base = r.diskText
+        ed.version = r.diskVersion
+        ed.before = null
+        replaceText(ed.box, r.diskText)
+        setStatus(ed, 'Reloaded from disk: your changes here were discarded.')
+        ed.refresh()
+        return
+      }
+      // The disk version is the new base for an overwrite; a merge keeps
+      // the page's base, which is what the merge works from.
+      if (pick === 'overwrite') ed.version = r.diskVersion
+      saveInstructions(ed, pick)
+    }
+    dialog.showModal()
+  }
+
+  async function optimiseInstructions(ed) {
+    const started = Date.now()
+    ed.running = new AbortController()
+    const tickTime = () => setStatus(ed, 'Optimising… ' + Math.round((Date.now() - started) / 1000) + 's — the agent is reading it', '', true)
+    tickTime()
+    ed.timer = setInterval(tickTime, 1000)
+    ed.refresh()
+    try {
+      const res = await api('/api/admin/instructions/optimise', {
+        method: 'POST', body: JSON.stringify({ which: ed.file.which, text: ed.box.value }),
+        // The server gives up first (at 10 minutes) and says why.
+        timeout: 11 * 60000, cancel: ed.running,
+      })
+      reached(true)
+      if (!res.ok) { setStatus(ed, (res.body && res.body.error) || 'Optimising failed — nothing changed.', 'bad'); return }
+      ed.before = ed.box.value
+      replaceText(ed.box, res.body.text)
+      setStatus(ed, 'Here is the agent\'s version (' + sizeText(new Blob([ed.before]).size) + ' → ' +
+        sizeText(new Blob([res.body.text]).size) + '). Edit it if you like, then Accept to save it, or Revert.')
+    } catch (e) {
+      setStatus(ed, ed.running && ed.running.signal.aborted ? 'Cancelled — nothing changed.' : 'Could not reach vibe.', 'bad')
+    } finally {
+      clearInterval(ed.timer)
+      ed.running = null
+      ed.refresh()
+    }
+  }
+
   // --- the conversation --------------------------------------------------
 
-  const convo = { last: 0, running: false, polling: false, behind: false, lastPrompt: '', ticks: new Map(), heard: 0, typing: null }
+  const convo = { last: 0, running: false, polling: false, behind: false, lastPrompt: '', ticks: new Map(), typing: null }
 
-  // How long the agent may be at work with nothing new to show before the
-  // page says it is still at it, as a chat shows someone typing.
-  const QUIET_MS = 1000
-
-  // showTyping puts the "typing" bubble at the end of the conversation
-  // while the agent is answering but has shown nothing for QUIET_MS, and
-  // takes it away otherwise: anything new from it ends the quiet.
+  // showTyping keeps the "typing" bubble below the agent's latest message
+  // for as long as it is answering, and takes it away once it has. Its
+  // output comes a whole message at a time, so between messages it is
+  // always still at work: there's no quiet to wait out first, and nothing
+  // the page doesn't draw (the agent's start-up, its thinking, hooks) can
+  // take the bubble away.
   function showTyping() {
     const log = $('convo-log')
-    const show = convo.running && Date.now() - convo.heard >= QUIET_MS
+    const show = convo.running
     if (!convo.typing) {
       // Hidden from screen readers: the log around it is announced, and
       // the bubble comes and goes with every tool call. The Stop button
@@ -956,28 +1203,52 @@
     return el('a', { href: u.href, target: '_blank', rel: 'noopener noreferrer', text: href })
   }
 
-  // linked is text with the local addresses in it made into links, as nodes
-  // (text stays text: there is no markup in it to read).
-  const LOCAL_URL = /\bhttps?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?(?![\w:-]|\.[\w-])(?:[/?#][^\s<>"'`]*)?/g
-  function linked(text) {
-    const nodes = []
-    let at = 0
-    for (const m of text.matchAll(LOCAL_URL)) {
-      // Sentence punctuation after an address isn't part of it.
-      const href = m[0].replace(/[.,;:!?)\]}'"]+$/, '')
-      const link = localLink(href)
-      if (!link) continue
-      if (m.index > at) nodes.push(text.slice(at, m.index))
-      nodes.push(link)
-      at = m.index + href.length
-    }
-    if (at < text.length) nodes.push(text.slice(at))
-    return nodes
+  // markdown is the agent's Markdown as elements, built from what
+  // markdown.js read: every piece of text set as text, never as markup. A
+  // link becomes one only where localLink allows (this machine's own pages);
+  // any other shows its address instead.
+  function markdown(text) {
+    const inline = (nodes) => nodes.map((n) => {
+      switch (n.type) {
+        case 'text': return document.createTextNode(n.text)
+        case 'code': return el('code', { text: n.text })
+        case 'br': return el('br')
+        case 'strong': return el('strong', {}, ...inline(n.children))
+        case 'em': return el('em', {}, ...inline(n.children))
+        case 'del': return el('del', {}, ...inline(n.children))
+        case 'link': {
+          const link = localLink(n.href)
+          if (link) { link.replaceChildren(...inline(n.children)); return link }
+          const label = n.children.map((c) => c.text || '').join('')
+          return document.createTextNode(label === n.href ? n.href : label + ' (' + n.href + ')')
+        }
+      }
+      return document.createTextNode('')
+    })
+    const blocks = (list) => list.map((b) => {
+      switch (b.type) {
+        case 'para': return el('p', {}, ...inline(b.inline))
+        case 'heading': return el('h' + Math.min(6, Math.max(1, b.level)), {}, ...inline(b.inline))
+        case 'code': return el('pre', {}, el('code', { text: b.text }))
+        case 'hr': return el('hr')
+        case 'quote': return el('blockquote', {}, ...blocks(b.blocks))
+        case 'list': return el(b.ordered ? 'ol' : 'ul', b.ordered && b.start !== 1 ? { start: String(b.start) } : {},
+          ...b.items.map((item) => el('li', {}, ...blocks(item))))
+        case 'table': {
+          const cell = (tag, content, i) => el(tag, b.align[i] ? { class: 'align-' + b.align[i] } : {}, ...inline(content))
+          return el('div', { class: 'table-scroll' }, el('table', {},
+            el('thead', {}, el('tr', {}, ...b.head.map((c, i) => cell('th', c, i)))),
+            el('tbody', {}, ...b.rows.map((r) => el('tr', {}, ...r.map((c, i) => cell('td', c, i)))))))
+        }
+      }
+      return document.createTextNode('')
+    })
+    return el('div', { class: 'md' }, ...blocks(window.vibeMarkdown.parse(text)))
   }
 
   function convoNote(cls, text, at) {
     const time = stamp(at)
-    const words = cls === 'agent' ? el('span', {}, ...linked(text)) : el('span', { text })
+    const words = cls === 'agent' ? markdown(text) : el('span', { text })
     $('convo-log').append(time
       ? el('div', { class: 'msg ' + cls }, words, el('span', { class: 'foot' }, time))
       : el('div', { class: 'msg ' + cls }, words))
@@ -1088,7 +1359,10 @@
   // running is the agent answering; background is it having answered, but
   // still waiting on something it left running (a review page, say). Then
   // the page goes on as if it were done: sending ends that work.
-  function setConvoRunning(running, background) {
+  // quietMinutes, when not 0, is how long the agent has been answering
+  // without a word: long enough that it may be stuck. The turn isn't
+  // stopped — that's the user's call.
+  function setConvoRunning(running, background, quietMinutes) {
     if (running) setFaviconDot('working')
     else if (convo.running) setFaviconDot(document.visibilityState === 'visible' && document.hasFocus() ? '' : 'done')
     convo.running = running
@@ -1098,8 +1372,11 @@
     $('convo-stop').hidden = !running
     $('convo-new').disabled = running
     // While it answers, the typing bubble says so.
-    $('convo-status').textContent = !running && background
-      ? 'The agent has answered, and has something still running. Sending a prompt ends it.' : ''
+    const status = $('convo-status')
+    status.classList.toggle('warn-text', !!(running && quietMinutes))
+    status.textContent = running && quietMinutes
+      ? 'No output from the agent for ' + quietMinutes + ' minutes — it may be stuck. Stop it, or check "sbx ls" in a terminal; it is still being waited for.'
+      : !running && background ? 'The agent has answered, and has something still running. Sending a prompt ends it.' : ''
   }
 
   async function pollConversation() {
@@ -1120,11 +1397,10 @@
         slash.seq = res.body.commandsSeq || 0
         if (slash.open) updateCommands(false)
       }
-      if ((res.body.events || []).length) { convo.heard = Date.now(); if (convo.typing) convo.typing.remove() }
       for (const ev of res.body.events || []) showEvent(ev)
       if (res.body.receipt) showReceipt(res.body.receipt.seq, res.body.receipt.state)
       convo.last = res.body.last || 0
-      setConvoRunning(!!res.body.running, !!res.body.background)
+      setConvoRunning(!!res.body.running, !!res.body.background, res.body.quietMinutes || 0)
       if ((res.body.events || []).length) {
         if ($('panel-conversation').hidden) convo.behind = true
         else if (stick) log.scrollTop = log.scrollHeight
@@ -1153,8 +1429,8 @@
       input.value = ''
       saveDraft()
       closeCommands()
-      convo.heard = Date.now()
       setConvoRunning(true)
+      showTyping()
       pollConversation()
     } catch (e) {
       reached(false)

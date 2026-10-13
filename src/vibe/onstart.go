@@ -9,12 +9,14 @@ import (
 	"time"
 
 	"vibe/internal/kitspec"
+	"vibe/internal/layout"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
 	"vibe/internal/timezone"
 )
 
-func nudgeOnStart(vibeHome, name string) {
+func nudgeOnStart(lay layout.Layout, name string, reached func()) {
+	vibeHome := lay.Home
 	logPath := filepath.Join(os.TempDir(), "vibe-nudge.log")
 	logf := func(format string, a ...interface{}) {
 		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
@@ -29,6 +31,7 @@ func nudgeOnStart(vibeHome, name string) {
 		logf("gave up waiting for reachability")
 		return
 	}
+	reached()
 	writePublishedURLs(vibeHome, name, logf)
 	zone := recordedTimezone(vibeHome, name)
 	if err := timezone.Apply(name, zone); err != nil {
@@ -38,6 +41,11 @@ func nudgeOnStart(vibeHome, name string) {
 	}
 	if err := syncGitInstructions(vibeHome, name); err != nil {
 		logf("writing the agent's rules for pushing failed: %v", err)
+	}
+	if supported, err := applyInstructions(lay, name); err != nil {
+		logf("giving the agent the user's instructions failed: %v", err)
+	} else if supported {
+		logf("the agent has the user's instructions")
 	}
 	// sbx exec runs as the agent user, but on-start is written to run as
 	// root, as setup.startup runs it at first boot: its logs in /tmp are

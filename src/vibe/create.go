@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -76,7 +77,7 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 	if err != nil {
 		return err
 	}
-	if err := createSandbox(vibeHome, name, target, profile, doc, merged, !args.Force, timezone.Host(), !args.Force, false, "", git); err != nil {
+	if err := createSandbox(context.Background(), vibeHome, name, target, profile, doc, merged, !args.Force, timezone.Host(), !args.Force, false, "", git); err != nil {
 		return err
 	}
 	return finish(lay, args, name)
@@ -150,7 +151,7 @@ func setClaudeTheme(lay layout.Layout, profile string, doc kitspec.Doc, fromSand
 // on the memory setting; without it, that setting is used as long as this
 // machine can give it. git, when not nil, is the GitHub token the agent may
 // push with.
-func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merged settings.Settings, askMemory bool, zone string, askZone, restoreAfterCreate bool, memoryStore string, git *gitAccess) error {
+func createSandbox(ctx context.Context, vibeHome, name, target, profile string, doc kitspec.Doc, merged settings.Settings, askMemory bool, zone string, askZone, restoreAfterCreate bool, memoryStore string, git *gitAccess) error {
 	// Every sandbox's agent is told where to look for its rules for
 	// pushing, since a token can be given to a sandbox after it's made.
 	kitspec.AppendAgentInstructions(doc, gittoken.KitInstructions)
@@ -247,7 +248,7 @@ func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merg
 		env = append(env, k+"="+merged.Env[k])
 	}
 
-	if err := sbxrun.Create(sbxrun.CreateOpts{
+	if err := sbxrun.CreateContext(ctx, sbxrun.CreateOpts{
 		Name:    name,
 		KitDir:  kitDir,
 		Memory:  memSize,
@@ -257,6 +258,9 @@ func createSandbox(vibeHome, name, target, profile string, doc kitspec.Doc, merg
 		Target:  target,
 		Mounts:  mounts,
 	}); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		warnIfClockIsOff()
 		return err
 	}

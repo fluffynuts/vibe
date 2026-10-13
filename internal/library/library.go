@@ -16,6 +16,7 @@ import (
 
 	"vibe/internal/directive"
 	"vibe/internal/fscopy"
+	agentinstructions "vibe/internal/instructions"
 	"vibe/internal/kitspec"
 )
 
@@ -313,7 +314,9 @@ func Compose(features []string, dirFor DirFor, profileDir string) error {
 		}
 	}
 	if len(instructions) > 0 {
-		if err := appendInstructions(filepath.Join(profileDir, "agent-instructions.md"), instructions); err != nil {
+		// Apart from the user's own (instructions.File), which composing
+		// never touches.
+		if err := appendInstructions(filepath.Join(profileDir, agentinstructions.KitFile), instructions); err != nil {
 			return err
 		}
 	}
@@ -349,7 +352,7 @@ func mergeUnderProfile(path string, fragment kitspec.Doc) error {
 }
 
 // appendInstructions adds each feature's agent-instructions.md to the
-// profile's, after anything already there.
+// profile's kit instructions, after anything already there.
 func appendInstructions(path string, instructions []string) error {
 	existing, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {

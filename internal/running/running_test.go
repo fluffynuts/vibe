@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -163,5 +164,77 @@ func TestStopRequestedFiresOnRequest(t *testing.T) {
 	case <-s.StopRequested():
 	case <-time.After(5 * time.Second):
 		t.Fatal("stop request never noticed")
+	}
+}
+
+func TestAHoldIsAskedForOnceAndThenGone(t *testing.T) {
+	home := t.TempDir()
+	s, err := register(home, "/work/a", 101)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Release()
+	if s.HoldAsked() {
+		t.Fatal("asked before anyone asked")
+	}
+	if err := AskToHold(home, 101); err != nil {
+		t.Fatal(err)
+	}
+	if !s.HoldAsked() {
+		t.Error("the request wasn't seen")
+	}
+	if s.HoldAsked() {
+		t.Error("one request answered for two session endings")
+	}
+	AskToHold(home, 101)
+	CancelHold(home, 101)
+	if s.HoldAsked() {
+		t.Error("a cancelled request was still seen")
+	}
+}
+
+func TestAHoldLeftByAnEarlierProcessIsNotForThisOne(t *testing.T) {
+	home := t.TempDir()
+	AskToHold(home, 101)
+	s, err := register(home, "/work/a", 101)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Release()
+	if s.HoldAsked() {
+		t.Error("a stale request was taken for this process's")
+	}
+}
+
+func TestACancelRequestIsPassedOnAndAnswered(t *testing.T) {
+	home := t.TempDir()
+	s, err := register(home, "/work/a", os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Release()
+	go func() {
+		<-s.CancelRequested()
+		s.AnswerCancel("cancelled the agent's turn")
+	}()
+	answer, err := AskToCancel(home, os.Getpid(), 5*time.Second)
+	if err != nil || answer != "cancelled the agent's turn" {
+		t.Errorf("answer %q, %v", answer, err)
+	}
+}
+
+func TestAVibeThatNeverAnswersIsSaidToBeStuck(t *testing.T) {
+	home := t.TempDir()
+	s, err := register(home, "/work/a", os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Release()
+	_, err = AskToCancel(home, os.Getpid(), 300*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "may be stuck") {
+		t.Errorf("err = %v", err)
+	}
+	if _, err := os.Stat(cancelPath(home, os.Getpid())); !os.IsNotExist(err) {
+		t.Errorf("the unanswered request was left behind: %v", err)
 	}
 }

@@ -27,6 +27,9 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe -p/--profile foo      use profile "foo" instead of the derived one
   vibe -s/--stop [path]      stop the sandbox for path (default: $PWD); with
                              -f, no sandbox there isn't an error
+  vibe --cancel [path]       cancel what the companion page for path has under
+                             way (the agent's turn, an Admin action), leaving
+                             the sandbox running
   vibe -S/--stop-all         stop every running sandbox, in parallel (asks
                              first; -f stops them without asking)
   vibe -c/--ssh [path]       ssh into the sandbox for path
@@ -140,8 +143,11 @@ func main() {
 
 func note(format string, a ...interface{}) {
 	line := fmt.Sprintf(format, a...)
-	fmt.Fprintf(os.Stderr, "vibe: %s\n", line)
 	teeNote(line)
+	if holdNote(line) {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "vibe: %s\n", line)
 }
 
 func run(argv []string) error {
@@ -279,7 +285,9 @@ func run(argv []string) error {
 
 	switch {
 	case args.Stop:
-		return doStop(name, target, args.Force)
+		return doStop(vibeHome, name, target, args.Force)
+	case args.Cancel:
+		return doCancel(vibeHome, target)
 	case args.Ssh:
 		return doSsh(name, target)
 	case args.Info:

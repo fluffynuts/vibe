@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"vibe/internal/fscopy"
+	"vibe/internal/instructions"
 	"vibe/internal/layout"
 	"vibe/internal/sbxinstall"
 	"vibe/internal/upgrade"
@@ -56,6 +57,13 @@ func doInstall(lay layout.Layout, force bool, strategyValue string) error {
 	// First, so the upgrade doesn't also ask about each file in a copy
 	// that goes as a whole.
 	retireShadowedFeatures(lay, time.Now(), decideShadowed)
+	// The user's instructions for every sandbox's agent: theirs, so made
+	// once, empty, and never touched again.
+	if created, err := instructions.EnsureFile(lay.HomePath(instructions.File)); err != nil {
+		note("  WARNING: couldn't create %s: %s", displayPath(lay.HomePath(instructions.File)), err)
+	} else if created {
+		note("  created %s, for instructions to every sandbox's agent", displayPath(lay.HomePath(instructions.File)))
+	}
 	res, err := upgrade.Run(upgrade.Options{
 		Package:       lay.Bundle,
 		Home:          lay.Home,

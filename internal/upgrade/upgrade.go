@@ -495,3 +495,25 @@ func pruneBase(base string, rels []string) error {
 	}
 	return err
 }
+
+// MergeText is merge for text in hand rather than in files: mine and
+// theirs both changed from base, merged where git can. ok is false, with
+// why, when they overlap or git isn't there.
+func MergeText(base, mine, theirs []byte) (merged []byte, ok bool, why string) {
+	dir, err := os.MkdirTemp("", "vibe-merge-")
+	if err != nil {
+		return nil, false, err.Error()
+	}
+	defer os.RemoveAll(dir)
+	paths := map[string][]byte{"mine": mine, "base": base, "theirs": theirs}
+	for name, text := range paths {
+		if err := os.WriteFile(filepath.Join(dir, name), text, 0o600); err != nil {
+			return nil, false, err.Error()
+		}
+	}
+	merged, ok, why = merge(filepath.Join(dir, "mine"), filepath.Join(dir, "base"), filepath.Join(dir, "theirs"), true, mine, base, theirs)
+	if !ok && strings.Contains(why, "the package's") {
+		why = "the changes here and on disk overlap"
+	}
+	return merged, ok, why
+}

@@ -207,6 +207,9 @@ vibe -n/--name custom .    # override the derived sandbox name
 vibe -p/--profile foo      # use profile "foo" instead of the derived one
 vibe -s/--stop [path]      # stop the sandbox for path (default: $PWD); with -f,
                            #    no sandbox there isn't an error
+vibe --cancel [path]       # cancel what the companion page for path has under way
+                           #    (the agent's turn, an Admin action); the sandbox
+                           #    keeps running
 vibe -S/--stop-all         # stop every running sandbox, in parallel, showing each
                            #    one's progress (asks first; -f: without asking)
 vibe -c/--ssh [path]       # ssh into the sandbox for path
@@ -458,9 +461,12 @@ you're looking at:
 
 - **Conversation** — talk to the agent from the page, with the sandbox's clipboard page (see
   `clipboard-bridge` below) embedded beside it: paste images and files anywhere on the tab and they go
-  to the clipboard. Each message shows the time it was said, and each prompt you send carries ticks like a chat message: one grey tick once vibe has
+  to the clipboard. The agent's replies are shown as Markdown — headings, lists, tables, code — built as
+  text, so nothing it writes can become markup on the page; links open only to this machine's own pages.
+  Each message shows the time it was said, and each prompt you send carries ticks like a chat message: one grey tick once vibe has
   it, two grey ticks once it has reached the sandbox, and two blue ticks once the agent has started
-  answering. While it works with nothing new to show for a second, three dots show it's still at it,
+  answering. If it has been answering for an hour without a word, the pane says it may be stuck (it's
+  left running: stopping it is up to you, with **Stop**, or `vibe --cancel` from a terminal). For as long as it is answering, three dots below its latest message show it's still at it,
   as in a chat app. Typing `/` at the start of a prompt lists the agent's slash commands, filtered as
   you type with the closest match picked: Tab (or Enter) completes it, the arrow keys pick another.
   vibe learns the list from the agent as it starts, so it shows once the agent has answered a prompt.
@@ -489,8 +495,18 @@ you're looking at:
   whether newer releases of vibe or Docker SBX are out (with a dot on the tab when they are), and shows
   the sandbox's GitHub token, read-only, with a link to make or renew one on GitHub. Each action shows the
   command it matches and asks first, and nothing that takes the sandbox away runs while the agent is
-  answering. When the sandbox is stopped or rebuilt, from here or with `vibe --stop` or sbx, vibe keeps
+  answering. An action taking far longer than it should (3 minutes for start, stop or saving memories,
+  15 for a rebuild) is flagged as possibly stuck, with what to check, while vibe keeps waiting for it;
+  **Cancel** on the action's card ends it (a rebuild asks first, as it may leave the sandbox half-made),
+  and the card then says what state the sandbox is in. `vibe --cancel` does the same from a terminal.
+  When the sandbox is stopped or rebuilt, from here or with `vibe --stop` or sbx, vibe keeps
   serving the page; the terminal session attaches again once the sandbox is back (Ctrl-C ends vibe).
+  It also edits your [instructions to the agent](#your-instructions-to-the-agent): **Save** asks what to do when the file has
+  changed on disk since (merge, overwrite, or reload), and **Optimise** asks the agent for a tidier
+  version, leaving out what's repeated or already in the universal file, for you to **Accept** or
+  **Revert** (Ctrl-Z works throughout). While a session is attached, vibe keeps its messages out of the
+  terminal, which is the agent's screen then, and prints them when the session ends; the terminal's
+  title says when the agent is optimising.
 
 Every change shows the exact `sbx` command it will run and waits for you to confirm. A change only ever
 adds or removes a rule scoped to *this* sandbox: global and org rules are listed but not touched, and a
@@ -628,7 +644,9 @@ profiles/
     settings.yaml         # profile-specific settings, merged over the base ones
     install-scripts/      # profile-specific setup steps, run after defaults'
     agent-files/           # profile-specific files, deployed after defaults'
-    agent-instructions.md # appended to the base kit's agent instructions
+    agent-instructions.md # your instructions for this profile's agent, loaded every session
+    kit-instructions.md   # the features' instructions (guided profiles; re-composing rewrites it)
+agent-instructions.md     # your instructions for every sandbox's agent, loaded every session
 ```
 
 On each run, `vibe` derives the sandbox's **profile** (`--profile`, else `--name`, else the
@@ -646,8 +664,35 @@ target folder's leaf name) and generates a kit spec for `sbx create --kit` from:
 - `startup`: if either agent-files tree provides `.local/bin/on-start`, it's added as a
   backgrounded root step. Make it idempotent — it also gets re-invoked (harmlessly) on every
   `vibe` attach, to work around `setup.startup` not firing on a sandbox's very first boot.
-- `agentInstructions.content`: the base kit's content, with the profile's `agent-instructions.md`
-  appended.
+- `agentInstructions.content`: the base kit's content, with the profile's `kit-instructions.md`
+  appended. sbx offers these to the agent as reading for when a feature is relevant.
+
+### Your instructions to the agent
+
+Two files are yours, for standing instructions the agent should always follow:
+
+- `~/.vibe/agent-instructions.md`: for every sandbox (`vibe --install` makes it, empty).
+- `~/.vibe/profiles/<profile>/agent-instructions.md`: for that profile's sandboxes (made, empty, with
+  the profile).
+
+They're merged, the universal file first, under "Universal instructions" and "Project-specific
+instructions" headings, and a blank file is left out. Unlike the features' instructions, the agent
+loads them at the start of **every** session, including each prompt from the companion page. For
+Claude, vibe writes the merged text to `~/.claude/vibe-instructions.md` in the sandbox and imports it
+from `~/.claude/CLAUDE.md`; Gemini gets the same through `~/.gemini/GEMINI.md`, and Codex gets the text
+itself in `~/.codex/AGENTS.md`. vibe's part of those files sits between `<!-- vibe: instructions … -->`
+markers, and the rest is left alone: the agent writes there too, when asked to remember something.
+Other agents don't load them yet.
+
+They're applied whenever a sandbox starts, and straight away to running sandboxes when you save one
+from the companion page's Admin tab. A session already open in the terminal picks changes up when it
+restarts, or when you ask it to re-read `~/.claude/vibe-instructions.md`.
+
+A guided profile from before this keeps the features' instructions in its `agent-instructions.md`:
+the next time it's used or re-composed, they move to `kit-instructions.md` and an empty
+`agent-instructions.md` takes their place. A hand-made profile's `agent-instructions.md` was its
+author's own, and becomes its project instructions as it is. Re-composing carries the profile's
+`agent-instructions.md` across.
 
 ## Writing a profile
 
@@ -737,8 +782,8 @@ library/
 
 Composing writes all of that into the new profile: install scripts are renumbered so the features
 run in the order you picked, `agent-files/.local/bin/*` scripts get an `on-start` generated to run
-them, and the `config.yaml` / `settings.yaml` / `agent-instructions.md` fragments are merged into
-the profile's own (lists append in feature order; anything the profile itself sets wins). A
+them, and the `config.yaml` / `settings.yaml` fragments are merged into the profile's own, and the
+`agent-instructions.md` ones into its `kit-instructions.md` (lists append in feature order; anything the profile itself sets wins). A
 feature therefore carries the ports, permissions and instructions its tooling needs — picking
 `diffity` is what gives a sandbox the review viewer, its published port and `$VIBE_DIFFITY_URL`,
 the `registry.npmjs.org` egress rule and the agent instructions for using it.
@@ -780,8 +825,10 @@ item whenever sbx's answer is empty. The history keeps the newest 25 items (and 
 them), in `~/.vibe/clipboard/<sandbox>/` on your machine: vibe mounts that into the sandbox, where it
 shows as `~/.local/state/vibe/clipboard/`, so what you pasted survives the sandbox being rebuilt (`-r`,
 `-C`). `--delete` and `--cleanup` remove it with the sandbox. A sandbox made before this keeps its
-history inside itself until it is next rebuilt. The server logs to `/tmp/clipboard.log` and
-`/tmp/clipboard-server.log`.
+history inside itself until it is next rebuilt. `start-clipboard` waits for the server to say it's
+listening: a server that crashes is reported at once, and one that hasn't started within 30 seconds is
+reported as stuck. Either way the companion's clipboard pane shows why. The server logs to
+`/tmp/clipboard.log` and `/tmp/clipboard-server.log`.
 
 The profile that comes out is an ordinary profile directory: edit it afterwards like any other.
 Composing happens **once**, when the profile is created — the library is never read again, so a

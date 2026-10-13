@@ -33,13 +33,30 @@ func stopPath(vibeHome string, pid int) string {
 	return filepath.Join(Dir(vibeHome), strconv.Itoa(pid)+".stop")
 }
 
+func cancelPath(vibeHome string, pid int) string {
+	return filepath.Join(Dir(vibeHome), strconv.Itoa(pid)+".cancel")
+}
+
+func answerPath(vibeHome string, pid int) string {
+	return filepath.Join(Dir(vibeHome), strconv.Itoa(pid)+".cancelled")
+}
+
+func holdPath(vibeHome string, pid int) string {
+	return filepath.Join(Dir(vibeHome), strconv.Itoa(pid)+".hold")
+}
+
 // Session is this process's claim on a folder. The file must stay open for
 // the claim to hold, so keep the Session until the process exits.
 type Session struct {
 	file     *os.File
 	stopFile string
-	stop     chan struct{}
-	done     chan struct{}
+	holdFile string
+	// cancelFile is a request to cancel what the page has under way, which
+	// is answered in answerFile; cancels passes each request on.
+	cancelFile, answerFile string
+	cancels                chan struct{}
+	stop                   chan struct{}
+	done                   chan struct{}
 }
 
 // stopPollInterval is how often a Session looks for a stop request.
@@ -57,6 +74,9 @@ func register(vibeHome, target string, pid int) (*Session, error) {
 	// A request left over from an earlier process with this PID is not
 	// meant for this one.
 	os.Remove(stopPath(vibeHome, pid))
+	os.Remove(holdPath(vibeHome, pid))
+	os.Remove(cancelPath(vibeHome, pid))
+	os.Remove(answerPath(vibeHome, pid))
 	f, err := os.OpenFile(lockPath(vibeHome, pid), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		return nil, err
@@ -70,10 +90,14 @@ func register(vibeHome, target string, pid int) (*Session, error) {
 		return nil, err
 	}
 	s := &Session{
-		file:     f,
-		stopFile: stopPath(vibeHome, pid),
-		stop:     make(chan struct{}),
-		done:     make(chan struct{}),
+		file:       f,
+		stopFile:   stopPath(vibeHome, pid),
+		holdFile:   holdPath(vibeHome, pid),
+		cancelFile: cancelPath(vibeHome, pid),
+		answerFile: answerPath(vibeHome, pid),
+		cancels:    make(chan struct{}, 1),
+		stop:       make(chan struct{}),
+		done:       make(chan struct{}),
 	}
 	go s.watch()
 	return s, nil
@@ -90,6 +114,12 @@ func (s *Session) watch() {
 			if _, err := os.Stat(s.stopFile); err == nil {
 				close(s.stop)
 				return
+			}
+			if os.Remove(s.cancelFile) == nil {
+				select {
+				case s.cancels <- struct{}{}:
+				default: // one is already waiting to be handled
+				}
 			}
 		}
 	}
@@ -117,6 +147,71 @@ func (s *Session) Release() {
 	s.file = nil
 	os.Remove(name)
 	os.Remove(s.stopFile)
+	os.Remove(s.holdFile)
+	os.Remove(s.cancelFile)
+	os.Remove(s.answerFile)
+}
+
+// CancelRequested delivers each request another vibe makes (AskToCancel)
+// for this one to cancel what its companion page has under way. A nil
+// Session never has any.
+func (s *Session) CancelRequested() <-chan struct{} {
+	if s == nil {
+		return nil
+	}
+	return s.cancels
+}
+
+// AnswerCancel tells the vibe that asked what was cancelled.
+func (s *Session) AnswerCancel(answer string) error {
+	return os.WriteFile(s.answerFile, []byte(answer), 0o644)
+}
+
+// AskToCancel asks the vibe with pid to cancel what its companion page has
+// under way (the agent's turn, an Admin action), and returns its answer.
+// within is a backstop: answering takes a moment, so a vibe that hasn't
+// answered by then is stuck, and that is the error.
+func AskToCancel(vibeHome string, pid int, within time.Duration) (string, error) {
+	if !held(lockPath(vibeHome, pid)) {
+		return "", fmt.Errorf("vibe (PID %d) isn't running any more", pid)
+	}
+	answer := answerPath(vibeHome, pid)
+	os.Remove(answer)
+	if err := os.WriteFile(cancelPath(vibeHome, pid), nil, 0o644); err != nil {
+		return "", fmt.Errorf("asking vibe (PID %d) to cancel: %w", pid, err)
+	}
+	for deadline := time.Now().Add(within); ; {
+		if data, err := os.ReadFile(answer); err == nil {
+			os.Remove(answer)
+			return string(data), nil
+		}
+		if time.Now().After(deadline) {
+			os.Remove(cancelPath(vibeHome, pid))
+			return "", fmt.Errorf("vibe (PID %d) didn't answer within %s — it may be stuck", pid, within)
+		}
+		time.Sleep(stopPollInterval)
+	}
+}
+
+// AskToHold tells the vibe with pid that its sandbox is about to be stopped
+// on purpose, from outside it ('vibe --stop'): when its session ends, that
+// is why, and it should keep its companion page up rather than end.
+func AskToHold(vibeHome string, pid int) error {
+	return os.WriteFile(holdPath(vibeHome, pid), nil, 0o644)
+}
+
+// CancelHold takes AskToHold back, for a stop that didn't happen.
+func CancelHold(vibeHome string, pid int) {
+	os.Remove(holdPath(vibeHome, pid))
+}
+
+// HoldAsked says whether another vibe has asked this one to hold (see
+// AskToHold), and takes the request: it answers for one session ending.
+func (s *Session) HoldAsked() bool {
+	if s == nil || s.holdFile == "" {
+		return false
+	}
+	return os.Remove(s.holdFile) == nil
 }
 
 // held reports whether a live process still holds the lock file at path,
@@ -133,6 +228,9 @@ func held(path string) bool {
 	f.Close()
 	os.Remove(path)
 	os.Remove(strings.TrimSuffix(path, ".lock") + ".stop")
+	os.Remove(strings.TrimSuffix(path, ".lock") + ".hold")
+	os.Remove(strings.TrimSuffix(path, ".lock") + ".cancel")
+	os.Remove(strings.TrimSuffix(path, ".lock") + ".cancelled")
 	return false
 }
 

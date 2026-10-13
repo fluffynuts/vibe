@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -58,5 +59,43 @@ func TestStopReportsAFailureUnlessForceFindsItStoppedAnyway(t *testing.T) {
 	half = &fakeStopper{there: true, running: true, known: true, code: 1, stopsAnyway: true}
 	if code, err := stopSandbox(half.stopper(), "box", "/w", true); code != 0 || err != nil {
 		t.Errorf("with -f, a failed stop that stopped it anyway: %d, %v", code, err)
+	}
+}
+
+func TestStopAsksWhatIsAttachedToHoldOnlyWhileTheStopHolds(t *testing.T) {
+	var events []string
+	withHold := func(f *fakeStopper) stopper {
+		s := f.stopper()
+		s.stop = func(name string) (int, error) {
+			events = append(events, "stop")
+			f.stopped++
+			if f.code == 0 || f.stopsAnyway {
+				f.running = false
+			}
+			return f.code, nil
+		}
+		s.hold = func() { events = append(events, "hold") }
+		s.unhold = func() { events = append(events, "unhold") }
+		return s
+	}
+
+	stopsFine := &fakeStopper{there: true, running: true, known: true}
+	stopSandbox(withHold(stopsFine), "box", "/w", false)
+	if got := strings.Join(events, ","); got != "hold,stop" {
+		t.Errorf("a stop that worked: %s", got)
+	}
+
+	events = nil
+	stuck := &fakeStopper{there: true, running: true, known: true, code: 1}
+	stopSandbox(withHold(stuck), "box", "/w", true)
+	if got := strings.Join(events, ","); got != "hold,stop,unhold" {
+		t.Errorf("a stop that left it running: %s", got)
+	}
+
+	events = nil
+	stopped := &fakeStopper{there: true, known: true}
+	stopSandbox(withHold(stopped), "box", "/w", false)
+	if len(events) != 0 {
+		t.Errorf("a sandbox already stopped: %v", events)
 	}
 }

@@ -658,3 +658,48 @@ func TestTheSlashCommandsOutliveTheServer(t *testing.T) {
 		t.Errorf("after a restart: %v, sent %v", commands, sent)
 	}
 }
+
+func quietOf(t *testing.T, s *Server) int {
+	t.Helper()
+	rec := do(t, s, req{path: "/api/conversation?after=0", headers: authed(nil)})
+	var body struct {
+		Quiet int `json:"quietMinutes"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	return body.Quiet
+}
+
+func TestALongQuietTurnIsSaidToBeQuietButNotStopped(t *testing.T) {
+	clock := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	s := converseServer(&fakeAgent{})
+	c := &s.convo
+	c.now = func() time.Time { return clock }
+	c.begin("long job")
+
+	clock = clock.Add(59 * time.Minute)
+	if q := quietOf(t, s); q != 0 {
+		t.Errorf("after 59 quiet minutes: %d", q)
+	}
+	clock = clock.Add(2 * time.Minute)
+	if q := quietOf(t, s); q != 61 {
+		t.Errorf("after 61 quiet minutes: %d", q)
+	}
+	if !c.running {
+		t.Error("the turn was stopped")
+	}
+	// Anything the agent says ends the quiet.
+	c.line([]byte(`{"type":"assistant"}`))
+	if q := quietOf(t, s); q != 0 {
+		t.Errorf("after the agent spoke: %d", q)
+	}
+	// Answered, with work left in the background: not the agent being quiet.
+	c.line([]byte(`{"type":"result"}`))
+	clock = clock.Add(3 * time.Hour)
+	if q := quietOf(t, s); q != 0 {
+		t.Errorf("answered, three hours on: %d", q)
+	}
+	c.finish(nil, false)
+	if q := quietOf(t, s); q != 0 {
+		t.Errorf("no turn at all: %d", q)
+	}
+}

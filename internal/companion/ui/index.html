@@ -127,6 +127,7 @@
         <section class="card" id="admin-job-card" aria-labelledby="admin-job-h" hidden>
           <h2 id="admin-job-h">Last action <span id="admin-job-state" class="pill"></span></h2>
           <pre id="admin-job" class="info log" role="log" aria-live="polite"></pre>
+          <div class="bar"><button type="button" id="admin-cancel" class="danger" hidden>Cancel</button></div>
         </section>
 
         <section class="card" aria-labelledby="admin-features-h">
@@ -152,6 +153,12 @@
           <ol id="admin-git-steps" class="steps" hidden></ol>
         </section>
 
+        <section class="card card-wide" aria-labelledby="admin-instructions-h">
+          <h2 id="admin-instructions-h">Agent instructions</h2>
+          <p id="admin-instructions-note" class="note muted"></p>
+          <div id="admin-instructions" class="instructions"></div>
+        </section>
+
         <section class="card" aria-labelledby="admin-backups-h">
           <h2 id="admin-backups-h">Profile backups</h2>
           <p class="note muted">Taken each time the profile is re-composed. Restoring one re-composes from it and rebuilds the sandbox.</p>
@@ -160,6 +167,23 @@
       </div>
     </section>
   </main>
+
+  <dialog id="changed">
+    <form method="dialog">
+      <h2>This file has changed on disk</h2>
+      <p id="changed-path" class="muted"></p>
+      <p>What would you like to do?</p>
+      <div class="choices" role="radiogroup">
+        <label><input type="radio" name="changed" value="merge"> merge your changes here into it <span id="changed-why" class="muted"></span></label>
+        <label><input type="radio" name="changed" value="overwrite"> overwrite it</label>
+        <label><input type="radio" name="changed" value="reload"> discard your changes here and reload from disk</label>
+      </div>
+      <div class="actions">
+        <button value="cancel" class="ghost">Cancel</button>
+        <button value="go" id="changed-go">Continue</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="confirm">
     <form method="dialog">
@@ -175,6 +199,7 @@
   </dialog>
 
   <div id="toast" class="toast" role="status" hidden></div>
+  <script src="/markdown.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

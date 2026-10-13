@@ -418,3 +418,14 @@ func TestAChangedFileThePackageDroppedIsTheUsersToDecide(t *testing.T) {
 		})
 	}
 }
+
+func TestMergeTextMergesWhatDoesntOverlap(t *testing.T) {
+	requireGit(t)
+	merged, ok, why := MergeText([]byte(original), []byte(userBottom), []byte(packageTop))
+	if !ok || string(merged) != bothMerged {
+		t.Errorf("merged %q, %v (%s)", merged, ok, why)
+	}
+	if _, ok, why := MergeText([]byte(original), []byte(userClash), []byte(packageClash)); ok || !strings.Contains(why, "overlap") {
+		t.Errorf("a clash merged: %v (%s)", ok, why)
+	}
+}

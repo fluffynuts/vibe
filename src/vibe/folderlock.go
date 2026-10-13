@@ -36,6 +36,10 @@ func guardFolder(vibeHome, target string, force bool) error {
 	}
 	session = s
 	go exitOnStopRequest(s)
+	// From the moment it has the folder, so 'vibe --cancel' is answered
+	// even before there's a page (at a prompt, or while sbx creates the
+	// sandbox) rather than taken for a vibe that's stuck.
+	go answerCancels(s, cancelPage, nil)
 	return nil
 }
 

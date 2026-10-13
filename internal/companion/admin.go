@@ -1,8 +1,10 @@
 package companion
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -21,7 +23,8 @@ type Admin interface {
 	// found. It may be slow.
 	Upgrades(fresh bool) []string
 	// Do carries out an action, saying what it does as it goes through log.
-	Do(action AdminAction, log func(string)) error
+	// ctx ending (the tab's Cancel, or 'vibe --cancel') ends it.
+	Do(ctx context.Context, action AdminAction, log func(string)) error
 }
 
 // What the tab can ask for.
@@ -38,6 +41,15 @@ const (
 // under the agent.
 var adminKinds = map[string]bool{
 	AdminStart: false, AdminStop: true, AdminReInit: true, AdminReCompose: true, AdminRestore: true, AdminMemories: false,
+}
+
+// adminSlow is, for each action, many times how long it normally takes.
+// Past it, the tab says the action may be stuck and what to check — and
+// keeps waiting: stopping sbx half-way through a rebuild could leave a
+// broken sandbox, worse than a slow one. A variable for tests.
+var adminSlow = map[string]time.Duration{
+	AdminStart: 3 * time.Minute, AdminStop: 3 * time.Minute, AdminMemories: 3 * time.Minute,
+	AdminReInit: 15 * time.Minute, AdminReCompose: 15 * time.Minute, AdminRestore: 15 * time.Minute,
 }
 
 // AdminAction is an action the tab asked for.
@@ -115,8 +127,12 @@ type adminJob struct {
 	Running bool     `json:"running"`
 	Lines   []string `json:"lines"`
 	Error   string   `json:"error,omitempty"`
-	Started int64    `json:"started"`
-	Ended   int64    `json:"ended,omitempty"`
+	// Warning says the action has run far longer than it should.
+	Warning string `json:"warning,omitempty"`
+	// Cancelled says it was cancelled (the tab's Cancel, or --cancel).
+	Cancelled bool  `json:"cancelled,omitempty"`
+	Started   int64 `json:"started"`
+	Ended     int64 `json:"ended,omitempty"`
 }
 
 // admin is the server's side of the tab: the action in hand, and what the
@@ -124,6 +140,7 @@ type adminJob struct {
 type admin struct {
 	mu       sync.Mutex
 	job      *adminJob
+	cancel   context.CancelFunc // ends job, while it runs
 	upgrades []string
 	checked  bool
 	checking bool
@@ -209,12 +226,51 @@ func (s *Server) beginAdmin(action AdminAction, destructive bool) error {
 		return errors.New("the agent is answering: stop it first")
 	}
 	job := &adminJob{Kind: action.Kind, Running: true, Lines: []string{}, Started: time.Now().UnixMilli()}
-	s.admin.job = job
-	go s.runAdmin(action, job)
+	ctx, cancel := context.WithCancel(context.Background())
+	s.admin.job, s.admin.cancel = job, cancel
+	go s.runAdmin(ctx, action, job)
 	return nil
 }
 
-func (s *Server) runAdmin(action AdminAction, job *adminJob) {
+// cancelAdmin cancels the action under way, saying whether there was one.
+func (s *Server) cancelAdmin() (string, bool) {
+	s.admin.mu.Lock()
+	defer s.admin.mu.Unlock()
+	if s.admin.job == nil || !s.admin.job.Running || s.admin.cancel == nil {
+		return "", false
+	}
+	s.admin.job.Cancelled = true
+	s.admin.job.Lines = append(s.admin.job.Lines, "", "cancelling…")
+	s.admin.cancel()
+	return s.admin.job.Kind, true
+}
+
+func (s *Server) adminCancel(w http.ResponseWriter, r *http.Request) {
+	kind, ok := s.cancelAdmin()
+	writeJSON(w, http.StatusOK, map[string]interface{}{"cancelled": ok, "kind": kind})
+}
+
+// Cancel ends whatever the page has under way — the agent's turn, an Admin
+// action — as its Stop and Cancel buttons do, and says what it ended (in
+// words, for 'vibe --cancel' to print); none, when nothing was running.
+func (s *Server) Cancel() []string {
+	var ended []string
+	if s.convo.stop() {
+		ended = append(ended, "the agent's turn")
+	}
+	if kind, ok := s.cancelAdmin(); ok {
+		ended = append(ended, "the Admin tab's "+adminWords[kind])
+	}
+	return ended
+}
+
+// adminWords name the actions for people.
+var adminWords = map[string]string{
+	AdminStart: "start", AdminStop: "stop", AdminReInit: "rebuild", AdminReCompose: "re-compose",
+	AdminRestore: "restore", AdminMemories: "memory save",
+}
+
+func (s *Server) runAdmin(ctx context.Context, action AdminAction, job *adminJob) {
 	log := func(line string) {
 		line = strings.TrimRight(line, "\n")
 		s.admin.mu.Lock()
@@ -224,7 +280,18 @@ func (s *Server) runAdmin(action AdminAction, job *adminJob) {
 			job.Lines = append([]string{}, job.Lines[over:]...)
 		}
 	}
-	err := s.cfg.Admin.Do(action, log)
+	slow := time.AfterFunc(adminSlow[action.Kind], func() {
+		s.admin.mu.Lock()
+		defer s.admin.mu.Unlock()
+		if !job.Running {
+			return
+		}
+		job.Warning = fmt.Sprintf("This has been running for %s, far longer than it should — sbx may be stuck. "+
+			"vibe is still waiting for it; 'sbx ls' in a terminal shows the sandbox's state.", adminSlow[action.Kind])
+		job.Lines = append(job.Lines, "", "⚠ "+job.Warning)
+	})
+	defer slow.Stop()
+	err := s.cfg.Admin.Do(ctx, action, log)
 	s.admin.mu.Lock()
 	job.Running = false
 	job.Ended = time.Now().UnixMilli()

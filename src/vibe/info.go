@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -54,7 +55,7 @@ type sandboxUsage struct {
 // running, its memory and disk use. A stopped sandbox isn't started: that
 // would be a slow and surprising side effect of asking a question.
 func doInfo(lay layout.Layout, args cliargs.Args, name, target string) error {
-	info, profileKnown, err := gatherInfo(lay, args, name, target)
+	info, profileKnown, err := gatherInfo(context.Background(), lay, args, name, target)
 	if err != nil {
 		return err
 	}
@@ -63,8 +64,8 @@ func doInfo(lay layout.Layout, args cliargs.Args, name, target string) error {
 }
 
 // gatherInfo is what --info shows of the sandbox for target, and whether its
-// profile is known.
-func gatherInfo(lay layout.Layout, args cliargs.Args, name, target string) (sandboxInfo, bool, error) {
+// profile is known; ctx ending gives up on sbx.
+func gatherInfo(ctx context.Context, lay layout.Layout, args cliargs.Args, name, target string) (sandboxInfo, bool, error) {
 	profile, err := resolveReInitProfile(lay.Home, args, name, target)
 	if err != nil {
 		return sandboxInfo{}, false, err
@@ -83,7 +84,7 @@ func gatherInfo(lay layout.Layout, args cliargs.Args, name, target string) (sand
 		info.guided = profilegen.IsGuided(lay.ProfileDir(profile))
 		info.features, _ = profilegen.WithoutBase(profilegen.ComposedFrom(lay.ProfileDir(profile)), lay.BaseFeatures())
 	}
-	statuses, err := sbxrun.List()
+	statuses, err := sbxrun.ListContext(ctx)
 	if err != nil {
 		return info, false, err
 	}
@@ -93,7 +94,7 @@ func gatherInfo(lay layout.Layout, args cliargs.Args, name, target string) (sand
 		}
 	}
 	if info.running {
-		u, err := liveUsage(name)
+		u, err := liveUsage(ctx, name)
 		if err != nil {
 			info.usageErr = err
 		} else {
@@ -105,21 +106,21 @@ func gatherInfo(lay layout.Layout, args cliargs.Args, name, target string) (sand
 
 // liveUsage reads a running sandbox's uptime, memory and root disk use from
 // inside it.
-func liveUsage(name string) (sandboxUsage, error) {
+func liveUsage(ctx context.Context, name string) (sandboxUsage, error) {
 	var u sandboxUsage
 	// Uptime is a nicety: not being able to read it is no reason to hide the
 	// memory and disk figures, which are what --info is for.
-	if out, err := sbxrun.ExecCapture(name, "cat", "/proc/uptime"); err == nil {
+	if out, err := sbxrun.ExecCaptureContext(ctx, name, "cat", "/proc/uptime"); err == nil {
 		u.uptime, _ = parseUptime(out)
 	}
-	out, err := sbxrun.ExecCapture(name, "cat", "/proc/meminfo")
+	out, err := sbxrun.ExecCaptureContext(ctx, name, "cat", "/proc/meminfo")
 	if err != nil {
 		return u, fmt.Errorf("reading /proc/meminfo: %w", err)
 	}
 	if u.memTotal, u.memAvailable, err = parseMeminfo(out); err != nil {
 		return u, err
 	}
-	out, err = sbxrun.ExecCapture(name, "df", "-Pk", "/")
+	out, err = sbxrun.ExecCaptureContext(ctx, name, "df", "-Pk", "/")
 	if err != nil {
 		return u, fmt.Errorf("running df: %w", err)
 	}
@@ -128,7 +129,7 @@ func liveUsage(name string) (sandboxUsage, error) {
 	}
 	// No Docker in the sandbox, or Docker's data on the root filesystem:
 	// either way, nothing to report apart.
-	if out, err := sbxrun.ExecCapture(name, "df", "-Pk", dockerDataDir); err == nil {
+	if out, err := sbxrun.ExecCaptureContext(ctx, name, "df", "-Pk", dockerDataDir); err == nil {
 		if size, used, mount, err := parseDf(out); err == nil && mount == dockerDataDir {
 			u.dockerSize, u.dockerUsed = size, used
 		}

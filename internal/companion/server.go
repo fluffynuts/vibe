@@ -63,6 +63,10 @@ type Config struct {
 	// ClipboardReady says whether the clipboard page at url has come up
 	// yet; nil means probeClipboard, which wants a 200 from it.
 	ClipboardReady func(url string) bool
+	// ClipboardTrouble says why the clipboard page didn't come up, when the
+	// sandbox's start-clipboard said ("" when it didn't, or hasn't run);
+	// asked for only while the page isn't up. Nil means it can't be asked.
+	ClipboardTrouble func() string
 	// StartClipboard pokes the sandbox to start its clipboard page's server
 	// (it is a no-op when that is already running), returning the sbx
 	// arguments it ran; nil means the page can't offer to.
@@ -187,6 +191,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /{$}", static)
 	mux.Handle("GET /app.js", static)
 	mux.Handle("GET /app.css", static)
+	mux.Handle("GET /markdown.js", static)
 
 	mux.HandleFunc("GET /api/ping", s.ping)
 	mux.HandleFunc("GET /api/state", s.authed(s.state))
@@ -204,6 +209,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin", s.authed(s.adminState))
 	mux.HandleFunc("POST /api/admin/do", s.administering(s.adminDo))
 	mux.HandleFunc("POST /api/admin/upgrades", s.administering(s.adminCheckUpgrades))
+	mux.HandleFunc("POST /api/admin/cancel", s.administering(s.adminCancel))
+	mux.HandleFunc("GET /api/admin/instructions", s.authed(s.instructionsState))
+	mux.HandleFunc("POST /api/admin/instructions", s.editing(s.instructionsSave))
+	mux.HandleFunc("POST /api/admin/instructions/optimise", s.editing(s.instructionsOptimise))
 
 	return s.guarded(mux)
 }
@@ -310,10 +319,20 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"git":               git,
 		"clipboardUrl":      clipboard,
 		"clipboardReady":    ready,
+		"clipboardTrouble":  s.clipboardTrouble(clipboard, ready),
 		"clipboardCanStart": clipboard != "" && s.cfg.StartClipboard != nil,
 		"conversation":      s.cfg.Converse != nil,
 		"admin":             s.cfg.Admin != nil,
 	})
+}
+
+// clipboardTrouble is why the clipboard page at url isn't up, if the sandbox
+// said: shared between the page's polls, since it asks the sandbox.
+func (s *Server) clipboardTrouble(url string, ready bool) string {
+	if url == "" || ready || s.cfg.ClipboardTrouble == nil {
+		return ""
+	}
+	return cached(s.cache, "clipboard-trouble", 10*time.Second, s.cfg.ClipboardTrouble)
 }
 
 // probeClient is for probeClipboard: never through a proxy (the page is on

@@ -270,21 +270,26 @@ func TestComposeMergesFragmentsUnderTheProfile(t *testing.T) {
 		!strings.Contains(read(t, filepath.Join(profile, "settings.yaml")), "diffity") {
 		t.Error("the feature's settings fragment did not reach the profile")
 	}
-	if got, want := read(t, filepath.Join(profile, "agent-instructions.md")),
+	// The kits' instructions go to the profile's kit-instructions.md, not
+	// the user's own agent-instructions.md, which composing never writes.
+	if got, want := read(t, filepath.Join(profile, "kit-instructions.md")),
 		"## Diffity\n\nreview tooling.\n\n## Toolchain\n\ndotnet.\n"; got != want {
-		t.Errorf("agent-instructions.md =\n%q\nwant\n%q", got, want)
+		t.Errorf("kit-instructions.md =\n%q\nwant\n%q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(profile, "agent-instructions.md")); !os.IsNotExist(err) {
+		t.Errorf("composing wrote the user's agent-instructions.md: %v", err)
 	}
 }
 
 // TestComposeLeavesFragmentlessFeaturesAlone keeps Compose from writing a
-// settings.yaml or agent-instructions.md a profile never asked for.
+// settings.yaml or instructions a profile never asked for.
 func TestComposeLeavesFragmentlessFeaturesAlone(t *testing.T) {
 	dir := seedTwoFeatures(t)
 	profile := filepath.Join(t.TempDir(), "demo")
 	if err := Compose([]string{"mysql", "rabbitmq"}, flatDirFor(dir), profile); err != nil {
 		t.Fatalf("Compose: %v", err)
 	}
-	for _, name := range []string{"config.yaml", "settings.yaml", "agent-instructions.md"} {
+	for _, name := range []string{"config.yaml", "settings.yaml", "agent-instructions.md", "kit-instructions.md"} {
 		if _, err := os.Stat(filepath.Join(profile, name)); err == nil {
 			t.Errorf("%s was created for features that carry no fragments", name)
 		}

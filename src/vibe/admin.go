@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"time"
+
 	"errors"
 	"fmt"
 	"os"
@@ -26,18 +29,32 @@ import (
 type companionAdmin struct {
 	lay          layout.Layout
 	name, target string
+	// listSandboxes is sbx ls (sbxrun.ListContext when nil), for tests to
+	// stand in for.
+	listSandboxes func(ctx context.Context) ([]sbxrun.Status, error)
 
 	mu       sync.Mutex
 	upgrades []string
 	checked  bool
 }
 
+// statusWithin is how long the tab's status may take: it is normally a
+// second or two of sbx calls.
+const statusWithin = 20 * time.Second
+
 // adminArgs are the arguments the tab's actions run with: nothing asked.
 var adminArgs = cliargs.Args{Force: true}
 
 func (a *companionAdmin) Status() companion.AdminStatus {
 	st := companion.AdminStatus{Commands: adminCommands(a.target), Features: []companion.AdminFeature{}, Backups: []companion.AdminBackup{}}
-	info, profileKnown, err := gatherInfo(a.lay, cliargs.Args{}, a.name, a.target)
+	// A backstop: the tab polls this, and a stuck sbx mustn't leave it
+	// waiting for good — it says the state is unknown, and why.
+	ctx, cancel := context.WithTimeout(context.Background(), statusWithin)
+	defer cancel()
+	info, profileKnown, err := gatherInfo(ctx, a.lay, cliargs.Args{}, a.name, a.target)
+	if ctx.Err() != nil {
+		err = fmt.Errorf("sbx didn't answer within %s, so the sandbox's state is unknown — 'sbx ls' in a terminal shows whether sbx itself is stuck", statusWithin)
+	}
 	var text strings.Builder
 	printInfo(&text, info, profileKnown)
 	st.Info = text.String()
@@ -136,38 +153,66 @@ func (a *companionAdmin) Upgrades(fresh bool) []string {
 	return found
 }
 
-func (a *companionAdmin) Do(action companion.AdminAction, log func(string)) error {
+func (a *companionAdmin) Do(ctx context.Context, action companion.AdminAction, log func(string)) error {
 	teeNotes(log)
 	defer teeNotes(nil)
+	err := a.do(ctx, action)
+	if ctx.Err() != nil {
+		// Cancelled: say where that left the sandbox, which sbx can tell.
+		err = fmt.Errorf("cancelled — %s", a.sandboxState())
+	}
+	return err
+}
+
+// sandboxState says, in words, what sbx says the sandbox is now.
+func (a *companionAdmin) sandboxState() string {
+	ctx, cancel := context.WithTimeout(context.Background(), statusWithin)
+	defer cancel()
+	statuses, err := sbxrun.ListContext(ctx)
+	if err != nil {
+		return "and sbx can't say what state the sandbox is in (" + err.Error() + ")"
+	}
+	for _, st := range statuses {
+		if st.Name == a.name {
+			if st.Running {
+				return fmt.Sprintf("sandbox '%s' is running", a.name)
+			}
+			return fmt.Sprintf("sandbox '%s' is stopped: Start it, or Rebuild if it was part-way through being made", a.name)
+		}
+	}
+	return fmt.Sprintf("sandbox '%s' is gone: Rebuild makes it again from its profile", a.name)
+}
+
+func (a *companionAdmin) do(ctx context.Context, action companion.AdminAction) error {
 	switch action.Kind {
 	case companion.AdminStart:
-		return a.start()
+		return a.start(ctx)
 	case companion.AdminStop:
 		hold.begin()
 		note("stopping sandbox '%s'", a.name)
-		if err := sbxrun.StopQuiet(a.name); err != nil {
+		if err := sbxrun.StopQuietContext(ctx, a.name); err != nil {
 			a.settle()
 			return err
 		}
 		note("stopped '%s' — start it again from this page, or with 'vibe' in its folder", a.name)
 		return nil
 	case companion.AdminReInit:
-		return a.rebuild(func() error { return nil })
+		return a.rebuild(ctx, func() error { return nil })
 	case companion.AdminReCompose:
 		features := action.Features
 		if features == nil {
 			features = []string{}
 		}
-		return a.rebuild(func() error {
+		return a.rebuild(ctx, func() error {
 			return recomposeProfile(a.lay, adminArgs, a.name, a.target, false, features)
 		})
 	case companion.AdminRestore:
-		return a.rebuild(func() error { return a.restore(action.Backup) })
+		return a.rebuild(ctx, func() error { return a.restore(action.Backup) })
 	case companion.AdminMemories:
-		if !sbxrun.Reachable(a.name) {
+		if !sbxrun.ReachableContext(ctx, a.name) {
 			return errors.New("the sandbox isn't running: its memories can only be read while it is")
 		}
-		saveMemoriesOnExit(a.lay.Home, a.name)
+		saveMemories(ctx, a.lay.Home, a.name)
 		note("done")
 		return nil
 	}
@@ -175,9 +220,12 @@ func (a *companionAdmin) Do(action companion.AdminAction, log func(string)) erro
 }
 
 // start starts the sandbox, and lets the terminal attach to it again.
-func (a *companionAdmin) start() error {
+func (a *companionAdmin) start(ctx context.Context) error {
 	note("starting sandbox '%s'", a.name)
-	if !sbxrun.Start(a.name) {
+	if !sbxrun.StartContext(ctx, a.name) {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("sandbox '%s' didn't start — 'sbx ls' says what state it is in", a.name)
 	}
 	note("'%s' is running", a.name)
@@ -187,17 +235,17 @@ func (a *companionAdmin) start() error {
 
 // rebuild removes the sandbox and creates it again, after prepare (which
 // changes the profile it is built from, or doesn't), then starts it.
-func (a *companionAdmin) rebuild(prepare func() error) error {
+func (a *companionAdmin) rebuild(ctx context.Context, prepare func() error) error {
 	hold.begin()
 	if err := prepare(); err != nil {
 		a.settle()
 		return err
 	}
-	if err := rebuildSandbox(a.lay, adminArgs, a.name, a.target, true, false); err != nil {
+	if err := rebuildSandbox(ctx, a.lay, adminArgs, a.name, a.target, true, false); err != nil {
 		a.settle()
 		return err
 	}
-	return a.start()
+	return a.start(ctx)
 }
 
 // settle is for an action that failed part-way: a sandbox still running
@@ -263,6 +311,58 @@ func teeNote(line string) {
 	if to != nil {
 		to(line)
 	}
+}
+
+// --- keeping out of the agent's screen ---------------------------------------
+
+var (
+	attachedMu sync.Mutex
+	attached   bool
+	heldNotes  []string
+)
+
+// setAttached says whether the terminal is the agent's now: a session is
+// attached, and its full-screen interface would be written over by anything
+// vibe printed. Detaching prints what was held back meanwhile.
+func setAttached(now bool) {
+	attachedMu.Lock()
+	attached = now
+	held := heldNotes
+	if !now {
+		heldNotes = nil
+	}
+	attachedMu.Unlock()
+	if !now && len(held) > 0 {
+		fmt.Fprintln(os.Stderr, "vibe: while the session was attached:")
+		for _, line := range held {
+			fmt.Fprintf(os.Stderr, "vibe:   %s\n", line)
+		}
+	}
+}
+
+// holdNote keeps line back from the terminal while a session is attached,
+// to print once it isn't; it says whether it did.
+func holdNote(line string) bool {
+	attachedMu.Lock()
+	defer attachedMu.Unlock()
+	if !attached {
+		return false
+	}
+	heldNotes = append(heldNotes, line)
+	return true
+}
+
+// noteIfFree is note for what is only worth saying now: dropped, rather
+// than held, while a session is attached (the page says it anyway).
+func noteIfFree(format string, a ...interface{}) {
+	attachedMu.Lock()
+	busy := attached
+	attachedMu.Unlock()
+	if busy {
+		teeNote(fmt.Sprintf(format, a...))
+		return
+	}
+	note(format, a...)
 }
 
 // --- holding the terminal while the page acts -------------------------------

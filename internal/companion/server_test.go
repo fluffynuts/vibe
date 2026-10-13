@@ -618,3 +618,27 @@ func TestStateSaysTheAgentsThemeColour(t *testing.T) {
 		t.Errorf("themeColor = %q, asked %d times (it can ask the sandbox, so seldom)", got.ThemeColor, asked)
 	}
 }
+
+func TestStateSaysWhyTheClipboardPageIsntUpOnlyWhileItIsnt(t *testing.T) {
+	ready, asked := false, 0
+	s := New(Config{Sandbox: "vibe", Token: token, Port: testPort,
+		ClipboardURL:     func() string { return "http://localhost:5390" },
+		ClipboardReady:   func(string) bool { return ready },
+		ClipboardTrouble: func() string { asked++; return "the clipboard server stopped before it was listening" },
+	})
+	var got struct {
+		Trouble string `json:"clipboardTrouble"`
+	}
+	json.Unmarshal(do(t, s, req{path: "/api/state", headers: authed(nil)}).Body.Bytes(), &got)
+	do(t, s, req{path: "/api/state", headers: authed(nil)})
+	if got.Trouble == "" || asked != 1 {
+		t.Errorf("trouble = %q, asked %d times", got.Trouble, asked)
+	}
+	ready = true
+	s.cache.clear()
+	got.Trouble = "stale"
+	json.Unmarshal(do(t, s, req{path: "/api/state", headers: authed(nil)}).Body.Bytes(), &got)
+	if got.Trouble != "" {
+		t.Errorf("a page that is up still has trouble: %q", got.Trouble)
+	}
+}

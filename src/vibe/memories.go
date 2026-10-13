@@ -17,6 +17,12 @@ import (
 // host store once a session ends, so the host copy tracks the sandbox rather
 // than only being refreshed by a --re-init.
 func saveMemoriesOnExit(vibeHome, name string) {
+	saveMemories(context.Background(), vibeHome, name)
+}
+
+// saveMemories is saveMemoriesOnExit, given up when ctx ends (the companion
+// page's Cancel): the store is put back as it was, as for a quit.
+func saveMemories(parent context.Context, vibeHome, name string) {
 	inst, found, err := state.Load(vibeHome, name)
 	if err != nil || !found {
 		return
@@ -43,7 +49,7 @@ func saveMemoriesOnExit(vibeHome, name string) {
 	interrupts := make(chan os.Signal, 1)
 	signal.Notify(interrupts, os.Interrupt)
 	defer signal.Stop(interrupts)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
 	type outcome struct {
@@ -60,6 +66,16 @@ func saveMemoriesOnExit(vibeHome, name string) {
 	for {
 		select {
 		case o := <-finished:
+			if parent.Err() != nil {
+				// Cancelled part-way: the store goes back to what it held,
+				// as for a quit, rather than staying half-copied.
+				if err := snap.Restore(); err != nil {
+					note("Memory backup cancelled, and the original local memories could not be restored: %s", err)
+					return
+				}
+				note("Memory backup cancelled; the original local memories are back as they were")
+				return
+			}
 			snap.Discard()
 			reportMemoryBackup(status, store, o.saved, o.err)
 			return

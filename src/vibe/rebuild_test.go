@@ -82,3 +82,99 @@ func TestSplitMissingFeaturesKeepsWhatIsStillThere(t *testing.T) {
 		t.Errorf("missing = %s", got)
 	}
 }
+
+// instructionsFixture is a library with one feature that carries
+// instructions, and a guided profile composed from it the way profiles were
+// before the kits' instructions had a file of their own: their text in the
+// profile's agent-instructions.md, and no kit-instructions.md.
+func instructionsFixture(t *testing.T) (lay layout.Layout, profileDir string) {
+	t.Helper()
+	lay = layout.New(t.TempDir(), t.TempDir())
+	writeFile(t, lay.BundlePath("library", "diffity", "install-scripts", "01-install"), "#!/bin/sh\necho hi\n")
+	writeFile(t, lay.BundlePath("library", "diffity", "agent-instructions.md"), "## Diffity\n\nreview with it.\n")
+	profileDir = lay.HomePath("profiles", "foo-browser")
+	writeFile(t, filepath.Join(profileDir, "config.yaml"), "# vibe: features: diffity\nname: foo-browser\n")
+	writeFile(t, filepath.Join(profileDir, "agent-instructions.md"), "## Diffity\n\nreview with it.\n")
+	return lay, profileDir
+}
+
+func readFile(t *testing.T, path string) (string, bool) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	return string(data), true
+}
+
+func TestReComposingAnOldProfileGivesTheUserTheirOwnInstructionsFile(t *testing.T) {
+	lay, dir := instructionsFixture(t)
+	args := cliargs.Args{Force: true, Profile: "foo-browser"}
+	if err := recomposeProfile(lay, args, "foo-browser", t.TempDir(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := readFile(t, filepath.Join(dir, "kit-instructions.md")); !strings.Contains(got, "## Diffity") {
+		t.Errorf("kit-instructions.md = %q", got)
+	}
+	if got, ok := readFile(t, filepath.Join(dir, "agent-instructions.md")); !ok || got != "" {
+		t.Errorf("agent-instructions.md = %q, %v; want the user's, blank", got, ok)
+	}
+	if got, ok := readFile(t, lay.HomePath("agent-instructions.md")); !ok || got != "" {
+		t.Errorf("~/.vibe/agent-instructions.md = %q, %v; want a blank one", got, ok)
+	}
+}
+
+func TestReComposingKeepsTheUsersInstructions(t *testing.T) {
+	lay, dir := instructionsFixture(t)
+	args := cliargs.Args{Force: true, Profile: "foo-browser"}
+	if err := recomposeProfile(lay, args, "foo-browser", t.TempDir(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "agent-instructions.md"), "use British spelling\n")
+	for i := 0; i < 2; i++ {
+		if err := recomposeProfile(lay, args, "foo-browser", t.TempDir(), false, nil); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := readFile(t, filepath.Join(dir, "agent-instructions.md")); got != "use British spelling\n" {
+			t.Fatalf("after re-compose %d: agent-instructions.md = %q", i+1, got)
+		}
+		if got, _ := readFile(t, filepath.Join(dir, "kit-instructions.md")); strings.Contains(got, "British") || !strings.Contains(got, "## Diffity") {
+			t.Fatalf("after re-compose %d: kit-instructions.md = %q", i+1, got)
+		}
+	}
+}
+
+func TestRestoringABackupFromBeforeTheMoveStillSortsTheFilesOut(t *testing.T) {
+	lay, dir := instructionsFixture(t)
+	args := cliargs.Args{Force: true, Profile: "foo-browser"}
+	// The first re-compose backs up the profile as it was: old-style.
+	if err := recomposeProfile(lay, args, "foo-browser", t.TempDir(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "agent-instructions.md"), "mine\n")
+	if err := doRestore(lay, args, "foo-browser", t.TempDir()); err == nil {
+		t.Log("restore went on to rebuild the sandbox")
+	}
+	// The oldest backup is the old-style profile: restored, then
+	// re-composed, its kit text must not land in the user's file.
+	if got, _ := readFile(t, filepath.Join(dir, "kit-instructions.md")); !strings.Contains(got, "## Diffity") {
+		t.Errorf("kit-instructions.md = %q", got)
+	}
+	if got, _ := readFile(t, filepath.Join(dir, "agent-instructions.md")); strings.Contains(got, "## Diffity") {
+		t.Errorf("the kits' text ended up in the user's file: %q", got)
+	}
+}
+
+func TestABundledProfileIsNotCopiedIntoTheOverlay(t *testing.T) {
+	lay := layout.New(t.TempDir(), t.TempDir())
+	writeFile(t, lay.BundlePath("profiles", "shipped", "config.yaml"), "name: shipped\n")
+	if err := prepareInstructions(lay, "shipped"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(lay.HomePath("profiles", "shipped")); !os.IsNotExist(err) {
+		t.Errorf("a folder was made in ~/.vibe for a bundled profile, which would hide it: %v", err)
+	}
+	if got, ok := readFile(t, lay.HomePath("agent-instructions.md")); !ok || got != "" {
+		t.Errorf("~/.vibe/agent-instructions.md = %q, %v", got, ok)
+	}
+}

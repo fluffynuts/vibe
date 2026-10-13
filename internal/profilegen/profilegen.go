@@ -12,6 +12,7 @@ import (
 
 	"vibe/internal/directive"
 	"vibe/internal/fscopy"
+	"vibe/internal/instructions"
 	"vibe/internal/layout"
 	"vibe/internal/library"
 )
@@ -40,7 +41,10 @@ const blankConfig = `# vibe profile "%[1]s".
 #   settings.yaml          memory, agent, publish, nugetDir, ... overrides
 #   install-scripts/       run once at creation, in leading-number order
 #   agent-files/           copied into /home/agent in the sandbox
-#   agent-instructions.md  appended to the agent's instructions
+#   agent-instructions.md  your instructions to this profile's agent, loaded
+#                          in every session (after ~/.vibe's universal ones)
+#   kit-instructions.md    the kits' instructions, when composed from the
+#                          library: re-composing rewrites it
 name: %[1]s
 displayName: %[1]s sandbox
 description: Sandbox for the %[1]s workspace
@@ -61,6 +65,9 @@ func CreateBlank(l layout.Layout, profile string) (string, error) {
 	}
 	path := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(path, []byte(fmt.Sprintf(blankConfig, profile)), 0o644); err != nil {
+		return "", createErr(dir, err)
+	}
+	if _, err := instructions.EnsureFile(filepath.Join(dir, instructions.File)); err != nil {
 		return "", createErr(dir, err)
 	}
 	return dir, nil

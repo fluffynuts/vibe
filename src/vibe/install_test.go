@@ -91,7 +91,12 @@ func TestDoInstallIsSafeToRunTwice(t *testing.T) {
 	if err := doInstall(lay, true, ""); err != nil {
 		t.Fatal(err)
 	}
+	universal := filepath.Join(home, ".vibe", "agent-instructions.md")
+	if data, err := os.ReadFile(universal); err != nil || len(data) != 0 {
+		t.Errorf("the first install didn't make a blank agent-instructions.md: %q, %v", data, err)
+	}
 	writeFile(t, filepath.Join(home, ".vibe", "config.yaml"), "name: customized\n")
+	writeFile(t, universal, "use British spelling\n")
 	if err := doInstall(lay, true, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -99,6 +104,9 @@ func TestDoInstallIsSafeToRunTwice(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(home, ".vibe", "config.yaml"))
 	if err != nil || !strings.Contains(string(data), "customized") {
 		t.Errorf("second install overwrote the customized config.yaml: %q, %v", data, err)
+	}
+	if data, _ := os.ReadFile(universal); string(data) != "use British spelling\n" {
+		t.Errorf("second install touched the user's agent-instructions.md: %q", data)
 	}
 }
 

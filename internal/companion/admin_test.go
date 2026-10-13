@@ -1,6 +1,7 @@
 package companion
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -35,10 +36,14 @@ func (f *fakeAdmin) Upgrades(fresh bool) []string {
 	return []string{"vibe 1.2.3"}
 }
 
-func (f *fakeAdmin) Do(action AdminAction, log func(string)) error {
+func (f *fakeAdmin) Do(ctx context.Context, action AdminAction, log func(string)) error {
 	log("doing " + action.Kind)
 	if f.release != nil {
-		<-f.release
+		select {
+		case <-f.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	f.mu.Lock()
 	f.done = append(f.done, action)
@@ -237,5 +242,72 @@ func TestTheStatusIsSharedBetweenQuickPolls(t *testing.T) {
 	adminPoll(t, s)
 	if f.statuses != 1 {
 		t.Errorf("status asked %d times, want 1", f.statuses)
+	}
+}
+
+func TestAnActionThatRunsFarTooLongSaysSoAndKeepsWaiting(t *testing.T) {
+	was := adminSlow
+	adminSlow = map[string]time.Duration{AdminReInit: 20 * time.Millisecond}
+	defer func() { adminSlow = was }()
+	f := &fakeAdmin{release: make(chan struct{})}
+	s := adminServer(f, nil)
+	do(t, s, post("/api/admin/do", `{"kind":"reinit"}`))
+
+	deadline := time.Now().Add(2 * time.Second)
+	var r adminResult
+	for r = adminPoll(t, s); r.Job.Warning == "" && time.Now().Before(deadline); r = adminPoll(t, s) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !r.Job.Running || !strings.Contains(r.Job.Warning, "sbx may be stuck") || !strings.Contains(strings.Join(r.Job.Lines, "\n"), "sbx ls") {
+		t.Fatalf("job = %+v", r.Job)
+	}
+	close(f.release) // it finishes after all: nothing was stopped
+	if r := adminDone(t, s); r.Job.Error != "" || len(f.done) != 1 {
+		t.Errorf("job = %+v, done = %v", r.Job, f.done)
+	}
+}
+
+func TestAnActionInGoodTimeHasNoWarning(t *testing.T) {
+	s := adminServer(&fakeAdmin{}, nil)
+	do(t, s, post("/api/admin/do", `{"kind":"start"}`))
+	if r := adminDone(t, s); r.Job.Warning != "" {
+		t.Errorf("warning = %q", r.Job.Warning)
+	}
+}
+
+func TestCancelEndsTheActionUnderWay(t *testing.T) {
+	f := &fakeAdmin{release: make(chan struct{})}
+	s := adminServer(f, nil)
+	do(t, s, post("/api/admin/do", `{"kind":"reinit"}`))
+	rec := do(t, s, post("/api/admin/cancel", `{}`))
+	if !strings.Contains(rec.Body.String(), `"cancelled":true`) {
+		t.Fatalf("cancel: %s", rec.Body)
+	}
+	r := adminDone(t, s)
+	if !r.Job.Cancelled || r.Job.Error == "" || len(f.done) != 0 {
+		t.Errorf("job = %+v, done = %v", r.Job, f.done)
+	}
+	if rec := do(t, s, post("/api/admin/cancel", `{}`)); !strings.Contains(rec.Body.String(), `"cancelled":false`) {
+		t.Errorf("cancelling with nothing under way: %s", rec.Body)
+	}
+}
+
+func TestCancelEndsTheTurnAndTheActionAndSaysWhich(t *testing.T) {
+	agent := &fakeAgent{release: make(chan struct{})}
+	defer close(agent.release)
+	f := &fakeAdmin{release: make(chan struct{})}
+	s := adminServer(f, agent)
+	if got := s.Cancel(); len(got) != 0 {
+		t.Errorf("with nothing under way: %v", got)
+	}
+	send(t, s, "/api/conversation/send", `{"prompt":"work"}`)
+	do(t, s, post("/api/admin/do", `{"kind":"memories"}`))
+	got := strings.Join(s.Cancel(), ", ")
+	if got != "the agent's turn, the Admin tab's memory save" {
+		t.Errorf("ended %q", got)
+	}
+	idle(t, s)
+	if r := adminDone(t, s); !r.Job.Cancelled {
+		t.Errorf("job = %+v", r.Job)
 	}
 }

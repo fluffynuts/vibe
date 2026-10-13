@@ -1,14 +1,20 @@
 package main
 
 import (
+	"sync/atomic"
+
+	"path/filepath"
+	"strings"
+
 	"os"
 	"runtime"
-	"time"
 
 	"vibe/internal/cliargs"
 	"vibe/internal/clockskew"
+	"vibe/internal/instructions"
 	"vibe/internal/layout"
 	"vibe/internal/sbxrun"
+	"vibe/internal/state"
 	"vibe/internal/termtitle"
 )
 
@@ -25,7 +31,11 @@ func finish(lay layout.Layout, args cliargs.Args, name string) error {
 		return nil
 	}
 	checkGitTokenExpiry(vibeHome, args, name)
-	stopCompanion, companionUp := startCompanion(lay, args, name)
+	remindOfInstructions(lay, name)
+	stopCompanion, companionUp, cancelThePage := startCompanion(lay, args, name)
+	// 'vibe --cancel' from another terminal ends what the page has under way.
+	setPageCancel(cancelThePage)
+	defer setPageCancel(nil)
 	noteUpgrades := checkUpgradesInBackground()
 	sessionMu.Lock()
 	inSession = true
@@ -37,9 +47,14 @@ func finish(lay layout.Layout, args cliargs.Args, name string) error {
 	var err error
 	left := false
 	for {
-		go nudgeOnStart(vibeHome, name)
-		began := time.Now()
+		// Set once the sandbox has answered during this attach: a session
+		// ending after that is the sandbox going away under it, where one
+		// ending before never had a sandbox to lose.
+		var reached atomic.Bool
+		go nudgeOnStart(lay, name, func() { reached.Store(true) })
+		setAttached(true)
 		code, err = sbxrun.Run(name, session.StopRequested())
+		setAttached(false)
 		if err != nil || stopAsked() {
 			break
 		}
@@ -47,9 +62,9 @@ func finish(lay layout.Layout, args cliargs.Args, name string) error {
 		switch {
 		case resume != nil:
 			note("the sandbox was stopped or is being rebuilt from the companion page, which carries on;")
-		case stoppedUnderSession(name, code, time.Since(began)) && companionUp:
-			// Stopped by 'vibe --stop' or sbx: the page's Admin tab can
-			// start it again.
+		case companionUp && (session.HoldAsked() || stoppedUnderSession(name, code, reached.Load())):
+			// Stopped by 'vibe --stop' (which says so) or by sbx: the
+			// page's Admin tab can start it again.
 			hold.begin()
 			resume = hold.waiting()
 			note("sandbox '%s' was stopped — the companion page's Admin tab can start it again;", name)
@@ -100,17 +115,12 @@ func finish(lay layout.Layout, args cliargs.Args, name string) error {
 	return nil
 }
 
-// sessionLasted is how long a session must have run for its ending in an
-// error to be taken for the sandbox being stopped under it, rather than for
-// sbx failing to start it.
-const sessionLasted = 10 * time.Second
-
-// stoppedUnderSession says a session that ended with code after lasting
-// ran ended because its sandbox was stopped (or removed) from outside: by
-// 'vibe --stop', or sbx itself. An agent quit as usual ends without an
-// error, and one sbx couldn't start fails at once.
-func stoppedUnderSession(name string, code int, ran time.Duration) bool {
-	if code == 0 || ran < sessionLasted {
+// stoppedUnderSession says a session that ended with code ended because its
+// sandbox was stopped (or removed) from outside it — by sbx itself, say —
+// rather than the agent being quit (which ends without an error) or sbx
+// failing to start it (when it was never reached).
+func stoppedUnderSession(name string, code int, reached bool) bool {
+	if code == 0 || !reached {
 		return false
 	}
 	statuses, err := sbxrun.List()
@@ -136,5 +146,31 @@ func warnIfClockIsOff() {
 	}
 	if w := clockskew.Warning(skew); w != "" {
 		note("WARNING: %s", w)
+	}
+}
+
+// remindOfInstructions says, as the session starts, where the user's
+// instructions to the agent are: a tip for each that is still blank, so the
+// files are found, and one short line once they have something in them.
+func remindOfInstructions(lay layout.Layout, name string) {
+	type file struct{ path, forWhom string }
+	files := []file{{lay.HomePath(instructions.File), "every sandbox"}}
+	if inst, found, err := state.Load(lay.Home, name); err == nil && found {
+		files = append(files, file{filepath.Join(lay.ProfileDir(inst.Profile), instructions.File), "this profile's sandboxes"})
+	}
+	var used []string
+	for _, f := range files {
+		if f.path == "" {
+			continue
+		}
+		if data, err := os.ReadFile(f.path); err == nil && strings.TrimSpace(string(data)) != "" {
+			used = append(used, displayPath(f.path))
+			continue
+		}
+		note("tip: instructions to the agent for %s go in %s (empty so far; the companion page's Admin tab edits it too)",
+			f.forWhom, displayPath(f.path))
+	}
+	if len(used) > 0 {
+		note("agent instructions: %s", strings.Join(used, ", "))
 	}
 }
