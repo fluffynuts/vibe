@@ -251,6 +251,10 @@ type CreateOpts struct {
 	// a question it asks: the create fails with sbx's question as the
 	// reason, rather than waiting on the terminal.
 	NoInput bool
+	// Output is where what sbx prints goes, as plain lines, rather than the
+	// terminal (nil): a companion page's log, when the terminal is a
+	// session's agent's screen.
+	Output io.Writer
 }
 
 // Create provisions a new sandbox (does not start it).
@@ -270,6 +274,10 @@ func CreateContext(ctx context.Context, opts CreateOpts) error {
 	for _, e := range opts.Env {
 		args = append(args, "-e", e)
 	}
+	if opts.Output != nil {
+		// Progress drawn in place is for a terminal; a log gets lines.
+		args = append(args, "--no-progress")
+	}
 	args = append(args, opts.Agent, opts.Target)
 	args = append(args, opts.Mounts...)
 
@@ -277,9 +285,17 @@ func CreateContext(ctx context.Context, opts CreateOpts) error {
 	if !opts.NoInput {
 		cmd.Stdin = os.Stdin
 	}
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	outputTo(cmd, opts.Output)
 	return cmd.Run()
+}
+
+// outputTo sends what cmd prints to out, or to the terminal when out is nil.
+func outputTo(cmd *exec.Cmd, out io.Writer) {
+	if out == nil {
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		return
+	}
+	cmd.Stdout, cmd.Stderr = out, out
 }
 
 // cancellable is sbx with args, ended when ctx ends — and, being the
@@ -420,14 +436,19 @@ func Remove(name string, force bool) error {
 
 // RemoveContext is Remove, ending sbx when ctx ends.
 func RemoveContext(ctx context.Context, name string, force bool) error {
+	return RemoveToContext(ctx, name, force, nil)
+}
+
+// RemoveToContext is RemoveContext, sending what sbx prints to out rather
+// than the terminal (see CreateOpts.Output).
+func RemoveToContext(ctx context.Context, name string, force bool, out io.Writer) error {
 	args := []string{"rm"}
 	if force {
 		args = append(args, "-f")
 	}
 	args = append(args, name)
 	cmd := cancellable(ctx, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	outputTo(cmd, out)
 	return cmd.Run()
 }
 

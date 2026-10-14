@@ -84,3 +84,23 @@ func TestARefusalForATakenFolderSaysWhy(t *testing.T) {
 		t.Errorf("resolveOthers = %v", err)
 	}
 }
+
+// While a page's action runs, what sbx prints goes to its log, as plain
+// lines; otherwise to the terminal (nil).
+func TestSbxsOutputGoesToTheActionsLogWhileOneRuns(t *testing.T) {
+	if actionOutput() != nil {
+		t.Fatal("with no action running, sbx's output didn't go to the terminal")
+	}
+	var lines []string
+	teeNotes(func(line string) { lines = append(lines, line) })
+	defer teeNotes(nil)
+	out := actionOutput()
+	if out == nil {
+		t.Fatal("while an action runs, sbx's output went to the terminal")
+	}
+	out.Write([]byte("✓ image \x1b[32mready\x1b[0m\r\n\n  creat"))
+	out.Write([]byte("ing\rdone\n"))
+	if want := []string{"✓ image ready", "  creating", "done"}; strings.Join(lines, "|") != strings.Join(want, "|") {
+		t.Errorf("lines = %q, want %q", lines, want)
+	}
+}

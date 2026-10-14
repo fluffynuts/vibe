@@ -425,7 +425,7 @@ func (m *companionManager) Delete(ctx context.Context, ids []string, log func(st
 	if err != nil {
 		return err
 	}
-	err = plan.run(m.lay, func(name string, force bool) error { return sbxrun.RemoveContext(ctx, name, force) })
+	err = plan.run(m.lay, func(name string, force bool) error { return sbxrun.RemoveToContext(ctx, name, force, actionOutput()) })
 	if ctx.Err() != nil {
 		return fmt.Errorf("cancelled — what was deleted before then is gone; the list shows what's left")
 	}

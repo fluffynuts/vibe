@@ -399,9 +399,14 @@ function applyLayout() {
 phone.addEventListener("change", applyLayout);
 applyLayout();
 
+// parentOrigin is the origin of the companion page this page is shown in,
+// learned from its messages, so typing can be passed only to it.
+var parentOrigin = "";
+
 window.addEventListener("message", function (e) {
   var d = e.data;
   if (window.parent === window || e.source !== window.parent) return;
+  parentOrigin = e.origin;
   if (d && d.type === "vibe-clipboard-layout") {
     framedSplit = !!d.split;
     applyLayout();
@@ -435,6 +440,19 @@ document.getElementById("picker").addEventListener("change", function (e) {
 
 zoomEl.addEventListener("click", function () { zoomEl.classList.remove("open"); });
 document.addEventListener("keydown", function (e) { if (e.key === "Escape") zoomEl.classList.remove("open"); });
+
+// Beside the conversation, focus is easily left here (after a paste, say):
+// a character typed while none of this page's own boxes has focus is meant
+// for the prompt, so it's passed to the page this one is shown in.
+document.addEventListener("keydown", function (e) {
+  if (!parentOrigin || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return;
+  var a = document.activeElement;
+  if (a && (a.isContentEditable || a.tagName === "TEXTAREA" || (a.tagName === "INPUT" && a.type !== "file"))) return;
+  // Space presses a focused button, as it should.
+  if (e.key === " " && a && a.tagName === "BUTTON") return;
+  e.preventDefault();
+  window.parent.postMessage({ type: "vibe-clipboard-key", key: e.key }, parentOrigin);
+});
 
 // asPNG converts an image blob to PNG: the one image type every browser's
 // clipboard accepts.

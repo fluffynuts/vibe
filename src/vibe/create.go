@@ -296,6 +296,7 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 		Target:  target,
 		Mounts:  mounts,
 		NoInput: !sbxMayAsk,
+		Output:  actionOutput(),
 	}); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()

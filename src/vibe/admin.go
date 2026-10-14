@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"regexp"
 	"time"
 
 	"errors"
@@ -423,5 +426,43 @@ func awaitResume(resume <-chan struct{}, stop <-chan struct{}) bool {
 		return false
 	case <-interrupts:
 		return false
+	}
+}
+
+// actionOutput is where what sbx prints should go: while a companion page's
+// action runs (its notes are teed to the page), to that action's log, as
+// plain lines, since the terminal is then the session's agent's screen; and
+// nil, the terminal, otherwise.
+func actionOutput() io.Writer {
+	teeMu.Lock()
+	to := tee
+	teeMu.Unlock()
+	if to == nil {
+		return nil
+	}
+	return &lineWriter{line: to}
+}
+
+// lineWriter passes what's written to it on, a line at a time, without the
+// terminal's colours and cursor moves; blank lines are dropped.
+type lineWriter struct {
+	line    func(string)
+	partial []byte
+}
+
+var terminalEscapes = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)
+
+func (w *lineWriter) Write(p []byte) (int, error) {
+	w.partial = append(w.partial, p...)
+	for {
+		i := bytes.IndexAny(w.partial, "\r\n")
+		if i < 0 {
+			return len(p), nil
+		}
+		line := strings.TrimRight(terminalEscapes.ReplaceAllString(string(w.partial[:i]), ""), " \t")
+		w.partial = w.partial[i+1:]
+		if line != "" {
+			w.line(line)
+		}
 	}
 }

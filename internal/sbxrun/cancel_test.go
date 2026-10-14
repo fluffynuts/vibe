@@ -1,10 +1,12 @@
 package sbxrun
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -87,5 +89,39 @@ func TestACreateWithNoInputFailsAtAQuestionInsteadOfWaiting(t *testing.T) {
 	}
 	if err == nil {
 		t.Error("the create succeeded, though sbx's question went unanswered")
+	}
+}
+
+// chattySbx puts an sbx on PATH that prints its arguments, as sbx create
+// and rm print their progress.
+func chattySbx(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in sbx is a shell script")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "sbx"), []byte("#!/bin/sh\necho \"sbx $*\"\necho 'to stderr' >&2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// What sbx prints goes where it's told: a page action's log rather than the
+// terminal, which a session's agent is using. It's asked for plain lines,
+// not progress redrawn in place.
+func TestCreateAndRemoveCanSayWhatTheyDoSomewhereElse(t *testing.T) {
+	chattySbx(t)
+	var create, remove bytes.Buffer
+	if err := CreateContext(context.Background(), CreateOpts{Name: "box", Output: &create}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(create.String(), "sbx create --name box") || !strings.Contains(create.String(), "--no-progress") || !strings.Contains(create.String(), "to stderr") {
+		t.Errorf("create's output = %q", create.String())
+	}
+	if err := RemoveToContext(context.Background(), "box", true, &remove); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(remove.String(), "sbx rm -f box") {
+		t.Errorf("rm's output = %q", remove.String())
 	}
 }

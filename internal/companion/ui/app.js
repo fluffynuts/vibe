@@ -1889,6 +1889,64 @@
     return !!(node && node.closest && node.closest('textarea, input, select, [contenteditable=""], [contenteditable="true"]'))
   }
 
+  // refocusPrompt puts the cursor back in the prompt when the page is come
+  // back to with the conversation showing, so typing goes where it's
+  // meant: focus is easily left elsewhere, in the clipboard beside it after
+  // a paste, say. It leaves alone another box being typed in, a dialog or
+  // the frosted glass, and text selected for copying.
+  function refocusPrompt() {
+    if (state.tab !== 'conversation' || document.visibilityState !== 'visible') return
+    if (document.querySelector('dialog[open]') || !$('offline').hidden) return
+    const active = document.activeElement
+    if (active === $('convo-input') || (editable(active) && active.tagName !== 'IFRAME')) return
+    const selection = window.getSelection && window.getSelection()
+    if (selection && !selection.isCollapsed) return
+    $('convo-input').focus()
+  }
+  window.addEventListener('focus', refocusPrompt)
+  document.addEventListener('visibilitychange', refocusPrompt)
+
+  // promptCanTake says whether a character typed with focus elsewhere on
+  // the conversation tab is meant for the prompt.
+  function promptCanTake(ev) {
+    if (state.tab !== 'conversation' || ev.isComposing || ev.ctrlKey || ev.metaKey || ev.altKey || ev.key.length !== 1) return false
+    if (document.querySelector('dialog[open]') || !$('offline').hidden) return false
+    const active = document.activeElement
+    if (active === $('convo-input') || typingInto(active)) return false
+    // Space presses a focused button or ticks a box, as it should.
+    return !(ev.key === ' ' && active && (active.tagName === 'BUTTON' || active.tagName === 'INPUT'))
+  }
+
+  // typingInto says whether node is something typed into: a checkbox isn't.
+  function typingInto(node) {
+    if (!node) return false
+    if (node.isContentEditable || node.tagName === 'TEXTAREA' || node.tagName === 'SELECT') return true
+    return node.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'range', 'color'].includes(node.type)
+  }
+
+  // Typing goes to the prompt, wherever focus was left on the tab: moving
+  // focus there as the key goes down lets the character land in it.
+  document.addEventListener('keydown', (ev) => {
+    if (promptCanTake(ev)) $('convo-input').focus()
+  }, true)
+
+  // The clipboard beside the conversation passes on what's typed in it
+  // (outside its own boxes): only from that frame, at the clipboard's
+  // origin, is it taken.
+  window.addEventListener('message', (ev) => {
+    const frame = $('convo-clipboard-frame')
+    const d = ev.data
+    if (!frame || ev.source !== frame.contentWindow || !d || d.type !== 'vibe-clipboard-key') return
+    let origin
+    try { origin = new URL(state.clipboardUrl).origin } catch (e) { return }
+    if (ev.origin !== origin || typeof d.key !== 'string' || d.key.length !== 1) return
+    if (!promptCanTake({ key: d.key })) return
+    const input = $('convo-input')
+    input.focus()
+    input.setRangeText(d.key, input.selectionStart, input.selectionEnd, 'end')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+
   // The clipboard page is on another origin, so what was pasted here is
   // handed to it as a message. It takes them only from the page that
   // framed it.

@@ -146,7 +146,7 @@ func rebuildSandbox(ctx context.Context, lay layout.Layout, args cliargs.Args, n
 			return err
 		}
 		note("removing sandbox '%s'", name)
-		if err := sbxrun.RemoveContext(ctx, name, true); err != nil {
+		if err := sbxrun.RemoveToContext(ctx, name, true, actionOutput()); err != nil {
 			return err
 		}
 		// The instance record deliberately outlives the sandbox: it carries
