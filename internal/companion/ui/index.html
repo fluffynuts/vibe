@@ -188,6 +188,14 @@
     </section>
   </main>
 
+  <div id="offline" class="offline" role="alertdialog" aria-modal="true" aria-labelledby="offline-title" aria-describedby="offline-text" hidden>
+    <div class="offline-box">
+      <p id="offline-title" class="offline-title">Disconnected</p>
+      <p id="offline-text"></p>
+      <button type="button" id="offline-dismiss" class="ghost">Dismiss until it reconnects</button>
+    </div>
+  </div>
+
   <dialog id="changed">
     <form method="dialog">
       <h2>This file has changed on disk</h2>

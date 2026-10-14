@@ -598,7 +598,10 @@ The page needs `sbx` to be signed in (`sbx login`), the same as `sbx policy` doe
 Its address is the same at every start (the port is kept in the sandbox's instance record, and so is a
 secret token, in `~/.vibe/companion/<name>.token`), so a bookmark keeps working. The page lives as
 long as vibe does: when the session ends it shows "vibe is not running for this sandbox", and
-reconnects by itself when you run vibe again. A second vibe for the same sandbox leaves the first's page
+reconnects by itself when you run vibe again. So that's hard to miss, the tab's icon gets a red cross
+and the page goes behind frosted glass saying so, within a few seconds, even in a background tab;
+**Dismiss until it reconnects** clears the glass (the cross and the status top right stay). Both go
+when vibe is back. A second vibe for the same sandbox leaves the first's page
 be and just prints its address.
 
 Because the page can change what the sandbox may reach, it is built to be out of the sandbox's reach: it

@@ -190,11 +190,18 @@
   const DOT = { working: ['#5f6368', '#b0b3b8'], done: ['#1d9bd8'] }
   const PULSE_MS = 1000 // a step each way, so a two-second pulse
 
-  const favicon = { agent: '', dot: '', step: 0, timer: null, shown: '' }
+  // The cross over the icon while vibe isn't there: red, outlined in white
+  // so it shows on any agent's icon.
+  const CROSS = '<path d="M7 7L25 25M25 7L7 25" stroke="#fff" stroke-width="8" stroke-linecap="round"/>' +
+    '<path d="M7 7L25 25M25 7L7 25" stroke="#d93025" stroke-width="4.5" stroke-linecap="round"/>'
+
+  const favicon = { agent: '', dot: '', step: 0, timer: null, shown: '', down: false }
 
   function drawFavicon() {
     let svg = AGENT_ICONS[favicon.agent] || VIBE_ICON
-    const colors = DOT[favicon.dot]
+    // Disconnected, what the dot says is stale: the cross says what is.
+    const colors = favicon.down ? null : DOT[favicon.dot]
+    if (favicon.down) svg += CROSS
     if (colors) {
       svg += '<circle cx="24" cy="24" r="7.5" fill="' + colors[favicon.step % colors.length] +
         '" stroke="#fff" stroke-width="2"/>'
@@ -275,11 +282,62 @@
     if (ok) {
       state.failures = 0
       setLink(true, 'connected')
+      disconnected(false)
       return
     }
     state.failures += 1
     if (state.failures >= 2) {
-      setLink(false, 'vibe is not running for this sandbox — run vibe again, then this page reconnects')
+      setLink(false, offlineText())
+      disconnected(true)
+    }
+  }
+
+  function offlineText() {
+    return state.sandboxTabs === false
+      ? "vibe --manage isn't running — run it again, then this page reconnects"
+      : 'vibe is not running for this sandbox — run vibe again, then this page reconnects'
+  }
+
+  // What the page shows while vibe isn't there: a cross on its icon, and
+  // frosted glass over everything, as nothing on it can work. The glass can
+  // be dismissed until vibe is back; the cross and the status stay.
+  const offline = { down: false, dismissed: false }
+  const BEHIND_GLASS = ['.top', '#tabs', '#banner', 'main']
+
+  function disconnected(down) {
+    if (down === offline.down) return
+    offline.down = down
+    offline.dismissed = false
+    favicon.down = down
+    drawFavicon()
+    if (down) {
+      $('offline-text').textContent = offlineText()
+      for (const d of document.querySelectorAll('dialog[open]')) d.close('cancel')
+    }
+    showGlass()
+  }
+
+  function showGlass() {
+    const shown = offline.down && !offline.dismissed
+    $('offline').hidden = !shown
+    for (const sel of BEHIND_GLASS) {
+      const node = document.querySelector(sel)
+      if (node) node.inert = shown
+    }
+    if (shown) $('offline-dismiss').focus()
+  }
+
+  // Asked every few seconds whatever tab is showing, and in the background
+  // too: a page out of sight is just when its icon has to say vibe has gone.
+  // The ping needs no token and does no work; it's ours only if it's this
+  // page's vibe answering.
+  const PING_MS = 3000
+  async function ping() {
+    try {
+      const res = await api('/api/ping', { timeout: PING_MS })
+      reached(res.ok && res.body.app === 'vibe-companion' && (!state.loaded || res.body.sandbox === state.sandbox))
+    } catch (e) {
+      reached(false)
     }
   }
 
@@ -346,6 +404,8 @@
       reached(true)
       if (!res.ok) { problem(res); return }
       state.sandbox = res.body.sandbox || ''
+      state.loaded = true
+      state.sandboxTabs = res.body.sandboxTabs !== false
       $('sandbox').textContent = state.sandbox || 'all profiles and sandboxes'
       renderWhere(res.body.folder || '', res.body.git || null)
       document.title = state.sandbox ? 'vibe · ' + state.sandbox : 'vibe · profiles'
@@ -1921,6 +1981,8 @@
 
   document.addEventListener('visibilitychange', tick)
   state.timer = setInterval(tick, POLL_MS)
+  setInterval(ping, PING_MS)
+  $('offline-dismiss').addEventListener('click', () => { offline.dismissed = true; showGlass() })
 
   setLink(false, 'connecting…')
   loadState().then(() => select(state.tab))
