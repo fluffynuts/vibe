@@ -325,3 +325,20 @@ func TestParseCancel(t *testing.T) {
 		t.Fatalf("got %+v err=%v", a, err)
 	}
 }
+
+func TestParseUpdateSandboxes(t *testing.T) {
+	a, err := Parse([]string{"--update-sandboxes"})
+	if err != nil || !a.UpdateSandboxes || a.ExclusiveActions() != 1 {
+		t.Errorf("Parse(--update-sandboxes) = %+v, %v; want it set, as one action", a, err)
+	}
+	if a, _ := Parse([]string{"--update-sandboxes", "-C"}); a.ExclusiveActions() != 2 {
+		t.Error("--update-sandboxes with -C should count as two actions")
+	}
+}
+
+func TestParseNoAutoUpdate(t *testing.T) {
+	a, err := Parse([]string{"--no-auto-update", "."})
+	if err != nil || !a.NoAutoUpdate || a.Path != "." || a.ExclusiveActions() != 0 {
+		t.Errorf("Parse(--no-auto-update .) = %+v, %v", a, err)
+	}
+}

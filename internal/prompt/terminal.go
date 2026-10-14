@@ -106,6 +106,15 @@ func (t *Terminal) pollByte() (b byte, ok bool) {
 	return t.readByte()
 }
 
+// waitByte is readByte, but gives up after ms milliseconds when nothing
+// arrives.
+func (t *Terminal) waitByte(ms int) (b byte, ok bool) {
+	if len(t.buf) == 0 && !waitReadable(t.in, ms) {
+		return 0, false
+	}
+	return t.readByte()
+}
+
 // IsTerminal reports whether f is a terminal a question could be asked on.
 func IsTerminal(f *os.File) bool {
 	return term.IsTerminal(int(f.Fd()))

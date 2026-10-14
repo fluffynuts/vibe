@@ -58,7 +58,11 @@ type Instance struct {
 	// it was given; zero when it never does, or GitHub didn't say. vibe
 	// warns as it nears, at every session start.
 	GitTokenExpires time.Time `yaml:"gitTokenExpires,omitempty"`
-	CreatedAt       time.Time `yaml:"createdAt"`
+	// KitHash fingerprints what the sandbox was built from (see
+	// kitFingerprint), to tell when it's out of date. Empty in records from
+	// before it was kept, which are.
+	KitHash   string    `yaml:"kitHash,omitempty"`
+	CreatedAt time.Time `yaml:"createdAt"`
 }
 
 // Dir returns the instances directory under the given vibe home.

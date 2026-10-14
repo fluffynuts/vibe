@@ -179,6 +179,52 @@ without asking, and also runs unattended:
 A `.updated` file is never used by vibe itself: it doesn't run as an install script or get
 copied into a sandbox.
 
+### Keeping sandboxes up to date
+
+New vibe features, like the clipboard bridge or diffity's hooks, reach a sandbox when its profile is
+composed again from the library and the sandbox is rebuilt from the profile. vibe does both for you,
+when they're needed:
+
+- **A profile** is out of date when composing it again, from the features it records, would give
+  something different. Composing records a hash of what it wrote (`composed-hash`), so vibe can
+  tell a library change from your own edits. Your `agent-instructions.md` and Claude theme don't
+  count: they're carried across.
+  - **Not edited since it was composed:** it's re-composed, after a backup (`vibe --restore` rolls
+    back), as `vibe -C -f` would.
+  - **Edited by hand:** it's left alone, with a warning. `vibe -C` re-composes it when you're
+    ready, replacing your edits (backed up first).
+  - **Composed before vibe kept the hash:** it's older than this vibe, so it's re-composed (backed
+    up first), unless it's identical to a fresh composition anyway.
+  - **Not composed from the library** (written by hand, copied, blank, or vibe's own): there's
+    nothing to update.
+- **A sandbox** is out of date when what it would be built from now differs from what it was
+  built from: the kit, the agent, the environment and the published ports. Its Claude theme
+  doesn't count. A sandbox built before vibe kept track is out of date. Rebuilding carries across
+  what vibe knows of (agent memories, theme, GitHub token, timezone, the conversation), but
+  anything you installed by hand, or kept outside the workspace, goes with the old sandbox.
+
+**When a session starts**, `vibe` brings its folder's profile and sandbox up to date first. A rebuild
+is counted down, on a terminal, for you to change your mind:
+
+```
+vibe: sandbox 'my-app' is out of date: what it's built from has changed
+rebuilding it in 5s — Enter to go now, s to skip this time, Ctrl-C to quit
+```
+
+`s` starts the sandbox as it is; Ctrl-C quits, changing nothing. With no terminal, there's no
+countdown. `vibe --no-auto-update` starts the sandbox as it is for one run, and `autoUpdate: false` in
+`~/.vibe/settings.yaml` (or a profile's `settings.yaml`) turns all of this off.
+
+**`vibe --update-sandboxes`** does the same for everything at once, starting no session: every
+profile in `~/.vibe/profiles` (each once, however many sandboxes share it), then every sandbox vibe
+has a record of, each left running or stopped as it was. A sandbox with a vibe attached is left
+for its next session start (`vibe --stop-all` first, to update those too). It carries on past a
+failure, ends with a summary, and exits non-zero when anything failed, so it suits a cron job:
+
+```
+vibe --upgrade -f && vibe --update-sandboxes
+```
+
 ## Building
 
 `make` builds `vibe` into the repo root (and `make test`, `make vet`, `make check`, `make clean`
@@ -246,6 +292,10 @@ vibe -i -u/--update-strategy merge,keep
                            #    asking: keep, update, merge,keep, merge,update
 vibe -U/--upgrade          # check for newer vibe and sbx releases, pick which
                            #    to install (-f: all of them, without asking)
+vibe --update-sandboxes    # bring every profile and sandbox up to date with the
+                           #    library, starting no session (see "Keeping
+                           #    sandboxes up to date")
+vibe --no-auto-update      # start the sandbox as it is, even when it's out of date
 vibe -I/--install-sbx      # install the latest stable Docker Sandboxes (sbx);
                            #    on macOS and Windows, asking how (-f: the first
                            #    way, even when up to date)

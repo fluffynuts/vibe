@@ -58,19 +58,25 @@ func CreateBlank(l layout.Layout, profile string) (string, error) {
 		return "", err
 	}
 	dir := l.NewProfileDir(profile)
+	if err := writeBlank(dir, profile); err != nil {
+		return "", createErr(dir, err)
+	}
+	return dir, nil
+}
+
+// writeBlank writes a blank profile named profile into dir.
+func writeBlank(dir, profile string) error {
 	for _, sub := range []string{"install-scripts", "agent-files"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
-			return "", createErr(dir, err)
+			return err
 		}
 	}
 	path := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(path, []byte(fmt.Sprintf(blankConfig, profile)), 0o644); err != nil {
-		return "", createErr(dir, err)
+		return err
 	}
-	if _, err := instructions.EnsureFile(filepath.Join(dir, instructions.File)); err != nil {
-		return "", createErr(dir, err)
-	}
-	return dir, nil
+	_, err := instructions.EnsureFile(filepath.Join(dir, instructions.File))
+	return err
 }
 
 // CreateGuided writes a new profile assembled from the chosen library
@@ -87,21 +93,33 @@ func CreateBlank(l layout.Layout, profile string) (string, error) {
 // ComposedFrom, which is what re-composing it against a changed library
 // works from.
 func CreateGuided(l layout.Layout, profile string, features []string) (string, error) {
-	dir, err := CreateBlank(l, profile)
-	if err != nil {
+	if err := Validate(profile); err != nil {
 		return "", err
+	}
+	dir := l.NewProfileDir(profile)
+	if err := composeInto(l, dir, profile, features); err != nil {
+		return "", createErr(dir, err)
+	}
+	if err := RecordHash(dir); err != nil {
+		return "", createErr(dir, err)
+	}
+	return dir, nil
+}
+
+// composeInto writes a guided profile named profile into dir: a blank one,
+// with features composed into it.
+func composeInto(l layout.Layout, dir, profile string, features []string) error {
+	if err := writeBlank(dir, profile); err != nil {
+		return err
 	}
 	// The base features are always in, and are not part of what was chosen,
 	// so they are composed first but not recorded.
 	base := l.BaseFeatures()
 	features, _ = WithoutBase(features, base)
 	if err := recordComposedFrom(dir, features); err != nil {
-		return "", createErr(dir, err)
+		return err
 	}
-	if err := library.Compose(append(append([]string{}, base...), features...), l.FeatureDir, dir); err != nil {
-		return "", createErr(dir, err)
-	}
-	return dir, nil
+	return library.Compose(append(append([]string{}, base...), features...), l.FeatureDir, dir)
 }
 
 // composedFromKey is the directive a generated profile records its feature

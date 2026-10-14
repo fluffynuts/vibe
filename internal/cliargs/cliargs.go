@@ -34,6 +34,12 @@ type Args struct {
 	// NoStart is --no-start: do all the setup, but stop short of starting
 	// the sandbox and companion.
 	NoStart bool
+	// UpdateSandboxes is --update-sandboxes: bring every profile and
+	// sandbox up to date, starting none.
+	UpdateSandboxes bool
+	// NoAutoUpdate is --no-auto-update: start the sandbox as it is, even
+	// when it's out of date.
+	NoAutoUpdate bool
 	// GitToken is --git-token: give the sandbox for the folder a GitHub
 	// token to push with, change the one it has, or take it away.
 	GitToken bool
@@ -122,6 +128,12 @@ func Parse(argv []string) (Args, error) {
 			i++
 		case arg == "--no-start":
 			a.NoStart = true
+			i++
+		case arg == "--update-sandboxes":
+			a.UpdateSandboxes = true
+			i++
+		case arg == "--no-auto-update":
+			a.NoAutoUpdate = true
 			i++
 		case arg == "--git-token":
 			a.GitToken = true
@@ -224,10 +236,10 @@ func setPath(a *Args, v string) error {
 
 // ExclusiveActions counts how many of the mutually-exclusive action flags
 // (stop/stop-all/ssh/re-init/re-create/re-compose/restore/list/install/upgrade/install-sbx/setup/
-// cleanup/delete/info/git-token) are set.
+// cleanup/delete/info/git-token/update-sandboxes) are set.
 func (a Args) ExclusiveActions() int {
 	n := 0
-	for _, b := range []bool{a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info, a.Setup, a.GitToken} {
+	for _, b := range []bool{a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info, a.Setup, a.GitToken, a.UpdateSandboxes} {
 		if b {
 			n++
 		}

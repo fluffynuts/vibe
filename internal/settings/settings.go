@@ -40,6 +40,9 @@ type Settings struct {
 	// them ticked. They are a starting point, not a requirement: the user
 	// can untick any of them while picking.
 	DefaultFeatures []string `yaml:"defaultFeatures,omitempty"`
+	// AutoUpdate false stops a session start bringing an out-of-date
+	// profile and sandbox up to date. Unset means it does.
+	AutoUpdate *bool `yaml:"autoUpdate,omitempty"`
 }
 
 // Load reads a settings.yaml file. A missing file yields a zero Settings and
@@ -90,6 +93,9 @@ func Merge(base, override Settings) Settings {
 	}
 	if override.Companion != "" {
 		out.Companion = override.Companion
+	}
+	if override.AutoUpdate != nil {
+		out.AutoUpdate = override.AutoUpdate
 	}
 
 	out.Publish = append(append([]PublishEntry{}, base.Publish...), override.Publish...)

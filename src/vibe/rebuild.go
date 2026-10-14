@@ -164,7 +164,7 @@ func rebuildSandbox(ctx context.Context, lay layout.Layout, args cliargs.Args, n
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return createSandbox(ctx, vibeHome, name, target, profile, doc, merged, false, zone, askZone, restoreAfterCreate, memoryStore, git)
+	return createSandbox(ctx, lay, name, target, profile, doc, merged, false, zone, askZone, restoreAfterCreate, memoryStore, git)
 }
 
 // doReCreate deletes the overlay copy of the matched profile (if there is
@@ -294,6 +294,12 @@ func recomposeProfile(lay layout.Layout, args cliargs.Args, name, target string,
 			return err
 		}
 	}
+	return replaceProfile(lay, profile, name, features)
+}
+
+// replaceProfile backs profile up, under backupName (the sandbox it's for),
+// and composes it afresh from features.
+func replaceProfile(lay layout.Layout, profile, backupName string, features []string) error {
 	// The recorded theme isn't something the features produce, so it would
 	// go with the rest of the old profile; carry it across. So too the
 	// user's own instructions for the profile — read now, before anything
@@ -305,7 +311,7 @@ func recomposeProfile(lay layout.Layout, args cliargs.Args, name, target string,
 	}
 	dir := lay.HomePath("profiles", profile)
 	if info, err := os.Stat(dir); dir != "" && err == nil && info.IsDir() {
-		if zip, err := backup.Create(lay.HomePath("backup"), name, dir, time.Now()); err != nil {
+		if zip, err := backup.Create(lay.HomePath("backup"), backupName, dir, time.Now()); err != nil {
 			return fmt.Errorf("could not back up profile '%s' first (nothing changed): %w", profile, err)
 		} else {
 			note("backed up profile '%s' to %s", profile, zip)

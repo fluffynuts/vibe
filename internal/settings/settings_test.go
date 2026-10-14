@@ -122,3 +122,18 @@ func TestMergeCompanionOverrides(t *testing.T) {
 		t.Errorf("Companion = %q, want serve (unset override should not clobber base)", got.Companion)
 	}
 }
+
+func TestMergeAutoUpdateOnlyWhenSet(t *testing.T) {
+	off := false
+	if got := Merge(Settings{AutoUpdate: &off}, Settings{}); got.AutoUpdate == nil || *got.AutoUpdate {
+		t.Errorf("an unset override changed autoUpdate: %v", got.AutoUpdate)
+	}
+	on := true
+	if got := Merge(Settings{AutoUpdate: &off}, Settings{AutoUpdate: &on}); got.AutoUpdate == nil || !*got.AutoUpdate {
+		t.Errorf("a set override didn't win: %v", got.AutoUpdate)
+	}
+	parsed, err := Parse([]byte("autoUpdate: false\n"))
+	if err != nil || parsed.AutoUpdate == nil || *parsed.AutoUpdate {
+		t.Errorf("Parse(autoUpdate: false) = %v, %v", parsed.AutoUpdate, err)
+	}
+}

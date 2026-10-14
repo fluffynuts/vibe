@@ -66,6 +66,20 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              ~/.docker/sbx; on macOS (Apple Silicon) and
                              Windows, asking how (-f takes the first way,
                              and reinstalls when already up to date)
+  vibe --update-sandboxes    bring every profile and sandbox up to date with
+                             the library: re-compose the profiles it has
+                             moved on from (unless edited by hand), and
+                             rebuild the sandboxes built from what has since
+                             changed, leaving each running or stopped as it
+                             was. Sandboxes with a vibe attached are left
+                             for their next session. Starts no session, so
+                             it suits cron: vibe --upgrade -f && vibe
+                             --update-sandboxes
+  vibe --no-auto-update      ...start the sandbox as it is, even when it's
+                             out of date: by default, starting a session
+                             brings its profile and sandbox up to date
+                             first ("autoUpdate: false" in settings.yaml
+                             turns that off)
   vibe -N/--no-companion     ...without serving the companion page this run
   vibe --no-start            ...doing all the setup (create, -r, -R, -C...) but
                              stopping short of starting the sandbox and
@@ -254,6 +268,13 @@ func run(argv []string) error {
 	lay := layout.New(vibeHome, bundleRoot)
 	if err := initHome(lay, args.Force); err != nil {
 		return err
+	}
+
+	if args.UpdateSandboxes {
+		if args.Path != "" {
+			return fmt.Errorf("--update-sandboxes takes no path argument")
+		}
+		return doUpdateSandboxes(lay)
 	}
 
 	// Windows PowerShell hands "~\project" over as it is, and vibe shows

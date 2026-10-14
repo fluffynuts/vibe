@@ -31,6 +31,9 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 			note("sandbox '%s' already exists — nothing to set up", name)
 			return finish(lay, args, name)
 		}
+		if err := autoUpdate(lay, args, name, target); err != nil {
+			return err
+		}
 		note("attaching to existing sandbox '%s'", name)
 		if args.GitTokenEnv != "" || args.NoGitToken || args.GitRules != "" {
 			note("  (it exists, so --git-token-env, --no-git-token and --git-rules don't apply — 'vibe --git-token' changes its token)")
@@ -86,7 +89,7 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 	if err != nil {
 		return err
 	}
-	if err := createSandbox(context.Background(), vibeHome, name, target, profile, doc, merged, !args.Force, timezone.Host(), !args.Force, false, "", git); err != nil {
+	if err := createSandbox(context.Background(), lay, name, target, profile, doc, merged, !args.Force, timezone.Host(), !args.Force, false, "", git); err != nil {
 		return err
 	}
 	return finish(lay, args, name)
@@ -184,7 +187,8 @@ func setClaudeTheme(lay layout.Layout, profile string, doc kitspec.Doc, fromSand
 // on the memory setting; without it, that setting is used as long as this
 // machine can give it. git, when not nil, is the GitHub token the agent may
 // push with.
-func createSandbox(ctx context.Context, vibeHome, name, target, profile string, doc kitspec.Doc, merged settings.Settings, askMemory bool, zone string, askZone, restoreAfterCreate bool, memoryStore string, git *gitAccess) error {
+func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile string, doc kitspec.Doc, merged settings.Settings, askMemory bool, zone string, askZone, restoreAfterCreate bool, memoryStore string, git *gitAccess) error {
+	vibeHome := lay.Home
 	// Every sandbox's agent is told where to look for its rules for
 	// pushing, since a token can be given to a sandbox after it's made.
 	kitspec.AppendAgentInstructions(doc, gittoken.KitInstructions)
@@ -312,6 +316,9 @@ func createSandbox(ctx context.Context, vibeHome, name, target, profile string, 
 
 	inst := state.Instance{
 		Name: name, Profile: profile, Target: target, Publish: publishRecords, MemoryStore: memoryStore, Timezone: zone, Agent: agent, CreatedAt: time.Now(),
+	}
+	if inst.KitHash, err = kitFingerprint(lay, profile, agent); err != nil {
+		note("WARNING: couldn't record what sandbox '%s' was built from, so it will be taken as out of date: %s", name, err)
 	}
 	if git = giveGitAccess(vibeHome, name, git, repoOf(target)); git != nil {
 		inst.GitToken, inst.GitRules, inst.GitTokenExpires = git.source, git.rules, git.expires
