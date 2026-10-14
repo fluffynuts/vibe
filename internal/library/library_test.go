@@ -394,3 +394,64 @@ func TestDiffityFeatureStartsItsForwarderAtStartup(t *testing.T) {
 		t.Errorf("the forwarder's script is not shipped: %v", err)
 	}
 }
+
+func TestListReadsWhichAgentsAFeatureIsFor(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "review", "install-scripts", "01-install"),
+		"#!/bin/sh\n# vibe: description: Install a reviewer\n# vibe: agents: claude, gemini\necho hi\n")
+	write(t, filepath.Join(dir, "redis", "install-scripts", "01-install"),
+		"#!/bin/sh\n# vibe: description: Install redis\necho hi\n")
+
+	features := List([]string{"review", "redis"}, flatDirFor(dir))
+	if got := features[0].Agents; !reflect.DeepEqual(got, []string{"claude", "gemini"}) {
+		t.Errorf("review's Agents = %v", got)
+	}
+	for _, agent := range []string{"claude", "gemini", "codex"} {
+		if !features[1].Supports(agent) {
+			t.Errorf("redis names no agents, but doesn't support %s", agent)
+		}
+	}
+	if features[0].Supports("codex") || !features[0].Supports("gemini") {
+		t.Errorf("review supports codex: %v, gemini: %v", features[0].Supports("codex"), features[0].Supports("gemini"))
+	}
+}
+
+// The agents come from the same file as the description, as the rest of a
+// feature's self-description does.
+func TestAgentsAreReadFromTheFileThatDescribesTheFeature(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "tool", "install-scripts", "01-install"), "#!/bin/sh\n# vibe: agents: claude\necho hi\n")
+	write(t, filepath.Join(dir, "tool", "agent-files", ".local", "bin", "tool"),
+		"#!/bin/sh\n# vibe: description: A tool\necho hi\n")
+
+	features := List([]string{"tool"}, flatDirFor(dir))
+	if features[0].Description != "A tool" || len(features[0].Agents) != 0 {
+		t.Errorf("feature = %+v, want the agent-file's description and no agents", features[0])
+	}
+}
+
+func TestForAgentSplitsFeaturesKeepingTheirOrder(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a", "c"} {
+		write(t, filepath.Join(dir, name, "install-scripts", "01"), "# vibe: description: "+name+"\n# vibe: agents: claude\n")
+	}
+	write(t, filepath.Join(dir, "b", "install-scripts", "01"), "# vibe: description: b\n")
+
+	supported, unsupported := ForAgent([]string{"c", "b", "a"}, flatDirFor(dir), "codex")
+	if !reflect.DeepEqual(supported, []string{"b"}) || !reflect.DeepEqual(unsupported, []string{"c", "a"}) {
+		t.Errorf("ForAgent = %v, %v", supported, unsupported)
+	}
+	if got := Unsupported([]string{"c", "b", "a"}, flatDirFor(dir), "codex"); len(got) != 2 || got[0].Name != "c" || got[1].Name != "a" {
+		t.Errorf("Unsupported = %+v", got)
+	}
+}
+
+func TestDiffityFeatureIsForClaudeOnly(t *testing.T) {
+	lib, err := filepath.Abs(filepath.Join("..", "..", "library"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := List([]string{"diffity"}, flatDirFor(lib))[0].Agents; !reflect.DeepEqual(got, []string{"claude"}) {
+		t.Errorf("diffity's Agents = %v, want just claude: its skills and hooks are Claude Code's", got)
+	}
+}

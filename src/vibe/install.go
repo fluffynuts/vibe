@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"vibe"
 	"vibe/internal/fscopy"
 	"vibe/internal/instructions"
 	"vibe/internal/layout"
@@ -219,7 +220,8 @@ func offerSbxInstall(force bool) error {
 // that directory if needed, then warns (without failing) if it isn't on
 // $PATH — the freshly installed binary would otherwise be invisible to the
 // shell with no explanation why. An existing one is replaced without
-// asking: installing or upgrading vibe is what --install is for.
+// asking, by a release: installing or upgrading vibe is what --install is
+// for. A development build leaves an existing one alone.
 func installBinary() error {
 	exe, err := os.Executable()
 	if err != nil {
@@ -249,6 +251,13 @@ func installBinary() error {
 	}
 	_, statErr := os.Stat(dest)
 	replacing := statErr == nil
+	// A build from source would lose the vibe installed there — most likely
+	// a release — and leave 'vibe --upgrade' offering that release back.
+	if replacing && vibe.Build == "" {
+		note("  this is a development build (%s): leaving the vibe at %s as it is", vibe.String(), dest)
+		note("  to run this build from your PATH, copy %s there yourself", exe)
+		return warnIfNotOnPath(binDir, "vibe")
+	}
 	if err := replaceFile(exe, dest); err != nil {
 		return fmt.Errorf("copying the vibe binary to %s: %w", dest, err)
 	}

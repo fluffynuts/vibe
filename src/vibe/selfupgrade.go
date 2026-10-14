@@ -183,13 +183,20 @@ func checkVibeUpgrade(force bool, strategyValue string) (*pendingUpgrade, string
 	if !selfupdate.Newer(latest, running) {
 		return nil, fmt.Sprintf("vibe %s is the latest", running), nil
 	}
+	label, summary := fmt.Sprintf("vibe %s → %s", running, latest), fmt.Sprintf("vibe %s is available (you have %s)", latest, running)
+	// A build from source has no build number, so every release of its
+	// version sorts after it: it isn't older, just not a release.
+	if vibe.Build == "" {
+		label = fmt.Sprintf("vibe %s (a development build) → %s", running, latest)
+		summary = fmt.Sprintf("vibe %s is the latest release (you have a development build of %s)", latest, running)
+	}
 	return &pendingUpgrade{
-		label: fmt.Sprintf("vibe %s → %s", running, latest),
+		label: label,
 		run: func() error {
 			note("upgrading vibe %s to %s", running, latest)
 			return upgradeVibe(tag, force, strategyValue)
 		},
-	}, fmt.Sprintf("vibe %s is available (you have %s)", latest, running), nil
+	}, summary, nil
 }
 
 // checkSbxUpgrade checks for a newer stable release of Docker SBX than the

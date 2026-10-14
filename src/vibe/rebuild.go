@@ -68,17 +68,22 @@ func rebuildSandbox(ctx context.Context, lay layout.Layout, args cliargs.Args, n
 		return err
 	}
 
-	if err := ensureProfile(lay, profile, args.Force); err != nil {
+	// A rebuild keeps the agent the sandbox was created with; it isn't asked
+	// again.
+	defaultAgent, err := defaultAgentFor(lay, profile)
+	if err != nil {
+		return err
+	}
+	agent := recordedAgent(vibeHome, name, defaultAgent)
+	if err := ensureProfile(lay, profile, args.Force, agent); err != nil {
 		return err
 	}
 	doc, merged, err := loadKit(lay, profile)
 	if err != nil {
 		return err
 	}
-	// A rebuild keeps the agent the sandbox was created with; it isn't asked
-	// again.
-	merged.Agent = recordedAgent(vibeHome, name, agentOf(merged))
-	agent := merged.Agent
+	merged.Agent = agent
+	warnUnsupportedFeatures(lay, profile, agent)
 
 	restoreAfterCreate := false
 	var memoryStore string
@@ -237,6 +242,11 @@ func recomposeProfile(lay layout.Layout, args cliargs.Args, name, target string,
 		return err
 	}
 	features := settleBaseFeatures(lay, profile)
+	defaultAgent, err := defaultAgentFor(lay, profile)
+	if err != nil {
+		return err
+	}
+	agent := recordedAgent(lay.Home, name, defaultAgent)
 	if !profilegen.IsGuided(lay.ProfileDir(profile)) {
 		return fmt.Errorf("profile '%s' does not record which features it was composed from.\n"+
 			"Only profiles from guided creation do — add a '# vibe: features: a, b' line to\n"+
@@ -279,7 +289,7 @@ func recomposeProfile(lay layout.Layout, args cliargs.Args, name, target string,
 		}
 		features = chosen
 	case !args.Force:
-		features, err = pickReComposeFeatures(lay, profile, features)
+		features, err = pickReComposeFeatures(lay, profile, features, agent)
 		if err != nil {
 			return err
 		}
@@ -447,9 +457,10 @@ func describeFeatures(features []string) string {
 // profile is rebuilt from: the checklist of the whole library, with the ones
 // the profile already has ticked. Features already in the profile keep their
 // order, and newly ticked ones follow in library order; with more than one
-// the user can then reorder them, as in guided creation.
-var pickReComposeFeatures = func(lay layout.Layout, profile string, current []string) ([]string, error) {
-	names := lay.Features()
+// the user can then reorder them, as in guided creation. Features that
+// don't work with agent aren't offered, unless the profile has them.
+var pickReComposeFeatures = func(lay layout.Layout, profile string, current []string, agent string) ([]string, error) {
+	names := offeredFor(lay, lay.Features(), agent, current)
 	features, labels, checked := featureChecklist(lay, names, current)
 	idxs, ok := checklistFrom("pick the features this sandbox needs (untick any you no longer use)", labels, checked)
 	if !ok {

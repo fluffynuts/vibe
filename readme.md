@@ -124,7 +124,9 @@ The first `vibe --install` (and vibe's first run, if you skip `--install`) also 
 up to half your machine's memory. It asks which agent sandboxes run by default, from the agents `sbx run
 --help` lists, and which library features a guided profile starts with ticked. Each question
 starts on the package's choice. Creating a new sandbox asks again which agent it should run,
-starting on that default; a re-init or re-create keeps the agent the sandbox was created with. With `-f`, or no terminal, it keeps the package's choices and only
+starting on that default (or on the profile's own `agent`, when the profile exists already). It asks
+this first, before any profile is made, because a guided profile only offers the features that work
+with that agent; a re-init or re-create keeps the agent the sandbox was created with. With `-f`, or no terminal, it keeps the package's choices and only
 lowers the memory, if it's more than your machine can give. Every later `--install` makes the same
 memory check on your `settings.yaml`, and changes nothing else in it.
 
@@ -756,7 +758,8 @@ preference to the variable. If sbx can't confirm a port, the file says so on a s
 `publish` entries append across base → profile, so a profile only needs to list what it's adding.
 `defaultFeatures` is the exception that replaces rather than appends, and it is read from the base
 settings only — it is what the guided picker starts with ticked, so it is consulted before the
-profile it is creating exists. Naming a feature the library doesn't have is an error, with the
+profile it is creating exists. A feature the sandbox's agent can't use (see `# vibe: agents:`
+below) is left out, with a note saying so. Naming a feature the library doesn't have is an error, with the
 closest real name suggested:
 
 ```
@@ -779,6 +782,14 @@ library/
     agent-files/           # files deployed into /home/agent
     agent-instructions.md  # appended to the profile's agent instructions
 ```
+
+A feature that only works with some agents says so beside its description, in the same file:
+`# vibe: agents: claude` (a comma-separated list; none means every agent). Guided creation only
+offers it for a sandbox running one of those agents, and re-composing only offers it to such a
+sandbox, or to a profile that has it already, so that taking it out stays your choice. A profile
+is shared by every sandbox for its folder, so it may still reach a sandbox running another agent:
+vibe warns when it does, and installs it anyway. `diffity` is `claude` only: its skills and URL
+hooks are Claude Code's.
 
 Composing writes all of that into the new profile: install scripts are renumbered so the features
 run in the order you picked, `agent-files/.local/bin/*` scripts get an `on-start` generated to run

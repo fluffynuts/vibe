@@ -119,6 +119,23 @@ func TestCheckVibeUpgrade(t *testing.T) {
 	}
 }
 
+// A build from source has no build number, so every release of its version
+// counts as newer: it is offered, but as what it is, not as an older vibe.
+func TestCheckVibeUpgradeSaysADevelopmentBuildIsOne(t *testing.T) {
+	asBuild(t, "")
+	onReleases(t, "v"+vibe.Version+".51", "v0.46.0")
+	u, summary, err := checkVibeUpgrade(false, "")
+	if err != nil || u == nil {
+		t.Fatalf("checkVibeUpgrade = %v, %q, %v; want an upgrade", u, summary, err)
+	}
+	if want := "vibe " + vibe.Version + " (a development build) → " + vibe.Version + ".51"; u.label != want {
+		t.Errorf("label = %q, want %q", u.label, want)
+	}
+	if want := "vibe " + vibe.Version + ".51 is the latest release (you have a development build of " + vibe.Version + ")"; summary != want {
+		t.Errorf("summary = %q, want %q", summary, want)
+	}
+}
+
 func TestCheckSbxUpgrade(t *testing.T) {
 	onReleases(t, "v0.1.1", "v0.46.0")
 	for _, tt := range []struct {

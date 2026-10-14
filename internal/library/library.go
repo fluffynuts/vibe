@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,6 +25,9 @@ import (
 type Feature struct {
 	Name        string // the folder name, e.g. "mysql"
 	Description string // "" when no "# vibe: description:" was found anywhere in it
+	// Agents are the only agents it works with, from a "# vibe: agents:"
+	// beside its description: none means every agent.
+	Agents []string
 }
 
 // Label is what to show the user for this feature: "name: description", or
@@ -34,6 +38,36 @@ func (f Feature) Label() string {
 		return f.Name
 	}
 	return f.Name + ": " + f.Description
+}
+
+// Supports says whether the feature works with agent.
+func (f Feature) Supports(agent string) bool {
+	return len(f.Agents) == 0 || slices.Contains(f.Agents, agent)
+}
+
+// Unsupported names the features among names that don't work with agent,
+// each with the agents it does work with (for saying why), in names' order.
+func Unsupported(names []string, dirFor DirFor, agent string) []Feature {
+	var out []Feature
+	for _, f := range List(names, dirFor) {
+		if !f.Supports(agent) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// ForAgent splits names into the features that work with agent and the
+// ones that don't, keeping names' order in each.
+func ForAgent(names []string, dirFor DirFor, agent string) (supported, unsupported []string) {
+	for _, f := range List(names, dirFor) {
+		if f.Supports(agent) {
+			supported = append(supported, f.Name)
+		} else {
+			unsupported = append(unsupported, f.Name)
+		}
+	}
+	return supported, unsupported
 }
 
 // DirFor resolves a feature name to the single directory it should be read
@@ -48,36 +82,55 @@ type DirFor func(feature string) string
 func List(names []string, dirFor DirFor) []Feature {
 	features := make([]Feature, len(names))
 	for i, name := range names {
-		features[i] = Feature{Name: name, Description: describe(dirFor(name))}
+		about := describe(dirFor(name))
+		features[i] = Feature{Name: name, Description: about.String("description", ""), Agents: agentList(about)}
 	}
 	return features
 }
 
-// describe derives a feature's description from what it already documents
-// itself with, so the library never needs a separate manifest to keep in
-// sync: the first "# vibe: description:" found in its install-scripts (in
-// their run order), else the first one found among its agent-files (by
-// path), else "".
-func describe(featureDir string) string {
-	if d := firstScriptDescription(filepath.Join(featureDir, "install-scripts")); d != "" {
+// agentList reads a "# vibe: agents: a, b" directive.
+func agentList(about directive.Set) []string {
+	var agents []string
+	for _, agent := range strings.Split(about.String("agents", ""), ",") {
+		if agent = strings.TrimSpace(agent); agent != "" {
+			agents = append(agents, agent)
+		}
+	}
+	return agents
+}
+
+// describe finds where a feature describes itself, so the library never
+// needs a separate manifest to keep in sync: the directives of the first of
+// its install-scripts (in their run order) with a "# vibe: description:",
+// else of the first of its agent-files (by path) with one, else none.
+func describe(featureDir string) directive.Set {
+	if d := firstScriptDescription(filepath.Join(featureDir, "install-scripts")); d != nil {
 		return d
 	}
 	return firstAgentFileDescription(filepath.Join(featureDir, "agent-files"))
 }
 
-func firstScriptDescription(dir string) string {
+func firstScriptDescription(dir string) directive.Set {
 	entries, err := kitspec.SortedDirEntries(dir)
 	if err != nil || len(entries) == 0 {
-		return ""
+		return nil
 	}
 	content, err := os.ReadFile(filepath.Join(dir, entries[0].Name()))
 	if err != nil {
-		return ""
+		return nil
 	}
-	return directive.Parse(content).String("description", "")
+	return described(directive.Parse(content))
 }
 
-func firstAgentFileDescription(dir string) string {
+// described is set when it has a description, and nil otherwise.
+func described(set directive.Set) directive.Set {
+	if set.String("description", "") == "" {
+		return nil
+	}
+	return set
+}
+
+func firstAgentFileDescription(dir string) directive.Set {
 	var rels []string
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() || kitspec.IsIgnored(d.Name()) {
@@ -89,14 +142,14 @@ func firstAgentFileDescription(dir string) string {
 		return nil
 	})
 	if len(rels) == 0 {
-		return ""
+		return nil
 	}
 	sort.Strings(rels)
 	content, err := os.ReadFile(filepath.Join(dir, rels[0]))
 	if err != nil {
-		return ""
+		return nil
 	}
-	return directive.Parse(content).String("description", "")
+	return described(directive.Parse(content))
 }
 
 // Validate checks that every name in wanted is a feature the library

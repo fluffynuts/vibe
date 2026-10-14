@@ -1,6 +1,9 @@
 #!/bin/sh
 # vibe: description: Install the diffity review viewer CLI (non-fatal)
+# vibe: agents: claude
 # vibe: user: 0
+# Claude only: its skills and URL hooks are Claude Code's, and its
+# instructions send the agent to those skills.
 # Self-contained on purpose: setup.files are not deployed until setup.install
 # has finished, so an install script that calls a helper from agent-files runs
 # before that helper exists and fails with "not found" every single time.

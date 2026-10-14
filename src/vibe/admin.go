@@ -63,7 +63,8 @@ func (a *companionAdmin) Status() companion.AdminStatus {
 		st.Error = err.Error()
 	}
 	if info.guided {
-		features, labels, checked := featureChecklist(a.lay, a.lay.Features(), info.features)
+		offered := offeredFor(a.lay, a.lay.Features(), info.agent, info.features)
+		features, labels, checked := featureChecklist(a.lay, offered, info.features)
 		for i, f := range features {
 			st.Features = append(st.Features, companion.AdminFeature{Name: f.Name, Label: labels[i], On: checked[i]})
 		}

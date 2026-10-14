@@ -13,7 +13,7 @@ import (
 func TestEnsureProfileExisting(t *testing.T) {
 	root, _ := goldenBundle(t)
 	lay := layout.New(t.TempDir(), root)
-	if err := ensureProfile(lay, bundledProfile, false); err != nil {
+	if err := ensureProfile(lay, bundledProfile, false, "claude"); err != nil {
 		t.Fatalf("ensureProfile on an existing profile: %v", err)
 	}
 	if _, err := os.Stat(lay.HomePath("profiles")); err == nil {
@@ -42,7 +42,7 @@ func TestEnsureProfileCreatesBlank(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := ensureProfile(lay, "foo-browser", tc.force); err != nil {
+			if err := ensureProfile(lay, "foo-browser", tc.force, "claude"); err != nil {
 				t.Fatalf("ensureProfile: %v", err)
 			}
 			// the new profile lands in the overlay, not the bundle
@@ -60,7 +60,7 @@ func TestEnsureProfileCreatesBlank(t *testing.T) {
 // TestEnsureProfileRejectsBadName refuses to create a profile whose name
 // could escape the profiles directory.
 func TestEnsureProfileRejectsBadName(t *testing.T) {
-	if err := ensureProfile(layout.New(t.TempDir(), t.TempDir()), "../evil", true); err == nil {
+	if err := ensureProfile(layout.New(t.TempDir(), t.TempDir()), "../evil", true, "claude"); err == nil {
 		t.Fatal("expected an error for a path-escaping profile name")
 	}
 }
@@ -81,7 +81,7 @@ func TestGuidedProfileChecksDefaultFeatures(t *testing.T) {
 			writeFile(t, lay.BundlePath("library", "diffity", "install-scripts", "01-install"), "#!/bin/sh\necho hi\n")
 			writeFile(t, lay.HomePath("settings.yaml"), "defaultFeatures:\n  - "+tc.wanted+"\n")
 
-			err := ensureGuidedProfile(lay, "demo")
+			err := ensureGuidedProfile(lay, "demo", "claude")
 			if err == nil {
 				t.Fatal("expected an error")
 			}
@@ -89,5 +89,105 @@ func TestGuidedProfileChecksDefaultFeatures(t *testing.T) {
 				t.Errorf("error = %v, want it to mention %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// writeClaudeOnly puts a claude-only feature, name, in the bundle's library.
+func writeClaudeOnly(t *testing.T, lay layout.Layout, name string) {
+	t.Helper()
+	writeFile(t, lay.BundlePath("library", name, "install-scripts", "01-install"),
+		"#!/bin/sh\n# vibe: description: Install "+name+"\n# vibe: agents: claude\necho hi\n")
+}
+
+// A defaultFeatures entry the chosen agent can't use is left out with a
+// note saying why, rather than stopping creation as an unknown name does.
+func TestGuidedProfileLeavesOutDefaultsTheAgentCantUse(t *testing.T) {
+	lay := layout.New(t.TempDir(), t.TempDir())
+	writeClaudeOnly(t, lay, "diffity")
+	writeFile(t, lay.BundlePath("library", "redis", "install-scripts", "01-install"), "#!/bin/sh\necho hi\n")
+	writeFile(t, lay.HomePath("settings.yaml"), "defaultFeatures:\n  - diffity\n")
+
+	var err error
+	notes := strings.Join(notesOf(func() { err = ensureGuidedProfile(lay, "demo", "codex") }), "\n")
+	if err == nil || !strings.Contains(err.Error(), "aborted") {
+		t.Fatalf("error = %v, want it to get as far as asking (and abort, with no terminal)", err)
+	}
+	if !strings.Contains(notes, "leaving out diffity: it works only with claude, and this sandbox runs codex") {
+		t.Errorf("notes don't say diffity was left out, and why:\n%s", notes)
+	}
+}
+
+func TestGuidedProfileSaysSoWhenNoFeatureSuitsTheAgent(t *testing.T) {
+	lay := layout.New(t.TempDir(), t.TempDir())
+	writeClaudeOnly(t, lay, "diffity")
+
+	err := ensureGuidedProfile(lay, "demo", "codex")
+	if err == nil || !strings.Contains(err.Error(), "no library features work with codex") {
+		t.Errorf("error = %v", err)
+	}
+}
+
+func TestOfferedFeaturesAreTheAgentsAndWhatTheProfileHas(t *testing.T) {
+	lay := layout.New(t.TempDir(), t.TempDir())
+	writeClaudeOnly(t, lay, "diffity")
+	writeClaudeOnly(t, lay, "other")
+	writeFile(t, lay.BundlePath("library", "redis", "install-scripts", "01-install"), "#!/bin/sh\necho hi\n")
+	all := lay.Features()
+
+	for _, tc := range []struct {
+		agent string
+		has   []string
+		want  string
+	}{
+		{"claude", nil, "diffity other redis"},
+		{"codex", nil, "redis"},
+		{"codex", []string{"diffity"}, "diffity redis"},
+	} {
+		if got := strings.Join(offeredFor(lay, all, tc.agent, tc.has), " "); got != tc.want {
+			t.Errorf("offeredFor(%s, has %v) = %q, want %q", tc.agent, tc.has, got, tc.want)
+		}
+	}
+}
+
+func TestChecklistLabelsSayWhichAgentsAFeatureIsFor(t *testing.T) {
+	lay := layout.New(t.TempDir(), t.TempDir())
+	writeClaudeOnly(t, lay, "diffity")
+	writeFile(t, lay.BundlePath("library", "redis", "install-scripts", "01-install"),
+		"#!/bin/sh\n# vibe: description: Install redis\necho hi\n")
+
+	_, labels, _ := featureChecklist(lay, lay.Features(), nil)
+	want := "diffity: Install diffity (claude only)|redis: Install redis"
+	if got := strings.Join(labels, "|"); got != want {
+		t.Errorf("labels = %q, want %q", got, want)
+	}
+}
+
+// A profile shared with a sandbox of another agent is used as it is, with a
+// warning for what this sandbox's agent can't use.
+func TestUnsupportedProfileFeaturesAreWarnedAbout(t *testing.T) {
+	lay := layout.New(t.TempDir(), t.TempDir())
+	writeClaudeOnly(t, lay, "diffity")
+	writeFile(t, lay.HomePath("profiles", "p", "config.yaml"), "# vibe: features: diffity\nname: p\n")
+
+	notes := strings.Join(notesOf(func() { warnUnsupportedFeatures(lay, "p", "codex") }), "\n")
+	if !strings.Contains(notes, "WARNING: profile 'p' has diffity: it works only with claude, and this sandbox runs codex") {
+		t.Errorf("no warning for diffity:\n%s", notes)
+	}
+	if notes := notesOf(func() { warnUnsupportedFeatures(lay, "p", "claude") }); len(notes) != 0 {
+		t.Errorf("warned for a feature the agent can use: %v", notes)
+	}
+}
+
+func TestTheAgentOfferedFirstIsTheProfilesThenTheUsers(t *testing.T) {
+	lay := layout.New(t.TempDir(), t.TempDir())
+	writeFile(t, lay.HomePath("settings.yaml"), "agent: gemini\n")
+	writeFile(t, lay.HomePath("profiles", "p", "config.yaml"), "name: p\n")
+	writeFile(t, lay.HomePath("profiles", "p", "settings.yaml"), "agent: codex\n")
+
+	for profile, want := range map[string]string{"p": "codex", "new-one": "gemini"} {
+		got, err := defaultAgentFor(lay, profile)
+		if err != nil || got != want {
+			t.Errorf("defaultAgentFor(%s) = %q, %v; want %q", profile, got, err, want)
+		}
 	}
 }

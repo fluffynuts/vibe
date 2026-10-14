@@ -68,8 +68,8 @@ func initHome(lay layout.Layout, force bool) error {
 // no profile behind it yet, so rather than failing, offer to seed one: a
 // copy of an existing profile, a blank one, or a guided walk through
 // picking library features.
-func ensureProfile(lay layout.Layout, profile string, force bool) error {
-	if err := createProfileIfMissing(lay, profile, force); err != nil {
+func ensureProfile(lay layout.Layout, profile string, force bool, agent string) error {
+	if err := createProfileIfMissing(lay, profile, force, agent); err != nil {
 		return err
 	}
 	return prepareInstructions(lay, profile)
@@ -105,8 +105,10 @@ func prepareInstructions(lay layout.Layout, profile string) error {
 }
 
 // createProfileIfMissing makes the profile when there's none, asking how
-// (guided, a copy, or blank) when there's a terminal to ask on.
-func createProfileIfMissing(lay layout.Layout, profile string, force bool) error {
+// (guided, a copy, or blank) when there's a terminal to ask on. agent is the
+// agent the sandbox will run: guided creation offers only the features
+// that work with it.
+func createProfileIfMissing(lay layout.Layout, profile string, force bool, agent string) error {
 	if lay.ProfileExists(profile) {
 		return nil
 	}
@@ -147,7 +149,7 @@ func createProfileIfMissing(lay layout.Layout, profile string, force bool) error
 			}
 			source = existing[pick]
 		case guided:
-			return ensureGuidedProfile(lay, profile)
+			return ensureGuidedProfile(lay, profile, agent)
 		}
 	}
 
@@ -172,7 +174,8 @@ func createProfileIfMissing(lay layout.Layout, profile string, force bool) error
 // ensureGuidedProfile walks the user through picking which library
 // features a new profile should install, lets them reorder the ones they
 // picked, and writes the result as a new profile via profilegen.CreateGuided.
-func ensureGuidedProfile(lay layout.Layout, profile string) error {
+// Features that don't work with agent aren't offered.
+func ensureGuidedProfile(lay layout.Layout, profile, agent string) error {
 	names := lay.Features()
 	if len(names) == 0 {
 		return fmt.Errorf("no library features found — pick another option instead")
@@ -188,6 +191,11 @@ func ensureGuidedProfile(lay layout.Layout, profile string) error {
 	base.DefaultFeatures, _ = profilegen.WithoutBase(base.DefaultFeatures, lay.BaseFeatures())
 	if err := library.Validate(base.DefaultFeatures, names); err != nil {
 		return fmt.Errorf("defaultFeatures in %s: %w", settingsPath, err)
+	}
+	names = offeredFor(lay, names, agent, nil)
+	base.DefaultFeatures = defaultsFor(lay, base.DefaultFeatures, agent)
+	if len(names) == 0 {
+		return fmt.Errorf("no library features work with %s — pick another option instead", agent)
 	}
 
 	features, labels, checked := featureChecklist(lay, names, base.DefaultFeatures)
@@ -224,6 +232,35 @@ func ensureGuidedProfile(lay layout.Layout, profile string) error {
 	return nil
 }
 
+// offeredFor is the features among names to offer for agent's sandbox:
+// the ones that work with it, and any of has, which the profile has
+// already — taking one of those out is the user's choice, not vibe's.
+func offeredFor(lay layout.Layout, names []string, agent string, has []string) []string {
+	var offered []string
+	for _, f := range library.List(names, lay.FeatureDir) {
+		if f.Supports(agent) || slices.Contains(has, f.Name) {
+			offered = append(offered, f.Name)
+		}
+	}
+	return offered
+}
+
+// defaultsFor is the defaultFeatures that work with agent, saying which
+// are left out and why: they're the user's own choice, so going without
+// one shouldn't go unremarked.
+func defaultsFor(lay layout.Layout, defaults []string, agent string) []string {
+	for _, f := range library.Unsupported(defaults, lay.FeatureDir, agent) {
+		note("defaultFeatures: leaving out %s", whyUnsupported(f, agent))
+	}
+	kept, _ := library.ForAgent(defaults, lay.FeatureDir, agent)
+	return kept
+}
+
+// whyUnsupported says why f isn't for agent's sandbox, for a note.
+func whyUnsupported(f library.Feature, agent string) string {
+	return fmt.Sprintf("%s: it works only with %s, and this sandbox runs %s", f.Name, strings.Join(f.Agents, ", "), agent)
+}
+
 // featureChecklist lists the library features names for a checkbox list:
 // each one's label, and whether it starts ticked — the ones in ticked.
 func featureChecklist(lay layout.Layout, names, ticked []string) (features []library.Feature, labels []string, checked []bool) {
@@ -232,6 +269,9 @@ func featureChecklist(lay layout.Layout, names, ticked []string) (features []lib
 	checked = make([]bool, len(features))
 	for i, f := range features {
 		labels[i] = f.Label()
+		if len(f.Agents) > 0 {
+			labels[i] += " (" + strings.Join(f.Agents, ", ") + " only)"
+		}
 		checked[i] = slices.Index(ticked, f.Name) >= 0
 	}
 	return features, labels, checked

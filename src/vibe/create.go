@@ -14,8 +14,10 @@ import (
 	"vibe/internal/gittoken"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
+	"vibe/internal/library"
 	agentmem "vibe/internal/memory"
 	"vibe/internal/portalloc"
+	"vibe/internal/profilegen"
 	"vibe/internal/sbxrun"
 	"vibe/internal/settings"
 	"vibe/internal/state"
@@ -56,7 +58,13 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 	}
 
 	profile := resolveProfileName(args, target)
-	if err := ensureProfile(lay, profile, args.Force); err != nil {
+	// The agent first: which features a new profile is offered depends on it.
+	defaultAgent, err := defaultAgentFor(lay, profile)
+	if err != nil {
+		return err
+	}
+	agent := pickAgent(defaultAgent, !args.Force && interactive(), fmt.Sprintf("which agent should sandbox '%s' run?", name))
+	if err := ensureProfile(lay, profile, args.Force, agent); err != nil {
 		return err
 	}
 	settleBaseFeatures(lay, profile)
@@ -65,7 +73,8 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 	if err != nil {
 		return err
 	}
-	merged.Agent = pickAgent(agentOf(merged), !args.Force && interactive(), fmt.Sprintf("which agent should sandbox '%s' run?", name))
+	merged.Agent = agent
+	warnUnsupportedFeatures(lay, profile, agent)
 	if agentOf(merged) == "claude" {
 		if doc, err = setClaudeTheme(lay, profile, doc, "", true, args.Force); err != nil {
 			return err
@@ -81,6 +90,30 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 		return err
 	}
 	return finish(lay, args, name)
+}
+
+// defaultAgentFor is the agent a new sandbox on profile is offered first:
+// the profile's own setting when the profile exists, else the user's. A
+// profile not made yet isn't read from, so a bad name reads nothing.
+func defaultAgentFor(lay layout.Layout, profile string) (string, error) {
+	if lay.ProfileExists(profile) {
+		merged, err := loadSettings(lay, profile)
+		return agentOf(merged), err
+	}
+	user, err := settings.Load(lay.File("settings.yaml"))
+	return agentOf(user), err
+}
+
+// warnUnsupportedFeatures warns about features the profile was composed
+// from that don't work with agent. The profile is used as it is — it may be
+// shared with sandboxes running another agent — but the user should know
+// what this sandbox has that its agent can't use.
+func warnUnsupportedFeatures(lay layout.Layout, profile, agent string) {
+	dir := lay.ProfileDir(profile)
+	for _, f := range library.Unsupported(profilegen.ComposedFrom(dir), lay.FeatureDir, agent) {
+		note("WARNING: profile '%s' has %s", profile, whyUnsupported(f, agent))
+		note("  it is installed anyway; 'vibe --re-compose' can take it out of the profile")
+	}
 }
 
 func agentOf(merged settings.Settings) string {

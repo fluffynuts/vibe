@@ -366,3 +366,50 @@ func TestAFeatureThatIsABaseOneNowCanBeRemoved(t *testing.T) {
 		}
 	}
 }
+
+// installedBinaryOf puts stand-in content at the ~/.local/bin copy of the
+// running binary, in a fresh home, returning its path.
+func installedBinaryOf(t *testing.T, content string) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(home, ".local", "bin", filepath.Base(exe))
+	writeFile(t, dest, content)
+	return dest
+}
+
+// A build from source replacing a released vibe would lose that release,
+// and leave 'vibe --upgrade' offering it again.
+func TestADevelopmentBuildLeavesAnInstalledVibeAlone(t *testing.T) {
+	asBuild(t, "")
+	dest := installedBinaryOf(t, "the release\n")
+
+	var err error
+	notes := strings.Join(notesOf(func() { err = installBinary() }), "\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(dest); string(data) != "the release\n" {
+		t.Errorf("the installed vibe was replaced by a development build")
+	}
+	if !strings.Contains(notes, "development build") || !strings.Contains(notes, "leaving the vibe at "+dest) {
+		t.Errorf("notes don't say why the installed vibe was left alone:\n%s", notes)
+	}
+}
+
+func TestAReleaseBuildReplacesAnInstalledVibe(t *testing.T) {
+	asBuild(t, "50")
+	dest := installedBinaryOf(t, "an older release\n")
+
+	if err := installBinary(); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(dest); string(data) == "an older release\n" {
+		t.Errorf("a release build didn't replace the installed vibe")
+	}
+}
