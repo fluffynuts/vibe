@@ -51,8 +51,11 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe -a/--info [path]      show the sandbox's settings (memory, agent,
                              features) and, while it runs, its uptime and
                              how much memory and disk it is using
-  vibe -x/--cleanup          pick sandboxes from a checklist and delete them;
-                             the profiles they were built from are kept
+  vibe -x/--cleanup          pick profiles and sandboxes to delete from a
+                             checklist grouped by profile, with what's likely
+                             trash ticked; a profile goes with all its
+                             sandboxes and everything vibe keeps for them.
+                             Lists exactly what will go, and asks once
   vibe -d/--delete [path]    pick from a checklist whether to delete the
                              sandbox for path (ticked), its profile
                              (unticked), or both; -f deletes both unasked
@@ -181,7 +184,7 @@ func run(argv []string) error {
 		return fmt.Errorf("--update-strategy only applies to --install and --upgrade")
 	}
 	if args.ExclusiveActions() > 1 {
-		return fmt.Errorf("--stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info, --setup and --git-token are mutually exclusive")
+		return fmt.Errorf("--stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info, --setup, --git-token and --update-sandboxes are mutually exclusive")
 	}
 
 	if (args.GitTokenEnv != "" || args.NoGitToken || args.GitRules != "") && args.ExclusiveActions() > 0 && !args.GitToken {
@@ -244,15 +247,6 @@ func run(argv []string) error {
 			"then make sure its bin directory is on PATH (e.g. ${HOME}/.docker/sbx/bin).", hint)
 	}
 
-	// Before the bundle is resolved and ~/.vibe is seeded: cleanup is about
-	// sandboxes sbx holds, and needs neither a profile nor a target folder.
-	if args.Cleanup {
-		if args.Path != "" {
-			return fmt.Errorf("--cleanup takes no path argument")
-		}
-		return doCleanup(vibeHome)
-	}
-
 	// Like cleanup, this is about sandboxes sbx holds, not a folder.
 	if args.StopAll {
 		if args.Path != "" {
@@ -268,6 +262,13 @@ func run(argv []string) error {
 	lay := layout.New(vibeHome, bundleRoot)
 	if err := initHome(lay, args.Force); err != nil {
 		return err
+	}
+
+	if args.Cleanup {
+		if args.Path != "" {
+			return fmt.Errorf("--cleanup takes no path argument")
+		}
+		return doCleanup(lay)
 	}
 
 	if args.UpdateSandboxes {

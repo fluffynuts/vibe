@@ -285,8 +285,8 @@ vibe --no-git-token        # ...no token for a new sandbox, without asking;
 vibe -l/--list             # list every known sandbox and its status
 vibe -a/--info [path]      # show the sandbox's settings and, while it runs,
                            #    its uptime and memory and disk use
-vibe -x/--cleanup          # pick sandboxes from a checklist and delete them;
-                           #    the profiles they were built from are kept
+vibe -x/--cleanup          # pick profiles and sandboxes to delete, grouped by
+                           #    profile, with the likely trash ticked
 vibe -d/--delete [path]    # pick whether to delete the sandbox for path, its
                            #    profile, or both (-f: both, without asking)
 vibe -i/--install          # copy the bundle into ~/.vibe and the binary into
@@ -310,19 +310,31 @@ Every option has a long and a short form. `-s`, `-c`, `-a`, `-r`, `-R`, `-C`, `-
 name exactly as a normal run would, so `vibe -s && vibe` restarts whatever you were working on.
 `-l` and `-x` work on every sandbox at once and take no path.
 
-`-x`/`--cleanup` is for the sandboxes a machine accumulates. It lists everything `sbx` knows
-about — each with its status and, where vibe has a record of it, the profile and folder it was
-built for — as a checkbox list; space checks, enter is done. What you checked is then listed back
-to confirm (see [Checkbox prompts](#checkbox-prompts)), and that is the only question asked —
-you came here to delete sandboxes and have just read back which ones. Sandboxes vibe has no
-record of are offered too, since those are the ones most likely to be forgotten. There is no
-unattended form of this: `-x` always asks, and `-f` has nothing to skip.
+`-x`/`--cleanup` is for the profiles and sandboxes a machine accumulates. It lists every profile, with
+the sandboxes vibe built from it under it, and then the sandboxes `sbx` has that vibe has no record
+of, as a checkbox list (space checks, enter is done). Each line says what's worth knowing when
+deciding whether it's trash:
 
-**Profiles are never deleted by `-x`.** A profile outlives the sandboxes built from it, so
-cleaning up a sandbox leaves the next `vibe` in that folder able to rebuild it unchanged. Deleting
-a profile is the job of `-d`/`--delete` or `-R`/`--re-create`. What a cleanup does discard is vibe's *instance record* for
-the sandbox — it has to, because a record claims its published host ports whether or not anything
-is listening, so one left behind would reserve those ports against every sandbox made afterwards.
+- **A profile:** its features, how many sandboxes it has, and flags: no sandboxes, every sandbox or
+  folder gone, out of date, edited by hand, features missing from the library.
+- **A sandbox:** its folder, and whether it's running, stopped or gone from sbx, whether its folder
+  is gone, whether a vibe is attached, whether it's out of date.
+
+What's likely trash starts ticked: profiles with no sandboxes, profiles whose sandboxes are all gone
+(from sbx, or their folders), and sandboxes gone from sbx or whose folder is gone. Untick what you
+want to keep.
+
+**Checking a profile deletes all of it:** the profile, all its sandboxes, their records, agent
+memories, clipboard history, conversations and GitHub tokens, and the profile's backups. There's no
+undo. **Checking a sandbox** deletes it and what vibe keeps for it; its profile stays. Either way the
+sandbox's record goes, as a record claims its published host ports whether or not anything is
+listening, so one left behind would reserve those ports against every sandbox made afterwards.
+
+Before anything is deleted, everything that will go is listed by name and path, and you're asked
+once. A failure doesn't stop the rest; a profile is kept when one of its sandboxes couldn't be
+removed, so it can be tried again. Some things aren't offered, with a note saying why: a sandbox with
+a vibe attached (stop it first), and profiles that ship with vibe, which the next upgrade would bring
+back. There is no unattended form of this: `-x` always asks, and `-f` has nothing to skip.
 
 `-a`/`--info` shows the sandbox's profile, agent, memory setting, timezone and, for a guided profile, the
 library features it was composed from. While the sandbox is running, it also shows how long it

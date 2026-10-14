@@ -87,6 +87,6 @@ exists.
 1. The missing folder bug. Done.
 2. The shared inventory, and `--update-sandboxes` moved onto it. Done (`src/vibe/inventory.go`). "Likely trash" also
    ticks a sandbox whose folder is gone, as well as one sbx no longer has.
-3. `--cleanup` as the profile-grouped checklist, with deleting as above.
+3. `--cleanup` as the profile-grouped checklist, with deleting as above. Done (`src/vibe/cleanup.go`, `src/vibe/manage.go`).
 4. The page: `vibe --manage` and the Profiles tab, listing and deleting.
 5. The page's other actions.

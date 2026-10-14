@@ -60,12 +60,19 @@ func kitFingerprint(lay layout.Layout, profile, agent string) (string, error) {
 type profileState int
 
 const (
-	profileCurrent     profileState = iota // it's up to date
-	profileOutOfDate                       // it isn't, and re-composing it loses nothing of anyone's
-	profileUpdated                         // it was re-composed
-	profileNotComposed                     // it isn't one vibe composes, so there's nothing to update
-	profileNeedsYou                        // it's out of date in a way only the user can settle
+	profileCurrent         profileState = iota // it's up to date
+	profileOutOfDate                           // it isn't, and re-composing it loses nothing of anyone's
+	profileUpdated                             // it was re-composed
+	profileNotComposed                         // it isn't one vibe composes, so there's nothing to update
+	profileEdited                              // it was changed by hand since it was composed: re-composing it is the user's call
+	profileMissingFeatures                     // it records features the library no longer has: the user must say what to do
 )
+
+// needsYou is a profile that's out of date in a way only the user can
+// settle.
+func (o profileOutcome) needsYou() bool {
+	return o.state == profileEdited || o.state == profileMissingFeatures
+}
 
 // profileOutcome is how a profile stands, or what updating it came to, and
 // why.
@@ -86,7 +93,7 @@ func assessProfile(lay layout.Layout, profile string) (profileOutcome, []string,
 	}
 	features, _ := profilegen.WithoutBase(profilegen.ComposedFrom(dir), lay.BaseFeatures())
 	if _, missing := splitMissingFeatures(features, lay.Features()); len(missing) > 0 {
-		return profileOutcome{profileNeedsYou, fmt.Sprintf(
+		return profileOutcome{profileMissingFeatures, fmt.Sprintf(
 			"it has features the library no longer has (%s): 'vibe -C' asks what to do", strings.Join(missing, ", "))}, features, nil
 	}
 	fresh, err := profilegen.Check(lay, dir, profile, features)
@@ -97,7 +104,7 @@ func assessProfile(lay layout.Layout, profile string) (profileOutcome, []string,
 	case profilegen.UpToDate:
 		return profileOutcome{state: profileCurrent}, features, nil
 	case profilegen.Edited:
-		return profileOutcome{profileNeedsYou,
+		return profileOutcome{profileEdited,
 			"it was changed by hand since it was composed: 'vibe -C' re-composes it, replacing those changes (backed up first)"}, features, nil
 	}
 	return profileOutcome{state: profileOutOfDate}, features, nil
@@ -211,7 +218,7 @@ func autoUpdate(lay layout.Layout, args cliargs.Args, name, target string) error
 		note("WARNING: couldn't bring profile '%s' up to date, so sandbox '%s' is left as it is: %s", inst.Profile, name, err)
 		return nil
 	}
-	if outcome.state == profileNeedsYou {
+	if outcome.needsYou() {
 		note("WARNING: profile '%s' wasn't brought up to date: %s", inst.Profile, outcome.why)
 	}
 	why, err := sandboxOutOfDate(lay, inst)
@@ -274,7 +281,7 @@ func doUpdateSandboxes(lay layout.Layout) error {
 			tally.current++
 		case outcome.state == profileUpdated:
 			tally.updated++
-		case outcome.state == profileNeedsYou:
+		case outcome.needsYou():
 			note("WARNING: profile '%s' skipped: %s", p.name, outcome.why)
 			tally.skipped++
 		default:

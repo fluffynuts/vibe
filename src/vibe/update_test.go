@@ -165,7 +165,7 @@ func TestAHandEditedProfileIsLeftForTheUser(t *testing.T) {
 	changeLibrary(t, lay)
 
 	got := updated(t, lay)
-	if got.state != profileNeedsYou || !strings.Contains(got.why, "changed by hand") || !strings.Contains(got.why, "vibe -C") {
+	if got.state != profileEdited || !strings.Contains(got.why, "changed by hand") || !strings.Contains(got.why, "vibe -C") {
 		t.Errorf("outcome = %+v, want it left for the user, saying why and what to do", got)
 	}
 	if data, _ := os.ReadFile(path); string(data) != "memory: 24g\n" {
@@ -178,7 +178,7 @@ func TestAProfileWithAFeatureTheLibraryLostIsLeftForTheUser(t *testing.T) {
 	if err := os.RemoveAll(lay.HomePath("library", "mine")); err != nil {
 		t.Fatal(err)
 	}
-	if got := updated(t, lay); got.state != profileNeedsYou || !strings.Contains(got.why, "mine") {
+	if got := updated(t, lay); got.state != profileMissingFeatures || !strings.Contains(got.why, "mine") {
 		t.Errorf("outcome = %+v, want it left for the user, naming the feature", got)
 	}
 }
