@@ -218,7 +218,11 @@ countdown. `vibe --no-auto-update` starts the sandbox as it is for one run, and 
 **`vibe --update-sandboxes`** does the same for everything at once, starting no session: every
 profile in `~/.vibe/profiles` (each once, however many sandboxes share it), then every sandbox vibe
 has a record of, each left running or stopped as it was. A sandbox with a vibe attached is left
-for its next session start (`vibe --stop-all` first, to update those too). It carries on past a
+for its next session start (`vibe --stop-all` first, to update those too). One whose folder no longer
+exists is skipped, and left as it is: a sandbox can't be built for a folder that isn't there, so any
+rebuild (this, `-r`, `-C` or the Admin tab's) checks first, rather than removing it and failing to
+make it again. `vibe --cleanup` deletes it. It never stops to ask: when sbx has a question, the
+rebuild fails with sbx's question as the reason. It carries on past a
 failure, ends with a summary, and exits non-zero when anything failed, so it suits a cron job:
 
 ```

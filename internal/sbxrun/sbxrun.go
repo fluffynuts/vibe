@@ -247,6 +247,10 @@ type CreateOpts struct {
 	Agent   string
 	Target  string
 	Mounts  []string
+	// NoInput gives sbx nothing to read, for when nobody is there to answer
+	// a question it asks: the create fails with sbx's question as the
+	// reason, rather than waiting on the terminal.
+	NoInput bool
 }
 
 // Create provisions a new sandbox (does not start it).
@@ -270,7 +274,9 @@ func CreateContext(ctx context.Context, opts CreateOpts) error {
 	args = append(args, opts.Mounts...)
 
 	cmd := cancellable(ctx, args...)
-	cmd.Stdin = os.Stdin
+	if !opts.NoInput {
+		cmd.Stdin = os.Stdin
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()

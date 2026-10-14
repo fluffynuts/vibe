@@ -296,6 +296,10 @@ func doUpdateSandboxes(lay layout.Layout) error {
 			note("sandbox '%s' skipped: sbx has no sandbox by that name any more", inst.Name)
 			tally.skipped++
 			continue
+		case folderGone(inst.Target) != "":
+			note("sandbox '%s' skipped: %s", inst.Name, folderGone(inst.Target))
+			tally.skipped++
+			continue
 		case len(running.Others(lay.Home, inst.Target)) > 0:
 			note("sandbox '%s' skipped: a vibe is attached to it, so it's brought up to date when its next session starts", inst.Name)
 			tally.skipped++

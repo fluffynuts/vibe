@@ -89,7 +89,7 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 	if err != nil {
 		return err
 	}
-	if err := createSandbox(context.Background(), lay, name, target, profile, doc, merged, !args.Force, timezone.Host(), !args.Force, false, "", git); err != nil {
+	if err := createSandbox(context.Background(), lay, name, target, profile, doc, merged, !args.Force, timezone.Host(), !args.Force, false, "", git, !args.Force); err != nil {
 		return err
 	}
 	return finish(lay, args, name)
@@ -186,8 +186,9 @@ func setClaudeTheme(lay layout.Layout, profile string, doc kitspec.Doc, fromSand
 // askMemory offers a choice of how much memory the sandbox gets, starting
 // on the memory setting; without it, that setting is used as long as this
 // machine can give it. git, when not nil, is the GitHub token the agent may
-// push with.
-func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile string, doc kitspec.Doc, merged settings.Settings, askMemory bool, zone string, askZone, restoreAfterCreate bool, memoryStore string, git *gitAccess) error {
+// push with. sbxMayAsk lets sbx ask on the terminal; without it, a question
+// from sbx fails the create, for when nobody is there to answer.
+func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile string, doc kitspec.Doc, merged settings.Settings, askMemory bool, zone string, askZone, restoreAfterCreate bool, memoryStore string, git *gitAccess, sbxMayAsk bool) error {
 	vibeHome := lay.Home
 	// Every sandbox's agent is told where to look for its rules for
 	// pushing, since a token can be given to a sandbox after it's made.
@@ -294,6 +295,7 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 		Agent:   agent,
 		Target:  target,
 		Mounts:  mounts,
+		NoInput: !sbxMayAsk,
 	}); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()

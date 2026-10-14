@@ -430,3 +430,64 @@ func TestUpdateSandboxesCarriesOnPastAFailureAndSaysSo(t *testing.T) {
 		t.Errorf("did %v: it stopped at the failure", *did)
 	}
 }
+
+// loggingSbx puts an sbx on PATH that lists rows for 'sbx ls', succeeds at
+// everything else, and logs every call; it returns the log's path.
+func loggingSbx(t *testing.T, rows string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in sbx is a shell script")
+	}
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls")
+	script := "#!/bin/sh\necho \"$*\" >>'" + log + "'\n[ \"$1\" = ls ] && printf 'NAME STATUS\\n" + rows + "'\nexit 0\n"
+	writeFile(t, filepath.Join(dir, "sbx"), script)
+	if err := os.Chmod(filepath.Join(dir, "sbx"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return log
+}
+
+// A sandbox whose folder is gone can't be built again, so rebuilding it
+// must not start by removing it.
+func TestARebuildLeavesASandboxWhoseFolderIsGoneAlone(t *testing.T) {
+	lay := updateLayout(t)
+	gone := filepath.Join(t.TempDir(), "gone")
+	if err := state.Save(lay.Home, state.Instance{Name: "box", Profile: "p", Target: gone, Agent: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	log := loggingSbx(t, "box stopped\\n")
+
+	err := rebuildSandbox(context.Background(), lay, cliargs.Args{Force: true}, "box", gone, true, false)
+	if err == nil || !strings.Contains(err.Error(), gone) || !strings.Contains(err.Error(), "no longer exists") {
+		t.Errorf("rebuildSandbox = %v, want it to say the folder is gone", err)
+	}
+	if calls, _ := os.ReadFile(log); strings.Contains(string(calls), "rm") || strings.Contains(string(calls), "create") {
+		t.Errorf("sbx was asked to remove or create the sandbox:\n%s", calls)
+	}
+}
+
+func TestUpdateSandboxesSkipsASandboxWhoseFolderIsGone(t *testing.T) {
+	lay := updateLayout(t)
+	gone := filepath.Join(t.TempDir(), "gone")
+	if err := state.Save(lay.Home, state.Instance{Name: "box", Profile: "p", Target: gone, Agent: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	sbxListing(t, "box stopped\\n")
+	did := batchStandIns(t)
+
+	var err error
+	notes := strings.Join(notesOf(func() { err = doUpdateSandboxes(lay) }), "\n")
+	if err != nil {
+		t.Errorf("doUpdateSandboxes = %v; a skipped sandbox isn't a failure", err)
+	}
+	if len(*did) != 0 {
+		t.Errorf("did %v to a sandbox whose folder is gone", *did)
+	}
+	for _, want := range []string{"sandbox 'box' skipped: its folder " + gone + " no longer exists", "vibe --cleanup"} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("notes don't say %q:\n%s", want, notes)
+		}
+	}
+}

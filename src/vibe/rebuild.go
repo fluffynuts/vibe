@@ -63,6 +63,11 @@ func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandb
 // caller, which can ask sbx.
 func rebuildSandbox(ctx context.Context, lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool) error {
 	vibeHome := lay.Home
+	// Before anything is removed: a sandbox can't be built for a folder that
+	// isn't there, so removing it first would leave nothing at all.
+	if why := folderGone(target); why != "" {
+		return fmt.Errorf("sandbox '%s' was left as it is: %s", name, why)
+	}
 	profile, err := resolveReInitProfile(vibeHome, args, name, target)
 	if err != nil {
 		return err
@@ -164,7 +169,16 @@ func rebuildSandbox(ctx context.Context, lay layout.Layout, args cliargs.Args, n
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return createSandbox(ctx, lay, name, target, profile, doc, merged, false, zone, askZone, restoreAfterCreate, memoryStore, git)
+	return createSandbox(ctx, lay, name, target, profile, doc, merged, false, zone, askZone, restoreAfterCreate, memoryStore, git, !args.Force)
+}
+
+// folderGone says, when a sandbox's folder target no longer exists, why
+// that matters and what to do; "" when it's there.
+func folderGone(target string) string {
+	if info, err := os.Stat(target); err == nil && info.IsDir() {
+		return ""
+	}
+	return fmt.Sprintf("its folder %s no longer exists — 'vibe --cleanup' deletes the sandbox; if the folder moved, 'vibe' in its new place makes a new one", target)
 }
 
 // doReCreate deletes the overlay copy of the matched profile (if there is
