@@ -59,6 +59,7 @@
         <div class="convo-clip">
           <div class="bar">
             <span class="muted">Clipboard</span>
+            <span id="convo-clipboard-note" class="muted" hidden></span>
             <span class="spacer"></span>
             <a id="convo-clipboard-open" class="button ghost" target="_blank" rel="noopener noreferrer">Open on its own</a>
           </div>
@@ -128,7 +129,7 @@
         </section>
 
         <section class="card" id="admin-job-card" aria-labelledby="admin-job-h" hidden>
-          <h2 id="admin-job-h">Last action <span id="admin-job-state" class="pill"></span></h2>
+          <h2 id="admin-job-h" tabindex="-1">Last action <span id="admin-job-state" class="pill"></span></h2>
           <pre id="admin-job" class="info log" role="log" aria-live="polite"></pre>
           <div class="bar"><button type="button" id="admin-cancel" class="danger" hidden>Cancel</button></div>
         </section>
@@ -183,7 +184,7 @@
       <p id="manage-wait" class="note muted">Taking stock…</p>
       <div id="manage-list" class="manage-list"></div>
       <section class="card" id="manage-job-card" aria-labelledby="manage-job-h" hidden>
-        <h2 id="manage-job-h">Last action <span id="manage-job-state" class="pill"></span></h2>
+        <h2 id="manage-job-h" tabindex="-1">Last action <span id="manage-job-state" class="pill"></span></h2>
         <pre id="manage-job" class="info log" role="log" aria-live="polite"></pre>
         <div class="bar"><button type="button" id="manage-cancel" class="danger" hidden>Cancel</button></div>
       </section>

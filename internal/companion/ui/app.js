@@ -60,7 +60,7 @@
   // The clipboard page, shown beside the conversation: its frame, waiting
   // notice and the controls that go with them.
   const CLIPBOARD_VIEWS = [
-    { frame: 'convo-clipboard-frame', wait: 'convo-clipboard-wait', text: 'convo-clipboard-wait-text', help: 'convo-clipboard-wait-help', start: 'convo-clipboard-start', open: 'convo-clipboard-open' },
+    { frame: 'convo-clipboard-frame', wait: 'convo-clipboard-wait', text: 'convo-clipboard-wait-text', help: 'convo-clipboard-wait-help', start: 'convo-clipboard-start', open: 'convo-clipboard-open', note: 'convo-clipboard-note' },
   ]
 
   const $ = (id) => document.getElementById(id)
@@ -266,13 +266,44 @@
     b.textContent = message || ''
   }
 
-  function toast(message, bad) {
+  // toast says message for a few seconds. With action ({ label, run }), it
+  // carries a button, and stays longer to give time to press it — and for
+  // as long as the pointer is on it or the button has focus.
+  function toast(message, bad, action) {
     const t = $('toast')
-    t.textContent = message
+    t.replaceChildren(message)
+    if (action) {
+      t.append(' ', el('button', { type: 'button', class: 'toast-action', text: action.label,
+        onclick: () => { hideToast(); action.run() } }))
+    }
     t.className = 'toast' + (bad ? ' bad' : '')
     t.hidden = false
+    toast.lasts = action ? 10000 : bad ? 8000 : 4000
+    toast.held = false
     clearTimeout(toast.timer)
-    toast.timer = setTimeout(() => { t.hidden = true }, bad ? 8000 : 4000)
+    toast.timer = setTimeout(hideToast, toast.lasts)
+  }
+
+  function hideToast() {
+    clearTimeout(toast.timer)
+    $('toast').hidden = true
+  }
+
+  function holdToast(held) {
+    if (held === toast.held || $('toast').hidden) return
+    toast.held = held
+    clearTimeout(toast.timer)
+    if (!held) toast.timer = setTimeout(hideToast, toast.lasts)
+  }
+
+  // showProgress brings the Last action box with id card into view, with
+  // focus on it, so a keyboard user is taken there too. The box shows once
+  // the page has heard of the job, which may not be yet.
+  async function showProgress(card, load) {
+    if ($(card).hidden) await load()
+    const heading = $(card).querySelector('h2')
+    $(card).scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    heading.focus({ preventScroll: true })
   }
 
   // reached is called with the outcome of every call to vibe: two failures
@@ -422,20 +453,26 @@
       $('tab-manage').hidden = !res.body.manage
       for (const t of SANDBOX_TABS) $('tab-' + t).hidden = res.body.sandboxTabs === false
       $('admin-dot').hidden = !res.body.upgrades
-      if (url !== state.clipboardUrl || ready !== state.clipboardReady) {
-        if (url && !ready && (url !== state.clipboardUrl || state.clipboardReady)) {
+      const moved = url !== state.clipboardUrl
+      if (moved || ready !== state.clipboardReady) {
+        if (url && !ready && (moved || state.clipboardReady)) {
           state.clipboardWaitingSince = Date.now()
         }
+        if (moved) state.clipboardLoaded = ''
         state.clipboardUrl = url
         state.clipboardReady = ready
         for (const view of CLIPBOARD_VIEWS) {
           if (url) $(view.open).href = url
           // The frame only gets the page once vibe has seen it answer: a
           // frame on another origin can't be watched, and a browser's
-          // "can't connect" page would otherwise sit there for good.
-          if (ready) $(view.frame).src = url
-          else $(view.frame).removeAttribute('src')
+          // "can't connect" page would otherwise sit there for good. Once
+          // it has the page, it keeps it while the address stays the same:
+          // the page carries on by itself when its server comes back (the
+          // sandbox restarted, say), where loading it again would flash.
+          if (ready && state.clipboardLoaded !== url) $(view.frame).src = url
+          else if (!url || (moved && !ready)) $(view.frame).removeAttribute('src')
         }
+        if (ready) state.clipboardLoaded = url
       }
       renderClipboard()
       if ($('tab-' + state.tab).hidden) select(state.tab)
@@ -445,7 +482,13 @@
   }
 
   function renderClipboard() {
-    const waiting = !!state.clipboardUrl && !state.clipboardReady
+    // A pane already showing the page keeps it while its server is away.
+    const kept = !!state.clipboardUrl && state.clipboardLoaded === state.clipboardUrl
+    for (const view of CLIPBOARD_VIEWS) {
+      $(view.note).hidden = !kept || state.clipboardReady
+      $(view.note).textContent = "— not answering just now; it picks up again by itself"
+    }
+    const waiting = !!state.clipboardUrl && !state.clipboardReady && !kept
     const late = Date.now() - state.clipboardWaitingSince >= CLIPBOARD_PATIENCE_MS
     for (const view of CLIPBOARD_VIEWS) {
       $(view.frame).hidden = waiting || !state.clipboardUrl
@@ -496,8 +539,20 @@
     }
   }
 
+  // How often the page, while in view, asks vibe to keep the sandbox awake:
+  // well inside the minute after which sbx stops one nothing is attached to.
+  const AWAKE_MS = 20000
+  let awakeAsked = 0
+
   function tick() {
     if (document.visibilityState !== 'visible') return
+    // Only in view: out of sight, sbx is left to stop an idle sandbox, and
+    // coming back asks at once (it starts it again, if it was stopped).
+    if (state.sandboxTabs !== false && Date.now() - awakeAsked >= AWAKE_MS) {
+      awakeAsked = Date.now()
+      // Whether vibe is there at all is the ping's to say.
+      post('/api/awake', {}).catch(() => {})
+    }
     if (state.tab === 'conversation') { loadState(); return }
     if (state.tab === 'admin') { loadState(); loadAdmin(); loadInstructions(false); return }
     if (state.tab === 'manage') { loadState(); loadManage(); return }
@@ -723,7 +778,8 @@
         const res = await opts.run()
         reached(true)
         if (res.ok) {
-          toast(opts.started ? opts.started : 'Done: ' + (res.body.command || opts.command))
+          toast(opts.started ? opts.started : 'Done: ' + (res.body.command || opts.command), false,
+            opts.progress ? { label: 'Show progress', run: opts.progress } : null)
         } else {
           toast((res.body && res.body.error) || 'That failed.', true)
         }
@@ -944,11 +1000,26 @@
     }
   }
 
+  // What the toast says is under way once an action has begun: a bare
+  // "Started" after Stop reads as the sandbox starting.
+  const UNDER_WAY = { stop: 'Stopping', rebuild: 'Rebuilding', update: 'Updating', recompose: 'Re-composing' }
+  const ADMIN_UNDER_WAY = {
+    stop: 'Stopping the sandbox', reinit: 'Rebuilding the sandbox',
+    recompose: 'Re-composing the profile and rebuilding the sandbox', restore: 'Restoring the backup and rebuilding the sandbox',
+  }
+  const adminProgress = () => showProgress('admin-job-card', loadAdmin)
+  const manageProgress = () => showProgress('manage-job-card', loadManage)
+
+  function underWay(kind, what) {
+    return (UNDER_WAY[kind] ? UNDER_WAY[kind] + ' ' + what : 'Under way') + '…'
+  }
+
   function adminConfirm(kind, extra, opts) {
     const commands = (adminView.data && adminView.data.status && adminView.data.status.commands) || {}
     confirmThen(Object.assign({
       command: commands[kind] || '',
-      started: 'Started — the Last action box shows how it goes.',
+      started: (ADMIN_UNDER_WAY[kind] || 'Under way') + '…',
+      progress: adminProgress,
       run: () => post('/api/admin/do', Object.assign({ kind }, extra || {})),
     }, opts))
   }
@@ -978,7 +1049,8 @@
         text: 'Stopping part-way may leave the sandbox half-made. Afterwards, the card says what state it is in, and Rebuild makes it again from its profile.',
         command: 'vibe --cancel',
         danger: true,
-        started: 'Cancelling — the Last action box says how it ended.',
+        started: 'Cancelling…',
+        progress: adminProgress,
         run: () => post('/api/admin/cancel', {}),
       })
     })
@@ -1137,7 +1209,8 @@
       commandNote: 'From a terminal:',
       danger: kind !== 'update',
       runLabel: a.label.replace('…', ''),
-      started: 'Started — the Last action box shows how it goes.',
+      started: underWay(kind, (isProfile ? 'profile ' : 'sandbox ') + row.name),
+      progress: manageProgress,
       run,
     }, a.ask(row.name, isProfile, row)))
   }
@@ -1194,7 +1267,8 @@
         command: '',
         danger: true,
         runLabel: 'Delete',
-        started: 'Deleting — the Last action box shows how it goes.',
+        started: 'Deleting…',
+        progress: manageProgress,
         run: () => post('/api/manage/delete', { ids }),
       })
     } catch (e) {
@@ -1646,6 +1720,8 @@
       if (typeof line.duration_ms === 'number') bits.push((line.duration_ms / 1000).toFixed(1) + 's')
       if (typeof line.total_cost_usd === 'number') bits.push('$' + line.total_cost_usd.toFixed(4))
       if (bits.length) convoNote('meta', bits.join(' · '))
+    } else if (line.type === 'system' && line.subtype === 'compact_boundary') {
+      convoNote('meta', 'The agent compacted its context: it now works from a summary of the conversation so far.')
     } else if (line.type === 'truncated') {
       convoNote('meta', '(that was too long to show)')
     }
@@ -1665,8 +1741,9 @@
   // the page goes on as if it were done: sending ends that work.
   // quietMinutes, when not 0, is how long the agent has been answering
   // without a word: long enough that it may be stuck. The turn isn't
-  // stopped — that's the user's call.
-  function setConvoRunning(running, background, quietMinutes) {
+  // stopped — that's the user's call. compacting is the agent making room
+  // in a full context first, which can take minutes with nothing to show.
+  function setConvoRunning(running, background, quietMinutes, compacting) {
     if (running) setFaviconDot('working')
     else if (convo.running) setFaviconDot(document.visibilityState === 'visible' && document.hasFocus() ? '' : 'done')
     convo.running = running
@@ -1678,7 +1755,9 @@
     // While it answers, the typing bubble says so.
     const status = $('convo-status')
     status.classList.toggle('warn-text', !!(running && quietMinutes))
-    status.textContent = running && quietMinutes
+    status.textContent = running && compacting
+      ? 'The agent is compacting its context (summarising the conversation so far to make room). This can take a few minutes; it answers once it is done.'
+      : running && quietMinutes
       ? 'No output from the agent for ' + quietMinutes + ' minutes — it may be stuck. Stop it, or check "sbx ls" in a terminal; it is still being waited for.'
       : !running && background ? 'The agent has answered, and has something still running. Sending a prompt ends it.' : ''
   }
@@ -1704,7 +1783,7 @@
       for (const ev of res.body.events || []) showEvent(ev)
       if (res.body.receipt) showReceipt(res.body.receipt.seq, res.body.receipt.state)
       convo.last = res.body.last || 0
-      setConvoRunning(!!res.body.running, !!res.body.background, res.body.quietMinutes || 0)
+      setConvoRunning(!!res.body.running, !!res.body.background, res.body.quietMinutes || 0, !!res.body.compacting)
       if ((res.body.events || []).length) {
         if ($('panel-conversation').hidden) convo.behind = true
         else if (stick) log.scrollTop = log.scrollHeight
@@ -2071,8 +2150,14 @@
 
   setUpConversation()
   setUpAdmin()
+  for (const [on, held] of [['mouseenter', true], ['mouseleave', false], ['focusin', true], ['focusout', false]]) {
+    $('toast').addEventListener(on, () => holdToast(held))
+  }
   setUpManage()
 
+  // Out of sight, the next time in view asks to keep the sandbox awake at
+  // once, rather than when the last ask is old enough.
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') awakeAsked = 0 })
   document.addEventListener('visibilitychange', tick)
   state.timer = setInterval(tick, POLL_MS)
   setInterval(ping, PING_MS)

@@ -189,6 +189,22 @@ func ReachableContext(ctx context.Context, name string) bool {
 	return err == nil
 }
 
+// Running says whether sandbox name is running, as `sbx ls` lists it:
+// unlike Reachable, which runs something in it, asking doesn't start a
+// sandbox sbx has stopped. ok is false when sbx couldn't say.
+func Running(ctx context.Context, name string) (running, ok bool) {
+	statuses, err := ListContext(ctx)
+	if err != nil {
+		return false, false
+	}
+	for _, s := range statuses {
+		if s.Name == name {
+			return s.Running, true
+		}
+	}
+	return false, true
+}
+
 // Status is one row of `sbx ls`.
 type Status struct {
 	Name    string

@@ -20,9 +20,10 @@ func doStop(vibeHome, name, target string, force bool) error {
 	return nil
 }
 
-// endHeadlessVibes ends each headless vibe among claims, before its sandbox
-// is stopped: with no terminal, nobody would see it carry on without it (it
-// saves its agent's memories as it ends). A vibe with a terminal is left to
+// endHeadlessVibes ends each headless vibe among claims (saving its agent's
+// memories as it ends), leaving the sandbox as it is: 'vibe --stop' then
+// stops the sandbox, as nobody would see a headless vibe carry on without
+// it, and --restart starts a fresh one. A vibe with a terminal is left to
 // keep its page up, as its terminal says.
 func endHeadlessVibes(vibeHome string, claims []running.Claim) error {
 	for _, c := range claims {

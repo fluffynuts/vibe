@@ -63,7 +63,12 @@ func headless(lay layout.Layout, args cliargs.Args, name string) error {
 	signal.Notify(interrupts, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(interrupts)
 	note("sandbox '%s' is running, with no terminal attached: the companion page above is where to work with it", name)
-	note("  Ctrl-C ends vibe and leaves the sandbox running; 'vibe --stop' (or the page's Stop) stops the sandbox and keeps the page up")
+	if detachedChild() {
+		note("  'vibe --stop' ends this vibe and stops the sandbox")
+	} else {
+		note("  Ctrl-C ends vibe and leaves the sandbox running; 'vibe --stop' ends vibe and stops the sandbox")
+	}
+	announceHeadlessReady(companionURL(vibeHome, name))
 
 	// Held for good: the page's Start (and a rebuild's) releases the hold,
 	// which is how this hears the sandbox is back.

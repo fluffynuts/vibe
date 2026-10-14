@@ -230,6 +230,10 @@ func autoUpdate(lay layout.Layout, args cliargs.Args, name, target string) error
 		return nil
 	}
 	note("sandbox '%s' is out of date: %s", name, why)
+	if headlessHere != nil {
+		note("  it isn't rebuilt while the headless vibe (%s) is using it — 'vibe --restart' here ends that vibe and brings the sandbox up to date", pidList(headlessHere))
+		return nil
+	}
 	switch confirmRebuild() {
 	case prompt.CountdownQuit:
 		return fmt.Errorf("quit — sandbox '%s' left as it is ('vibe --no-auto-update' starts it without updating it)", name)

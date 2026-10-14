@@ -88,6 +88,13 @@ type Config struct {
 	// Admin is what the page's Admin tab does to the sandbox; nil means the
 	// page has no such tab.
 	Admin Admin
+	// KeepAwake is what the page asks for while it's in view (and as it
+	// comes back into view), to keep the sandbox from being stopped for
+	// being idle, or start it again if it was; it returns what it did, if
+	// it says, for the log. Nil means nothing is done. It may be slow.
+	KeepAwake func() string
+	// Log says something in vibe's own output; nil means nowhere.
+	Log func(string)
 	// Manage is what the page's Profiles tab works on; nil means the page
 	// has no such tab. A page with no Sandbox is a Profiles page alone
 	// ('vibe --manage').
@@ -111,8 +118,11 @@ type Server struct {
 	// starting is held while a StartClipboard runs, so a second press of
 	// the page's button doesn't start a second one.
 	starting sync.Mutex
-	convo    conversation
-	admin    admin
+	// awake is held while a KeepAwake runs: pages asking meanwhile needn't
+	// ask again.
+	awake sync.Mutex
+	convo conversation
+	admin admin
 }
 
 // New makes a Server without listening, which is how tests drive Handler.
@@ -218,6 +228,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/instructions", s.authed(s.instructionsState))
 	mux.HandleFunc("POST /api/admin/instructions", s.editing(s.instructionsSave))
 	mux.HandleFunc("POST /api/admin/instructions/optimise", s.editing(s.instructionsOptimise))
+	mux.HandleFunc("POST /api/awake", s.authed(s.changing(s.keepAwake)))
 	mux.HandleFunc("GET /api/manage", s.authed(s.managed(s.manageState)))
 	mux.HandleFunc("POST /api/manage/plan", s.managing(s.managePlan))
 	mux.HandleFunc("POST /api/manage/delete", s.managing(s.manageDelete))
@@ -370,6 +381,21 @@ func probeClipboard(url string) bool {
 	io.Copy(io.Discard, io.LimitReader(res.Body, 64*1024))
 	res.Body.Close()
 	return res.StatusCode == http.StatusOK
+}
+
+// keepAwake runs KeepAwake in the background, unless it's running already;
+// the page doesn't wait on it (starting a sandbox takes a while).
+func (s *Server) keepAwake([]byte) ([]string, error) {
+	if s.cfg.KeepAwake == nil || !s.awake.TryLock() {
+		return nil, nil
+	}
+	go func() {
+		defer s.awake.Unlock()
+		if said := s.cfg.KeepAwake(); said != "" && s.cfg.Log != nil {
+			s.cfg.Log(said)
+		}
+	}()
+	return nil, nil
 }
 
 func (s *Server) startClipboard([]byte) ([]string, error) {

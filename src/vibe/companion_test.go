@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"vibe/internal/cliargs"
@@ -197,5 +199,73 @@ func TestTheReviewLinkIsTheLastLineSbxGivesBack(t *testing.T) {
 		if got := lastLine(out); got != want {
 			t.Errorf("lastLine(%q) = %q, want %q", out, got, want)
 		}
+	}
+}
+
+// keepAwakeStandIns stands in for sbx's answer to whether the sandbox is
+// running, and for starting it, recording the starts.
+func keepAwakeStandIns(t *testing.T, running, startWorks bool) *int {
+	t.Helper()
+	starts := new(int)
+	oldRunning, oldStart := runningNow, startSandboxForPage
+	t.Cleanup(func() {
+		runningNow, startSandboxForPage = oldRunning, oldStart
+		stoppedOnPurpose.Store(false)
+		setAttached(false)
+	})
+	runningNow = func(context.Context, string) bool { return running }
+	startSandboxForPage = func(context.Context, string) bool { *starts++; return startWorks }
+	return starts
+}
+
+func TestKeepingAwakeStartsASandboxSbxStoppedWhileThePageWasAway(t *testing.T) {
+	starts := keepAwakeStandIns(t, false, true)
+	if said := keepAwakeFor("box")(); *starts != 1 || !strings.Contains(said, "started it again") {
+		t.Errorf("starts %d, said %q", *starts, said)
+	}
+}
+
+func TestKeepingAwakeLeavesASandboxStoppedOnPurpose(t *testing.T) {
+	starts := keepAwakeStandIns(t, false, true)
+	stoppedOnPurpose.Store(true)
+	if said := keepAwakeFor("box")(); *starts != 0 || said != "" {
+		t.Errorf("starts %d, said %q; want it left stopped", *starts, said)
+	}
+}
+
+func TestKeepingAwakeDoesNothingWithATerminalAttached(t *testing.T) {
+	starts := keepAwakeStandIns(t, false, true)
+	setAttached(true)
+	if said := keepAwakeFor("box")(); *starts != 0 || said != "" {
+		t.Errorf("starts %d, said %q", *starts, said)
+	}
+}
+
+func TestKeepingAwakeSaysWhenTheSandboxWontStart(t *testing.T) {
+	keepAwakeStandIns(t, false, false)
+	if said := keepAwakeFor("box")(); !strings.Contains(said, "couldn't be started again") {
+		t.Errorf("said %q", said)
+	}
+}
+
+// A running sandbox is touched, which is what keeps sbx from stopping it.
+func TestKeepingAwakeTouchesARunningSandbox(t *testing.T) {
+	calls := loggingSbx(t, "box running\\n")
+	keepAwakeStandIns(t, true, true)
+	keepAwakeFor("box")()
+	if data, _ := os.ReadFile(calls); !strings.Contains(string(data), "exec box -- true") {
+		t.Errorf("sbx was asked:\n%s", data)
+	}
+}
+
+// The page asks for the theme's colour every minute; for a stopped sandbox,
+// asking it would start it again, so the profile's record stands in.
+func TestTheThemeOfAStoppedSandboxDoesntStartIt(t *testing.T) {
+	lay := layout.New(t.TempDir(), t.TempDir())
+	writeFile(t, lay.HomePath("profiles", "p", "config.yaml"), "name: p\n")
+	calls := loggingSbx(t, "box stopped\\n")
+	themeColorFor(lay, "box", state.Instance{Name: "box", Profile: "p"}, "claude")()
+	if data, _ := os.ReadFile(calls); strings.Contains(string(data), "exec") {
+		t.Errorf("a stopped sandbox was asked for its theme:\n%s", data)
 	}
 }

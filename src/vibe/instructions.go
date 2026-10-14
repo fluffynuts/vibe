@@ -162,7 +162,7 @@ func (a *companionAdmin) Instructions() companion.AdminInstructions {
 	_, agent, _ := instructionsFor(a.lay, a.name)
 	spec, known := instructions.Agents[agent]
 	out.Agent, out.Applies, out.CanOptimise = agent, known, known && spec.OneShot != nil
-	out.Running = sbxrun.Reachable(a.name)
+	out.Running = runningNow(context.Background(), a.name)
 	return out
 }
 

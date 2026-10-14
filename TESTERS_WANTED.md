@@ -14,6 +14,7 @@ You need:
 
 - [Docker Sandboxes (`sbx`)](https://github.com/docker/sbx-releases), installed and working:
   `sbx ls` should run without errors.
+  - note: vibe can install sbx for you, once built, with --install-sbx
 - Go (the version in `go.mod` or newer).
 - A throwaway folder with some code in it to point vibe at. It creates a sandbox for that folder,
   and at the end you can delete it with `vibe -x`.

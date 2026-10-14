@@ -22,10 +22,16 @@ const stopOtherTimeout = 60 * time.Second
 // guardFolder checks for other vibe processes with target open — two agents
 // taking instructions against one workspace is easy to do by accident — and
 // asks what to do if there are any. It then claims target for this process.
-// With force, or no terminal to ask on, it says so and carries on.
-func guardFolder(vibeHome, target string, force bool) error {
+// With force it says so and carries on; with no terminal to ask on, it
+// refuses. A terminal attaching (rather than rebuilding or deleting) where
+// only headless vibes hold target goes alongside them without asking: they
+// serve the page, and this attaches the terminal the user came for.
+func guardFolder(vibeHome, target string, force, attaching bool) error {
 	if claims := running.Claims(vibeHome, target); len(claims) > 0 {
-		if err := resolveOthers(vibeHome, target, claims, force); err != nil {
+		if pids := alongsideHeadless(claims, attaching); pids != nil {
+			headlessHere = pids
+			note("attaching alongside the headless vibe (%s), which carries on serving the companion page", pidList(pids))
+		} else if err := resolveOthers(vibeHome, target, claims, force); err != nil {
 			return err
 		}
 	}
@@ -41,6 +47,38 @@ func guardFolder(vibeHome, target string, force bool) error {
 	// sandbox) rather than taken for a vibe that's stuck.
 	go answerCancels(s, cancelPage, nil)
 	return nil
+}
+
+// headlessHere is the PIDs of the headless vibes this one is attached
+// alongside, if any (see guardFolder).
+var headlessHere []int
+
+// alongsideHeadless is the PIDs of the vibes holding the folder, when a
+// terminal attaching can go alongside them: every one is a headless vibe.
+func alongsideHeadless(claims []running.Claim, attaching bool) []int {
+	if !attaching || len(claims) == 0 {
+		return nil
+	}
+	var pids []int
+	for _, c := range claims {
+		if !c.Headless || c.Work != "" {
+			return nil
+		}
+		pids = append(pids, c.PID)
+	}
+	return pids
+}
+
+func pidList(pids []int) string {
+	which := "PID"
+	if len(pids) > 1 {
+		which = "PIDs"
+	}
+	strs := make([]string, len(pids))
+	for i, p := range pids {
+		strs[i] = fmt.Sprint(p)
+	}
+	return which + " " + strings.Join(strs, ", ")
 }
 
 // sessionMu guards inSession, which records whether finish has handed the

@@ -352,6 +352,12 @@ func TestParseHeadless(t *testing.T) {
 			t.Errorf("Parse(%s ~/code/x) = %+v, %v", arg, a, err)
 		}
 	}
+	if a, _ := Parse([]string{"--headless", "--restart"}); !a.Restart || a.ExclusiveActions() != 1 {
+		t.Errorf("--headless --restart = %+v", a)
+	}
+	if a, _ := Parse([]string{"--headless", "--foreground"}); !a.Foreground || a.ExclusiveActions() != 1 {
+		t.Errorf("--headless --foreground = %+v", a)
+	}
 	if a, _ := Parse([]string{"--headless", "-C"}); a.ExclusiveActions() != 2 {
 		t.Error("--headless with -C should count as two actions")
 	}

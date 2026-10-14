@@ -198,6 +198,7 @@ func (a *companionAdmin) do(ctx context.Context, action companion.AdminAction) e
 			a.settle()
 			return err
 		}
+		stoppedOnPurpose.Store(true)
 		note("stopped '%s' — start it again from this page, or with 'vibe' in its folder", a.name)
 		return nil
 	case companion.AdminReInit:
@@ -233,6 +234,7 @@ func (a *companionAdmin) start(ctx context.Context) error {
 		return fmt.Errorf("sandbox '%s' didn't start — 'sbx ls' says what state it is in", a.name)
 	}
 	note("'%s' is running", a.name)
+	stoppedOnPurpose.Store(false)
 	hold.release()
 	return nil
 }

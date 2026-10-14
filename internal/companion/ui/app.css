@@ -188,8 +188,9 @@ dialog p { margin: 6px 0; }
 dialog code { display: block; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; font: 13px var(--mono); word-break: break-all; }
 dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 
-.toast { position: fixed; right: 16px; bottom: 16px; max-width: min(520px, calc(100% - 32px)); padding: 10px 14px; background: var(--text); color: var(--bg); border-radius: 8px; box-shadow: 0 4px 16px rgb(0 0 0 / .3); }
-.toast.bad { background: var(--bad); color: #fff; }
+.toast { position: fixed; right: 16px; bottom: 16px; max-width: min(520px, calc(100% - 32px)); padding: 10px 14px; background: var(--panel); color: var(--text); border: 1px solid var(--accent); border-radius: 8px; box-shadow: 0 4px 16px rgb(0 0 0 / .3); }
+.toast.bad { background: var(--bad); color: #fff; border-color: var(--bad); }
+.toast-action { margin-left: 8px; padding: 2px 10px; background: transparent; color: inherit; border: 1px solid currentColor; border-radius: 6px; font: inherit; cursor: pointer; }
 
 @media (max-width: 640px) {
   input[type="text"], input[type="search"] { min-width: 0; flex: 1; }

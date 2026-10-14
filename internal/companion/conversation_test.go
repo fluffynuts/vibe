@@ -703,3 +703,50 @@ func TestALongQuietTurnIsSaidToBeQuietButNotStopped(t *testing.T) {
 		t.Errorf("no turn at all: %d", q)
 	}
 }
+
+func compactingOf(t *testing.T, s *Server) bool {
+	t.Helper()
+	rec := do(t, s, req{path: "/api/conversation?after=0", headers: authed(nil)})
+	var body struct {
+		Compacting bool `json:"compacting"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	return body.Compacting
+}
+
+// The lines are as claude -p wrote them for a real /compact (trimmed).
+func TestThePageIsToldWhileTheAgentCompactsItsContext(t *testing.T) {
+	s := converseServer(&fakeAgent{})
+	c := &s.convo
+	c.begin("a prompt to a full context")
+	if compactingOf(t, s) {
+		t.Error("compacting before the agent said so")
+	}
+	c.line([]byte(`{"type":"system","subtype":"status","status":"compacting","session_id":"a4f1c427-d374-4814-9a21-221a07f37303"}`))
+	if !compactingOf(t, s) {
+		t.Error("not compacting once the agent said so")
+	}
+	c.line([]byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"}}`))
+	if !compactingOf(t, s) {
+		t.Error("another line, during compaction, ended it")
+	}
+	c.line([]byte(`{"type":"system","subtype":"status","status":null,"compact_result":"success"}`))
+	if compactingOf(t, s) {
+		t.Error("still compacting after the agent said it was done")
+	}
+}
+
+func TestATurnThatEndsWhileCompactingIsntStillCompacting(t *testing.T) {
+	s := converseServer(&fakeAgent{})
+	c := &s.convo
+	c.begin("go")
+	c.line([]byte(`{"type":"system","subtype":"status","status":"compacting"}`))
+	c.finish(nil, true)
+	if compactingOf(t, s) {
+		t.Error("compacting after the turn ended")
+	}
+	c.begin("again")
+	if compactingOf(t, s) {
+		t.Error("the next turn began compacting")
+	}
+}

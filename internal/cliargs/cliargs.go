@@ -45,6 +45,12 @@ type Args struct {
 	// Headless is --headless: start an existing sandbox and serve its
 	// companion page, with no terminal attached to it.
 	Headless bool
+	// Foreground is --foreground: with --headless, stay in the foreground
+	// (for tmux, nohup or a systemd unit) rather than go to the background.
+	Foreground bool
+	// Restart is --restart: with --headless, end the headless vibe already
+	// running for the folder, leaving its sandbox be, and start afresh.
+	Restart bool
 	// GitToken is --git-token: give the sandbox for the folder a GitHub
 	// token to push with, change the one it has, or take it away.
 	GitToken bool
@@ -145,6 +151,12 @@ func Parse(argv []string) (Args, error) {
 			i++
 		case arg == "-H" || arg == "--headless":
 			a.Headless = true
+			i++
+		case arg == "--foreground":
+			a.Foreground = true
+			i++
+		case arg == "--restart":
+			a.Restart = true
 			i++
 		case arg == "--git-token":
 			a.GitToken = true

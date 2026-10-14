@@ -290,7 +290,13 @@ vibe -l/--list             # list every known sandbox and its status
 vibe -a/--info [path]      # show the sandbox's settings and, while it runs,
                            #    its uptime and memory and disk use
 vibe -H/--headless [path]  # start the sandbox for path and serve its companion page,
-                           #    with no terminal attached (see "Headless")
+                           #    from a vibe in the background (see "Headless")
+vibe --headless --foreground
+                           # ...staying in the foreground, until Ctrl-C
+vibe --restart [path]      # end the vibe already running for path, leaving its sandbox
+                           #    running, and take over (asks first if that would
+                           #    interrupt anything; -f: doesn't)
+vibe --headless --restart  # ...taking over headless
 vibe -M/--manage           # serve the Profiles page on its own, until Ctrl-C
 vibe -x/--cleanup          # pick profiles and sandboxes to delete, grouped by
                            #    profile, with the likely trash selected
@@ -545,7 +551,8 @@ you're looking at:
   it, two grey ticks once it has reached the sandbox, and two blue ticks once the agent has started
   answering. If it has been answering for an hour without a word, the pane says it may be stuck (it's
   left running: stopping it is up to you, with **Stop**, or `vibe --cancel` from a terminal). For as long as it is answering, three dots below its latest message show it's still at it,
-  as in a chat app. Typing `/` at the start of a prompt lists the agent's slash commands, filtered as
+  as in a chat app. When the agent's context is full, it first summarises the conversation so far to make
+  room, which can take a few minutes with nothing else to show: the pane says so while it does. Typing `/` at the start of a prompt lists the agent's slash commands, filtered as
   you type with the closest match picked: Tab (or Enter) completes it, the arrow keys pick another.
   vibe learns the list from the agent as it starts, so it shows once the agent has answered a prompt.
   Until vibe sees the clipboard page answer the pane shows a placeholder; if it still isn't
@@ -623,13 +630,38 @@ sandbox.
 **Headless.** `vibe --headless [path]` (`-H`) is the companion page with no terminal attached: for a
 sandbox that already exists (run `vibe` there once first, as creating one asks a few things), it brings
 it up to date as a session start does, starts it if it's stopped, runs its start-up, and serves its
-page, which is then where you work with it. It carries on until Ctrl-C (or SIGTERM), or another vibe
-asks it to stop, and then saves the agent's memories (after Ctrl-C, it leaves the sandbox running).
+page, which is then where you work with it.
+
+It does that from a vibe it leaves running in the background: what needs your terminal (another vibe
+in the folder, the countdown to rebuilding an out-of-date sandbox) happens first, then it waits for
+the background vibe to say its page is up, prints the page's address and where it logs
+(`~/.vibe/logs/<sandbox>.log`, started afresh each time), and gives you your terminal back. If the
+background vibe can't get going, the end of its log is shown, and it exits non-zero. Running
+`vibe --headless` again while one is running just points at it. Plain `vibe` in the folder attaches a
+terminal alongside it, without asking: the headless vibe carries on serving the page, and an
+out-of-date sandbox isn't rebuilt under it (`vibe --restart` does that). Rebuilding or deleting (`-C`,
+`-r`, `-R`, `--delete`) still asks what to do about it first.
+
+**`--restart`** ends whatever vibe has the folder (in a terminal or headless, saving its agent's
+memories, and leaving the sandbox running) and takes over: `vibe --headless --restart` starts a fresh
+headless vibe, to pick up a new vibe after `--upgrade` say, and `vibe --restart` a terminal session,
+on a sandbox that was headless too. It asks first when that would interrupt something: another
+terminal's session, or an agent part-way through a turn (it asks the other vibe's page). `-f` doesn't
+ask; with no terminal and no `-f`, it says what would be interrupted and doesn't. A folder held for a
+rebuild isn't restarted. `vibe --stop && vibe --headless` restarts the sandbox too. `--foreground` keeps it in the
+foreground instead, for tmux, `nohup` or a systemd user unit.
+
+It carries on until another vibe asks it to stop (or, in the foreground, Ctrl-C or SIGTERM), and then
+saves the agent's memories (after Ctrl-C, it leaves the sandbox running).
 `vibe --stop` ends it too, then stops the sandbox: with no terminal, nobody would see it carry on
 without one, still running an old vibe after an `--upgrade`, say. Stop on the Profiles page does the
 same. Stop on its own page's Admin tab stops just the sandbox and keeps the page up, as you're looking
-at it; its Start brings the sandbox back, and vibe runs its start-up again. For now it runs in the foreground: under tmux, `nohup` or a systemd user unit, it
-doesn't need a terminal of its own.
+at it; its Start brings the sandbox back, and vibe runs its start-up again. sbx itself stops a sandbox
+about a minute after nothing is attached to it. So while the page is in view, it keeps the sandbox
+awake (a tiny command in it every 20 seconds); out of sight, it lets sbx stop it, and starts it again
+as soon as you're back (unless it was stopped on purpose). The page's own background checks never wake
+a stopped sandbox, and the clipboard pane keeps its page while its server is away, picking up again by
+itself when it's back.
 
 **`vibe --manage`** serves the Profiles tab on its own, for no sandbox or folder: every profile and
 sandbox, to clean up, without a session open. It keeps its own port and token (in

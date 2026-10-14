@@ -53,9 +53,24 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              how much memory and disk it is using
   vibe -H/--headless [path]  start the sandbox for path (one that exists:
                              run vibe there once first) and serve its
-                             companion page, with no terminal attached to it,
-                             until Ctrl-C, which leaves the sandbox running;
-                             'vibe --stop' ends it and stops the sandbox
+                             companion page, with no terminal attached, from
+                             a vibe in the background: prints the page's
+                             address and the log's (~/.vibe/logs), and gives
+                             the terminal back; run again, it just points at
+                             the one running. 'vibe --stop' ends it and stops
+                             the sandbox
+  vibe --headless --foreground
+                             ...staying in the foreground (for tmux, nohup or
+                             a systemd unit) until Ctrl-C, which leaves the
+                             sandbox running
+  vibe --restart [path]      end the vibe already running for path (with a
+                             terminal or headless, saving its agent's
+                             memories), leaving its sandbox running, and take
+                             over: to pick up a new vibe, or get a terminal on
+                             a headless sandbox. Asks first when that would
+                             cut off an agent's turn or another terminal's
+                             session (-f: doesn't)
+  vibe --headless --restart  ...taking over headless
   vibe -M/--manage           serve the Profiles page on its own, until Ctrl-C:
                              every profile and its sandboxes, to clean up as
                              --cleanup does (every companion page has it as
@@ -337,7 +352,20 @@ func run(argv []string) error {
 		return doRestore(lay, args, name, target)
 	}
 
-	if err := guardFolder(vibeHome, target, args.Force); err != nil {
+	if args.Foreground && !args.Headless {
+		return fmt.Errorf("--foreground only goes with --headless")
+	}
+	if args.Restart && !detachedChild() {
+		if err := restartFolder(vibeHome, name, target, args.Force); err != nil {
+			return err
+		}
+	}
+	if args.Headless && !args.Foreground && !detachedChild() {
+		return detachHeadless(lay, args, name, target)
+	}
+
+	attaching := !args.ReInit && !args.ReCreate && !args.ReCompose && !args.Delete && !args.Headless
+	if err := guardFolder(vibeHome, target, args.Force, attaching); err != nil {
 		return err
 	}
 	if !args.Delete {

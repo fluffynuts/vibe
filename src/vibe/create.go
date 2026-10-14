@@ -65,7 +65,7 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 	}
 
 	if args.Headless {
-		return fmt.Errorf("there's no sandbox '%s' for %s yet, and --headless only starts one that exists: run 'vibe' there once first, to create it (it asks a few things), then --headless", name, target)
+		return noSandboxForHeadless(name, target)
 	}
 	profile := resolveProfileName(args, target)
 	// The agent first: which features a new profile is offered depends on it.

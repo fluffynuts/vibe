@@ -85,6 +85,9 @@ type conversation struct {
 	// may then send another prompt, which ends that (superseded) quietly.
 	answered   bool
 	superseded bool
+	// compacting says the agent is summarising its context to make room,
+	// which can take minutes with nothing else said.
+	compacting bool
 	// ended is closed when the running turn has finished.
 	ended chan struct{}
 	// heard is when the agent last said anything in the running turn (or
@@ -202,7 +205,7 @@ func (c *conversation) begin(prompt string) (session string, ctx context.Context
 	}
 	ctx, c.cancel = context.WithCancel(context.Background())
 	c.running = true
-	c.answered, c.superseded = false, false
+	c.answered, c.superseded, c.compacting = false, false, false
 	c.ended = make(chan struct{})
 	c.heard = c.clock()
 	c.add("user", prompt, nil)
@@ -244,6 +247,7 @@ func (c *conversation) line(raw []byte) string {
 		Subtype       string   `json:"subtype"`
 		SessionID     string   `json:"session_id"`
 		SlashCommands []string `json:"slash_commands"`
+		Status        *string  `json:"status"`
 	}
 	json.Unmarshal(raw, &head)
 	c.mu.Lock()
@@ -256,6 +260,9 @@ func (c *conversation) line(raw []byte) string {
 			c.commands = commands
 			c.commandsSeq++
 		}
+	}
+	if head.Type == "system" && head.Subtype == "status" {
+		c.compacting = head.Status != nil && *head.Status == "compacting"
 	}
 	c.advance(receiptSeen)
 	c.heard = c.clock()
@@ -287,7 +294,7 @@ func (c *conversation) finish(err error, stopped bool) {
 		c.add("done", "", nil)
 	}
 	c.running = false
-	c.answered, c.superseded = false, false
+	c.answered, c.superseded, c.compacting = false, false, false
 	c.cancel = nil
 	c.save()
 	close(c.ended)
@@ -386,6 +393,13 @@ func (c *conversation) quiet() time.Duration {
 		return 0
 	}
 	return c.clock().Sub(c.heard)
+}
+
+// isCompacting says the running turn's agent is compacting its context.
+func (c *conversation) isCompacting() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.running && c.compacting
 }
 
 // since is the events after seq, whether the agent is answering, and
@@ -523,6 +537,7 @@ func (s *Server) conversationEvents(w http.ResponseWriter, r *http.Request) {
 		// Minutes the agent has been answering with nothing new, once that
 		// is long enough to say so.
 		"quietMinutes": quietMinutes(s.convo.quiet()),
+		"compacting":   s.convo.isCompacting(),
 	}
 	// The slash commands go only to a page without the latest (it says
 	// which it has), not with every poll.

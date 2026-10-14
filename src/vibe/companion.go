@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"vibe/internal/browser"
@@ -131,11 +132,27 @@ func clipboardPageURL(vibeHome, name string) string {
 	return ""
 }
 
+// runningNow says whether sandbox name is running, without starting it if
+// it isn't: what the companion page asks of its own accord mustn't wake a
+// sandbox sbx has stopped while nobody was using it, nor keep it awake. Not
+// knowing counts as not running. A variable for tests.
+var runningNow = func(ctx context.Context, name string) bool {
+	ctx, cancel := context.WithTimeout(ctx, statusWithin)
+	defer cancel()
+	running, _ := sbxrun.Running(ctx, name)
+	return running
+}
+
 // clipboardTrouble is the last error start-clipboard logged in the sandbox
 // (it starts each run with a "===" line, so only this run's count), or "".
 func clipboardTrouble(name string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	// Asked while the clipboard page isn't up, which a stopped sandbox's
+	// isn't: running something in it to ask would start it again.
+	if !runningNow(ctx, name) {
+		return ""
+	}
 	out, err := sbxrun.ExecStdout(ctx, name, "sh", "-c",
 		`[ -f /tmp/clipboard.log ] && sed -n '/^=== start-clipboard/h; /^=== start-clipboard/!H; $!d; x; p' /tmp/clipboard.log | grep '^ERROR: ' | tail -n 1`)
 	if err != nil {
@@ -205,7 +222,12 @@ func themeColorFor(lay layout.Layout, name string, inst state.Instance, agent st
 	}
 	return func() string {
 		profileDir := lay.ProfileDir(inst.Profile)
-		choice, ok := claudetheme.FromSandbox(name)
+		choice, ok := "", false
+		// Asking the sandbox would start a stopped one again, every
+		// minute the page is open: the profile's record stands in.
+		if runningNow(context.Background(), name) {
+			choice, ok = claudetheme.FromSandbox(name)
+		}
 		if !ok {
 			if choice, ok = claudetheme.FromProfile(profileDir); !ok {
 				return ""
@@ -313,6 +335,8 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		Admin:            adminFor(lay, name, inst.Target),
 		Manage:           &companionManager{lay: lay, own: name},
 		ThemeColor:       themeColorFor(lay, name, inst, agent),
+		KeepAwake:        keepAwakeFor(name),
+		Log:              func(line string) { note("%s", line) },
 	})
 	if err != nil {
 		note("companion: could not serve the page on port %d: %v", port, err)
@@ -324,3 +348,44 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 	}
 	return func() { srv.Close() }, true, srv.Cancel
 }
+
+// stoppedOnPurpose is set while the sandbox is stopped because someone
+// stopped it (the page's Stop, 'vibe --stop', sbx under a terminal session),
+// rather than sbx stopping it for being idle: the page coming back to the
+// screen doesn't start it again then.
+var stoppedOnPurpose atomic.Bool
+
+// keepAwakeFor is what the companion page asks for while it's in view:
+// sbx stops a sandbox about a minute after nothing is attached to it, and
+// one stopping and starting under the page reloads its clipboard pane. So a
+// running sandbox is touched, to keep it awake while the page is in use, and
+// one sbx stopped while the page was out of sight is started again (with
+// its start-up), ready for when it's used; what it did, if it says. One
+// stopped on purpose is left stopped, and with a terminal attached there's
+// nothing to do: the session keeps it awake.
+func keepAwakeFor(name string) func() string {
+	return func() string {
+		attachedMu.Lock()
+		busy := attached
+		attachedMu.Unlock()
+		if busy || stoppedOnPurpose.Load() {
+			return ""
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), statusWithin)
+		defer cancel()
+		if runningNow(ctx, name) {
+			sbxrun.ExecSilentContext(ctx, name, "true")
+			return ""
+		}
+		startCtx, cancelStart := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancelStart()
+		if !startSandboxForPage(startCtx, name) {
+			return "sandbox '" + name + "' was stopped, and couldn't be started again for the page — 'sbx ls' says what state it is in"
+		}
+		return "sandbox '" + name + "' was stopped: started it again for the page, which is in view"
+	}
+}
+
+// startSandboxForPage starts sandbox name for the page. A variable for
+// tests.
+var startSandboxForPage = sbxrun.StartContext

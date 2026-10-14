@@ -275,6 +275,26 @@ func TestAnOutOfDateSandboxIsRebuiltAtTheStart(t *testing.T) {
 	}
 }
 
+func TestASandboxAHeadlessVibeIsUsingIsntRebuiltUnderIt(t *testing.T) {
+	lay := updateLayout(t)
+	inst := sandboxFor(t, lay, true)
+	changeLibrary(t, lay)
+	rebuilds, asked := standIns(t, prompt.CountdownGo)
+	headlessHere = []int{4242}
+	t.Cleanup(func() { headlessHere = nil })
+	var err error
+	notes := strings.Join(notesOf(func() { err = autoUpdate(lay, cliargs.Args{}, "box", inst.Target) }), "\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *rebuilds != 0 || *asked {
+		t.Errorf("rebuilt %d times, counted down: %v; want neither", *rebuilds, *asked)
+	}
+	if !strings.Contains(notes, "out of date") || !strings.Contains(notes, "PID 4242") || !strings.Contains(notes, "vibe --restart") {
+		t.Errorf("notes don't say why it wasn't rebuilt, or how to:\n%s", notes)
+	}
+}
+
 func TestASandboxFromBeforeFingerprintsIsOutOfDate(t *testing.T) {
 	lay := updateLayout(t)
 	inst := sandboxFor(t, lay, false)

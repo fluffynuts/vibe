@@ -68,9 +68,15 @@ func finish(lay layout.Layout, args cliargs.Args, name string) error {
 		case companionUp && (session.HoldAsked() || stoppedUnderSession(name, code, reached.Load())):
 			// Stopped by 'vibe --stop' (which says so) or by sbx: the
 			// page's Admin tab can start it again.
+			stoppedOnPurpose.Store(true)
 			hold.begin()
 			resume = hold.waiting()
 			note("sandbox '%s' was stopped — the companion page's Admin tab can start it again;", name)
+		case headlessHere != nil && stoppedUnderSession(name, code, reached.Load()):
+			// The page is the headless vibe's, so this terminal has no
+			// hold to wait in.
+			note("sandbox '%s' was stopped — the companion page's Admin tab can start it again, then 'vibe' here attaches to it", name)
+			left = true
 		}
 		if resume == nil {
 			break

@@ -642,3 +642,43 @@ func TestStateSaysWhyTheClipboardPageIsntUpOnlyWhileItIsnt(t *testing.T) {
 		t.Errorf("a page that is up still has trouble: %q", got.Trouble)
 	}
 }
+
+// While in view, the page asks to keep the sandbox awake; the asking
+// doesn't wait for it, and asks made while one runs aren't stacked up.
+func TestKeepingTheSandboxAwakeRunsOnceAtATime(t *testing.T) {
+	release := make(chan struct{})
+	var mu sync.Mutex
+	runs := 0
+	var said []string
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort,
+		KeepAwake: func() string {
+			mu.Lock()
+			runs++
+			mu.Unlock()
+			<-release
+			return "started it again"
+		},
+		Log: func(line string) { mu.Lock(); said = append(said, line); mu.Unlock() },
+	})
+	for i := 0; i < 3; i++ {
+		if code := do(t, s, post("/api/awake", `{}`)).Code; code != http.StatusOK {
+			t.Fatalf("POST /api/awake: %d", code)
+		}
+	}
+	close(release)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		done := len(said) == 1
+		mu.Unlock()
+		if done {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if runs != 1 || len(said) != 1 || said[0] != "started it again" {
+		t.Errorf("runs %d, said %v; want one run, its outcome logged", runs, said)
+	}
+}
