@@ -50,7 +50,7 @@
     return ids
   }
 
-  // summary says what's ticked, in words, for beside the Delete button.
+  // summary says what's selected, in words, for beside the Delete button.
   function summary(inv, ticked) {
     let profiles = 0
     let sandboxes = 0
@@ -62,7 +62,7 @@
     const parts = []
     if (profiles) parts.push(profiles + (profiles === 1 ? ' profile' : ' profiles'))
     if (sandboxes) parts.push(sandboxes + (sandboxes === 1 ? ' sandbox' : ' sandboxes'))
-    return parts.length ? parts.join(' and ') + ' ticked' : 'nothing ticked'
+    return parts.length ? parts.join(' and ') + ' selected' : 'nothing selected'
   }
 
   const api = { pickable, likelyTrash, coveredBy, picked, summary }

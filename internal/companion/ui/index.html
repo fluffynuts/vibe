@@ -171,12 +171,12 @@
     <section id="panel-manage" class="panel panel-manage" hidden>
       <div class="bar">
         <button type="button" id="manage-trash" class="ghost">Select likely trash</button>
-        <button type="button" id="manage-none" class="ghost">Untick all</button>
+        <button type="button" id="manage-none" class="ghost">Select none</button>
         <span class="spacer"></span>
         <span id="manage-count" class="muted"></span>
-        <button type="button" id="manage-delete" class="danger" disabled>Delete ticked…</button>
+        <button type="button" id="manage-delete" class="danger" disabled>Delete selected…</button>
       </div>
-      <p class="note muted">Every profile, with the sandboxes built from it. Ticking a profile deletes all of it — its sandboxes, their memories, clipboard history, conversations and GitHub tokens, and its backups. Ticking a sandbox deletes it and what vibe keeps for it; its profile stays. From a terminal: <code>vibe --cleanup</code>.</p>
+      <p class="note muted">Every profile, with the sandboxes built from it. Selecting a profile deletes all of it — its sandboxes, their memories, clipboard history, conversations and GitHub tokens, and its backups. Selecting a sandbox deletes it and what vibe keeps for it; its profile stays. From a terminal: <code>vibe --cleanup</code>.</p>
       <p id="manage-error" class="note bad-text" hidden></p>
       <p id="manage-wait" class="note muted">Taking stock…</p>
       <div id="manage-list" class="manage-list"></div>

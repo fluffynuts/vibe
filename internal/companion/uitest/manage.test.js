@@ -40,7 +40,7 @@ test("what vibe keeps isn't sent, even if ticked", () => {
 })
 
 test('the summary counts what goes', () => {
-  assert.equal(summary(inv, new Set()), 'nothing ticked')
-  assert.equal(summary(inv, new Set(['profile:keep', 'unknown:handmade'])), '1 profile and 3 sandboxes ticked')
-  assert.equal(summary(inv, new Set(['sandbox:old'])), '1 sandbox ticked')
+  assert.equal(summary(inv, new Set()), 'nothing selected')
+  assert.equal(summary(inv, new Set(['profile:keep', 'unknown:handmade'])), '1 profile and 3 sandboxes selected')
+  assert.equal(summary(inv, new Set(['sandbox:old'])), '1 sandbox selected')
 })

@@ -293,7 +293,7 @@ func recomposeProfile(lay layout.Layout, args cliargs.Args, name, target string,
 		for _, name := range missing {
 			note("  - %s", name)
 		}
-		note("Please verify which features are required (the ones still available are ticked):")
+		note("Please verify which features are required (the ones still available are selected):")
 		features = present
 	}
 	switch {
@@ -482,7 +482,7 @@ func describeFeatures(features []string) string {
 var pickReComposeFeatures = func(lay layout.Layout, profile string, current []string, agent string) ([]string, error) {
 	names := offeredFor(lay, lay.Features(), agent, current)
 	features, labels, checked := featureChecklist(lay, names, current)
-	idxs, ok := checklistFrom("pick the features this sandbox needs (untick any you no longer use)", labels, checked)
+	idxs, ok := checklistFrom("pick the features this sandbox needs (deselect any you no longer use)", labels, checked)
 	if !ok {
 		return nil, fmt.Errorf("aborted — profile '%s' not changed", profile)
 	}

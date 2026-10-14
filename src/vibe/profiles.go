@@ -200,7 +200,7 @@ func ensureGuidedProfile(lay layout.Layout, profile, agent string) error {
 
 	features, labels, checked := featureChecklist(lay, names, base.DefaultFeatures)
 	if len(base.DefaultFeatures) > 0 {
-		note("ticked from defaultFeatures (untick any you don't want): %s", strings.Join(base.DefaultFeatures, ", "))
+		note("selected from defaultFeatures (deselect any you don't want): %s", strings.Join(base.DefaultFeatures, ", "))
 	}
 
 	idxs, ok := checklistFrom("pick the features this sandbox needs", labels, checked)
@@ -290,7 +290,7 @@ func pickDefaultFeatures(lay layout.Layout, defaults []string) ([]string, error)
 		return nil, fmt.Errorf("defaultFeatures in %s: %w", displayPath(lay.HomePath("settings.yaml")), err)
 	}
 	features, labels, checked := featureChecklist(lay, names, defaults)
-	idxs, ok := checklistFrom("which features should a guided profile start with ticked?", labels, checked)
+	idxs, ok := checklistFrom("which features should a guided profile start with selected?", labels, checked)
 	if !ok {
 		note("  keeping defaultFeatures: %s", strings.Join(defaults, ", "))
 		return defaults, nil

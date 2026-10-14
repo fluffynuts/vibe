@@ -769,7 +769,7 @@
         : 'There is no profile to compose.'
       return
     }
-    note.textContent = 'Tick what the sandbox should have; re-composing rebuilds it. New features go after the ones it has.'
+    note.textContent = 'Select what the sandbox should have; re-composing rebuilds it. New features go after the ones it has.'
     const features = st.features || []
     const key = JSON.stringify(features.map((f) => [f.name, f.on]))
     if (key === adminView.features) return
@@ -1123,7 +1123,7 @@
       reached(true)
       if (!res.ok) { toast((res.body && res.body.error) || "That can't be deleted.", true); loadManage(); return }
       confirmThen({
-        title: 'Delete ' + M.summary(manageView.inv, manageView.ticked).replace(/ ticked$/, '') + '?',
+        title: 'Delete ' + M.summary(manageView.inv, manageView.ticked).replace(/ selected$/, '') + '?',
         text: "There's no undo. This deletes:",
         list: res.body.lines || [],
         commandNote: 'From a terminal, vibe --cleanup does the same.',

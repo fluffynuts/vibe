@@ -48,7 +48,7 @@ func (d deletion) options() (labels []string, checked []bool, isSandbox []bool) 
 // returning the indices picked; ok is false when the user quit. A variable
 // so tests can stand in for the user.
 var pickDeletions = func(labels []string, checked []bool) ([]int, bool) {
-	return checklistFrom("Check what to delete (this cannot be undone):", labels, checked)
+	return checklistFrom("Select what to delete (this cannot be undone):", labels, checked)
 }
 
 // choose settles what to delete: everything d offers with -f, else what

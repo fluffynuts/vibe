@@ -57,15 +57,15 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              a tab too)
   vibe -x/--cleanup          pick profiles and sandboxes to delete from a
                              checklist grouped by profile, with what's likely
-                             trash ticked; a profile goes with all its
+                             trash selected; a profile goes with all its
                              sandboxes and everything vibe keeps for them.
                              Lists exactly what will go, and asks once
   vibe -d/--delete [path]    pick from a checklist whether to delete the
-                             sandbox for path (ticked), its profile
-                             (unticked), or both; -f deletes both unasked
+                             sandbox for path (selected), its profile
+                             (deselected), or both; -f deletes both unasked
   vibe -U/--upgrade          check GitHub for newer releases of vibe and
                              Docker SBX, pick which to upgrade (all are
-                             ticked), and install them; -f upgrades them all
+                             selected), and install them; -f upgrades them all
                              without asking (-f and -u are passed on to
                              vibe's --install)
   vibe -I/--install-sbx      download the latest stable Docker Sandboxes (sbx)

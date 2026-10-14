@@ -101,9 +101,9 @@ macOS may block the unsigned binary the first time: `xattr -dr com.apple.quarant
 ### Upgrading
 
 `vibe --upgrade` (`-U`) checks GitHub for newer releases of vibe and of Docker SBX, then lists
-what it found with everything ticked, for you to untick what you'd rather leave; enter starts the
+what it found with everything selected, for you to deselect what you'd rather leave; enter starts the
 upgrades straight away, with no confirmation step. When there's
-nothing newer, it says "vibe and sbx are up to date". Unticking everything stops with "nothing
+nothing newer, it says "vibe and sbx are up to date". Deselecting everything stops with "nothing
 selected to update" and a non-zero exit. `-f`, or running with no terminal, upgrades everything
 it found without asking.
 
@@ -122,7 +122,7 @@ to date, when a check fails, or when the checks haven't finished by the time you
 The first `vibe --install` (and vibe's first run, if you skip `--install`) also sets up
 `~/.vibe/settings.yaml` for your machine. It asks how much memory each sandbox gets, in 4g steps
 up to half your machine's memory. It asks which agent sandboxes run by default, from the agents `sbx run
---help` lists, and which library features a guided profile starts with ticked. Each question
+--help` lists, and which library features a guided profile starts with selected. Each question
 starts on the package's choice. Creating a new sandbox asks again which agent it should run,
 starting on that default (or on the profile's own `agent`, when the profile exists already). It asks
 this first, before any profile is made, because a guided profile only offers the features that work
@@ -131,7 +131,7 @@ lowers the memory, if it's more than your machine can give. Every later `--insta
 memory check on your `settings.yaml`, and changes nothing else in it.
 
 `vibe --setup` asks those questions again (default memory, default agent, and the features a guided
-profile starts with ticked), starting on your current choices, and saves the answers in
+profile starts with selected), starting on your current choices, and saves the answers in
 `~/.vibe/settings.yaml`. It then offers to store a default GitHub token for new sandboxes to push with
 (see [Letting the agent push](#letting-the-agent-push)). It needs a terminal, and
 `~/.vibe/settings.yaml` to exist (so run `vibe --install` first).
@@ -287,7 +287,7 @@ vibe -a/--info [path]      # show the sandbox's settings and, while it runs,
                            #    its uptime and memory and disk use
 vibe -M/--manage           # serve the Profiles page on its own, until Ctrl-C
 vibe -x/--cleanup          # pick profiles and sandboxes to delete, grouped by
-                           #    profile, with the likely trash ticked
+                           #    profile, with the likely trash selected
 vibe -d/--delete [path]    # pick whether to delete the sandbox for path, its
                            #    profile, or both (-f: both, without asking)
 vibe -i/--install          # copy the bundle into ~/.vibe and the binary into
@@ -313,7 +313,7 @@ name exactly as a normal run would, so `vibe -s && vibe` restarts whatever you w
 
 `-x`/`--cleanup` is for the profiles and sandboxes a machine accumulates. It lists every profile, with
 the sandboxes vibe built from it under it, and then the sandboxes `sbx` has that vibe has no record
-of, as a checkbox list (space checks, enter is done). Each line says what's worth knowing when
+of, as a checkbox list (space selects, enter is done). Each line says what's worth knowing when
 deciding whether it's trash:
 
 - **A profile:** its features, how many sandboxes it has, and flags: no sandboxes, every sandbox or
@@ -321,13 +321,13 @@ deciding whether it's trash:
 - **A sandbox:** its folder, and whether it's running, stopped or gone from sbx, whether its folder
   is gone, whether a vibe is attached, whether it's out of date.
 
-What's likely trash starts ticked: profiles with no sandboxes, profiles whose sandboxes are all gone
-(from sbx, or their folders), and sandboxes gone from sbx or whose folder is gone. Untick what you
+What's likely trash starts selected: profiles with no sandboxes, profiles whose sandboxes are all gone
+(from sbx, or their folders), and sandboxes gone from sbx or whose folder is gone. Deselect what you
 want to keep.
 
-**Checking a profile deletes all of it:** the profile, all its sandboxes, their records, agent
+**Selecting a profile deletes all of it:** the profile, all its sandboxes, their records, agent
 memories, clipboard history, conversations and GitHub tokens, and the profile's backups. There's no
-undo. **Checking a sandbox** deletes it and what vibe keeps for it; its profile stays. Either way the
+undo. **Selecting a sandbox** deletes it and what vibe keeps for it; its profile stays. Either way the
 sandbox's record goes, as a record claims its published host ports whether or not anything is
 listening, so one left behind would reserve those ports against every sandbox made afterwards.
 
@@ -369,8 +369,8 @@ stopped sandbox isn't started just to answer: you get its settings only.
 [ ] remove the profile <profile name>
 ```
 
-The sandbox starts ticked, because the next `vibe` in that folder rebuilds it. The profile starts
-unticked, because it can hold work that's harder to redo. If other sandboxes use the profile, its
+The sandbox starts selected, because the next `vibe` in that folder rebuilds it. The profile starts
+deselected, because it can hold work that's harder to redo. If other sandboxes use the profile, its
 line names them. Only things that exist are offered. A profile that only ships with vibe has no
 copy in `~/.vibe` to delete, so it isn't offered. `-f` deletes both without asking. With no
 terminal and no `-f`, nothing is deleted. vibe logs what it removed and what it kept. As with
@@ -578,9 +578,9 @@ you're looking at:
   title says when the agent is optimising.
 - **Profiles** — every profile on the machine, with the sandboxes built from it, to clean up what's
   trash: the same as [`vibe --cleanup`](#usage), with the same flags and the same rules. **Select likely
-  trash** ticks profiles with no sandboxes, profiles whose sandboxes are all gone, and sandboxes gone
-  from sbx or whose folder is gone; **Delete ticked…** lists exactly what will go, by name and path,
-  and asks once. Ticking a profile deletes all of it, with its sandboxes. What can't be deleted says
+  trash** selects profiles with no sandboxes, profiles whose sandboxes are all gone, and sandboxes gone
+  from sbx or whose folder is gone; **Delete selected…** lists exactly what will go, by name and path,
+  and asks once. Selecting a profile deletes all of it, with its sandboxes. What can't be deleted says
   why: this page's own sandbox, a sandbox with a vibe attached, and profiles that ship with vibe. Each
   row also has what can be done to it: a sandbox can be started, stopped (as `vibe --stop` does), rebuilt
   (and left running or stopped as it was), or updated when it's out of date; a guided profile can be
@@ -656,7 +656,7 @@ different token, or continue without one.
 
 vibe then asks what the agent should be told about pushing, beyond never force-pushing, which it is
 always told: *only work in a feature branch*, and *never push the default branch* (open a pull request
-instead). Both start unticked. These are instructions to the agent, not enforced by anything. If you
+instead). Both start deselected. These are instructions to the agent, not enforced by anything. If you
 need the default branch protected, set up a branch rule on GitHub.
 
 The token never enters the sandbox. vibe gives it to sbx as the sandbox's own secret
@@ -691,8 +691,8 @@ checked the same way, and turned down if GitHub won't let it push. `--git-rules`
 
 ### Checkbox prompts
 
-Anywhere vibe asks you to check several things — the guided feature picker, `-x`/`--cleanup`, `-d`/`--delete` —
-enter doesn't answer straight away (`--upgrade`'s list is the exception: it just goes ahead). What you checked is listed back, one item per line, and the
+Anywhere vibe asks you to select several things — the guided feature picker, `-x`/`--cleanup`, `-d`/`--delete` —
+enter doesn't answer straight away (`--upgrade`'s list is the exception: it just goes ahead). What you selected is listed back, one item per line, and the
 list is still there to go back to:
 
 ```
@@ -822,7 +822,7 @@ memory: 12g          # sandbox memory limit; a new sandbox asks, starting here, 
 agent: claude         # which coding agent to run
 nugetDir: ~/.nuget    # mounted into the sandbox and symlinked in, if it exists on the host
 memoryRoot: ~/.vibe/memories   # where per-sandbox agent memories are backed up
-defaultFeatures:      # library features a guided profile starts with ticked
+defaultFeatures:      # library features a guided profile starts with selected
   - diffity
 env:                  # extra environment variables passed to `sbx create -e`
   SOME_VAR: value
@@ -841,7 +841,7 @@ preference to the variable. If sbx can't confirm a port, the file says so on a s
 
 `publish` entries append across base → profile, so a profile only needs to list what it's adding.
 `defaultFeatures` is the exception that replaces rather than appends, and it is read from the base
-settings only — it is what the guided picker starts with ticked, so it is consulted before the
+settings only — it is what the guided picker starts with selected, so it is consulted before the
 profile it is creating exists. A feature the sandbox's agent can't use (see `# vibe: agents:`
 below) is left out, with a note saying so. Naming a feature the library doesn't have is an error, with the
 closest real name suggested:
@@ -940,7 +940,7 @@ published port or an instruction reaches the profiles built from it. The profile
 rather than merged into — re-running the composition over the existing files would append every
 fragment a second time, duplicating permissions and published ports — so hand-edits to it are
 lost, and it warns of that up front, in yellow, before anything else (enter accepts; `-f` skips the question). The profile is zipped into `~/.vibe/backup/<sandbox>-<date>_<time>.zip` first (the last three per sandbox are kept), and `vibe --restore [path]` lists them, rolls the profile back to the one you pick (after confirming) and offers to re-compose from it; `-f` restores the newest without asking. Before rebuilding it shows the same feature
-checklist as guided creation, with the profile's current features ticked, so you can add a feature or
+checklist as guided creation, with the profile's current features selected, so you can add a feature or
 drop one you no longer use (and reorder them); with `-f` the recorded features are kept as they are. Profiles written by hand, copied or
 created blank record nothing and are refused rather than guessed at; add the comment line above
 to adopt one.

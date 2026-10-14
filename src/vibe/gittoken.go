@@ -501,7 +501,7 @@ func pickGitRules(preset []string) []string {
 		checked[i] = ticked[r]
 	}
 	note("the agent will be told never to force-push")
-	idxs, ok := checklistNoConfirmFrom("anything else it should be told about pushing? (space ticks, enter answers)", labels, checked)
+	idxs, ok := checklistNoConfirmFrom("anything else it should be told about pushing? (space selects, enter answers)", labels, checked)
 	if !ok {
 		return preset
 	}

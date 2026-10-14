@@ -89,7 +89,7 @@ func sandboxLabel(s inventorySandbox) string {
 // ok is false when the user quit. A variable so tests can stand in for the
 // user.
 var pickCleanup = func(labels []string, ticked []bool) ([]int, bool) {
-	return checklistNoConfirmFrom("Check what to delete — a profile goes with all its sandboxes (likely trash is ticked):", labels, ticked)
+	return checklistNoConfirmFrom("Select what to delete — a profile goes with all its sandboxes (likely trash is selected):", labels, ticked)
 }
 
 // confirmCleanup asks once, after listing everything that will go, whether
