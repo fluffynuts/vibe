@@ -15,6 +15,7 @@ import (
 	"vibe/internal/layout"
 	"vibe/internal/profilegen"
 	"vibe/internal/prompt"
+	"vibe/internal/running"
 	"vibe/internal/state"
 )
 
@@ -546,5 +547,22 @@ func TestUpdateSandboxesDoesntAskWhenTheresNothingToDo(t *testing.T) {
 	asked := answering(t, false)
 	if err := doUpdateSandboxes(lay, false); err != nil || *asked != 0 {
 		t.Errorf("doUpdateSandboxes = %v, asked %d times; want nothing asked", err, *asked)
+	}
+}
+
+// The Profiles page runs in a vibe that holds its own folder; rebuilding
+// another sandbox from it must claim that sandbox's folder as well, not
+// trip over its own claim.
+func TestAPagesVibeCanRebuildAnotherSandbox(t *testing.T) {
+	lay := updateLayout(t)
+	own, err := running.Register(lay.Home, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer own.Release()
+	batchStandIns(t)
+	inst := sandboxRecord(t, lay, "other", "p").inst
+	if err := rebuildAsItWas(context.Background(), lay, inst, false); err != nil {
+		t.Errorf("rebuildAsItWas = %v, want the rebuild to go ahead", err)
 	}
 }

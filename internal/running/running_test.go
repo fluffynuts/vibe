@@ -238,3 +238,70 @@ func TestAVibeThatNeverAnswersIsSaidToBeStuck(t *testing.T) {
 		t.Errorf("the unanswered request was left behind: %v", err)
 	}
 }
+
+// A process that has a session can claim other folders too (the Profiles
+// page rebuilding another sandbox), each seen by other vibes, without
+// touching its session's claim.
+func TestAHoldClaimsAnotherFolderAlongsideTheSession(t *testing.T) {
+	home := t.TempDir()
+	s, err := register(home, "/work/a", 4242)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Release()
+	h, err := hold(home, "/work/b", "rebuilding sandbox 'b'", 4242)
+	if err != nil {
+		t.Fatalf("hold: %v", err)
+	}
+	if got := Others(home, "/work/b"); len(got) != 1 || got[0] != 4242 {
+		t.Errorf("Others(/work/b) = %v, want the hold seen", got)
+	}
+	if got := Others(home, "/work/a"); len(got) != 1 || got[0] != 4242 {
+		t.Errorf("Others(/work/a) = %v, want the session still seen", got)
+	}
+	h.Release()
+	if got := Others(home, "/work/b"); len(got) != 0 {
+		t.Errorf("Others(/work/b) = %v after release", got)
+	}
+	if got := Others(home, "/work/a"); len(got) != 1 {
+		t.Errorf("Others(/work/a) = %v, want the session untouched by the hold's release", got)
+	}
+}
+
+// A claim that can't be taken mustn't spoil the one that holds the file.
+func TestAFailedClaimLeavesTheHolderAlone(t *testing.T) {
+	home := t.TempDir()
+	s, err := register(home, "/work/a", 4243)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Release()
+	if _, err := register(home, "/work/b", 4243); err == nil {
+		t.Fatal("a second claim on the same file was taken")
+	}
+	if got := Others(home, "/work/a"); len(got) != 1 {
+		t.Errorf("Others(/work/a) = %v, want the first claim still seen", got)
+	}
+}
+
+// A hold says what it's for, so a vibe finding the folder taken can say why.
+func TestClaimsSayWhatAHoldIsFor(t *testing.T) {
+	home := t.TempDir()
+	s, err := register(home, "/work/a", 4244)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Release()
+	h, err := hold(home, "/work/a", "rebuilding sandbox 'a'", 4245)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Release()
+	want := []Claim{{PID: 4244}, {PID: 4245, Work: "rebuilding sandbox 'a'"}}
+	if got := Claims(home, "/work/a"); !reflect.DeepEqual(got, want) {
+		t.Errorf("Claims = %+v, want %+v", got, want)
+	}
+	if got := Others(home, "/work/a"); !reflect.DeepEqual(got, []int{4244, 4245}) {
+		t.Errorf("Others = %v", got)
+	}
+}

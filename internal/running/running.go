@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -77,16 +78,8 @@ func register(vibeHome, target string, pid int) (*Session, error) {
 	os.Remove(holdPath(vibeHome, pid))
 	os.Remove(cancelPath(vibeHome, pid))
 	os.Remove(answerPath(vibeHome, pid))
-	f, err := os.OpenFile(lockPath(vibeHome, pid), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o644)
+	f, err := claim(lockPath(vibeHome, pid), target)
 	if err != nil {
-		return nil, err
-	}
-	if err := lock(f); err != nil {
-		f.Close()
-		return nil, fmt.Errorf("locking %s: %w", f.Name(), err)
-	}
-	if _, err := f.WriteString(target + "\n"); err != nil {
-		f.Close()
 		return nil, err
 	}
 	s := &Session{
@@ -101,6 +94,55 @@ func register(vibeHome, target string, pid int) (*Session, error) {
 	}
 	go s.watch()
 	return s, nil
+}
+
+// holds numbers the extra claims this process makes (see Hold), so each has
+// a lock file of its own.
+var holds atomic.Int64
+
+// Hold claims target for this process alongside its session, if it has one,
+// for work, said in words ("rebuilding sandbox 'x'"): work on a folder other
+// than its own, such as rebuilding another sandbox from the Profiles page.
+// Other vibes see the claim, and what it's for (see Claims). Asking it to
+// stop asks this process, so nothing is waited on here for a stop or a
+// cancel: Release it when the work is done.
+func Hold(vibeHome, target, work string) (*Session, error) {
+	return hold(vibeHome, target, work, os.Getpid())
+}
+
+func hold(vibeHome, target, work string, pid int) (*Session, error) {
+	if err := os.MkdirAll(Dir(vibeHome), 0o755); err != nil {
+		return nil, fmt.Errorf("creating %s: %w", Dir(vibeHome), err)
+	}
+	path := filepath.Join(Dir(vibeHome), fmt.Sprintf("%d-%d.lock", pid, holds.Add(1)))
+	f, err := claim(path, target+"\n"+work)
+	if err != nil {
+		return nil, err
+	}
+	return &Session{file: f, done: make(chan struct{})}, nil
+}
+
+// claim opens the lock file at path, locks it, and only then writes what
+// it claims (the folder, and for a hold what it's for) into it: a claim that
+// can't be taken mustn't wipe the one that holds it.
+func claim(path, target string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	if err := lock(f); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("locking %s: %w", f.Name(), err)
+	}
+	if err := f.Truncate(0); err != nil {
+		f.Close()
+		return nil, err
+	}
+	if _, err := f.WriteString(target + "\n"); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
 }
 
 func (s *Session) watch() {
@@ -245,28 +287,60 @@ func held(path string) bool {
 // Others returns the PIDs of every other live vibe process that has target
 // open, lowest first.
 func Others(vibeHome, target string) []int {
+	var pids []int
+	for _, c := range Claims(vibeHome, target) {
+		if len(pids) == 0 || pids[len(pids)-1] != c.PID {
+			pids = append(pids, c.PID)
+		}
+	}
+	return pids
+}
+
+// Claim is another live vibe process's claim on a folder.
+type Claim struct {
+	PID int
+	// Work says what it's doing with the folder, for a claim taken for a
+	// piece of work (see Hold): "rebuilding sandbox 'x'". It's "" for a
+	// session, which is the vibe working in the folder.
+	Work string
+}
+
+// Claims returns every other live vibe process's claims on target, by PID,
+// a process's session before any work it holds the folder for.
+func Claims(vibeHome, target string) []Claim {
 	entries, err := os.ReadDir(Dir(vibeHome))
 	if err != nil {
 		return nil
 	}
 	self := os.Getpid()
-	var pids []int
+	var claims []Claim
 	for _, e := range entries {
-		pid, err := strconv.Atoi(strings.TrimSuffix(e.Name(), ".lock"))
+		// A session's claim is <pid>.lock; a hold's, <pid>-<n>.lock.
+		owner, _, _ := strings.Cut(strings.TrimSuffix(e.Name(), ".lock"), "-")
+		pid, err := strconv.Atoi(owner)
 		if err != nil || pid == self || !strings.HasSuffix(e.Name(), ".lock") {
 			continue
 		}
 		path := filepath.Join(Dir(vibeHome), e.Name())
 		data, err := os.ReadFile(path)
-		if err != nil || strings.TrimSpace(string(data)) != target {
+		if err != nil {
+			continue
+		}
+		folder, work, _ := strings.Cut(strings.TrimRight(string(data), "\n"), "\n")
+		if folder != target {
 			continue
 		}
 		if held(path) {
-			pids = append(pids, pid)
+			claims = append(claims, Claim{PID: pid, Work: strings.TrimSpace(work)})
 		}
 	}
-	sort.Ints(pids)
-	return pids
+	sort.Slice(claims, func(i, j int) bool {
+		if claims[i].PID != claims[j].PID {
+			return claims[i].PID < claims[j].PID
+		}
+		return claims[i].Work < claims[j].Work
+	})
+	return claims
 }
 
 // killWait is how long Stop gives a killed process to be gone.

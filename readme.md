@@ -985,6 +985,11 @@ state:
   `--stop-all`, `--list`, `--install` and `--cleanup`), locked for as long as that process lives. A second vibe
   for the same folder warns that one is already running, gives its PID, and offers to exit,
   continue anyway, or stop the other one first. `-f` continues anyway without asking.
+- `running/<pid>-<n>.lock` — a vibe holding another folder for a while, besides its own: rebuilding
+  that folder's sandbox from the Profiles page, or with `--update-sandboxes`. The file says what it's
+  doing, so a vibe started in that folder says so too ("vibe (PID n) is rebuilding sandbox 'x'"),
+  suggests waiting for it, and warns that stopping it ends the rebuild part-way, along with that
+  vibe's own session.
 
 A record outlives the sandbox it describes — `--re-init` tears the sandbox down but keeps the
 record, since the ports it remembers are what the rebuild re-claims.

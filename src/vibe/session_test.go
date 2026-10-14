@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"vibe/internal/layout"
+	"vibe/internal/running"
 	"vibe/internal/state"
 )
 
@@ -54,5 +55,32 @@ func TestOnlyASessionThatHadItsSandboxCountsAsStoppedUnderIt(t *testing.T) {
 	}
 	if stoppedUnderSession("box", 1, false) {
 		t.Error("a session whose sandbox was never reached was taken as stopped under it")
+	}
+}
+
+// A vibe holding the folder for a rebuild says so, before the user is
+// offered to stop it, and what stopping it ends.
+func TestAFolderTakenForARebuildSaysWhy(t *testing.T) {
+	why, stop, busy := othersSay("/work/a", []running.Claim{{PID: 7}, {PID: 8, Work: "rebuilding sandbox 'a'"}})
+	joined := strings.Join(why, "\n")
+	for _, want := range []string{"vibe is already running for /work/a (PID 7)", "vibe (PID 8) is rebuilding sandbox 'a' for /work/a", "Profiles page"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("why doesn't say %q:\n%s", want, joined)
+		}
+	}
+	if !busy || !strings.Contains(stop, "PIDs 7, 8") || !strings.Contains(stop, "half-made") {
+		t.Errorf("busy %v, stop = %q", busy, stop)
+	}
+	why, stop, busy = othersSay("/work/a", []running.Claim{{PID: 7}})
+	if busy || stop != "stop vibe (PID 7), then continue" || len(why) != 1 {
+		t.Errorf("a session alone: why %v, stop %q, busy %v", why, stop, busy)
+	}
+}
+
+// With no terminal, the refusal says why the folder is taken.
+func TestARefusalForATakenFolderSaysWhy(t *testing.T) {
+	err := resolveOthers(t.TempDir(), "/work/a", []running.Claim{{PID: 8, Work: "rebuilding sandbox 'a'"}}, false)
+	if err == nil || !strings.Contains(err.Error(), "rebuilding sandbox 'a'") {
+		t.Errorf("resolveOthers = %v", err)
 	}
 }

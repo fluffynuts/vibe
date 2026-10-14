@@ -398,7 +398,7 @@ func updateSandbox(ctx context.Context, lay layout.Layout, inst state.Instance, 
 // stopped as it was. Its folder is held meanwhile, so that a vibe started
 // there knows.
 func rebuildAsItWas(ctx context.Context, lay layout.Layout, inst state.Instance, wasRunning bool) error {
-	session, err := running.Register(lay.Home, inst.Target)
+	session, err := running.Hold(lay.Home, inst.Target, fmt.Sprintf("rebuilding sandbox '%s'", inst.Name))
 	if err != nil {
 		return err
 	}

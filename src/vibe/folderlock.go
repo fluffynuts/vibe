@@ -24,8 +24,8 @@ const stopOtherTimeout = 60 * time.Second
 // asks what to do if there are any. It then claims target for this process.
 // With force, or no terminal to ask on, it says so and carries on.
 func guardFolder(vibeHome, target string, force bool) error {
-	if others := running.Others(vibeHome, target); len(others) > 0 {
-		if err := resolveOthers(vibeHome, target, others, force); err != nil {
+	if claims := running.Claims(vibeHome, target); len(claims) > 0 {
+		if err := resolveOthers(vibeHome, target, claims, force); err != nil {
 			return err
 		}
 	}
@@ -71,16 +71,47 @@ func exitOnStopRequest(s *running.Session) {
 	os.Exit(1)
 }
 
-func resolveOthers(vibeHome, target string, others []int, force bool) error {
-	pids := make([]string, len(others))
-	for i, pid := range others {
-		pids[i] = fmt.Sprint(pid)
+// othersSay is what to tell the user about the claims other vibes have on
+// target: why the folder is taken, and, for the choice to stop them, what
+// stopping them ends. A vibe holding it for work (a rebuild from the
+// Profiles page, or --update-sandboxes) says what it's doing, as stopping it
+// ends that part-way, and that vibe's own session with it.
+func othersSay(target string, claims []running.Claim) (why []string, stop string, busy bool) {
+	var sessions, pids []string
+	seen := map[int]bool{}
+	for _, c := range claims {
+		if !seen[c.PID] {
+			seen[c.PID] = true
+			pids = append(pids, fmt.Sprint(c.PID))
+		}
+		if c.Work == "" {
+			sessions = append(sessions, fmt.Sprint(c.PID))
+			continue
+		}
+		busy = true
+		why = append(why, fmt.Sprintf("vibe (PID %d) is %s for %s — the Profiles page it was started from, or the terminal running --update-sandboxes, shows how it's going", c.PID, c.Work, target))
 	}
-	which, instance := "PID", "that instance"
-	if len(others) > 1 {
-		which, instance = "PIDs", "those instances"
+	if len(sessions) > 0 {
+		which := "PID"
+		if len(sessions) > 1 {
+			which = "PIDs"
+		}
+		why = append([]string{fmt.Sprintf("vibe is already running for %s (%s %s)", target, which, strings.Join(sessions, ", "))}, why...)
 	}
-	already := fmt.Sprintf("vibe is already running for %s (%s %s)", target, which, strings.Join(pids, ", "))
+	which := "vibe (PID " + strings.Join(pids, ", ") + ")"
+	if len(pids) > 1 {
+		which = "those vibes (PIDs " + strings.Join(pids, ", ") + ")"
+	}
+	stop = "stop " + which + ", then continue"
+	if busy {
+		stop = "stop " + which + ", ending its work part-way (a rebuild stopped part-way can leave the sandbox half-made), then continue"
+	}
+	return why, stop, busy
+}
+
+func resolveOthers(vibeHome, target string, claims []running.Claim, force bool) error {
+	why, stopLabel, busy := othersSay(target, claims)
+	already := strings.Join(why, "; ")
 
 	if force {
 		note("WARNING: %s — continuing anyway (--force)", already)
@@ -89,18 +120,23 @@ func resolveOthers(vibeHome, target string, others []int, force bool) error {
 	if !interactive() {
 		return fmt.Errorf("%s", already)
 	}
-	note("%s", already)
-	choice, ok := chooseFrom("WARNING: vibe is already running in this folder! What would you like to do?", []string{
-		"exit",
-		"continue anyway",
-		"stop " + instance + ", then continue",
-	}, 0)
+	for _, line := range why {
+		note("%s", line)
+	}
+	exit := "exit"
+	question := "WARNING: vibe is already running in this folder! What would you like to do?"
+	if busy {
+		exit = "exit, and run vibe again once that's done"
+		question = "WARNING: another vibe is working on this folder's sandbox! What would you like to do?"
+	}
+	choice, ok := chooseFrom(question, []string{exit, "continue anyway", stopLabel}, 0)
 	switch {
 	case !ok || choice == 0:
-		return fmt.Errorf("already running for %s — exiting", target)
+		return fmt.Errorf("already in use for %s — exiting", target)
 	case choice == 1:
 		return nil
 	}
+	others := running.Others(vibeHome, target)
 	for _, pid := range others {
 		status := newStatusLine()
 		status.show("Stopping vibe (PID %d)", pid)
