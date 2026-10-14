@@ -1710,6 +1710,11 @@
         if (block.type === 'text' && block.text) convoNote('agent', block.text, at)
         else if (block.type === 'tool_use') convoNote('tool', '⚙ ' + (block.name || 'tool') + '  ' + summarise(block.input))
       }
+      // The agent says to run /login, which needs its terminal: this page
+      // can't show the agent's own screens.
+      if (line.error === 'authentication_failed') {
+        convoNote('error', "The agent isn't logged in, and can't be from this page. In a terminal, run vibe in the sandbox's folder and log in there with /login, then send your prompt again.", at)
+      }
     } else if (line.type === 'user') {
       for (const block of content) if (block.type === 'tool_result') showResult(block)
     } else if (line.type === 'result') {
