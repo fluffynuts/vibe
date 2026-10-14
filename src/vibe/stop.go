@@ -9,10 +9,20 @@ import (
 )
 
 func doStop(vibeHome, name, target string, force bool) error {
+	code, err := stopSandbox(holdingStopper(vibeHome, target), name, target, force)
+	if err != nil {
+		return err
+	}
+	os.Exit(code)
+	return nil
+}
+
+// holdingStopper is sbxStopper, telling a vibe attached to target that its
+// session ending is on purpose: it would otherwise take that for the agent
+// being quit, and end, rather than keep its companion page up to start the
+// sandbox again from.
+func holdingStopper(vibeHome, target string) stopper {
 	s := sbxStopper
-	// A vibe attached to this sandbox would take its session ending for
-	// the agent being quit: tell it the stop is on purpose, so it keeps its
-	// companion page up to start the sandbox again from.
 	attached := running.Others(vibeHome, target)
 	s.hold = func() {
 		for _, pid := range attached {
@@ -24,12 +34,7 @@ func doStop(vibeHome, name, target string, force bool) error {
 			running.CancelHold(vibeHome, pid)
 		}
 	}
-	code, err := stopSandbox(s, name, target, force)
-	if err != nil {
-		return err
-	}
-	os.Exit(code)
-	return nil
+	return s
 }
 
 // stopper is what --stop asks of sbx: sbxStopper, or a stub under test.

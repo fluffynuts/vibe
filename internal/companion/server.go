@@ -221,6 +221,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/manage", s.authed(s.managed(s.manageState)))
 	mux.HandleFunc("POST /api/manage/plan", s.managing(s.managePlan))
 	mux.HandleFunc("POST /api/manage/delete", s.managing(s.manageDelete))
+	mux.HandleFunc("POST /api/manage/do", s.managing(s.manageDo))
 	mux.HandleFunc("POST /api/manage/cancel", s.managing(s.adminCancel))
 
 	return s.guarded(mux)

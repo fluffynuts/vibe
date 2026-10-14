@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"vibe/internal/companion"
 	"vibe/internal/layout"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
@@ -316,5 +318,96 @@ func TestTheProfilesTabShowsEverythingAndRefusesItsOwnSandbox(t *testing.T) {
 	lines, err := m.Plan([]string{"sandbox:other"})
 	if err != nil || !strings.Contains(strings.Join(lines, "\n"), "sandbox 'other'") {
 		t.Errorf("Plan = %v, %v", lines, err)
+	}
+}
+
+func TestWhatEachSandboxOffersToDo(t *testing.T) {
+	base := state.Instance{Name: "a", Profile: "p"}
+	for _, tc := range []struct {
+		name string
+		s    inventorySandbox
+		want string
+	}{
+		{"gone from sbx", inventorySandbox{inst: base}, ""},
+		{"this page's", inventorySandbox{inst: state.Instance{Name: "mine"}, inSbx: true, running: true}, ""},
+		{"attached", inventorySandbox{inst: base, inSbx: true, running: true, attached: true}, "stop"},
+		{"folder gone, stopped", inventorySandbox{inst: base, inSbx: true, folderGone: true}, ""},
+		{"running", inventorySandbox{inst: base, inSbx: true, running: true}, "stop rebuild"},
+		{"stopped, out of date", inventorySandbox{inst: base, inSbx: true, outOfDate: "changed"}, "start rebuild update"},
+	} {
+		if got := strings.Join(sandboxActions(tc.s, "mine"), " "); got != tc.want {
+			t.Errorf("%s: actions = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestWhatEachProfileOffersToDo(t *testing.T) {
+	stale := inventorySandbox{inst: state.Instance{Name: "a"}, inSbx: true, outOfDate: "changed"}
+	for _, tc := range []struct {
+		name string
+		p    inventoryProfile
+		want string
+	}{
+		{"vibe's own", inventoryProfile{exists: true, bundled: true}, ""},
+		{"hand-written", inventoryProfile{exists: true, standing: profileOutcome{state: profileNotComposed}}, ""},
+		{"features gone", inventoryProfile{exists: true, standing: profileOutcome{state: profileMissingFeatures}}, ""},
+		{"up to date", inventoryProfile{exists: true}, "recompose"},
+		{"out of date", inventoryProfile{exists: true, standing: profileOutcome{state: profileOutOfDate}}, "recompose update"},
+		{"a sandbox out of date", inventoryProfile{exists: true, sandboxes: []inventorySandbox{stale}}, "recompose update"},
+	} {
+		if got := strings.Join(profileActions(tc.p), " "); got != tc.want {
+			t.Errorf("%s: actions = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestTheProfilesTabRefusesWhatARowDoesntOffer(t *testing.T) {
+	lay := updateLayout(t)
+	record(t, lay, "box", "p", t.TempDir())
+	record(t, lay, "other", "p", t.TempDir())
+	sbxListing(t, "box running\\nother stopped\\n")
+	m := &companionManager{lay: lay, own: "box"}
+	for _, tc := range []struct{ kind, id, want string }{
+		{"rebuild", "sandbox:box", "this page's sandbox"},
+		{"stop", "sandbox:other", "can't be stopped now"},
+		{"rebuild", "sandbox:nope", "there's no sandbox 'nope' any more"},
+	} {
+		if err := m.CanDo(companion.ManageAction{Kind: tc.kind, ID: tc.id}); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("CanDo(%s %s) = %v, want it to say %q", tc.kind, tc.id, err, tc.want)
+		}
+	}
+	if err := m.CanDo(companion.ManageAction{Kind: "rebuild", ID: "sandbox:other"}); err != nil {
+		t.Errorf("CanDo(rebuild other) = %v", err)
+	}
+}
+
+// Re-composing a profile rebuilds its sandboxes that can be, leaving the
+// rest as they are and saying why.
+func TestReComposingAProfileFromThePageRebuildsItsSandboxes(t *testing.T) {
+	lay := updateLayout(t)
+	record(t, lay, "box", "p", t.TempDir())
+	record(t, lay, "idle", "p", t.TempDir())
+	record(t, lay, "lost", "p", filepath.Join(t.TempDir(), "gone"))
+	sbxListing(t, "box running\\nidle stopped\\nlost stopped\\n")
+	did := batchStandIns(t)
+	changeLibrary(t, lay)
+	m := &companionManager{lay: lay, own: "box"}
+
+	var lines []string
+	err := m.Do(context.Background(), companion.ManageAction{Kind: "recompose", ID: "profile:p"}, func(l string) { lines = append(lines, l) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(mineScript(t, lay), "v2") {
+		t.Error("the profile wasn't re-composed")
+	}
+	if strings.Join(*did, ",") != "rebuild idle,stop idle" {
+		t.Errorf("did %v, want just idle rebuilt, and stopped again", *did)
+	}
+	log := strings.Join(lines, "\n")
+	for _, want := range []string{"sandbox 'box' left as it is: it's this page's sandbox", "sandbox 'lost' left as it is: its folder"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("the log doesn't say %q:\n%s", want, log)
+		}
 	}
 }

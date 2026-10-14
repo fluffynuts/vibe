@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -375,12 +376,13 @@ func (m *companionManager) Inventory() companion.ManageInventory {
 	for _, p := range inv.profiles {
 		mp := companion.ManageProfile{
 			ID: pickProfile + p.name, Name: p.name, Features: nonNil(p.features), Flags: nonNil(profileFlags(p)),
-			Trash: p.likelyTrash(), Kept: whyProfileKept(p, m.own), Sandboxes: []companion.ManageSandbox{},
+			Trash: p.likelyTrash(), Kept: whyProfileKept(p, m.own), Actions: profileActions(p), Sandboxes: []companion.ManageSandbox{},
 		}
 		for _, s := range p.sandboxes {
 			mp.Sandboxes = append(mp.Sandboxes, companion.ManageSandbox{
 				ID: pickSandbox + s.inst.Name, Name: s.inst.Name, Folder: displayPath(s.inst.Target),
 				Flags: nonNil(sandboxFlags(s)), Trash: s.likelyTrash(), Kept: whyKept(s, m.own), Own: s.inst.Name == m.own,
+				Actions: sandboxActions(s, m.own),
 			})
 		}
 		out.Profiles = append(out.Profiles, mp)
@@ -482,4 +484,240 @@ func doManage(lay layout.Layout) error {
 	<-interrupts
 	note("stopped serving the Profiles page")
 	return nil
+}
+
+// sandboxActions are what the Profiles tab offers to do to s, besides
+// deleting it. The page's own sandbox is the Admin tab's to work on. One
+// with a vibe attached, or whose folder is gone, can only be stopped.
+func sandboxActions(s inventorySandbox, own string) []string {
+	switch {
+	case !s.inSbx || s.inst.Name == own:
+		return []string{}
+	case s.attached || s.folderGone:
+		if s.running {
+			return []string{companion.ManageStop}
+		}
+		return []string{}
+	}
+	actions := []string{companion.ManageStart}
+	if s.running {
+		actions = []string{companion.ManageStop}
+	}
+	actions = append(actions, companion.ManageRebuild)
+	if s.outOfDate != "" {
+		actions = append(actions, companion.ManageUpdate)
+	}
+	return actions
+}
+
+// profileActions are what the Profiles tab offers to do to p: re-compose a
+// guided profile of the user's, and bring it and its sandboxes up to date
+// when any of them are out of date.
+func profileActions(p inventoryProfile) []string {
+	actions := []string{}
+	if !p.exists || p.bundled || p.standing.state == profileNotComposed || p.standing.state == profileMissingFeatures {
+		return actions
+	}
+	actions = append(actions, companion.ManageRecompose)
+	stale := p.standing.state == profileOutOfDate
+	for _, s := range p.sandboxes {
+		if s.outOfDate != "" {
+			stale = true
+		}
+	}
+	if stale {
+		actions = append(actions, companion.ManageUpdate)
+	}
+	return actions
+}
+
+// rowFor finds the row id picks in inv, and the actions it offers now.
+func (m *companionManager) rowFor(inv inventory, id string) (p *inventoryProfile, s *inventorySandbox, actions []string) {
+	for i := range inv.profiles {
+		prof := &inv.profiles[i]
+		if id == pickProfile+prof.name {
+			return prof, nil, profileActions(*prof)
+		}
+		for j := range prof.sandboxes {
+			if id == pickSandbox+prof.sandboxes[j].inst.Name {
+				return prof, &prof.sandboxes[j], sandboxActions(prof.sandboxes[j], m.own)
+			}
+		}
+	}
+	return nil, nil, nil
+}
+
+// check finds what action is for, in a fresh inventory, and says why it
+// can't be done when it can't.
+func (m *companionManager) check(action companion.ManageAction) (inventory, *inventoryProfile, *inventorySandbox, error) {
+	inv, err := m.takeStock()
+	if err != nil {
+		return inv, nil, nil, err
+	}
+	p, s, actions := m.rowFor(inv, action.ID)
+	if p == nil {
+		kind, name, _ := strings.Cut(action.ID, ":")
+		return inv, nil, nil, fmt.Errorf("there's no %s '%s' any more", kind, name)
+	}
+	if !slices.Contains(actions, action.Kind) {
+		what := "profile '" + p.name + "'"
+		if s != nil {
+			what = "sandbox '" + s.inst.Name + "'"
+		}
+		return inv, nil, nil, fmt.Errorf("%s can't be %s now: %s", what, pastTense[action.Kind], whyNot(p, s, m.own))
+	}
+	return inv, p, s, nil
+}
+
+var pastTense = map[string]string{
+	companion.ManageStart: "started", companion.ManageStop: "stopped", companion.ManageRebuild: "rebuilt",
+	companion.ManageUpdate: "updated", companion.ManageRecompose: "re-composed",
+}
+
+// whyNot says why a row doesn't offer an action.
+func whyNot(p *inventoryProfile, s *inventorySandbox, own string) string {
+	if s != nil {
+		switch {
+		case !s.inSbx:
+			return "sbx no longer has it"
+		case s.inst.Name == own:
+			return "it's this page's sandbox: the Admin tab works on it"
+		case s.attached:
+			return "a vibe is attached to it"
+		case s.folderGone:
+			return folderGone(s.inst.Target)
+		case s.outOfDate == "":
+			return "it's already up to date, or not in the state that needs it"
+		}
+		return "it's not in the state that needs it"
+	}
+	switch {
+	case p.bundled:
+		return "it ships with vibe"
+	case p.standing.why != "":
+		return p.standing.why
+	}
+	return "it and its sandboxes are already up to date"
+}
+
+func (m *companionManager) CanDo(action companion.ManageAction) error {
+	_, _, _, err := m.check(action)
+	return err
+}
+
+// Do carries out action, checking afresh that it can be done: what was shown
+// may have changed since. A profile's action goes on to each of its
+// sandboxes that can take it, saying which can't, and why.
+func (m *companionManager) Do(ctx context.Context, action companion.ManageAction, log func(string)) error {
+	teeNotes(log)
+	defer teeNotes(nil)
+	_, p, s, err := m.check(action)
+	if err != nil {
+		return err
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	err = m.do(ctx, action.Kind, p, s)
+	if ctx.Err() != nil {
+		return fmt.Errorf("cancelled — the list shows where that left things")
+	}
+	return err
+}
+
+func (m *companionManager) do(ctx context.Context, kind string, p *inventoryProfile, s *inventorySandbox) error {
+	if s != nil {
+		switch kind {
+		case companion.ManageStart:
+			note("starting sandbox '%s'", s.inst.Name)
+			if !sbxrun.StartContext(ctx, s.inst.Name) {
+				return fmt.Errorf("sbx couldn't start sandbox '%s' — 'sbx ls' shows its state", s.inst.Name)
+			}
+			note("sandbox '%s' is running", s.inst.Name)
+			return nil
+		case companion.ManageStop:
+			stop := holdingStopper(m.lay.Home, s.inst.Target)
+			stop.stop = func(name string) (int, error) {
+				if err := sbxrun.StopQuietContext(ctx, name); err != nil {
+					return 1, err
+				}
+				return 0, nil
+			}
+			_, err := stopSandbox(stop, s.inst.Name, s.inst.Target, true)
+			return err
+		case companion.ManageRebuild:
+			note("rebuilding sandbox '%s'", s.inst.Name)
+			return rebuildAsItWas(ctx, m.lay, s.inst, s.running)
+		case companion.ManageUpdate:
+			if _, err := updateProfile(m.lay, s.inst.Profile, s.inst.Name); err != nil {
+				return err
+			}
+			_, err := updateSandbox(ctx, m.lay, s.inst, s.running)
+			return err
+		}
+		return fmt.Errorf("a sandbox can't be %s", kind)
+	}
+
+	backupName := p.name
+	if len(p.sandboxes) > 0 {
+		backupName = p.sandboxes[0].inst.Name
+	}
+	switch kind {
+	case companion.ManageRecompose:
+		note("re-composing profile '%s' from %s", p.name, describeFeatures(p.features))
+		if err := replaceProfile(m.lay, p.name, backupName, p.features); err != nil {
+			return err
+		}
+	case companion.ManageUpdate:
+		outcome, err := updateProfile(m.lay, p.name, backupName)
+		if err != nil {
+			return err
+		}
+		if outcome.needsYou() {
+			note("WARNING: profile '%s' wasn't brought up to date: %s", p.name, outcome.why)
+		}
+	default:
+		return fmt.Errorf("a profile can't be %s", kind)
+	}
+	var failed []string
+	for _, sb := range p.sandboxes {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if why := whyNotRebuilt(sb, m.own); why != "" {
+			note("sandbox '%s' left as it is: %s", sb.inst.Name, why)
+			continue
+		}
+		var err error
+		if kind == companion.ManageRecompose {
+			note("rebuilding sandbox '%s'", sb.inst.Name)
+			err = rebuildAsItWas(ctx, m.lay, sb.inst, sb.running)
+		} else {
+			_, err = updateSandbox(ctx, m.lay, sb.inst, sb.running)
+		}
+		if err != nil {
+			note("FAILED: sandbox '%s': %s", sb.inst.Name, err)
+			failed = append(failed, sb.inst.Name)
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("couldn't rebuild %s — see above", strings.Join(failed, ", "))
+	}
+	return nil
+}
+
+// whyNotRebuilt says why a profile's action leaves its sandbox s alone, or
+// "" when it doesn't.
+func whyNotRebuilt(s inventorySandbox, own string) string {
+	switch {
+	case !s.inSbx:
+		return "sbx no longer has it"
+	case s.inst.Name == own:
+		return "it's this page's sandbox — Rebuild on the Admin tab rebuilds it"
+	case s.attached:
+		return "a vibe is attached to it — it's brought up to date when its next session starts"
+	case s.folderGone:
+		return folderGone(s.inst.Target)
+	}
+	return ""
 }

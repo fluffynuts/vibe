@@ -309,7 +309,7 @@ func doUpdateSandboxes(lay layout.Layout) error {
 			}
 			// Asked afresh by updateSandbox: its profile may have just been
 			// re-composed.
-			switch updated, err := updateSandbox(lay, s.inst, s.running); {
+			switch updated, err := updateSandbox(context.Background(), lay, s.inst, s.running); {
 			case err != nil:
 				note("FAILED: sandbox '%s': %s", name, err)
 				tally.failed = append(tally.failed, "sandbox '"+name+"'")
@@ -334,9 +334,8 @@ func (t updateTally) report() error {
 }
 
 // updateSandbox rebuilds the sandbox inst records if it's out of date,
-// saying whether it was, and leaves it running or stopped as it was. Its
-// folder is held meanwhile, so that a vibe started there knows.
-func updateSandbox(lay layout.Layout, inst state.Instance, wasRunning bool) (updated bool, err error) {
+// saying whether it was, and leaves it running or stopped as it was.
+func updateSandbox(ctx context.Context, lay layout.Layout, inst state.Instance, wasRunning bool) (updated bool, err error) {
 	why, err := sandboxOutOfDate(lay, inst)
 	if err != nil {
 		return false, err
@@ -346,22 +345,29 @@ func updateSandbox(lay layout.Layout, inst state.Instance, wasRunning bool) (upd
 		return false, nil
 	}
 	note("sandbox '%s' is out of date (%s): rebuilding it", inst.Name, why)
+	return true, rebuildAsItWas(ctx, lay, inst, wasRunning)
+}
+
+// rebuildAsItWas rebuilds the sandbox inst records and leaves it running or
+// stopped as it was. Its folder is held meanwhile, so that a vibe started
+// there knows.
+func rebuildAsItWas(ctx context.Context, lay layout.Layout, inst state.Instance, wasRunning bool) error {
 	session, err := running.Register(lay.Home, inst.Target)
 	if err != nil {
-		return false, err
+		return err
 	}
 	defer session.Release()
-	if err := rebuild(context.Background(), lay, inst.Name, inst.Target); err != nil {
-		return false, err
+	if err := rebuild(ctx, lay, inst.Name, inst.Target); err != nil {
+		return err
 	}
 	if wasRunning {
 		if !startRebuilt(inst.Name) {
-			return true, fmt.Errorf("rebuilt, but couldn't start it again, as it was running before — 'sbx ls' shows its state")
+			return fmt.Errorf("rebuilt, but couldn't start it again, as it was running before — 'sbx ls' shows its state")
 		}
 	} else if err := stopRebuilt(inst.Name); err != nil {
-		return true, fmt.Errorf("rebuilt, but couldn't stop it again, as it was stopped before: %w", err)
+		return fmt.Errorf("rebuilt, but couldn't stop it again, as it was stopped before: %w", err)
 	}
-	return true, nil
+	return nil
 }
 
 // startRebuilt and stopRebuilt put a rebuilt sandbox back as it was;

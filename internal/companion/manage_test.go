@@ -20,6 +20,7 @@ type fakeManager struct {
 	deleted [][]string
 	release chan struct{}
 	asked   int
+	done    []ManageAction
 }
 
 func (f *fakeManager) Inventory() ManageInventory {
@@ -49,6 +50,21 @@ func (f *fakeManager) Delete(ctx context.Context, ids []string, log func(string)
 	}
 	f.mu.Lock()
 	f.deleted = append(f.deleted, ids)
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *fakeManager) CanDo(action ManageAction) error {
+	if action.ID == f.refuse {
+		return errors.New(action.ID + " can't be rebuilt: a vibe is attached to it")
+	}
+	return nil
+}
+
+func (f *fakeManager) Do(ctx context.Context, action ManageAction, log func(string)) error {
+	log(action.Kind + " " + action.ID)
+	f.mu.Lock()
+	f.done = append(f.done, action)
 	f.mu.Unlock()
 	return nil
 }
@@ -204,4 +220,33 @@ func TestADeleteCanBeCancelledFromThePageOrATerminal(t *testing.T) {
 		t.Errorf("cancel: %s", rec.Body)
 	}
 	manageDone(t, s)
+}
+
+func TestAnActionRunsAsThePagesJob(t *testing.T) {
+	f := &fakeManager{}
+	s := New(Config{Token: token, Port: testPort, Manage: f})
+	if code := do(t, s, post("/api/manage/do", `{"kind":"rebuild","id":"sandbox:a"}`)).Code; code != http.StatusAccepted {
+		t.Fatalf("rebuild: %d", code)
+	}
+	r := manageDone(t, s)
+	if r.Job.Kind != "rebuild" || strings.Join(r.Job.Lines, "|") != "rebuild sandbox:a" || len(f.done) != 1 {
+		t.Errorf("job = %+v, done = %+v", r.Job, f.done)
+	}
+}
+
+func TestAnActionThatCantBeDoneSaysWhyAndNeverStarts(t *testing.T) {
+	f := &fakeManager{refuse: "sandbox:busy"}
+	s := New(Config{Token: token, Port: testPort, Manage: f})
+	rec := do(t, s, post("/api/manage/do", `{"kind":"rebuild","id":"sandbox:busy"}`))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "a vibe is attached") {
+		t.Errorf("rebuild: %d %s", rec.Code, rec.Body)
+	}
+	for _, body := range []string{`{"kind":"rm -rf","id":"sandbox:a"}`, `{"kind":"start"}`} {
+		if code := do(t, s, post("/api/manage/do", body)).Code; code != http.StatusBadRequest {
+			t.Errorf("%s: %d", body, code)
+		}
+	}
+	if r := managePoll(t, s); r.Job != nil || len(f.done) != 0 {
+		t.Errorf("job = %+v, done = %+v", r.Job, f.done)
+	}
 }

@@ -1,6 +1,6 @@
 # Plan: managing profiles and sandboxes
 
-Status: agreed 2026-10-14; being built, a commit per step (see "Order of work").
+Status: agreed and built 2026-10-14, a commit per step (see "Order of work").
 
 ## The problem
 
@@ -91,4 +91,4 @@ exists.
 4. The page: `vibe --manage` and the Profiles tab, listing and deleting. Done. The list loads whole, under
    the 20-second backstop, rather than in stages: everything on it waits on `sbx ls`, and the rest is quick.
    The Profiles and Admin tabs share the page's one job at a time.
-5. The page's other actions.
+5. The page's other actions. Done.

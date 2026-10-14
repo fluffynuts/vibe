@@ -736,7 +736,7 @@
   function renderJob(job, prefix, view) {
     $(prefix + '-job-card').hidden = !job
     if (!job) return
-    const words = { start: 'Start', stop: 'Stop', reinit: 'Rebuild', recompose: 'Re-compose', restore: 'Restore', memories: 'Save memories', delete: 'Delete' }
+    const words = { start: 'Start', stop: 'Stop', reinit: 'Rebuild', rebuild: 'Rebuild', recompose: 'Re-compose', update: 'Update', restore: 'Restore', memories: 'Save memories', delete: 'Delete' }
     $(prefix + '-job-h').firstChild.textContent = (words[job.kind] || 'Last action') + ' '
     pill(prefix + '-job-state', job.running ? (job.cancelled ? 'cancelling…' : job.warning ? 'taking too long' : 'working…')
       : job.cancelled ? 'cancelled' : job.error ? 'failed' : 'done',
@@ -1023,6 +1023,61 @@
     return el('label', { class: 'mgr-pick' }, box, label)
   }
 
+  // What each action is called on its button, and what it asks first (none:
+  // it just runs). The terminal's way is given too, as every action's is.
+  const MANAGE_ACTIONS = {
+    start: { label: 'Start' },
+    stop: { label: 'Stop…', ask: (name) => ({
+      title: 'Stop sandbox ' + name + '?',
+      text: 'The agent stops. A vibe attached to it keeps its page up, to start it again from.',
+      command: 'vibe --stop <its folder>' }) },
+    rebuild: { label: 'Rebuild…', ask: (name) => ({
+      title: 'Rebuild sandbox ' + name + '?',
+      text: "It's destroyed and made again from its profile, which takes a few minutes, and left running or stopped as it was. The agent's memories are kept; anything installed by hand, or kept outside its folder, goes.",
+      command: 'vibe -r <its folder>' }) },
+    update: { label: 'Update…', ask: (name, isProfile) => ({
+      title: 'Bring ' + (isProfile ? 'profile ' + name + ' and its sandboxes' : 'sandbox ' + name) + ' up to date?',
+      text: "A profile the library has moved on from is composed afresh (backed up first, and not if it was edited by hand), and each sandbox built from what has since changed is rebuilt, left running or stopped as it was. The agent's memories are kept.",
+      command: isProfile ? 'vibe --update-sandboxes' : 'vibe <its folder>' }) },
+    recompose: { label: 'Re-compose…', ask: (name) => ({
+      title: 'Re-compose profile ' + name + '?',
+      text: "It's backed up and composed afresh from its features, replacing any edits made to it by hand, and its sandboxes are rebuilt — a few minutes each. One with a vibe attached, this page's own, or one whose folder is gone is left as it is.",
+      command: 'vibe -C <a folder it is for>' }) },
+  }
+
+  function actionButtons(row, isProfile) {
+    return (row.actions || []).map((kind) => {
+      const a = MANAGE_ACTIONS[kind]
+      if (!a) return null
+      return el('button', { type: 'button', class: 'small ghost', text: a.label, disabled: manageView.busy,
+        onclick: () => manageAction(kind, row, isProfile) })
+    })
+  }
+
+  async function manageAction(kind, row, isProfile) {
+    const run = () => post('/api/manage/do', { kind, id: row.id })
+    const a = MANAGE_ACTIONS[kind]
+    if (!a.ask) {
+      try {
+        const res = await run()
+        reached(true)
+        if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true)
+        loadManage()
+      } catch (e) {
+        reached(false)
+        toast('Could not reach vibe.', true)
+      }
+      return
+    }
+    confirmThen(Object.assign({
+      commandNote: 'From a terminal:',
+      danger: kind !== 'update',
+      runLabel: a.label.replace('…', ''),
+      started: 'Started — the Last action box shows how it goes.',
+      run,
+    }, a.ask(row.name, isProfile)))
+  }
+
   function keptNote(row) {
     return row.kept ? el('span', { class: 'mgr-kept muted', text: "can't be deleted: " + row.kept }) : null
   }
@@ -1035,11 +1090,11 @@
       const head = el('div', { class: 'mgr-row mgr-head' },
         tickBox(p, el('span', {}, el('strong', { text: p.name }),
           p.features && p.features.length ? el('span', { class: 'muted', text: ' ' + p.features.join(', ') }) : null)),
-        ...flagPills(p.flags), keptNote(p))
+        ...flagPills(p.flags), keptNote(p), el('span', { class: 'spacer' }), ...actionButtons(p, true))
       const sandboxes = (p.sandboxes || []).map((s) => el('li', { class: 'mgr-row' },
         tickBox(s, el('span', {}, el('span', { text: s.name + (s.own ? ' (this page)' : '') }),
           el('code', { class: 'mgr-folder', text: s.folder })), M.coveredBy(inv, manageView.ticked, s.id)),
-        ...flagPills(s.flags), keptNote(s)))
+        ...flagPills(s.flags), keptNote(s), el('span', { class: 'spacer' }), ...actionButtons(s, false)))
       return el('div', { class: 'mgr-profile' }, head, sandboxes.length ? el('ul', { class: 'mgr-sandboxes' }, ...sandboxes) : null)
     })
     if (!groups.length && !inv.error) groups.push(el('p', { class: 'muted', text: 'No profiles yet.' }))

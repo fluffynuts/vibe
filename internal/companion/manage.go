@@ -20,6 +20,39 @@ type Manager interface {
 	// Delete deletes what ids pick, saying what it does through log. ctx
 	// ending (Cancel, or 'vibe --cancel') ends it.
 	Delete(ctx context.Context, ids []string, log func(string)) error
+	// CanDo says why action can't be done now; nil when it can.
+	CanDo(action ManageAction) error
+	// Do carries out action, as Delete does.
+	Do(ctx context.Context, action ManageAction, log func(string)) error
+}
+
+// What the Profiles tab can do to a row, besides deleting it. The row's
+// Actions say which it offers.
+const (
+	ManageStart     = "start"     // start a sandbox
+	ManageStop      = "stop"      // stop a sandbox, as 'vibe --stop' does
+	ManageRebuild   = "rebuild"   // rebuild a sandbox from its profile, leaving it running or stopped as it was
+	ManageUpdate    = "update"    // bring a sandbox, or a profile and its sandboxes, up to date
+	ManageRecompose = "recompose" // compose a profile afresh, then rebuild its sandboxes
+)
+
+// manageWords name the actions for people, and manageSlowAfter is far
+// longer than each should take.
+var (
+	manageWords = map[string]string{
+		ManageStart: "start", ManageStop: "stop", ManageRebuild: "rebuild", ManageUpdate: "update", ManageRecompose: "re-compose",
+	}
+	manageSlowAfter = map[string]time.Duration{
+		ManageStart: 3 * time.Minute, ManageStop: 3 * time.Minute, ManageRebuild: 15 * time.Minute,
+		// Updating or re-composing a profile rebuilds each of its sandboxes.
+		ManageUpdate: 45 * time.Minute, ManageRecompose: 45 * time.Minute,
+	}
+)
+
+// ManageAction is an action the Profiles tab asked for, on the row ID picks.
+type ManageAction struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
 }
 
 // ManageInventory is every profile, with its sandboxes, and the sandboxes
@@ -42,7 +75,9 @@ type ManageProfile struct {
 	// Trash says it's likely trash: Select likely trash ticks it.
 	Trash bool `json:"trash"`
 	// Kept says why it can't be deleted; "" when it can.
-	Kept      string          `json:"kept,omitempty"`
+	Kept string `json:"kept,omitempty"`
+	// Actions are what can be done to it now, besides deleting it.
+	Actions   []string        `json:"actions"`
 	Sandboxes []ManageSandbox `json:"sandboxes"`
 }
 
@@ -55,7 +90,8 @@ type ManageSandbox struct {
 	Trash  bool     `json:"trash"`
 	Kept   string   `json:"kept,omitempty"`
 	// Own is the sandbox this page is for.
-	Own bool `json:"own,omitempty"`
+	Own     bool     `json:"own,omitempty"`
+	Actions []string `json:"actions"`
 }
 
 // ManageUnknown is a sandbox sbx has that vibe has no record of.
@@ -118,6 +154,33 @@ func (s *Server) manageDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	s.startJob("delete", "the Profiles tab's delete", manageSlow, func(ctx context.Context, log func(string)) error {
 		return s.cfg.Manage.Delete(ctx, ids, log)
+	})
+	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
+}
+
+func (s *Server) manageDo(w http.ResponseWriter, r *http.Request) {
+	var action ManageAction
+	if err := json.NewDecoder(r.Body).Decode(&action); err != nil || action.ID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "expected {\"kind\": ..., \"id\": ...}"})
+		return
+	}
+	words, known := manageWords[action.Kind]
+	if !known {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "there is no such action"})
+		return
+	}
+	if err := s.cfg.Manage.CanDo(action); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	s.admin.mu.Lock()
+	defer s.admin.mu.Unlock()
+	if s.admin.job != nil && s.admin.job.Running {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "something is already being done: wait for it to finish"})
+		return
+	}
+	s.startJob(action.Kind, "the Profiles tab's "+words, manageSlowAfter[action.Kind], func(ctx context.Context, log func(string)) error {
+		return s.cfg.Manage.Do(ctx, action, log)
 	})
 	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
 }

@@ -581,8 +581,13 @@ you're looking at:
   trash** ticks profiles with no sandboxes, profiles whose sandboxes are all gone, and sandboxes gone
   from sbx or whose folder is gone; **Delete ticked…** lists exactly what will go, by name and path,
   and asks once. Ticking a profile deletes all of it, with its sandboxes. What can't be deleted says
-  why: this page's own sandbox, a sandbox with a vibe attached, and profiles that ship with vibe. A
-  delete runs as the page's one action at a time, with **Cancel**, like the Admin tab's.
+  why: this page's own sandbox, a sandbox with a vibe attached, and profiles that ship with vibe. Each
+  row also has what can be done to it: a sandbox can be started, stopped (as `vibe --stop` does), rebuilt
+  (and left running or stopped as it was), or updated when it's out of date; a guided profile can be
+  re-composed (its sandboxes rebuilt after) or, when it or a sandbox of its is out of date, updated as
+  `--update-sandboxes` would. This page's own sandbox is the Admin tab's to work on, and one with a vibe
+  attached can only be stopped. Each action runs as the page's one action at a time, with **Cancel**,
+  like the Admin tab's, and anything that rebuilds asks first.
 
 Every change shows the exact `sbx` command it will run and waits for you to confirm. A change only ever
 adds or removes a rule scoped to *this* sandbox: global and org rules are listed but not touched, and a
