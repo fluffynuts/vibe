@@ -150,6 +150,7 @@ func (s *Session) Release() {
 	os.Remove(s.holdFile)
 	os.Remove(s.cancelFile)
 	os.Remove(s.answerFile)
+	os.Remove(s.answerFile + ".new")
 }
 
 // CancelRequested delivers each request another vibe makes (AskToCancel)
@@ -162,9 +163,16 @@ func (s *Session) CancelRequested() <-chan struct{} {
 	return s.cancels
 }
 
-// AnswerCancel tells the vibe that asked what was cancelled.
+// AnswerCancel tells the vibe that asked what was cancelled. The answer is
+// written beside its file and renamed into place: the asker reads the file
+// as soon as it exists, and would otherwise catch it empty, between being
+// created and being written.
 func (s *Session) AnswerCancel(answer string) error {
-	return os.WriteFile(s.answerFile, []byte(answer), 0o644)
+	tmp := s.answerFile + ".new"
+	if err := os.WriteFile(tmp, []byte(answer), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, s.answerFile)
 }
 
 // AskToCancel asks the vibe with pid to cancel what its companion page has
