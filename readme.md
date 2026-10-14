@@ -285,6 +285,7 @@ vibe --no-git-token        # ...no token for a new sandbox, without asking;
 vibe -l/--list             # list every known sandbox and its status
 vibe -a/--info [path]      # show the sandbox's settings and, while it runs,
                            #    its uptime and memory and disk use
+vibe -M/--manage           # serve the Profiles page on its own, until Ctrl-C
 vibe -x/--cleanup          # pick profiles and sandboxes to delete, grouped by
                            #    profile, with the likely trash ticked
 vibe -d/--delete [path]    # pick whether to delete the sandbox for path, its
@@ -575,6 +576,13 @@ you're looking at:
   **Revert** (Ctrl-Z works throughout). While a session is attached, vibe keeps its messages out of the
   terminal, which is the agent's screen then, and prints them when the session ends; the terminal's
   title says when the agent is optimising.
+- **Profiles** — every profile on the machine, with the sandboxes built from it, to clean up what's
+  trash: the same as [`vibe --cleanup`](#usage), with the same flags and the same rules. **Select likely
+  trash** ticks profiles with no sandboxes, profiles whose sandboxes are all gone, and sandboxes gone
+  from sbx or whose folder is gone; **Delete ticked…** lists exactly what will go, by name and path,
+  and asks once. Ticking a profile deletes all of it, with its sandboxes. What can't be deleted says
+  why: this page's own sandbox, a sandbox with a vibe attached, and profiles that ship with vibe. A
+  delete runs as the page's one action at a time, with **Cancel**, like the Admin tab's.
 
 Every change shows the exact `sbx` command it will run and waits for you to confirm. A change only ever
 adds or removes a rule scoped to *this* sandbox: global and org rules are listed but not touched, and a
@@ -594,6 +602,11 @@ not DNS rebinding, and not anything sent through `host.docker.internal`), needs 
 (it rides in the URL's `#fragment`, which browsers keep from servers and logs), takes changes only as
 same-origin JSON POSTs, and shows host names as text, never markup. The token is never written into the
 sandbox.
+
+**`vibe --manage`** serves the Profiles tab on its own, for no sandbox or folder: every profile and
+sandbox, to clean up, without a session open. It keeps its own port and token (in
+`~/.vibe/companion/manage/`), so its address stays the same, and serves until Ctrl-C. Run it again while
+it's being served, and it opens the one already there.
 
 `companion:` in `settings.yaml` (bundle or profile) sets what happens by default: `open` (the default —
 serve it and open the browser), `serve` (serve it and only print the address — for when you have a bookmark,

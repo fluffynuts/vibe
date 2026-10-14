@@ -73,6 +73,30 @@ func chooseCompanionPort(instances []state.Instance, name string, inUse func(int
 			taken[rec.HostPort] = true
 		}
 	}
+	return choosePagePort(taken, remembered, inUse, isOurs)
+}
+
+// chooseManagePort is chooseCompanionPort for the Profiles page served on
+// its own, which was last on remembered: clear of every sandbox's page and
+// published ports.
+func chooseManagePort(instances []state.Instance, remembered int, inUse func(int) bool, isOurs func(int) bool) (port int, served bool, err error) {
+	taken := map[int]bool{}
+	for _, inst := range instances {
+		if inst.CompanionPort != 0 {
+			taken[inst.CompanionPort] = true
+		}
+		for _, rec := range inst.Publish {
+			taken[rec.HostPort] = true
+		}
+	}
+	return choosePagePort(taken, remembered, inUse, isOurs)
+}
+
+// choosePagePort keeps the port a page had last time, remembered, if it's
+// free (or what holds it is this same page, served by another vibe: served
+// is then true); else it's the first port from companionBasePort that isn't
+// taken and nothing is listening on.
+func choosePagePort(taken map[int]bool, remembered int, inUse func(int) bool, isOurs func(int) bool) (port int, served bool, err error) {
 	if remembered != 0 && !taken[remembered] {
 		if !inUse(remembered) {
 			return remembered, false, nil
@@ -251,7 +275,11 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		note("companion: %v", err)
 		return stop, false, cancel
 	}
-	port, served, err := chooseCompanionPort(instances, name, portalloc.InUse,
+	// The Profiles page served on its own keeps its port, even while it
+	// isn't being served.
+	managePort := state.ManagePort(vibeHome)
+	port, served, err := chooseCompanionPort(instances, name,
+		func(p int) bool { return p == managePort || portalloc.InUse(p) },
 		func(p int) bool { return companion.Running(p, name) })
 	if err != nil {
 		note("companion: %v", err)
@@ -283,6 +311,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		History:          state.ConversationPath(vibeHome, name),
 		LatestReview:     latestReviewFor(name, inst),
 		Admin:            adminFor(lay, name, inst.Target),
+		Manage:           &companionManager{lay: lay, own: name},
 		ThemeColor:       themeColorFor(lay, name, inst, agent),
 	})
 	if err != nil {

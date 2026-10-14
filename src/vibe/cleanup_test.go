@@ -263,3 +263,58 @@ func TestAMemoryStoreSharedWithOthersIsntDeleted(t *testing.T) {
 		t.Error("a memory store that isn't the sandbox's own was deleted")
 	}
 }
+
+func TestTheProfilesPageKeepsClearOfEverySandboxsPorts(t *testing.T) {
+	instances := []state.Instance{
+		{Name: "a", CompanionPort: companionBasePort},
+		{Name: "b", Publish: []state.PublishRecord{{HostPort: companionBasePort + 1}}},
+	}
+	if port, _, err := chooseManagePort(instances, 0, never, never); err != nil || port != companionBasePort+2 {
+		t.Errorf("chooseManagePort = %d, %v; want the first port no sandbox has", port, err)
+	}
+	if port, _, _ := chooseManagePort(instances, companionBasePort+9, never, never); port != companionBasePort+9 {
+		t.Errorf("chooseManagePort = %d; want the port it had last time", port)
+	}
+	if _, served, _ := chooseManagePort(nil, companionBasePort+9, always, always); !served {
+		t.Error("the page served by another vibe wasn't recognised")
+	}
+}
+
+func TestTheProfilesTabShowsEverythingAndRefusesItsOwnSandbox(t *testing.T) {
+	lay := updateLayout(t)
+	record(t, lay, "box", "p", t.TempDir())
+	record(t, lay, "other", "p", filepath.Join(t.TempDir(), "gone"))
+	sbxListing(t, "box running\\nother stopped\\nhandmade running\\n")
+	m := &companionManager{lay: lay, own: "box"}
+
+	inv := m.Inventory()
+	if inv.Error != "" {
+		t.Fatal(inv.Error)
+	}
+	found := false
+	for _, mp := range inv.Profiles {
+		if mp.Name != "p" {
+			continue
+		}
+		found = true
+		if !strings.Contains(mp.Kept, "this page is for") {
+			t.Errorf("profile p kept: %q, want it kept, as it holds this page's sandbox", mp.Kept)
+		}
+		if len(mp.Sandboxes) != 2 || !mp.Sandboxes[0].Own || mp.Sandboxes[0].Kept == "" || !mp.Sandboxes[1].Trash {
+			t.Errorf("profile p's sandboxes = %+v", mp.Sandboxes)
+		}
+	}
+	if !found {
+		t.Error("profile p isn't listed")
+	}
+	if len(inv.Unknown) != 1 || inv.Unknown[0].ID != "unknown:handmade" {
+		t.Errorf("unknown = %+v", inv.Unknown)
+	}
+	if _, err := m.Plan([]string{"sandbox:box"}); err == nil {
+		t.Error("the page's own sandbox could be planned for deletion")
+	}
+	lines, err := m.Plan([]string{"sandbox:other"})
+	if err != nil || !strings.Contains(strings.Join(lines, "\n"), "sandbox 'other'") {
+		t.Errorf("Plan = %v, %v", lines, err)
+	}
+}

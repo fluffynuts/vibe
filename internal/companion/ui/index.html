@@ -25,6 +25,7 @@
     <button role="tab" data-tab="rules" id="tab-rules">Network rules</button>
     <button role="tab" data-tab="fs" id="tab-fs">Filesystem rules</button>
     <button role="tab" data-tab="admin" id="tab-admin" hidden>Admin<span id="admin-dot" class="tab-dot" hidden title="Upgrades are available"></span></button>
+    <button role="tab" data-tab="manage" id="tab-manage" hidden>Profiles</button>
   </nav>
 
   <div id="banner" class="banner" role="alert" hidden></div>
@@ -166,6 +167,25 @@
         </section>
       </div>
     </section>
+
+    <section id="panel-manage" class="panel panel-manage" hidden>
+      <div class="bar">
+        <button type="button" id="manage-trash" class="ghost">Select likely trash</button>
+        <button type="button" id="manage-none" class="ghost">Untick all</button>
+        <span class="spacer"></span>
+        <span id="manage-count" class="muted"></span>
+        <button type="button" id="manage-delete" class="danger" disabled>Delete ticked…</button>
+      </div>
+      <p class="note muted">Every profile, with the sandboxes built from it. Ticking a profile deletes all of it — its sandboxes, their memories, clipboard history, conversations and GitHub tokens, and its backups. Ticking a sandbox deletes it and what vibe keeps for it; its profile stays. From a terminal: <code>vibe --cleanup</code>.</p>
+      <p id="manage-error" class="note bad-text" hidden></p>
+      <p id="manage-wait" class="note muted">Taking stock…</p>
+      <div id="manage-list" class="manage-list"></div>
+      <section class="card" id="manage-job-card" aria-labelledby="manage-job-h" hidden>
+        <h2 id="manage-job-h">Last action <span id="manage-job-state" class="pill"></span></h2>
+        <pre id="manage-job" class="info log" role="log" aria-live="polite"></pre>
+        <div class="bar"><button type="button" id="manage-cancel" class="danger" hidden>Cancel</button></div>
+      </section>
+    </section>
   </main>
 
   <dialog id="changed">
@@ -189,7 +209,8 @@
     <form method="dialog">
       <h2 id="confirm-title"></h2>
       <p id="confirm-text"></p>
-      <p class="muted">This runs, on your machine:</p>
+      <ul id="confirm-list" class="confirm-list" hidden></ul>
+      <p id="confirm-command-note" class="muted">This runs, on your machine:</p>
       <code id="confirm-command"></code>
       <div class="actions">
         <button value="cancel" class="ghost">Cancel</button>
@@ -200,6 +221,7 @@
 
   <div id="toast" class="toast" role="status" hidden></div>
   <script src="/markdown.js"></script>
+  <script src="/manage.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

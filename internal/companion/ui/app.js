@@ -49,7 +49,10 @@
   // How long the clipboard page gets to come up before the page says so and
   // offers to start it.
   const CLIPBOARD_PATIENCE_MS = 30000
-  const TABS = ['conversation', 'log', 'rules', 'fs', 'admin']
+  const TABS = ['conversation', 'log', 'rules', 'fs', 'admin', 'manage']
+  // The tabs about a sandbox: a page served for none ('vibe --manage') has
+  // only the Profiles tab.
+  const SANDBOX_TABS = ['log', 'rules', 'fs']
   // How often the conversation tab asks for what the agent has said since.
   const CONVO_POLL_MS = 700
   // The longest a tool's result is shown, in characters.
@@ -343,9 +346,9 @@
       reached(true)
       if (!res.ok) { problem(res); return }
       state.sandbox = res.body.sandbox || ''
-      $('sandbox').textContent = state.sandbox
+      $('sandbox').textContent = state.sandbox || 'all profiles and sandboxes'
       renderWhere(res.body.folder || '', res.body.git || null)
-      document.title = state.sandbox ? 'vibe · ' + state.sandbox : 'vibe companion'
+      document.title = state.sandbox ? 'vibe · ' + state.sandbox : 'vibe · profiles'
       setFaviconAgent(res.body.agent || '')
       applyTheme(res.body.themeColor || '')
       const url = res.body.clipboardUrl || ''
@@ -356,6 +359,8 @@
       $('tab-conversation').hidden = !state.conversation
       state.admin = !!res.body.admin
       $('tab-admin').hidden = !state.admin
+      $('tab-manage').hidden = !res.body.manage
+      for (const t of SANDBOX_TABS) $('tab-' + t).hidden = res.body.sandboxTabs === false
       $('admin-dot').hidden = !res.body.upgrades
       if (url !== state.clipboardUrl || ready !== state.clipboardReady) {
         if (url && !ready && (url !== state.clipboardUrl || state.clipboardReady)) {
@@ -373,8 +378,7 @@
         }
       }
       renderClipboard()
-      if (!state.conversation && state.tab === 'conversation') select('log')
-      if (!state.admin && state.tab === 'admin') select('log')
+      if ($('tab-' + state.tab).hidden) select(state.tab)
     } catch (e) {
       reached(false)
     }
@@ -436,16 +440,16 @@
     if (document.visibilityState !== 'visible') return
     if (state.tab === 'conversation') { loadState(); return }
     if (state.tab === 'admin') { loadState(); loadAdmin(); loadInstructions(false); return }
+    if (state.tab === 'manage') { loadState(); loadManage(); return }
     loadState()
     load(state.tab)
   }
 
   // --- tabs -------------------------------------------------------------
 
+  // select shows tab, or the first tab the page has when it hasn't that one.
   function select(tab) {
-    if (!TABS.includes(tab)) tab = 'log'
-    if (tab === 'conversation' && !state.conversation) tab = 'log'
-    if (tab === 'admin' && !state.admin) tab = 'log'
+    if (!TABS.includes(tab) || $('tab-' + tab).hidden) tab = TABS.find((t) => !$('tab-' + t).hidden) || 'log'
     state.tab = tab
     store.set('vibe-companion-tab', tab)
     for (const t of TABS) {
@@ -643,8 +647,14 @@
     const dialog = $('confirm')
     $('confirm-title').textContent = opts.title
     $('confirm-text').textContent = opts.text
+    const list = opts.list || []
+    $('confirm-list').hidden = !list.length
+    $('confirm-list').replaceChildren(...list.map((line) => el('li', { text: line })))
+    $('confirm-command-note').textContent = opts.commandNote || 'This runs, on your machine:'
     $('confirm-command').textContent = opts.command
+    $('confirm-command').hidden = !opts.command
     $('confirm-run').className = opts.danger ? 'danger' : ''
+    $('confirm-run').textContent = opts.runLabel || 'Run'
     dialog.returnValue = ''
     dialog.onclose = async () => {
       if (dialog.returnValue !== 'run') return
@@ -714,28 +724,30 @@
       const busy = Object.values(instr.eds).some((ed) => ed.running || ed.before !== null || ed.box.value !== ed.base)
       if (!busy) loadInstructions(true)
     }
-    renderAdminJob(job)
+    renderJob(job, 'admin', adminView)
     renderAdminFeatures(st, busy)
     renderAdminUpgrades(data.upgrades || {}, st.commands || {})
     renderAdminGit(st.gitToken || {})
     renderAdminBackups(st.backups || [], busy)
   }
 
-  function renderAdminJob(job) {
-    $('admin-job-card').hidden = !job
+  // renderJob draws the page's one job — an Admin action, or a delete from
+  // the Profiles tab — on the card whose ids start with prefix.
+  function renderJob(job, prefix, view) {
+    $(prefix + '-job-card').hidden = !job
     if (!job) return
-    const words = { start: 'Start', stop: 'Stop', reinit: 'Rebuild', recompose: 'Re-compose', restore: 'Restore', memories: 'Save memories' }
-    $('admin-job-h').firstChild.textContent = (words[job.kind] || 'Last action') + ' '
-    pill('admin-job-state', job.running ? (job.cancelled ? 'cancelling…' : job.warning ? 'taking too long' : 'working…')
+    const words = { start: 'Start', stop: 'Stop', reinit: 'Rebuild', recompose: 'Re-compose', restore: 'Restore', memories: 'Save memories', delete: 'Delete' }
+    $(prefix + '-job-h').firstChild.textContent = (words[job.kind] || 'Last action') + ' '
+    pill(prefix + '-job-state', job.running ? (job.cancelled ? 'cancelling…' : job.warning ? 'taking too long' : 'working…')
       : job.cancelled ? 'cancelled' : job.error ? 'failed' : 'done',
       job.running ? (job.warning ? 'warn' : 'busy') : job.error || job.cancelled ? 'bad' : 'ok')
-    $('admin-cancel').hidden = !job.running || job.cancelled
-    adminView.jobKind = job.kind
+    $(prefix + '-cancel').hidden = !job.running || job.cancelled
+    view.jobKind = job.kind
     const lines = (job.lines || []).slice()
     if (job.error) lines.push('', 'failed: ' + job.error)
-    if (lines.length !== adminView.jobLines) {
-      adminView.jobLines = lines.length
-      const box = $('admin-job')
+    if (lines.length !== view.jobLines) {
+      view.jobLines = lines.length
+      const box = $(prefix + '-job')
       const stick = nearBottom(box)
       box.textContent = lines.join('\n')
       if (stick) box.scrollTop = box.scrollHeight
@@ -942,6 +954,158 @@
         loadAdmin()
       } catch (e) {
         reached(false)
+      }
+    })
+  }
+
+  // --- the Profiles tab ---------------------------------------------------
+
+  // What the tab last showed, and what's ticked, by ID (see manage.js).
+  const manageView = { inv: null, key: '', ticked: new Set(), jobLines: -1, busy: false }
+  const M = window.vibeManage
+
+  async function loadManage() {
+    try {
+      // Taking stock asks sbx, which vibe gives 20 seconds.
+      const res = await api('/api/manage', { timeout: 30000 })
+      reached(true)
+      if (!res.ok) { problem(res); return }
+      renderManage(res.body)
+    } catch (e) {
+      reached(false)
+    }
+  }
+
+  function renderManage(data) {
+    const inv = data.inventory || { profiles: [], unknown: [] }
+    const job = data.job
+    const busy = !!(job && job.running)
+    // A delete has just ended: what was ticked is gone, or failed and says so.
+    if (manageView.busy && !busy) manageView.ticked.clear()
+    manageView.busy = busy
+    manageView.inv = inv
+    $('manage-wait').hidden = true
+    $('manage-error').hidden = !inv.error
+    $('manage-error').textContent = inv.error || ''
+    // Drawn afresh only when what's there changes, so ticking isn't undone
+    // by the next poll.
+    const key = JSON.stringify(inv) + busy
+    if (key !== manageView.key) {
+      manageView.key = key
+      drawManage()
+    }
+    updateManage()
+    renderJob(job, 'manage', manageView)
+  }
+
+  // Flags that say something's gone are trash's tell, so they stand out.
+  const BAD_FLAGS = ['no sandboxes', 'every sandbox or folder gone', 'profile gone', 'gone from sbx', 'folder gone']
+
+  function flagPills(flags) {
+    return (flags || []).map((f) => el('span', {
+      class: 'flag' + (BAD_FLAGS.includes(f) ? ' bad' : f === 'running' ? ' ok' : ''), text: f,
+    }))
+  }
+
+  function tickBox(row, label, covered) {
+    const box = el('input', { type: 'checkbox', 'data-id': row.id })
+    box.checked = manageView.ticked.has(row.id) || !!covered
+    box.disabled = manageView.busy || !M.pickable(row) || !!covered
+    if (!M.pickable(row)) box.title = "Can't be deleted: " + row.kept
+    else if (covered) box.title = 'Goes with profile ' + covered.name
+    box.addEventListener('change', () => {
+      if (box.checked) manageView.ticked.add(row.id)
+      else manageView.ticked.delete(row.id)
+      // A profile ticked or unticked takes its sandboxes with it.
+      if (row.id.startsWith('profile:')) drawManage()
+      updateManage()
+    })
+    return el('label', { class: 'mgr-pick' }, box, label)
+  }
+
+  function keptNote(row) {
+    return row.kept ? el('span', { class: 'mgr-kept muted', text: "can't be deleted: " + row.kept }) : null
+  }
+
+  function drawManage() {
+    const inv = manageView.inv
+    const list = $('manage-list')
+    if (!inv) return
+    const groups = (inv.profiles || []).map((p) => {
+      const head = el('div', { class: 'mgr-row mgr-head' },
+        tickBox(p, el('span', {}, el('strong', { text: p.name }),
+          p.features && p.features.length ? el('span', { class: 'muted', text: ' ' + p.features.join(', ') }) : null)),
+        ...flagPills(p.flags), keptNote(p))
+      const sandboxes = (p.sandboxes || []).map((s) => el('li', { class: 'mgr-row' },
+        tickBox(s, el('span', {}, el('span', { text: s.name + (s.own ? ' (this page)' : '') }),
+          el('code', { class: 'mgr-folder', text: s.folder })), M.coveredBy(inv, manageView.ticked, s.id)),
+        ...flagPills(s.flags), keptNote(s)))
+      return el('div', { class: 'mgr-profile' }, head, sandboxes.length ? el('ul', { class: 'mgr-sandboxes' }, ...sandboxes) : null)
+    })
+    if (!groups.length && !inv.error) groups.push(el('p', { class: 'muted', text: 'No profiles yet.' }))
+    const unknown = inv.unknown || []
+    if (unknown.length) {
+      groups.push(el('h3', { class: 'mgr-unknown-h', text: 'Sandboxes vibe has no record of' }),
+        el('ul', { class: 'mgr-sandboxes' }, ...unknown.map((u) => el('li', { class: 'mgr-row' },
+          tickBox(u, el('span', { text: u.name })), ...flagPills([u.running ? 'running' : 'stopped'])))))
+    }
+    list.replaceChildren(...groups)
+  }
+
+  function updateManage() {
+    const inv = manageView.inv || { profiles: [], unknown: [] }
+    $('manage-count').textContent = M.summary(inv, manageView.ticked)
+    $('manage-delete').disabled = manageView.busy || !M.picked(inv, manageView.ticked).length
+    $('manage-trash').disabled = manageView.busy
+    $('manage-none').disabled = manageView.busy
+  }
+
+  async function deleteTicked() {
+    const ids = M.picked(manageView.inv, manageView.ticked)
+    if (!ids.length) return
+    try {
+      const res = await post('/api/manage/plan', { ids })
+      reached(true)
+      if (!res.ok) { toast((res.body && res.body.error) || "That can't be deleted.", true); loadManage(); return }
+      confirmThen({
+        title: 'Delete ' + M.summary(manageView.inv, manageView.ticked).replace(/ ticked$/, '') + '?',
+        text: "There's no undo. This deletes:",
+        list: res.body.lines || [],
+        commandNote: 'From a terminal, vibe --cleanup does the same.',
+        command: '',
+        danger: true,
+        runLabel: 'Delete',
+        started: 'Deleting — the Last action box shows how it goes.',
+        run: () => post('/api/manage/delete', { ids }),
+      })
+    } catch (e) {
+      reached(false)
+      toast('Could not reach vibe.', true)
+    }
+  }
+
+  function setUpManage() {
+    $('manage-trash').addEventListener('click', () => {
+      if (!manageView.inv) return
+      manageView.ticked = M.likelyTrash(manageView.inv)
+      drawManage()
+      updateManage()
+    })
+    $('manage-none').addEventListener('click', () => {
+      manageView.ticked.clear()
+      drawManage()
+      updateManage()
+    })
+    $('manage-delete').addEventListener('click', deleteTicked)
+    $('manage-cancel').addEventListener('click', async () => {
+      try {
+        const res = await post('/api/manage/cancel', {})
+        reached(true)
+        if (!res.ok) toast((res.body && res.body.error) || 'That could not be cancelled.', true)
+        loadManage()
+      } catch (e) {
+        reached(false)
+        toast('Could not reach vibe.', true)
       }
     })
   }
@@ -1698,6 +1862,7 @@
 
   setUpConversation()
   setUpAdmin()
+  setUpManage()
 
   document.addEventListener('visibilitychange', tick)
   state.timer = setInterval(tick, POLL_MS)

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -172,7 +173,44 @@ func tokenPath(vibeHome, name string) string {
 // a file only the user can read: the page can change the sandbox's network
 // rules, so the sandbox itself must never learn it.
 func CompanionToken(vibeHome, name string) (string, error) {
-	file := tokenPath(vibeHome, name)
+	return secretIn(tokenPath(vibeHome, name))
+}
+
+// managePath is where the Profiles page served on its own ('vibe --manage')
+// keeps what it keeps: apart from the sandboxes' own, so no sandbox's name
+// can collide with it.
+func managePath(vibeHome, file string) string {
+	return filepath.Join(vibeHome, "companion", "manage", file)
+}
+
+// ManageToken is CompanionToken for the Profiles page served on its own.
+func ManageToken(vibeHome string) (string, error) {
+	return secretIn(managePath(vibeHome, "token"))
+}
+
+// ManagePort is the port the Profiles page was last served on on its own,
+// or 0 when it never has been.
+func ManagePort(vibeHome string) int {
+	data, err := os.ReadFile(managePath(vibeHome, "port"))
+	if err != nil {
+		return 0
+	}
+	port, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	return port
+}
+
+// SaveManagePort remembers the port the Profiles page is served on on its
+// own, so its URL (and a bookmark of it) stays the same.
+func SaveManagePort(vibeHome string, port int) error {
+	file := managePath(vibeHome, "port")
+	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(file, []byte(strconv.Itoa(port)+"\n"), 0o600)
+}
+
+// secretIn returns the secret kept in file, making one the first time.
+func secretIn(file string) (string, error) {
 	if data, err := os.ReadFile(file); err == nil {
 		if token := strings.TrimSpace(string(data)); len(token) >= 32 {
 			return token, nil

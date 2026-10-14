@@ -88,6 +88,10 @@ type Config struct {
 	// Admin is what the page's Admin tab does to the sandbox; nil means the
 	// page has no such tab.
 	Admin Admin
+	// Manage is what the page's Profiles tab works on; nil means the page
+	// has no such tab. A page with no Sandbox is a Profiles page alone
+	// ('vibe --manage').
+	Manage Manager
 	// ThemeColor is the colour of the agent's theme, for the page to pick
 	// itself out with ("" for none: the page's own); nil means none. It may
 	// be slow (it can ask the sandbox), so it is asked for seldom.
@@ -192,6 +196,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /app.js", static)
 	mux.Handle("GET /app.css", static)
 	mux.Handle("GET /markdown.js", static)
+	mux.Handle("GET /manage.js", static)
 
 	mux.HandleFunc("GET /api/ping", s.ping)
 	mux.HandleFunc("GET /api/state", s.authed(s.state))
@@ -213,6 +218,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/admin/instructions", s.authed(s.instructionsState))
 	mux.HandleFunc("POST /api/admin/instructions", s.editing(s.instructionsSave))
 	mux.HandleFunc("POST /api/admin/instructions/optimise", s.editing(s.instructionsOptimise))
+	mux.HandleFunc("GET /api/manage", s.authed(s.managed(s.manageState)))
+	mux.HandleFunc("POST /api/manage/plan", s.managing(s.managePlan))
+	mux.HandleFunc("POST /api/manage/delete", s.managing(s.manageDelete))
+	mux.HandleFunc("POST /api/manage/cancel", s.managing(s.adminCancel))
 
 	return s.guarded(mux)
 }
@@ -323,6 +332,9 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"clipboardCanStart": clipboard != "" && s.cfg.StartClipboard != nil,
 		"conversation":      s.cfg.Converse != nil,
 		"admin":             s.cfg.Admin != nil,
+		"manage":            s.cfg.Manage != nil,
+		// A page for no sandbox has only the Profiles tab.
+		"sandboxTabs": s.cfg.Sandbox != "",
 	})
 }
 

@@ -51,6 +51,10 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe -a/--info [path]      show the sandbox's settings (memory, agent,
                              features) and, while it runs, its uptime and
                              how much memory and disk it is using
+  vibe -M/--manage           serve the Profiles page on its own, until Ctrl-C:
+                             every profile and its sandboxes, to clean up as
+                             --cleanup does (every companion page has it as
+                             a tab too)
   vibe -x/--cleanup          pick profiles and sandboxes to delete from a
                              checklist grouped by profile, with what's likely
                              trash ticked; a profile goes with all its
@@ -184,7 +188,7 @@ func run(argv []string) error {
 		return fmt.Errorf("--update-strategy only applies to --install and --upgrade")
 	}
 	if args.ExclusiveActions() > 1 {
-		return fmt.Errorf("--stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info, --setup, --git-token and --update-sandboxes are mutually exclusive")
+		return fmt.Errorf("--stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info, --setup, --git-token, --update-sandboxes and --manage are mutually exclusive")
 	}
 
 	if (args.GitTokenEnv != "" || args.NoGitToken || args.GitRules != "") && args.ExclusiveActions() > 0 && !args.GitToken {
@@ -269,6 +273,13 @@ func run(argv []string) error {
 			return fmt.Errorf("--cleanup takes no path argument")
 		}
 		return doCleanup(lay)
+	}
+
+	if args.Manage {
+		if args.Path != "" {
+			return fmt.Errorf("--manage takes no path argument")
+		}
+		return doManage(lay)
 	}
 
 	if args.UpdateSandboxes {

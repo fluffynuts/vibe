@@ -336,6 +336,15 @@ func TestParseUpdateSandboxes(t *testing.T) {
 	}
 }
 
+func TestParseManage(t *testing.T) {
+	for _, arg := range []string{"-M", "--manage"} {
+		a, err := Parse([]string{arg})
+		if err != nil || !a.Manage || a.ExclusiveActions() != 1 {
+			t.Errorf("Parse(%s) = %+v, %v; want it set, as one action", arg, a, err)
+		}
+	}
+}
+
 func TestParseNoAutoUpdate(t *testing.T) {
 	a, err := Parse([]string{"--no-auto-update", "."})
 	if err != nil || !a.NoAutoUpdate || a.Path != "." || a.ExclusiveActions() != 0 {

@@ -121,9 +121,12 @@ type AdminGitToken struct {
 // maxJobLines bounds what an action's log keeps.
 const maxJobLines = 500
 
-// adminJob is the action running or last run.
+// adminJob is the action running or last run, from the Admin tab or the
+// Profiles tab: the page runs one at a time.
 type adminJob struct {
-	Kind    string   `json:"kind"`
+	Kind string `json:"kind"`
+	// words name it for people, as 'vibe --cancel' says what it ended.
+	words   string
 	Running bool     `json:"running"`
 	Lines   []string `json:"lines"`
 	Error   string   `json:"error,omitempty"`
@@ -225,14 +228,23 @@ func (s *Server) beginAdmin(action AdminAction, destructive bool) error {
 	if destructive && !s.convo.supersede() {
 		return errors.New("the agent is answering: stop it first")
 	}
-	job := &adminJob{Kind: action.Kind, Running: true, Lines: []string{}, Started: time.Now().UnixMilli()}
-	ctx, cancel := context.WithCancel(context.Background())
-	s.admin.job, s.admin.cancel = job, cancel
-	go s.runAdmin(ctx, action, job)
+	s.startJob(action.Kind, adminWords[action.Kind], adminSlow[action.Kind], func(ctx context.Context, log func(string)) error {
+		return s.cfg.Admin.Do(ctx, action, log)
+	})
 	return nil
 }
 
-// cancelAdmin cancels the action under way, saying whether there was one.
+// startJob runs do in the background as the page's job, kind (words, for
+// people), warning once it has run past slow. s.admin.mu is held.
+func (s *Server) startJob(kind, words string, slow time.Duration, do func(ctx context.Context, log func(string)) error) {
+	job := &adminJob{Kind: kind, words: words, Running: true, Lines: []string{}, Started: time.Now().UnixMilli()}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.admin.job, s.admin.cancel = job, cancel
+	go s.runJob(ctx, job, slow, do)
+}
+
+// cancelAdmin cancels the action under way, saying what it was, in words,
+// and whether there was one.
 func (s *Server) cancelAdmin() (string, bool) {
 	s.admin.mu.Lock()
 	defer s.admin.mu.Unlock()
@@ -242,12 +254,12 @@ func (s *Server) cancelAdmin() (string, bool) {
 	s.admin.job.Cancelled = true
 	s.admin.job.Lines = append(s.admin.job.Lines, "", "cancelling…")
 	s.admin.cancel()
-	return s.admin.job.Kind, true
+	return s.admin.job.words, true
 }
 
 func (s *Server) adminCancel(w http.ResponseWriter, r *http.Request) {
-	kind, ok := s.cancelAdmin()
-	writeJSON(w, http.StatusOK, map[string]interface{}{"cancelled": ok, "kind": kind})
+	words, ok := s.cancelAdmin()
+	writeJSON(w, http.StatusOK, map[string]interface{}{"cancelled": ok, "kind": words})
 }
 
 // Cancel ends whatever the page has under way — the agent's turn, an Admin
@@ -258,19 +270,19 @@ func (s *Server) Cancel() []string {
 	if s.convo.stop() {
 		ended = append(ended, "the agent's turn")
 	}
-	if kind, ok := s.cancelAdmin(); ok {
-		ended = append(ended, "the Admin tab's "+adminWords[kind])
+	if words, ok := s.cancelAdmin(); ok {
+		ended = append(ended, words)
 	}
 	return ended
 }
 
 // adminWords name the actions for people.
 var adminWords = map[string]string{
-	AdminStart: "start", AdminStop: "stop", AdminReInit: "rebuild", AdminReCompose: "re-compose",
-	AdminRestore: "restore", AdminMemories: "memory save",
+	AdminStart: "the Admin tab's start", AdminStop: "the Admin tab's stop", AdminReInit: "the Admin tab's rebuild",
+	AdminReCompose: "the Admin tab's re-compose", AdminRestore: "the Admin tab's restore", AdminMemories: "the Admin tab's memory save",
 }
 
-func (s *Server) runAdmin(ctx context.Context, action AdminAction, job *adminJob) {
+func (s *Server) runJob(ctx context.Context, job *adminJob, slow time.Duration, do func(ctx context.Context, log func(string)) error) {
 	log := func(line string) {
 		line = strings.TrimRight(line, "\n")
 		s.admin.mu.Lock()
@@ -280,18 +292,18 @@ func (s *Server) runAdmin(ctx context.Context, action AdminAction, job *adminJob
 			job.Lines = append([]string{}, job.Lines[over:]...)
 		}
 	}
-	slow := time.AfterFunc(adminSlow[action.Kind], func() {
+	warning := time.AfterFunc(slow, func() {
 		s.admin.mu.Lock()
 		defer s.admin.mu.Unlock()
 		if !job.Running {
 			return
 		}
 		job.Warning = fmt.Sprintf("This has been running for %s, far longer than it should — sbx may be stuck. "+
-			"vibe is still waiting for it; 'sbx ls' in a terminal shows the sandbox's state.", adminSlow[action.Kind])
+			"vibe is still waiting for it; 'sbx ls' in a terminal shows the sandboxes' state.", slow)
 		job.Lines = append(job.Lines, "", "⚠ "+job.Warning)
 	})
-	defer slow.Stop()
-	err := s.cfg.Admin.Do(ctx, action, log)
+	defer warning.Stop()
+	err := do(ctx, log)
 	s.admin.mu.Lock()
 	job.Running = false
 	job.Ended = time.Now().UnixMilli()
@@ -301,4 +313,5 @@ func (s *Server) runAdmin(ctx context.Context, action AdminAction, job *adminJob
 	s.admin.mu.Unlock()
 	// What the action changed shows at once, not when the cache runs out.
 	s.cache.forget("admin-status")
+	s.cache.forget("manage")
 }

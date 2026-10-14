@@ -284,3 +284,19 @@ html.themed .commands li[aria-selected="true"] {
 .md .align-right { text-align: right; } .md .align-center { text-align: center; }
 .pill.warn { color: var(--amber); border-color: var(--amber); }
 .warn-text { color: var(--amber); }
+
+/* The Profiles tab: a group per profile, its sandboxes under it. */
+.panel-manage { overflow: auto; }
+.manage-list { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 12px; }
+.mgr-profile { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 6px 10px; }
+.mgr-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; padding: 2px 0; }
+.mgr-pick { display: flex; gap: 8px; align-items: baseline; cursor: pointer; margin-right: 4px; }
+.mgr-pick input:disabled + * { opacity: .75; }
+.mgr-sandboxes { list-style: none; margin: 2px 0 0; padding: 0 0 0 24px; }
+.mgr-folder { margin-left: 8px; font-size: 12px; color: var(--muted); }
+.mgr-kept { font-size: 12px; }
+.mgr-unknown-h { font-size: 13px; margin: 6px 0 0; }
+.flag { font-size: 11px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.flag.bad { color: var(--bad); border-color: var(--bad); }
+.flag.ok { color: var(--ok); border-color: var(--ok); }
+.confirm-list { margin: 0 0 8px; padding-left: 18px; max-height: 40vh; overflow: auto; font-size: 13px; }

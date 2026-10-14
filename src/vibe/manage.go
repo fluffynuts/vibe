@@ -1,14 +1,22 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"vibe/internal/backup"
+	"vibe/internal/browser"
+	"vibe/internal/companion"
 	"vibe/internal/layout"
 	agentmem "vibe/internal/memory"
+	"vibe/internal/portalloc"
+	"vibe/internal/sbxrun"
+	"vibe/internal/settings"
 	"vibe/internal/state"
 )
 
@@ -334,5 +342,144 @@ func deleteSandbox(lay layout.Layout, s inventorySandbox, remove func(name strin
 		}
 	}
 	note("deleted sandbox '%s'", name)
+	return nil
+}
+
+// companionManager is the Profiles tab's view of the machine: own is the
+// sandbox whose page it's on ("" for the page served on its own), which
+// it won't delete.
+type companionManager struct {
+	lay layout.Layout
+	own string
+}
+
+// takeStock is the inventory, giving up after statusWithin, as the Admin
+// tab's status does: a stuck sbx mustn't leave the page waiting for good.
+func (m *companionManager) takeStock() (inventory, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), statusWithin)
+	defer cancel()
+	inv, err := gatherInventory(ctx, m.lay)
+	if ctx.Err() != nil {
+		err = fmt.Errorf("sbx didn't answer within %s, so what it has is unknown — 'sbx ls' in a terminal shows whether sbx itself is stuck", statusWithin)
+	}
+	return inv, err
+}
+
+func (m *companionManager) Inventory() companion.ManageInventory {
+	out := companion.ManageInventory{Profiles: []companion.ManageProfile{}, Unknown: []companion.ManageUnknown{}}
+	inv, err := m.takeStock()
+	if err != nil {
+		out.Error = err.Error()
+		return out
+	}
+	for _, p := range inv.profiles {
+		mp := companion.ManageProfile{
+			ID: pickProfile + p.name, Name: p.name, Features: nonNil(p.features), Flags: nonNil(profileFlags(p)),
+			Trash: p.likelyTrash(), Kept: whyProfileKept(p, m.own), Sandboxes: []companion.ManageSandbox{},
+		}
+		for _, s := range p.sandboxes {
+			mp.Sandboxes = append(mp.Sandboxes, companion.ManageSandbox{
+				ID: pickSandbox + s.inst.Name, Name: s.inst.Name, Folder: displayPath(s.inst.Target),
+				Flags: nonNil(sandboxFlags(s)), Trash: s.likelyTrash(), Kept: whyKept(s, m.own), Own: s.inst.Name == m.own,
+			})
+		}
+		out.Profiles = append(out.Profiles, mp)
+	}
+	for _, s := range inv.unknown {
+		out.Unknown = append(out.Unknown, companion.ManageUnknown{ID: pickUnknown + s.Name, Name: s.Name, Running: s.Running})
+	}
+	return out
+}
+
+func nonNil(list []string) []string {
+	if list == nil {
+		return []string{}
+	}
+	return list
+}
+
+func (m *companionManager) Plan(ids []string) ([]string, error) {
+	inv, err := m.takeStock()
+	if err != nil {
+		return nil, err
+	}
+	plan, err := planRemoval(inv, ids, m.own)
+	if err != nil {
+		return nil, err
+	}
+	return plan.describe(m.lay), nil
+}
+
+// Delete deletes what ids pick, as --cleanup does, taking stock afresh: what
+// was shown may have changed since (a vibe attached to a sandbox, say).
+func (m *companionManager) Delete(ctx context.Context, ids []string, log func(string)) error {
+	teeNotes(log)
+	defer teeNotes(nil)
+	inv, err := m.takeStock()
+	if err != nil {
+		return err
+	}
+	plan, err := planRemoval(inv, ids, m.own)
+	if err != nil {
+		return err
+	}
+	err = plan.run(m.lay, func(name string, force bool) error { return sbxrun.RemoveContext(ctx, name, force) })
+	if ctx.Err() != nil {
+		return fmt.Errorf("cancelled — what was deleted before then is gone; the list shows what's left")
+	}
+	return err
+}
+
+// doManage is --manage: the Profiles page, served on its own (no sandbox,
+// no folder) until Ctrl-C. Its port and token are kept, so its URL stays the
+// same; when another vibe is already serving it, that one is opened.
+func doManage(lay layout.Layout) error {
+	token, err := state.ManageToken(lay.Home)
+	if err != nil {
+		return err
+	}
+	instances, err := state.List(lay.Home)
+	if err != nil {
+		return err
+	}
+	port, served, err := chooseManagePort(instances, state.ManagePort(lay.Home), portalloc.InUse,
+		func(p int) bool { return companion.Running(p, "") })
+	if err != nil {
+		return err
+	}
+	if err := state.SaveManagePort(lay.Home, port); err != nil {
+		note("WARNING: couldn't remember the page's port, so its URL may change next time: %s", err)
+	}
+	user, err := settings.Load(lay.File("settings.yaml"))
+	if err != nil {
+		return err
+	}
+	mode, err := companionMode(false, user.Companion)
+	if err != nil {
+		return err
+	}
+	url := fmt.Sprintf("http://localhost:%d/#%s", port, token)
+	if served {
+		note("the Profiles page is already being served by another vibe: %s", url)
+		if mode == companionOpen {
+			browser.Open(url)
+		}
+		return nil
+	}
+	srv, err := companion.Start(companion.Config{Token: token, Port: port, Manage: &companionManager{lay: lay}})
+	if err != nil {
+		return fmt.Errorf("couldn't serve the Profiles page on port %d: %w", port, err)
+	}
+	defer srv.Close()
+	note("Profiles page: %s", url)
+	if mode == companionOpen && !browser.Open(url) {
+		note("no browser to open it in from here — open the URL above yourself")
+	}
+	note("serving it until Ctrl-C")
+	interrupts := make(chan os.Signal, 1)
+	signal.Notify(interrupts, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(interrupts)
+	<-interrupts
+	note("stopped serving the Profiles page")
 	return nil
 }

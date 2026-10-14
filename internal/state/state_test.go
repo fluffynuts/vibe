@@ -125,3 +125,23 @@ func TestRemoveDeletesTheClipboardHistoryButNotAnotherSandboxs(t *testing.T) {
 		t.Errorf("another sandbox's history went too: %v", err)
 	}
 }
+
+func TestTheProfilesPageKeepsItsOwnTokenAndPort(t *testing.T) {
+	home := t.TempDir()
+	token, err := ManageToken(home)
+	if err != nil || len(token) < 32 {
+		t.Fatalf("ManageToken = %q, %v", token, err)
+	}
+	if again, _ := ManageToken(home); again != token {
+		t.Error("the token changed between calls")
+	}
+	if sandbox, _ := CompanionToken(home, "manage"); sandbox == token {
+		t.Error("a sandbox called 'manage' shares the Profiles page's token")
+	}
+	if ManagePort(home) != 0 {
+		t.Error("a port was remembered before one was saved")
+	}
+	if err := SaveManagePort(home, 10007); err != nil || ManagePort(home) != 10007 {
+		t.Errorf("ManagePort = %d after saving 10007 (%v)", ManagePort(home), err)
+	}
+}
