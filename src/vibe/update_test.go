@@ -387,7 +387,7 @@ func TestUpdateSandboxesBringsEverythingUpToDate(t *testing.T) {
 	did := batchStandIns(t)
 
 	var err error
-	notes := strings.Join(notesOf(func() { err = doUpdateSandboxes(lay) }), "\n")
+	notes := strings.Join(notesOf(func() { err = doUpdateSandboxes(lay, true) }), "\n")
 	if err != nil {
 		t.Fatalf("doUpdateSandboxes: %v\n%s", err, notes)
 	}
@@ -406,7 +406,7 @@ func TestUpdateSandboxesBringsEverythingUpToDate(t *testing.T) {
 
 	// Everything is up to date now, so a second run does nothing.
 	*did = nil
-	notes = strings.Join(notesOf(func() { err = doUpdateSandboxes(lay) }), "\n")
+	notes = strings.Join(notesOf(func() { err = doUpdateSandboxes(lay, true) }), "\n")
 	if err != nil || len(*did) != 0 {
 		t.Errorf("second run: %v, did %v; want nothing done", err, *did)
 	}
@@ -422,7 +422,7 @@ func TestUpdateSandboxesCarriesOnPastAFailureAndSaysSo(t *testing.T) {
 	sbxListing(t, "a stopped\\nb stopped\\n")
 	did := batchStandIns(t, "a")
 
-	err := doUpdateSandboxes(lay)
+	err := doUpdateSandboxes(lay, true)
 	if err == nil || !strings.Contains(err.Error(), "sandbox 'a'") {
 		t.Errorf("doUpdateSandboxes = %v, want it to name the sandbox that failed", err)
 	}
@@ -478,7 +478,7 @@ func TestUpdateSandboxesSkipsASandboxWhoseFolderIsGone(t *testing.T) {
 	did := batchStandIns(t)
 
 	var err error
-	notes := strings.Join(notesOf(func() { err = doUpdateSandboxes(lay) }), "\n")
+	notes := strings.Join(notesOf(func() { err = doUpdateSandboxes(lay, true) }), "\n")
 	if err != nil {
 		t.Errorf("doUpdateSandboxes = %v; a skipped sandbox isn't a failure", err)
 	}
@@ -489,5 +489,62 @@ func TestUpdateSandboxesSkipsASandboxWhoseFolderIsGone(t *testing.T) {
 		if !strings.Contains(notes, want) {
 			t.Errorf("notes don't say %q:\n%s", want, notes)
 		}
+	}
+}
+
+// answering stands in for the user at --update-sandboxes' question.
+func answering(t *testing.T, yes bool) *int {
+	t.Helper()
+	asked := new(int)
+	old := confirmUpdate
+	t.Cleanup(func() { confirmUpdate = old })
+	confirmUpdate = func(force bool) bool {
+		if !force {
+			*asked++
+		}
+		return force || yes
+	}
+	return asked
+}
+
+// Rebuilding is destructive: without -f, what's out of date is listed and
+// asked about once, and saying no changes nothing.
+func TestUpdateSandboxesAsksFirstWithoutForce(t *testing.T) {
+	lay := updateLayout(t)
+	saveSandbox(t, lay, "busy", true)
+	changeLibrary(t, lay)
+	sbxListing(t, "busy running\\n")
+	did := batchStandIns(t)
+	asked := answering(t, false)
+
+	var err error
+	notes := strings.Join(notesOf(func() { err = doUpdateSandboxes(lay, false) }), "\n")
+	if err == nil || !strings.Contains(err.Error(), "nothing changed") {
+		t.Errorf("doUpdateSandboxes = %v, want it to say nothing changed", err)
+	}
+	if *asked != 1 || len(*did) != 0 || strings.Contains(mineScript(t, lay), "v2") {
+		t.Errorf("asked %d times, did %v, profile re-composed: %v; want one question and nothing done", *asked, *did, strings.Contains(mineScript(t, lay), "v2"))
+	}
+	for _, want := range []string{"profile 'p': re-composed", "sandbox 'busy': rebuilt"} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("the list of what would be done doesn't say %q:\n%s", want, notes)
+		}
+	}
+
+	*asked = 0
+	answering(t, true)
+	if err := doUpdateSandboxes(lay, false); err != nil || len(*did) == 0 {
+		t.Errorf("after a yes: %v, did %v", err, *did)
+	}
+}
+
+func TestUpdateSandboxesDoesntAskWhenTheresNothingToDo(t *testing.T) {
+	lay := updateLayout(t)
+	saveSandbox(t, lay, "busy", true)
+	sbxListing(t, "busy running\\n")
+	batchStandIns(t)
+	asked := answering(t, false)
+	if err := doUpdateSandboxes(lay, false); err != nil || *asked != 0 {
+		t.Errorf("doUpdateSandboxes = %v, asked %d times; want nothing asked", err, *asked)
 	}
 }

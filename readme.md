@@ -221,12 +221,16 @@ has a record of, each left running or stopped as it was. A sandbox with a vibe a
 for its next session start (`vibe --stop-all` first, to update those too). One whose folder no longer
 exists is skipped, and left as it is: a sandbox can't be built for a folder that isn't there, so any
 rebuild (this, `-r`, `-C` or the Admin tab's) checks first, rather than removing it and failing to
-make it again. `vibe --cleanup` deletes it. It never stops to ask: when sbx has a question, the
-rebuild fails with sbx's question as the reason. It carries on past a
-failure, ends with a summary, and exits non-zero when anything failed, so it suits a cron job:
+make it again. `vibe --cleanup` deletes it.
+
+Rebuilding is destructive, so it first lists what it will re-compose and rebuild, and asks once; with
+nothing out of date, it doesn't ask. `-f` goes ahead without asking, and with no terminal to ask on, it
+won't go ahead without `-f`. Once it's going, it never stops to ask: when sbx has a question, the
+rebuild fails with sbx's question as the reason. It carries on past a failure, ends with a summary, and
+exits non-zero when anything failed, so with `-f` it suits a cron job:
 
 ```
-vibe --upgrade -f && vibe --update-sandboxes
+vibe --upgrade -f && vibe --update-sandboxes -f
 ```
 
 ## Building
@@ -299,7 +303,7 @@ vibe -U/--upgrade          # check for newer vibe and sbx releases, pick which
                            #    to install (-f: all of them, without asking)
 vibe --update-sandboxes    # bring every profile and sandbox up to date with the
                            #    library, starting no session (see "Keeping
-                           #    sandboxes up to date")
+                           #    sandboxes up to date"); asks first, unless -f
 vibe --no-auto-update      # start the sandbox as it is, even when it's out of date
 vibe -I/--install-sbx      # install the latest stable Docker Sandboxes (sbx);
                            #    on macOS and Windows, asking how (-f: the first
@@ -530,8 +534,11 @@ you're looking at:
 
 - **Conversation** — talk to the agent from the page, with the sandbox's clipboard page (see
   `clipboard-bridge` below) embedded beside it: paste images and files anywhere on the tab and they go
-  to the clipboard. The agent's replies are shown as Markdown — headings, lists, tables, code — built as
-  text, so nothing it writes can become markup on the page; links open only to this machine's own pages.
+  to the clipboard. The agent's replies, and your prompts, are shown as Markdown — headings, lists, tables, code — built
+  as text, so nothing in them can become markup on the page; links open only to this machine's own pages.
+  Your prompt is sent exactly as you typed it; only how it's shown changes, so fence pasted console output
+  in ``` (and put globs like `*.go` in backticks) to keep it as it is. **My prompts as Markdown**, above the
+  conversation, turns that off for your prompts, in that browser, if you'd rather see them as you typed them.
   Each message shows the time it was said, and each prompt you send carries ticks like a chat message: one grey tick once vibe has
   it, two grey ticks once it has reached the sandbox, and two blue ticks once the agent has started
   answering. If it has been answering for an hour without a word, the pane says it may be stuck (it's

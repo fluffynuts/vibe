@@ -15,7 +15,7 @@ vibe can tell whether a profile or a sandbox is out of date, and brings it up to
 
 - **When a session starts** in a folder: its profile and sandbox are brought up to date before attaching.
 - **In batch**, with `vibe --update-sandboxes`: every profile and every sandbox, without starting a session.
-  It's fit for a cron job: `vibe --upgrade -f && vibe --update-sandboxes`.
+  With `-f`, it's fit for a cron job: `vibe --upgrade -f && vibe --update-sandboxes -f`.
 
 ## Staleness is about content, not versions
 
@@ -71,4 +71,6 @@ On a terminal, a rebuild that's due is announced with a countdown:
 3. It carries on past a failure, ends with a summary of what was updated, skipped and failed, and exits
    non-zero if anything failed. It never starts a session.
 
-No countdown: it was asked for by name.
+No countdown, but rebuilding is destructive: what it will re-compose and rebuild is listed and asked
+about once (not at all when nothing is out of date). `-f` goes ahead unasked; with no terminal, it won't
+go ahead without `-f`. (Changed 2026-10-14: at first it went ahead unasked.)

@@ -79,9 +79,10 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              rebuild the sandboxes built from what has since
                              changed, leaving each running or stopped as it
                              was. Sandboxes with a vibe attached are left
-                             for their next session. Starts no session, so
-                             it suits cron: vibe --upgrade -f && vibe
-                             --update-sandboxes
+                             for their next session. Lists what it will do
+                             and asks first; -f goes ahead unasked. Starts
+                             no session, so with -f it suits cron:
+                             vibe --upgrade -f && vibe --update-sandboxes -f
   vibe --no-auto-update      ...start the sandbox as it is, even when it's
                              out of date: by default, starting a session
                              brings its profile and sandbox up to date
@@ -286,7 +287,7 @@ func run(argv []string) error {
 		if args.Path != "" {
 			return fmt.Errorf("--update-sandboxes takes no path argument")
 		}
-		return doUpdateSandboxes(lay)
+		return doUpdateSandboxes(lay, args.Force)
 	}
 
 	// Windows PowerShell hands "~\project" over as it is, and vibe shows

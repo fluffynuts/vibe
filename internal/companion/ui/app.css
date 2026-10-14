@@ -264,7 +264,10 @@ html.themed .commands li[aria-selected="true"] {
 #changed .choices label { display: flex; gap: 8px; align-items: baseline; }
 
 /* the agent's replies, as Markdown */
-.msg.agent { white-space: normal; }
+.msg.agent, .msg.user { white-space: normal; }
+.msg.user .md pre { background: var(--panel); }
+.msg.user .plain { white-space: pre-wrap; }
+.inline-check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; }
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
 .md p, .md ul, .md ol, .md pre, .md blockquote, .md .table-scroll { margin: 0 0 8px; }

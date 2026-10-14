@@ -710,7 +710,8 @@
     const list = opts.list || []
     $('confirm-list').hidden = !list.length
     $('confirm-list').replaceChildren(...list.map((line) => el('li', { text: line })))
-    $('confirm-command-note').textContent = opts.commandNote || 'This runs, on your machine:'
+    $('confirm-command-note').textContent = opts.commandNote == null ? 'This runs, on your machine:' : opts.commandNote
+    $('confirm-command-note').hidden = opts.commandNote === ''
     $('confirm-command').textContent = opts.command
     $('confirm-command').hidden = !opts.command
     $('confirm-run').className = opts.danger ? 'danger' : ''
@@ -1565,12 +1566,33 @@
     ticks.setAttribute('aria-label', RECEIPT_WORDS[receipt])
   }
 
+  // Whether the user's prompts are shown as Markdown, as the agent's
+  // replies are (and as the agent reads them), or as plain text. Either way,
+  // what was sent is the text as typed; only how it's shown changes. On
+  // unless the user turned it off, in this browser.
+  const promptsAsMarkdown = { on: store.get('vibe-prompts-markdown') !== 'off' }
+
+  function promptBody(text) {
+    return promptsAsMarkdown.on ? markdown(text) : el('span', { class: 'plain', text })
+  }
+
   function userNote(ev) {
     const ticks = el('span', { class: 'ticks' })
     convo.ticks.set(ev.seq, ticks)
-    $('convo-log').append(el('div', { class: 'msg user' }, el('span', { text: ev.text || '' }),
-      el('span', { class: 'foot' }, stamp(ev.at), ticks)))
+    const text = ev.text || ''
+    const msg = el('div', { class: 'msg user' }, promptBody(text), el('span', { class: 'foot' }, stamp(ev.at), ticks))
+    msg.prompt = text
+    $('convo-log').append(msg)
     showReceipt(ev.seq, ev.receipt || 'sent')
+  }
+
+  // setPromptsAsMarkdown shows every prompt on the page afresh, the new way.
+  function setPromptsAsMarkdown(on) {
+    promptsAsMarkdown.on = on
+    store.set('vibe-prompts-markdown', on ? 'on' : 'off')
+    for (const msg of $('convo-log').querySelectorAll('.msg.user')) {
+      if (typeof msg.prompt === 'string') msg.firstChild.replaceWith(promptBody(msg.prompt))
+    }
   }
 
   // What a tool was asked to do, in a few words: its input is the agent's
@@ -1937,7 +1959,18 @@
     $('convo-input').value = store.get(DRAFT) || ''
     $('convo-input').addEventListener('input', saveDraft)
     $('convo-stop').addEventListener('click', () => conversationCall('/api/conversation/stop'))
-    $('convo-new').addEventListener('click', () => conversationCall('/api/conversation/new'))
+    $('convo-new').addEventListener('click', () => confirmThen({
+      title: 'Start a new conversation?',
+      text: "This one is cleared from the page (and any other page open for this sandbox), and the agent starts afresh, without remembering it. There's no undo. The agent's long-term memories and the terminal session aren't touched.",
+      commandNote: '',
+      command: '',
+      danger: true,
+      runLabel: 'Start a new conversation',
+      started: 'Started a new conversation.',
+      run: () => post('/api/conversation/new', {}),
+    }))
+    $('convo-md').checked = promptsAsMarkdown.on
+    $('convo-md').addEventListener('change', () => setPromptsAsMarkdown($('convo-md').checked))
     document.addEventListener('paste', onPaste)
     setInterval(pollConversation, CONVO_POLL_MS)
   }

@@ -58,6 +58,7 @@
   button:hover, .button:hover { border-color: var(--accent); }
   button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
   button.danger { color: var(--danger); }
+  .actions .ask { align-self: center; color: var(--danger); }
   #status { min-height: 1.5em; margin: 10px 2px; color: var(--muted); font-size: 14px; }
   #status.error { color: var(--danger); }
   #items { display: grid; gap: 12px; }
@@ -288,10 +289,17 @@ function titleRow(item) {
   return row;
 }
 
+// confirming is the item whose Delete was pressed, waiting on Yes or Keep:
+// asked here, in the page, as a browser's own confirm() is suppressed in
+// the frame the companion page shows this page in.
+var confirming = null;
+var lastData = null;
+
 function render(data) {
+  lastData = data;
   document.getElementById("host").textContent = data.host ? "sandbox: " + data.host : "";
   if (editing()) return;
-  var key = JSON.stringify(data);
+  var key = JSON.stringify(data) + "|" + confirming;
   if (key === lastRendered) return;
   lastRendered = key;
   itemsEl.textContent = "";
@@ -312,9 +320,13 @@ function render(data) {
         titleRow(item),
         el("div", { class: "details", text: item.type + " · " + formatSize(item.size) + " · " + formatTime(item.created) }),
         el("div", { class: "badges" }, badges),
-        el("div", { class: "actions" }, [
+        el("div", { class: "actions" }, confirming === item.id ? [
+          el("span", { class: "ask", text: "Delete it? There's no undo." }),
+          el("button", { class: "danger", text: "Yes, delete", onclick: function () { confirming = null; remove(item); } }),
+          el("button", { text: "Keep", onclick: function () { confirming = null; render(lastData); } }),
+        ] : [
           el("button", { class: "primary", text: "Copy", onclick: function () { copy(item); } }),
-          el("button", { class: "danger", text: "Delete", onclick: function () { remove(item); } }),
+          el("button", { class: "danger", text: "Delete…", onclick: function () { confirming = item.id; render(lastData); } }),
         ]),
       ]),
     ]);

@@ -252,14 +252,60 @@ type updateTally struct {
 	failed                    []string
 }
 
+// confirmUpdate asks once whether to go ahead with what --update-sandboxes
+// listed: rebuilding is destructive, so only -f goes ahead unasked (and with
+// no terminal, it's refused, saying to add -f). A variable so tests can
+// stand in for the user.
+var confirmUpdate = func(force bool) bool {
+	return confirmDefault(force, false, "Re-compose and rebuild these? A rebuilt sandbox keeps its agent's memories, but not what was installed in it by hand.")
+}
+
+// pendingUpdates lists, for the user to confirm, what bringing inv up to
+// date looks like it will do: the profiles to re-compose, and the sandboxes
+// to rebuild, being out of date or built from one of those profiles.
+func pendingUpdates(inv inventory) []string {
+	var lines []string
+	stale := map[string]bool{}
+	for _, p := range inv.profiles {
+		if p.exists && !p.bundled && p.standing.state == profileOutOfDate {
+			stale[p.name] = true
+			lines = append(lines, fmt.Sprintf("profile '%s': re-composed from %s (backed up first)", p.name, describeFeatures(p.features)))
+		}
+	}
+	for _, p := range inv.profiles {
+		for _, s := range p.sandboxes {
+			if !s.inSbx || s.folderGone || s.attached {
+				continue
+			}
+			switch {
+			case s.outOfDate != "":
+				lines = append(lines, fmt.Sprintf("sandbox '%s': rebuilt (%s)", s.inst.Name, s.outOfDate))
+			case stale[p.name]:
+				lines = append(lines, fmt.Sprintf("sandbox '%s': rebuilt if its profile's re-composing changes it", s.inst.Name))
+			}
+		}
+	}
+	return lines
+}
+
 // doUpdateSandboxes is --update-sandboxes: every profile in ~/.vibe, then
 // every sandbox vibe has a record of, brought up to date. A sandbox with a
 // vibe attached is left for its next session start, and each rebuilt one is
-// left running or stopped as it was. No session is started.
-func doUpdateSandboxes(lay layout.Layout) error {
+// left running or stopped as it was. No session is started. What it will do
+// is listed and asked about first, unless force (-f).
+func doUpdateSandboxes(lay layout.Layout, force bool) error {
 	inv, err := gatherInventory(context.Background(), lay)
 	if err != nil {
 		return fmt.Errorf("can't tell which sandboxes sbx has, so nothing was updated: %w", err)
+	}
+	if pending := pendingUpdates(inv); len(pending) > 0 {
+		note("this updates:")
+		for _, line := range pending {
+			note("  %s", line)
+		}
+		if !confirmUpdate(force) {
+			return fmt.Errorf("aborted — nothing changed")
+		}
 	}
 
 	var tally updateTally
