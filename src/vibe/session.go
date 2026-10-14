@@ -30,6 +30,9 @@ func finish(lay layout.Layout, args cliargs.Args, name string) error {
 		}
 		return nil
 	}
+	if args.Headless {
+		return headless(lay, args, name)
+	}
 	checkGitTokenExpiry(vibeHome, args, name)
 	remindOfInstructions(lay, name)
 	stopCompanion, companionUp, cancelThePage := startCompanion(lay, args, name)

@@ -34,7 +34,11 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 		if err := autoUpdate(lay, args, name, target); err != nil {
 			return err
 		}
-		note("attaching to existing sandbox '%s'", name)
+		if args.Headless {
+			note("starting existing sandbox '%s', with no terminal attached", name)
+		} else {
+			note("attaching to existing sandbox '%s'", name)
+		}
 		if args.GitTokenEnv != "" || args.NoGitToken || args.GitRules != "" {
 			note("  (it exists, so --git-token-env, --no-git-token and --git-rules don't apply — 'vibe --git-token' changes its token)")
 		}
@@ -60,6 +64,9 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 		return finish(lay, args, name)
 	}
 
+	if args.Headless {
+		return fmt.Errorf("there's no sandbox '%s' for %s yet, and --headless only starts one that exists: run 'vibe' there once first, to create it (it asks a few things), then --headless", name, target)
+	}
 	profile := resolveProfileName(args, target)
 	// The agent first: which features a new profile is offered depends on it.
 	defaultAgent, err := defaultAgentFor(lay, profile)

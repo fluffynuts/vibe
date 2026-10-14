@@ -1,8 +1,11 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"vibe/internal/running"
 )
 
 // fakeStopper is sbx as --stop sees it: whether the sandbox is there and
@@ -97,5 +100,22 @@ func TestStopAsksWhatIsAttachedToHoldOnlyWhileTheStopHolds(t *testing.T) {
 	stopSandbox(withHold(stopped), "box", "/w", false)
 	if len(events) != 0 {
 		t.Errorf("a sandbox already stopped: %v", events)
+	}
+}
+
+// 'vibe --stop' ends a headless vibe (nobody would see it carry on), and
+// leaves one with a terminal to keep its page up.
+func TestStoppingEndsAHeadlessVibeOnly(t *testing.T) {
+	var ended []int
+	old := stopVibe
+	t.Cleanup(func() { stopVibe = old })
+	stopVibe = func(_ string, pid int) (bool, error) { ended = append(ended, pid); return false, nil }
+	err := endHeadlessVibes(t.TempDir(), []running.Claim{{PID: 10}, {PID: 11, Headless: true}, {PID: 12, Work: "rebuilding sandbox 'a'"}})
+	if err != nil || len(ended) != 1 || ended[0] != 11 {
+		t.Errorf("endHeadlessVibes = %v, ended %v; want just the headless one", err, ended)
+	}
+	stopVibe = func(string, int) (bool, error) { return false, errors.New("no such process") }
+	if err := endHeadlessVibes(t.TempDir(), []running.Claim{{PID: 11, Headless: true}}); err == nil || !strings.Contains(err.Error(), "left running") {
+		t.Errorf("when it can't be ended: %v", err)
 	}
 }

@@ -305,3 +305,21 @@ func TestClaimsSayWhatAHoldIsFor(t *testing.T) {
 		t.Errorf("Others = %v", got)
 	}
 }
+
+func TestAHeadlessSessionSaysSo(t *testing.T) {
+	home := t.TempDir()
+	s, err := register(home, "/work/a", 4246)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Release()
+	if got := Claims(home, "/work/a"); len(got) != 1 || got[0].Headless {
+		t.Fatalf("before: Claims = %+v", got)
+	}
+	if err := s.MarkHeadless("/work/a"); err != nil {
+		t.Fatal(err)
+	}
+	if got := Claims(home, "/work/a"); !reflect.DeepEqual(got, []Claim{{PID: 4246, Headless: true}}) {
+		t.Errorf("after: Claims = %+v", got)
+	}
+}

@@ -331,6 +331,8 @@ func TestWhatEachSandboxOffersToDo(t *testing.T) {
 		{"gone from sbx", inventorySandbox{inst: base}, ""},
 		{"this page's", inventorySandbox{inst: state.Instance{Name: "mine"}, inSbx: true, running: true}, ""},
 		{"attached", inventorySandbox{inst: base, inSbx: true, running: true, attached: true}, "stop"},
+		{"attached, though sbx says it's stopped", inventorySandbox{inst: base, inSbx: true, attached: true}, "stop"},
+		{"being rebuilt", inventorySandbox{inst: base, inSbx: true, running: true, attached: true, rebuilding: "rebuilding sandbox 'a'"}, ""},
 		{"folder gone, stopped", inventorySandbox{inst: base, inSbx: true, folderGone: true}, ""},
 		{"running", inventorySandbox{inst: base, inSbx: true, running: true}, "stop rebuild"},
 		{"stopped, out of date", inventorySandbox{inst: base, inSbx: true, outOfDate: "changed"}, "start rebuild update"},
@@ -409,5 +411,34 @@ func TestReComposingAProfileFromThePageRebuildsItsSandboxes(t *testing.T) {
 		if !strings.Contains(log, want) {
 			t.Errorf("the log doesn't say %q:\n%s", want, log)
 		}
+	}
+}
+
+// Stopping a sandbox a vibe is working in ends that vibe first (saving its
+// agent's memories), then stops the sandbox.
+func TestStoppingASandboxFromThePageEndsTheVibeAttachedToIt(t *testing.T) {
+	lay := updateLayout(t)
+	inst := sandboxRecord(t, lay, "busy", "p").inst
+	calls := loggingSbx(t, "busy running\\n")
+	var ended []int
+	old := stopVibe
+	t.Cleanup(func() { stopVibe = old })
+	stopVibe = func(_ string, pid int) (bool, error) {
+		if data, _ := os.ReadFile(calls); strings.Contains(string(data), "stop busy") {
+			t.Error("the sandbox was stopped before the vibe attached to it ended")
+		}
+		ended = append(ended, pid)
+		return false, nil
+	}
+	m := &companionManager{lay: lay}
+	s := &inventorySandbox{inst: inst, inSbx: true, attached: true, vibes: []int{4242}}
+	if err := m.do(context.Background(), "stop", &inventoryProfile{name: "p"}, s); err != nil {
+		t.Fatal(err)
+	}
+	if len(ended) != 1 || ended[0] != 4242 {
+		t.Errorf("ended vibes %v, want [4242]", ended)
+	}
+	if data, _ := os.ReadFile(calls); !strings.Contains(string(data), "stop busy") {
+		t.Errorf("the sandbox wasn't stopped; sbx was asked:\n%s", data)
 	}
 }

@@ -303,6 +303,22 @@ type Claim struct {
 	// piece of work (see Hold): "rebuilding sandbox 'x'". It's "" for a
 	// session, which is the vibe working in the folder.
 	Work string
+	// Headless is a session with no terminal (see MarkHeadless).
+	Headless bool
+}
+
+// headlessMark is the second line of a headless session's lock file.
+const headlessMark = "headless"
+
+// MarkHeadless records that this session has no terminal attached, so
+// another vibe stopping its sandbox knows to end it too: nobody would see
+// it carry on.
+func (s *Session) MarkHeadless(target string) error {
+	if err := s.file.Truncate(0); err != nil {
+		return err
+	}
+	_, err := s.file.WriteAt([]byte(target+"\n"+headlessMark+"\n"), 0)
+	return err
 }
 
 // Claims returns every other live vibe process's claims on target, by PID,
@@ -331,7 +347,11 @@ func Claims(vibeHome, target string) []Claim {
 			continue
 		}
 		if held(path) {
-			claims = append(claims, Claim{PID: pid, Work: strings.TrimSpace(work)})
+			c := Claim{PID: pid, Work: strings.TrimSpace(work)}
+			if c.Work == headlessMark {
+				c.Work, c.Headless = "", true
+			}
+			claims = append(claims, c)
 		}
 	}
 	sort.Slice(claims, func(i, j int) bool {

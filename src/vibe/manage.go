@@ -16,6 +16,7 @@ import (
 	"vibe/internal/layout"
 	agentmem "vibe/internal/memory"
 	"vibe/internal/portalloc"
+	"vibe/internal/running"
 	"vibe/internal/sbxrun"
 	"vibe/internal/settings"
 	"vibe/internal/state"
@@ -382,7 +383,8 @@ func (m *companionManager) Inventory() companion.ManageInventory {
 			mp.Sandboxes = append(mp.Sandboxes, companion.ManageSandbox{
 				ID: pickSandbox + s.inst.Name, Name: s.inst.Name, Folder: displayPath(s.inst.Target),
 				Flags: nonNil(sandboxFlags(s)), Trash: s.likelyTrash(), Kept: whyKept(s, m.own), Own: s.inst.Name == m.own,
-				Actions: sandboxActions(s, m.own),
+				Attached: len(s.vibes) > 0,
+				Actions:  sandboxActions(s, m.own),
 			})
 		}
 		out.Profiles = append(out.Profiles, mp)
@@ -487,13 +489,17 @@ func doManage(lay layout.Layout) error {
 }
 
 // sandboxActions are what the Profiles tab offers to do to s, besides
-// deleting it. The page's own sandbox is the Admin tab's to work on. One
-// with a vibe attached, or whose folder is gone, can only be stopped.
+// deleting it. The page's own sandbox is the Admin tab's to work on, and one
+// being rebuilt is left to its rebuild. One with a vibe attached can only be
+// stopped, which ends that vibe too, whatever sbx says of the sandbox; one
+// whose folder is gone, only when it's running.
 func sandboxActions(s inventorySandbox, own string) []string {
 	switch {
-	case !s.inSbx || s.inst.Name == own:
+	case !s.inSbx || s.inst.Name == own || s.rebuilding != "":
 		return []string{}
-	case s.attached || s.folderGone:
+	case s.attached:
+		return []string{companion.ManageStop}
+	case s.folderGone:
 		if s.running {
 			return []string{companion.ManageStop}
 		}
@@ -582,6 +588,8 @@ func whyNot(p *inventoryProfile, s *inventorySandbox, own string) string {
 			return "sbx no longer has it"
 		case s.inst.Name == own:
 			return "it's this page's sandbox: the Admin tab works on it"
+		case s.rebuilding != "":
+			return "a vibe is " + s.rebuilding + " — wait for that, or cancel it where it was started"
 		case s.attached:
 			return "a vibe is attached to it"
 		case s.folderGone:
@@ -636,6 +644,21 @@ func (m *companionManager) do(ctx context.Context, kind string, p *inventoryProf
 			note("sandbox '%s' is running", s.inst.Name)
 			return nil
 		case companion.ManageStop:
+			// A vibe attached to it ends first, saving its agent's
+			// memories, as 'vibe' asked to stop another does: a session
+			// (terminal or headless) is no use without its sandbox.
+			for _, pid := range s.vibes {
+				note("ending vibe (PID %d), which is attached to it — it saves its agent's memories first", pid)
+				killed, err := stopVibe(m.lay.Home, pid)
+				switch {
+				case err != nil:
+					return fmt.Errorf("couldn't end vibe (PID %d), so sandbox '%s' was left running: %w", pid, s.inst.Name, err)
+				case killed:
+					note("  vibe (PID %d) didn't end within %s and was killed, so its agent's memories may not have been saved", pid, stopOtherTimeout)
+				default:
+					note("  vibe (PID %d) has ended", pid)
+				}
+			}
 			stop := holdingStopper(m.lay.Home, s.inst.Target)
 			stop.stop = func(name string) (int, error) {
 				if err := sbxrun.StopQuietContext(ctx, name); err != nil {
@@ -704,6 +727,12 @@ func (m *companionManager) do(ctx context.Context, kind string, p *inventoryProf
 		return fmt.Errorf("couldn't rebuild %s — see above", strings.Join(failed, ", "))
 	}
 	return nil
+}
+
+// stopVibe asks the vibe with pid to end, waiting for it to (and killing it
+// when it doesn't), saying whether it came to that. A variable for tests.
+var stopVibe = func(vibeHome string, pid int) (killed bool, err error) {
+	return running.Stop(vibeHome, pid, stopOtherTimeout)
 }
 
 // whyNotRebuilt says why a profile's action leaves its sandbox s alone, or

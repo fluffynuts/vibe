@@ -9,11 +9,37 @@ import (
 )
 
 func doStop(vibeHome, name, target string, force bool) error {
+	if err := endHeadlessVibes(vibeHome, running.Claims(vibeHome, target)); err != nil {
+		return err
+	}
 	code, err := stopSandbox(holdingStopper(vibeHome, target), name, target, force)
 	if err != nil {
 		return err
 	}
 	os.Exit(code)
+	return nil
+}
+
+// endHeadlessVibes ends each headless vibe among claims, before its sandbox
+// is stopped: with no terminal, nobody would see it carry on without it (it
+// saves its agent's memories as it ends). A vibe with a terminal is left to
+// keep its page up, as its terminal says.
+func endHeadlessVibes(vibeHome string, claims []running.Claim) error {
+	for _, c := range claims {
+		if !c.Headless {
+			continue
+		}
+		note("ending headless vibe (PID %d) — it saves its agent's memories first", c.PID)
+		killed, err := stopVibe(vibeHome, c.PID)
+		switch {
+		case err != nil:
+			return fmt.Errorf("couldn't end headless vibe (PID %d), so the sandbox was left running: %w", c.PID, err)
+		case killed:
+			note("  it didn't end within %s and was killed, so its agent's memories may not have been saved", stopOtherTimeout)
+		default:
+			note("  it has ended")
+		}
+	}
 	return nil
 }
 

@@ -42,6 +42,9 @@ type Args struct {
 	NoAutoUpdate bool
 	// Manage is --manage: serve the Profiles page on its own, until Ctrl-C.
 	Manage bool
+	// Headless is --headless: start an existing sandbox and serve its
+	// companion page, with no terminal attached to it.
+	Headless bool
 	// GitToken is --git-token: give the sandbox for the folder a GitHub
 	// token to push with, change the one it has, or take it away.
 	GitToken bool
@@ -139,6 +142,9 @@ func Parse(argv []string) (Args, error) {
 			i++
 		case arg == "-M" || arg == "--manage":
 			a.Manage = true
+			i++
+		case arg == "-H" || arg == "--headless":
+			a.Headless = true
 			i++
 		case arg == "--git-token":
 			a.GitToken = true
@@ -241,10 +247,10 @@ func setPath(a *Args, v string) error {
 
 // ExclusiveActions counts how many of the mutually-exclusive action flags
 // (stop/stop-all/ssh/re-init/re-create/re-compose/restore/list/install/upgrade/install-sbx/setup/
-// cleanup/delete/info/git-token/update-sandboxes/manage) are set.
+// cleanup/delete/info/git-token/update-sandboxes/manage/headless) are set.
 func (a Args) ExclusiveActions() int {
 	n := 0
-	for _, b := range []bool{a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info, a.Setup, a.GitToken, a.UpdateSandboxes, a.Manage} {
+	for _, b := range []bool{a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info, a.Setup, a.GitToken, a.UpdateSandboxes, a.Manage, a.Headless} {
 		if b {
 			n++
 		}

@@ -1088,10 +1088,13 @@
   // it just runs). The terminal's way is given too, as every action's is.
   const MANAGE_ACTIONS = {
     start: { label: 'Start' },
-    stop: { label: 'Stop…', ask: (name) => ({
+    stop: { label: 'Stop…', ask: (name, isProfile, row) => row.attached ? {
+      title: 'Stop sandbox ' + name + ', and the vibe attached to it?',
+      text: "The vibe working in it ends first, saving the agent's memories — and with it, its terminal session, or its page if it was started with --headless. Then the sandbox stops.",
+      command: 'vibe <its folder>, then choose to stop the other vibe' } : {
       title: 'Stop sandbox ' + name + '?',
-      text: 'The agent stops. A vibe attached to it keeps its page up, to start it again from.',
-      command: 'vibe --stop <its folder>' }) },
+      text: 'The agent stops.',
+      command: 'vibe --stop <its folder>' } },
     rebuild: { label: 'Rebuild…', ask: (name) => ({
       title: 'Rebuild sandbox ' + name + '?',
       text: "It's destroyed and made again from its profile, which takes a few minutes, and left running or stopped as it was. The agent's memories are kept; anything installed by hand, or kept outside its folder, goes.",
@@ -1136,7 +1139,7 @@
       runLabel: a.label.replace('…', ''),
       started: 'Started — the Last action box shows how it goes.',
       run,
-    }, a.ask(row.name, isProfile)))
+    }, a.ask(row.name, isProfile, row)))
   }
 
   function keptNote(row) {

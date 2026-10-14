@@ -345,6 +345,18 @@ func TestParseManage(t *testing.T) {
 	}
 }
 
+func TestParseHeadless(t *testing.T) {
+	for _, arg := range []string{"-H", "--headless"} {
+		a, err := Parse([]string{arg, "~/code/x"})
+		if err != nil || !a.Headless || a.Path != "~/code/x" || a.ExclusiveActions() != 1 {
+			t.Errorf("Parse(%s ~/code/x) = %+v, %v", arg, a, err)
+		}
+	}
+	if a, _ := Parse([]string{"--headless", "-C"}); a.ExclusiveActions() != 2 {
+		t.Error("--headless with -C should count as two actions")
+	}
+}
+
 func TestParseNoAutoUpdate(t *testing.T) {
 	a, err := Parse([]string{"--no-auto-update", "."})
 	if err != nil || !a.NoAutoUpdate || a.Path != "." || a.ExclusiveActions() != 0 {

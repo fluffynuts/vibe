@@ -289,6 +289,8 @@ vibe --no-git-token        # ...no token for a new sandbox, without asking;
 vibe -l/--list             # list every known sandbox and its status
 vibe -a/--info [path]      # show the sandbox's settings and, while it runs,
                            #    its uptime and memory and disk use
+vibe -H/--headless [path]  # start the sandbox for path and serve its companion page,
+                           #    with no terminal attached (see "Headless")
 vibe -M/--manage           # serve the Profiles page on its own, until Ctrl-C
 vibe -x/--cleanup          # pick profiles and sandboxes to delete, grouped by
                            #    profile, with the likely trash selected
@@ -617,6 +619,17 @@ not DNS rebinding, and not anything sent through `host.docker.internal`), needs 
 (it rides in the URL's `#fragment`, which browsers keep from servers and logs), takes changes only as
 same-origin JSON POSTs, and shows host names as text, never markup. The token is never written into the
 sandbox.
+
+**Headless.** `vibe --headless [path]` (`-H`) is the companion page with no terminal attached: for a
+sandbox that already exists (run `vibe` there once first, as creating one asks a few things), it brings
+it up to date as a session start does, starts it if it's stopped, runs its start-up, and serves its
+page, which is then where you work with it. It carries on until Ctrl-C (or SIGTERM), or another vibe
+asks it to stop, and then saves the agent's memories (after Ctrl-C, it leaves the sandbox running).
+`vibe --stop` ends it too, then stops the sandbox: with no terminal, nobody would see it carry on
+without one, still running an old vibe after an `--upgrade`, say. Stop on the Profiles page does the
+same. Stop on its own page's Admin tab stops just the sandbox and keeps the page up, as you're looking
+at it; its Start brings the sandbox back, and vibe runs its start-up again. For now it runs in the foreground: under tmux, `nohup` or a systemd user unit, it
+doesn't need a terminal of its own.
 
 **`vibe --manage`** serves the Profiles tab on its own, for no sandbox or folder: every profile and
 sandbox, to clean up, without a session open. It keeps its own port and token (in

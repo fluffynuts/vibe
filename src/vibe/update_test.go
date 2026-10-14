@@ -441,7 +441,10 @@ func loggingSbx(t *testing.T, rows string) string {
 	}
 	dir := t.TempDir()
 	log := filepath.Join(dir, "calls")
-	script := "#!/bin/sh\necho \"$*\" >>'" + log + "'\n[ \"$1\" = ls ] && printf 'NAME STATUS\\n" + rows + "'\nexit 0\n"
+	// 'sbx ls --quiet' lists just the names, as sbx does.
+	script := "#!/bin/sh\necho \"$*\" >>'" + log + "'\n" +
+		"[ \"$1\" = ls ] && [ \"$2\" = --quiet ] && { printf '" + rows + "' | cut -d' ' -f1; exit 0; }\n" +
+		"[ \"$1\" = ls ] && printf 'NAME STATUS\\n" + rows + "'\nexit 0\n"
 	writeFile(t, filepath.Join(dir, "sbx"), script)
 	if err := os.Chmod(filepath.Join(dir, "sbx"), 0o755); err != nil {
 		t.Fatal(err)

@@ -90,8 +90,10 @@ type ManageSandbox struct {
 	Trash  bool     `json:"trash"`
 	Kept   string   `json:"kept,omitempty"`
 	// Own is the sandbox this page is for.
-	Own     bool     `json:"own,omitempty"`
-	Actions []string `json:"actions"`
+	Own bool `json:"own,omitempty"`
+	// Attached says a vibe is working in it, which stopping it ends too.
+	Attached bool     `json:"attached,omitempty"`
+	Actions  []string `json:"actions"`
 }
 
 // ManageUnknown is a sandbox sbx has that vibe has no record of.

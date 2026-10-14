@@ -51,6 +51,11 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe -a/--info [path]      show the sandbox's settings (memory, agent,
                              features) and, while it runs, its uptime and
                              how much memory and disk it is using
+  vibe -H/--headless [path]  start the sandbox for path (one that exists:
+                             run vibe there once first) and serve its
+                             companion page, with no terminal attached to it,
+                             until Ctrl-C, which leaves the sandbox running;
+                             'vibe --stop' ends it and stops the sandbox
   vibe -M/--manage           serve the Profiles page on its own, until Ctrl-C:
                              every profile and its sandboxes, to clean up as
                              --cleanup does (every companion page has it as
@@ -189,7 +194,7 @@ func run(argv []string) error {
 		return fmt.Errorf("--update-strategy only applies to --install and --upgrade")
 	}
 	if args.ExclusiveActions() > 1 {
-		return fmt.Errorf("--stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info, --setup, --git-token, --update-sandboxes and --manage are mutually exclusive")
+		return fmt.Errorf("--stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info, --setup, --git-token, --update-sandboxes, --manage and --headless are mutually exclusive")
 	}
 
 	if (args.GitTokenEnv != "" || args.NoGitToken || args.GitRules != "") && args.ExclusiveActions() > 0 && !args.GitToken {

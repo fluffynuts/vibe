@@ -41,8 +41,12 @@ type inventorySandbox struct {
 	inst state.Instance
 	// inSbx is false when sbx no longer has it: only vibe's record is left.
 	inSbx, running bool
-	// attached is set when a vibe holds its folder.
+	// attached is set when a vibe holds its folder: vibes are the PIDs of
+	// those working in it (sessions, headless or not), and rebuilding says
+	// what one holding it for a rebuild is doing ("" when none is).
 	attached   bool
+	vibes      []int
+	rebuilding string
 	folderGone bool
 	// outOfDate says why it's out of date ("" when it isn't, or that
 	// couldn't be told, which err says).
@@ -115,8 +119,15 @@ func gatherInventory(ctx context.Context, lay layout.Layout) (inventory, error) 
 			status, found := inSbx[inst.Name]
 			s := inventorySandbox{
 				inst: inst, inSbx: found, running: status.Running,
-				attached:   len(running.Others(lay.Home, inst.Target)) > 0,
 				folderGone: folderGone(inst.Target) != "",
+			}
+			for _, c := range running.Claims(lay.Home, inst.Target) {
+				s.attached = true
+				if c.Work != "" {
+					s.rebuilding = c.Work
+				} else {
+					s.vibes = append(s.vibes, c.PID)
+				}
 			}
 			if found && p.exists {
 				s.outOfDate, s.err = sandboxOutOfDate(lay, inst)
