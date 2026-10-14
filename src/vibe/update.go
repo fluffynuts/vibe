@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -56,20 +55,52 @@ func kitFingerprint(lay layout.Layout, profile, agent string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// profileState is what bringing a profile up to date came to.
+// profileState is how a profile stands against the library, or what
+// bringing it up to date came to.
 type profileState int
 
 const (
-	profileCurrent     profileState = iota // it was up to date
+	profileCurrent     profileState = iota // it's up to date
+	profileOutOfDate                       // it isn't, and re-composing it loses nothing of anyone's
 	profileUpdated                         // it was re-composed
 	profileNotComposed                     // it isn't one vibe composes, so there's nothing to update
 	profileNeedsYou                        // it's out of date in a way only the user can settle
 )
 
-// profileOutcome is what bringing a profile up to date came to, and why.
+// profileOutcome is how a profile stands, or what updating it came to, and
+// why.
 type profileOutcome struct {
 	state profileState
 	why   string
+}
+
+// assessProfile says how profile stands against the library, changing
+// nothing, and, for a guided one, the features it records.
+func assessProfile(lay layout.Layout, profile string) (profileOutcome, []string, error) {
+	dir := lay.HomePath("profiles", profile)
+	if info, err := os.Stat(dir); dir == "" || err != nil || !info.IsDir() {
+		return profileOutcome{profileNotComposed, "it is vibe's own, not one in " + displayPath(lay.HomePath("profiles"))}, nil, nil
+	}
+	if !profilegen.IsGuided(dir) {
+		return profileOutcome{profileNotComposed, "it wasn't composed from the library"}, nil, nil
+	}
+	features, _ := profilegen.WithoutBase(profilegen.ComposedFrom(dir), lay.BaseFeatures())
+	if _, missing := splitMissingFeatures(features, lay.Features()); len(missing) > 0 {
+		return profileOutcome{profileNeedsYou, fmt.Sprintf(
+			"it has features the library no longer has (%s): 'vibe -C' asks what to do", strings.Join(missing, ", "))}, features, nil
+	}
+	fresh, err := profilegen.Check(lay, dir, profile, features)
+	if err != nil {
+		return profileOutcome{}, features, err
+	}
+	switch fresh {
+	case profilegen.UpToDate:
+		return profileOutcome{state: profileCurrent}, features, nil
+	case profilegen.Edited:
+		return profileOutcome{profileNeedsYou,
+			"it was changed by hand since it was composed: 'vibe -C' re-composes it, replacing those changes (backed up first)"}, features, nil
+	}
+	return profileOutcome{state: profileOutOfDate}, features, nil
 }
 
 // updateProfile re-composes profile when the library has moved on since it
@@ -77,27 +108,21 @@ type profileOutcome struct {
 // backupName (a sandbox it's for), as 'vibe -C' does. A profile it can't
 // re-compose without losing something is left for the user, saying why.
 func updateProfile(lay layout.Layout, profile, backupName string) (profileOutcome, error) {
+	// What re-composing does first, so the profile is assessed as it will be.
+	if dir := lay.HomePath("profiles", profile); dir != "" && fileExists(dir) {
+		if err := prepareInstructions(lay, profile); err != nil {
+			return profileOutcome{}, err
+		}
+		if profilegen.IsGuided(dir) {
+			settleBaseFeatures(lay, profile)
+		}
+	}
+	outcome, features, err := assessProfile(lay, profile)
+	if err != nil || (outcome.state != profileCurrent && outcome.state != profileOutOfDate) {
+		return outcome, err
+	}
 	dir := lay.HomePath("profiles", profile)
-	if info, err := os.Stat(dir); dir == "" || err != nil || !info.IsDir() {
-		return profileOutcome{profileNotComposed, "it is vibe's own, not one in " + displayPath(lay.HomePath("profiles"))}, nil
-	}
-	if err := prepareInstructions(lay, profile); err != nil {
-		return profileOutcome{}, err
-	}
-	if !profilegen.IsGuided(dir) {
-		return profileOutcome{profileNotComposed, "it wasn't composed from the library"}, nil
-	}
-	features := settleBaseFeatures(lay, profile)
-	if _, missing := splitMissingFeatures(features, lay.Features()); len(missing) > 0 {
-		return profileOutcome{profileNeedsYou, fmt.Sprintf(
-			"it has features the library no longer has (%s): 'vibe -C' asks what to do", strings.Join(missing, ", "))}, nil
-	}
-	fresh, err := profilegen.Check(lay, dir, profile, features)
-	if err != nil {
-		return profileOutcome{}, err
-	}
-	switch fresh {
-	case profilegen.UpToDate:
+	if outcome.state == profileCurrent {
 		// One from before hashes were recorded, which turned out to be up
 		// to date, is adopted as it is.
 		if profilegen.RecordedHash(dir) == "" {
@@ -105,10 +130,7 @@ func updateProfile(lay layout.Layout, profile, backupName string) (profileOutcom
 				return profileOutcome{}, err
 			}
 		}
-		return profileOutcome{state: profileCurrent}, nil
-	case profilegen.Edited:
-		return profileOutcome{profileNeedsYou,
-			"it was changed by hand since it was composed: 'vibe -C' re-composes it, replacing those changes (backed up first)"}, nil
+		return outcome, nil
 	}
 	note("profile '%s' is out of date: re-composing it from %s", profile, describeFeatures(features))
 	if err := replaceProfile(lay, profile, backupName, features); err != nil {
@@ -212,22 +234,6 @@ func autoUpdate(lay layout.Layout, args cliargs.Args, name, target string) error
 	return rebuild(context.Background(), lay, name, target)
 }
 
-// homeProfiles names the profiles in ~/.vibe, sorted.
-func homeProfiles(lay layout.Layout) []string {
-	entries, err := os.ReadDir(lay.HomePath("profiles"))
-	if err != nil {
-		return nil
-	}
-	var names []string
-	for _, e := range entries {
-		if e.IsDir() && fileExists(filepath.Join(lay.HomePath("profiles"), e.Name(), "config.yaml")) {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-	return names
-}
-
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
@@ -244,75 +250,67 @@ type updateTally struct {
 // vibe attached is left for its next session start, and each rebuilt one is
 // left running or stopped as it was. No session is started.
 func doUpdateSandboxes(lay layout.Layout) error {
-	instances, err := state.List(lay.Home)
-	if err != nil {
-		return err
-	}
-	sort.Slice(instances, func(i, j int) bool { return instances[i].Name < instances[j].Name })
-	statuses, err := sbxrun.List()
+	inv, err := gatherInventory(context.Background(), lay)
 	if err != nil {
 		return fmt.Errorf("can't tell which sandboxes sbx has, so nothing was updated: %w", err)
 	}
-	isRunning := map[string]bool{}
-	for _, s := range statuses {
-		isRunning[s.Name] = s.Running
-	}
 
 	var tally updateTally
-	backupFor := map[string]string{}
-	for _, inst := range instances {
-		if _, taken := backupFor[inst.Profile]; !taken {
-			backupFor[inst.Profile] = inst.Name
+	for _, p := range inv.profiles {
+		if !p.exists || p.bundled {
+			continue
 		}
-	}
-	for _, profile := range homeProfiles(lay) {
-		backupName := backupFor[profile]
-		if backupName == "" {
-			backupName = profile
+		backupName := p.name
+		if len(p.sandboxes) > 0 {
+			backupName = p.sandboxes[0].inst.Name
 		}
-		outcome, err := updateProfile(lay, profile, backupName)
+		outcome, err := updateProfile(lay, p.name, backupName)
 		switch {
 		case err != nil:
-			note("FAILED: profile '%s': %s", profile, err)
-			tally.failed = append(tally.failed, "profile '"+profile+"'")
+			note("FAILED: profile '%s': %s", p.name, err)
+			tally.failed = append(tally.failed, "profile '"+p.name+"'")
 		case outcome.state == profileCurrent:
-			note("profile '%s' is up to date", profile)
+			note("profile '%s' is up to date", p.name)
 			tally.current++
 		case outcome.state == profileUpdated:
 			tally.updated++
 		case outcome.state == profileNeedsYou:
-			note("WARNING: profile '%s' skipped: %s", profile, outcome.why)
+			note("WARNING: profile '%s' skipped: %s", p.name, outcome.why)
 			tally.skipped++
 		default:
-			note("profile '%s' skipped: %s", profile, outcome.why)
+			note("profile '%s' skipped: %s", p.name, outcome.why)
 			tally.skipped++
 		}
 	}
 
-	for _, inst := range instances {
-		wasRunning, exists := isRunning[inst.Name]
-		switch {
-		case !exists:
-			note("sandbox '%s' skipped: sbx has no sandbox by that name any more", inst.Name)
-			tally.skipped++
-			continue
-		case folderGone(inst.Target) != "":
-			note("sandbox '%s' skipped: %s", inst.Name, folderGone(inst.Target))
-			tally.skipped++
-			continue
-		case len(running.Others(lay.Home, inst.Target)) > 0:
-			note("sandbox '%s' skipped: a vibe is attached to it, so it's brought up to date when its next session starts", inst.Name)
-			tally.skipped++
-			continue
-		}
-		switch updated, err := updateSandbox(lay, inst, wasRunning); {
-		case err != nil:
-			note("FAILED: sandbox '%s': %s", inst.Name, err)
-			tally.failed = append(tally.failed, "sandbox '"+inst.Name+"'")
-		case updated:
-			tally.updated++
-		default:
-			tally.current++
+	for _, p := range inv.profiles {
+		for _, s := range p.sandboxes {
+			name := s.inst.Name
+			switch {
+			case !s.inSbx:
+				note("sandbox '%s' skipped: sbx has no sandbox by that name any more", name)
+				tally.skipped++
+				continue
+			case s.folderGone:
+				note("sandbox '%s' skipped: %s", name, folderGone(s.inst.Target))
+				tally.skipped++
+				continue
+			case s.attached:
+				note("sandbox '%s' skipped: a vibe is attached to it, so it's brought up to date when its next session starts", name)
+				tally.skipped++
+				continue
+			}
+			// Asked afresh by updateSandbox: its profile may have just been
+			// re-composed.
+			switch updated, err := updateSandbox(lay, s.inst, s.running); {
+			case err != nil:
+				note("FAILED: sandbox '%s': %s", name, err)
+				tally.failed = append(tally.failed, "sandbox '"+name+"'")
+			case updated:
+				tally.updated++
+			default:
+				tally.current++
+			}
 		}
 	}
 	return tally.report()
