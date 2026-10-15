@@ -333,14 +333,18 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		// /theme in the agent can change it at any time, but that's seldom.
 		theme = cached(s.cache, "theme", time.Minute, s.cfg.ThemeColor)
 	}
-	upgrades := 0
+	// attention is, by tab, why that tab wants looking at: the page draws a
+	// dot on it, with these as its tooltip, so a dot always says why.
+	attention := map[string][]string{}
 	if s.cfg.Admin != nil {
 		s.admin.mu.Lock()
-		upgrades = len(s.admin.upgrades)
+		if len(s.admin.upgrades) > 0 {
+			attention["admin"] = []string{"Upgrades available: " + strings.Join(s.admin.upgrades, ", ") + " — this tab says how to get them"}
+		}
 		s.admin.mu.Unlock()
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"upgrades":          upgrades,
+		"attention":         attention,
 		"themeColor":        theme,
 		"sandbox":           s.cfg.Sandbox,
 		"agent":             s.cfg.Agent,

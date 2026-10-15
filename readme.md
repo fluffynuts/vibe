@@ -551,7 +551,7 @@ you're looking at:
 
 - **Conversation** — talk to the agent from the page, with the sandbox's clipboard page (see
   `clipboard-bridge` below) embedded beside it: paste images and files anywhere on the tab and they go
-  to the clipboard. The agent's replies, and your prompts, are shown as Markdown — headings, lists, tables, code — built
+  to the clipboard. The prompt box grows as you type, up to half the column. The agent's replies, and your prompts, are shown as Markdown — headings, lists, tables, code — built
   as text, so nothing in them can become markup on the page; links open only to this machine's own pages.
   Your prompt is sent exactly as you typed it; only how it's shown changes, so fence pasted console output
   in ``` (and put globs like `*.go` in backticks) to keep it as it is. **My prompts as Markdown**, above the
@@ -586,7 +586,7 @@ you're looking at:
 - **Admin** — what `vibe --info` shows of the sandbox, and what you'd otherwise go to a terminal for:
   start or stop it, rebuild it from its profile (`-r`), re-compose it with features added or taken away
   (`-C`), restore a backup of its profile (`--restore`), and save the agent's memories now. It also says
-  whether newer releases of vibe or Docker SBX are out (with a dot on the tab when they are), and shows
+  whether newer releases of vibe or Docker SBX are out (with a dot on the tab when they are; hovering over the tab says which), and shows
   the sandbox's GitHub token, read-only, with a link to make or renew one on GitHub. Each action shows the
   command it matches and asks first, and nothing that takes the sandbox away runs while the agent is
   answering. An action taking far longer than it should (3 minutes for start, stop or saving memories,
@@ -602,7 +602,10 @@ you're looking at:
   terminal, which is the agent's screen then, and prints them when the session ends; the terminal's
   title says when the agent is optimising.
 - **Profiles** — every profile on the machine, with the sandboxes built from it, to clean up what's
-  trash: the same as [`vibe --cleanup`](#usage), with the same flags and the same rules. **Select likely
+  trash: the same as [`vibe --cleanup`](#usage), with the same flags and the same rules. The filter (`/`
+  gets to it, Esc clears it) narrows the list to what matches every word typed: names, folders,
+  features, and words like `running`, `stopped`, `out of date` or `trash`; a profile whose name matches
+  shows all its sandboxes. Selections the filter hides still count, and are listed when deleting. **Select likely
   trash** selects profiles with no sandboxes, profiles whose sandboxes are all gone, and sandboxes gone
   from sbx or whose folder is gone; **Delete selected…** lists exactly what will go, by name and path,
   and asks once. Selecting a profile deletes all of it, with its sandboxes. What can't be deleted says
@@ -984,7 +987,8 @@ and each item reaches the agent with your next message, or at its next step if i
 working: two Claude Code hooks (`UserPromptSubmit` and `PostToolUse`, in
 `/etc/claude-code/managed-settings.d/`) hand over anything not yet delivered, with short text
 inline and images as paths for the agent to read. Every item on the page shows whether it has
-been sent yet, and has **Copy** (to put it back on your own clipboard) and **Delete** buttons.
+been sent yet, and has **Copy** (to put it back on your own clipboard) and **Delete** buttons; **Clear all** empties the
+history at once (asking first).
 The item you pasted or copied last is also what Ctrl-V in the agent's terminal attaches: at every
 start, `start-clipboard` puts a fallback in front of sbx's `sbx-clipboard` shim that serves that
 item whenever sbx's answer is empty. The history keeps the newest 25 items (and no more than 250 MB of

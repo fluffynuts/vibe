@@ -213,6 +213,8 @@ ul.checks label { display: flex; gap: 8px; align-items: baseline; cursor: pointe
 ul.checks .was { font-size: 11px; color: var(--muted); }
 ul.plain li { display: flex; gap: 8px; align-items: center; }
 ul.plain li .spacer { flex: 1; }
+.mgr-filter { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; min-width: 16em; }
+mark.mgr-hit { background: var(--warn-bg); color: inherit; border-radius: 2px; }
 .tab-dot { display: inline-block; width: 7px; height: 7px; margin-left: 6px; border-radius: 50%; background: var(--tick-seen); vertical-align: middle; }
 ol.steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 ol.steps code { font: 12px var(--mono); padding: 1px 4px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); user-select: all; }

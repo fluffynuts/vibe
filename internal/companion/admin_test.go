@@ -311,3 +311,29 @@ func TestCancelEndsTheTurnAndTheActionAndSaysWhich(t *testing.T) {
 		t.Errorf("job = %+v", r.Job)
 	}
 }
+
+// A tab drawing attention says why, so its dot is never a puzzle.
+func TestTheAdminTabSaysWhyItWantsAttention(t *testing.T) {
+	attention := func(s *Server) map[string][]string {
+		t.Helper()
+		rec := do(t, s, req{path: "/api/state", headers: authed(nil)})
+		var body struct {
+			Attention map[string][]string `json:"attention"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body.Attention
+	}
+	s := adminServer(&fakeAdmin{}, nil)
+	if got := attention(s); len(got) != 0 {
+		t.Errorf("before any upgrade was found: %v", got)
+	}
+	s.admin.mu.Lock()
+	s.admin.upgrades = []string{"vibe 1.2.3", "Docker SBX 0.48.0 → 0.49.0"}
+	s.admin.mu.Unlock()
+	got := attention(s)["admin"]
+	if len(got) != 1 || !strings.Contains(got[0], "vibe 1.2.3") || !strings.Contains(got[0], "Docker SBX 0.48.0 → 0.49.0") {
+		t.Errorf("the Admin tab's reasons: %v", got)
+	}
+}

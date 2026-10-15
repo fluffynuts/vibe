@@ -257,6 +257,11 @@ function handle(req, res) {
       sendJSON(res, 201, describe(addItem(body, req.headers["content-type"], path.basename(name))));
     });
   }
+  if (req.method === "DELETE" && parts[1] === "items" && parts.length === 2) {
+    const all = state.items.slice();
+    all.forEach(removeItem);
+    return sendJSON(res, 200, { deleted: all.length });
+  }
   if (parts[1] === "items" && parts.length >= 3) {
     const item = find(Number(parts[2]));
     if (!item) return sendJSON(res, 404, { error: "no such item" });

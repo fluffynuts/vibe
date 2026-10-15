@@ -61,6 +61,15 @@
   .actions .ask { align-self: center; color: var(--danger); }
   #status { min-height: 1.5em; margin: 10px 2px; color: var(--muted); font-size: 14px; }
   #status.error { color: var(--danger); }
+  #clearbar { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; margin: 0 2px 10px; }
+  #clearbar:empty { display: none; }
+  #clearbar .ask { color: var(--danger); font-size: 14px; }
+  /* Says what was just done, then goes: what needs reading stays in #status. */
+  #toast {
+    position: fixed; right: 12px; bottom: 12px; max-width: calc(100% - 24px);
+    background: var(--panel); color: var(--text); border: 1px solid var(--accent);
+    border-radius: 8px; padding: 8px 12px; font-size: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.3);
+  }
   #items { display: grid; gap: 12px; }
   .item {
     display: grid; grid-template-columns: 160px 1fr; gap: 14px; align-items: start;
@@ -146,10 +155,12 @@
   <div id="status" role="status"></div>
   </div>
   <div id="list">
+  <div id="clearbar"></div>
   <section id="items" aria-live="polite"></section>
   </div>
 </main>
 <div id="zoom"><img alt=""></div>
+<div id="toast" role="status" hidden></div>
 
 <script>
 "use strict";
@@ -163,6 +174,18 @@ var textCache = {};
 function setStatus(message, isError) {
   statusEl.textContent = message || "";
   statusEl.className = isError ? "error" : "";
+}
+
+var toastEl = document.getElementById("toast");
+var toastTimer = null;
+
+// toast says what was just done, for a few seconds.
+function toast(message) {
+  setStatus("");
+  toastEl.textContent = message;
+  toastEl.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { toastEl.hidden = true; }, 3000);
 }
 
 function formatSize(n) {
@@ -291,17 +314,33 @@ function titleRow(item) {
 
 // confirming is the item whose Delete was pressed, waiting on Yes or Keep:
 // asked here, in the page, as a browser's own confirm() is suppressed in
-// the frame the companion page shows this page in.
+// the frame the companion page shows this page in. clearing is the same
+// for Clear all.
 var confirming = null;
+var clearing = false;
+
+function renderClearBar(count) {
+  var bar = document.getElementById("clearbar");
+  bar.textContent = "";
+  if (!count) { clearing = false; return; }
+  if (clearing) {
+    bar.appendChild(el("span", { class: "ask", text: "Delete all " + count + (count === 1 ? " item" : " items") + "? There's no undo." }));
+    bar.appendChild(el("button", { class: "danger", text: "Yes, clear all", onclick: function () { clearing = false; clearAll(); } }));
+    bar.appendChild(el("button", { text: "Keep", onclick: function () { clearing = false; render(lastData); } }));
+    return;
+  }
+  bar.appendChild(el("button", { class: "danger", text: "Clear all\u2026", onclick: function () { clearing = true; render(lastData); } }));
+}
 var lastData = null;
 
 function render(data) {
   lastData = data;
   document.getElementById("host").textContent = data.host ? "sandbox: " + data.host : "";
   if (editing()) return;
-  var key = JSON.stringify(data) + "|" + confirming;
+  var key = JSON.stringify(data) + "|" + confirming + "|" + clearing;
   if (key === lastRendered) return;
   lastRendered = key;
+  renderClearBar(data.items.length);
   itemsEl.textContent = "";
   if (!data.items.length) {
     itemsEl.appendChild(el("div", { class: "empty", text: "Nothing here yet." }));
@@ -496,10 +535,26 @@ function copy(item) {
 }
 
 function remove(item) {
-  fetch("/api/items/" + item.id, { method: "DELETE" }).then(function () {
+  fetch("/api/items/" + item.id, { method: "DELETE" }).then(function (r) {
+    if (!r.ok) throw new Error("the clipboard server said " + r.status);
     delete textCache[item.id];
-    setStatus("Deleted.");
+    toast("Deleted.");
     return refresh();
+  }).catch(function (err) {
+    setStatus("Couldn't delete that: " + err.message, true);
+  });
+}
+
+function clearAll() {
+  fetch("/api/items", { method: "DELETE" }).then(function (r) {
+    if (!r.ok) throw new Error("the clipboard server said " + r.status);
+    return r.json();
+  }).then(function (body) {
+    textCache = {};
+    toast(body.deleted === 1 ? "Deleted 1 item." : "Deleted " + body.deleted + " items.");
+    return refresh();
+  }).catch(function (err) {
+    setStatus("Couldn't clear the clipboard: " + err.message, true);
   });
 }
 

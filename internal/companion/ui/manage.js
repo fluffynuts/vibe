@@ -65,7 +65,47 @@
     return parts.length ? parts.join(' and ') + ' selected' : 'nothing selected'
   }
 
-  const api = { pickable, likelyTrash, coveredBy, picked, summary }
+  // words is query, lowercased, split into the words a row has to match.
+  function words(query) {
+    return String(query || '').toLowerCase().split(/\s+/).filter(Boolean)
+  }
+
+  // text is what a row is matched on: its names, folder, features and
+  // flags, and "trash" when it's likely trash.
+  function text(...parts) {
+    return parts.flat().filter((p) => typeof p === 'string').join(' ').toLowerCase()
+  }
+
+  const matchesAll = (wanted, hay) => wanted.every((w) => hay.includes(w))
+
+  // filtered is inv narrowed to what matches query: every word of it has
+  // to match, each anywhere in a sandbox's own text or its profile's. A
+  // profile that matches by itself keeps all its sandboxes. shown and total
+  // count sandboxes, with the ones vibe has no record of.
+  function filtered(inv, query) {
+    const wanted = words(query)
+    const profiles = inv.profiles || []
+    const unknown = inv.unknown || []
+    const total = profiles.reduce((n, p) => n + (p.sandboxes || []).length, 0) + unknown.length
+    if (!wanted.length) return { profiles, unknown, shown: total, total }
+    let shown = 0
+    const keptProfiles = []
+    for (const p of profiles) {
+      const own = text(p.name, p.features, p.flags, p.trash ? 'trash' : '')
+      const sandboxes = matchesAll(wanted, own)
+        ? (p.sandboxes || [])
+        : (p.sandboxes || []).filter((s) => matchesAll(wanted, own + ' ' + text(s.name, s.folder, s.flags, s.trash ? 'trash' : '')))
+      if (sandboxes.length || matchesAll(wanted, own)) {
+        keptProfiles.push(Object.assign({}, p, { sandboxes }))
+        shown += sandboxes.length
+      }
+    }
+    const keptUnknown = unknown.filter((u) => matchesAll(wanted, text(u.name, u.running ? 'running' : 'stopped')))
+    shown += keptUnknown.length
+    return { profiles: keptProfiles, unknown: keptUnknown, shown, total }
+  }
+
+  const api = { pickable, likelyTrash, coveredBy, picked, summary, filtered }
   if (typeof module === 'object' && module.exports) module.exports = api
   else root.vibeManage = api
 })(this)

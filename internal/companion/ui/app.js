@@ -306,6 +306,23 @@
     heading.focus({ preventScroll: true })
   }
 
+  // showAttention marks each tab attention names with a dot, and says why
+  // in the tab's tooltip; a tab it doesn't name loses both. The reasons come
+  // with the dot, so there's no dot without them.
+  function showAttention(attention) {
+    for (const tab of document.querySelectorAll('[role=tab]')) {
+      const reasons = Array.isArray(attention[tab.dataset.tab]) ? attention[tab.dataset.tab] : []
+      let dot = tab.querySelector('.tab-dot')
+      if (!reasons.length) {
+        if (dot) dot.remove()
+        tab.removeAttribute('title')
+        continue
+      }
+      if (!dot) tab.append(dot = el('span', { class: 'tab-dot', 'aria-hidden': 'true' }))
+      tab.title = reasons.join('\n')
+    }
+  }
+
   // reached is called with the outcome of every call to vibe: two failures
   // in a row mean vibe has gone (its session ended), and it says so; the
   // next success puts everything back.
@@ -452,7 +469,7 @@
       $('tab-admin').hidden = !state.admin
       $('tab-manage').hidden = !res.body.manage
       for (const t of SANDBOX_TABS) $('tab-' + t).hidden = res.body.sandboxTabs === false
-      $('admin-dot').hidden = !res.body.upgrades
+      showAttention(res.body.attention || {})
       const moved = url !== state.clipboardUrl
       if (moved || ready !== state.clipboardReady) {
         if (url && !ready && (moved || state.clipboardReady)) {
@@ -1094,7 +1111,38 @@
   // --- the Profiles tab ---------------------------------------------------
 
   // What the tab last showed, and what's ticked, by ID (see manage.js).
-  const manageView = { inv: null, key: '', ticked: new Set(), jobLines: -1, busy: false }
+  // The filter is kept for this tab, so a reload (or vibe restarting) keeps it.
+  const MANAGE_FILTER = 'vibe-manage-filter'
+  const manageView = { inv: null, key: '', ticked: new Set(), jobLines: -1, busy: false, filter: sessionGet(MANAGE_FILTER) }
+
+  function sessionGet(key) {
+    try { return sessionStorage.getItem(key) || '' } catch (e) { return '' }
+  }
+
+  function sessionSet(key, value) {
+    try { sessionStorage.setItem(key, value) } catch (e) { /* kept for this page only */ }
+  }
+
+  // marked is text with the filter's words in it marked, as text nodes and
+  // <mark>s: never markup made from it.
+  function marked(text) {
+    const wanted = manageView.filter.toLowerCase().split(/\s+/).filter(Boolean)
+    const lower = String(text).toLowerCase()
+    const hit = new Array(lower.length).fill(false)
+    for (const w of wanted) {
+      for (let i = lower.indexOf(w); i >= 0; i = lower.indexOf(w, i + 1)) hit.fill(true, i, i + w.length)
+    }
+    const nodes = []
+    let start = 0
+    for (let i = 1; i <= lower.length; i++) {
+      if (i === lower.length || hit[i] !== hit[start]) {
+        const part = String(text).slice(start, i)
+        nodes.push(hit[start] ? el('mark', { class: 'mgr-hit', text: part }) : document.createTextNode(part))
+        start = i
+      }
+    }
+    return nodes
+  }
   const M = window.vibeManage
 
   async function loadManage() {
@@ -1223,23 +1271,27 @@
     const inv = manageView.inv
     const list = $('manage-list')
     if (!inv) return
-    const groups = (inv.profiles || []).map((p) => {
+    const view = M.filtered(inv, manageView.filter)
+    $('manage-shown').textContent = manageView.filter.trim() ? 'showing ' + view.shown + ' of ' + view.total + ' sandboxes' : ''
+    const groups = view.profiles.map((p) => {
       const head = el('div', { class: 'mgr-row mgr-head' },
-        tickBox(p, el('span', {}, el('strong', { text: p.name }),
+        tickBox(p, el('span', {}, el('strong', {}, ...marked(p.name)),
           p.features && p.features.length ? el('span', { class: 'muted', text: ' ' + p.features.join(', ') }) : null)),
         ...flagPills(p.flags), keptNote(p), el('span', { class: 'spacer' }), ...actionButtons(p, true))
       const sandboxes = (p.sandboxes || []).map((s) => el('li', { class: 'mgr-row' },
-        tickBox(s, el('span', {}, el('span', { text: s.name + (s.own ? ' (this page)' : '') }),
-          el('code', { class: 'mgr-folder', text: s.folder })), M.coveredBy(inv, manageView.ticked, s.id)),
+        tickBox(s, el('span', {}, el('span', {}, ...marked(s.name), s.own ? ' (this page)' : ''),
+          el('code', { class: 'mgr-folder' }, ...marked(s.folder))), M.coveredBy(inv, manageView.ticked, s.id)),
         ...flagPills(s.flags), keptNote(s), el('span', { class: 'spacer' }), ...actionButtons(s, false)))
       return el('div', { class: 'mgr-profile' }, head, sandboxes.length ? el('ul', { class: 'mgr-sandboxes' }, ...sandboxes) : null)
     })
-    if (!groups.length && !inv.error) groups.push(el('p', { class: 'muted', text: 'No profiles yet.' }))
-    const unknown = inv.unknown || []
+    if (!groups.length && !inv.error) {
+      groups.push(el('p', { class: 'muted', text: (inv.profiles || []).length ? 'No profile matches the filter.' : 'No profiles yet.' }))
+    }
+    const unknown = view.unknown
     if (unknown.length) {
       groups.push(el('h3', { class: 'mgr-unknown-h', text: 'Sandboxes vibe has no record of' }),
         el('ul', { class: 'mgr-sandboxes' }, ...unknown.map((u) => el('li', { class: 'mgr-row' },
-          tickBox(u, el('span', { text: u.name })), ...flagPills([u.running ? 'running' : 'stopped'])))))
+          tickBox(u, el('span', {}, ...marked(u.name))), ...flagPills([u.running ? 'running' : 'stopped'])))))
     }
     list.replaceChildren(...groups)
   }
@@ -1290,6 +1342,28 @@
       updateManage()
     })
     $('manage-delete').addEventListener('click', deleteTicked)
+    const filter = $('manage-filter')
+    filter.value = manageView.filter
+    filter.addEventListener('input', () => {
+      manageView.filter = filter.value
+      sessionSet(MANAGE_FILTER, filter.value)
+      drawManage()
+    })
+    filter.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' && filter.value) {
+        ev.preventDefault()
+        filter.value = ''
+        filter.dispatchEvent(new Event('input'))
+      }
+    })
+    // / finds, as on many sites: from anywhere on the tab but a box being
+    // typed into.
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key !== '/' || ev.ctrlKey || ev.metaKey || ev.altKey || $('panel-manage').hidden || typingInto(document.activeElement)) return
+      ev.preventDefault()
+      filter.focus()
+      filter.select()
+    })
     $('manage-cancel').addEventListener('click', async () => {
       try {
         const res = await post('/api/manage/cancel', {})
@@ -1806,6 +1880,24 @@
   const DRAFT = 'vibe-companion-draft'
   const saveDraft = () => store.set(DRAFT, $('convo-input').value)
 
+  // fitPrompt grows the prompt box with what's in it, so a long prompt can
+  // be read over whole before it's sent, up to half the conversation's
+  // column: the log keeps the other half. Past that, the box scrolls.
+  function fitPrompt() {
+    const box = $('convo-input')
+    const cap = Math.max(box.offsetHeight, Math.floor(box.closest('.convo').clientHeight / 2))
+    // Back to its own size first, so it can shrink as well as grow.
+    box.style.height = ''
+    const borders = box.offsetHeight - box.clientHeight
+    const want = box.scrollHeight + borders
+    if (want > box.offsetHeight) box.style.height = Math.min(want, cap) + 'px'
+  }
+
+  function promptChanged() {
+    saveDraft()
+    fitPrompt()
+  }
+
   async function sendPrompt() {
     const input = $('convo-input')
     const prompt = input.value.trim()
@@ -1815,7 +1907,7 @@
       reached(true)
       if (!res.ok) { toast((res.body && res.body.error) || 'That could not be sent.', true); return }
       input.value = ''
-      saveDraft()
+      promptChanged()
       closeCommands()
       setConvoRunning(true)
       showTyping()
@@ -1942,7 +2034,7 @@
     input.value = '/' + name + ' ' + rest
     const caret = name.length + 2
     input.setSelectionRange(caret, caret)
-    saveDraft()
+    promptChanged()
     closeCommands()
   }
 
@@ -2098,11 +2190,16 @@
         ev.preventDefault()
         ev.target.value = convo.lastPrompt
         ev.target.setSelectionRange(convo.lastPrompt.length, convo.lastPrompt.length)
-        saveDraft()
+        promptChanged()
       }
     })
     $('convo-input').value = store.get(DRAFT) || ''
-    $('convo-input').addEventListener('input', saveDraft)
+    $('convo-input').addEventListener('input', promptChanged)
+    window.addEventListener('resize', fitPrompt)
+    // A draft put back at load is fitted once the box can be measured: the
+    // tab it's on may not be showing yet.
+    $('convo-input').addEventListener('focus', fitPrompt)
+    requestAnimationFrame(fitPrompt)
     $('convo-stop').addEventListener('click', () => conversationCall('/api/conversation/stop'))
     $('convo-new').addEventListener('click', () => confirmThen({
       title: 'Start a new conversation?',
