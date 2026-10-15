@@ -26,12 +26,13 @@ func TestShellQuote(t *testing.T) {
 }
 
 func TestConversationCommandRunsClaudeInTheWorkspace(t *testing.T) {
-	cmd := conversationCommand("/home/me/my project", "")
+	cmd := conversationCommand("/home/me/my project", "", "/tmp/t.pid")
 	if cmd[0] != "sh" || cmd[1] != "-c" || cmd[2] != asAgentScript || cmd[3] != "converse" || len(cmd) != 5 {
 		t.Fatalf("command = %q", cmd)
 	}
 	inner := cmd[4]
-	if !strings.HasPrefix(inner, `cd '/home/me/my project' && exec 'claude' '-p'`) {
+	// After the wrapper that records where the turn runs (see wrapTurn).
+	if !strings.HasPrefix(inner, wrapTurn("", "/tmp/t.pid")+`cd '/home/me/my project' && 'claude' '-p'`) {
 		t.Errorf("inner = %s", inner)
 	}
 	for _, want := range []string{"'stream-json'", "'bypassPermissions'"} {
@@ -45,25 +46,25 @@ func TestConversationCommandRunsClaudeInTheWorkspace(t *testing.T) {
 }
 
 func TestConversationCommandResumesASessionButNeverAnythingElse(t *testing.T) {
-	if inner := conversationCommand("/w", "abc-123")[4]; !strings.HasSuffix(inner, "--resume 'abc-123'") {
+	if inner := conversationCommand("/w", "abc-123", "/tmp/t.pid")[4]; !strings.HasSuffix(inner, "--resume 'abc-123'") {
 		t.Errorf("inner = %s", inner)
 	}
 	for _, bad := range []string{"x; rm -rf /", "a b", "--dangerously-skip-permissions x", strings.Repeat("a", 101)} {
-		if inner := conversationCommand("/w", bad)[4]; strings.Contains(inner, "--resume") {
+		if inner := conversationCommand("/w", bad, "/tmp/t.pid")[4]; strings.Contains(inner, "--resume") {
 			t.Errorf("resumed %q: %s", bad, inner)
 		}
 	}
 }
 
 func TestConversationCommandQuotesAWorkspaceThatTriesToBeShell(t *testing.T) {
-	inner := conversationCommand("/x'; touch /pwned; '", "")[4]
-	if !strings.HasPrefix(inner, `cd '/x'\''; touch /pwned; '\''' && `) {
+	inner := conversationCommand("/x'; touch /pwned; '", "", "/tmp/t.pid")[4]
+	if !strings.HasPrefix(inner, wrapTurn("", "/tmp/t.pid")+`cd '/x'\''; touch /pwned; '\''' && `) {
 		t.Errorf("inner = %s", inner)
 	}
 }
 
 func TestConversationCommandWithoutAWorkspaceStaysWhereItIs(t *testing.T) {
-	if inner := conversationCommand("", "")[4]; strings.Contains(inner, "cd ") {
+	if inner := conversationCommand("", "", "/tmp/t.pid")[4]; strings.Contains(inner, "cd ") {
 		t.Errorf("inner = %s", inner)
 	}
 }

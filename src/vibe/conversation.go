@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -36,8 +38,9 @@ func shellQuote(s string) string {
 const asAgentScript = `if [ "$(id -u)" = 0 ]; then exec su - "$(id -un 1000 2>/dev/null || echo agent)" -c "$1"; else exec bash -lc "$1"; fi`
 
 // conversationCommand is what sbx exec runs for one turn: claude, in the
-// folder the sandbox works in, resuming session when there is one.
-func conversationCommand(workspace, session string) []string {
+// folder the sandbox works in, resuming session when there is one, wrapped
+// (see wrapTurn) to record in pidFile where it runs.
+func conversationCommand(workspace, session, pidFile string) []string {
 	words := make([]string, 0, len(agentArgs)+2)
 	for _, a := range agentArgs {
 		words = append(words, shellQuote(a))
@@ -45,19 +48,91 @@ func conversationCommand(workspace, session string) []string {
 	if resumableSession.MatchString(session) {
 		words = append(words, "--resume", shellQuote(session))
 	}
-	inner := "exec " + strings.Join(words, " ")
+	inner := strings.Join(words, " ")
 	if workspace != "" {
 		inner = "cd " + shellQuote(workspace) + " && " + inner
 	}
-	return asAgent(inner)
+	return asAgent(wrapTurn(inner, pidFile))
+}
+
+// wrapTurn runs agent, a turn's command, from a shell that writes its
+// process ID to pidFile and removes it as it ends. Ending the sbx exec a
+// turn runs in (the page's Stop, a new prompt) doesn't end what it runs in
+// the sandbox: the agent carried on, unseen, and the next prompt started a
+// second one on the same conversation. With pidFile, stopTurnScript can
+// stop it, and all it started. The agent isn't exec'd, so the shell stays
+// its parent: what's under it is the turn's.
+func wrapTurn(agent, pidFile string) string {
+	return "echo $$ > " + shellQuote(pidFile) + "; trap " + shellQuote("rm -f "+shellQuote(pidFile)) + " EXIT; " + agent
+}
+
+// turnStopWithin is how long a stopped turn's processes have to end before
+// they're killed.
+const turnStopWithin = "50" // tenths of a second
+
+// stopTurnScript stops the turn wrapTurn recorded in pidFile: its shell and
+// everything under it (the agent, its tool calls, what it left running) are
+// asked to end, and killed if they haven't within 5 seconds, which it then
+// says. A turn that has already ended has no pidFile: there's nothing to do.
+func stopTurnScript(pidFile string) string {
+	return `f=` + shellQuote(pidFile) + `
+[ -f "$f" ] || exit 0
+tree() { for c in $(pgrep -P "$1"); do tree "$c"; done; echo "$1"; }
+alive() { kill -0 "$1" 2>/dev/null && ! grep -q ') Z ' "/proc/$1/stat" 2>/dev/null; }
+pids=$(tree "$(cat "$f")")
+kill -TERM $pids 2>/dev/null
+i=0
+while [ "$i" -lt ` + turnStopWithin + ` ]; do
+  left=
+  for p in $pids; do alive "$p" && left="$left $p"; done
+  [ -z "$left" ] && { rm -f "$f"; exit 0; }
+  sleep 0.1
+  i=$((i + 1))
+done
+kill -KILL $left 2>/dev/null
+rm -f "$f"
+echo "killed what was still running 5s after being asked to stop:$left"
+`
+}
+
+// stopTurnWithin bounds reaching into the sandbox to stop a turn.
+const stopTurnWithin = 20 * time.Second
+
+// stopTurn stops the turn recorded in pidFile in sandbox name, saying so
+// when it had to kill it, or couldn't reach it. A variable for tests.
+var stopTurn = func(name, pidFile string) {
+	ctx, cancel := context.WithTimeout(context.Background(), stopTurnWithin)
+	defer cancel()
+	out, err := sbxrun.ExecStdout(ctx, name, "sh", "-c", stopTurnScript(pidFile))
+	if err != nil {
+		note("WARNING: couldn't stop the agent's turn in sandbox '%s', so it may still be running: %v — 'sbx exec %s ps -ef' shows", name, err, name)
+		return
+	}
+	if said := strings.TrimSpace(out); said != "" {
+		note("stopping the agent's turn in sandbox '%s': %s", name, said)
+	}
 }
 
 // converse is the companion page's conversation with the agent of sandbox
-// name, which works in workspace (the same path inside as out).
+// name, which works in workspace (the same path inside as out). A turn
+// ended early (stopped, or by the next prompt) is stopped in the sandbox
+// too, before it counts as ended, so a second can't start alongside it.
 func converse(name, workspace string) companion.Converser {
 	return func(ctx context.Context, prompt, session string, delivered func(), onLine func([]byte)) error {
-		return sbxrun.ExecStream(ctx, name, prompt, delivered, onLine, conversationCommand(workspace, session)...)
+		pidFile := "/tmp/vibe-turn-" + turnID() + ".pid"
+		err := sbxrun.ExecStream(ctx, name, prompt, delivered, onLine, conversationCommand(workspace, session, pidFile)...)
+		if ctx.Err() != nil {
+			stopTurn(name, pidFile)
+		}
+		return err
 	}
+}
+
+// turnID names a turn's pidFile: random, so turns never share one.
+func turnID() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // transcripts is how the agent's own record of a session — what --resume
