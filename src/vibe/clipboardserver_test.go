@@ -145,8 +145,8 @@ func TestTheClipboardHookIsRegisteredForPromptsAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The settings are the heredoc's body: the line after <<'JSON', up to
-	// the line JSON.
-	text := string(script)
+	// the line JSON. Git on Windows checks the script out with CRLF.
+	text := strings.ReplaceAll(string(script), "\r\n", "\n")
 	marker := strings.Index(text, "<<'JSON'")
 	if marker < 0 {
 		t.Fatal("no settings found in the install script")
