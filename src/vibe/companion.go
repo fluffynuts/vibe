@@ -377,6 +377,9 @@ func keepAwakeFor(name string) func() string {
 			sbxrun.ExecSilentContext(ctx, name, "true")
 			return ""
 		}
+		if err := vmCheck(); err != nil {
+			return "sandbox '" + name + "' was stopped, and can't be started again for the page: " + err.Error()
+		}
 		startCtx, cancelStart := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancelStart()
 		if !startSandboxForPage(startCtx, name) {

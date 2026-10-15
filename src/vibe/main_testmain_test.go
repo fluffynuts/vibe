@@ -26,5 +26,8 @@ func TestMain(m *testing.M) {
 	// And on the same machine, whatever it really is: one big enough for
 	// any memory setting the tests use, so none is lowered unasked.
 	hostmem.Total = func() (uint64, error) { return 64 * hostmem.GiB, nil }
+	// One whose KVM works, whether this one's does or not (a CI runner, or
+	// a sandbox, may have none): tests of a machine where it doesn't say so.
+	vmCheck = func() error { return nil }
 	os.Exit(m.Run())
 }

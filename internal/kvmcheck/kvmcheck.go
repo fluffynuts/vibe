@@ -1,9 +1,10 @@
-// Package kvmcheck checks, for vibe --install on Linux, that sbx will be
+// Package kvmcheck checks, on Linux, that sbx will be
 // able to start its VMs: that /dev/kvm exists, and that the user can read
 // and write it.
 package kvmcheck
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -31,15 +32,33 @@ type State struct {
 	User      string
 }
 
-// Advice is what to tell the user about s, a line per entry; none when
-// all's well.
+// Advice is what to tell the user about s, as warnings, a line per entry;
+// none when all's well. vibe --install warns; starting a VM refuses (Err).
 func Advice(s State) []string {
+	lines := problems(s)
+	for i, line := range lines {
+		lines[i] = "WARNING: " + line
+	}
+	return lines
+}
+
+// Err is why sbx can't start its VMs, with what to do about it; nil when
+// all's well.
+func Err(s State) error {
+	lines := problems(s)
+	if len(lines) == 0 {
+		return nil
+	}
+	return errors.New(strings.Join(lines, "\n"))
+}
+
+func problems(s State) []string {
 	if !s.Exists {
 		if !s.CPUVirt {
 			return []string{
-				"WARNING: " + Device + " doesn't exist, and this CPU doesn't advertise hardware virtualization (vmx/svm),",
-				"WARNING: so sbx can't start its VMs. Enable virtualization (VT-x / AMD-V / SVM) in your BIOS/UEFI,",
-				"WARNING: or, inside a VM, enable nested virtualization on its host.",
+				Device + " doesn't exist, and this CPU doesn't advertise hardware virtualization (vmx/svm),",
+				"so sbx can't start its VMs. Enable virtualization (VT-x / AMD-V / SVM) in your BIOS/UEFI,",
+				"or, inside a VM, enable nested virtualization on its host.",
 			}
 		}
 		module := "kvm_intel"
@@ -47,32 +66,37 @@ func Advice(s State) []string {
 			module = "kvm_amd"
 		}
 		return []string{
-			"WARNING: " + Device + " doesn't exist — the kvm kernel modules aren't loaded, so sbx can't start its VMs.",
-			"WARNING: load them with: sudo modprobe " + module,
-			fmt.Sprintf("WARNING: and to load them at every boot: echo %s | sudo tee /etc/modules-load.d/kvm.conf", module),
+			Device + " doesn't exist — the kvm kernel modules aren't loaded, so sbx can't start its VMs.",
+			"load them with: sudo modprobe " + module,
+			fmt.Sprintf("and to load them at every boot: echo %s | sudo tee /etc/modules-load.d/kvm.conf", module),
 		}
 	}
 	if s.Accessible {
 		return nil
 	}
-	lines := []string{"WARNING: you can't read and write " + Device + ", so sbx can't start its VMs."}
+	lines := []string{"you can't read and write " + Device + ", so sbx can't start its VMs."}
+	// newgrp starts a shell with the group, so vibe run from that shell
+	// has it without logging out; only that shell, though.
+	newgrp := "or, for this terminal only, run 'newgrp " + s.Group + "' and run vibe from the shell it starts."
 	switch {
 	case s.Group == "" || !s.GroupRW:
 		lines = append(lines,
-			"WARNING: its permissions don't give its group access either; ask your distribution's docs how KVM",
-			"WARNING: access is granted (usually a udev rule making it root:kvm, mode 0660).")
+			"its permissions don't give its group access either; ask your distribution's docs how KVM",
+			"access is granted (usually a udev rule making it root:kvm, mode 0660).")
 	case s.InGroup && !s.InSession:
 		lines = append(lines,
-			"WARNING: you're in its group, '"+s.Group+"', but this login session started before you were added:",
-			"WARNING: log out and back in (or restart) to pick it up.")
+			"you're in its group, '"+s.Group+"', but this login session started before you were added:",
+			"log out and back in (or restart) to pick it up,",
+			newgrp)
 	default:
 		user := s.User
 		if user == "" {
 			user = "$USER"
 		}
 		lines = append(lines,
-			"WARNING: add yourself to its group, '"+s.Group+"', then log out and back in:",
-			"WARNING:   sudo usermod -aG "+s.Group+" "+user)
+			"add yourself to its group, '"+s.Group+"', then log out and back in:",
+			"  sudo usermod -aG "+s.Group+" "+user,
+			newgrp)
 	}
 	return lines
 }

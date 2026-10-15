@@ -42,3 +42,27 @@ func TestAdvice(t *testing.T) {
 		}
 	}
 }
+
+func TestJoiningTheGroupCanBePickedUpWithoutLoggingOut(t *testing.T) {
+	for name, s := range map[string]State{
+		"not in the group":               {Exists: true, Group: "kvm", GroupRW: true, User: "me"},
+		"added, not yet logged in again": {Exists: true, Group: "kvm", GroupRW: true, InGroup: true, User: "me"},
+	} {
+		if got := strings.Join(Advice(s), "\n"); !strings.Contains(got, "newgrp kvm") {
+			t.Errorf("%s: Advice = %q, want it to mention newgrp", name, got)
+		}
+	}
+}
+
+func TestErrIsTheAdviceWhenAVMCantStart(t *testing.T) {
+	if err := Err(State{Exists: true, Accessible: true}); err != nil {
+		t.Errorf("all's well: %v", err)
+	}
+	err := Err(State{Exists: true, Group: "kvm", GroupRW: true, User: "me"})
+	if err == nil {
+		t.Fatal("no error when the user can't use /dev/kvm")
+	}
+	if msg := err.Error(); !strings.Contains(msg, "sudo usermod -aG kvm me") || strings.Contains(msg, "WARNING") {
+		t.Errorf("Err = %q, want the advice, as an error rather than warnings", msg)
+	}
+}

@@ -307,6 +307,9 @@ func run(argv []string) error {
 		if args.Path != "" {
 			return fmt.Errorf("--update-sandboxes takes no path argument")
 		}
+		if err := vmCheck(); err != nil {
+			return err
+		}
 		return doUpdateSandboxes(lay, args.Force)
 	}
 
@@ -337,6 +340,11 @@ func run(argv []string) error {
 		name = pathresolve.DeriveName(target)
 	}
 
+	if startsAVM(args) {
+		if err := vmCheck(); err != nil {
+			return err
+		}
+	}
 	switch {
 	case args.Stop:
 		return doStop(vibeHome, name, target, args.Force)

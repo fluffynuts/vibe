@@ -188,6 +188,11 @@ func (a *companionAdmin) sandboxState() string {
 }
 
 func (a *companionAdmin) do(ctx context.Context, action companion.AdminAction) error {
+	if pageActionStartsAVM(action.Kind) {
+		if err := vmCheck(); err != nil {
+			return err
+		}
+	}
 	switch action.Kind {
 	case companion.AdminStart:
 		return a.start(ctx)

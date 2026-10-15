@@ -68,7 +68,10 @@ found on, later installs don't check again.
 On Linux, it checks that `/dev/kvm` exists (if not, the kvm kernel modules aren't loaded, or
 virtualization is off in your BIOS/UEFI) and that you can read and write it. If you can't, it names
 the group to add yourself to (usually `kvm`), or tells you to log out and back in if you've been
-added since you logged in.
+added since you logged in (or, without logging out, `newgrp kvm`, then vibe from the shell it starts).
+The install only warns; after that, vibe checks again before anything that would start a sandbox
+(creating, attaching, `--headless`, a rebuild, `--update-sandboxes`, Start or Rebuild on the page),
+and refuses with the same advice, rather than leave sbx to fail part-way.
 `install.sh` needs `curl` or `wget`, and `unzip` (or `python3`).
 
 Run the same command again to upgrade, or, once vibe is installed:

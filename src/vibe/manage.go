@@ -634,6 +634,11 @@ func (m *companionManager) Do(ctx context.Context, action companion.ManageAction
 }
 
 func (m *companionManager) do(ctx context.Context, kind string, p *inventoryProfile, s *inventorySandbox) error {
+	if pageActionStartsAVM(kind) {
+		if err := vmCheck(); err != nil {
+			return err
+		}
+	}
 	if s != nil {
 		switch kind {
 		case companion.ManageStart:
