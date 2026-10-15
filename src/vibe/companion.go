@@ -15,6 +15,7 @@ import (
 	"vibe/internal/layout"
 	"vibe/internal/policy"
 	"vibe/internal/portalloc"
+	"vibe/internal/review"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
 )
@@ -333,6 +334,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		Prepare:          readyForTurn(name),
 		History:          state.ConversationPath(vibeHome, name),
 		LatestReview:     latestReviewFor(name, inst),
+		ReviewTab:        reviewTabFor(vibeHome, name, inst),
 		Admin:            adminFor(lay, name, inst.Target),
 		Manage:           &companionManager{lay: lay, own: name},
 		ThemeColor:       themeColorFor(lay, name, inst, agent),
@@ -348,6 +350,17 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		note("companion: no browser to open it in from here — open the URL above yourself")
 	}
 	return func() { srv.Close() }, true, srv.Cancel
+}
+
+// reviewTabFor is what the page's Review tab works on: the sandbox's folder,
+// which is the same path on the host, and its reviews, kept on the host
+// (see docs/plan-review-tab.md). Nil, and no tab, for a sandbox with no
+// folder on record.
+func reviewTabFor(vibeHome, name string, inst state.Instance) *companion.ReviewTab {
+	if inst.Target == "" {
+		return nil
+	}
+	return &companion.ReviewTab{Workspace: inst.Target, Store: review.NewStore(state.ReviewPath(vibeHome, name))}
 }
 
 // stoppedOnPurpose is set while the sandbox is stopped because someone

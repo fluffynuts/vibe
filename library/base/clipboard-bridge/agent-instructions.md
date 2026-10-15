@@ -4,8 +4,9 @@ Pasting images into this terminal doesn't reach the sandbox on every host,
 so the user has a clipboard page in their browser instead. Whatever they
 paste, drop or pick there reaches you:
 
-- with their next message, or at your next tool call if you're already
-  working, as added context listing each item. Short text is quoted inline.
+- with their next message (never part-way through your turn), as added
+  context listing each item, with the title they gave it, if any. Short
+  text is quoted inline.
   Images and files come as paths under `~/.local/state/vibe/clipboard/items/`.
   Look at an image with the Read tool before you answer.
 - as the "current" item when they press Ctrl-V in this terminal. Then it

@@ -1,9 +1,9 @@
 package companion
 
 import (
-	"errors"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"slices"

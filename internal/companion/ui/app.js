@@ -49,7 +49,7 @@
   // How long the clipboard page gets to come up before the page says so and
   // offers to start it.
   const CLIPBOARD_PATIENCE_MS = 30000
-  const TABS = ['conversation', 'log', 'rules', 'fs', 'admin', 'manage']
+  const TABS = ['conversation', 'review', 'log', 'rules', 'fs', 'admin', 'manage']
   // The tabs about a sandbox: a page served for none ('vibe --manage') has
   // only the Profiles tab.
   const SANDBOX_TABS = ['log', 'rules', 'fs']
@@ -468,6 +468,7 @@
       state.admin = !!res.body.admin
       $('tab-admin').hidden = !state.admin
       $('tab-manage').hidden = !res.body.manage
+      $('tab-review').hidden = !res.body.review
       for (const t of SANDBOX_TABS) $('tab-' + t).hidden = res.body.sandboxTabs === false
       showAttention(res.body.attention || {})
       const moved = url !== state.clipboardUrl
@@ -573,6 +574,7 @@
     if (state.tab === 'conversation') { loadState(); return }
     if (state.tab === 'admin') { loadState(); loadAdmin(); loadInstructions(false); return }
     if (state.tab === 'manage') { loadState(); loadManage(); return }
+    if (state.tab === 'review') { loadState(); loadReview(reviewView.files === null); return }
     loadState()
     load(state.tab)
   }
@@ -807,6 +809,184 @@
       tick()
     }
     dialog.showModal()
+  }
+
+  // --- the Review tab -----------------------------------------------------
+
+  // The review, and the diff it's of: the diff is worked out when the tab
+  // is first shown and on Refresh; polls fetch the review alone (git on a
+  // large repository every couple of seconds would be costly). drafts are
+  // replies being typed, by thread, kept across redraws.
+  const reviewView = { review: null, files: null, diffError: '', key: '', drafts: new Map(), loading: false }
+  const R = window.vibeReview
+  // A file this long is shown folded until asked for: a big generated file
+  // shouldn't bury the rest.
+  const REVIEW_FOLD_LINES = 600
+
+  async function loadReview(withDiff) {
+    if (reviewView.loading) return
+    reviewView.loading = true
+    try {
+      const res = await api('/api/review' + (withDiff ? '?diff=1' : ''), { timeout: 40000 })
+      reached(true)
+      if (!res.ok) { problem(res); return }
+      reviewView.review = res.body.review
+      if (withDiff) {
+        reviewView.files = res.body.diff || []
+        reviewView.diffError = res.body.diffError || ''
+      }
+      drawReview()
+    } catch (e) {
+      reached(false)
+    } finally {
+      reviewView.loading = false
+    }
+  }
+
+  // typingAReply says a reply box on the tab has focus: redrawing now would
+  // take it away mid-word, so the redraw waits for the next poll.
+  function typingAReply() {
+    const a = document.activeElement
+    return a && a.tagName === 'TEXTAREA' && $('panel-review').contains(a)
+  }
+
+  function drawReview() {
+    const rv = reviewView.review
+    if (!rv) return
+    const key = JSON.stringify(rv) + '|' + (reviewView.files ? reviewView.files.length : -1) + reviewView.diffError
+    if (key === reviewView.key || typingAReply()) return
+    reviewView.key = key
+    for (const box of $('panel-review').querySelectorAll('textarea[data-thread]')) {
+      if (box.value.trim()) reviewView.drafts.set(box.dataset.thread, box.value)
+    }
+    $('review-wait').hidden = reviewView.files !== null
+    $('review-title').textContent = rv.note ? 'Review: ' + rv.note : 'Review'
+    $('review-state').hidden = !rv.state
+    $('review-state').textContent = rv.state === 'in progress' ? 'the agent is still reviewing' : rv.state || ''
+    $('review-of').textContent = rv.commit ? 'of commit ' + rv.commit : rv.ref ? 'against ' + rv.ref : 'of the uncommitted changes'
+    const open = rv.threads.filter((t) => t.status === 'open').length
+    $('review-count').textContent = rv.threads.length ? open + ' open of ' + rv.threads.length : 'no comments yet'
+    $('review-error').hidden = !reviewView.diffError
+    $('review-error').textContent = reviewView.diffError
+    $('review-problems').hidden = !(rv.problems || []).length
+    $('review-problems').replaceChildren(...(rv.problems || []).map((p) => el('li', { text: "The agent's request failed: " + p })))
+
+    const files = reviewView.files || []
+    const threads = new Map(rv.threads.map((t) => [t.id, t]))
+    const placed = R.placeThreads(files, rv.threads)
+    reviewView.outdated = placed.outdated
+    const cards = (ids) => ids.map((id) => threadCard(threads.get(id)))
+    $('review-general').replaceChildren(...cards(placed.general),
+      ...(placed.elsewhere.length ? [el('p', { class: 'muted', text: 'On files not in this diff:' }), ...cards(placed.elsewhere)] : []))
+
+    const ordered = R.inReadingOrder(files, rv.order)
+    const stops = ordered.filter((o) => o.stop)
+    $('review-order').hidden = !stops.length
+    $('review-order').replaceChildren(...stops.map((o) => el('li', {},
+      el('a', { href: '#review-file-' + files.indexOf(o.file), text: o.file.path }),
+      o.stop.label ? ' — ' + o.stop.label : '')))
+
+    $('review-files').replaceChildren(...(files.length || reviewView.files === null ? [] : [el('p', { class: 'muted', text: 'Nothing to review: no changes.' })]),
+      ...ordered.map((o) => fileCard(o.file, o.stop, files.indexOf(o.file), placed, threads)))
+  }
+
+  function fileCard(f, stop, index, placed, threads) {
+    const after = placed.after[f.path] || {}
+    const marked = placed.lines[f.path] || {}
+    const total = (f.hunks || []).reduce((n, h) => n + h.lines.length, 0)
+    const head = el('header', {}, el('code', { text: f.status === 'renamed' ? f.oldPath + ' → ' + f.path : f.path }),
+      el('span', { class: 'muted', text: f.status }),
+      stop ? el('span', { class: 'review-stop', text: stop.label || 'in the reading order' }) : null)
+    const card = el('section', { class: 'review-file', id: 'review-file-' + index }, head)
+    if (stop && stop.body) card.append(el('div', { class: 'note' }, markdown(stop.body)))
+    const off = placed.offDiff[f.path] || []
+    if (off.length) card.append(el('div', { class: 'note' }, el('p', { class: 'muted', text: 'On lines this diff doesn\'t show:' }),
+      ...off.map((id) => threadCard(threads.get(id)))))
+    if (f.binary) { card.append(el('p', { class: 'note muted', text: 'A binary file: no lines to show.' })); return card }
+    if (f.tooLarge) { card.append(el('p', { class: 'note muted', text: 'Too large to show.' })); return card }
+    const table = el('table', { class: 'review-lines' })
+    const fill = () => {
+      const rows = []
+      ;(f.hunks || []).forEach((h, hi) => {
+        rows.push(el('tr', { class: 'hunk' }, el('td', { colspan: '3', text: '@@ -' + h.oldStart + ' +' + h.newStart + ' @@ ' + (h.section || '') })))
+        h.lines.forEach((l, li) => {
+          const key = hi + ':' + li
+          const sign = l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' '
+          rows.push(el('tr', { class: l.kind + (marked[key] ? ' marked' : '') },
+            el('td', { class: 'num', text: l.old ? String(l.old) : '' }),
+            el('td', { class: 'num', text: l.new ? String(l.new) : '' }),
+            el('td', { class: 'code', text: sign + l.text })))
+          if (after[key]) rows.push(el('tr', { class: 'threads' }, el('td', { colspan: '3' }, ...after[key].map((id) => threadCard(threads.get(id))))))
+        })
+      })
+      table.replaceChildren(...rows)
+    }
+    // A file with comments is never folded: they'd be hidden.
+    if (total > REVIEW_FOLD_LINES && !Object.keys(after).length) {
+      card.append(el('p', { class: 'note' }, el('button', { type: 'button', class: 'ghost',
+        text: 'Show ' + total + ' lines', onclick: (ev) => { ev.target.parentNode.replaceWith(table); fill() } })))
+    } else {
+      fill()
+      card.append(table)
+    }
+    return card
+  }
+
+  function threadCard(t) {
+    const comments = t.comments.map((c) => el('div', { class: 'comment' },
+      el('div', {}, el('span', { class: 'who', text: c.author === 'agent' ? 'Agent' : 'You' }), stamp(c.at)),
+      markdown(c.body)))
+    const where = t.file ? t.file + ':' + t.line + (t.endLine > t.line ? '–' + t.endLine : '') + (t.side === 'old' ? ' (old)' : '') : 'on the whole review'
+    const box = el('textarea', { 'data-thread': String(t.id), placeholder: 'Reply…', 'aria-label': 'Reply to comment ' + t.id })
+    box.value = reviewView.drafts.get(String(t.id)) || ''
+    box.addEventListener('input', () => reviewView.drafts.set(String(t.id), box.value))
+    const act = (op) => async () => {
+      const body = box.value.trim()
+      if (op === 'reply' && !body) { box.focus(); return }
+      try {
+        const res = await post('/api/review/do', { op, thread: t.id, body: op === 'reopen' ? '' : body })
+        reached(true)
+        if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
+        reviewView.drafts.delete(String(t.id))
+        box.value = ''
+        reviewView.review = res.body.review
+        box.blur()
+        drawReview()
+      } catch (e) {
+        reached(false)
+        toast('Could not reach vibe.', true)
+      }
+    }
+    // A turn: the answer comes back on this comment, from the agent's
+    // vibe-review reply, and the turn shows on the Conversation tab too.
+    const ask = async () => {
+      const body = box.value.trim()
+      if (!body) { box.focus(); toast('Type your question first.'); return }
+      try {
+        const res = await post('/api/review/ask', { thread: t.id, body })
+        reached(true)
+        if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
+        reviewView.drafts.delete(String(t.id))
+        box.value = ''
+        box.blur()
+        toast('Asked — the answer comes here, on comment #' + t.id + '.')
+        loadReview(false)
+      } catch (e) {
+        reached(false)
+        toast('Could not reach vibe.', true)
+      }
+    }
+    const open = t.status === 'open'
+    return el('div', { class: 'review-thread ' + t.status },
+      el('div', { class: 'muted' }, '#' + t.id + ' · ' + where + (open ? '' : ' · ' + t.status),
+        reviewView.outdated && reviewView.outdated.has(t.id) ? el('span', { class: 'review-outdated', text: ' · the code has changed since' }) : null),
+      ...comments, box,
+      el('div', { class: 'bar' },
+        el('button', { type: 'button', text: 'Reply', onclick: act('reply') }),
+        state.conversation ? el('button', { type: 'button', class: 'ghost', text: 'Ask the agent', title: 'Send your reply to the agent as a question: it answers here', onclick: ask }) : null,
+        open ? el('button', { type: 'button', class: 'ghost', text: 'Resolve', title: 'With your reply, if you typed one', onclick: act('resolve') }) : null,
+        open ? el('button', { type: 'button', class: 'ghost', text: 'Dismiss', title: 'With your reply, if you typed one', onclick: act('dismiss') }) : null,
+        open ? null : el('button', { type: 'button', class: 'ghost', text: 'Reopen', onclick: act('reopen') })))
   }
 
   // --- the Admin tab ------------------------------------------------------
@@ -1342,6 +1522,7 @@
       updateManage()
     })
     $('manage-delete').addEventListener('click', deleteTicked)
+    $('review-refresh').addEventListener('click', () => loadReview(true))
     const filter = $('manage-filter')
     filter.value = manageView.filter
     filter.addEventListener('input', () => {

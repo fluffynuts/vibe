@@ -213,6 +213,29 @@ ul.checks label { display: flex; gap: 8px; align-items: baseline; cursor: pointe
 ul.checks .was { font-size: 11px; color: var(--muted); }
 ul.plain li { display: flex; gap: 8px; align-items: center; }
 ul.plain li .spacer { flex: 1; }
+/* The Review tab: a diff, with comment threads under the lines they're on. */
+.review-file { border: 1px solid var(--line); border-radius: 6px; margin: 12px 0; background: var(--panel); overflow: hidden; }
+.review-file > header { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--row-hover); }
+.review-file > header code { font-weight: 600; }
+.review-stop { color: var(--accent); }
+.review-lines { width: 100%; border-collapse: collapse; font: 12px/1.45 var(--mono); }
+.review-lines td { padding: 0 8px; vertical-align: top; }
+.review-lines td.num { width: 1%; min-width: 3em; text-align: right; color: var(--muted); user-select: none; }
+.review-lines td.code { white-space: pre-wrap; word-break: break-word; }
+.review-lines tr.add td.code { background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.review-lines tr.del td.code { background: color-mix(in srgb, var(--bad) 14%, transparent); }
+.review-lines tr.hunk td { color: var(--muted); background: var(--row-hover); padding: 2px 8px; }
+.review-lines tr.marked td.num { box-shadow: inset 3px 0 0 var(--accent); }
+.review-lines tr.threads > td { padding: 6px 10px; font: inherit; font-family: inherit; }
+.review-thread { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 4px 0; background: var(--bg); font: 14px/1.45 system-ui, sans-serif; white-space: normal; }
+.review-thread.resolved, .review-thread.dismissed { opacity: .7; }
+.review-thread .who { font-weight: 600; margin-right: 6px; }
+.review-thread .comment + .comment { border-top: 1px dashed var(--line); margin-top: 6px; padding-top: 6px; }
+.review-thread textarea { width: 100%; min-height: 3em; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; margin-top: 6px; }
+.review-thread .bar { margin-top: 6px; }
+.review-order li { margin: 2px 0; }
+.review-outdated { color: var(--amber); }
+.review-problems { margin: 6px 0; padding-left: 1.2em; }
 .mgr-filter { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; min-width: 16em; }
 mark.mgr-hit { background: var(--warn-bg); color: inherit; border-radius: 2px; }
 .tab-dot { display: inline-block; width: 7px; height: 7px; margin-left: 6px; border-radius: 50%; background: var(--tick-seen); vertical-align: middle; }

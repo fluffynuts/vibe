@@ -255,6 +255,16 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 	if err != nil {
 		return err
 	}
+	// The companion page's Review tab keeps the sandbox's reviews on the
+	// host; vibe-review, in the sandbox, drops the agent's comments in the
+	// inbox there (see docs/plan-review-tab.md).
+	reviews := state.ReviewPath(vibeHome, name)
+	if err := os.MkdirAll(filepath.Join(reviews, "inbox"), 0o755); err != nil {
+		return err
+	}
+	mounts = append(mounts, reviews)
+	env = append(env, "VIBE_REVIEW_DIR="+reviews)
+
 	var publishArgs []string
 	var publishRecords []state.PublishRecord
 	for _, m := range publishMappings {

@@ -1,0 +1,5 @@
+# Every text file is checked out with LF line endings, on every OS. What's in
+# library/ is copied into Linux sandboxes, where a script checked out with
+# CRLF (git's default on Windows) breaks: "#!/bin/sh\r" doesn't run. The
+# PowerShell scripts run as well with LF. Binary files are left as they are.
+* text=auto eol=lf

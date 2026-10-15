@@ -1,0 +1,16 @@
+#!/bin/sh
+# vibe: description: Review the changes in this folder for the user, on the companion page's Review tab
+# vibe: startup: false
+# The work is done by ~/.local/share/vibe/review-cli.js: 'vibe-review' alone
+# says how to use it.
+script=/home/agent/.local/share/vibe/review-cli.js
+# A shell that hasn't been through the persistent env file (where a node
+# version manager records itself) may not have node on its PATH yet.
+if ! command -v node >/dev/null 2>&1 && [ -f /etc/sandbox-persistent.sh ]; then
+  . /etc/sandbox-persistent.sh >/dev/null 2>&1
+fi
+if ! command -v node >/dev/null 2>&1; then
+  echo "vibe-review: node isn't installed in this sandbox, and vibe-review needs it" >&2
+  exit 1
+fi
+exec node "$script" "$@"

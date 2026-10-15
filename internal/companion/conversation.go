@@ -591,16 +591,25 @@ func (s *Server) conversationSend(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "there is nothing to send"})
 		return
 	}
-	session, ctx, ok := "", context.Context(nil), s.convo.supersede()
-	if ok {
-		session, ctx, ok = s.convo.begin(req.Prompt)
-	}
-	if !ok {
+	if !s.startTurn(req.Prompt) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "the agent is still answering the last prompt"})
 		return
 	}
-	go s.convo.run(ctx, s.cfg.Prepare, s.cfg.Converse, s.cfg.LatestReview, req.Prompt, session)
 	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
+}
+
+// startTurn sends prompt to the agent as a turn, in the background; false
+// when it can't, the agent still answering the last one.
+func (s *Server) startTurn(prompt string) bool {
+	session, ctx, ok := "", context.Context(nil), s.convo.supersede()
+	if ok {
+		session, ctx, ok = s.convo.begin(prompt)
+	}
+	if !ok {
+		return false
+	}
+	go s.convo.run(ctx, s.cfg.Prepare, s.cfg.Converse, s.cfg.LatestReview, prompt, session)
+	return true
 }
 
 func (s *Server) conversationStop(w http.ResponseWriter, r *http.Request) {

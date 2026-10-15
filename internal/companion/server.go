@@ -86,6 +86,9 @@ type Config struct {
 	// shows; an error ends the turn with it, unrun. Nil means nothing is
 	// done first.
 	Prepare func(ctx context.Context, say func(string)) error
+	// ReviewTab is what the Review tab shows; nil means the page has no
+	// such tab.
+	ReviewTab *ReviewTab
 	// LatestReview reads the diffity link the sandbox gave out last ("" for
 	// none), which the conversation announces when a turn has made a new
 	// one; nil means the sandbox has no diffity. It may be slow, but should
@@ -221,6 +224,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /app.css", static)
 	mux.Handle("GET /markdown.js", static)
 	mux.Handle("GET /manage.js", static)
+	mux.Handle("GET /review.js", static)
 
 	mux.HandleFunc("GET /api/ping", s.ping)
 	mux.HandleFunc("GET /api/state", s.authed(s.state))
@@ -243,6 +247,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/instructions", s.editing(s.instructionsSave))
 	mux.HandleFunc("POST /api/admin/instructions/optimise", s.editing(s.instructionsOptimise))
 	mux.HandleFunc("POST /api/awake", s.authed(s.changing(s.keepAwake)))
+	mux.HandleFunc("GET /api/review", s.reviewing(s.reviewState))
+	mux.HandleFunc("POST /api/review/do", s.reviewing(s.reviewDo))
+	mux.HandleFunc("POST /api/review/ask", s.reviewing(s.reviewAsk))
 	mux.HandleFunc("GET /api/manage", s.authed(s.managed(s.manageState)))
 	mux.HandleFunc("POST /api/manage/plan", s.managing(s.managePlan))
 	mux.HandleFunc("POST /api/manage/delete", s.managing(s.manageDelete))
@@ -363,6 +370,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"conversation":      s.cfg.Converse != nil,
 		"admin":             s.cfg.Admin != nil,
 		"manage":            s.cfg.Manage != nil,
+		"review":            s.cfg.ReviewTab != nil,
 		// A page for no sandbox has only the Profiles tab.
 		"sandboxTabs": s.cfg.Sandbox != "",
 	})

@@ -21,6 +21,7 @@
 
   <nav class="tabs" role="tablist" id="tabs">
     <button role="tab" data-tab="conversation" id="tab-conversation" hidden>Conversation</button>
+    <button role="tab" data-tab="review" id="tab-review" hidden>Review</button>
     <button role="tab" data-tab="log" id="tab-log">Network log</button>
     <button role="tab" data-tab="rules" id="tab-rules">Network rules</button>
     <button role="tab" data-tab="fs" id="tab-fs">Filesystem rules</button>
@@ -112,6 +113,23 @@
         <tbody></tbody>
       </table></div>
       <p id="fs-note" class="muted note">Read-only: sbx doesn't log filesystem access yet, so there is only the rules to show.</p>
+    </section>
+
+    <section id="panel-review" class="panel panel-review" hidden>
+      <div class="bar">
+        <strong id="review-title">Review</strong>
+        <span id="review-state" class="pill" hidden></span>
+        <span id="review-of" class="muted"></span>
+        <span class="spacer"></span>
+        <span id="review-count" class="muted"></span>
+        <button type="button" id="review-refresh" class="ghost" title="Work out the diff afresh">Refresh</button>
+      </div>
+      <p id="review-error" class="note bad-text" hidden></p>
+      <ul id="review-problems" class="note bad-text review-problems" hidden></ul>
+      <p id="review-wait" class="note muted">Working out the diff…</p>
+      <div id="review-general"></div>
+      <ol id="review-order" class="review-order" hidden></ol>
+      <div id="review-files"></div>
     </section>
 
     <section id="panel-admin" class="panel panel-admin" hidden>
@@ -237,6 +255,7 @@
   <div id="toast" class="toast" role="status" hidden></div>
   <script src="/markdown.js"></script>
   <script src="/manage.js"></script>
+  <script src="/review.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

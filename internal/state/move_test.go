@@ -17,6 +17,7 @@ func TestMovingASandboxsRecordsTakesEverythingVibeKeepsForIt(t *testing.T) {
 		ConversationPath(home, "old"):                               "{}",
 		TranscriptPath(home, "old"):                                 "tgz",
 		filepath.Join(ClipboardPath(home, "old"), "items", "1.png"): "png",
+		filepath.Join(ReviewPath(home, "old"), "review.json"):       "{}",
 	}
 	for file, content := range files {
 		os.MkdirAll(filepath.Dir(file), 0o700)
@@ -37,6 +38,7 @@ func TestMovingASandboxsRecordsTakesEverythingVibeKeepsForIt(t *testing.T) {
 	for _, moved := range []string{
 		tokenPath(home, "new"), GitTokenPath(home, "new"), ConversationPath(home, "new"), TranscriptPath(home, "new"),
 		filepath.Join(ClipboardPath(home, "new"), "items", "1.png"),
+		filepath.Join(ReviewPath(home, "new"), "review.json"),
 	} {
 		if _, err := os.Stat(moved); err != nil {
 			t.Errorf("not moved: %s", moved)
@@ -74,5 +76,21 @@ func TestMovingOntoAnotherSandboxsRecordsIsRefused(t *testing.T) {
 	}
 	if _, found, _ := Load(home, "old"); !found {
 		t.Error("the refused move lost the old record")
+	}
+}
+
+func TestRemovingASandboxsRecordsTakesItsReviewsToo(t *testing.T) {
+	home := t.TempDir()
+	if err := Save(home, Instance{Name: "box", Target: "/code/box"}); err != nil {
+		t.Fatal(err)
+	}
+	review := filepath.Join(ReviewPath(home, "box"), "review.json")
+	os.MkdirAll(filepath.Dir(review), 0o700)
+	os.WriteFile(review, []byte("{}"), 0o600)
+	if err := Remove(home, "box"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(ReviewPath(home, "box")); err == nil {
+		t.Error("its reviews are still there")
 	}
 }

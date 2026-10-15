@@ -587,6 +587,15 @@ you're looking at:
   sending ends that. With the `diffity` kit, a turn
   that leaves a new review (or tour) behind ends with a card linking to it, and links to pages on
   `localhost` in what the agent says can be clicked.
+- **Review** — the changes in the sandbox's folder, worked out on this machine with git (uncommitted ones,
+  untracked files with them; or a branch's, or a commit's), with the agent's review comments under the
+  lines they're about. Ask the agent for a review and it uses `vibe-review` (and its skill) to comment,
+  set a reading order, and say when it's done. Reply, resolve, dismiss or reopen a comment there; **Ask
+  the agent** sends your reply as a question, which it answers on the comment (the turn shows in the
+  conversation too). A comment whose lines read differently now is marked as such. Reviews are kept in
+  `~/.vibe/reviews/<sandbox>/`, so they outlive the sandbox stopping or being rebuilt; `--migrate` takes
+  them along, and deleting the sandbox deletes them. A sandbox built before this has no review folder
+  until it's rebuilt. (This is meant to replace diffity, which is still installed alongside for now.)
 - **Network log** — every host the sandbox has tried to reach, with hit counts and whether it was
   allowed or blocked, refreshing every couple of seconds while the tab is showing. Filter by status or
   search for a host. A blocked host has an **Allow** button, an allowed one a **Block** button; click

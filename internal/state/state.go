@@ -130,11 +130,14 @@ func Remove(vibeHome, name string) error {
 	if err := os.RemoveAll(ClipboardPath(vibeHome, name)); err != nil {
 		return fmt.Errorf("removing clipboard history: %w", err)
 	}
+	if err := os.RemoveAll(ReviewPath(vibeHome, name)); err != nil {
+		return fmt.Errorf("removing reviews: %w", err)
+	}
 	return nil
 }
 
 // Move takes everything vibe keeps for sandbox oldName (its record, page
-// token, GitHub token, conversation and clipboard history) to newName, for
+// token, GitHub token, conversation, clipboard history and reviews) to newName, for
 // a sandbox that has moved folders. The record's Name follows; anything
 // else in it is the caller's to change. Another sandbox's record already at
 // newName is never overwritten.
@@ -158,6 +161,7 @@ func Move(vibeHome, oldName, newName string) error {
 		{ConversationPath(vibeHome, oldName), ConversationPath(vibeHome, newName)},
 		{TranscriptPath(vibeHome, oldName), TranscriptPath(vibeHome, newName)},
 		{ClipboardPath(vibeHome, oldName), ClipboardPath(vibeHome, newName)},
+		{ReviewPath(vibeHome, oldName), ReviewPath(vibeHome, newName)},
 	} {
 		if err := moveIfThere(pair[0], pair[1]); err != nil {
 			return err
@@ -189,6 +193,12 @@ func moveIfThere(from, to string) error {
 		return fmt.Errorf("moving %s: %w", from, err)
 	}
 	return nil
+}
+
+// ReviewPath is the folder the companion page's Review tab keeps the
+// sandbox's reviews in, on the host, so they outlive a rebuild.
+func ReviewPath(vibeHome, name string) string {
+	return filepath.Join(vibeHome, "reviews", name)
 }
 
 // ClipboardPath is the folder the sandbox's clipboard history is kept in on
