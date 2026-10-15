@@ -395,6 +395,14 @@ func (c *conversation) quiet() time.Duration {
 	return c.clock().Sub(c.heard)
 }
 
+// working says a turn is running: the agent answering, or having answered,
+// still at work on something it left running.
+func (c *conversation) working() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.running
+}
+
 // isCompacting says the running turn's agent is compacting its context.
 func (c *conversation) isCompacting() bool {
 	c.mu.Lock()

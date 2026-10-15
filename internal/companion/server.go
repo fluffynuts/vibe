@@ -121,6 +121,8 @@ type Server struct {
 	// awake is held while a KeepAwake runs: pages asking meanwhile needn't
 	// ask again.
 	awake sync.Mutex
+	// done is closed by Close, ending what Start began alongside serving.
+	done  chan struct{}
 	convo conversation
 	admin admin
 }
@@ -159,11 +161,17 @@ func Start(cfg Config) (*Server, error) {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go s.http.Serve(ln)
+	s.done = make(chan struct{})
+	go s.keepAwakeWhileWorking(s.done)
 	return s, nil
 }
 
 // Close stops serving, saving the conversation for the next vibe.
 func (s *Server) Close() error {
+	if s.done != nil {
+		close(s.done)
+		s.done = nil
+	}
 	s.convo.close()
 	if s.http == nil {
 		return nil
@@ -385,6 +393,35 @@ func probeClipboard(url string) bool {
 
 // keepAwake runs KeepAwake in the background, unless it's running already;
 // the page doesn't wait on it (starting a sandbox takes a while).
+// workingAwakeEvery is how often the sandbox is kept awake while the agent
+// works: as often as the page asks, well within sbx's idle stop.
+const workingAwakeEvery = 20 * time.Second
+
+// keepAwakeWhileWorking keeps the sandbox awake for as long as the agent
+// works, until done is closed.
+func (s *Server) keepAwakeWhileWorking(done <-chan struct{}) {
+	tick := time.NewTicker(workingAwakeEvery)
+	defer tick.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-tick.C:
+			s.keepAwakeIfWorking()
+		}
+	}
+}
+
+// keepAwakeIfWorking keeps the sandbox awake if the agent is answering, or
+// has answered and left something running (a review page, say). The page
+// keeps it awake only while it's in view; sbx stopping the sandbox for being
+// idle meanwhile would end that work under it.
+func (s *Server) keepAwakeIfWorking() {
+	if s.convo.working() {
+		s.keepAwake(nil)
+	}
+}
+
 func (s *Server) keepAwake([]byte) ([]string, error) {
 	if s.cfg.KeepAwake == nil || !s.awake.TryLock() {
 		return nil, nil

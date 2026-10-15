@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
 	"strconv"
 	"strings"
 	"time"
 
 	"vibe/internal/cliargs"
+	"vibe/internal/companion"
 	"vibe/internal/gittoken"
 	"vibe/internal/layout"
 	"vibe/internal/profilegen"
@@ -31,6 +33,15 @@ type sandboxInfo struct {
 	guided                bool      // the profile records what it was composed from
 	usage                 *sandboxUsage
 	usageErr              error
+	// page is the companion page's address, token and all; "" when it has
+	// never been served. pageServed says a vibe serves it now.
+	page       string
+	pageServed bool
+	// forwards are the host ports the page needs, its own first: forwarded
+	// from another machine, they keep their numbers, as the page only
+	// answers on its own port. sshTarget is this machine, as user@host.
+	forwards  []int
+	sshTarget string
 }
 
 // sandboxUsage is what a running sandbox reports of how long it has been up,
@@ -59,6 +70,9 @@ func doInfo(lay layout.Layout, args cliargs.Args, name, target string) error {
 	if err != nil {
 		return err
 	}
+	// Not in gatherInfo: the Admin tab shows what it gathers, on the page
+	// itself, where its own address is no news.
+	addPage(&info, lay.Home, name)
 	printInfo(os.Stdout, info, profileKnown)
 	return nil
 }
@@ -228,6 +242,17 @@ func printInfo(w io.Writer, info sandboxInfo, profileKnown bool) {
 		}
 	}
 
+	if info.exists && info.page != "" {
+		if info.pageServed {
+			row("page", "%s (being served now)", info.page)
+		} else {
+			row("page", "%s (not being served: 'vibe --headless' here serves it)", info.page)
+		}
+		row("remote", "from another machine, forward the page's ports, keeping their numbers:")
+		row("", "  %s", sshForwarding(info.forwards, info.sshTarget))
+		row("", "then open the page's address there")
+	}
+
 	switch {
 	case !info.exists:
 		row("status", "no sandbox yet: running vibe here creates one")
@@ -290,4 +315,48 @@ func formatBytes(n uint64) string {
 		return fmt.Sprintf("%d B", n)
 	}
 	return fmt.Sprintf("%.1f %s", v, units[i])
+}
+
+// addPage adds to info the sandbox's companion page, if it has had one:
+// its address, whether it's served, and the ports to forward to reach it
+// from another machine.
+func addPage(info *sandboxInfo, vibeHome, name string) {
+	inst, found, err := state.Load(vibeHome, name)
+	if err != nil || !found || inst.CompanionPort == 0 {
+		return
+	}
+	info.page = companionURL(vibeHome, name)
+	info.pageServed = companion.Running(inst.CompanionPort, name)
+	info.forwards = []int{inst.CompanionPort}
+	for _, rec := range inst.Publish {
+		info.forwards = append(info.forwards, rec.HostPort)
+	}
+	info.sshTarget = thisMachine()
+}
+
+// sshForwarding is the ssh command that, run on another machine, forwards
+// ports from target to the same ports there. They're forwarded to
+// 127.0.0.1, not localhost: sbx publishes ports on 127.0.0.1 alone, and
+// localhost can be ::1 on the far side.
+func sshForwarding(ports []int, target string) string {
+	parts := []string{"ssh -N"}
+	for _, p := range ports {
+		parts = append(parts, fmt.Sprintf("-L %d:127.0.0.1:%d", p, p))
+	}
+	return strings.Join(append(parts, target), " ")
+}
+
+// thisMachine is this user at this machine, as ssh takes it; the host name
+// is the machine's own, which another machine may know by another name.
+func thisMachine() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "<this machine>"
+	}
+	who := "<you>"
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		// Windows names users DOMAIN\name; ssh wants the name.
+		who = u.Username[strings.LastIndex(u.Username, `\`)+1:]
+	}
+	return who + "@" + host
 }

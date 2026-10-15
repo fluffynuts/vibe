@@ -5,6 +5,9 @@ come next, in order. Nothing below is built: a start on step 1 was reverted to p
 
 ## 1. Reaching the page from another machine
 
+Built 2026-10-15, uncommitted then; the user reached the page from another machine with its ssh line. Checked first: sbx publishes ports without a host IP on 127.0.0.1
+alone (`sbx ports --help`), so the forwards go to `127.0.0.1`, not `localhost` (which can be `::1`).
+
 A headless vibe is mostly useful from elsewhere, over SSH. The page only answers on its own port (its Host
 check wants `localhost:<its port>`), and it embeds the clipboard and diffity pages by their own ports, so a
 forward has to keep every port's number.
@@ -43,6 +46,13 @@ and diffity pages are then reachable from the network without SSH.
 
 ## 2. An agent that isn't logged in
 
+Built 2026-10-15, uncommitted then. Found: a logged-out `claude -p` turn ends with an assistant line
+marked `error: "authentication_failed"` ("Not logged in · Please run /login"), and an error result;
+`claude auth status` prints JSON with `loggedIn`, exiting 1 when logged out. The headless vibe checks
+each time its sandbox starts (src/vibe/login.go), warning only when certain: logged out with sbx's
+`SBX_CRED_ANTHROPIC_MODE` none or unset (read from the container's environment, which `su -` drops);
+another mode may be sbx supplying credentials. The page's note on such a turn is in app.js.
+
 Headless, nobody sees the agent's login prompt, so prompts from the page would just fail. Detect a
 logged-out agent when the headless vibe starts (and when a turn fails for it), and say so in the log and on
 the page, with what to do (`vibe` in the folder, in a terminal, to log in). Find first how a logged-out
@@ -60,6 +70,25 @@ vibe prints (never installs) a systemd user unit, or a launchd agent on macOS, r
 An agent with bypassed permissions and nobody watching can run for a long time. The page already says when
 it has been quiet for an hour, and leaves stopping it to the user. Decide whether headless wants a limit.
 
+## Later: forwarding without the ssh line
+
+Asked for 2026-10-15: once someone can reach a vibe on the host from another machine, launching a sandbox
+from the Profiles page there should make the same forwards happen for them, so remote use is transparent
+rather than a command to copy. Not designed yet.
+
+What the user said (review of the --info change): "when launching a profile from the profiles page, the
+same ssh magic is automatically done for the user, ie make this process transparent once the user has
+access to an instance on the host machine."
+
+To settle when it's designed:
+- Who makes the forwards. The page runs on the host; the forwards have to be made from the remote
+  machine, so something there has to do it: the user's existing ssh session (`ssh -O forward` over a
+  ControlMaster connection adds forwards to it), or a small helper the user runs once. A page in a
+  browser can't open ssh tunnels itself.
+- Which ports: the launched sandbox's page, clipboard and diffity, as `--info` lists them, each keeping its
+  number. A port already taken on the remote machine needs saying so, not a silent miss.
+- What the page offers meanwhile: its link to the new sandbox's page only works remotely once forwarded.
+
 ## Smaller gaps
 
 - Headless in the background on Windows (`detach_windows.go`) has never been run there.
@@ -68,4 +97,7 @@ it has been quiet for an hour, and leaves stopping it to the user. Decide whethe
 - The compaction notice waits on a real compaction to be seen.
 
 Dropped: a periodic check that starts a stopped sandbox again. sbx stopping idle sandboxes is wanted, and
-the page keeps its sandbox awake while it's in view.
+the page keeps its sandbox awake while it's in view, as does the page's server while the agent is at work
+(answering, or with something it left running: a review page). Added 2026-10-15, after a review page in
+another tab died when sbx stopped the sandbox under it. A new prompt still ends what the last turn left
+running, review servers included.

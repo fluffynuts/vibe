@@ -76,6 +76,8 @@ func headless(lay layout.Layout, args cliargs.Args, name string) error {
 	asked := false
 	for {
 		go nudgeOnStart(lay, name, func() {})
+		// Each time, as a rebuild can leave it logged out.
+		go warnIfAgentLoggedOut(name, recordedAgent(vibeHome, name, "claude"))
 		select {
 		case <-hold.waiting():
 			hold.begin()

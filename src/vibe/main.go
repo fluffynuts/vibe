@@ -49,8 +49,10 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              -f restores the newest, unasked
   vibe -l/--list             list every known sandbox and its status
   vibe -a/--info [path]      show the sandbox's settings (memory, agent,
-                             features) and, while it runs, its uptime and
-                             how much memory and disk it is using
+                             features), its companion page and how to
+                             reach it from another machine, and, while it
+                             runs, its uptime and how much memory and disk
+                             it is using
   vibe -H/--headless [path]  start the sandbox for path (one that exists:
                              run vibe there once first) and serve its
                              companion page, with no terminal attached, from

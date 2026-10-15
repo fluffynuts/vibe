@@ -290,7 +290,8 @@ vibe --git-rules R[,R]     # ...and these rules for pushing, without asking:
 vibe --no-git-token        # ...no token for a new sandbox, without asking;
                            #    with --git-token, take its token away
 vibe -l/--list             # list every known sandbox and its status
-vibe -a/--info [path]      # show the sandbox's settings and, while it runs,
+vibe -a/--info [path]      # show the sandbox's settings, its companion page and how to
+                           #    reach it from another machine, and, while it runs,
                            #    its uptime and memory and disk use
 vibe -H/--headless [path]  # start the sandbox for path and serve its companion page,
                            #    from a vibe in the background (see "Headless")
@@ -353,7 +354,12 @@ a vibe attached (stop it first), and profiles that ship with vibe, which the nex
 back. There is no unattended form of this: `-x` always asks, and `-f` has nothing to skip.
 
 `-a`/`--info` shows the sandbox's profile, agent, memory setting, timezone and, for a guided profile, the
-library features it was composed from. While the sandbox is running, it also shows how long it
+library features it was composed from. Once it has had a companion page, it shows the page's address (and
+whether a vibe is serving it now), and the `ssh -L` command that reaches it from another machine: it
+forwards the page's port and the ports the page embeds (the clipboard, diffity), each to the same number,
+as the page only answers on its own port. The host name in it is this machine's own; use whatever name
+the other machine knows it by. sbx publishes a sandbox's ports on this machine's loopback alone, so
+without such a forward, they can't be reached from elsewhere. While the sandbox is running, it also shows how long it
 has been up (since it was last started) and the memory and disk it is using, read from inside it:
 
 ```
@@ -640,7 +646,12 @@ in the folder, the countdown to rebuilding an out-of-date sandbox) happens first
 the background vibe to say its page is up, prints the page's address and where it logs
 (`~/.vibe/logs/<sandbox>.log`, started afresh each time), and gives you your terminal back. If the
 background vibe can't get going, the end of its log is shown, and it exits non-zero. Running
-`vibe --headless` again while one is running just points at it. Plain `vibe` in the folder attaches a
+`vibe --headless` again while one is running just points at it. To use the page from another machine,
+`vibe --info` gives the `ssh -L` command that forwards its ports there. The agent has to be logged in
+already: nobody sees its login screen. Each time the sandbox starts, a headless vibe checks, and warns in
+its log if it isn't (when sbx leaves logging in to the agent; when sbx supplies credentials itself, vibe
+can't tell, and says nothing). A prompt from the page that fails for it says what to do: `vibe` in the
+folder, in a terminal, then `/login` there. Plain `vibe` in the folder attaches a
 terminal alongside it, without asking: the headless vibe carries on serving the page, and an
 out-of-date sandbox isn't rebuilt under it (`vibe --restart` does that). Rebuilding or deleting (`-C`,
 `-r`, `-R`, `--delete`) still asks what to do about it first.
@@ -661,7 +672,9 @@ without one, still running an old vibe after an `--upgrade`, say. Stop on the Pr
 same. Stop on its own page's Admin tab stops just the sandbox and keeps the page up, as you're looking
 at it; its Start brings the sandbox back, and vibe runs its start-up again. sbx itself stops a sandbox
 about a minute after nothing is attached to it. So while the page is in view, it keeps the sandbox
-awake (a tiny command in it every 20 seconds); out of sight, it lets sbx stop it, and starts it again
+awake (a tiny command in it every 20 seconds), and so does vibe while the agent is at work, answering
+or with something it left running (a review page, say), page in view or not; otherwise, out of sight, it
+lets sbx stop it, and starts it again
 as soon as you're back (unless it was stopped on purpose). The page's own background checks never wake
 a stopped sandbox, and the clipboard pane keeps its page while its server is away, picking up again by
 itself when it's back.

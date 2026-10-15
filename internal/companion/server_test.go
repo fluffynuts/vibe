@@ -682,3 +682,38 @@ func TestKeepingTheSandboxAwakeRunsOnceAtATime(t *testing.T) {
 		t.Errorf("runs %d, said %v; want one run, its outcome logged", runs, said)
 	}
 }
+
+// While the agent works — answering, or with something it left running, a
+// review page say — the sandbox is kept awake whether the page is in view
+// or not: sbx stopping it for being idle would end that work.
+func TestTheSandboxIsKeptAwakeWhileTheAgentWorks(t *testing.T) {
+	asked := make(chan struct{}, 10)
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort,
+		KeepAwake: func() string { asked <- struct{}{}; return "" }})
+	c := &s.convo
+	wasAsked := func() bool {
+		s.keepAwakeIfWorking()
+		select {
+		case <-asked:
+			return true
+		case <-time.After(200 * time.Millisecond):
+			return false
+		}
+	}
+
+	if wasAsked() {
+		t.Error("kept awake with no turn")
+	}
+	c.begin("go")
+	if !wasAsked() {
+		t.Error("not kept awake while the agent answers")
+	}
+	c.line([]byte(`{"type":"result"}`))
+	if !wasAsked() {
+		t.Error("not kept awake while something it left runs")
+	}
+	c.finish(nil, false)
+	if wasAsked() {
+		t.Error("kept awake after the agent was done")
+	}
+}

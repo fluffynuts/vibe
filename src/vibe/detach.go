@@ -160,6 +160,7 @@ func detachHeadless(lay layout.Layout, args cliargs.Args, name, target string) e
 	status.done("sandbox '%s' is running in the background (vibe PID %d)", name, pid)
 	note("  its page: %s", url)
 	note("  its log: %s; 'vibe --stop %s' stops it", displayPath(logPath), target)
+	note("  'vibe --info %s' says how to reach the page from another machine", target)
 	return nil
 }
 

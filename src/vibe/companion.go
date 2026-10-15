@@ -355,10 +355,12 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 // screen doesn't start it again then.
 var stoppedOnPurpose atomic.Bool
 
-// keepAwakeFor is what the companion page asks for while it's in view:
+// keepAwakeFor is what the companion page asks for while it's in view, and
+// the page's server while the agent is at work:
 // sbx stops a sandbox about a minute after nothing is attached to it, and
 // one stopping and starting under the page reloads its clipboard pane. So a
-// running sandbox is touched, to keep it awake while the page is in use, and
+// running sandbox is touched, to keep it awake while the page is in use (or
+// the agent is at work: see companion.Server.keepAwakeIfWorking), and
 // one sbx stopped while the page was out of sight is started again (with
 // its start-up), ready for when it's used; what it did, if it says. One
 // stopped on purpose is left stopped, and with a terminal attached there's
@@ -385,7 +387,7 @@ func keepAwakeFor(name string) func() string {
 		if !startSandboxForPage(startCtx, name) {
 			return "sandbox '" + name + "' was stopped, and couldn't be started again for the page — 'sbx ls' says what state it is in"
 		}
-		return "sandbox '" + name + "' was stopped: started it again for the page, which is in view"
+		return "sandbox '" + name + "' was stopped: started it again"
 	}
 }
 
