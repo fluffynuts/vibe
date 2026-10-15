@@ -1810,6 +1810,7 @@
     if (ev.kind === 'reset') { $('convo-log').replaceChildren(); convo.ticks.clear() }
     else if (ev.kind === 'user') { convo.lastPrompt = ev.text || ''; userNote(ev) }
     else if (ev.kind === 'agent') showAgent(ev.agent, ev.at)
+    else if (ev.kind === 'note') convoNote('meta', ev.text || '')
     else if (ev.kind === 'error') convoNote('error', ev.text || 'That failed.', ev.at)
     else if (ev.kind === 'review') reviewNote(ev)
     else if (ev.kind === 'done' && ev.text === 'stopped') convoNote('meta', 'Stopped.')

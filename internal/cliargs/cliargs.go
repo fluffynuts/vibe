@@ -48,9 +48,13 @@ type Args struct {
 	// Foreground is --foreground: with --headless, stay in the foreground
 	// (for tmux, nohup or a systemd unit) rather than go to the background.
 	Foreground bool
-	// Restart is --restart: with --headless, end the headless vibe already
-	// running for the folder, leaving its sandbox be, and start afresh.
+	// Restart is --restart: end whatever vibe has the folder, leaving its
+	// sandbox be, and start afresh (headless, with --headless).
 	Restart bool
+	// Migrate is --migrate: move the folder Path to MigrateTo, and its
+	// sandbox and everything vibe keeps for it with it.
+	Migrate   bool
+	MigrateTo string
 	// GitToken is --git-token: give the sandbox for the folder a GitHub
 	// token to push with, change the one it has, or take it away.
 	GitToken bool
@@ -72,7 +76,25 @@ type Args struct {
 
 // Parse parses argv (excluding the program name).
 func Parse(argv []string) (Args, error) {
-	var a Args
+	a, paths, err := parse(argv)
+	if err != nil {
+		return a, err
+	}
+	switch {
+	case a.Migrate && len(paths) != 2:
+		return a, fmt.Errorf("--migrate takes the folder to move, then where it goes: vibe --migrate /old/place /new/place")
+	case a.Migrate:
+		a.Path, a.MigrateTo = paths[0], paths[1]
+	case len(paths) > 1:
+		return a, fmt.Errorf("expected at most one path argument")
+	case len(paths) == 1:
+		a.Path = paths[0]
+	}
+	return a, nil
+}
+
+// parse reads the flags, and the paths among them in the order given.
+func parse(argv []string) (a Args, paths []string, err error) {
 	i := 0
 	for i < len(argv) {
 		arg := argv[i]
@@ -158,6 +180,9 @@ func Parse(argv []string) (Args, error) {
 		case arg == "--restart":
 			a.Restart = true
 			i++
+		case arg == "--migrate":
+			a.Migrate = true
+			i++
 		case arg == "--git-token":
 			a.GitToken = true
 			i++
@@ -167,7 +192,7 @@ func Parse(argv []string) (Args, error) {
 		case arg == "--git-token-env":
 			v, n, err := valueArg(argv, i)
 			if err != nil {
-				return a, err
+				return a, paths, err
 			}
 			a.GitTokenEnv = v
 			i += n
@@ -177,7 +202,7 @@ func Parse(argv []string) (Args, error) {
 		case arg == "--git-rules":
 			v, n, err := valueArg(argv, i)
 			if err != nil {
-				return a, err
+				return a, paths, err
 			}
 			a.GitRules = v
 			i += n
@@ -187,7 +212,7 @@ func Parse(argv []string) (Args, error) {
 		case arg == "-n" || arg == "--name":
 			v, n, err := valueArg(argv, i)
 			if err != nil {
-				return a, err
+				return a, paths, err
 			}
 			a.Name = v
 			i += n
@@ -200,7 +225,7 @@ func Parse(argv []string) (Args, error) {
 		case arg == "-u" || arg == "--update-strategy":
 			v, n, err := valueArg(argv, i)
 			if err != nil {
-				return a, err
+				return a, paths, err
 			}
 			a.UpdateStrategy = v
 			i += n
@@ -213,7 +238,7 @@ func Parse(argv []string) (Args, error) {
 		case arg == "-p" || arg == "--profile":
 			v, n, err := valueArg(argv, i)
 			if err != nil {
-				return a, err
+				return a, paths, err
 			}
 			a.Profile = v
 			i += n
@@ -226,20 +251,16 @@ func Parse(argv []string) (Args, error) {
 		case arg == "--":
 			i++
 			for ; i < len(argv); i++ {
-				if err := setPath(&a, argv[i]); err != nil {
-					return a, err
-				}
+				paths = append(paths, argv[i])
 			}
 		case strings.HasPrefix(arg, "-") && arg != "-":
-			return a, fmt.Errorf("unknown option: %s", arg)
+			return a, paths, fmt.Errorf("unknown option: %s", arg)
 		default:
-			if err := setPath(&a, arg); err != nil {
-				return a, err
-			}
+			paths = append(paths, arg)
 			i++
 		}
 	}
-	return a, nil
+	return a, paths, nil
 }
 
 func valueArg(argv []string, i int) (string, int, error) {
@@ -249,20 +270,12 @@ func valueArg(argv []string, i int) (string, int, error) {
 	return argv[i+1], 2, nil
 }
 
-func setPath(a *Args, v string) error {
-	if a.Path != "" {
-		return fmt.Errorf("expected at most one path argument")
-	}
-	a.Path = v
-	return nil
-}
-
 // ExclusiveActions counts how many of the mutually-exclusive action flags
-// (stop/stop-all/ssh/re-init/re-create/re-compose/restore/list/install/upgrade/install-sbx/setup/
+// (migrate/stop/stop-all/ssh/re-init/re-create/re-compose/restore/list/install/upgrade/install-sbx/setup/
 // cleanup/delete/info/git-token/update-sandboxes/manage/headless) are set.
 func (a Args) ExclusiveActions() int {
 	n := 0
-	for _, b := range []bool{a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info, a.Setup, a.GitToken, a.UpdateSandboxes, a.Manage, a.Headless} {
+	for _, b := range []bool{a.Migrate, a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info, a.Setup, a.GitToken, a.UpdateSandboxes, a.Manage, a.Headless} {
 		if b {
 			n++
 		}

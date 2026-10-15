@@ -62,6 +62,17 @@ func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandb
 // and the rebuild stops before its next step: what is left is said by the
 // caller, which can ask sbx.
 func rebuildSandbox(ctx context.Context, lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool) error {
+	return rebuildSandboxTo(ctx, lay, args, name, target, skipSandboxConfirm, askZone, nil)
+}
+
+// relocation moves a sandbox's folder, and what vibe keeps for it, once the
+// old sandbox is gone, and says its new name and folder.
+type relocation func() (name, target string, err error)
+
+// rebuildSandboxTo is rebuildSandbox, with relocate (when not nil) run
+// between removing the old sandbox and creating the new one, which is made
+// with the name and for the folder relocate gives: --migrate.
+func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool, relocate relocation) error {
 	vibeHome := lay.Home
 	// Before anything is removed: a sandbox can't be built for a folder that
 	// isn't there, so removing it first would leave nothing at all.
@@ -157,6 +168,18 @@ func rebuildSandbox(ctx context.Context, lay layout.Layout, args cliargs.Args, n
 		note("no existing sandbox '%s' — nothing to remove", name)
 	}
 
+	if relocate != nil {
+		oldName := name
+		if name, target, err = relocate(); err != nil {
+			return err
+		}
+		// The memories went with the rest: a store named after the sandbox
+		// is renamed with it (see migrateRecords).
+		if dir, base := filepath.Split(memoryStore); restoreAfterCreate && base == oldName {
+			memoryStore = filepath.Join(dir, name)
+		}
+	}
+
 	if agent == "claude" {
 		if doc, err = setClaudeTheme(lay, profile, doc, themeFromSandbox, false, args.Force); err != nil {
 			return err
@@ -187,14 +210,15 @@ func folderGone(target string) string {
 // the user through creating a new one (copy, blank or guided) instead of
 // silently reusing the old one, and any existing sandbox is removed and
 // rebuilt from it. Both destructive steps share a single confirmation up
-// front rather than asking once per step.
+// front rather than asking once per step; yes is its default, as -R asked
+// for this.
 func doReCreate(lay layout.Layout, args cliargs.Args, name, target string) error {
 	profile, err := resolveReInitProfile(lay.Home, args, name, target)
 	if err != nil {
 		return err
 	}
 
-	if !confirmDefault(args.Force, false,
+	if !confirmDefault(args.Force, true,
 		"This action will destroy any existing profile or sandbox for the current project. Continue?") {
 		return fmt.Errorf("aborted — nothing removed")
 	}

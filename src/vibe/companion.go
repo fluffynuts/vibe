@@ -330,6 +330,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		ClipboardTrouble: func() string { return clipboardTrouble(name) },
 		Workspace:        inst.Target,
 		Converse:         conversationFor(vibeHome, name, inst),
+		Prepare:          readyForTurn(name),
 		History:          state.ConversationPath(vibeHome, name),
 		LatestReview:     latestReviewFor(name, inst),
 		Admin:            adminFor(lay, name, inst.Target),
@@ -388,6 +389,43 @@ func keepAwakeFor(name string) func() string {
 			return "sandbox '" + name + "' was stopped, and couldn't be started again for the page — 'sbx ls' says what state it is in"
 		}
 		return "sandbox '" + name + "' was stopped: started it again"
+	}
+}
+
+// turnStartWithin bounds starting a stopped sandbox for a turn: a cold
+// boot, with its start-up, is well within it.
+const turnStartWithin = 3 * time.Minute
+
+// readyForTurn is what the page's server does before each turn: starts the
+// sandbox when it isn't running, saying so, and waits until it answers.
+// sbx exec would start it itself, but can give up while it boots, failing
+// the turn with sbx's "context deadline exceeded". A sandbox stopped on
+// purpose is started too: sending a prompt asks for it.
+func readyForTurn(name string) func(ctx context.Context, say func(string)) error {
+	return func(ctx context.Context, say func(string)) error {
+		check, cancel := context.WithTimeout(ctx, statusWithin)
+		running := runningNow(check, name)
+		cancel()
+		if running {
+			return nil
+		}
+		if err := vmCheck(); err != nil {
+			return err
+		}
+		say("starting the sandbox (sbx stops one that's left idle) — the agent answers once it's up")
+		start, cancel := context.WithTimeout(ctx, turnStartWithin)
+		defer cancel()
+		if !startSandboxForPage(start, name) {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("sandbox '%s' didn't start within %s — 'sbx ls' says what state it is in", name, turnStartWithin)
+		}
+		stoppedOnPurpose.Store(false)
+		// A session (terminal or headless) waiting for the sandbox to be back
+		// carries on, running its start-up again, as after the Admin tab's Start.
+		hold.release()
+		return nil
 	}
 }
 

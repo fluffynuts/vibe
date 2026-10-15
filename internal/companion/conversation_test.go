@@ -1,6 +1,7 @@
 package companion
 
 import (
+	"errors"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -748,5 +749,47 @@ func TestATurnThatEndsWhileCompactingIsntStillCompacting(t *testing.T) {
 	c.begin("again")
 	if compactingOf(t, s) {
 		t.Error("the next turn began compacting")
+	}
+}
+
+// Before a turn, the sandbox is made ready for it (started, if sbx stopped
+// it while idle), saying so on the page; the turn runs once it is.
+func TestATurnWaitsForTheSandboxToBeReadyAndSaysSo(t *testing.T) {
+	f := &fakeAgent{}
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: f.converse,
+		Prepare: func(ctx context.Context, say func(string)) error {
+			say("starting the sandbox")
+			return nil
+		}})
+	send(t, s, "/api/conversation/send", `{"prompt":"hello"}`)
+	p := idle(t, s)
+	if got := kinds(p); got != "user,note,agent,agent,done" {
+		t.Errorf("events = %s", got)
+	}
+	if p.Events[1].Text != "starting the sandbox" {
+		t.Errorf("the note = %+v", p.Events[1])
+	}
+}
+
+func TestATurnTheSandboxCantBeReadiedForIsntRun(t *testing.T) {
+	f := &fakeAgent{}
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: f.converse,
+		Prepare: func(context.Context, func(string)) error {
+			return errors.New("sandbox 'box' didn't start — 'sbx ls' says what state it is in")
+		}})
+	send(t, s, "/api/conversation/send", `{"prompt":"hello"}`)
+	p := idle(t, s)
+	if got := kinds(p); got != "user,error" {
+		t.Errorf("events = %s", got)
+	}
+	if !strings.Contains(p.Events[1].Text, "sbx ls") {
+		t.Errorf("the error = %+v", p.Events[1])
+	}
+	if len(f.prompts) != 0 {
+		t.Errorf("the agent was asked anyway: %v", f.prompts)
+	}
+	// The next prompt can go.
+	if code, _ := send(t, s, "/api/conversation/send", `{"prompt":"again"}`); code != http.StatusAccepted {
+		t.Errorf("the next prompt: %d", code)
 	}
 }

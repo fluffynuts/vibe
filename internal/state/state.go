@@ -133,6 +133,64 @@ func Remove(vibeHome, name string) error {
 	return nil
 }
 
+// Move takes everything vibe keeps for sandbox oldName (its record, page
+// token, GitHub token, conversation and clipboard history) to newName, for
+// a sandbox that has moved folders. The record's Name follows; anything
+// else in it is the caller's to change. Another sandbox's record already at
+// newName is never overwritten.
+func Move(vibeHome, oldName, newName string) error {
+	if oldName == newName {
+		return nil
+	}
+	if _, err := os.Stat(path(vibeHome, newName)); err == nil {
+		return fmt.Errorf("vibe already has a record of a sandbox '%s'", newName)
+	}
+	inst, found, err := Load(vibeHome, oldName)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("vibe has no record of a sandbox '%s'", oldName)
+	}
+	for _, pair := range [][2]string{
+		{tokenPath(vibeHome, oldName), tokenPath(vibeHome, newName)},
+		{GitTokenPath(vibeHome, oldName), GitTokenPath(vibeHome, newName)},
+		{ConversationPath(vibeHome, oldName), ConversationPath(vibeHome, newName)},
+		{TranscriptPath(vibeHome, oldName), TranscriptPath(vibeHome, newName)},
+		{ClipboardPath(vibeHome, oldName), ClipboardPath(vibeHome, newName)},
+	} {
+		if err := moveIfThere(pair[0], pair[1]); err != nil {
+			return err
+		}
+	}
+	inst.Name = newName
+	if err := Save(vibeHome, inst); err != nil {
+		return err
+	}
+	if err := os.Remove(path(vibeHome, oldName)); err != nil {
+		return fmt.Errorf("removing the old record: %w", err)
+	}
+	return nil
+}
+
+// moveIfThere renames from to to, when from exists, refusing to replace
+// anything already at to.
+func moveIfThere(from, to string) error {
+	if _, err := os.Lstat(from); os.IsNotExist(err) {
+		return nil
+	}
+	if _, err := os.Lstat(to); err == nil {
+		return fmt.Errorf("%s is already there, so %s wasn't moved to it", to, from)
+	}
+	if err := os.MkdirAll(filepath.Dir(to), 0o700); err != nil {
+		return err
+	}
+	if err := os.Rename(from, to); err != nil {
+		return fmt.Errorf("moving %s: %w", from, err)
+	}
+	return nil
+}
+
 // ClipboardPath is the folder the sandbox's clipboard history is kept in on
 // the host, mounted into the sandbox so it outlives a rebuild.
 func ClipboardPath(vibeHome, name string) string {

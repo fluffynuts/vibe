@@ -1,6 +1,9 @@
 package cliargs
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseBasics(t *testing.T) {
 	a, err := Parse([]string{"-n", "custom", "--profile", "yumbi", "/path/to/code"})
@@ -367,5 +370,30 @@ func TestParseNoAutoUpdate(t *testing.T) {
 	a, err := Parse([]string{"--no-auto-update", "."})
 	if err != nil || !a.NoAutoUpdate || a.Path != "." || a.ExclusiveActions() != 0 {
 		t.Errorf("Parse(--no-auto-update .) = %+v, %v", a, err)
+	}
+}
+
+func TestParseMigrate(t *testing.T) {
+	a, err := Parse([]string{"--migrate", "/old/place", "/new/place"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.Migrate || a.Path != "/old/place" || a.MigrateTo != "/new/place" || a.ExclusiveActions() != 1 {
+		t.Errorf("--migrate /old/place /new/place = %+v", a)
+	}
+	for _, argv := range [][]string{
+		{"--migrate", "/old/place"},
+		{"--migrate"},
+		{"--migrate", "/a", "/b", "/c"},
+	} {
+		if _, err := Parse(argv); err == nil || !strings.Contains(err.Error(), "--migrate") {
+			t.Errorf("%v: %v, want an error saying --migrate takes a folder and where it goes", argv, err)
+		}
+	}
+	if _, err := Parse([]string{"/a", "/b"}); err == nil {
+		t.Error("two paths without --migrate were accepted")
+	}
+	if a, _ := Parse([]string{"--migrate", "/a", "/b", "-C"}); a.ExclusiveActions() != 2 {
+		t.Error("--migrate with -C should count as two actions")
 	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -267,5 +268,49 @@ func TestTheThemeOfAStoppedSandboxDoesntStartIt(t *testing.T) {
 	themeColorFor(lay, "box", state.Instance{Name: "box", Profile: "p"}, "claude")()
 	if data, _ := os.ReadFile(calls); strings.Contains(string(data), "exec") {
 		t.Errorf("a stopped sandbox was asked for its theme:\n%s", data)
+	}
+}
+
+func TestARunningSandboxIsReadyForATurnAsItIs(t *testing.T) {
+	starts := keepAwakeStandIns(t, true, true)
+	var said []string
+	if err := readyForTurn("box")(context.Background(), func(s string) { said = append(said, s) }); err != nil {
+		t.Fatal(err)
+	}
+	if *starts != 0 || len(said) != 0 {
+		t.Errorf("started %d times, said %v; want neither", *starts, said)
+	}
+}
+
+// sbx exec starts a stopped sandbox itself, but can give up while it boots
+// ("context deadline exceeded"): the turn waits for it to be up instead.
+func TestAStoppedSandboxIsStartedForATurnSayingSo(t *testing.T) {
+	starts := keepAwakeStandIns(t, false, true)
+	stoppedOnPurpose.Store(true)
+	var said []string
+	if err := readyForTurn("box")(context.Background(), func(s string) { said = append(said, s) }); err != nil {
+		t.Fatal(err)
+	}
+	if *starts != 1 || len(said) != 1 || !strings.Contains(said[0], "starting") {
+		t.Errorf("started %d times, said %v", *starts, said)
+	}
+	if stoppedOnPurpose.Load() {
+		t.Error("started for a turn, it's still taken as stopped on purpose, so the page won't keep it awake")
+	}
+}
+
+func TestATurnSaysWhenTheSandboxWontStart(t *testing.T) {
+	keepAwakeStandIns(t, false, false)
+	err := readyForTurn("box")(context.Background(), func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "sbx ls") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestATurnSaysWhenNoVMCanStart(t *testing.T) {
+	keepAwakeStandIns(t, false, true)
+	want := noKVM(t)
+	if err := readyForTurn("box")(context.Background(), func(string) {}); !errors.Is(err, want) {
+		t.Errorf("err = %v, want the KVM advice", err)
 	}
 }

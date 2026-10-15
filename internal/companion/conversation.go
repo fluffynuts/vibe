@@ -57,7 +57,7 @@ var sessionID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,100}$`)
 // agent's output, how a turn ended, or that the conversation began anew.
 type event struct {
 	Seq   int             `json:"seq"`
-	Kind  string          `json:"kind"` // user, agent, error, done, reset, review
+	Kind  string          `json:"kind"` // user, agent, note, error, done, reset, review
 	Text  string          `json:"text,omitempty"`
 	Agent json.RawMessage `json:"agent,omitempty"`
 	// Receipt is how far a user event got: see receiptSent.
@@ -424,8 +424,23 @@ func (c *conversation) since(after int) (events []event, last int, running, back
 	return events, c.seq, c.running && !c.answered, c.running && c.answered
 }
 
-// run is a turn, in the background.
-func (c *conversation) run(ctx context.Context, converse Converser, latestReview func() string, prompt, session string) {
+// note says something of vibe's own in the conversation: what it's doing
+// before the agent can answer.
+func (c *conversation) note(text string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.heard = c.clock()
+	c.add("note", text, nil)
+}
+
+// run is a turn, in the background: prepare first, when there's one to do.
+func (c *conversation) run(ctx context.Context, prepare func(context.Context, func(string)) error, converse Converser, latestReview func() string, prompt, session string) {
+	if prepare != nil {
+		if err := prepare(ctx, c.note); err != nil {
+			c.finish(err, ctx.Err() != nil)
+			return
+		}
+	}
 	checks := make(chan struct{}, 1)
 	checked := make(chan struct{})
 	go c.watchReviews(latestReview, checks, checked)
@@ -584,7 +599,7 @@ func (s *Server) conversationSend(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "the agent is still answering the last prompt"})
 		return
 	}
-	go s.convo.run(ctx, s.cfg.Converse, s.cfg.LatestReview, req.Prompt, session)
+	go s.convo.run(ctx, s.cfg.Prepare, s.cfg.Converse, s.cfg.LatestReview, req.Prompt, session)
 	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
 }
 

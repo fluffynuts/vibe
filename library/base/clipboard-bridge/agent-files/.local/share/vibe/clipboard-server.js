@@ -5,10 +5,9 @@
 // whatever the user pastes, drops or picks there. That history reaches the
 // agent two ways:
 //
-//   - POST /api/claim, called by clipboard-hook on UserPromptSubmit and
-//     PostToolUse, hands over everything not yet delivered, so a paste
-//     rides along with the user's next message, or reaches a working agent
-//     at its next step.
+//   - POST /api/claim, called by clipboard-hook on UserPromptSubmit, hands
+//     over everything not yet delivered, so a paste rides along with the
+//     user's next message.
 //   - GET /api/clipboard, called by the sbx-clipboard fallback, answers the
 //     sandbox's wl-paste/xclip shims with the current item whenever sbx's
 //     own host clipboard bridge comes back empty — so Ctrl-V in the agent's

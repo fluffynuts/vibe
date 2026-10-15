@@ -327,6 +327,11 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 	inst := state.Instance{
 		Name: name, Profile: profile, Target: target, Publish: publishRecords, MemoryStore: memoryStore, Timezone: zone, Agent: agent, CreatedAt: time.Now(),
 	}
+	// A rebuild keeps the page on the port it had, as it keeps the published
+	// ports: its address (a bookmark, another machine's ssh forwards) stays.
+	if was, found, err := state.Load(vibeHome, name); err == nil && found {
+		inst.CompanionPort = was.CompanionPort
+	}
 	if inst.KitHash, err = kitFingerprint(lay, profile, agent); err != nil {
 		note("WARNING: couldn't record what sandbox '%s' was built from, so it will be taken as out of date: %s", name, err)
 	}

@@ -289,6 +289,7 @@ vibe --git-rules R[,R]     # ...and these rules for pushing, without asking:
                            #    feature-branch, no-default-branch
 vibe --no-git-token        # ...no token for a new sandbox, without asking;
                            #    with --git-token, take its token away
+vibe --migrate FROM TO     # move folder FROM to TO, its sandbox with it (see below)
 vibe -l/--list             # list every known sandbox and its status
 vibe -a/--info [path]      # show the sandbox's settings, its companion page and how to
                            #    reach it from another machine, and, while it runs,
@@ -352,6 +353,16 @@ once. A failure doesn't stop the rest; a profile is kept when one of its sandbox
 removed, so it can be tried again. Some things aren't offered, with a note saying why: a sandbox with
 a vibe attached (stop it first), and profiles that ship with vibe, which the next upgrade would bring
 back. There is no unattended form of this: `-x` always asks, and `-f` has nothing to skip.
+
+`--migrate FROM TO` moves a folder vibe has a sandbox for, and the sandbox with it. sbx can't point a
+sandbox at another folder, so it's rebuilt for the new one, under the name the new folder gives it (a
+folder called `TO` gives sandbox `to`). What vibe keeps for it goes along: the agent's memories and the
+page's conversation (filed under the new folder's path, which is where the agent looks for them), its
+GitHub token, clipboard history, timezone, theme and page address. What a rebuild loses, it loses: anything
+installed in the sandbox by hand, or kept outside its folder. `TO` mustn't exist yet (vibe moves the
+folder there itself), and has to be on the same disk. It says what it will do and asks first (`-f`
+doesn't), and checks everything it can before changing anything; a vibe running in `FROM` has to be
+ended first.
 
 `-a`/`--info` shows the sandbox's profile, agent, memory setting, timezone and, for a guided profile, the
 library features it was composed from. Once it has had a companion page, it shows the page's address (and
@@ -680,7 +691,8 @@ or with something it left running (a review page, say), page in view or not; oth
 lets sbx stop it, and starts it again
 as soon as you're back (unless it was stopped on purpose). The page's own background checks never wake
 a stopped sandbox, and the clipboard pane keeps its page while its server is away, picking up again by
-itself when it's back.
+itself when it's back. A prompt sent while the sandbox is stopped starts it first, saying so in the
+conversation, and is answered once it's up (or says why it couldn't start, after three minutes).
 
 **`vibe --manage`** serves the Profiles tab on its own, for no sandbox or folder: every profile and
 sandbox, to clean up, without a session open. It keeps its own port and token (in
@@ -983,9 +995,9 @@ a guided profile with it (and recreates the sandbox). It is for sharing images (
 image into the agent's terminal goes through sbx's clipboard bridge, which comes back empty on
 Linux hosts, so the feature gives you a page in your browser instead (the agent gives you its URL
 via `clipboard-url`, or open `$VIBE_CLIPBOARD_URL`). Paste on it, drop files on it, or pick them,
-and each item reaches the agent with your next message, or at its next step if it's already
-working: two Claude Code hooks (`UserPromptSubmit` and `PostToolUse`, in
-`/etc/claude-code/managed-settings.d/`) hand over anything not yet delivered, with short text
+and each item reaches the agent with your next message (not part-way through a turn, so there's time to
+give it a title): a Claude Code hook (`UserPromptSubmit`, in
+`/etc/claude-code/managed-settings.d/`) hands over anything not yet delivered, with short text
 inline and images as paths for the agent to read. Every item on the page shows whether it has
 been sent yet, and has **Copy** (to put it back on your own clipboard) and **Delete** buttons; **Clear all** empties the
 history at once (asking first).

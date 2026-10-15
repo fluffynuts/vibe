@@ -258,10 +258,11 @@ type updateTally struct {
 
 // confirmUpdate asks once whether to go ahead with what --update-sandboxes
 // listed: rebuilding is destructive, so only -f goes ahead unasked (and with
-// no terminal, it's refused, saying to add -f). A variable so tests can
-// stand in for the user.
+// no terminal, it's refused, saying to add -f). Yes is the default, as
+// --update-sandboxes asked for this. A variable so tests can stand in for
+// the user.
 var confirmUpdate = func(force bool) bool {
-	return confirmDefault(force, false, "Re-compose and rebuild these? A rebuilt sandbox keeps its agent's memories, but not what was installed in it by hand.")
+	return confirmDefault(force, true, "Re-compose and rebuild these? A rebuilt sandbox keeps its agent's memories, but not what was installed in it by hand.")
 }
 
 // pendingUpdates lists, for the user to confirm, what bringing inv up to

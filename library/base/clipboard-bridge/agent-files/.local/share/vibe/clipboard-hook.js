@@ -1,20 +1,19 @@
 "use strict";
 // vibe: description: Claude Code hook logic behind clipboard-hook
-// Claude Code hook (UserPromptSubmit and PostToolUse), run through
+// Claude Code hook (UserPromptSubmit), run through
 // ~/.local/bin/clipboard-hook and registered for every session in
 // /etc/claude-code/managed-settings.d by the clipboard feature's install
 // step.
 //
-// Nothing can push a message into a Claude Code session from outside, so
-// what the user pastes on the clipboard page waits for the next moment a
-// hook runs: their next prompt, or — while the agent is working — its next
-// tool call. Either way the hook claims everything not yet delivered from
-// the clipboard server and adds it to the agent's context: short text
-// inline, anything else as a path to read.
+// What the user pastes on the clipboard page goes with their next prompt:
+// the hook claims everything not yet delivered from the clipboard server
+// and adds it to the agent's context, short text inline, anything else as a
+// path to read. Not mid-turn: a paste then reached the agent with no word
+// of what it was for, before the user could even title it.
 //
 // Whatever goes wrong in here, the hook stays quiet and exits 0: a broken
 // clipboard must never get in the way of the agent. It is quick to give up,
-// too, since PostToolUse runs it after every tool call.
+// too, as the prompt waits on it.
 //
 // No template literals: sbx validates every dollar-brace form in a kit's
 // file content against its own placeholder list.
@@ -69,12 +68,9 @@ function describe(item) {
   return "- " + item.kind + " " + what + "at " + item.path + " (" + item.type + ", " + size(item.size) + ") — " + how + note;
 }
 
-function context(items, event) {
-  const when = event === "UserPromptSubmit"
-    ? "along with this message"
-    : "while you were working";
+function context(items) {
   return "The user sent " + (items.length === 1 ? "this" : "these") + " to you through the vibe clipboard page " +
-    when + ". Take " + (items.length === 1 ? "it" : "them") + " into account as part of what they're asking:\n" +
+    "along with this message. Take " + (items.length === 1 ? "it" : "them") + " into account as part of what they're asking:\n" +
     items.map(describe).join("\n");
 }
 
@@ -85,12 +81,11 @@ function main() {
   } catch (e) {
     return;
   }
-  const event = input.hook_event_name;
-  if (event !== "UserPromptSubmit" && event !== "PostToolUse") return;
+  if (input.hook_event_name !== "UserPromptSubmit") return;
   claim(function (items) {
     if (!items.length) return;
     process.stdout.write(JSON.stringify({
-      hookSpecificOutput: { hookEventName: event, additionalContext: context(items, event) },
+      hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context(items) },
     }));
   });
 }

@@ -47,6 +47,11 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              profile (taken before each re-compose) to roll
                              back to, then offer to re-compose from it;
                              -f restores the newest, unasked
+  vibe --migrate FROM TO     move folder FROM to TO (which mustn't exist
+                             yet), its sandbox with it: rebuilt there, under
+                             the name TO gives it, keeping its agent's
+                             memories, conversation, GitHub token and
+                             clipboard history; asks first (-f doesn't)
   vibe -l/--list             list every known sandbox and its status
   vibe -a/--info [path]      show the sandbox's settings (memory, agent,
                              features), its companion page and how to
@@ -211,7 +216,7 @@ func run(argv []string) error {
 		return fmt.Errorf("--update-strategy only applies to --install and --upgrade")
 	}
 	if args.ExclusiveActions() > 1 {
-		return fmt.Errorf("--stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info, --setup, --git-token, --update-sandboxes, --manage and --headless are mutually exclusive")
+		return fmt.Errorf("--migrate, --stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info, --setup, --git-token, --update-sandboxes, --manage and --headless are mutually exclusive")
 	}
 
 	if (args.GitTokenEnv != "" || args.NoGitToken || args.GitRules != "") && args.ExclusiveActions() > 0 && !args.GitToken {
@@ -348,6 +353,8 @@ func run(argv []string) error {
 		}
 	}
 	switch {
+	case args.Migrate:
+		return doMigrate(lay, args, name, target, expandHome(args.MigrateTo))
 	case args.Stop:
 		return doStop(vibeHome, name, target, args.Force)
 	case args.Cancel:

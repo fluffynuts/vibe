@@ -25,6 +25,7 @@
 package companion
 
 import (
+	"context"
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
@@ -80,6 +81,11 @@ type Config struct {
 	// nil means the sandbox's agent can't be talked to this way, and the
 	// page has no such tab.
 	Converse Converser
+	// Prepare readies the sandbox for a turn before it runs (starting it,
+	// if it's stopped), saying what it does through say, which the page
+	// shows; an error ends the turn with it, unrun. Nil means nothing is
+	// done first.
+	Prepare func(ctx context.Context, say func(string)) error
 	// LatestReview reads the diffity link the sandbox gave out last ("" for
 	// none), which the conversation announces when a turn has made a new
 	// one; nil means the sandbox has no diffity. It may be slow, but should
