@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -320,5 +321,27 @@ func TestAFolderBelowItsRepositorysTopIsWarnedAbout(t *testing.T) {
 	}
 	if notes := notesOf(func() { reviewTabFor(t.TempDir(), "box", state.Instance{Target: top}) }); len(notes) != 0 {
 		t.Errorf("at the top: %q", notes)
+	}
+}
+
+// Reached through a link (as macOS's /var is /private/var), the top is
+// named as the user reaches it, not as git resolves it.
+func TestTheRepositorysTopIsNamedAsTheUserReachesIt(t *testing.T) {
+	need(t, "git")
+	if runtime.GOOS == "windows" {
+		t.Skip("symbolic links need privileges on Windows")
+	}
+	real := t.TempDir()
+	if out, err := exec.Command("git", "-C", real, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	os.MkdirAll(filepath.Join(real, "sub"), 0o755)
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	notes := strings.Join(notesOf(func() { reviewTabFor(t.TempDir(), "box", state.Instance{Target: filepath.Join(link, "sub")}) }), "\n")
+	if !strings.Contains(notes, "start vibe in "+link+".") {
+		t.Errorf("notes: %q", notes)
 	}
 }

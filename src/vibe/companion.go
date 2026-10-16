@@ -342,13 +342,19 @@ func noteBelowRepositoryTop(folder string) {
 	if err != nil {
 		return
 	}
-	same := func(a, b string) bool {
-		ra, errA := filepath.EvalSymlinks(a)
-		rb, errB := filepath.EvalSymlinks(b)
-		return errA == nil && errB == nil && ra == rb
-	}
-	if same(top, folder) {
+	realTop, errTop := filepath.EvalSymlinks(top)
+	realFolder, errFolder := filepath.EvalSymlinks(folder)
+	if errTop != nil || errFolder != nil || realTop == realFolder {
 		return
+	}
+	// git names the top resolved (macOS's /var is /private/var): it's named
+	// as the user reaches it, the folder's path with the levels below the
+	// top taken off.
+	if rel, err := filepath.Rel(realTop, realFolder); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		top = folder
+		for range strings.Split(rel, string(filepath.Separator)) {
+			top = filepath.Dir(top)
+		}
 	}
 	note("%s is inside the git repository at %s, not at its top: the Review tab reviews the whole repository, "+
 		"but the agent can't use git in the sandbox, which only has this folder. For the best results, start vibe in %s.", folder, top, top)
