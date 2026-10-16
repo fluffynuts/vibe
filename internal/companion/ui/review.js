@@ -46,20 +46,27 @@
     return out
   }
 
-  // inReadingOrder is files as { file, stop }: those the reading order has a
-  // stop on first, in its order, then the rest as they came.
-  function inReadingOrder(files, order) {
+  // inTreeOrder is files as { file, stop, step }, in the order the file
+  // tree lists them (folders first, each by name), so the files, the tree
+  // and the comment arrows all go the same way. stop is the file's place in
+  // the reading order, if it has one, and step its number there (from 1,
+  // counting the stops on files in the diff).
+  function inTreeOrder(files, order) {
     const byPath = new Map(files.map((f) => [f.path, f]))
-    const out = []
-    const seen = new Set()
+    const stops = new Map()
     for (const stop of order || []) {
-      const f = byPath.get(stop.file)
-      if (!f || seen.has(f.path)) continue
-      seen.add(f.path)
-      out.push({ file: f, stop })
+      if (byPath.has(stop.file) && !stops.has(stop.file)) stops.set(stop.file, { stop, step: stops.size + 1 })
     }
-    for (const f of files) if (!seen.has(f.path)) out.push({ file: f, stop: null })
-    return out
+    const paths = []
+    const walk = (node) => {
+      for (const d of node.dirs) walk(d)
+      for (const f of node.files) paths.push(f.path)
+    }
+    walk(fileTree(files.map((f) => f.path)))
+    return paths.map((path) => {
+      const s = stops.get(path)
+      return { file: byPath.get(path), stop: s ? s.stop : null, step: s ? s.step : 0 }
+    })
   }
 
   // sideBySide lays out hunk's lines as rows of { left, right }: indexes
@@ -257,7 +264,52 @@
     return out
   }
 
-  const api = { placeInGaps, placeThreads, inReadingOrder, sideBySide, gaps, gapView, GAP_STEP, fileTree, matchesFilter, agentUpdated, threadsByFile, stepTo }
+  // positionOf is which of the threads at tops (in page order) the page is
+  // at, with line where a thread shows (just under the bar): the last one
+  // at it or scrolled past it, else the first. -1 when there are none.
+  function positionOf(tops, line) {
+    if (!tops.length) return -1
+    let at = 0
+    tops.forEach((top, i) => { if (top <= line + 2) at = i })
+    return at
+  }
+
+  // currentOf is which of the files at tops (their sections' tops, in page
+  // order) the page is in, with line just under the bar: the last one
+  // reaching up to it; -1 above the first.
+  function currentOf(tops, line) {
+    let at = -1
+    tops.forEach((top, i) => { if (top <= line + 2) at = i })
+    return at
+  }
+
+  // diffSquares is the five squares GitHub shows of a file's change: split
+  // between added and deleted by their share of the lines changed (each
+  // there at all getting one), or, with fewer than five changed, one each
+  // and the rest grey.
+  function diffSquares(adds, dels) {
+    const total = adds + dels
+    let add = adds
+    let del = dels
+    if (total >= 5) {
+      add = Math.round((5 * adds) / total)
+      if (adds && !add) add = 1
+      if (dels && add === 5) add = 4
+      del = 5 - add
+    }
+    return [...Array(add).fill('add'), ...Array(del).fill('del'), ...Array(5 - add - del).fill('none')]
+  }
+
+  // inStepOrder is entries ({ file, ... }: things on the page, in its
+  // order; file null for the whole review's) in the reading order: the
+  // whole review's first, then those on files with a step (steps: path to
+  // its number), by step, then the rest; each group as the page has them.
+  function inStepOrder(entries, steps) {
+    const rank = (e) => e.file === null ? 0 : steps.has(e.file) ? steps.get(e.file) : Infinity
+    return entries.map((e, i) => ({ e, i })).sort((a, b) => (rank(a.e) - rank(b.e)) || (a.i - b.i)).map((x) => x.e)
+  }
+
+  const api = { inStepOrder, diffSquares, currentOf, positionOf, placeInGaps, placeThreads, inTreeOrder, sideBySide, gaps, gapView, GAP_STEP, fileTree, matchesFilter, agentUpdated, threadsByFile, stepTo }
   if (typeof module === 'object' && module.exports) module.exports = api
   else root.vibeReview = api
 })(this)

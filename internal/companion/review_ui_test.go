@@ -21,6 +21,7 @@ func TestTheReviewTabsPlacing(t *testing.T) {
 }
 
 // TestThePageItself runs the tests of the page as a whole (uitest/page.test.js),
+// and of the clipboard bridge's page beside it (uitest/clipboard-page.test.js),
 // in jsdom. jsdom is installed with `npm ci` in uitest: without it they're
 // skipped here, saying how to get it, but never in CI, where skipping would
 // pass them unseen.
@@ -36,8 +37,10 @@ func TestThePageItself(t *testing.T) {
 		}
 		t.Skip(how)
 	}
-	out, err := exec.Command(node, "--test", filepath.Join("uitest", "page.test.js")).CombinedOutput()
-	if err != nil {
-		t.Fatalf("node --test uitest/page.test.js failed: %v\n%s", err, out)
+	for _, file := range []string{"page.test.js", "clipboard-page.test.js"} {
+		out, err := exec.Command(node, "--test", filepath.Join("uitest", file)).CombinedOutput()
+		if err != nil {
+			t.Fatalf("node --test uitest/%s failed: %v\n%s", file, err, out)
+		}
 	}
 }

@@ -33,8 +33,12 @@ type File struct {
 	Status  string `json:"status"`
 	Binary  bool   `json:"binary,omitempty"`
 	// TooLarge is an untracked file too large to show the lines of.
-	TooLarge bool   `json:"tooLarge,omitempty"`
-	Hunks    []Hunk `json:"hunks"`
+	TooLarge bool `json:"tooLarge,omitempty"`
+	// Lines is how many lines the file has: as the review has it, or, for
+	// a deleted one, as it had; 0 for a binary one, or when it couldn't be
+	// read (then the page just doesn't say).
+	Lines int    `json:"lines,omitempty"`
+	Hunks []Hunk `json:"hunks"`
 }
 
 // Hunk is a run of changed lines with their context. Section is what git

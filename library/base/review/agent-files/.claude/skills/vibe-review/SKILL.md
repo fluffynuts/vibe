@@ -19,8 +19,13 @@ that found nothing.
     vibe-review start --note "<what this change is, in a few words>"
 
 Uncommitted changes (the default), or `--ref <branch>` for a branch's
-changes since it parted from that one, or `--commit <sha>` for one commit.
+changes since it parted from that one, `--commit <sha>` for one commit, or
+`--unpushed` for the commits not yet pushed to the branch's upstream.
 Starting again replaces the last review (it's kept in the folder's history).
+
+When the user started the review from the Review tab, the prompt says so:
+then it's already started, so don't run `start` (it would replace theirs);
+begin at step 2.
 
 ## 2. Read
 

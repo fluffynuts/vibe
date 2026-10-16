@@ -316,7 +316,7 @@
   // showAttention marks each tab attention names with a dot, and says why
   // in the tab's tooltip; a tab it doesn't name loses both. The reasons come
   // with the dot, so there's no dot without them.
-  function showAttention(attention) {
+  function showAttention(attention, pulsing) {
     for (const tab of document.querySelectorAll('[role=tab]')) {
       const reasons = Array.isArray(attention[tab.dataset.tab]) ? attention[tab.dataset.tab] : []
       let dot = tab.querySelector('.tab-dot')
@@ -326,8 +326,20 @@
         continue
       }
       if (!dot) tab.append(dot = el('span', { class: 'tab-dot', 'aria-hidden': 'true' }))
+      dot.classList.toggle('working', !!pulsing && pulsing.has(tab.dataset.tab))
       tab.title = reasons.join('\n')
     }
+  }
+
+  // showAllAttention draws the dots vibe asked for, with the page's own:
+  // the Review tab's, when the agent has updated the review, and the
+  // Conversation tab's, when it has said something out of sight (pulsing
+  // while it's still at work).
+  function showAllAttention() {
+    const attention = withReviewNews(state.attention)
+    if (!convo.news) { showAttention(attention); return }
+    showAttention(Object.assign({}, attention, { conversation: [convo.running ? 'The agent is working' : 'The agent has answered'] }),
+      convo.running ? new Set(['conversation']) : null)
   }
 
   // REVIEW_SEEN keeps when the agent last updated the review as the user
@@ -346,7 +358,7 @@
   function reviewSeen() {
     if (!state.loaded || !R.agentUpdated(state.reviewAt, store.get(REVIEW_SEEN))) return
     store.set(REVIEW_SEEN, state.reviewAt)
-    showAttention(withReviewNews(state.attention))
+    showAllAttention()
   }
 
   // reached is called with the outcome of every call to vibe: two failures
@@ -498,7 +510,7 @@
       for (const t of SANDBOX_TABS) $('tab-' + t).hidden = res.body.sandboxTabs === false
       state.attention = res.body.attention || {}
       state.reviewAt = res.body.review ? res.body.reviewAt || '' : ''
-      showAttention(withReviewNews(state.attention))
+      showAllAttention()
       const moved = url !== state.clipboardUrl
       if (moved || ready !== state.clipboardReady) {
         if (url && !ready && (moved || state.clipboardReady)) {
@@ -621,6 +633,10 @@
       button.tabIndex = t === tab ? 0 : -1
     }
     if (tab === 'review') reviewSeen()
+    if (tab === 'conversation' && convo.news) { convo.news = false; showAllAttention() }
+    // Opening the conversation is to say something: the cursor goes in the
+    // prompt box. (Arrowing along the tabs keeps focus on the tabs.)
+    if (tab === 'conversation') $('convo-input').focus({ preventScroll: true })
     // What the agent said while the conversation was out of sight.
     if (tab === 'conversation' && convo.behind) {
       convo.behind = false
@@ -849,6 +865,8 @@
   // layout is 'split' (side by side, the default) or 'unified' (one column,
   // for a narrow window), kept for this browser.
   const REVIEW_LAYOUT = 'vibe-review-layout'
+  // REVIEW_ORDER keeps, per browser, the order the comment arrows go in.
+  const REVIEW_ORDER = 'vibe-review-comment-order'
   // The file filter is kept for this browser tab, as the Profiles tab's is.
   const REVIEW_FILTER = 'vibe-review-filter'
   // fileLines are files' lines, fetched the first time one of their gaps
@@ -861,7 +879,22 @@
     // code, text, mode: 'write' or 'preview' }); editing, the unsent comment
     // being edited ({ thread, at: when it was said, text }); ask, the
     // thread last asked about and whether the agent is still answering it.
-    composer: null, editing: null, ask: null }
+    composer: null, editing: null, ask: null,
+    // options are the reviews that can be started, while none is open
+    // (null until known), or why they couldn't be told.
+    options: null, optionsError: '',
+    // at is which of the shown threads the page is at, for the bar's
+    // "3/5"; steering, that the arrows put it there, so the next step goes
+    // on from it (the last threads can't always be scrolled up to the bar),
+    // until the user scrolls themselves.
+    at: 0, steering: false,
+    // current is the file the page is in, marked in the tree (null above
+    // the first); fileSteering, that a click in the tree set it, until the
+    // user scrolls themselves.
+    current: null, fileSteering: false,
+    // order is the order the comment arrows go in: 'path', as the files
+    // are shown, or 'reading', by the agent's steps.
+    order: store.get(REVIEW_ORDER) === 'reading' ? 'reading' : 'path' }
 
   // redrawReview draws the review again even though nothing in it changed:
   // something the page holds (a comment being written) did.
@@ -968,8 +1001,7 @@
     const index = new Map(files.map((f, i) => [f.path, i]))
     const byPath = new Map(files.map((f) => [f.path, f]))
     const commentsOn = R.threadsByFile(reviewView.review ? reviewView.review.threads : [])
-    $('review-tree-count').textContent = !files.length ? ''
-      : filtering ? shown.length + ' of ' + files.length + ' files' : files.length + (files.length === 1 ? ' file' : ' files')
+    const steps = new Map(R.inTreeOrder(files, reviewView.review ? reviewView.review.order : []).filter((o) => o.step).map((o) => [o.file.path, o]))
     const rows = []
     // Indented through element.style: the page's policy (style-src 'self')
     // drops a style attribute.
@@ -977,7 +1009,7 @@
     const walk = (node, depth) => {
       for (const d of node.dirs) {
         const open = filtering || !reviewView.collapsed.has(d.path)
-        rows.push(indented(el('button', { type: 'button', role: 'treeitem', 'aria-expanded': String(open), title: d.path,
+        rows.push(indented(el('button', { type: 'button', role: 'treeitem', 'aria-expanded': String(open), title: d.path, 'data-path': d.path,
           onclick: () => {
             if (filtering) return
             if (open) reviewView.collapsed.add(d.path)
@@ -989,10 +1021,16 @@
       }
       for (const f of node.files) {
         const file = byPath.get(f.path)
-        rows.push(indented(el('button', { type: 'button', role: 'treeitem', title: f.path + ' (' + file.status + ')',
-          onclick: () => scrollToFile(index.get(f.path)) },
-        el('span', { class: 'twisty' }), el('span', { class: 'mark ' + file.status, text: TREE_MARKS[file.status] || '●' }),
-        el('span', { class: 'name', text: f.name }), commentCount(commentsOn.get(f.path) || 0)), depth))
+        rows.push(indented(el('button', { type: 'button', role: 'treeitem', title: f.path + ' (' + file.status + ')', 'data-path': f.path,
+          onclick: () => {
+            scrollToFile(index.get(f.path))
+            reviewView.current = f.path
+            reviewView.fileSteering = true
+            markCurrentFile()
+          } },
+        el('span', { class: 'twisty' }), fileIcon(file.status),
+        el('span', { class: 'name', text: f.name }), stepBadge((steps.get(f.path) || {}).step, (steps.get(f.path) || {}).stop),
+        commentCount(commentsOn.get(f.path) || 0)), depth))
       }
     }
     walk(R.fileTree(shown.map((f) => f.path)), 0)
@@ -1003,6 +1041,49 @@
       if (card) card.hidden = !R.matchesFilter(f.path, query)
     })
     countComments()
+    if (reviewView.fileSteering) markCurrentFile()
+    else measureCurrentFile()
+  }
+
+  // fileCards are the files' sections the page shows, in its order.
+  function fileCards() {
+    return Array.from($('review-files').querySelectorAll('.review-file')).filter((card) => !card.hidden)
+  }
+
+  // measureCurrentFile works out which file the page is in, from where the
+  // files' sections are: the last reaching up to just under the bar.
+  function measureCurrentFile() {
+    const cards = fileCards()
+    const i = R.currentOf(cards.map((c) => c.getBoundingClientRect().top), threadLine())
+    reviewView.current = i < 0 ? null : cards[i].dataset.path
+    markCurrentFile()
+  }
+
+  // markCurrentFile marks the file the page is in, in the tree: its row, or
+  // the collapsed folder it's hidden in; keeps that row in view in the
+  // tree; and counts how far through the files it is.
+  function markCurrentFile() {
+    const tree = $('review-tree')
+    for (const row of tree.querySelectorAll('.current')) row.classList.remove('current')
+    const cards = fileCards()
+    const total = (reviewView.files || []).length
+    const at = cards.findIndex((c) => c.dataset.path === reviewView.current)
+    const filtering = !!reviewView.filter.trim()
+    $('review-tree-count').textContent = !total ? ''
+      : (at >= 0 ? (at + 1) + '/' : '') + (filtering ? cards.length + ' of ' + total : total) + (total === 1 ? ' file' : ' files')
+    const path = reviewView.current
+    if (!path) return
+    const rows = Array.from(tree.querySelectorAll('[data-path]'))
+    const row = rows.find((r) => r.dataset.path === path) ||
+      rows.filter((r) => path.startsWith(r.dataset.path + '/')).sort((a, b) => b.dataset.path.length - a.dataset.path.length)[0]
+    if (!row) return
+    row.classList.add('current')
+    // In view in the tree, which scrolls on its own: just far enough.
+    const pane = tree.closest('.review-tree-pane')
+    const r = row.getBoundingClientRect()
+    const p = pane.getBoundingClientRect()
+    if (r.bottom > p.bottom) pane.scrollTop += r.bottom - p.bottom + 4
+    else if (r.top < p.top) pane.scrollTop -= p.top - r.top + 4
   }
 
   // commentCount is a file's comment threads, for its row in the tree.
@@ -1022,6 +1103,70 @@
     return svg
   }
 
+  // threadLine is where a thread is scrolled to, on the screen: just under
+  // the bar and the file header pinned below it, by its scroll-margin-top
+  // (8px more, in app.css).
+  function threadLine() {
+    return $('panel-review').querySelector(':scope > .bar').getBoundingClientRect().bottom + fileHeadHeight() + 8
+  }
+
+  // fileHeadHeight is how tall a file's header is, pinned under the bar
+  // while the page is in its file; 0 with no files.
+  function fileHeadHeight() {
+    const head = $('review-files').querySelector('.review-file > header')
+    return head ? head.getBoundingClientRect().height : 0
+  }
+
+  // setUpOrderMenu makes the comment count a button choosing the order the
+  // comment arrows go in. The reading order can only be chosen when the
+  // agent set one.
+  function setUpOrderMenu() {
+    const button = $('review-order')
+    const menu = $('review-order-menu')
+    const close = () => { menu.hidden = true; button.setAttribute('aria-expanded', 'false') }
+    button.addEventListener('click', () => {
+      if (!menu.hidden) { close(); return }
+      const none = reviewSteps().size === 0
+      for (const item of menu.querySelectorAll('[role=menuitemradio]')) {
+        item.setAttribute('aria-checked', String(item.dataset.order === reviewView.order))
+        if (item.dataset.order === 'reading') {
+          item.disabled = none
+          item.textContent = "By the agent's reading order" + (none ? ' (the agent set no reading order)' : '')
+        }
+      }
+      menu.hidden = false
+      button.setAttribute('aria-expanded', 'true')
+      const checked = menu.querySelector('[aria-checked=true]')
+      if (checked) checked.focus()
+    })
+    menu.addEventListener('click', (ev) => {
+      const item = ev.target.closest('[role=menuitemradio]')
+      if (!item || item.disabled) return
+      reviewView.order = item.dataset.order
+      store.set(REVIEW_ORDER, reviewView.order)
+      reviewView.steering = false
+      close()
+      countComments()
+    })
+    menu.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); close(); button.focus() } })
+    document.addEventListener('pointerdown', (ev) => { if (!menu.hidden && !ev.target.closest('.review-order-wrap')) close() })
+  }
+
+  // reviewSteps is each file's step in the reading order (path to number).
+  function reviewSteps() {
+    const rv = reviewView.review
+    return new Map(R.inTreeOrder(reviewView.files || [], rv ? rv.order : []).filter((o) => o.step).map((o) => [o.file.path, o.step]))
+  }
+
+  // arrowCards are the shown threads' cards in the order the comment
+  // arrows go in: the page's, or the reading order's.
+  function arrowCards() {
+    const cards = threadCards()
+    if (reviewView.order !== 'reading') return cards
+    const entries = cards.map((card) => { const file = card.closest('.review-file'); return { file: file ? file.dataset.path : null, card } })
+    return R.inStepOrder(entries, reviewSteps()).map((e) => e.card)
+  }
+
   // threadCards are the threads' cards the page shows, in its order: the
   // filter hides the rest.
   function threadCards() {
@@ -1034,11 +1179,23 @@
     const rv = reviewView.review
     const all = rv ? rv.threads.length : 0
     const open = rv ? rv.threads.filter((t) => t.status === 'open').length : 0
-    const shown = threadCards().length
+    const page = threadCards()
+    const cards = arrowCards()
+    const shown = cards.length
     const hidden = Math.max(0, all - shown)
-    $('review-count').textContent = !all ? 'no comments yet'
-      : (all === 1 ? '1 comment' : all + ' comments') + (hidden ? ' (' + hidden + ' hidden by the filter)' : '')
-    $('review-count').title = rv && rv.threads.length ? open + ' open of ' + rv.threads.length + ' comment threads' : ''
+    if (!reviewView.steering) {
+      // Where the page is: in the page's order, then counted in the arrows'.
+      const tops = page.map((c) => c.getBoundingClientRect().top)
+      if (reviewView.order === 'reading') {
+        const i = R.currentOf(tops, threadLine())
+        reviewView.at = i < 0 ? 0 : cards.indexOf(page[i])
+      } else reviewView.at = Math.max(0, R.positionOf(tops, threadLine()))
+    }
+    reviewView.at = Math.min(reviewView.at, Math.max(0, shown - 1))
+    const where = shown ? (reviewView.at + 1) + '/' + shown + (shown === 1 ? ' comment' : ' comments') : (all === 1 ? '1 comment' : all + ' comments')
+    $('review-count').textContent = !all ? 'no comments yet' : where + (hidden ? ' (' + hidden + ' hidden by the filter)' : '')
+    $('review-order').title = (all ? open + ' open of ' + all + ' comment threads. ' : '') +
+      (reviewView.order === 'reading' ? "The arrows go in the agent's reading order" : 'The arrows go in path order, as the tree') + ': click to change.'
     $('review-prev-comment').disabled = !shown
     $('review-next-comment').disabled = !shown
   }
@@ -1046,19 +1203,55 @@
   // goToComment scrolls to the next thread past the one the page is at, or
   // the one before it, and puts focus in its reply box.
   function goToComment(dir) {
-    const cards = threadCards()
-    const bar = $('panel-review').querySelector(':scope > .bar').getBoundingClientRect().bottom
-    // Where a thread is scrolled to: just under the bar, by its
-    // scroll-margin-top (8px, in app.css).
-    const i = R.stepTo(cards.map((c) => c.getBoundingClientRect().top), bar + 8, dir)
+    const cards = arrowCards()
+    if (!cards.length) return
+    const n = cards.length
+    let i
+    if (reviewView.steering) i = (reviewView.at + (dir === 'next' ? 1 : -1) + n) % n
+    else if (reviewView.order === 'reading') {
+      // From the thread the page is at, on in the reading order.
+      const page = threadCards()
+      const at = R.currentOf(page.map((c) => c.getBoundingClientRect().top), threadLine())
+      const from = at < 0 ? -1 : cards.indexOf(page[at])
+      i = dir === 'next' ? (from + 1) % n : from <= 0 ? n - 1 : from - 1
+    } else i = R.stepTo(cards.map((c) => c.getBoundingClientRect().top), threadLine(), dir)
     if (i < 0) return
+    reviewView.at = i
+    reviewView.steering = true
+    countComments()
     cards[i].scrollIntoView({ behavior: 'smooth', block: 'start' })
     // Its reply box, to type in at once.
     ;(cards[i].querySelector('textarea[data-thread]') || cards[i]).focus({ preventScroll: true })
   }
 
   // What each file's mark in the tree says about it.
-  const TREE_MARKS = { added: '+', modified: '●', deleted: '−', renamed: '→' }
+  // FILE_SIGNS are the sign on each file's icon in the tree, by what
+  // happened to it, as paths in the icon's 16x16 box (and, for tests and
+  // screen readers, as the character they draw).
+  const FILE_SIGNS = {
+    added: { sign: '+', d: 'M8 6.5v5M5.5 9h5' },
+    modified: { sign: '±', d: 'M8 5.5v4M6 7.5h4M6 11.5h4' },
+    deleted: { sign: '−', d: 'M5.5 9h5' },
+    renamed: { sign: '→', d: 'M5.5 9h5M8.5 7l2 2-2 2' },
+  }
+
+  // fileIcon is a file's icon in the tree: a page with a folded corner,
+  // coloured and signed by what happened to it, as GitHub has them.
+  function fileIcon(status) {
+    const s = FILE_SIGNS[status] || FILE_SIGNS.modified
+    const ns = 'http://www.w3.org/2000/svg'
+    const svg = document.createElementNS(ns, 'svg')
+    svg.setAttribute('viewBox', '0 0 16 16')
+    svg.setAttribute('class', 'file-icon ' + status)
+    svg.setAttribute('data-sign', s.sign)
+    svg.setAttribute('aria-hidden', 'true')
+    for (const d of ['M3.5 1.5h6l3 3v10h-9z M9.5 1.5v3h3', s.d]) {
+      const path = document.createElementNS(ns, 'path')
+      path.setAttribute('d', d)
+      svg.append(path)
+    }
+    return svg
+  }
 
   // scrollToFile scrolls to a file's diff: never a link to it, as the URL's
   // fragment is the page's token.
@@ -1129,6 +1322,45 @@
 
   // openGap opens a file's gap by direction ('down', 'up' or 'all'),
   // fetching the file's lines first if they aren't to hand.
+  // showPastes says, in the review's bar, how many pastes will go to the
+  // agent with the next message: the clipboard page can't be seen here.
+  function showPastes(n) {
+    $('review-pastes').hidden = !n
+    $('review-pastes').textContent = n === 1 ? '1 paste to send' : n + ' pastes to send'
+  }
+
+  // reviewPaste sends what's pasted on the Review tab that isn't text (an
+  // image, a file) to the clipboard page, to go to the agent with the next
+  // message, saying which; text pastes into its box as ever.
+  async function reviewPaste(ev) {
+    const data = ev.clipboardData
+    const files = data ? Array.from(data.files || []) : []
+    if (!files.length || data.getData('text/plain')) return
+    ev.preventDefault()
+    const said = { image: 0, file: 0, already: 0 }
+    for (const f of files) {
+      try {
+        const res = await fetch('/api/clipboard/paste', { method: 'POST', body: f, headers: {
+          'X-Vibe-Token': token, 'Content-Type': f.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(f.name || '') } })
+        reached(true)
+        let body = {}
+        try { body = await res.json() } catch (e) { /* not JSON: said by its status */ }
+        if (!res.ok) { toast(body.error || "That couldn't be pasted.", true); return }
+        if (body.duplicate) said.already++
+        else said[(f.type || '').startsWith('image/') ? 'image' : 'file']++
+      } catch (e) {
+        reached(false)
+        toast('Could not reach vibe.', true)
+        return
+      }
+    }
+    const many = (n, one, more) => (n === 1 ? one : n + ' ' + more) + ' pasted'
+    const parts = [said.image && many(said.image, 'Image', 'images'), said.file && many(said.file, 'File', 'files')].filter(Boolean)
+    if (said.already) parts.push(parts.length ? '(' + said.already + ' already pasted)' : 'Already pasted')
+    toast(parts.join(' '))
+    loadReview(false)
+  }
+
   // loadFileLines gets path's lines, for its gaps: true once they're there.
   async function loadFileLines(path) {
     if (reviewView.fileLines.has(path)) return true
@@ -1183,6 +1415,8 @@
       if (!res.ok) { problem(res); return }
       reviewView.review = res.body.review
       reviewView.ask = res.body.ask || null
+      showPastes(res.body.pastes)
+      if (!reviewIsOn(reviewView.review)) loadOptions()
       if (withDiff) {
         reviewView.files = res.body.diff || []
         reviewView.diffError = res.body.diffError || ''
@@ -1208,21 +1442,133 @@
   // drawReview draws the review when it has changed; a poll's redraw waits
   // while a box on the tab is being typed in (it would take the focus away),
   // one the user asked for (force) doesn't.
+  // reviewIsOn says rv is a review to show: started (or commented on) and
+  // not closed. Else the tab offers to start one.
+  function reviewIsOn(rv) {
+    const started = !!rv.started && !String(rv.started).startsWith('0001-')
+    return !rv.closed && (started || rv.threads.length > 0)
+  }
+
+  // drawStart draws the ways to start a review: each kind there is to
+  // review, by the agent (when the page can talk to it), or just its diff.
+  function drawStart(rv) {
+    $('review-closed').hidden = !rv.closed
+    $('review-closed').textContent = rv.closed ? 'The last review was closed. ' + rv.closed : ''
+    $('review-reopen').hidden = !rv.closed
+    const o = reviewView.options
+    if (!o) {
+      $('review-start-options').replaceChildren(el('p', { class: reviewView.optionsError ? 'bad-text' : 'muted',
+        text: reviewView.optionsError ? "What there is to review couldn't be told: " + reviewView.optionsError : 'Seeing what there is to review…' }))
+      return
+    }
+    const kinds = []
+    if (o.uncommitted) kinds.push({ kind: 'uncommitted', what: 'the uncommitted changes', review: 'Review uncommitted changes', show: 'Show uncommitted changes' })
+    if (o.defaultBranch) kinds.push({ kind: 'branch', what: 'this branch against ' + o.defaultBranch, review: 'Review against ' + o.defaultBranch, show: 'Diff against ' + o.defaultBranch })
+    if (o.upstream) {
+      const n = o.unpushed === 1 ? '1 unpushed commit' : o.unpushed + ' unpushed commits'
+      kinds.push({ kind: 'unpushed', what: 'the commits not yet pushed to ' + o.upstream, review: 'Review ' + n, show: 'Show ' + n })
+    }
+    if (!kinds.length) {
+      $('review-start-options').replaceChildren(el('p', { class: 'muted',
+        text: 'Nothing to review: no uncommitted changes, no commits waiting to be pushed, and no other branch to compare this one with.' }))
+      return
+    }
+    const button = (k, agent) => el('button', { type: 'button', class: agent ? '' : 'ghost', text: agent ? k.review : k.show,
+      title: agent ? 'Ask the agent to review ' + k.what + ': the diff shows at once, its comments as it makes them' : 'Show the diff of ' + k.what + ', to review yourself',
+      onclick: () => startReview(k.kind, agent) })
+    $('review-start-options').replaceChildren(
+      ...(state.conversation ? [...kinds.map((k) => button(k, true)), el('div', { class: 'gap' })] : []),
+      ...kinds.map((k) => button(k, false)))
+  }
+
+  async function loadOptions() {
+    try {
+      const res = await api('/api/review/options')
+      reached(true)
+      reviewView.options = res.ok ? res.body : null
+      reviewView.optionsError = res.ok ? '' : (res.body && res.body.error) || 'vibe said no'
+      drawReview()
+    } catch (e) {
+      reached(false)
+    }
+  }
+
+  // showReview shows review rv, as vibe gave it, with its diff worked out
+  // afresh: one just started, or reopened.
+  function showReview(rv) {
+    reviewView.review = rv
+    reviewView.files = null
+    reviewView.fileLines.clear()
+    reviewView.linesAsked.clear()
+    reviewView.opened.clear()
+    reviewView.key = null
+    drawReview()
+    loadReview(true)
+  }
+
+  async function startReview(kind, agent) {
+    try {
+      const res = await post('/api/review/start', { kind, agent })
+      reached(true)
+      if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
+      showReview(res.body.review)
+    } catch (e) {
+      reached(false)
+      toast('Could not reach vibe.', true)
+    }
+  }
+
+  // closeReview closes the review, asking first when comments on it are
+  // still open; it's kept, to reopen.
+  function closeReview() {
+    const rv = reviewView.review
+    const open = rv.threads.filter((t) => t.status === 'open').length
+    const close = async () => {
+      const res = await post('/api/review/do', { op: 'close', body: 'You closed it.' })
+      if (res.ok) { reviewView.review = res.body.review; reviewView.key = null; drawReview(); loadOptions() }
+      return res
+    }
+    if (!open) {
+      close().then((res) => { reached(true); if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true) },
+        () => { reached(false); toast('Could not reach vibe.', true) })
+      return
+    }
+    confirmThen({ title: 'Close this review?', text: (open === 1 ? '1 comment is' : open + ' comments are') + ' still open. The review is kept: you can reopen it.',
+      commandNote: '', command: '', runLabel: 'Close review', started: 'Closed.', run: close })
+  }
+
+  async function reopenReview() {
+    try {
+      const res = await post('/api/review/do', { op: 'reopen-review' })
+      reached(true)
+      if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
+      showReview(res.body.review)
+    } catch (e) {
+      reached(false)
+      toast('Could not reach vibe.', true)
+    }
+  }
+
   function drawReview(force) {
     const rv = reviewView.review
     if (!rv) return
-    const key = JSON.stringify(rv) + '|' + JSON.stringify(reviewView.ask) + '|' + (reviewView.files ? reviewView.files.length : -1) + reviewView.diffError
+    const key = JSON.stringify(rv) + '|' + JSON.stringify(reviewView.ask) + '|' + JSON.stringify(reviewView.options) + reviewView.optionsError + '|' + (reviewView.files ? reviewView.files.length : -1) + reviewView.diffError
     if (!force && (key === reviewView.key || typingAReply())) return
     reviewView.key = key
     for (const box of $('panel-review').querySelectorAll('textarea[data-thread]')) {
       if (box.value.trim()) reviewView.drafts.set(box.dataset.thread, box.value)
     }
     const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.thread : undefined
-    $('review-wait').hidden = reviewView.files !== null
-    $('review-title').textContent = rv.note ? 'Review: ' + rv.note : 'Review'
-    $('review-state').hidden = !rv.state
+    const on = reviewIsOn(rv)
+    $('review-start').hidden = on
+    $('review-body').hidden = !on
+    $('review-actions').hidden = !on
+    $('review-wait').hidden = reviewView.files !== null || !on
+    if (!on) drawStart(rv)
+    $('review-title').textContent = on && rv.note ? 'Review: ' + rv.note : 'Review'
+    $('review-state').hidden = !on || !rv.state
     $('review-state').textContent = rv.state === 'in progress' ? 'the agent is still reviewing' : rv.state || ''
-    $('review-of').textContent = rv.commit ? 'of commit ' + rv.commit : rv.ref ? 'against ' + rv.ref : 'of the uncommitted changes'
+    $('review-of').textContent = !on ? '' : rv.commit ? 'of commit ' + rv.commit : rv.unpushed ? 'of the commits not pushed to ' + rv.ref : rv.ref ? 'against ' + rv.ref : 'of the uncommitted changes'
     const unsent = unsentCount(rv)
     $('review-submit').disabled = !unsent || !state.conversation
     $('review-submit').textContent = unsent ? 'Submit ' + unsent + ' to agent' : 'Submit to agent'
@@ -1242,26 +1588,49 @@
     $('review-general').replaceChildren(...cards(placed.general),
       ...(placed.elsewhere.length ? [el('p', { class: 'muted', text: 'On files not in this diff:' }), ...cards(placed.elsewhere)] : []))
 
-    // The files in the reading order (each stop's label on its file); the
-    // tree is how to get to one.
-    const ordered = R.inReadingOrder(files, rv.order)
+    // The files as the tree lists them, so the tree, the files and the
+    // comment arrows all go one way; the reading order is numbered on them.
+    const ordered = R.inTreeOrder(files, rv.order)
 
     $('review-files').replaceChildren(...(files.length || reviewView.files === null ? [] : [el('p', { class: 'muted', text: 'Nothing to review: no changes.' })]),
-      ...ordered.map((o) => fileCard(o.file, o.stop, files.indexOf(o.file), placed, threads)))
+      ...ordered.map((o) => fileCard(o.file, o.stop, o.step, files.indexOf(o.file), placed, threads)))
     drawTree()
     // The reply box that had focus, drawn afresh, keeps it.
     const again = focused && $('panel-review').querySelector('textarea[data-thread="' + focused + '"]')
     if (again) again.focus({ preventScroll: true })
   }
 
-  function fileCard(f, stop, index, placed, threads) {
+  // diffStat is a file's figures, on the right of its header, as GitHub
+  // shows them: lines added and deleted, five squares of their share, and
+  // how long the file is (or was, deleted). Nothing for a binary file.
+  function diffStat(f) {
+    if (f.binary) return null
+    let adds = 0
+    let dels = 0
+    for (const h of f.hunks || []) for (const l of h.lines) { if (l.kind === 'add') adds++; else if (l.kind === 'del') dels++ }
+    const length = f.lines ? (f.status === 'deleted' ? 'was ' : '') + f.lines + (f.lines === 1 ? ' line' : ' lines') : ''
+    return el('span', { class: 'diffstat', title: adds + (adds === 1 ? ' line' : ' lines') + ' added, ' + dels + ' deleted' + (f.lines ? ', of ' + f.lines : '') },
+      el('span', { class: 'adds', text: '+' + adds }), el('span', { class: 'dels', text: '−' + dels }),
+      el('span', { class: 'squares' }, ...R.diffSquares(adds, dels).map((k) => el('span', { class: 'square ' + k }))),
+      length ? el('span', { class: 'length muted', text: length }) : null)
+  }
+
+  // stepBadge is a file's number in the reading order, if it has one.
+  function stepBadge(step, stop) {
+    if (!step) return null
+    return el('span', { class: 'review-step', text: String(step), title: 'Step ' + step + ' of the reading order' + (stop.label ? ': ' + stop.label : '') })
+  }
+
+  function fileCard(f, stop, step, index, placed, threads) {
     const after = placed.after[f.path] || {}
     const marked = placed.lines[f.path] || {}
     const total = (f.hunks || []).reduce((n, h) => n + h.lines.length, 0)
     const head = el('header', {}, el('code', { text: f.status === 'renamed' ? f.oldPath + ' → ' + f.path : f.path }),
       el('span', { class: 'muted', text: f.status }),
-      stop ? el('span', { class: 'review-stop', text: stop.label || 'in the reading order' }) : null)
-    const card = el('section', { class: 'review-file', id: 'review-file-' + index }, head)
+      stepBadge(step, stop),
+      stop ? el('span', { class: 'review-stop', text: stop.label || 'in the reading order' }) : null,
+      diffStat(f))
+    const card = el('section', { class: 'review-file', id: 'review-file-' + index, 'data-path': f.path }, head)
     if (stop && stop.body) card.append(el('div', { class: 'note' }, markdown(stop.body)))
     // The lines the diff leaves out can be opened, as on GitHub, for a file
     // that's in it on both sides: an added or deleted one is shown whole.
@@ -2036,6 +2405,23 @@
     $('manage-delete').addEventListener('click', deleteTicked)
     $('review-refresh').addEventListener('click', () => { reviewView.fileLines.clear(); reviewView.linesAsked.clear(); loadReview(true) })
     setUpReviewTree()
+    $('review-close').addEventListener('click', closeReview)
+    setUpOrderMenu()
+    $('panel-review').addEventListener('paste', reviewPaste)
+    // Scrolling by hand (not the arrows' scrolling) says where the page is.
+    const panel = $('panel-review')
+    const byHand = () => { reviewView.steering = false; reviewView.fileSteering = false }
+    panel.addEventListener('wheel', byHand, { passive: true })
+    panel.addEventListener('touchstart', byHand, { passive: true })
+    panel.addEventListener('pointerdown', (ev) => { if (ev.target === panel) byHand() }) // its scrollbar
+    panel.addEventListener('keydown', (ev) => {
+      if (['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' '].includes(ev.key) && !typingInto(ev.target)) byHand()
+    })
+    panel.addEventListener('scroll', () => {
+      if (!reviewView.steering) countComments()
+      if (!reviewView.fileSteering) measureCurrentFile()
+    }, { passive: true })
+    $('review-reopen').addEventListener('click', reopenReview)
     $('review-prev-comment').addEventListener('click', () => goToComment('prev'))
     $('review-next-comment').addEventListener('click', () => goToComment('next'))
     // Clicking or typing anywhere in the review is looking at it: an update
@@ -2062,6 +2448,7 @@
       const bar = panel.querySelector(':scope > .bar')
       const barH = bar.offsetHeight
       panel.style.setProperty('--review-bar-h', barH + 'px')
+      panel.style.setProperty('--review-file-head-h', fileHeadHeight() + 'px')
       panel.style.setProperty('--review-tree-max', Math.max(160, window.innerHeight - panel.getBoundingClientRect().top - barH) + 'px')
     }
     if (window.ResizeObserver) new ResizeObserver(measure).observe($('panel-review').querySelector(':scope > .bar'))
@@ -2312,7 +2699,9 @@
 
   // --- the conversation --------------------------------------------------
 
-  const convo = { last: 0, running: false, polling: false, behind: false, lastPrompt: '', ticks: new Map(), typing: null }
+  // news: the agent has said something since the Conversation tab was last
+  // open (its dot); loaded: the conversation so far has been fetched once.
+  const convo = { last: 0, running: false, polling: false, behind: false, news: false, loaded: false, lastPrompt: '', ticks: new Map(), typing: null }
 
   // showTyping keeps the "typing" bubble below the agent's latest message
   // for as long as it is answering, and takes it away once it has. Its
@@ -2597,9 +2986,14 @@
       convo.last = res.body.last || 0
       setConvoRunning(!!res.body.running, !!res.body.background, res.body.quietMinutes || 0, !!res.body.compacting)
       if ((res.body.events || []).length) {
-        if ($('panel-conversation').hidden) convo.behind = true
-        else if (stick) log.scrollTop = log.scrollHeight
+        if ($('panel-conversation').hidden) {
+          convo.behind = true
+          // What was said before the page was opened isn't news.
+          if (convo.loaded) convo.news = true
+        } else if (stick) log.scrollTop = log.scrollHeight
       }
+      convo.loaded = true
+      showAllAttention()
       showTyping()
     } catch (e) {
       reached(false)

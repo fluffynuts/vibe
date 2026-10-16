@@ -151,8 +151,9 @@ func TestStartingAReviewAnewKeepsTheLastOne(t *testing.T) {
 func TestTheUserCantDoTheAgentsPart(t *testing.T) {
 	s := NewStore(t.TempDir())
 	// Commenting is the user's too, since 2026-10-16: their own comments,
-	// sent to the agent when they choose (see Unsent).
-	for _, op := range []string{"start", "order", "done"} {
+	// sent to the agent when they choose (see Unsent). So is starting a
+	// review, from the page (TestThePageStartsAReview).
+	for _, op := range []string{"order", "done"} {
 		if _, err := s.Do(Request{Op: op, File: "a.go", Line: 1, Body: "x"}, User); err == nil {
 			t.Errorf("the user could %s", op)
 		}
@@ -359,5 +360,97 @@ func TestAReviewFromBeforeSentCountsAnsweredCommentsAsSent(t *testing.T) {
 	}
 	if got := refs(Unsent(r)); got != "1.3" {
 		t.Errorf("unsent: %s, want only the one not answered (1.3)", got)
+	}
+}
+
+// A request that can't be read is said to be, and taken out of the inbox,
+// as a bad one is: left there, every Take would find it again, and count
+// it as news from the agent each time.
+func TestARequestThatCantBeReadIsSaidToBeAndTakenOut(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads any file: there's no unreadable one to make")
+	}
+	s := NewStore(t.TempDir())
+	now := clockAt(s)
+	drop(t, s, "1.json", Request{Op: "general", Body: "x"})
+	path := filepath.Join(s.Inbox(), "1.json")
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.Take()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Problems) != 1 || !strings.Contains(r.Problems[0], "1.json") {
+		t.Errorf("problems: %q", r.Problems)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("still in the inbox: %v", err)
+	}
+	at := r.AgentAt
+	*now = now.Add(time.Minute)
+	if r, _ := s.Take(); !r.AgentAt.Equal(at) {
+		t.Errorf("taken as news again: %v, then %v", at, r.AgentAt)
+	}
+}
+
+// The page starts a review: just the diff, or with the agent asked to
+// review it, and of what's not pushed yet as well as a branch or what's
+// uncommitted.
+func TestThePageStartsAReview(t *testing.T) {
+	s := NewStore(t.TempDir())
+	now := clockAt(s)
+	r, err := s.Do(Request{Op: "start", Ref: "origin/feat", Unpushed: true}, User)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.State != "" || !r.Unpushed || r.Ref != "origin/feat" || !r.Started.Equal(*now) {
+		t.Errorf("just the diff: %+v", r)
+	}
+	r, _ = s.Do(Request{Op: "start", Reviewing: true}, User)
+	if r.State != InProgress || r.Unpushed || r.Ref != "" {
+		t.Errorf("with the agent asked: %+v", r)
+	}
+}
+
+func TestAReviewIsClosedAndReopened(t *testing.T) {
+	s := NewStore(t.TempDir())
+	clockAt(s)
+	s.Do(Request{Op: "start"}, User)
+	s.Do(Request{Op: "comment", File: "a.go", Line: 1, Body: "x"}, Agent)
+	r, err := s.Do(Request{Op: "close", Body: "You closed it."}, User)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Closed != "You closed it." || len(r.Threads) != 1 {
+		t.Errorf("closed: %+v", r)
+	}
+	if r, _ := s.Do(Request{Op: "reopen-review"}, User); r.Closed != "" || len(r.Threads) != 1 {
+		t.Errorf("reopened: %+v", r)
+	}
+	if _, err := s.Do(Request{Op: "close"}, Agent); err == nil {
+		t.Error("the agent closed the review: that's the user's to do")
+	}
+	// A review started afresh isn't closed, whatever the last one was.
+	s.Do(Request{Op: "close", Body: "x"}, User)
+	drop(t, s, "1.json", Request{Op: "start"})
+	if r, _ := s.Take(); r.Closed != "" {
+		t.Errorf("the agent's new review: %+v", r)
+	}
+}
+
+// A review started for nothing (the agent was busy) is undone by putting
+// the last one back as it was.
+func TestTheLastReviewCanBePutBack(t *testing.T) {
+	s := NewStore(t.TempDir())
+	clockAt(s)
+	s.Do(Request{Op: "comment", File: "a.go", Line: 1, Body: "x"}, Agent)
+	last, _ := s.Load()
+	s.Do(Request{Op: "start", Reviewing: true}, User)
+	if err := s.Put(last); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := s.Load(); len(r.Threads) != 1 || r.State != last.State {
+		t.Errorf("put back: %+v", r)
 	}
 }

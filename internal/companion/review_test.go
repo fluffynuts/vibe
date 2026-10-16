@@ -336,3 +336,184 @@ func TestTheTabIsToldWhileTheAgentAnswersAnAsk(t *testing.T) {
 		t.Errorf("after another prompt: %s", got)
 	}
 }
+
+// --- starting and closing reviews from the page ------------------------------------
+
+func TestThePageIsToldWhatReviewsItCanStart(t *testing.T) {
+	s, _ := reviewTabServer(t)
+	rec := do(t, s, req{path: "/api/review/options", headers: authed(nil)})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("options: %d %s", rec.Code, rec.Body)
+	}
+	var o review.StartOptions
+	if err := json.Unmarshal(rec.Body.Bytes(), &o); err != nil {
+		t.Fatal(err)
+	}
+	if !o.Uncommitted || o.DefaultBranch != "" {
+		t.Errorf("a change on main: %+v", o)
+	}
+}
+
+func TestThePageStartsJustTheDiff(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{}
+	s.cfg.Converse = f.converse
+	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	r, _ := store.Load()
+	if r.Started.IsZero() || r.State != "" {
+		t.Errorf("review: %+v", r)
+	}
+	idle(t, s)
+	if len(f.prompts) != 0 {
+		t.Errorf("the agent was asked: %q", f.prompts)
+	}
+}
+
+func TestThePageStartsAReviewByTheAgent(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{}
+	s.cfg.Converse = f.converse
+	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted","agent":true}`)); rec.Code != http.StatusAccepted {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	idle(t, s)
+	if r, _ := store.Load(); r.State != review.InProgress {
+		t.Errorf("review: %+v", r)
+	}
+	if len(f.prompts) != 1 {
+		t.Fatalf("turns: %q", f.prompts)
+	}
+	for _, want := range []string{"the uncommitted changes", "don't run vibe-review start", "vibe-review done"} {
+		if !strings.Contains(f.prompts[0], want) {
+			t.Errorf("the prompt lacks %q:\n%s", want, f.prompts[0])
+		}
+	}
+}
+
+func TestABusyAgentStartsNoReview(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	defer close(f.release)
+	if !s.startTurn("busy") {
+		t.Fatal("no first turn")
+	}
+	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted","agent":true}`)); rec.Code != http.StatusConflict {
+		t.Errorf("start while busy: %d %s", rec.Code, rec.Body)
+	}
+	if r, _ := store.Load(); !r.Started.IsZero() {
+		t.Errorf("started anyway: %+v", r)
+	}
+}
+
+func TestAReviewAgainstABranchThereIsntIsRefused(t *testing.T) {
+	s, _ := reviewTabServer(t)
+	rec := do(t, s, post("/api/review/start", `{"kind":"branch"}`))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "default branch") {
+		t.Errorf("start: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// A review whose diff has nothing left in it is over: it closes itself,
+// saying why, and how many comments were still open.
+func TestAReviewWithNothingLeftClosesItself(t *testing.T) {
+	s, store := reviewTabServer(t)
+	do(t, s, post("/api/review/start", `{"kind":"uncommitted"}`))
+	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "why two?"}, review.Agent)
+	if r := getReview(t, s, "/api/review?diff=1").Review; r.Closed != "" {
+		t.Fatalf("closed with changes there: %q", r.Closed)
+	}
+	gitIn(t, s.cfg.ReviewTab.Workspace, "commit", "-q", "-am", "two")
+	r := getReview(t, s, "/api/review?diff=1").Review
+	if !strings.Contains(r.Closed, "committed") || !strings.Contains(r.Closed, "1 comment was still open") {
+		t.Errorf("closed: %q", r.Closed)
+	}
+}
+
+// Nothing started: nothing to close.
+func TestNoReviewIsntClosed(t *testing.T) {
+	s, _ := reviewTabServer(t)
+	gitIn(t, s.cfg.ReviewTab.Workspace, "commit", "-q", "-am", "two")
+	if r := getReview(t, s, "/api/review?diff=1").Review; r.Closed != "" {
+		t.Errorf("closed: %q", r.Closed)
+	}
+}
+
+func TestUnpushedCommitsAreReviewedFromThePage(t *testing.T) {
+	s, store := reviewTabServer(t)
+	dir := s.cfg.ReviewTab.Workspace
+	gitIn(t, dir, "branch", "pushed")
+	gitIn(t, dir, "branch", "-q", "-u", "pushed")
+	gitIn(t, dir, "commit", "-q", "-am", "two")
+	os.WriteFile(filepath.Join(dir, "b.txt"), []byte("not committed\n"), 0o644)
+	if rec := do(t, s, post("/api/review/start", `{"kind":"unpushed"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	if r, _ := store.Load(); r.Ref != "pushed" || !r.Unpushed {
+		t.Errorf("review: %+v", r)
+	}
+	r := getReview(t, s, "/api/review?diff=1")
+	if len(r.Diff) != 1 || r.Diff[0].Path != "a.txt" {
+		t.Errorf("diff: %+v", r.Diff)
+	}
+}
+
+// The page's options can be a poll behind: a review of uncommitted changes
+// there aren't any of is refused, as the other kinds are.
+func TestAReviewOfUncommittedChangesThereArentIsRefused(t *testing.T) {
+	s, store := reviewTabServer(t)
+	gitIn(t, s.cfg.ReviewTab.Workspace, "commit", "-q", "-am", "two")
+	rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted"}`))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "no uncommitted changes") {
+		t.Errorf("start: %d %s", rec.Code, rec.Body)
+	}
+	if r, _ := store.Load(); !r.Started.IsZero() {
+		t.Errorf("started anyway: %+v", r)
+	}
+}
+
+// While the agent is still reviewing, the review stays open though its diff
+// has emptied: its comments would go into a closed review, out of sight.
+// It closes once the agent has finished.
+func TestAReviewTheAgentIsStillAtDoesntCloseItself(t *testing.T) {
+	s, _ := reviewTabServer(t)
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted","agent":true}`)); rec.Code != http.StatusAccepted {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	gitIn(t, s.cfg.ReviewTab.Workspace, "commit", "-q", "-am", "two")
+	if r := getReview(t, s, "/api/review?diff=1").Review; r.Closed != "" {
+		t.Errorf("closed while the agent reviews: %q", r.Closed)
+	}
+	close(f.release)
+	idle(t, s)
+	if r := getReview(t, s, "/api/review?diff=1").Review; r.Closed == "" {
+		t.Error("still open once the agent had finished")
+	}
+}
+
+// A busy agent leaves the review as it was: the one before, comments and
+// all, not one started for nobody.
+func TestABusyAgentLeavesTheLastReviewAsItWas(t *testing.T) {
+	s, store := reviewTabServer(t)
+	if _, err := store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "why two?"}, review.Agent); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := store.Load()
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	defer close(f.release)
+	if !s.startTurn("busy") {
+		t.Fatal("no first turn")
+	}
+	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted","agent":true}`)); rec.Code != http.StatusConflict {
+		t.Fatalf("start while busy: %d %s", rec.Code, rec.Body)
+	}
+	after, _ := store.Load()
+	if len(after.Threads) != 1 || !after.Started.Equal(before.Started) || after.State != before.State {
+		t.Errorf("before %+v\nafter %+v", before, after)
+	}
+}

@@ -582,7 +582,8 @@ you're looking at:
   (in `~/.vibe/companion/`), and gives it back to a sandbox that has been rebuilt (by `--re-compose`,
   say), so the new agent remembers it too. The page's tab icon is the sandbox's agent's, and it says
   what the agent is up to even while you're on another tab: a grey dot pulses while it works, and a
-  blue dot shows it has finished, until you come back to the page. Once the agent has answered you can
+  blue dot shows it has finished, until you come back to the page. The Conversation tab does the same
+  while you're on another tab, until you open it. Once the agent has answered you can
   send the next prompt, even if it left something running that it is waiting on (a review page, say):
   sending ends that. With the `diffity` kit, a turn
   that leaves a new review (or tour) behind ends with a card linking to it, and links to pages on
@@ -596,7 +597,7 @@ you're looking at:
   the agent** sends your reply as a question, which it answers on the comment (the turn shows in the
   conversation too; three dots show on the comment while it answers). Comment on a line yourself with the **+** over its number (Write, or Preview it as
   Markdown): your comments and replies wait, editable and deletable, until **Submit to agent** sends them
-  all as one turn, and takes you to the Conversation tab. The agent answers on each, and changes code only where a comment asks it to. The tree shows how many comments each file has, and the bar how many there are in all, with arrows to step through them. A comment on a line the diff doesn't show is shown under that line all the same, with the lines around it opened. A comment whose lines read differently now is marked as such. When the agent
+  all as one turn, and takes you to the Conversation tab. The agent answers on each, and changes code only where a comment asks it to. Files are shown in the tree's order (folders first, each by name), so the tree, the files and the comment arrows all go the same way; the agent's reading order is shown as a numbered step on its files, in the tree and in their headers. Each file in the tree has an icon for what happened to it (added, changed, deleted, renamed) and how many comments it has; the bar says which comment you're at ("3/5 comments"), with arrows to step through them: in path order, as the files are shown, or (click the count to choose) in the agent's reading order, which this browser remembers. An image or file pasted on the tab goes to the clipboard page, to reach the agent with your next message (the bar says how many are waiting); text pastes as text. A comment on a line the diff doesn't show is shown under that line all the same, with the lines around it opened. With no review open, the tab offers to start one: of the uncommitted changes, of this branch against the default one, or of the commits not yet pushed; either asking the agent to review it (the diff shows at once, its comments as it makes them) or just showing the diff, to review yourself. **Close review** finishes with one (it's kept, and can be reopened); a review whose diff has nothing left in it, say once its changes are committed or pushed, closes by itself. A comment whose lines read differently now is marked as such. When the agent
   updates the review (a comment, an answer, finishing it), a dot shows on the tab until you open it, or
   click or type anywhere in it if it's already open. Reviews are kept in
   `~/.vibe/reviews/<sandbox>/`, so they outlive the sandbox stopping or being rebuilt; `--migrate` takes

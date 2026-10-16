@@ -391,8 +391,13 @@ function upload(blob, name) {
 function uploadAll(entries) {
   if (!entries.length) return;
   setStatus("Sending " + entries.length + (entries.length === 1 ? " item…" : " items…"));
-  Promise.all(entries.map(function (e) { return upload(e.blob, e.name); })).then(function () {
-    setStatus(entries.length === 1 ? "Added — it'll reach the agent with your next message." : "Added " + entries.length + " items.");
+  Promise.all(entries.map(function (e) { return upload(e.blob, e.name); })).then(function (added) {
+    // One already waiting to go to the agent isn't added again.
+    var already = added.filter(function (a) { return a.duplicate; }).length;
+    var fresh = added.length - already;
+    if (!fresh) setStatus(already === 1 ? "Already pasted: it's waiting to go with your next message." : "Already pasted, all " + already + ".");
+    else setStatus((fresh === 1 ? "Added — it'll reach the agent with your next message." : "Added " + fresh + " items.") +
+      (already ? " (" + already + " already pasted.)" : ""));
     return refresh();
   }).catch(function (err) {
     setStatus("Couldn't add that: " + err.message, true);

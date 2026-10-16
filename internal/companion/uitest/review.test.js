@@ -2,7 +2,7 @@
 'use strict'
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { placeThreads, inReadingOrder } = require('../ui/review.js')
+const { placeThreads, inTreeOrder } = require('../ui/review.js')
 
 const files = [
   { path: 'a.go', status: 'modified', hunks: [{ oldStart: 10, newStart: 10, lines: [
@@ -36,10 +36,13 @@ test("general comments, and comments on lines the diff hasn't, are kept apart", 
   assert.deepEqual(placed.elsewhere, [3])
 })
 
-test('files come in the reading order, then the rest as they were', () => {
-  const ordered = inReadingOrder([{ path: 'a.go' }, { path: 'b.go' }, { path: 'c.go' }],
-    [{ file: 'c.go', label: 'start here' }, { file: 'a.go', label: 'then' }, { file: 'nowhere.go' }])
-  assert.deepEqual(ordered.map((f) => f.file.path + ':' + (f.stop ? f.stop.label : '')), ['c.go:start here', 'a.go:then', 'b.go:'])
+// Files are shown as the tree lists them, so the tree, the files and the
+// comment arrows all go one way; the reading order is numbered on them.
+test('files come as the tree lists them, the reading order numbered', () => {
+  const ordered = inTreeOrder([{ path: 'z.go' }, { path: 'ui/b.go' }, { path: 'a.go' }, { path: 'ui/a.go' }],
+    [{ file: 'z.go', label: 'start here' }, { file: 'ui/b.go', label: 'then' }, { file: 'nowhere.go' }])
+  assert.deepEqual(ordered.map((f) => f.file.path + ':' + (f.step || '') + ':' + (f.stop ? f.stop.label : '')),
+    ['ui/a.go::', 'ui/b.go:2:then', 'a.go::', 'z.go:1:start here'])
 })
 
 test("a comment whose lines read differently now is out of date", () => {
@@ -216,4 +219,46 @@ test('a thread in a middle gap opens it from the nearer end', () => {
   const near = (line) => placeInGaps(g, [{ id: 1, side: 'new', line }], lines, hunks.length).reveal[1]
   assert.deepEqual(near(10), { down: 10 + 3 - 2 + 1, up: 0 }, 'near the top')
   assert.deepEqual(near(95), { down: 0, up: 100 - (95 - 3) + 1 }, 'near the bottom')
+})
+
+test('where the page is in the comments: the last thread at or past the bar, else the first', () => {
+  const { positionOf } = require('../ui/review.js')
+  assert.equal(positionOf([200, 400, 600], 58), 0, 'none reached yet: the first')
+  assert.equal(positionOf([-300, -100, 100], 58), 1, 'the last scrolled past')
+  assert.equal(positionOf([-300, 59, 100], 58), 1, 'one at the bar, give or take a pixel')
+  assert.equal(positionOf([-300, -200, -100], 58), 2, 'past them all: the last')
+  assert.equal(positionOf([], 58), -1, 'none')
+})
+
+test('the file the page is in: the last one reaching up to the bar; none above the first', () => {
+  const { currentOf } = require('../ui/review.js')
+  assert.equal(currentOf([200, 900], 58), -1, 'none reached yet')
+  assert.equal(currentOf([-400, 300], 58), 0)
+  assert.equal(currentOf([-400, 59], 58), 1, 'one just at the bar, give or take a pixel')
+  assert.equal(currentOf([-900, -400], 58), 1, 'past them all: the last')
+  assert.equal(currentOf([], 58), -1)
+})
+
+test('the five squares split by the share of added to deleted lines, as GitHub draws them', () => {
+  const { diffSquares } = require('../ui/review.js')
+  assert.deepEqual(diffSquares(193, 37), ['add', 'add', 'add', 'add', 'del'])
+  assert.deepEqual(diffSquares(10, 0), ['add', 'add', 'add', 'add', 'add'])
+  assert.deepEqual(diffSquares(0, 7), ['del', 'del', 'del', 'del', 'del'])
+  assert.deepEqual(diffSquares(1000, 1), ['add', 'add', 'add', 'add', 'del'], 'a deletion always shows')
+  assert.deepEqual(diffSquares(1, 1000), ['add', 'del', 'del', 'del', 'del'], 'and an addition')
+  assert.deepEqual(diffSquares(1, 1), ['add', 'del', 'none', 'none', 'none'], 'fewer than five changed: the rest grey')
+  assert.deepEqual(diffSquares(0, 0), ['none', 'none', 'none', 'none', 'none'])
+})
+
+test('in the reading order, comments go by their files’ steps: the whole review’s first, unstepped files last', () => {
+  const { inStepOrder } = require('../ui/review.js')
+  const page = [
+    { file: null, id: 'general' },
+    { file: 'a.go', id: 'a1' }, { file: 'a.go', id: 'a2' },
+    { file: 'ui/b.go', id: 'b1' },
+    { file: 'z.go', id: 'z1' },
+  ]
+  const steps = new Map([['z.go', 1], ['ui/b.go', 2]])
+  assert.deepEqual(inStepOrder(page, steps).map((e) => e.id), ['general', 'z1', 'b1', 'a1', 'a2'])
+  assert.deepEqual(inStepOrder(page, new Map()).map((e) => e.id), page.map((e) => e.id), 'no steps: as the page has them')
 })

@@ -672,15 +672,7 @@ func sameOriginJSON(w http.ResponseWriter, r *http.Request) bool {
 		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "expected application/json"})
 		return false
 	}
-	if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
-		return false
-	}
-	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-site request refused"})
-		return false
-	}
-	return true
+	return sameOrigin(w, r)
 }
 
 // quietMinutes is d in whole minutes when it has reached quietWarning, else 0.

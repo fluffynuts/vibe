@@ -1,12 +1,17 @@
 # Plan: a review tab in the companion page
 
-Status: proposed 2026-10-15; the proof of concept's steps 1–7 built 2026-10-15, uncommitted then, tested
-with unit tests, real git, the real `vibe-review` script against the real store, and the tab in jsdom; not
-yet in a real browser or sandbox. Where: the diff (`internal/review/git.go`, `parse.go`), the store
-(`internal/review/store.go`), the server (`internal/companion/review.go`), the tab (`ui/review.js`,
-`ui/app.js`), vibe's wiring (`reviewTabFor` in `src/vibe/companion.go`, the mount in `create.go`), and the
-agent's side (`library/base/review/`: `vibe-review`, its skill and instructions). Next: use it for real
-reviews alongside diffity, and decide.
+Status: proposed 2026-10-15; the proof of concept built 2026-10-15, then grown in real use (line comments,
+Submit to agent, Ask with progress, the tab's attention dot, comment counts and a comment scroller, threads
+on lines outside the diff opened in place), checkpointed on `feat/review-tab` 2026-10-16. Tested with unit
+tests, real git, the real `vibe-review` against the real store, the page in jsdom (`uitest/page.test.js`),
+and by the user in a real browser on a real sandbox. Where: the diff (`internal/review/git.go`,
+`parse.go`), the store (`internal/review/store.go`), the server (`internal/companion/review.go`), the tab
+(`ui/review.js`, `ui/app.js`), vibe's wiring (`reviewTabFor` in `src/vibe/companion.go`, the mount in
+`create.go`), and the agent's side (`library/base/review/`: `vibe-review`, its skill and instructions).
+Next: starting and closing reviews from the page; then comments on line ranges, a formatting toolbar, comments
+on lines opened from a gap, editing sent comments, following a drifted comment to its line, and "Viewed" ticks on files (as GitHub's;
+the user wants them, 2026-10-16). diffity goes when this merges
+to master.
 
 ## Why
 

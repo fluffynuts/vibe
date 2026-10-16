@@ -19,6 +19,7 @@
 // No template literals: sbx validates every dollar-brace form in a kit's
 // file content against its own placeholder list.
 
+const crypto = require("crypto");
 const http = require("http");
 const fs = require("fs");
 const os = require("os");
@@ -116,6 +117,24 @@ function describe(item) {
   };
 }
 
+function digestOf(body) {
+  return crypto.createHash("sha256").update(body).digest("hex");
+}
+
+// waitingLike is the item not yet delivered with body's content, if any:
+// pasting it again before the agent has it would hand it over twice. Items
+// kept from before digests were recorded are digested from their files.
+function waitingLike(body) {
+  const digest = digestOf(body);
+  return state.items.find(function (item) {
+    if (item.delivered) return false;
+    if (!item.digest) {
+      try { item.digest = digestOf(fs.readFileSync(itemPath(item))); } catch (e) { return false; }
+    }
+    return item.digest === digest;
+  });
+}
+
 function addItem(body, contentType, name) {
   const type = baseType(contentType);
   const id = state.nextId++;
@@ -128,6 +147,7 @@ function addItem(body, contentType, name) {
     created: new Date().toISOString(),
     delivered: null,
     file: id + extensionFor(type, name),
+    digest: digestOf(body),
   };
   fs.writeFileSync(itemPath(item), body);
   state.items.push(item);
@@ -253,6 +273,8 @@ function handle(req, res) {
     try { name = decodeURIComponent(req.headers["x-filename"] || ""); } catch (e) { /* keep it nameless */ }
     return readBody(req, res, function (body) {
       if (!body.length) return sendJSON(res, 400, { error: "nothing to add" });
+      const already = waitingLike(body);
+      if (already) return sendJSON(res, 200, Object.assign({ duplicate: true }, describe(already)));
       sendJSON(res, 201, describe(addItem(body, req.headers["content-type"], path.basename(name))));
     });
   }

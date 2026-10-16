@@ -35,6 +35,9 @@ func (s *Server) reviewState(w http.ResponseWriter, r *http.Request) {
 	if ask := s.answeringAsk(); ask != nil {
 		body["ask"] = ask
 	}
+	if n, ok := s.pastesWaiting(); ok {
+		body["pastes"] = n
+	}
 	if r.URL.Query().Get("diff") == "1" {
 		ctx, cancel := context.WithTimeout(r.Context(), diffWithin)
 		defer cancel()
@@ -46,6 +49,17 @@ func (s *Server) reviewState(w http.ResponseWriter, r *http.Request) {
 				files = []review.File{}
 			}
 			body["diff"] = files
+			// Not while the agent is still reviewing: what it says next would go
+			// into a closed review, out of sight. The next look after closes it.
+			agentAtIt := rv.State == review.InProgress && s.convo.working()
+			if len(files) == 0 && rv.Closed == "" && !agentAtIt && (!rv.Started.IsZero() || len(rv.Threads) > 0) {
+				closed, err := s.cfg.ReviewTab.Store.Do(review.Request{Op: "close", Body: overBecause(rv)}, review.User)
+				if err != nil {
+					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "the review has nothing left in it, but couldn't be closed: " + err.Error()})
+					return
+				}
+				body["review"] = closed
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, body)
@@ -64,12 +78,41 @@ func (s *Server) answeringAsk() map[string]interface{} {
 	return map[string]interface{}{"thread": thread, "answering": answering}
 }
 
-// diffOf is the diff rv is of: a commit's, the folder's against a branch,
-// or the folder as it is.
+// overBecause is why review rv, its diff now empty, closed by itself, and
+// how many of its comments were still open.
+func overBecause(rv review.Review) string {
+	why := "Closed by itself: its changes have all been committed (or put away)."
+	switch {
+	case rv.Commit != "":
+		why = "Closed by itself: the commit changes nothing."
+	case rv.Unpushed:
+		why = "Closed by itself: its commits have all been pushed to " + rv.Ref + "."
+	case rv.Ref != "":
+		why = "Closed by itself: there's nothing here " + rv.Ref + " hasn't got (merged?)."
+	}
+	open := 0
+	for _, t := range rv.Threads {
+		if t.Status == review.Open {
+			open++
+		}
+	}
+	switch {
+	case open == 1:
+		why += " 1 comment was still open."
+	case open > 1:
+		why += fmt.Sprintf(" %d comments were still open.", open)
+	}
+	return why
+}
+
+// diffOf is the diff rv is of: a commit's, the commits not yet pushed to
+// its upstream, the folder's against a branch, or the folder as it is.
 func diffOf(ctx context.Context, dir string, rv review.Review) ([]review.File, error) {
 	switch {
 	case rv.Commit != "":
 		return review.Commit(ctx, dir, rv.Commit)
+	case rv.Unpushed:
+		return review.Unpushed(ctx, dir, rv.Ref)
 	case rv.Ref != "":
 		return review.Against(ctx, dir, rv.Ref)
 	}
@@ -280,6 +323,101 @@ func askPrompt(t review.Thread, question string) string {
 		"If what I say settles it, resolve it instead, saying how: vibe-review resolve --thread %d --body \"...\". "+
 		"Keep to this comment, and don't change any code unless I ask you to.",
 		t.ID, where(t), said.String(), question, t.ID, t.ID)
+}
+
+// reviewOptions is the reviews the page can start on the folder as it is.
+func (s *Server) reviewOptions(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), diffWithin)
+	defer cancel()
+	o, err := review.Options(ctx, s.cfg.ReviewTab.Workspace)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, o)
+}
+
+// reviewStart starts a review from the page, of what kind says: the
+// uncommitted changes, this branch against the default one, or the commits
+// not yet pushed; the agent asked to review it (a turn), or just the diff,
+// shown at once either way.
+func (s *Server) reviewStart(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Kind  string `json:"kind"`
+		Agent bool   `json:"agent"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": `expected {"kind": "uncommitted", "branch" or "unpushed", "agent": true or false}`})
+		return
+	}
+	if req.Agent && s.cfg.Converse == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "this sandbox's agent can't be talked to from the page: show the diff instead"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), diffWithin)
+	defer cancel()
+	o, err := review.Options(ctx, s.cfg.ReviewTab.Workspace)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	start := review.Request{Op: "start", Reviewing: req.Agent}
+	what := "the uncommitted changes"
+	switch req.Kind {
+	case "uncommitted":
+		if !o.Uncommitted {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "there are no uncommitted changes to review"})
+			return
+		}
+	case "branch":
+		if o.DefaultBranch == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "there's no default branch to review against: none is main or master, and origin doesn't say"})
+			return
+		}
+		start.Ref, what = o.DefaultBranch, "this branch's changes against "+o.DefaultBranch+", from where they parted (uncommitted ones too)"
+	case "unpushed":
+		if o.Upstream == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "there are no commits waiting to be pushed"})
+			return
+		}
+		start.Ref, start.Unpushed, what = o.Upstream, true, "the commits not yet pushed to "+o.Upstream
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("there's no review of kind %q: uncommitted, branch or unpushed", req.Kind)})
+		return
+	}
+	// The review first, so the agent is never told of one that isn't
+	// there; a busy agent then has the last one put back.
+	last, err := s.cfg.ReviewTab.Store.Load()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	rv, err := s.cfg.ReviewTab.Store.Do(start, review.User)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if req.Agent && !s.startTurn(startPrompt(what)) {
+		if err := s.cfg.ReviewTab.Store.Put(last); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "the agent is still answering the last prompt, and the last review couldn't be put back: " + err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "the agent is still answering the last prompt — start the review once it's done, or show the diff for now"})
+		return
+	}
+	status := http.StatusOK
+	if req.Agent {
+		status = http.StatusAccepted
+	}
+	writeJSON(w, status, map[string]interface{}{"review": rv})
+}
+
+// startPrompt is the turn asking the agent to review what, a review the
+// page has started.
+func startPrompt(what string) string {
+	return "On the Review tab, I've started a review of " + what + ": please review it with your vibe-review skill. " +
+		"It's already started, so don't run vibe-review start (that would replace it): begin at the skill's step 2, " +
+		"with vibe-review diff, and finish with vibe-review done. Comment on the tab, not here; here, just say briefly what you found."
 }
 
 // reviewing wraps the Review tab's calls: there's no such tab without a

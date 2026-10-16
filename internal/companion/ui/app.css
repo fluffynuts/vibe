@@ -214,9 +214,22 @@ ul.checks .was { font-size: 11px; color: var(--muted); }
 ul.plain li { display: flex; gap: 8px; align-items: center; }
 ul.plain li .spacer { flex: 1; }
 /* The Review tab: a diff, with comment threads under the lines they're on. */
-.review-file { border: 1px solid var(--line); border-radius: 6px; margin: 12px 0; background: var(--panel); overflow: hidden; }
-.review-file > header { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--row-hover); }
+/* overflow: clip, not hidden, so the header can stick (hidden makes a scroll box it would stick in) */
+.review-file { border: 1px solid var(--line); border-radius: 6px; margin: 12px 0; background: var(--panel); overflow: clip; }
+/* the file's header stays pinned under the bar while the page is in it */
+.review-file > header { position: sticky; top: var(--review-bar-h, 48px); z-index: 2; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--row-hover); }
 .review-file > header code { font-weight: 600; }
+/* a file's number in the reading order, in its header and in the tree */
+.review-step { display: inline-block; min-width: 1.4em; padding: 0 4px; border-radius: 9px; background: var(--accent); color: var(--accent-text); font: 600 11px/1.5 system-ui, sans-serif; text-align: center; }
+.review-tree .review-step { margin-left: 6px; flex: none; }
+/* a file's figures, on the right of its header: +added −deleted, five squares, its length */
+.diffstat { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font: 12px var(--mono); }
+.diffstat .adds { color: var(--ok); }
+.diffstat .dels { color: var(--bad); }
+.diffstat .squares { display: inline-flex; gap: 1px; }
+.diffstat .square { width: 8px; height: 8px; border-radius: 1px; background: var(--line); }
+.diffstat .square.add { background: var(--ok); }
+.diffstat .square.del { background: var(--bad); }
 .review-stop { color: var(--accent); }
 .review-lines { width: 100%; table-layout: fixed; border-collapse: collapse; font: 12px/20px var(--mono); }
 .review-lines col.num { width: 4.5em; }
@@ -260,12 +273,21 @@ ul.plain li .spacer { flex: 1; }
 .review-thread { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 4px 0; background: var(--bg); font: 14px/1.45 system-ui, sans-serif; white-space: normal; }
 .review-thread.resolved, .review-thread.dismissed { opacity: .7; }
 /* the comment arrows scroll a thread to just under the sticky bar, and focus it */
-.review-thread { scroll-margin-top: calc(var(--review-bar-h, 48px) + 8px); }
+.review-thread { scroll-margin-top: calc(var(--review-bar-h, 48px) + var(--review-file-head-h, 0px) + 8px); }
 .review-thread:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .review-thread .typing { margin: 6px 0; }
 .review-unanswered { margin: 6px 0; font-size: 13px; }
 .review-scroller { display: inline-flex; align-items: center; gap: 2px; }
-.review-scroller button { padding: 0 6px; font-size: 11px; line-height: 1.6; }
+/* the comment count: a button choosing the order the arrows go in */
+.review-order-wrap { position: relative; }
+.review-order-menu { position: absolute; left: 0; top: calc(100% + 4px); z-index: 5; display: flex; flex-direction: column; width: max-content; padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); box-shadow: 0 4px 12px rgba(0, 0, 0, .25); }
+.review-order-menu button { border: 0; background: none; color: var(--text); text-align: left; padding: 4px 8px; border-radius: 4px; font: inherit; cursor: pointer; white-space: nowrap; }
+.review-order-menu button:hover:not(:disabled) { background: var(--row-hover); }
+/* a column for the tick, so the options line up whichever is ticked */
+.review-order-menu button::before { content: ''; display: inline-block; width: 1.2em; }
+.review-order-menu button[aria-checked=true]::before { content: '✓'; }
+.review-order-menu button:disabled { color: var(--muted); cursor: default; }
+#review-prev-comment, #review-next-comment { padding: 0 6px; font-size: 11px; line-height: 1.6; }
 .review-tree-comments { margin-left: auto; padding-left: 8px; display: inline-flex; align-items: center; gap: 3px; color: var(--muted); font-size: 12px; }
 .review-tree-comments svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; }
 .review-thread .who { font-weight: 600; margin-right: 6px; }
@@ -274,6 +296,11 @@ ul.plain li .spacer { flex: 1; }
 .review-thread .bar { margin-top: 6px; }
 /* The file tree beside the diff: a quarter of the width to start with,
    draggable, and staying in view as the diff scrolls. */
+.review-actions { display: inline-flex; align-items: center; gap: 8px; }
+/* with no review open: the ways to start one, in the middle of the tab */
+.review-start { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 15vh 16px 32px; text-align: center; }
+.review-start-options { display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 18em; }
+.review-start-options .gap { height: 12px; }
 .review-body { display: grid; grid-template-columns: var(--review-tree-width, 25%) 6px minmax(0, 1fr); align-items: start; }
 /* The tab scrolls in a box of its own, as the Admin tab does, so the project
    line and the tabs stay put; its title bar stays at the top of the box,
@@ -290,12 +317,12 @@ ul.plain li .spacer { flex: 1; }
 .review-tree { font-size: 13px; }
 .review-tree button { display: flex; align-items: center; gap: 6px; width: 100%; padding: 2px 4px; border: 0; border-radius: 4px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; white-space: nowrap; }
 .review-tree button:hover { background: var(--row-hover); }
+/* the file the page is in (or the collapsed folder it's in) */
+.review-tree button.current { background: var(--row-hover); box-shadow: inset 2px 0 0 var(--accent); }
 .review-tree .twisty { width: 1em; color: var(--muted); flex: none; }
-.review-tree .mark { width: 1em; flex: none; text-align: center; font-weight: 600; }
-.review-tree .mark.added { color: var(--ok); }
-.review-tree .mark.deleted { color: var(--bad); }
-.review-tree .mark.modified { color: var(--amber); }
-.review-tree .mark.renamed { color: var(--accent); }
+.review-tree .file-icon { width: 15px; height: 15px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linejoin: round; stroke-linecap: round; color: var(--muted); }
+.review-tree .file-icon.added { color: var(--ok); }
+.review-tree .file-icon.deleted { color: var(--bad); }
 .review-tree .name { overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 800px) {
   .review-body { grid-template-columns: minmax(0, 1fr); }
@@ -307,6 +334,10 @@ ul.plain li .spacer { flex: 1; }
 .mgr-filter { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; min-width: 16em; }
 mark.mgr-hit { background: var(--warn-bg); color: inherit; border-radius: 2px; }
 .tab-dot { display: inline-block; width: 7px; height: 7px; margin-left: 6px; border-radius: 50%; background: var(--tick-seen); vertical-align: middle; }
+/* the agent at work out of sight: grey and pulsing, as the page's icon does */
+.tab-dot.working { background: var(--muted); animation: tab-dot-pulse 1.2s infinite ease-in-out; }
+@keyframes tab-dot-pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .tab-dot.working { animation-duration: 2.4s; } }
 ol.steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 ol.steps code { font: 12px var(--mono); padding: 1px 4px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); user-select: all; }
 /* as the terminal colours GitHub's form: the choice to leave, the one to make, the repository, the permissions, the last step */

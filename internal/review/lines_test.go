@@ -2,46 +2,60 @@ package review
 
 import (
 	"context"
-	"os"
-	"path/filepath"
+	"fmt"
 	"strings"
 	"testing"
 )
 
-func TestAFilesLinesAreReadForExpandingItsContext(t *testing.T) {
-	dir := repo(t, map[string]string{"src/a.txt": "one\ntwo\nthree\n"})
-	write(t, dir, "src/a.txt", "one\nTWO\nthree\nfour\n")
-	lines, err := FileLines(context.Background(), dir, Review{}, "src/a.txt")
+// lengths is each file's line count, by path.
+func lengths(files []File) string {
+	var out []string
+	for _, f := range files {
+		out = append(out, fmt.Sprintf("%s=%d", f.Path, f.Lines))
+	}
+	return strings.Join(out, " ")
+}
+
+// Each file in a diff says how long it is: as it is now, or, deleted, as
+// it was; a last line without a newline counts.
+func TestTheWorkingTreesFilesSayHowLongTheyAre(t *testing.T) {
+	dir := repo(t, map[string]string{"a.txt": "one\n", "gone.txt": "1\n2\n3\n"})
+	write(t, dir, "a.txt", "one\ntwo\nthree")
+	write(t, dir, "new.txt", "fresh\n")
+	git(t, dir, "rm", "-q", "gone.txt")
+	files, err := WorkingTree(context.Background(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(lines, "|") != "one|TWO|three|four" {
-		t.Errorf("lines: %q", lines)
+	if got := lengths(files); got != "a.txt=3 gone.txt=3 new.txt=1" {
+		t.Errorf("lengths: %s", got)
 	}
 }
 
-func TestACommitsFileIsReadAsTheCommitHasIt(t *testing.T) {
-	dir := repo(t, map[string]string{"a.txt": "committed\n"})
-	write(t, dir, "a.txt", "changed since\n")
-	lines, err := FileLines(context.Background(), dir, Review{Commit: "HEAD"}, "a.txt")
+func TestACommitsFilesAreAsLongAsTheCommitHasThem(t *testing.T) {
+	dir := repo(t, map[string]string{"a.txt": "one\n"})
+	write(t, dir, "a.txt", "one\ntwo\n")
+	git(t, dir, "commit", "-q", "-am", "two")
+	write(t, dir, "a.txt", "changed since, and longer\n\n\n\n")
+	files, err := Commit(context.Background(), dir, "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(lines, "|") != "committed" {
-		t.Errorf("lines: %q", lines)
+	if got := lengths(files); got != "a.txt=2" {
+		t.Errorf("lengths: %s", got)
 	}
 }
 
-// The page asks for files by path: nothing outside the sandbox's folder can
-// be read through it.
-func TestOnlyFilesInTheFolderCanBeRead(t *testing.T) {
-	dir := repo(t, map[string]string{"a.txt": "a\n"})
-	outside := filepath.Join(t.TempDir(), "secret.txt")
-	os.WriteFile(outside, []byte("secret\n"), 0o600)
-	os.Symlink(outside, filepath.Join(dir, "link.txt"))
-	for _, path := range []string{"../secret.txt", outside, "link.txt", "a.txt/../../x", ""} {
-		if lines, err := FileLines(context.Background(), dir, Review{}, path); err == nil {
-			t.Errorf("%q was read: %q", path, lines)
-		}
+func TestUnpushedFilesAreAsLongAsTheLastCommitHasThem(t *testing.T) {
+	dir := cloned(t)
+	write(t, dir, "a.txt", "one\ntwo\n")
+	git(t, dir, "commit", "-q", "-am", "two")
+	write(t, dir, "a.txt", "not committed\n\n\n\n\n")
+	files, err := Unpushed(context.Background(), dir, "origin/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lengths(files); got != "a.txt=2" {
+		t.Errorf("lengths: %s", got)
 	}
 }

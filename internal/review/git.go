@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -35,7 +37,7 @@ func WorkingTree(ctx context.Context, dir string) ([]File, error) {
 	if _, err := run(ctx, dir, "rev-parse", "--verify", "--quiet", "HEAD"); err != nil {
 		base = emptyTree
 	}
-	return diffFrom(ctx, dir, base)
+	return withLengths(ctx, dir, "", base)(diffFrom(ctx, dir, base))
 }
 
 // Against is the diff of the folder dir as it is from where it parted from
@@ -52,7 +54,8 @@ func Against(ctx context.Context, dir, ref string) ([]File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s and the folder's HEAD have no history in common: %w", ref, err)
 	}
-	return diffFrom(ctx, dir, strings.TrimSpace(base))
+	parted := strings.TrimSpace(base)
+	return withLengths(ctx, dir, "", parted)(diffFrom(ctx, dir, parted))
 }
 
 // Commit is the diff of what commit ref changed.
@@ -67,7 +70,7 @@ func Commit(ctx context.Context, dir, ref string) ([]File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return Parse(out)
+	return withLengths(ctx, dir, ref, ref+"^")(Parse(out))
 }
 
 // diffFrom is the working tree's diff from base, untracked files with it,
@@ -157,4 +160,158 @@ func run(ctx context.Context, dir string, args ...string) (string, error) {
 		return "", fmt.Errorf("git %s: %w", args[0], err)
 	}
 	return out.String(), nil
+}
+
+// StartOptions are the reviews the folder can be started on, as it is.
+type StartOptions struct {
+	// Uncommitted says there are changes not yet committed.
+	Uncommitted bool `json:"uncommitted"`
+	// DefaultBranch is the repository's main line to review this branch
+	// against: "" when it can't be told, or the folder is on it.
+	DefaultBranch string `json:"defaultBranch,omitempty"`
+	// Upstream is the branch this one pushes to, when it has commits not
+	// pushed there yet: Unpushed of them.
+	Upstream string `json:"upstream,omitempty"`
+	Unpushed int    `json:"unpushed,omitempty"`
+}
+
+// Options are the reviews the folder dir can be started on.
+func Options(ctx context.Context, dir string) (StartOptions, error) {
+	var o StartOptions
+	if err := isRepository(ctx, dir); err != nil {
+		return o, err
+	}
+	status, err := run(ctx, dir, "status", "--porcelain", "--untracked-files=normal")
+	if err != nil {
+		return o, err
+	}
+	o.Uncommitted = strings.TrimSpace(status) != ""
+	current, _ := run(ctx, dir, "symbolic-ref", "--quiet", "--short", "HEAD")
+	current = strings.TrimSpace(current)
+	if def := defaultBranch(ctx, dir); def != "" && def != current {
+		o.DefaultBranch = def
+	}
+	if up, err := run(ctx, dir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"); err == nil {
+		count, err := run(ctx, dir, "rev-list", "--count", "@{upstream}..HEAD")
+		if err != nil {
+			return o, err
+		}
+		if n, _ := strconv.Atoi(strings.TrimSpace(count)); n > 0 {
+			o.Upstream, o.Unpushed = strings.TrimSpace(up), n
+		}
+	}
+	return o, nil
+}
+
+// defaultBranch is the repository's main line, as origin says (its HEAD),
+// else main or master, whichever is there; "" when none is. The local
+// branch's name when there is one, else the remote's.
+func defaultBranch(ctx context.Context, dir string) string {
+	exists := func(ref string) bool {
+		_, err := run(ctx, dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+		return err == nil
+	}
+	if remote, err := run(ctx, dir, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"); err == nil {
+		remote = strings.TrimSpace(remote)
+		if local := strings.TrimPrefix(remote, "origin/"); exists("refs/heads/" + local) {
+			return local
+		}
+		return remote
+	}
+	for _, name := range []string{"main", "master"} {
+		if exists("refs/heads/" + name) {
+			return name
+		}
+	}
+	return ""
+}
+
+// Unpushed is the diff of the commits on HEAD that upstream hasn't: what
+// they changed, from where the two parted, without anything uncommitted.
+func Unpushed(ctx context.Context, dir, upstream string) ([]File, error) {
+	if err := isRepository(ctx, dir); err != nil {
+		return nil, err
+	}
+	if err := isCommit(ctx, dir, upstream); err != nil {
+		return nil, err
+	}
+	base, err := run(ctx, dir, "merge-base", upstream, "HEAD")
+	if err != nil {
+		return nil, fmt.Errorf("%s and the folder's HEAD have no history in common: %w", upstream, err)
+	}
+	out, err := run(ctx, dir, append([]string{"diff"}, append(diffFlags, strings.TrimSpace(base), "HEAD")...)...)
+	if err != nil {
+		return nil, err
+	}
+	return withLengths(ctx, dir, "HEAD", strings.TrimSpace(base))(Parse(out))
+}
+
+// withLengths is a step after working out a diff: it fills in each file's
+// line count, from newRev (the folder itself when "") for the files there,
+// and from oldRev for the deleted ones.
+func withLengths(ctx context.Context, dir, newRev, oldRev string) func([]File, error) ([]File, error) {
+	return func(files []File, err error) ([]File, error) {
+		if err != nil {
+			return files, err
+		}
+		for i := range files {
+			f := &files[i]
+			if f.Binary {
+				continue
+			}
+			switch {
+			case f.Status == Deleted:
+				f.Lines = linesAt(ctx, dir, oldRev, f.Path)
+			case newRev == "":
+				f.Lines = linesOnDisk(filepath.Join(dir, f.Path))
+			default:
+				f.Lines = linesAt(ctx, dir, newRev, f.Path)
+			}
+		}
+		return files, nil
+	}
+}
+
+// linesAt is how many lines path has at rev; 0 if it can't be read.
+func linesAt(ctx context.Context, dir, rev, path string) int {
+	out, err := run(ctx, dir, "show", rev+":"+path)
+	if err != nil {
+		return 0
+	}
+	return countLines(strings.NewReader(out))
+}
+
+// linesOnDisk is how many lines the file at path has; 0 if it can't be
+// read.
+func linesOnDisk(path string) int {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	return countLines(f)
+}
+
+// countLines counts r's lines: a last line without a newline counts too.
+func countLines(r io.Reader) int {
+	buf := make([]byte, 64*1024)
+	n, last := 0, byte('\n')
+	for {
+		k, err := r.Read(buf)
+		for _, b := range buf[:k] {
+			if b == '\n' {
+				n++
+			}
+		}
+		if k > 0 {
+			last = buf[k-1]
+		}
+		if err != nil {
+			break
+		}
+	}
+	if last != '\n' {
+		n++
+	}
+	return n
 }

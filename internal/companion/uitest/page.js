@@ -22,7 +22,10 @@ async function openPage({ routes = {}, storage = {} } = {}) {
   let inFlight = 0
   w.fetch = async (url, options = {}) => {
     const u = new URL(String(url), 'http://localhost:1')
-    const call = { path: u.pathname, query: u.search, method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : null }
+    // A JSON body is kept as what it says; anything else (a pasted file)
+    // as it was given.
+    const body = typeof options.body === 'string' ? JSON.parse(options.body) : options.body || null
+    const call = { path: u.pathname, query: u.search, method: options.method || 'GET', headers: options.headers || {}, body }
     calls.push(call)
     inFlight++
     try {
@@ -68,10 +71,13 @@ async function openPage({ routes = {}, storage = {} } = {}) {
     calls,
     settle,
     // poll runs the page's regular poll (its tick), as its timer would.
-    async poll() {
-      const tick = intervals.find((i) => i.fn.name === 'tick')
-      if (!tick) throw new Error('the page set no poll going')
-      tick.fn()
+    async poll() { await this.every('tick') },
+    // every runs the page's timer that calls the function named name, as
+    // the timer would.
+    async every(name) {
+      const timer = intervals.find((i) => i.fn.name === name)
+      if (!timer) throw new Error('the page set no timer going for ' + name)
+      timer.fn()
       await settle()
     },
     async click(target) {

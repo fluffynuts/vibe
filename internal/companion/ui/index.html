@@ -51,7 +51,7 @@
                 placeholder="Ask the agent… Ctrl+Enter sends, Enter adds a line, / lists commands. Images and files you paste anywhere on this tab go to the clipboard on the right."></textarea>
             </div>
             <div class="bar">
-              <button type="button" id="convo-stop" class="danger" hidden>Stop</button>
+              <button type="button" id="convo-stop" class="danger" title="Escape, in the prompt box" hidden>Stop (Escape)</button>
               <span class="spacer"></span>
               <button type="submit" id="convo-send" title="Ctrl+Enter">Send (Ctrl+Enter)</button>
             </div>
@@ -121,18 +121,33 @@
         <span id="review-state" class="pill" hidden></span>
         <span id="review-of" class="muted"></span>
         <span class="spacer"></span>
-        <button type="button" id="review-submit" disabled title="Send the agent your comments it hasn't seen yet">Submit to agent</button>
-        <span class="review-scroller">
-          <span id="review-count" class="muted"></span>
-          <button type="button" id="review-prev-comment" class="ghost" disabled aria-label="Previous comment" title="Previous comment">▲</button>
-          <button type="button" id="review-next-comment" class="ghost" disabled aria-label="Next comment" title="Next comment">▼</button>
+        <span id="review-actions" class="review-actions">
+          <button type="button" id="review-submit" disabled title="Send the agent your comments it hasn't seen yet">Submit to agent</button>
+          <span class="review-scroller">
+            <span class="review-order-wrap">
+              <button type="button" id="review-order" class="review-order" aria-haspopup="menu" aria-expanded="false"><span id="review-count"></span> ▾</button>
+              <div id="review-order-menu" class="review-order-menu" role="menu" aria-label="The order the comment arrows go in" hidden>
+                <button type="button" role="menuitemradio" data-order="path">By path, as the tree</button>
+                <button type="button" role="menuitemradio" data-order="reading">By the agent's reading order</button>
+              </div>
+            </span>
+            <button type="button" id="review-prev-comment" class="ghost" disabled aria-label="Previous comment" title="Previous comment">▲</button>
+            <button type="button" id="review-next-comment" class="ghost" disabled aria-label="Next comment" title="Next comment">▼</button>
+          </span>
+          <button type="button" id="review-layout" class="ghost"></button>
+          <button type="button" id="review-close" class="ghost" title="Finish with this review: it's kept, and can be reopened">Close review</button>
         </span>
-        <button type="button" id="review-layout" class="ghost"></button>
+        <span id="review-pastes" class="muted" hidden title="Pasted here or beside the conversation: they go to the agent with your next message (Submit, Ask, or on the Conversation tab)"></span>
         <button type="button" id="review-refresh" class="ghost" title="Work out the diff afresh">Refresh</button>
       </div>
       <p id="review-error" class="note bad-text" hidden></p>
       <ul id="review-problems" class="note bad-text review-problems" hidden></ul>
       <p id="review-wait" class="note muted">Working out the diff…</p>
+      <div id="review-start" class="review-start" hidden>
+        <p id="review-closed" class="muted" hidden></p>
+        <p><button type="button" id="review-reopen" class="ghost" hidden>Reopen it</button></p>
+        <div id="review-start-options" class="review-start-options"></div>
+      </div>
       <div class="review-body" id="review-body">
         <aside class="review-tree-pane" aria-label="Changed files">
           <input type="search" id="review-filter" class="review-filter" aria-label="Filter the changed files"

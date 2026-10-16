@@ -41,6 +41,12 @@ type Review struct {
 	Ref string `json:"ref,omitempty"`
 	// Commit, when set, is the one commit the review is of.
 	Commit string `json:"commit,omitempty"`
+	// Unpushed says the review is of the commits Ref (the branch's
+	// upstream) hasn't: what they changed, without what's uncommitted.
+	Unpushed bool `json:"unpushed,omitempty"`
+	// Closed is why the review was closed (by the user, or by itself when
+	// there was nothing left to review); "" while it's open.
+	Closed string `json:"closed,omitempty"`
 	// Note says what's being reviewed, as the agent put it.
 	Note string `json:"note,omitempty"`
 	// State is "" before a review is started, then InProgress, then Done.
@@ -104,16 +110,21 @@ type Stop struct {
 // Request is one thing to do to the review: dropped in the inbox by the
 // agent's command, or made from the page.
 type Request struct {
-	Op      string `json:"op"`
-	Ref     string `json:"ref,omitempty"`
-	Commit  string `json:"commit,omitempty"`
-	Note    string `json:"note,omitempty"`
-	File    string `json:"file,omitempty"`
-	Side    string `json:"side,omitempty"`
-	Line    int    `json:"line,omitempty"`
-	EndLine int    `json:"endLine,omitempty"`
-	Code    string `json:"code,omitempty"`
-	Thread  int    `json:"thread,omitempty"`
+	Op     string `json:"op"`
+	Ref    string `json:"ref,omitempty"`
+	Commit string `json:"commit,omitempty"`
+	Note   string `json:"note,omitempty"`
+	// Unpushed is start's: a review of the commits Ref hasn't.
+	Unpushed bool `json:"unpushed,omitempty"`
+	// Reviewing is the page's start's: the agent has been asked to review
+	// it, so it's in progress; else it's just the diff, for the user.
+	Reviewing bool   `json:"reviewing,omitempty"`
+	File      string `json:"file,omitempty"`
+	Side      string `json:"side,omitempty"`
+	Line      int    `json:"line,omitempty"`
+	EndLine   int    `json:"endLine,omitempty"`
+	Code      string `json:"code,omitempty"`
+	Thread    int    `json:"thread,omitempty"`
 	// At is when the comment edit or delete is of was said: what it's
 	// known by, as its place on the thread moves when one before it goes.
 	At    time.Time `json:"at,omitempty"`
@@ -122,7 +133,7 @@ type Request struct {
 }
 
 // userOps are what the user can do from the page: the rest is the agent's.
-var userOps = map[string]bool{"comment": true, "reply": true, "resolve": true, "dismiss": true, "reopen": true, "edit": true, "delete": true}
+var userOps = map[string]bool{"start": true, "close": true, "reopen-review": true, "comment": true, "reply": true, "resolve": true, "dismiss": true, "reopen": true, "edit": true, "delete": true}
 
 // Store keeps a sandbox's review in dir (~/.vibe/reviews/<sandbox>): the
 // review in review.json, of which it's the only writer, and an inbox the
@@ -216,17 +227,17 @@ func (s *Store) Take() (Review, error) {
 	sort.Strings(names)
 	for _, name := range names {
 		path := filepath.Join(s.Inbox(), name)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
 		var req Request
-		if err := json.Unmarshal(data, &req); err != nil {
+		if data, err := os.ReadFile(path); err != nil {
+			s.problem(&r, fmt.Sprintf("%s couldn't be read: %v", name, err))
+		} else if err := json.Unmarshal(data, &req); err != nil {
 			s.problem(&r, fmt.Sprintf("%s isn't a request: %v", name, err))
 		} else if err := s.apply(&r, req, Agent); err != nil {
 			s.problem(&r, fmt.Sprintf("%s: %v", req.Op, err))
 		}
-		os.Remove(path)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			s.problem(&r, fmt.Sprintf("%s couldn't be taken out of the inbox, so it may be taken in again: %v", name, err))
+		}
 	}
 	r.AgentAt = s.now()
 	return r, s.save(r)
@@ -263,7 +274,23 @@ func (s *Store) apply(r *Review, req Request, author string) error {
 		if err := s.keep(*r); err != nil {
 			return err
 		}
-		*r = Review{Ref: req.Ref, Commit: req.Commit, Note: req.Note, State: InProgress, Threads: []Thread{}, Started: s.now(), LastID: r.LastID}
+		state := InProgress
+		if author == User && !req.Reviewing {
+			state = ""
+		}
+		*r = Review{Ref: req.Ref, Commit: req.Commit, Unpushed: req.Unpushed, Note: req.Note, State: state, Threads: []Thread{}, Started: s.now(), LastID: r.LastID}
+	case "close", "reopen-review":
+		if author != User {
+			return fmt.Errorf("closing or reopening the review is the user's to do")
+		}
+		if req.Op == "reopen-review" {
+			r.Closed = ""
+			break
+		}
+		r.Closed = req.Body
+		if r.Closed == "" {
+			r.Closed = "Closed."
+		}
 	case "comment":
 		if req.File == "" || req.Line < 1 || strings.TrimSpace(req.Body) == "" {
 			return fmt.Errorf("a comment needs a file, a line and something to say")
@@ -442,4 +469,11 @@ func (s *Store) save(r Review) error {
 		return err
 	}
 	return os.Rename(tmp, s.file())
+}
+
+// Put makes r the review, as it was: to undo one started for nothing.
+func (s *Store) Put(r Review) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.save(r)
 }

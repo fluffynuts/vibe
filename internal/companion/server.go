@@ -262,6 +262,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/review/do", s.reviewing(s.reviewDo))
 	mux.HandleFunc("POST /api/review/ask", s.reviewing(s.reviewAsk))
 	mux.HandleFunc("POST /api/review/submit", s.reviewing(s.reviewSubmit))
+	mux.HandleFunc("GET /api/review/options", s.reviewing(s.reviewOptions))
+	mux.HandleFunc("POST /api/clipboard/paste", s.authed(s.clipboardPaste))
+	mux.HandleFunc("POST /api/review/start", s.reviewing(s.reviewStart))
 	mux.HandleFunc("GET /api/manage", s.authed(s.managed(s.manageState)))
 	mux.HandleFunc("POST /api/manage/plan", s.managing(s.managePlan))
 	mux.HandleFunc("POST /api/manage/delete", s.managing(s.manageDelete))
@@ -327,10 +330,7 @@ func (s *Server) ping(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) state(w http.ResponseWriter, r *http.Request) {
-	clipboard := ""
-	if s.cfg.ClipboardURL != nil {
-		clipboard = cached(s.cache, "clipboard-url", 5*time.Second, s.cfg.ClipboardURL)
-	}
+	clipboard := s.clipboardAt()
 	ready := false
 	if clipboard != "" {
 		probe := s.cfg.ClipboardReady

@@ -17,9 +17,11 @@ const childProcess = require("child_process");
 const USAGE = [
   "usage: vibe-review <command> [options]",
   "",
-  "  start [--note TEXT] [--ref BRANCH | --commit SHA]",
-  "                      begin a review (of the uncommitted changes, unless --ref",
-  "                      or --commit): the Review tab shows it as in progress",
+  "  start [--note TEXT] [--ref BRANCH | --commit SHA | --unpushed]",
+  "                      begin a review (of the uncommitted changes, unless --ref,",
+  "                      --commit, or --unpushed: the commits not yet pushed to",
+  "                      the branch's upstream): the Review tab shows it as in",
+  "                      progress",
   "  diff                the diff the Review tab shows, for the review started",
   "  comment --file PATH --line N [--end-line N] [--side new|old] BODY",
   "                      comment on lines of the diff (the new file's, unless",
@@ -128,12 +130,17 @@ function git(args) {
 
 const DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", "-M"];
 
-// diff prints what the Review tab shows: the review's commit, its branch
-// from where they parted, or the uncommitted changes, untracked files with
-// them.
+// diff prints what the Review tab shows: the review's commit, the commits
+// not pushed to its upstream, its branch from where they parted, or the
+// uncommitted changes, untracked files with them.
 function diff() {
   const r = load();
   if (r.commit) { process.stdout.write(git(["show", "--format="].concat(DIFF_FLAGS, [r.commit]))); return; }
+  if (r.unpushed) {
+    const parted = git(["merge-base", r.ref, "HEAD"]).trim();
+    process.stdout.write(git(["diff"].concat(DIFF_FLAGS, [parted, "HEAD"])));
+    return;
+  }
   let base = "HEAD";
   if (r.ref) base = git(["merge-base", r.ref, "HEAD"]).trim();
   else {
@@ -154,7 +161,7 @@ function diff() {
 function list(json) {
   const r = load();
   if (json) { process.stdout.write(JSON.stringify(r, null, 2) + "\n"); return; }
-  const of = r.commit ? "commit " + r.commit : r.ref ? "against " + r.ref : "the uncommitted changes";
+  const of = r.commit ? "commit " + r.commit : r.unpushed ? "the commits not pushed to " + r.ref : r.ref ? "against " + r.ref : "the uncommitted changes";
   process.stdout.write("review of " + of + (r.note ? ": " + r.note : "") + (r.state ? " (" + r.state + ")" : "") + "\n");
   for (const t of r.threads || []) {
     const where = t.file ? t.file + ":" + t.line + (t.endLine > t.line ? "-" + t.endLine : "") + (t.side === "old" ? " (old)" : "") : "general";
@@ -171,8 +178,16 @@ function main(argv) {
   const rest = argv.slice(1);
   switch (command) {
     case "start": {
-      const o = parse(rest);
-      if (o.ref && o.commit) fail("--ref or --commit, not both");
+      const o = parse(rest, ["unpushed"]);
+      if ([o.ref, o.commit, o.unpushed].filter(Boolean).length > 1) fail("one of --ref, --commit or --unpushed, not more");
+      if (o.unpushed) {
+        let upstream;
+        try { upstream = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]).trim(); } catch (e) {
+          fail("--unpushed needs the branch to have an upstream (git push -u, once): this one hasn't");
+        }
+        drop({ op: "start", note: o.note, ref: upstream, unpushed: true });
+        return;
+      }
       drop({ op: "start", note: o.note, ref: o.ref, commit: o.commit });
       return;
     }

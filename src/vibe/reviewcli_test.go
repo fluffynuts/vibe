@@ -193,3 +193,53 @@ func TestACommentRecordsTheLinesItsOn(t *testing.T) {
 		t.Errorf("code = %q", got)
 	}
 }
+
+// A review of unpushed commits is what they changed, as the tab shows it:
+// nothing uncommitted. The agent can start one itself, of the branch's
+// upstream.
+func TestTheAgentReviewsUnpushedCommitsAsTheTabDoes(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git isn't installed")
+	}
+	work := t.TempDir()
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Dir = work
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q", "-b", "main")
+	os.WriteFile(filepath.Join(work, "a.txt"), []byte("one\n"), 0o644)
+	run("add", "-A")
+	run("commit", "-q", "-m", "start")
+	run("branch", "pushed")
+	run("branch", "-q", "-u", "pushed")
+	os.WriteFile(filepath.Join(work, "a.txt"), []byte("one\ntwo\n"), 0o644)
+	run("commit", "-q", "-am", "two")
+	os.WriteFile(filepath.Join(work, "new.txt"), []byte("not committed\n"), 0o644)
+
+	dir := t.TempDir()
+	if out, code := vibeReviewIn(t, work, dir, "", "start", "--unpushed"); code != 0 {
+		t.Fatalf("start --unpushed: exit %d\n%s", code, out)
+	}
+	store := review.NewStore(dir)
+	r, err := store.Take()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Ref != "pushed" || !r.Unpushed {
+		t.Fatalf("started: %+v", r)
+	}
+	out, code := vibeReviewIn(t, work, dir, "", "diff")
+	if code != 0 {
+		t.Fatalf("diff: exit %d\n%s", code, out)
+	}
+	files, err := review.Parse(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Path != "a.txt" {
+		t.Errorf("files: %+v\n%s", files, out)
+	}
+}

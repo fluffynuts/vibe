@@ -175,3 +175,38 @@ func keysOf(m map[string]json.RawMessage) []string {
 	}
 	return keys
 }
+
+// A paste the agent hasn't been given yet isn't pasted twice: pasting A, B,
+// then A again keeps one A, and says so. Once they've gone with a message,
+// the same paste is welcome again: the user may be pointing back to it.
+func TestThePasteWaitingIsntPastedTwice(t *testing.T) {
+	base, _ := clipboardServer(t)
+	paste := func(body string) (int, bool) {
+		t.Helper()
+		res, err := http.Post(base+"/api/items", "image/png", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var got struct {
+			Duplicate bool `json:"duplicate"`
+		}
+		json.NewDecoder(res.Body).Decode(&got)
+		return res.StatusCode, got.Duplicate
+	}
+	for _, body := range []string{"image A", "image B"} {
+		if code, dup := paste(body); code != http.StatusCreated || dup {
+			t.Fatalf("%s: %d, duplicate %v", body, code, dup)
+		}
+	}
+	if code, dup := paste("image A"); code != http.StatusOK || !dup {
+		t.Errorf("A again: %d, duplicate %v", code, dup)
+	}
+	if n := clipboardItems(t, base); n != 2 {
+		t.Errorf("%d items, want 2", n)
+	}
+	runClipboardHook(t, base, "UserPromptSubmit")
+	if code, dup := paste("image A"); code != http.StatusCreated || dup {
+		t.Errorf("A after it was sent: %d, duplicate %v", code, dup)
+	}
+}
