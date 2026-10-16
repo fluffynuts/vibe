@@ -142,11 +142,15 @@ type Store struct {
 	dir string
 	mu  sync.Mutex
 	now func() time.Time
+	// readFile reads a request from the inbox: os.ReadFile, which a test
+	// stands in for, as no platform can be relied on for a file that can't
+	// be read (Windows has no such permission).
+	readFile func(string) ([]byte, error)
 }
 
 // NewStore is the store in dir.
 func NewStore(dir string) *Store {
-	return &Store{dir: dir, now: time.Now}
+	return &Store{dir: dir, now: time.Now, readFile: os.ReadFile}
 }
 
 // Inbox is the folder the agent's requests are dropped in.
@@ -228,7 +232,7 @@ func (s *Store) Take() (Review, error) {
 	for _, name := range names {
 		path := filepath.Join(s.Inbox(), name)
 		var req Request
-		if data, err := os.ReadFile(path); err != nil {
+		if data, err := s.readFile(path); err != nil {
 			s.problem(&r, fmt.Sprintf("%s couldn't be read: %v", name, err))
 		} else if err := json.Unmarshal(data, &req); err != nil {
 			s.problem(&r, fmt.Sprintf("%s isn't a request: %v", name, err))

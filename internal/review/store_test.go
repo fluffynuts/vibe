@@ -367,16 +367,11 @@ func TestAReviewFromBeforeSentCountsAnsweredCommentsAsSent(t *testing.T) {
 // as a bad one is: left there, every Take would find it again, and count
 // it as news from the agent each time.
 func TestARequestThatCantBeReadIsSaidToBeAndTakenOut(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root reads any file: there's no unreadable one to make")
-	}
 	s := NewStore(t.TempDir())
 	now := clockAt(s)
+	s.readFile = func(string) ([]byte, error) { return nil, os.ErrPermission }
 	drop(t, s, "1.json", Request{Op: "general", Body: "x"})
 	path := filepath.Join(s.Inbox(), "1.json")
-	if err := os.Chmod(path, 0); err != nil {
-		t.Fatal(err)
-	}
 	r, err := s.Take()
 	if err != nil {
 		t.Fatal(err)
