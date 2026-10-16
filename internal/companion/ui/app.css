@@ -340,6 +340,7 @@ ul.plain li .spacer { flex: 1; }
 .comment-card { display: flex; flex-direction: column; gap: 3px; width: 100%; text-align: left; padding: 6px 8px; }
 .comment-card.resolved, .comment-card.dismissed { opacity: .7; }
 .comment-card-where { display: flex; gap: 6px; align-items: center; font-size: 12px; }
+.comment-card.awaiting { background: var(--warn-bg); border-left: 3px solid var(--warn-line); }
 .comment-card-said { font-size: 13px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .comment-card-replies { font-size: 12px; }
 .review-actions { display: inline-flex; align-items: center; gap: 8px; }

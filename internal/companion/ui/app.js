@@ -912,7 +912,8 @@
   }
 
   // drawCommentsPane draws the comments pane's cards: each thread, where
-  // it is, its state, how it starts, and how many replies it has.
+  // it is, its state, how it starts, and how many replies it has; one the
+  // agent had the last word on, still open, is marked as awaiting your answer.
   function drawCommentsPane() {
     const rv = reviewView.review
     $('review-comments-count').textContent = String(rv ? rv.threads.length : 0)
@@ -928,8 +929,12 @@
       const first = t.comments[0] || { author: '', body: '' }
       const replies = t.comments.length - 1
       const where = t.file ? t.file + ':' + t.line + (t.endLine > t.line ? '–' + t.endLine : '') + (t.side === 'old' ? ' (old)' : '') : 'on the whole review'
-      return el('button', { type: 'button', class: 'comment-card ' + t.status, 'data-thread': String(t.id), onclick: () => goToThread(t.id) },
-        el('span', { class: 'comment-card-where' }, el('code', { text: where }), t.status === 'open' ? null : el('span', { class: 'pill', text: t.status })),
+      const last = t.comments[t.comments.length - 1]
+      const awaiting = t.status === 'open' && !!last && last.author === 'agent'
+      return el('button', { type: 'button', class: 'comment-card ' + t.status + (awaiting ? ' awaiting' : ''), 'data-thread': String(t.id), onclick: () => goToThread(t.id) },
+        el('span', { class: 'comment-card-where' }, el('code', { text: where }),
+          t.status === 'open' ? null : el('span', { class: 'pill', text: t.status }),
+          awaiting ? el('span', { class: 'pill warn', text: 'awaiting your answer' }) : null),
         el('span', { class: 'comment-card-said' }, el('strong', { text: first.author === 'agent' ? 'Agent: ' : 'You: ' }), first.body.replace(/\s+/g, ' ').slice(0, 160)),
         replies ? el('span', { class: 'comment-card-replies muted', text: replies === 1 ? '1 reply' : replies + ' replies' }) : null)
     }) : [el('p', { class: 'muted', text: pane.filter === 'all' ? 'No comments yet.' : 'None of these.' })]))

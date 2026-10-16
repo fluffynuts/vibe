@@ -1559,6 +1559,20 @@ test('each card says where its thread is, its state, how it starts, and its repl
   } finally { p.close() }
 })
 
+test("a card whose thread waits on your answer (open, the agent's the last word) stands out", async () => {
+  const p = await reviewPage({ review: overlaid, diff: twoFiles })
+  try {
+    await p.click('tab-review')
+    await p.click('review-comments-open')
+    const card = (id) => p.$('review-comments-list').querySelector(`[data-thread="${id}"]`)
+    assert.equal(card(1).classList.contains('awaiting'), true)
+    assert.match(card(1).textContent, /awaiting your answer/)
+    assert.equal(card(2).classList.contains('awaiting'), false, 'you answered last')
+    assert.equal(card(4).classList.contains('awaiting'), false, 'resolved')
+    assert.equal(card(5).classList.contains('awaiting'), false, 'yours, unanswered')
+  } finally { p.close() }
+})
+
 test('the pane filters to open threads, or yours, and orders by newest', async () => {
   const p = await reviewPage({ review: overlaid, diff: twoFiles })
   try {
