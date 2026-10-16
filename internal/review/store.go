@@ -51,6 +51,9 @@ type Review struct {
 	// as nobody saw them fail.
 	Problems []string  `json:"problems,omitempty"`
 	Started  time.Time `json:"started,omitempty"`
+	// AgentAt is when the agent's requests were last taken in: the page
+	// marks the tab when it's later than the user has seen.
+	AgentAt time.Time `json:"agentAt,omitempty"`
 	// LastID is the last thread's ID: IDs are never reused.
 	LastID int `json:"lastId"`
 }
@@ -83,6 +86,10 @@ type Comment struct {
 	Author string    `json:"author"`
 	Body   string    `json:"body"`
 	At     time.Time `json:"at"`
+	// Sent says the agent has been given a comment of the user's (with Ask
+	// the agent, or Submit to agent); until then it's the user's to edit or
+	// delete. The agent's own are never anything but sent.
+	Sent bool `json:"sent,omitempty"`
 }
 
 // Stop is a place in the reading order: where to look, and why there.
@@ -107,12 +114,15 @@ type Request struct {
 	EndLine int    `json:"endLine,omitempty"`
 	Code    string `json:"code,omitempty"`
 	Thread  int    `json:"thread,omitempty"`
-	Body    string `json:"body,omitempty"`
-	Stops   []Stop `json:"stops,omitempty"`
+	// At is when the comment edit or delete is of was said: what it's
+	// known by, as its place on the thread moves when one before it goes.
+	At    time.Time `json:"at,omitempty"`
+	Body  string    `json:"body,omitempty"`
+	Stops []Stop    `json:"stops,omitempty"`
 }
 
 // userOps are what the user can do from the page: the rest is the agent's.
-var userOps = map[string]bool{"reply": true, "resolve": true, "dismiss": true, "reopen": true}
+var userOps = map[string]bool{"comment": true, "reply": true, "resolve": true, "dismiss": true, "reopen": true, "edit": true, "delete": true}
 
 // Store keeps a sandbox's review in dir (~/.vibe/reviews/<sandbox>): the
 // review in review.json, of which it's the only writer, and an inbox the
@@ -155,7 +165,25 @@ func (s *Store) load() (Review, error) {
 	if r.Threads == nil {
 		r.Threads = []Thread{}
 	}
+	sentIfAnswered(&r)
 	return r, nil
+}
+
+// sentIfAnswered marks sent the user's comments the agent has answered
+// since: a review kept before comments were marked sent has them all
+// unsent, and Submit would give the agent them again.
+func sentIfAnswered(r *Review) {
+	for ti := range r.Threads {
+		cs := r.Threads[ti].Comments
+		answered := false
+		for i := len(cs) - 1; i >= 0; i-- {
+			if cs[i].Author == Agent {
+				answered = true
+			} else if answered {
+				cs[i].Sent = true
+			}
+		}
+	}
 }
 
 // Take takes in what the agent has dropped in the inbox, oldest first
@@ -200,6 +228,7 @@ func (s *Store) Take() (Review, error) {
 		}
 		os.Remove(path)
 	}
+	r.AgentAt = s.now()
 	return r, s.save(r)
 }
 
@@ -278,6 +307,44 @@ func (s *Store) apply(r *Review, req Request, author string) error {
 		case "reopen":
 			t.Status = Open
 		}
+	case "edit", "delete":
+		t := r.thread(req.Thread)
+		i := -1
+		if t != nil {
+			for k, c := range t.Comments {
+				if c.Author == User && c.At.Equal(req.At) {
+					i = k
+					break
+				}
+			}
+		}
+		if i < 0 {
+			return fmt.Errorf("there's no such comment of yours on thread %d: deleted already?", req.Thread)
+		}
+		c := &t.Comments[i]
+		if author != User || c.Sent {
+			return fmt.Errorf("only a comment of the user's that the agent hasn't been given can be changed")
+		}
+		if req.Op == "edit" {
+			if strings.TrimSpace(req.Body) == "" {
+				return fmt.Errorf("an edited comment needs something to say: delete it instead")
+			}
+			c.Body = req.Body
+			break
+		}
+		if i > 0 {
+			t.Comments = append(t.Comments[:i], t.Comments[i+1:]...)
+			break
+		}
+		if len(t.Comments) > 1 {
+			return fmt.Errorf("thread %d has replies: delete them first", req.Thread)
+		}
+		for i := range r.Threads {
+			if r.Threads[i].ID == req.Thread {
+				r.Threads = append(r.Threads[:i], r.Threads[i+1:]...)
+				break
+			}
+		}
 	case "order":
 		r.Order = req.Stops
 	case "done":
@@ -286,6 +353,52 @@ func (s *Store) apply(r *Review, req Request, author string) error {
 		return fmt.Errorf("there's no such request as %q", req.Op)
 	}
 	return nil
+}
+
+// Ref is one comment: the Comment'th of thread Thread's, said at At. At is
+// what MarkSent knows it by: the comments before it can be deleted in the
+// meantime, moving it up.
+type Ref struct {
+	Thread  int       `json:"thread"`
+	Comment int       `json:"comment"`
+	At      time.Time `json:"at"`
+}
+
+// Unsent is the user's comments the agent hasn't been given, in the order
+// the threads were started, each thread's in the order they were said.
+func Unsent(r Review) []Ref {
+	var out []Ref
+	for _, t := range r.Threads {
+		for i, c := range t.Comments {
+			if c.Author == User && !c.Sent {
+				out = append(out, Ref{Thread: t.ID, Comment: i, At: c.At})
+			}
+		}
+	}
+	return out
+}
+
+// MarkSent marks refs as given to the agent. One the user deleted in the
+// meantime is no longer there to mark, and that's no matter.
+func (s *Store) MarkSent(refs []Ref) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, err := s.load()
+	if err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		t := r.thread(ref.Thread)
+		if t == nil {
+			continue
+		}
+		for i := range t.Comments {
+			if c := &t.Comments[i]; c.Author == User && c.At.Equal(ref.At) {
+				c.Sent = true
+			}
+		}
+	}
+	return s.save(r)
 }
 
 func (r *Review) thread(id int) *Thread {

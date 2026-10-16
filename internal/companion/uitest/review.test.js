@@ -148,3 +148,72 @@ test('the filter wants every word typed somewhere in the path, any case', () => 
     assert.ok(!matchesFilter(path, q), q)
   }
 })
+
+test("the Review tab is marked when the agent has updated the review since it was seen", () => {
+  const { agentUpdated } = require('../ui/review.js')
+  assert.equal(agentUpdated('', ''), false, 'nothing from the agent yet')
+  assert.equal(agentUpdated('t1', null), true, 'first look: never seen here')
+  assert.equal(agentUpdated('t1', 't1'), false, 'seen')
+  assert.equal(agentUpdated('t2', 't1'), true, 'updated since')
+  assert.equal(agentUpdated('t1', ''), true, 'the first update after looking')
+})
+
+test('the file tree counts each file’s comment threads, open or not', () => {
+  const { threadsByFile } = require('../ui/review.js')
+  const counts = threadsByFile([
+    { id: 1, file: 'a.go', status: 'open' },
+    { id: 2, file: 'a.go', status: 'open' },
+    { id: 3, file: 'a.go', status: 'resolved' },
+    { id: 4, file: 'b.go', status: 'dismissed' },
+    { id: 5, status: 'open' },
+  ])
+  assert.deepEqual(Object.fromEntries(counts), { 'a.go': 3, 'b.go': 1 })
+})
+
+test('the comment arrows go to the thread after or before where the page is, round at the ends', () => {
+  const { stepTo } = require('../ui/review.js')
+  const tops = [-300, 40, 500, 900] // where each thread is; 40 is just under the bar
+  assert.equal(stepTo(tops, 40, 'next'), 2, 'past the one at the bar')
+  assert.equal(stepTo(tops, 40, 'prev'), 0)
+  assert.equal(stepTo(tops, 41, 'next'), 2, 'a pixel off still counts as there')
+  assert.equal(stepTo(tops, 1000, 'next'), 0, 'past the last: round to the first')
+  assert.equal(stepTo(tops, -500, 'prev'), 3, 'before the first: round to the last')
+  assert.equal(stepTo([], 0, 'next'), -1, 'none')
+})
+
+test('threads on lines the diff leaves out are placed in its gaps, opened enough to show them', () => {
+  const { gaps, placeInGaps } = require('../ui/review.js')
+  // Lines 1-9 hidden, a hunk at 10-11 (old 10-10: one line added), then 12-40 hidden.
+  const hunks = [{ oldStart: 10, newStart: 10, lines: [
+    { kind: 'context', old: 10, new: 10, text: 'ten' },
+    { kind: 'add', new: 11, text: 'eleven' },
+  ] }]
+  const lines = Array.from({ length: 40 }, (_, i) => 'line ' + (i + 1))
+  const g = gaps(hunks, lines.length)
+  const placed = placeInGaps(g, [
+    { id: 1, side: 'new', line: 30, endLine: 31, code: 'line 30\nline 31' },
+    { id: 2, side: 'old', line: 5, code: 'something else' },  // old 5 is new 5, above the hunk
+    { id: 3, side: 'new', line: 99 },                         // past the end of the file
+  ], lines, hunks.length)
+  assert.deepEqual(placed.after, { 31: [1], 5: [2] }, 'under the last line of each, in new numbers')
+  assert.deepEqual([...placed.marked].sort((a, b) => a - b), [5, 30, 31])
+  assert.deepEqual(placed.rest, [3])
+  assert.deepEqual([...placed.outdated], [2], 'its line reads differently now')
+  // The first gap opens upwards only, the last downwards only: each far
+  // enough for its thread and 3 lines past it.
+  assert.deepEqual(placed.reveal, { 0: { down: 0, up: 9 - (5 - 3) + 1 }, 1: { down: 31 + 3 - 12 + 1, up: 0 } })
+})
+
+test('a thread in a middle gap opens it from the nearer end', () => {
+  const { gaps, placeInGaps } = require('../ui/review.js')
+  const hunks = [
+    { oldStart: 1, newStart: 1, lines: [{ kind: 'add', new: 1, text: 'a' }] },
+    { oldStart: 100, newStart: 101, lines: [{ kind: 'add', new: 101, text: 'b' }] },
+  ]
+  const lines = Array.from({ length: 120 }, (_, i) => 'l' + (i + 1))
+  const g = gaps(hunks, lines.length)
+  // The middle gap is new lines 2-100.
+  const near = (line) => placeInGaps(g, [{ id: 1, side: 'new', line }], lines, hunks.length).reveal[1]
+  assert.deepEqual(near(10), { down: 10 + 3 - 2 + 1, up: 0 }, 'near the top')
+  assert.deepEqual(near(95), { down: 0, up: 100 - (95 - 3) + 1 }, 'near the bottom')
+})

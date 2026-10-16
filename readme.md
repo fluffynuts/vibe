@@ -594,7 +594,11 @@ you're looking at:
   that keeps the files whose path has every word typed. Ask the agent for a review and it uses `vibe-review` (and its skill) to comment,
   set a reading order, and say when it's done. Reply, resolve, dismiss or reopen a comment there; **Ask
   the agent** sends your reply as a question, which it answers on the comment (the turn shows in the
-  conversation too). A comment whose lines read differently now is marked as such. Reviews are kept in
+  conversation too; three dots show on the comment while it answers). Comment on a line yourself with the **+** over its number (Write, or Preview it as
+  Markdown): your comments and replies wait, editable and deletable, until **Submit to agent** sends them
+  all as one turn, and takes you to the Conversation tab. The agent answers on each, and changes code only where a comment asks it to. The tree shows how many comments each file has, and the bar how many there are in all, with arrows to step through them. A comment on a line the diff doesn't show is shown under that line all the same, with the lines around it opened. A comment whose lines read differently now is marked as such. When the agent
+  updates the review (a comment, an answer, finishing it), a dot shows on the tab until you open it, or
+  click or type anywhere in it if it's already open. Reviews are kept in
   `~/.vibe/reviews/<sandbox>/`, so they outlive the sandbox stopping or being rebuilt; `--migrate` takes
   them along, and deleting the sandbox deletes them. A sandbox built before this has no review folder
   until it's rebuilt. (This is meant to replace diffity, which is still installed alongside for now.)

@@ -32,6 +32,9 @@ func (s *Server) reviewState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body := map[string]interface{}{"review": rv}
+	if ask := s.answeringAsk(); ask != nil {
+		body["ask"] = ask
+	}
 	if r.URL.Query().Get("diff") == "1" {
 		ctx, cancel := context.WithTimeout(r.Context(), diffWithin)
 		defer cancel()
@@ -46,6 +49,19 @@ func (s *Server) reviewState(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, body)
+}
+
+// answeringAsk is the thread the user last asked the agent about, and
+// whether it's still answering, while that Ask is the latest prompt; else nil.
+func (s *Server) answeringAsk() map[string]interface{} {
+	s.asked.mu.Lock()
+	thread, asked := s.asked.thread, s.asked.prompt
+	s.asked.mu.Unlock()
+	prompt, answering := s.convo.turn()
+	if thread == 0 || prompt != asked {
+		return nil
+	}
+	return map[string]interface{}{"thread": thread, "answering": answering}
 }
 
 // diffOf is the diff rv is of: a commit's, the folder's against a branch,
@@ -134,27 +150,126 @@ func (s *Server) reviewAsk(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "the agent is still answering the last prompt — ask once it's done"})
 		return
 	}
-	if _, err := s.cfg.ReviewTab.Store.Do(review.Request{Op: "reply", Thread: req.Thread, Body: question}, review.User); err != nil {
+	prompt, _ := s.convo.turn()
+	s.asked.mu.Lock()
+	s.asked.thread, s.asked.prompt = req.Thread, prompt
+	s.asked.mu.Unlock()
+	after, err := s.cfg.ReviewTab.Store.Do(review.Request{Op: "reply", Thread: req.Thread, Body: question}, review.User)
+	if err == nil {
+		// The agent is given the whole thread: Submit to agent mustn't send
+		// any of it again.
+		err = s.cfg.ReviewTab.Store.MarkSent(unsentOn(after, req.Thread))
+	}
+	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "asked, but the question couldn't be kept on the comment: " + err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
 }
 
+// unsentOn is the user's unsent comments on thread id.
+func unsentOn(rv review.Review, id int) []review.Ref {
+	var out []review.Ref
+	for _, ref := range review.Unsent(rv) {
+		if ref.Thread == id {
+			out = append(out, ref)
+		}
+	}
+	return out
+}
+
+// reviewSubmit sends the agent the user's comments it hasn't been given, as
+// a turn; they're sent once it has begun. Refused, they stay unsent.
+func (s *Server) reviewSubmit(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Converse == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "this sandbox's agent can't be talked to from the page"})
+		return
+	}
+	rv, err := s.cfg.ReviewTab.Store.Load()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	refs := review.Unsent(rv)
+	if len(refs) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "there's nothing new to send"})
+		return
+	}
+	if !s.startTurn(submitPrompt(rv, refs)) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "the agent is still answering the last prompt — submit once it's done"})
+		return
+	}
+	if err := s.cfg.ReviewTab.Store.MarkSent(refs); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "sent, but they couldn't be marked as sent, so Submit would send them again: " + err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{"ok": true, "sent": len(refs)})
+}
+
+// submitPrompt is the turn giving the agent the user's new comments
+// (refs): each thread they're on, where it is, the code it's about, and
+// everything said on it, the new marked as new.
+func submitPrompt(rv review.Review, refs []review.Ref) string {
+	fresh := map[int]map[int]bool{}
+	var order []int
+	for _, ref := range refs {
+		if fresh[ref.Thread] == nil {
+			fresh[ref.Thread] = map[int]bool{}
+			order = append(order, ref.Thread)
+		}
+		fresh[ref.Thread][ref.Comment] = true
+	}
+	var b strings.Builder
+	b.WriteString("On the Review tab, I've left review comments for you. Here's each comment thread with something new of mine on it:\n")
+	for _, id := range order {
+		for _, t := range rv.Threads {
+			if t.ID != id {
+				continue
+			}
+			b.WriteString(fmt.Sprintf("\n## #%d, on %s\n", t.ID, where(t)))
+			if t.Code != "" {
+				b.WriteString("\nThe code it's on:\n\n" + indent(t.Code) + "\n")
+			}
+			b.WriteString("\n")
+			for i, c := range t.Comments {
+				mark := ""
+				if fresh[id][i] {
+					mark = " (new)"
+				}
+				b.WriteString("- " + c.Author + mark + ": " + strings.ReplaceAll(c.Body, "\n", "\n  ") + "\n")
+			}
+		}
+	}
+	b.WriteString("\nWork through each new comment of mine, in turn. Change code only where a comment asks you to (\"please fix\", say): " +
+		"then make the change and resolve its thread, saying what you did: vibe-review resolve --thread <n> --body-file - <<'BODY' ... BODY. " +
+		"Where a comment asks a question, or tells you not to change code, answer it and change nothing: " +
+		"vibe-review reply --thread <n> --body-file - <<'BODY' ... BODY. If you disagree, or need more from me, reply and leave the thread open. " +
+		"Answer on the threads, not here; here, just say briefly what you did.")
+	return b.String()
+}
+
+// where is where thread t is, in words.
+func where(t review.Thread) string {
+	if t.File == "" {
+		return "the whole review"
+	}
+	lines := fmt.Sprintf("line %d", t.Line)
+	if t.EndLine > t.Line {
+		lines = fmt.Sprintf("lines %d-%d", t.Line, t.EndLine)
+	}
+	side := ""
+	if t.Side == "old" {
+		side = " (of the old file)"
+	}
+	return t.File + ", " + lines + side
+}
+
+func indent(text string) string {
+	return "    " + strings.ReplaceAll(text, "\n", "\n    ")
+}
+
 // askPrompt is the turn asking the agent question about thread t.
 func askPrompt(t review.Thread, question string) string {
-	where := "the whole review"
-	if t.File != "" {
-		lines := fmt.Sprintf("line %d", t.Line)
-		if t.EndLine > t.Line {
-			lines = fmt.Sprintf("lines %d-%d", t.Line, t.EndLine)
-		}
-		side := ""
-		if t.Side == "old" {
-			side = " (of the old file)"
-		}
-		where = t.File + ", " + lines + side
-	}
 	var said strings.Builder
 	for _, c := range t.Comments {
 		said.WriteString("- " + c.Author + ": " + strings.ReplaceAll(c.Body, "\n", "\n  ") + "\n")
@@ -164,7 +279,7 @@ func askPrompt(t review.Thread, question string) string {
 		"Answer me on that comment, not here:\n\n    vibe-review reply --thread %d --body-file - <<'BODY'\n    <your answer>\n    BODY\n\n"+
 		"If what I say settles it, resolve it instead, saying how: vibe-review resolve --thread %d --body \"...\". "+
 		"Keep to this comment, and don't change any code unless I ask you to.",
-		t.ID, where, said.String(), question, t.ID, t.ID)
+		t.ID, where(t), said.String(), question, t.ID, t.ID)
 }
 
 // reviewing wraps the Review tab's calls: there's no such tab without a

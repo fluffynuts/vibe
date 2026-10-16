@@ -31,6 +31,9 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      # jsdom, for the companion page's tests: go test fails them without it
+      # in CI rather than skipping.
+      - run: npm ci --prefix internal/companion/uitest
       - run: go vet ./...
       - run: go test ./...
 

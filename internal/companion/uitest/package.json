@@ -1,0 +1,8 @@
+{
+  "name": "vibe-companion-uitest",
+  "private": true,
+  "description": "What the companion page's tests need: jsdom, for the tests that run the page itself (page.test.js). npm ci here before go test.",
+  "devDependencies": {
+    "jsdom": "24.1.3"
+  }
+}

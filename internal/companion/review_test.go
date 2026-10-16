@@ -2,6 +2,7 @@ package companion
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -92,8 +93,10 @@ func TestTheUserRepliesAndResolvesFromTheTab(t *testing.T) {
 	if th.Status != review.Resolved || len(th.Comments) != 2 || th.Comments[1].Author != review.User {
 		t.Errorf("thread: %+v", th)
 	}
-	if rec := do(t, s, post("/api/review/do", `{"op":"comment","file":"a.txt","line":1,"body":"x"}`)); rec.Code != http.StatusBadRequest {
-		t.Errorf("the page commenting as the agent: %d", rec.Code)
+	// The page comments as the user now (2026-10-16), but finishing the
+	// review is still the agent's.
+	if rec := do(t, s, post("/api/review/do", `{"op":"done"}`)); rec.Code != http.StatusBadRequest {
+		t.Errorf("the page doing the agent's part: %d", rec.Code)
 	}
 }
 
@@ -170,5 +173,166 @@ func TestTheTabGetsAFilesLinesForMoreContext(t *testing.T) {
 	}
 	if rec := do(t, s, req{path: "/api/review/file?path=../../etc/passwd", headers: authed(nil)}); rec.Code != http.StatusBadRequest {
 		t.Errorf("a path out of the folder: %d", rec.Code)
+	}
+}
+
+// Submitting sends the agent everything of the user's it hasn't seen, as a
+// turn, with the earlier comments of a thread for context; then it's sent.
+func TestSubmittingSendsTheUsersNewCommentsAsATurn(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{}
+	s.cfg.Converse = f.converse
+	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "P2: why two?"}, review.Agent)
+	store.Do(review.Request{Op: "reply", Thread: 1, Body: "because of the cache"}, review.User)
+	store.Do(review.Request{Op: "comment", File: "a.txt", Side: "new", Line: 1, Code: "one", Body: "please fix the naming"}, review.User)
+
+	if rec := do(t, s, post("/api/review/submit", `{}`)); rec.Code != http.StatusAccepted {
+		t.Fatalf("submit: %d %s", rec.Code, rec.Body)
+	}
+	idle(t, s)
+	if len(f.prompts) != 1 {
+		t.Fatalf("turns: %d", len(f.prompts))
+	}
+	p := f.prompts[0]
+	for _, want := range []string{
+		"#1", "P2: why two?", "because of the cache", // the reply, and what it replies to
+		"#2", "a.txt", "line 1", "one", "please fix the naming",
+		"vibe-review reply --thread", "vibe-review resolve --thread",
+		"Change code only where a comment asks", // the user's rule
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("the turn's prompt lacks %q:\n%s", want, p)
+		}
+	}
+	rv := getReview(t, s, "/api/review").Review
+	if left := review.Unsent(rv); len(left) != 0 {
+		t.Errorf("still unsent after submitting: %v", left)
+	}
+	if rec := do(t, s, post("/api/review/submit", `{}`)); rec.Code != http.StatusBadRequest {
+		t.Errorf("submitting with nothing new: %d", rec.Code)
+	}
+}
+
+func TestSubmittingWhileTheAgentAnswersLeavesTheCommentsUnsent(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 1, Body: "hmm"}, review.User)
+	send(t, s, "/api/conversation/send", `{"prompt":"busy"}`)
+	if rec := do(t, s, post("/api/review/submit", `{}`)); rec.Code != http.StatusConflict {
+		t.Errorf("while busy: %d", rec.Code)
+	}
+	close(f.release)
+	idle(t, s)
+	if rv := getReview(t, s, "/api/review").Review; len(review.Unsent(rv)) != 1 {
+		t.Error("a refused submit marked the comment sent")
+	}
+}
+
+func TestAskingMarksTheQuestionSent(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{}
+	s.cfg.Converse = f.converse
+	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "why?"}, review.Agent)
+	do(t, s, post("/api/review/ask", `{"thread":1,"body":"what about the cache?"}`))
+	idle(t, s)
+	if rv := getReview(t, s, "/api/review").Review; len(review.Unsent(rv)) != 0 {
+		t.Error("an asked question is still unsent, so Submit would send it again")
+	}
+}
+
+// The page's status poll, made from every tab, says when the agent last
+// updated the review, so the Review tab can be marked while another is open.
+func TestThePagesStatusSaysWhenTheAgentLastUpdatedTheReview(t *testing.T) {
+	s, store := reviewTabServer(t)
+	reviewAt := func() string {
+		t.Helper()
+		rec := do(t, s, req{path: "/api/state", headers: authed(nil)})
+		var body struct {
+			ReviewAt string `json:"reviewAt"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body.ReviewAt
+	}
+	if at := reviewAt(); at != "" {
+		t.Errorf("before the agent did anything: %q", at)
+	}
+	os.MkdirAll(store.Inbox(), 0o755)
+	os.WriteFile(filepath.Join(store.Inbox(), "1.json"), []byte(`{"op":"done"}`), 0o644)
+	if at := reviewAt(); at == "" {
+		t.Error("the agent's update wasn't told")
+	}
+}
+
+// Ask gives the agent the whole thread, so a reply of the user's written
+// there before isn't new to it any more: Submit mustn't send it again.
+func TestAskingSendsTheThreadsEarlierReplies(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{}
+	s.cfg.Converse = f.converse
+	if _, err := store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "P2: why two?"}, review.Agent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Do(review.Request{Op: "reply", Thread: 1, Body: "first thought"}, review.User); err != nil {
+		t.Fatal(err)
+	}
+	if rec := do(t, s, post("/api/review/ask", `{"thread":1,"body":"and why?"}`)); rec.Code != http.StatusAccepted {
+		t.Fatalf("ask: %d %s", rec.Code, rec.Body)
+	}
+	rv, _ := store.Load()
+	if left := review.Unsent(rv); len(left) != 0 {
+		t.Errorf("still unsent after Ask: %+v", left)
+	}
+}
+
+// While the agent answers an Ask, the tab is told which thread it's on, to
+// show it answering there; once the turn has ended, that it isn't any more.
+func TestTheTabIsToldWhileTheAgentAnswersAnAsk(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	if _, err := store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "P2: why two?"}, review.Agent); err != nil {
+		t.Fatal(err)
+	}
+	asking := func() string {
+		t.Helper()
+		rec := do(t, s, req{path: "/api/review", headers: authed(nil)})
+		var body struct {
+			Ask *struct {
+				Thread    int  `json:"thread"`
+				Answering bool `json:"answering"`
+			} `json:"ask"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Ask == nil {
+			return "none"
+		}
+		return fmt.Sprintf("#%d answering=%v", body.Ask.Thread, body.Ask.Answering)
+	}
+	if got := asking(); got != "none" {
+		t.Errorf("before asking: %s", got)
+	}
+	if rec := do(t, s, post("/api/review/ask", `{"thread":1,"body":"why?"}`)); rec.Code != http.StatusAccepted {
+		t.Fatalf("ask: %d %s", rec.Code, rec.Body)
+	}
+	if got := asking(); got != "#1 answering=true" {
+		t.Errorf("while answering: %s", got)
+	}
+	close(f.release)
+	idle(t, s)
+	if got := asking(); got != "#1 answering=false" {
+		t.Errorf("once the turn ended: %s", got)
+	}
+	// Another prompt and the Ask is over and done with.
+	if !s.startTurn("something else") {
+		t.Fatal("the next turn didn't start")
+	}
+	idle(t, s)
+	if got := asking(); got != "none" {
+		t.Errorf("after another prompt: %s", got)
 	}
 }

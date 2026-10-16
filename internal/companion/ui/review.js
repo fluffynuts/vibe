@@ -184,7 +184,80 @@
     return String(query || '').toLowerCase().split(/\s+/).filter(Boolean).every((w) => lower.includes(w))
   }
 
-  const api = { placeThreads, inReadingOrder, sideBySide, gaps, gapView, GAP_STEP, fileTree, matchesFilter }
+  // agentUpdated says the agent has updated the review (last at at, "" if
+  // never) since the user last saw it (seen: the at they saw, null when this
+  // browser never has, so all of it is news). Times are compared as given,
+  // not ordered: they only move on.
+  function agentUpdated(at, seen) {
+    return !!at && at !== seen
+  }
+
+  // threadsByFile is how many comment threads each file has, open or not,
+  // for the tree: those on the whole review aren't on a file.
+  function threadsByFile(threads) {
+    const out = new Map()
+    for (const t of threads) if (t.file) out.set(t.file, (out.get(t.file) || 0) + 1)
+    return out
+  }
+
+  // stepTo is which of the threads at tops (in page order, where each now
+  // is) the comment arrows go to from a page scrolled so line is where a
+  // thread is shown (just under the bar): the next past it, or the one
+  // before; round to the first after the last, and back. One within a few
+  // pixels of line is the one there. -1 when there are none.
+  function stepTo(tops, line, dir) {
+    if (!tops.length) return -1
+    const NEAR = 2
+    if (dir === 'next') {
+      const i = tops.findIndex((top) => top > line + NEAR)
+      return i < 0 ? 0 : i
+    }
+    for (let i = tops.length - 1; i >= 0; i--) if (tops[i] < line - NEAR) return i
+    return tops.length - 1
+  }
+
+  // GAP_CONTEXT is how many lines past a thread's lines are opened with
+  // them, when they're in a gap.
+  const GAP_CONTEXT = 3
+
+  // placeInGaps places threads on lines the diff leaves out, in its gaps
+  // (made knowing the file's length, from its lines; hunkCount hunks):
+  //   after[n]  — the threads to show after new line n: their last line;
+  //   marked    — the new lines they're on (a Set);
+  //   reveal[i] — how far to open gap i ({ down, up }) to show each thread's
+  //               lines and GAP_CONTEXT past them: from the nearer end, but
+  //               the first gap only upwards and the last only downwards;
+  //   outdated  — those whose lines read differently now (a Set);
+  //   rest      — those in no gap: past the end of the file, say.
+  // A context line is the same on both sides, so an old line n is new line
+  // n + the gap's offset.
+  function placeInGaps(fileGaps, threads, lines, hunkCount) {
+    const out = { after: {}, marked: new Set(), reveal: {}, outdated: new Set(), rest: [] }
+    for (const t of threads) {
+      const last = Math.max(t.endLine || t.line, t.line)
+      const g = fileGaps.find((g) => {
+        const shift = t.side === 'old' ? g.offset : 0
+        return g.to !== null && t.line + shift >= g.from && last + shift <= g.to
+      })
+      if (!g) { out.rest.push(t.id); continue }
+      const shift = t.side === 'old' ? g.offset : 0
+      const lo = t.line + shift
+      const hi = last + shift
+      for (let n = lo; n <= hi; n++) out.marked.add(n)
+      ;(out.after[hi] = out.after[hi] || []).push(t.id)
+      if (typeof t.code === 'string' && lines.slice(lo - 1, hi).join('\n') !== t.code) out.outdated.add(t.id)
+      const size = g.to - g.from + 1
+      const fromTop = Math.min(size, hi + GAP_CONTEXT - g.from + 1)
+      const fromBottom = Math.min(size, g.to - (lo - GAP_CONTEXT) + 1)
+      const down = g.index !== 0 && (g.index === hunkCount || fromTop <= fromBottom)
+      const r = out.reveal[g.index] = out.reveal[g.index] || { down: 0, up: 0 }
+      if (down) r.down = Math.max(r.down, fromTop)
+      else r.up = Math.max(r.up, fromBottom)
+    }
+    return out
+  }
+
+  const api = { placeInGaps, placeThreads, inReadingOrder, sideBySide, gaps, gapView, GAP_STEP, fileTree, matchesFilter, agentUpdated, threadsByFile, stepTo }
   if (typeof module === 'object' && module.exports) module.exports = api
   else root.vibeReview = api
 })(this)

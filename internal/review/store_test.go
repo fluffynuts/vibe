@@ -2,6 +2,7 @@ package review
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -149,9 +150,214 @@ func TestStartingAReviewAnewKeepsTheLastOne(t *testing.T) {
 
 func TestTheUserCantDoTheAgentsPart(t *testing.T) {
 	s := NewStore(t.TempDir())
-	for _, op := range []string{"start", "comment", "order", "done"} {
+	// Commenting is the user's too, since 2026-10-16: their own comments,
+	// sent to the agent when they choose (see Unsent).
+	for _, op := range []string{"start", "order", "done"} {
 		if _, err := s.Do(Request{Op: op, File: "a.go", Line: 1, Body: "x"}, User); err == nil {
 			t.Errorf("the user could %s", op)
 		}
+	}
+}
+
+func refs(r []Ref) string {
+	var out []string
+	for _, x := range r {
+		out = append(out, fmt.Sprintf("%d.%d", x.Thread, x.Comment))
+	}
+	return strings.Join(out, " ")
+}
+
+// The user comments on lines, and replies, before sending any of it: what
+// the agent hasn't been given is what's unsent.
+func TestTheUsersCommentsWaitUntilSent(t *testing.T) {
+	s := NewStore(t.TempDir())
+	clockAt(s)
+	s.Do(Request{Op: "comment", File: "a.go", Line: 3, Body: "agent's"}, Agent)
+	if _, err := s.Do(Request{Op: "comment", File: "b.go", Side: "new", Line: 7, Code: "x := 1", Body: "please fix"}, User); err != nil {
+		t.Fatal(err)
+	}
+	s.Do(Request{Op: "reply", Thread: 1, Body: "why though?"}, User)
+	r, _ := s.Load()
+	if got := refs(Unsent(r)); got != "1.1 2.0" {
+		t.Errorf("unsent: %s, want the reply (1.1) and the new comment (2.0)", got)
+	}
+	if th := r.Threads[1]; th.Comments[0].Author != User || th.Code != "x := 1" || th.Comments[0].Sent {
+		t.Errorf("the user's comment: %+v", th)
+	}
+	if err := s.MarkSent(Unsent(r)); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = s.Load()
+	if got := refs(Unsent(r)); got != "" {
+		t.Errorf("unsent after sending: %s", got)
+	}
+}
+
+// tickingClock moves on a second each time it's read, so every comment is
+// said at a time of its own, as the page knows it by.
+func tickingClock(s *Store) {
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { now = now.Add(time.Second); return now }
+}
+
+// at is when the i'th comment on thread id was said.
+func at(t *testing.T, s *Store, id, i int) time.Time {
+	t.Helper()
+	r, _ := s.Load()
+	th := r.thread(id)
+	if th == nil || i >= len(th.Comments) {
+		t.Fatalf("no comment %d on thread %d", i, id)
+	}
+	return th.Comments[i].At
+}
+
+func TestAnUnsentCommentCanBeEditedOrDeleted(t *testing.T) {
+	s := NewStore(t.TempDir())
+	tickingClock(s)
+	s.Do(Request{Op: "comment", File: "b.go", Line: 7, Body: "typo"}, User)
+	s.Do(Request{Op: "comment", File: "c.go", Line: 1, Body: "never mind"}, User)
+	if _, err := s.Do(Request{Op: "edit", Thread: 1, At: at(t, s, 1, 0), Body: "fixed wording"}, User); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Do(Request{Op: "delete", Thread: 2, At: at(t, s, 2, 0)}, User); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := s.Load()
+	if len(r.Threads) != 1 || r.Threads[0].Body() != "fixed wording" {
+		t.Errorf("threads: %+v", r.Threads)
+	}
+	// A deleted reply goes; its thread stays.
+	s.Do(Request{Op: "reply", Thread: 1, Body: "and another thing"}, User)
+	if _, err := s.Do(Request{Op: "delete", Thread: 1, At: at(t, s, 1, 1)}, User); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := s.Load(); len(r.Threads[0].Comments) != 1 {
+		t.Errorf("after deleting the reply: %+v", r.Threads[0].Comments)
+	}
+}
+
+// With the review open in two tabs, one deleting a reply moves the ones
+// after it up: the other's edit still lands on the comment it was of.
+func TestEditingFindsTheCommentWhereverItHasMoved(t *testing.T) {
+	s := NewStore(t.TempDir())
+	tickingClock(s)
+	s.Do(Request{Op: "comment", File: "a.go", Line: 1, Body: "first"}, User)
+	s.Do(Request{Op: "reply", Thread: 1, Body: "second"}, User)
+	s.Do(Request{Op: "reply", Thread: 1, Body: "third"}, User)
+	third := at(t, s, 1, 2)
+	if _, err := s.Do(Request{Op: "delete", Thread: 1, At: at(t, s, 1, 1)}, User); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Do(Request{Op: "edit", Thread: 1, At: third, Body: "third, edited"}, User); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := s.Load()
+	var got []string
+	for _, c := range r.Threads[0].Comments {
+		got = append(got, c.Body)
+	}
+	if strings.Join(got, "|") != "first|third, edited" {
+		t.Errorf("comments: %q", got)
+	}
+	// One deleted in the other tab is gone, not some other comment.
+	if _, err := s.Do(Request{Op: "edit", Thread: 1, At: at(t, s, 1, 0).Add(time.Hour), Body: "x"}, User); err == nil {
+		t.Error("edited a comment that isn't there")
+	}
+}
+
+func TestOnlyTheUsersUnsentCommentsCanBeChanged(t *testing.T) {
+	s := NewStore(t.TempDir())
+	tickingClock(s)
+	s.Do(Request{Op: "comment", File: "a.go", Line: 3, Body: "agent's"}, Agent)
+	s.Do(Request{Op: "comment", File: "b.go", Line: 7, Body: "sent already"}, User)
+	r, _ := s.Load()
+	s.MarkSent(Unsent(r))
+	s.Do(Request{Op: "comment", File: "c.go", Line: 1, Body: "mine"}, User)
+	s.Do(Request{Op: "reply", Thread: 3, Body: "my reply"}, User)
+	for _, tc := range []struct {
+		why string
+		req Request
+	}{
+		{"the agent's", Request{Op: "edit", Thread: 1, At: at(t, s, 1, 0), Body: "x"}},
+		{"sent", Request{Op: "edit", Thread: 2, At: at(t, s, 2, 0), Body: "x"}},
+		{"sent, deleted", Request{Op: "delete", Thread: 2, At: at(t, s, 2, 0)}},
+		{"no such comment", Request{Op: "edit", Thread: 3, At: time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), Body: "x"}},
+		{"a comment with replies", Request{Op: "delete", Thread: 3, At: at(t, s, 3, 0)}},
+		{"edited to nothing", Request{Op: "edit", Thread: 3, At: at(t, s, 3, 0), Body: "  "}},
+	} {
+		if _, err := s.Do(tc.req, User); err == nil {
+			t.Errorf("%s: allowed", tc.why)
+		}
+	}
+	// Nor can the agent change the user's.
+	if _, err := s.Do(Request{Op: "edit", Thread: 3, At: at(t, s, 3, 0), Body: "x"}, Agent); err == nil {
+		t.Error("the agent edited the user's comment")
+	}
+}
+
+// Comments are marked sent as they were when sent, whatever's deleted in
+// the meantime.
+func TestMarkingSentFollowsTheCommentNotItsPlace(t *testing.T) {
+	s := NewStore(t.TempDir())
+	now := clockAt(s)
+	s.Do(Request{Op: "comment", File: "a.go", Line: 1, Body: "first"}, User)
+	*now = now.Add(time.Second)
+	s.Do(Request{Op: "reply", Thread: 1, Body: "second"}, User)
+	r, _ := s.Load()
+	sent := Unsent(r)[1:] // just "second"
+	*now = now.Add(time.Second)
+	s.Do(Request{Op: "reply", Thread: 1, Body: "third"}, User)
+	s.Do(Request{Op: "delete", Thread: 1, At: sent[0].At}, User) // "second" goes; "third" moves up
+	s.MarkSent(sent)
+	r, _ = s.Load()
+	if c := r.Threads[0].Comments[1]; c.Body != "third" || c.Sent {
+		t.Errorf("a comment that wasn't sent was marked sent: %+v", c)
+	}
+}
+
+// The page lights the Review tab when the agent has done something to the
+// review since it was last looked at: the store says when that was.
+func TestTheStoreSaysWhenTheAgentLastUpdatedTheReview(t *testing.T) {
+	s := NewStore(t.TempDir())
+	now := clockAt(s)
+	r, _ := s.Take()
+	if !r.AgentAt.IsZero() {
+		t.Errorf("updated before the agent did anything: %v", r.AgentAt)
+	}
+	drop(t, s, "1.json", Request{Op: "comment", File: "a.go", Line: 1, Body: "x"})
+	r, _ = s.Take()
+	if !r.AgentAt.Equal(*now) {
+		t.Errorf("after the agent's comment: %v, want %v", r.AgentAt, *now)
+	}
+	at := r.AgentAt
+	*now = now.Add(time.Minute)
+	s.Do(Request{Op: "reply", Thread: 1, Body: "mine"}, User)
+	if r, _ := s.Take(); !r.AgentAt.Equal(at) {
+		t.Errorf("the user's reply counted as the agent's update: %v", r.AgentAt)
+	}
+	drop(t, s, "2.json", Request{Op: "resolve", Thread: 1})
+	if r, _ := s.Take(); !r.AgentAt.Equal(*now) {
+		t.Errorf("the agent resolving didn't count: %v", r.AgentAt)
+	}
+}
+
+// A review kept before comments were marked sent: a comment of the user's
+// the agent has answered after is one it was given, so it isn't sent again.
+func TestAReviewFromBeforeSentCountsAnsweredCommentsAsSent(t *testing.T) {
+	dir := t.TempDir()
+	old := `{"threads":[{"id":1,"file":"a.go","line":1,"status":"open","comments":[
+		{"author":"agent","body":"P3: x","at":"2026-10-15T10:00:00Z"},
+		{"author":"user","body":"why?","at":"2026-10-15T10:01:00Z"},
+		{"author":"agent","body":"because","at":"2026-10-15T10:02:00Z"},
+		{"author":"user","body":"not answered yet","at":"2026-10-15T10:03:00Z"}]}],"lastId":1}`
+	if err := os.WriteFile(filepath.Join(dir, "review.json"), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewStore(dir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := refs(Unsent(r)); got != "1.3" {
+		t.Errorf("unsent: %s, want only the one not answered (1.3)", got)
 	}
 }

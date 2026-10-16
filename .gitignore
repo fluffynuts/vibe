@@ -6,3 +6,5 @@
 # the claude theme last chosen for a profile's sandbox — a per-machine preference
 /profiles/*/claude-theme
 tmp
+# the companion page tests' jsdom: npm ci in internal/companion/uitest
+node_modules/

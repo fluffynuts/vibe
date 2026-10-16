@@ -121,7 +121,12 @@
         <span id="review-state" class="pill" hidden></span>
         <span id="review-of" class="muted"></span>
         <span class="spacer"></span>
-        <span id="review-count" class="muted"></span>
+        <button type="button" id="review-submit" disabled title="Send the agent your comments it hasn't seen yet">Submit to agent</button>
+        <span class="review-scroller">
+          <span id="review-count" class="muted"></span>
+          <button type="button" id="review-prev-comment" class="ghost" disabled aria-label="Previous comment" title="Previous comment">▲</button>
+          <button type="button" id="review-next-comment" class="ghost" disabled aria-label="Next comment" title="Next comment">▼</button>
+        </span>
         <button type="button" id="review-layout" class="ghost"></button>
         <button type="button" id="review-refresh" class="ghost" title="Work out the diff afresh">Refresh</button>
       </div>

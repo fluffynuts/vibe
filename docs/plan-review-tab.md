@@ -105,6 +105,10 @@ reverting hunks, guided tours beyond the reading order, side-by-side view.
 - Windows: is the sandbox's folder the same path, and does the host have git? (The tab says so if not.)
 - Large diffs: a cap on what's shown at once, with files collapsed past a size.
 - The user's global instructions name diffity for reviews: they change once the tab takes over.
+- Tabs open on the same review don't sync: each has its own drafts, open composer and edit in progress,
+  and only sees another's changes on its next poll. Ideally they would sync (the user, 2026-10-16); not
+  built yet. Meanwhile, edit and delete find a comment by when it was said, not its place, so a tab
+  behind the times can't change the wrong one.
 
 ## Testing it (notes for the first real try)
 

@@ -1,6 +1,7 @@
 package companion
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -16,5 +17,27 @@ func TestTheReviewTabsPlacing(t *testing.T) {
 	out, err := exec.Command(node, "--test", filepath.Join("uitest", "review.test.js")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("node --test uitest/review.test.js failed: %v\n%s", err, out)
+	}
+}
+
+// TestThePageItself runs the tests of the page as a whole (uitest/page.test.js),
+// in jsdom. jsdom is installed with `npm ci` in uitest: without it they're
+// skipped here, saying how to get it, but never in CI, where skipping would
+// pass them unseen.
+func TestThePageItself(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node isn't installed: the page's tests need it")
+	}
+	if _, err := os.Stat(filepath.Join("uitest", "node_modules", "jsdom")); err != nil {
+		const how = "the page's tests need jsdom: run `npm ci` in internal/companion/uitest"
+		if os.Getenv("CI") != "" {
+			t.Fatal(how)
+		}
+		t.Skip(how)
+	}
+	out, err := exec.Command(node, "--test", filepath.Join("uitest", "page.test.js")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node --test uitest/page.test.js failed: %v\n%s", err, out)
 	}
 }

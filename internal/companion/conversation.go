@@ -403,6 +403,14 @@ func (c *conversation) working() bool {
 	return c.running
 }
 
+// turn is the latest prompt's seq, and whether the agent is still at its
+// answer to it.
+func (c *conversation) turn() (prompt int, answering bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.prompt, c.running && !c.answered
+}
+
 // isCompacting says the running turn's agent is compacting its context.
 func (c *conversation) isCompacting() bool {
 	c.mu.Lock()

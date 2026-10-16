@@ -134,6 +134,16 @@ type Server struct {
 	done  chan struct{}
 	convo conversation
 	admin admin
+	asked asked
+}
+
+// asked is the thread of the review the user last asked the agent about,
+// and the prompt that asked: while that's the conversation's latest, the
+// Review tab shows the agent answering there.
+type asked struct {
+	mu     sync.Mutex
+	thread int
+	prompt int
 }
 
 // New makes a Server without listening, which is how tests drive Handler.
@@ -251,6 +261,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/review/file", s.reviewing(s.reviewFile))
 	mux.HandleFunc("POST /api/review/do", s.reviewing(s.reviewDo))
 	mux.HandleFunc("POST /api/review/ask", s.reviewing(s.reviewAsk))
+	mux.HandleFunc("POST /api/review/submit", s.reviewing(s.reviewSubmit))
 	mux.HandleFunc("GET /api/manage", s.authed(s.managed(s.manageState)))
 	mux.HandleFunc("POST /api/manage/plan", s.managing(s.managePlan))
 	mux.HandleFunc("POST /api/manage/delete", s.managing(s.manageDelete))
@@ -357,8 +368,20 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		}
 		s.admin.mu.Unlock()
 	}
+	// reviewAt is when the agent last updated the review: the page marks the
+	// Review tab when it's later than the user has seen. Taken in here, as
+	// the Review tab only polls the review while it's open.
+	reviewAt := ""
+	if s.cfg.ReviewTab != nil {
+		if rv, err := s.cfg.ReviewTab.Store.Take(); err != nil {
+			attention["review"] = []string{"The review couldn't be read: " + err.Error()}
+		} else if !rv.AgentAt.IsZero() {
+			reviewAt = rv.AgentAt.UTC().Format(time.RFC3339Nano)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"attention":         attention,
+		"reviewAt":          reviewAt,
 		"themeColor":        theme,
 		"sandbox":           s.cfg.Sandbox,
 		"agent":             s.cfg.Agent,
