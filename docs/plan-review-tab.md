@@ -149,3 +149,31 @@ In this order, each finished and tested before the next; all in vibe itself (no 
 5. **Formatting toolbar**: bold, italic, code, code block, link, quote, bulleted and numbered lists
    (only what the page's Markdown shows), Ctrl+B / Ctrl+I / Ctrl+K, on every comment box (new,
    reply, edit).
+
+## Editing a sent comment (agreed and built 2026-10-16)
+
+The user's own comments can be edited after the agent has seen them; the agent's can't. An edited comment
+shows the new text marked **edited** (clicking it shows what it said before), is unsent again, and goes
+with the next Submit (or Ask) as "edited since you saw it: … It said: …", so the agent knows what changed.
+Edited twice before that, the agent hears only about the version it saw. A comment the agent has seen any
+version of can't be deleted: edit it instead. Kept as `Comment.Was` (what the agent saw, oldest first).
+
+## Syntax highlighting (agreed and built 2026-10-16)
+
+On the host, with Chroma (`github.com/alecthomas/chroma/v2`, MIT; about +5 MB of binary, measured): the
+page asks `/api/review/highlight?path=&side=` for each file side as its card nears the screen; vibe
+colours the whole file (so a comment or string over several lines is coloured on each) as the review has
+it (`NewTextOf`, `OldTextOf`), and answers with runs per line. The page maps Chroma's classes to a few
+kinds (`tokenKind`), colours them with GitHub's light and dark palettes, and draws a line plain if its
+runs no longer spell it. Files over 10,000 lines or 1 MB aren't coloured, saying so in their header.
+Chosen over highlight.js in the page so the browser isn't slowed (the user's choice).
+
+## The comments pane (agreed and built 2026-10-16)
+
+A speech-bubble button with the comment count, in the review's bar, slides a pane in from the right
+over the diff, below the bar (an overlay, the user's change from GitHub's pane that resizes the diff).
+Short cards, one a thread: where it is, its state, how it starts, its replies; clicking one goes to the
+thread (its reply box ready) and closes the pane, clearing a tree filter hiding it (one in a file ticked
+as viewed stays folded, saying so). Filters All / Open / Yours (threads the user started); order as the
+comment arrows go, or newest first. ✕, Escape or the button again closes it. No whole-review comment box
+for now (the user will see how it play-tests).

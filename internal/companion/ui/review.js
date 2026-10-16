@@ -347,7 +347,37 @@
       : { from, to, insert, selStart: from, selEnd: from + insert.length }
   }
 
-  const api = { formatText, inStepOrder, diffSquares, currentOf, positionOf, placeInGaps, placeThreads, inTreeOrder, sideBySide, gaps, gapView, GAP_STEP, fileTree, matchesFilter, agentUpdated, threadsByFile, stepTo }
+  // tokenKind is the kind of thing a Chroma class (as its HTML formatter
+  // names them) is, to colour: a keyword, a string, a comment, and so on;
+  // '' to leave as plain text.
+  function tokenKind(c) {
+    if (!c || c === 'err' || c === 'p' || c === 'nx') return ''
+    if (c === 'kt') return 'type'
+    if (c === 'kc') return 'const'
+    if (c[0] === 'k' || c === 'ow') return 'kw'
+    if (c === 'nf' || c === 'fm') return 'fn'
+    if (c === 'nc' || c === 'nn') return 'type'
+    if (c === 'nt') return 'tag'
+    if (c === 'nb' || c === 'bp') return 'builtin'
+    if (c === 'na') return 'attr'
+    if (c === 'nd' || c === 'cp' || c === 'cpf') return 'meta'
+    if (c[0] === 'n' && c[1] === 'v') return 'var'
+    if (c[0] === 's' || c === 'dl') return 'str'
+    if (c[0] === 'm' || c === 'il') return 'num'
+    if (c[0] === 'c') return 'comment'
+    if (c[0] === 'o') return 'op'
+    return ''
+  }
+
+  // lineRuns is a line's coloured runs ({ c: class, t: text }, from the
+  // server) as { kind, text }, to draw; null when there are none, or they
+  // no longer spell the line (the file changed since): then it's plain.
+  function lineRuns(runs, text) {
+    if (!Array.isArray(runs) || runs.map((r) => r.t).join('') !== text) return null
+    return runs.map((r) => ({ kind: tokenKind(r.c), text: r.t }))
+  }
+
+  const api = { tokenKind, lineRuns, formatText, inStepOrder, diffSquares, currentOf, positionOf, placeInGaps, placeThreads, inTreeOrder, sideBySide, gaps, gapView, GAP_STEP, fileTree, matchesFilter, agentUpdated, threadsByFile, stepTo }
   if (typeof module === 'object' && module.exports) module.exports = api
   else root.vibeReview = api
 })(this)

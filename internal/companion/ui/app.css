@@ -1,4 +1,8 @@
 :root {
+  /* syntax colours, GitHub's (light) */
+  --hl-kw: #cf222e; --hl-str: #0a3069; --hl-comment: #6e7781; --hl-num: #0550ae; --hl-fn: #8250df;
+  --hl-type: #953800; --hl-builtin: #0550ae; --hl-tag: #116329; --hl-attr: #0550ae; --hl-var: #953800;
+  --hl-meta: #8250df; --hl-const: #0550ae; --hl-op: inherit;
   --bg: #fafafa;
   --panel: #ffffff;
   --line: #d9dde3;
@@ -20,6 +24,10 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
+    /* syntax colours, GitHub's (dark) */
+    --hl-kw: #ff7b72; --hl-str: #a5d6ff; --hl-comment: #8b949e; --hl-num: #79c0ff; --hl-fn: #d2a8ff;
+    --hl-type: #ffa657; --hl-builtin: #79c0ff; --hl-tag: #7ee787; --hl-attr: #79c0ff; --hl-var: #ffa657;
+    --hl-meta: #d2a8ff; --hl-const: #79c0ff;
     --bg: #14161a;
     --panel: #1b1e24;
     --line: #2d323b;
@@ -188,7 +196,10 @@ dialog p { margin: 6px 0; }
 dialog code { display: block; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; font: 13px var(--mono); word-break: break-all; }
 dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 
-.toast { position: fixed; right: 16px; bottom: 16px; max-width: min(520px, calc(100% - 32px)); padding: 10px 14px; background: var(--panel); color: var(--text); border: 1px solid var(--accent); border-radius: 8px; box-shadow: 0 4px 16px rgb(0 0 0 / .3); }
+.toast { position: fixed; inset: auto 16px 16px auto; margin: 0; width: auto; height: auto; overflow: visible; z-index: 2147483000; max-width: min(520px, calc(100% - 32px)); padding: 10px 14px; background: var(--panel); color: var(--text); border: 1px solid var(--accent); border-radius: 8px; box-shadow: 0 4px 16px rgb(0 0 0 / .3); }
+/* the toast is shown in the browser's top layer (a popover), over everything else, dialogs too:
+   undo what browsers give a popover (centred, framed); z-index for one without them */
+.toast[popover] { inset: auto 16px 16px auto; margin: 0; }
 .toast.bad { background: var(--bad); color: #fff; border-color: var(--bad); }
 .toast-action { margin-left: 8px; padding: 2px 10px; background: transparent; color: inherit; border: 1px solid currentColor; border-radius: 6px; font: inherit; cursor: pointer; }
 
@@ -278,6 +289,9 @@ ul.plain li .spacer { flex: 1; }
 .review-compose-preview { min-height: 6em; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
 .review-unsent { margin-left: 6px; font-size: 12px; color: var(--amber); }
 .review-thread .comment-actions { display: inline-flex; gap: 4px; margin-left: 8px; }
+/* "edited", beside a comment's time: shows what it said before, in a quieter box under it */
+.review-thread .review-edited { padding: 0 4px; font-size: 12px; color: var(--muted); text-decoration: underline dotted; }
+.review-earlier { margin-top: 6px; padding: 4px 8px; border-left: 3px solid var(--line); opacity: .8; }
 .review-thread .comment-actions button { padding: 0 6px; font-size: 12px; }
 .review-lines tr.marked td.num:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 /* the lines the comment being written is on, on their own side: a tint over the cell's own colour
@@ -311,6 +325,24 @@ ul.plain li .spacer { flex: 1; }
 .review-thread .bar { margin-top: 6px; }
 /* The file tree beside the diff: a quarter of the width to start with,
    draggable, and staying in view as the diff scrolls. */
+/* the comments pane: slides in from the right over the diff (it doesn't resize it), below the bar */
+.review-comments-open { display: inline-flex; align-items: center; gap: 4px; }
+.review-comments-open svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; }
+.review-comments { position: fixed; right: 0; top: var(--review-pane-top, 90px); bottom: 0; z-index: 20; width: min(440px, 92vw);
+  display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--line); box-shadow: -6px 0 18px rgba(0, 0, 0, .25);
+  transform: translateX(105%); transition: transform .2s ease-out; visibility: hidden; }
+.review-comments.open { transform: none; visibility: visible; }
+@media (prefers-reduced-motion: reduce) { .review-comments { transition: none; } }
+.review-comments-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.review-comments-head #review-comments-close { margin-left: auto; }
+.review-comments-filters { display: inline-flex; gap: 2px; }
+.review-comments-filters button[aria-pressed=true] { background: var(--row-hover); border-color: var(--accent); }
+.review-comments-list { flex: 1; overflow: auto; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.comment-card { display: flex; flex-direction: column; gap: 3px; width: 100%; text-align: left; padding: 6px 8px; }
+.comment-card.resolved, .comment-card.dismissed { opacity: .7; }
+.comment-card-where { display: flex; gap: 6px; align-items: center; font-size: 12px; }
+.comment-card-said { font-size: 13px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.comment-card-replies { font-size: 12px; }
 .review-actions { display: inline-flex; align-items: center; gap: 8px; }
 /* with no review open: the ways to start one, in the middle of the tab */
 .review-start { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 15vh 16px 32px; text-align: center; }
@@ -461,3 +493,19 @@ html.themed .commands li[aria-selected="true"] {
   .offline { background: rgba(250, 250, 250, .88); }
   @media (prefers-color-scheme: dark) { .offline { background: rgba(20, 22, 26, .88); } }
 }
+
+/* syntax colours on a diff's code: kinds from review.js's tokenKind */
+.review-lines .hl-kw { color: var(--hl-kw); }
+.review-lines .hl-str { color: var(--hl-str); }
+.review-lines .hl-comment { color: var(--hl-comment); font-style: italic; }
+.review-lines .hl-num { color: var(--hl-num); }
+.review-lines .hl-fn { color: var(--hl-fn); }
+.review-lines .hl-type { color: var(--hl-type); }
+.review-lines .hl-builtin { color: var(--hl-builtin); }
+.review-lines .hl-tag { color: var(--hl-tag); }
+.review-lines .hl-attr { color: var(--hl-attr); }
+.review-lines .hl-var { color: var(--hl-var); }
+.review-lines .hl-meta { color: var(--hl-meta); }
+.review-lines .hl-const { color: var(--hl-const); }
+.review-lines .hl-op { color: var(--hl-op); }
+.review-uncoloured { font-size: 12px; }

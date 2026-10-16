@@ -12,43 +12,13 @@ import (
 // generated file has no use for all of it.
 const maxFileLines = 200000
 
-// FileLines is path's lines, as the diff of r has its new side: the file as
-// it is in dir, or as the commit r is of has it. They're what the Review
-// tab shows when asked for more of a file's context than the diff has.
-// path is relative to dir, and nothing outside dir is read: not by .., not
-// through a symbolic link.
+// FileLines is path's lines, as the diff of r has its new side (see
+// NewTextOf). They're what the Review tab shows when asked for more of a
+// file's context than the diff has.
 func FileLines(ctx context.Context, dir string, r Review, path string) ([]string, error) {
-	clean := filepath.Clean(filepath.FromSlash(path))
-	if path == "" || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return nil, fmt.Errorf("%q isn't a file in the folder", path)
-	}
-	var text string
-	if r.Commit != "" {
-		if err := isCommit(ctx, dir, r.Commit); err != nil {
-			return nil, err
-		}
-		out, err := run(ctx, dir, "show", r.Commit+":"+filepath.ToSlash(clean))
-		if err != nil {
-			return nil, err
-		}
-		text = out
-	} else {
-		root, err := filepath.EvalSymlinks(dir)
-		if err != nil {
-			return nil, err
-		}
-		full, err := filepath.EvalSymlinks(filepath.Join(root, clean))
-		if err != nil {
-			return nil, fmt.Errorf("%q can't be read: %w", path, err)
-		}
-		if rel, err := filepath.Rel(root, full); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return nil, fmt.Errorf("%q isn't a file in the folder", path)
-		}
-		data, err := os.ReadFile(full)
-		if err != nil {
-			return nil, fmt.Errorf("%q can't be read: %w", path, err)
-		}
-		text = string(data)
+	text, err := NewTextOf(ctx, dir, r, path)
+	if err != nil {
+		return nil, err
 	}
 	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 	if len(lines) > maxFileLines {
@@ -58,4 +28,51 @@ func FileLines(ctx context.Context, dir string, r Review, path string) ([]string
 		lines[i] = strings.TrimSuffix(l, "\r")
 	}
 	return lines, nil
+}
+
+// inFolder is path cleaned, when it names something in the folder: relative,
+// and not reaching out of it with "..".
+func inFolder(path string) (string, error) {
+	clean := filepath.Clean(filepath.FromSlash(path))
+	if path == "" || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%q isn't a file in the folder", path)
+	}
+	return clean, nil
+}
+
+// NewTextOf is path's text as review r has its new side: in the commit r is
+// of, at HEAD for unpushed commits, else in the folder dir as it is. path is
+// relative to dir, and nothing outside dir is read: not by .., not through
+// a symbolic link. (A comment's file, which this reads, comes from the
+// agent.)
+func NewTextOf(ctx context.Context, dir string, r Review, path string) (string, error) {
+	clean, err := inFolder(path)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case r.Commit != "":
+		if err := isCommit(ctx, dir, r.Commit); err != nil {
+			return "", err
+		}
+		return run(ctx, dir, "show", r.Commit+":"+filepath.ToSlash(clean))
+	case r.Unpushed:
+		return run(ctx, dir, "show", "HEAD:"+filepath.ToSlash(clean))
+	}
+	root, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", err
+	}
+	full, err := filepath.EvalSymlinks(filepath.Join(root, clean))
+	if err != nil {
+		return "", fmt.Errorf("%q can't be read: %w", path, err)
+	}
+	if rel, err := filepath.Rel(root, full); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%q isn't a file in the folder", path)
+	}
+	data, err := os.ReadFile(full)
+	if err != nil {
+		return "", fmt.Errorf("%q can't be read: %w", path, err)
+	}
+	return string(data), nil
 }

@@ -266,6 +266,8 @@ func TestEditingFindsTheCommentWhereverItHasMoved(t *testing.T) {
 	}
 }
 
+// Deleting is for the user's comments the agent hasn't seen; editing a sent
+// one is allowed since 2026-10-16 (TestASentCommentIsEditedAndTheAgentToldWhatChanged).
 func TestOnlyTheUsersUnsentCommentsCanBeChanged(t *testing.T) {
 	s := NewStore(t.TempDir())
 	tickingClock(s)
@@ -280,7 +282,6 @@ func TestOnlyTheUsersUnsentCommentsCanBeChanged(t *testing.T) {
 		req Request
 	}{
 		{"the agent's", Request{Op: "edit", Thread: 1, At: at(t, s, 1, 0), Body: "x"}},
-		{"sent", Request{Op: "edit", Thread: 2, At: at(t, s, 2, 0), Body: "x"}},
 		{"sent, deleted", Request{Op: "delete", Thread: 2, At: at(t, s, 2, 0)}},
 		{"no such comment", Request{Op: "edit", Thread: 3, At: time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), Body: "x"}},
 		{"a comment with replies", Request{Op: "delete", Thread: 3, At: at(t, s, 3, 0)}},
@@ -487,5 +488,44 @@ func TestFilesAreTickedAsViewed(t *testing.T) {
 	}
 	if _, err := s.Do(Request{Op: "view", File: "c.go"}, User); err == nil {
 		t.Error("ticked with no fingerprint of what was seen")
+	}
+}
+
+// The user edits a comment the agent has seen: it shows the new text, keeps
+// what the agent saw, and waits to be sent again, so the agent can be told
+// what changed. Edited again before that, the agent still only saw the
+// first. It can't be deleted: the agent has seen it.
+func TestASentCommentIsEditedAndTheAgentToldWhatChanged(t *testing.T) {
+	s := NewStore(t.TempDir())
+	tickingClock(s)
+	s.Do(Request{Op: "comment", File: "a.go", Line: 1, Body: "as sent"}, User)
+	r, _ := s.Load()
+	s.MarkSent(Unsent(r))
+	said := at(t, s, 1, 0)
+	if _, err := s.Do(Request{Op: "edit", Thread: 1, At: said, Body: "better"}, User); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Do(Request{Op: "edit", Thread: 1, At: said, Body: "better still"}, User); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = s.Load()
+	c := r.Threads[0].Comments[0]
+	if c.Body != "better still" || c.Sent || strings.Join(c.Was, "|") != "as sent" {
+		t.Errorf("edited: %+v", c)
+	}
+	if got := refs(Unsent(r)); got != "1.0" {
+		t.Errorf("unsent: %s", got)
+	}
+	if _, err := s.Do(Request{Op: "delete", Thread: 1, At: said}, User); err == nil {
+		t.Error("deleted a comment the agent has seen")
+	}
+	s.MarkSent(Unsent(r))
+	s.Do(Request{Op: "edit", Thread: 1, At: said, Body: "third"}, User)
+	if r, _ := s.Load(); strings.Join(r.Threads[0].Comments[0].Was, "|") != "as sent|better still" {
+		t.Errorf("what the agent has seen: %q", r.Threads[0].Comments[0].Was)
+	}
+	s.Do(Request{Op: "comment", File: "b.go", Line: 1, Body: "agent's"}, Agent)
+	if _, err := s.Do(Request{Op: "edit", Thread: 2, At: at(t, s, 2, 0), Body: "x"}, User); err == nil {
+		t.Error("edited the agent's comment")
 	}
 }

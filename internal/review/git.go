@@ -320,29 +320,11 @@ func countLines(r io.Reader) int {
 	return n
 }
 
-// TextOf is path's lines as review rv has it: in its commit, at HEAD for
-// unpushed commits, else in the folder dir as it is.
+// TextOf is path's lines as review rv has it (see NewTextOf).
 func TextOf(ctx context.Context, dir string, rv Review, path string) ([]string, error) {
-	var text string
-	switch {
-	case rv.Commit != "":
-		out, err := run(ctx, dir, "show", rv.Commit+":"+path)
-		if err != nil {
-			return nil, err
-		}
-		text = out
-	case rv.Unpushed:
-		out, err := run(ctx, dir, "show", "HEAD:"+path)
-		if err != nil {
-			return nil, err
-		}
-		text = out
-	default:
-		data, err := os.ReadFile(filepath.Join(dir, path))
-		if err != nil {
-			return nil, err
-		}
-		text = string(data)
+	text, err := NewTextOf(ctx, dir, rv, path)
+	if err != nil {
+		return nil, err
 	}
 	return strings.Split(strings.TrimSuffix(text, "\n"), "\n"), nil
 }

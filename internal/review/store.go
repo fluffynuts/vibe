@@ -100,9 +100,13 @@ type Comment struct {
 	Body   string    `json:"body"`
 	At     time.Time `json:"at"`
 	// Sent says the agent has been given a comment of the user's (with Ask
-	// the agent, or Submit to agent); until then it's the user's to edit or
-	// delete. The agent's own are never anything but sent.
+	// the agent, or Submit to agent); until then it can be deleted. Edited
+	// after, it's unsent again, to be sent saying what changed (see Was).
+	// The agent's own are never anything but sent.
 	Sent bool `json:"sent,omitempty"`
+	// Was is what the agent saw of a comment of the user's edited since,
+	// oldest first: an edited comment is sent again, saying what changed.
+	Was []string `json:"was,omitempty"`
 }
 
 // Stop is a place in the reading order: where to look, and why there.
@@ -378,15 +382,24 @@ func (s *Store) apply(r *Review, req Request, author string) error {
 			return fmt.Errorf("there's no such comment of yours on thread %d: deleted already?", req.Thread)
 		}
 		c := &t.Comments[i]
-		if author != User || c.Sent {
-			return fmt.Errorf("only a comment of the user's that the agent hasn't been given can be changed")
+		if author != User {
+			return fmt.Errorf("only the user changes their comments")
 		}
 		if req.Op == "edit" {
 			if strings.TrimSpace(req.Body) == "" {
 				return fmt.Errorf("an edited comment needs something to say: delete it instead")
 			}
+			// One the agent has seen keeps what it saw, and waits to be sent
+			// again, to tell it what changed.
+			if c.Sent {
+				c.Was = append(c.Was, c.Body)
+				c.Sent = false
+			}
 			c.Body = req.Body
 			break
+		}
+		if c.Sent || len(c.Was) > 0 {
+			return fmt.Errorf("the agent has seen this comment, so it can't be deleted: edit it instead")
 		}
 		if i > 0 {
 			t.Comments = append(t.Comments[:i], t.Comments[i+1:]...)

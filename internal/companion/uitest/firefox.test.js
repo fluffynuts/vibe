@@ -1,7 +1,8 @@
 // Tests of the companion page in a real Firefox (Playwright's), for what
 // jsdom can't show: layout, hover, and how a real browser hands out pointer
 // events. Run by `node --test` from firefox_test.go, which serves the page
-// (VIBE_PAGE_URL) for a repository where a.txt's lines 20-22 are changed.
+// (VIBE_PAGE_URL) for a repository where a.txt's lines 20-22 are changed,
+// and main.go's line 4.
 // Needs `npm ci` and `npx playwright install firefox` in this folder.
 'use strict'
 const test = require('node:test')
@@ -93,5 +94,75 @@ test("a range's lines are marked on their side, over the colour of changed lines
     assert.notEqual(inRange.code, outside.code, 'the code stands out')
     assert.notEqual(inRange.num, outside.num, 'and its number')
     assert.equal(otherSide.code, otherSideOutside.code, 'the old side is left alone')
+  } finally { await page.close() }
+})
+
+// Code is coloured once its file is near the screen, and the colours show.
+// Colours arrive a file at a time, each redrawing the diff: so each step
+// here is one call into the page, finding what it needs as it then is.
+// (Polled from here: the page's policy forbids the eval Playwright's own
+// waiting uses.)
+test('code is coloured by its language', async () => {
+  const page = await reviewPage()
+  try {
+    await page.evaluate(() => document.querySelector('.review-file[data-path="main.go"]').scrollIntoView())
+    const look = () => page.evaluate(() => {
+      const kw = document.querySelector('.review-file[data-path="main.go"] .hl-kw')
+      return kw && [getComputedStyle(kw).color, getComputedStyle(kw.closest('td')).color]
+    })
+    let colours = null
+    for (let i = 0; i < 100 && !(colours = await look()); i++) await page.waitForTimeout(50)
+    assert.ok(colours, 'main.go was coloured within 5s')
+    assert.notEqual(colours[0], colours[1], 'a keyword stands out from plain code')
+  } finally { await page.close() }
+})
+
+// The comments pane slides in over the diff, below the review's bar: the
+// diff isn't resized for it.
+test('the comments pane slides in over the diff, without resizing it', async () => {
+  const page = await reviewPage()
+  try {
+    const box = (sel) => page.evaluate((sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width } }, sel)
+    const before = await box('.review-main')
+    await page.click('#review-comments-open')
+    let pane = null
+    for (let i = 0; i < 40; i++) {
+      pane = await box('#review-comments')
+      if (Math.abs(pane.right - 1400) < 1) break
+      await page.waitForTimeout(50)
+    }
+    assert.ok(Math.abs(pane.right - 1400) < 1, 'flush with the right edge once in: ' + JSON.stringify(pane))
+    const bar = await box('#panel-review > .bar')
+    assert.ok(pane.top >= bar.bottom - 1, 'below the bar')
+    assert.equal((await box('.review-main')).width, before.width, 'the diff not resized')
+  } finally { await page.close() }
+})
+
+// A toast is never hidden: not by the comments pane, nor a dialog.
+test('a toast shows over the comments pane', async () => {
+  const page = await reviewPage()
+  try {
+    await page.click('#review-comments-open')
+    // Once it's all the way in.
+    for (let i = 0; i < 40 && Math.abs(await page.evaluate(() => document.getElementById('review-comments').getBoundingClientRect().right) - 1400) >= 1; i++) await page.waitForTimeout(50)
+    // A paste with no clipboard page to take it: the page says so, in a toast.
+    // (Firefox ignores data given to a made-up paste event: it's set on it.)
+    await page.evaluate(() => {
+      const ev = new Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(ev, 'clipboardData', { value: { files: [new File(['png'], 'shot.png', { type: 'image/png' })], getData: () => '' } })
+      document.querySelector('#review-files').dispatchEvent(ev)
+    })
+    const onTop = () => page.evaluate(() => {
+      const t = document.getElementById('toast')
+      if (t.hidden) return null
+      const r = t.getBoundingClientRect()
+      const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+      return !!at && (at === t || t.contains(at))
+    })
+    let seen = null
+    for (let i = 0; i < 40 && (seen = await onTop()) === null; i++) await page.waitForTimeout(50)
+    assert.equal(seen, true, 'the toast is what shows where it is')
+    const where = await page.evaluate(() => { const r = document.getElementById('toast').getBoundingClientRect(); return [Math.round(innerWidth - r.right), Math.round(innerHeight - r.bottom)] })
+    assert.deepEqual(where, [16, 16], 'in its place, bottom right')
   } finally { await page.close() }
 })

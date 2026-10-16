@@ -285,6 +285,7 @@
     }
     t.className = 'toast' + (bad ? ' bad' : '')
     t.hidden = false
+    raiseToast()
     toast.lasts = action ? 10000 : bad ? 8000 : 4000
     toast.held = false
     clearTimeout(toast.timer)
@@ -293,7 +294,19 @@
 
   function hideToast() {
     clearTimeout(toast.timer)
-    $('toast').hidden = true
+    const t = $('toast')
+    t.hidden = true
+    if (t.hidePopover && t.matches(':popover-open')) t.hidePopover()
+  }
+
+  // raiseToast puts the toast over everything: in the browser's top layer,
+  // above whatever went there before it (a dialog, say), so nothing on the
+  // page ever covers it. (Without popovers, its z-index does what it can.)
+  function raiseToast() {
+    const t = $('toast')
+    if (t.hidden || !t.showPopover) return
+    if (t.matches(':popover-open')) t.hidePopover()
+    t.showPopover()
   }
 
   function holdToast(held) {
@@ -859,6 +872,8 @@
       tick()
     }
     dialog.showModal()
+    // A toast showing stays over the dialog.
+    raiseToast()
   }
 
   // --- the Review tab -----------------------------------------------------
@@ -870,6 +885,106 @@
   // layout is 'split' (side by side, the default) or 'unified' (one column,
   // for a narrow window), kept for this browser.
   const REVIEW_LAYOUT = 'vibe-review-layout'
+  // paneThreads are the review's threads the comments pane shows, in its
+  // order: as the comment arrows go (the page's order, or the reading
+  // order), or by their latest comment, newest first.
+  function paneThreads() {
+    const rv = reviewView.review
+    if (!rv) return []
+    const pane = reviewView.pane
+    const byId = new Map(rv.threads.map((t) => [t.id, t]))
+    const onPage = Array.from($('panel-review').querySelectorAll('.review-thread')).map((card) => {
+      const file = card.closest('.review-file')
+      return { file: file ? file.dataset.path : null, id: Number(card.id.replace('review-thread-', '')) }
+    })
+    let ids = (reviewView.order === 'reading' ? R.inStepOrder(onPage, reviewSteps()) : onPage).map((e) => e.id)
+    ids = ids.concat(rv.threads.map((t) => t.id).filter((id) => !ids.includes(id)))
+    let threads = ids.map((id) => byId.get(id)).filter(Boolean)
+    if (pane.filter === 'open') threads = threads.filter((t) => t.status === 'open')
+    if (pane.filter === 'yours') threads = threads.filter((t) => t.comments.length && t.comments[0].author === 'user')
+    if (pane.order === 'newest') {
+      const latest = (t) => t.comments.reduce((m, c) => (c.at > m ? c.at : m), '')
+      threads = threads.map((t, i) => ({ t, i })).sort((a, b) => latest(b.t).localeCompare(latest(a.t)) || a.i - b.i).map((x) => x.t)
+    }
+    return threads
+  }
+
+  // drawCommentsPane draws the comments pane's cards: each thread, where
+  // it is, its state, how it starts, and how many replies it has.
+  function drawCommentsPane() {
+    const rv = reviewView.review
+    $('review-comments-count').textContent = String(rv ? rv.threads.length : 0)
+    const pane = reviewView.pane
+    for (const b of $('review-comments').querySelectorAll('[data-filter]')) b.setAttribute('aria-pressed', String(b.dataset.filter === pane.filter))
+    // Path and reading order are the comment arrows' own (as chosen under the
+    // count); newest first is the pane's alone.
+    const order = $('review-comments-order')
+    order.querySelector('[value=reading]').disabled = reviewSteps().size === 0
+    order.value = pane.order === 'newest' ? 'newest' : reviewView.order
+    const threads = paneThreads()
+    $('review-comments-list').replaceChildren(...(threads.length ? threads.map((t) => {
+      const first = t.comments[0] || { author: '', body: '' }
+      const replies = t.comments.length - 1
+      const where = t.file ? t.file + ':' + t.line + (t.endLine > t.line ? '–' + t.endLine : '') + (t.side === 'old' ? ' (old)' : '') : 'on the whole review'
+      return el('button', { type: 'button', class: 'comment-card ' + t.status, 'data-thread': String(t.id), onclick: () => goToThread(t.id) },
+        el('span', { class: 'comment-card-where' }, el('code', { text: where }), t.status === 'open' ? null : el('span', { class: 'pill', text: t.status })),
+        el('span', { class: 'comment-card-said' }, el('strong', { text: first.author === 'agent' ? 'Agent: ' : 'You: ' }), first.body.replace(/\s+/g, ' ').slice(0, 160)),
+        replies ? el('span', { class: 'comment-card-replies muted', text: replies === 1 ? '1 reply' : replies + ' replies' }) : null)
+    }) : [el('p', { class: 'muted', text: pane.filter === 'all' ? 'No comments yet.' : 'None of these.' })]))
+  }
+
+  function openCommentsPane(open) {
+    reviewView.pane.open = open
+    const pane = $('review-comments')
+    pane.classList.toggle('open', open)
+    pane.setAttribute('aria-hidden', String(!open))
+    pane.inert = !open
+    $('review-comments-open').setAttribute('aria-expanded', String(open))
+    if (open) {
+      // Just below the review's bar, wherever it is now.
+      $('panel-review').style.setProperty('--review-pane-top', Math.max(0, $('panel-review').querySelector(':scope > .bar').getBoundingClientRect().bottom) + 'px')
+      drawCommentsPane()
+      const first = pane.querySelector('.comment-card')
+      if (first) first.focus({ preventScroll: true })
+    }
+  }
+
+  // goToThread closes the comments pane and goes to thread id: its reply
+  // box ready. A tree filter hiding it is cleared; one in a file ticked as
+  // viewed stays folded, saying so.
+  function goToThread(id) {
+    openCommentsPane(false)
+    let card = $('review-thread-' + id)
+    if (card && card.closest('.review-file[hidden]')) {
+      const filter = $('review-filter')
+      filter.value = ''
+      filter.dispatchEvent(new Event('input', { bubbles: true }))
+      card = $('review-thread-' + id)
+    }
+    if (!card) return
+    if (card.closest('[hidden]')) { toast("That comment is in a file you've ticked as viewed: untick it to see it."); return }
+    const i = arrowCards().indexOf(card)
+    if (i >= 0) { reviewView.at = i; reviewView.steering = true; countComments() }
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    ;(card.querySelector('textarea[data-thread]') || card).focus({ preventScroll: true })
+  }
+
+  function setUpCommentsPane() {
+    const pane = $('review-comments')
+    $('review-comments-open').addEventListener('click', () => openCommentsPane(!reviewView.pane.open))
+    $('review-comments-close').addEventListener('click', () => { openCommentsPane(false); $('review-comments-open').focus() })
+    for (const b of pane.querySelectorAll('[data-filter]')) b.addEventListener('click', () => { reviewView.pane.filter = b.dataset.filter; drawCommentsPane() })
+    $('review-comments-order').addEventListener('change', (ev) => {
+      if (ev.target.value === 'newest') { reviewView.pane.order = 'newest'; drawCommentsPane(); return }
+      reviewView.pane.order = 'arrows'
+      setCommentOrder(ev.target.value)
+    })
+    pane.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); openCommentsPane(false); $('review-comments-open').focus() } })
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' && reviewView.pane.open && !typingInto(ev.target)) openCommentsPane(false)
+    })
+  }
+
   // REVIEW_ORDER keeps, per browser, the order the comment arrows go in.
   const REVIEW_ORDER = 'vibe-review-comment-order'
   // The file filter is kept for this browser tab, as the Profiles tab's is.
@@ -888,6 +1003,16 @@
     // options are the reviews that can be started, while none is open
     // (null until known), or why they couldn't be told.
     options: null, optionsError: '',
+    // earlier is the edited comments (by when they were said) showing what
+    // they said before.
+    earlier: new Set(),
+    // pane is the comments pane: open, which threads it shows ('all',
+    // 'open', 'yours': those you started) and in what order ('arrows', as
+    // the comment arrows go, or 'newest').
+    pane: { open: false, filter: 'all', order: 'arrows' },
+    // colours is each file side's colouring, by "path|side", as vibe gave
+    // it ({ language, lines, skipped }), or { loading } / { error }.
+    colours: new Map(),
     // at is which of the shown threads the page is at, for the bar's
     // "3/5"; steering, that the arrows put it there, so the next step goes
     // on from it (the last threads can't always be scrolled up to the bar),
@@ -907,6 +1032,12 @@
   // something the page holds (a comment being written) did.
   function redrawReview() {
     drawReview(true)
+  }
+
+  // toggle puts value in set, or takes it out.
+  function toggle(set, value) {
+    if (set.has(value)) set.delete(value)
+    else set.add(value)
   }
 
   // openComposer opens a comment on line of path's side: one already being
@@ -1258,6 +1389,17 @@
     return head ? head.getBoundingClientRect().height : 0
   }
 
+  // setCommentOrder sets the order the comment arrows go in, 'path' or
+  // 'reading', for this browser: chosen under the comment count, or in the
+  // comments pane, which go in step.
+  function setCommentOrder(order) {
+    reviewView.order = order
+    store.set(REVIEW_ORDER, order)
+    reviewView.steering = false
+    countComments()
+    drawCommentsPane()
+  }
+
   // setUpOrderMenu makes the comment count a button choosing the order the
   // comment arrows go in. The reading order can only be chosen when the
   // agent set one.
@@ -1272,7 +1414,7 @@
         item.setAttribute('aria-checked', String(item.dataset.order === reviewView.order))
         if (item.dataset.order === 'reading') {
           item.disabled = none
-          item.textContent = "By the agent's reading order" + (none ? ' (the agent set no reading order)' : '')
+          item.textContent = 'Order by agent reading order' + (none ? ' (the agent set no reading order)' : '')
         }
       }
       menu.hidden = false
@@ -1283,11 +1425,8 @@
     menu.addEventListener('click', (ev) => {
       const item = ev.target.closest('[role=menuitemradio]')
       if (!item || item.disabled) return
-      reviewView.order = item.dataset.order
-      store.set(REVIEW_ORDER, reviewView.order)
-      reviewView.steering = false
       close()
-      countComments()
+      setCommentOrder(item.dataset.order)
     })
     menu.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); close(); button.focus() } })
     document.addEventListener('pointerdown', (ev) => { if (!menu.hidden && !ev.target.closest('.review-order-wrap')) close() })
@@ -1474,11 +1613,13 @@
 
   // reviewPaste sends what's pasted on the Review tab that isn't text (an
   // image, a file) to the clipboard page, to go to the agent with the next
-  // message, saying which; text pastes into its box as ever.
+  // message, saying which; in a text box, text pastes into it as ever.
   async function reviewPaste(ev) {
     const data = ev.clipboardData
     const files = data ? Array.from(data.files || []) : []
-    if (!files.length || data.getData('text/plain')) return
+    // In a text box, text goes in it as ever; elsewhere text has nowhere to
+    // go, and a file copied in a file manager carries its path as text too.
+    if (!files.length || (typingInto(ev.target) && data.getData('text/plain'))) return
     ev.preventDefault()
     const said = { image: 0, file: 0, already: 0 }
     for (const f of files) {
@@ -1644,6 +1785,7 @@
     reviewView.fileLines.clear()
     reviewView.linesAsked.clear()
     reviewView.opened.clear()
+    reviewView.colours.clear()
     reviewView.key = null
     drawReview()
     loadReview(true)
@@ -1739,6 +1881,7 @@
     $('review-files').replaceChildren(...(files.length || reviewView.files === null ? [] : [el('p', { class: 'muted', text: 'Nothing to review: no changes.' })]),
       ...ordered.map((o) => foldIfViewed(o.file, fileCard(o.file, o.stop, o.step, files.indexOf(o.file), placed, threads))))
     drawTree()
+    drawCommentsPane()
     // The reply box that had focus, drawn afresh, keeps it.
     const again = focused && $('panel-review').querySelector('textarea[data-thread="' + focused + '"]')
     if (again) again.focus({ preventScroll: true })
@@ -1783,6 +1926,65 @@
     return card
   }
 
+  // colourSides are the sides of file f there are to colour: an added file
+  // has only its new one, a deleted file its old; a binary one none.
+  function colourSides(f) {
+    if (f.binary || f.tooLarge) return []
+    if (f.status === 'added') return [{ side: 'new', path: f.path }]
+    if (f.status === 'deleted') return [{ side: 'old', path: f.path }]
+    return [{ side: 'old', path: f.oldPath || f.path }, { side: 'new', path: f.path }]
+  }
+
+  // fetchColours asks vibe to colour the sides of file f it hasn't yet,
+  // drawing them as they come (not while a reply's being typed).
+  function fetchColours(f) {
+    for (const { side, path } of colourSides(f)) {
+      const key = f.path + '|' + side
+      if (reviewView.colours.has(key)) continue
+      reviewView.colours.set(key, { loading: true })
+      api('/api/review/highlight?path=' + encodeURIComponent(path) + '&side=' + side)
+        .then((res) => { reached(true); reviewView.colours.set(key, res.ok ? res.body : { error: (res.body && res.body.error) || 'vibe said no' }) },
+          () => { reached(false); reviewView.colours.delete(key) })
+        .then(() => { reviewView.key = null; drawReview() })
+    }
+  }
+
+  // colourWhenNear asks for file f's colours once its card is near the
+  // screen (all at once where the browser can't tell): a big review's
+  // files aren't all coloured up front.
+  let colourWatch = null
+  function colourWhenNear(f, card) {
+    if (colourSides(f).every(({ side }) => reviewView.colours.has(f.path + '|' + side))) return
+    if (!window.IntersectionObserver) { fetchColours(f); return }
+    if (!colourWatch) {
+      colourWatch = new IntersectionObserver((entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue
+          colourWatch.unobserve(e.target)
+          const file = (reviewView.files || []).find((x) => x.path === e.target.dataset.path)
+          if (file) fetchColours(file)
+        }
+      }, { rootMargin: '800px 0px' })
+    }
+    colourWatch.observe(card)
+  }
+
+  // codeCell is a line's code, coloured when its side's colouring has the
+  // line as it reads (lineRuns), else plain.
+  function codeCell(classes, f, side, n, text) {
+    const coloured = reviewView.colours.get(f.path + '|' + side)
+    const runs = coloured && coloured.lines ? R.lineRuns(coloured.lines[n - 1], text) : null
+    if (!runs) return el('td', { class: classes, text })
+    return el('td', { class: classes }, ...runs.map((r) => r.kind ? el('span', { class: 'hl-' + r.kind, text: r.text }) : r.text))
+  }
+
+  // uncoloured says, in a file's header, why it isn't coloured, when vibe
+  // said why.
+  function uncoloured(f) {
+    const why = colourSides(f).map(({ side }) => reviewView.colours.get(f.path + '|' + side)).find((c) => c && (c.skipped || c.error))
+    return why ? el('span', { class: 'muted review-uncoloured', text: 'not coloured: ' + (why.skipped || why.error) }) : null
+  }
+
   // diffStat is a file's figures, on the right of its header, as GitHub
   // shows them: lines added and deleted, five squares of their share, and
   // how long the file is (or was, deleted). Nothing for a binary file.
@@ -1810,10 +2012,11 @@
     const total = (f.hunks || []).reduce((n, h) => n + h.lines.length, 0)
     const head = el('header', {}, el('code', { text: f.status === 'renamed' ? f.oldPath + ' → ' + f.path : f.path }),
       el('span', { class: 'muted', text: f.status }),
-      stepBadge(step, stop),
+      stepBadge(step, stop), uncoloured(f),
       stop ? el('span', { class: 'review-stop', text: stop.label || 'in the reading order' }) : null,
       diffStat(f), viewedTick(f))
     const card = el('section', { class: 'review-file', id: 'review-file-' + index, 'data-path': f.path }, head)
+    colourWhenNear(f, card)
     if (stop && stop.body) card.append(el('div', { class: 'note' }, markdown(stop.body)))
     // The lines the diff leaves out can be opened, as on GitHub, for a file
     // that's in it on both sides: an added or deleted one is shown whole.
@@ -1869,7 +2072,7 @@
       const half = (number, side) => {
         const sel = inComposer(f.path, side, number) ? ' sel' : ''
         return [el('td', { class: 'num context' + sel }, String(number), lineButton(f.path, side, number, text, { old, new: n })),
-          el('td', { class: 'sign' + sel }), el('td', { class: 'code context' + sel, text })]
+          el('td', { class: 'sign' + sel }), codeCell('code context' + sel, f, 'new', n, text)]
       }
       const classes = [gapped.marked.has(n) ? 'marked' : '', inComposer(f.path, 'old', old) || inComposer(f.path, 'new', n) ? 'selected' : ''].filter(Boolean).join(' ')
       const row = split
@@ -1877,7 +2080,7 @@
         : el('tr', { class: classes }, ...(() => {
           const sel = inComposer(f.path, 'old', old) || inComposer(f.path, 'new', n) ? ' sel' : ''
           return [el('td', { class: 'num context' + sel }, String(old), lineButton(f.path, 'new', n, text, { old, new: n })), el('td', { class: 'num context' + sel, text: String(n) }),
-            el('td', { class: 'sign' + sel }), el('td', { class: 'code context' + sel, text })]
+            el('td', { class: 'sign' + sel }), codeCell('code context' + sel, f, 'new', n, text)]
         })())
       const out = gapped.after[n] ? [row, threadRow(gapped.after[n])] : [row]
       if (composerAfter(f.path, 'old', old) || composerAfter(f.path, 'new', n)) out.push(composerRow(columns))
@@ -1920,7 +2123,7 @@
             const sel = inComposer(f.path, side, l[number]) ? ' sel' : ''
             return [el('td', { class: 'num ' + l.kind + (start ? ' start' : '') + sel }, String(l[number] || ''), lineButton(f.path, side, l[number], l.text, row)),
               el('td', { class: 'sign ' + l.kind + sel, text: signOf(l.kind) }),
-              el('td', { class: 'code ' + l.kind + sel, text: l.text })]
+              codeCell('code ' + l.kind + sel, f, side, l[number], l.text)]
           }
           for (const row of R.sideBySide(h)) {
             const keys = [...new Set([row.left, row.right].filter((i) => i !== null).map((i) => hi + ':' + i))]
@@ -1947,7 +2150,7 @@
             el('td', { class: 'num ' + l.kind + (selected ? ' sel' : '') }, l.old ? String(l.old) : '', lineButton(f.path, side, l[side], l.text, { old: l.old || null, new: l.new || null })),
             el('td', { class: 'num ' + l.kind + (selected ? ' sel' : ''), text: l.new ? String(l.new) : '' }),
             el('td', { class: 'sign ' + l.kind + (selected ? ' sel' : ''), text: signOf(l.kind) }),
-            el('td', { class: 'code ' + l.kind + (selected ? ' sel' : ''), text: l.text })))
+            codeCell('code ' + l.kind + (selected ? ' sel' : ''), f, side, l[side], l.text)))
           if (after[key]) rows.push(threadRow(after[key]))
           if (composerAfter(f.path, 'old', l.old) || composerAfter(f.path, 'new', l.new)) rows.push(composerRow(columns))
         })
@@ -2000,14 +2203,25 @@
 
   function threadCard(t) {
     const comments = t.comments.map((c, i) => {
-      const mine = c.author === 'user' && !c.sent
-      const editing = mine && reviewView.editing && reviewView.editing.thread === t.id && reviewView.editing.at === c.at
+      // Your comments can be edited; deleted only while the agent has
+      // seen no version of them. One edited since the agent saw it says
+      // so, and shows what it said, on asking.
+      const yours = c.author === 'user'
+      const edited = !!(c.was && c.was.length)
+      const unsent = yours && !c.sent
+      const editing = yours && reviewView.editing && reviewView.editing.thread === t.id && reviewView.editing.at === c.at
       const head = el('div', {}, el('span', { class: 'who', text: c.author === 'agent' ? 'Agent' : 'You' }), stamp(c.at),
-        mine ? el('span', { class: 'review-unsent', text: 'not sent yet' }) : null,
-        mine && !editing ? el('span', { class: 'comment-actions' },
+        edited ? el('button', { type: 'button', class: 'ghost review-edited', text: 'edited', 'aria-expanded': String(reviewView.earlier.has(c.at)),
+          title: 'Show what it said before', onclick: () => { toggle(reviewView.earlier, c.at); redrawReview() } }) : null,
+        unsent ? el('span', { class: 'review-unsent', text: edited ? 'edit not sent yet' : 'not sent yet' }) : null,
+        yours && !editing ? el('span', { class: 'comment-actions' },
           el('button', { type: 'button', class: 'ghost', text: 'Edit', onclick: () => { reviewView.editing = { thread: t.id, at: c.at, text: c.body }; redrawReview() } }),
-          el('button', { type: 'button', class: 'ghost', text: 'Delete', onclick: () => deleteComment(t, i, c) })) : null)
-      if (!editing) return el('div', { class: 'comment' }, head, markdown(c.body))
+          unsent && !edited ? el('button', { type: 'button', class: 'ghost', text: 'Delete', onclick: () => deleteComment(t, i, c) }) : null) : null)
+      const earlier = edited && reviewView.earlier.has(c.at)
+        ? el('div', { class: 'review-earlier' }, ...c.was.slice().reverse().map((w, k) => el('div', {},
+          el('div', { class: 'muted', text: k === 0 ? 'It said, before you edited it:' : 'And before that:' }), markdown(w))))
+        : null
+      if (!editing) return el('div', { class: 'comment' }, head, markdown(c.body), earlier)
       const box = el('textarea', { class: 'review-compose-text', 'aria-label': 'Edit your comment' })
       box.value = reviewView.editing.text
       box.addEventListener('input', () => { reviewView.editing.text = box.value })
@@ -2604,9 +2818,10 @@
       updateManage()
     })
     $('manage-delete').addEventListener('click', deleteTicked)
-    $('review-refresh').addEventListener('click', () => { reviewView.fileLines.clear(); reviewView.linesAsked.clear(); loadReview(true) })
+    $('review-refresh').addEventListener('click', () => { reviewView.fileLines.clear(); reviewView.linesAsked.clear(); reviewView.colours.clear(); loadReview(true) })
     setUpReviewTree()
     $('review-close').addEventListener('click', closeReview)
+    setUpCommentsPane()
     setUpLineDrag()
     setUpOrderMenu()
     $('panel-review').addEventListener('paste', reviewPaste)
@@ -2651,6 +2866,7 @@
       const barH = bar.offsetHeight
       panel.style.setProperty('--review-bar-h', barH + 'px')
       panel.style.setProperty('--review-file-head-h', fileHeadHeight() + 'px')
+      panel.style.setProperty('--review-pane-top', Math.max(0, bar.getBoundingClientRect().bottom) + 'px')
       panel.style.setProperty('--review-tree-max', Math.max(160, window.innerHeight - panel.getBoundingClientRect().top - barH) + 'px')
     }
     if (window.ResizeObserver) new ResizeObserver(measure).observe($('panel-review').querySelector(':scope > .bar'))
@@ -2869,6 +3085,8 @@
       saveInstructions(ed, pick)
     }
     dialog.showModal()
+    // A toast showing stays over the dialog.
+    raiseToast()
   }
 
   async function optimiseInstructions(ed) {

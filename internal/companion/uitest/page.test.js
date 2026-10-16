@@ -722,13 +722,36 @@ test('a pasted file that isn’t already waiting says so', async () => {
   } finally { p.close() }
 })
 
-test('text pastes as text, as ever, even with an image alongside it', async () => {
+// pasteInto pastes into node (a text box, say) what a clipboard holding
+// text and files would give.
+function pasteInto(p, node, { text = '', files = [] }) {
+  const ev = new p.window.Event('paste', { bubbles: true, cancelable: true })
+  ev.clipboardData = { getData: (type) => (type === 'text/plain' ? text : ''), files }
+  node.dispatchEvent(ev)
+  return ev
+}
+
+test('in a text box, text pastes as text, as ever, even with a file alongside it', async () => {
   const p = await pastePage()
   try {
-    const ev = paste(p, { text: 'some words', files: [new p.window.File(['png'], 'a.png', { type: 'image/png' })] })
+    const box = p.$('review-general').querySelector('textarea') || p.$('panel-review').querySelector('textarea')
+    const target = box || p.$('review-filter')
+    const ev = pasteInto(p, target, { text: 'some words', files: [new p.window.File(['png'], 'a.png', { type: 'image/png' })] })
     await p.settle()
     assert.equal(ev.defaultPrevented, false)
     assert.deepEqual(p.calls.filter((c) => c.path === '/api/clipboard/paste'), [])
+  } finally { p.close() }
+})
+
+// A file copied in a file manager carries its path as text too: outside a
+// text box, where text has nowhere to go, the file is what's pasted.
+test('outside a text box, a file pastes as a file, even with text alongside it', async () => {
+  const p = await pastePage()
+  try {
+    paste(p, { text: '/home/me/notes.pdf', files: [new p.window.File(['pdf'], 'notes.pdf', { type: 'application/pdf' })] })
+    await p.settle()
+    assert.equal(p.calls.filter((c) => c.path === '/api/clipboard/paste').length, 1)
+    assert.equal(p.$('toast').textContent, 'File pasted')
   } finally { p.close() }
 })
 
@@ -925,8 +948,8 @@ test('the count opens a choice of order; the reading order sends the arrows by s
     assert.equal(p.$('review-order-menu').hidden, true)
     await p.click('review-order')
     assert.equal(p.$('review-order-menu').hidden, false)
-    assert.equal(orderItem(p, 'By path').getAttribute('aria-checked'), 'true')
-    await p.click(orderItem(p, "By the agent's reading order"))
+    assert.equal(orderItem(p, 'Order by file path').getAttribute('aria-checked'), 'true')
+    await p.click(orderItem(p, "Order by agent reading order"))
     assert.equal(p.$('review-order-menu').hidden, true, 'closed once chosen')
     assert.match(p.$('review-order').title, /reading order/)
     assert.equal(p.window.localStorage.getItem('vibe-review-comment-order'), 'reading')
@@ -942,7 +965,7 @@ test('with no reading order, it can’t be chosen, and says why', async () => {
   try {
     await p.click('tab-review')
     await p.click('review-order')
-    const item = orderItem(p, "By the agent's reading order")
+    const item = orderItem(p, "Order by agent reading order")
     assert.equal(item.disabled, true)
     assert.match(item.textContent, /the agent set no reading order/)
   } finally { p.close() }
@@ -1284,5 +1307,223 @@ test('a page older than the vibe serving it says so, with a way to reload', asyn
     assert.equal(p.$('page-outdated').hidden, false)
     assert.match(p.$('page-outdated').textContent, /vibe has been updated/)
     assert.ok(p.button('Reload', p.$('page-outdated')))
+  } finally { p.close() }
+})
+
+// --- editing a comment the agent has seen -------------------------------------------------------------
+
+const seen = { lastId: 1, threads: [{ id: 1, status: 'open', comments: [
+  { author: 'agent', body: 'P3: something', at: '2026-10-16T10:00:00Z' },
+  { author: 'user', body: 'as sent', at: '2026-10-16T10:05:00Z', sent: true },
+] }] }
+
+test('a comment the agent has seen can be edited, not deleted; the agent’s can’t be either', async () => {
+  const p = await reviewPage({ review: seen })
+  try {
+    await p.click('tab-review')
+    const general = p.$('review-general')
+    assert.equal(general.querySelectorAll('.comment')[0].querySelector('.comment-actions'), null, "the agent's")
+    assert.equal(p.button('Delete', general), undefined)
+    await p.click(p.button('Edit', general))
+    const box = general.querySelector('textarea[aria-label="Edit your comment"]')
+    assert.equal(box.value, 'as sent')
+    await p.type(box, 'better')
+    await p.click(p.button('Save', general))
+    assert.deepEqual(p.posted('/api/review/do'), [{ op: 'edit', thread: 1, at: '2026-10-16T10:05:00Z', body: 'better' }])
+  } finally { p.close() }
+})
+
+test('an edited comment says so, shows what it said on asking, and that the edit is to be sent', async () => {
+  const edited = { ...seen, threads: [{ ...seen.threads[0], comments: [seen.threads[0].comments[0],
+    { author: 'user', body: 'better', at: '2026-10-16T10:05:00Z', was: ['as sent'] }] }] }
+  const p = await reviewPage({ review: edited })
+  try {
+    await p.click('tab-review')
+    const mine = p.$('review-general').querySelectorAll('.comment')[1]
+    assert.match(mine.textContent, /edit not sent yet/)
+    assert.equal(p.button('Delete', mine), undefined, 'the agent saw it before')
+    assert.doesNotMatch(mine.textContent, /as sent/, 'what it said is out of the way')
+    await p.click(p.button('edited', mine))
+    assert.match(p.$('review-general').querySelectorAll('.comment')[1].textContent, /as sent/)
+  } finally { p.close() }
+})
+
+// --- syntax colouring ------------------------------------------------------------------------------
+
+// colourPage is a review of the files diff, whose fake vibe colours a file
+// as colours says, by "path|side".
+async function colourPage(diff, colours) {
+  return openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': { review: { ...none, started: '2026-10-16T10:00:00Z' }, diff },
+      '/api/review/highlight': (call) => {
+        const q = new URLSearchParams(call.query)
+        return colours[q.get('path') + '|' + q.get('side')] || {}
+      },
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+  })
+}
+
+const goDiff = [{ path: 'main.go', status: 'modified', hunks: [{ oldStart: 1, newStart: 1, header: '', lines: [
+  { kind: 'context', old: 1, new: 1, text: 'package main' },
+  { kind: 'del', old: 2, text: 'var x = 1' },
+  { kind: 'add', new: 2, text: 'var x = 2' },
+] }] }]
+const goColours = {
+  'main.go|old': { language: 'Go', lines: [[{ c: 'kn', t: 'package' }, { t: ' ' }, { c: 'nn', t: 'main' }], [{ c: 'kd', t: 'var' }, { t: ' x ' }, { c: 'o', t: '=' }, { t: ' ' }, { c: 'mi', t: '1' }]] },
+  'main.go|new': { language: 'Go', lines: [[{ c: 'kn', t: 'package' }, { t: ' ' }, { c: 'nn', t: 'main' }], [{ c: 'kd', t: 'var' }, { t: ' x ' }, { c: 'o', t: '=' }, { t: ' ' }, { c: 'mi', t: '2' }]] },
+}
+
+// codeOf is the code cell of side's line n: its coloured runs, as kind:text.
+const codeOf = (p, side, n) => {
+  const plus = p.$('review-files').querySelector(`[aria-label="Comment on line ${side === 'new' ? 'R' : 'L'}${n}"]`)
+  const code = plus.closest('td').nextElementSibling.nextElementSibling
+  return Array.from(code.childNodes).map((x) => (x.nodeType === 3 ? ':' : x.className.replace('hl-', '') + ':') + x.textContent).join(' ')
+}
+
+test('code is coloured by its language, on both sides', async () => {
+  const p = await colourPage(goDiff, goColours)
+  try {
+    assert.equal(codeOf(p, 'new', 2), 'kw:var : x  op:= :  num:2')
+    assert.equal(codeOf(p, 'old', 2), 'kw:var : x  op:= :  num:1')
+    assert.equal(codeOf(p, 'new', 1), 'kw:package :  type:main')
+  } finally { p.close() }
+})
+
+test("a line that no longer reads as it was coloured is shown plain", async () => {
+  const stale = { ...goColours, 'main.go|new': { language: 'Go', lines: [goColours['main.go|new'].lines[0], [{ c: 'kd', t: 'var' }, { t: ' y = 3' }]] } }
+  const p = await colourPage(goDiff, stale)
+  try {
+    assert.equal(codeOf(p, 'new', 2), ':var x = 2')
+  } finally { p.close() }
+})
+
+test("a file too long to colour says so; an added one is asked for its new side alone", async () => {
+  const diff = [{ path: 'big.go', status: 'added', hunks: [{ oldStart: 0, newStart: 1, header: '', lines: [{ kind: 'add', new: 1, text: 'x' }] }] }]
+  const p = await colourPage(diff, { 'big.go|new': { skipped: 'too long to colour (20000 lines)' } })
+  try {
+    assert.match(p.$('review-files').querySelector('[data-path="big.go"] header').textContent, /not coloured: too long to colour/)
+    const asked = p.calls.filter((c) => c.path === '/api/review/highlight').map((c) => new URLSearchParams(c.query).get('side'))
+    assert.deepEqual(asked, ['new'])
+  } finally { p.close() }
+})
+
+// --- the comments overlay ---------------------------------------------------------------------------
+
+// overlaid is the commented review, with a thread of the user's (#5, the
+// newest), on twoFiles.
+const overlaid = { ...commented, lastId: 5, threads: [...commented.threads,
+  { id: 5, file: 'b.txt', side: 'new', line: 1, status: 'open', comments: [{ author: 'user', body: 'mine, and newest', at: '2026-10-16T12:00:00Z', sent: true }] }] }
+overlaid.threads[1] = { ...overlaid.threads[1], comments: [...overlaid.threads[1].comments, { author: 'user', body: 'a reply', at: '2026-10-16T11:00:00Z', sent: true }] }
+
+const cards = (p) => Array.from(p.$('review-comments-list').querySelectorAll('.comment-card')).map((c) => c.dataset.thread)
+
+test('the comments button opens a pane of every thread over the diff, and closes it again', async () => {
+  const p = await reviewPage({ review: overlaid, diff: twoFiles })
+  try {
+    await p.click('tab-review')
+    const pane = p.$('review-comments')
+    assert.equal(p.$('review-comments-open').textContent.trim(), '5')
+    assert.equal(pane.classList.contains('open'), false)
+    await p.click('review-comments-open')
+    assert.equal(pane.classList.contains('open'), true)
+    assert.equal(pane.getAttribute('aria-hidden'), 'false')
+    assert.deepEqual(cards(p), ['1', '3', '2', '4', '5'], 'in the arrows’ order: the whole review, then a.txt by line, then b.txt')
+    await p.click('review-comments-close')
+    assert.equal(pane.classList.contains('open'), false, '✕')
+    await p.click('review-comments-open')
+    pane.dispatchEvent(new p.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    assert.equal(pane.classList.contains('open'), false, 'Escape')
+  } finally { p.close() }
+})
+
+test('each card says where its thread is, its state, how it starts, and its replies', async () => {
+  const p = await reviewPage({ review: overlaid, diff: twoFiles })
+  try {
+    await p.click('tab-review')
+    await p.click('review-comments-open')
+    const card = p.$('review-comments-list').querySelector('[data-thread="2"]')
+    assert.match(card.textContent, /a\.txt:2/)
+    assert.match(card.textContent, /on two/)
+    assert.match(card.textContent, /1 reply/)
+    assert.match(p.$('review-comments-list').querySelector('[data-thread="4"]').textContent, /resolved/)
+    assert.match(p.$('review-comments-list').querySelector('[data-thread="1"]').textContent, /the whole review/)
+  } finally { p.close() }
+})
+
+test('the pane filters to open threads, or yours, and orders by newest', async () => {
+  const p = await reviewPage({ review: overlaid, diff: twoFiles })
+  try {
+    await p.click('tab-review')
+    await p.click('review-comments-open')
+    await p.click(p.button('Open', p.$('review-comments')))
+    assert.deepEqual(cards(p), ['1', '3', '2', '5'], 'the resolved one left out')
+    await p.click(p.button('Yours', p.$('review-comments')))
+    assert.deepEqual(cards(p), ['5'], 'started by you')
+    await p.click(p.button('All', p.$('review-comments')))
+    const order = p.$('review-comments-order')
+    order.value = 'newest'
+    order.dispatchEvent(new p.window.Event('change', { bubbles: true }))
+    await p.settle()
+    assert.deepEqual(cards(p), ['5', '2', '1', '3', '4'], 'by their latest comment, newest first')
+  } finally { p.close() }
+})
+
+test('a card takes you to its thread, closing the pane, its reply box ready', async () => {
+  const p = await reviewPage({ review: overlaid, diff: twoFiles })
+  try {
+    const shown = []
+    p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
+    await p.click('tab-review')
+    await p.click('review-comments-open')
+    await p.click(p.$('review-comments-list').querySelector('[data-thread="3"]'))
+    assert.deepEqual(shown, ['review-thread-3'])
+    assert.equal(p.$('review-comments').classList.contains('open'), false)
+    assert.equal(p.window.document.activeElement.dataset.thread, '3')
+  } finally { p.close() }
+})
+
+test('a card for a thread the tree filter hides clears the filter to get there', async () => {
+  const p = await reviewPage({ review: overlaid, diff: twoFiles })
+  try {
+    const shown = []
+    p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
+    await p.click('tab-review')
+    await p.type(p.$('review-filter'), 'b.txt')
+    await p.click('review-comments-open')
+    await p.click(p.$('review-comments-list').querySelector('[data-thread="2"]'))
+    assert.equal(p.$('review-filter').value, '')
+    assert.deepEqual(shown, ['review-thread-2'])
+  } finally { p.close() }
+})
+
+test("the pane offers every order; the first two are the comment arrows' own, kept in step with the count's menu", async () => {
+  const p = await reviewPage({ ...stepped })
+  try {
+    await p.click('tab-review')
+    await p.click('review-comments-open')
+    const order = p.$('review-comments-order')
+    assert.deepEqual(Array.from(order.options).map((o) => o.textContent), ['Order by file path', 'Order by agent reading order', 'Newest first'])
+    assert.equal(order.value, 'path')
+    await p.click('review-order')
+    await p.click(orderItem(p, 'Order by agent reading order'))
+    assert.equal(order.value, 'reading', 'chosen under the count')
+    order.value = 'path'
+    order.dispatchEvent(new p.window.Event('change', { bubbles: true }))
+    await p.settle()
+    assert.match(p.$('review-order').title, /path order/, 'chosen in the pane: the arrows follow')
+    assert.equal(p.window.localStorage.getItem('vibe-review-comment-order'), 'path')
+  } finally { p.close() }
+})
+
+test("with no reading order, the pane can't offer it either", async () => {
+  const p = await reviewPage({ ...stepped, review: { ...stepped.review, order: [] } })
+  try {
+    await p.click('tab-review')
+    await p.click('review-comments-open')
+    assert.equal(p.$('review-comments-order').options[1].disabled, true)
   } finally { p.close() }
 })

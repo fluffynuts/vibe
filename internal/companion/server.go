@@ -268,6 +268,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/review/ask", s.reviewing(s.reviewAsk))
 	mux.HandleFunc("POST /api/review/submit", s.reviewing(s.reviewSubmit))
 	mux.HandleFunc("GET /api/review/options", s.reviewing(s.reviewOptions))
+	mux.HandleFunc("GET /api/review/highlight", s.reviewing(s.reviewHighlight))
 	mux.HandleFunc("POST /api/clipboard/paste", s.authed(s.clipboardPaste))
 	mux.HandleFunc("POST /api/review/start", s.reviewing(s.reviewStart))
 	mux.HandleFunc("GET /api/manage", s.authed(s.managed(s.manageState)))

@@ -537,3 +537,61 @@ func TestACommentFollowsItsCodeWhenTheDiffIsWorkedOut(t *testing.T) {
 		t.Error("the move wasn't kept")
 	}
 }
+
+// A comment the agent has seen, edited since, goes to it again saying what
+// it said before, so the agent knows what changed.
+func TestAnEditedCommentIsSentSayingWhatChanged(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{}
+	s.cfg.Converse = f.converse
+	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "P2: why two?"}, review.Agent)
+	store.Do(review.Request{Op: "reply", Thread: 1, Body: "it is needed"}, review.User)
+	rv, _ := store.Load()
+	store.MarkSent(review.Unsent(rv))
+	rv, _ = store.Load()
+	said := rv.Threads[0].Comments[1].At
+	if _, err := store.Do(review.Request{Op: "edit", Thread: 1, At: said, Body: "it is not needed after all"}, review.User); err != nil {
+		t.Fatal(err)
+	}
+	if rec := do(t, s, post("/api/review/submit", `{}`)); rec.Code != http.StatusAccepted {
+		t.Fatalf("submit: %d %s", rec.Code, rec.Body)
+	}
+	idle(t, s)
+	if len(f.prompts) != 1 {
+		t.Fatalf("turns: %q", f.prompts)
+	}
+	for _, want := range []string{"edited", "it is needed", "it is not needed after all"} {
+		if !strings.Contains(f.prompts[0], want) {
+			t.Errorf("the prompt lacks %q:\n%s", want, f.prompts[0])
+		}
+	}
+}
+
+// The tab asks for a file coloured, on either side of its diff: the whole
+// file, as the review has it.
+func TestTheTabGetsAFileColoured(t *testing.T) {
+	s, _ := reviewTabServer(t)
+	dir := s.cfg.ReviewTab.Workspace
+	os.WriteFile(filepath.Join(dir, "b.go"), []byte("package old\n"), 0o644)
+	gitIn(t, dir, "add", "b.go")
+	gitIn(t, dir, "commit", "-q", "-m", "b")
+	os.WriteFile(filepath.Join(dir, "b.go"), []byte("package changed\n\nfunc f() {}\n"), 0o644)
+	coloured := func(query string) (int, review.Highlighted) {
+		t.Helper()
+		rec := do(t, s, req{path: "/api/review/highlight?" + query, headers: authed(nil)})
+		var h review.Highlighted
+		json.Unmarshal(rec.Body.Bytes(), &h)
+		return rec.Code, h
+	}
+	code, h := coloured("path=b.go&side=new")
+	if code != http.StatusOK || h.Language != "Go" || len(h.Lines) != 3 {
+		t.Errorf("new side: %d %+v", code, h)
+	}
+	code, h = coloured("path=b.go&side=old")
+	if code != http.StatusOK || len(h.Lines) != 1 || h.Lines[0][len(h.Lines[0])-1].Text != "old" {
+		t.Errorf("old side: %d %+v", code, h)
+	}
+	if code, _ := coloured("path=../secret.go&side=new"); code != http.StatusBadRequest {
+		t.Errorf("outside the folder: %d", code)
+	}
+}

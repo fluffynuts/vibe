@@ -296,3 +296,22 @@ test('quotes and lists take in each whole line selected', () => {
   assert.equal(formatted('numbered', '[one\ntwo]'), '[1. one\n2. two]')
   assert.equal(formatted('bullet', '[]'), '- []')
 })
+
+test("Chroma's classes come down to a few kinds of thing to colour", () => {
+  const { tokenKind } = require('../ui/review.js')
+  const kinds = Object.fromEntries(['k', 'kd', 'kn', 'kt', 'kc', 'nf', 'fm', 'nc', 'nt', 'nb', 'na', 'nv', 'nd', 's', 's2', 'sr', 'dl', 'm', 'mi', 'il', 'c', 'c1', 'cm', 'cp', 'o', 'ow', 'p', '', 'err', 'nx'].map((c) => [c, tokenKind(c)]))
+  assert.deepEqual(kinds, {
+    k: 'kw', kd: 'kw', kn: 'kw', kt: 'type', kc: 'const', nf: 'fn', fm: 'fn', nc: 'type', nt: 'tag', nb: 'builtin', na: 'attr',
+    nv: 'var', nd: 'meta', s: 'str', s2: 'str', sr: 'str', dl: 'str', m: 'num', mi: 'num', il: 'num', c: 'comment', c1: 'comment',
+    cm: 'comment', cp: 'meta', o: 'op', ow: 'kw', p: '', '': '', err: '', nx: '',
+  })
+})
+
+test("a line's runs are used only while they still spell the line", () => {
+  const { lineRuns } = require('../ui/review.js')
+  const runs = [{ c: 'k', t: 'func' }, { t: ' ' }, { c: 'nf', t: 'f' }]
+  assert.deepEqual(lineRuns(runs, 'func f'), [{ kind: 'kw', text: 'func' }, { kind: '', text: ' ' }, { kind: 'fn', text: 'f' }])
+  assert.equal(lineRuns(runs, 'func g'), null, 'the file has changed since: plain')
+  assert.equal(lineRuns(undefined, 'x'), null)
+  assert.deepEqual(lineRuns([], ''), [], 'an empty line')
+})

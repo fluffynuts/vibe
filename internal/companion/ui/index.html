@@ -123,12 +123,14 @@
         <span class="spacer"></span>
         <span id="review-actions" class="review-actions">
           <button type="button" id="review-submit" disabled title="Send the agent your comments it hasn't seen yet">Submit to agent</button>
+          <button type="button" id="review-comments-open" class="review-comments-open" aria-controls="review-comments" aria-expanded="false"
+            title="All the comments, in a pane over the diff"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 2.5h11v8h-5l-3 3v-3h-3z"/></svg><span id="review-comments-count">0</span></button>
           <span class="review-scroller">
             <span class="review-order-wrap">
               <button type="button" id="review-order" class="review-order" aria-haspopup="menu" aria-expanded="false"><span id="review-count"></span> ▾</button>
               <div id="review-order-menu" class="review-order-menu" role="menu" aria-label="The order the comment arrows go in" hidden>
-                <button type="button" role="menuitemradio" data-order="path">By path, as the tree</button>
-                <button type="button" role="menuitemradio" data-order="reading">By the agent's reading order</button>
+                <button type="button" role="menuitemradio" data-order="path">Order by file path</button>
+                <button type="button" role="menuitemradio" data-order="reading">Order by agent reading order</button>
               </div>
             </span>
             <button type="button" id="review-prev-comment" class="ghost" disabled aria-label="Previous comment" title="Previous comment">▲</button>
@@ -140,6 +142,23 @@
         <span id="review-pastes" class="muted" hidden title="Pasted here or beside the conversation: they go to the agent with your next message (Submit, Ask, or on the Conversation tab)"></span>
         <button type="button" id="review-refresh" class="ghost" title="Work out the diff afresh">Refresh</button>
       </div>
+      <aside id="review-comments" class="review-comments" aria-label="Comments" aria-hidden="true" inert>
+        <div class="review-comments-head">
+          <strong>Comments</strong>
+          <span class="review-comments-filters" role="group" aria-label="Which comments">
+            <button type="button" class="ghost" data-filter="all" aria-pressed="true">All</button>
+            <button type="button" class="ghost" data-filter="open" aria-pressed="false">Open</button>
+            <button type="button" class="ghost" data-filter="yours" aria-pressed="false" title="The threads you started">Yours</button>
+          </span>
+          <select id="review-comments-order" aria-label="Order">
+            <option value="path">Order by file path</option>
+            <option value="reading">Order by agent reading order</option>
+            <option value="newest">Newest first</option>
+          </select>
+          <button type="button" id="review-comments-close" class="ghost" aria-label="Close" title="Close (Escape)">✕</button>
+        </div>
+        <div id="review-comments-list" class="review-comments-list"></div>
+      </aside>
       <p id="review-error" class="note bad-text" hidden></p>
       <ul id="review-problems" class="note bad-text review-problems" hidden></ul>
       <p id="review-wait" class="note muted">Working out the diff…</p>
@@ -288,7 +307,7 @@
     </form>
   </dialog>
 
-  <div id="toast" class="toast" role="status" hidden></div>
+  <div id="toast" class="toast" role="status" popover="manual" hidden></div>
   <script src="/markdown.js"></script>
   <script src="/manage.js"></script>
   <script src="/review.js"></script>

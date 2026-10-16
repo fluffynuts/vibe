@@ -11,12 +11,13 @@ import (
 	"strings"
 	"testing"
 
+	"vibe/internal/policy"
 	"vibe/internal/review"
 )
 
 // TestThePageInFirefox runs uitest/firefox.test.js: the page in a real
 // Firefox, for what jsdom can't show, served for a repository where a.txt's
-// lines 20-22 are changed. It needs Playwright's Firefox (npm ci, then npx
+// lines 20-22 are changed, and main.go's line 4. It needs Playwright's Firefox (npm ci, then npx
 // playwright install firefox, in uitest): without it, it's skipped saying
 // so, but never in CI on Linux, where it's installed and skipping would
 // pass it unseen.
@@ -49,6 +50,7 @@ func TestThePageInFirefox(t *testing.T) {
 	}
 	write := func() { os.WriteFile(filepath.Join(dir, "a.txt"), []byte(strings.Join(lines, "\n")+"\n"), 0o644) }
 	write()
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc f() int {\n\treturn 1\n}\n"), 0o644)
 	gitIn(t, dir, "init", "-q", "-b", "main")
 	gitIn(t, dir, "add", "-A")
 	gitIn(t, dir, "commit", "-q", "-m", "start")
@@ -56,6 +58,7 @@ func TestThePageInFirefox(t *testing.T) {
 		lines[i] += " changed"
 	}
 	write()
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc f() int {\n\treturn 2\n}\n"), 0o644)
 	store := review.NewStore(t.TempDir())
 	if _, err := store.Do(review.Request{Op: "start"}, review.User); err != nil {
 		t.Fatal(err)
@@ -70,6 +73,7 @@ func TestThePageInFirefox(t *testing.T) {
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 	srv := &http.Server{Handler: New(Config{Sandbox: "box", Token: pageToken, Port: port,
+		Policy:    &policy.Client{Sandbox: "box", Run: (&fakeSbx{}).run},
 		ReviewTab: &ReviewTab{Workspace: dir, Store: store}}).Handler()}
 	go srv.Serve(ln)
 	defer srv.Close()

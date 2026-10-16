@@ -287,11 +287,7 @@ func submitPrompt(rv review.Review, refs []review.Ref) string {
 			}
 			b.WriteString("\n")
 			for i, c := range t.Comments {
-				mark := ""
-				if fresh[id][i] {
-					mark = " (new)"
-				}
-				b.WriteString("- " + c.Author + mark + ": " + strings.ReplaceAll(c.Body, "\n", "\n  ") + "\n")
+				b.WriteString(saidLine(c, fresh[id][i]))
 			}
 		}
 	}
@@ -301,6 +297,19 @@ func submitPrompt(rv review.Review, refs []review.Ref) string {
 		"vibe-review reply --thread <n> --body-file - <<'BODY' ... BODY. If you disagree, or need more from me, reply and leave the thread open. " +
 		"Answer on the threads, not here; here, just say briefly what you did.")
 	return b.String()
+}
+
+// saidLine is comment c as a line of a thread for the agent, marked new
+// when fresh: edited since the agent saw it, with what it said then.
+func saidLine(c review.Comment, fresh bool) string {
+	text := func(s string) string { return strings.ReplaceAll(s, "\n", "\n  ") }
+	switch {
+	case fresh && len(c.Was) > 0:
+		return "- " + c.Author + " (edited since you saw it): " + text(c.Body) + "\n  It said: " + text(c.Was[len(c.Was)-1]) + "\n"
+	case fresh:
+		return "- " + c.Author + " (new): " + text(c.Body) + "\n"
+	}
+	return "- " + c.Author + ": " + text(c.Body) + "\n"
 }
 
 // where is where thread t is, in words.
@@ -327,7 +336,7 @@ func indent(text string) string {
 func askPrompt(t review.Thread, question string) string {
 	var said strings.Builder
 	for _, c := range t.Comments {
-		said.WriteString("- " + c.Author + ": " + strings.ReplaceAll(c.Body, "\n", "\n  ") + "\n")
+		said.WriteString(saidLine(c, c.Author == review.User && !c.Sent))
 	}
 	return fmt.Sprintf("On the Review tab, I'm asking about review comment #%d, on %s. What's been said so far:\n\n%s\n"+
 		"My question:\n\n%s\n\n"+
@@ -335,6 +344,30 @@ func askPrompt(t review.Thread, question string) string {
 		"If what I say settles it, resolve it instead, saying how: vibe-review resolve --thread %d --body \"...\". "+
 		"Keep to this comment, and don't change any code unless I ask you to.",
 		t.ID, where(t), said.String(), question, t.ID, t.ID)
+}
+
+// reviewHighlight is a file coloured, on one side of the review's diff
+// (?side=new or old): the whole file, so what spans lines is coloured on
+// each.
+func (s *Server) reviewHighlight(w http.ResponseWriter, r *http.Request) {
+	rv, err := s.cfg.ReviewTab.Store.Load()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), diffWithin)
+	defer cancel()
+	path := r.URL.Query().Get("path")
+	read := review.NewTextOf
+	if r.URL.Query().Get("side") == "old" {
+		read = review.OldTextOf
+	}
+	text, err := read(ctx, s.cfg.ReviewTab.Workspace, rv, path)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, review.Highlight(path, text))
 }
 
 // reviewOptions is the reviews the page can start on the folder as it is.
