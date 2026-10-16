@@ -128,7 +128,10 @@ type Server struct {
 	// ask again.
 	awake sync.Mutex
 	// done is closed by Close, ending what Start began alongside serving.
-	done  chan struct{}
+	done chan struct{}
+	// loops are what Start began that writes (see takeInbox): Close waits
+	// for them to end.
+	loops sync.WaitGroup
 	convo conversation
 	admin admin
 	asked asked
@@ -183,7 +186,11 @@ func Start(cfg Config) (*Server, error) {
 	s.done = make(chan struct{})
 	go s.keepAwakeWhileWorking(s.done)
 	if cfg.ReviewTab != nil {
-		go s.takeInbox(s.done, reviewTakeEvery)
+		s.loops.Add(1)
+		go func(done <-chan struct{}) {
+			defer s.loops.Done()
+			s.takeInbox(done, reviewTakeEvery)
+		}(s.done)
 	}
 	return s, nil
 }
@@ -194,6 +201,8 @@ func (s *Server) Close() error {
 		close(s.done)
 		s.done = nil
 	}
+	// What's under way (the review being taken in and saved) ends first.
+	s.loops.Wait()
 	s.convo.close()
 	if s.http == nil {
 		return nil
@@ -287,6 +296,7 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"GET /api/review/highlight", s.reviewing(s.reviewHighlight)},
 		{"POST /api/clipboard/paste", s.authed(s.clipboardPaste)},
 		{"POST /api/review/start", s.reviewing(s.reviewStart)},
+		{"POST /api/review/afresh", s.reviewing(s.reviewAfresh)},
 		{"GET /api/manage", s.authed(s.managed(s.manageState))},
 		{"POST /api/manage/plan", s.managing(s.managePlan)},
 		{"POST /api/manage/delete", s.managing(s.manageDelete)},

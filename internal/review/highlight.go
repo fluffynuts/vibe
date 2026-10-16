@@ -72,10 +72,10 @@ func Highlight(path, text string) Highlighted {
 	return out
 }
 
-// OldTextOf is path's text where review rv's diff starts from: the commit
+// oldTextOf is path's text where review rv's diff starts from: the commit
 // before rv's, where its branch parted from its ref, or the folder's last
 // commit.
-func OldTextOf(ctx context.Context, dir string, rv Review, path string) (string, error) {
+func oldTextOf(ctx context.Context, dir string, rv Review, path string) (string, error) {
 	clean, err := inFolder(path)
 	if err != nil {
 		return "", err
@@ -84,6 +84,7 @@ func OldTextOf(ctx context.Context, dir string, rv Review, path string) (string,
 	if err != nil {
 		return "", err
 	}
+	defer repo.close()
 	head, err := repo.head()
 	if err != nil {
 		return "", err

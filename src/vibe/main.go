@@ -14,6 +14,7 @@ import (
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
 	"vibe/internal/prompt"
+	"vibe/internal/review"
 	"vibe/internal/sbxinstall"
 	"vibe/internal/sbxrun"
 	"vibe/internal/termtitle"
@@ -179,6 +180,9 @@ any other, and pick up new ones the bundle adds later.
 `
 
 func main() {
+	// Started as the helper reading a repository (see review.isolated), it
+	// does only that.
+	review.ServeHelperIfAsked()
 	prompt.EnableVT(os.Stdout)
 	prompt.EnableVT(os.Stderr)
 	err := run(os.Args[1:])

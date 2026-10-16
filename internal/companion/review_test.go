@@ -755,14 +755,70 @@ func TestAReviewThatCantBeStartedGivesTheTurnUp(t *testing.T) {
 	f := &fakeAgent{release: make(chan struct{})}
 	s.cfg.Converse = f.converse
 	defer close(f.release)
-	os.WriteFile(filepath.Join(filepath.Dir(store.Inbox()), "review.json"), []byte("{broken"), 0o600)
+	// The review reads, but the last one can't be kept: the start fails
+	// once the turn is claimed.
+	store.Do(review.Request{Op: "general", Body: "kept"}, review.Agent)
+	os.WriteFile(filepath.Join(filepath.Dir(store.Inbox()), "history"), []byte("not a folder"), 0o600)
 	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted","agent":true}`)); rec.Code != http.StatusInternalServerError {
 		t.Errorf("start: %d %s", rec.Code, rec.Body)
 	}
 	if s.convo.working() {
 		t.Error("the turn was left claimed")
 	}
+	if r := s.convo.latestReceipt(); r == nil || r["state"] != "undelivered" {
+		t.Errorf("the prompt's receipt: %v, want it marked not delivered", r)
+	}
 	if len(f.prompts) != 0 {
 		t.Errorf("the agent was asked anyway: %q", f.prompts)
+	}
+}
+
+// The inbox taken in with no page open failing isn't silent: it's said in
+// vibe's own output.
+func TestTheInboxFailingToBeTakenInIsSaid(t *testing.T) {
+	s, store := reviewTabServer(t)
+	var said []string
+	s.cfg.Log = func(line string) { said = append(said, line) }
+	os.WriteFile(filepath.Join(filepath.Dir(store.Inbox()), "review.json"), []byte("{broken"), 0o600)
+	done := make(chan struct{})
+	go s.takeInbox(done, 5*time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
+	close(done)
+	if len(said) == 0 || !strings.Contains(said[0], "review") {
+		t.Errorf("said %q", said)
+	}
+}
+
+// A review that can't be read refuses a start before the agent's turn is
+// claimed: what the agent left running isn't ended for nothing.
+func TestAnUnreadableReviewRefusesAStartBeforeClaimingTheTurn(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	defer close(f.release)
+	os.WriteFile(filepath.Join(filepath.Dir(store.Inbox()), "review.json"), []byte("{broken"), 0o600)
+	rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted","agent":true}`))
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "review-unreadable") {
+		t.Errorf("start: %d %s", rec.Code, rec.Body)
+	}
+	if r := s.convo.latestReceipt(); r != nil {
+		t.Errorf("a turn was claimed: %v", r)
+	}
+}
+
+// An unreadable review is said to be, so the page can offer to start
+// afresh; doing so sets it aside and begins anew.
+func TestAnUnreadableReviewCanBeStartedAfreshFromThePage(t *testing.T) {
+	s, store := reviewTabServer(t)
+	os.WriteFile(filepath.Join(filepath.Dir(store.Inbox()), "review.json"), []byte("{broken"), 0o600)
+	rec := do(t, s, req{path: "/api/review", headers: authed(nil)})
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), `"code":"review-unreadable"`) {
+		t.Fatalf("review: %d %s", rec.Code, rec.Body)
+	}
+	if rec := do(t, s, post("/api/review/afresh", `{}`)); rec.Code != http.StatusOK {
+		t.Fatalf("afresh: %d %s", rec.Code, rec.Body)
+	}
+	if r := getReview(t, s, "/api/review"); r.Review.Threads == nil {
+		t.Errorf("review after: %+v", r.Review)
 	}
 }

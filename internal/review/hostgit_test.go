@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -400,7 +401,8 @@ func TestCRLFsAreLFsWithAutocrlf(t *testing.T) {
 func TestAFingerprintRestsOnFullBlobIDs(t *testing.T) {
 	dir := repo(t, map[string]string{"a.txt": "a\n"})
 	write(t, dir, "a.txt", "b\n")
-	files, err := WorkingTree(context.Background(), dir)
+	// The stamp is the helper's own: read in this process.
+	files, err := workingTree(context.Background(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -492,5 +494,167 @@ func cleanAsGitSeesIt(t *testing.T, dir string) {
 	}
 	if s, _ := StatusOf(context.Background(), dir); s == nil || s.Modified != 0 {
 		t.Errorf("status = %+v", s)
+	}
+}
+
+// A large committed file isn't read whole, by the diff or the status,
+// however small it has become.
+func TestALargeCommittedFileIsntReadWhole(t *testing.T) {
+	t.Setenv("VIBE_REVIEW_HELPER_MEMORY", "200")
+	dir := repo(t, map[string]string{"a.txt": "a\n"})
+	big := make([]byte, maxFileBytes+(1<<20))
+	for i := range big {
+		big[i] = byte('a' + i%26)
+	}
+	write(t, dir, "big.txt", string(big))
+	git(t, dir, "add", "big.txt")
+	git(t, dir, "commit", "-q", "-m", "big")
+	write(t, dir, "big.txt", "small now\n")
+	files, err := WorkingTree(context.Background(), dir)
+	if err != nil || len(files) != 1 || !files[0].TooLarge {
+		t.Errorf("files = %+v, %v", files, err)
+	}
+	if _, err := StatusOf(context.Background(), dir); err != nil {
+		t.Error(err)
+	}
+}
+
+// The Review tab only reads: a submodule set up but not fetched (which
+// go-git's own status would set up) is left as it is, as is all the rest.
+func TestReadingARepositoryChangesNothingInIt(t *testing.T) {
+	lib := repo(t, map[string]string{"lib.txt": "lib\n"})
+	super := repo(t, map[string]string{"a.txt": "a\n"})
+	git(t, super, "-c", "protocol.file.allow=always", "submodule", "add", "-q", lib, "lib")
+	git(t, super, "commit", "-q", "-m", "lib")
+	dir := filepath.Join(t.TempDir(), "clone")
+	git(t, filepath.Dir(dir), "clone", "-q", super, dir)
+	git(t, dir, "submodule", "init")
+	write(t, dir, "a.txt", "changed\n")
+	before := snapshot(t, dir)
+	WorkingTree(context.Background(), dir)
+	StatusOf(context.Background(), dir)
+	Options(context.Background(), dir)
+	if after := snapshot(t, dir); after != before {
+		t.Errorf("the repository changed:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// snapshot is every path under dir, with its size and time.
+func snapshot(t *testing.T, dir string) string {
+	t.Helper()
+	var out []string
+	filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+		if err == nil {
+			out = append(out, fmt.Sprintf("%s %d %d", p, info.Size(), info.ModTime().UnixNano()))
+		}
+		return nil
+	})
+	return strings.Join(out, "\n")
+}
+
+func TestASparseCheckoutSaysWhatIsntSupported(t *testing.T) {
+	dir := repo(t, map[string]string{"a.txt": "a\n"})
+	git(t, dir, "config", "core.repositoryformatversion", "1")
+	git(t, dir, "config", "extensions.worktreeConfig", "true")
+	if _, err := WorkingTree(context.Background(), dir); err == nil || !strings.Contains(err.Error(), "sparse-checkout") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// Where git status would say otherwise, the tab says as git does.
+func TestAFileTakenOutOfTheIndexIsADeletionAndUntracked(t *testing.T) {
+	dir := repo(t, map[string]string{"a.txt": "a\n", "b.txt": "b\n"})
+	git(t, dir, "rm", "-q", "--cached", "a.txt")
+	s, err := StatusOf(context.Background(), dir)
+	if err != nil || s.Staged != 1 || s.Untracked != 1 {
+		t.Errorf("status = %+v, %v", s, err)
+	}
+	files, _ := WorkingTree(context.Background(), dir)
+	if summary(files) != "deleted a.txt, added a.txt" {
+		t.Errorf("files = %s", summary(files))
+	}
+}
+
+func TestAModeChangeIsNoChangeWithoutFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no executable bit")
+	}
+	dir := repo(t, map[string]string{"a.sh": "echo\n"})
+	git(t, dir, "config", "core.fileMode", "false")
+	os.Chmod(filepath.Join(dir, "a.sh"), 0o755)
+	if files, _ := WorkingTree(context.Background(), dir); len(files) != 0 {
+		t.Errorf("files = %s", summary(files))
+	}
+	if s, _ := StatusOf(context.Background(), dir); s == nil || s.Modified != 0 {
+		t.Errorf("status = %+v", s)
+	}
+}
+
+func TestTheUsersOwnIgnoreFilesAreHeeded(t *testing.T) {
+	dir := repo(t, map[string]string{"a.txt": "a\n"})
+	xdg := t.TempDir()
+	write(t, xdg, filepath.Join("git", "ignore"), "*.log\n")
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("HOME", t.TempDir())
+	write(t, dir, ".git/own-ignore", "*.tmp\n")
+	git(t, dir, "config", "core.excludesfile", ".git/own-ignore")
+	write(t, dir, "x.log", "log\n")
+	write(t, dir, "y.tmp", "tmp\n")
+	write(t, dir, "z.txt", "kept\n")
+	files, _ := WorkingTree(context.Background(), dir)
+	if summary(files) != "added z.txt" {
+		t.Errorf("files = %s", summary(files))
+	}
+}
+
+func TestBinaryContentIsntMadeLFsByTextAuto(t *testing.T) {
+	binary := "PNG\x00\r\nbody\r\n"
+	dir := repo(t, map[string]string{".gitattributes": "* text=auto eol=crlf\n", "a.png": binary})
+	r, err := openRepo(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.close()
+	if lf, err := r.lfInRepository("a.png", []byte(binary)); err != nil || lf {
+		t.Errorf("binary made LFs: %v, %v", lf, err)
+	}
+}
+
+// The host's own repository may borrow objects (a clone --shared): read
+// where they are.
+func TestTheHostsRepositoryReadsBorrowedObjects(t *testing.T) {
+	origin := repo(t, map[string]string{"sub/a.txt": "a\n"})
+	top := filepath.Join(t.TempDir(), "shared")
+	git(t, filepath.Dir(top), "clone", "-q", "--shared", origin, top)
+	write(t, top, "sub/a.txt", "changed\n")
+	files, err := WorkingTree(context.Background(), filepath.Join(top, "sub"))
+	if err != nil || summary(files) != "modified sub/a.txt" {
+		t.Errorf("files = %s, %v", summary(files), err)
+	}
+}
+
+// The walk counting how far a branch is from its upstream is bounded.
+func TestTheWalkAheadAndBehindIsBounded(t *testing.T) {
+	dir := repo(t, map[string]string{"a.txt": "0\n"})
+	git(t, dir, "branch", "up")
+	for i := 1; i <= 30; i++ {
+		write(t, dir, "a.txt", fmt.Sprintf("%d\n", i))
+		git(t, dir, "commit", "-q", "-am", fmt.Sprint(i))
+	}
+	r, err := openRepo(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.close()
+	head, _ := r.head()
+	up, _ := r.commit("up")
+	if ahead, _ := aheadBehind(head, up); ahead != 30 {
+		t.Fatalf("ahead %d, want 30", ahead)
+	}
+	was := maxWalk
+	maxWalk = 10
+	defer func() { maxWalk = was }()
+	if ahead, _ := aheadBehind(head, up); ahead > 12 {
+		t.Errorf("walked on past the bound: ahead %d", ahead)
 	}
 }

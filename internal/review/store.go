@@ -47,8 +47,9 @@ var maxReview int64 = 256 << 20
 // memory.
 const maxTakeAtOnce = 100
 
-// maxBody is the most a comment can say: a review of them can't grow past
-// loading (maxReview).
+// maxBody is the most one comment can say. How large the review grows is
+// held to maxReview by Take, which refuses a request that would take it
+// past.
 const maxBody = 256 << 10
 
 // Review is a review of a diff: the agent's comments on it, the user's
@@ -87,7 +88,22 @@ type Review struct {
 	AgentAt time.Time `json:"agentAt,omitempty"`
 	// LastID is the last thread's ID: IDs are never reused.
 	LastID int `json:"lastId"`
+	// Taken are the agent's last requests taken in, by the name of their
+	// file in the inbox, and why one couldn't be carried out: so its command
+	// can tell what became of its own (see maxTaken).
+	Taken []Taken `json:"taken,omitempty"`
 }
+
+// Taken is what became of a request: its file's name, and the problem it
+// met ("" if none).
+type Taken struct {
+	Name    string `json:"name"`
+	Problem string `json:"problem,omitempty"`
+}
+
+// maxTaken is how many requests' outcomes are kept: far more than are
+// taken in between two looks of the agent's command.
+const maxTaken = 200
 
 // Thread is a comment on lines of the diff (File "" for one on the whole
 // review), and the replies to it.
@@ -226,6 +242,49 @@ type errTooLarge struct{ limit int64 }
 
 func (e errTooLarge) Error() string { return fmt.Sprintf("it's too large (over %d bytes)", e.limit) }
 
+// reviewSize is how large r is, saved: what Take holds under maxReview,
+// an eighth of it left for what's noted as it goes (problems, the taken).
+func reviewSize(r Review) int64 {
+	data, _ := json.MarshalIndent(r, "", "  ")
+	return int64(len(data))
+}
+
+// Unreadable is a review that can't be read for what's in it (corrupt, or
+// too large): one StartAfresh can set aside. A review that can't be read
+// for the disk (its permissions, say) isn't one: that's the machine's to
+// put right.
+type Unreadable struct{ error }
+
+func (u Unreadable) Unwrap() error { return u.error }
+
+// StartAfresh sets aside a review that can't be read (see Unreadable),
+// keeping it in history/ as broken-<time>.json, and begins an empty one.
+// The inbox is left as it is: what the agent has dropped lands in the new
+// review. A review that reads isn't set aside.
+func (s *Store) StartAfresh() (Review, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.load(); !errors.As(err, &Unreadable{}) {
+		if err == nil {
+			return Review{}, Refused{fmt.Errorf("the review reads as it is: there's nothing to start afresh from")}
+		}
+		return Review{}, err
+	}
+	history := filepath.Join(s.dir, "history")
+	if err := os.MkdirAll(history, 0o700); err != nil {
+		return Review{}, fmt.Errorf("the review couldn't be set aside in %s: %w", history, err)
+	}
+	aside := filepath.Join(history, "broken-"+s.now().UTC().Format("20060102-150405.000000000")+".json")
+	if err := os.Rename(s.file(), aside); err != nil {
+		return Review{}, fmt.Errorf("the review couldn't be set aside in %s: %w", history, err)
+	}
+	r := Review{Threads: []Thread{}}
+	if err := s.save(r); err != nil {
+		return Review{}, fmt.Errorf("a fresh review couldn't be written in %s: %w", s.dir, err)
+	}
+	return r, nil
+}
+
 // failed is a request the store couldn't carry out for its own reasons (a
 // disk problem): not one it refused (see Refused).
 type failed struct{ error }
@@ -246,13 +305,13 @@ func (s *Store) load() (Review, error) {
 		return r, nil
 	}
 	if errors.As(err, &errTooLarge{}) {
-		return r, fmt.Errorf("the review in %s is too large to load (over %d MB): move it aside (into history/, say) to start afresh", s.file(), maxReview>>20)
+		return r, Unreadable{fmt.Errorf("the review in %s is too large to load (over %d MB): move it aside to start afresh (Start afresh on the Review tab does, keeping it in history/)", s.file(), maxReview>>20)}
 	}
 	if err != nil {
 		return r, err
 	}
 	if err := json.Unmarshal(data, &r); err != nil {
-		return r, fmt.Errorf("%s: %w", s.file(), err)
+		return r, Unreadable{fmt.Errorf("the review in %s can't be read (%v): Start afresh on the Review tab sets it aside, keeping it in history/", s.file(), err)}
 	}
 	if r.Threads == nil {
 		r.Threads = []Thread{}
@@ -314,15 +373,28 @@ func (s *Store) Take() (Review, error) {
 	if len(names) > maxTakeAtOnce {
 		names = names[:maxTakeAtOnce]
 	}
+	size := reviewSize(r)
 	for _, name := range names {
 		path := filepath.Join(s.Inbox(), name)
 		var req Request
+		problem := ""
 		if data, err := s.readFile(path); err != nil {
-			s.problem(&r, fmt.Sprintf("%s couldn't be read: %v", name, err))
+			problem = fmt.Sprintf("%s couldn't be read: %v", name, err)
 		} else if err := json.Unmarshal(data, &req); err != nil {
-			s.problem(&r, fmt.Sprintf("%s isn't a request: %v", name, err))
+			problem = fmt.Sprintf("%s isn't a request: %v", name, err)
+		} else if size+int64(len(data)) > maxReview-maxReview/8 {
+			problem = fmt.Sprintf("%s: it would make the review too large (over %d MB): resolve or dismiss what's done with, or start a new review", req.Op, maxReview>>20)
 		} else if err := s.apply(&r, req, Agent); err != nil {
-			s.problem(&r, fmt.Sprintf("%s: %v", req.Op, err))
+			problem = fmt.Sprintf("%s: %v", req.Op, err)
+		} else {
+			size += int64(len(data))
+		}
+		if problem != "" {
+			s.problem(&r, problem)
+		}
+		r.Taken = append(r.Taken, Taken{Name: name, Problem: problem})
+		if over := len(r.Taken) - maxTaken; over > 0 {
+			r.Taken = r.Taken[over:]
 		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			s.problem(&r, fmt.Sprintf("%s couldn't be taken out of the inbox, so it may be taken in again: %v", name, err))
@@ -389,7 +461,7 @@ func (s *Store) apply(r *Review, req Request, author string) error {
 		if author == User && !req.Reviewing {
 			state = ""
 		}
-		*r = Review{Ref: req.Ref, Commit: req.Commit, Unpushed: req.Unpushed, Note: req.Note, State: state, Threads: []Thread{}, Started: s.now(), LastID: r.LastID}
+		*r = Review{Ref: req.Ref, Commit: req.Commit, Unpushed: req.Unpushed, Note: req.Note, State: state, Threads: []Thread{}, Started: s.now(), LastID: r.LastID, Taken: r.Taken}
 	case "view", "unview":
 		if author != User {
 			return fmt.Errorf("ticking files as viewed is the user's to do")

@@ -471,7 +471,7 @@ func TestAStartSaysSoWhenAnotherReviewLandsInstead(t *testing.T) {
 			}
 		}
 	}()
-	out, code := vibeReview(t, dir, "", "start", "--note", "mine", "--ref", "main")
+	out, code := runVibeReview(t, "", []string{"VIBE_REVIEW_DIR=" + dir, "VIBE_REVIEW_START_WAIT_MS=500"}, "", "start", "--note", "mine", "--ref", "main")
 	if code == 0 || !strings.Contains(out, "vibe-review list") {
 		t.Errorf("exit %d, said %q", code, out)
 	}
@@ -499,5 +499,26 @@ func TestAWorkspaceThatIsntThereIsLeftForTheFolderHere(t *testing.T) {
 	out, code := runVibeReview(t, work, []string{"VIBE_REVIEW_DIR=" + reviewFolder(t), `VIBE_REVIEW_WORKSPACE=C:\Users\me\project`}, "", "diff")
 	if code != 0 || !strings.Contains(out, "new.txt") {
 		t.Errorf("exit %d, said %q", code, out)
+	}
+}
+
+// An empty note is no note: the start that worked says it did.
+func TestAStartWithAnEmptyNoteIsTakenIn(t *testing.T) {
+	dir := reviewFolder(t)
+	host(t, dir, 0)
+	if out, code := vibeReview(t, dir, "", "start", "--note", ""); code != 0 {
+		t.Errorf("exit %d, said %q", code, out)
+	}
+}
+
+// The same start refused twice says why both times.
+func TestAStartRefusedAgainSaysWhyAgain(t *testing.T) {
+	dir := reviewFolder(t)
+	host(t, dir, 0)
+	for i := 0; i < 2; i++ {
+		out, code := vibeReview(t, dir, "", "start", "--ref", "-x")
+		if code == 0 || !strings.Contains(out, "isn't a branch or commit") {
+			t.Errorf("try %d: exit %d, said %q", i+1, code, out)
+		}
 	}
 }

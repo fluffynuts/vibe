@@ -13,9 +13,7 @@ import (
 	"sort"
 	"strings"
 
-	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/format/index"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
@@ -45,14 +43,15 @@ func open(dir string) (*repository, error) {
 	return r, nil
 }
 
-// WorkingTree is the diff of the folder dir as it is: everything not yet
+// workingTree is the diff of the folder dir as it is: everything not yet
 // committed, staged or not, and untracked files (those git doesn't ignore)
 // as added.
-func WorkingTree(ctx context.Context, dir string, how ...Diffing) ([]File, error) {
+func workingTree(ctx context.Context, dir string, how ...Diffing) ([]File, error) {
 	r, err := open(dir)
 	if err != nil {
 		return nil, err
 	}
+	defer r.close()
 	head, err := r.head()
 	if err != nil {
 		return nil, err
@@ -60,14 +59,15 @@ func WorkingTree(ctx context.Context, dir string, how ...Diffing) ([]File, error
 	return r.diffWorkTree(ctx, head, how)
 }
 
-// Against is the diff of the folder dir as it is from where it parted from
+// against is the diff of the folder dir as it is from where it parted from
 // ref (a branch, say): this branch's changes, committed or not, without
 // those ref has gained since.
-func Against(ctx context.Context, dir, ref string, how ...Diffing) ([]File, error) {
+func against(ctx context.Context, dir, ref string, how ...Diffing) ([]File, error) {
 	r, err := open(dir)
 	if err != nil {
 		return nil, err
 	}
+	defer r.close()
 	other, err := r.commit(ref)
 	if err != nil {
 		return nil, err
@@ -103,29 +103,21 @@ func (r *repository) diffWorkTree(ctx context.Context, base *object.Commit, how 
 	if err != nil {
 		return nil, err
 	}
-	root, err := os.OpenRoot(r.top)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
 	for _, p := range untracked {
-		// As git, only files and links: not a FIFO, a socket, a device.
-		if info, err := root.Lstat(filepath.FromSlash(p)); err == nil && !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
-			continue
-		}
-		files = append(files, untrackedFile(root, p))
+		files = append(files, untrackedFile(r.work, p))
 	}
 	sort.SliceStable(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	return files, nil
 }
 
-// Commit is the diff of what commit ref changed: a merge commit's, what it
+// commit is the diff of what commit ref changed: a merge commit's, what it
 // brought in to its first parent.
-func Commit(ctx context.Context, dir, ref string, how ...Diffing) ([]File, error) {
+func commit(ctx context.Context, dir, ref string, how ...Diffing) ([]File, error) {
 	r, err := open(dir)
 	if err != nil {
 		return nil, err
 	}
+	defer r.close()
 	c, err := r.commit(ref)
 	if err != nil {
 		return nil, err
@@ -139,13 +131,14 @@ func Commit(ctx context.Context, dir, ref string, how ...Diffing) ([]File, error
 	return r.diffCommits(ctx, parent, c, how)
 }
 
-// Unpushed is the diff of the commits on HEAD that upstream hasn't: what
+// unpushed is the diff of the commits on HEAD that upstream hasn't: what
 // they changed, from where the two parted, without anything uncommitted.
-func Unpushed(ctx context.Context, dir, upstream string, how ...Diffing) ([]File, error) {
+func unpushed(ctx context.Context, dir, upstream string, how ...Diffing) ([]File, error) {
 	r, err := open(dir)
 	if err != nil {
 		return nil, err
 	}
+	defer r.close()
 	up, err := r.commit(upstream)
 	if err != nil {
 		return nil, err
@@ -236,14 +229,15 @@ func untrackedOf(root *os.Root, path string) File {
 	return f
 }
 
-// Root is the top of the repository folder dir is in: what its paths are
+// root is the top of the repository folder dir is in: what its paths are
 // relative to. It's dir or a folder above it, whatever the repository's
 // config says.
-func Root(ctx context.Context, dir string) (string, error) {
+func root(ctx context.Context, dir string) (string, error) {
 	r, err := open(dir)
 	if err != nil {
 		return "", err
 	}
+	defer r.close()
 	return r.top, nil
 }
 
@@ -260,14 +254,15 @@ type StartOptions struct {
 	Unpushed int    `json:"unpushed,omitempty"`
 }
 
-// Options are the reviews the folder dir can be started on.
-func Options(ctx context.Context, dir string) (StartOptions, error) {
+// optionsOf are the reviews the folder dir can be started on.
+func optionsOf(ctx context.Context, dir string) (StartOptions, error) {
 	var o StartOptions
 	r, err := open(dir)
 	if err != nil {
 		return o, err
 	}
-	files, err := WorkingTree(ctx, dir)
+	defer r.close()
+	files, err := workingTree(ctx, dir)
 	if err != nil {
 		return o, err
 	}
@@ -351,9 +346,14 @@ func (r *repository) upstream(branch string) (*object.Commit, string) {
 	return c, short
 }
 
+// maxWalk bounds walking history for aheadBehind: past it, the counts so
+// far stand (a branch thousands of commits from its upstream is far
+// enough to say so, and the walk is the sandbox's to make long).
+var maxWalk = 20000
+
 // aheadBehind is how many commits a has that b hasn't, and b that a
 // hasn't: git's way, walking back from both newest first until all that's
-// left is history they share.
+// left is history they share (or maxWalk commits have been walked).
 func aheadBehind(a, b *object.Commit) (ahead, behind int) {
 	if a == nil || b == nil {
 		return 0, 0
@@ -361,28 +361,31 @@ func aheadBehind(a, b *object.Commit) (ahead, behind int) {
 	const fromA, fromB = 1, 2
 	flags := map[plumbing.Hash]int{}
 	q := &byTime{}
+	// fresh counts the commits waiting that only one side has reached:
+	// none left, only shared history is.
+	fresh := 0
 	mark := func(c *object.Commit, f int) {
-		if flags[c.Hash]|f == flags[c.Hash] {
+		was := flags[c.Hash]
+		if was|f == was {
 			return
 		}
-		flags[c.Hash] |= f
+		flags[c.Hash] = was | f
+		if was != 0 && was != fromA|fromB {
+			fresh--
+		}
+		if was|f != fromA|fromB {
+			fresh++
+		}
 		heap.Push(q, c)
 	}
 	mark(a, fromA)
 	mark(b, fromB)
-	for q.Len() > 0 {
-		stale := true
-		for _, c := range *q {
-			if flags[c.Hash] != fromA|fromB {
-				stale = false
-				break
-			}
-		}
-		if stale {
-			break
-		}
+	for walked := 0; q.Len() > 0 && fresh > 0 && walked < maxWalk; walked++ {
 		c := heap.Pop(q).(*object.Commit)
 		f := flags[c.Hash]
+		if f != fromA|fromB {
+			fresh--
+		}
 		parents := c.Parents()
 		parents.ForEach(func(p *object.Commit) error {
 			mark(p, f)
@@ -428,51 +431,31 @@ type FolderStatus struct {
 	Stashed    int
 }
 
-// StatusOf is the git status of the folder dir; an error when it's in no
+// statusOf is the git status of the folder dir; an error when it's in no
 // repository (or one that can't be read).
-func StatusOf(ctx context.Context, dir string) (*FolderStatus, error) {
+func statusOf(ctx context.Context, dir string) (*FolderStatus, error) {
 	r, err := openRepo(dir)
 	if err != nil {
 		return nil, err
 	}
-	wt, err := r.git.Worktree()
-	if err != nil {
-		return nil, err
-	}
-	wt.Excludes = append(wt.Excludes, r.ignored()...)
-	status, err := wt.Status()
-	if err != nil {
-		return nil, err
-	}
-	s := &FolderStatus{Branch: r.branch()}
+	defer r.close()
 	head, err := r.head()
 	if err != nil {
 		return nil, err
 	}
+	base, err := treeOf(head)
+	if err != nil {
+		return nil, err
+	}
+	sc, err := r.scan(newOverlay(r.git.Storer), base, false)
+	if err != nil {
+		return nil, err
+	}
+	s := &FolderStatus{Branch: r.branch(), Staged: sc.staged, Modified: sc.changed, Untracked: len(sc.untracked), Conflicted: sc.conflicted}
 	if s.Branch == "" {
 		s.Branch = "detached"
 		if head != nil {
 			s.Branch = "@" + head.Hash.String()[:7]
-		}
-	}
-	idx, err := r.git.Storer.Index()
-	if err != nil {
-		return nil, err
-	}
-	for path, f := range status {
-		switch {
-		case f.Worktree == gogit.Untracked:
-			s.Untracked++
-			continue
-		case f.Staging == gogit.UpdatedButUnmerged || f.Worktree == gogit.UpdatedButUnmerged:
-			s.Conflicted++
-			continue
-		}
-		if f.Staging != gogit.Unmodified {
-			s.Staged++
-		}
-		if f.Worktree != gogit.Unmodified && r.changedOnDisk(path, idx) {
-			s.Modified++
 		}
 	}
 	if up, _ := r.upstream(r.branch()); up != nil {
@@ -482,50 +465,21 @@ func StatusOf(ctx context.Context, dir string) (*FolderStatus, error) {
 	return s, nil
 }
 
-// changedOnDisk says file p differs from the index as git sees it: go-git
-// compares the bytes, and a checkout's CRLFs (or a Git LFS file's content)
-// are no change to git.
-func (r *repository) changedOnDisk(p string, idx *index.Index) bool {
-	e, err := idx.Entry(p)
-	if err != nil {
-		return true
-	}
-	root, err := os.OpenRoot(r.top)
-	if err != nil {
-		return true
-	}
-	defer root.Close()
-	info, err := root.Lstat(filepath.FromSlash(p))
-	if err != nil || !info.Mode().IsRegular() || info.Size() > maxFileBytes {
-		return true
-	}
-	data, err := readIn(root, filepath.FromSlash(p), maxFileBytes)
-	if err != nil {
-		return true
-	}
-	was := &object.TreeEntry{Name: p, Mode: e.Mode, Hash: e.Hash}
-	data = r.asCommitted(newOverlay(r.git.Storer), p, was, data)
-	return plumbing.ComputeHash(plumbing.BlobObject, data) != e.Hash
-}
-
 // stashes is how many stashes there are: the lines of the stash's log.
 func (r *repository) stashes() int {
-	f, err := r.git.Storer.Reference("refs/stash")
-	if err != nil || f == nil {
+	if _, err := r.git.Storer.Reference("refs/stash"); err != nil {
 		return 0
 	}
-	n := 0
-	for _, dir := range r.gitDirs {
-		if data, err := readPlain(filepath.Join(dir, "logs", "refs", "stash"), 1<<20); err == nil {
-			n = strings.Count(string(data), "\n")
-		}
+	data, err := readIn(r.common, filepath.Join("logs", "refs", "stash"), 1<<20)
+	if err != nil {
+		return 0
 	}
-	return n
+	return strings.Count(string(data), "\n")
 }
 
-// TextOf is path's lines as review rv has it (see NewTextOf).
-func TextOf(ctx context.Context, dir string, rv Review, path string) ([]string, error) {
-	text, err := NewTextOf(ctx, dir, rv, path)
+// textOf is path's lines as review rv has it (see NewTextOf).
+func textOf(ctx context.Context, dir string, rv Review, path string) ([]string, error) {
+	text, err := newTextOf(ctx, dir, rv, path)
 	if err != nil {
 		return nil, err
 	}
@@ -543,11 +497,11 @@ func splitLines(text string) []string {
 	return lines
 }
 
-// Moves are rv's comments on the new side whose code (as it read when
+// moves are rv's comments on the new side whose code (as it read when
 // they were made) is no longer at their lines but is elsewhere in the file:
 // where to. A file that can't be read moves nothing: its comments stay, and
 // the page marks any whose lines read differently.
-func Moves(ctx context.Context, dir string, rv Review) []Move {
+func moves(ctx context.Context, dir string, rv Review) []Move {
 	var out []Move
 	files := map[string][]string{}
 	for _, t := range rv.Threads {
@@ -556,7 +510,7 @@ func Moves(ctx context.Context, dir string, rv Review) []Move {
 		}
 		lines, seen := files[t.File]
 		if !seen {
-			lines, _ = TextOf(ctx, dir, rv, t.File)
+			lines, _ = textOf(ctx, dir, rv, t.File)
 			files[t.File] = lines
 		}
 		if lines == nil {

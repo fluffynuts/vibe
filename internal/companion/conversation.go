@@ -31,6 +31,8 @@ const (
 	receiptSent      = "sent"
 	receiptDelivered = "delivered"
 	receiptSeen      = "seen"
+	// receiptUndelivered is a prompt never given to the agent.
+	receiptUndelivered = "undelivered"
 )
 
 var receiptRank = map[string]int{receiptSent: 1, receiptDelivered: 2, receiptSeen: 3}
@@ -203,6 +205,19 @@ func (c *conversation) begin(prompt string) (session string, ctx context.Context
 	c.events[len(c.events)-1].Receipt = receiptSent
 	c.save()
 	return c.session, ctx, true
+}
+
+// undeliver marks the latest prompt as never given to the agent: a turn
+// claimed for it was given up (see claimTurn).
+func (c *conversation) undeliver() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := range c.events {
+		if c.events[i].Seq == c.prompt && c.events[i].Kind == "user" {
+			c.events[i].Receipt = receiptUndelivered
+		}
+	}
+	c.save()
 }
 
 // receipt moves the latest prompt's receipt forward to state.
@@ -557,7 +572,10 @@ func (s *Server) claimTurn(prompt string) (launch func(), abandon func(error), o
 		return nil, nil, false
 	}
 	launch = func() { go s.convo.run(ctx, s.cfg.Prepare, s.cfg.Converse, prompt, session) }
-	abandon = func(why error) { s.convo.finish(why, false) }
+	abandon = func(why error) {
+		s.convo.undeliver()
+		s.convo.finish(why, false)
+	}
 	return launch, abandon, true
 }
 

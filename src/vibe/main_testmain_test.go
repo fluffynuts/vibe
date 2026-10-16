@@ -7,6 +7,7 @@ import (
 
 	"vibe/internal/hostmem"
 	"vibe/internal/prompt"
+	"vibe/internal/review"
 )
 
 // TestMain runs every test with no terminal to ask on, whatever the test
@@ -15,6 +16,8 @@ import (
 // make — which is exactly what it did on a Windows runner, whose console
 // opens as readily as a real one.
 func TestMain(m *testing.M) {
+	// A copy of this binary is the helper reading repositories, as vibe is.
+	review.ServeHelperIfAsked()
 	// A copy of this binary, started with this set, is a stand-in for a
 	// vibe that's still running — see TestReplaceFileWhileTheTargetIsRunning.
 	if os.Getenv("VIBE_TEST_STAY_RUNNING") != "" {

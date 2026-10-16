@@ -131,3 +131,91 @@ func TestAReviewTooLargeToLoadSaysWhatToDo(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// What became of each request taken in is kept by its name, so the agent's
+// command can tell its own: taken in, or refused and why.
+func TestEachRequestTakenInIsAccountedFor(t *testing.T) {
+	s := NewStore(t.TempDir())
+	drop(t, s, "1.json", Request{Op: "start", Note: "fine"})
+	drop(t, s, "2.json", Request{Op: "start", Ref: "-x"})
+	r, err := s.Take()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, tk := range r.Taken {
+		got[tk.Name] = tk.Problem
+	}
+	if p, ok := got["1.json"]; !ok || p != "" {
+		t.Errorf("1.json: %q, %v", p, ok)
+	}
+	if p := got["2.json"]; !strings.Contains(p, "isn't a branch or commit") {
+		t.Errorf("2.json: %q", p)
+	}
+	// A start that came after keeps the account.
+	s.Do(Request{Op: "start"}, User)
+	if r, _ = s.Load(); len(r.Taken) != 2 {
+		t.Errorf("taken after a start: %+v", r.Taken)
+	}
+}
+
+// The review can't be grown past loading: a request that would take it
+// past the limit is refused, saying so.
+func TestTheReviewCantGrowPastLoading(t *testing.T) {
+	was := maxReview
+	maxReview = 64 << 10
+	defer func() { maxReview = was }()
+	s := NewStore(t.TempDir())
+	for i := 0; i < 10; i++ {
+		drop(t, s, fmt.Sprintf("%02d.json", i), Request{Op: "general", Body: strings.Repeat("x", 10<<10)})
+	}
+	r, err := s.Take()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Threads) == 10 || len(r.Problems) == 0 || !strings.Contains(r.Problems[len(r.Problems)-1], "too large") {
+		t.Errorf("threads %d, problems %q", len(r.Threads), r.Problems)
+	}
+	if _, err := s.Load(); err != nil {
+		t.Errorf("the review can't be loaded: %v", err)
+	}
+}
+
+// A review that can't be read (corrupt, or too large) is set aside, kept in
+// history/, and a fresh one begun; the agent's waiting requests land in it.
+func TestAnUnreadableReviewCanBeStartedAfresh(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	os.WriteFile(filepath.Join(dir, "review.json"), []byte("{broken"), 0o600)
+	_, err := s.Load()
+	if !errors.As(err, &Unreadable{}) {
+		t.Fatalf("err = %v, want it Unreadable", err)
+	}
+	drop(t, s, "1.json", Request{Op: "general", Body: "waiting"})
+	if _, err := s.StartAfresh(); err != nil {
+		t.Fatal(err)
+	}
+	kept, _ := filepath.Glob(filepath.Join(dir, "history", "broken-*.json"))
+	if len(kept) != 1 {
+		t.Fatalf("set aside: %v", kept)
+	}
+	if data, _ := os.ReadFile(kept[0]); string(data) != "{broken" {
+		t.Errorf("kept %q", data)
+	}
+	r, err := s.Take()
+	if err != nil || len(r.Threads) != 1 {
+		t.Errorf("after: %+v, %v", r, err)
+	}
+}
+
+// One that reads is never set aside.
+func TestAReviewThatReadsIsntStartedAfresh(t *testing.T) {
+	s := NewStore(t.TempDir())
+	s.Do(Request{Op: "general", Body: "kept"}, Agent)
+	if _, err := s.StartAfresh(); err == nil {
+		t.Error("a review that reads was set aside")
+	}
+	if r, _ := s.Load(); len(r.Threads) != 1 {
+		t.Errorf("review = %+v", r)
+	}
+}

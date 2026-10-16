@@ -1057,12 +1057,19 @@
     // ignoreSpace: the diff leaves out changes of whitespace alone.
     ignoreSpace: store.get(REVIEW_WHITESPACE) === 'ignore' }
 
-  // doReview asks vibe to do req to the review, taking the review it gives
-  // back (see tookReview): every change from the page goes this way.
-  async function doReview(req) {
-    const res = await post('/api/review/do', req)
-    if (res.ok) tookReview(res.body.review)
+  // changeReview asks vibe for a change to the review (do, ask, submit,
+  // start), taking the review it gives back (see tookReview): every change
+  // from the page goes this way, so a poll that set out before can't undo
+  // it.
+  async function changeReview(path, body) {
+    const res = await post(path, body)
+    if (res.ok && res.body && res.body.review) tookReview(res.body.review)
     return res
+  }
+
+  // doReview asks vibe to do req to the review (see changeReview).
+  function doReview(req) {
+    return changeReview('/api/review/do', req)
   }
 
   // tookReview takes rv, the review vibe gave back for something done on
@@ -1773,7 +1780,14 @@
     try {
       const res = await api('/api/review' + (withDiff ? '?diff=1' + (reviewView.ignoreSpace ? '&whitespace=ignore' : '') : ''), { timeout: 40000 })
       reached(true)
-      if (!res.ok) { problem(res); reviewView.goTo = null; return }
+      if (!res.ok) {
+        reviewView.goTo = null
+        // A review that can't be read is the tab's to say, with a way out.
+        if (res.body && res.body.code === 'review-unreadable') showBroken(res.body.error)
+        else problem(res)
+        return
+      }
+      showBroken('')
       // Something done on the page since this set out gave a newer review.
       if (reviewView.changed === changed) {
         const wasOn = reviewView.review && reviewIsOn(reviewView.review)
@@ -1784,7 +1798,9 @@
         if (!reviewIsOn(reviewView.review) && (wasOn || (!reviewView.options && !reviewView.optionsError))) loadOptions()
       }
       showPastes(res.body.pastes)
-      if (withDiff) {
+      // A diff that set out before the review's files went stale (Refresh,
+      // a new review) isn't drawn: the one asked for since is on its way.
+      if (withDiff && reviewView.loadingEpoch === reviewView.epoch) {
         reviewView.files = res.body.diff || []
         reviewView.diffError = res.body.diffError || ''
         // The code may have changed with the same files: drawn afresh.
@@ -1898,6 +1914,26 @@
     loadReview(true)
   }
 
+  // showBroken says, on the tab, why the review can't be read, offering to
+  // start afresh; "" hides it.
+  function showBroken(why) {
+    $('review-broken').hidden = !why
+    $('review-broken-why').textContent = why
+    if (why) $('review-wait').hidden = true
+  }
+
+  // startAfresh sets aside the review that can't be read (vibe keeps it in
+  // history/) and begins an empty one, asking first.
+  function startAfresh() {
+    confirmThen({ title: 'Start afresh?', text: "The review that can't be read is set aside in history/ (nothing is deleted), and an empty one is begun. What the agent sends from now on lands in it.",
+      commandNote: '', command: '', runLabel: 'Start afresh', started: 'Started afresh.',
+      run: async () => {
+        const res = await changeReview('/api/review/afresh', {})
+        if (res.ok) { showBroken(''); showReview(res.body.review) }
+        return res
+      } })
+  }
+
   // forgetFiles forgets what the page has of the diff's files (their
   // lines, the gaps opened in them, their colours, which long ones are
   // shown): the code may have changed under it.
@@ -1923,7 +1959,7 @@
 
   async function startReview(kind, agent) {
     try {
-      const res = await post('/api/review/start', { kind, agent })
+      const res = await changeReview('/api/review/start', { kind, agent })
       reached(true)
       if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
       showReview(res.body.review)
@@ -2427,7 +2463,7 @@
       const body = box.value.trim()
       if (!body) { box.focus(); toast('Type your question first.'); return }
       try {
-        const res = await post('/api/review/ask', { thread: t.id, body })
+        const res = await changeReview('/api/review/ask', { thread: t.id, body })
         reached(true)
         if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
         reviewView.drafts.delete(String(t.id))
@@ -2987,6 +3023,7 @@
     })
     $('manage-delete').addEventListener('click', deleteTicked)
     $('review-refresh').addEventListener('click', refreshReview)
+    $('review-afresh').addEventListener('click', startAfresh)
     $('review-whitespace').checked = reviewView.ignoreSpace
     $('review-whitespace').addEventListener('change', (ev) => {
       reviewView.ignoreSpace = ev.target.checked
@@ -3027,7 +3064,7 @@
     for (const type of ['pointerdown', 'keydown']) $('panel-review').addEventListener(type, reviewSeen, true)
     $('review-submit').addEventListener('click', once(async () => {
       try {
-        const res = await post('/api/review/submit', {})
+        const res = await changeReview('/api/review/submit', {})
         reached(true)
         if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
         const n = res.body.sent || 0
@@ -3367,9 +3404,9 @@
         case 'text': return inLink ? document.createTextNode(n.text) : withThreadRefs(n.text)
         case 'code': return el('code', { text: n.text })
         case 'br': return el('br')
-        case 'strong': return el('strong', {}, ...inline(n.children))
-        case 'em': return el('em', {}, ...inline(n.children))
-        case 'del': return el('del', {}, ...inline(n.children))
+        case 'strong': return el('strong', {}, ...inline(n.children, inLink))
+        case 'em': return el('em', {}, ...inline(n.children, inLink))
+        case 'del': return el('del', {}, ...inline(n.children, inLink))
         case 'link': {
           const link = localLink(n.href)
           if (link) { link.replaceChildren(...inline(n.children, true)); return link }
@@ -3482,8 +3519,8 @@
   // The ticks on what the user said, as on a chat message: one when vibe has
   // it, two when the sandbox has it, two in blue once the agent has started
   // answering.
-  const RECEIPT_TICKS = { sent: '✓', delivered: '✓✓', seen: '✓✓' }
-  const RECEIPT_WORDS = { sent: 'Sent', delivered: 'Delivered', seen: 'The agent is answering' }
+  const RECEIPT_TICKS = { sent: '✓', delivered: '✓✓', seen: '✓✓', undelivered: '✕' }
+  const RECEIPT_WORDS = { sent: 'Sent', delivered: 'Delivered', seen: 'The agent is answering', undelivered: 'Not given to the agent' }
 
   function showReceipt(seq, receipt) {
     const ticks = convo.ticks.get(seq)

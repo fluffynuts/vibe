@@ -19,32 +19,31 @@ type ReviewTab struct {
 	Store     *review.Store
 }
 
-// reviewRoot is where the tab works: the top of the repository the
-// sandbox's folder is in, as git's paths are from there; the folder itself
-// when it isn't in one (the tab then says so).
-func (s *Server) reviewRoot(ctx context.Context) string {
-	if root, err := review.Root(ctx, s.cfg.ReviewTab.Workspace); err == nil {
-		return root
-	}
-	return s.cfg.ReviewTab.Workspace
-}
-
 // reviewTakeEvery is how often vibe takes in the agent's requests itself,
 // page or not: vibe-review's start waits for its review to be taken in.
 var reviewTakeEvery = 2 * time.Second
 
 // takeInbox takes in the agent's requests every so often, until done is
-// closed. One that fails isn't lost: it's taken in again the next time, and
-// the page's poll, which takes in the same way, says what went wrong.
+// closed. One that fails isn't lost: it's taken in again the next time.
+// Failing is said in vibe's own output (once, until it works again), as no
+// page may be open to say it.
 func (s *Server) takeInbox(done <-chan struct{}, every time.Duration) {
 	tick := time.NewTicker(every)
 	defer tick.Stop()
+	failing := ""
 	for {
 		select {
 		case <-done:
 			return
 		case <-tick.C:
-			s.cfg.ReviewTab.Store.Take()
+			_, err := s.cfg.ReviewTab.Store.Take()
+			switch {
+			case err == nil:
+				failing = ""
+			case err.Error() != failing && s.cfg.Log != nil:
+				failing = err.Error()
+				s.cfg.Log("the agent's review requests can't be taken in: " + failing)
+			}
 		}
 	}
 }
@@ -60,7 +59,7 @@ const diffWithin = 30 * time.Second
 func (s *Server) reviewState(w http.ResponseWriter, r *http.Request) {
 	rv, err := s.cfg.ReviewTab.Store.Take()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeStoreError(w, err)
 		return
 	}
 	body := map[string]interface{}{"review": rv}
@@ -73,9 +72,9 @@ func (s *Server) reviewState(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("diff") == "1" {
 		ctx, cancel := context.WithTimeout(r.Context(), diffWithin)
 		defer cancel()
-		root := s.reviewRoot(ctx)
+		folder := s.cfg.ReviewTab.Workspace
 		how := review.Diffing{IgnoreSpace: r.URL.Query().Get("whitespace") == "ignore"}
-		files, err := diffOf(ctx, root, rv, how)
+		files, err := diffOf(ctx, folder, rv, how)
 		if err != nil {
 			body["diffError"] = err.Error()
 		} else {
@@ -84,7 +83,7 @@ func (s *Server) reviewState(w http.ResponseWriter, r *http.Request) {
 			}
 			body["diff"] = files
 			// Comments follow their code when lines above them came or went.
-			if moves := review.Moves(ctx, root, rv); len(moves) > 0 {
+			if moves := review.Moves(ctx, folder, rv); len(moves) > 0 {
 				if err := s.cfg.ReviewTab.Store.Move(moves); err != nil {
 					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "comments couldn't be moved to where their code is now: " + err.Error()})
 					return
@@ -104,7 +103,7 @@ func (s *Server) reviewState(w http.ResponseWriter, r *http.Request) {
 			// changes still there: whether it's over is the whole diff's to say.
 			over := len(files) == 0
 			if over && how.IgnoreSpace {
-				all, err := diffOf(ctx, root, rv, review.Diffing{})
+				all, err := diffOf(ctx, folder, rv, review.Diffing{})
 				over = err == nil && len(all) == 0
 			}
 			if over && rv.Closed == "" && !s.convo.working() && (!rv.Started.IsZero() || len(rv.Threads) > 0) {
@@ -184,7 +183,7 @@ func (s *Server) reviewFile(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), diffWithin)
 	defer cancel()
-	lines, err := review.FileLines(ctx, s.reviewRoot(ctx), rv, r.URL.Query().Get("path"))
+	lines, err := review.FileLines(ctx, s.cfg.ReviewTab.Workspace, rv, r.URL.Query().Get("path"))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -266,7 +265,14 @@ func (s *Server) reviewAsk(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "asked, but the question couldn't be kept on the comment: " + err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
+	// The review as it now is, the question on it: the page takes it, so
+	// a poll that set out before can't take it away.
+	now, err := s.cfg.ReviewTab.Store.Load()
+	if err != nil {
+		writeJSON(w, http.StatusAccepted, map[string]interface{}{"ok": true})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{"ok": true, "review": now})
 }
 
 // unsentOn is the user's unsent comments on thread id.
@@ -305,7 +311,11 @@ func (s *Server) reviewSubmit(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "sent, but they couldn't be marked as sent, so Submit would send them again: " + err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]interface{}{"ok": true, "sent": len(refs)})
+	body := map[string]interface{}{"ok": true, "sent": len(refs)}
+	if now, err := s.cfg.ReviewTab.Store.Load(); err == nil {
+		body["review"] = now
+	}
+	writeJSON(w, http.StatusAccepted, body)
 }
 
 // submitPrompt is the turn giving the agent the user's new comments
@@ -409,7 +419,7 @@ func (s *Server) reviewHighlight(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("side") == "old" {
 		read = review.OldTextOf
 	}
-	text, err := read(ctx, s.reviewRoot(ctx), rv, path)
+	text, err := read(ctx, s.cfg.ReviewTab.Workspace, rv, path)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -421,7 +431,7 @@ func (s *Server) reviewHighlight(w http.ResponseWriter, r *http.Request) {
 func (s *Server) reviewOptions(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), diffWithin)
 	defer cancel()
-	o, err := review.Options(ctx, s.reviewRoot(ctx))
+	o, err := review.Options(ctx, s.cfg.ReviewTab.Workspace)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -448,7 +458,7 @@ func (s *Server) reviewStart(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), diffWithin)
 	defer cancel()
-	o, err := review.Options(ctx, s.reviewRoot(ctx))
+	o, err := review.Options(ctx, s.cfg.ReviewTab.Workspace)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -477,6 +487,12 @@ func (s *Server) reviewStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("there's no review of kind %q: uncommitted, branch or unpushed", req.Kind)})
 		return
 	}
+	// A review that can't be read refuses before the agent's turn is claimed
+	// (claiming ends what the agent left running).
+	if _, err := s.cfg.ReviewTab.Store.Load(); err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	// The agent's turn first, then the review, then the agent is given it:
 	// a busy agent leaves the review as it was, and the agent never hears of
 	// one that isn't there.
@@ -490,7 +506,7 @@ func (s *Server) reviewStart(w http.ResponseWriter, r *http.Request) {
 	}
 	rv, err := s.cfg.ReviewTab.Store.Do(start, review.User)
 	if err != nil {
-		abandon(fmt.Errorf("the review couldn't be started: %w", err))
+		abandon(fmt.Errorf("the review couldn't be started, so this wasn't given to the agent: %w", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -508,6 +524,32 @@ func startPrompt(what string) string {
 	return "On the Review tab, I've started a review of " + what + ": please review it with your vibe-review skill. " +
 		"It's already started, so don't run vibe-review start (that would replace it): begin at the skill's step 2, " +
 		"with vibe-review diff, and finish with vibe-review done. Comment on the tab, not here; here, just say briefly what you found."
+}
+
+// reviewAfresh sets aside a review that can't be read, keeping it in
+// history/, and begins an empty one (see review.Store.StartAfresh).
+func (s *Server) reviewAfresh(w http.ResponseWriter, r *http.Request) {
+	rv, err := s.cfg.ReviewTab.Store.StartAfresh()
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.As(err, &review.Refused{}) {
+			status = http.StatusBadRequest
+		}
+		writeJSON(w, status, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"review": rv})
+}
+
+// writeStoreError answers with the store's failure: one whose review can't
+// be read for what's in it says so (code review-unreadable), so the page
+// can offer to start afresh.
+func writeStoreError(w http.ResponseWriter, err error) {
+	body := map[string]string{"error": err.Error()}
+	if errors.As(err, &review.Unreadable{}) {
+		body["code"] = "review-unreadable"
+	}
+	writeJSON(w, http.StatusInternalServerError, body)
 }
 
 // reviewing wraps the Review tab's calls: there's no such tab without a

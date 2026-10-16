@@ -25,7 +25,6 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	formatcfg "github.com/go-git/go-git/v5/plumbing/format/config"
 	"github.com/go-git/go-git/v5/plumbing/format/gitattributes"
-	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/storer"
 	"github.com/go-git/go-git/v5/storage/filesystem"
@@ -36,23 +35,32 @@ import (
 // The sandbox's folder is the sandbox's to write, .git and all: the
 // repository is read here with go-git, which runs nothing a repository's
 // config names (no hooks, filters, file system monitor, signature checks,
-// fetches), rather than with git, which would. Its files and git directory
-// are read through file systems bound to their folders, so no link leads
-// out of them; and a git directory the sandbox could have pointed
-// elsewhere is refused (see openRepo).
+// fetches), rather than with git, which would. go-git only reads the git
+// directory, through rootFS (pinned to the folder checked, read-only,
+// nothing that would wait); the work tree is read here (see scan), through
+// an os.Root: no link leads out of either. A git directory the sandbox
+// could have pointed elsewhere is refused (see openRepo). And all of it is
+// done in a helper process (see isolated), so what can't be bounded here (a
+// zlib bomb inflating in go-git) costs that process, not vibe.
 
 // repository is the repository a folder is in, opened safely.
 type repository struct {
 	git *gogit.Repository
-	// top is the top of its work tree: the folder, or a folder above it.
-	top string
-	// autocrlf is core.autocrlf: text files' CRLFs are LFs in the
-	// repository, as git would make them.
-	autocrlf bool
-	// gitDirs are its git directory, and the one it shares, if any.
-	gitDirs []string
-	// attributes are its .gitattributes, read when first needed.
-	attributes gitattributes.Matcher
+	// top is the top of its work tree: the folder, or a folder above it;
+	// work, the same, opened.
+	top  string
+	work *os.Root
+	// gitDir is its git directory, opened; common, the one it shares, if
+	// any (else gitDir).
+	gitDir, common *os.Root
+	// trusted says the git directory is the host's, not the sandbox's: it's
+	// above the sandbox's folder.
+	trusted bool
+	// autocrlf is core.autocrlf; fileMode, core.fileMode (true unless set
+	// false): whether an executable bit's change is a change.
+	autocrlf, fileMode bool
+	// attributes are .gitattributes files read so far, by folder.
+	attributes map[string][]gitattributes.MatchAttribute
 }
 
 // errNotRepository is a folder in no repository.
@@ -62,7 +70,8 @@ var errNotRepository = errors.New("not a git repository")
 // can write (one in dir) may only lead to a git directory in dir, with no
 // common directory or object alternates elsewhere: else it could make the
 // host read another repository. One above dir is the host's, as is all it
-// leads to.
+// leads to. Each git directory is opened once checked, and checked to be
+// the one opened: one swapped in after isn't read.
 func openRepo(dir string) (*repository, error) {
 	ws, err := filepath.EvalSymlinks(dir)
 	if err != nil {
@@ -80,11 +89,11 @@ func openRepo(dir string) (*repository, error) {
 		}
 		top = parent
 	}
-	writable := top == ws
-	gitDir := filepath.Join(top, ".git")
+	writable := inFolderTree(filepath.Join(top, ".git"), ws)
 	refuse := func(why string) (*repository, error) {
 		return nil, fmt.Errorf("its .git %s: the Review tab won't read a repository the sandbox could have pointed anywhere (a linked worktree? start vibe in the main checkout)", why)
 	}
+	gitDir := filepath.Join(top, ".git")
 	switch {
 	case dotGit.Mode()&os.ModeSymlink != 0:
 		if writable {
@@ -113,38 +122,90 @@ func openRepo(dir string) (*repository, error) {
 			return refuse("leads to a git directory outside the folder, " + gitDir)
 		}
 	}
-	var dot billy.Filesystem = osfs.New(gitDir, osfs.WithBoundOS())
-	gitDirs := []string{gitDir}
-	if data, err := readPlain(filepath.Join(gitDir, "commondir"), 4096); err == nil {
+	r := &repository{top: top, trusted: !writable, attributes: map[string][]gitattributes.MatchAttribute{}}
+	if r.gitDir, err = openChecked(gitDir); err != nil {
+		return nil, err
+	}
+	r.common = r.gitDir
+	var dot billy.Filesystem = newRootFS(r.gitDir)
+	if data, err := readIn(r.gitDir, "commondir", 4096); err == nil {
 		common := strings.TrimSpace(string(data))
 		if !filepath.IsAbs(common) {
 			common = filepath.Join(gitDir, common)
 		}
 		if common, err = filepath.EvalSymlinks(common); err != nil {
+			r.close()
 			return nil, err
 		}
 		if writable && !inFolderTree(common, ws) {
+			r.close()
 			return refuse("shares a git directory outside the folder, " + common)
 		}
-		dot = dotgit.NewRepositoryFilesystem(dot, osfs.New(common, osfs.WithBoundOS()))
-		gitDirs = append(gitDirs, common)
+		if r.common, err = openChecked(common); err != nil {
+			r.close()
+			return nil, err
+		}
+		dot = dotgit.NewRepositoryFilesystem(dot, newRootFS(r.common))
 	}
-	if writable {
-		if _, err := os.Lstat(filepath.Join(gitDir, "objects", "info", "alternates")); err == nil {
+	// Borrowed objects: the host's own repository may (a clone --shared, say),
+	// read where they are; the sandbox's may not.
+	alternates := billy.Filesystem(newRootFS(r.common))
+	if _, err := r.common.Lstat(filepath.Join("objects", "info", "alternates")); err == nil {
+		if writable {
+			r.close()
 			return refuse("borrows objects from other repositories (objects/info/alternates)")
 		}
+		alternates = osfs.New("/")
 	}
-	st := filesystem.NewStorage(dot, cache.NewObjectLRUDefault())
-	r, err := gogit.Open(st, osfs.New(top, osfs.WithBoundOS()))
-	if err != nil {
-		if errors.Is(err, gogit.ErrRepositoryNotExists) {
+	st := filesystem.NewStorageWithOptions(dot, cache.NewObjectLRUDefault(), filesystem.Options{LargeObjectThreshold: maxFileBytes, AlternatesFS: alternates})
+	if r.git, err = gogit.Open(st, nil); err != nil {
+		r.close()
+		switch {
+		case errors.Is(err, gogit.ErrRepositoryNotExists):
 			return nil, errNotRepository
+		case strings.Contains(strings.ToLower(err.Error()), "worktreeconfig"):
+			return nil, fmt.Errorf("it uses per-worktree config (extensions.worktreeConfig, which git sparse-checkout turns on), which vibe can't read yet: the Review tab and the header's git status don't work in this repository")
 		}
 		return nil, err
 	}
-	repo := &repository{git: r, top: top, gitDirs: gitDirs}
-	repo.autocrlf = repo.setting("core", "autocrlf") == "true" || repo.setting("core", "autocrlf") == "input"
-	return repo, nil
+	if r.work, err = os.OpenRoot(top); err != nil {
+		r.close()
+		return nil, err
+	}
+	crlf := r.setting("core", "autocrlf")
+	r.autocrlf = crlf == "true" || crlf == "input"
+	r.fileMode = r.setting("core", "filemode") != "false"
+	return r, nil
+}
+
+// openChecked opens the folder at path, which must be a folder (not a link
+// to one), and be the one opened: else something was swapped in meanwhile.
+func openChecked(path string) (*os.Root, error) {
+	before, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !before.IsDir() {
+		return nil, fmt.Errorf("%s isn't a folder", path)
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := root.Stat(".")
+	if err != nil || !os.SameFile(before, opened) {
+		root.Close()
+		return nil, fmt.Errorf("%s changed while it was being opened", path)
+	}
+	return root, nil
+}
+
+func (r *repository) close() {
+	for _, root := range []*os.Root{r.work, r.common, r.gitDir} {
+		if root != nil {
+			root.Close()
+		}
+	}
 }
 
 // inFolderTree says path is folder or in it.
@@ -166,26 +227,37 @@ func (r *repository) setting(section, key string) string {
 		}
 	}
 	for _, file := range systemConfigs() {
-		data, err := readPlain(file, 1<<20)
-		if err != nil {
-			continue
-		}
-		cfg := formatcfg.New()
-		if err := formatcfg.NewDecoder(bytes.NewReader(data)).Decode(cfg); err != nil {
-			continue
-		}
-		if v := cfg.Section(section).Option(key); v != "" {
+		if v := hostSetting(file, section, key); v != "" {
 			return strings.ToLower(v)
 		}
 	}
 	return ""
 }
 
+// hostSetting is a setting in a config file of the host's own (not the
+// sandbox's: a link is followed, as git would), "" if it isn't there.
+func hostSetting(file, section, key string) string {
+	f, err := os.Open(file)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	cfg := formatcfg.New()
+	if err := formatcfg.NewDecoder(io.LimitReader(f, 1<<20)).Decode(cfg); err != nil {
+		return ""
+	}
+	return cfg.Section(section).Option(key)
+}
+
 // systemConfigs are where git keeps its system config, as git finds it:
 // $GIT_CONFIG_SYSTEM, else beside git itself (Git for Windows keeps it in
-// its own etc/, as Homebrew's git does), else /etc/gitconfig. go-git looks
-// in /etc alone, so on Windows it would miss core.autocrlf, which Git for
-// Windows sets there.
+// its own etc/; a git installed by Homebrew, in the prefix it's linked
+// into, and also its keg's), else /etc/gitconfig. go-git looks in /etc
+// alone, so on Windows it would miss core.autocrlf, which Git for Windows
+// sets there.
 func systemConfigs() []string {
 	if os.Getenv("GIT_CONFIG_NOSYSTEM") != "" {
 		return nil
@@ -195,11 +267,14 @@ func systemConfigs() []string {
 	}
 	var out []string
 	if git, err := exec.LookPath("git"); err == nil {
-		if real, err := filepath.EvalSymlinks(git); err == nil {
-			git = real
+		beside := func(git string) {
+			bin := filepath.Dir(git)
+			out = append(out, filepath.Join(bin, "..", "etc", "gitconfig"), filepath.Join(bin, "..", "..", "etc", "gitconfig"))
 		}
-		bin := filepath.Dir(git)
-		out = append(out, filepath.Join(bin, "..", "etc", "gitconfig"), filepath.Join(bin, "..", "..", "etc", "gitconfig"))
+		beside(git)
+		if real, err := filepath.EvalSymlinks(git); err == nil && real != git {
+			beside(real)
+		}
 	}
 	if data := os.Getenv("ProgramData"); data != "" {
 		out = append(out, filepath.Join(data, "Git", "config"))
@@ -383,176 +458,113 @@ func editTree(o *overlay, base *object.Tree, edits map[string]edit) (plumbing.Ha
 
 var emptyTreeHash = plumbing.NewHash(emptyTree)
 
-// workTree is the folder's work tree as a tree (HEAD's, with what has
-// changed since made in o), and its untracked files, which git doesn't
-// list in a diff but the tab shows as added.
+// workTree is the folder's work tree as a tree (HEAD's, with what differs
+// from it made in o: what's staged, what's changed on disk, what was taken
+// out of the index), and its untracked files, which git doesn't list in a
+// diff but the tab shows as added.
 func (r *repository) workTree(o *overlay, head *object.Commit) (*object.Tree, []string, error) {
-	wt, err := r.git.Worktree()
-	if err != nil {
-		return nil, nil, err
-	}
-	wt.Excludes = append(wt.Excludes, r.ignored()...)
-	status, err := wt.Status()
-	if err != nil {
-		return nil, nil, err
-	}
 	base, err := treeOf(head)
 	if err != nil {
 		return nil, nil, err
 	}
-	root, err := os.OpenRoot(r.top)
+	sc, err := r.scan(o, base, true)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer root.Close()
-	edits := map[string]edit{}
-	var untracked []string
-	for p, s := range status {
-		switch {
-		case s.Worktree == gogit.Untracked:
-			untracked = append(untracked, p)
-			continue
-		case s.Staging == gogit.Unmodified && s.Worktree == gogit.Unmodified:
-			continue
-		}
-		e, ok, err := r.onDisk(o, root, base, p)
-		if err != nil {
-			return nil, nil, err
-		}
-		if ok {
-			edits[p] = e
-		}
-	}
-	h, err := editTree(o, base, edits)
+	h, err := editTree(o, base, sc.edits)
 	if err != nil {
 		return nil, nil, err
 	}
 	if h == emptyTreeHash {
-		sort.Strings(untracked)
-		return &object.Tree{}, untracked, nil
+		return &object.Tree{}, sc.untracked, nil
 	}
 	t, err := object.GetTree(o, h)
 	if err != nil {
 		return nil, nil, err
 	}
-	sort.Strings(untracked)
-	return t, untracked, nil
-}
-
-// ignored are the user's own and the system's ignore patterns, which
-// go-git's status doesn't read by itself.
-func (r *repository) ignored() []gitignore.Pattern {
-	var out []gitignore.Pattern
-	root := osfs.New("/")
-	if ps, err := gitignore.LoadGlobalPatterns(root); err == nil {
-		out = append(out, ps...)
-	}
-	if ps, err := gitignore.LoadSystemPatterns(root); err == nil {
-		out = append(out, ps...)
-	}
-	return out
-}
-
-// onDisk is the edit making path in base what it is on disk: a file's
-// content, a link's target, or gone; ok false for what a tree doesn't hold
-// (a folder: a submodule, say).
-func (r *repository) onDisk(o *overlay, root *os.Root, base *object.Tree, p string) (edit, bool, error) {
-	native := filepath.FromSlash(p)
-	info, err := root.Lstat(native)
-	if errors.Is(err, os.ErrNotExist) {
-		return edit{gone: true}, true, nil
-	}
-	if err != nil {
-		return edit{}, false, err
-	}
-	var was *object.TreeEntry
-	if base != nil {
-		if e, err := base.FindEntry(p); err == nil {
-			was = e
-		}
-	}
-	var data []byte
-	mode := filemode.Regular
-	switch {
-	case info.Mode()&os.ModeSymlink != 0:
-		target, err := root.Readlink(native)
-		if err != nil {
-			return edit{}, false, err
-		}
-		data, mode = []byte(filepath.ToSlash(target)), filemode.Symlink
-	case info.Mode().IsRegular():
-		if info.Size() > maxFileBytes {
-			// Too large to read: a blob standing for it, so the tab lists it.
-			h, err := o.blob([]byte(fmt.Sprintf("%d bytes, %d", info.Size(), info.ModTime().UnixNano())))
-			if err != nil {
-				return edit{}, false, err
-			}
-			o.large[h] = true
-			return edit{hash: h, mode: mode}, true, nil
-		}
-		if data, err = readIn(root, native, maxFileBytes); err != nil {
-			return edit{}, false, err
-		}
-		if info.Mode().Perm()&0o111 != 0 {
-			mode = filemode.Executable
-		}
-		// Windows has no executable bit: the mode the repository had stands.
-		if was != nil && os.PathSeparator == '\\' && was.Mode == filemode.Executable {
-			mode = filemode.Executable
-		}
-		data = r.asCommitted(o, p, was, data)
-	default:
-		return edit{}, false, nil
-	}
-	h, err := o.blob(data)
-	if err != nil {
-		return edit{}, false, err
-	}
-	return edit{hash: h, mode: mode}, true, nil
+	return t, sc.untracked, nil
 }
 
 // asCommitted is a file's content as git would commit it, without running
-// anything: CRLFs as LFs with core.autocrlf; and a file kept in Git LFS
-// (its committed blob a pointer) as the pointer to its content, as git-lfs
-// would make it.
-func (r *repository) asCommitted(o *overlay, p string, was *object.TreeEntry, data []byte) []byte {
-	if was != nil && !isPointer(data) {
-		if old, err := o.EncodedObject(plumbing.BlobObject, was.Hash); err == nil && old.Size() < 1024 {
-			if rd, err := old.Reader(); err == nil {
-				committed, _ := io.ReadAll(rd)
-				rd.Close()
-				if isPointer(committed) {
-					sum := sha256.Sum256(data)
-					return []byte("version https://git-lfs.github.com/spec/v1\noid sha256:" + hex.EncodeToString(sum[:]) + "\nsize " + strconv.Itoa(len(data)) + "\n")
+// anything: CRLFs as LFs as git would make them (see lfInRepository); and
+// a file kept in Git LFS (its committed blob a pointer, was) as the
+// pointer to its content, as git-lfs would make it.
+func (r *repository) asCommitted(o *overlay, p string, was plumbing.Hash, data []byte) ([]byte, error) {
+	if !was.IsZero() && !isPointer(data) {
+		// A pointer is small: a blob that isn't isn't read to find out.
+		if size, err := o.EncodedObjectSize(was); err == nil && size < 1024 {
+			if old, err := o.EncodedObject(plumbing.BlobObject, was); err == nil {
+				if rd, err := old.Reader(); err == nil {
+					committed, _ := io.ReadAll(io.LimitReader(rd, 1024))
+					rd.Close()
+					if isPointer(committed) {
+						sum := sha256.Sum256(data)
+						return []byte("version https://git-lfs.github.com/spec/v1\noid sha256:" + hex.EncodeToString(sum[:]) + "\nsize " + strconv.Itoa(len(data)) + "\n"), nil
+					}
 				}
 			}
 		}
 	}
-	if r.lfInRepository(p, data) {
-		return bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
+	lf, err := r.lfInRepository(p, data)
+	if err != nil {
+		return nil, err
 	}
-	return data
+	if lf {
+		return bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n")), nil
+	}
+	return data, nil
 }
 
 // lfInRepository says file p's line ends are LFs in the repository, CRLFs
 // made into LFs as git would commit it: by .gitattributes (text, eol; not
-// -text, binary), else by core.autocrlf, for what isn't binary.
-func (r *repository) lfInRepository(p string, data []byte) bool {
-	if r.attributes == nil {
-		patterns, _ := gitattributes.ReadPatterns(osfs.New(r.top, osfs.WithBoundOS()), nil)
-		r.attributes = gitattributes.NewMatcher(patterns)
+// -text, binary; text=auto only for what isn't binary), else by
+// core.autocrlf, for what isn't binary.
+func (r *repository) lfInRepository(p string, data []byte) (bool, error) {
+	patterns, err := r.attributesFor(p)
+	if err != nil {
+		return false, err
 	}
-	attrs, _ := r.attributes.Match(strings.Split(p, "/"), []string{"text", "eol", "binary"})
+	attrs, _ := gitattributes.NewMatcher(patterns).Match(strings.Split(p, "/"), []string{"text", "eol", "binary"})
 	text, eol, binary := attrs["text"], attrs["eol"], attrs["binary"]
 	switch {
 	case binary != nil && binary.IsSet(), text != nil && text.IsUnset():
-		return false
-	case text != nil && text.IsSet(), eol != nil && eol.IsValueSet():
-		return true
+		return false, nil
 	case text != nil && text.IsValueSet() && text.Value() == "auto":
-		return !isBinary(data)
+		return !isBinary(data), nil
+	case text != nil && text.IsSet():
+		return true, nil
+	case eol != nil && eol.IsValueSet():
+		return !isBinary(data), nil
 	}
-	return r.autocrlf && !isBinary(data)
+	return r.autocrlf && !isBinary(data), nil
+}
+
+// attributesFor are the .gitattributes patterns bearing on file p: the git
+// directory's info/attributes, then each folder's from the top down to
+// p's, each file read once, from in the work tree (no link out, no FIFO).
+func (r *repository) attributesFor(p string) ([]gitattributes.MatchAttribute, error) {
+	var out []gitattributes.MatchAttribute
+	if data, err := readIn(r.gitDir, filepath.Join("info", "attributes"), 1<<20); err == nil {
+		ps, _ := gitattributes.ReadAttributes(bytes.NewReader(data), nil, true)
+		out = append(out, ps...)
+	}
+	parts := strings.Split(p, "/")
+	for depth := 0; depth < len(parts); depth++ {
+		folder := strings.Join(parts[:depth], "/")
+		ps, seen := r.attributes[folder]
+		if !seen {
+			data, err := readIn(r.work, filepath.FromSlash(path.Join(folder, ".gitattributes")), 1<<20)
+			switch {
+			case err == nil:
+				ps, _ = gitattributes.ReadAttributes(bytes.NewReader(data), parts[:depth], depth == 0)
+			case !errors.Is(err, os.ErrNotExist):
+				return nil, fmt.Errorf("%s can't be read: %w", path.Join(folder, ".gitattributes"), err)
+			}
+			r.attributes[folder] = ps
+		}
+		out = append(out, ps...)
+	}
+	return out, nil
 }
 
 func isPointer(data []byte) bool {

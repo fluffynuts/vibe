@@ -3,7 +3,6 @@ package review
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -16,11 +15,11 @@ const maxFileLines = 200000
 // review shows.
 const maxFileBytes = 64 << 20
 
-// FileLines is path's lines, as the diff of r has its new side (see
+// fileLines is path's lines, as the diff of r has its new side (see
 // NewTextOf). They're what the Review tab shows when asked for more of a
 // file's context than the diff has.
-func FileLines(ctx context.Context, dir string, r Review, path string) ([]string, error) {
-	text, err := NewTextOf(ctx, dir, r, path)
+func fileLines(ctx context.Context, dir string, r Review, path string) ([]string, error) {
+	text, err := newTextOf(ctx, dir, r, path)
 	if err != nil {
 		return nil, err
 	}
@@ -41,12 +40,12 @@ func inFolder(path string) (string, error) {
 	return clean, nil
 }
 
-// NewTextOf is path's text as review r has its new side: in the commit r is
+// newTextOf is path's text as review r has its new side: in the commit r is
 // of, at HEAD for unpushed commits, else in the folder dir as it is. path is
 // relative to the repository's top, and nothing outside it is read: not by
 // "..", not through a link. (A comment's file, which this reads, comes from
 // the agent.)
-func NewTextOf(ctx context.Context, dir string, r Review, path string) (string, error) {
+func newTextOf(ctx context.Context, dir string, r Review, path string) (string, error) {
 	clean, err := inFolder(path)
 	if err != nil {
 		return "", err
@@ -55,6 +54,7 @@ func NewTextOf(ctx context.Context, dir string, r Review, path string) (string, 
 	if err != nil {
 		return "", err
 	}
+	defer repo.close()
 	switch {
 	case r.Commit != "":
 		c, err := repo.commit(r.Commit)
@@ -64,19 +64,17 @@ func NewTextOf(ctx context.Context, dir string, r Review, path string) (string, 
 		return blobText(c, filepath.ToSlash(clean))
 	case r.Unpushed:
 		head, err := repo.head()
-		if err != nil || head == nil {
+		if err != nil {
+			return "", err
+		}
+		if head == nil {
 			return "", fmt.Errorf("the folder has no commits")
 		}
 		return blobText(head, filepath.ToSlash(clean))
 	}
-	root, err := os.OpenRoot(repo.top)
-	if err != nil {
-		return "", err
-	}
-	defer root.Close()
 	// Only a plain file in the folder: a FIFO would wait forever, and a link
 	// out of it isn't followed.
-	data, err := readIn(root, clean, maxFileBytes)
+	data, err := readIn(repo.work, clean, maxFileBytes)
 	if err != nil {
 		return "", fmt.Errorf("%q can't be read: %w", path, err)
 	}

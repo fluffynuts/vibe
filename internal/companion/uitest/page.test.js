@@ -2079,5 +2079,113 @@ test('a long file shown stays shown through a poll, with no comment being writte
 // vibe gives back: a poll that set out before can't undo it.
 test('the review is changed from one place only', () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'ui', 'app.js'), 'utf8')
-  assert.equal(src.split("post('/api/review/do'").length - 1, 1)
+  // Every call that changes the review (do, ask, submit, start) goes
+  // through changeReview, which takes the review vibe gives back.
+  const calls = src.match(/[\w.]+\(\s*'\/api\/review\/(do|ask|submit|start)'/g) || []
+  assert.ok(calls.length >= 4, calls.join(' | '))
+  for (const call of calls) assert.match(call, /^changeReview\(/, call)
+  assert.equal(src.split('await post(path, body)').length - 1, 1, 'changeReview posts')
+})
+
+test("a prompt never given to the agent says so, not that it was sent", async () => {
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'review it', receipt: 'undelivered' }, { seq: 2, kind: 'error', text: "the review couldn't be started" }], running: false })
+  try {
+    const ticks = p.$('convo-log').querySelector('.ticks')
+    assert.equal(ticks.textContent, '✕')
+    assert.match(ticks.title, /not given to the agent/i)
+  } finally { p.close() }
+})
+
+test('a question asked stays shown when a poll that set out before it lands', async () => {
+  const before = { lastId: 1, started: '2026-10-16T10:00:00Z', threads: [{ id: 1, status: 'open', comments: said('why?') }] }
+  const after = { ...before, threads: [{ id: 1, status: 'open', comments: [...said('why?'), { author: 'user', body: 'my question', at: '2026-10-16T10:07:00Z', sent: true }] }] }
+  let answerPoll
+  let slow = false
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': () => (!slow ? { review: before, diff: [] } : new Promise((resolve) => { answerPoll = () => resolve({ review: before }) })),
+      '/api/review/ask': () => ({ ok: true, review: after }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+  })
+  try {
+    slow = true
+    const pollGone = p.poll().catch(() => {})
+    await new Promise((resolve) => setImmediate(resolve))
+    const box = p.$('review-thread-1').querySelector('textarea[data-thread]')
+    box.value = 'my question'
+    box.dispatchEvent(new p.window.Event('input', { bubbles: true }))
+    p.button('Ask the agent', p.$('review-thread-1')).click()
+    for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve))
+    answerPoll()
+    await pollGone
+    await p.settle()
+    assert.ok(p.$('review-thread-1').textContent.includes('my question'), 'still shown')
+  } finally { p.close() }
+})
+
+test('a comment named in bold link text is no button in the link either', async () => {
+  const p = await talkPage('[**see #3**](http://localhost:1/x) and [_#2_](http://localhost:1/y)')
+  try {
+    assert.equal(p.$('convo-log').querySelector('a .thread-ref'), null)
+  } finally { p.close() }
+})
+
+test('a diff that set out before Refresh is not shown when it lands: the fresh one is', async () => {
+  const waiting = []
+  let loads = 0
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': (call) => {
+        if (!call.query.includes('diff=1')) return { review: started }
+        const n = ++loads
+        return new Promise((resolve) => waiting.push(() => resolve({ review: started, diff: oneFile('load ' + n) })))
+      },
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'log' },
+  })
+  const turns = async () => { for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve)) }
+  try {
+    p.$('tab-review').click()
+    await turns()
+    p.$('review-refresh').click()
+    await turns()
+    waiting.shift()()
+    await turns()
+    assert.ok(!codeShown(p).includes('load 1'), 'the stale diff was drawn')
+    waiting.shift()()
+    await turns()
+    assert.ok(codeShown(p).includes('load 2'), codeShown(p).join('|'))
+  } finally { p.close() }
+})
+
+// A review that can't be read is said to be on the tab, with a way out:
+// start afresh, the old one kept.
+test('an unreadable review offers to start afresh, and does, asking first', async () => {
+  let broken = true
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': () => (broken
+        ? { status: 500, body: { error: "the review in review.json can't be read", code: 'review-unreadable' } }
+        : { review: started, diff: [] }),
+      '/api/review/afresh': () => { broken = false; return { review: started } },
+      '/api/review/options': { uncommitted: true },
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+  })
+  try {
+    assert.equal(p.$('review-broken').hidden, false)
+    assert.match(p.$('review-broken').textContent, /can't be read/)
+    await p.click(p.button('Start afresh', p.$('review-broken')))
+    assert.ok(p.$('confirm').open, 'asked first')
+    await p.confirm(true)
+    assert.deepEqual(p.posted('/api/review/afresh'), [{}])
+    assert.equal(p.$('review-broken').hidden, true)
+  } finally { p.close() }
 })

@@ -110,36 +110,30 @@ function drop(request) {
 
 // startAndWait drops a start, and waits until vibe has taken it in (it does
 // every couple of seconds), so what follows (diff, above all) is of the new
-// review, as the tab shows it. Taken in is its file gone from the inbox and
-// the review saved after (agentAt); the review then is this start's, else
-// it says what happened instead.
+// review, as the tab shows it. vibe notes what became of each request by
+// its file's name (the review's "taken"): this one's says whether it was
+// carried out, or refused and why.
 function startAndWait(request) {
-  const before = load();
   const dropped = drop(request);
+  const name = path.basename(dropped);
   const limit = Number(process.env.VIBE_REVIEW_START_WAIT_MS) || 15000;
   const deadline = Date.now() + limit;
   const pause = new Int32Array(new SharedArrayBuffer(4));
-  const wait = function (done) {
-    while (!done()) {
-      if (Date.now() > deadline) return false;
-      Atomics.wait(pause, 0, 0, 100);
+  let taken;
+  while (Date.now() <= deadline) {
+    if (!fs.existsSync(dropped)) {
+      taken = (load().taken || []).filter(function (t) { return t.name === name; }).pop();
+      if (taken) break;
     }
-    return true;
-  };
-  if (!wait(function () { return !fs.existsSync(dropped); })) {
+    Atomics.wait(pause, 0, 0, 100);
+  }
+  if (taken && taken.problem) fail("the Review tab refused the start: " + taken.problem.replace(/^start: /, ""), 1);
+  if (taken) return;
+  if (fs.existsSync(dropped)) {
     fail("the Review tab hasn't taken the start in after " + Math.round(limit / 1000) + "s: is vibe running on the host, " +
       "with its companion page (not --no-companion, nor companion: off)? The start waits in the inbox, and is taken in once it is.", 1);
   }
-  let now = load();
-  wait(function () { now = load(); return now.agentAt !== before.agentAt; });
-  const ours = now.started && now.started !== before.started &&
-    (now.ref || undefined) === request.ref && (now.commit || undefined) === request.commit &&
-    !!now.unpushed === !!request.unpushed && (now.note || undefined) === request.note;
-  if (ours) return;
-  const fresh = (now.problems || []).filter(function (p) { return (before.problems || []).indexOf(p) < 0; });
-  const refused = fresh.filter(function (p) { return /^start: /.test(p); }).pop();
-  if (refused) fail("the Review tab refused the start: " + refused.replace(/^start: /, ""), 1);
-  fail("the start was taken in, but the review now isn't it (another was started on the page?): see vibe-review list", 1);
+  fail("the start was taken in, but vibe hasn't said what became of it: see vibe-review list", 1);
 }
 
 // linesOf is lines first to last of file as they read now, for the tab to

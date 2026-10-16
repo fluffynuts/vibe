@@ -33,7 +33,10 @@ async function openPage({ routes = {}, storage = {} } = {}) {
       // A route may answer later: a promise, for a call still on its way.
       const body = typeof route === 'function' ? await route(call) : route || {}
       // jsdom has no Response of its own: node's is the one fetch gives.
-      return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      // A route answers with an error status as { status, body }.
+      const status = body && body.status && body.body ? body.status : 200
+      const sent = status === 200 ? body : body.body
+      return new Response(JSON.stringify(sent), { status, headers: { 'Content-Type': 'application/json' } })
     } finally {
       inFlight--
     }
