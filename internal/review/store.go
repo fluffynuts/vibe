@@ -57,6 +57,10 @@ type Review struct {
 	// as nobody saw them fail.
 	Problems []string  `json:"problems,omitempty"`
 	Started  time.Time `json:"started,omitempty"`
+	// Viewed is the files the user has ticked as viewed: path to the
+	// fingerprint of the change they saw (a File's), so one changed since
+	// can be told.
+	Viewed map[string]string `json:"viewed,omitempty"`
 	// AgentAt is when the agent's requests were last taken in: the page
 	// marks the tab when it's later than the user has seen.
 	AgentAt time.Time `json:"agentAt,omitempty"`
@@ -72,6 +76,9 @@ type Thread struct {
 	Side    string `json:"side,omitempty"` // "new" or "old"
 	Line    int    `json:"line,omitempty"`
 	EndLine int    `json:"endLine,omitempty"`
+	// MovedFrom is the line the comment was made on, when it has since
+	// followed its code (lines above it came or went); 0 if it hasn't.
+	MovedFrom int `json:"movedFrom,omitempty"`
 	// Code is the text of the lines when the comment was made, to tell
 	// when they've changed since.
 	Code     string    `json:"code,omitempty"`
@@ -133,7 +140,7 @@ type Request struct {
 }
 
 // userOps are what the user can do from the page: the rest is the agent's.
-var userOps = map[string]bool{"start": true, "close": true, "reopen-review": true, "comment": true, "reply": true, "resolve": true, "dismiss": true, "reopen": true, "edit": true, "delete": true}
+var userOps = map[string]bool{"view": true, "unview": true, "start": true, "close": true, "reopen-review": true, "comment": true, "reply": true, "resolve": true, "dismiss": true, "reopen": true, "edit": true, "delete": true}
 
 // Store keeps a sandbox's review in dir (~/.vibe/reviews/<sandbox>): the
 // review in review.json, of which it's the only writer, and an inbox the
@@ -283,6 +290,24 @@ func (s *Store) apply(r *Review, req Request, author string) error {
 			state = ""
 		}
 		*r = Review{Ref: req.Ref, Commit: req.Commit, Unpushed: req.Unpushed, Note: req.Note, State: state, Threads: []Thread{}, Started: s.now(), LastID: r.LastID}
+	case "view", "unview":
+		if author != User {
+			return fmt.Errorf("ticking files as viewed is the user's to do")
+		}
+		if req.File == "" {
+			return fmt.Errorf("which file?")
+		}
+		if req.Op == "unview" {
+			delete(r.Viewed, req.File)
+			break
+		}
+		if req.Code == "" {
+			return fmt.Errorf("a file ticked as viewed needs the fingerprint of the change seen")
+		}
+		if r.Viewed == nil {
+			r.Viewed = map[string]string{}
+		}
+		r.Viewed[req.File] = req.Code
 	case "close", "reopen-review":
 		if author != User {
 			return fmt.Errorf("closing or reopening the review is the user's to do")
@@ -479,5 +504,34 @@ func (s *Store) save(r Review) error {
 func (s *Store) Put(r Review) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.save(r)
+}
+
+// Move is a comment (thread Thread) that has followed its code to Line.
+type Move struct {
+	Thread int
+	Line   int
+}
+
+// Move moves comments to where their code is now, keeping the line each
+// was first made on. One deleted in the meantime is no longer there to move.
+func (s *Store) Move(moves []Move) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, err := s.load()
+	if err != nil {
+		return err
+	}
+	for _, m := range moves {
+		t := r.thread(m.Thread)
+		if t == nil {
+			continue
+		}
+		if t.MovedFrom == 0 {
+			t.MovedFrom = t.Line
+		}
+		t.EndLine += m.Line - t.Line
+		t.Line = m.Line
+	}
 	return s.save(r)
 }

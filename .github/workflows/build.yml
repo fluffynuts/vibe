@@ -34,6 +34,11 @@ jobs:
       # jsdom, for the companion page's tests: go test fails them without it
       # in CI rather than skipping.
       - run: npm ci --prefix internal/companion/uitest
+      # Firefox, for the companion page's tests that need a real browser:
+      # on Linux only (go test skips them elsewhere, but not in CI on Linux).
+      - if: runner.os == 'Linux'
+        working-directory: internal/companion/uitest
+        run: npx playwright install --with-deps firefox
       - run: go vet ./...
       - run: go test ./...
 

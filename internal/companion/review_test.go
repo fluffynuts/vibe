@@ -517,3 +517,23 @@ func TestABusyAgentLeavesTheLastReviewAsItWas(t *testing.T) {
 		t.Errorf("before %+v\nafter %+v", before, after)
 	}
 }
+
+// When lines come or go above a comment, it follows its code there; if
+// the code is gone, it stays where it was.
+func TestACommentFollowsItsCodeWhenTheDiffIsWorkedOut(t *testing.T) {
+	s, store := reviewTabServer(t)
+	dir := s.cfg.ReviewTab.Workspace
+	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Code: "two", Body: "why two?"}, review.Agent)
+	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 1, Code: "gone soon", Body: "?"}, review.Agent)
+	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("zero\nhalf\none\ntwo\n"), 0o644)
+	threads := getReview(t, s, "/api/review?diff=1").Review.Threads
+	if th := threads[0]; th.Line != 4 || th.EndLine != 4 || th.MovedFrom != 2 {
+		t.Errorf("followed: %+v", th)
+	}
+	if th := threads[1]; th.Line != 1 || th.MovedFrom != 0 {
+		t.Errorf("its code gone, it stays: %+v", th)
+	}
+	if th, _ := store.Load(); th.Threads[0].Line != 4 {
+		t.Error("the move wasn't kept")
+	}
+}

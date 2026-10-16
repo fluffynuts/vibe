@@ -222,6 +222,16 @@ ul.plain li .spacer { flex: 1; }
 /* a file's number in the reading order, in its header and in the tree */
 .review-step { display: inline-block; min-width: 1.4em; padding: 0 4px; border-radius: 9px; background: var(--accent); color: var(--accent-text); font: 600 11px/1.5 system-ui, sans-serif; text-align: center; }
 .review-tree .review-step { margin-left: 6px; flex: none; }
+/* the Viewed tick, after a file's figures; a viewed file is folded to its header, and dimmed in the tree */
+/* the formatting toolbar over a comment box: the composer's beside Write and Preview */
+.md-toolbar { display: flex; flex-wrap: wrap; gap: 2px; margin: 4px 0; }
+.md-toolbar button { padding: 0 6px; min-width: 1.8em; font-size: 12px; line-height: 1.8; }
+.md-toolbar button[aria-label^="Bold"] { font-weight: 700; }
+.md-toolbar button[aria-label^="Italic"] { font-style: italic; }
+.review-viewed { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.review-viewed .review-changed { color: var(--amber); margin-right: 4px; }
+.review-file.viewed > header { border-bottom: 0; }
+.review-tree button.viewed .name { opacity: .5; }
 /* a file's figures, on the right of its header: +added −deleted, five squares, its length */
 .diffstat { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font: 12px var(--mono); }
 .diffstat .adds { color: var(--ok); }
@@ -239,10 +249,10 @@ ul.plain li .spacer { flex: 1; }
 .review-lines td.sign { padding: 0; text-align: center; color: var(--muted); user-select: none; }
 .review-lines td.code { padding-left: 2px; white-space: pre-wrap; word-break: break-word; }
 /* As GitHub shows them: the line's number a stronger shade of its colour. */
-.review-lines td.code.add, .review-lines td.sign.add { background: color-mix(in srgb, var(--ok) 14%, transparent); }
-.review-lines td.num.add { background: color-mix(in srgb, var(--ok) 30%, transparent); color: var(--text); }
-.review-lines td.code.del, .review-lines td.sign.del { background: color-mix(in srgb, var(--bad) 14%, transparent); }
-.review-lines td.num.del { background: color-mix(in srgb, var(--bad) 30%, transparent); color: var(--text); }
+.review-lines td.code.add, .review-lines td.sign.add { background-color: color-mix(in srgb, var(--ok) 14%, transparent); }
+.review-lines td.num.add { background-color: color-mix(in srgb, var(--ok) 30%, transparent); color: var(--text); }
+.review-lines td.code.del, .review-lines td.sign.del { background-color: color-mix(in srgb, var(--bad) 14%, transparent); }
+.review-lines td.num.del { background-color: color-mix(in srgb, var(--bad) 30%, transparent); color: var(--text); }
 .review-lines td.blank { background: repeating-linear-gradient(-45deg, var(--row-hover) 0 6px, transparent 6px 12px); }
 .review-lines.split td.start { border-left: 1px solid var(--line); }
 .review-lines tr.hunk td { color: var(--muted); background: color-mix(in srgb, var(--accent) 10%, transparent); padding: 4px 10px; }
@@ -257,7 +267,8 @@ ul.plain li .spacer { flex: 1; }
 .review-lines td.num:hover button.line-comment, .review-lines button.line-comment:focus-visible { display: block; }
 .review-composer { border: 1px solid var(--line); border-radius: 6px; background: var(--bg); padding: 8px 10px; font: 14px/1.45 system-ui, sans-serif; white-space: normal; }
 .review-compose-head { font-weight: 600; margin-bottom: 6px; }
-.review-compose-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+.review-compose-tabs { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+.review-compose-tabs > [role=tablist] { display: flex; gap: 2px; }
 .review-compose-tab { padding: 4px 12px; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0; background: none; color: var(--muted); font: inherit; cursor: pointer; }
 .review-compose-tab.on { border-color: var(--line); background: var(--panel); color: var(--text); }
 .review-compose-actions { margin-top: 8px; }
@@ -269,6 +280,10 @@ ul.plain li .spacer { flex: 1; }
 .review-thread .comment-actions { display: inline-flex; gap: 4px; margin-left: 8px; }
 .review-thread .comment-actions button { padding: 0 6px; font-size: 12px; }
 .review-lines tr.marked td.num:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+/* the lines the comment being written is on, on their own side: a tint over the cell's own colour
+   (an added or deleted line's too), and an accent bar down the line numbers */
+.review-lines td.sel { background-image: linear-gradient(color-mix(in srgb, var(--accent) 28%, transparent), color-mix(in srgb, var(--accent) 28%, transparent)); }
+.review-lines td.num.sel { box-shadow: inset 3px 0 0 var(--accent); }
 .review-lines tr.threads > td { padding: 6px 10px; font: inherit; font-family: inherit; }
 .review-thread { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 4px 0; background: var(--bg); font: 14px/1.45 system-ui, sans-serif; white-space: normal; }
 .review-thread.resolved, .review-thread.dismissed { opacity: .7; }
@@ -433,6 +448,8 @@ html.themed .commands li[aria-selected="true"] {
 .offline { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center;
   background: rgba(250, 250, 250, .55); backdrop-filter: blur(6px) saturate(.7); -webkit-backdrop-filter: blur(6px) saturate(.7); }
 .offline[hidden] { display: none; }
+/* this page is older than the vibe serving it: a bar across the top, not in the way */
+.page-outdated { position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 900; margin-top: 6px; padding: 6px 12px; border: 1px solid var(--amber); border-radius: 6px; background: var(--panel); box-shadow: 0 4px 12px rgba(0, 0, 0, .25); font-size: 13px; }
 .offline-box { max-width: 34em; margin: 16px; padding: 20px 24px; text-align: center; border: 1px solid var(--line);
   border-radius: 12px; background: var(--panel); box-shadow: 0 8px 32px rgba(0, 0, 0, .18); }
 .offline-title { margin: 0 0 6px; font-size: 18px; font-weight: 700; color: var(--bad); }

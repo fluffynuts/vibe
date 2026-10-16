@@ -26,8 +26,10 @@ package companion
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -135,6 +137,9 @@ type Server struct {
 	convo conversation
 	admin admin
 	asked asked
+	// pageVersion stands for the page's files as this vibe serves them: a
+	// page left open across a rebuild of vibe can tell it's out of date.
+	pageVersion string
 }
 
 // asked is the thread of the review the user last asked the agent about,
@@ -149,7 +154,7 @@ type asked struct {
 // New makes a Server without listening, which is how tests drive Handler.
 func New(cfg Config) *Server {
 	ui, _ := fs.Sub(uiFiles, "ui")
-	return &Server{cfg: cfg, ui: ui, cache: newCache(time.Second)}
+	return &Server{cfg: cfg, ui: ui, cache: newCache(time.Second), pageVersion: versionOf(ui)}
 }
 
 // Start listens on 127.0.0.1 at cfg.Port and serves in the background.
@@ -382,6 +387,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"attention":         attention,
 		"reviewAt":          reviewAt,
+		"pageVersion":       s.pageVersion,
 		"themeColor":        theme,
 		"sandbox":           s.cfg.Sandbox,
 		"agent":             s.cfg.Agent,
@@ -665,4 +671,22 @@ func (c *cache) clear() {
 	c.mu.Lock()
 	c.entries = map[string]*cacheEntry{}
 	c.mu.Unlock()
+}
+
+// versionOf is a digest of the page's files (all of them, in name order).
+func versionOf(ui fs.FS) string {
+	h := sha256.New()
+	fs.WalkDir(ui, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := fs.ReadFile(ui, path)
+		if err != nil {
+			return err
+		}
+		io.WriteString(h, path+"\x00")
+		h.Write(data)
+		return nil
+	})
+	return hex.EncodeToString(h.Sum(nil)[:8])
 }

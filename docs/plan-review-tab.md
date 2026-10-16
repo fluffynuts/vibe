@@ -127,3 +127,25 @@ reverting hunks, guided tours beyond the reading order, side-by-side view.
   UserPromptSubmit context, and its agent instructions), against the review feature's instructions. Until
   diffity goes, say "use vibe-review" when asking.
 - Not yet seen anywhere: a Windows host (is the review folder's path the same inside the sandbox?).
+
+## Five improvements (agreed 2026-10-16; built 2026-10-16, uncommitted then, tested in jsdom and against real git)
+
+In this order, each finished and tested before the next; all in vibe itself (no sandbox rebuild):
+
+1. **+ on lines opened from a gap**: every line opened from a gap gets the same **+** as a changed line;
+   in side by side, the left one comments on the old line and the right one on the new.
+2. **Comments on line ranges**: click one **+** and Shift-click another (only that: dragging a **+**
+   onto another line's moves the comment being written there, keeping its text, at the user's wish);
+   the composer says "lines R10–R14" and the lines are highlighted. One side: begun in one column and
+   ended in the other, the side both rows have a line on, the new file's first. May include lines
+   opened from a gap, but not lines still hidden. Tested in a real Firefox too (`uitest/firefox.test.js`).
+3. **Following a drifted comment**: on diff load, a new-side comment whose code is no longer at its
+   line is looked for in the file: exact, then ignoring indentation and spacing; the copy nearest the
+   old line if there are several. Found: it moves there for good, and says "moved from line 213". Not
+   found: it stays, marked "the code has changed since".
+4. **"Viewed" ticks**: a Viewed checkbox in each file's header; ticking folds the diff and dims the
+   file in the tree; "3/8 viewed" above the tree; kept in the review; a file whose diff changes after
+   ticking is unticked, saying "changed since you viewed it".
+5. **Formatting toolbar**: bold, italic, code, code block, link, quote, bulleted and numbered lists
+   (only what the page's Markdown shows), Ctrl+B / Ctrl+I / Ctrl+K, on every comment box (new,
+   reply, edit).

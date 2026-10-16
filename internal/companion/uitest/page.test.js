@@ -383,7 +383,8 @@ async function gappedPage() {
 // rowAfter is the row after the context row showing new line n.
 const rowAfter = (p, n) => {
   const rows = Array.from(p.$('review-files').querySelectorAll('tr'))
-  const i = rows.findIndex((r) => { const td = r.querySelector('td.num.context.start'); return td && td.textContent === String(n) })
+  // The number, not the + beside it.
+  const i = rows.findIndex((r) => { const td = r.querySelector('td.num.context.start'); return td && td.firstChild.textContent === String(n) })
   assert.ok(i >= 0, 'line ' + n + ' is shown')
   return rows[i + 1]
 }
@@ -984,4 +985,304 @@ test('opening the Conversation tab puts the cursor in the prompt box', async () 
   try {
     assert.equal(opened.window.document.activeElement, opened.$('convo-input'), 'when the page opens on it too')
   } finally { opened.close() }
+})
+
+// --- commenting on lines opened from a gap, and on ranges ----------------------------------------
+
+// openedPage is a review of c.txt (a change at lines 10-11 of 40; 1-9 and
+// 12-40 hidden) with the lines after the change opened from their gap.
+async function openedPage(diff = gapped) {
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': { review: { ...none, started: '2026-10-16T10:00:00Z' }, diff },
+      '/api/review/file': { lines: fileText },
+      '/api/review/do': (call) => ({ review: { ...none, started: '2026-10-16T10:00:00Z' } }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+  })
+  const down = Array.from(p.$('review-files').querySelectorAll('.gap-open')).find((b) => b.textContent === '↓')
+  await p.click(down)
+  return p
+}
+
+const plus = (p, label) => p.$('review-files').querySelector('[aria-label="Comment on line ' + label + '"]')
+const shiftClick = async (p, node) => { node.dispatchEvent(new p.window.MouseEvent('click', { bubbles: true, shiftKey: true })); await p.settle() }
+
+async function comment(p, text) {
+  await p.type(p.window.document.querySelector('.review-compose-text'), text)
+  await p.click(p.button('Comment', p.$('review-files')))
+  return p.posted('/api/review/do')
+}
+
+test('a line opened from a gap can be commented on, on either side', async () => {
+  const p = await openedPage()
+  try {
+    assert.ok(plus(p, 'R20'), 'the new line has a +')
+    await p.click(plus(p, 'R20'))
+    assert.deepEqual(await comment(p, 'why?'), [{ op: 'comment', file: 'c.txt', side: 'new', line: 20, code: 'line 20', body: 'why?' }])
+  } finally { p.close() }
+  const q = await openedPage()
+  try {
+    // After the change, old lines are one behind the new: old 19 is new 20.
+    await q.click(plus(q, 'L19'))
+    assert.deepEqual(await comment(q, 'and this?'), [{ op: 'comment', file: 'c.txt', side: 'old', line: 19, code: 'line 20', body: 'and this?' }])
+  } finally { q.close() }
+})
+
+test('Shift-click makes a range, its lines marked', async () => {
+  const p = await openedPage()
+  try {
+    await p.click(plus(p, 'R20'))
+    await shiftClick(p, plus(p, 'R22'))
+    assert.equal(p.$('review-files').querySelector('.review-compose-head').textContent, 'Add a comment on lines R20–R22')
+    const marked = Array.from(p.$('review-files').querySelectorAll('tr.selected td.num.start')).map((td) => td.textContent.replace('+', ''))
+    assert.deepEqual(marked, ['20', '21', '22'])
+    assert.deepEqual(await comment(p, 'these three'), [{ op: 'comment', file: 'c.txt', side: 'new', line: 20, endLine: 22, code: 'line 20\nline 21\nline 22', body: 'these three' }])
+  } finally { p.close() }
+})
+
+// Dragging a + onto another line's moves the comment being written there,
+// keeping what's written (as clicking that + does); only Shift-click makes
+// a range (the user's choice, 2026-10-16).
+test('dragging from one + to another moves the comment being written, keeping its text', async () => {
+  const p = await openedPage()
+  try {
+    await p.click(plus(p, 'R20'))
+    await p.type(p.window.document.querySelector('.review-compose-text'), 'kept')
+    plus(p, 'R20').dispatchEvent(new p.window.Event('pointerdown', { bubbles: true }))
+    plus(p, 'R23').dispatchEvent(new p.window.Event('pointerup', { bubbles: true }))
+    await p.settle()
+    assert.equal(p.$('review-files').querySelector('.review-compose-head').textContent, 'Add a comment on line R23')
+    assert.equal(p.window.document.querySelector('.review-compose-text').value, 'kept')
+  } finally { p.close() }
+})
+
+// sidesPage is c.txt with, side by side: 10|10, 11|- (deleted), 12|11,
+// -|12 (added): rows with a line on both sides, and on one only.
+async function sidesPage() {
+  const diff = [{ path: 'c.txt', status: 'modified', hunks: [{ oldStart: 10, newStart: 10, header: '', lines: [
+    { kind: 'context', old: 10, new: 10, text: 'ten' },
+    { kind: 'del', old: 11, text: 'gone' },
+    { kind: 'context', old: 12, new: 11, text: 'kept' },
+    { kind: 'add', new: 12, text: 'new' },
+  ] }] }]
+  return openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': { review: { ...none, started: '2026-10-16T10:00:00Z' }, diff },
+      '/api/review/do': () => ({ review: { ...none, started: '2026-10-16T10:00:00Z' } }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+  })
+}
+
+test('a range begun in one column and ended in the other takes the side both rows have, the new file’s first', async () => {
+  const p = await sidesPage()
+  try {
+    await p.click(plus(p, 'L10'))
+    await shiftClick(p, plus(p, 'R12'))
+    assert.equal(p.$('review-files').querySelector('.review-compose-head').textContent, 'Add a comment on lines R10–R12')
+    assert.deepEqual(await comment(p, 'all of it'), [{ op: 'comment', file: 'c.txt', side: 'new', line: 10, endLine: 12, code: 'ten\nkept\nnew', body: 'all of it' }])
+  } finally { p.close() }
+})
+
+test('a range between rows with no side in common is refused, saying why', async () => {
+  const p = await sidesPage()
+  try {
+    await p.click(plus(p, 'L11'))
+    await shiftClick(p, plus(p, 'R12'))
+    assert.match(p.$('toast').textContent, /same side/)
+    assert.equal(p.$('review-files').querySelector('.review-compose-head').textContent, 'Add a comment on line L11', 'left as it was')
+  } finally { p.close() }
+})
+
+test("a range can't take in lines still hidden", async () => {
+  const twoChanges = [{ path: 'c.txt', status: 'modified', hunks: [
+    { oldStart: 10, newStart: 10, header: '', lines: [{ kind: 'context', old: 10, new: 10, text: 'line 10' }, { kind: 'add', new: 11, text: 'added' }] },
+    { oldStart: 29, newStart: 30, header: '', lines: [{ kind: 'context', old: 29, new: 30, text: 'line 30' }] },
+  ] }]
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': { review: { ...none, started: '2026-10-16T10:00:00Z' }, diff: twoChanges },
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+  })
+  try {
+    await p.click(plus(p, 'R11'))
+    await shiftClick(p, plus(p, 'R30'))
+    assert.match(p.$('toast').textContent, /hidden/)
+    assert.equal(p.$('review-files').querySelector('.review-compose-head').textContent, 'Add a comment on line R11', 'left as it was')
+  } finally { p.close() }
+})
+
+test('in one column, a line opened from a gap is commented on as the new file’s', async () => {
+  const p = await openedPage()
+  try {
+    await p.click('review-layout')
+    assert.equal(plus(p, 'L19'), null, 'one + a line, as for changed lines')
+    await p.click(plus(p, 'R20'))
+    assert.deepEqual(await comment(p, 'why?'), [{ op: 'comment', file: 'c.txt', side: 'new', line: 20, code: 'line 20', body: 'why?' }])
+  } finally { p.close() }
+})
+
+test('a comment that has followed its code says where it was made', async () => {
+  const one = [{ path: 'a.txt', status: 'modified', hunks: [{ oldStart: 1, newStart: 1, header: '', lines: [{ kind: 'add', new: 1, text: 'x' }, { kind: 'add', new: 2, text: 'y' }] }] }]
+  const p = await reviewPage({ review: { ...none, started: '2026-10-16T10:00:00Z', lastId: 1,
+    threads: [{ id: 1, file: 'a.txt', side: 'new', line: 2, endLine: 2, movedFrom: 9, code: 'y', status: 'open', comments: said('hm') }] }, diff: one })
+  try {
+    await p.click('tab-review')
+    assert.match(p.$('review-thread-1').querySelector('.muted').textContent, /moved from line 9/)
+  } finally { p.close() }
+})
+
+// --- "Viewed" ticks ------------------------------------------------------------------------------
+
+// viewedPage is a review of three files (b.txt with a comment) whose fake
+// vibe keeps the ticks the page asks for.
+async function viewedPage(viewed = {}) {
+  const one = (path) => ({ path, status: 'modified', fingerprint: 'fp-' + path, hunks: [{ oldStart: 1, newStart: 1, header: '', lines: [{ kind: 'add', new: 1, text: 'x' }] }] })
+  let review = { ...none, started: '2026-10-16T10:00:00Z', lastId: 1, viewed,
+    threads: [{ id: 1, file: 'b.txt', side: 'new', line: 1, endLine: 1, code: 'x', status: 'open', comments: said('on b') }] }
+  return openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': () => ({ review, diff: ['a.txt', 'b.txt', 'c.txt'].map(one) }),
+      '/api/review/do': (call) => {
+        const v = { ...review.viewed }
+        if (call.body.op === 'view') v[call.body.file] = call.body.code
+        if (call.body.op === 'unview') delete v[call.body.file]
+        review = { ...review, viewed: v }
+        return { review }
+      },
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+  })
+}
+
+const tick = (p, path) => p.$('review-files').querySelector('[data-path="' + path + '"] header .review-viewed input')
+const folded = (p, path) => p.$('review-files').querySelector('[data-path="' + path + '"] table').closest('[hidden]') !== null
+
+test('ticking a file as viewed folds it, dims it in the tree, and counts it', async () => {
+  const p = await viewedPage()
+  try {
+    assert.equal(tick(p, 'b.txt').checked, false)
+    await p.click(tick(p, 'b.txt'))
+    assert.deepEqual(p.posted('/api/review/do'), [{ op: 'view', file: 'b.txt', code: 'fp-b.txt' }])
+    assert.equal(tick(p, 'b.txt').checked, true)
+    assert.ok(folded(p, 'b.txt'), 'its diff folded away')
+    assert.ok(treeRow(p, 'b.txt').classList.contains('viewed'))
+    assert.match(p.$('review-tree-count').textContent, /1\/3 viewed/)
+    await p.click(tick(p, 'b.txt'))
+    assert.deepEqual(p.posted('/api/review/do')[1], { op: 'unview', file: 'b.txt' })
+    assert.equal(folded(p, 'b.txt'), false, 'shown again')
+  } finally { p.close() }
+})
+
+test('a file whose change has changed since it was ticked says so, unticked', async () => {
+  const p = await viewedPage({ 'a.txt': 'fp-a.txt', 'c.txt': 'what it was' })
+  try {
+    assert.equal(tick(p, 'a.txt').checked, true)
+    assert.equal(tick(p, 'c.txt').checked, false)
+    assert.match(p.$('review-files').querySelector('[data-path="c.txt"] header').textContent, /changed since you viewed it/)
+    assert.equal(folded(p, 'c.txt'), false)
+    assert.match(p.$('review-tree-count').textContent, /1\/3 viewed/)
+  } finally { p.close() }
+})
+
+test('the comment arrows pass over comments in viewed files, and say so', async () => {
+  const p = await viewedPage({ 'b.txt': 'fp-b.txt' })
+  try {
+    assert.equal(p.$('review-count').textContent, '1 comment (1 in viewed files)')
+    assert.equal(p.$('review-next-comment').disabled, true)
+  } finally { p.close() }
+})
+
+// --- the formatting toolbar ------------------------------------------------------------------
+
+const select = (box, text, from, to) => { box.focus(); box.value = text; box.dispatchEvent(new box.ownerDocument.defaultView.Event('input', { bubbles: true })); box.setSelectionRange(from, to) }
+const toolbarOf = (box) => box.previousElementSibling && box.previousElementSibling.matches('.md-toolbar') ? box.previousElementSibling : box.parentElement.querySelector('.md-toolbar')
+const pressKey = async (p, box, key) => { box.dispatchEvent(new p.window.KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, cancelable: true })); await p.settle() }
+
+test('a reply has a formatting toolbar, and what it does is replied', async () => {
+  const p = await reviewPage({ review: commented, diff: twoFiles })
+  try {
+    await p.click('tab-review')
+    const box = p.$('review-thread-1').querySelector('textarea[data-thread]')
+    const bar = toolbarOf(box)
+    assert.deepEqual(Array.from(bar.querySelectorAll('button')).map((b) => b.getAttribute('aria-label')),
+      ['Bold (Ctrl+B)', 'Italic (Ctrl+I)', 'Code', 'Code block', 'Link (Ctrl+K)', 'Quote', 'Bulleted list', 'Numbered list'])
+    select(box, 'a word here', 2, 6)
+    await p.click(bar.querySelector('[aria-label="Bold (Ctrl+B)"]'))
+    assert.equal(box.value, 'a **word** here')
+    await p.click(p.button('Reply', p.$('review-thread-1')))
+    assert.deepEqual(p.posted('/api/review/do'), [{ op: 'reply', thread: 1, body: 'a **word** here' }])
+  } finally { p.close() }
+})
+
+test('Ctrl+B, Ctrl+I and Ctrl+K format a new comment as it is written', async () => {
+  const p = await openedPage()
+  try {
+    await p.click(plus(p, 'R20'))
+    const box = p.window.document.querySelector('.review-compose-text')
+    assert.ok(toolbarOf(box), 'the composer has the toolbar')
+    select(box, 'see docs', 4, 8)
+    await pressKey(p, box, 'k')
+    assert.equal(box.value, 'see [docs](url)')
+    select(box, 'x', 0, 1)
+    await pressKey(p, box, 'i')
+    assert.equal(box.value, '_x_')
+    assert.deepEqual(await comment(p, '_x_'), [{ op: 'comment', file: 'c.txt', side: 'new', line: 20, code: 'line 20', body: '_x_' }])
+  } finally { p.close() }
+})
+
+test('editing an unsent comment has the toolbar too', async () => {
+  const p = await reviewPage({ review: unsent })
+  try {
+    await p.click('tab-review')
+    await p.click(p.button('Edit', p.$('review-general')))
+    const box = p.$('review-general').querySelector('textarea[aria-label="Edit your comment"]')
+    select(box, 'one\ntwo', 0, 7)
+    await p.click(toolbarOf(box).querySelector('[aria-label="Bulleted list"]'))
+    assert.equal(box.value, '- one\n- two')
+  } finally { p.close() }
+})
+
+test('clicking another line’s + moves the comment being written there, keeping what’s written', async () => {
+  const p = await openedPage()
+  try {
+    await p.click(plus(p, 'R20'))
+    await p.type(p.window.document.querySelector('.review-compose-text'), 'half a thought')
+    await p.click(plus(p, 'R25'))
+    assert.equal(p.$('review-files').querySelector('.review-compose-head').textContent, 'Add a comment on line R25')
+    assert.equal(p.window.document.querySelector('.review-compose-text').value, 'half a thought')
+  } finally { p.close() }
+})
+
+// --- a page left open across a rebuild of vibe ------------------------------------------------------
+
+test('a page older than the vibe serving it says so, with a way to reload', async () => {
+  const served = { version: 'v1' }
+  const p = await openPage({
+    routes: {
+      '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, pageVersion: served.version }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'log' },
+  })
+  try {
+    assert.equal(p.$('page-outdated').hidden, true, 'the version it was opened with')
+    await p.poll()
+    assert.equal(p.$('page-outdated').hidden, true)
+    served.version = 'v2'
+    await p.poll()
+    assert.equal(p.$('page-outdated').hidden, false)
+    assert.match(p.$('page-outdated').textContent, /vibe has been updated/)
+    assert.ok(p.button('Reload', p.$('page-outdated')))
+  } finally { p.close() }
 })

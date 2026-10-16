@@ -37,8 +37,12 @@ type File struct {
 	// Lines is how many lines the file has: as the review has it, or, for
 	// a deleted one, as it had; 0 for a binary one, or when it couldn't be
 	// read (then the page just doesn't say).
-	Lines int    `json:"lines,omitempty"`
-	Hunks []Hunk `json:"hunks"`
+	Lines int `json:"lines,omitempty"`
+	// Fingerprint stands for the file's change (its hunks): the same while
+	// the change is, so a file ticked as viewed is known to have changed
+	// since.
+	Fingerprint string `json:"fingerprint,omitempty"`
+	Hunks       []Hunk `json:"hunks"`
 }
 
 // Hunk is a run of changed lines with their context. Section is what git

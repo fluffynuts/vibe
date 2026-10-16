@@ -511,6 +511,11 @@
       state.attention = res.body.attention || {}
       state.reviewAt = res.body.review ? res.body.reviewAt || '' : ''
       showAllAttention()
+      // A page left open across a rebuild of vibe is the old page: say so.
+      if (res.body.pageVersion) {
+        if (!state.pageVersion) state.pageVersion = res.body.pageVersion
+        $('page-outdated').hidden = res.body.pageVersion === state.pageVersion
+      }
       const moved = url !== state.clipboardUrl
       if (moved || ready !== state.clipboardReady) {
         if (url && !ready && (moved || state.clipboardReady)) {
@@ -892,6 +897,8 @@
     // the first); fileSteering, that a click in the tree set it, until the
     // user scrolls themselves.
     current: null, fileSteering: false,
+    // shown is the lines on the page, by "path|side": line number to text.
+    shown: new Map(),
     // order is the order the comment arrows go in: 'path', as the files
     // are shown, or 'reading', by the agent's steps.
     order: store.get(REVIEW_ORDER) === 'reading' ? 'reading' : 'path' }
@@ -902,8 +909,57 @@
     drawReview(true)
   }
 
-  function openComposer(path, side, line, code) {
-    reviewView.composer = { path, side, line, code, text: '', mode: 'write' }
+  // openComposer opens a comment on line of path's side: one already being
+  // written moves there, keeping what's written.
+  // row is the line numbers of the row clicked, on each side ({ old, new },
+  // null where it has none): a Shift-click in the other column ranges from
+  // it on a side they share.
+  function openComposer(path, side, line, code, row) {
+    const was = reviewView.composer
+    reviewView.composer = { path, side, line, endLine: line, code, anchor: row || { [side]: line },
+      text: was ? was.text : '', mode: was ? was.mode : 'write' }
+    redrawReview()
+    focusComposer()
+  }
+
+  // shownLine notes, while drawing, that line n of path's side is on the
+  // page reading text: a range of lines takes its code from them, and can
+  // only be made of them.
+  function shownLine(path, side, n, text) {
+    const key = path + '|' + side
+    if (!reviewView.shown.has(key)) reviewView.shown.set(key, new Map())
+    reviewView.shown.get(key).set(n, text)
+  }
+
+  // inComposer says line n of path's side is one the comment being written
+  // is on (to mark it).
+  function inComposer(path, side, n) {
+    const c = reviewView.composer
+    return !!c && c.path === path && c.side === side && n >= c.line && n <= c.endLine
+  }
+
+  // composerAfter says the comment being written goes after line n of
+  // path's side: its last line.
+  function composerAfter(path, side, n) {
+    const c = reviewView.composer
+    return !!c && c.path === path && c.side === side && n === c.endLine
+  }
+
+  // commentOnLines opens a comment on lines a to b (either way round) of
+  // path's side, keeping what's been written; refused, saying why, when
+  // some of them are still hidden.
+  function commentOnLines(path, side, a, b) {
+    const lo = Math.min(a, b)
+    const hi = Math.max(a, b)
+    const shown = reviewView.shown.get(path + '|' + side) || new Map()
+    const code = []
+    for (let n = lo; n <= hi; n++) {
+      if (!shown.has(n)) { toast("A comment's lines can't take in lines still hidden: open them first."); return }
+      code.push(shown.get(n))
+    }
+    const was = reviewView.composer
+    reviewView.composer = { path, side, line: lo, endLine: hi, code: code.join('\n'), anchor: was ? was.anchor : { [side]: lo },
+      text: was ? was.text : '', mode: was ? was.mode : 'write' }
     redrawReview()
     focusComposer()
   }
@@ -913,11 +969,89 @@
     if (box) box.focus()
   }
 
-  // lineButton is the + over a line's number, opening a comment on it.
-  function lineButton(path, side, line, code) {
+  // FORMATS are the formatting toolbar's buttons: what the page's Markdown
+  // shows (see markdown.js), each with its shortcut, if it has one.
+  const FORMATS = [
+    { kind: 'bold', text: 'B', label: 'Bold (Ctrl+B)' },
+    { kind: 'italic', text: 'I', label: 'Italic (Ctrl+I)' },
+    { kind: 'code', text: '</>', label: 'Code' },
+    { kind: 'codeblock', text: '{ }', label: 'Code block' },
+    { kind: 'link', text: 'Link', label: 'Link (Ctrl+K)' },
+    { kind: 'quote', text: '❝', label: 'Quote' },
+    { kind: 'bullet', text: '•', label: 'Bulleted list' },
+    { kind: 'numbered', text: '1.', label: 'Numbered list' },
+  ]
+  const FORMAT_KEYS = { b: 'bold', i: 'italic', k: 'link' }
+
+  // formatBox applies a formatting button to box's selection: as typing
+  // would where the browser can, so Ctrl+Z takes it back.
+  function formatBox(box, kind) {
+    const e = R.formatText(kind, box.value, box.selectionStart, box.selectionEnd)
+    const want = box.value.slice(0, e.from) + e.insert + box.value.slice(e.to)
+    box.focus()
+    box.setSelectionRange(e.from, e.to)
+    let done = false
+    try { done = document.execCommand('insertText', false, e.insert) } catch (err) { /* not supported: set it below */ }
+    if (!done || box.value !== want) {
+      box.value = want
+      box.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    box.setSelectionRange(e.selStart, e.selEnd)
+  }
+
+  // formattable gives comment box box its formatting shortcuts, and is
+  // its toolbar. A button keeps the box's focus and selection when pressed.
+  function formattable(box) {
+    box.addEventListener('keydown', (ev) => {
+      const kind = (ev.ctrlKey || ev.metaKey) && !ev.altKey && !ev.shiftKey && FORMAT_KEYS[ev.key.toLowerCase()]
+      if (kind) { ev.preventDefault(); formatBox(box, kind) }
+    })
+    return el('div', { class: 'md-toolbar', role: 'toolbar', 'aria-label': 'Formatting' },
+      ...FORMATS.map((f) => el('button', { type: 'button', class: 'ghost', text: f.text, title: f.label, 'aria-label': f.label,
+        onmousedown: (ev) => ev.preventDefault(), onclick: () => formatBox(box, f.kind) })))
+  }
+
+  // lineButton is the + over a line's number (in a row with line numbers
+  // row, { old, new }), opening a comment on it, or moving the one being
+  // written there; a Shift-click makes the comment being written a range
+  // to it. (Dragging one + onto another moves it too: see setUpLineDrag.)
+  function lineButton(path, side, line, code, row) {
     const label = 'Comment on line ' + (side === 'old' ? 'L' : 'R') + line
-    return el('button', { type: 'button', class: 'line-comment', text: '+', title: label, 'aria-label': label,
-      onclick: () => openComposer(path, side, line, code) })
+    return el('button', { type: 'button', class: 'line-comment', text: '+', 'aria-label': label,
+      title: label + ' (Shift-click another for several)',
+      'data-path': path, 'data-side': side, 'data-line': String(line),
+      onclick: (ev) => {
+        const c = reviewView.composer
+        if (ev.shiftKey && c && c.path === path) commentToRow(path, side, line, row || { [side]: line })
+        else openComposer(path, side, line, code, row)
+      } })
+  }
+
+  // commentToRow makes the comment being written a range from the row it
+  // was begun on to row (Shift-clicked on its side's +): on that side when
+  // it's the comment's, else on a side both rows have a line on, the new
+  // file's first; refused, saying why, when they have none in common.
+  function commentToRow(path, side, line, row) {
+    const c = reviewView.composer
+    const anchor = c.anchor || { [c.side]: c.line }
+    const common = c.side === side ? side : ['new', 'old'].find((s) => anchor[s] && row[s])
+    if (!common) { toast("A comment's lines are all on one side: Shift-click a line on the same side as the first."); return }
+    commentOnLines(path, common, anchor[common] || c.line, row[common] || line)
+  }
+
+  // setUpLineDrag makes dragging one line's + onto another's move the
+  // comment being written there, as clicking it does: a browser gives no
+  // click when a press and its release are on different buttons.
+  function setUpLineDrag() {
+    let from = null
+    const plusOf = (ev) => ev.target.closest && ev.target.closest('.line-comment')
+    $('review-files').addEventListener('pointerdown', (ev) => { from = plusOf(ev) || null })
+    document.addEventListener('pointerup', (ev) => {
+      const to = plusOf(ev)
+      const start = from
+      from = null
+      if (start && to && to !== start) to.click()
+    })
   }
 
   // composerRow is the comment being written, as a row of a file's table:
@@ -940,8 +1074,11 @@
       class: 'review-compose-tab' + (c.mode === mode ? ' on' : ''), text: label,
       onclick: () => { c.mode = mode; redrawReview(); if (mode === 'write') focusComposer() } })
     const box = el('div', { class: 'review-composer' },
-      el('div', { class: 'review-compose-head', text: 'Add a comment on line ' + (c.side === 'old' ? 'L' : 'R') + c.line }),
-      el('div', { class: 'review-compose-tabs', role: 'tablist' }, tab('write', 'Write'), tab('preview', 'Preview')),
+      el('div', { class: 'review-compose-head', text: 'Add a comment on ' + (c.endLine > c.line
+        ? 'lines ' + (c.side === 'old' ? 'L' : 'R') + c.line + '–' + (c.side === 'old' ? 'L' : 'R') + c.endLine
+        : 'line ' + (c.side === 'old' ? 'L' : 'R') + c.line) }),
+      el('div', { class: 'review-compose-tabs' }, el('span', { role: 'tablist' }, tab('write', 'Write'), tab('preview', 'Preview')),
+        c.mode === 'write' ? formattable(body) : null),
       body,
       el('div', { class: 'bar review-compose-actions' }, el('span', { class: 'spacer' }),
         el('button', { type: 'button', class: 'ghost', text: 'Cancel', onclick: cancelComposer }), send))
@@ -962,7 +1099,9 @@
     const c = reviewView.composer
     if (!c || !c.text.trim()) return
     try {
-      const res = await post('/api/review/do', { op: 'comment', file: c.path, side: c.side, line: c.line, code: c.code, body: c.text })
+      const req = { op: 'comment', file: c.path, side: c.side, line: c.line, code: c.code, body: c.text }
+      if (c.endLine > c.line) req.endLine = c.endLine
+      const res = await post('/api/review/do', req)
       reached(true)
       if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
       reviewView.composer = null
@@ -1021,7 +1160,7 @@
       }
       for (const f of node.files) {
         const file = byPath.get(f.path)
-        rows.push(indented(el('button', { type: 'button', role: 'treeitem', title: f.path + ' (' + file.status + ')', 'data-path': f.path,
+        rows.push(indented(el('button', { type: 'button', role: 'treeitem', class: viewedState(file) === 'viewed' ? 'viewed' : '', title: f.path + ' (' + file.status + ')', 'data-path': f.path,
           onclick: () => {
             scrollToFile(index.get(f.path))
             reviewView.current = f.path
@@ -1069,8 +1208,10 @@
     const total = (reviewView.files || []).length
     const at = cards.findIndex((c) => c.dataset.path === reviewView.current)
     const filtering = !!reviewView.filter.trim()
+    const viewed = (reviewView.files || []).filter((f) => viewedState(f) === 'viewed').length
     $('review-tree-count').textContent = !total ? ''
-      : (at >= 0 ? (at + 1) + '/' : '') + (filtering ? cards.length + ' of ' + total : total) + (total === 1 ? ' file' : ' files')
+      : (at >= 0 ? (at + 1) + '/' : '') + (filtering ? cards.length + ' of ' + total : total) + (total === 1 ? ' file' : ' files') +
+        (viewed ? ' · ' + viewed + '/' + total + ' viewed' : '')
     const path = reviewView.current
     if (!path) return
     const rows = Array.from(tree.querySelectorAll('[data-path]'))
@@ -1182,7 +1323,9 @@
     const page = threadCards()
     const cards = arrowCards()
     const shown = cards.length
-    const hidden = Math.max(0, all - shown)
+    const filtered = $('review-files').querySelectorAll('.review-file[hidden] .review-thread').length
+    const inViewed = Math.max(0, all - shown - filtered)
+    const hiddenNote = [filtered ? filtered + ' hidden by the filter' : '', inViewed ? inViewed + ' in viewed files' : ''].filter(Boolean).join(', ')
     if (!reviewView.steering) {
       // Where the page is: in the page's order, then counted in the arrows'.
       const tops = page.map((c) => c.getBoundingClientRect().top)
@@ -1193,7 +1336,7 @@
     }
     reviewView.at = Math.min(reviewView.at, Math.max(0, shown - 1))
     const where = shown ? (reviewView.at + 1) + '/' + shown + (shown === 1 ? ' comment' : ' comments') : (all === 1 ? '1 comment' : all + ' comments')
-    $('review-count').textContent = !all ? 'no comments yet' : where + (hidden ? ' (' + hidden + ' hidden by the filter)' : '')
+    $('review-count').textContent = !all ? 'no comments yet' : where + (hiddenNote ? ' (' + hiddenNote + ')' : '')
     $('review-order').title = (all ? open + ' open of ' + all + ' comment threads. ' : '') +
       (reviewView.order === 'reading' ? "The arrows go in the agent's reading order" : 'The arrows go in path order, as the tree') + ': click to change.'
     $('review-prev-comment').disabled = !shown
@@ -1581,6 +1724,7 @@
     $('review-problems').replaceChildren(...(rv.problems || []).map((p) => el('li', { text: "The agent's request failed: " + p })))
 
     const files = reviewView.files || []
+    reviewView.shown = new Map()
     const threads = new Map(rv.threads.map((t) => [t.id, t]))
     const placed = R.placeThreads(files, rv.threads)
     reviewView.outdated = placed.outdated
@@ -1593,11 +1737,50 @@
     const ordered = R.inTreeOrder(files, rv.order)
 
     $('review-files').replaceChildren(...(files.length || reviewView.files === null ? [] : [el('p', { class: 'muted', text: 'Nothing to review: no changes.' })]),
-      ...ordered.map((o) => fileCard(o.file, o.stop, o.step, files.indexOf(o.file), placed, threads)))
+      ...ordered.map((o) => foldIfViewed(o.file, fileCard(o.file, o.stop, o.step, files.indexOf(o.file), placed, threads))))
     drawTree()
     // The reply box that had focus, drawn afresh, keeps it.
     const again = focused && $('panel-review').querySelector('textarea[data-thread="' + focused + '"]')
     if (again) again.focus({ preventScroll: true })
+  }
+
+  // viewedState is whether file f is ticked as viewed: 'viewed', 'changed'
+  // (ticked, but its change has changed since), or ''.
+  function viewedState(f) {
+    const seen = reviewView.review && reviewView.review.viewed ? reviewView.review.viewed[f.path] : undefined
+    return !seen ? '' : seen === f.fingerprint ? 'viewed' : 'changed'
+  }
+
+  // viewedTick is the Viewed tick in file f's header, saying when its
+  // change has changed since it was ticked.
+  function viewedTick(f) {
+    const was = viewedState(f)
+    const box = el('input', { type: 'checkbox' })
+    box.checked = was === 'viewed'
+    box.addEventListener('change', () => tickViewed(f, box.checked))
+    return el('label', { class: 'review-viewed', title: 'Ticked, its diff is folded away until you untick it' },
+      was === 'changed' ? el('span', { class: 'review-changed', text: 'changed since you viewed it' }) : null, box, ' Viewed')
+  }
+
+  async function tickViewed(f, on) {
+    try {
+      const res = await post('/api/review/do', on ? { op: 'view', file: f.path, code: f.fingerprint } : { op: 'unview', file: f.path })
+      reached(true)
+      if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
+      reviewView.review = res.body.review
+      redrawReview()
+    } catch (e) {
+      reached(false)
+      toast('Could not reach vibe.', true)
+    }
+  }
+
+  // foldIfViewed folds file f's card, ticked as viewed, to its header.
+  function foldIfViewed(f, card) {
+    if (viewedState(f) !== 'viewed') return card
+    card.classList.add('viewed')
+    for (const child of card.children) if (child.tagName !== 'HEADER') child.hidden = true
+    return card
   }
 
   // diffStat is a file's figures, on the right of its header, as GitHub
@@ -1629,7 +1812,7 @@
       el('span', { class: 'muted', text: f.status }),
       stepBadge(step, stop),
       stop ? el('span', { class: 'review-stop', text: stop.label || 'in the reading order' }) : null,
-      diffStat(f))
+      diffStat(f), viewedTick(f))
     const card = el('section', { class: 'review-file', id: 'review-file-' + index, 'data-path': f.path }, head)
     if (stop && stop.body) card.append(el('div', { class: 'note' }, markdown(stop.body)))
     // The lines the diff leaves out can be opened, as on GitHub, for a file
@@ -1680,13 +1863,25 @@
     // offset), opened from a gap, and the threads that end on it.
     const contextRows = (n, offset) => {
       const text = lines && n <= lines.length ? lines[n - 1] : ''
-      const half = (number) => [el('td', { class: 'num context', text: String(number) }), el('td', { class: 'sign' }), el('td', { class: 'code context', text })]
-      const marked = gapped.marked.has(n) ? 'marked' : ''
+      const old = n - offset
+      shownLine(f.path, 'old', old, text)
+      shownLine(f.path, 'new', n, text)
+      const half = (number, side) => {
+        const sel = inComposer(f.path, side, number) ? ' sel' : ''
+        return [el('td', { class: 'num context' + sel }, String(number), lineButton(f.path, side, number, text, { old, new: n })),
+          el('td', { class: 'sign' + sel }), el('td', { class: 'code context' + sel, text })]
+      }
+      const classes = [gapped.marked.has(n) ? 'marked' : '', inComposer(f.path, 'old', old) || inComposer(f.path, 'new', n) ? 'selected' : ''].filter(Boolean).join(' ')
       const row = split
-        ? el('tr', { class: marked }, ...half(n - offset), ...half(n).map((td, i) => { if (i === 0) td.classList.add('start'); return td }))
-        : el('tr', { class: marked }, el('td', { class: 'num context', text: String(n - offset) }), el('td', { class: 'num context', text: String(n) }),
-          el('td', { class: 'sign' }), el('td', { class: 'code context', text }))
-      return gapped.after[n] ? [row, threadRow(gapped.after[n])] : [row]
+        ? el('tr', { class: classes }, ...half(old, 'old'), ...half(n, 'new').map((td, i) => { if (i === 0) td.classList.add('start'); return td }))
+        : el('tr', { class: classes }, ...(() => {
+          const sel = inComposer(f.path, 'old', old) || inComposer(f.path, 'new', n) ? ' sel' : ''
+          return [el('td', { class: 'num context' + sel }, String(old), lineButton(f.path, 'new', n, text, { old, new: n })), el('td', { class: 'num context' + sel, text: String(n) }),
+            el('td', { class: 'sign' + sel }), el('td', { class: 'code context' + sel, text })]
+        })())
+      const out = gapped.after[n] ? [row, threadRow(gapped.after[n])] : [row]
+      if (composerAfter(f.path, 'old', old) || composerAfter(f.path, 'new', n)) out.push(composerRow(columns))
+      return out
     }
     const GAP_BUTTONS = {
       down: { text: '↓', title: 'Show ' + R.GAP_STEP + ' more lines, carrying on from the lines above' },
@@ -1717,22 +1912,26 @@
         rows.push(...gapRows(fileGaps[hi], hi === 0 ? 'first' : '', header))
         if (split) {
           // Each side's line, or a blank where that side has none.
-          const half = (index, number, start) => {
+          const half = (index, number, start, row) => {
             if (index === null) return ['num', 'sign', 'code'].map((c) => el('td', { class: c + ' blank' + (start ? ' start' : '') }))
             const l = h.lines[index]
             const side = number === 'old' ? 'old' : 'new'
-            return [el('td', { class: 'num ' + l.kind + (start ? ' start' : '') }, String(l[number] || ''), lineButton(f.path, side, l[number], l.text)),
-              el('td', { class: 'sign ' + l.kind, text: signOf(l.kind) }),
-              el('td', { class: 'code ' + l.kind, text: l.text })]
+            shownLine(f.path, side, l[number], l.text)
+            const sel = inComposer(f.path, side, l[number]) ? ' sel' : ''
+            return [el('td', { class: 'num ' + l.kind + (start ? ' start' : '') + sel }, String(l[number] || ''), lineButton(f.path, side, l[number], l.text, row)),
+              el('td', { class: 'sign ' + l.kind + sel, text: signOf(l.kind) }),
+              el('td', { class: 'code ' + l.kind + sel, text: l.text })]
           }
           for (const row of R.sideBySide(h)) {
             const keys = [...new Set([row.left, row.right].filter((i) => i !== null).map((i) => hi + ':' + i))]
-            rows.push(el('tr', { class: keys.some((k) => marked[k]) ? 'marked' : '' }, ...half(row.left, 'old', false), ...half(row.right, 'new', true)))
+            const left = row.left === null ? null : h.lines[row.left].old
+            const right = row.right === null ? null : h.lines[row.right].new
+            const selected = inComposer(f.path, 'old', left) || inComposer(f.path, 'new', right)
+            rows.push(el('tr', { class: [keys.some((k) => marked[k]) ? 'marked' : '', selected ? 'selected' : ''].filter(Boolean).join(' ') },
+              ...half(row.left, 'old', false, { old: left, new: right }), ...half(row.right, 'new', true, { old: left, new: right })))
             const ids = [...new Set(keys.flatMap((k) => after[k] || []))]
             if (ids.length) rows.push(threadRow(ids))
-            const c = reviewView.composer
-            if (c && c.path === f.path && ((c.side === 'old' && row.left !== null && h.lines[row.left].old === c.line) ||
-              (c.side === 'new' && row.right !== null && h.lines[row.right].new === c.line))) rows.push(composerRow(columns))
+            if (composerAfter(f.path, 'old', left) || composerAfter(f.path, 'new', right)) rows.push(composerRow(columns))
           }
           return
         }
@@ -1741,14 +1940,16 @@
           // One + per line: on the old file's line for a deleted one, else
           // the new file's.
           const side = l.kind === 'del' ? 'old' : 'new'
-          rows.push(el('tr', { class: marked[key] ? 'marked' : '' },
-            el('td', { class: 'num ' + l.kind }, l.old ? String(l.old) : '', lineButton(f.path, side, l[side], l.text)),
-            el('td', { class: 'num ' + l.kind, text: l.new ? String(l.new) : '' }),
-            el('td', { class: 'sign ' + l.kind, text: signOf(l.kind) }),
-            el('td', { class: 'code ' + l.kind, text: l.text })))
+          if (l.old) shownLine(f.path, 'old', l.old, l.text)
+          if (l.new) shownLine(f.path, 'new', l.new, l.text)
+          const selected = inComposer(f.path, 'old', l.old) || inComposer(f.path, 'new', l.new)
+          rows.push(el('tr', { class: [marked[key] ? 'marked' : '', selected ? 'selected' : ''].filter(Boolean).join(' ') },
+            el('td', { class: 'num ' + l.kind + (selected ? ' sel' : '') }, l.old ? String(l.old) : '', lineButton(f.path, side, l[side], l.text, { old: l.old || null, new: l.new || null })),
+            el('td', { class: 'num ' + l.kind + (selected ? ' sel' : ''), text: l.new ? String(l.new) : '' }),
+            el('td', { class: 'sign ' + l.kind + (selected ? ' sel' : ''), text: signOf(l.kind) }),
+            el('td', { class: 'code ' + l.kind + (selected ? ' sel' : ''), text: l.text })))
           if (after[key]) rows.push(threadRow(after[key]))
-          const c = reviewView.composer
-          if (c && c.path === f.path && c.side === side && l[side] === c.line) rows.push(composerRow(columns))
+          if (composerAfter(f.path, 'old', l.old) || composerAfter(f.path, 'new', l.new)) rows.push(composerRow(columns))
         })
       })
       if (expandable && f.hunks && f.hunks.length) rows.push(...gapRows(fileGaps[f.hunks.length], 'last', null))
@@ -1810,7 +2011,7 @@
       const box = el('textarea', { class: 'review-compose-text', 'aria-label': 'Edit your comment' })
       box.value = reviewView.editing.text
       box.addEventListener('input', () => { reviewView.editing.text = box.value })
-      return el('div', { class: 'comment' }, head, box, el('div', { class: 'bar' },
+      return el('div', { class: 'comment' }, head, formattable(box), box, el('div', { class: 'bar' },
         el('button', { type: 'button', text: 'Save', onclick: () => saveEdit(t, c) }),
         el('button', { type: 'button', class: 'ghost', text: 'Cancel', onclick: () => { reviewView.editing = null; redrawReview() } })))
     })
@@ -1859,9 +2060,9 @@
     }
     const open = t.status === 'open'
     return el('div', { class: 'review-thread ' + t.status, id: 'review-thread-' + t.id, tabindex: '-1' },
-      el('div', { class: 'muted' }, '#' + t.id + ' · ' + where + (open ? '' : ' · ' + t.status),
+      el('div', { class: 'muted' }, '#' + t.id + ' · ' + where + (t.movedFrom ? ' · moved from line ' + t.movedFrom : '') + (open ? '' : ' · ' + t.status),
         reviewView.outdated && reviewView.outdated.has(t.id) ? el('span', { class: 'review-outdated', text: ' · the code has changed since' }) : null),
-      ...comments, askFeedback(t), box,
+      ...comments, askFeedback(t), formattable(box), box,
       el('div', { class: 'bar' },
         el('button', { type: 'button', text: 'Reply', onclick: act('reply') }),
         state.conversation ? el('button', { type: 'button', class: 'ghost', text: 'Ask the agent', title: 'Send your reply to the agent as a question: it answers here', onclick: ask }) : null,
@@ -2406,6 +2607,7 @@
     $('review-refresh').addEventListener('click', () => { reviewView.fileLines.clear(); reviewView.linesAsked.clear(); loadReview(true) })
     setUpReviewTree()
     $('review-close').addEventListener('click', closeReview)
+    setUpLineDrag()
     setUpOrderMenu()
     $('panel-review').addEventListener('paste', reviewPaste)
     // Scrolling by hand (not the arrows' scrolling) says where the page is.
@@ -3397,6 +3599,7 @@
   state.timer = setInterval(tick, POLL_MS)
   setInterval(ping, PING_MS)
   $('offline-dismiss').addEventListener('click', () => { offline.dismissed = true; showGlass() })
+  $('page-reload').addEventListener('click', () => location.reload())
 
   setLink(false, 'connecting…')
   loadState().then(() => select(state.tab))

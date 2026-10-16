@@ -262,3 +262,37 @@ test('in the reading order, comments go by their files’ steps: the whole revie
   assert.deepEqual(inStepOrder(page, steps).map((e) => e.id), ['general', 'z1', 'b1', 'a1', 'a2'])
   assert.deepEqual(inStepOrder(page, new Map()).map((e) => e.id), page.map((e) => e.id), 'no steps: as the page has them')
 })
+
+// formatted applies a formatting button to value, with start-end selected:
+// the text after, and what's selected after (marked [ and ]).
+function formatted(kind, marked) {
+  const { formatText } = require('../ui/review.js')
+  const start = marked.indexOf('[')
+  const end = marked.indexOf(']') - 1
+  const value = marked.replace('[', '').replace(']', '')
+  const e = formatText(kind, value, start, end)
+  const after = value.slice(0, e.from) + e.insert + value.slice(e.to)
+  return after.slice(0, e.selStart) + '[' + after.slice(e.selStart, e.selEnd) + ']' + after.slice(e.selEnd)
+}
+
+test('the formatting buttons wrap what is selected, or leave the cursor ready to type', () => {
+  assert.equal(formatted('bold', 'a [word] b'), 'a **[word]** b')
+  assert.equal(formatted('bold', 'a [] b'), 'a **[]** b')
+  assert.equal(formatted('italic', '[word]'), '_[word]_')
+  assert.equal(formatted('code', 'call [f()] now'), 'call `[f()]` now')
+  assert.equal(formatted('link', 'see [the docs]'), 'see [the docs]([url])')
+  assert.equal(formatted('link', 'see []'), 'see [[]](url)')
+})
+
+test('code over several lines, or a code block, goes on lines of its own', () => {
+  assert.equal(formatted('code', '[a\nb]'), '```\n[a\nb]\n```')
+  assert.equal(formatted('codeblock', 'x [y] z'), 'x \n```\n[y]\n```\n z')
+  assert.equal(formatted('codeblock', '[]'), '```\n[]\n```')
+})
+
+test('quotes and lists take in each whole line selected', () => {
+  assert.equal(formatted('quote', 'o[ne\ntw]o'), '[> one\n> two]')
+  assert.equal(formatted('bullet', 'one\n[two\nthree]'), 'one\n[- two\n- three]')
+  assert.equal(formatted('numbered', '[one\ntwo]'), '[1. one\n2. two]')
+  assert.equal(formatted('bullet', '[]'), '- []')
+})

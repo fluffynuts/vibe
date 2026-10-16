@@ -1,8 +1,9 @@
 {
   "name": "vibe-companion-uitest",
   "private": true,
-  "description": "What the companion page's tests need: jsdom, for the tests that run the pages themselves (page.test.js, clipboard-page.test.js). npm ci here before go test.",
+  "description": "What the companion page's tests need: jsdom, for the tests that run the pages themselves (page.test.js, clipboard-page.test.js); Playwright's Firefox, for those needing a real browser's layout (firefox.test.js: npx playwright install firefox). npm ci here before go test.",
   "devDependencies": {
-    "jsdom": "24.1.3"
+    "jsdom": "24.1.3",
+    "playwright": "1.48.2"
   }
 }

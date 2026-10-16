@@ -309,7 +309,45 @@
     return entries.map((e, i) => ({ e, i })).sort((a, b) => (rank(a.e) - rank(b.e)) || (a.i - b.i)).map((x) => x.e)
   }
 
-  const api = { inStepOrder, diffSquares, currentOf, positionOf, placeInGaps, placeThreads, inTreeOrder, sideBySide, gaps, gapView, GAP_STEP, fileTree, matchesFilter, agentUpdated, threadsByFile, stepTo }
+  // formatText is what a formatting button does to value, with start to
+  // end selected: { from, to, insert } (value[from, to) becomes insert) and
+  // what's selected after (selStart, selEnd, in the new text). Bold,
+  // italic, code and links wrap the selection (or leave the cursor between
+  // their marks); code over several lines and code blocks go on lines of
+  // their own; quotes and lists take in each whole line selected.
+  function formatText(kind, value, start, end) {
+    const sel = value.slice(start, end)
+    const wrap = (before, after) => ({ from: start, to: end, insert: before + sel + after,
+      selStart: start + before.length, selEnd: start + before.length + sel.length })
+    if (kind === 'code' && sel.includes('\n')) kind = 'codeblock'
+    switch (kind) {
+      case 'bold': return wrap('**', '**')
+      case 'italic': return wrap('_', '_')
+      case 'code': return wrap('`', '`')
+      case 'link': {
+        const insert = '[' + sel + '](url)'
+        return sel
+          ? { from: start, to: end, insert, selStart: start + sel.length + 3, selEnd: start + sel.length + 6 }
+          : { from: start, to: end, insert, selStart: start + 1, selEnd: start + 1 }
+      }
+      case 'codeblock': {
+        const before = (start > 0 && value[start - 1] !== '\n' ? '\n' : '') + '```\n'
+        const after = '\n```' + (end < value.length && value[end] !== '\n' ? '\n' : '')
+        return wrap(before, after)
+      }
+    }
+    const from = value.lastIndexOf('\n', start - 1) + 1
+    const nl = value.indexOf('\n', end)
+    const to = nl < 0 ? value.length : nl
+    const prefix = { quote: () => '> ', bullet: () => '- ', numbered: (i) => (i + 1) + '. ' }[kind]
+    if (!prefix) throw new Error('no such formatting: ' + kind)
+    const insert = value.slice(from, to).split('\n').map((line, i) => prefix(i) + line).join('\n')
+    return start === end
+      ? { from, to, insert, selStart: from + insert.length, selEnd: from + insert.length }
+      : { from, to, insert, selStart: from, selEnd: from + insert.length }
+  }
+
+  const api = { formatText, inStepOrder, diffSquares, currentOf, positionOf, placeInGaps, placeThreads, inTreeOrder, sideBySide, gaps, gapView, GAP_STEP, fileTree, matchesFilter, agentUpdated, threadsByFile, stepTo }
   if (typeof module === 'object' && module.exports) module.exports = api
   else root.vibeReview = api
 })(this)

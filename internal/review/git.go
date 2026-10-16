@@ -3,6 +3,9 @@ package review
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -37,7 +40,7 @@ func WorkingTree(ctx context.Context, dir string) ([]File, error) {
 	if _, err := run(ctx, dir, "rev-parse", "--verify", "--quiet", "HEAD"); err != nil {
 		base = emptyTree
 	}
-	return withLengths(ctx, dir, "", base)(diffFrom(ctx, dir, base))
+	return withDetails(ctx, dir, "", base)(diffFrom(ctx, dir, base))
 }
 
 // Against is the diff of the folder dir as it is from where it parted from
@@ -55,7 +58,7 @@ func Against(ctx context.Context, dir, ref string) ([]File, error) {
 		return nil, fmt.Errorf("%s and the folder's HEAD have no history in common: %w", ref, err)
 	}
 	parted := strings.TrimSpace(base)
-	return withLengths(ctx, dir, "", parted)(diffFrom(ctx, dir, parted))
+	return withDetails(ctx, dir, "", parted)(diffFrom(ctx, dir, parted))
 }
 
 // Commit is the diff of what commit ref changed.
@@ -70,7 +73,7 @@ func Commit(ctx context.Context, dir, ref string) ([]File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return withLengths(ctx, dir, ref, ref+"^")(Parse(out))
+	return withDetails(ctx, dir, ref, ref+"^")(Parse(out))
 }
 
 // diffFrom is the working tree's diff from base, untracked files with it,
@@ -243,19 +246,20 @@ func Unpushed(ctx context.Context, dir, upstream string) ([]File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return withLengths(ctx, dir, "HEAD", strings.TrimSpace(base))(Parse(out))
+	return withDetails(ctx, dir, "HEAD", strings.TrimSpace(base))(Parse(out))
 }
 
-// withLengths is a step after working out a diff: it fills in each file's
-// line count, from newRev (the folder itself when "") for the files there,
-// and from oldRev for the deleted ones.
-func withLengths(ctx context.Context, dir, newRev, oldRev string) func([]File, error) ([]File, error) {
+// withDetails is a step after working out a diff: it fills in each file's
+// fingerprint, and its line count, from newRev (the folder itself when "")
+// for the files there, and from oldRev for the deleted ones.
+func withDetails(ctx context.Context, dir, newRev, oldRev string) func([]File, error) ([]File, error) {
 	return func(files []File, err error) ([]File, error) {
 		if err != nil {
 			return files, err
 		}
 		for i := range files {
 			f := &files[i]
+			f.Fingerprint = fingerprint(*f)
 			if f.Binary {
 				continue
 			}
@@ -314,4 +318,75 @@ func countLines(r io.Reader) int {
 		n++
 	}
 	return n
+}
+
+// TextOf is path's lines as review rv has it: in its commit, at HEAD for
+// unpushed commits, else in the folder dir as it is.
+func TextOf(ctx context.Context, dir string, rv Review, path string) ([]string, error) {
+	var text string
+	switch {
+	case rv.Commit != "":
+		out, err := run(ctx, dir, "show", rv.Commit+":"+path)
+		if err != nil {
+			return nil, err
+		}
+		text = out
+	case rv.Unpushed:
+		out, err := run(ctx, dir, "show", "HEAD:"+path)
+		if err != nil {
+			return nil, err
+		}
+		text = out
+	default:
+		data, err := os.ReadFile(filepath.Join(dir, path))
+		if err != nil {
+			return nil, err
+		}
+		text = string(data)
+	}
+	return strings.Split(strings.TrimSuffix(text, "\n"), "\n"), nil
+}
+
+// Moves are rv's comments on the new side whose code (as it read when
+// they were made) is no longer at their lines but is elsewhere in the file:
+// where to. A file that can't be read moves nothing: its comments stay, and
+// the page marks any whose lines read differently.
+func Moves(ctx context.Context, dir string, rv Review) []Move {
+	var out []Move
+	files := map[string][]string{}
+	for _, t := range rv.Threads {
+		if t.File == "" || t.Side == "old" || t.Code == "" {
+			continue
+		}
+		lines, seen := files[t.File]
+		if !seen {
+			lines, _ = TextOf(ctx, dir, rv, t.File)
+			files[t.File] = lines
+		}
+		if lines == nil {
+			continue
+		}
+		end := t.EndLine
+		if end < t.Line {
+			end = t.Line
+		}
+		if t.Line >= 1 && end <= len(lines) && strings.Join(lines[t.Line-1:end], "\n") == t.Code {
+			continue
+		}
+		if at, ok := Relocate(t.Code, lines, t.Line); ok && at != t.Line {
+			out = append(out, Move{Thread: t.ID, Line: at})
+		}
+	}
+	return out
+}
+
+// fingerprint stands for f's change: a digest of what it is and its hunks.
+func fingerprint(f File) string {
+	data, _ := json.Marshal(struct {
+		Path, OldPath, Status string
+		Binary, TooLarge      bool
+		Hunks                 []Hunk
+	}{f.Path, f.OldPath, f.Status, f.Binary, f.TooLarge, f.Hunks})
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:12])
 }

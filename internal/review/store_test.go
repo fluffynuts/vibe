@@ -449,3 +449,43 @@ func TestTheLastReviewCanBePutBack(t *testing.T) {
 		t.Errorf("put back: %+v", r)
 	}
 }
+
+// A comment that has followed its code keeps its new place, and the line
+// it was first made on, however often it moves.
+func TestACommentsMoveIsKept(t *testing.T) {
+	s := NewStore(t.TempDir())
+	clockAt(s)
+	s.Do(Request{Op: "comment", File: "a.go", Line: 10, EndLine: 12, Body: "x"}, Agent)
+	if err := s.Move([]Move{{Thread: 1, Line: 14}}); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := s.Load()
+	if th := r.Threads[0]; th.Line != 14 || th.EndLine != 16 || th.MovedFrom != 10 {
+		t.Errorf("moved: %+v", th)
+	}
+	s.Move([]Move{{Thread: 1, Line: 20}, {Thread: 9, Line: 1}})
+	if th, _ := s.Load(); th.Threads[0].Line != 20 || th.Threads[0].MovedFrom != 10 {
+		t.Errorf("moved again: %+v", th.Threads[0])
+	}
+}
+
+// The user ticks files as viewed: kept with the fingerprint of the change
+// they saw; unticked, forgotten. The agent doesn't tick them.
+func TestFilesAreTickedAsViewed(t *testing.T) {
+	s := NewStore(t.TempDir())
+	if _, err := s.Do(Request{Op: "view", File: "a.go", Code: "f1"}, User); err != nil {
+		t.Fatal(err)
+	}
+	s.Do(Request{Op: "view", File: "b.go", Code: "f2"}, User)
+	s.Do(Request{Op: "unview", File: "b.go"}, User)
+	r, _ := s.Load()
+	if len(r.Viewed) != 1 || r.Viewed["a.go"] != "f1" {
+		t.Errorf("viewed: %v", r.Viewed)
+	}
+	if _, err := s.Do(Request{Op: "view", File: "c.go", Code: "f3"}, Agent); err == nil {
+		t.Error("the agent ticked a file")
+	}
+	if _, err := s.Do(Request{Op: "view", File: "c.go"}, User); err == nil {
+		t.Error("ticked with no fingerprint of what was seen")
+	}
+}

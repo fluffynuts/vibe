@@ -717,3 +717,21 @@ func TestTheSandboxIsKeptAwakeWhileTheAgentWorks(t *testing.T) {
 		t.Error("kept awake after the agent was done")
 	}
 }
+
+// The page is told which version of itself vibe serves, so a page left
+// open across a rebuild of vibe can say it's out of date.
+func TestThePageIsToldWhichVersionOfItVibeServes(t *testing.T) {
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort})
+	version := func() string {
+		t.Helper()
+		var body struct {
+			PageVersion string `json:"pageVersion"`
+		}
+		json.Unmarshal(do(t, s, req{path: "/api/state", headers: authed(nil)}).Body.Bytes(), &body)
+		return body.PageVersion
+	}
+	first := version()
+	if first == "" || version() != first {
+		t.Errorf("versions: %q, then %q", first, version())
+	}
+}

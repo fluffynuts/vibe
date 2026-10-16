@@ -59,3 +59,38 @@ func TestUnpushedFilesAreAsLongAsTheLastCommitHasThem(t *testing.T) {
 		t.Errorf("lengths: %s", got)
 	}
 }
+
+// Each file in a diff has a fingerprint of its change, the same while the
+// change is, and different once it isn't: a file ticked as viewed is
+// known to have changed since.
+func TestAFilesFingerprintChangesWithItsChange(t *testing.T) {
+	dir := repo(t, map[string]string{"a.txt": "one\n", "b.txt": "b\n"})
+	write(t, dir, "a.txt", "one\ntwo\n")
+	write(t, dir, "b.txt", "b\nb\n")
+	print := func() map[string]string {
+		files, err := WorkingTree(context.Background(), dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]string{}
+		for _, f := range files {
+			if f.Fingerprint == "" {
+				t.Fatalf("%s has no fingerprint", f.Path)
+			}
+			out[f.Path] = f.Fingerprint
+		}
+		return out
+	}
+	before := print()
+	if again := print(); again["a.txt"] != before["a.txt"] {
+		t.Error("the same change, a different fingerprint")
+	}
+	write(t, dir, "a.txt", "one\ntwo\nthree\n")
+	after := print()
+	if after["a.txt"] == before["a.txt"] {
+		t.Error("a's change changed, its fingerprint didn't")
+	}
+	if after["b.txt"] != before["b.txt"] {
+		t.Error("b's change didn't change, its fingerprint did")
+	}
+}

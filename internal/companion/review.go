@@ -49,6 +49,18 @@ func (s *Server) reviewState(w http.ResponseWriter, r *http.Request) {
 				files = []review.File{}
 			}
 			body["diff"] = files
+			// Comments follow their code when lines above them came or went.
+			if moves := review.Moves(ctx, s.cfg.ReviewTab.Workspace, rv); len(moves) > 0 {
+				if err := s.cfg.ReviewTab.Store.Move(moves); err != nil {
+					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "comments couldn't be moved to where their code is now: " + err.Error()})
+					return
+				}
+				if rv, err = s.cfg.ReviewTab.Store.Load(); err != nil {
+					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+					return
+				}
+				body["review"] = rv
+			}
 			// Not while the agent is still reviewing: what it says next would go
 			// into a closed review, out of sight. The next look after closes it.
 			agentAtIt := rv.State == review.InProgress && s.convo.working()
