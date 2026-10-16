@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -25,62 +24,20 @@ type GitInfo struct {
 }
 
 // readGit is the workspace's git status, or nil when dir isn't in a
-// repository (or git isn't there to ask).
+// repository (or it can't be read). It's read with go-git, which runs
+// nothing the repository's config names: the sandbox can write that.
 func readGit(dir string) *GitInfo {
 	if dir == "" {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	// The sandbox can write the repository's config: git is run so that
-	// nothing it says to run runs here.
-	out, err := review.Git(ctx, dir, "status", "--porcelain=v2", "--branch", "--show-stash")
+	st, err := review.StatusOf(ctx, dir)
 	if err != nil {
 		return nil
 	}
-	info := parseGitStatus(string(out))
+	info := GitInfo(*st)
 	return &info
-}
-
-// parseGitStatus reads `git status --porcelain=v2 --branch --show-stash`.
-func parseGitStatus(out string) GitInfo {
-	var info GitInfo
-	oid := ""
-	for _, line := range strings.Split(out, "\n") {
-		switch {
-		case strings.HasPrefix(line, "# branch.oid "):
-			oid = strings.TrimPrefix(line, "# branch.oid ")
-		case strings.HasPrefix(line, "# branch.head "):
-			info.Branch = strings.TrimPrefix(line, "# branch.head ")
-		case strings.HasPrefix(line, "# branch.ab "):
-			fields := strings.Fields(strings.TrimPrefix(line, "# branch.ab "))
-			if len(fields) == 2 {
-				info.Ahead, _ = strconv.Atoi(strings.TrimPrefix(fields[0], "+"))
-				info.Behind, _ = strconv.Atoi(strings.TrimPrefix(fields[1], "-"))
-			}
-		case strings.HasPrefix(line, "# stash "):
-			info.Stashed, _ = strconv.Atoi(strings.TrimPrefix(line, "# stash "))
-		case strings.HasPrefix(line, "? "):
-			info.Untracked++
-		case strings.HasPrefix(line, "u "):
-			info.Conflicted++
-		case (strings.HasPrefix(line, "1 ") || strings.HasPrefix(line, "2 ")) && len(line) >= 4:
-			if line[2] != '.' {
-				info.Staged++
-			}
-			if line[3] != '.' {
-				info.Modified++
-			}
-		}
-	}
-	if info.Branch == "(detached)" {
-		if oid == "(initial)" || len(oid) < 7 {
-			info.Branch = "detached"
-		} else {
-			info.Branch = "@" + oid[:7]
-		}
-	}
-	return info
 }
 
 // shortenPath puts ~ for the user's home at the front of path.

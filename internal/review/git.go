@@ -1,20 +1,21 @@
 package review
 
 import (
-	"bytes"
+	"container/heap"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
+
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
 // emptyTree is git's tree with nothing in it: what a repository with no
@@ -25,109 +26,171 @@ const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 // is listed without its lines.
 const maxUntracked = 1 << 20
 
-// diffFlags make git's diff what Parse reads, whatever the user's git
-// config says: no colour, no external diff tool or text conversion (which
-// the repository's own config could make run anything), a/ and b/
-// prefixes, and renames found.
-var diffFlags = []string{"--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/", "-M"}
-
 // Diffing is how a diff is shown: IgnoreSpace leaves out what changed only
 // in whitespace (an untracked file is all new, so it's shown whole).
 type Diffing struct {
 	IgnoreSpace bool
 }
 
-// flags are diffFlags, for how.
-func flags(how []Diffing) []string {
-	out := append([]string{}, diffFlags...)
-	for _, h := range how {
-		if h.IgnoreSpace {
-			out = append(out, "--ignore-all-space")
-		}
+// open is the repository dir is in, or why there's no diff to review.
+func open(dir string) (*repository, error) {
+	r, err := openRepo(dir)
+	switch {
+	case errors.Is(err, errNotRepository):
+		return nil, fmt.Errorf("%s isn't a git repository, so there's no diff to review", dir)
+	case err != nil:
+		return nil, fmt.Errorf("%s can't be read as a git repository, so there's no diff to review: %w", dir, err)
 	}
-	return out
+	return r, nil
 }
 
 // WorkingTree is the diff of the folder dir as it is: everything not yet
 // committed, staged or not, and untracked files (those git doesn't ignore)
 // as added.
 func WorkingTree(ctx context.Context, dir string, how ...Diffing) ([]File, error) {
-	if err := isRepository(ctx, dir); err != nil {
+	r, err := open(dir)
+	if err != nil {
 		return nil, err
 	}
-	base := "HEAD"
-	if _, err := run(ctx, dir, "rev-parse", "--verify", "--quiet", "HEAD"); err != nil {
-		base = emptyTree
+	head, err := r.head()
+	if err != nil {
+		return nil, err
 	}
-	return withDetails(ctx, dir, "", base)(diffFrom(ctx, dir, base, how))
+	return r.diffWorkTree(ctx, head, how)
 }
 
 // Against is the diff of the folder dir as it is from where it parted from
 // ref (a branch, say): this branch's changes, committed or not, without
 // those ref has gained since.
 func Against(ctx context.Context, dir, ref string, how ...Diffing) ([]File, error) {
-	if err := isRepository(ctx, dir); err != nil {
+	r, err := open(dir)
+	if err != nil {
 		return nil, err
 	}
-	if err := isCommit(ctx, dir, ref); err != nil {
+	other, err := r.commit(ref)
+	if err != nil {
 		return nil, err
 	}
-	base, err := run(ctx, dir, "merge-base", ref, "HEAD")
+	head, err := r.head()
+	if err != nil || head == nil {
+		return nil, fmt.Errorf("the folder has no commits to compare with %s", ref)
+	}
+	parted, err := mergeBase(other, head)
 	if err != nil {
 		return nil, fmt.Errorf("%s and the folder's HEAD have no history in common: %w", ref, err)
 	}
-	parted := strings.TrimSpace(base)
-	return withDetails(ctx, dir, "", parted)(diffFrom(ctx, dir, parted, how))
+	return r.diffWorkTree(ctx, parted, how)
 }
 
-// Commit is the diff of what commit ref changed.
-func Commit(ctx context.Context, dir, ref string, how ...Diffing) ([]File, error) {
-	if err := isRepository(ctx, dir); err != nil {
-		return nil, err
-	}
-	if err := isCommit(ctx, dir, ref); err != nil {
-		return nil, err
-	}
-	// A merge commit's change is what it brought in to its first parent,
-	// which is what its old side is read from.
-	out, err := run(ctx, dir, append([]string{"show", "--format=", "-m", "--first-parent"}, append(flags(how), ref)...)...)
+// diffWorkTree is the work tree's diff from commit base (none: from
+// nothing), untracked files with it, in path order.
+func (r *repository) diffWorkTree(ctx context.Context, base *object.Commit, how []Diffing) ([]File, error) {
+	head, err := r.head()
 	if err != nil {
 		return nil, err
 	}
-	return withDetails(ctx, dir, ref, ref+"^")(Parse(out))
-}
-
-// diffFrom is the working tree's diff from base, untracked files with it,
-// in path order.
-func diffFrom(ctx context.Context, dir, base string, how []Diffing) ([]File, error) {
-	out, err := run(ctx, dir, append([]string{"diff"}, append(flags(how), base)...)...)
+	o := newOverlay(r.git.Storer)
+	now, untracked, err := r.workTree(o, head)
 	if err != nil {
 		return nil, err
 	}
-	files, err := Parse(out)
+	from, err := treeOf(base)
 	if err != nil {
 		return nil, err
 	}
-	listed, err := run(ctx, dir, "ls-files", "--others", "--exclude-standard", "-z")
+	files, err := diffTrees(ctx, from, now, how, o.large)
 	if err != nil {
 		return nil, err
 	}
-	for _, path := range strings.Split(listed, "\x00") {
-		if path != "" {
-			files = append(files, untracked(dir, path))
+	root, err := os.OpenRoot(r.top)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	for _, p := range untracked {
+		// As git, only files and links: not a FIFO, a socket, a device.
+		if info, err := root.Lstat(filepath.FromSlash(p)); err == nil && !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+			continue
 		}
+		files = append(files, untrackedFile(root, p))
 	}
 	sort.SliceStable(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	return files, nil
 }
 
-// untracked is an untracked file, as git would show it added: a link as
-// where it points, never what's there (it may point out of the folder, at
-// a host file, or at /dev/zero); only a plain file's content is read.
-func untracked(dir, path string) File {
-	f := File{Path: path, Status: Added}
-	full := filepath.Join(dir, path)
-	info, err := os.Lstat(full)
+// Commit is the diff of what commit ref changed: a merge commit's, what it
+// brought in to its first parent.
+func Commit(ctx context.Context, dir, ref string, how ...Diffing) ([]File, error) {
+	r, err := open(dir)
+	if err != nil {
+		return nil, err
+	}
+	c, err := r.commit(ref)
+	if err != nil {
+		return nil, err
+	}
+	var parent *object.Commit
+	if c.NumParents() > 0 {
+		if parent, err = c.Parent(0); err != nil {
+			return nil, err
+		}
+	}
+	return r.diffCommits(ctx, parent, c, how)
+}
+
+// Unpushed is the diff of the commits on HEAD that upstream hasn't: what
+// they changed, from where the two parted, without anything uncommitted.
+func Unpushed(ctx context.Context, dir, upstream string, how ...Diffing) ([]File, error) {
+	r, err := open(dir)
+	if err != nil {
+		return nil, err
+	}
+	up, err := r.commit(upstream)
+	if err != nil {
+		return nil, err
+	}
+	head, err := r.head()
+	if err != nil || head == nil {
+		return nil, fmt.Errorf("the folder has no commits")
+	}
+	parted, err := mergeBase(up, head)
+	if err != nil {
+		return nil, fmt.Errorf("%s and the folder's HEAD have no history in common: %w", upstream, err)
+	}
+	return r.diffCommits(ctx, parted, head, how)
+}
+
+func (r *repository) diffCommits(ctx context.Context, from, to *object.Commit, how []Diffing) ([]File, error) {
+	a, err := treeOf(from)
+	if err != nil {
+		return nil, err
+	}
+	b, err := treeOf(to)
+	if err != nil {
+		return nil, err
+	}
+	files, err := diffTrees(ctx, a, b, how, nil)
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	return files, nil
+}
+
+// untrackedFile is an untracked file, as git would show it added: a link
+// as where it points, never what's there (it may point out of the folder,
+// at a host file, or at /dev/zero); only a plain file's content is read,
+// from in the folder (root).
+func untrackedFile(root *os.Root, path string) File {
+	f := untrackedOf(root, path)
+	f.Fingerprint = fingerprint(f)
+	return f
+}
+
+func untrackedOf(root *os.Root, path string) File {
+	f := File{Path: path, Status: Added, Hunks: []Hunk{}}
+	native := filepath.FromSlash(path)
+	info, err := root.Lstat(native)
 	if err != nil {
 		f.Unreadable = err.Error()
 		return f
@@ -135,12 +198,13 @@ func untracked(dir, path string) File {
 	// Its size and time stand for its content until it's read.
 	f.stamp = fmt.Sprintf("%d %d", info.Size(), info.ModTime().UnixNano())
 	if info.Mode()&os.ModeSymlink != 0 {
-		target, err := os.Readlink(full)
+		target, err := root.Readlink(native)
 		if err != nil {
 			f.Unreadable = err.Error()
 			return f
 		}
 		f.stamp = "link " + target
+		f.Lines = 1
 		f.Hunks = []Hunk{{OldStart: 0, NewStart: 1, Lines: []Line{{Kind: Addition, New: 1, Text: target}}}}
 		return f
 	}
@@ -148,129 +212,38 @@ func untracked(dir, path string) File {
 		f.TooLarge = true
 		return f
 	}
-	body, err := readPlain(full, maxUntracked)
+	body, err := readIn(root, native, maxUntracked)
 	if err != nil {
 		f.Unreadable = err.Error()
 		return f
 	}
 	sum := sha256.Sum256(body)
 	f.stamp = hex.EncodeToString(sum[:])
-	// As git tells: a NUL early on means binary.
-	if bytes.IndexByte(body[:min(len(body), 8000)], 0) >= 0 {
+	if isBinary(body) {
 		f.Binary = true
 		return f
 	}
-	text := strings.TrimSuffix(string(body), "\n")
-	if text == "" {
+	if len(body) == 0 {
 		return f
 	}
 	h := Hunk{OldStart: 0, NewStart: 1}
-	for i, line := range splitLines(text) {
+	for i, line := range splitLines(string(body)) {
 		h.Lines = append(h.Lines, Line{Kind: Addition, New: i + 1, Text: line})
 	}
 	f.Hunks = []Hunk{h}
+	f.Lines = len(h.Lines)
 	return f
 }
 
-func isRepository(ctx context.Context, dir string) error {
-	if _, err := exec.LookPath("git"); err != nil {
-		return fmt.Errorf("git isn't installed on this machine, and the Review tab needs it to work out the diff")
-	}
-	if _, err := run(ctx, dir, "rev-parse", "--git-dir"); err != nil {
-		if strings.Contains(err.Error(), "not a git repository") {
-			return fmt.Errorf("%s isn't a git repository, so there's no diff to review", dir)
-		}
-		return fmt.Errorf("git can't use %s as a repository, so there's no diff to review: %w", dir, err)
-	}
-	return nil
-}
-
-// Root is the top of the repository folder dir is in: what git's paths are
-// relative to.
+// Root is the top of the repository folder dir is in: what its paths are
+// relative to. It's dir or a folder above it, whatever the repository's
+// config says.
 func Root(ctx context.Context, dir string) (string, error) {
-	if err := isRepository(ctx, dir); err != nil {
-		return "", err
-	}
-	top, err := run(ctx, dir, "rev-parse", "--show-toplevel")
+	r, err := open(dir)
 	if err != nil {
 		return "", err
 	}
-	return filepath.FromSlash(strings.TrimSpace(top)), nil
-}
-
-func isCommit(ctx context.Context, dir, ref string) error {
-	if strings.HasPrefix(ref, "-") {
-		return fmt.Errorf("%q isn't a branch or commit", ref)
-	}
-	if _, err := run(ctx, dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err != nil {
-		return fmt.Errorf("there's no branch or commit %q in %s", ref, dir)
-	}
-	return nil
-}
-
-// hostSafe is how git is run on this machine in a folder the sandbox can
-// write, .git/config with it: nothing the repository says to run runs. No
-// file system monitor, no hooks, no optional index writes (which would run
-// some); diffs take no text conversion or external tool (diffFlags); and
-// filters, which can't be turned off by name in advance, are refused
-// (ownFilters). Paths are left as they are, not \-quoted.
-var hostSafe = []string{"--no-optional-locks", "-c", "core.quotepath=false", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull}
-
-// readsWorkingTree are the git commands that read the folder's files, and
-// so run the repository's filters on them.
-var readsWorkingTree = map[string]bool{"diff": true, "status": true}
-
-// Git runs git in dir as the Review tab does (see hostSafe), for others on
-// this machine that read the sandbox's folder.
-func Git(ctx context.Context, dir string, args ...string) (string, error) {
-	return run(ctx, dir, args...)
-}
-
-// run runs git in dir, safely (see hostSafe), and gives what it wrote;
-// failing, its error says what git said.
-func run(ctx context.Context, dir string, args ...string) (string, error) {
-	if readsWorkingTree[args[0]] {
-		if err := ownFilters(ctx, dir); err != nil {
-			return "", err
-		}
-	}
-	cmd := exec.CommandContext(ctx, "git", append(append([]string{}, hostSafe...), args...)...)
-	cmd.Dir = dir
-	var out, errOut bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errOut
-	if err := cmd.Run(); err != nil {
-		if msg := strings.TrimSpace(errOut.String()); msg != "" {
-			return "", fmt.Errorf("git %s: %s", args[0], msg)
-		}
-		return "", fmt.Errorf("git %s: %w", args[0], err)
-	}
-	return out.String(), nil
-}
-
-// ownFilters refuses a repository whose own config (not the user's, which
-// is theirs to trust, git-lfs's say) sets a filter: one runs a command on
-// each file git reads from the folder, and the sandbox can write the config.
-func ownFilters(ctx context.Context, dir string) error {
-	cmd := exec.CommandContext(ctx, "git", "config", "--show-scope", "--get-regexp", `^filter\.`)
-	cmd.Dir = dir
-	var out, errOut bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errOut
-	if err := cmd.Run(); err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) && exit.ExitCode() == 1 && errOut.Len() == 0 {
-			return nil // none set
-		}
-		return fmt.Errorf("the repository's git config couldn't be checked for commands it would run (git 2.26 or later is needed): %s", strings.TrimSpace(errOut.String()+" "+err.Error()))
-	}
-	for _, line := range strings.Split(out.String(), "\n") {
-		scope, setting, _ := strings.Cut(line, "\t")
-		if scope != "local" && scope != "worktree" {
-			continue
-		}
-		key, _, _ := strings.Cut(setting, " ")
-		return fmt.Errorf("the repository's own git config sets %s, a command git would run on this machine for each file it reads: the Review tab won't run git there (take it out of .git/config, or set it in your own ~/.gitconfig if you trust it)", key)
-	}
-	return nil
+	return r.top, nil
 }
 
 // StartOptions are the reviews the folder can be started on, as it is.
@@ -289,148 +262,232 @@ type StartOptions struct {
 // Options are the reviews the folder dir can be started on.
 func Options(ctx context.Context, dir string) (StartOptions, error) {
 	var o StartOptions
-	if err := isRepository(ctx, dir); err != nil {
-		return o, err
-	}
-	status, err := run(ctx, dir, "status", "--porcelain", "--untracked-files=normal")
+	r, err := open(dir)
 	if err != nil {
 		return o, err
 	}
-	o.Uncommitted = strings.TrimSpace(status) != ""
-	current, _ := run(ctx, dir, "symbolic-ref", "--quiet", "--short", "HEAD")
-	current = strings.TrimSpace(current)
-	if def := defaultBranch(ctx, dir); def != "" && def != current {
+	files, err := WorkingTree(ctx, dir)
+	if err != nil {
+		return o, err
+	}
+	o.Uncommitted = len(files) > 0
+	current := r.branch()
+	if def := r.defaultBranch(); def != "" && def != current {
 		o.DefaultBranch = def
 	}
-	if up, err := run(ctx, dir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"); err == nil {
-		count, err := run(ctx, dir, "rev-list", "--count", "@{upstream}..HEAD")
+	if up, upstream := r.upstream(current); up != nil {
+		head, err := r.head()
 		if err != nil {
 			return o, err
 		}
-		if n, _ := strconv.Atoi(strings.TrimSpace(count)); n > 0 {
-			o.Upstream, o.Unpushed = strings.TrimSpace(up), n
+		if ahead, _ := aheadBehind(head, up); ahead > 0 {
+			o.Upstream, o.Unpushed = upstream, ahead
 		}
 	}
 	return o, nil
 }
 
+// branch is the branch HEAD is on (one with no commits yet included), or
+// "" when it's detached.
+func (r *repository) branch() string {
+	ref, err := r.git.Storer.Reference(plumbing.HEAD)
+	if err != nil || ref.Type() != plumbing.SymbolicReference || !ref.Target().IsBranch() {
+		return ""
+	}
+	return ref.Target().Short()
+}
+
 // defaultBranch is the repository's main line, as origin says (its HEAD),
 // else main or master, whichever is there; "" when none is. The local
 // branch's name when there is one, else the remote's.
-func defaultBranch(ctx context.Context, dir string) string {
-	exists := func(ref string) bool {
-		_, err := run(ctx, dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+func (r *repository) defaultBranch() string {
+	exists := func(name plumbing.ReferenceName) bool {
+		_, err := r.git.Reference(name, true)
 		return err == nil
 	}
-	if remote, err := run(ctx, dir, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"); err == nil {
-		remote = strings.TrimSpace(remote)
-		if local := strings.TrimPrefix(remote, "origin/"); exists("refs/heads/" + local) {
+	if ref, err := r.git.Storer.Reference("refs/remotes/origin/HEAD"); err == nil && ref.Type() == plumbing.SymbolicReference {
+		remote := ref.Target().Short()
+		if local := strings.TrimPrefix(remote, "origin/"); exists(plumbing.NewBranchReferenceName(local)) {
 			return local
 		}
 		return remote
 	}
 	for _, name := range []string{"main", "master"} {
-		if exists("refs/heads/" + name) {
+		if exists(plumbing.NewBranchReferenceName(name)) {
 			return name
 		}
 	}
 	return ""
 }
 
-// Unpushed is the diff of the commits on HEAD that upstream hasn't: what
-// they changed, from where the two parted, without anything uncommitted.
-func Unpushed(ctx context.Context, dir, upstream string, how ...Diffing) ([]File, error) {
-	if err := isRepository(ctx, dir); err != nil {
-		return nil, err
+// upstream is the commit branch pushes to, and its name; nil when it has
+// none.
+func (r *repository) upstream(branch string) (*object.Commit, string) {
+	if branch == "" {
+		return nil, ""
 	}
-	if err := isCommit(ctx, dir, upstream); err != nil {
-		return nil, err
-	}
-	base, err := run(ctx, dir, "merge-base", upstream, "HEAD")
+	cfg, err := r.git.Config()
 	if err != nil {
-		return nil, fmt.Errorf("%s and the folder's HEAD have no history in common: %w", upstream, err)
+		return nil, ""
 	}
-	out, err := run(ctx, dir, append([]string{"diff"}, append(flags(how), strings.TrimSpace(base), "HEAD")...)...)
+	b, ok := cfg.Branches[branch]
+	if !ok || b.Merge == "" {
+		return nil, ""
+	}
+	name := plumbing.NewRemoteReferenceName(b.Remote, b.Merge.Short())
+	short := b.Remote + "/" + b.Merge.Short()
+	if b.Remote == "." {
+		name, short = b.Merge, b.Merge.Short()
+	}
+	ref, err := r.git.Reference(name, true)
 	if err != nil {
-		return nil, err
+		return nil, ""
 	}
-	return withDetails(ctx, dir, "HEAD", strings.TrimSpace(base))(Parse(out))
+	c, err := r.git.CommitObject(ref.Hash())
+	if err != nil {
+		return nil, ""
+	}
+	return c, short
 }
 
-// withDetails is a step after working out a diff: it fills in each file's
-// fingerprint, and its line count, from newRev (the folder itself when "")
-// for the files there, and from oldRev for the deleted ones.
-func withDetails(ctx context.Context, dir, newRev, oldRev string) func([]File, error) ([]File, error) {
-	return func(files []File, err error) ([]File, error) {
-		if err != nil {
-			return files, err
+// aheadBehind is how many commits a has that b hasn't, and b that a
+// hasn't: git's way, walking back from both newest first until all that's
+// left is history they share.
+func aheadBehind(a, b *object.Commit) (ahead, behind int) {
+	if a == nil || b == nil {
+		return 0, 0
+	}
+	const fromA, fromB = 1, 2
+	flags := map[plumbing.Hash]int{}
+	q := &byTime{}
+	mark := func(c *object.Commit, f int) {
+		if flags[c.Hash]|f == flags[c.Hash] {
+			return
 		}
-		for i := range files {
-			f := &files[i]
-			f.Fingerprint = fingerprint(*f)
-			if f.Binary {
-				continue
-			}
-			switch {
-			case f.Status == Deleted:
-				f.Lines = linesAt(ctx, dir, oldRev, f.Path)
-			case newRev == "":
-				f.Lines = linesOnDisk(filepath.Join(dir, f.Path))
-			default:
-				f.Lines = linesAt(ctx, dir, newRev, f.Path)
-			}
-		}
-		return files, nil
+		flags[c.Hash] |= f
+		heap.Push(q, c)
 	}
-}
-
-// linesAt is how many lines path has at rev; 0 if it can't be read.
-func linesAt(ctx context.Context, dir, rev, path string) int {
-	out, err := run(ctx, dir, "show", rev+":"+path)
-	if err != nil {
-		return 0
-	}
-	return countLines(strings.NewReader(out))
-}
-
-// linesOnDisk is how many lines the file at path has, as git sees it: a
-// link's one (where it points); 0 if it isn't a plain file, or can't be
-// read.
-func linesOnDisk(path string) int {
-	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return 1
-	}
-	f, err := openNoFollow(path)
-	if err != nil {
-		return 0
-	}
-	defer f.Close()
-	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
-		return 0
-	}
-	return countLines(f)
-}
-
-// countLines counts r's lines: a last line without a newline counts too.
-func countLines(r io.Reader) int {
-	buf := make([]byte, 64*1024)
-	n, last := 0, byte('\n')
-	for {
-		k, err := r.Read(buf)
-		for _, b := range buf[:k] {
-			if b == '\n' {
-				n++
+	mark(a, fromA)
+	mark(b, fromB)
+	for q.Len() > 0 {
+		stale := true
+		for _, c := range *q {
+			if flags[c.Hash] != fromA|fromB {
+				stale = false
+				break
 			}
 		}
-		if k > 0 {
-			last = buf[k-1]
-		}
-		if err != nil {
+		if stale {
 			break
 		}
+		c := heap.Pop(q).(*object.Commit)
+		f := flags[c.Hash]
+		parents := c.Parents()
+		parents.ForEach(func(p *object.Commit) error {
+			mark(p, f)
+			return nil
+		})
+		parents.Close()
 	}
-	if last != '\n' {
-		n++
+	for _, f := range flags {
+		switch f {
+		case fromA:
+			ahead++
+		case fromB:
+			behind++
+		}
+	}
+	return ahead, behind
+}
+
+// byTime is commits, newest first.
+type byTime []*object.Commit
+
+func (q byTime) Len() int           { return len(q) }
+func (q byTime) Less(i, j int) bool { return q[i].Committer.When.After(q[j].Committer.When) }
+func (q byTime) Swap(i, j int)      { q[i], q[j] = q[j], q[i] }
+func (q *byTime) Push(x any)        { *q = append(*q, x.(*object.Commit)) }
+func (q *byTime) Pop() any {
+	old := *q
+	c := old[len(old)-1]
+	*q = old[:len(old)-1]
+	return c
+}
+
+// FolderStatus is what the companion page's header shows of the folder's
+// git status, as the infobar in the sandbox does.
+type FolderStatus struct {
+	Branch     string
+	Staged     int
+	Modified   int
+	Untracked  int
+	Conflicted int
+	Ahead      int
+	Behind     int
+	Stashed    int
+}
+
+// StatusOf is the git status of the folder dir; an error when it's in no
+// repository (or one that can't be read).
+func StatusOf(ctx context.Context, dir string) (*FolderStatus, error) {
+	r, err := openRepo(dir)
+	if err != nil {
+		return nil, err
+	}
+	wt, err := r.git.Worktree()
+	if err != nil {
+		return nil, err
+	}
+	wt.Excludes = append(wt.Excludes, r.ignored()...)
+	status, err := wt.Status()
+	if err != nil {
+		return nil, err
+	}
+	s := &FolderStatus{Branch: r.branch()}
+	head, err := r.head()
+	if err != nil {
+		return nil, err
+	}
+	if s.Branch == "" {
+		s.Branch = "detached"
+		if head != nil {
+			s.Branch = "@" + head.Hash.String()[:7]
+		}
+	}
+	for _, f := range status {
+		switch {
+		case f.Worktree == gogit.Untracked:
+			s.Untracked++
+			continue
+		case f.Staging == gogit.UpdatedButUnmerged || f.Worktree == gogit.UpdatedButUnmerged:
+			s.Conflicted++
+			continue
+		}
+		if f.Staging != gogit.Unmodified {
+			s.Staged++
+		}
+		if f.Worktree != gogit.Unmodified {
+			s.Modified++
+		}
+	}
+	if up, _ := r.upstream(r.branch()); up != nil {
+		s.Ahead, s.Behind = aheadBehind(head, up)
+	}
+	s.Stashed = r.stashes()
+	return s, nil
+}
+
+// stashes is how many stashes there are: the lines of the stash's log.
+func (r *repository) stashes() int {
+	f, err := r.git.Storer.Reference("refs/stash")
+	if err != nil || f == nil {
+		return 0
+	}
+	n := 0
+	for _, dir := range r.gitDirs {
+		if data, err := readPlain(filepath.Join(dir, "logs", "refs", "stash"), 1<<20); err == nil {
+			n = strings.Count(string(data), "\n")
+		}
 	}
 	return n
 }
@@ -489,8 +546,9 @@ func Moves(ctx context.Context, dir string, rv Review) []Move {
 }
 
 // fingerprint stands for f's change: a digest of what it is and its stamp
-// (the blobs git compares, the modes; an untracked file's content), not its
-// hunks, which change with how the diff is shown (see Diffing).
+// (the full ids of the blobs compared, and their modes; an untracked
+// file's content), not its hunks, which change with how the diff is shown
+// (see Diffing).
 func fingerprint(f File) string {
 	data, _ := json.Marshal(struct {
 		Path, OldPath, Status, Stamp string

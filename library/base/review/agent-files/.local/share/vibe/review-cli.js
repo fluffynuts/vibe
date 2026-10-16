@@ -103,31 +103,43 @@ function drop(request) {
     process.hrtime.bigint().toString().padStart(20, "0") + "-" + process.pid;
   const tmp = path.join(inbox, name + ".tmp");
   fs.writeFileSync(tmp, JSON.stringify(request));
-  fs.renameSync(tmp, path.join(inbox, name + ".json"));
+  const dropped = path.join(inbox, name + ".json");
+  fs.renameSync(tmp, dropped);
+  return dropped;
 }
 
 // startAndWait drops a start, and waits until vibe has taken it in (it does
 // every couple of seconds), so what follows (diff, above all) is of the new
-// review, as the tab shows it. Refused, it says why; not taken in at all,
-// it says vibe may not be running (the start waits in the inbox for it).
+// review, as the tab shows it. Taken in is its file gone from the inbox and
+// the review saved after (agentAt); the review then is this start's, else
+// it says what happened instead.
 function startAndWait(request) {
   const before = load();
-  const problemsBefore = (before.problems || []).join("\n");
-  drop(request);
+  const dropped = drop(request);
   const limit = Number(process.env.VIBE_REVIEW_START_WAIT_MS) || 15000;
   const deadline = Date.now() + limit;
   const pause = new Int32Array(new SharedArrayBuffer(4));
-  while (Date.now() < deadline) {
-    Atomics.wait(pause, 0, 0, 100);
-    const now = load();
-    if (now.started && now.started !== before.started) return;
-    const problems = now.problems || [];
-    if (problems.join("\n") !== problemsBefore && problems.length && /^start: /.test(problems[problems.length - 1])) {
-      fail("the Review tab refused the start: " + problems[problems.length - 1].replace(/^start: /, ""), 1);
+  const wait = function (done) {
+    while (!done()) {
+      if (Date.now() > deadline) return false;
+      Atomics.wait(pause, 0, 0, 100);
     }
+    return true;
+  };
+  if (!wait(function () { return !fs.existsSync(dropped); })) {
+    fail("the Review tab hasn't taken the start in after " + Math.round(limit / 1000) + "s: is vibe running on the host, " +
+      "with its companion page (not --no-companion, nor companion: off)? The start waits in the inbox, and is taken in once it is.", 1);
   }
-  fail("the Review tab hasn't taken the start in after " + Math.round(limit / 1000) + "s: is vibe running on the host? " +
-    "The start waits in the inbox, and is taken in once vibe is.", 1);
+  let now = load();
+  wait(function () { now = load(); return now.agentAt !== before.agentAt; });
+  const ours = now.started && now.started !== before.started &&
+    (now.ref || undefined) === request.ref && (now.commit || undefined) === request.commit &&
+    !!now.unpushed === !!request.unpushed && (now.note || undefined) === request.note;
+  if (ours) return;
+  const fresh = (now.problems || []).filter(function (p) { return (before.problems || []).indexOf(p) < 0; });
+  const refused = fresh.filter(function (p) { return /^start: /.test(p); }).pop();
+  if (refused) fail("the Review tab refused the start: " + refused.replace(/^start: /, ""), 1);
+  fail("the start was taken in, but the review now isn't it (another was started on the page?): see vibe-review list", 1);
 }
 
 // linesOf is lines first to last of file as they read now, for the tab to
@@ -163,13 +175,16 @@ function load() {
 
 let rootFolder;
 
-// root is the top of the workspace's repository, where the Review tab runs
-// git, so paths are the tab's wherever the agent has gone: the workspace
+// root is the top of the workspace's repository, where the Review tab reads
+// it, so paths are the tab's wherever the agent has gone: the workspace
 // (VIBE_REVIEW_WORKSPACE) itself when it isn't a repository's, or, in a
-// sandbox built before that was set, here.
+// sandbox built before that was set (or on a host whose path isn't one
+// here), the folder vibe-review is run in.
 function root() {
   if (rootFolder === undefined) {
-    const workspace = process.env.VIBE_REVIEW_WORKSPACE || process.cwd();
+    // A workspace that isn't here (a Windows host's C:\...) is no use.
+    const named = process.env.VIBE_REVIEW_WORKSPACE;
+    const workspace = named && fs.existsSync(named) ? named : process.cwd();
     try {
       rootFolder = childProcess.execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: workspace, encoding: "utf8" }).trim();
     } catch (e) {

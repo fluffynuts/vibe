@@ -435,22 +435,6 @@ func TestAReviewIsClosedAndReopened(t *testing.T) {
 	}
 }
 
-// A review started for nothing (the agent was busy) is undone by putting
-// the last one back as it was.
-func TestTheLastReviewCanBePutBack(t *testing.T) {
-	s := NewStore(t.TempDir())
-	clockAt(s)
-	s.Do(Request{Op: "comment", File: "a.go", Line: 1, Body: "x"}, Agent)
-	last, _ := s.Load()
-	started, _ := s.Do(Request{Op: "start", Reviewing: true}, User)
-	if err := s.PutBack(last, started.Started); err != nil {
-		t.Fatal(err)
-	}
-	if r, _ := s.Load(); len(r.Threads) != 1 || r.State != last.State {
-		t.Errorf("put back: %+v", r)
-	}
-}
-
 // A comment that has followed its code keeps its new place, and the line
 // it was first made on, however often it moves.
 func TestACommentsMoveIsKept(t *testing.T) {
@@ -545,24 +529,3 @@ func TestClosingAsOverLeavesAReviewStartedSince(t *testing.T) {
 	}
 }
 
-// Putting the last review back undoes a start: only while the review is
-// still the one started.
-func TestPuttingBackLeavesAReviewStartedSince(t *testing.T) {
-	s := NewStore(t.TempDir())
-	tickingClock(s)
-	last, _ := s.Do(Request{Op: "general", Body: "kept"}, Agent)
-	mine, _ := s.Do(Request{Op: "start"}, User)
-	theirs, _ := s.Do(Request{Op: "start", Note: "another"}, User)
-	if err := s.PutBack(last, mine.Started); err != nil {
-		t.Fatal(err)
-	}
-	if r, _ := s.Load(); !r.Started.Equal(theirs.Started) {
-		t.Errorf("the review started since was replaced: %+v", r)
-	}
-	if err := s.PutBack(last, theirs.Started); err != nil {
-		t.Fatal(err)
-	}
-	if r, _ := s.Load(); len(r.Threads) != 1 {
-		t.Errorf("the last review wasn't put back: %+v", r)
-	}
-}

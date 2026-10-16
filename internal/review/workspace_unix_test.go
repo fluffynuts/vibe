@@ -108,3 +108,49 @@ func TestAnUntrackedFileThatCantBeReadSaysSo(t *testing.T) {
 		t.Errorf("files = %+v, want locked.txt saying it couldn't be read", files)
 	}
 }
+
+// A link to a folder out of the workspace is shown as a link, and nothing
+// in that folder is read, through it or by a path through it.
+func TestALinkToAHostFolderIsntReadThrough(t *testing.T) {
+	dir := repo(t, map[string]string{"a.txt": "a\n"})
+	host := t.TempDir()
+	os.WriteFile(filepath.Join(host, "id_rsa"), []byte("HOST SECRET\n"), 0o600)
+	os.Symlink(host, filepath.Join(dir, "sub"))
+	files, err := WorkingTree(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		for _, h := range f.Hunks {
+			for _, l := range h.Lines {
+				if strings.Contains(l.Text, "HOST SECRET") {
+					t.Errorf("%s showed the host's file", f.Path)
+				}
+			}
+		}
+	}
+	if _, err := FileLines(context.Background(), dir, Review{}, "sub/id_rsa"); err == nil {
+		t.Error("a file was read through the link")
+	}
+}
+
+// A file too large to show isn't read, however large: a sparse one, here.
+func TestAHugeFileIsntRead(t *testing.T) {
+	dir := repo(t, map[string]string{"a.txt": "a\n"})
+	f, err := os.Create(filepath.Join(dir, "huge"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Truncate(20 << 30)
+	f.Close()
+	within(t, "the diff", func() {
+		files, err := WorkingTree(context.Background(), dir)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if len(files) != 1 || !files[0].TooLarge || files[0].Lines != 0 {
+			t.Errorf("files = %+v", files)
+		}
+	})
+}

@@ -720,3 +720,49 @@ func TestWhitespaceChangesCanBeLeftOutAndTheReviewStays(t *testing.T) {
 		t.Errorf("with whitespace: %+v", r.Diff)
 	}
 }
+
+// A served page takes in the agent's requests by itself, page open or not.
+func TestAServedPageTakesInTheInbox(t *testing.T) {
+	was := reviewTakeEvery
+	reviewTakeEvery = 10 * time.Millisecond
+	defer func() { reviewTakeEvery = was }()
+	store := review.NewStore(t.TempDir())
+	s, err := Start(Config{Sandbox: "box", Token: token, Port: 0, ReviewTab: &ReviewTab{Workspace: t.TempDir(), Store: store}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	os.MkdirAll(store.Inbox(), 0o755)
+	os.WriteFile(filepath.Join(store.Inbox(), "1.json"), []byte(`{"op":"general","body":"taken in"}`), 0o644)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if r, _ := store.Load(); len(r.Threads) == 1 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the request was never taken in")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A review the page starts for the agent is started only once the agent's
+// turn is the page's: a busy agent leaves the review untouched (nothing to
+// put back, so nothing the agent drops meanwhile is lost); and a review
+// that can't be started gives the turn up.
+func TestAReviewThatCantBeStartedGivesTheTurnUp(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	defer close(f.release)
+	os.WriteFile(filepath.Join(filepath.Dir(store.Inbox()), "review.json"), []byte("{broken"), 0o600)
+	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted","agent":true}`)); rec.Code != http.StatusInternalServerError {
+		t.Errorf("start: %d %s", rec.Code, rec.Body)
+	}
+	if s.convo.working() {
+		t.Error("the turn was left claimed")
+	}
+	if len(f.prompts) != 0 {
+		t.Errorf("the agent was asked anyway: %q", f.prompts)
+	}
+}

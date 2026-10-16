@@ -1927,3 +1927,157 @@ test('a page opened with whitespace hidden asks for the diff so', async () => {
     assert.ok(asked.length && asked.every((c) => c.query.includes('whitespace=ignore')), asked.map((c) => c.query).join(' '))
   } finally { p.close() }
 })
+
+// --- the second review's findings on the page ---------------------------------------
+
+// slowDiffPage is a review whose diff loads answer only when let go:
+// release() answers the oldest waiting one.
+async function slowDiffPage() {
+  const waiting = []
+  let diffLoads = 0
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': (call) => {
+        if (!call.query.includes('diff=1')) return { review: started }
+        diffLoads++
+        return new Promise((resolve) => waiting.push(() => resolve({ review: started, diff: twoFiles })))
+      },
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'log' },
+  })
+  const turns = async (n = 20) => { for (let i = 0; i < n; i++) await new Promise((resolve) => setImmediate(resolve)) }
+  return Object.assign(p, { waiting, diffLoads: () => diffLoads, turns,
+    release: async () => { waiting.shift()(); await turns() } })
+}
+
+test('a poll while the diff is on its way asks for it no second time', async () => {
+  const p = await slowDiffPage()
+  try {
+    p.$('tab-review').click()
+    await p.turns()
+    assert.equal(p.diffLoads(), 1)
+    p.every('tick').catch(() => {})
+    await p.turns()
+    await p.release()
+    await p.turns()
+    assert.equal(p.diffLoads(), 1, 'one diff load')
+  } finally { p.close() }
+})
+
+test('Refresh while the diff is on its way loads it again once that one is in', async () => {
+  const p = await slowDiffPage()
+  try {
+    p.$('tab-review').click()
+    await p.turns()
+    p.$('review-refresh').click()
+    await p.turns()
+    await p.release()
+    await p.turns()
+    assert.equal(p.diffLoads(), 2, 'the stale one followed by a fresh one')
+    await p.release()
+  } finally { p.close() }
+})
+
+test("a comment named on a closed review says the review's closed", async () => {
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': { review: { ...commented, started: '2026-10-16T10:00:00Z', closed: 'You closed it.' }, diff: twoFiles },
+      '/api/conversation': () => ({ events: [agentSaid(1, 'Fixed #2.')], last: 1, running: false }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+  })
+  try {
+    await p.every('pollConversation')
+    await p.click(p.$('convo-log').querySelector('.thread-ref'))
+    assert.match(p.$('toast').textContent, /closed/)
+    assert.doesNotMatch(p.$('toast').textContent, /viewed/)
+  } finally { p.close() }
+})
+
+test('with an edit open, the empty comment box keeps the focus through a redraw', async () => {
+  const mine = { lastId: 1, started: '2026-10-16T10:00:00Z', threads: [{ id: 1, status: 'open', comments: [{ author: 'user', body: 'first', at: '2026-10-16T10:05:00Z' }] }] }
+  const now = { diff: twoFiles, review: mine }
+  const p = await changingPage(now)
+  try {
+    await p.click(p.button('Edit', p.$('review-thread-1')))
+    await p.click(p.$('review-files').querySelector('[aria-label="Comment on line R2"]'))
+    const box = () => p.window.document.querySelector('textarea[aria-label="Your comment"]')
+    box().focus()
+    now.review = { ...mine, threads: [...mine.threads, { id: 2, status: 'open', comments: said('news') }], lastId: 2 }
+    await p.poll()
+    assert.equal(p.window.document.activeElement, box(), 'the comment box, not the edit box')
+  } finally { p.close() }
+})
+
+test('a deleted comment stays deleted when a poll set out before it lands', async () => {
+  const mine = { lastId: 1, started: '2026-10-16T10:00:00Z', threads: [{ id: 1, status: 'open', comments: [{ author: 'user', body: 'oops', at: '2026-10-16T10:05:00Z' }] }] }
+  const gone = { lastId: 1, started: '2026-10-16T10:00:00Z', threads: [] }
+  let answerPoll
+  let slow = false
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': () => (!slow ? { review: mine, diff: [] } : new Promise((resolve) => { answerPoll = () => resolve({ review: mine }) })),
+      '/api/review/do': () => ({ review: gone }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+  })
+  try {
+    slow = true
+    const pollGone = p.poll().catch(() => {})
+    await new Promise((resolve) => setImmediate(resolve))
+    p.button('Delete', p.$('review-thread-1')).click()
+    p.$('confirm').close('run')
+    for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve))
+    answerPoll()
+    await pollGone
+    await p.settle()
+    assert.equal(p.$('review-thread-1'), null, 'still gone')
+  } finally { p.close() }
+})
+
+test('a comment named as the agent wrote it is shown so, and only a plain #N', async () => {
+  const p = await talkPage('See #007, not #1.5; [see #3](http://localhost:1/x); and example.com/#4.')
+  try {
+    assert.deepEqual(refsIn(p).map((r) => r.textContent), ['#007'])
+    assert.equal(p.$('convo-log').querySelector('a .thread-ref'), null, 'none inside a link')
+  } finally { p.close() }
+})
+
+test("a comment asked for when vibe can't be reached isn't gone to later, out of the blue", async () => {
+  const p = await talkPage('Fixed #2.')
+  try {
+    const real = p.window.fetch
+    p.window.fetch = async (url, options) => (String(url).includes('/api/review') ? Promise.reject(new Error('down')) : real(url, options))
+    await p.click(refsIn(p)[0])
+    p.window.fetch = real
+    await p.click('tab-conversation')
+    const shown = []
+    p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
+    await p.click('tab-review')
+    assert.deepEqual(shown, [], 'not scrolled to #2')
+  } finally { p.close() }
+})
+
+test('a long file shown stays shown through a poll, with no comment being written', async () => {
+  const now = { diff: longFile }
+  const p = await changingPage(now)
+  try {
+    await p.click(p.button('Show 700 lines', p.$('review-files')))
+    now.review = { ...started, threads: [{ id: 1, status: 'open', comments: said('news') }], lastId: 1 }
+    await p.poll()
+    assert.equal(p.button('Show 700 lines', p.$('review-files')), undefined, 'not folded again')
+  } finally { p.close() }
+})
+
+// Every change to the review goes through doReview, which takes the review
+// vibe gives back: a poll that set out before can't undo it.
+test('the review is changed from one place only', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'ui', 'app.js'), 'utf8')
+  assert.equal(src.split("post('/api/review/do'").length - 1, 1)
+})

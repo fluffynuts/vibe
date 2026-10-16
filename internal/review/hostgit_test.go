@@ -2,9 +2,13 @@ package review
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -70,33 +74,22 @@ func TestTheRepositorysHooksArentRun(t *testing.T) {
 	notRun(t, marker, "the start options")
 }
 
-// A filter can't be turned off by name in advance: a repository that sets
-// one of its own isn't diffed, saying why.
-func TestARepositoryWithAFilterOfItsOwnIsntDiffed(t *testing.T) {
+// A filter is a command the repository names for git to run on its files:
+// none is run here, whoever set it; the file is diffed as it is.
+func TestARepositorysFilterIsntRun(t *testing.T) {
 	dir := repo(t, map[string]string{"a.txt": "a\n"})
 	marker, command := ranMarker(t)
 	write(t, dir, ".gitattributes", "*.txt filter=pwn\n")
 	git(t, dir, "config", "filter.pwn.clean", command+"; cat")
 	write(t, dir, "a.txt", "b\n")
-	_, err := WorkingTree(context.Background(), dir)
-	if err == nil || !strings.Contains(err.Error(), "filter.pwn.clean") {
-		t.Errorf("err = %v, want it to name the filter", err)
-	}
-	notRun(t, marker, "the diff")
-}
-
-func TestOneOfTheUsersOwnFiltersIsTrusted(t *testing.T) {
-	dir := repo(t, map[string]string{"a.txt": "a\n"})
-	home := t.TempDir()
-	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[filter \"lfs\"]\n\tclean = cat\n"), 0o644); err != nil {
+	files, err := WorkingTree(context.Background(), dir)
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	write(t, dir, "a.txt", "b\n")
-	if _, err := WorkingTree(context.Background(), dir); err != nil {
-		t.Errorf("a filter in the user's own config refused: %v", err)
+	if summary(files) != "added .gitattributes, modified a.txt" {
+		t.Errorf("files = %s", summary(files))
 	}
+	notRun(t, marker, "the diff")
 }
 
 // What the agent asks a review to be of reaches git: an option in its
@@ -239,13 +232,15 @@ func TestAModeChangeChangedBackHasANewFingerprint(t *testing.T) {
 	}
 }
 
-func TestWhyGitCantReadAFolderIsGitsOwnSay(t *testing.T) {
+func TestWhyARepositoryCantBeReadIsSaid(t *testing.T) {
 	dir := repo(t, map[string]string{"a.txt": "a\n"})
-	// An unknown repository format is one git refuses, and says why.
-	git(t, dir, "config", "core.repositoryformatversion", "99")
-	_, err := WorkingTree(context.Background(), dir)
-	if err == nil || strings.Contains(err.Error(), "isn't a git repository") || !strings.Contains(err.Error(), "found 99") {
-		t.Errorf("err = %v, want git's own reason", err)
+	sub := filepath.Join(dir, "sub")
+	os.MkdirAll(sub, 0o755)
+	// A .git file that doesn't say where its git directory is.
+	write(t, sub, ".git", "nonsense\n")
+	_, err := WorkingTree(context.Background(), sub)
+	if err == nil || strings.Contains(err.Error(), "isn't a git repository") || !strings.Contains(err.Error(), "doesn't say where") {
+		t.Errorf("err = %v, want why", err)
 	}
 }
 
@@ -323,5 +318,135 @@ func TestAnUntrackedFileTouchedButUnchangedKeepsItsFingerprint(t *testing.T) {
 	write(t, dir, "new.txt", "fresher\n")
 	if print() == before {
 		t.Error("changed, its fingerprint didn't")
+	}
+}
+
+// The page's header: what's staged, changed, new; how far the branch is
+// from its upstream; and stashes, as git status says them.
+func TestTheFoldersStatusIsCounted(t *testing.T) {
+	dir := repo(t, map[string]string{"a.txt": "a\n", "b.txt": "b\n", "c.txt": "c\n"})
+	git(t, dir, "branch", "up")
+	git(t, dir, "branch", "-q", "-u", "up")
+	write(t, dir, "a.txt", "a2\n")
+	git(t, dir, "commit", "-q", "-am", "ahead")
+	write(t, dir, "b.txt", "b2\n")
+	git(t, dir, "add", "b.txt")
+	write(t, dir, "c.txt", "c2\n")
+	write(t, dir, "new.txt", "n\n")
+	write(t, dir, "s.txt", "s\n")
+	git(t, dir, "add", "s.txt")
+	git(t, dir, "stash", "push", "-q", "--", "s.txt")
+	s, err := StatusOf(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := FolderStatus{Branch: "main", Staged: 1, Modified: 1, Untracked: 1, Ahead: 1, Stashed: 1}
+	if *s != want {
+		t.Errorf("status = %+v, want %+v", *s, want)
+	}
+}
+
+func TestADetachedHeadIsNamedByItsCommit(t *testing.T) {
+	dir := repo(t, map[string]string{"a.txt": "a\n"})
+	git(t, dir, "checkout", "-q", "--detach")
+	s, err := StatusOf(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(s.Branch, "@") || len(s.Branch) != 8 {
+		t.Errorf("branch = %q", s.Branch)
+	}
+}
+
+// A file kept in Git LFS is committed as a pointer to its content, which
+// git-lfs (a filter: never run here) makes; its content unchanged is no
+// change, and changed is the pointer's change, as git shows it.
+func TestAFileInLFSIsComparedByItsPointer(t *testing.T) {
+	content := "a large binary, say\n"
+	sum := sha256.Sum256([]byte(content))
+	pointer := "version https://git-lfs.github.com/spec/v1\noid sha256:" + hex.EncodeToString(sum[:]) + "\nsize " + strconv.Itoa(len(content)) + "\n"
+	dir := repo(t, map[string]string{"big.bin": pointer})
+	write(t, dir, "big.bin", content)
+	files, err := WorkingTree(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 0 {
+		t.Errorf("unchanged, yet: %s", summary(files))
+	}
+	write(t, dir, "big.bin", "something else\n")
+	if files, _ = WorkingTree(context.Background(), dir); summary(files) != "modified big.bin" {
+		t.Errorf("changed: %s", summary(files))
+	}
+}
+
+// With core.autocrlf, a CRLF file whose LF-ended lines are as committed
+// hasn't changed, as git sees it.
+func TestCRLFsAreLFsWithAutocrlf(t *testing.T) {
+	dir := repo(t, map[string]string{"a.txt": "one\ntwo\n"})
+	git(t, dir, "config", "core.autocrlf", "true")
+	write(t, dir, "a.txt", "one\r\ntwo\r\n")
+	files, err := WorkingTree(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 0 {
+		t.Errorf("unchanged, yet: %s", summary(files))
+	}
+}
+
+// A file's fingerprint rests on the full ids of the blobs compared, not
+// git's shortened ones, which another content can share.
+func TestAFingerprintRestsOnFullBlobIDs(t *testing.T) {
+	dir := repo(t, map[string]string{"a.txt": "a\n"})
+	write(t, dir, "a.txt", "b\n")
+	files, err := WorkingTree(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`\b[0-9a-f]{40}\b.*\b[0-9a-f]{40}\b`).MatchString(files[0].stamp) {
+		t.Errorf("stamp = %q", files[0].stamp)
+	}
+}
+
+// The repository's config can't point the tab elsewhere: core.worktree is
+// no matter; the top is the folder or one above it.
+func TestCoreWorktreeDoesntMoveTheTop(t *testing.T) {
+	dir := repo(t, map[string]string{"a.txt": "a\n"})
+	elsewhere := t.TempDir()
+	write(t, elsewhere, "secret", "host secret\n")
+	git(t, dir, "config", "core.worktree", elsewhere)
+	top, err := Root(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := filepath.EvalSymlinks(dir)
+	if top != want {
+		t.Errorf("top = %q, want the folder", top)
+	}
+	if lines, err := FileLines(context.Background(), dir, Review{}, "secret"); err == nil {
+		t.Errorf("read %q from elsewhere", lines)
+	}
+}
+
+// A .git in the folder is the sandbox's to write: one leading out of it
+// (to another repository on the host) is refused, saying why.
+func TestAGitDirectoryOutsideTheFolderIsRefused(t *testing.T) {
+	other := repo(t, map[string]string{"x.txt": "the host's\n"})
+	dir := t.TempDir()
+	write(t, dir, ".git", "gitdir: "+filepath.Join(other, ".git")+"\n")
+	_, err := WorkingTree(context.Background(), dir)
+	if err == nil || !strings.Contains(err.Error(), "outside the folder") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestObjectsBorrowedFromElsewhereAreRefused(t *testing.T) {
+	other := repo(t, map[string]string{"x.txt": "the host's\n"})
+	dir := repo(t, map[string]string{"a.txt": "a\n"})
+	write(t, dir, filepath.Join(".git", "objects", "info", "alternates"), filepath.Join(other, ".git", "objects")+"\n")
+	_, err := WorkingTree(context.Background(), dir)
+	if err == nil || !strings.Contains(err.Error(), "alternates") {
+		t.Errorf("err = %v", err)
 	}
 }

@@ -55,7 +55,9 @@ The sandbox's folder is the same path on the host (Linux, macOS; Windows to chec
 `git` there: `git diff HEAD` plus untracked files (`git ls-files --others --exclude-standard`, each shown as
 added) for the working tree; `git diff <ref>...` (merge base) for a branch; `git show` for a commit. The
 unified diff is parsed into files, hunks and lines with old and new line numbers. No forwarding, nothing
-that dies with the sandbox. Needs git on the host: say so plainly when it's missing.
+that dies with the sandbox. (Since built with go-git, not the git command: the sandbox can write the
+repository's config, and git runs what that names (hooks, filters, signature checks, fetches); go-git runs
+nothing, and needs no git on the host.)
 
 ### Storage: one writer
 

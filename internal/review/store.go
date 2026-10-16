@@ -2,6 +2,7 @@ package review
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -39,7 +40,16 @@ const maxProblems = 20
 const maxRequest = 1 << 20
 
 // maxReview bounds reading review.json: far more than any review.
-const maxReview = 256 << 20
+var maxReview int64 = 256 << 20
+
+// maxTakeAtOnce is how many of the agent's requests are taken in at once:
+// the rest wait for the next time, so a flood of them can't take the host's
+// memory.
+const maxTakeAtOnce = 100
+
+// maxBody is the most a comment can say: a review of them can't grow past
+// loading (maxReview).
+const maxBody = 256 << 10
 
 // Review is a review of a diff: the agent's comments on it, the user's
 // replies, and the order to read it in.
@@ -206,10 +216,19 @@ func readPlain(path string, limit int64) ([]byte, error) {
 		return nil, err
 	}
 	if int64(len(data)) > limit {
-		return nil, fmt.Errorf("it's too large (over %d bytes)", limit)
+		return nil, errTooLarge{limit}
 	}
 	return data, nil
 }
+
+// errTooLarge is a file over the limit it's read up to.
+type errTooLarge struct{ limit int64 }
+
+func (e errTooLarge) Error() string { return fmt.Sprintf("it's too large (over %d bytes)", e.limit) }
+
+// failed is a request the store couldn't carry out for its own reasons (a
+// disk problem): not one it refused (see Refused).
+type failed struct{ error }
 
 func (s *Store) file() string { return filepath.Join(s.dir, "review.json") }
 
@@ -225,6 +244,9 @@ func (s *Store) load() (Review, error) {
 	data, err := readPlain(s.file(), maxReview)
 	if os.IsNotExist(err) {
 		return r, nil
+	}
+	if errors.As(err, &errTooLarge{}) {
+		return r, fmt.Errorf("the review in %s is too large to load (over %d MB): move it aside (into history/, say) to start afresh", s.file(), maxReview>>20)
 	}
 	if err != nil {
 		return r, err
@@ -289,6 +311,9 @@ func (s *Store) Take() (Review, error) {
 		return r, nil
 	}
 	sort.Strings(names)
+	if len(names) > maxTakeAtOnce {
+		names = names[:maxTakeAtOnce]
+	}
 	for _, name := range names {
 		path := filepath.Join(s.Inbox(), name)
 		var req Request
@@ -327,6 +352,10 @@ func (s *Store) Do(req Request, author string) (Review, error) {
 		return r, err
 	}
 	if err := s.apply(&r, req, author); err != nil {
+		var f failed
+		if errors.As(err, &f) {
+			return r, f.error
+		}
 		return r, Refused{err}
 	}
 	return r, s.save(r)
@@ -341,6 +370,9 @@ func (s *Store) problem(r *Review, text string) {
 
 func (s *Store) apply(r *Review, req Request, author string) error {
 	say := func(body string) Comment { return Comment{Author: author, Body: body, At: s.now()} }
+	if len(req.Body) > maxBody {
+		return fmt.Errorf("what it says is too long (over %d KB)", maxBody>>10)
+	}
 	switch req.Op {
 	case "start":
 		// What a review is of reaches git: nothing in its place may be taken
@@ -351,7 +383,7 @@ func (s *Store) apply(r *Review, req Request, author string) error {
 			}
 		}
 		if err := s.keep(*r); err != nil {
-			return err
+			return failed{fmt.Errorf("the last review couldn't be kept in history/: %w", err)}
 		}
 		state := InProgress
 		if author == User && !req.Reviewing {
@@ -615,22 +647,6 @@ func writeWhole(path string, data []byte) error {
 		return err
 	}
 	return nil
-}
-
-// PutBack makes last the review again, undoing the start of the one
-// started at started: unless that's no longer the review (another has been
-// started since), which is left as it is.
-func (s *Store) PutBack(last Review, started time.Time) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	r, err := s.load()
-	if err != nil {
-		return err
-	}
-	if !r.Started.Equal(started) {
-		return nil
-	}
-	return s.save(last)
 }
 
 // CloseOver closes the review started at started, as over, saying why:

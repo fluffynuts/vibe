@@ -92,8 +92,8 @@ explains the rest first, its callers after, mechanical changes last.
     vibe-review done
 
 Always, including when you found nothing or stopped early: until then the
-tab says the review is still in progress. Requests are carried out when the
-page takes them in (within a few seconds while it's open), and one that
+tab says the review is still in progress. Requests are carried out when vibe
+takes them in, every couple of seconds (whether the page is open or not), and one that
 can't be (a reply to a thread that isn't there, say) only shows as a
 `problem:` line in `vibe-review list`: check it, and put right what's
 there. Then tell the user it's on the Review tab, with the counts by

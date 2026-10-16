@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -42,36 +43,40 @@ func inFolder(path string) (string, error) {
 
 // NewTextOf is path's text as review r has its new side: in the commit r is
 // of, at HEAD for unpushed commits, else in the folder dir as it is. path is
-// relative to dir, and nothing outside dir is read: not by .., not through
-// a symbolic link. (A comment's file, which this reads, comes from the
-// agent.)
+// relative to the repository's top, and nothing outside it is read: not by
+// "..", not through a link. (A comment's file, which this reads, comes from
+// the agent.)
 func NewTextOf(ctx context.Context, dir string, r Review, path string) (string, error) {
 	clean, err := inFolder(path)
 	if err != nil {
 		return "", err
 	}
-	switch {
-	case r.Commit != "":
-		if err := isCommit(ctx, dir, r.Commit); err != nil {
-			return "", err
-		}
-		return run(ctx, dir, "show", r.Commit+":"+filepath.ToSlash(clean))
-	case r.Unpushed:
-		return run(ctx, dir, "show", "HEAD:"+filepath.ToSlash(clean))
-	}
-	root, err := filepath.EvalSymlinks(dir)
+	repo, err := open(dir)
 	if err != nil {
 		return "", err
 	}
-	full, err := filepath.EvalSymlinks(filepath.Join(root, clean))
+	switch {
+	case r.Commit != "":
+		c, err := repo.commit(r.Commit)
+		if err != nil {
+			return "", err
+		}
+		return blobText(c, filepath.ToSlash(clean))
+	case r.Unpushed:
+		head, err := repo.head()
+		if err != nil || head == nil {
+			return "", fmt.Errorf("the folder has no commits")
+		}
+		return blobText(head, filepath.ToSlash(clean))
+	}
+	root, err := os.OpenRoot(repo.top)
 	if err != nil {
-		return "", fmt.Errorf("%q can't be read: %w", path, err)
+		return "", err
 	}
-	if rel, err := filepath.Rel(root, full); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("%q isn't a file in the folder", path)
-	}
-	// Only a plain file: a FIFO would wait forever.
-	data, err := readPlain(full, maxFileBytes)
+	defer root.Close()
+	// Only a plain file in the folder: a FIFO would wait forever, and a link
+	// out of it isn't followed.
+	data, err := readIn(root, clean, maxFileBytes)
 	if err != nil {
 		return "", fmt.Errorf("%q can't be read: %w", path, err)
 	}

@@ -446,3 +446,58 @@ func TestAStartTheTabRefusesSaysWhy(t *testing.T) {
 		t.Errorf("exit %d, said %q", code, out)
 	}
 }
+
+// While start waits, the page may start a review of its own: that isn't
+// the agent's, and start mustn't say it is.
+func TestAStartSaysSoWhenAnotherReviewLandsInstead(t *testing.T) {
+	dir := reviewFolder(t)
+	view := filepath.Join(dir, "view", "review.json")
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done) })
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-time.After(20 * time.Millisecond):
+			}
+			left, _ := os.ReadDir(filepath.Join(dir, "inbox"))
+			for _, e := range left {
+				if strings.HasSuffix(e.Name(), ".json") {
+					// Taken in, but the review that lands is the page's.
+					os.Remove(filepath.Join(dir, "inbox", e.Name()))
+					os.WriteFile(view, []byte(`{"note":"the page's","started":"2026-10-16T12:00:00Z","agentAt":"2026-10-16T12:00:01Z","threads":[]}`), 0o644)
+				}
+			}
+		}
+	}()
+	out, code := vibeReview(t, dir, "", "start", "--note", "mine", "--ref", "main")
+	if code == 0 || !strings.Contains(out, "vibe-review list") {
+		t.Errorf("exit %d, said %q", code, out)
+	}
+}
+
+func TestAStartNobodyTakesInMentionsThePage(t *testing.T) {
+	dir := reviewFolder(t)
+	out, code := runVibeReview(t, "", []string{"VIBE_REVIEW_DIR=" + dir, "VIBE_REVIEW_START_WAIT_MS=300"}, "", "start")
+	if code == 0 || !strings.Contains(out, "companion page") {
+		t.Errorf("exit %d, said %q", code, out)
+	}
+}
+
+// A workspace path that isn't there in the sandbox (a Windows host's
+// C:\...) is no use to run git in: the folder vibe-review is run in is.
+func TestAWorkspaceThatIsntThereIsLeftForTheFolderHere(t *testing.T) {
+	need(t, "git")
+	work := t.TempDir()
+	cmd := exec.Command("git", "init", "-q", "-b", "main")
+	cmd.Dir = work
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	os.WriteFile(filepath.Join(work, "new.txt"), []byte("fresh\n"), 0o644)
+	out, code := runVibeReview(t, work, []string{"VIBE_REVIEW_DIR=" + reviewFolder(t), `VIBE_REVIEW_WORKSPACE=C:\Users\me\project`}, "", "diff")
+	if code != 0 || !strings.Contains(out, "new.txt") {
+		t.Errorf("exit %d, said %q", code, out)
+	}
+}

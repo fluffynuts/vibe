@@ -31,7 +31,7 @@ func (s *Server) reviewRoot(ctx context.Context) string {
 
 // reviewTakeEvery is how often vibe takes in the agent's requests itself,
 // page or not: vibe-review's start waits for its review to be taken in.
-const reviewTakeEvery = 2 * time.Second
+var reviewTakeEvery = 2 * time.Second
 
 // takeInbox takes in the agent's requests every so often, until done is
 // closed. One that fails isn't lost: it's taken in again the next time, and
@@ -477,26 +477,24 @@ func (s *Server) reviewStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("there's no review of kind %q: uncommitted, branch or unpushed", req.Kind)})
 		return
 	}
-	// The review first, so the agent is never told of one that isn't
-	// there; a busy agent then has the last one put back.
-	last, err := s.cfg.ReviewTab.Store.Load()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
+	// The agent's turn first, then the review, then the agent is given it:
+	// a busy agent leaves the review as it was, and the agent never hears of
+	// one that isn't there.
+	launch, abandon := func() {}, func(error) {}
+	if req.Agent {
+		var ok bool
+		if launch, abandon, ok = s.claimTurn(startPrompt(what)); !ok {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "the agent is still answering the last prompt — start the review once it's done, or show the diff for now"})
+			return
+		}
 	}
 	rv, err := s.cfg.ReviewTab.Store.Do(start, review.User)
 	if err != nil {
+		abandon(fmt.Errorf("the review couldn't be started: %w", err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	if req.Agent && !s.startTurn(startPrompt(what)) {
-		if err := s.cfg.ReviewTab.Store.PutBack(last, rv.Started); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "the agent is still answering the last prompt, and the last review couldn't be put back: " + err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "the agent is still answering the last prompt — start the review once it's done, or show the diff for now"})
-		return
-	}
+	launch()
 	status := http.StatusOK
 	if req.Agent {
 		status = http.StatusAccepted

@@ -584,7 +584,7 @@ you're looking at:
   while you're on another tab, until you open it. Once the agent has answered you can
   send the next prompt, even if it left something running that it is waiting on (a review page, say):
   sending ends that. Links to pages on `localhost` in what the agent says can be clicked.
-- **Review** — the changes in the sandbox's folder, worked out on this machine with git (uncommitted ones,
+- **Review** — the changes in the sandbox's folder, worked out on this machine (read with go-git, which runs nothing the repository's own git config names, as the sandbox can write that; no git needed on the host) (uncommitted ones,
   untracked files with them; or a branch's, or a commit's), with the agent's review comments under the
   lines they're about: side by side (or in one column), with the hidden lines between changes a click away,
   and a tree of the changed files beside it (a quarter of the width; drag its edge to resize) with a filter

@@ -8,35 +8,6 @@ import (
 	"testing"
 )
 
-func TestParseGitStatus(t *testing.T) {
-	out := "# branch.oid 1234567890abcdef\n" +
-		"# branch.head master\n" +
-		"# branch.upstream origin/master\n" +
-		"# branch.ab +2 -1\n" +
-		"# stash 3\n" +
-		"1 .M N... 100644 100644 100644 a b readme.md\n" +
-		"1 M. N... 100644 100644 100644 a b go.mod\n" +
-		"1 MM N... 100644 100644 100644 a b go.sum\n" +
-		"2 R. N... 100644 100644 100644 a b R100 new\told\n" +
-		"u UU N... 100644 100644 100644 100644 a b c conflict.go\n" +
-		"? scratch.txt\n" +
-		"? other.txt\n"
-	got := parseGitStatus(out)
-	want := GitInfo{Branch: "master", Staged: 3, Modified: 2, Untracked: 2, Conflicted: 1, Ahead: 2, Behind: 1, Stashed: 3}
-	if got != want {
-		t.Errorf("got %+v, want %+v", got, want)
-	}
-}
-
-func TestParseGitStatusDetached(t *testing.T) {
-	if got := parseGitStatus("# branch.oid 1234567890abcdef\n# branch.head (detached)\n").Branch; got != "@1234567" {
-		t.Errorf("detached head = %q", got)
-	}
-	if got := parseGitStatus("# branch.oid (initial)\n# branch.head (detached)\n").Branch; got != "detached" {
-		t.Errorf("detached initial = %q", got)
-	}
-}
-
 func TestShortenPath(t *testing.T) {
 	home := filepath.Join(string(filepath.Separator), "home", "me")
 	cases := map[string]string{

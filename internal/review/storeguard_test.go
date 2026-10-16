@@ -2,6 +2,8 @@ package review
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -73,5 +75,59 @@ func TestAnInboxRequestTooLargeIsntRead(t *testing.T) {
 	}
 	if len(r.Threads) != 0 || len(r.Problems) != 1 || !strings.Contains(r.Problems[0], "too large") {
 		t.Errorf("threads %d, problems %q", len(r.Threads), r.Problems)
+	}
+}
+
+// A start whose old review can't be kept is a disk problem, not the
+// request's: it isn't Refused.
+func TestAStartThatCantKeepTheLastReviewIsntRefused(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	s.Do(Request{Op: "general", Body: "kept"}, Agent)
+	os.WriteFile(filepath.Join(dir, "history"), []byte("not a folder"), 0o600)
+	_, err := s.Do(Request{Op: "start"}, User)
+	if err == nil || errors.As(err, &Refused{}) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// The agent's requests are taken in a batch at a time: the rest wait for
+// the next time.
+func TestTheInboxIsTakenInABatchAtATime(t *testing.T) {
+	s := NewStore(t.TempDir())
+	for i := 0; i < maxTakeAtOnce+5; i++ {
+		drop(t, s, fmt.Sprintf("%04d.json", i), Request{Op: "general", Body: "x"})
+	}
+	r, err := s.Take()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Threads) != maxTakeAtOnce {
+		t.Errorf("took %d", len(r.Threads))
+	}
+	if r, _ = s.Take(); len(r.Threads) != maxTakeAtOnce+5 {
+		t.Errorf("then %d", len(r.Threads))
+	}
+}
+
+func TestACommentTooLongIsRefused(t *testing.T) {
+	s := NewStore(t.TempDir())
+	drop(t, s, "1.json", Request{Op: "general", Body: strings.Repeat("x", maxBody+1)})
+	r, _ := s.Take()
+	if len(r.Threads) != 0 || len(r.Problems) != 1 || !strings.Contains(r.Problems[0], "too long") {
+		t.Errorf("threads %d, problems %q", len(r.Threads), r.Problems)
+	}
+}
+
+// A review too large to load says which file, and what to do.
+func TestAReviewTooLargeToLoadSaysWhatToDo(t *testing.T) {
+	was := maxReview
+	maxReview = 100
+	defer func() { maxReview = was }()
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "review.json"), []byte(`{"note": "`+strings.Repeat("x", 200)+`", "threads": []}`), 0o600)
+	_, err := NewStore(dir).Load()
+	if err == nil || !strings.Contains(err.Error(), "review.json") || !strings.Contains(err.Error(), "move it") {
+		t.Errorf("err = %v", err)
 	}
 }

@@ -80,22 +80,41 @@ func OldTextOf(ctx context.Context, dir string, rv Review, path string) (string,
 	if err != nil {
 		return "", err
 	}
-	base := "HEAD"
+	repo, err := open(dir)
+	if err != nil {
+		return "", err
+	}
+	head, err := repo.head()
+	if err != nil {
+		return "", err
+	}
+	base := head
 	switch {
 	case rv.Commit != "":
-		if err := isCommit(ctx, dir, rv.Commit); err != nil {
-			return "", err
-		}
-		base = rv.Commit + "^"
-	case rv.Ref != "":
-		if err := isCommit(ctx, dir, rv.Ref); err != nil {
-			return "", err
-		}
-		parted, err := run(ctx, dir, "merge-base", rv.Ref, "HEAD")
+		c, err := repo.commit(rv.Commit)
 		if err != nil {
 			return "", err
 		}
-		base = strings.TrimSpace(parted)
+		if c.NumParents() == 0 {
+			return "", fmt.Errorf("commit %s has no parent: %q is new in it", rv.Commit, path)
+		}
+		if base, err = c.Parent(0); err != nil {
+			return "", err
+		}
+	case rv.Ref != "":
+		other, err := repo.commit(rv.Ref)
+		if err != nil {
+			return "", err
+		}
+		if head == nil {
+			return "", fmt.Errorf("the folder has no commits")
+		}
+		if base, err = mergeBase(other, head); err != nil {
+			return "", err
+		}
 	}
-	return run(ctx, dir, "show", base+":"+filepath.ToSlash(clean))
+	if base == nil {
+		return "", fmt.Errorf("the folder has no commits: %q is new", path)
+	}
+	return blobText(base, filepath.ToSlash(clean))
 }

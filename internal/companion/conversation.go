@@ -536,15 +536,29 @@ func (s *Server) conversationSend(w http.ResponseWriter, r *http.Request) {
 // startTurn sends prompt to the agent as a turn, in the background; false
 // when it can't, the agent still answering the last one.
 func (s *Server) startTurn(prompt string) bool {
+	launch, _, ok := s.claimTurn(prompt)
+	if ok {
+		launch()
+	}
+	return ok
+}
+
+// claimTurn makes prompt the next turn, unless the agent is still at the
+// last, without yet giving it to the agent: launch does, or abandon ends
+// it, saying why. Something the turn needs (a review to start) is made in
+// between, so the agent never hears of one that isn't there, and nothing
+// made is undone because the agent was busy.
+func (s *Server) claimTurn(prompt string) (launch func(), abandon func(error), ok bool) {
 	session, ctx, ok := "", context.Context(nil), s.convo.supersede()
 	if ok {
 		session, ctx, ok = s.convo.begin(prompt)
 	}
 	if !ok {
-		return false
+		return nil, nil, false
 	}
-	go s.convo.run(ctx, s.cfg.Prepare, s.cfg.Converse, prompt, session)
-	return true
+	launch = func() { go s.convo.run(ctx, s.cfg.Prepare, s.cfg.Converse, prompt, session) }
+	abandon = func(why error) { s.convo.finish(why, false) }
+	return launch, abandon, true
 }
 
 func (s *Server) conversationStop(w http.ResponseWriter, r *http.Request) {

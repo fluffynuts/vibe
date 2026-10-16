@@ -651,6 +651,8 @@
       button.tabIndex = t === tab ? 0 : -1
     }
     if (tab === 'review') reviewSeen()
+    // A comment asked for, not yet gone to, isn't gone to once you're elsewhere.
+    else reviewView.goTo = null
     if (tab === 'conversation' && convo.news) { convo.news = false; showAllAttention() }
     // Opening the conversation is to say something: the cursor goes in the
     // prompt box. (Arrowing along the tabs keeps focus on the tabs.)
@@ -1040,8 +1042,9 @@
     // dropped (see tookReview).
     changed: 0,
     // diffWanted: the diff was asked for while a load was on its way, to
-    // load once it's in.
-    diffWanted: false,
+    // load once it's in: when that load wasn't of the diff, or the diff it
+    // set out for has gone stale since (epoch: see forgetFiles).
+    diffWanted: false, loadingDiff: false, epoch: 0, loadingEpoch: 0,
     // unfolded is the long files the user has asked to see (see
     // REVIEW_FOLD_LINES): kept shown however often the diff is drawn.
     unfolded: new Set(),
@@ -1053,6 +1056,14 @@
     goTo: null,
     // ignoreSpace: the diff leaves out changes of whitespace alone.
     ignoreSpace: store.get(REVIEW_WHITESPACE) === 'ignore' }
+
+  // doReview asks vibe to do req to the review, taking the review it gives
+  // back (see tookReview): every change from the page goes this way.
+  async function doReview(req) {
+    const res = await post('/api/review/do', req)
+    if (res.ok) tookReview(res.body.review)
+    return res
+  }
 
   // tookReview takes rv, the review vibe gave back for something done on
   // the page, as the review.
@@ -1140,7 +1151,7 @@
   }
 
   function focusComposer() {
-    const box = document.querySelector('.review-compose-text')
+    const box = document.querySelector('textarea[aria-label="Your comment"]')
     if (box) box.focus()
   }
 
@@ -1276,11 +1287,10 @@
     try {
       const req = { op: 'comment', file: c.path, side: c.side, line: c.line, code: c.code, body: c.text }
       if (c.endLine > c.line) req.endLine = c.endLine
-      const res = await post('/api/review/do', req)
+      const res = await doReview(req)
       reached(true)
       if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
       reviewView.composer = null
-      tookReview(res.body.review)
       document.activeElement && document.activeElement.blur()
       redrawReview()
     } catch (e) {
@@ -1753,15 +1763,17 @@
   // afresh. A load asked for the diff while one's on its way follows it.
   async function loadReview(withDiff) {
     if (reviewView.loading) {
-      if (withDiff) reviewView.diffWanted = true
+      if (withDiff && (!reviewView.loadingDiff || reviewView.loadingEpoch !== reviewView.epoch)) reviewView.diffWanted = true
       return
     }
     reviewView.loading = true
+    reviewView.loadingDiff = withDiff
+    reviewView.loadingEpoch = reviewView.epoch
     const changed = reviewView.changed
     try {
       const res = await api('/api/review' + (withDiff ? '?diff=1' + (reviewView.ignoreSpace ? '&whitespace=ignore' : '') : ''), { timeout: 40000 })
       reached(true)
-      if (!res.ok) { problem(res); return }
+      if (!res.ok) { problem(res); reviewView.goTo = null; return }
       // Something done on the page since this set out gave a newer review.
       if (reviewView.changed === changed) {
         const wasOn = reviewView.review && reviewIsOn(reviewView.review)
@@ -1781,6 +1793,8 @@
       drawReview()
     } catch (e) {
       reached(false)
+      // Not to be gone to out of the blue, once vibe answers again.
+      reviewView.goTo = null
     } finally {
       reviewView.loading = false
       if (reviewView.diffWanted) {
@@ -1790,12 +1804,12 @@
     }
   }
 
-  // typingAReply says a box on the tab is being typed in: redrawing now
+  // typingInABox says a box on the tab is being typed in: redrawing now
   // would take it away mid-word, so the redraw waits for the next poll. An
   // empty box with focus (the comment arrows put it in a reply box; a +
   // puts it in a comment box) isn't: holding back would hide what the
   // agent says until it lost focus. Drawn again, it keeps the focus.
-  function typingAReply() {
+  function typingInABox() {
     const a = document.activeElement
     if (!a || a.tagName !== 'TEXTAREA' || !$('panel-review').contains(a)) return false
     return !!a.value.trim()
@@ -1809,7 +1823,7 @@
     if (!a || a.tagName !== 'TEXTAREA' || !$('panel-review').contains(a)) return null
     if (a.dataset.thread) return 'textarea[data-thread="' + a.dataset.thread + '"]'
     if (a.getAttribute('aria-label') === 'Edit your comment') return 'textarea[aria-label="Edit your comment"]'
-    if (a.classList.contains('review-compose-text')) return '.review-compose-text'
+    if (a.getAttribute('aria-label') === 'Your comment') return 'textarea[aria-label="Your comment"]'
     return null
   }
 
@@ -1888,6 +1902,7 @@
   // lines, the gaps opened in them, their colours, which long ones are
   // shown): the code may have changed under it.
   function forgetFiles() {
+    reviewView.epoch++
     reviewView.fileLines.clear()
     reviewView.linesAsked.clear()
     reviewView.opened.clear()
@@ -1924,8 +1939,8 @@
     const rv = reviewView.review
     const open = rv.threads.filter((t) => t.status === 'open').length
     const close = async () => {
-      const res = await post('/api/review/do', { op: 'close', body: 'You closed it.' })
-      if (res.ok) { tookReview(res.body.review); reviewView.key = null; drawReview(); loadOptions() }
+      const res = await doReview({ op: 'close', body: 'You closed it.' })
+      if (res.ok) { reviewView.key = null; drawReview(); loadOptions() }
       return res
     }
     if (!open) {
@@ -1939,7 +1954,7 @@
 
   async function reopenReview() {
     try {
-      const res = await post('/api/review/do', { op: 'reopen-review' })
+      const res = await doReview({ op: 'reopen-review' })
       reached(true)
       if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
       showReview(res.body.review)
@@ -1953,7 +1968,7 @@
     const rv = reviewView.review
     if (!rv) return
     const key = JSON.stringify(rv) + '|' + JSON.stringify(reviewView.ask) + '|' + JSON.stringify(reviewView.options) + reviewView.optionsError + '|' + (reviewView.files ? reviewView.files.length : -1) + reviewView.diffError
-    if (!force && (key === reviewView.key || typingAReply())) return
+    if (!force && (key === reviewView.key || typingInABox())) return
     reviewView.key = key
     for (const box of $('panel-review').querySelectorAll('textarea[data-thread]')) {
       if (box.value.trim()) reviewView.drafts.set(box.dataset.thread, box.value)
@@ -2025,10 +2040,9 @@
 
   async function tickViewed(f, on) {
     try {
-      const res = await post('/api/review/do', on ? { op: 'view', file: f.path, code: f.fingerprint } : { op: 'unview', file: f.path })
+      const res = await doReview(on ? { op: 'view', file: f.path, code: f.fingerprint } : { op: 'unview', file: f.path })
       reached(true)
       if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); redrawReview(); return }
-      tookReview(res.body.review)
       redrawReview()
     } catch (e) {
       reached(false)
@@ -2295,11 +2309,10 @@
   const saveEdit = once(async (t, c) => {
     const text = reviewView.editing ? reviewView.editing.text : ''
     try {
-      const res = await post('/api/review/do', { op: 'edit', thread: t.id, at: c.at, body: text })
+      const res = await doReview({ op: 'edit', thread: t.id, at: c.at, body: text })
       reached(true)
       if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
       reviewView.editing = null
-      tookReview(res.body.review)
       document.activeElement && document.activeElement.blur()
       redrawReview()
     } catch (e) {
@@ -2330,7 +2343,11 @@
   function deleteComment(t, i, c) {
     confirmThen({ title: 'Delete your comment?', text: i === 0 && t.comments.length === 1 ? 'It goes, with its thread. It was never sent, so the agent never saw it.' : 'It goes. It was never sent, so the agent never saw it.',
       commandNote: '', command: '', danger: true, runLabel: 'Delete', started: 'Deleted.',
-      run: () => post('/api/review/do', { op: 'delete', thread: t.id, at: c.at }) })
+      run: async () => {
+        const res = await doReview({ op: 'delete', thread: t.id, at: c.at })
+        if (res.ok) redrawReview()
+        return res
+      } })
   }
 
   // askFeedback is, on the thread last asked about while it's unanswered,
@@ -2390,7 +2407,7 @@
       if (op === 'reply' && !body) { box.focus(); return }
       let res
       try {
-        res = await post('/api/review/do', { op, thread: t.id, body: op === 'reopen' ? '' : body })
+        res = await doReview({ op, thread: t.id, body: op === 'reopen' ? '' : body })
       } catch (e) {
         reached(false)
         toast('Could not reach vibe.', true)
@@ -2400,7 +2417,6 @@
       if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
       reviewView.drafts.delete(String(t.id))
       box.value = ''
-      tookReview(res.body.review)
       box.blur()
       drawReview()
       if (byKeys && reviewView.replyNext) goToCommentAfter(t.id)
@@ -3345,9 +3361,10 @@
   // link becomes one only where localLink allows (this machine's own pages);
   // any other shows its address instead.
   function markdown(text) {
-    const inline = (nodes) => nodes.flatMap((n) => {
+    // inLink: in a link's text, where a button can't go.
+    const inline = (nodes, inLink) => nodes.flatMap((n) => {
       switch (n.type) {
-        case 'text': return withThreadRefs(n.text)
+        case 'text': return inLink ? document.createTextNode(n.text) : withThreadRefs(n.text)
         case 'code': return el('code', { text: n.text })
         case 'br': return el('br')
         case 'strong': return el('strong', {}, ...inline(n.children))
@@ -3355,7 +3372,7 @@
         case 'del': return el('del', {}, ...inline(n.children))
         case 'link': {
           const link = localLink(n.href)
-          if (link) { link.replaceChildren(...inline(n.children)); return link }
+          if (link) { link.replaceChildren(...inline(n.children, true)); return link }
           const label = n.children.map((c) => c.text || '').join('')
           return document.createTextNode(label === n.href ? n.href : label + ' (' + n.href + ')')
         }
@@ -3415,12 +3432,14 @@
   function withThreadRefs(text) {
     const nodes = []
     let at = 0
-    for (const m of text.matchAll(/(^|[^\w#])#(\d+)\b/g)) {
+    // Not in a word (issue#3), a path or address (example.com/#4), nor a
+    // number going on (#1.5); shown as written (#007).
+    for (const m of text.matchAll(/(^|[^\w#/])#(\d+)(?![\w.]*\d)\b/g)) {
       const start = m.index + m[1].length
       const id = Number(m[2])
       if (start > at) nodes.push(document.createTextNode(text.slice(at, start)))
       nodes.push(el('button', { type: 'button', class: 'thread-ref', 'data-thread': String(id), title: 'Go to comment #' + id + ' on the Review tab',
-        text: '#' + id, onclick: () => openThread(id) }))
+        text: '#' + m[2], onclick: () => openThread(id) }))
       at = start + 1 + m[2].length
     }
     if (at < text.length) nodes.push(document.createTextNode(text.slice(at)))
@@ -3441,6 +3460,10 @@
     const id = reviewView.goTo
     if (id == null || !reviewView.review || reviewView.files === null) return
     reviewView.goTo = null
+    if (!reviewIsOn(reviewView.review)) {
+      toast('Comment #' + id + " is on a review that's closed: reopen it to see its comments.")
+      return
+    }
     if (!$('review-thread-' + id)) {
       toast("There's no comment #" + id + ' on this review: it may have been on an earlier one.')
       return

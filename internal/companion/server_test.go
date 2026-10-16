@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -767,5 +769,17 @@ func TestEveryAPICallIsGuarded(t *testing.T) {
 		if w := do(t, s, cross); w.Code != http.StatusForbidden {
 			t.Errorf("%s from another origin: %d, want 403", r.pattern, w.Code)
 		}
+	}
+}
+
+// Every API call is registered from apiRoutes, which the test above holds
+// to the token and same-origin checks: none straight onto the mux.
+func TestNoAPICallIsRegisteredOutsideTheTable(t *testing.T) {
+	src, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := regexp.MustCompile(`mux\.Handle(Func)?\("[A-Z]* ?/api/`).Find(src); m != nil {
+		t.Errorf("an API call is registered outside apiRoutes: %s", m)
 	}
 }
