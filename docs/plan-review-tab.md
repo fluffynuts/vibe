@@ -10,8 +10,9 @@ and by the user in a real browser on a real sandbox. Where: the diff (`internal/
 `create.go`), and the agent's side (`library/base/review/`: `vibe-review`, its skill and instructions).
 Next: starting and closing reviews from the page; then comments on line ranges, a formatting toolbar, comments
 on lines opened from a gap, editing sent comments, following a drifted comment to its line, and "Viewed" ticks on files (as GitHub's;
-the user wants them, 2026-10-16). diffity goes when this merges
-to master.
+the user wants them, 2026-10-16). Those are all built now (below). diffity was removed 2026-10-16, before
+this merges to master (the user: too many edge cases): `library.Retired` names it, so a profile or
+`defaultFeatures` that still does is settled without it, with a note.
 
 ## Why
 
@@ -43,7 +44,8 @@ A **Review** tab on the companion page:
 - keeps reviews in `~/.vibe/reviews/<sandbox>/`, so they survive the sandbox stopping, being rebuilt, and
   vibe restarting.
 
-diffity stays installed alongside until the tab has proven itself; then the diffity feature goes.
+diffity stays installed alongside until the tab has proven itself; then the diffity feature goes (it went
+2026-10-16).
 
 ## How
 
@@ -109,7 +111,7 @@ reverting hunks, guided tours beyond the reading order, side-by-side view.
 
 - Windows: is the sandbox's folder the same path, and does the host have git? (The tab says so if not.)
 - Large diffs: a cap on what's shown at once, with files collapsed past a size.
-- The user's global instructions name diffity for reviews: they change once the tab takes over.
+- The user's global instructions name diffity for reviews: they change now that it's gone (the user's to make).
 - Tabs open on the same review don't sync: each has its own drafts, open composer and edit in progress,
   and only sees another's changes on its next poll. Ideally they would sync (the user, 2026-10-16); not
   built yet. Meanwhile, edit and delete find a comment by when it was said, not its place, so a tab
@@ -123,9 +125,9 @@ reverting hunks, guided tours beyond the reading order, side-by-side view.
   A profile edited by hand isn't re-composed automatically: then `vibe -C` (if `vibe-review` isn't found).
 - Feature branch: `vibe-review start` reviews uncommitted changes unless given `--ref <base branch>`; ask
   for "a review of this branch against main", or the review may come back empty.
-- A sandbox with the diffity feature tells the agent, every prompt, to review with diffity (its hook's
-  UserPromptSubmit context, and its agent instructions), against the review feature's instructions. Until
-  diffity goes, say "use vibe-review" when asking.
+- A sandbox composed with diffity, until it's re-composed, tells the agent every prompt to review with
+  diffity (its hook's UserPromptSubmit context, and its agent instructions): say "use vibe-review" when
+  asking, or re-compose it (the session-start update check offers to).
 - Not yet seen anywhere: a Windows host (is the review folder's path the same inside the sandbox?).
 
 ## Five improvements (agreed 2026-10-16; built 2026-10-16, uncommitted then, tested in jsdom and against real git)

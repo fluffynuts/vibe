@@ -184,7 +184,7 @@ copied into a sandbox.
 
 ### Keeping sandboxes up to date
 
-New vibe features, like the clipboard bridge or diffity's hooks, reach a sandbox when its profile is
+New vibe features, like the clipboard bridge or `vibe-review`, reach a sandbox when its profile is
 composed again from the library and the sandbox is rebuilt from the profile. vibe does both for you,
 when they're needed:
 
@@ -367,7 +367,7 @@ ended first.
 `-a`/`--info` shows the sandbox's profile, agent, memory setting, timezone and, for a guided profile, the
 library features it was composed from. Once it has had a companion page, it shows the page's address (and
 whether a vibe is serving it now), and the `ssh -L` command that reaches it from another machine: it
-forwards the page's port and the ports the page embeds (the clipboard, diffity), each to the same number,
+forwards the page's port and the sandbox's published ports (the clipboard's, which the page embeds), each to the same number,
 as the page only answers on its own port. The host name in it is this machine's own; use whatever name
 the other machine knows it by. sbx publishes a sandbox's ports on this machine's loopback alone, so
 without such a forward, they can't be reached from elsewhere. While the sandbox is running, it also shows how long it
@@ -544,9 +544,7 @@ name, the project folder (the workspace, which doesn't follow the agent's `cd`),
 `?` untracked, `✘` conflicted, `↑`/`↓` ahead/behind, `#` stash count). It refreshes every 2 seconds and after each
 turn. A second line, `copy-paste at: <url>`, shows the
 clipboard page's address (from `clipboard-url`), or `copy-paste at: (starting)` until the clipboard server is
-listening and vibe has confirmed its host port for this boot. Once the agent has run a diffity review, a
-`review at: <url>` line sits above it: the latest URL `diffity-url` gave out, shown while a diffity viewer is
-running. Claude Code loads it automatically from `~/.claude/skills/`, so nothing needs configuring; delete
+listening and vibe has confirmed its host port for this boot. Claude Code loads it automatically from `~/.claude/skills/`, so nothing needs configuring; delete
 the folder from `~/.vibe/defaults/agent-files/.claude/skills/` to leave it out. As with themes, a
 `~/.vibe/defaults` seeded before it existed won't have it until the bundle's copy is added.
 
@@ -563,7 +561,7 @@ you're looking at:
 - **Conversation** — talk to the agent from the page, with the sandbox's clipboard page (see
   `clipboard-bridge` below) embedded beside it: paste images and files anywhere on the tab and they go
   to the clipboard. The prompt box grows as you type, up to half the column. The agent's replies, and your prompts, are shown as Markdown — headings, lists, tables, code — built
-  as text, so nothing in them can become markup on the page; links open only to this machine's own pages.
+  as text, so nothing in them can become markup on the page; links open only to this machine's own pages. A block of code has a copy button (two pages) at its top right.
   Your prompt is sent exactly as you typed it; only how it's shown changes, so fence pasted console output
   in ``` (and put globs like `*.go` in backticks) to keep it as it is. **My prompts as Markdown**, above the
   conversation, turns that off for your prompts, in that browser, if you'd rather see them as you typed them.
@@ -585,9 +583,7 @@ you're looking at:
   blue dot shows it has finished, until you come back to the page. The Conversation tab does the same
   while you're on another tab, until you open it. Once the agent has answered you can
   send the next prompt, even if it left something running that it is waiting on (a review page, say):
-  sending ends that. With the `diffity` kit, a turn
-  that leaves a new review (or tour) behind ends with a card linking to it, and links to pages on
-  `localhost` in what the agent says can be clicked.
+  sending ends that. Links to pages on `localhost` in what the agent says can be clicked.
 - **Review** — the changes in the sandbox's folder, worked out on this machine with git (uncommitted ones,
   untracked files with them; or a branch's, or a commit's), with the agent's review comments under the
   lines they're about: side by side (or in one column), with the hidden lines between changes a click away,
@@ -602,7 +598,7 @@ you're looking at:
   click or type anywhere in it if it's already open. Reviews are kept in
   `~/.vibe/reviews/<sandbox>/`, so they outlive the sandbox stopping or being rebuilt; `--migrate` takes
   them along, and deleting the sandbox deletes them. A sandbox built before this has no review folder
-  until it's rebuilt. (This is meant to replace diffity, which is still installed alongside for now.)
+  until it's rebuilt.
 - **Network log** — every host the sandbox has tried to reach, with hit counts and whether it was
   allowed or blocked, refreshing every couple of seconds while the tab is showing. Filter by status or
   search for a host. A blocked host has an **Allow** button, an allowed one a **Block** button; click
@@ -799,8 +795,8 @@ list is still there to go back to:
 
 ```
 Confirm selection:
-  - diffity: review viewer
   - dotnet: the .NET SDK
+  - redis: the Redis server
 
 Continue? [Y/n]
 ```
@@ -907,7 +903,7 @@ work the same way, plus:
   to always overwriting)
 - `# vibe: startup: false` — for a script in `.local/bin`, keep it out of the generated `on-start`
   (defaults to true, so a feature's service scripts are started without having to say so). Mark a
-  helper the agent or the user runs on demand — like diffity's `diffity-url` — with this.
+  helper the agent or the user runs on demand — like the clipboard's `clipboard-url` — with this.
 
 For a file whose format can't carry a `#` comment (JSON, binary, ...), put the same `key: value`
 lines in a sidecar file named `<file>.vibe` next to it instead — e.g. `settings.json.vibe`. The
@@ -925,13 +921,13 @@ agent: claude         # which coding agent to run
 nugetDir: ~/.nuget    # mounted into the sandbox and symlinked in, if it exists on the host
 memoryRoot: ~/.vibe/memories   # where per-sandbox agent memories are backed up
 defaultFeatures:      # library features a guided profile starts with selected
-  - diffity
+  - dotnet
 env:                  # extra environment variables passed to `sbx create -e`
   SOME_VAR: value
 publish:              # ports to publish, and (optionally) a stable URL env var for each
-  - name: diffity
-    ports: [5391]
-    urlEnv: VIBE_DIFFITY_URL   # sandbox env var set to http://localhost:<host port>
+  - name: clipboard
+    ports: [5390]
+    urlEnv: VIBE_CLIPBOARD_URL   # sandbox env var set to http://localhost:<host port>
 ```
 
 The host port behind each `publish` entry is fixed in `urlEnv` when the sandbox is created, but a
@@ -949,7 +945,7 @@ below) is left out, with a note saying so. Naming a feature the library doesn't 
 closest real name suggested:
 
 ```
-vibe: defaultFeatures in ~/.vibe/settings.yaml: no library feature 'diffty' — did you mean 'diffity'?
+vibe: defaultFeatures in ~/.vibe/settings.yaml: no library feature 'dotnte' — did you mean 'dotnet'?
 ```
 
 ## Library features
@@ -961,7 +957,7 @@ optional:
 
 ```
 library/
-  diffity/
+  redis/
     config.yaml           # kit fragment — ports, permissions, environment
     settings.yaml          # settings fragment — publish, memory, ...
     install-scripts/       # setup steps, renumbered into the profile's sequence
@@ -974,34 +970,24 @@ A feature that only works with some agents says so beside its description, in th
 offers it for a sandbox running one of those agents, and re-composing only offers it to such a
 sandbox, or to a profile that has it already, so that taking it out stays your choice. A profile
 is shared by every sandbox for its folder, so it may still reach a sandbox running another agent:
-vibe warns when it does, and installs it anyway. `diffity` is `claude` only: its skills and URL
-hooks are Claude Code's.
+vibe warns when it does, and installs it anyway.
 
 Composing writes all of that into the new profile: install scripts are renumbered so the features
 run in the order you picked, `agent-files/.local/bin/*` scripts get an `on-start` generated to run
 them, and the `config.yaml` / `settings.yaml` fragments are merged into the profile's own, and the
 `agent-instructions.md` ones into its `kit-instructions.md` (lists append in feature order; anything the profile itself sets wins). A
-feature therefore carries the ports, permissions and instructions its tooling needs — picking
-`diffity` is what gives a sandbox the review viewer, its published port and `$VIBE_DIFFITY_URL`,
-the `registry.npmjs.org` egress rule and the agent instructions for using it.
-
-It also makes sure the agent gives you the review URL, and that it's the right one. The diffity
-skills tell the agent the viewer is "running at http://localhost:5391", which is the sandbox's
-side of the port mapping, or just to "check your browser". So `diffity` registers two Claude Code
-hooks, in `/etc/claude-code/managed-settings.d/` so that your own `~/.claude/settings.json` is
-left alone. The first time a turn touches diffity, the agent is told the URL your browser can
-open, which `diffity-url` reads from the live-checked `published/diffity` file. When the agent
-tries to finish a turn that used diffity while a viewer is running, a reply that lacks that URL,
-or quotes another localhost port, is sent back to be fixed. This happens once per turn, so it
-can't loop. A profile composed before this existed picks it up with `vibe -C`.
+feature therefore carries the ports, permissions and instructions its tooling needs — the
+`clipboard-bridge` base feature is what gives a sandbox the clipboard page, its published port and
+`$VIBE_CLIPBOARD_URL`, and the agent instructions for using it.
 
 A startup script is also how a feature keeps itself current: install scripts run once, when the
-sandbox is created, so `diffity` ships an `update-diffity` and an `update-diffity-skills` that the
-generated `on-start` runs. Every sandbox start pulls the latest CLI from npm and re-adds the
-matching agent skills — the two are released together — non-fatally, logging to
-`/tmp/update-diffity.log` and `/tmp/update-diffity-skills.log`. The skills half re-enters as the
-agent user, since `on-start` runs as root and nothing root writes under `/home/agent` can be
-replaced by the agent later.
+sandbox is created, so anything that should be refreshed on every sandbox start belongs in a script
+in `agent-files/.local/bin/`, which the generated `on-start` runs (as root: re-enter as the agent
+user for anything written under `/home/agent`, or the agent can't replace it later).
+
+A feature vibe no longer has — `diffity`, whose reviews are on the companion page's Review tab now — is
+left out, with a note, wherever it's still named: in `defaultFeatures`, and in a profile's recorded
+features when it's re-composed or updated.
 
 `clipboard-bridge` lives in `library/base/`: a **base feature**, which every guided profile is
 composed with and which is never offered as a choice (a `defaultFeatures` entry, or a recorded
@@ -1034,7 +1020,7 @@ profile carries the version of its features that existed the day it was generate
 profile records what it was made of in its `config.yaml`:
 
 ```yaml
-# vibe: features: diffity, dotnet
+# vibe: features: dotnet, redis
 ```
 
 which is what `vibe -C/--re-compose` works from: it rebuilds the profile from those features as

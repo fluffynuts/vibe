@@ -190,19 +190,6 @@ func TestStartCompanionDoesNothingWhenOff(t *testing.T) {
 	}
 }
 
-func TestTheReviewLinkIsTheLastLineSbxGivesBack(t *testing.T) {
-	for out, want := range map[string]string{
-		"http://localhost:5396/diff\n":                                  "http://localhost:5396/diff",
-		"sbx: a newer version is available\nhttp://localhost:5396/diff": "http://localhost:5396/diff",
-		"warning\r\nhttp://localhost:5396/diff\r\n\n":                   "http://localhost:5396/diff",
-		"": "",
-	} {
-		if got := lastLine(out); got != want {
-			t.Errorf("lastLine(%q) = %q, want %q", out, got, want)
-		}
-	}
-}
-
 // keepAwakeStandIns stands in for sbx's answer to whether the sandbox is
 // running, and for starting it, recording the starts.
 func keepAwakeStandIns(t *testing.T, running, startWorks bool) *int {

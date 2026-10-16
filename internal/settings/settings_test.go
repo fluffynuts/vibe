@@ -19,13 +19,13 @@ func TestMergeScalarsOverride(t *testing.T) {
 }
 
 func TestMergePublishAppends(t *testing.T) {
-	base := Settings{Publish: []PublishEntry{{Name: "diffity", Ports: []int{5391}}}}
+	base := Settings{Publish: []PublishEntry{{Name: "dashboard", Ports: []int{5391}}}}
 	override := Settings{Publish: []PublishEntry{{Name: "extra", Ports: []int{8080}}}}
 	got := Merge(base, override)
 	if len(got.Publish) != 2 {
 		t.Fatalf("expected 2 publish entries, got %d", len(got.Publish))
 	}
-	if got.Publish[0].Name != "diffity" || got.Publish[1].Name != "extra" {
+	if got.Publish[0].Name != "dashboard" || got.Publish[1].Name != "extra" {
 		t.Errorf("unexpected publish order: %+v", got.Publish)
 	}
 }
@@ -43,8 +43,8 @@ func TestMergeEnvOverrideWins(t *testing.T) {
 }
 
 func TestMergeReplacesDefaultFeatures(t *testing.T) {
-	base := Settings{DefaultFeatures: []string{"diffity"}}
-	if got := Merge(base, Settings{}).DefaultFeatures; !reflect.DeepEqual(got, []string{"diffity"}) {
+	base := Settings{DefaultFeatures: []string{"dashboard"}}
+	if got := Merge(base, Settings{}).DefaultFeatures; !reflect.DeepEqual(got, []string{"dashboard"}) {
 		t.Errorf("an override that sets none keeps the base's: %v", got)
 	}
 	got := Merge(base, Settings{DefaultFeatures: []string{"dotnet", "mysql"}}).DefaultFeatures
@@ -57,7 +57,7 @@ const shipped = `memory: 12g
 agent: claude
 # ticked by default when a guided profile is created
 defaultFeatures:
-  - diffity
+  - dashboard
 `
 
 func TestSetReplacesKeepingTheRest(t *testing.T) {
@@ -66,7 +66,7 @@ func TestSetReplacesKeepingTheRest(t *testing.T) {
 	for _, kv := range []struct {
 		key   string
 		value interface{}
-	}{{"memory", "8g"}, {"agent", "codex"}, {"defaultFeatures", []string{"diffity", "mysql"}}} {
+	}{{"memory", "8g"}, {"agent", "codex"}, {"defaultFeatures", []string{"dashboard", "mysql"}}} {
 		if data, err = Set(data, kv.key, kv.value); err != nil {
 			t.Fatalf("Set(%s): %v", kv.key, err)
 		}
@@ -75,7 +75,7 @@ func TestSetReplacesKeepingTheRest(t *testing.T) {
 agent: codex
 # ticked by default when a guided profile is created
 defaultFeatures:
-  - diffity
+  - dashboard
   - mysql
 `
 	if string(data) != want {

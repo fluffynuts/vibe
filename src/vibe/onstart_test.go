@@ -9,7 +9,7 @@ import (
 
 func TestPublishedURLsPreferTheLiveMapping(t *testing.T) {
 	records := []state.PublishRecord{
-		{Name: "diffity", ContainerPort: 5391, HostPort: 5396},
+		{Name: "dashboard", ContainerPort: 5391, HostPort: 5396},
 		{Name: "api", ContainerPort: 8080, HostPort: 8080},
 		{Name: "api", ContainerPort: 8081, HostPort: 8082}, // not the entry's first port
 	}
@@ -18,8 +18,8 @@ func TestPublishedURLsPreferTheLiveMapping(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("publishedURLs = %+v, want one per publish entry", got)
 	}
-	if got[0].name != "diffity" || got[0].url() != "http://localhost:5399" || got[0].unverified {
-		t.Errorf("diffity = %+v, want the live port 5399, verified", got[0])
+	if got[0].name != "dashboard" || got[0].url() != "http://localhost:5399" || got[0].unverified {
+		t.Errorf("dashboard = %+v, want the live port 5399, verified", got[0])
 	}
 	if got[0].fileContent() != "http://localhost:5399\n" {
 		t.Errorf("verified file content = %q", got[0].fileContent())

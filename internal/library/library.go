@@ -486,3 +486,23 @@ func writeOnStart(profileDir string, scripts []string) error {
 	b.WriteString("echo \"=== done at $(date -Is) ===\"\n")
 	return os.WriteFile(dest, []byte(b.String()), 0o644)
 }
+
+// Retired are the features vibe once had and has no longer, by name, with
+// what took their place: a profile or setting naming one is composed without
+// it, saying so, rather than failing.
+var Retired = map[string]string{
+	"diffity": "reviews are on the companion page's Review tab now",
+}
+
+// WithoutRetired is features without the retired ones, and those it took
+// out.
+func WithoutRetired(features []string) (kept, retired []string) {
+	for _, name := range features {
+		if _, gone := Retired[name]; gone {
+			retired = append(retired, name)
+		} else {
+			kept = append(kept, name)
+		}
+	}
+	return kept, retired
+}

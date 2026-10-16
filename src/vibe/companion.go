@@ -11,7 +11,6 @@ import (
 	"vibe/internal/claudetheme"
 	"vibe/internal/cliargs"
 	"vibe/internal/companion"
-	"vibe/internal/kitspec"
 	"vibe/internal/layout"
 	"vibe/internal/policy"
 	"vibe/internal/portalloc"
@@ -182,38 +181,6 @@ func startClipboard(name string) ([]string, error) {
 	return args, nil
 }
 
-// diffityReviewFile is where, in the sandbox, the diffity kit's diffity-url
-// keeps the last link it gave out.
-const diffityReviewFile = kitspec.AgentHome + "/.local/state/vibe/diffity-review-url"
-
-// latestReviewFor reads the sandbox's last diffity link for the companion
-// page's conversation, or is nil when the sandbox doesn't publish diffity.
-func latestReviewFor(name string, inst state.Instance) func() string {
-	for _, p := range inst.Publish {
-		if p.Name == "diffity" {
-			return func() string {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
-				// No file yet is no review yet: cat's complaint isn't an error.
-				out, err := sbxrun.ExecCaptureContext(ctx, name, "cat", diffityReviewFile)
-				if err != nil {
-					return ""
-				}
-				return lastLine(out)
-			}
-		}
-	}
-	return nil
-}
-
-// lastLine is the last line of out that isn't blank. What sbx exec gives
-// back has sbx's own stderr mixed in, ahead of the command's output, and
-// diffity-url's file is a single line.
-func lastLine(out string) string {
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	return strings.TrimSpace(lines[len(lines)-1])
-}
-
 // themeColorFor reads the colour of the theme the sandbox's agent uses, for
 // the companion page: as the agent has it now (it may have been changed with
 // /theme), else as its profile recorded it. Only claude has themes.
@@ -333,7 +300,6 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		Converse:         conversationFor(vibeHome, name, inst),
 		Prepare:          readyForTurn(name),
 		History:          state.ConversationPath(vibeHome, name),
-		LatestReview:     latestReviewFor(name, inst),
 		ReviewTab:        reviewTabFor(vibeHome, name, inst),
 		Admin:            adminFor(lay, name, inst.Target),
 		Manage:           &companionManager{lay: lay, own: name},

@@ -34,21 +34,6 @@ async function clipboard($: EngineInterface, home: string | undefined): Promise<
   }
 }
 
-// The latest URL diffity-url gave the user, while a diffity viewer is still
-// running (the file outlives the viewer, so a stale one isn't shown).
-async function reviewUrl($: EngineInterface, home: string | undefined) {
-  try {
-    const url = (await $.fs.read(`${home ?? '/home/agent'}/.local/state/vibe/diffity-review-url`)).trim()
-    if (url === '') return null
-    const ran = await $.process.run(['diffity', 'list', '--json'], { timeoutMs: 5_000 })
-    const sessions = ran.exitCode === 0 ? JSON.parse(ran.stdout) : null
-
-    return Array.isArray(sessions) && sessions.length > 0 ? url : null
-  } catch {
-    return null
-  }
-}
-
 async function refresh($: EngineInterface) {
   if (isRefreshing) return
   isRefreshing = true
@@ -68,7 +53,6 @@ async function refresh($: EngineInterface) {
       folder: shortenPath(projectDir, home),
       git: status === null ? null : parseStatus(status),
       clipboard: await clipboard($, home),
-      reviewUrl: await reviewUrl($, home),
     }
     const prev = await read($, info)
     if (JSON.stringify(prev) !== JSON.stringify(next)) {
@@ -115,12 +99,6 @@ export const register: Register = on => {
           {band.git && <Text dimColor> │ </Text>}
           {band.git && <Git Text={Text} git={band.git} />}
         </Box>
-        {band.reviewUrl && (
-          <Text>
-            <Text dimColor>review at: </Text>
-            <Text color="cyan">{band.reviewUrl}</Text>
-          </Text>
-        )}
         {band.clipboard && (
           <Text>
             <Text dimColor>copy-paste at: </Text>

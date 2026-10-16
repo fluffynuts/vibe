@@ -264,7 +264,7 @@ const shippedSettings = `memory: 12g
 agent: claude
 # ticked by default when a guided profile is created
 defaultFeatures:
-  - diffity
+  - dashboard
 `
 
 // TestDoInstallFirstTimeSetsMemoryForThisMachine: with nobody to ask, a

@@ -186,7 +186,7 @@ func TestDeletingAProfileDeletesEverythingOfIt(t *testing.T) {
 func TestDeletingASandboxFreesItsPublishedPorts(t *testing.T) {
 	lay := layout.New(t.TempDir(), t.TempDir())
 	base := freeBase(t, 4)
-	s := sandboxRecord(t, lay, "old", "p", state.PublishRecord{Name: "diffity", ContainerPort: base, HostPort: base})
+	s := sandboxRecord(t, lay, "old", "p", state.PublishRecord{Name: "dashboard", ContainerPort: base, HostPort: base})
 	var removed []string
 	if err := (removal{sandboxes: []inventorySandbox{s}}).run(lay, remover(t, &removed)); err != nil {
 		t.Fatal(err)

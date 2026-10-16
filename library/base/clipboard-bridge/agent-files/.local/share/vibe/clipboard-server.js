@@ -1,7 +1,7 @@
 "use strict";
 // vibe: description: The clipboard page's server: a paste target in the user's browser that feeds the agent
 // Started by ~/.local/bin/start-clipboard. It serves clipboard-page.html on
-// 5390 (published to the host like diffity's 5391) and keeps a history of
+// 5390 (published to the host) and keeps a history of
 // whatever the user pastes, drops or picks there. That history reaches the
 // agent two ways:
 //

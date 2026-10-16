@@ -91,11 +91,6 @@ type Config struct {
 	// ReviewTab is what the Review tab shows; nil means the page has no
 	// such tab.
 	ReviewTab *ReviewTab
-	// LatestReview reads the diffity link the sandbox gave out last ("" for
-	// none), which the conversation announces when a turn has made a new
-	// one; nil means the sandbox has no diffity. It may be slow, but should
-	// give up within seconds.
-	LatestReview func() string
 	// Admin is what the page's Admin tab does to the sandbox; nil means the
 	// page has no such tab.
 	Admin Admin

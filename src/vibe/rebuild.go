@@ -279,7 +279,7 @@ func recomposeProfile(lay layout.Layout, args cliargs.Args, name, target string,
 	if err := prepareInstructions(lay, profile); err != nil {
 		return err
 	}
-	features := settleBaseFeatures(lay, profile)
+	features := settleFeatures(lay, profile)
 	defaultAgent, err := defaultAgentFor(lay, profile)
 	if err != nil {
 		return err
@@ -417,17 +417,23 @@ func doRestore(lay layout.Layout, args cliargs.Args, name, target string) error 
 	return reCompose(lay, args, name, target, false)
 }
 
-// settleBaseFeatures makes a profile's record of its features agree with
-// the base features being always on: a profile that names one (it was a
-// choice once) has the name taken out, silently. It returns the features the
-// profile records, base ones excluded.
-func settleBaseFeatures(lay layout.Layout, profile string) []string {
+// settleFeatures makes a profile's record of its features agree with what
+// vibe has: a base feature it names (it was a choice once) is taken out
+// silently, as it's always on; a retired one (vibe has it no longer) is taken
+// out saying so, and what replaced it. It returns the features the profile
+// records, those excluded.
+func settleFeatures(lay layout.Layout, profile string) []string {
 	dir := lay.ProfileDir(profile)
 	base := lay.BaseFeatures()
-	features, err := profilegen.DropBaseFromRecord(dir, base)
+	_, retired := library.WithoutRetired(profilegen.ComposedFrom(dir))
+	for _, name := range retired {
+		note("profile '%s' was composed with '%s', which vibe no longer has (%s): it's left out", profile, name, library.Retired[name])
+	}
+	features, err := profilegen.DropFromRecord(dir, append(append([]string{}, base...), retired...))
 	if err != nil {
 		// Not worth stopping for: the same strip happens next time.
 		features, _ = profilegen.WithoutBase(profilegen.ComposedFrom(dir), base)
+		features, _ = library.WithoutRetired(features)
 	}
 	return features
 }

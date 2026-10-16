@@ -72,13 +72,13 @@ func TestEnsureProfileRejectsBadName(t *testing.T) {
 // is no terminal for here, so it aborts — the point is that it got that far).
 func TestGuidedProfileChecksDefaultFeatures(t *testing.T) {
 	for _, tc := range []struct{ name, wanted, wantErr string }{
-		{"typo", "diffty", "did you mean 'diffity'?"},
-		{"unknown", "postgres", "the library has: diffity"},
-		{"known", "diffity", "aborted"},
+		{"typo", "dashbord", "did you mean 'dashboard'?"},
+		{"unknown", "postgres", "the library has: dashboard"},
+		{"known", "dashboard", "aborted"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			lay := layout.New(t.TempDir(), t.TempDir())
-			writeFile(t, lay.BundlePath("library", "diffity", "install-scripts", "01-install"), "#!/bin/sh\necho hi\n")
+			writeFile(t, lay.BundlePath("library", "dashboard", "install-scripts", "01-install"), "#!/bin/sh\necho hi\n")
 			writeFile(t, lay.HomePath("settings.yaml"), "defaultFeatures:\n  - "+tc.wanted+"\n")
 
 			err := ensureGuidedProfile(lay, "demo", "claude")
@@ -103,23 +103,23 @@ func writeClaudeOnly(t *testing.T, lay layout.Layout, name string) {
 // note saying why, rather than stopping creation as an unknown name does.
 func TestGuidedProfileLeavesOutDefaultsTheAgentCantUse(t *testing.T) {
 	lay := layout.New(t.TempDir(), t.TempDir())
-	writeClaudeOnly(t, lay, "diffity")
+	writeClaudeOnly(t, lay, "dashboard")
 	writeFile(t, lay.BundlePath("library", "redis", "install-scripts", "01-install"), "#!/bin/sh\necho hi\n")
-	writeFile(t, lay.HomePath("settings.yaml"), "defaultFeatures:\n  - diffity\n")
+	writeFile(t, lay.HomePath("settings.yaml"), "defaultFeatures:\n  - dashboard\n")
 
 	var err error
 	notes := strings.Join(notesOf(func() { err = ensureGuidedProfile(lay, "demo", "codex") }), "\n")
 	if err == nil || !strings.Contains(err.Error(), "aborted") {
 		t.Fatalf("error = %v, want it to get as far as asking (and abort, with no terminal)", err)
 	}
-	if !strings.Contains(notes, "leaving out diffity: it works only with claude, and this sandbox runs codex") {
-		t.Errorf("notes don't say diffity was left out, and why:\n%s", notes)
+	if !strings.Contains(notes, "leaving out dashboard: it works only with claude, and this sandbox runs codex") {
+		t.Errorf("notes don't say dashboard was left out, and why:\n%s", notes)
 	}
 }
 
 func TestGuidedProfileSaysSoWhenNoFeatureSuitsTheAgent(t *testing.T) {
 	lay := layout.New(t.TempDir(), t.TempDir())
-	writeClaudeOnly(t, lay, "diffity")
+	writeClaudeOnly(t, lay, "dashboard")
 
 	err := ensureGuidedProfile(lay, "demo", "codex")
 	if err == nil || !strings.Contains(err.Error(), "no library features work with codex") {
@@ -129,7 +129,7 @@ func TestGuidedProfileSaysSoWhenNoFeatureSuitsTheAgent(t *testing.T) {
 
 func TestOfferedFeaturesAreTheAgentsAndWhatTheProfileHas(t *testing.T) {
 	lay := layout.New(t.TempDir(), t.TempDir())
-	writeClaudeOnly(t, lay, "diffity")
+	writeClaudeOnly(t, lay, "dashboard")
 	writeClaudeOnly(t, lay, "other")
 	writeFile(t, lay.BundlePath("library", "redis", "install-scripts", "01-install"), "#!/bin/sh\necho hi\n")
 	all := lay.Features()
@@ -139,9 +139,9 @@ func TestOfferedFeaturesAreTheAgentsAndWhatTheProfileHas(t *testing.T) {
 		has   []string
 		want  string
 	}{
-		{"claude", nil, "diffity other redis"},
+		{"claude", nil, "dashboard other redis"},
 		{"codex", nil, "redis"},
-		{"codex", []string{"diffity"}, "diffity redis"},
+		{"codex", []string{"dashboard"}, "dashboard redis"},
 	} {
 		if got := strings.Join(offeredFor(lay, all, tc.agent, tc.has), " "); got != tc.want {
 			t.Errorf("offeredFor(%s, has %v) = %q, want %q", tc.agent, tc.has, got, tc.want)
@@ -151,12 +151,12 @@ func TestOfferedFeaturesAreTheAgentsAndWhatTheProfileHas(t *testing.T) {
 
 func TestChecklistLabelsSayWhichAgentsAFeatureIsFor(t *testing.T) {
 	lay := layout.New(t.TempDir(), t.TempDir())
-	writeClaudeOnly(t, lay, "diffity")
+	writeClaudeOnly(t, lay, "dashboard")
 	writeFile(t, lay.BundlePath("library", "redis", "install-scripts", "01-install"),
 		"#!/bin/sh\n# vibe: description: Install redis\necho hi\n")
 
 	_, labels, _ := featureChecklist(lay, lay.Features(), nil)
-	want := "diffity: Install diffity (claude only)|redis: Install redis"
+	want := "dashboard: Install dashboard (claude only)|redis: Install redis"
 	if got := strings.Join(labels, "|"); got != want {
 		t.Errorf("labels = %q, want %q", got, want)
 	}
@@ -166,12 +166,12 @@ func TestChecklistLabelsSayWhichAgentsAFeatureIsFor(t *testing.T) {
 // warning for what this sandbox's agent can't use.
 func TestUnsupportedProfileFeaturesAreWarnedAbout(t *testing.T) {
 	lay := layout.New(t.TempDir(), t.TempDir())
-	writeClaudeOnly(t, lay, "diffity")
-	writeFile(t, lay.HomePath("profiles", "p", "config.yaml"), "# vibe: features: diffity\nname: p\n")
+	writeClaudeOnly(t, lay, "dashboard")
+	writeFile(t, lay.HomePath("profiles", "p", "config.yaml"), "# vibe: features: dashboard\nname: p\n")
 
 	notes := strings.Join(notesOf(func() { warnUnsupportedFeatures(lay, "p", "codex") }), "\n")
-	if !strings.Contains(notes, "WARNING: profile 'p' has diffity: it works only with claude, and this sandbox runs codex") {
-		t.Errorf("no warning for diffity:\n%s", notes)
+	if !strings.Contains(notes, "WARNING: profile 'p' has dashboard: it works only with claude, and this sandbox runs codex") {
+		t.Errorf("no warning for dashboard:\n%s", notes)
 	}
 	if notes := notesOf(func() { warnUnsupportedFeatures(lay, "p", "claude") }); len(notes) != 0 {
 		t.Errorf("warned for a feature the agent can use: %v", notes)

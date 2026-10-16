@@ -121,7 +121,7 @@ func updateProfile(lay layout.Layout, profile, backupName string) (profileOutcom
 			return profileOutcome{}, err
 		}
 		if profilegen.IsGuided(dir) {
-			settleBaseFeatures(lay, profile)
+			settleFeatures(lay, profile)
 		}
 	}
 	outcome, features, err := assessProfile(lay, profile)

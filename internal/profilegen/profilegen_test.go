@@ -211,18 +211,18 @@ func TestComposedFromRoundTrips(t *testing.T) {
 	l := testLayout(t)
 	write(t, mkdirAndPath(t, l.BundlePath("library", "mysql", "install-scripts"), "01-install-mysql"),
 		"#!/bin/sh\necho install-mysql\n", 0o644)
-	write(t, mkdirAndPath(t, l.BundlePath("library", "diffity"), "config.yaml"),
+	write(t, mkdirAndPath(t, l.BundlePath("library", "dashboard"), "config.yaml"),
 		"ports:\n  - container: 5391\n", 0o644)
 
-	dir, err := CreateGuided(l, "phoenix", []string{"diffity", "mysql"})
+	dir, err := CreateGuided(l, "phoenix", []string{"dashboard", "mysql"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := ComposedFrom(dir), []string{"diffity", "mysql"}; !reflect.DeepEqual(got, want) {
+	if got, want := ComposedFrom(dir), []string{"dashboard", "mysql"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("ComposedFrom = %v, want %v", got, want)
 	}
 	config := read(t, filepath.Join(dir, "config.yaml"))
-	if !strings.Contains(config, "# vibe: features: diffity, mysql") {
+	if !strings.Contains(config, "# vibe: features: dashboard, mysql") {
 		t.Errorf("the record should be readable in the file itself:\n%s", config)
 	}
 	// it is a comment, so it must not have become a YAML key
@@ -311,13 +311,13 @@ func TestGuidedProfilesAlwaysGetTheBaseFeaturesWithoutRecordingThem(t *testing.T
 	}
 }
 
-func TestDropBaseFromRecordRewritesTheProfile(t *testing.T) {
+func TestDropFromRecordRewritesTheProfile(t *testing.T) {
 	l := testLayout(t)
 	dir := l.HomePath("profiles", "old")
 	mkdir(t, dir)
 	write(t, filepath.Join(dir, "config.yaml"), "# vibe: features: clip, mysql\nname: old\n", 0o644)
 
-	got, err := DropBaseFromRecord(dir, []string{"clip"})
+	got, err := DropFromRecord(dir, []string{"clip"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestDropBaseFromRecordRewritesTheProfile(t *testing.T) {
 
 	// Only the base feature recorded: the profile is still a guided one.
 	write(t, filepath.Join(dir, "config.yaml"), "# vibe: features: clip\nname: old\n", 0o644)
-	if _, err := DropBaseFromRecord(dir, []string{"clip"}); err != nil {
+	if _, err := DropFromRecord(dir, []string{"clip"}); err != nil {
 		t.Fatal(err)
 	}
 	if !IsGuided(dir) || len(ComposedFrom(dir)) != 0 {

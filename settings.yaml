@@ -7,6 +7,6 @@ agent: claude
 companion: open
 # ticked by default when a guided profile is created — the user can untick
 # any of them while picking, and naming a feature the library doesn't have
-# is an error rather than a silent no-op
-defaultFeatures:
-  - diffity
+# is an error rather than a silent no-op (one vibe has retired is left out,
+# saying so)
+defaultFeatures: []

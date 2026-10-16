@@ -62,9 +62,9 @@ func nudgeOnStart(lay layout.Layout, name string, reached func()) {
 
 // publishedURLDir is where, inside the sandbox, each published service's
 // URL is written at every session start — one file per publish entry,
-// named after it (".../published/diffity"), holding the URL the host
+// named after it (".../published/<name>"), holding the URL the host
 // reaches it on (and a second, "unverified: ..." line when sbx couldn't
-// confirm it). It is what the sandbox's own helpers (diffity-url) read
+// confirm it). It is what the sandbox's own helpers read
 // first: unlike the urlEnv variable, fixed when the sandbox was created, it
 // is checked against sbx's live port mappings every time.
 const publishedURLDir = kitspec.AgentHome + "/.local/state/vibe/published"

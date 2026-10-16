@@ -662,6 +662,40 @@ test('the Conversation tab is never marked while it is open', async () => {
   } finally { p.close() }
 })
 
+// clipboardOf gives the page a clipboard that keeps what's written to it,
+// or refuses with refusal.
+function clipboardOf(p, refusal) {
+  const written = []
+  Object.defineProperty(p.window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async (text) => { if (refusal) throw new Error(refusal); written.push(text) } },
+  })
+  return written
+}
+
+test('a code block the agent wrote has a button copying just its code', async () => {
+  const code = 'line one\n  line two'
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, 'Here:\n\n```\n' + code + '\n```\n\nand more')], running: false })
+  try {
+    const written = clipboardOf(p)
+    const copy = p.$('convo-log').querySelector('.msg.agent button.copy-code')
+    assert.ok(copy, 'the block has a copy button')
+    await p.click(copy)
+    assert.deepEqual(written, [code])
+    assert.equal(p.$('toast').textContent, 'Copied')
+  } finally { p.close() }
+})
+
+test("a copy the browser refuses says so", async () => {
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, '```\nx\n```')], running: false })
+  try {
+    clipboardOf(p, 'Document is not focused')
+    await p.click(p.$('convo-log').querySelector('button.copy-code'))
+    assert.equal(p.$('toast').textContent, "Couldn't copy: Document is not focused")
+    assert.ok(p.$('toast').classList.contains('bad'))
+  } finally { p.close() }
+})
+
 // --- pasting on the Review tab --------------------------------------------------------
 
 // pastePage is a page on a review whose fake vibe answers pastes as the

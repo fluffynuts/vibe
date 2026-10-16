@@ -12,8 +12,9 @@ import (
 	"vibe/internal/library"
 )
 
-// bundledProfile is the profile goldenBundle composes: the .NET, MySQL,
-// RabbitMQ, Elasticsearch, Redis and diffity features of the repo's library.
+// bundledProfile is the profile goldenBundle composes: the base features,
+// and the .NET, MySQL, RabbitMQ, Elasticsearch and Redis ones, of the repo's
+// library.
 const bundledProfile = "golden"
 
 // goldenBundle is a bundle made of the repo's own base config, defaults and
@@ -31,7 +32,8 @@ func goldenBundle(t *testing.T) (root string, profileSteps int) {
 	}
 	lay := layout.New(t.TempDir(), repo)
 	dir := filepath.Join(root, "profiles", bundledProfile)
-	features := []string{"dotnet", "mysql", "rabbitmq", "elasticsearch", "redis", "diffity"}
+	// The base features first, as a guided profile is composed.
+	features := append(lay.BaseFeatures(), "dotnet", "mysql", "rabbitmq", "elasticsearch", "redis")
 	if err := library.Compose(features, lay.FeatureDir, dir); err != nil {
 		t.Fatalf("composing the golden profile: %v", err)
 	}
@@ -62,9 +64,6 @@ func TestLoadKitBundledProfile(t *testing.T) {
 	if merged.NugetDir == "" {
 		t.Error("expected NugetDir from profile settings.yaml")
 	}
-	if len(merged.Publish) != 1 || merged.Publish[0].Name != "diffity" || merged.Publish[0].UrlEnv != "VIBE_DIFFITY_URL" {
-		t.Errorf("unexpected Publish: %+v", merged.Publish)
-	}
 
 	setup, _ := doc["setup"].(kitspec.Doc)
 	if setup == nil {
@@ -81,19 +80,6 @@ func TestLoadKitBundledProfile(t *testing.T) {
 	if !strings.Contains(strings.ToLower(first["description"].(string)), "apt") {
 		t.Errorf("expected defaults' apt-refresh step first, got %+v", first)
 	}
-	// diffity is a library feature, so its steps come with the profile
-	var sawDiffityCLI, sawDiffitySkills bool
-	for _, step := range installSteps {
-		switch cmd := step.(kitspec.Doc)["command"].(string); {
-		case strings.Contains(cmd, "npm install -g @naturalcycles/diffity"):
-			sawDiffityCLI = true
-		case strings.Contains(cmd, "diffity skills install"):
-			sawDiffitySkills = true
-		}
-	}
-	if !sawDiffityCLI || !sawDiffitySkills {
-		t.Errorf("diffity steps missing from the profile: cli=%v skills=%v", sawDiffityCLI, sawDiffitySkills)
-	}
 
 	files, _ := setup["files"].([]interface{})
 	wantPaths := map[string]bool{
@@ -102,6 +88,8 @@ func TestLoadKitBundledProfile(t *testing.T) {
 		"/home/agent/.local/bin/link-nuget":          false,
 		"/home/agent/.local/bin/start-elasticsearch": false,
 		"/home/agent/.local/bin/on-start":            false,
+		// the review feature's command, a base feature's file
+		"/home/agent/.local/bin/vibe-review": false,
 	}
 	for _, f := range files {
 		entry := f.(kitspec.Doc)
@@ -147,8 +135,8 @@ func TestLoadKitBundledProfile(t *testing.T) {
 
 	ai, _ := doc["agentInstructions"].(kitspec.Doc)
 	content, _ := ai["content"].(string)
-	if !strings.Contains(content, "Diffity") {
-		t.Error("expected agentInstructions to carry the diffity feature's section")
+	if !strings.Contains(content, "## Reviews") {
+		t.Error("expected agentInstructions to carry the review feature's section")
 	}
 
 	if _, err := kitspec.Marshal(doc); err != nil {
@@ -193,7 +181,7 @@ func TestLoadKitOverlayWins(t *testing.T) {
 		t.Errorf("the overlay's 01-ensure-local-bin did not replace the bundle's: %+v", first)
 	}
 	// the overlay's defaults replace the bundle's whole: only the two scripts
-	// it holds run, in their own numeric order, and the bundle's diffity
+	// it holds run, in their own numeric order, and the bundle's own
 	// steps are gone rather than layered underneath
 	want := []string{"my own setup log", "99-extra"}
 	if !reflect.DeepEqual(descriptions, want) {

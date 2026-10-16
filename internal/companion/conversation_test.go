@@ -445,99 +445,6 @@ func TestBeginningAnewIsKept(t *testing.T) {
 	}
 }
 
-// fakeReviews is the sandbox's last diffity link, as a turn leaves it.
-type fakeReviews struct {
-	mu   sync.Mutex
-	link string
-}
-
-func (r *fakeReviews) set(link string) { r.mu.Lock(); r.link = link; r.mu.Unlock() }
-func (r *fakeReviews) read() string    { r.mu.Lock(); defer r.mu.Unlock(); return r.link }
-
-func reviewServer(f *fakeAgent, r *fakeReviews, file string) *Server {
-	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: f.converse, LatestReview: r.read, History: file})
-	if file != "" {
-		s.convo.load(file)
-	}
-	return s
-}
-
-func reviews(p pollResult) []string {
-	var links []string
-	for _, e := range p.Events {
-		if e.Kind == "review" {
-			links = append(links, e.Text)
-		}
-	}
-	return links
-}
-
-func TestANewReviewIsAnnouncedOnceWhenTheTurnEnds(t *testing.T) {
-	r := &fakeReviews{link: "http://localhost:5396/diff"}
-	s := reviewServer(&fakeAgent{}, r, "")
-	send(t, s, "/api/conversation/send", `{"prompt":"one"}`)
-	if got := reviews(idle(t, s)); len(got) != 0 {
-		t.Errorf("the link the sandbox already had was announced: %v", got)
-	}
-
-	r.set("http://localhost:5396/diff?ref=master")
-	send(t, s, "/api/conversation/send", `{"prompt":"review against master"}`)
-	p := idle(t, s)
-	if got := reviews(p); len(got) != 1 || got[0] != "http://localhost:5396/diff?ref=master" {
-		t.Errorf("reviews = %v", got)
-	}
-	if got := kinds(p); !strings.HasSuffix(got, "agent,agent,review,done") {
-		t.Errorf("the review isn't announced as the turn ends: %s", got)
-	}
-
-	send(t, s, "/api/conversation/send", `{"prompt":"resolve them"}`)
-	if got := reviews(idle(t, s)); len(got) != 1 {
-		t.Errorf("the same link was announced again: %v", got)
-	}
-}
-
-func TestOnlyLocalReviewLinksAreAnnounced(t *testing.T) {
-	r := &fakeReviews{}
-	s := reviewServer(&fakeAgent{}, r, "")
-	send(t, s, "/api/conversation/send", `{"prompt":"one"}`)
-	idle(t, s)
-	for _, link := range []string{"https://example.com/diff", "http://evil.example/diff", "javascript:alert(1)", "http://user@localhost:5396/diff"} {
-		r.set(link)
-		send(t, s, "/api/conversation/send", `{"prompt":"again"}`)
-		if got := reviews(idle(t, s)); len(got) != 0 {
-			t.Errorf("%q was announced: %v", link, got)
-		}
-	}
-}
-
-func TestAnAnnouncedReviewIsKnownAfterARestart(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "box.conversation.json")
-	r := &fakeReviews{}
-	f := &fakeAgent{}
-	first := reviewServer(f, r, file)
-	send(t, first, "/api/conversation/send", `{"prompt":"one"}`)
-	idle(t, first)
-	r.set("http://127.0.0.1:5396/diff")
-	send(t, first, "/api/conversation/send", `{"prompt":"review"}`)
-	idle(t, first)
-	first.Close()
-
-	// A review made while vibe was down is news to the page, which only
-	// knows it if what it was last told survived the restart: otherwise the
-	// new link would be taken for what was already there.
-	r.set("http://127.0.0.1:5396/diff?ref=master")
-	second := reviewServer(f, r, file)
-	send(t, second, "/api/conversation/send", `{"prompt":"three"}`)
-	got := reviews(idle(t, second))
-	if len(got) != 2 || got[1] != "http://127.0.0.1:5396/diff?ref=master" {
-		t.Errorf("reviews after a restart = %v, want the one from before and the new one", got)
-	}
-	send(t, second, "/api/conversation/send", `{"prompt":"four"}`)
-	if got := reviews(idle(t, second)); len(got) != 2 {
-		t.Errorf("a review was announced again after a restart: %v", got)
-	}
-}
-
 // answered waits for the agent to have answered, though it may go on.
 func answered(t *testing.T, s *Server) pollResult {
 	t.Helper()
@@ -627,16 +534,16 @@ func TestThePageLearnsTheSlashCommandsTheAgentHas(t *testing.T) {
 	if commands, _, sent := pollCommands(t, s, -1); !sent || len(commands) != 0 {
 		t.Errorf("before the agent has started: %v, sent %v", commands, sent)
 	}
-	c.line([]byte(`{"type":"system","subtype":"init","slash_commands":["diffity-review","compact","/plugin:skill","compact","bad name","<script>"]}`))
+	c.line([]byte(`{"type":"system","subtype":"init","slash_commands":["deploy","compact","/plugin:skill","compact","bad name","<script>"]}`))
 	commands, seq, sent := pollCommands(t, s, -1)
-	if want := []string{"compact", "diffity-review", "plugin:skill"}; !sent || !slices.Equal(commands, want) {
+	if want := []string{"compact", "deploy", "plugin:skill"}; !sent || !slices.Equal(commands, want) {
 		t.Errorf("commands = %v (sent %v), want %v", commands, sent, want)
 	}
 	if _, _, sent := pollCommands(t, s, seq); sent {
 		t.Error("a page with the latest was sent them again")
 	}
 	// The same list again isn't news; a different one is.
-	c.line([]byte(`{"type":"system","subtype":"init","slash_commands":["compact","diffity-review","plugin:skill"]}`))
+	c.line([]byte(`{"type":"system","subtype":"init","slash_commands":["compact","deploy","plugin:skill"]}`))
 	if _, _, sent := pollCommands(t, s, seq); sent {
 		t.Error("an unchanged list was sent again")
 	}
@@ -650,12 +557,12 @@ func TestTheSlashCommandsOutliveTheServer(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "box.conversation.json")
 	first := historyServer(t, &fakeAgent{}, file)
 	first.convo.begin("go")
-	first.convo.line([]byte(`{"type":"system","subtype":"init","slash_commands":["diffity-review"]}`))
+	first.convo.line([]byte(`{"type":"system","subtype":"init","slash_commands":["deploy"]}`))
 	first.convo.finish(nil, false)
 	first.Close()
 
 	second := historyServer(t, &fakeAgent{}, file)
-	if commands, _, sent := pollCommands(t, second, -1); !sent || !slices.Equal(commands, []string{"diffity-review"}) {
+	if commands, _, sent := pollCommands(t, second, -1); !sent || !slices.Equal(commands, []string{"deploy"}) {
 		t.Errorf("after a restart: %v, sent %v", commands, sent)
 	}
 }

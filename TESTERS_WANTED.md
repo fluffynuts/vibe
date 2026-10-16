@@ -140,21 +140,22 @@ profile's sandbox. When vibe reports the clash, it should list which process hol
 the platform sections for which tool it uses). If the tool is missing it should skip that part
 quietly, never fail.
 
-### 8. The diffity review URL
+### 8. The Review tab
 
-This needs a profile with the diffity feature, recreated with `vibe -r` (or `vibe -C` for a guided
-profile made before this change).
+This needs a sandbox built with this version (`vibe -r`, or `vibe -C` for a guided profile made
+before it), so that `vibe-review` and the review folder are in it.
 
-1. Start a session and run `sbx ports <sandbox>` in another terminal. Note the host port mapped to
-   5391.
-2. Ask the agent for `/diffity-diff`, then `/diffity-review`, then `/diffity-resolve` after
-   leaving a comment in the viewer.
+1. Make a change or two in the project folder, open the companion page's **Review** tab, and start a
+   review of the uncommitted changes, asking the agent to review it.
+2. Once it says it's done, reply to one of its comments with **Ask the agent**, and add a comment of
+   your own with the **+** beside a line, then **Submit to agent**.
 
-**Expect:** every one of those replies ends with a `http://localhost:<port>…` URL whose port is
-the one `sbx ports` showed (not 5391, unless that really is the mapping), and the URL opens in your
-browser. Inside the sandbox, `cat ~/.local/state/vibe/published/diffity` should show the same URL
-with no `unverified:` line. If there is one, or the file is missing, please include the output of
-`sbx ports <sandbox> --json`: vibe has to guess that format, since sbx doesn't document it.
+**Expect:** the diff shows straight away, and the agent's comments appear under their lines as it
+makes them; its answer to your question lands on that comment, and Submit takes you to the
+Conversation tab, where the agent answers each comment. Restart vibe, or rebuild the sandbox: the
+review and its comments are still there. On Windows especially, please say whether the diff showed
+at all (it needs git on your machine) and whether the agent's comments reached the tab (the review
+folder has to be the same path inside the sandbox).
 
 ## Windows
 

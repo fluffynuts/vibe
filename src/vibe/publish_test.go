@@ -32,7 +32,7 @@ func freeBase(t *testing.T, span int) int {
 }
 
 func publishOne(ports ...int) settings.Settings {
-	return settings.Settings{Publish: []settings.PublishEntry{{Name: "diffity", Ports: ports, UrlEnv: "URL"}}}
+	return settings.Settings{Publish: []settings.PublishEntry{{Name: "dashboard", Ports: ports, UrlEnv: "URL"}}}
 }
 
 func hostPorts(mappings []publishMapping) []int {
@@ -73,7 +73,7 @@ func TestAllocatePublishFreshTakesContainerPort(t *testing.T) {
 func TestAllocatePublishReclaimsOwnRecordedPort(t *testing.T) {
 	home := t.TempDir()
 	base := freeBase(t, 4)
-	saveInstance(t, home, "crit", state.PublishRecord{Name: "diffity", ContainerPort: base, HostPort: base + 2})
+	saveInstance(t, home, "crit", state.PublishRecord{Name: "dashboard", ContainerPort: base, HostPort: base + 2})
 
 	got, err := allocatePublish(home, "crit", publishOne(base))
 	if err != nil {
@@ -90,7 +90,7 @@ func TestAllocatePublishReclaimsOwnRecordedPort(t *testing.T) {
 func TestAllocatePublishSkipsPortClaimedByAnotherStoppedSandbox(t *testing.T) {
 	home := t.TempDir()
 	base := freeBase(t, 4)
-	saveInstance(t, home, "valleyrunner", state.PublishRecord{Name: "diffity", ContainerPort: base, HostPort: base})
+	saveInstance(t, home, "valleyrunner", state.PublishRecord{Name: "dashboard", ContainerPort: base, HostPort: base})
 
 	got, err := allocatePublish(home, "crit", publishOne(base))
 	if err != nil {
@@ -110,7 +110,7 @@ func TestAllocatePublishSkipsPortClaimedByAnotherStoppedSandbox(t *testing.T) {
 func TestAllocatePublishNoDuplicateWithinOnePass(t *testing.T) {
 	home := t.TempDir()
 	base := freeBase(t, 4)
-	saveInstance(t, home, "valleyrunner", state.PublishRecord{Name: "diffity", ContainerPort: base, HostPort: base})
+	saveInstance(t, home, "valleyrunner", state.PublishRecord{Name: "dashboard", ContainerPort: base, HostPort: base})
 
 	// base is claimed, so the first container port slides to base+1 — which
 	// is exactly what the second container port would otherwise take.
@@ -138,7 +138,7 @@ func TestAllocatePublishSkipsLiveListener(t *testing.T) {
 	}
 	defer ln.Close()
 
-	saveInstance(t, home, "crit", state.PublishRecord{Name: "diffity", ContainerPort: base, HostPort: base})
+	saveInstance(t, home, "crit", state.PublishRecord{Name: "dashboard", ContainerPort: base, HostPort: base})
 
 	got, err := allocatePublish(home, "crit", publishOne(base))
 	if err != nil {

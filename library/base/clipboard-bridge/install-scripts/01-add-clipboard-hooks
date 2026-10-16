@@ -2,9 +2,8 @@
 # vibe: description: web-based clipboard bridge - use if you have trouble pasting into the agent console
 # vibe: user: 0
 # vibe: registers: clipboard-hook
-# Managed settings rather than ~/.claude/settings.json, for the same reason
-# as diffity's URL hooks: that file is the user's, deployed only-if-missing
-# after install steps have run. Claude Code merges the hooks of every
+# Managed settings rather than ~/.claude/settings.json: that file is the
+# user's, deployed only-if-missing after install steps have run. Claude Code merges the hooks of every
 # managed-settings.d drop-in with the user's.
 # UserPromptSubmit hands over what was pasted with the user's next message.
 # Not mid-turn (PostToolUse, say): a paste then reached the agent with no

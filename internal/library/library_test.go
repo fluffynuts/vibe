@@ -244,11 +244,11 @@ func TestComposeNoFeaturesWithStartScriptsWritesNoOnStart(t *testing.T) {
 // values — its name, above all — survive being merged into.
 func TestComposeMergesFragmentsUnderTheProfile(t *testing.T) {
 	dir := t.TempDir()
-	write(t, filepath.Join(dir, "diffity", "config.yaml"),
-		"permissions:\n  network:\n    allow:\n      - registry.npmjs.org\nports:\n  - container: 5391\n    name: diffity\n")
-	write(t, filepath.Join(dir, "diffity", "settings.yaml"),
-		"publish:\n  - name: diffity\n    ports:\n      - 5391\n")
-	write(t, filepath.Join(dir, "diffity", "agent-instructions.md"), "## Diffity\n\nreview tooling.\n")
+	write(t, filepath.Join(dir, "dashboard", "config.yaml"),
+		"permissions:\n  network:\n    allow:\n      - registry.npmjs.org\nports:\n  - container: 5391\n    name: dashboard\n")
+	write(t, filepath.Join(dir, "dashboard", "settings.yaml"),
+		"publish:\n  - name: dashboard\n    ports:\n      - 5391\n")
+	write(t, filepath.Join(dir, "dashboard", "agent-instructions.md"), "## Dashboard\n\nreview tooling.\n")
 	write(t, filepath.Join(dir, "dotnet", "config.yaml"),
 		"permissions:\n  network:\n    allow:\n      - api.nuget.org\n")
 	write(t, filepath.Join(dir, "dotnet", "agent-instructions.md"), "## Toolchain\n\ndotnet.\n")
@@ -256,7 +256,7 @@ func TestComposeMergesFragmentsUnderTheProfile(t *testing.T) {
 	profile := filepath.Join(t.TempDir(), "demo")
 	write(t, filepath.Join(profile, "config.yaml"), "# a comment header\nname: demo\ndescription: mine\n")
 
-	if err := Compose([]string{"diffity", "dotnet"}, flatDirFor(dir), profile); err != nil {
+	if err := Compose([]string{"dashboard", "dotnet"}, flatDirFor(dir), profile); err != nil {
 		t.Fatalf("Compose: %v", err)
 	}
 
@@ -267,13 +267,13 @@ func TestComposeMergesFragmentsUnderTheProfile(t *testing.T) {
 		}
 	}
 	if !strings.Contains(read(t, filepath.Join(profile, "settings.yaml")), "VIBE") &&
-		!strings.Contains(read(t, filepath.Join(profile, "settings.yaml")), "diffity") {
+		!strings.Contains(read(t, filepath.Join(profile, "settings.yaml")), "dashboard") {
 		t.Error("the feature's settings fragment did not reach the profile")
 	}
 	// The kits' instructions go to the profile's kit-instructions.md, not
 	// the user's own agent-instructions.md, which composing never writes.
 	if got, want := read(t, filepath.Join(profile, "kit-instructions.md")),
-		"## Diffity\n\nreview tooling.\n\n## Toolchain\n\ndotnet.\n"; got != want {
+		"## Dashboard\n\nreview tooling.\n\n## Toolchain\n\ndotnet.\n"; got != want {
 		t.Errorf("kit-instructions.md =\n%q\nwant\n%q", got, want)
 	}
 	if _, err := os.Stat(filepath.Join(profile, "agent-instructions.md")); !os.IsNotExist(err) {
@@ -306,7 +306,7 @@ func read(t *testing.T, path string) string {
 }
 
 func TestValidateAcceptsEveryKnownFeature(t *testing.T) {
-	if err := Validate([]string{"diffity", "dotnet"}, []string{"diffity", "dotnet", "mysql"}); err != nil {
+	if err := Validate([]string{"dashboard", "dotnet"}, []string{"dashboard", "dotnet", "mysql"}); err != nil {
 		t.Errorf("Validate: %v", err)
 	}
 	if err := Validate(nil, nil); err != nil {
@@ -315,10 +315,10 @@ func TestValidateAcceptsEveryKnownFeature(t *testing.T) {
 }
 
 func TestValidateSuggestsTheFeatureThatWasMeant(t *testing.T) {
-	available := []string{"diffity", "dotnet", "elasticsearch", "mysql", "rabbitmq", "redis"}
+	available := []string{"dashboard", "dotnet", "elasticsearch", "mysql", "rabbitmq", "redis"}
 	for _, tc := range []struct{ typo, want string }{
-		{"diffty", "diffity"},
-		{"Diffity", "diffity"},
+		{"dashbord", "dashboard"},
+		{"Dashboard", "dashboard"},
 		{"elasticserch", "elasticsearch"},
 		{"rabbit-mq", "rabbitmq"},
 	} {
@@ -353,45 +353,24 @@ func TestValidateListsTheLibraryWhenNothingIsClose(t *testing.T) {
 // service to start: without it, every helper would be run once at boot.
 func TestComposeKeepsOptedOutHelpersOutOfOnStart(t *testing.T) {
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "diffity", "agent-files", ".local", "bin")
+	bin := filepath.Join(dir, "dashboard", "agent-files", ".local", "bin")
 	write(t, filepath.Join(bin, "start-viewer"), "#!/bin/sh\necho service\n")
-	write(t, filepath.Join(bin, "diffity-url"), "#!/bin/sh\n# vibe: startup: false\necho url\n")
+	write(t, filepath.Join(bin, "dashboard-url"), "#!/bin/sh\n# vibe: startup: false\necho url\n")
 	write(t, filepath.Join(bin, "start-viewer.vibe"), "description: a sidecar, never deployed\n")
 
 	profile := filepath.Join(t.TempDir(), "demo")
-	if err := Compose([]string{"diffity"}, flatDirFor(dir), profile); err != nil {
+	if err := Compose([]string{"dashboard"}, flatDirFor(dir), profile); err != nil {
 		t.Fatalf("Compose: %v", err)
 	}
 	onStart := read(t, filepath.Join(profile, "agent-files", ".local", "bin", "on-start"))
 	if !strings.Contains(onStart, "start-viewer") {
 		t.Errorf("on-start should run the feature's service script:\n%s", onStart)
 	}
-	if strings.Contains(onStart, "diffity-url") {
+	if strings.Contains(onStart, "dashboard-url") {
 		t.Errorf("on-start runs a helper that opted out:\n%s", onStart)
 	}
 	if strings.Contains(onStart, ".vibe") {
 		t.Errorf("on-start runs a directive sidecar:\n%s", onStart)
-	}
-}
-
-func TestDiffityFeatureStartsItsForwarderAtStartup(t *testing.T) {
-	lib, err := filepath.Abs(filepath.Join("..", "..", "library"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	dest := filepath.Join(t.TempDir(), "profile")
-	if err := Compose([]string{"diffity"}, flatDirFor(lib), dest); err != nil {
-		t.Fatal(err)
-	}
-	onStart, err := os.ReadFile(filepath.Join(dest, "agent-files", ".local", "bin", "on-start"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(onStart), "start-diffity-forward") {
-		t.Errorf("on-start does not run the diffity forwarder:\n%s", onStart)
-	}
-	if _, err := os.Stat(filepath.Join(dest, "agent-files", ".local", "share", "vibe", "diffity-forward.js")); err != nil {
-		t.Errorf("the forwarder's script is not shipped: %v", err)
 	}
 }
 
@@ -446,12 +425,17 @@ func TestForAgentSplitsFeaturesKeepingTheirOrder(t *testing.T) {
 	}
 }
 
-func TestDiffityFeatureIsForClaudeOnly(t *testing.T) {
-	lib, err := filepath.Abs(filepath.Join("..", "..", "library"))
-	if err != nil {
-		t.Fatal(err)
+// A feature vibe no longer has is taken out of a list naming it, with what
+// replaced it to say, rather than failing what the list was for.
+func TestARetiredFeatureIsTakenOutOfAList(t *testing.T) {
+	kept, retired := WithoutRetired([]string{"dotnet", "diffity", "mysql"})
+	if strings.Join(kept, ",") != "dotnet,mysql" {
+		t.Errorf("kept %q", kept)
 	}
-	if got := List([]string{"diffity"}, flatDirFor(lib))[0].Agents; !reflect.DeepEqual(got, []string{"claude"}) {
-		t.Errorf("diffity's Agents = %v, want just claude: its skills and hooks are Claude Code's", got)
+	if len(retired) != 1 || retired[0] != "diffity" || Retired["diffity"] == "" {
+		t.Errorf("retired %q, why %q", retired, Retired["diffity"])
+	}
+	if kept, retired := WithoutRetired([]string{"dotnet"}); len(kept) != 1 || retired != nil {
+		t.Errorf("none retired: %q %q", kept, retired)
 	}
 }

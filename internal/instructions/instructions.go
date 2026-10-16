@@ -2,8 +2,8 @@
 // sandbox's agent: a universal file in ~/.vibe, and one per profile, which
 // are merged (universal first) and loaded by the agent in every session.
 //
-// A guided profile also carries the kits' instructions — how to use diffity,
-// say — composed from the library. Those are kept apart, in KitFile, so
+// A guided profile also carries the kits' instructions — how to review with
+// vibe-review, say — composed from the library. Those are kept apart, in KitFile, so
 // re-composing (which rewrites them) never touches what the user wrote; they
 // reach the agent through sbx, as reading for when a kit is relevant.
 package instructions

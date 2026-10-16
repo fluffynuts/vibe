@@ -16,7 +16,6 @@ export type BandInfo = {
   git: GitInfo | null
   // null when the clipboard feature isn't installed
   clipboard: { url: string } | 'starting' | null
-  reviewUrl: string | null
 }
 
 declare module 'claude-code' {

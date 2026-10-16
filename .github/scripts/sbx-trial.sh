@@ -84,7 +84,8 @@ check "exec -d (detached)" -- sbx exec -d "$SHELL_SB" -- touch /tmp/trial-detach
 sleep 3
 check "did the detached exec run?" -- sbx exec "$SHELL_SB" -- ls -l /tmp/trial-detached
 
-# The diffity URL code reads sbx ports --json, whose shape isn't documented.
+# vibe's published-port code reads sbx ports --json, whose shape isn't
+# documented.
 check "publish 15391:5391" -- sbx ports "$SHELL_SB" --publish 15391:5391
 check "publish 5392 to an ephemeral host port" -- sbx ports "$SHELL_SB" --publish 5392
 check "ports (text)" -- sbx ports "$SHELL_SB"

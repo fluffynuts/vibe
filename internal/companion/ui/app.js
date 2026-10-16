@@ -3201,7 +3201,7 @@
       switch (b.type) {
         case 'para': return el('p', {}, ...inline(b.inline))
         case 'heading': return el('h' + Math.min(6, Math.max(1, b.level)), {}, ...inline(b.inline))
-        case 'code': return el('pre', {}, el('code', { text: b.text }))
+        case 'code': return codeBlock(b.text)
         case 'hr': return el('hr')
         case 'quote': return el('blockquote', {}, ...blocks(b.blocks))
         case 'list': return el(b.ordered ? 'ol' : 'ul', b.ordered && b.start !== 1 ? { start: String(b.start) } : {},
@@ -3218,29 +3218,39 @@
     return el('div', { class: 'md' }, ...blocks(window.vibeMarkdown.parse(text)))
   }
 
+  // codeBlock is a block of code with a button copying it: selecting it by
+  // hand means scrolling, as Ctrl+A takes the whole conversation.
+  function codeBlock(code) {
+    const copy = async () => {
+      try {
+        await navigator.clipboard.writeText(code)
+        toast('Copied')
+      } catch (err) {
+        toast("Couldn't copy: " + err.message, true)
+      }
+    }
+    return el('div', { class: 'code-block' }, el('pre', {}, el('code', { text: code })),
+      el('button', { type: 'button', class: 'copy-code small', title: 'Copy', 'aria-label': 'Copy the code', onclick: copy }, copyIcon()))
+  }
+
+  // copyIcon is two overlapping pages, the copy a step down and right.
+  function copyIcon() {
+    const ns = 'http://www.w3.org/2000/svg'
+    const svg = document.createElementNS(ns, 'svg')
+    svg.setAttribute('viewBox', '0 0 16 16')
+    svg.setAttribute('aria-hidden', 'true')
+    const path = document.createElementNS(ns, 'path')
+    path.setAttribute('d', 'M2.5 10.5v-8h8 M5.5 5.5h8v8h-8z')
+    svg.append(path)
+    return svg
+  }
+
   function convoNote(cls, text, at) {
     const time = stamp(at)
     const words = cls === 'agent' ? markdown(text) : el('span', { text })
     $('convo-log').append(time
       ? el('div', { class: 'msg ' + cls }, words, el('span', { class: 'foot' }, time))
       : el('div', { class: 'msg ' + cls }, words))
-  }
-
-  // reviewNote is a card for a link diffity has for the user, saying what
-  // it is from its address: a tour, the changes against a ref, or the
-  // uncommitted ones.
-  function reviewNote(ev) {
-    const link = localLink(ev.text || '')
-    if (!link) return
-    const u = new URL(link.href)
-    const ref = u.searchParams.get('ref')
-    const what = u.pathname.startsWith('/tour/') ? 'Diffity has a code tour for you:'
-      : u.pathname.startsWith('/diff') ? (ref ? 'The changes against ' + ref + ' are ready to review in diffity:'
-        : 'The uncommitted changes are ready to review in diffity:')
-      : 'Diffity has something for you to look at:'
-    $('convo-log').append(el('div', { class: 'msg review' },
-      el('span', { text: what }), el('span', { class: 'review-link' }, link),
-      el('span', { class: 'foot' }, stamp(ev.at))))
   }
 
   // The ticks on what the user said, as on a chat message: one when vibe has
@@ -3353,7 +3363,6 @@
     else if (ev.kind === 'agent') showAgent(ev.agent, ev.at)
     else if (ev.kind === 'note') convoNote('meta', ev.text || '')
     else if (ev.kind === 'error') convoNote('error', ev.text || 'That failed.', ev.at)
-    else if (ev.kind === 'review') reviewNote(ev)
     else if (ev.kind === 'done' && ev.text === 'stopped') convoNote('meta', 'Stopped.')
   }
 

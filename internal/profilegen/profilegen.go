@@ -209,13 +209,13 @@ func WithoutBase(features, base []string) (kept []string, removed bool) {
 	return kept, removed
 }
 
-// DropBaseFromRecord takes the base features out of the list a profile
-// records, writing the profile back when it had any: a profile composed
-// when a base feature was still a choice names it, and it is not a choice
-// any more. It returns what the profile now records.
-func DropBaseFromRecord(profileDir string, base []string) ([]string, error) {
+// DropFromRecord takes names out of the list of features a profile
+// records, writing the profile back when it had any: a base feature (a
+// profile composed when it was still a choice names it) or a retired one
+// (one vibe no longer has). It returns what the profile now records.
+func DropFromRecord(profileDir string, names []string) ([]string, error) {
 	recorded := ComposedFrom(profileDir)
-	kept, removed := WithoutBase(recorded, base)
+	kept, removed := WithoutBase(recorded, names)
 	if !removed {
 		return recorded, nil
 	}

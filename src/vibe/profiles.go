@@ -189,6 +189,7 @@ func ensureGuidedProfile(lay layout.Layout, profile, agent string) error {
 	// mistake worth stopping for: carrying on would quietly build a
 	// sandbox without the tooling it was told to always start with.
 	base.DefaultFeatures, _ = profilegen.WithoutBase(base.DefaultFeatures, lay.BaseFeatures())
+	base.DefaultFeatures = withoutRetiredDefaults(base.DefaultFeatures, settingsPath)
 	if err := library.Validate(base.DefaultFeatures, names); err != nil {
 		return fmt.Errorf("defaultFeatures in %s: %w", settingsPath, err)
 	}
@@ -286,6 +287,7 @@ func pickDefaultFeatures(lay layout.Layout, defaults []string) ([]string, error)
 		return defaults, nil
 	}
 	defaults, _ = profilegen.WithoutBase(defaults, lay.BaseFeatures())
+	defaults = withoutRetiredDefaults(defaults, lay.HomePath("settings.yaml"))
 	if err := library.Validate(defaults, names); err != nil {
 		return nil, fmt.Errorf("defaultFeatures in %s: %w", displayPath(lay.HomePath("settings.yaml")), err)
 	}
@@ -300,4 +302,16 @@ func pickDefaultFeatures(lay layout.Layout, defaults []string) ([]string, error)
 		chosen[i] = features[idx].Name
 	}
 	return chosen, nil
+}
+
+// withoutRetiredDefaults is defaults (settings' defaultFeatures, from
+// settingsPath) without the features vibe no longer has, saying so: an
+// error would stop a guided profile being made at all, for a name that
+// was right when it was written.
+func withoutRetiredDefaults(defaults []string, settingsPath string) []string {
+	kept, retired := library.WithoutRetired(defaults)
+	for _, name := range retired {
+		note("defaultFeatures in %s names '%s', which vibe no longer has (%s): it's left out (take it out of there to stop this note)", displayPath(settingsPath), name, library.Retired[name])
+	}
+	return kept
 }

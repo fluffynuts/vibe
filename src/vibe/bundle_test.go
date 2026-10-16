@@ -18,8 +18,8 @@ import (
 // only after setup.install has run, so a step that invokes a helper from an
 // agent-files tree runs before that helper exists and fails with "not found"
 // every time — silently, since setup steps are deliberately non-fatal. The
-// diffity CLI and its skills were installed that way and never landed in any
-// sandbox. agent-files scripts belong to on-start, not to install steps.
+// diffity CLI (a feature since retired) and its skills were installed that
+// way and never landed in any sandbox. agent-files scripts belong to on-start, not to install steps.
 //
 // Only names some agent-files tree actually ships count: ~/.local/bin also
 // holds what the sandbox image put there (the claude binary, say), which is
@@ -70,7 +70,7 @@ func TestInstallScriptsDoNotCallAgentFiles(t *testing.T) {
 }
 
 // namesHelper reports whether code mentions path as a whole name — not as
-// the start of a longer one (diffity-url within diffity-url-hook).
+// the start of a longer one (dashboard-url within dashboard-url-hook).
 func namesHelper(code, path string) bool {
 	for rest := code; ; {
 		i := strings.Index(rest, path)
@@ -129,32 +129,6 @@ func TestBundleDefaultFeaturesExist(t *testing.T) {
 	}
 	if err := library.Validate(base.DefaultFeatures, lay.Features()); err != nil {
 		t.Errorf("settings.yaml defaultFeatures: %v", err)
-	}
-}
-
-// TestDiffityFeatureUpdatesOnStart pins the reason diffity carries startup
-// scripts at all: install steps run once, at creation, so a sandbox that is
-// only ever restarted would keep the CLI and skills it was born with — and
-// the two are released together, so they have to move together. Composing
-// the real feature has to put both update steps into the generated on-start,
-// and has to leave diffity-url, the on-demand helper, out of it.
-func TestDiffityFeatureUpdatesOnStart(t *testing.T) {
-	lay := layout.New(t.TempDir(), repoRoot(t))
-	profile := filepath.Join(t.TempDir(), "demo")
-	if err := library.Compose([]string{"diffity"}, lay.FeatureDir, profile); err != nil {
-		t.Fatalf("composing the diffity feature: %v", err)
-	}
-	onStart, err := os.ReadFile(filepath.Join(profile, "agent-files", ".local", "bin", "on-start"))
-	if err != nil {
-		t.Fatalf("the diffity feature generated no on-start: %v", err)
-	}
-	for _, want := range []string{"update-diffity", "update-diffity-skills"} {
-		if !strings.Contains(string(onStart), want) {
-			t.Errorf("on-start does not run %s at startup:\n%s", want, onStart)
-		}
-	}
-	if strings.Contains(string(onStart), "diffity-url") {
-		t.Errorf("on-start runs the on-demand URL helper:\n%s", onStart)
 	}
 }
 

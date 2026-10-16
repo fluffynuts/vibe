@@ -35,12 +35,12 @@ func TestEnsureFileCreatesAnEmptyOneAndLeavesAnExistingOneAlone(t *testing.T) {
 
 func TestAGuidedProfilesKitTextMovesOutOfTheWayOnce(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, File), []byte("## Diffity\nuse it"), 0o644)
+	os.WriteFile(filepath.Join(dir, File), []byte("## Dashboard\nuse it"), 0o644)
 	moved, err := MigrateProfile(dir, true)
 	if err != nil || !moved {
 		t.Fatalf("moved %v, %v", moved, err)
 	}
-	if got, _ := read(t, filepath.Join(dir, KitFile)); got != "## Diffity\nuse it" {
+	if got, _ := read(t, filepath.Join(dir, KitFile)); got != "## Dashboard\nuse it" {
 		t.Errorf("kit file = %q", got)
 	}
 	if got, ok := read(t, filepath.Join(dir, File)); !ok || got != "" {

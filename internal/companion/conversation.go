@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -100,11 +99,6 @@ type conversation struct {
 	// so a page only fetches them when it hasn't the latest.
 	commands    []string
 	commandsSeq int
-	// review is the last diffity link the page was told of, and reviewKnown
-	// whether it has been read at all: the link the sandbox already had
-	// before the page's first turn is not news.
-	review      string
-	reviewKnown bool
 	// file is where the conversation is kept between runs of vibe, so a
 	// page that outlives one carries on where it was; "" keeps it only in
 	// memory.
@@ -118,9 +112,6 @@ type saved struct {
 	Prompt  int     `json:"prompt,omitempty"`
 	Running bool    `json:"running,omitempty"`
 	Events  []event `json:"events"`
-	// Review and ReviewKnown are conversation.review and reviewKnown.
-	Review      string `json:"review,omitempty"`
-	ReviewKnown bool   `json:"reviewKnown,omitempty"`
 	// Commands and CommandsSeq are conversation.commands and commandsSeq.
 	Commands    []string `json:"commands,omitempty"`
 	CommandsSeq int      `json:"commandsSeq,omitempty"`
@@ -146,7 +137,6 @@ func (c *conversation) load(file string) error {
 		return fmt.Errorf("%s: %w", file, err)
 	}
 	c.events, c.seq, c.prompt = was.Events, was.Seq, was.Prompt
-	c.review, c.reviewKnown = was.Review, was.ReviewKnown
 	c.commands, c.commandsSeq = slashCommands(was.Commands), was.CommandsSeq
 	if sessionID.MatchString(was.Session) {
 		c.session = was.Session
@@ -167,7 +157,7 @@ func (c *conversation) save() {
 		return
 	}
 	data, err := json.Marshal(saved{Seq: c.seq, Session: c.session, Prompt: c.prompt, Running: c.running, Events: c.events,
-		Review: c.review, ReviewKnown: c.reviewKnown, Commands: c.commands, CommandsSeq: c.commandsSeq})
+		Commands: c.commands, CommandsSeq: c.commandsSeq})
 	if err != nil {
 		return
 	}
@@ -442,63 +432,16 @@ func (c *conversation) note(text string) {
 }
 
 // run is a turn, in the background: prepare first, when there's one to do.
-func (c *conversation) run(ctx context.Context, prepare func(context.Context, func(string)) error, converse Converser, latestReview func() string, prompt, session string) {
+func (c *conversation) run(ctx context.Context, prepare func(context.Context, func(string)) error, converse Converser, prompt, session string) {
 	if prepare != nil {
 		if err := prepare(ctx, c.note); err != nil {
 			c.finish(err, ctx.Err() != nil)
 			return
 		}
 	}
-	checks := make(chan struct{}, 1)
-	checked := make(chan struct{})
-	go c.watchReviews(latestReview, checks, checked)
-	onLine := func(raw []byte) {
-		if c.line(raw) == "result" {
-			select {
-			case checks <- struct{}{}:
-			default: // one is already waiting to be made
-			}
-		}
-	}
+	onLine := func(raw []byte) { c.line(raw) }
 	err := converse(ctx, prompt, session, func() { c.receipt(receiptDelivered) }, onLine)
-	stopped := ctx.Err() != nil
-	close(checks)
-	<-checked
-	c.finish(err, stopped)
-}
-
-// watchReviews announces, each time the agent gives an answer, a diffity
-// link the sandbox has given out that the page hasn't been told of:
-// reviews are only ever started by the agent, so that is when one can have
-// appeared. The first time, the link is read as the turn starts too, so one
-// from before the page was used isn't announced as new. It closes checked
-// when checks is closed and it is done.
-func (c *conversation) watchReviews(latestReview func() string, checks <-chan struct{}, checked chan<- struct{}) {
-	defer close(checked)
-	if latestReview == nil {
-		for range checks {
-		}
-		return
-	}
-	c.mu.Lock()
-	known := c.reviewKnown
-	c.mu.Unlock()
-	if !known {
-		was := reviewLink(latestReview())
-		c.mu.Lock()
-		c.review, c.reviewKnown = was, true
-		c.mu.Unlock()
-	}
-	for range checks {
-		link := reviewLink(latestReview())
-		c.mu.Lock()
-		if link != "" && link != c.review {
-			c.add("review", link, nil)
-			c.review = link
-			c.save()
-		}
-		c.mu.Unlock()
-	}
+	c.finish(err, ctx.Err() != nil)
 }
 
 // maxCommands bounds how many slash commands are kept for the page.
@@ -534,22 +477,6 @@ func (c *conversation) commandsFor(seq int) ([]string, int) {
 		return nil, c.commandsSeq
 	}
 	return append([]string{}, c.commands...), c.commandsSeq
-}
-
-// reviewLink is link if it is one the page may offer: plain http, on the
-// host's own loopback (where sbx publishes the sandbox's ports). Anything
-// else the sandbox wrote is ignored.
-func reviewLink(link string) string {
-	link = strings.TrimSpace(link)
-	u, err := url.Parse(link)
-	if err != nil || u.Scheme != "http" || u.User != nil {
-		return ""
-	}
-	switch u.Hostname() {
-	case "localhost", "127.0.0.1":
-		return u.String()
-	}
-	return ""
 }
 
 func (s *Server) conversationEvents(w http.ResponseWriter, r *http.Request) {
@@ -616,7 +543,7 @@ func (s *Server) startTurn(prompt string) bool {
 	if !ok {
 		return false
 	}
-	go s.convo.run(ctx, s.cfg.Prepare, s.cfg.Converse, s.cfg.LatestReview, prompt, session)
+	go s.convo.run(ctx, s.cfg.Prepare, s.cfg.Converse, prompt, session)
 	return true
 }
 

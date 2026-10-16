@@ -196,7 +196,7 @@ func recordWithPage(t *testing.T, lay layout.Layout) state.Instance {
 	t.Helper()
 	inst := sandboxRecord(t, lay, "box", "p").inst
 	inst.CompanionPort = 10000
-	inst.Publish = []state.PublishRecord{{Name: "clipboard", ContainerPort: 5390, HostPort: 5402}, {Name: "diffity", ContainerPort: 5391, HostPort: 5403}}
+	inst.Publish = []state.PublishRecord{{Name: "clipboard", ContainerPort: 5390, HostPort: 5402}, {Name: "dashboard", ContainerPort: 5391, HostPort: 5403}}
 	if err := state.Save(lay.Home, inst); err != nil {
 		t.Fatal(err)
 	}

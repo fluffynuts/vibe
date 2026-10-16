@@ -77,7 +77,7 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 	if err := ensureProfile(lay, profile, args.Force, agent); err != nil {
 		return err
 	}
-	settleBaseFeatures(lay, profile)
+	settleFeatures(lay, profile)
 	noteMissingBase(lay, profile)
 	doc, merged, err := loadKit(lay, profile)
 	if err != nil {

@@ -31,10 +31,6 @@ vibe-unpacked/
     /defaults
         /install-scripts
         /agent-files
-            /.local
-                /.bin
-                    install-diffity
-                    add-diffity-skills
     /profiles
         /yumbi
             config.yaml
@@ -44,11 +40,9 @@ vibe-unpacked/
                 02-install-dotnet
                 03-install-services
                 04-install-asp-net8.0-runtime
-                05-install-diffity
-                06-add-diffity-skills
-                07-enable-elasticsearch-repo
-                08-install-elasticsearch
-                09-configure-elasticsearch
+                05-enable-elasticsearch-repo
+                06-install-elasticsearch
+                07-configure-elasticsearch
             /agent-files
                 /.claude
                     settings.json

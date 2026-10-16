@@ -62,20 +62,20 @@ func TestReComposeNeedsAProfileThatRecordsItsFeatures(t *testing.T) {
 // is no one to ask (--force).
 func TestReComposeRejectsAFeatureThatIsGoneWhenNotAsking(t *testing.T) {
 	lay := layout.New(t.TempDir(), t.TempDir())
-	writeFile(t, lay.BundlePath("library", "diffity", "install-scripts", "01-install"), "#!/bin/sh\necho hi\n")
+	writeFile(t, lay.BundlePath("library", "dashboard", "install-scripts", "01-install"), "#!/bin/sh\necho hi\n")
 	writeFile(t, lay.HomePath("profiles", "foo-browser", "config.yaml"),
-		"# vibe: features: diffity, diffty\nname: foo-browser\n")
+		"# vibe: features: dashboard, dashbord\nname: foo-browser\n")
 
 	err := doReCompose(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "foo-browser", t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), "did you mean 'diffity'?") {
+	if err == nil || !strings.Contains(err.Error(), "did you mean 'dashboard'?") {
 		t.Errorf("error for a vanished feature = %v", err)
 	}
 }
 
 func TestSplitMissingFeaturesKeepsWhatIsStillThere(t *testing.T) {
 	present, missing := splitMissingFeatures(
-		[]string{"clipboard", "diffity", "mysql"}, []string{"diffity", "mysql", "redis"})
-	if got := strings.Join(present, ","); got != "diffity,mysql" {
+		[]string{"clipboard", "dashboard", "mysql"}, []string{"dashboard", "mysql", "redis"})
+	if got := strings.Join(present, ","); got != "dashboard,mysql" {
 		t.Errorf("present = %s", got)
 	}
 	if got := strings.Join(missing, ","); got != "clipboard" {
@@ -90,11 +90,11 @@ func TestSplitMissingFeaturesKeepsWhatIsStillThere(t *testing.T) {
 func instructionsFixture(t *testing.T) (lay layout.Layout, profileDir string) {
 	t.Helper()
 	lay = layout.New(t.TempDir(), t.TempDir())
-	writeFile(t, lay.BundlePath("library", "diffity", "install-scripts", "01-install"), "#!/bin/sh\necho hi\n")
-	writeFile(t, lay.BundlePath("library", "diffity", "agent-instructions.md"), "## Diffity\n\nreview with it.\n")
+	writeFile(t, lay.BundlePath("library", "dashboard", "install-scripts", "01-install"), "#!/bin/sh\necho hi\n")
+	writeFile(t, lay.BundlePath("library", "dashboard", "agent-instructions.md"), "## Dashboard\n\nreview with it.\n")
 	profileDir = lay.HomePath("profiles", "foo-browser")
-	writeFile(t, filepath.Join(profileDir, "config.yaml"), "# vibe: features: diffity\nname: foo-browser\n")
-	writeFile(t, filepath.Join(profileDir, "agent-instructions.md"), "## Diffity\n\nreview with it.\n")
+	writeFile(t, filepath.Join(profileDir, "config.yaml"), "# vibe: features: dashboard\nname: foo-browser\n")
+	writeFile(t, filepath.Join(profileDir, "agent-instructions.md"), "## Dashboard\n\nreview with it.\n")
 	return lay, profileDir
 }
 
@@ -113,7 +113,7 @@ func TestReComposingAnOldProfileGivesTheUserTheirOwnInstructionsFile(t *testing.
 	if err := recomposeProfile(lay, args, "foo-browser", t.TempDir(), false, nil); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := readFile(t, filepath.Join(dir, "kit-instructions.md")); !strings.Contains(got, "## Diffity") {
+	if got, _ := readFile(t, filepath.Join(dir, "kit-instructions.md")); !strings.Contains(got, "## Dashboard") {
 		t.Errorf("kit-instructions.md = %q", got)
 	}
 	if got, ok := readFile(t, filepath.Join(dir, "agent-instructions.md")); !ok || got != "" {
@@ -138,7 +138,7 @@ func TestReComposingKeepsTheUsersInstructions(t *testing.T) {
 		if got, _ := readFile(t, filepath.Join(dir, "agent-instructions.md")); got != "use British spelling\n" {
 			t.Fatalf("after re-compose %d: agent-instructions.md = %q", i+1, got)
 		}
-		if got, _ := readFile(t, filepath.Join(dir, "kit-instructions.md")); strings.Contains(got, "British") || !strings.Contains(got, "## Diffity") {
+		if got, _ := readFile(t, filepath.Join(dir, "kit-instructions.md")); strings.Contains(got, "British") || !strings.Contains(got, "## Dashboard") {
 			t.Fatalf("after re-compose %d: kit-instructions.md = %q", i+1, got)
 		}
 	}
@@ -157,10 +157,10 @@ func TestRestoringABackupFromBeforeTheMoveStillSortsTheFilesOut(t *testing.T) {
 	}
 	// The oldest backup is the old-style profile: restored, then
 	// re-composed, its kit text must not land in the user's file.
-	if got, _ := readFile(t, filepath.Join(dir, "kit-instructions.md")); !strings.Contains(got, "## Diffity") {
+	if got, _ := readFile(t, filepath.Join(dir, "kit-instructions.md")); !strings.Contains(got, "## Dashboard") {
 		t.Errorf("kit-instructions.md = %q", got)
 	}
-	if got, _ := readFile(t, filepath.Join(dir, "agent-instructions.md")); strings.Contains(got, "## Diffity") {
+	if got, _ := readFile(t, filepath.Join(dir, "agent-instructions.md")); strings.Contains(got, "## Dashboard") {
 		t.Errorf("the kits' text ended up in the user's file: %q", got)
 	}
 }

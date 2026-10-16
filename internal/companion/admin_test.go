@@ -136,14 +136,14 @@ func TestAdminIsProtectedLikeEveryChange(t *testing.T) {
 func TestAnActionRunsInTheBackgroundAndSaysWhatItDid(t *testing.T) {
 	f := &fakeAdmin{}
 	s := adminServer(f, nil)
-	if code := do(t, s, post("/api/admin/do", `{"kind":"recompose","features":["mysql","diffity"]}`)).Code; code != http.StatusAccepted {
+	if code := do(t, s, post("/api/admin/do", `{"kind":"recompose","features":["mysql","dashboard"]}`)).Code; code != http.StatusAccepted {
 		t.Fatalf("recompose: %d", code)
 	}
 	r := adminDone(t, s)
 	if r.Job.Kind != "recompose" || r.Job.Error != "" || strings.Join(r.Job.Lines, "|") != "doing recompose|done" {
 		t.Errorf("job = %+v", r.Job)
 	}
-	if len(f.done) != 1 || strings.Join(f.done[0].Features, ",") != "mysql,diffity" {
+	if len(f.done) != 1 || strings.Join(f.done[0].Features, ",") != "mysql,dashboard" {
 		t.Errorf("done = %+v", f.done)
 	}
 	if !r.Status.Running || r.Status.Profile != "p" {
