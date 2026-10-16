@@ -178,3 +178,16 @@ func TestABundledProfileIsNotCopiedIntoTheOverlay(t *testing.T) {
 		t.Errorf("~/.vibe/agent-instructions.md = %q, %v", got, ok)
 	}
 }
+
+// A profile built before a base feature existed is told which it lacks:
+// not always the clipboard.
+func TestAProfileMissingABaseFeatureIsToldWhich(t *testing.T) {
+	lay := updateLayout(t)
+	if err := os.RemoveAll(lay.HomePath("profiles", "p", "agent-files", ".local", "bin", "vibe-review")); err != nil {
+		t.Fatal(err)
+	}
+	notes := strings.Join(notesOf(func() { noteMissingBase(lay, "p") }), "\n")
+	if !strings.Contains(notes, "review") || strings.Contains(notes, "clipboard") {
+		t.Errorf("notes: %q", notes)
+	}
+}

@@ -34,6 +34,8 @@ type File struct {
 	Binary  bool   `json:"binary,omitempty"`
 	// TooLarge is an untracked file too large to show the lines of.
 	TooLarge bool `json:"tooLarge,omitempty"`
+	// Unreadable is why an untracked file's content couldn't be read.
+	Unreadable string `json:"unreadable,omitempty"`
 	// Lines is how many lines the file has: as the review has it, or, for
 	// a deleted one, as it had; 0 for a binary one, or when it couldn't be
 	// read (then the page just doesn't say).
@@ -43,6 +45,10 @@ type File struct {
 	// since.
 	Fingerprint string `json:"fingerprint,omitempty"`
 	Hunks       []Hunk `json:"hunks"`
+	// stamp is what git says of the change besides its hunks (the blobs'
+	// ids, modes; for an untracked file, a digest of its content, else its
+	// size and time): what the fingerprint is made of.
+	stamp string
 }
 
 // Hunk is a run of changed lines with their context. Section is what git
@@ -96,11 +102,11 @@ func Parse(unified string) ([]File, error) {
 		case h == nil && strings.HasPrefix(line, "Binary files "):
 			f.Binary = true
 		case h == nil && strings.HasPrefix(line, "--- "):
-			if p := strings.TrimPrefix(line, "--- "); p != "/dev/null" {
+			if p := headerPath(line); p != "/dev/null" {
 				f.OldPath = strings.TrimPrefix(unquote(p), "a/")
 			}
 		case h == nil && strings.HasPrefix(line, "+++ "):
-			if p := strings.TrimPrefix(line, "+++ "); p != "/dev/null" {
+			if p := headerPath(line); p != "/dev/null" {
 				f.Path = strings.TrimPrefix(unquote(p), "b/")
 			}
 		case strings.HasPrefix(line, "@@ "):
@@ -113,16 +119,18 @@ func Parse(unified string) ([]File, error) {
 			f.Hunks = append(f.Hunks, Hunk{OldStart: old, NewStart: new, Section: m[3]})
 			h = &f.Hunks[len(f.Hunks)-1]
 		case h == nil:
-			// index, mode and similarity lines: nothing the tab shows.
+			// index, mode and similarity lines: nothing the tab shows, but
+			// they tell one change from another when there are no hunks to.
+			f.stamp += line + "\n"
 		case strings.HasPrefix(line, " "):
-			h.Lines = append(h.Lines, Line{Kind: Context, Old: old, New: new, Text: line[1:]})
+			h.Lines = append(h.Lines, Line{Kind: Context, Old: old, New: new, Text: lineText(line)})
 			old++
 			new++
 		case strings.HasPrefix(line, "-"):
-			h.Lines = append(h.Lines, Line{Kind: Deletion, Old: old, Text: line[1:]})
+			h.Lines = append(h.Lines, Line{Kind: Deletion, Old: old, Text: lineText(line)})
 			old++
 		case strings.HasPrefix(line, "+"):
-			h.Lines = append(h.Lines, Line{Kind: Addition, New: new, Text: line[1:]})
+			h.Lines = append(h.Lines, Line{Kind: Addition, New: new, Text: lineText(line)})
 			new++
 		case strings.HasPrefix(line, `\`):
 			// "\ No newline at end of file": about the line before.
@@ -137,6 +145,18 @@ func Parse(unified string) ([]File, error) {
 		}
 	}
 	return files, nil
+}
+
+// headerPath is the path of a ---/+++ line: git ends one with a space in
+// it with a tab, which isn't part of it.
+func headerPath(line string) string {
+	return strings.TrimSuffix(line[4:], "\t")
+}
+
+// lineText is a hunk line's text, without its +/-/space and without the
+// carriage return a CRLF file's lines end with (see splitLines).
+func lineText(line string) string {
+	return strings.TrimSuffix(line[1:], "\r")
 }
 
 // splitGitPaths splits the a/… b/… of a "diff --git" line, quoted or not.

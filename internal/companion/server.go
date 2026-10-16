@@ -182,6 +182,9 @@ func Start(cfg Config) (*Server, error) {
 	go s.http.Serve(ln)
 	s.done = make(chan struct{})
 	go s.keepAwakeWhileWorking(s.done)
+	if cfg.ReviewTab != nil {
+		go s.takeInbox(s.done, reviewTakeEvery)
+	}
 	return s, nil
 }
 
@@ -236,43 +239,60 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /manage.js", static)
 	mux.Handle("GET /review.js", static)
 
-	mux.HandleFunc("GET /api/ping", s.ping)
-	mux.HandleFunc("GET /api/state", s.authed(s.state))
-	mux.HandleFunc("GET /api/log", s.authed(s.reading("log", func() (interface{}, error) { return s.cfg.Policy.ResolvedLog() })))
-	mux.HandleFunc("GET /api/rules", s.authed(s.reading("rules", func() (interface{}, error) { return s.cfg.Policy.NetworkRules() })))
-	mux.HandleFunc("GET /api/fs-rules", s.authed(s.reading("fs-rules", func() (interface{}, error) { return s.cfg.Policy.FilesystemRules() })))
-	mux.HandleFunc("POST /api/allow", s.authed(s.changing(s.allow)))
-	mux.HandleFunc("POST /api/deny", s.authed(s.changing(s.deny)))
-	mux.HandleFunc("POST /api/remove", s.authed(s.changing(s.remove)))
-	mux.HandleFunc("POST /api/clipboard/start", s.authed(s.changing(s.startClipboard)))
-	mux.HandleFunc("GET /api/conversation", s.authed(s.conversationEvents))
-	mux.HandleFunc("POST /api/conversation/send", s.conversing(s.conversationSend))
-	mux.HandleFunc("POST /api/conversation/stop", s.conversing(s.conversationStop))
-	mux.HandleFunc("POST /api/conversation/new", s.conversing(s.conversationNew))
-	mux.HandleFunc("GET /api/admin", s.authed(s.adminState))
-	mux.HandleFunc("POST /api/admin/do", s.administering(s.adminDo))
-	mux.HandleFunc("POST /api/admin/upgrades", s.administering(s.adminCheckUpgrades))
-	mux.HandleFunc("POST /api/admin/cancel", s.administering(s.adminCancel))
-	mux.HandleFunc("GET /api/admin/instructions", s.authed(s.instructionsState))
-	mux.HandleFunc("POST /api/admin/instructions", s.editing(s.instructionsSave))
-	mux.HandleFunc("POST /api/admin/instructions/optimise", s.editing(s.instructionsOptimise))
-	mux.HandleFunc("POST /api/awake", s.authed(s.changing(s.keepAwake)))
-	mux.HandleFunc("GET /api/review", s.reviewing(s.reviewState))
-	mux.HandleFunc("GET /api/review/file", s.reviewing(s.reviewFile))
-	mux.HandleFunc("POST /api/review/do", s.reviewing(s.reviewDo))
-	mux.HandleFunc("POST /api/review/ask", s.reviewing(s.reviewAsk))
-	mux.HandleFunc("POST /api/review/submit", s.reviewing(s.reviewSubmit))
-	mux.HandleFunc("GET /api/review/options", s.reviewing(s.reviewOptions))
-	mux.HandleFunc("GET /api/review/highlight", s.reviewing(s.reviewHighlight))
-	mux.HandleFunc("POST /api/clipboard/paste", s.authed(s.clipboardPaste))
-	mux.HandleFunc("POST /api/review/start", s.reviewing(s.reviewStart))
-	mux.HandleFunc("GET /api/manage", s.authed(s.managed(s.manageState)))
-	mux.HandleFunc("POST /api/manage/plan", s.managing(s.managePlan))
-	mux.HandleFunc("POST /api/manage/delete", s.managing(s.manageDelete))
-	mux.HandleFunc("POST /api/manage/do", s.managing(s.manageDo))
-	mux.HandleFunc("POST /api/manage/cancel", s.managing(s.adminCancel))
+	for _, r := range s.apiRoutes() {
+		mux.HandleFunc(r.pattern, r.handler)
+	}
 
 	return s.guarded(mux)
+}
+
+// apiRoute is one of the API's calls: its method and path, and what
+// answers it.
+type apiRoute struct {
+	pattern string
+	handler http.HandlerFunc
+}
+
+// apiRoutes are the API's calls. Every one but ping is behind the token,
+// and every change is same-origin only: a test holds each to that.
+func (s *Server) apiRoutes() []apiRoute {
+	return []apiRoute{
+		{"GET /api/ping", s.ping},
+		{"GET /api/state", s.authed(s.state)},
+		{"GET /api/log", s.authed(s.reading("log", func() (interface{}, error) { return s.cfg.Policy.ResolvedLog() }))},
+		{"GET /api/rules", s.authed(s.reading("rules", func() (interface{}, error) { return s.cfg.Policy.NetworkRules() }))},
+		{"GET /api/fs-rules", s.authed(s.reading("fs-rules", func() (interface{}, error) { return s.cfg.Policy.FilesystemRules() }))},
+		{"POST /api/allow", s.authed(s.changing(s.allow))},
+		{"POST /api/deny", s.authed(s.changing(s.deny))},
+		{"POST /api/remove", s.authed(s.changing(s.remove))},
+		{"POST /api/clipboard/start", s.authed(s.changing(s.startClipboard))},
+		{"GET /api/conversation", s.authed(s.conversationEvents)},
+		{"POST /api/conversation/send", s.conversing(s.conversationSend)},
+		{"POST /api/conversation/stop", s.conversing(s.conversationStop)},
+		{"POST /api/conversation/new", s.conversing(s.conversationNew)},
+		{"GET /api/admin", s.authed(s.adminState)},
+		{"POST /api/admin/do", s.administering(s.adminDo)},
+		{"POST /api/admin/upgrades", s.administering(s.adminCheckUpgrades)},
+		{"POST /api/admin/cancel", s.administering(s.adminCancel)},
+		{"GET /api/admin/instructions", s.authed(s.instructionsState)},
+		{"POST /api/admin/instructions", s.editing(s.instructionsSave)},
+		{"POST /api/admin/instructions/optimise", s.editing(s.instructionsOptimise)},
+		{"POST /api/awake", s.authed(s.changing(s.keepAwake))},
+		{"GET /api/review", s.reviewing(s.reviewState)},
+		{"GET /api/review/file", s.reviewing(s.reviewFile)},
+		{"POST /api/review/do", s.reviewing(s.reviewDo)},
+		{"POST /api/review/ask", s.reviewing(s.reviewAsk)},
+		{"POST /api/review/submit", s.reviewing(s.reviewSubmit)},
+		{"GET /api/review/options", s.reviewing(s.reviewOptions)},
+		{"GET /api/review/highlight", s.reviewing(s.reviewHighlight)},
+		{"POST /api/clipboard/paste", s.authed(s.clipboardPaste)},
+		{"POST /api/review/start", s.reviewing(s.reviewStart)},
+		{"GET /api/manage", s.authed(s.managed(s.manageState))},
+		{"POST /api/manage/plan", s.managing(s.managePlan)},
+		{"POST /api/manage/delete", s.managing(s.manageDelete)},
+		{"POST /api/manage/do", s.managing(s.manageDo)},
+		{"POST /api/manage/cancel", s.managing(s.adminCancel)},
+	}
 }
 
 // guarded refuses requests for any other Host, and sets the headers every

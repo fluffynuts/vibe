@@ -315,3 +315,8 @@ test("a line's runs are used only while they still spell the line", () => {
   assert.equal(lineRuns(undefined, 'x'), null)
   assert.deepEqual(lineRuns([], ''), [], 'an empty line')
 })
+
+test('a list or quote made at the very start of the text starts there', () => {
+  assert.equal(formatted('bullet', '[]\nabc'), '- []\nabc')
+  assert.equal(formatted('quote', '[\n]\nabc'), '[> \n> ]\nabc')
+})

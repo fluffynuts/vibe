@@ -257,13 +257,19 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 	}
 	// The companion page's Review tab keeps the sandbox's reviews on the
 	// host; vibe-review, in the sandbox, drops the agent's comments in the
-	// inbox there (see docs/plan-review-tab.md).
+	// inbox there, and reads the review from the view, read-only (see
+	// docs/plan-review-tab.md). Nothing else of it is the sandbox's to
+	// touch: the host acts on what's there.
 	reviews := state.ReviewPath(vibeHome, name)
-	if err := os.MkdirAll(filepath.Join(reviews, "inbox"), 0o755); err != nil {
-		return err
+	inbox, view := filepath.Join(reviews, "inbox"), filepath.Join(reviews, "view")
+	for _, dir := range []string{inbox, view} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
 	}
-	mounts = append(mounts, reviews)
-	env = append(env, "VIBE_REVIEW_DIR="+reviews)
+	mounts = append(mounts, inbox, view+":ro")
+	// vibe-review runs git where the tab does: from the workspace's top.
+	env = append(env, "VIBE_REVIEW_DIR="+reviews, "VIBE_REVIEW_WORKSPACE="+target)
 
 	var publishArgs []string
 	var publishRecords []state.PublishRecord

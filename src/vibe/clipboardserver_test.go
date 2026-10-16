@@ -205,8 +205,30 @@ func TestThePasteWaitingIsntPastedTwice(t *testing.T) {
 	if n := clipboardItems(t, base); n != 2 {
 		t.Errorf("%d items, want 2", n)
 	}
+	// Pasted last, A is what Ctrl-V in the agent's terminal gives.
+	if current := clipboardCurrent(t, base); current != 1 {
+		t.Errorf("current item %d, want A's (1)", current)
+	}
 	runClipboardHook(t, base, "UserPromptSubmit")
 	if code, dup := paste("image A"); code != http.StatusCreated || dup {
 		t.Errorf("A after it was sent: %d, duplicate %v", code, dup)
 	}
+}
+
+// clipboardCurrent is the id of the clipboard's current item: the one
+// Ctrl-V in the agent's terminal attaches.
+func clipboardCurrent(t *testing.T, base string) int {
+	t.Helper()
+	res, err := http.Get(base + "/api/items")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var got struct {
+		Current int `json:"current"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	return got.Current
 }

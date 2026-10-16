@@ -30,13 +30,16 @@ async function openPage({ routes = {}, storage = {} } = {}) {
     inFlight++
     try {
       const route = routes[u.pathname]
-      const body = typeof route === 'function' ? route(call) : route || {}
+      // A route may answer later: a promise, for a call still on its way.
+      const body = typeof route === 'function' ? await route(call) : route || {}
       // jsdom has no Response of its own: node's is the one fetch gives.
       return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
     } finally {
       inFlight--
     }
   }
+  // jsdom has no scrolling: a test that cares what's scrolled to says so.
+  w.Element.prototype.scrollIntoView = function () {}
   w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} })
   // jsdom has dialogs, but not showing them: closing one is what the page
   // waits on, as in a browser.

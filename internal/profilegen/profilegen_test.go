@@ -311,6 +311,33 @@ func TestGuidedProfilesAlwaysGetTheBaseFeaturesWithoutRecordingThem(t *testing.T
 	}
 }
 
+// Taking a feature out of the record is vibe's doing, not a hand edit: a
+// profile nobody had edited still reads as unedited after.
+func TestDropFromRecordKeepsAnUneditedProfileUnedited(t *testing.T) {
+	l := testLayout(t)
+	dir := l.HomePath("profiles", "old")
+	mkdir(t, dir)
+	write(t, filepath.Join(dir, "config.yaml"), "# vibe: features: gone, mysql\nname: old\n", 0o644)
+	if err := RecordHash(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DropFromRecord(dir, []string{"gone"}); err != nil {
+		t.Fatal(err)
+	}
+	if have, _ := ContentHash(dir); RecordedHash(dir) != have {
+		t.Error("the profile reads as edited by hand")
+	}
+
+	// One that had been edited stays so.
+	write(t, filepath.Join(dir, "config.yaml"), "# vibe: features: gone, mysql\nname: mine\n", 0o644)
+	if _, err := DropFromRecord(dir, []string{"gone"}); err != nil {
+		t.Fatal(err)
+	}
+	if have, _ := ContentHash(dir); RecordedHash(dir) == have {
+		t.Error("a hand-edited profile now reads as unedited")
+	}
+}
+
 func TestDropFromRecordRewritesTheProfile(t *testing.T) {
 	l := testLayout(t)
 	dir := l.HomePath("profiles", "old")

@@ -336,7 +336,8 @@
         return wrap(before, after)
       }
     }
-    const from = value.lastIndexOf('\n', start - 1) + 1
+    // At the very start, lastIndexOf would look from 0 and find a newline there.
+    const from = start === 0 ? 0 : value.lastIndexOf('\n', start - 1) + 1
     const nl = value.indexOf('\n', end)
     const to = nl < 0 ? value.length : nl
     const prefix = { quote: () => '> ', bullet: () => '- ', numbered: (i) => (i + 1) + '. ' }[kind]

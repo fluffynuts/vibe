@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"vibe/internal/review"
 )
@@ -593,5 +594,129 @@ func TestTheTabGetsAFileColoured(t *testing.T) {
 	}
 	if code, _ := coloured("path=../secret.go&side=new"); code != http.StatusBadRequest {
 		t.Errorf("outside the folder: %d", code)
+	}
+}
+
+// A sandbox's folder may be a repository's subfolder: git's paths are the
+// repository's, so that's what the tab works in, files read where they are.
+func TestASubfoldersReviewIsOfItsRepository(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git isn't installed")
+	}
+	top := t.TempDir()
+	gitIn(t, top, "init", "-q", "-b", "main")
+	os.MkdirAll(filepath.Join(top, "sub"), 0o755)
+	os.WriteFile(filepath.Join(top, "sub", "a.txt"), []byte("one\n"), 0o644)
+	gitIn(t, top, "add", "-A")
+	gitIn(t, top, "commit", "-q", "-m", "start")
+	os.WriteFile(filepath.Join(top, "sub", "a.txt"), []byte("one\ntwo\n"), 0o644)
+	os.WriteFile(filepath.Join(top, "sub", "new.txt"), []byte("fresh\n"), 0o644)
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, ReviewTab: &ReviewTab{Workspace: filepath.Join(top, "sub"), Store: review.NewStore(t.TempDir())}})
+
+	r := getReview(t, s, "/api/review?diff=1")
+	var got []string
+	for _, f := range r.Diff {
+		got = append(got, fmt.Sprintf("%s %s %d", f.Status, f.Path, f.Lines))
+	}
+	if strings.Join(got, ", ") != "modified sub/a.txt 2, added sub/new.txt 1" {
+		t.Errorf("diff: %v (error %q)", got, r.Error)
+	}
+	rec := do(t, s, req{path: "/api/review/file?path=sub/a.txt", headers: authed(nil)})
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"two"`) {
+		t.Errorf("file: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// Whatever the review, the agent answering on it (a Submit, an Ask) keeps
+// it open: what it says would go into a closed review, out of sight.
+func TestAReviewJustShownDoesntCloseItselfWhileTheAgentAnswers(t *testing.T) {
+	s, _ := reviewTabServer(t)
+	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	if !s.startTurn("answering a Submit") {
+		t.Fatal("no turn")
+	}
+	gitIn(t, s.cfg.ReviewTab.Workspace, "commit", "-q", "-am", "two")
+	if r := getReview(t, s, "/api/review?diff=1").Review; r.Closed != "" {
+		t.Errorf("closed while the agent answers: %q", r.Closed)
+	}
+	close(f.release)
+	idle(t, s)
+	if r := getReview(t, s, "/api/review?diff=1").Review; r.Closed == "" {
+		t.Error("still open once the agent had finished")
+	}
+}
+
+// A review the user reopens is theirs to read: it doesn't close itself
+// again.
+func TestAReopenedReviewStaysOpen(t *testing.T) {
+	s, store := reviewTabServer(t)
+	do(t, s, post("/api/review/start", `{"kind":"uncommitted"}`))
+	gitIn(t, s.cfg.ReviewTab.Workspace, "commit", "-q", "-am", "two")
+	if r := getReview(t, s, "/api/review?diff=1").Review; r.Closed == "" {
+		t.Fatal("didn't close itself")
+	}
+	if _, err := store.Do(review.Request{Op: "reopen-review"}, review.User); err != nil {
+		t.Fatal(err)
+	}
+	if r := getReview(t, s, "/api/review?diff=1").Review; r.Closed != "" {
+		t.Errorf("closed itself again: %q", r.Closed)
+	}
+}
+
+// A request the review refuses is the page's to put right (400); the review
+// failing to be read or kept is vibe's (500), and isn't put as the user's.
+func TestAReviewThatCantBeReadIsntTheRequestsFault(t *testing.T) {
+	s, store := reviewTabServer(t)
+	if rec := do(t, s, post("/api/review/do", `{"op":"reply","thread":99,"body":"x"}`)); rec.Code != http.StatusBadRequest {
+		t.Errorf("a reply to no thread: %d %s", rec.Code, rec.Body)
+	}
+	store.Do(review.Request{Op: "general", Body: "x"}, review.Agent)
+	if err := os.WriteFile(filepath.Join(filepath.Dir(store.Inbox()), "review.json"), []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if rec := do(t, s, post("/api/review/do", `{"op":"reply","thread":1,"body":"x"}`)); rec.Code != http.StatusInternalServerError {
+		t.Errorf("with the review unreadable: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// The agent's requests are taken in whether or not a page is open: vibe
+// takes in the inbox itself, every so often.
+func TestTheInboxIsTakenInWithNoPageOpen(t *testing.T) {
+	s, store := reviewTabServer(t)
+	os.MkdirAll(store.Inbox(), 0o755)
+	os.WriteFile(filepath.Join(store.Inbox(), "1.json"), []byte(`{"op":"general","body":"seen without a page"}`), 0o644)
+	done := make(chan struct{})
+	defer close(done)
+	go s.takeInbox(done, 10*time.Millisecond)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if r, _ := store.Load(); len(r.Threads) == 1 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the request was never taken in")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// The page can leave whitespace changes out; a review whose changes are all
+// whitespace still isn't over.
+func TestWhitespaceChangesCanBeLeftOutAndTheReviewStays(t *testing.T) {
+	s, _ := reviewTabServer(t)
+	dir := s.cfg.ReviewTab.Workspace
+	gitIn(t, dir, "commit", "-q", "-am", "two")
+	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n  two\n"), 0o644)
+	do(t, s, post("/api/review/start", `{"kind":"uncommitted"}`))
+	r := getReview(t, s, "/api/review?diff=1&whitespace=ignore")
+	if len(r.Diff) != 0 || r.Review.Closed != "" {
+		t.Errorf("diff %+v, closed %q", r.Diff, r.Review.Closed)
+	}
+	if r := getReview(t, s, "/api/review?diff=1"); len(r.Diff) != 1 {
+		t.Errorf("with whitespace: %+v", r.Diff)
 	}
 }

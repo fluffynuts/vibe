@@ -99,3 +99,36 @@ func TestTheReviewTabIsToldHowManyPastesAreWaiting(t *testing.T) {
 		t.Errorf("pastes: %v (%s)", body.Pastes, rec.Body)
 	}
 }
+
+// The clipboard page is the sandbox's: a redirect from it isn't followed
+// to fetch, from this machine, wherever it says.
+func TestAPasteDoesntFollowARedirectFromTheClipboardPage(t *testing.T) {
+	var hit sync.Once
+	reached := false
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit.Do(func() { reached = true }) }))
+	t.Cleanup(elsewhere.Close)
+	clip := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, elsewhere.URL+"/secret", http.StatusFound)
+	}))
+	t.Cleanup(clip.Close)
+	s, _ := reviewTabServer(t)
+	s.cfg.ClipboardURL = func() string { return clip.URL }
+	rec := do(t, s, pasteReq("png bytes", "image/png", "shot.png"))
+	if reached {
+		t.Error("the redirect was followed")
+	}
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "redirect") {
+		t.Errorf("paste: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestAPasteTooLargeSaysSo(t *testing.T) {
+	f := &fakeClipboard{}
+	srv := f.serve(t)
+	s, _ := reviewTabServer(t)
+	s.cfg.ClipboardURL = func() string { return srv.URL }
+	rec := do(t, s, pasteReq(strings.Repeat("x", maxPaste+1), "image/png", "huge.png"))
+	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), "50 MB") {
+		t.Errorf("paste: %d %s", rec.Code, rec.Body)
+	}
+}

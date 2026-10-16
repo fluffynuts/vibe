@@ -45,7 +45,7 @@ var confirmMigration = func(force bool, steps []string) bool {
 // doMigrate is --migrate: folder from, which has sandbox name, moves to to.
 // The sandbox goes with it: as sbx can't move a sandbox to another folder,
 // it's rebuilt there, under the name the new folder gives it, with its
-// agent's memories, conversation, GitHub token, clipboard history and the
+// agent's memories, conversation, GitHub token, clipboard history, reviews and the
 // rest of what vibe keeps for it carried across. The folder isn't moved
 // until the old sandbox is gone (its memories are read out of it first),
 // and nothing at all changes if a check fails or the user says no.
@@ -67,11 +67,11 @@ func doMigrate(lay layout.Layout, args cliargs.Args, name, from, to string) erro
 	}
 	steps := []string{
 		fmt.Sprintf("move %s to %s", displayPath(from), displayPath(to)),
-		fmt.Sprintf("rebuild sandbox '%s' there as '%s': its agent's memories, conversation, GitHub token and clipboard history go with it;", name, newName),
+		fmt.Sprintf("rebuild sandbox '%s' there as '%s': its agent's memories, conversation, GitHub token, clipboard history and reviews go with it;", name, newName),
 		"  anything installed in it by hand, or kept outside its folder, doesn't",
 	}
 	if newName == name {
-		steps[1] = fmt.Sprintf("rebuild sandbox '%s' there: its agent's memories, conversation, GitHub token and clipboard history go with it;", name)
+		steps[1] = fmt.Sprintf("rebuild sandbox '%s' there: its agent's memories, conversation, GitHub token, clipboard history and reviews go with it;", name)
 	}
 	note("migrating:")
 	if !confirmMigration(args.Force, steps) {

@@ -133,9 +133,11 @@
                 <button type="button" role="menuitemradio" data-order="reading">Order by agent reading order</button>
               </div>
             </span>
+            <label class="muted inline-check" title="After Ctrl+Enter sends a reply, go on to the next comment, ready to reply to it"><input type="checkbox" id="review-reply-next"> Next after reply</label>
             <button type="button" id="review-prev-comment" class="ghost" disabled aria-label="Previous comment" title="Previous comment">▲</button>
             <button type="button" id="review-next-comment" class="ghost" disabled aria-label="Next comment" title="Next comment">▼</button>
           </span>
+          <label class="muted inline-check" title="Leave out what changed only in whitespace (indentation, spacing): comments stay where they are"><input type="checkbox" id="review-whitespace"> Hide whitespace changes</label>
           <button type="button" id="review-layout" class="ghost"></button>
           <button type="button" id="review-close" class="ghost" title="Finish with this review: it's kept, and can be reopened">Close review</button>
         </span>

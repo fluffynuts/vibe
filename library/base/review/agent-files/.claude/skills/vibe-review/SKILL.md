@@ -18,6 +18,10 @@ that found nothing.
 
     vibe-review start --note "<what this change is, in a few words>"
 
+It returns once vibe, on the host, has taken the review in (a few seconds),
+so the diff after it is the new review's. If it says vibe isn't running, or
+that the start was refused, tell the user rather than reviewing anyway.
+
 Uncommitted changes (the default), or `--ref <branch>` for a branch's
 changes since it parted from that one, `--commit <sha>` for one commit, or
 `--unpushed` for the commits not yet pushed to the branch's upstream.
@@ -88,8 +92,12 @@ explains the rest first, its callers after, mechanical changes last.
     vibe-review done
 
 Always, including when you found nothing or stopped early: until then the
-tab says the review is still in progress. Then tell the user it's on the
-Review tab, with the counts by severity.
+tab says the review is still in progress. Requests are carried out when the
+page takes them in (within a few seconds while it's open), and one that
+can't be (a reply to a thread that isn't there, say) only shows as a
+`problem:` line in `vibe-review list`: check it, and put right what's
+there. Then tell the user it's on the Review tab, with the counts by
+severity.
 
 ## Replies
 

@@ -212,14 +212,27 @@ func WithoutBase(features, base []string) (kept []string, removed bool) {
 // DropFromRecord takes names out of the list of features a profile
 // records, writing the profile back when it had any: a base feature (a
 // profile composed when it was still a choice names it) or a retired one
-// (one vibe no longer has). It returns what the profile now records.
+// (one vibe no longer has). It returns what the profile now records. That
+// rewrite is vibe's, not a hand edit: a profile unedited before it is
+// recorded as unedited after.
 func DropFromRecord(profileDir string, names []string) ([]string, error) {
 	recorded := ComposedFrom(profileDir)
 	kept, removed := WithoutBase(recorded, names)
 	if !removed {
 		return recorded, nil
 	}
-	return kept, recordComposedFrom(profileDir, kept)
+	have, err := ContentHash(profileDir)
+	if err != nil {
+		return recorded, err
+	}
+	unedited := RecordedHash(profileDir) == have
+	if err := recordComposedFrom(profileDir, kept); err != nil {
+		return recorded, err
+	}
+	if unedited {
+		return kept, RecordHash(profileDir)
+	}
+	return kept, nil
 }
 
 // CopyFrom creates a profile as a copy of an existing one — wherever that

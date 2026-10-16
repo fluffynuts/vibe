@@ -13,6 +13,7 @@ function reviewPage({ reviewAt = '', review = { threads: [], lastId: 0 }, storag
   const routes = {
     '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, review: true, conversation, reviewAt: at.reviewAt, attention: {} }),
     '/api/review': () => ({ review: at.review || review, diff }),
+    '/api/review/do': () => ({ review: at.review || review }),
     '/api/log': { entries: [] },
   }
   return openPage({ routes, storage: Object.assign({ 'vibe-companion-tab': 'log' }, storage) }).then((p) => Object.assign(p, { at }))
@@ -136,6 +137,19 @@ test('editing an unsent comment sends when it was said', async () => {
     await p.click(p.button('Edit', p.$('review-general')))
     await p.type(p.$('review-general').querySelector('textarea[aria-label="Edit your comment"]'), 'my better reply')
     await p.click(p.button('Save', p.$('review-general')))
+    assert.deepEqual(p.posted('/api/review/do'), [{ op: 'edit', thread: 1, at: '2026-10-16T10:05:00.123456789Z', body: 'my better reply' }])
+  } finally { p.close() }
+})
+
+test('Ctrl+Enter in the edit box saves the edit', async () => {
+  const p = await reviewPage({ review: unsent })
+  try {
+    await p.click('tab-review')
+    await p.click(p.button('Edit', p.$('review-general')))
+    const box = p.$('review-general').querySelector('textarea[aria-label="Edit your comment"]')
+    await p.type(box, 'my better reply')
+    box.dispatchEvent(new p.window.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
+    await p.settle()
     assert.deepEqual(p.posted('/api/review/do'), [{ op: 'edit', thread: 1, at: '2026-10-16T10:05:00.123456789Z', body: 'my better reply' }])
   } finally { p.close() }
 })
@@ -433,6 +447,63 @@ test('Ctrl+Enter in a reply box replies (never asks)', async () => {
     await p.settle()
     assert.deepEqual(p.posted('/api/review/do'), [{ op: 'reply', thread: 1, body: 'noted' }])
     assert.deepEqual(p.posted('/api/review/ask'), [])
+  } finally { p.close() }
+})
+
+// replyByKeys replies on a thread with Ctrl+Enter, the server taking it.
+async function replyByKeys(p, id, text) {
+  const box = p.$('review-thread-' + id).querySelector('textarea[data-thread]')
+  box.focus()
+  await p.type(box, text)
+  box.dispatchEvent(new p.window.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
+  await p.settle()
+}
+
+const replyBoxFocused = (p) => {
+  const box = p.window.document.activeElement
+  return box && box.dataset && box.dataset.thread ? Number(box.dataset.thread) : null
+}
+
+test('Ctrl+Enter in a reply box goes on to the next comment, ready to reply', async () => {
+  const p = await reviewPage({ review: commented, diff: twoFiles })
+  try {
+    await p.click('tab-review')
+    assert.equal(p.$('review-reply-next').checked, true, 'on unless turned off')
+    const shown = []
+    p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
+    await replyByKeys(p, 1, 'noted')
+    assert.deepEqual(shown, ['review-thread-3'], 'the next comment down the page')
+    assert.equal(replyBoxFocused(p), 3, 'its reply box ready')
+    assert.match(p.$('review-count').textContent, /^2\/4/)
+  } finally { p.close() }
+})
+
+test('with "next after reply" unticked, Ctrl+Enter replies and stays, and the choice is kept', async () => {
+  const p = await reviewPage({ review: commented, diff: twoFiles })
+  try {
+    await p.click('tab-review')
+    const tick = p.$('review-reply-next')
+    tick.checked = false
+    tick.dispatchEvent(new p.window.Event('change', { bubbles: true }))
+    await replyByKeys(p, 1, 'noted')
+    assert.deepEqual(p.posted('/api/review/do'), [{ op: 'reply', thread: 1, body: 'noted' }])
+    assert.equal(replyBoxFocused(p), null)
+  } finally { p.close() }
+  const again = await reviewPage({ review: commented, diff: twoFiles, storage: { 'vibe-review-reply-next': 'off' } })
+  try {
+    await again.click('tab-review')
+    assert.equal(again.$('review-reply-next').checked, false)
+  } finally { again.close() }
+})
+
+test("the Reply button doesn't move on: only Ctrl+Enter does", async () => {
+  const p = await reviewPage({ review: commented, diff: twoFiles })
+  try {
+    await p.click('tab-review')
+    const card = p.$('review-thread-1')
+    await p.type(card.querySelector('textarea[data-thread]'), 'noted')
+    await p.click(Array.from(card.querySelectorAll('button')).find((b) => b.textContent === 'Reply'))
+    assert.equal(replyBoxFocused(p), null)
   } finally { p.close() }
 })
 
@@ -1559,5 +1630,300 @@ test("with no reading order, the pane can't offer it either", async () => {
     await p.click('tab-review')
     await p.click('review-comments-open')
     assert.equal(p.$('review-comments-order').options[1].disabled, true)
+  } finally { p.close() }
+})
+
+// --- what the review found in the tab itself --------------------------------------------------
+
+const started = { threads: [], lastId: 0, started: '2026-10-16T10:00:00Z' }
+const oneFile = (text) => [{ path: 'a.txt', status: 'modified', hunks: [{ oldStart: 1, newStart: 1, header: '@@ -1 +1 @@', lines: [
+  { kind: 'del', old: 1, text: 'one' },
+  { kind: 'add', new: 1, text },
+] }] }]
+const codeShown = (p) => Array.from(p.$('review-files').querySelectorAll('td.code')).map((td) => td.textContent)
+
+// changingPage is a review whose diff (now.diff) can change under it, as
+// the folder's code does.
+async function changingPage(now, extra = {}) {
+  return openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': (call) => ({ review: now.review || started, diff: call.query.includes('diff=1') ? now.diff : undefined }),
+      '/api/review/do': () => ({ review: now.review || started }),
+      '/api/log': { entries: [] },
+      ...extra,
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+  })
+}
+
+test('Refresh shows the code as it is now, the files the same', async () => {
+  const now = { diff: oneFile('first version') }
+  const p = await changingPage(now)
+  try {
+    assert.ok(codeShown(p).includes('first version'))
+    now.diff = oneFile('second version')
+    await p.click('review-refresh')
+    assert.ok(codeShown(p).includes('second version'), codeShown(p).join('|'))
+  } finally { p.close() }
+})
+
+test('a gap opened before Refresh is closed after it, not drawn blank', async () => {
+  const now = { diff: gapped }
+  const p = await changingPage(now, { '/api/review/file': { lines: fileText } })
+  try {
+    // Side by side, an added line's old side is empty: those aside.
+    const blanks = () => codeShown(p).filter((t) => t === '').length
+    const before = blanks()
+    const down = Array.from(p.$('review-files').querySelectorAll('.gap-open')).find((b) => b.textContent === '↓')
+    await p.click(down)
+    assert.ok(codeShown(p).includes('line 12'), 'opened')
+    await p.click('review-refresh')
+    assert.ok(!codeShown(p).includes('line 12'), 'closed again')
+    assert.equal(blanks(), before, 'no blank lines')
+  } finally { p.close() }
+})
+
+const longFile = [{ path: 'long.txt', status: 'added', hunks: [{ oldStart: 0, newStart: 1, header: '@@ -0,0 +1,700 @@',
+  lines: Array.from({ length: 700 }, (_, i) => ({ kind: 'add', new: i + 1, text: 'line ' + (i + 1) })) }] }]
+
+test('a long file shown stays shown: a comment can be written on it', async () => {
+  const now = { diff: longFile }
+  const p = await changingPage(now)
+  try {
+    await p.click(p.button('Show 700 lines', p.$('review-files')))
+    await p.click(p.$('review-files').querySelector('[aria-label="Comment on line R5"]'))
+    assert.ok(p.window.document.querySelector('.review-compose-text'), 'the comment box is there')
+    assert.equal(p.button('Show 700 lines', p.$('review-files')), undefined, 'not folded again')
+    now.review = { ...started, threads: [{ id: 1, status: 'open', comments: said('news') }], lastId: 1 }
+    await p.poll()
+    assert.equal(p.button('Show 700 lines', p.$('review-files')), undefined, 'nor by a poll')
+  } finally { p.close() }
+})
+
+test('with no review open, what can be reviewed is asked once, not every poll', async () => {
+  const p = await reviewPage({ review: none })
+  try {
+    await p.click('tab-review')
+    await p.poll()
+    await p.poll()
+    await p.poll()
+    assert.equal(p.calls.filter((c) => c.path === '/api/review/options').length, 1)
+    await p.click('review-refresh')
+    assert.equal(p.calls.filter((c) => c.path === '/api/review/options').length, 2, 'Refresh asks again')
+  } finally { p.close() }
+})
+
+test("an empty comment box with focus doesn't hold back what the agent says, and keeps focus", async () => {
+  const now = { diff: twoFiles }
+  const p = await changingPage(now)
+  try {
+    await p.click(p.$('review-files').querySelector('[aria-label="Comment on line R2"]'))
+    const box = () => p.window.document.querySelector('.review-compose-text')
+    box().focus()
+    now.review = { ...started, threads: [{ id: 1, status: 'open', comments: said('news from the agent') }], lastId: 1 }
+    await p.poll()
+    assert.ok(p.$('review-general').textContent.includes('news from the agent'), 'shown')
+    assert.equal(p.window.document.activeElement, box(), 'the comment box keeps focus')
+  } finally { p.close() }
+})
+
+test('editing another comment asks before losing an edit in progress', async () => {
+  const two = { lastId: 2, threads: [
+    { id: 1, status: 'open', comments: [{ author: 'user', body: 'first', at: '2026-10-16T10:05:00Z' }] },
+    { id: 2, status: 'open', comments: [{ author: 'user', body: 'second', at: '2026-10-16T10:06:00Z' }] },
+  ] }
+  const p = await reviewPage({ review: two })
+  try {
+    await p.click('tab-review')
+    await p.click(p.button('Edit', p.$('review-thread-1')))
+    await p.type(p.$('review-thread-1').querySelector('textarea[aria-label="Edit your comment"]'), 'first, better')
+    await p.click(p.button('Edit', p.$('review-thread-2')))
+    assert.ok(p.$('confirm').open, 'asked')
+    await p.confirm(false)
+    assert.equal(p.$('review-thread-1').querySelector('textarea[aria-label="Edit your comment"]').value, 'first, better', 'kept')
+    await p.click(p.button('Edit', p.$('review-thread-2')))
+    await p.confirm(true)
+    assert.ok(p.$('review-thread-2').querySelector('textarea[aria-label="Edit your comment"]'), 'editing the second')
+  } finally { p.close() }
+})
+
+test("a comment half-written on a review doesn't turn up on the next one", async () => {
+  const now = { diff: twoFiles }
+  const p = await changingPage(now)
+  try {
+    await p.click(p.$('review-files').querySelector('[aria-label="Comment on line R2"]'))
+    await p.type(p.window.document.querySelector('.review-compose-text'), 'half')
+    // A click on a button takes the focus there, in a browser.
+    p.window.document.activeElement.blur()
+    now.review = { ...started, closed: 'You closed it.' }
+    await p.click('review-close')
+    now.review = { ...started, started: '2026-10-16T11:00:00Z' }
+    await p.click('review-reopen')
+    assert.equal(p.window.document.querySelector('.review-compose-text'), null)
+  } finally { p.close() }
+})
+
+test("Delete isn't offered on a comment with replies: they'd have to go first", async () => {
+  const replied = { lastId: 1, threads: [{ id: 1, status: 'open', comments: [
+    { author: 'user', body: 'mine', at: '2026-10-16T10:05:00Z' },
+    { author: 'user', body: 'and more', at: '2026-10-16T10:06:00Z' },
+  ] }] }
+  const p = await reviewPage({ review: replied })
+  try {
+    await p.click('tab-review')
+    const deletes = Array.from(p.$('review-thread-1').querySelectorAll('button')).filter((b) => b.textContent === 'Delete')
+    assert.equal(deletes.length, 1, 'only on the reply')
+    assert.ok(deletes[0].closest('.comment').textContent.includes('and more'))
+  } finally { p.close() }
+})
+
+test('a poll that set out before a reply lands without undoing it', async () => {
+  const before = { lastId: 1, threads: [{ id: 1, status: 'open', comments: said('on the whole review') }] }
+  const after = { lastId: 1, threads: [{ id: 1, status: 'open', comments: [...said('on the whole review'), { author: 'user', body: 'my reply', at: '2026-10-16T10:07:00Z' }] }] }
+  let answerPoll
+  let slow = false
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': () => (!slow ? { review: before, diff: [] } : new Promise((resolve) => { answerPoll = () => resolve({ review: before }) })),
+      '/api/review/do': () => ({ review: after }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+  })
+  try {
+    // A poll sets out, and is slow to answer.
+    slow = true
+    const pollGone = p.poll().catch(() => {})
+    await new Promise((resolve) => setImmediate(resolve))
+    const box = p.$('review-thread-1').querySelector('textarea[data-thread]')
+    box.value = 'my reply'
+    box.dispatchEvent(new p.window.Event('input', { bubbles: true }))
+    box.dispatchEvent(new p.window.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
+    for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve))
+    answerPoll()
+    await pollGone
+    await p.settle()
+    assert.ok(p.$('review-thread-1').textContent.includes('my reply'), 'the reply is still shown')
+  } finally { p.close() }
+})
+
+test('a reply sent twice at once (Ctrl+Enter held) is posted once', async () => {
+  const p = await reviewPage({ review: commented, diff: twoFiles })
+  try {
+    await p.click('tab-review')
+    const box = p.$('review-thread-1').querySelector('textarea[data-thread]')
+    box.focus()
+    await p.type(box, 'once')
+    box.dispatchEvent(new p.window.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
+    box.dispatchEvent(new p.window.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
+    await p.settle()
+    assert.equal(p.posted('/api/review/do').length, 1)
+  } finally { p.close() }
+})
+
+test("a Viewed tick vibe couldn't keep is unticked again", async () => {
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': { review: started, diff: twoFiles },
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+  })
+  try {
+    p.window.fetch = ((real) => async (url, options) => (String(url).includes('/api/review/do')
+      ? new Response(JSON.stringify({ error: 'disk full' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+      : real(url, options)))(p.window.fetch)
+    const tick = p.$('review-files').querySelector('.review-viewed input')
+    tick.checked = true
+    tick.dispatchEvent(new p.window.Event('change', { bubbles: true }))
+    await p.settle()
+    assert.equal(p.$('review-files').querySelector('.review-viewed input').checked, false)
+  } finally { p.close() }
+})
+
+test("an untracked file that couldn't be read says so", async () => {
+  const unreadable = [{ path: 'gone.txt', status: 'added', unreadable: 'no such file or directory', hunks: [] }]
+  const p = await reviewPage({ review: started, diff: unreadable })
+  try {
+    await p.click('tab-review')
+    assert.match(p.$('review-files').textContent, /couldn't be read: no such file or directory/)
+  } finally { p.close() }
+})
+
+// --- comments named in the conversation -----------------------------------------------
+
+// talkPage is the Conversation tab open on what the agent said, with a
+// review whose threads are commented's.
+async function talkPage(text) {
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': { review: { ...commented, started: '2026-10-16T10:00:00Z' }, diff: twoFiles },
+      '/api/conversation': () => ({ events: [{ seq: 1, kind: 'user', text: 'please fix' }, agentSaid(2, text)], last: 2, running: false }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+  })
+  await p.every('pollConversation')
+  return p
+}
+const refsIn = (p) => Array.from(p.$('convo-log').querySelectorAll('.thread-ref'))
+
+test('a comment the agent names, #2, takes you to it on the Review tab', async () => {
+  const p = await talkPage('Fixed #2, and see #3.')
+  try {
+    assert.deepEqual(refsIn(p).map((r) => r.textContent), ['#2', '#3'])
+    const shown = []
+    p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
+    await p.click(refsIn(p)[0])
+    assert.equal(p.$('tab-review').getAttribute('aria-selected'), 'true')
+    assert.deepEqual(shown, ['review-thread-2'])
+    assert.equal(p.window.document.activeElement.dataset.thread, '2', 'its reply box ready')
+  } finally { p.close() }
+})
+
+test("a comment that isn't on the review says so", async () => {
+  const p = await talkPage('Fixed #9.')
+  try {
+    await p.click(refsIn(p)[0])
+    assert.match(p.$('toast').textContent, /no comment #9/)
+  } finally { p.close() }
+})
+
+test('a number in code, or in a word, is left alone', async () => {
+  const p = await talkPage('Run `git show #2`, see issue#3 and C#4.')
+  try {
+    assert.deepEqual(refsIn(p), [])
+  } finally { p.close() }
+})
+
+// --- leaving whitespace changes out ---------------------------------------------------
+
+test('ticking "Hide whitespace changes" loads the diff without them, and is kept', async () => {
+  const now = { diff: twoFiles }
+  const p = await changingPage(now)
+  try {
+    const tick = p.$('review-whitespace')
+    assert.equal(tick.checked, false, 'off unless ticked')
+    tick.checked = true
+    tick.dispatchEvent(new p.window.Event('change', { bubbles: true }))
+    await p.settle()
+    const last = p.calls.filter((c) => c.path === '/api/review').pop()
+    assert.match(last.query, /diff=1/)
+    assert.match(last.query, /whitespace=ignore/)
+    assert.equal(p.window.localStorage.getItem('vibe-review-whitespace'), 'ignore')
+  } finally { p.close() }
+})
+
+test('a page opened with whitespace hidden asks for the diff so', async () => {
+  const p = await reviewPage({ review: started, diff: twoFiles, storage: { 'vibe-review-whitespace': 'ignore' } })
+  try {
+    await p.click('tab-review')
+    assert.equal(p.$('review-whitespace').checked, true)
+    const asked = p.calls.filter((c) => c.path === '/api/review' && c.query.includes('diff=1'))
+    assert.ok(asked.length && asked.every((c) => c.query.includes('whitespace=ignore')), asked.map((c) => c.query).join(' '))
   } finally { p.close() }
 })

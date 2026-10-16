@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -299,5 +300,25 @@ func TestATurnSaysWhenNoVMCanStart(t *testing.T) {
 	want := noKVM(t)
 	if err := readyForTurn("box")(context.Background(), func(string) {}); !errors.Is(err, want) {
 		t.Errorf("err = %v, want the KVM advice", err)
+	}
+}
+
+// A sandbox's folder inside a repository, not at its top, gets a review of
+// the whole repository, which the agent's git can't see from the sandbox:
+// vibe says so, and where to start it instead.
+func TestAFolderBelowItsRepositorysTopIsWarnedAbout(t *testing.T) {
+	need(t, "git")
+	top := t.TempDir()
+	if out, err := exec.Command("git", "-C", top, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	sub := filepath.Join(top, "sub")
+	os.MkdirAll(sub, 0o755)
+	notes := strings.Join(notesOf(func() { reviewTabFor(t.TempDir(), "box", state.Instance{Target: sub}) }), "\n")
+	if !strings.Contains(notes, sub) || !strings.Contains(notes, "start vibe in "+top) {
+		t.Errorf("notes: %q", notes)
+	}
+	if notes := notesOf(func() { reviewTabFor(t.TempDir(), "box", state.Instance{Target: top}) }); len(notes) != 0 {
+		t.Errorf("at the top: %q", notes)
 	}
 }

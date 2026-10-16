@@ -446,12 +446,16 @@ func noteMissingBase(lay layout.Layout, profile string) {
 	if len(missing) == 0 {
 		return
 	}
-	note("clipboard is always enabled now, and has been upgraded to live in a conversation view.")
+	them := "it"
+	if len(missing) > 1 {
+		them = "them"
+	}
+	note("every sandbox now has %s, which profile '%s' was built without", describeFeatures(missing), profile)
 	if profilegen.IsGuided(dir) {
-		note("  profile '%s' was built without it: run 'vibe --re-compose' to rebuild the profile with it", profile)
+		note("  run 'vibe --re-compose' to rebuild the profile with %s", them)
 		note("  (that recreates the sandbox, so anything that isn't in your workspace is lost)")
 	} else {
-		note("  profile '%s' was not composed from the library, so it has none of it: 'vibe -R' builds a fresh profile that does", profile)
+		note("  it was not composed from the library: 'vibe -R' builds a fresh profile that has %s", them)
 	}
 }
 

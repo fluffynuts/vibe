@@ -274,7 +274,12 @@ function handle(req, res) {
     return readBody(req, res, function (body) {
       if (!body.length) return sendJSON(res, 400, { error: "nothing to add" });
       const already = waitingLike(body);
-      if (already) return sendJSON(res, 200, Object.assign({ duplicate: true }, describe(already)));
+      if (already) {
+        // Pasted again, it's the latest: what Ctrl-V in the terminal gives.
+        state.current = already.id;
+        save();
+        return sendJSON(res, 200, Object.assign({ duplicate: true }, describe(already)));
+      }
       sendJSON(res, 201, describe(addItem(body, req.headers["content-type"], path.basename(name))));
     });
   }

@@ -987,6 +987,12 @@
 
   // REVIEW_ORDER keeps, per browser, the order the comment arrows go in.
   const REVIEW_ORDER = 'vibe-review-comment-order'
+  // REVIEW_REPLY_NEXT keeps, per browser, whether Ctrl+Enter in a reply box
+  // goes on to the next comment after replying ('off' if not).
+  const REVIEW_REPLY_NEXT = 'vibe-review-reply-next'
+  // REVIEW_WHITESPACE keeps, per browser, whether the diff leaves out
+  // changes of whitespace alone ('ignore').
+  const REVIEW_WHITESPACE = 'vibe-review-whitespace'
   // The file filter is kept for this browser tab, as the Profiles tab's is.
   const REVIEW_FILTER = 'vibe-review-filter'
   // fileLines are files' lines, fetched the first time one of their gaps
@@ -1026,7 +1032,45 @@
     shown: new Map(),
     // order is the order the comment arrows go in: 'path', as the files
     // are shown, or 'reading', by the agent's steps.
-    order: store.get(REVIEW_ORDER) === 'reading' ? 'reading' : 'path' }
+    order: store.get(REVIEW_ORDER) === 'reading' ? 'reading' : 'path',
+    // replyNext: Ctrl+Enter in a reply box goes on to the next comment.
+    replyNext: store.get(REVIEW_REPLY_NEXT) !== 'off',
+    // changed counts the review vibe gave back for something done on the
+    // page: a poll that set out before it brings an older review, which is
+    // dropped (see tookReview).
+    changed: 0,
+    // diffWanted: the diff was asked for while a load was on its way, to
+    // load once it's in.
+    diffWanted: false,
+    // unfolded is the long files the user has asked to see (see
+    // REVIEW_FOLD_LINES): kept shown however often the diff is drawn.
+    unfolded: new Set(),
+    // optionsLoading: what can be reviewed is being asked, so it isn't
+    // asked again meanwhile.
+    optionsLoading: false,
+    // goTo is the comment a link in the conversation asked to go to, until
+    // the review is drawn to go to it (see openThread).
+    goTo: null,
+    // ignoreSpace: the diff leaves out changes of whitespace alone.
+    ignoreSpace: store.get(REVIEW_WHITESPACE) === 'ignore' }
+
+  // tookReview takes rv, the review vibe gave back for something done on
+  // the page, as the review.
+  function tookReview(rv) {
+    reviewView.review = rv
+    reviewView.changed++
+  }
+
+  // once runs act (an async function) unless it's already running: a
+  // button clicked twice, or Ctrl+Enter held, does it once.
+  function once(act) {
+    let running = false
+    return async (...args) => {
+      if (running) return
+      running = true
+      try { return await act(...args) } finally { running = false }
+    }
+  }
 
   // redrawReview draws the review again even though nothing in it changed:
   // something the page holds (a comment being written) did.
@@ -1226,7 +1270,7 @@
       el('td', { colspan: '3', class: 'side start' + (right.length ? '' : ' empty') }, ...right))
   }
 
-  async function submitComposer() {
+  const submitComposer = once(async () => {
     const c = reviewView.composer
     if (!c || !c.text.trim()) return
     try {
@@ -1236,14 +1280,14 @@
       reached(true)
       if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
       reviewView.composer = null
-      reviewView.review = res.body.review
+      tookReview(res.body.review)
       document.activeElement && document.activeElement.blur()
       redrawReview()
     } catch (e) {
       reached(false)
       toast('Could not reach vibe.', true)
     }
-  }
+  })
 
   // cancelComposer closes the comment being written, asking first when
   // there's something written to lose.
@@ -1498,6 +1542,21 @@
       i = dir === 'next' ? (from + 1) % n : from <= 0 ? n - 1 : from - 1
     } else i = R.stepTo(cards.map((c) => c.getBoundingClientRect().top), threadLine(), dir)
     if (i < 0) return
+    showComment(cards, i)
+  }
+
+  // goToCommentAfter goes to the comment after thread id's, in the order the
+  // arrows go, round at the end.
+  function goToCommentAfter(id) {
+    const cards = arrowCards()
+    const i = cards.findIndex((card) => card.id === 'review-thread-' + id)
+    if (i < 0 || cards.length < 2) return
+    showComment(cards, (i + 1) % cards.length)
+  }
+
+  // showComment scrolls to cards[i], its reply box ready to type in, and
+  // makes it where the arrows go on from.
+  function showComment(cards, i) {
     reviewView.at = i
     reviewView.steering = true
     countComments()
@@ -1690,37 +1749,68 @@
   // shouldn't bury the rest.
   const REVIEW_FOLD_LINES = 600
 
+  // loadReview loads the review, and with withDiff its diff, worked out
+  // afresh. A load asked for the diff while one's on its way follows it.
   async function loadReview(withDiff) {
-    if (reviewView.loading) return
+    if (reviewView.loading) {
+      if (withDiff) reviewView.diffWanted = true
+      return
+    }
     reviewView.loading = true
+    const changed = reviewView.changed
     try {
-      const res = await api('/api/review' + (withDiff ? '?diff=1' : ''), { timeout: 40000 })
+      const res = await api('/api/review' + (withDiff ? '?diff=1' + (reviewView.ignoreSpace ? '&whitespace=ignore' : '') : ''), { timeout: 40000 })
       reached(true)
       if (!res.ok) { problem(res); return }
-      reviewView.review = res.body.review
-      reviewView.ask = res.body.ask || null
+      // Something done on the page since this set out gave a newer review.
+      if (reviewView.changed === changed) {
+        const wasOn = reviewView.review && reviewIsOn(reviewView.review)
+        reviewView.review = res.body.review
+        reviewView.ask = res.body.ask || null
+        // What can be reviewed is asked when the start screen shows, not at
+        // every poll: it's git, which polls keep clear of.
+        if (!reviewIsOn(reviewView.review) && (wasOn || (!reviewView.options && !reviewView.optionsError))) loadOptions()
+      }
       showPastes(res.body.pastes)
-      if (!reviewIsOn(reviewView.review)) loadOptions()
       if (withDiff) {
         reviewView.files = res.body.diff || []
         reviewView.diffError = res.body.diffError || ''
+        // The code may have changed with the same files: drawn afresh.
+        reviewView.key = null
       }
       drawReview()
     } catch (e) {
       reached(false)
     } finally {
       reviewView.loading = false
+      if (reviewView.diffWanted) {
+        reviewView.diffWanted = false
+        loadReview(true)
+      }
     }
   }
 
   // typingAReply says a box on the tab is being typed in: redrawing now
   // would take it away mid-word, so the redraw waits for the next poll. An
-  // empty reply box with focus (the comment arrows put it there) isn't:
-  // holding back would hide what the agent says until it lost focus.
+  // empty box with focus (the comment arrows put it in a reply box; a +
+  // puts it in a comment box) isn't: holding back would hide what the
+  // agent says until it lost focus. Drawn again, it keeps the focus.
   function typingAReply() {
     const a = document.activeElement
     if (!a || a.tagName !== 'TEXTAREA' || !$('panel-review').contains(a)) return false
-    return !(a.dataset.thread && !a.value.trim())
+    return !!a.value.trim()
+  }
+
+  // focusedBox is which box on the tab has focus, to give it back once the
+  // tab is drawn afresh: a reply box by its thread, the comment box, the
+  // edit box; null for none.
+  function focusedBox() {
+    const a = document.activeElement
+    if (!a || a.tagName !== 'TEXTAREA' || !$('panel-review').contains(a)) return null
+    if (a.dataset.thread) return 'textarea[data-thread="' + a.dataset.thread + '"]'
+    if (a.getAttribute('aria-label') === 'Edit your comment') return 'textarea[aria-label="Edit your comment"]'
+    if (a.classList.contains('review-compose-text')) return '.review-compose-text'
+    return null
   }
 
   // drawReview draws the review when it has changed; a poll's redraw waits
@@ -1766,6 +1856,8 @@
   }
 
   async function loadOptions() {
+    if (reviewView.optionsLoading) return
+    reviewView.optionsLoading = true
     try {
       const res = await api('/api/review/options')
       reached(true)
@@ -1774,20 +1866,43 @@
       drawReview()
     } catch (e) {
       reached(false)
+    } finally {
+      reviewView.optionsLoading = false
     }
   }
 
   // showReview shows review rv, as vibe gave it, with its diff worked out
   // afresh: one just started, or reopened.
   function showReview(rv) {
-    reviewView.review = rv
+    tookReview(rv)
     reviewView.files = null
+    // A comment being written, or edited, was on the review before.
+    reviewView.composer = null
+    reviewView.editing = null
+    forgetFiles()
+    drawReview()
+    loadReview(true)
+  }
+
+  // forgetFiles forgets what the page has of the diff's files (their
+  // lines, the gaps opened in them, their colours, which long ones are
+  // shown): the code may have changed under it.
+  function forgetFiles() {
     reviewView.fileLines.clear()
     reviewView.linesAsked.clear()
     reviewView.opened.clear()
     reviewView.colours.clear()
+    reviewView.unfolded.clear()
     reviewView.key = null
-    drawReview()
+  }
+
+  // refreshReview loads the review and its diff afresh, and what can be
+  // reviewed, when there's no review to show.
+  function refreshReview() {
+    forgetFiles()
+    reviewView.options = null
+    reviewView.optionsError = ''
+    if (reviewView.review && !reviewIsOn(reviewView.review)) loadOptions()
     loadReview(true)
   }
 
@@ -1810,7 +1925,7 @@
     const open = rv.threads.filter((t) => t.status === 'open').length
     const close = async () => {
       const res = await post('/api/review/do', { op: 'close', body: 'You closed it.' })
-      if (res.ok) { reviewView.review = res.body.review; reviewView.key = null; drawReview(); loadOptions() }
+      if (res.ok) { tookReview(res.body.review); reviewView.key = null; drawReview(); loadOptions() }
       return res
     }
     if (!open) {
@@ -1843,7 +1958,9 @@
     for (const box of $('panel-review').querySelectorAll('textarea[data-thread]')) {
       if (box.value.trim()) reviewView.drafts.set(box.dataset.thread, box.value)
     }
-    const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.thread : undefined
+    const focused = focusedBox()
+    // The cards drawn last go: so does watching them.
+    if (colourWatch) colourWatch.disconnect()
     const on = reviewIsOn(rv)
     $('review-start').hidden = on
     $('review-body').hidden = !on
@@ -1882,9 +1999,10 @@
       ...ordered.map((o) => foldIfViewed(o.file, fileCard(o.file, o.stop, o.step, files.indexOf(o.file), placed, threads))))
     drawTree()
     drawCommentsPane()
-    // The reply box that had focus, drawn afresh, keeps it.
-    const again = focused && $('panel-review').querySelector('textarea[data-thread="' + focused + '"]')
+    // The box that had focus, drawn afresh, keeps it.
+    const again = focused && $('panel-review').querySelector(focused)
     if (again) again.focus({ preventScroll: true })
+    goToWanted()
   }
 
   // viewedState is whether file f is ticked as viewed: 'viewed', 'changed'
@@ -1909,12 +2027,14 @@
     try {
       const res = await post('/api/review/do', on ? { op: 'view', file: f.path, code: f.fingerprint } : { op: 'unview', file: f.path })
       reached(true)
-      if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
-      reviewView.review = res.body.review
+      if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); redrawReview(); return }
+      tookReview(res.body.review)
       redrawReview()
     } catch (e) {
       reached(false)
       toast('Could not reach vibe.', true)
+      // The tick shows what vibe has, not what was asked.
+      redrawReview()
     }
   }
 
@@ -2046,6 +2166,7 @@
       ...off.map((id) => threadCard(threads.get(id)))))
     if (f.binary) { card.append(el('p', { class: 'note muted', text: 'A binary file: no lines to show.' })); return card }
     if (f.tooLarge) { card.append(el('p', { class: 'note muted', text: 'Too large to show.' })); return card }
+    if (f.unreadable) { card.append(el('p', { class: 'note bad-text', text: "It couldn't be read: " + f.unreadable })); return card }
     const table = el('table', { class: 'review-lines' })
     // Fixed column widths, set by a colgroup: a fixed table takes its
     // widths from its first row otherwise, which is a hunk header spanning
@@ -2158,10 +2279,12 @@
       if (expandable && f.hunks && f.hunks.length) rows.push(...gapRows(fileGaps[f.hunks.length], 'last', null))
       table.replaceChildren(el('colgroup', {}, ...cols.map((c) => el('col', { class: c }))), ...rows)
     }
-    // A file with comments is never folded: they'd be hidden.
-    if (total > REVIEW_FOLD_LINES && !Object.keys(after).length && !Object.keys(gapped.after).length) {
+    // A file with comments is never folded: they'd be hidden; nor one with
+    // a comment being written on it, nor one the user asked to see.
+    const writingHere = reviewView.composer && reviewView.composer.path === f.path
+    if (total > REVIEW_FOLD_LINES && !Object.keys(after).length && !Object.keys(gapped.after).length && !writingHere && !reviewView.unfolded.has(f.path)) {
       card.append(el('p', { class: 'note' }, el('button', { type: 'button', class: 'ghost',
-        text: 'Show ' + total + ' lines', onclick: (ev) => { ev.target.parentNode.replaceWith(table); fill() } })))
+        text: 'Show ' + total + ' lines', onclick: (ev) => { reviewView.unfolded.add(f.path); ev.target.parentNode.replaceWith(table); fill() } })))
     } else {
       fill()
       card.append(table)
@@ -2169,20 +2292,39 @@
     return card
   }
 
-  async function saveEdit(t, c) {
+  const saveEdit = once(async (t, c) => {
     const text = reviewView.editing ? reviewView.editing.text : ''
     try {
       const res = await post('/api/review/do', { op: 'edit', thread: t.id, at: c.at, body: text })
       reached(true)
       if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
       reviewView.editing = null
-      reviewView.review = res.body.review
+      tookReview(res.body.review)
       document.activeElement && document.activeElement.blur()
       redrawReview()
     } catch (e) {
       reached(false)
       toast('Could not reach vibe.', true)
     }
+  })
+
+  // editComment opens comment c of thread t to edit: asking first when
+  // another edit has changes that would be lost.
+  function editComment(t, c) {
+    const start = () => { reviewView.editing = { thread: t.id, at: c.at, text: c.body }; redrawReview() }
+    const was = reviewView.editing
+    const lost = was && was.text.trim() !== originalOf(was).trim()
+    if (!lost) { start(); return }
+    confirmThen({ title: 'Discard your edit?', text: "The comment you're editing has changes that haven't been saved: they go.", commandNote: '', command: '',
+      danger: true, runLabel: 'Discard', started: 'Discarded.',
+      run: async () => { start(); return { ok: true, body: {} } } })
+  }
+
+  // originalOf is what the comment being edited says, as last saved.
+  function originalOf(editing) {
+    const t = reviewView.review && reviewView.review.threads.find((x) => x.id === editing.thread)
+    const c = t && t.comments.find((x) => x.at === editing.at)
+    return c ? c.body : ''
   }
 
   function deleteComment(t, i, c) {
@@ -2215,8 +2357,9 @@
           title: 'Show what it said before', onclick: () => { toggle(reviewView.earlier, c.at); redrawReview() } }) : null,
         unsent ? el('span', { class: 'review-unsent', text: edited ? 'edit not sent yet' : 'not sent yet' }) : null,
         yours && !editing ? el('span', { class: 'comment-actions' },
-          el('button', { type: 'button', class: 'ghost', text: 'Edit', onclick: () => { reviewView.editing = { thread: t.id, at: c.at, text: c.body }; redrawReview() } }),
-          unsent && !edited ? el('button', { type: 'button', class: 'ghost', text: 'Delete', onclick: () => deleteComment(t, i, c) }) : null) : null)
+          el('button', { type: 'button', class: 'ghost', text: 'Edit', onclick: () => editComment(t, c) }),
+          // A thread's first comment goes only once its replies have.
+          unsent && !edited && !(i === 0 && t.comments.length > 1) ? el('button', { type: 'button', class: 'ghost', text: 'Delete', onclick: () => deleteComment(t, i, c) }) : null) : null)
       const earlier = edited && reviewView.earlier.has(c.at)
         ? el('div', { class: 'review-earlier' }, ...c.was.slice().reverse().map((w, k) => el('div', {},
           el('div', { class: 'muted', text: k === 0 ? 'It said, before you edited it:' : 'And before that:' }), markdown(w))))
@@ -2225,8 +2368,11 @@
       const box = el('textarea', { class: 'review-compose-text', 'aria-label': 'Edit your comment' })
       box.value = reviewView.editing.text
       box.addEventListener('input', () => { reviewView.editing.text = box.value })
+      box.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); saveEdit(t, c) }
+      })
       return el('div', { class: 'comment' }, head, formattable(box), box, el('div', { class: 'bar' },
-        el('button', { type: 'button', text: 'Save', onclick: () => saveEdit(t, c) }),
+        el('button', { type: 'button', text: 'Save', title: 'Save (Ctrl+Enter)', onclick: () => saveEdit(t, c) }),
         el('button', { type: 'button', class: 'ghost', text: 'Cancel', onclick: () => { reviewView.editing = null; redrawReview() } })))
     })
     const where = t.file ? t.file + ':' + t.line + (t.endLine > t.line ? '–' + t.endLine : '') + (t.side === 'old' ? ' (old)' : '') : 'on the whole review'
@@ -2234,25 +2380,31 @@
     box.value = reviewView.drafts.get(String(t.id)) || ''
     box.addEventListener('input', () => reviewView.drafts.set(String(t.id), box.value))
     box.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); act('reply')() }
+      if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); act('reply', true)() }
     })
-    const act = (op) => async () => {
+    // byKeys: replied with Ctrl+Enter, which can go on to the next comment.
+    // One at a time, whichever button (or Ctrl+Enter, held) asks.
+    const act = (op, byKeys) => () => send(op, byKeys)
+    const send = once(async (op, byKeys) => {
       const body = box.value.trim()
       if (op === 'reply' && !body) { box.focus(); return }
+      let res
       try {
-        const res = await post('/api/review/do', { op, thread: t.id, body: op === 'reopen' ? '' : body })
-        reached(true)
-        if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
-        reviewView.drafts.delete(String(t.id))
-        box.value = ''
-        reviewView.review = res.body.review
-        box.blur()
-        drawReview()
+        res = await post('/api/review/do', { op, thread: t.id, body: op === 'reopen' ? '' : body })
       } catch (e) {
         reached(false)
         toast('Could not reach vibe.', true)
+        return
       }
-    }
+      reached(true)
+      if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
+      reviewView.drafts.delete(String(t.id))
+      box.value = ''
+      tookReview(res.body.review)
+      box.blur()
+      drawReview()
+      if (byKeys && reviewView.replyNext) goToCommentAfter(t.id)
+    })
     // A turn: the answer comes back on this comment, from the agent's
     // vibe-review reply, and the turn shows on the Conversation tab too.
     const ask = async () => {
@@ -2818,7 +2970,15 @@
       updateManage()
     })
     $('manage-delete').addEventListener('click', deleteTicked)
-    $('review-refresh').addEventListener('click', () => { reviewView.fileLines.clear(); reviewView.linesAsked.clear(); reviewView.colours.clear(); loadReview(true) })
+    $('review-refresh').addEventListener('click', refreshReview)
+    $('review-whitespace').checked = reviewView.ignoreSpace
+    $('review-whitespace').addEventListener('change', (ev) => {
+      reviewView.ignoreSpace = ev.target.checked
+      store.set(REVIEW_WHITESPACE, reviewView.ignoreSpace ? 'ignore' : 'show')
+      // The hunks are another shape: what was opened in them goes.
+      forgetFiles()
+      loadReview(true)
+    })
     setUpReviewTree()
     $('review-close').addEventListener('click', closeReview)
     setUpCommentsPane()
@@ -2841,10 +3001,15 @@
     $('review-reopen').addEventListener('click', reopenReview)
     $('review-prev-comment').addEventListener('click', () => goToComment('prev'))
     $('review-next-comment').addEventListener('click', () => goToComment('next'))
+    $('review-reply-next').checked = reviewView.replyNext
+    $('review-reply-next').addEventListener('change', (ev) => {
+      reviewView.replyNext = ev.target.checked
+      store.set(REVIEW_REPLY_NEXT, reviewView.replyNext ? 'on' : 'off')
+    })
     // Clicking or typing anywhere in the review is looking at it: an update
     // that comes while it's in view is marked until then.
     for (const type of ['pointerdown', 'keydown']) $('panel-review').addEventListener(type, reviewSeen, true)
-    $('review-submit').addEventListener('click', async () => {
+    $('review-submit').addEventListener('click', once(async () => {
       try {
         const res = await post('/api/review/submit', {})
         reached(true)
@@ -2857,7 +3022,7 @@
         reached(false)
         toast('Could not reach vibe.', true)
       }
-    })
+    }))
     // The tree sticks under the title bar, and fits in what's left of the
     // window: both measured, as the bar wraps on a narrow window.
     const measure = () => {
@@ -3180,9 +3345,9 @@
   // link becomes one only where localLink allows (this machine's own pages);
   // any other shows its address instead.
   function markdown(text) {
-    const inline = (nodes) => nodes.map((n) => {
+    const inline = (nodes) => nodes.flatMap((n) => {
       switch (n.type) {
-        case 'text': return document.createTextNode(n.text)
+        case 'text': return withThreadRefs(n.text)
         case 'code': return el('code', { text: n.text })
         case 'br': return el('br')
         case 'strong': return el('strong', {}, ...inline(n.children))
@@ -3243,6 +3408,44 @@
     path.setAttribute('d', 'M2.5 10.5v-8h8 M5.5 5.5h8v8h-8z')
     svg.append(path)
     return svg
+  }
+
+  // withThreadRefs is text as nodes, each review comment it names (#24, not
+  // in a word: issue#3, C#4 aren't) a link to that comment on the Review tab.
+  function withThreadRefs(text) {
+    const nodes = []
+    let at = 0
+    for (const m of text.matchAll(/(^|[^\w#])#(\d+)\b/g)) {
+      const start = m.index + m[1].length
+      const id = Number(m[2])
+      if (start > at) nodes.push(document.createTextNode(text.slice(at, start)))
+      nodes.push(el('button', { type: 'button', class: 'thread-ref', 'data-thread': String(id), title: 'Go to comment #' + id + ' on the Review tab',
+        text: '#' + id, onclick: () => openThread(id) }))
+      at = start + 1 + m[2].length
+    }
+    if (at < text.length) nodes.push(document.createTextNode(text.slice(at)))
+    return nodes
+  }
+
+  // openThread goes to comment id on the Review tab: once the review is
+  // there to go to, when it hasn't been loaded yet.
+  function openThread(id) {
+    reviewView.goTo = id
+    select('review')
+    goToWanted()
+  }
+
+  // goToWanted goes to the comment openThread asked for, once the review
+  // and its diff are drawn; one the review hasn't is said not to be there.
+  function goToWanted() {
+    const id = reviewView.goTo
+    if (id == null || !reviewView.review || reviewView.files === null) return
+    reviewView.goTo = null
+    if (!$('review-thread-' + id)) {
+      toast("There's no comment #" + id + ' on this review: it may have been on an earlier one.')
+      return
+    }
+    goToThread(id)
   }
 
   function convoNote(cls, text, at) {

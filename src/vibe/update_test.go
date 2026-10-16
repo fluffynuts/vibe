@@ -589,3 +589,24 @@ func TestAPagesVibeCanRebuildAnotherSandbox(t *testing.T) {
 		t.Errorf("rebuildAsItWas = %v, want the rebuild to go ahead", err)
 	}
 }
+
+// A profile composed with a feature vibe has since retired is updated
+// without it: the record rewritten without it is no hand edit.
+func TestAProfileWithARetiredFeatureIsUpdatedWithoutIt(t *testing.T) {
+	root, _ := goldenBundle(t)
+	lay := layout.New(t.TempDir(), root)
+	writeFile(t, lay.HomePath("library", "mine", "install-scripts", "01-mine"), "#!/bin/sh\necho v1\n")
+	writeFile(t, lay.HomePath("library", "diffity", "install-scripts", "01-diffity"), "#!/bin/sh\necho old\n")
+	if _, err := profilegen.CreateGuided(lay, "p", []string{"mine", "diffity"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(lay.HomePath("library", "diffity")); err != nil {
+		t.Fatal(err)
+	}
+	if got := updated(t, lay); got.state != profileUpdated {
+		t.Fatalf("outcome = %+v, want it updated", got)
+	}
+	if found, _ := filepath.Glob(lay.HomePath("profiles", "p", "install-scripts", "*-diffity")); len(found) != 0 {
+		t.Errorf("diffity's script is still there: %v", found)
+	}
+}

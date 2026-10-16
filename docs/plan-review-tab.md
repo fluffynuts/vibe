@@ -87,7 +87,8 @@ answer shows in the thread; the turn shows in the conversation as any other. No 
   same git).
 - A `vibe-review` skill replacing diffity-review: what to look for, severities, how to comment, the reading
   order, and to finish with `done`.
-- The agent is told the tab's address the way it's told the companion's now.
+- No address for the agent to give: the tab is on the companion page the user already has open (the
+  feature's instructions say so).
 
 ## Not in the proof of concept
 

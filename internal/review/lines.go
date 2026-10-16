@@ -3,7 +3,6 @@ package review
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -11,6 +10,10 @@ import (
 // maxFileLines bounds a file read for its context: a review of a huge
 // generated file has no use for all of it.
 const maxFileLines = 200000
+
+// maxFileBytes bounds reading a file of the folder: far more than any a
+// review shows.
+const maxFileBytes = 64 << 20
 
 // FileLines is path's lines, as the diff of r has its new side (see
 // NewTextOf). They're what the Review tab shows when asked for more of a
@@ -20,12 +23,9 @@ func FileLines(ctx context.Context, dir string, r Review, path string) ([]string
 	if err != nil {
 		return nil, err
 	}
-	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
+	lines := splitLines(text)
 	if len(lines) > maxFileLines {
 		lines = lines[:maxFileLines]
-	}
-	for i, l := range lines {
-		lines[i] = strings.TrimSuffix(l, "\r")
 	}
 	return lines, nil
 }
@@ -70,7 +70,8 @@ func NewTextOf(ctx context.Context, dir string, r Review, path string) (string, 
 	if rel, err := filepath.Rel(root, full); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("%q isn't a file in the folder", path)
 	}
-	data, err := os.ReadFile(full)
+	// Only a plain file: a FIFO would wait forever.
+	data, err := readPlain(full, maxFileBytes)
 	if err != nil {
 		return "", fmt.Errorf("%q can't be read: %w", path, err)
 	}

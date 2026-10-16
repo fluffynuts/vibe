@@ -83,8 +83,14 @@ func OldTextOf(ctx context.Context, dir string, rv Review, path string) (string,
 	base := "HEAD"
 	switch {
 	case rv.Commit != "":
+		if err := isCommit(ctx, dir, rv.Commit); err != nil {
+			return "", err
+		}
 		base = rv.Commit + "^"
 	case rv.Ref != "":
+		if err := isCommit(ctx, dir, rv.Ref); err != nil {
+			return "", err
+		}
 		parted, err := run(ctx, dir, "merge-base", rv.Ref, "HEAD")
 		if err != nil {
 			return "", err

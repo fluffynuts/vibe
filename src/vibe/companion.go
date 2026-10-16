@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -326,7 +327,31 @@ func reviewTabFor(vibeHome, name string, inst state.Instance) *companion.ReviewT
 	if inst.Target == "" {
 		return nil
 	}
+	noteBelowRepositoryTop(inst.Target)
 	return &companion.ReviewTab{Workspace: inst.Target, Store: review.NewStore(state.ReviewPath(vibeHome, name))}
+}
+
+// noteBelowRepositoryTop warns when the sandbox's folder is inside a git
+// repository but not its top: the Review tab reviews the whole repository,
+// while in the sandbox, which has only the folder, git can't see it, so the
+// agent can't review it.
+func noteBelowRepositoryTop(folder string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	top, err := review.Root(ctx, folder)
+	if err != nil {
+		return
+	}
+	same := func(a, b string) bool {
+		ra, errA := filepath.EvalSymlinks(a)
+		rb, errB := filepath.EvalSymlinks(b)
+		return errA == nil && errB == nil && ra == rb
+	}
+	if same(top, folder) {
+		return
+	}
+	note("%s is inside the git repository at %s, not at its top: the Review tab reviews the whole repository, "+
+		"but the agent can't use git in the sandbox, which only has this folder. For the best results, start vibe in %s.", folder, top, top)
 }
 
 // stoppedOnPurpose is set while the sandbox is stopped because someone

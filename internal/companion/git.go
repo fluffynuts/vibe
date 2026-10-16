@@ -3,11 +3,12 @@ package companion
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"vibe/internal/review"
 )
 
 // GitInfo is what the page's header shows of the workspace's git status,
@@ -31,8 +32,9 @@ func readGit(dir string) *GitInfo {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "git", "-C", dir, "--no-optional-locks",
-		"status", "--porcelain=v2", "--branch", "--show-stash").Output()
+	// The sandbox can write the repository's config: git is run so that
+	// nothing it says to run runs here.
+	out, err := review.Git(ctx, dir, "status", "--porcelain=v2", "--branch", "--show-stash")
 	if err != nil {
 		return nil
 	}

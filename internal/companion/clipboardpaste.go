@@ -3,6 +3,8 @@ package companion
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -13,8 +15,10 @@ import (
 const maxPaste = 50 << 20
 
 // pasteClient talks to the sandbox's clipboard page: on this machine, never
-// through a proxy, and not for long.
-var pasteClient = &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{Proxy: nil}}
+// through a proxy, and not for long. The page is the sandbox's: a redirect
+// from it isn't followed (this machine would fetch wherever it said).
+var pasteClient = &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{Proxy: nil},
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 
 // clipboardAt is the sandbox's clipboard page, or "" when it has none.
 func (s *Server) clipboardAt() string {
@@ -50,10 +54,19 @@ func (s *Server) clipboardPaste(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := pasteClient.Do(out)
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": fmt.Sprintf("that's over %d MB: too large to paste", maxPaste>>20)})
+			return
+		}
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "the clipboard page couldn't be reached (is the sandbox running?): " + err.Error()})
 		return
 	}
 	defer res.Body.Close()
+	if res.StatusCode >= 300 && res.StatusCode < 400 {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "the clipboard page answered with a redirect, which isn't followed: try pasting on the clipboard page itself"})
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(res.StatusCode)
 	io.Copy(w, io.LimitReader(res.Body, 1<<20))

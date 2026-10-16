@@ -446,6 +446,8 @@ html.themed .commands li[aria-selected="true"] {
 .md ul, .md ol { padding-left: 1.5em; }
 .md li > p { margin: 0; }
 .md code { font: 0.92em var(--mono); padding: 0 3px; border-radius: 3px; background: var(--row-hover); }
+.md .thread-ref { font: inherit; color: var(--accent); background: none; border: none; padding: 0; text-decoration: underline dotted; text-underline-offset: 2px; cursor: pointer; }
+.md .thread-ref:hover { text-decoration-style: solid; }
 .md pre { padding: 8px 10px; overflow: auto; max-height: 420px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
 .md pre code { padding: 0; background: none; font-size: 12px; white-space: pre; }
 .md .code-block { position: relative; margin: 0 0 8px; }

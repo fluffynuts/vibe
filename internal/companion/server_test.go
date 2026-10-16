@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"vibe/internal/policy"
+	"vibe/internal/review"
 )
 
 const token = "0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -733,5 +734,38 @@ func TestThePageIsToldWhichVersionOfItVibeServes(t *testing.T) {
 	first := version()
 	if first == "" || version() != first {
 		t.Errorf("versions: %q, then %q", first, version())
+	}
+}
+
+// Every API call but ping is behind the token, and every change is
+// same-origin only: held of each one the server has, so a call added
+// without its guard fails here.
+func TestEveryAPICallIsGuarded(t *testing.T) {
+	f := &fakeAgent{}
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort,
+		Policy:    &policy.Client{Sandbox: "box", Run: (&fakeSbx{}).run},
+		Converse:  f.converse,
+		Admin:     &fakeInstructor{},
+		Manage:    &fakeManager{},
+		ReviewTab: &ReviewTab{Workspace: t.TempDir(), Store: review.NewStore(t.TempDir())}})
+	routes := s.apiRoutes()
+	if len(routes) < 30 {
+		t.Fatalf("only %d routes: are they all listed?", len(routes))
+	}
+	for _, r := range routes {
+		method, path, _ := strings.Cut(r.pattern, " ")
+		if path == "/api/ping" {
+			continue
+		}
+		if w := do(t, s, req{method: method, path: path, body: "{}", headers: map[string]string{"Content-Type": "application/json"}}); w.Code != http.StatusUnauthorized {
+			t.Errorf("%s with no token: %d, want 401", r.pattern, w.Code)
+		}
+		if method != http.MethodPost {
+			continue
+		}
+		cross := req{method: method, path: path, body: "{}", headers: authed(map[string]string{"Content-Type": "application/json", "Origin": "http://evil.example.com"})}
+		if w := do(t, s, cross); w.Code != http.StatusForbidden {
+			t.Errorf("%s from another origin: %d, want 403", r.pattern, w.Code)
+		}
 	}
 }

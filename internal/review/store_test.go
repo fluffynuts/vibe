@@ -442,8 +442,8 @@ func TestTheLastReviewCanBePutBack(t *testing.T) {
 	clockAt(s)
 	s.Do(Request{Op: "comment", File: "a.go", Line: 1, Body: "x"}, Agent)
 	last, _ := s.Load()
-	s.Do(Request{Op: "start", Reviewing: true}, User)
-	if err := s.Put(last); err != nil {
+	started, _ := s.Do(Request{Op: "start", Reviewing: true}, User)
+	if err := s.PutBack(last, started.Started); err != nil {
 		t.Fatal(err)
 	}
 	if r, _ := s.Load(); len(r.Threads) != 1 || r.State != last.State {
@@ -527,5 +527,42 @@ func TestASentCommentIsEditedAndTheAgentToldWhatChanged(t *testing.T) {
 	s.Do(Request{Op: "comment", File: "b.go", Line: 1, Body: "agent's"}, Agent)
 	if _, err := s.Do(Request{Op: "edit", Thread: 2, At: at(t, s, 2, 0), Body: "x"}, User); err == nil {
 		t.Error("edited the agent's comment")
+	}
+}
+
+// Closing because the diff emptied is of the review that was looked at:
+// one started since is left alone.
+func TestClosingAsOverLeavesAReviewStartedSince(t *testing.T) {
+	s := NewStore(t.TempDir())
+	tickingClock(s)
+	first, _ := s.Do(Request{Op: "start"}, User)
+	second, _ := s.Do(Request{Op: "start"}, User)
+	if r, closed, err := s.CloseOver(first.Started, "over"); err != nil || closed || r.Closed != "" {
+		t.Errorf("the second review closed: %v %+v", err, r)
+	}
+	if r, closed, err := s.CloseOver(second.Started, "over"); err != nil || !closed || r.Closed != "over" {
+		t.Errorf("the review looked at wasn't closed: %v %+v", err, r)
+	}
+}
+
+// Putting the last review back undoes a start: only while the review is
+// still the one started.
+func TestPuttingBackLeavesAReviewStartedSince(t *testing.T) {
+	s := NewStore(t.TempDir())
+	tickingClock(s)
+	last, _ := s.Do(Request{Op: "general", Body: "kept"}, Agent)
+	mine, _ := s.Do(Request{Op: "start"}, User)
+	theirs, _ := s.Do(Request{Op: "start", Note: "another"}, User)
+	if err := s.PutBack(last, mine.Started); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := s.Load(); !r.Started.Equal(theirs.Started) {
+		t.Errorf("the review started since was replaced: %+v", r)
+	}
+	if err := s.PutBack(last, theirs.Started); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := s.Load(); len(r.Threads) != 1 {
+		t.Errorf("the last review wasn't put back: %+v", r)
 	}
 }

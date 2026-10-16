@@ -2,10 +2,11 @@
 // vibe: description: vibe-review: the agent's side of the companion page's Review tab
 // The agent reviews the changes in its folder with this, and the user reads
 // and answers on the companion page's Review tab. The review is kept on the
-// host, in a folder vibe mounts into the sandbox (VIBE_REVIEW_DIR); the
-// page's server is its only writer, so this never writes the review itself:
-// each request is dropped in the folder's inbox, which the page takes in.
-// A request made while vibe isn't running waits there.
+// host, in a folder (VIBE_REVIEW_DIR) of which vibe mounts two into the
+// sandbox: the inbox, where each request is dropped for the page to take
+// in (one made while vibe isn't running waits there), and view, read-only,
+// with a copy of the review to read. The page's server alone writes the
+// review.
 //
 // No template literals: sbx validates every dollar-brace form in a kit's
 // file content against its own placeholder list.
@@ -90,10 +91,14 @@ function body(opts, required) {
 }
 
 // drop puts request in the inbox, named so requests sort in the order they
-// were made, written whole before it's given a name the page reads.
+// were made, written whole before it's given a name the page reads. The
+// inbox is the host's, mounted: one made here would reach nobody.
 function drop(request) {
   const inbox = path.join(reviewDir(), "inbox");
-  fs.mkdirSync(inbox, { recursive: true });
+  if (!fs.existsSync(inbox)) {
+    fail("the review folder isn't mounted in this sandbox (there's no " + inbox + "), so the Review tab would never see this — " +
+      "rebuild the sandbox ('vibe -r' on the host) to mount it", 1);
+  }
   const name = String(Date.now()).padStart(15, "0") + "-" +
     process.hrtime.bigint().toString().padStart(20, "0") + "-" + process.pid;
   const tmp = path.join(inbox, name + ".tmp");
@@ -101,13 +106,35 @@ function drop(request) {
   fs.renameSync(tmp, path.join(inbox, name + ".json"));
 }
 
+// startAndWait drops a start, and waits until vibe has taken it in (it does
+// every couple of seconds), so what follows (diff, above all) is of the new
+// review, as the tab shows it. Refused, it says why; not taken in at all,
+// it says vibe may not be running (the start waits in the inbox for it).
+function startAndWait(request) {
+  const before = load();
+  const problemsBefore = (before.problems || []).join("\n");
+  drop(request);
+  const limit = Number(process.env.VIBE_REVIEW_START_WAIT_MS) || 15000;
+  const deadline = Date.now() + limit;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  while (Date.now() < deadline) {
+    Atomics.wait(pause, 0, 0, 100);
+    const now = load();
+    if (now.started && now.started !== before.started) return;
+    const problems = now.problems || [];
+    if (problems.join("\n") !== problemsBefore && problems.length && /^start: /.test(problems[problems.length - 1])) {
+      fail("the Review tab refused the start: " + problems[problems.length - 1].replace(/^start: /, ""), 1);
+    }
+  }
+  fail("the Review tab hasn't taken the start in after " + Math.round(limit / 1000) + "s: is vibe running on the host? " +
+    "The start waits in the inbox, and is taken in once vibe is.", 1);
+}
+
 // linesOf is lines first to last of file as they read now, for the tab to
 // tell when they've changed since; undefined when the file can't be read
 // (the comment is still made: it just can't be told to be out of date).
 function linesOf(file, first, last) {
-  let root = ".";
-  try { root = git(["rev-parse", "--show-toplevel"]).trim(); } catch (e) { /* not a repository: relative to here */ }
-  for (const base of [root, "."]) {
+  for (const base of [root(), "."]) {
     try {
       const lines = fs.readFileSync(path.resolve(base, file), "utf8").split("\n");
       if (last <= lines.length) return lines.slice(first - 1, last).map(function (l) { return l.replace(/\r$/, ""); }).join("\n");
@@ -116,26 +143,55 @@ function linesOf(file, first, last) {
   return undefined;
 }
 
+// load is the review, from the view the host keeps of it: no review yet
+// is an empty one; one that can't be read is said to be.
 function load() {
+  const file = path.join(reviewDir(), "view", "review.json");
+  let text;
   try {
-    return JSON.parse(fs.readFileSync(path.join(reviewDir(), "review.json"), "utf8"));
+    text = fs.readFileSync(file, "utf8");
   } catch (e) {
-    return { threads: [] };
+    if (e.code === "ENOENT") return { threads: [] };
+    fail("the review can't be read from " + file + ": " + e.message, 1);
+  }
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    fail("the review in " + file + " isn't readable JSON: " + e.message, 1);
   }
 }
 
-function git(args) {
-  return childProcess.execFileSync("git", ["-c", "core.quotepath=false"].concat(args), { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+let rootFolder;
+
+// root is the top of the workspace's repository, where the Review tab runs
+// git, so paths are the tab's wherever the agent has gone: the workspace
+// (VIBE_REVIEW_WORKSPACE) itself when it isn't a repository's, or, in a
+// sandbox built before that was set, here.
+function root() {
+  if (rootFolder === undefined) {
+    const workspace = process.env.VIBE_REVIEW_WORKSPACE || process.cwd();
+    try {
+      rootFolder = childProcess.execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: workspace, encoding: "utf8" }).trim();
+    } catch (e) {
+      rootFolder = workspace;
+    }
+  }
+  return rootFolder;
 }
 
-const DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", "-M"];
+function git(args) {
+  return childProcess.execFileSync("git", ["-c", "core.quotepath=false"].concat(args), { cwd: root(), encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+}
+
+const DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/", "-M"];
 
 // diff prints what the Review tab shows: the review's commit, the commits
 // not pushed to its upstream, its branch from where they parted, or the
 // uncommitted changes, untracked files with them.
 function diff() {
   const r = load();
-  if (r.commit) { process.stdout.write(git(["show", "--format="].concat(DIFF_FLAGS, [r.commit]))); return; }
+  // A merge commit's change is what it brought in to its first parent, as the tab has it.
+  if (r.commit) { process.stdout.write(git(["show", "--format=", "-m", "--first-parent"].concat(DIFF_FLAGS, [r.commit]))); return; }
   if (r.unpushed) {
     const parted = git(["merge-base", r.ref, "HEAD"]).trim();
     process.stdout.write(git(["diff"].concat(DIFF_FLAGS, [parted, "HEAD"])));
@@ -161,7 +217,7 @@ function diff() {
 function list(json) {
   const r = load();
   if (json) { process.stdout.write(JSON.stringify(r, null, 2) + "\n"); return; }
-  const of = r.commit ? "commit " + r.commit : r.unpushed ? "the commits not pushed to " + r.ref : r.ref ? "against " + r.ref : "the uncommitted changes";
+  const of = r.commit ? "commit " + r.commit : r.unpushed ? "the commits not pushed to " + r.ref : r.ref ? "the changes against " + r.ref : "the uncommitted changes";
   process.stdout.write("review of " + of + (r.note ? ": " + r.note : "") + (r.state ? " (" + r.state + ")" : "") + "\n");
   for (const t of r.threads || []) {
     const where = t.file ? t.file + ":" + t.line + (t.endLine > t.line ? "-" + t.endLine : "") + (t.side === "old" ? " (old)" : "") : "general";
@@ -171,6 +227,22 @@ function list(json) {
     }
   }
   for (const p of r.problems || []) process.stdout.write("\nproblem: " + p + "\n");
+}
+
+// checkStop refuses a stop of the reading order the tab couldn't take in,
+// saying which and why: refused there, nobody would see it.
+function checkStop(stop, i) {
+  const which = "stop " + (i + 1) + " ";
+  if (stop === null || typeof stop !== "object" || Array.isArray(stop)) fail(which + "isn't {\"file\": ..., \"line\": N, ...}");
+  if (typeof stop.file !== "string" || !stop.file) fail(which + "needs a \"file\"");
+  for (const name of ["line", "endLine"]) {
+    if (stop[name] !== undefined && !(Number.isInteger(stop[name]) && stop[name] >= 1)) {
+      fail(which + "has \"" + name + "\": " + JSON.stringify(stop[name]) + ", which isn't a line number (a whole number from 1)");
+    }
+  }
+  for (const name of ["label", "body"]) {
+    if (stop[name] !== undefined && typeof stop[name] !== "string") fail(which + "has a \"" + name + "\" that isn't text");
+  }
 }
 
 function main(argv) {
@@ -185,10 +257,10 @@ function main(argv) {
         try { upstream = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]).trim(); } catch (e) {
           fail("--unpushed needs the branch to have an upstream (git push -u, once): this one hasn't");
         }
-        drop({ op: "start", note: o.note, ref: upstream, unpushed: true });
+        startAndWait({ op: "start", note: o.note, ref: upstream, unpushed: true });
         return;
       }
-      drop({ op: "start", note: o.note, ref: o.ref, commit: o.commit });
+      startAndWait({ op: "start", note: o.note, ref: o.ref, commit: o.commit });
       return;
     }
     case "comment": {
@@ -215,6 +287,7 @@ function main(argv) {
       let stops;
       try { stops = JSON.parse(fs.readFileSync(0, "utf8")); } catch (e) { fail("order reads its stops as JSON on stdin: " + e.message); }
       if (!Array.isArray(stops)) fail("order reads a JSON list of stops on stdin");
+      stops.forEach(checkStop);
       drop({ op: "order", stops: stops });
       return;
     }

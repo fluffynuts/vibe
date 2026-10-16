@@ -70,6 +70,27 @@ func TestReadGit(t *testing.T) {
 	}
 }
 
+// The repository's config is the sandbox's to write: reading the header's
+// status mustn't run what it says.
+func TestReadingGitStatusDoesntRunTheRepositorysCommands(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	marker := filepath.Join(t.TempDir(), "ran")
+	if out, err := exec.Command("git", "-C", dir, "config", "core.fsmonitor", "touch '"+filepath.ToSlash(marker)+"'").CombinedOutput(); err != nil {
+		t.Fatalf("git config: %v %s", err, out)
+	}
+	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("x"), 0o644)
+	readGit(dir)
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("reading git status ran the repository's fsmonitor")
+	}
+}
+
 func TestStateSaysWhereTheWorkspaceIs(t *testing.T) {
 	home := homeDir()
 	s := New(Config{Sandbox: "vibe", Token: token, Port: testPort,

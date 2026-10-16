@@ -34,8 +34,10 @@ func TestARebuiltSandboxKeepsItsPagesPort(t *testing.T) {
 	}
 }
 
-// The Review tab's folder is on the host, mounted into the sandbox, where
-// vibe-review drops the agent's comments in its inbox.
+// The Review tab's folder is on the host. Only two folders of it are
+// mounted into the sandbox: the inbox, where vibe-review drops the agent's
+// comments, and, read-only, the view it reads the review from. The review
+// itself is the host's alone.
 func TestASandboxIsBuiltWithItsReviewFolderMounted(t *testing.T) {
 	lay := updateLayout(t)
 	inst := sandboxRecord(t, lay, "box", "p").inst
@@ -51,10 +53,16 @@ func TestASandboxIsBuiltWithItsReviewFolderMounted(t *testing.T) {
 		}
 	}
 	dir := state.ReviewPath(lay.Home, "box")
-	if !strings.Contains(create, " "+dir) || !strings.Contains(create, "-e VIBE_REVIEW_DIR="+dir) {
-		t.Errorf("sbx create wasn't given the review folder:\n%s", create)
+	inbox, view := filepath.Join(dir, "inbox"), filepath.Join(dir, "view")
+	if !strings.Contains(create, " "+inbox+" ") || !strings.Contains(create, " "+view+":ro") || !strings.Contains(create, "-e VIBE_REVIEW_DIR="+dir) || !strings.Contains(create, "-e VIBE_REVIEW_WORKSPACE="+inst.Target) {
+		t.Errorf("sbx create wasn't given the inbox, and the view read-only:\n%s", create)
 	}
-	if info, err := os.Stat(filepath.Join(dir, "inbox")); err != nil || !info.IsDir() {
-		t.Error("the review folder's inbox wasn't made")
+	if strings.Contains(create, " "+dir+" ") || strings.HasSuffix(create, " "+dir) {
+		t.Errorf("the whole review folder was mounted:\n%s", create)
+	}
+	for _, d := range []string{inbox, view} {
+		if info, err := os.Stat(d); err != nil || !info.IsDir() {
+			t.Errorf("%s wasn't made", d)
+		}
 	}
 }

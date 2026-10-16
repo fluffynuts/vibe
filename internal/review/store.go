@@ -3,6 +3,7 @@ package review
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -33,6 +34,13 @@ const (
 // maxProblems is how many problems with requests a review keeps to show.
 const maxProblems = 20
 
+// maxRequest is the most of a request in the inbox that's read: the
+// agent's command writes them small; anything larger isn't one.
+const maxRequest = 1 << 20
+
+// maxReview bounds reading review.json: far more than any review.
+const maxReview = 256 << 20
+
 // Review is a review of a diff: the agent's comments on it, the user's
 // replies, and the order to read it in.
 type Review struct {
@@ -47,6 +55,9 @@ type Review struct {
 	// Closed is why the review was closed (by the user, or by itself when
 	// there was nothing left to review); "" while it's open.
 	Closed string `json:"closed,omitempty"`
+	// Reopened says the user reopened the review: it's theirs to read, and
+	// doesn't close itself again (see CloseOver).
+	Reopened bool `json:"reopened,omitempty"`
 	// Note says what's being reviewed, as the agent put it.
 	Note string `json:"note,omitempty"`
 	// State is "" before a review is started, then InProgress, then Done.
@@ -147,13 +158,16 @@ type Request struct {
 var userOps = map[string]bool{"view": true, "unview": true, "start": true, "close": true, "reopen-review": true, "comment": true, "reply": true, "resolve": true, "dismiss": true, "reopen": true, "edit": true, "delete": true}
 
 // Store keeps a sandbox's review in dir (~/.vibe/reviews/<sandbox>): the
-// review in review.json, of which it's the only writer, and an inbox the
-// agent's command drops requests into, mounted into the sandbox.
+// review in review.json, of which it's the only writer, and a copy of it in
+// view/ for the agent's command to read; and an inbox that command drops
+// requests into. Only the inbox (read-write) and view/ (read-only) are
+// mounted into the sandbox: what's in them is the agent's to make, so
+// nothing there is read but plain files, nor written but afresh.
 type Store struct {
 	dir string
 	mu  sync.Mutex
 	now func() time.Time
-	// readFile reads a request from the inbox: os.ReadFile, which a test
+	// readFile reads a request from the inbox (readRequest), which a test
 	// stands in for, as no platform can be relied on for a file that can't
 	// be read (Windows has no such permission).
 	readFile func(string) ([]byte, error)
@@ -161,11 +175,41 @@ type Store struct {
 
 // NewStore is the store in dir.
 func NewStore(dir string) *Store {
-	return &Store{dir: dir, now: time.Now, readFile: os.ReadFile}
+	return &Store{dir: dir, now: time.Now, readFile: readRequest}
 }
 
 // Inbox is the folder the agent's requests are dropped in.
 func (s *Store) Inbox() string { return filepath.Join(s.dir, "inbox") }
+
+// View is the folder the review is copied to for the agent to read.
+func (s *Store) View() string { return filepath.Join(s.dir, "view") }
+
+func readRequest(path string) ([]byte, error) { return readPlain(path, maxRequest) }
+
+// readPlain reads the plain file at path, up to limit bytes: not a link
+// there, nor anything that isn't a file (a FIFO would wait forever).
+func readPlain(path string, limit int64) ([]byte, error) {
+	f, err := openNoFollow(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("it isn't a plain file")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("it's too large (over %d bytes)", limit)
+	}
+	return data, nil
+}
 
 func (s *Store) file() string { return filepath.Join(s.dir, "review.json") }
 
@@ -178,7 +222,7 @@ func (s *Store) Load() (Review, error) {
 
 func (s *Store) load() (Review, error) {
 	r := Review{Threads: []Thread{}}
-	data, err := os.ReadFile(s.file())
+	data, err := readPlain(s.file(), maxReview)
 	if os.IsNotExist(err) {
 		return r, nil
 	}
@@ -223,6 +267,9 @@ func (s *Store) Take() (Review, error) {
 	if err != nil {
 		return r, err
 	}
+	if err := s.viewed(r); err != nil {
+		return r, err
+	}
 	entries, err := os.ReadDir(s.Inbox())
 	if os.IsNotExist(err) {
 		return r, nil
@@ -232,6 +279,8 @@ func (s *Store) Take() (Review, error) {
 	}
 	names := []string{}
 	for _, e := range entries {
+		// Directories aside, anything named as a request is taken out,
+		// read or not: what isn't a plain file is said to be.
 		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
 			names = append(names, e.Name())
 		}
@@ -258,19 +307,27 @@ func (s *Store) Take() (Review, error) {
 	return r, s.save(r)
 }
 
-// Do carries out req, from author, and gives the review as it then is.
+// Refused is a request the review won't take (a reply to a thread that
+// isn't there, say): the asker's to put right, unlike the review failing to
+// be read or kept.
+type Refused struct{ error }
+
+func (r Refused) Unwrap() error { return r.error }
+
+// Do carries out req, from author, and gives the review as it then is. A
+// request that can't be carried out is Refused.
 func (s *Store) Do(req Request, author string) (Review, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if author == User && !userOps[req.Op] {
-		return Review{}, fmt.Errorf("%q is the agent's to do, not the page's", req.Op)
+		return Review{}, Refused{fmt.Errorf("%q is the agent's to do, not the page's", req.Op)}
 	}
 	r, err := s.load()
 	if err != nil {
 		return r, err
 	}
 	if err := s.apply(&r, req, author); err != nil {
-		return r, err
+		return r, Refused{err}
 	}
 	return r, s.save(r)
 }
@@ -286,6 +343,13 @@ func (s *Store) apply(r *Review, req Request, author string) error {
 	say := func(body string) Comment { return Comment{Author: author, Body: body, At: s.now()} }
 	switch req.Op {
 	case "start":
+		// What a review is of reaches git: nothing in its place may be taken
+		// for one of git's options.
+		for _, ref := range []string{req.Ref, req.Commit} {
+			if strings.HasPrefix(ref, "-") || strings.ContainsAny(ref, " \t\n\r\x00") {
+				return fmt.Errorf("%q isn't a branch or commit", ref)
+			}
+		}
 		if err := s.keep(*r); err != nil {
 			return err
 		}
@@ -317,7 +381,7 @@ func (s *Store) apply(r *Review, req Request, author string) error {
 			return fmt.Errorf("closing or reopening the review is the user's to do")
 		}
 		if req.Op == "reopen-review" {
-			r.Closed = ""
+			r.Closed, r.Reopened = "", true
 			break
 		}
 		r.Closed = req.Body
@@ -493,31 +557,98 @@ func (s *Store) keep(r Review) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, s.now().UTC().Format("20060102-150405.000000000")+".json"), data, 0o600)
+	f, err := os.OpenFile(filepath.Join(dir, s.now().UTC().Format("20060102-150405.000000000")+".json"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
-// save writes the review whole, through a temporary file, so a reader
-// never sees half of it.
+// save writes the review whole, and its copy in the view, each through a
+// new temporary file renamed over it, so a reader never sees half of it,
+// and nothing left in the store's way is written through.
 func (s *Store) save(r Review) error {
 	data, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+	if err := writeWhole(s.file(), data); err != nil {
 		return err
 	}
-	tmp := s.file() + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.file())
+	return writeWhole(filepath.Join(s.View(), "review.json"), data)
 }
 
-// Put makes r the review, as it was: to undo one started for nothing.
-func (s *Store) Put(r Review) error {
+// viewed copies the review to the view when it isn't there: one kept
+// before there was a view.
+func (s *Store) viewed(r Review) error {
+	if _, err := os.Lstat(filepath.Join(s.View(), "review.json")); !os.IsNotExist(err) {
+		return nil
+	}
+	return s.save(r)
+}
+
+// writeWhole makes path hold data, through a temporary file of its own
+// (created afresh, never one already there) renamed over it.
+func writeWhole(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	return nil
+}
+
+// PutBack makes last the review again, undoing the start of the one
+// started at started: unless that's no longer the review (another has been
+// started since), which is left as it is.
+func (s *Store) PutBack(last Review, started time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.save(r)
+	r, err := s.load()
+	if err != nil {
+		return err
+	}
+	if !r.Started.Equal(started) {
+		return nil
+	}
+	return s.save(last)
+}
+
+// CloseOver closes the review started at started, as over, saying why:
+// unless it's no longer the review (another was started while its diff was
+// worked out), it's closed already, or the user reopened it. It gives the
+// review as it then is, and whether it closed it.
+func (s *Store) CloseOver(started time.Time, why string) (Review, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, err := s.load()
+	if err != nil {
+		return r, false, err
+	}
+	if !r.Started.Equal(started) || r.Closed != "" || r.Reopened {
+		return r, false, nil
+	}
+	r.Closed = why
+	return r, true, s.save(r)
 }
 
 // Move is a comment (thread Thread) that has followed its code to Line.

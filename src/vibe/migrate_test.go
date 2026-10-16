@@ -263,3 +263,21 @@ func TestAMoveToAnotherDiskIsRefused(t *testing.T) {
 		t.Errorf("across disks: %v", err)
 	}
 }
+
+// What's asked says everything vibe keeps for the sandbox goes along.
+func TestAMigrationSaysItsReviewsGoAlong(t *testing.T) {
+	lay := updateLayout(t)
+	root := t.TempDir()
+	from, to := filepath.Join(root, "app"), filepath.Join(root, "moved-app")
+	writeFile(t, filepath.Join(from, "main.go"), "package main")
+	if err := state.Save(lay.Home, state.Instance{Name: "app", Profile: "p", Target: from}); err != nil {
+		t.Fatal(err)
+	}
+	migrateStandIns(t, false)
+	var asked []string
+	confirmMigration = func(_ bool, steps []string) bool { asked = steps; return false }
+	doMigrate(lay, cliargs.Args{}, "app", from, to)
+	if said := strings.Join(asked, "\n"); !strings.Contains(said, "reviews") {
+		t.Errorf("asked:\n%s", said)
+	}
+}
