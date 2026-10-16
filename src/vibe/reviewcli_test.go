@@ -82,7 +82,9 @@ func runVibeReview(t *testing.T, cwd string, env []string, stdin string, args ..
 
 func TestTheAgentsReviewReachesTheTab(t *testing.T) {
 	dir := reviewFolder(t)
-	host(t, dir, 0)
+	// The host's own store: one store per review folder, as vibe has, or
+	// two taking in at once would save over each other.
+	store := host(t, dir, 0)
 	steps := []struct {
 		stdin string
 		args  []string
@@ -99,7 +101,7 @@ func TestTheAgentsReviewReachesTheTab(t *testing.T) {
 			t.Fatalf("vibe-review %v: exit %d\n%s", s.args, code, out)
 		}
 	}
-	r, err := review.NewStore(dir).Take()
+	r, err := store.Take()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,11 +254,10 @@ func TestTheAgentReviewsUnpushedCommitsAsTheTabDoes(t *testing.T) {
 	os.WriteFile(filepath.Join(work, "new.txt"), []byte("not committed\n"), 0o644)
 
 	dir := reviewFolder(t)
-	host(t, dir, 0)
+	store := host(t, dir, 0)
 	if out, code := vibeReviewIn(t, work, dir, "", "start", "--unpushed"); code != 0 {
 		t.Fatalf("start --unpushed: exit %d\n%s", code, out)
 	}
-	store := review.NewStore(dir)
 	r, err := store.Take()
 	if err != nil {
 		t.Fatal(err)
