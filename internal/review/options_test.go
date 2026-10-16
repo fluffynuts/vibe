@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -90,5 +91,20 @@ func TestTheUnpushedDiffIsTheCommitsAlone(t *testing.T) {
 	}
 	if got := summary(files); got != "modified a.txt" {
 		t.Errorf("files: %s", got)
+	}
+}
+
+// As on a Windows runner: git, by the system's core.autocrlf, checks the
+// clone out with CRLFs. Clean, it has nothing uncommitted.
+func TestACleanCRLFCheckoutHasNothingUncommitted(t *testing.T) {
+	system := filepath.Join(t.TempDir(), "gitconfig")
+	os.WriteFile(system, []byte("[core]\n\tautocrlf = true\n"), 0o644)
+	t.Setenv("GIT_CONFIG_SYSTEM", system)
+	dir := cloned(t)
+	if data, _ := os.ReadFile(filepath.Join(dir, "a.txt")); string(data) != "one\r\n" {
+		t.Fatalf("git didn't check out CRLFs: %q", data)
+	}
+	if o := options(t, dir); o != (StartOptions{}) {
+		t.Errorf("a clean clone, on main: %+v", o)
 	}
 }

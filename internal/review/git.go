@@ -15,6 +15,7 @@ import (
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/format/index"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
@@ -454,7 +455,11 @@ func StatusOf(ctx context.Context, dir string) (*FolderStatus, error) {
 			s.Branch = "@" + head.Hash.String()[:7]
 		}
 	}
-	for _, f := range status {
+	idx, err := r.git.Storer.Index()
+	if err != nil {
+		return nil, err
+	}
+	for path, f := range status {
 		switch {
 		case f.Worktree == gogit.Untracked:
 			s.Untracked++
@@ -466,7 +471,7 @@ func StatusOf(ctx context.Context, dir string) (*FolderStatus, error) {
 		if f.Staging != gogit.Unmodified {
 			s.Staged++
 		}
-		if f.Worktree != gogit.Unmodified {
+		if f.Worktree != gogit.Unmodified && r.changedOnDisk(path, idx) {
 			s.Modified++
 		}
 	}
@@ -475,6 +480,32 @@ func StatusOf(ctx context.Context, dir string) (*FolderStatus, error) {
 	}
 	s.Stashed = r.stashes()
 	return s, nil
+}
+
+// changedOnDisk says file p differs from the index as git sees it: go-git
+// compares the bytes, and a checkout's CRLFs (or a Git LFS file's content)
+// are no change to git.
+func (r *repository) changedOnDisk(p string, idx *index.Index) bool {
+	e, err := idx.Entry(p)
+	if err != nil {
+		return true
+	}
+	root, err := os.OpenRoot(r.top)
+	if err != nil {
+		return true
+	}
+	defer root.Close()
+	info, err := root.Lstat(filepath.FromSlash(p))
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxFileBytes {
+		return true
+	}
+	data, err := readIn(root, filepath.FromSlash(p), maxFileBytes)
+	if err != nil {
+		return true
+	}
+	was := &object.TreeEntry{Name: p, Mode: e.Mode, Hash: e.Hash}
+	data = r.asCommitted(newOverlay(r.git.Storer), p, was, data)
+	return plumbing.ComputeHash(plumbing.BlobObject, data) != e.Hash
 }
 
 // stashes is how many stashes there are: the lines of the stash's log.

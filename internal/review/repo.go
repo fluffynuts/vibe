@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
@@ -22,6 +23,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/cache"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
+	formatcfg "github.com/go-git/go-git/v5/plumbing/format/config"
+	"github.com/go-git/go-git/v5/plumbing/format/gitattributes"
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/storer"
@@ -48,6 +51,8 @@ type repository struct {
 	autocrlf bool
 	// gitDirs are its git directory, and the one it shares, if any.
 	gitDirs []string
+	// attributes are its .gitattributes, read when first needed.
+	attributes gitattributes.Matcher
 }
 
 // errNotRepository is a folder in no repository.
@@ -151,7 +156,7 @@ func inFolderTree(path, folder string) bool {
 // setting is a git setting, as the repository's config, else the user's,
 // else the system's, says.
 func (r *repository) setting(section, key string) string {
-	for _, scope := range []config.Scope{config.LocalScope, config.GlobalScope, config.SystemScope} {
+	for _, scope := range []config.Scope{config.LocalScope, config.GlobalScope} {
 		cfg, err := r.git.ConfigScoped(scope)
 		if err != nil {
 			continue
@@ -160,7 +165,46 @@ func (r *repository) setting(section, key string) string {
 			return strings.ToLower(v)
 		}
 	}
+	for _, file := range systemConfigs() {
+		data, err := readPlain(file, 1<<20)
+		if err != nil {
+			continue
+		}
+		cfg := formatcfg.New()
+		if err := formatcfg.NewDecoder(bytes.NewReader(data)).Decode(cfg); err != nil {
+			continue
+		}
+		if v := cfg.Section(section).Option(key); v != "" {
+			return strings.ToLower(v)
+		}
+	}
 	return ""
+}
+
+// systemConfigs are where git keeps its system config, as git finds it:
+// $GIT_CONFIG_SYSTEM, else beside git itself (Git for Windows keeps it in
+// its own etc/, as Homebrew's git does), else /etc/gitconfig. go-git looks
+// in /etc alone, so on Windows it would miss core.autocrlf, which Git for
+// Windows sets there.
+func systemConfigs() []string {
+	if os.Getenv("GIT_CONFIG_NOSYSTEM") != "" {
+		return nil
+	}
+	if file := os.Getenv("GIT_CONFIG_SYSTEM"); file != "" {
+		return []string{file}
+	}
+	var out []string
+	if git, err := exec.LookPath("git"); err == nil {
+		if real, err := filepath.EvalSymlinks(git); err == nil {
+			git = real
+		}
+		bin := filepath.Dir(git)
+		out = append(out, filepath.Join(bin, "..", "etc", "gitconfig"), filepath.Join(bin, "..", "..", "etc", "gitconfig"))
+	}
+	if data := os.Getenv("ProgramData"); data != "" {
+		out = append(out, filepath.Join(data, "Git", "config"))
+	}
+	return append(out, "/etc/gitconfig")
 }
 
 // commit is the commit ref names: a branch, a tag, a hash, HEAD~2.
@@ -456,7 +500,7 @@ func (r *repository) onDisk(o *overlay, root *os.Root, base *object.Tree, p stri
 		if was != nil && os.PathSeparator == '\\' && was.Mode == filemode.Executable {
 			mode = filemode.Executable
 		}
-		data = r.asCommitted(o, was, data)
+		data = r.asCommitted(o, p, was, data)
 	default:
 		return edit{}, false, nil
 	}
@@ -471,7 +515,7 @@ func (r *repository) onDisk(o *overlay, root *os.Root, base *object.Tree, p stri
 // anything: CRLFs as LFs with core.autocrlf; and a file kept in Git LFS
 // (its committed blob a pointer) as the pointer to its content, as git-lfs
 // would make it.
-func (r *repository) asCommitted(o *overlay, was *object.TreeEntry, data []byte) []byte {
+func (r *repository) asCommitted(o *overlay, p string, was *object.TreeEntry, data []byte) []byte {
 	if was != nil && !isPointer(data) {
 		if old, err := o.EncodedObject(plumbing.BlobObject, was.Hash); err == nil && old.Size() < 1024 {
 			if rd, err := old.Reader(); err == nil {
@@ -484,10 +528,31 @@ func (r *repository) asCommitted(o *overlay, was *object.TreeEntry, data []byte)
 			}
 		}
 	}
-	if r.autocrlf && !isBinary(data) {
+	if r.lfInRepository(p, data) {
 		return bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
 	}
 	return data
+}
+
+// lfInRepository says file p's line ends are LFs in the repository, CRLFs
+// made into LFs as git would commit it: by .gitattributes (text, eol; not
+// -text, binary), else by core.autocrlf, for what isn't binary.
+func (r *repository) lfInRepository(p string, data []byte) bool {
+	if r.attributes == nil {
+		patterns, _ := gitattributes.ReadPatterns(osfs.New(r.top, osfs.WithBoundOS()), nil)
+		r.attributes = gitattributes.NewMatcher(patterns)
+	}
+	attrs, _ := r.attributes.Match(strings.Split(p, "/"), []string{"text", "eol", "binary"})
+	text, eol, binary := attrs["text"], attrs["eol"], attrs["binary"]
+	switch {
+	case binary != nil && binary.IsSet(), text != nil && text.IsUnset():
+		return false
+	case text != nil && text.IsSet(), eol != nil && eol.IsValueSet():
+		return true
+	case text != nil && text.IsValueSet() && text.Value() == "auto":
+		return !isBinary(data)
+	}
+	return r.autocrlf && !isBinary(data)
 }
 
 func isPointer(data []byte) bool {

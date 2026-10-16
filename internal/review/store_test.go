@@ -528,4 +528,3 @@ func TestClosingAsOverLeavesAReviewStartedSince(t *testing.T) {
 		t.Errorf("the review looked at wasn't closed: %v %+v", err, r)
 	}
 }
-

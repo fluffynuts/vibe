@@ -450,3 +450,47 @@ func TestObjectsBorrowedFromElsewhereAreRefused(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// Line endings as git sees them: a checkout whose CRLFs git made (by the
+// system's core.autocrlf, as Git for Windows sets; or .gitattributes'
+// text and eol) is clean, in the diff, the start options and the status.
+func TestTheSystemsAutocrlfIsHeeded(t *testing.T) {
+	dir := repo(t, map[string]string{"a.txt": "one\ntwo\n"})
+	system := filepath.Join(t.TempDir(), "gitconfig")
+	os.WriteFile(system, []byte("[core]\n\tautocrlf = true\n"), 0o644)
+	t.Setenv("GIT_CONFIG_SYSTEM", system)
+	write(t, dir, "a.txt", "one\r\ntwo\r\n")
+	cleanAsGitSeesIt(t, dir)
+}
+
+func TestTextAttributesMakeCRLFsLFs(t *testing.T) {
+	dir := repo(t, map[string]string{".gitattributes": "* text=auto\n", "a.txt": "one\ntwo\n"})
+	write(t, dir, "a.txt", "one\r\ntwo\r\n")
+	cleanAsGitSeesIt(t, dir)
+}
+
+func TestNotTextLeavesCRLFsAsTheyAre(t *testing.T) {
+	dir := repo(t, map[string]string{".gitattributes": "*.txt -text\n", "a.txt": "one\ntwo\n"})
+	git(t, dir, "config", "core.autocrlf", "true")
+	write(t, dir, "a.txt", "one\r\ntwo\r\n")
+	if files, _ := WorkingTree(context.Background(), dir); summary(files) != "modified a.txt" {
+		t.Errorf("files = %s", summary(files))
+	}
+}
+
+func cleanAsGitSeesIt(t *testing.T, dir string) {
+	t.Helper()
+	files, err := WorkingTree(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 0 {
+		t.Errorf("diff: %s", summary(files))
+	}
+	if o, _ := Options(context.Background(), dir); o.Uncommitted {
+		t.Error("the start options see uncommitted changes")
+	}
+	if s, _ := StatusOf(context.Background(), dir); s == nil || s.Modified != 0 {
+		t.Errorf("status = %+v", s)
+	}
+}
