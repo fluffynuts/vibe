@@ -155,7 +155,7 @@ func openRepo(dir string) (*repository, error) {
 			r.close()
 			return refuse("borrows objects from other repositories (objects/info/alternates)")
 		}
-		alternates = osfs.New("/")
+		alternates = hostFS{osfs.New("/")}
 	}
 	st := filesystem.NewStorageWithOptions(dot, cache.NewObjectLRUDefault(), filesystem.Options{LargeObjectThreshold: maxFileBytes, AlternatesFS: alternates})
 	if r.git, err = gogit.Open(st, nil); err != nil {
@@ -176,6 +176,21 @@ func openRepo(dir string) (*repository, error) {
 	r.autocrlf = crlf == "true" || crlf == "input"
 	r.fileMode = r.setting("core", "filemode") != "false"
 	return r, nil
+}
+
+// hostFS reads the host's own folders by absolute path, as the host's
+// repository names them for objects it borrows (objects/info/alternates):
+// go-git makes such a path relative to its file system's root, which can't
+// be done for a Windows path (C:\...) from "/".
+type hostFS struct{ billy.Filesystem }
+
+func (h hostFS) Stat(name string) (os.FileInfo, error) { return os.Stat(name) }
+
+func (h hostFS) Chroot(name string) (billy.Filesystem, error) {
+	if !filepath.IsAbs(name) {
+		return h.Filesystem.Chroot(name)
+	}
+	return osfs.New(name), nil
 }
 
 // openChecked opens the folder at path, which must be a folder (not a link

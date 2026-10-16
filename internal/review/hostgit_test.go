@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/go-git/go-billy/v5/osfs"
 	"time"
 )
 
@@ -656,5 +658,23 @@ func TestTheWalkAheadAndBehindIsBounded(t *testing.T) {
 	defer func() { maxWalk = was }()
 	if ahead, _ := aheadBehind(head, up); ahead > 12 {
 		t.Errorf("walked on past the bound: ahead %d", ahead)
+	}
+}
+
+// A borrowed object folder named by its absolute path is read there,
+// whatever the platform's paths look like.
+func TestTheHostsFileSystemTakesAbsolutePathsAsTheyAre(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "objects"), 0o755)
+	h := hostFS{osfs.New("/")}
+	if info, err := h.Stat(filepath.Join(dir, "objects")); err != nil || !info.IsDir() {
+		t.Fatalf("stat: %v, %v", info, err)
+	}
+	sub, err := h.Chroot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sub.Stat("objects"); err != nil {
+		t.Errorf("in the chroot: %v", err)
 	}
 }
