@@ -218,14 +218,26 @@ ul.plain li .spacer { flex: 1; }
 .review-file > header { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--row-hover); }
 .review-file > header code { font-weight: 600; }
 .review-stop { color: var(--accent); }
-.review-lines { width: 100%; border-collapse: collapse; font: 12px/1.45 var(--mono); }
-.review-lines td { padding: 0 8px; vertical-align: top; }
-.review-lines td.num { width: 1%; min-width: 3em; text-align: right; color: var(--muted); user-select: none; }
-.review-lines td.code { white-space: pre-wrap; word-break: break-word; }
-.review-lines tr.add td.code { background: color-mix(in srgb, var(--ok) 14%, transparent); }
-.review-lines tr.del td.code { background: color-mix(in srgb, var(--bad) 14%, transparent); }
-.review-lines tr.hunk td { color: var(--muted); background: var(--row-hover); padding: 2px 8px; }
-.review-lines tr.marked td.num { box-shadow: inset 3px 0 0 var(--accent); }
+.review-lines { width: 100%; table-layout: fixed; border-collapse: collapse; font: 12px/20px var(--mono); }
+.review-lines col.num { width: 4.5em; }
+.review-lines col.sign { width: 1.5em; }
+.review-lines td { padding: 0 8px; border: 0; vertical-align: top; }
+.review-lines td.num { text-align: right; color: var(--muted); user-select: none; }
+.review-lines td.sign { padding: 0; text-align: center; color: var(--muted); user-select: none; }
+.review-lines td.code { padding-left: 2px; white-space: pre-wrap; word-break: break-word; }
+/* As GitHub shows them: the line's number a stronger shade of its colour. */
+.review-lines td.code.add, .review-lines td.sign.add { background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.review-lines td.num.add { background: color-mix(in srgb, var(--ok) 30%, transparent); color: var(--text); }
+.review-lines td.code.del, .review-lines td.sign.del { background: color-mix(in srgb, var(--bad) 14%, transparent); }
+.review-lines td.num.del { background: color-mix(in srgb, var(--bad) 30%, transparent); color: var(--text); }
+.review-lines td.blank { background: repeating-linear-gradient(-45deg, var(--row-hover) 0 6px, transparent 6px 12px); }
+.review-lines.split td.start { border-left: 1px solid var(--line); }
+.review-lines tr.hunk td { color: var(--muted); background: color-mix(in srgb, var(--accent) 10%, transparent); padding: 4px 10px; }
+/* A gap's buttons, stacked in the line-number column, as GitHub has them. */
+.review-lines td.gap-buttons { padding: 0; text-align: center; vertical-align: middle; background: color-mix(in srgb, var(--accent) 25%, transparent); }
+.review-lines button.gap-open { display: block; width: 100%; margin: 0; padding: 1px 0; border: 0; border-radius: 0; background: transparent; color: var(--text); font: 12px/16px var(--mono); cursor: pointer; }
+.review-lines button.gap-open:hover { background: var(--accent); color: var(--accent-text); }
+.review-lines tr.marked td.num:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .review-lines tr.threads > td { padding: 6px 10px; font: inherit; font-family: inherit; }
 .review-thread { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 4px 0; background: var(--bg); font: 14px/1.45 system-ui, sans-serif; white-space: normal; }
 .review-thread.resolved, .review-thread.dismissed { opacity: .7; }
@@ -233,7 +245,30 @@ ul.plain li .spacer { flex: 1; }
 .review-thread .comment + .comment { border-top: 1px dashed var(--line); margin-top: 6px; padding-top: 6px; }
 .review-thread textarea { width: 100%; min-height: 3em; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; margin-top: 6px; }
 .review-thread .bar { margin-top: 6px; }
-.review-order li { margin: 2px 0; }
+/* The file tree beside the diff: a quarter of the width to start with,
+   draggable, and staying in view as the diff scrolls. */
+.review-body { display: grid; grid-template-columns: var(--review-tree-width, 25%) 6px minmax(0, 1fr); align-items: start; }
+.review-tree-pane { position: sticky; top: 0; max-height: 100vh; overflow: auto; padding: 8px 8px 8px 4px; }
+.review-splitter { align-self: stretch; cursor: col-resize; background: var(--line); width: 2px; margin: 0 2px; }
+.review-splitter:hover, .review-splitter:focus-visible, .review-splitter.dragging { background: var(--accent); width: 4px; margin: 0 1px; outline: none; }
+.review-main { min-width: 0; padding-left: 8px; }
+.review-filter { width: 100%; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+.review-tree-count { margin: 4px 2px; font-size: 12px; }
+.review-tree { font-size: 13px; }
+.review-tree button { display: flex; align-items: center; gap: 6px; width: 100%; padding: 2px 4px; border: 0; border-radius: 4px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; white-space: nowrap; }
+.review-tree button:hover { background: var(--row-hover); }
+.review-tree .twisty { width: 1em; color: var(--muted); flex: none; }
+.review-tree .mark { width: 1em; flex: none; text-align: center; font-weight: 600; }
+.review-tree .mark.added { color: var(--ok); }
+.review-tree .mark.deleted { color: var(--bad); }
+.review-tree .mark.modified { color: var(--amber); }
+.review-tree .mark.renamed { color: var(--accent); }
+.review-tree .name { overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 800px) {
+  .review-body { grid-template-columns: minmax(0, 1fr); }
+  .review-tree-pane { position: static; max-height: 40vh; }
+  .review-splitter { display: none; }
+}
 .review-outdated { color: var(--amber); }
 .review-problems { margin: 6px 0; padding-left: 1.2em; }
 .mgr-filter { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; min-width: 16em; }

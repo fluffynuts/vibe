@@ -60,6 +60,24 @@ func diffOf(ctx context.Context, dir string, rv review.Review) ([]review.File, e
 	return review.WorkingTree(ctx, dir)
 }
 
+// reviewFile is a file's lines, for the tab to show more of its context
+// than the diff has.
+func (s *Server) reviewFile(w http.ResponseWriter, r *http.Request) {
+	rv, err := s.cfg.ReviewTab.Store.Load()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), diffWithin)
+	defer cancel()
+	lines, err := review.FileLines(ctx, s.cfg.ReviewTab.Workspace, rv, r.URL.Query().Get("path"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"lines": lines})
+}
+
 // reviewDo is the user replying to, resolving, dismissing or reopening a
 // thread.
 func (s *Server) reviewDo(w http.ResponseWriter, r *http.Request) {

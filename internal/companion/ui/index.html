@@ -122,14 +122,26 @@
         <span id="review-of" class="muted"></span>
         <span class="spacer"></span>
         <span id="review-count" class="muted"></span>
+        <button type="button" id="review-layout" class="ghost"></button>
         <button type="button" id="review-refresh" class="ghost" title="Work out the diff afresh">Refresh</button>
       </div>
       <p id="review-error" class="note bad-text" hidden></p>
       <ul id="review-problems" class="note bad-text review-problems" hidden></ul>
       <p id="review-wait" class="note muted">Working out the diff…</p>
-      <div id="review-general"></div>
-      <ol id="review-order" class="review-order" hidden></ol>
-      <div id="review-files"></div>
+      <div class="review-body" id="review-body">
+        <aside class="review-tree-pane" aria-label="Changed files">
+          <input type="search" id="review-filter" class="review-filter" aria-label="Filter the changed files"
+            title="Shows the files whose path has every word typed, in any order. Press / to get here." placeholder="Filter files (/)…">
+          <p id="review-tree-count" class="muted review-tree-count"></p>
+          <div id="review-tree" class="review-tree" role="tree" aria-label="Changed files"></div>
+        </aside>
+        <div id="review-splitter" class="review-splitter" role="separator" aria-orientation="vertical" tabindex="0"
+          aria-label="Resize the file tree" title="Drag to resize the file tree (or use ← and →)"></div>
+        <div class="review-main">
+          <div id="review-general"></div>
+          <div id="review-files"></div>
+        </div>
+      </div>
     </section>
 
     <section id="panel-admin" class="panel panel-admin" hidden>

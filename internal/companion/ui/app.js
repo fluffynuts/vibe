@@ -72,10 +72,13 @@
 
   // The token rides in the URL's fragment, which the browser never sends
   // anywhere. Kept in localStorage too (per origin, so per sandbox), so a
-  // tab opened without it still works.
+  // tab opened without it still works. Only a fragment shaped like a token
+  // (as vibe makes them) is taken for one: anything else there, from an
+  // in-page link say, would otherwise replace the token kept, and the page
+  // would have none.
   const token = (function () {
     const fromUrl = location.hash.slice(1)
-    if (fromUrl) { store.set('vibe-companion-token', fromUrl); return fromUrl }
+    if (/^[0-9a-f]{64}$/.test(fromUrl)) { store.set('vibe-companion-token', fromUrl); return fromUrl }
     return store.get('vibe-companion-token') || ''
   })()
 
@@ -817,7 +820,164 @@
   // is first shown and on Refresh; polls fetch the review alone (git on a
   // large repository every couple of seconds would be costly). drafts are
   // replies being typed, by thread, kept across redraws.
-  const reviewView = { review: null, files: null, diffError: '', key: '', drafts: new Map(), loading: false }
+  // layout is 'split' (side by side, the default) or 'unified' (one column,
+  // for a narrow window), kept for this browser.
+  const REVIEW_LAYOUT = 'vibe-review-layout'
+  // The file filter is kept for this browser tab, as the Profiles tab's is.
+  const REVIEW_FILTER = 'vibe-review-filter'
+  // fileLines are files' lines, fetched the first time one of their gaps
+  // is opened (and again after Refresh); opened is how far each gap has
+  // been opened, by file, then gap: { down, up }.
+  const reviewView = { review: null, files: null, diffError: '', key: '', drafts: new Map(), loading: false,
+    layout: store.get(REVIEW_LAYOUT) === 'unified' ? 'unified' : 'split', fileLines: new Map(), opened: new Map(),
+    filter: sessionGet(REVIEW_FILTER), collapsed: new Set() }
+
+  // drawTree draws the file tree from the files the filter keeps, and keeps
+  // the diff to the same files. A folder the user closed stays closed,
+  // unless the filter is in use: then every folder with a match is open.
+  function drawTree() {
+    const files = reviewView.files || []
+    const query = reviewView.filter
+    const filtering = !!query.trim()
+    const shown = files.filter((f) => R.matchesFilter(f.path, query))
+    const index = new Map(files.map((f, i) => [f.path, i]))
+    const byPath = new Map(files.map((f) => [f.path, f]))
+    $('review-tree-count').textContent = !files.length ? ''
+      : filtering ? shown.length + ' of ' + files.length + ' files' : files.length + (files.length === 1 ? ' file' : ' files')
+    const rows = []
+    // Indented through element.style: the page's policy (style-src 'self')
+    // drops a style attribute.
+    const indented = (row, depth) => { row.style.paddingLeft = (4 + depth * 14) + 'px'; return row }
+    const walk = (node, depth) => {
+      for (const d of node.dirs) {
+        const open = filtering || !reviewView.collapsed.has(d.path)
+        rows.push(indented(el('button', { type: 'button', role: 'treeitem', 'aria-expanded': String(open), title: d.path,
+          onclick: () => {
+            if (filtering) return
+            if (open) reviewView.collapsed.add(d.path)
+            else reviewView.collapsed.delete(d.path)
+            drawTree()
+          } },
+        el('span', { class: 'twisty', text: open ? '▾' : '▸' }), el('span', { class: 'name', text: d.name + '/' })), depth))
+        if (open) walk(d, depth + 1)
+      }
+      for (const f of node.files) {
+        const file = byPath.get(f.path)
+        rows.push(indented(el('button', { type: 'button', role: 'treeitem', title: f.path + ' (' + file.status + ')',
+          onclick: () => scrollToFile(index.get(f.path)) },
+        el('span', { class: 'twisty' }), el('span', { class: 'mark ' + file.status, text: TREE_MARKS[file.status] || '●' }),
+        el('span', { class: 'name', text: f.name })), depth))
+      }
+    }
+    walk(R.fileTree(shown.map((f) => f.path)), 0)
+    if (filtering && !shown.length) rows.push(el('p', { class: 'muted', text: 'No file matches.' }))
+    $('review-tree').replaceChildren(...rows)
+    files.forEach((f, i) => {
+      const card = $('review-file-' + i)
+      if (card) card.hidden = !R.matchesFilter(f.path, query)
+    })
+  }
+
+  // What each file's mark in the tree says about it.
+  const TREE_MARKS = { added: '+', modified: '●', deleted: '−', renamed: '→' }
+
+  // scrollToFile scrolls to a file's diff: never a link to it, as the URL's
+  // fragment is the page's token.
+  function scrollToFile(index) {
+    const card = $('review-file-' + index)
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  // The tree's width, kept for this browser: dragged, or nudged with the
+  // arrow keys on the line between it and the diff.
+  const REVIEW_TREE_WIDTH = 'vibe-review-tree-width'
+
+  function setTreeWidth(px) {
+    const body = $('review-body')
+    const max = Math.max(200, body.clientWidth * 0.6)
+    const width = Math.round(Math.min(max, Math.max(140, px)))
+    body.style.setProperty('--review-tree-width', width + 'px')
+    return width
+  }
+
+  function setUpReviewTree() {
+    const saved = Number(store.get(REVIEW_TREE_WIDTH))
+    if (saved > 0) $('review-body').style.setProperty('--review-tree-width', saved + 'px')
+    const splitter = $('review-splitter')
+    splitter.addEventListener('pointerdown', (ev) => {
+      ev.preventDefault()
+      splitter.setPointerCapture(ev.pointerId)
+      splitter.classList.add('dragging')
+      const left = $('review-body').getBoundingClientRect().left
+      const move = (e) => setTreeWidth(e.clientX - left)
+      const up = (e) => {
+        splitter.classList.remove('dragging')
+        splitter.removeEventListener('pointermove', move)
+        splitter.removeEventListener('pointerup', up)
+        store.set(REVIEW_TREE_WIDTH, String(setTreeWidth(e.clientX - left)))
+      }
+      splitter.addEventListener('pointermove', move)
+      splitter.addEventListener('pointerup', up)
+    })
+    splitter.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return
+      ev.preventDefault()
+      const now = splitter.previousElementSibling.getBoundingClientRect().width
+      store.set(REVIEW_TREE_WIDTH, String(setTreeWidth(now + (ev.key === 'ArrowLeft' ? -20 : 20))))
+    })
+    const filter = $('review-filter')
+    filter.value = reviewView.filter
+    filter.addEventListener('input', () => {
+      reviewView.filter = filter.value
+      sessionSet(REVIEW_FILTER, filter.value)
+      drawTree()
+    })
+    filter.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' && filter.value) {
+        ev.preventDefault()
+        filter.value = ''
+        filter.dispatchEvent(new Event('input'))
+      }
+    })
+    // / finds, as on the Profiles tab.
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key !== '/' || ev.ctrlKey || ev.metaKey || ev.altKey || $('panel-review').hidden || typingInto(document.activeElement)) return
+      ev.preventDefault()
+      filter.focus()
+      filter.select()
+    })
+  }
+
+  // openGap opens a file's gap by direction ('down', 'up' or 'all'),
+  // fetching the file's lines first if they aren't to hand.
+  async function openGap(path, index, direction) {
+    if (!reviewView.fileLines.has(path)) {
+      try {
+        const res = await api('/api/review/file?path=' + encodeURIComponent(path))
+        reached(true)
+        if (!res.ok) { toast((res.body && res.body.error) || "The file couldn't be read.", true); return }
+        reviewView.fileLines.set(path, res.body.lines || [])
+      } catch (e) {
+        reached(false)
+        toast('Could not reach vibe.', true)
+        return
+      }
+    }
+    const byGap = reviewView.opened.get(path) || {}
+    const g = byGap[index] || { down: 0, up: 0 }
+    if (direction === 'down') g.down += R.GAP_STEP
+    else if (direction === 'up') g.up += R.GAP_STEP
+    else g.down = Number.MAX_SAFE_INTEGER
+    byGap[index] = g
+    reviewView.opened.set(path, byGap)
+    reviewView.key = ''
+    drawReview()
+  }
+
+  function showReviewLayout() {
+    $('review-layout').textContent = reviewView.layout === 'split' ? 'One column' : 'Side by side'
+    $('review-layout').title = reviewView.layout === 'split' ? 'Show each file as one column, old and new lines in turn' : 'Show the old and new lines side by side'
+  }
   const R = window.vibeReview
   // A file this long is shown folded until asked for: a big generated file
   // shouldn't bury the rest.
@@ -879,15 +1039,13 @@
     $('review-general').replaceChildren(...cards(placed.general),
       ...(placed.elsewhere.length ? [el('p', { class: 'muted', text: 'On files not in this diff:' }), ...cards(placed.elsewhere)] : []))
 
+    // The files in the reading order (each stop's label on its file); the
+    // tree is how to get to one.
     const ordered = R.inReadingOrder(files, rv.order)
-    const stops = ordered.filter((o) => o.stop)
-    $('review-order').hidden = !stops.length
-    $('review-order').replaceChildren(...stops.map((o) => el('li', {},
-      el('a', { href: '#review-file-' + files.indexOf(o.file), text: o.file.path }),
-      o.stop.label ? ' — ' + o.stop.label : '')))
 
     $('review-files').replaceChildren(...(files.length || reviewView.files === null ? [] : [el('p', { class: 'muted', text: 'Nothing to review: no changes.' })]),
       ...ordered.map((o) => fileCard(o.file, o.stop, files.indexOf(o.file), placed, threads)))
+    drawTree()
   }
 
   function fileCard(f, stop, index, placed, threads) {
@@ -905,21 +1063,87 @@
     if (f.binary) { card.append(el('p', { class: 'note muted', text: 'A binary file: no lines to show.' })); return card }
     if (f.tooLarge) { card.append(el('p', { class: 'note muted', text: 'Too large to show.' })); return card }
     const table = el('table', { class: 'review-lines' })
+    // Fixed column widths, set by a colgroup: a fixed table takes its
+    // widths from its first row otherwise, which is a hunk header spanning
+    // them all, so every column came out the same width.
+    const split = reviewView.layout === 'split'
+    const cols = split ? ['num', 'sign', 'code', 'num', 'sign', 'code'] : ['num', 'num', 'sign', 'code']
+    if (split) table.classList.add('split')
+    const columns = String(cols.length)
+    const threadRow = (ids) => el('tr', { class: 'threads' }, el('td', { colspan: columns }, ...ids.map((id) => threadCard(threads.get(id)))))
+    const signOf = (kind) => kind === 'add' ? '+' : kind === 'del' ? '-' : ''
+    // The lines the diff leaves out can be opened, as on GitHub, for a file
+    // that's in it on both sides: an added or deleted one is shown whole.
+    const expandable = f.status === 'modified' || f.status === 'renamed'
+    const lines = reviewView.fileLines.get(f.path)
+    const fileGaps = expandable ? R.gaps(f.hunks || [], lines ? lines.length : null) : []
+    const opened = reviewView.opened.get(f.path) || {}
+    // contextRow is unchanged line n of the new file (old number n - offset),
+    // opened from a gap.
+    const contextRow = (n, offset) => {
+      const text = lines && n <= lines.length ? lines[n - 1] : ''
+      const half = (number) => [el('td', { class: 'num context', text: String(number) }), el('td', { class: 'sign' }), el('td', { class: 'code context', text })]
+      return split
+        ? el('tr', {}, ...half(n - offset), ...half(n).map((td, i) => { if (i === 0) td.classList.add('start'); return td }))
+        : el('tr', {}, el('td', { class: 'num context', text: String(n - offset) }), el('td', { class: 'num context', text: String(n) }),
+          el('td', { class: 'sign' }), el('td', { class: 'code context', text }))
+    }
+    const GAP_BUTTONS = {
+      down: { text: '↓', title: 'Show ' + R.GAP_STEP + ' more lines, carrying on from the lines above' },
+      up: { text: '↑', title: 'Show ' + R.GAP_STEP + ' more lines, leading into the lines below' },
+      all: { text: '↕', title: 'Show the hidden lines' },
+    }
+    // gapRows are a gap's rows: what's been opened at its top, its header
+    // (with the hunk's own, header) while anything's still hidden, and what's
+    // been opened at its foot.
+    const gapRows = (g, end, header) => {
+      if (!expandable) return header === null ? [] : [el('tr', { class: 'hunk' }, el('td', { colspan: columns, text: header }))]
+      const v = R.gapView(g, opened[g.index] || { down: 0, up: 0 }, end)
+      const rows = v.down.filter((n) => !lines || n <= lines.length).map((n) => contextRow(n, g.offset))
+      if (v.hidden !== 0 && !(end === 'last' && lines && v.hidden === null)) {
+        const buttons = v.buttons.map((b) => el('button', { type: 'button', class: 'gap-open', text: GAP_BUTTONS[b].text,
+          title: GAP_BUTTONS[b].title + (v.hidden ? ' (' + v.hidden + ' hidden)' : ''), 'aria-label': GAP_BUTTONS[b].title,
+          onclick: () => openGap(f.path, g.index, b) }))
+        rows.push(el('tr', { class: 'hunk' }, el('td', { class: 'gap-buttons' }, ...buttons),
+          el('td', { colspan: String(cols.length - 1), text: header || '' })))
+      }
+      rows.push(...v.up.map((n) => contextRow(n, g.offset)))
+      return rows
+    }
     const fill = () => {
       const rows = []
       ;(f.hunks || []).forEach((h, hi) => {
-        rows.push(el('tr', { class: 'hunk' }, el('td', { colspan: '3', text: '@@ -' + h.oldStart + ' +' + h.newStart + ' @@ ' + (h.section || '') })))
+        const header = '@@ -' + h.oldStart + ' +' + h.newStart + ' @@ ' + (h.section || '')
+        rows.push(...gapRows(fileGaps[hi], hi === 0 ? 'first' : '', header))
+        if (split) {
+          // Each side's line, or a blank where that side has none.
+          const half = (index, number, start) => {
+            if (index === null) return ['num', 'sign', 'code'].map((c) => el('td', { class: c + ' blank' + (start ? ' start' : '') }))
+            const l = h.lines[index]
+            return [el('td', { class: 'num ' + l.kind + (start ? ' start' : ''), text: String(l[number] || '') }),
+              el('td', { class: 'sign ' + l.kind, text: signOf(l.kind) }),
+              el('td', { class: 'code ' + l.kind, text: l.text })]
+          }
+          for (const row of R.sideBySide(h)) {
+            const keys = [...new Set([row.left, row.right].filter((i) => i !== null).map((i) => hi + ':' + i))]
+            rows.push(el('tr', { class: keys.some((k) => marked[k]) ? 'marked' : '' }, ...half(row.left, 'old', false), ...half(row.right, 'new', true)))
+            const ids = [...new Set(keys.flatMap((k) => after[k] || []))]
+            if (ids.length) rows.push(threadRow(ids))
+          }
+          return
+        }
         h.lines.forEach((l, li) => {
           const key = hi + ':' + li
-          const sign = l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' '
-          rows.push(el('tr', { class: l.kind + (marked[key] ? ' marked' : '') },
-            el('td', { class: 'num', text: l.old ? String(l.old) : '' }),
-            el('td', { class: 'num', text: l.new ? String(l.new) : '' }),
-            el('td', { class: 'code', text: sign + l.text })))
-          if (after[key]) rows.push(el('tr', { class: 'threads' }, el('td', { colspan: '3' }, ...after[key].map((id) => threadCard(threads.get(id))))))
+          rows.push(el('tr', { class: marked[key] ? 'marked' : '' },
+            el('td', { class: 'num ' + l.kind, text: l.old ? String(l.old) : '' }),
+            el('td', { class: 'num ' + l.kind, text: l.new ? String(l.new) : '' }),
+            el('td', { class: 'sign ' + l.kind, text: signOf(l.kind) }),
+            el('td', { class: 'code ' + l.kind, text: l.text })))
+          if (after[key]) rows.push(threadRow(after[key]))
         })
       })
-      table.replaceChildren(...rows)
+      if (expandable && f.hunks && f.hunks.length) rows.push(...gapRows(fileGaps[f.hunks.length], 'last', null))
+      table.replaceChildren(el('colgroup', {}, ...cols.map((c) => el('col', { class: c }))), ...rows)
     }
     // A file with comments is never folded: they'd be hidden.
     if (total > REVIEW_FOLD_LINES && !Object.keys(after).length) {
@@ -1522,7 +1746,16 @@
       updateManage()
     })
     $('manage-delete').addEventListener('click', deleteTicked)
-    $('review-refresh').addEventListener('click', () => loadReview(true))
+    $('review-refresh').addEventListener('click', () => { reviewView.fileLines.clear(); loadReview(true) })
+    setUpReviewTree()
+    showReviewLayout()
+    $('review-layout').addEventListener('click', () => {
+      reviewView.layout = reviewView.layout === 'split' ? 'unified' : 'split'
+      store.set(REVIEW_LAYOUT, reviewView.layout)
+      showReviewLayout()
+      reviewView.key = ''
+      drawReview()
+    })
     const filter = $('manage-filter')
     filter.value = manageView.filter
     filter.addEventListener('input', () => {

@@ -589,7 +589,9 @@ you're looking at:
   `localhost` in what the agent says can be clicked.
 - **Review** — the changes in the sandbox's folder, worked out on this machine with git (uncommitted ones,
   untracked files with them; or a branch's, or a commit's), with the agent's review comments under the
-  lines they're about. Ask the agent for a review and it uses `vibe-review` (and its skill) to comment,
+  lines they're about: side by side (or in one column), with the hidden lines between changes a click away,
+  and a tree of the changed files beside it (a quarter of the width; drag its edge to resize) with a filter
+  that keeps the files whose path has every word typed. Ask the agent for a review and it uses `vibe-review` (and its skill) to comment,
   set a reading order, and say when it's done. Reply, resolve, dismiss or reopen a comment there; **Ask
   the agent** sends your reply as a question, which it answers on the comment (the turn shows in the
   conversation too). A comment whose lines read differently now is marked as such. Reviews are kept in

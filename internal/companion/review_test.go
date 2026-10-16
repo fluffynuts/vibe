@@ -154,3 +154,21 @@ func TestAskingWithoutAQuestionOrWhileTheAgentAnswersIsRefused(t *testing.T) {
 		t.Errorf("thread after refusals: %+v", th.Comments)
 	}
 }
+
+func TestTheTabGetsAFilesLinesForMoreContext(t *testing.T) {
+	s, _ := reviewTabServer(t)
+	rec := do(t, s, req{path: "/api/review/file?path=a.txt", headers: authed(nil)})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET: %d %s", rec.Code, rec.Body)
+	}
+	var body struct {
+		Lines []string `json:"lines"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if strings.Join(body.Lines, "|") != "one|two" {
+		t.Errorf("lines: %q", body.Lines)
+	}
+	if rec := do(t, s, req{path: "/api/review/file?path=../../etc/passwd", headers: authed(nil)}); rec.Code != http.StatusBadRequest {
+		t.Errorf("a path out of the folder: %d", rec.Code)
+	}
+}

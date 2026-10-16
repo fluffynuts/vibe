@@ -50,3 +50,101 @@ test("a comment whose lines read differently now is out of date", () => {
   ])
   assert.deepEqual([...placed.outdated], [2])
 })
+
+const { sideBySide } = require('../ui/review.js')
+
+test('side by side, deleted lines face the added ones that replaced them', () => {
+  const hunk = { lines: [
+    { kind: 'context' }, // 0
+    { kind: 'del' }, { kind: 'del' }, { kind: 'del' }, // 1-3
+    { kind: 'add' }, { kind: 'add' }, // 4-5
+    { kind: 'context' }, // 6
+    { kind: 'add' }, // 7
+    { kind: 'del' }, // 8
+  ] }
+  assert.deepEqual(sideBySide(hunk), [
+    { left: 0, right: 0 },
+    { left: 1, right: 4 },
+    { left: 2, right: 5 },
+    { left: 3, right: null },
+    { left: 6, right: 6 },
+    { left: null, right: 7 },
+    { left: 8, right: null },
+  ])
+})
+
+const { gaps, gapView } = require('../ui/review.js')
+
+// Two hunks: new lines 24-30 (old 24-29) and 79-89 (old 78-83).
+const twoHunks = [
+  { oldStart: 24, newStart: 24, lines: [
+    { kind: 'context' }, { kind: 'context' }, { kind: 'context' }, { kind: 'add' },
+    { kind: 'context' }, { kind: 'context' }, { kind: 'context' }] },
+  { oldStart: 78, newStart: 79, lines: [
+    { kind: 'context' }, { kind: 'context' }, { kind: 'context' },
+    { kind: 'add' }, { kind: 'add' }, { kind: 'add' }, { kind: 'add' }, { kind: 'add' },
+    { kind: 'context' }, { kind: 'context' }, { kind: 'context' }] },
+]
+
+test('the gaps are what the diff leaves out, with old numbers to match', () => {
+  assert.deepEqual(gaps(twoHunks, 120), [
+    { index: 0, from: 1, to: 23, offset: 0 },
+    { index: 1, from: 31, to: 78, offset: 1 },
+    { index: 2, from: 90, to: 120, offset: 6 },
+  ])
+  // Before the file's been read, how long it is isn't known.
+  assert.equal(gaps(twoHunks, null)[2].to, null)
+})
+
+test('a gap opens 20 lines at a time from the end asked for', () => {
+  const gap = { index: 1, from: 31, to: 78, offset: 1 }
+  const closed = gapView(gap, { down: 0, up: 0 }, '')
+  assert.deepEqual([closed.down.length, closed.up.length, closed.hidden, closed.buttons], [0, 0, 48, ['down', 'up']])
+  const opened = gapView(gap, { down: 20, up: 20 }, '')
+  assert.deepEqual([opened.down[0], opened.down[19], opened.up[0], opened.up[19], opened.hidden, opened.buttons],
+    [31, 50, 59, 78, 8, ['all']])
+  const whole = gapView(gap, { down: 40, up: 20 }, '')
+  assert.deepEqual([whole.down.length, whole.up.length, whole.hidden, whole.buttons], [48, 0, 0, []])
+})
+
+test("the file's ends open one way only", () => {
+  assert.deepEqual(gapView({ index: 0, from: 1, to: 23, offset: 0 }, { down: 0, up: 0 }, 'first').buttons, ['up'])
+  const end = gapView({ index: 2, from: 90, to: null, offset: 6 }, { down: 0, up: 0 }, 'last')
+  assert.deepEqual([end.hidden, end.buttons], [null, ['down']])
+  assert.deepEqual(gapView({ index: 0, from: 1, to: 0, offset: 0 }, { down: 0, up: 0 }, 'first').hidden, 0)
+})
+
+const { fileTree, matchesFilter } = require('../ui/review.js')
+
+const names = (node, depth = 0) => [
+  ...node.dirs.flatMap((d) => [' '.repeat(depth) + d.name + '/', ...names(d, depth + 1)]),
+  ...node.files.map((f) => ' '.repeat(depth) + f.name),
+]
+
+test('files make a tree: folders first, then files, a folder with only one folder in it folded into it', () => {
+  const tree = fileTree(['src/src/assets/icons/b.svg', 'src/src/assets/icons/a.svg', 'src/src/components/x.ts', 'readme.md', 'src/main.ts'])
+  assert.deepEqual(names(tree), [
+    'src/',
+    ' src/',
+    '  assets/icons/',
+    '   a.svg',
+    '   b.svg',
+    '  components/',
+    '   x.ts',
+    ' main.ts',
+    'readme.md',
+  ])
+  const icons = tree.dirs[0].dirs[0].dirs[0]
+  assert.equal(icons.path, 'src/src/assets/icons')
+  assert.deepEqual(icons.files.map((f) => f.path), ['src/src/assets/icons/a.svg', 'src/src/assets/icons/b.svg'])
+})
+
+test('the filter wants every word typed somewhere in the path, any case', () => {
+  const path = 'path/to/some/file.js'
+  for (const q of ['', 'path file', 'file.js', 'some file', 'some/file', 'FILE', ' file  path ']) {
+    assert.ok(matchesFilter(path, q), q)
+  }
+  for (const q of ['other', 'path other', 'file/some']) {
+    assert.ok(!matchesFilter(path, q), q)
+  }
+})
