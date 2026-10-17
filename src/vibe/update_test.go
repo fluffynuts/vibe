@@ -349,12 +349,19 @@ func sbxListing(t *testing.T, rows string) {
 		t.Skip("the stand-in sbx is a shell script")
 	}
 	dir := t.TempDir()
-	script := "#!/bin/sh\n[ \"$1\" = ls ] && printf 'NAME STATUS\\n" + rows + "'\nexit 0\n"
+	script := "#!/bin/sh\n" + sbxLsJSON(rows) + "exit 0\n"
 	writeFile(t, filepath.Join(dir, "sbx"), script)
 	if err := os.Chmod(filepath.Join(dir, "sbx"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// sbxLsJSON is a stand-in sbx's answer to 'sbx ls --json': rows, each
+// "name state\\n", as the array of objects sbx prints.
+func sbxLsJSON(rows string) string {
+	return "[ \"$*\" = \"ls --json\" ] && { printf '" + rows + "' | " +
+		`awk 'BEGIN { printf "[" } NF { if (n++) printf ","; printf "{\"name\":\"%s\",\"status\":\"%s\"}", $1, $2 } END { print "]" }'; exit 0; }` + "\n"
 }
 
 // batchStandIns records what --update-sandboxes rebuilds, starts and stops,
@@ -464,7 +471,7 @@ func loggingSbx(t *testing.T, rows string) string {
 	// 'sbx ls --quiet' lists just the names, as sbx does.
 	script := "#!/bin/sh\necho \"$*\" >>'" + log + "'\n" +
 		"[ \"$1\" = ls ] && [ \"$2\" = --quiet ] && { printf '" + rows + "' | cut -d' ' -f1; exit 0; }\n" +
-		"[ \"$1\" = ls ] && printf 'NAME STATUS\\n" + rows + "'\nexit 0\n"
+		sbxLsJSON(rows) + "exit 0\n"
 	writeFile(t, filepath.Join(dir, "sbx"), script)
 	if err := os.Chmod(filepath.Join(dir, "sbx"), 0o755); err != nil {
 		t.Fatal(err)

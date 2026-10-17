@@ -53,7 +53,7 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              the name TO gives it, keeping its agent's
                              memories, conversation, GitHub token and
                              clipboard history; asks first (-f doesn't)
-  vibe -l/--list             list every known sandbox and its status
+  vibe -l/--list             list every sandbox: state, owner, name
   vibe -a/--info [path]      show the sandbox's settings (memory, agent,
                              features), its companion page and how to
                              reach it from another machine, and, while it
@@ -233,7 +233,7 @@ func run(argv []string) error {
 		if args.Path != "" {
 			return fmt.Errorf("--list takes no path argument")
 		}
-		return doList()
+		return doList(vibeHome)
 	}
 
 	if args.Upgrade {

@@ -317,6 +317,7 @@ const (
 	colorYellow = "33"
 	colorPink   = "95"
 	colorCyan   = "36"
+	colorGrey   = "90"
 )
 
 // paint colours s for vibe's output, which goes to stderr — when that's a
@@ -700,7 +701,9 @@ func doGitToken(vibeHome string, args cliargs.Args, name, target string) error {
 	if args.GitTokenEnv != "" && args.NoGitToken {
 		return fmt.Errorf("--git-token-env and --no-git-token contradict each other")
 	}
-	if !sbxrun.Exists(name) {
+	if exists, err := sbxrun.Exists(name); err != nil {
+		return err
+	} else if !exists {
 		return fmt.Errorf("no sandbox '%s' yet — running vibe here creates one, and asks about a token as it does", name)
 	}
 	inst, found, err := state.Load(vibeHome, name)

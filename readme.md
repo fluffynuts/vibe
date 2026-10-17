@@ -290,7 +290,7 @@ vibe --git-rules R[,R]     # ...and these rules for pushing, without asking:
 vibe --no-git-token        # ...no token for a new sandbox, without asking;
                            #    with --git-token, take its token away
 vibe --migrate FROM TO     # move folder FROM to TO, its sandbox with it (see below)
-vibe -l/--list             # list every known sandbox and its status
+vibe -l/--list             # list every sandbox and its state (see below)
 vibe -a/--info [path]      # show the sandbox's settings, its companion page and how to
                            #    reach it from another machine, and, while it runs,
                            #    its uptime and memory and disk use
@@ -407,6 +407,24 @@ line names them. Only things that exist are offered. A profile that only ships w
 copy in `~/.vibe` to delete, so it isn't offered. `-f` deletes both without asking. With no
 terminal and no `-f`, nothing is deleted. vibe logs what it removed and what it kept. As with
 `-x`, removing the sandbox drops vibe's instance record for it too.
+
+`-l`/`--list` prints one line per sandbox, in four groups: `RUNNING`, `UNKNOWN` (sbx reports a
+state other than running or stopped), `STOPPED`, then `GONE` (vibe has a record of it but sbx no
+longer has the sandbox). Within each group, names are sorted ignoring case:
+
+```
+RUNNING  vibe  phoenix
+UNKNOWN  sbx   hand-made
+STOPPED  vibe  crit
+GONE     vibe  old-project  /home/me/code/old-project
+```
+
+The columns are state, owner (`vibe` if vibe made the sandbox, `sbx` if it was made with sbx
+directly) and name. `GONE` lines also give the sandbox's folder. Every state is seven characters
+wide, so the name always starts at column 16. To get just the names of running sandboxes, use
+`vibe -l | awk '$1=="RUNNING" {print $3}'`. The state is coloured only when the output is a
+terminal and `NO_COLOR` isn't set. Notes about `UNKNOWN` and `GONE` sandboxes, such as what sbx
+said or `--cleanup`, go to stderr, so scripts don't see them.
 
 `-c`/`--ssh` requires `sbx setup ssh` to have been run once on this machine.
 

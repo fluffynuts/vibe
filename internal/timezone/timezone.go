@@ -4,6 +4,7 @@
 package timezone
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -115,8 +116,8 @@ func Apply(name, zone string) error {
 	if !sbxrun.ExecSilent(name, "test", "-f", file) {
 		return fmt.Errorf("the sandbox has no timezone %s (no %s)", zone, file)
 	}
-	link, _ := sbxrun.ExecCapture(name, "readlink", "/etc/localtime")
-	current, _ := sbxrun.ExecCapture(name, "cat", "/etc/timezone")
+	link, _ := sbxrun.ExecStdout(context.Background(), name, "readlink", "/etc/localtime")
+	current, _ := sbxrun.ExecStdout(context.Background(), name, "cat", "/etc/timezone")
 	if strings.TrimSpace(link) != file || strings.TrimSpace(current) != zone {
 		if out, err := sbxrun.ExecCapture(name, "sudo", "-n", "ln", "-sfn", file, "/etc/localtime"); err != nil {
 			return fmt.Errorf("linking /etc/localtime to %s: %w: %s", file, err, strings.TrimSpace(out))
@@ -138,7 +139,7 @@ func exportTZ(name, zone string) error {
 	if !sbxrun.ExecSilent(name, "test", "-f", persistentEnv) {
 		return nil
 	}
-	content, err := sbxrun.ExecCapture(name, "cat", persistentEnv)
+	content, err := sbxrun.ExecStdout(context.Background(), name, "cat", persistentEnv)
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", persistentEnv, err)
 	}

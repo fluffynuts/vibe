@@ -116,7 +116,11 @@ func doDelete(lay layout.Layout, args cliargs.Args, name, target string) error {
 	if err != nil {
 		return err
 	}
-	d := deletion{name: name, sandbox: sbxrun.Exists(name), profile: profile}
+	exists, err := sbxrun.Exists(name)
+	if err != nil {
+		return err
+	}
+	d := deletion{name: name, sandbox: exists, profile: profile}
 	if dir := lay.HomePath("profiles", profile); dir != "" {
 		if info, err := os.Stat(dir); err == nil && info.IsDir() {
 			d.profileDir = dir

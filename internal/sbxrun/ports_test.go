@@ -5,35 +5,22 @@ import (
 	"testing"
 )
 
-// sbx doesn't document its `ports --json` shape, so these are the shapes a
-// ports listing plausibly takes; each has to come out the same way.
-func TestParsePortsReadsTheLikelyShapes(t *testing.T) {
-	want := map[int][]int{5391: {5396}, 8080: {8081}}
-	tests := []struct{ name, json string }{
-		{"flat list, camelCase", `[{"sandboxPort":5391,"hostPort":5396,"hostIP":"127.0.0.1","protocol":"tcp"},
-			{"sandboxPort":8080,"hostPort":8081,"hostIP":"127.0.0.1","protocol":"tcp"}]`},
-		{"snake_case strings", `[{"sandbox_port":"5391/tcp","host_port":"5396","host_ip":"127.0.0.1"},
-			{"sandbox_port":"8080/tcp","host_port":"8081","host_ip":"::1"}]`},
-		{"wrapped, container-named", `{"sandbox":"proj","ports":[{"ContainerPort":5391,"HostPort":5396},
-			{"ContainerPort":8080,"HostPort":8081}]}`},
-		{"plain port key", `{"ports":[{"port":5391,"hostPort":5396},{"port":8080,"hostPort":8081}]}`},
-		{"docker style", `{"5391/tcp":[{"HostIp":"127.0.0.1","HostPort":"5396"},{"HostIp":"::1","HostPort":"5396"}],
-			"8080/tcp":[{"HostIp":"127.0.0.1","HostPort":"8081"}]}`},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := parsePorts([]byte(tt.json))
-			if err != nil {
-				t.Fatalf("parsePorts: %v", err)
-			}
-			if !reflect.DeepEqual(got, want) {
-				t.Errorf("parsePorts = %v, want %v", got, want)
-			}
-		})
+// Only the shape sbx prints is read: one that isn't, from some other sbx,
+// is an error to see, not something to make a guess at.
+func TestParsePortsRejectsShapesSbxDoesNotPrint(t *testing.T) {
+	for _, doc := range []string{
+		`[{"sandboxPort":5391,"hostPort":5396,"hostIP":"127.0.0.1","protocol":"tcp"}]`,
+		`[{"sandbox_port":"5391/tcp","host_port":"5396","host_ip":"127.0.0.1"}]`,
+		`{"sandbox":"proj","ports":[{"ContainerPort":5391,"HostPort":5396}]}`,
+		`{"5391/tcp":[{"HostIp":"127.0.0.1","HostPort":"5396"}]}`,
+	} {
+		if got, err := parsePorts([]byte(doc)); err == nil {
+			t.Errorf("parsePorts(%s) = %v, want an error", doc, got)
+		}
 	}
 }
 
-// What sbx really prints: the tcp4 mapping asked for at creation, then
+// What sbx v0.48 really prints: the tcp4 mapping asked for at creation, then
 // the dual-stack one sbx adds on an ephemeral port at every start. Both
 // are kept, in order, and the second's IPv4 and IPv6 rows count once.
 func TestParsePortsKeepsEveryMappingOfAPort(t *testing.T) {
@@ -56,7 +43,7 @@ func TestParsePortsKeepsEveryMappingOfAPort(t *testing.T) {
 }
 
 func TestParsePortsWithNothingPublishedIsEmpty(t *testing.T) {
-	for _, doc := range []string{`[]`, `{}`, `null`, `{"ports":[]}`} {
+	for _, doc := range []string{`[]`, `null`, ``} {
 		got, err := parsePorts([]byte(doc))
 		if err != nil || len(got) != 0 {
 			t.Errorf("parsePorts(%s) = %v, %v; want empty, nil", doc, got, err)

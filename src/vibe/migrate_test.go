@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -141,10 +142,10 @@ func TestAMigrationIsRefusedBeforeAnythingChanges(t *testing.T) {
 	if err := state.Save(home, state.Instance{Name: "other", Target: "/somewhere/other"}); err != nil {
 		t.Fatal(err)
 	}
-	noSbx := func(string) bool { return false }
+	noSbx := func(string) (bool, error) { return false, nil }
 	for _, tc := range []struct {
 		why, name, to string
-		sbxHas        func(string) bool
+		sbxHas        func(string) (bool, error)
 		want          string
 	}{
 		{"no record", "nope", filepath.Join(root, "x"), noSbx, "no sandbox for"},
@@ -152,7 +153,8 @@ func TestAMigrationIsRefusedBeforeAnythingChanges(t *testing.T) {
 		{"no parent", "app", filepath.Join(root, "missing", "app"), noSbx, "doesn't exist"},
 		{"into itself", "app", filepath.Join(from, "sub"), noSbx, "inside it"},
 		{"name taken by a record", "app", filepath.Join(root, "other"), noSbx, "'other'"},
-		{"name taken in sbx", "app", filepath.Join(root, "made-by-hand"), func(n string) bool { return n == "made-by-hand" }, "'made-by-hand'"},
+		{"name taken in sbx", "app", filepath.Join(root, "made-by-hand"), func(n string) (bool, error) { return n == "made-by-hand", nil }, "'made-by-hand'"},
+		{"sbx can't tell", "app", filepath.Join(root, "new-app"), func(string) (bool, error) { return false, errors.New("sbx ls --json: daemon not running") }, "daemon not running"},
 	} {
 		_, err := checkMigration(home, tc.name, from, tc.to, tc.sbxHas)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -164,11 +166,13 @@ func TestAMigrationIsRefusedBeforeAnythingChanges(t *testing.T) {
 	}
 }
 
-// migrateStandIns stand in for the user's answer, and for the rebuild,
-// which runs the relocation as the real one does, and records what it was
-// asked to rebuild and what it was relocated to.
+// migrateStandIns stand in for the user's answer, for sbx (with no
+// sandboxes of its own) and for the rebuild, which runs the relocation as
+// the real one does, and records what it was asked to rebuild and what it
+// was relocated to.
 func migrateStandIns(t *testing.T, answer bool) (rebuilt *[]string) {
 	t.Helper()
+	sbxListing(t, "")
 	rebuilt = &[]string{}
 	oldConfirm, oldRebuild := confirmMigration, migrateRebuild
 	t.Cleanup(func() { confirmMigration, migrateRebuild = oldConfirm, oldRebuild })
@@ -259,7 +263,7 @@ func TestAMoveToAnotherDiskIsRefused(t *testing.T) {
 	old := sameFilesystem
 	t.Cleanup(func() { sameFilesystem = old })
 	sameFilesystem = func(string, string) bool { return false }
-	if _, err := checkMigration(home, "app", from, filepath.Join(root, "new-app"), func(string) bool { return false }); err == nil || !strings.Contains(err.Error(), "another disk") {
+	if _, err := checkMigration(home, "app", from, filepath.Join(root, "new-app"), func(string) (bool, error) { return false, nil }); err == nil || !strings.Contains(err.Error(), "another disk") {
 		t.Errorf("across disks: %v", err)
 	}
 }

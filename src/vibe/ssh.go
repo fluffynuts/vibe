@@ -8,7 +8,9 @@ import (
 )
 
 func doSsh(name, target string) error {
-	if !sbxrun.Exists(name) {
+	if exists, err := sbxrun.Exists(name); err != nil {
+		return err
+	} else if !exists {
 		return fmt.Errorf("no sandbox named '%s' for %s — run vibe first", name, target)
 	}
 	host := name + ".sbx"

@@ -1,12 +1,10 @@
 // Package policy reads and changes a sandbox's network and filesystem
 // policy through `sbx policy`, for the companion page.
 //
-// sbx's JSON isn't a documented contract, and it is still moving, so what
-// comes back is read tolerantly: each field is looked for under the names
-// sbx is known (or likely) to use, and the entry as sbx printed it is kept
-// alongside, so the page can show it when a field didn't map. An entry vibe
-// can't make a host out of is dropped, but counted, so the page can say so
-// rather than quietly showing less than sbx knows.
+// What's read is the JSON sbx prints, in the shape sbx v0.48 prints it, and
+// nothing else: output vibe can't use is an error the page shows, never a
+// guess that shows less than sbx knows. Each entry is also kept as sbx
+// printed it, for the page to show in full.
 package policy
 
 import (
@@ -90,15 +88,15 @@ type Rule struct {
 	Resources []string `json:"resources"`
 	Decision  string   `json:"decision"`
 	Protocol  string   `json:"protocol,omitempty"`
-	// Source says where the rule comes from (local, org, kit...), and Scope
-	// what it applies to (global, or this sandbox), when sbx says.
+	// Source is where sbx says the rule comes from (its origin: local, or
+	// scoped to a sandbox), and Scope what it applies to (global, or
+	// sandbox:<name>).
 	Source string `json:"source,omitempty"`
 	Scope  string `json:"scope,omitempty"`
 	Status string `json:"status,omitempty"`
-	// Removable is true for a rule the page offers to remove: one sbx gave
-	// an ID for and doesn't say comes from the org or a kit. The removal is
-	// always scoped to the sandbox, so a global rule is never touched from
-	// the page: sbx refuses, and says so.
+	// Removable is true for a rule the page offers to remove: one sbx says
+	// is editable. The removal is always scoped to the sandbox, so a global
+	// rule is never touched from the page: sbx refuses, and says so.
 	Removable bool            `json:"removable"`
 	Raw       json.RawMessage `json:"raw"`
 }
@@ -106,15 +104,11 @@ type Rule struct {
 // Log is what `sbx policy log` knows about the sandbox.
 type Log struct {
 	Entries []LogEntry `json:"entries"`
-	// Skipped counts entries in sbx's output that had no host vibe could
-	// read.
-	Skipped int `json:"skipped"`
 }
 
-// Rules is a list of rules, with the same Skipped count as Log.
+// Rules is a list of rules.
 type Rules struct {
-	Rules   []Rule `json:"rules"`
-	Skipped int    `json:"skipped"`
+	Rules []Rule `json:"rules"`
 }
 
 func (c *Client) run(args ...string) ([]byte, error) {
@@ -257,9 +251,10 @@ func (c *Client) DenyCommand(host string) []string {
 }
 
 // RemoveCommand is the sbx arguments that remove one of this sandbox's own
-// rules.
+// rules. --force skips sbx's own confirmation, which it can't ask for with
+// no terminal (and fails without): the page has asked already.
 func (c *Client) RemoveCommand(id string) []string {
-	return []string{"policy", "rm", "network", "--sandbox", c.Sandbox, "--id", id}
+	return []string{"policy", "rm", "network", "--sandbox", c.Sandbox, "--id", id, "--force"}
 }
 
 // Allow lets the sandbox reach host.
@@ -338,30 +333,55 @@ func ValidHost(host string) error {
 
 // --- parsing ----------------------------------------------------------
 
-// ParseLog reads `sbx policy log --json`.
+// unusable is the error for output from sbx that vibe can't read.
+func unusable(command string, data []byte, why string) error {
+	return fmt.Errorf("couldn't use what sbx %s printed (%s) — vibe may need updating for this sbx:\n%s", command, why, bytes.TrimSpace(data))
+}
+
+// ParseLog reads `sbx policy log --json`: the hosts the sandbox has tried
+// to reach, in a list for each decision. Nothing at all, or null, is an
+// empty log.
 func ParseLog(data []byte) (Log, error) {
-	objs, err := objects(data, "entries", "logs", "log", "items", "data")
+	const command = "policy log --json"
+	log := Log{Entries: []LogEntry{}}
+	if isNothing(data) {
+		return log, nil
+	}
+	doc, err := topLevel(command, data, "blocked_hosts", "allowed_hosts")
 	if err != nil {
 		return Log{}, err
 	}
-	log := Log{Entries: []LogEntry{}}
-	for _, o := range objs {
-		host := str(o.m, "host", "hostname", "resource", "target", "address", "domain_name")
-		if host == "" {
-			log.Skipped++
-			continue
+	for _, list := range []struct{ key, decision string }{{"blocked_hosts", Blocked}, {"allowed_hosts", Allowed}} {
+		entries, err := listUnder(command, data, doc, list.key)
+		if err != nil {
+			return Log{}, err
 		}
-		e := LogEntry{
-			Host:      host,
-			Decision:  decisionOr(o),
-			Hits:      num(o.m, "count", "count_since", "hits", "requests", "request_count", "total"),
-			LastSeen:  when(o.m, "last_seen", "lastSeen", "last_seen_at", "lastSeenAt", "timestamp", "time"),
-			Rule:      str(o.m, "rule", "rule_name", "ruleName"),
-			ProxyType: str(o.m, "proxy_type", "proxyType", "proxy"),
-			Reason:    str(o.m, "reason", "decision_reason", "decisionReason"),
-			Raw:       o.raw,
+		for _, raw := range entries {
+			var e struct {
+				Host       string `json:"host"`
+				ProxyType  string `json:"proxy_type"`
+				Rule       string `json:"rule"`
+				LastSeen   string `json:"last_seen"`
+				CountSince int64  `json:"count_since"`
+				Reason     string `json:"reason"`
+			}
+			if err := json.Unmarshal(raw, &e); err != nil {
+				return Log{}, unusable(command, data, err.Error())
+			}
+			if e.Host == "" {
+				return Log{}, unusable(command, data, "an entry has no host")
+			}
+			log.Entries = append(log.Entries, LogEntry{
+				Host:      e.Host,
+				Decision:  list.decision,
+				Hits:      e.CountSince,
+				LastSeen:  utc(e.LastSeen),
+				Rule:      e.Rule,
+				ProxyType: e.ProxyType,
+				Reason:    e.Reason,
+				Raw:       raw,
+			})
 		}
-		log.Entries = append(log.Entries, e)
 	}
 	sort.SliceStable(log.Entries, func(i, j int) bool {
 		return log.Entries[i].LastSeen > log.Entries[j].LastSeen
@@ -369,243 +389,107 @@ func ParseLog(data []byte) (Log, error) {
 	return log, nil
 }
 
-// ParseRules reads `sbx policy ls --json`.
+// ParseRules reads `sbx policy ls --json`. Nothing at all, or null, is no
+// rules.
 func ParseRules(data []byte) (Rules, error) {
-	objs, err := objects(data, "rules", "policies", "items", "data")
+	const command = "policy ls --json"
+	rules := Rules{Rules: []Rule{}}
+	if isNothing(data) {
+		return rules, nil
+	}
+	doc, err := topLevel(command, data, "rules")
 	if err != nil {
 		return Rules{}, err
 	}
-	rules := Rules{Rules: []Rule{}}
-	for _, o := range objs {
-		resources := strs(o.m, "resources", "resource", "hosts", "host", "pattern", "paths", "path")
-		if len(resources) == 0 {
-			rules.Skipped++
-			continue
-		}
-		r := Rule{
-			ID:        str(o.m, "rule_id", "ruleId", "id"),
-			Name:      str(o.m, "rule", "rule_name", "ruleName", "name"),
-			Resources: resources,
-			Decision:  decisionOr(o),
-			Protocol:  str(o.m, "protocol"),
-			Source:    str(o.m, "source", "policy", "policy_name", "policyName"),
-			Scope:     str(o.m, "scope", "sandbox", "applies_to", "target"),
-			Status:    str(o.m, "status", "state"),
-			Raw:       o.raw,
-		}
-		r.Removable = r.ID != "" && (r.Source == "" || strings.EqualFold(r.Source, "local"))
-		rules.Rules = append(rules.Rules, r)
+	list, err := listUnder(command, data, doc, "rules")
+	if err != nil {
+		return Rules{}, err
 	}
+	for _, raw := range list {
+		var r struct {
+			ID        string   `json:"id"`
+			Name      string   `json:"name"`
+			Scope     string   `json:"scope"`
+			Decision  string   `json:"decision"`
+			Resources []string `json:"resources"`
+			Origin    string   `json:"origin"`
+			Status    string   `json:"status"`
+			Editable  bool     `json:"editable"`
+		}
+		if err := json.Unmarshal(raw, &r); err != nil {
+			return Rules{}, unusable(command, data, err.Error())
+		}
+		if len(r.Resources) == 0 {
+			return Rules{}, unusable(command, data, "a rule has no resources")
+		}
+		var decision string
+		switch r.Decision {
+		case "allow":
+			decision = Allowed
+		case "deny":
+			decision = Blocked
+		default:
+			return Rules{}, unusable(command, data, fmt.Sprintf("a rule's decision is %q, not allow or deny", r.Decision))
+		}
+		rules.Rules = append(rules.Rules, Rule{
+			ID:        r.ID,
+			Name:      r.Name,
+			Resources: r.Resources,
+			Decision:  decision,
+			Source:    r.Origin,
+			Scope:     r.Scope,
+			Status:    r.Status,
+			Removable: r.Editable && r.ID != "",
+			Raw:       raw,
+		})
+	}
+	// The sandbox's own rules first, so the page doesn't bury them under
+	// every global one.
+	sort.SliceStable(rules.Rules, func(i, j int) bool {
+		return rules.Rules[i].Scope != "global" && rules.Rules[j].Scope == "global"
+	})
 	return rules, nil
 }
 
-type object struct {
-	m   map[string]interface{}
-	raw json.RawMessage
-	// key is the name of the list the record was found in
-	// ("blocked_hosts"...), which is all some sbx output says about a
-	// decision.
-	key string
+// topLevel is the object sbx printed, which has to hold at least one of
+// keys: an object with none of them isn't one vibe knows how to read.
+func topLevel(command string, data []byte, keys ...string) (map[string]json.RawMessage, error) {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, unusable(command, data, err.Error())
+	}
+	for _, k := range keys {
+		if _, ok := doc[k]; ok {
+			return doc, nil
+		}
+	}
+	return nil, unusable(command, data, "it has no "+strings.Join(keys, " or "))
 }
 
-// objects finds the records in a document sbx printed: the objects, at any
-// depth, that look like a record (they hold a scalar of some kind), without
-// descending into one that has been taken. A top-level array is the common
-// shape; an object wrapping one under a key in preferred, or under any key,
-// is the other.
-func objects(data []byte, preferred ...string) ([]object, error) {
-	data = bytes.TrimSpace(data)
-	if len(data) == 0 {
+// listUnder is the list under key in doc: none when the key is missing or
+// null.
+func listUnder(command string, data []byte, doc map[string]json.RawMessage, key string) ([]json.RawMessage, error) {
+	raw, ok := doc[key]
+	if !ok || isNothing(raw) {
 		return nil, nil
 	}
-	var doc interface{}
-	if err := json.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("sbx printed something that isn't JSON: %w", err)
+	var list []json.RawMessage
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil, unusable(command, data, key+" isn't a list")
 	}
-	var found []object
-	var walk func(node interface{}, key string, depth int)
-	walk = func(node interface{}, key string, depth int) {
-		switch n := node.(type) {
-		case []interface{}:
-			for _, item := range n {
-				walk(item, key, depth+1)
-			}
-		case map[string]interface{}:
-			if isRecord(n) {
-				raw, _ := json.Marshal(n)
-				found = append(found, object{m: n, raw: raw, key: key})
-				return
-			}
-			for _, k := range preferred {
-				if v, ok := n[k]; ok {
-					walk(v, k, depth+1)
-				}
-			}
-			keys := make([]string, 0, len(n))
-			for k := range n {
-				if !contains(preferred, k) {
-					keys = append(keys, k)
-				}
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				walk(n[k], k, depth+1)
-			}
-		}
-	}
-	walk(doc, "", 0)
-	return found, nil
+	return list, nil
 }
 
-// isRecord says whether m is a record rather than a wrapper: a wrapper
-// holds a list of objects (a policy and its rules, say), a record holds
-// values — however many names or addresses are in a list of strings.
-func isRecord(m map[string]interface{}) bool {
-	scalars := 0
-	for _, v := range m {
-		switch v := v.(type) {
-		case string, float64, bool:
-			scalars++
-		case []interface{}:
-			for _, item := range v {
-				if _, ok := item.(map[string]interface{}); ok {
-					return false
-				}
-			}
-		}
-	}
-	return scalars >= 2
+func isNothing(data []byte) bool {
+	data = bytes.TrimSpace(data)
+	return len(data) == 0 || string(data) == "null"
 }
 
-func contains(list []string, s string) bool {
-	for _, x := range list {
-		if x == s {
-			return true
-		}
+// utc is a time sbx printed in RFC 3339, in UTC, so that times sort as
+// text; one it can't read is passed on as printed.
+func utc(t string) string {
+	if parsed, err := time.Parse(time.RFC3339Nano, t); err == nil {
+		return parsed.UTC().Format(time.RFC3339)
 	}
-	return false
-}
-
-func str(m map[string]interface{}, keys ...string) string {
-	for _, k := range keys {
-		switch v := m[k].(type) {
-		case string:
-			if v != "" {
-				return v
-			}
-		case float64:
-			return fmt.Sprintf("%g", v)
-		}
-	}
-	return ""
-}
-
-func strs(m map[string]interface{}, keys ...string) []string {
-	for _, k := range keys {
-		switch v := m[k].(type) {
-		case string:
-			if v != "" {
-				return []string{v}
-			}
-		case []interface{}:
-			var out []string
-			for _, item := range v {
-				if s, ok := item.(string); ok && s != "" {
-					out = append(out, s)
-				}
-			}
-			if len(out) > 0 {
-				return out
-			}
-		}
-	}
-	return nil
-}
-
-func num(m map[string]interface{}, keys ...string) int64 {
-	for _, k := range keys {
-		switch v := m[k].(type) {
-		case float64:
-			return int64(v)
-		case string:
-			var n int64
-			if _, err := fmt.Sscan(v, &n); err == nil {
-				return n
-			}
-		}
-	}
-	return 0
-}
-
-// decisionOr is the record's own decision or, when it has none, what the
-// list it sits in says: sbx groups the log into blocked_hosts and
-// allowed_hosts and leaves the decision off the entries.
-func decisionOr(o object) string {
-	if d := decision(o.m); d != Unknown {
-		return d
-	}
-	k := strings.ToLower(o.key)
-	switch {
-	case strings.Contains(k, "block"), strings.Contains(k, "deny"), strings.Contains(k, "denied"):
-		return Blocked
-	case strings.Contains(k, "allow"):
-		return Allowed
-	}
-	return Unknown
-}
-
-// decision reads allowed/blocked from a string ("allow", "POLICY_DECISION_
-// BLOCKED", "deny"...) or from a boolean field, whichever the entry has.
-func decision(m map[string]interface{}) string {
-	for _, k := range []string{"decision", "status", "action", "effect", "result"} {
-		if s, ok := m[k].(string); ok {
-			switch d := strings.ToLower(s); {
-			case strings.Contains(d, "block"), strings.Contains(d, "deny"), strings.Contains(d, "denied"), strings.Contains(d, "reject"):
-				return Blocked
-			case strings.Contains(d, "allow"), strings.Contains(d, "permit"):
-				return Allowed
-			}
-		}
-	}
-	if b, ok := m["blocked"].(bool); ok && b {
-		return Blocked
-	}
-	if b, ok := m["allowed"].(bool); ok {
-		if b {
-			return Allowed
-		}
-		return Blocked
-	}
-	return Unknown
-}
-
-// when reads a time sbx printed — RFC 3339, a Unix time in seconds or
-// milliseconds, or protobuf's {seconds, nanos} — as RFC 3339 in UTC, so
-// that times sort as text. A time in a shape it doesn't know is passed on
-// as printed.
-func when(m map[string]interface{}, keys ...string) string {
-	for _, k := range keys {
-		switch v := m[k].(type) {
-		case string:
-			if v == "" {
-				continue
-			}
-			for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05"} {
-				if t, err := time.Parse(layout, v); err == nil {
-					return t.UTC().Format(time.RFC3339)
-				}
-			}
-			return v
-		case float64:
-			if v > 1e12 {
-				return time.UnixMilli(int64(v)).UTC().Format(time.RFC3339)
-			}
-			return time.Unix(int64(v), 0).UTC().Format(time.RFC3339)
-		case map[string]interface{}:
-			if secs, ok := v["seconds"].(float64); ok {
-				return time.Unix(int64(secs), 0).UTC().Format(time.RFC3339)
-			}
-		}
-	}
-	return ""
+	return t
 }

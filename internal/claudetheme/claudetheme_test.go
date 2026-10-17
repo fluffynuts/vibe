@@ -200,7 +200,8 @@ func TestProfileRoundTrip(t *testing.T) {
 }
 
 // fakeSandbox puts an `sbx` on PATH whose exec runs the command here, with
-// /home/agent standing for the returned directory.
+// /home/agent standing for the returned directory. Like a real sbx can, it
+// says something of its own on stderr, which is no part of what was read.
 func fakeSandbox(t *testing.T) string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -212,6 +213,7 @@ func fakeSandbox(t *testing.T) string {
 	// /usr/bin/true), so the fake answers it itself.
 	script := "#!/bin/sh\n[ \"$1\" = exec ] || exit 1\nshift 3\n" +
 		"[ \"$1\" = /bin/true ] && exit 0\n" +
+		"echo 'A new version of sbx is available' >&2\n" +
 		"for a; do shift; set -- \"$@\" \"$(printf %s \"$a\" | sed \"s#^/home/agent#" + root + "#\")\"; done\n" +
 		"exec \"$@\"\n"
 	if err := os.WriteFile(filepath.Join(bin, "sbx"), []byte(script), 0o755); err != nil {

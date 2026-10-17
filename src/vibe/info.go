@@ -124,17 +124,17 @@ func liveUsage(ctx context.Context, name string) (sandboxUsage, error) {
 	var u sandboxUsage
 	// Uptime is a nicety: not being able to read it is no reason to hide the
 	// memory and disk figures, which are what --info is for.
-	if out, err := sbxrun.ExecCaptureContext(ctx, name, "cat", "/proc/uptime"); err == nil {
+	if out, err := sbxrun.ExecStdout(ctx, name, "cat", "/proc/uptime"); err == nil {
 		u.uptime, _ = parseUptime(out)
 	}
-	out, err := sbxrun.ExecCaptureContext(ctx, name, "cat", "/proc/meminfo")
+	out, err := sbxrun.ExecStdout(ctx, name, "cat", "/proc/meminfo")
 	if err != nil {
 		return u, fmt.Errorf("reading /proc/meminfo: %w", err)
 	}
 	if u.memTotal, u.memAvailable, err = parseMeminfo(out); err != nil {
 		return u, err
 	}
-	out, err = sbxrun.ExecCaptureContext(ctx, name, "df", "-Pk", "/")
+	out, err = sbxrun.ExecStdout(ctx, name, "df", "-Pk", "/")
 	if err != nil {
 		return u, fmt.Errorf("running df: %w", err)
 	}
@@ -143,7 +143,7 @@ func liveUsage(ctx context.Context, name string) (sandboxUsage, error) {
 	}
 	// No Docker in the sandbox, or Docker's data on the root filesystem:
 	// either way, nothing to report apart.
-	if out, err := sbxrun.ExecCaptureContext(ctx, name, "df", "-Pk", dockerDataDir); err == nil {
+	if out, err := sbxrun.ExecStdout(ctx, name, "df", "-Pk", dockerDataDir); err == nil {
 		if size, used, mount, err := parseDf(out); err == nil && mount == dockerDataDir {
 			u.dockerSize, u.dockerUsed = size, used
 		}

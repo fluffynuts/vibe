@@ -97,7 +97,7 @@ func doMigrate(lay layout.Layout, args cliargs.Args, name, from, to string) erro
 // checkMigration says what sandbox name, for folder from, will be called
 // once from moves to to, or why it can't move: anything that would make
 // the move fail part-way is caught here, before anything changes.
-func checkMigration(vibeHome, name, from, to string, sbxHas func(string) bool) (string, error) {
+func checkMigration(vibeHome, name, from, to string, sbxHas func(string) (bool, error)) (string, error) {
 	inst, found, err := state.Load(vibeHome, name)
 	if err != nil {
 		return "", err
@@ -117,7 +117,11 @@ func checkMigration(vibeHome, name, from, to string, sbxHas func(string) bool) (
 	}
 	newName := pathresolve.DeriveName(to)
 	if newName != name {
-		if _, taken, _ := state.Load(vibeHome, newName); taken || sbxHas(newName) {
+		inSbx, err := sbxHas(newName)
+		if err != nil {
+			return "", err
+		}
+		if _, taken, _ := state.Load(vibeHome, newName); taken || inSbx {
 			return "", fmt.Errorf("a sandbox called '%s' already exists, and the folder's new name would give it that name — pick another name for the folder, or delete that sandbox first ('vibe --cleanup')", newName)
 		}
 	}

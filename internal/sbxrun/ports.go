@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"os/exec"
 	"path"
-	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -40,48 +38,30 @@ func captureStdout(args ...string) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// parsePorts reads `sbx ports --json` output. sbx doesn't document the shape
-// of that JSON, so rather than bind to one guess this looks, anywhere in the
-// document, for an object naming both a sandbox-side and a host-side port —
-// {"sandboxPort": 5391, "hostPort": 5396}, in whatever casing or spelling
-// sbx uses — and for Docker's own {"5391/tcp": [{"HostPort": "5396"}]}. A
-// document where neither turns up is an error, never an empty answer: an
-// empty answer would read as "nothing is published".
+// parsePorts reads `sbx ports --json`: an array with an object per
+// mapping, each naming its sandbox_port and host_port. Nothing at all, or
+// null, is nothing published; anything else it can't read is an error,
+// never an empty answer, which would read as "nothing is published".
 func parsePorts(out []byte) (map[int][]int, error) {
-	var doc interface{}
-	if err := json.Unmarshal(out, &doc); err != nil {
-		return nil, fmt.Errorf("reading sbx ports output: %w", err)
-	}
 	ports := map[int][]int{}
-	walkPorts(doc, ports)
-	if len(ports) == 0 && !emptyDoc(doc) {
-		return nil, fmt.Errorf("found no port mappings in sbx ports output: %s", strings.TrimSpace(string(out)))
+	if len(bytes.TrimSpace(out)) == 0 {
+		return ports, nil
+	}
+	var mappings []struct {
+		SandboxPort int `json:"sandbox_port"`
+		HostPort    int `json:"host_port"`
+	}
+	if err := json.Unmarshal(out, &mappings); err != nil {
+		return nil, fmt.Errorf("couldn't read what sbx ports --json printed (%v) — vibe may need updating for this sbx:\n%s", err, bytes.TrimSpace(out))
+	}
+	for _, m := range mappings {
+		if m.SandboxPort == 0 || m.HostPort == 0 {
+			return nil, fmt.Errorf("sbx ports --json printed a mapping without a sandbox_port and host_port — vibe may need updating for this sbx:\n%s", bytes.TrimSpace(out))
+		}
+		addPort(ports, m.SandboxPort, m.HostPort)
 	}
 	return ports, nil
 }
-
-func emptyDoc(doc interface{}) bool {
-	switch v := doc.(type) {
-	case nil:
-		return true
-	case []interface{}:
-		return len(v) == 0
-	case map[string]interface{}:
-		for _, child := range v {
-			if !emptyDoc(child) {
-				return false
-			}
-		}
-		return true
-	}
-	return false
-}
-
-var (
-	sandboxPortKey = regexp.MustCompile(`^((sandbox|container|target|private|internal|guest)_?)?port$`)
-	hostPortKey    = regexp.MustCompile(`^(host|published|public|local)_?port$`)
-	portSpecKey    = regexp.MustCompile(`^(\d+)(/[a-z0-9]+)?$`)
-)
 
 // addPort records hostPort for sandboxPort, once: sbx lists a dual-stack
 // mapping once per address family, on the same port.
@@ -92,80 +72,6 @@ func addPort(ports map[int][]int, sandboxPort, hostPort int) {
 		}
 	}
 	ports[sandboxPort] = append(ports[sandboxPort], hostPort)
-}
-
-func walkPorts(node interface{}, ports map[int][]int) {
-	switch v := node.(type) {
-	case []interface{}:
-		for _, child := range v {
-			walkPorts(child, ports)
-		}
-	case map[string]interface{}:
-		sandbox, host := 0, 0
-		for key, val := range v {
-			k := strings.ToLower(strings.ReplaceAll(key, "-", "_"))
-			switch {
-			case sandboxPortKey.MatchString(k):
-				sandbox = portNumber(val)
-			case hostPortKey.MatchString(k):
-				host = portNumber(val)
-			}
-		}
-		if sandbox != 0 && host != 0 {
-			addPort(ports, sandbox, host)
-		}
-		for key, val := range v {
-			// Docker's shape: the sandbox port is the key itself.
-			if m := portSpecKey.FindStringSubmatch(key); m != nil {
-				sandboxPort, _ := strconv.Atoi(m[1])
-				if hostPort := firstHostPort(val); hostPort != 0 {
-					addPort(ports, sandboxPort, hostPort)
-					continue
-				}
-			}
-			walkPorts(val, ports)
-		}
-	}
-}
-
-// firstHostPort finds a host port in the value under a Docker-style
-// "5391/tcp" key: a list of bindings, or a single one.
-func firstHostPort(val interface{}) int {
-	switch v := val.(type) {
-	case []interface{}:
-		for _, child := range v {
-			if p := firstHostPort(child); p != 0 {
-				return p
-			}
-		}
-	case map[string]interface{}:
-		for key, child := range v {
-			if hostPortKey.MatchString(strings.ToLower(key)) {
-				return portNumber(child)
-			}
-		}
-	default:
-		return portNumber(v)
-	}
-	return 0
-}
-
-// portNumber reads a port given as a number, "5396", or "5391/tcp".
-func portNumber(val interface{}) int {
-	switch v := val.(type) {
-	case float64:
-		if v > 0 && v < 65536 && v == float64(int(v)) {
-			return int(v)
-		}
-	case string:
-		if m := portSpecKey.FindStringSubmatch(strings.ToLower(strings.TrimSpace(v))); m != nil {
-			n, _ := strconv.Atoi(m[1])
-			if n > 0 && n < 65536 {
-				return n
-			}
-		}
-	}
-	return 0
 }
 
 // WriteFile writes content to path inside the sandbox, creating its

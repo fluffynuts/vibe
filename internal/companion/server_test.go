@@ -44,7 +44,7 @@ func (f *fakeSbx) run(_ context.Context, args ...string) ([]byte, error) {
 	if out, ok := f.out[key]; ok {
 		return []byte(out), nil
 	}
-	return []byte("[]"), nil
+	return []byte("null"), nil
 }
 
 func (f *fakeSbx) called() [][]string {
@@ -272,7 +272,7 @@ func TestChangesRunTheScopedSbxCommandAndSayWhich(t *testing.T) {
 	want := [][]string{
 		{"policy", "allow", "network", "--sandbox", "vibe", "api.example.com"},
 		{"policy", "deny", "network", "--sandbox", "vibe", "ads.example.com"},
-		{"policy", "rm", "network", "--sandbox", "vibe", "--id", "r-1"},
+		{"policy", "rm", "network", "--sandbox", "vibe", "--id", "r-1", "--force"},
 	}
 	if !reflect.DeepEqual(sbx.called(), want) {
 		t.Errorf("calls = %v, want %v", sbx.called(), want)
@@ -295,9 +295,9 @@ func TestSbxFailuresAreReportedNotHidden(t *testing.T) {
 
 func TestReadsReturnWhatSbxSaid(t *testing.T) {
 	sbx := &fakeSbx{out: map[string]string{
-		"log":           `[{"resource":"github.com","decision":"allowed","count":3,"last_seen":"2026-10-09T12:00:00Z"}]`,
-		"ls-network":    `[{"rule_id":"r-1","resources":["github.com"],"decision":"allow","source":"local"}]`,
-		"ls-filesystem": `[{"rule_id":"f-1","resources":["/work"],"decision":"allow","source":"org"}]`,
+		"log":           `{"allowed_hosts": [{"host":"github.com","vm_name":"vibe","count_since":3,"last_seen":"2026-10-09T12:00:00Z"}]}`,
+		"ls-network":    `{"rules": [{"id":"r-1","resources":["github.com"],"decision":"allow","origin":"local","editable":true}]}`,
+		"ls-filesystem": `{"rules": [{"id":"f-1","resources":["/work"],"decision":"allow","origin":"local","editable":false}]}`,
 	}}
 	s := newServer(sbx)
 

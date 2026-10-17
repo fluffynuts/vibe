@@ -249,7 +249,7 @@ func sandboxTranscripts(name string) transcripts {
 			// The transcript, and the folder of whatever it refers out to,
 			// as one line of base64: the last line, should a login shell
 			// say anything first.
-			out, err := sbxrun.ExecCaptureContext(ctx, name, asAgent(
+			out, err := sbxrun.ExecStdout(ctx, name, asAgent(
 				`cd "$HOME/.claude" && ls projects/*/`+pattern(session)+` >/dev/null 2>&1 && `+
 					`find projects -mindepth 2 -maxdepth 2 \( -name `+pattern(session)+` -o -name `+shellQuote(session)+` \) -print0 | `+
 					`tar --null -czf - -T - 2>/dev/null | base64 -w0`)...)

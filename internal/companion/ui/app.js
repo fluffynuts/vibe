@@ -739,9 +739,6 @@
           ? 'Blocked earlier, but a rule now allows it. Retry the request in the sandbox.' : ''], ['Reason', e.reason], ['Proxy', e.proxyType], ['Last seen', e.lastSeen]], 6))
       }
     }
-    $('log-note').textContent = data.skipped
-      ? data.skipped + ' entr' + (data.skipped === 1 ? 'y' : 'ies') + " from sbx had no host vibe could read, so aren't shown."
-      : ''
   }
 
   function actionFor(entry) {
@@ -799,10 +796,7 @@
     })
     const note = $(noteId)
     if (kind === 'fs') {
-      note.textContent = "Read-only: sbx doesn't log filesystem access yet, so there are only the rules to show." +
-        (data.skipped ? ' ' + data.skipped + " from sbx couldn't be read." : '')
-    } else {
-      note.textContent = data.skipped ? data.skipped + " rule(s) from sbx couldn't be read, so aren't shown." : ''
+      note.textContent = "Read-only: sbx doesn't log filesystem access yet, so there are only the rules to show."
     }
   }
 
@@ -831,7 +825,7 @@
     confirmThen({
       title: 'Remove this rule?',
       text: (rule.resources || []).join(', ') + ' — a ' + (rule.decision || 'rule') + ' rule for this sandbox.',
-      command: 'sbx policy rm network --sandbox ' + state.sandbox + ' --id ' + rule.id,
+      command: 'sbx policy rm network --sandbox ' + state.sandbox + ' --id ' + rule.id + ' --force',
       danger: true,
       run: () => post('/api/remove', { id: rule.id }),
     })

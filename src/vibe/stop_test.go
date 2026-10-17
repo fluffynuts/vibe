@@ -12,6 +12,7 @@ import (
 // running, and what stopping it does.
 type fakeStopper struct {
 	there, running, known bool
+	existsErr             error
 	code                  int
 	stopsAnyway           bool // a failed stop still leaves it stopped
 	stopped               int
@@ -19,7 +20,7 @@ type fakeStopper struct {
 
 func (f *fakeStopper) stopper() stopper {
 	return stopper{
-		exists:  func(string) bool { return f.there },
+		exists:  func(string) (bool, error) { return f.there, f.existsErr },
 		running: func(string) (bool, bool) { return f.running, f.known },
 		stop: func(string) (int, error) {
 			f.stopped++
@@ -117,5 +118,17 @@ func TestStoppingEndsAHeadlessVibeOnly(t *testing.T) {
 	stopVibe = func(string, int) (bool, error) { return false, errors.New("no such process") }
 	if err := endHeadlessVibes(t.TempDir(), []running.Claim{{PID: 11, Headless: true}}); err == nil || !strings.Contains(err.Error(), "left running") {
 		t.Errorf("when it can't be ended: %v", err)
+	}
+}
+
+func TestStopSaysWhenSbxCannotTellWhetherTheSandboxIsThere(t *testing.T) {
+	unsure := &fakeStopper{existsErr: errors.New("sbx ls --json: daemon not running")}
+	for _, force := range []bool{false, true} {
+		if _, err := stopSandbox(unsure.stopper(), "box", "/w", force); err == nil || !strings.Contains(err.Error(), "daemon not running") {
+			t.Errorf("force %v: err = %v, want sbx's reason", force, err)
+		}
+	}
+	if unsure.stopped != 0 {
+		t.Error("asked sbx to stop a sandbox it couldn't say was there")
 	}
 }

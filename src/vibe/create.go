@@ -26,7 +26,11 @@ import (
 
 func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string) error {
 	vibeHome := lay.Home
-	if sbxrun.Exists(name) {
+	exists, err := sbxrun.Exists(name)
+	if err != nil {
+		return err
+	}
+	if exists {
 		if args.NoStart {
 			note("sandbox '%s' already exists — nothing to set up", name)
 			return finish(lay, args, name)

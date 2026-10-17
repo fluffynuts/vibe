@@ -107,7 +107,11 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 	zone := recordedTimezone(vibeHome, name)
 	git := recordedGitAccess(vibeHome, name)
 
-	if sbxrun.Exists(name) {
+	exists, err := sbxrun.Exists(name)
+	if err != nil {
+		return err
+	}
+	if exists {
 		if !skipSandboxConfirm && !confirmDefault(args.Force, true, fmt.Sprintf("Remove sandbox '%s' (workspace %s)?", name, target)) {
 			return fmt.Errorf("aborted — sandbox left alone")
 		}

@@ -8,70 +8,8 @@ import (
 	"testing"
 )
 
-func TestParseLogFlatArray(t *testing.T) {
-	doc := `[
-  {"resource": "api.anthropic.com", "decision": "POLICY_DECISION_ALLOWED", "count": 339, "last_seen": "2026-10-09T12:04:51Z", "rule": "anthropic", "proxy_type": "forward"},
-  {"resource": "http-intake.logs.us5.datadoghq.com", "decision": "POLICY_DECISION_BLOCKED", "count": 86, "last_seen": "2026-10-09T12:05:31Z", "reason": "no matching allow rule"}
-]`
-	got, err := ParseLog([]byte(doc))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Entries) != 2 || got.Skipped != 0 {
-		t.Fatalf("entries = %d, skipped = %d", len(got.Entries), got.Skipped)
-	}
-	first := got.Entries[0]
-	if first.Host != "http-intake.logs.us5.datadoghq.com" || first.Decision != Blocked || first.Hits != 86 {
-		t.Errorf("newest first, then: %+v", first)
-	}
-	if first.Reason != "no matching allow rule" {
-		t.Errorf("reason = %q", first.Reason)
-	}
-	second := got.Entries[1]
-	if second.Decision != Allowed || second.Rule != "anthropic" || second.ProxyType != "forward" || second.Hits != 339 {
-		t.Errorf("second = %+v", second)
-	}
-	if !strings.Contains(string(second.Raw), "api.anthropic.com") {
-		t.Errorf("raw = %s", second.Raw)
-	}
-}
-
-func TestParseLogWrappedWithOtherNames(t *testing.T) {
-	doc := `{"sandbox": "vibe", "entries": [
-  {"host": "github.com", "status": "allowed", "hits": "17", "lastSeen": {"seconds": 1791547439, "nanos": 5}},
-  {"host": "ads.example.com", "blocked": true, "requests": 2, "time": 1791547500000}
-]}`
-	got, err := ParseLog([]byte(doc))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Entries) != 2 {
-		t.Fatalf("entries = %+v", got.Entries)
-	}
-	byHost := map[string]LogEntry{}
-	for _, e := range got.Entries {
-		byHost[e.Host] = e
-	}
-	if e := byHost["github.com"]; e.Decision != Allowed || e.Hits != 17 || !strings.HasPrefix(e.LastSeen, "2026-") {
-		t.Errorf("github = %+v", e)
-	}
-	if e := byHost["ads.example.com"]; e.Decision != Blocked || e.Hits != 2 || !strings.HasPrefix(e.LastSeen, "2026-") {
-		t.Errorf("ads = %+v", e)
-	}
-}
-
-func TestParseLogCountsWhatItCannotReadAHostFrom(t *testing.T) {
-	got, err := ParseLog([]byte(`[{"decision": "allowed", "count": 3}, {"host": "a.example.com", "decision": "allowed"}]`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Entries) != 1 || got.Skipped != 1 {
-		t.Errorf("entries = %d, skipped = %d", len(got.Entries), got.Skipped)
-	}
-}
-
 func TestParseLogOfNothingIsAnEmptyLog(t *testing.T) {
-	for _, doc := range []string{"", "  \n", "[]", "null", "{}"} {
+	for _, doc := range []string{"", "  \n", "null", `{"blocked_hosts": [], "allowed_hosts": []}`, `{"blocked_hosts": null}`} {
 		got, err := ParseLog([]byte(doc))
 		if err != nil {
 			t.Errorf("%q: %v", doc, err)
@@ -82,61 +20,204 @@ func TestParseLogOfNothingIsAnEmptyLog(t *testing.T) {
 	}
 }
 
-func TestParseLogOfNonJSONIsAnError(t *testing.T) {
-	if _, err := ParseLog([]byte("no sandbox named foo")); err == nil {
-		t.Error("expected an error")
+// Only the shape sbx prints is read; anything else is said to be unusable,
+// rather than shown as an empty or partial log.
+func TestParseLogRejectsWhatSbxDoesNotPrint(t *testing.T) {
+	for _, doc := range []string{
+		"no sandbox named foo",
+		`[{"host": "a.example.com", "decision": "allowed"}]`,
+		`{"entries": [{"host": "a.example.com", "status": "allowed"}]}`,
+		`{}`,
+		`{"allowed_hosts": [{"vm_name": "vibe", "count_since": 3}]}`,
+	} {
+		if got, err := ParseLog([]byte(doc)); err == nil {
+			t.Errorf("ParseLog(%s) = %+v, want an error", doc, got)
+		}
 	}
 }
 
-func TestParseRulesNestedInPolicies(t *testing.T) {
-	doc := `{"policies": [
-  {"name": "local", "source": "local", "rules": [
-    {"rule_id": "r-1", "name": "allow-github", "resources": ["github.com", "*.github.com"], "decision": "allow", "protocol": "tcp", "sandbox": "vibe"}
-  ]},
-  {"name": "org", "source": "org", "rules": [
-    {"rule_id": "o-1", "resources": ["*.corp.example"], "decision": "deny", "source": "org"}
-  ]}
-]}`
+// realNetworkRules is 'sbx policy ls vibe --json --wide --type network'
+// from sbx v0.48, cut down to a default rule, one the user added and the
+// sandbox's kit's.
+const realNetworkRules = `{
+  "rules": [
+    {
+      "id": "default-ai-services",
+      "name": "default-ai-services",
+      "policy_id": "local-policy",
+      "scope": "global",
+      "applies_to": "all",
+      "resource_type": "network",
+      "decision": "allow",
+      "resources": ["api.anthropic.com:443", "**.openai.com:443"],
+      "origin": "local",
+      "layer": "local",
+      "status": "active",
+      "editable": true,
+      "provenance": {"created_via": "default"},
+      "actions": ["net:connect:tcp"]
+    },
+    {
+      "id": "1e8df9a6-b7fd-4cac-948d-0fab95719547",
+      "name": "1e8df9a6-b7fd-4cac-948d-0fab95719547",
+      "policy_id": "local-policy",
+      "scope": "global",
+      "applies_to": "all",
+      "resource_type": "network",
+      "decision": "allow",
+      "resources": ["192.168.50.45:22"],
+      "origin": "local",
+      "layer": "local",
+      "status": "active",
+      "editable": true,
+      "provenance": {"created_via": "added"},
+      "actions": ["net:connect:tcp"]
+    },
+    {
+      "id": "dc1b99b8-5e3c-44d7-9758-965f9080ad91",
+      "name": "kit:vibe",
+      "policy_id": "dcb3dbd5-198b-4b5c-b47d-12fcbce8f5f9",
+      "scope": "sandbox:vibe",
+      "applies_to": "sandbox:vibe",
+      "resource_type": "network",
+      "decision": "allow",
+      "resources": ["api.anthropic.com:443", "github.com", "*.ubuntu.com"],
+      "origin": "scoped",
+      "layer": "local",
+      "status": "active",
+      "editable": false,
+      "sandbox_id": "vibe",
+      "provenance": {"created_via": "provisioned", "source": "sandboxes"},
+      "actions": ["net:connect:tcp"]
+    }
+  ]
+}`
+
+func TestParseRulesReadsSbxsShape(t *testing.T) {
+	got, err := ParseRules([]byte(realNetworkRules))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Rules) != 3 {
+		t.Fatalf("rules = %+v", got.Rules)
+	}
+	byID := map[string]Rule{}
+	for _, r := range got.Rules {
+		byID[r.ID] = r
+	}
+	def, added, kit := byID["default-ai-services"], byID["1e8df9a6-b7fd-4cac-948d-0fab95719547"], byID["dc1b99b8-5e3c-44d7-9758-965f9080ad91"]
+	if def.ID != "default-ai-services" || def.Name != "default-ai-services" || def.Decision != Allowed ||
+		!reflect.DeepEqual(def.Resources, []string{"api.anthropic.com:443", "**.openai.com:443"}) ||
+		def.Source != "local" || def.Scope != "global" || def.Status != "active" || !def.Removable {
+		t.Errorf("default = %+v", def)
+	}
+	if added.ID != "1e8df9a6-b7fd-4cac-948d-0fab95719547" || !added.Removable {
+		t.Errorf("added = %+v", added)
+	}
+	if kit.Name != "kit:vibe" || kit.Source != "scoped" || kit.Scope != "sandbox:vibe" || kit.Removable {
+		t.Errorf("a kit's rule, which sbx says isn't editable, = %+v", kit)
+	}
+	if !strings.Contains(string(kit.Raw), `"provisioned"`) {
+		t.Errorf("raw = %s", kit.Raw)
+	}
+}
+
+// The sandbox's own rules come first, so they aren't under every global
+// one; otherwise sbx's order stands.
+func TestParseRulesPutsTheSandboxsOwnRulesFirst(t *testing.T) {
+	got, err := ParseRules([]byte(realNetworkRules))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, r := range got.Rules {
+		ids = append(ids, r.ID)
+	}
+	want := []string{"dc1b99b8-5e3c-44d7-9758-965f9080ad91", "default-ai-services", "1e8df9a6-b7fd-4cac-948d-0fab95719547"}
+	if !reflect.DeepEqual(ids, want) {
+		t.Errorf("order = %v, want %v", ids, want)
+	}
+}
+
+// From 'sbx policy ls vibe --json --wide --type filesystem', sbx v0.48.
+func TestParseRulesReadsFilesystemRules(t *testing.T) {
+	doc := `{
+  "rules": [
+    {"id": "default-fs-read-allow-all", "name": "default-fs-read-allow-all", "policy_id": "local-policy", "scope": "global", "applies_to": "all",
+     "resource_type": "filesystem:read", "decision": "allow", "resources": ["**"], "origin": "local", "layer": "local", "status": "active",
+     "editable": false, "provenance": {"created_via": "default"}, "actions": ["fs:mount:read"]},
+    {"id": "default-fs-write-allow-all", "name": "default-fs-write-allow-all", "policy_id": "local-policy", "scope": "global", "applies_to": "all",
+     "resource_type": "filesystem:write", "decision": "allow", "resources": ["**"], "origin": "local", "layer": "local", "status": "active",
+     "editable": false, "provenance": {"created_via": "default"}, "actions": ["fs:mount:read", "fs:mount:write"]}
+  ]
+}`
 	got, err := ParseRules([]byte(doc))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Rules) != 2 {
-		t.Fatalf("rules = %+v", got.Rules)
-	}
-	local, org := got.Rules[0], got.Rules[1]
-	if local.ID != "r-1" || !reflect.DeepEqual(local.Resources, []string{"github.com", "*.github.com"}) ||
-		local.Decision != Allowed || local.Protocol != "tcp" {
-		t.Errorf("local = %+v", local)
-	}
-	if org.Decision != Blocked || org.Source != "org" {
-		t.Errorf("org = %+v", org)
-	}
-	if !local.Removable {
-		t.Error("a local rule with an id should be removable")
-	}
-	if org.Removable {
-		t.Error("an org rule must never be offered for removal")
-	}
-}
-
-func TestParseRulesWithoutAnIDCannotBeRemoved(t *testing.T) {
-	got, err := ParseRules([]byte(`[{"resource": "a.example.com", "decision": "allow", "source": "local"}]`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Rules) != 1 || got.Rules[0].Removable {
+	if len(got.Rules) != 2 || got.Rules[0].Decision != Allowed || got.Rules[0].Removable || got.Rules[1].Removable {
 		t.Errorf("rules = %+v", got.Rules)
 	}
 }
 
-func TestParseRulesCountsWhatHasNoResource(t *testing.T) {
-	got, err := ParseRules([]byte(`[{"rule_id": "x", "decision": "allow"}]`))
+// From 'sbx policy deny network --sandbox vibe deny-test.example.com', then
+// 'sbx policy ls vibe --json --wide --type network', sbx v0.48.
+func TestParseRulesReadsADenyRule(t *testing.T) {
+	doc := `{
+  "rules": [
+    {
+      "id": "872e8e87-b0d3-443b-a42d-556b54c669f3",
+      "name": "872e8e87-b0d3-443b-a42d-556b54c669f3",
+      "policy_id": "7dc9bdb9-0b7c-4c79-814a-f882d6fdee44",
+      "scope": "sandbox:vibe",
+      "applies_to": "sandbox:vibe",
+      "resource_type": "network",
+      "decision": "deny",
+      "resources": ["deny-test.example.com"],
+      "origin": "scoped",
+      "layer": "local",
+      "status": "active",
+      "editable": true,
+      "sandbox_id": "vibe",
+      "provenance": {"created_via": "added"},
+      "actions": ["net:connect:tcp", "net:connect:udp"]
+    }
+  ]
+}`
+	got, err := ParseRules([]byte(doc))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Rules) != 0 || got.Skipped != 1 {
-		t.Errorf("rules = %+v, skipped = %d", got.Rules, got.Skipped)
+	if len(got.Rules) != 1 {
+		t.Fatalf("rules = %+v", got.Rules)
+	}
+	r := got.Rules[0]
+	if r.ID != "872e8e87-b0d3-443b-a42d-556b54c669f3" || r.Decision != Blocked || r.Scope != "sandbox:vibe" || !r.Removable {
+		t.Errorf("rule = %+v", r)
+	}
+}
+
+func TestParseRulesOfNothingIsNoRules(t *testing.T) {
+	for _, doc := range []string{"", "null", `{"rules": []}`, `{"rules": null}`} {
+		got, err := ParseRules([]byte(doc))
+		if err != nil || len(got.Rules) != 0 {
+			t.Errorf("%q: %+v, %v", doc, got.Rules, err)
+		}
+	}
+}
+
+func TestParseRulesRejectsWhatSbxDoesNotPrint(t *testing.T) {
+	for _, doc := range []string{
+		"not json",
+		`[{"id": "x", "decision": "allow", "resources": ["a.example.com"]}]`,
+		`{"policies": [{"name": "local", "rules": [{"rule_id": "r-1", "resources": ["github.com"], "decision": "allow"}]}]}`,
+		`{}`,
+		`{"rules": [{"id": "x", "decision": "allow"}]}`,
+		`{"rules": [{"id": "x", "decision": "maybe", "resources": ["a.example.com"]}]}`,
+	} {
+		if got, err := ParseRules([]byte(doc)); err == nil {
+			t.Errorf("ParseRules(%s) = %+v, want an error", doc, got)
+		}
 	}
 }
 
@@ -208,7 +289,7 @@ func TestMutationsAreScopedToTheSandbox(t *testing.T) {
 	want := [][]string{
 		{"policy", "allow", "network", "--sandbox", "vibe", "api.example.com"},
 		{"policy", "deny", "network", "--sandbox", "vibe", "ads.example.com"},
-		{"policy", "rm", "network", "--sandbox", "vibe", "--id", "r-1"},
+		{"policy", "rm", "network", "--sandbox", "vibe", "--id", "r-1", "--force"},
 	}
 	if !reflect.DeepEqual(r.calls, want) {
 		t.Errorf("calls = %v, want %v", r.calls, want)
@@ -234,7 +315,7 @@ func TestInvalidInputNeverReachesSbx(t *testing.T) {
 }
 
 func TestReadsAskSbxForJSONOfTheRightKind(t *testing.T) {
-	r := &recorder{out: "[]"}
+	r := &recorder{out: "null"}
 	c := &Client{Sandbox: "vibe", Run: r.run}
 	if _, err := c.Log(); err != nil {
 		t.Fatal(err)

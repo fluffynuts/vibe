@@ -66,7 +66,7 @@ func holdingStopper(vibeHome, target string) stopper {
 
 // stopper is what --stop asks of sbx: sbxStopper, or a stub under test.
 type stopper struct {
-	exists func(name string) bool
+	exists func(name string) (bool, error)
 	// running says whether the sandbox is running, and known whether sbx
 	// could say.
 	running func(name string) (running, known bool)
@@ -99,7 +99,11 @@ var sbxStopper = stopper{
 // there at all, or that sbx failed to stop but has stopped anyway (as one
 // half-made by an interrupted vibe can).
 func stopSandbox(s stopper, name, target string, force bool) (int, error) {
-	if !s.exists(name) {
+	exists, err := s.exists(name)
+	if err != nil {
+		return 0, err
+	}
+	if !exists {
 		if force {
 			note("no sandbox named '%s' for %s — nothing to stop", name, target)
 			return 0, nil
@@ -119,7 +123,8 @@ func stopSandbox(s stopper, name, target string, force bool) (int, error) {
 		return 0, nil
 	}
 	running, known := s.running(name)
-	stopped := !s.exists(name) || (known && !running)
+	stillThere, existsErr := s.exists(name)
+	stopped := (existsErr == nil && !stillThere) || (known && !running)
 	if !stopped && s.unhold != nil {
 		s.unhold()
 	}

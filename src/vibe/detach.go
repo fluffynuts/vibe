@@ -82,7 +82,9 @@ func companionURL(vibeHome, name string) string {
 // at.
 func detachHeadless(lay layout.Layout, args cliargs.Args, name, target string) error {
 	vibeHome := lay.Home
-	if !sbxrun.Exists(name) {
+	if exists, err := sbxrun.Exists(name); err != nil {
+		return err
+	} else if !exists {
 		return noSandboxForHeadless(name, target)
 	}
 	for _, c := range running.Claims(vibeHome, target) {

@@ -2,7 +2,10 @@ package sbxrun
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
@@ -127,5 +130,146 @@ func TestStreamSaysWhenTheCommandHasTakenAllItsInput(t *testing.T) {
 	}
 	if want := []string{"delivered", "typed", "out"}; !reflect.DeepEqual(order, want) {
 		t.Errorf("order = %q, want %q", order, want)
+	}
+}
+
+// fakeSbx puts an sbx on PATH that, asked for 'ls --json', prints stdout
+// and stderr and exits with code; asked for anything else, it fails.
+func fakeSbx(t *testing.T, stdout, stderr string, code int) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in sbx is a shell script")
+	}
+	dir := t.TempDir()
+	write := func(name, content string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("stdout", stdout)
+	write("stderr", stderr)
+	write("sbx", fmt.Sprintf("#!/bin/sh\n"+
+		"[ \"$*\" = \"ls --json\" ] || { echo \"unexpected: sbx $*\" >&2; exit 2; }\n"+
+		"cat '%s'\ncat '%s' >&2\nexit %d\n",
+		filepath.Join(dir, "stdout"), filepath.Join(dir, "stderr"), code))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// realListing is 'sbx ls --json' from sbx v0.48, cut down to two sandboxes.
+const realListing = `[
+  {
+    "name": "convert-type-imports",
+    "id": "1123044f-41e7-4ffb-82b3-57af4ff55f42",
+    "agent": "claude",
+    "status": "stopped",
+    "last_used_at": "2026-10-14T11:23:09.177234797Z",
+    "workspaces": [
+      "/home/davydm/code/opensource/convert-type-imports",
+      "/home/davydm/.vibe/memories/convert-type-imports",
+      "/home/davydm/.vibe/clipboard/convert-type-imports"
+    ],
+    "memory": "12g",
+    "memory_mib": 12288,
+    "created_at": "2026-10-14T11:22:44Z"
+  },
+  {
+    "name": "vibe",
+    "id": "610b4499-468b-4dff-abeb-0ffe9166ba9e",
+    "agent": "claude",
+    "status": "running",
+    "last_used_at": "2026-10-17T08:35:01.140488627Z",
+    "ports": [
+      {
+        "host_ip": "127.0.0.1",
+        "host_port": 5405,
+        "sandbox_port": 5390,
+        "protocol": "tcp4"
+      }
+    ],
+    "workspaces": [
+      "/home/davydm/code/opensource/vibe",
+      "/home/davydm/.vibe/memories/vibe"
+    ],
+    "memory": "12g",
+    "memory_mib": 12288,
+    "created_at": "2026-10-16T19:52:45Z"
+  }
+]
+`
+
+func TestListReadsSbxsJSON(t *testing.T) {
+	fakeSbx(t, realListing, "", 0)
+	got, err := ListContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Status{
+		{Name: "convert-type-imports", State: "stopped"},
+		{Name: "vibe", Running: true, State: "running"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ListContext = %+v\nwant %+v", got, want)
+	}
+}
+
+func TestListKeepsAStateItDoesNotKnow(t *testing.T) {
+	fakeSbx(t, `[{"name": "odd-one", "status": "Creating"}]`, "", 0)
+	got, err := ListContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []Status{{Name: "odd-one", State: "creating"}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("ListContext = %+v, want %+v", got, want)
+	}
+}
+
+func TestListIsNothingWhenSbxHasNoSandboxes(t *testing.T) {
+	for _, out := range []string{"[]\n", "null\n", ""} {
+		fakeSbx(t, out, "", 0)
+		got, err := ListContext(context.Background())
+		if err != nil || len(got) != 0 {
+			t.Errorf("ListContext of %q = %+v, %v; want nothing", out, got, err)
+		}
+	}
+}
+
+func TestListIgnoresWhatSbxSaysOnStderr(t *testing.T) {
+	fakeSbx(t, realListing, "A new version of sbx is available\n", 0)
+	got, err := ListContext(context.Background())
+	if err != nil || len(got) != 2 {
+		t.Errorf("ListContext = %+v, %v; want the two sandboxes", got, err)
+	}
+}
+
+func TestListSaysToUpgradeAnSbxWithoutJSON(t *testing.T) {
+	fakeSbx(t, "", "Error: unknown flag: --json\n", 1)
+	_, err := ListContext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "unknown flag: --json") || !strings.Contains(err.Error(), "vibe --install-sbx") {
+		t.Errorf("ListContext error = %v, want sbx's reason and how to upgrade it", err)
+	}
+}
+
+func TestListSaysWhatItCouldNotRead(t *testing.T) {
+	fakeSbx(t, "SANDBOX  AGENT  STATUS\n", "", 0)
+	_, err := ListContext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "sbx ls --json") {
+		t.Errorf("ListContext error = %v, want it to name the command it couldn't read", err)
+	}
+}
+
+func TestExistsLooksInSbxsList(t *testing.T) {
+	fakeSbx(t, realListing, "", 0)
+	for name, want := range map[string]bool{"vibe": true, "convert-type-imports": true, "vib": false, "nope": false} {
+		got, err := Exists(name)
+		if err != nil || got != want {
+			t.Errorf("Exists(%q) = %v, %v; want %v", name, got, err, want)
+		}
+	}
+}
+
+func TestExistsSaysWhenSbxCannotTell(t *testing.T) {
+	fakeSbx(t, "", "daemon not running\n", 1)
+	if _, err := Exists("vibe"); err == nil || !strings.Contains(err.Error(), "daemon not running") {
+		t.Errorf("Exists error = %v, want sbx's reason", err)
 	}
 }

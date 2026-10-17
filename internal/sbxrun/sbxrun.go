@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -78,6 +79,21 @@ func captureOutContext(ctx context.Context, args ...string) (string, error) {
 	cmd.Stderr = &out
 	err := cmd.Run()
 	return out.String(), err
+}
+
+// captureSplitContext is captureOutContext, keeping what sbx prints on
+// stderr apart from stdout, for output that's read as data.
+func captureSplitContext(ctx context.Context, args ...string) (stdout, stderr string, err error) {
+	cmd := exec.CommandContext(ctx, "sbx", args...)
+	if ctx.Done() != nil {
+		ignoreTerminalInterrupt(cmd)
+		cmd.WaitDelay = time.Second
+	}
+	var out, errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	err = cmd.Run()
+	return out.String(), errOut.String(), err
 }
 
 // runInherit runs sbx with stdio connected to the current process, returning
@@ -164,18 +180,20 @@ func resetTerminal(tty *term.State) {
 	}
 }
 
-// Exists reports whether a sandbox with the given name exists.
-func Exists(name string) bool {
-	out, err := captureOut("ls", "--quiet")
+// Exists reports whether a sandbox with the given name exists, or why sbx
+// couldn't say: a "no" sbx never gave would lead vibe to create a sandbox
+// that's already there.
+func Exists(name string) (bool, error) {
+	statuses, err := List()
 	if err != nil {
-		return false
+		return false, err
 	}
-	for _, line := range strings.Split(out, "\n") {
-		if strings.TrimSpace(line) == name {
-			return true
+	for _, s := range statuses {
+		if s.Name == name {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // Reachable reports whether the sandbox will currently accept an exec.
@@ -209,46 +227,54 @@ func Running(ctx context.Context, name string) (running, ok bool) {
 type Status struct {
 	Name    string
 	Running bool
+	// State is what sbx says of it, lowercased: "running", "stopped", or
+	// whatever else sbx reports; "" when sbx's output didn't say.
+	State string
 }
 
 // List returns every sandbox sbx knows about and whether it is running.
-//
-// This depends on the exact output format of `sbx ls`; if that format
-// changes upstream this parser may need adjusting.
 func List() ([]Status, error) {
 	return ListContext(context.Background())
 }
 
-// ListContext is List, giving up (and ending sbx) when ctx ends.
+// ListContext is List, giving up (and ending sbx) when ctx ends. It reads
+// `sbx ls --json`, sbx's output for scripts, rather than its table, which
+// is laid out for people and may change.
 func ListContext(ctx context.Context) ([]Status, error) {
-	out, err := captureOutContext(ctx, "ls")
+	stdout, stderr, err := captureSplitContext(ctx, "ls", "--json")
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("sbx ls didn't answer: %w", ctx.Err())
 		}
-		return nil, fmt.Errorf("sbx ls: %w", err)
+		said := strings.TrimSpace(stderr)
+		if strings.Contains(said, "--json") {
+			return nil, fmt.Errorf("sbx ls --json: %s\nthis sbx is too old for vibe — upgrade it with 'vibe --install-sbx'", said)
+		}
+		if said != "" {
+			return nil, fmt.Errorf("sbx ls --json: %w: %s", err, said)
+		}
+		return nil, fmt.Errorf("sbx ls --json: %w", err)
 	}
-	var statuses []Status
-	scanner := bufio.NewScanner(strings.NewReader(out))
-	first := true
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		lower := strings.ToLower(line)
-		if first && (strings.HasPrefix(lower, "name") || strings.Contains(lower, "status")) {
-			first = false
-			continue
-		}
-		first = false
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
-		}
-		name := fields[0]
-		running := strings.Contains(lower, "running") && !strings.Contains(lower, "not running")
-		statuses = append(statuses, Status{Name: name, Running: running})
+	return parseList(stdout)
+}
+
+// parseList reads `sbx ls --json`: an array with an object per sandbox.
+// Nothing at all is taken as no sandboxes, as is null.
+func parseList(out string) ([]Status, error) {
+	if strings.TrimSpace(out) == "" {
+		return nil, nil
+	}
+	var sandboxes []struct {
+		Name   string `json:"name"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(out), &sandboxes); err != nil {
+		return nil, fmt.Errorf("couldn't read what sbx ls --json printed (%v) — vibe may need updating for this sbx:\n%s", err, out)
+	}
+	statuses := make([]Status, 0, len(sandboxes))
+	for _, sb := range sandboxes {
+		state := strings.ToLower(sb.Status)
+		statuses = append(statuses, Status{Name: sb.Name, Running: state == "running", State: state})
 	}
 	return statuses, nil
 }

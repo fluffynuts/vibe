@@ -9,6 +9,7 @@
 package claudetheme
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -136,7 +137,7 @@ func themeIn(name, file string) (value string, found, ok bool) {
 	if !sbxrun.ExecSilent(name, "test", "-e", file) {
 		return "", false, sbxrun.Reachable(name)
 	}
-	out, err := sbxrun.ExecCapture(name, "cat", file)
+	out, err := sbxrun.ExecStdout(context.Background(), name, "cat", file)
 	if err != nil {
 		return "", false, false
 	}

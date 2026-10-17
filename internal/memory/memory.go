@@ -65,7 +65,7 @@ func probe(ctx context.Context, sandboxName string) Presence {
 	if !sbxrun.ExecSilentContext(ctx, sandboxName, "test", "-d", agentPath) {
 		return None
 	}
-	out, err := sbxrun.ExecCaptureContext(ctx, sandboxName, "find", agentPath, "-mindepth", "1", "-maxdepth", "1", "-print", "-quit")
+	out, err := sbxrun.ExecStdout(ctx, sandboxName, "find", agentPath, "-mindepth", "1", "-maxdepth", "1", "-print", "-quit")
 	if err != nil {
 		return Unknown
 	}
