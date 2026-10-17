@@ -47,8 +47,9 @@ func asBuild(t *testing.T, build string) {
 	t.Cleanup(func() { vibe.Build = old })
 }
 
-// withSbx puts a stand-in sbx reporting version where --install-sbx
-// installs it, in a fresh home, with nothing else on PATH.
+// withSbx puts a stand-in sbx reporting version — as sbx v0.48.0 and later
+// do — where --install-sbx installs it, in a fresh home, with nothing else
+// on PATH.
 func withSbx(t *testing.T, version string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -60,7 +61,7 @@ func withSbx(t *testing.T, version string) {
 	if version == "" {
 		return
 	}
-	writeFile(t, filepath.Join(home, ".docker", "sbx", "bin", "sbx"), "#!/bin/sh\necho 'sbx version: "+version+" abc123'\n")
+	writeFile(t, filepath.Join(home, ".docker", "sbx", "bin", "sbx"), "#!/bin/sh\necho 'sbx version "+version+" abc123'\n")
 	os.Chmod(filepath.Join(home, ".docker", "sbx", "bin", "sbx"), 0o755)
 }
 

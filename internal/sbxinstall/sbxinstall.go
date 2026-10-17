@@ -361,20 +361,22 @@ func Version(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return ParseVersion(string(out)), nil
+	return ParseVersion(string(out))
 }
 
-// ParseVersion reads the version from sbx version's output, which is
-// "sbx version: v0.46.0 <commit>". Output in any other shape is returned
-// as-is, trimmed.
-func ParseVersion(out string) string {
-	out = strings.TrimSpace(out)
-	rest, ok := strings.CutPrefix(out, "sbx version:")
-	if !ok {
-		return out
+// versionWord matches a version as sbx prints it: "v0.46.0", "v0.47.0-rc2".
+var versionWord = regexp.MustCompile(`^v?\d+\.\d+\.\d+(?:[-+]\S*)?$`)
+
+// ParseVersion reads the version from sbx version's output — "sbx version
+// v0.48.0 <commit>", or before v0.48.0 "sbx version: v0.46.0 <commit>" — as
+// the first word shaped like a version. Output with none is an error rather
+// than a version, which would compare as older than any release and so be
+// offered an upgrade forever.
+func ParseVersion(out string) (string, error) {
+	for _, word := range strings.Fields(out) {
+		if versionWord.MatchString(word) {
+			return word, nil
+		}
 	}
-	if fields := strings.Fields(rest); len(fields) > 0 {
-		return fields[0]
-	}
-	return out
+	return "", fmt.Errorf("can't find a version in its output %q", strings.TrimSpace(out))
 }

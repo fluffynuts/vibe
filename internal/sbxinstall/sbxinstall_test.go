@@ -240,13 +240,22 @@ func TestNeedsSudo(t *testing.T) {
 
 func TestParseVersion(t *testing.T) {
 	for out, want := range map[string]string{
+		"sbx version v0.48.0 5caf923e0587d376848f6f388eca3e0f5ca00e2d\n":  "v0.48.0",
 		"sbx version: v0.46.0 991967dc90ce0d9a440cd1df1bdf3e395c5a2693\n": "v0.46.0",
-		"sbx version: v0.46.0\n": "v0.46.0",
-		"something else\n":       "something else",
-		"sbx version:   \n":      "sbx version:",
+		"sbx version: v0.46.0\n":        "v0.46.0",
+		"sbx version v0.47.0-rc2 abc\n": "v0.47.0-rc2",
 	} {
-		if got := ParseVersion(out); got != want {
-			t.Errorf("ParseVersion(%q) = %q, want %q", out, got, want)
+		got, err := ParseVersion(out)
+		if err != nil || got != want {
+			t.Errorf("ParseVersion(%q) = %q, %v; want %q", out, got, err, want)
+		}
+	}
+}
+
+func TestParseVersionRefusesOutputWithNoVersion(t *testing.T) {
+	for _, out := range []string{"something else\n", "sbx version:   \n", ""} {
+		if got, err := ParseVersion(out); err == nil {
+			t.Errorf("ParseVersion(%q) = %q, want an error", out, got)
 		}
 	}
 }
