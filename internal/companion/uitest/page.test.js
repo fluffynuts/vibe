@@ -2203,3 +2203,130 @@ test('an unreadable review offers to start afresh, and does, asking first', asyn
     assert.equal(p.$('review-broken').hidden, true)
   } finally { p.close() }
 })
+
+// held is an answer from vibe that's on its way until the test sends it.
+function held() {
+  let send
+  const answer = new Promise((resolve) => { send = resolve })
+  return { route: () => answer, send }
+}
+
+// turns lets the page get on with what it has, while answers are held back.
+async function turns(n = 20) {
+  for (let i = 0; i < n; i++) await new Promise((resolve) => setImmediate(resolve))
+}
+
+test('the page says it is starting until the tab it opens on has its data', async () => {
+  const state = held()
+  const log = held()
+  const p = await openPage({ routes: { '/api/state': state.route, '/api/log': log.route }, storage: { 'vibe-companion-tab': 'log' }, settled: false })
+  try {
+    await turns()
+    assert.equal(p.$('starting').hidden, false, 'shown from the start')
+    state.send({ sandbox: 'box', sandboxTabs: true, attention: {} })
+    await turns()
+    assert.equal(p.$('starting').hidden, false, "the tabs are known, but the log isn't there yet")
+    log.send({ entries: [] })
+    await p.settle()
+    assert.equal(p.$('starting').hidden, true)
+  } finally { p.close() }
+})
+
+test('opening on the Conversation tab, the page is starting until the conversation is there', async () => {
+  const p = await openPage({
+    routes: { '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, attention: {} }, '/api/conversation': { events: [], last: 0 } },
+    storage: { 'vibe-companion-tab': 'conversation' },
+  })
+  try {
+    assert.equal(p.$('panel-conversation').hidden, false)
+    assert.equal(p.$('starting').hidden, false)
+    await p.every('pollConversation')
+    assert.equal(p.$('starting').hidden, true)
+  } finally { p.close() }
+})
+
+test("an error from vibe as the page starts isn't hidden behind Starting", async () => {
+  const p = await openPage({ routes: { '/api/state': { status: 500, body: { error: 'something broke' } } } })
+  try {
+    assert.equal(p.$('starting').hidden, true)
+  } finally { p.close() }
+})
+
+test('with vibe not there, Disconnected takes over from Starting', async () => {
+  const p = await openPage({ routes: { '/api/state': () => { throw new Error('refused') }, '/api/log': () => { throw new Error('refused') } } })
+  try {
+    assert.equal(p.$('offline').hidden, false)
+    assert.equal(p.$('starting').hidden, true)
+  } finally { p.close() }
+})
+
+// logPage opens on the network log, which answers with log (a body or a
+// function of the call), with a conversation that answers fine.
+function logPage(log) {
+  return openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, attention: {} },
+      '/api/log': log,
+      '/api/rules': { rules: [] },
+      '/api/conversation': { events: [], last: 0 },
+    },
+    storage: { 'vibe-companion-tab': 'log' },
+  })
+}
+
+const broken = { status: 500, body: { error: 'the log broke' } }
+
+test("the log's error stays up while the conversation is polled", async () => {
+  const p = await logPage(broken)
+  try {
+    assert.equal(p.$('banner').textContent, 'the log broke')
+    await p.every('pollConversation')
+    assert.equal(p.$('banner').hidden, false)
+    assert.equal(p.$('banner').textContent, 'the log broke')
+  } finally { p.close() }
+})
+
+test("the log's error goes once the log loads", async () => {
+  let answer = broken
+  const p = await logPage(() => answer)
+  try {
+    assert.equal(p.$('banner').hidden, false)
+    answer = { entries: [] }
+    await p.poll()
+    assert.equal(p.$('banner').hidden, true)
+  } finally { p.close() }
+})
+
+test("a tab's error is shown on that tab, not on the others", async () => {
+  const p = await logPage(broken)
+  try {
+    await p.click('tab-rules')
+    assert.equal(p.$('banner').hidden, true, 'on the rules tab')
+    await p.click('tab-log')
+    assert.equal(p.$('banner').textContent, 'the log broke')
+  } finally { p.close() }
+})
+
+test("an error from the conversation is shown on every tab", async () => {
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, attention: {} },
+      '/api/log': { entries: [] },
+      '/api/conversation': { status: 500, body: { error: 'the conversation broke' } },
+    },
+    storage: { 'vibe-companion-tab': 'log' },
+  })
+  try {
+    await p.every('pollConversation')
+    assert.equal(p.$('banner').textContent, 'the conversation broke')
+    await p.poll()
+    assert.equal(p.$('banner').textContent, 'the conversation broke', "the log loading fine doesn't clear it")
+  } finally { p.close() }
+})
+
+test("the log says when it couldn't be checked against the rules", async () => {
+  const p = await logPage({ entries: [], unresolved: "The rules couldn't be read" })
+  try {
+    assert.equal(p.$('banner').textContent, "The rules couldn't be read")
+  } finally { p.close() }
+})

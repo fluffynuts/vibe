@@ -13,8 +13,10 @@ const TOKEN = 'a'.repeat(64)
 
 // openPage loads the page with routes: { '/api/state': body or (call) =>
 // body, ... }, matched on the path without its query; anything else is
-// answered {}. storage seeds localStorage.
-async function openPage({ routes = {}, storage = {} } = {}) {
+// answered {}. storage seeds localStorage. With settled false, it comes back
+// as soon as the page's scripts have run, for a test of what the page shows
+// while answers are still on their way.
+async function openPage({ routes = {}, storage = {}, settled = true } = {}) {
   const html = fs.readFileSync(path.join(UI, 'index.html'), 'utf8').replace(/<script src="\/[^"]+"><\/script>/g, '')
   const dom = new JSDOM(html, { url: 'http://localhost:1/#' + TOKEN, runScripts: 'outside-only', pretendToBeVisual: true })
   const w = dom.window
@@ -70,7 +72,7 @@ async function openPage({ routes = {}, storage = {} } = {}) {
     }
     throw new Error('the page never settled: a call to vibe is still waiting')
   }
-  await settle()
+  if (settled) await settle()
   return {
     window: w,
     $,

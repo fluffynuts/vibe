@@ -267,10 +267,28 @@
     $('link-text').textContent = text
   }
 
-  function banner(message) {
+  // The banner says what went wrong, each problem kept under what it came
+  // from — the page's state, the conversation, or a tab's own load — so
+  // that only that source's next success takes it away. A tab's problem is
+  // shown on that tab; the state's and the conversation's on every tab, as
+  // they're asked for on every tab.
+  const problems = new Map()
+  const EVERY_TAB = ['state', 'conversation']
+
+  function banner(source, message) {
+    if (message) problems.set(source, message)
+    else problems.delete(source)
+    showBanner()
+  }
+
+  function showBanner() {
+    const shown = new Set()
+    for (const [source, message] of problems) {
+      if (EVERY_TAB.includes(source) || source === state.tab) shown.add(message)
+    }
     const b = $('banner')
-    b.hidden = !message
-    b.textContent = message || ''
+    b.hidden = shown.size === 0
+    b.textContent = [...shown].join('\n')
   }
 
   // toast says message for a few seconds. With action ({ label, run }), it
@@ -405,6 +423,7 @@
 
   function disconnected(down) {
     if (down === offline.down) return
+    if (down) started()
     offline.down = down
     offline.dismissed = false
     favicon.down = down
@@ -414,6 +433,17 @@
       for (const d of document.querySelectorAll('dialog[open]')) d.close('cancel')
     }
     showGlass()
+  }
+
+  // The same glass, in the page from the start, says it's starting until
+  // there's something to see: lifted once the tab it opens on has its data,
+  // or when there's an error to see, or Disconnected to say instead.
+  function started() { $('starting').hidden = true }
+
+  function startedIfReady() {
+    if (!state.loaded || $('panel-' + state.tab).hidden) return
+    if (state.tab === 'conversation' && !convo.loaded) return
+    started()
   }
 
   function showGlass() {
@@ -440,13 +470,13 @@
     }
   }
 
-  function problem(res) {
+  function problem(source, res) {
     if (res.status === 401) {
-      banner("This page doesn't have the right token. Open the URL vibe printed (it ends in #…), or run vibe again.")
+      banner(source, "This page doesn't have the right token. Open the URL vibe printed (it ends in #…), or run vibe again.")
       return true
     }
     if (res.body && res.body.error) {
-      banner(res.body.code === 'not-signed-in'
+      banner(source, res.body.code === 'not-signed-in'
         ? "sbx isn't signed in to Docker, so there's nothing to show yet. Run 'sbx login' on this machine."
         : res.body.error)
       return true
@@ -462,11 +492,11 @@
       const res = await api(path)
       reached(true)
       if (res.ok) {
-        banner('')
+        banner(kind, res.body.unresolved || '')
         state[kind] = res.body
         render(kind)
       } else {
-        problem(res)
+        problem(kind, res)
       }
     } catch (e) {
       reached(false)
@@ -501,7 +531,8 @@
     try {
       const res = await api('/api/state')
       reached(true)
-      if (!res.ok) { problem(res); return }
+      if (!res.ok) { problem('state', res); started(); return }
+      banner('state', '')
       state.sandbox = res.body.sandbox || ''
       state.loaded = true
       state.sandboxTabs = res.body.sandboxTabs !== false
@@ -629,12 +660,12 @@
       // Whether vibe is there at all is the ping's to say.
       post('/api/awake', {}).catch(() => {})
     }
-    if (state.tab === 'conversation') { loadState(); return }
-    if (state.tab === 'admin') { loadState(); loadAdmin(); loadInstructions(false); return }
-    if (state.tab === 'manage') { loadState(); loadManage(); return }
-    if (state.tab === 'review') { loadState(); loadReview(reviewView.files === null); return }
-    loadState()
-    load(state.tab)
+    const loads = state.tab === 'conversation' ? [loadState()]
+      : state.tab === 'admin' ? [loadState(), loadAdmin(), loadInstructions(false)]
+      : state.tab === 'manage' ? [loadState(), loadManage()]
+      : state.tab === 'review' ? [loadState(), loadReview(reviewView.files === null)]
+      : [loadState(), load(state.tab)]
+    Promise.allSettled(loads).then(startedIfReady)
   }
 
   // --- tabs -------------------------------------------------------------
@@ -644,6 +675,7 @@
     if (!TABS.includes(tab) || $('tab-' + tab).hidden) tab = TABS.find((t) => !$('tab-' + t).hidden) || 'log'
     state.tab = tab
     store.set('vibe-companion-tab', tab)
+    showBanner()
     for (const t of TABS) {
       $('panel-' + t).hidden = t !== tab
       const button = $('tab-' + t)
@@ -1783,9 +1815,10 @@
         reviewView.goTo = null
         // A review that can't be read is the tab's to say, with a way out.
         if (res.body && res.body.code === 'review-unreadable') showBroken(res.body.error)
-        else problem(res)
+        else problem('review', res)
         return
       }
+      banner('review', '')
       showBroken('')
       // Something done on the page since this set out gave a newer review.
       if (reviewView.changed === changed) {
@@ -2498,7 +2531,8 @@
     try {
       const res = await api('/api/admin')
       reached(true)
-      if (!res.ok) { problem(res); return }
+      if (!res.ok) { problem('admin', res); return }
+      banner('admin', '')
       renderAdmin(res.body)
     } catch (e) {
       reached(false)
@@ -2829,7 +2863,8 @@
       // Taking stock asks sbx, which vibe gives 20 seconds.
       const res = await api('/api/manage', { timeout: 30000 })
       reached(true)
-      if (!res.ok) { problem(res); return }
+      if (!res.ok) { problem('manage', res); return }
+      banner('manage', '')
       renderManage(res.body)
     } catch (e) {
       reached(false)
@@ -3662,8 +3697,8 @@
     try {
       const res = await api('/api/conversation?after=' + convo.last + '&commands=' + slash.seq)
       reached(true)
-      if (!res.ok) { problem(res); return }
-      banner('')
+      if (!res.ok) { problem('conversation', res); return }
+      banner('conversation', '')
       const log = $('convo-log')
       const stick = nearBottom(log)
       if (res.body.reset) { log.replaceChildren(); convo.ticks.clear() }
@@ -3686,6 +3721,7 @@
       convo.loaded = true
       showAllAttention()
       showTyping()
+      startedIfReady()
     } catch (e) {
       reached(false)
     } finally {

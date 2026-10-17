@@ -104,6 +104,9 @@ type Rule struct {
 // Log is what `sbx policy log` knows about the sandbox.
 type Log struct {
 	Entries []LogEntry `json:"entries"`
+	// Unresolved says why the entries couldn't be checked against the
+	// rules, so that none is marked Unblocked; "" when they were.
+	Unresolved string `json:"unresolved,omitempty"`
 }
 
 // Rules is a list of rules.
@@ -138,8 +141,9 @@ func (c *Client) Log() (Log, error) {
 }
 
 // ResolvedLog is Log with each blocked host a current rule allows marked
-// Unblocked. If the rules can't be read the log is returned as sbx gave it:
-// a host that shows as blocked is still true to what happened.
+// Unblocked. If the rules can't be read the log is returned as sbx gave it
+// — a host that shows as blocked is still true to what happened — saying
+// why in Unresolved.
 func (c *Client) ResolvedLog() (Log, error) {
 	log, err := c.Log()
 	if err != nil {
@@ -147,6 +151,7 @@ func (c *Client) ResolvedLog() (Log, error) {
 	}
 	rules, err := c.NetworkRules()
 	if err != nil {
+		log.Unresolved = "The rules couldn't be read, so blocked hosts a rule now allows aren't marked: " + err.Error()
 		return log, nil
 	}
 	return Resolve(log, rules), nil
@@ -339,19 +344,22 @@ func unusable(command string, data []byte, why string) error {
 }
 
 // ParseLog reads `sbx policy log --json`: the hosts the sandbox has tried
-// to reach, in a list for each decision. Nothing at all, or null, is an
-// empty log.
+// to reach, in a list for each decision — "blocked" and "allowed" from sbx
+// v0.48, "blocked_hosts" and "allowed_hosts" before it. Nothing at all, or
+// null, is an empty log.
 func ParseLog(data []byte) (Log, error) {
 	const command = "policy log --json"
 	log := Log{Entries: []LogEntry{}}
 	if isNothing(data) {
 		return log, nil
 	}
-	doc, err := topLevel(command, data, "blocked_hosts", "allowed_hosts")
+	doc, err := topLevel(command, data, "blocked", "allowed", "blocked_hosts", "allowed_hosts")
 	if err != nil {
 		return Log{}, err
 	}
-	for _, list := range []struct{ key, decision string }{{"blocked_hosts", Blocked}, {"allowed_hosts", Allowed}} {
+	for _, list := range []struct{ key, decision string }{
+		{"blocked", Blocked}, {"allowed", Allowed}, {"blocked_hosts", Blocked}, {"allowed_hosts", Allowed},
+	} {
 		entries, err := listUnder(command, data, doc, list.key)
 		if err != nil {
 			return Log{}, err
@@ -362,6 +370,7 @@ func ParseLog(data []byte) (Log, error) {
 				ProxyType  string `json:"proxy_type"`
 				Rule       string `json:"rule"`
 				LastSeen   string `json:"last_seen"`
+				Count      int64  `json:"count"`
 				CountSince int64  `json:"count_since"`
 				Reason     string `json:"reason"`
 			}
@@ -374,7 +383,7 @@ func ParseLog(data []byte) (Log, error) {
 			log.Entries = append(log.Entries, LogEntry{
 				Host:      e.Host,
 				Decision:  list.decision,
-				Hits:      e.CountSince,
+				Hits:      e.Count + e.CountSince, // an sbx prints one or the other
 				LastSeen:  utc(e.LastSeen),
 				Rule:      e.Rule,
 				ProxyType: e.ProxyType,

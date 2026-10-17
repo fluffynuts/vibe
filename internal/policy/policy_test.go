@@ -8,8 +8,32 @@ import (
 	"testing"
 )
 
+// TestParseLogAsSbxV048PrintsIt is from 'sbx policy log vibe --json --type
+// network', sbx v0.48: the decision is the list an entry is in, and the
+// count is count.
+func TestParseLogAsSbxV048PrintsIt(t *testing.T) {
+	doc := `{ "allowed": [ { "sandbox_id": "vibe", "host": "mcp-gateway.docker.internal:80", "proxy_type": "forward", "rule": "<daemon-managed alias>", "count": 54, "first_seen": "2026-10-17T10:05:50.965513681+02:00", "last_seen": "2026-10-17T11:10:47.830113738+02:00" } ],
+ "blocked": [ { "sandbox_id": "vibe", "host": "http-intake.logs.us5.datadoghq.com:443", "proxy_type": "forward", "rule": "no applicable policies for op(action=net:connect:tcp, resource=net:domain:http-intake.logs.us5.datadoghq.com:443)", "reason": "No matching allow rule (default deny)", "count": 87, "first_seen": "2026-10-17T10:05:13.127537295+02:00", "last_seen": "2026-10-17T11:11:01.756483328+02:00" } ] }`
+	got, err := ParseLog([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Entries) != 2 {
+		t.Fatalf("entries = %+v", got.Entries)
+	}
+	blocked, allowed := got.Entries[0], got.Entries[1]
+	if blocked.Host != "http-intake.logs.us5.datadoghq.com:443" || blocked.Decision != Blocked || blocked.Hits != 87 ||
+		blocked.Reason != "No matching allow rule (default deny)" || blocked.LastSeen != "2026-10-17T09:11:01Z" {
+		t.Errorf("newest first, the blocked one: %+v", blocked)
+	}
+	if allowed.Host != "mcp-gateway.docker.internal:80" || allowed.Decision != Allowed || allowed.Hits != 54 ||
+		allowed.Rule != "<daemon-managed alias>" || allowed.ProxyType != "forward" {
+		t.Errorf("allowed = %+v", allowed)
+	}
+}
+
 func TestParseLogOfNothingIsAnEmptyLog(t *testing.T) {
-	for _, doc := range []string{"", "  \n", "null", `{"blocked_hosts": [], "allowed_hosts": []}`, `{"blocked_hosts": null}`} {
+	for _, doc := range []string{"", "  \n", "null", `{"blocked": [], "allowed": []}`, `{"blocked": null}`, `{"blocked_hosts": [], "allowed_hosts": []}`} {
 		got, err := ParseLog([]byte(doc))
 		if err != nil {
 			t.Errorf("%q: %v", doc, err)
@@ -344,8 +368,8 @@ func TestSbxErrorsComeBack(t *testing.T) {
 	}
 }
 
-// TestParseLogGroupedByDecision is the shape sbx really prints: the decision
-// is the list an entry is in, and the count is count_since.
+// TestParseLogGroupedByDecision is the shape sbx printed before v0.48: the
+// decision is the list an entry is in, and the count is count_since.
 func TestParseLogGroupedByDecision(t *testing.T) {
 	doc := `{"blocked_hosts": [
   {"host": "kernel.org:80", "vm_name": "vibe", "proxy_type": "forward", "rule": "no applicable policies", "last_seen": "2026-10-09T13:01:10.517026142+02:00", "count_since": 1, "reason": "No matching allow rule (default deny)"}
@@ -395,5 +419,26 @@ func TestResolveMarksBlockedHostsARuleNowAllows(t *testing.T) {
 	}
 	if log.Entries[0].Decision != Blocked {
 		t.Error("Resolve changed its input")
+	}
+}
+
+// With the rules unreadable, the log is still what happened, but it says
+// that blocked hosts a rule now allows can't be marked.
+func TestResolvedLogSaysWhenTheRulesCouldNotBeRead(t *testing.T) {
+	c := &Client{Sandbox: "vibe", Run: func(_ context.Context, args ...string) ([]byte, error) {
+		if args[1] == "ls" {
+			return nil, errors.New("sbx policy ls: daemon not running")
+		}
+		return []byte(`{"blocked": [{"host": "a.example.com:443", "count": 1, "last_seen": "2026-10-17T09:00:00Z"}]}`), nil
+	}}
+	got, err := c.ResolvedLog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Entries) != 1 || got.Entries[0].Decision != Blocked {
+		t.Errorf("entries = %+v", got.Entries)
+	}
+	if !strings.Contains(got.Unresolved, "daemon not running") {
+		t.Errorf("unresolved = %q, want why the rules couldn't be read", got.Unresolved)
 	}
 }
