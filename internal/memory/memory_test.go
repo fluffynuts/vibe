@@ -48,8 +48,11 @@ func TestBackupOfAnUnreachableSandboxReportsNothingSaved(t *testing.T) {
 }
 
 func TestStoreForIsPerSandbox(t *testing.T) {
-	if got, want := StoreFor("/root", "alpha"), filepath.Join("/root", "alpha"); got != want {
+	if got, want := StoreFor("/home/u/.vibe", "/root", "alpha"), filepath.Join("/root", "alpha"); got != want {
 		t.Errorf("StoreFor = %q, want %q", got, want)
+	}
+	if got, want := StoreFor("/home/u/.vibe", "", "alpha"), filepath.Join("/home/u/.vibe", "memories", "alpha"); got != want {
+		t.Errorf("StoreFor with no root set = %q, want %q", got, want)
 	}
 }
 

@@ -240,12 +240,8 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 	}
 
 	if agentmem.Supported(agent) {
-		root := merged.MemoryRoot
-		if root == "" {
-			root = filepath.Join(vibeHome, "memories")
-		}
 		if memoryStore == "" {
-			memoryStore = agentmem.StoreFor(root, name)
+			memoryStore = agentmem.StoreFor(vibeHome, merged.MemoryRoot, name)
 		}
 		if err := os.MkdirAll(memoryStore, 0o755); err != nil {
 			return err

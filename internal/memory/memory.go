@@ -28,8 +28,12 @@ func Supported(agent string) bool {
 	return agent == "claude"
 }
 
-// StoreFor returns the host directory backing a sandbox's memories.
-func StoreFor(memoryRoot, name string) string {
+// StoreFor returns the host directory backing sandbox name's memories: in
+// memoryRoot (settings.yaml's memoryRoot), else in vibeHome's memories.
+func StoreFor(vibeHome, memoryRoot, name string) string {
+	if memoryRoot == "" {
+		memoryRoot = filepath.Join(vibeHome, "memories")
+	}
 	return filepath.Join(memoryRoot, name)
 }
 

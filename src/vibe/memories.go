@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,7 +30,7 @@ func saveMemories(parent context.Context, vibeHome, name string) {
 	if store == "" {
 		// Records written before the store was remembered: the default
 		// location is the one such a sandbox will have had mounted.
-		store = agentmem.StoreFor(filepath.Join(vibeHome, "memories"), name)
+		store = agentmem.StoreFor(vibeHome, "", name)
 		if info, err := os.Stat(store); err != nil || !info.IsDir() {
 			return
 		}

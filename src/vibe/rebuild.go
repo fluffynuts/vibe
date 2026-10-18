@@ -134,11 +134,7 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 			case presence == agentmem.None:
 				note("  no memories found in '%s' — nothing to preserve", name)
 			case confirmDefault(args.Force, true, fmt.Sprintf("Preserve agent memories from '%s'?", name)):
-				root := merged.MemoryRoot
-				if root == "" {
-					root = filepath.Join(vibeHome, "memories")
-				}
-				memoryStore = agentmem.StoreFor(root, name)
+				memoryStore = agentmem.StoreFor(vibeHome, merged.MemoryRoot, name)
 				ok, err := agentmem.Backup(ctx, name, memoryStore)
 				if err != nil {
 					note("  WARNING: %s", err)

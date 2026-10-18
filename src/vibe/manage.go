@@ -201,7 +201,7 @@ func planRemoval(inv inventory, picked []string, own string) (removal, error) {
 func memoryStoreOf(lay layout.Layout, inst state.Instance) string {
 	store := inst.MemoryStore
 	if store == "" {
-		store = agentmem.StoreFor(lay.HomePath("memories"), inst.Name)
+		store = agentmem.StoreFor(lay.Home, "", inst.Name)
 	}
 	if filepath.Base(store) != inst.Name {
 		return ""
