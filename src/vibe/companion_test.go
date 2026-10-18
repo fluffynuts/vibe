@@ -365,3 +365,26 @@ func TestNoFolderMeansNoGitInTheSandbox(t *testing.T) {
 		t.Error("a sandbox with no folder on record got git to run")
 	}
 }
+
+// In a folder below its repository's top, the agent may comment on the
+// folder's files, and no others.
+func TestTheAgentMayCommentOnlyOnTheFoldersFiles(t *testing.T) {
+	need(t, "git")
+	top := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = top
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	folder := filepath.Join(top, "sub")
+	os.MkdirAll(folder, 0o755)
+	may := agentMayComment(folder)
+	if err := may("sub/a.go"); err != nil {
+		t.Errorf("a file in the folder: %v", err)
+	}
+	if err := may("secret.txt"); err == nil || !strings.Contains(err.Error(), "isn't in the sandbox's folder") {
+		t.Errorf("a file outside it: %v", err)
+	}
+}

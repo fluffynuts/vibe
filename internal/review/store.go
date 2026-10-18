@@ -194,6 +194,9 @@ type Store struct {
 	dir string
 	mu  sync.Mutex
 	now func() time.Time
+	// AgentFile, when set, says why the agent may not comment on file, or
+	// nil when it may.
+	AgentFile func(file string) error
 	// readFile reads a request from the inbox (readRequest), which a test
 	// stands in for, as no platform can be relied on for a file that can't
 	// be read (Windows has no such permission).
@@ -496,6 +499,11 @@ func (s *Store) apply(r *Review, req Request, author string) error {
 	case "comment":
 		if req.File == "" || req.Line < 1 || strings.TrimSpace(req.Body) == "" {
 			return fmt.Errorf("a comment needs a file, a line and something to say")
+		}
+		if author == Agent && s.AgentFile != nil {
+			if err := s.AgentFile(req.File); err != nil {
+				return err
+			}
 		}
 		side := req.Side
 		if side == "" {

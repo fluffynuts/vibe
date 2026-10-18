@@ -123,6 +123,8 @@ func serve(in io.Reader) helperAnswer {
 		result = moves(ctx, a.Dir, a.Review)
 	case "fileLines":
 		result, err = fileLines(ctx, a.Dir, a.Review, a.Path)
+	case "inFolder":
+		result, err = fileInFolder(a.Dir, a.Path)
 	case "colour":
 		result, err = colour(ctx, a.Dir, a.Review, a.Path, a.Old)
 	default:
@@ -328,4 +330,12 @@ func FileLines(ctx context.Context, dir string, r Review, path string) ([]string
 func Colour(ctx context.Context, dir string, rv Review, path string, old bool) (Highlighted, error) {
 	var out Highlighted
 	return out, isolated(ctx, "colour", helperArgs{Dir: dir, Review: rv, Path: path, Old: old}, &out)
+}
+
+// InFolder says whether file, a path in the repository the folder is in (as
+// a thread names it), is in the folder: the repository's top may be above
+// it, and files outside the folder are none of the sandbox's.
+func InFolder(ctx context.Context, folder, file string) (bool, error) {
+	var out bool
+	return out, isolated(ctx, "inFolder", helperArgs{Dir: folder, Path: file}, &out)
 }

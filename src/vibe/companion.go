@@ -340,7 +340,28 @@ func reviewTabFor(vibeHome, name string, inst state.Instance) *companion.ReviewT
 		return nil
 	}
 	noteBelowRepositoryTop(inst.Target)
-	return &companion.ReviewTab{Workspace: inst.Target, Store: review.NewStore(state.ReviewPath(vibeHome, name))}
+	store := review.NewStore(state.ReviewPath(vibeHome, name))
+	store.AgentFile = agentMayComment(inst.Target)
+	return &companion.ReviewTab{Workspace: inst.Target, Store: store}
+}
+
+// agentMayComment says why the agent may not comment on a file: when it's
+// outside folder. The repository the folder is in can be one above it (the
+// folder's own .git gone, say), whose other files are the host's, and none
+// of the agent's to ask about.
+func agentMayComment(folder string) func(file string) error {
+	return func(file string) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		in, err := review.InFolder(ctx, folder, file)
+		switch {
+		case err != nil:
+			return fmt.Errorf("couldn't tell whether %s is in the sandbox's folder: %w", file, err)
+		case !in:
+			return fmt.Errorf("%s isn't in the sandbox's folder: only files there can be commented on", file)
+		}
+		return nil
+	}
 }
 
 // noteBelowRepositoryTop warns when the sandbox's folder is inside a git

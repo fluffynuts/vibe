@@ -679,3 +679,32 @@ func TestTheHostsFileSystemTakesAbsolutePathsAsTheyAre(t *testing.T) {
 		t.Errorf("in the chroot: %v", err)
 	}
 }
+
+// A sandbox's folder can be in a repository above it (the folder's own .git
+// gone, say). Files of that repository outside the folder are the host's:
+// the agent's threads on one don't follow their code, which would tell the
+// agent whether a line it guessed is there.
+func TestTheAgentsThreadsOnFilesOutsideTheFolderDontMove(t *testing.T) {
+	top := repo(t, map[string]string{"secret.txt": "one\npassword\n", "sub/a.txt": "a\nb\n"})
+	folder := filepath.Join(top, "sub")
+	thread := func(id int, author, file, code string) Thread {
+		return Thread{ID: id, File: file, Side: "new", Line: 1, Code: code, Comments: []Comment{{Author: author, Body: "x"}}}
+	}
+	rv := Review{Threads: []Thread{
+		thread(1, Agent, "secret.txt", "password"),
+		thread(2, User, "secret.txt", "password"),
+		thread(3, Agent, "sub/a.txt", "b"),
+	}}
+	moved := map[int]bool{}
+	for _, m := range Moves(context.Background(), folder, rv) {
+		moved[m.Thread] = true
+	}
+	if moved[1] || !moved[2] || !moved[3] {
+		t.Errorf("moved: %v; want 2 (the user's) and 3 (in the folder), not 1", moved)
+	}
+	for file, want := range map[string]bool{"sub/a.txt": true, "secret.txt": false, "sub/../secret.txt": false} {
+		if got, err := InFolder(context.Background(), folder, file); err != nil || got != want {
+			t.Errorf("InFolder(%q) = %v, %v; want %v", file, got, err, want)
+		}
+	}
+}

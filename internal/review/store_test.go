@@ -528,3 +528,28 @@ func TestClosingAsOverLeavesAReviewStartedSince(t *testing.T) {
 		t.Errorf("the review looked at wasn't closed: %v %+v", err, r)
 	}
 }
+
+// The store can be told which files the agent may comment on (those in the
+// sandbox's folder): a comment on any other is refused, saying why.
+func TestAnAgentsCommentOnAFileItMayNotIsRefused(t *testing.T) {
+	s := NewStore(t.TempDir())
+	clockAt(s)
+	s.AgentFile = func(file string) error {
+		if file != "in.go" {
+			return fmt.Errorf("%s isn't in the sandbox's folder", file)
+		}
+		return nil
+	}
+	drop(t, s, "1.json", Request{Op: "comment", File: "../secret", Line: 1, Body: "guess"})
+	drop(t, s, "2.json", Request{Op: "comment", File: "in.go", Line: 1, Body: "fine"})
+	r, err := s.Take()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Threads) != 1 || r.Threads[0].File != "in.go" {
+		t.Errorf("threads: %+v", r.Threads)
+	}
+	if len(r.Problems) != 1 || !strings.Contains(r.Problems[0], "isn't in the sandbox's folder") {
+		t.Errorf("problems: %q", r.Problems)
+	}
+}
