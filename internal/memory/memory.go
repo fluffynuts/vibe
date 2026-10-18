@@ -13,12 +13,13 @@ import (
 	"runtime"
 	"strings"
 
+	"vibe/internal/kitspec"
 	"vibe/internal/sbxrun"
 )
 
 // AgentPath is where Claude Code keeps its memories inside the sandbox. Memory
 // preservation is Claude-specific: other agents have no equivalent path.
-const AgentPath = "/home/agent/.claude/projects"
+const AgentPath = kitspec.AgentHome + "/.claude/projects"
 
 // agentPath is AgentPath, as a variable so tests can point it elsewhere.
 var agentPath = AgentPath

@@ -29,6 +29,7 @@ import (
 	"sync"
 	"time"
 	"vibe/internal/fscopy"
+	"vibe/internal/kitspec"
 )
 
 // Repo is a GitHub repository a folder pushes to.
@@ -518,7 +519,7 @@ var RuleOrder = []string{RuleFeatureBranch, RuleNoDefaultBranch}
 // instructions for pushing. The kit's own instructions (KitInstructions)
 // point the agent at it, since a token can be given to a sandbox long after
 // the kit made it.
-const SandboxFile = "/home/agent/.config/vibe/git-push.md"
+const SandboxFile = kitspec.AgentHome + "/.config/vibe/git-push.md"
 
 // KitInstructions is the part of every sandbox's agent instructions about
 // pushing: whether the agent may push is settled by SandboxFile being

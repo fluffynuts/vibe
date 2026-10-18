@@ -12,6 +12,7 @@ import (
 	"vibe/internal/claudetheme"
 	"vibe/internal/cliargs"
 	"vibe/internal/companion"
+	"vibe/internal/kitspec"
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
 	"vibe/internal/policy"
@@ -165,7 +166,7 @@ func clipboardTrouble(name string) string {
 
 // startClipboardScript starts the clipboard page's server in the sandbox,
 // and does nothing when it is already running (see the clipboard-bridge kit).
-const startClipboardScript = "/home/agent/.local/bin/start-clipboard"
+const startClipboardScript = kitspec.AgentHome + "/.local/bin/start-clipboard"
 
 // startClipboard is the companion page's "start it" for a clipboard page
 // that hasn't come up: it runs what on-start would have, and waits for it

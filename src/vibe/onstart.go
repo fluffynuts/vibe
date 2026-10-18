@@ -44,7 +44,7 @@ func nudgeOnStart(lay layout.Layout, name string, reached func()) {
 	// without starting anything. It runs in the foreground — sbx exec has
 	// no --detach — which is fine here, off the session's own goroutine:
 	// what it starts to keep running (the clipboard server) detaches itself.
-	if out, err := sbxrun.ExecCapture(name, "sudo", "-n", "/home/agent/.local/bin/on-start"); err != nil {
+	if out, err := sbxrun.ExecCapture(name, "sudo", "-n", kitspec.AgentHome+"/.local/bin/on-start"); err != nil {
 		logf("on-start nudge failed: %v: %s", err, strings.TrimSpace(out))
 		return
 	}
