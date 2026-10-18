@@ -24,11 +24,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+	"vibe/internal/fscopy"
 )
 
 // Repo is a GitHub repository a folder pushes to.
@@ -605,25 +605,8 @@ func Load(path string) (token string, ok bool, err error) {
 
 // Save stores token at path, readable by the user alone.
 func Save(path, token string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("creating git token dir: %w", err)
-	}
-	// Written new (CreateTemp makes it 0600), then renamed, so the token
-	// never sits in a file someone else could read, even briefly —
-	// WriteFile would keep an existing file's mode.
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".token-*")
-	if err != nil {
-		return fmt.Errorf("writing git token: %w", err)
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.WriteString(token + "\n"); err != nil {
-		tmp.Close()
-		return fmt.Errorf("writing git token: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("writing git token: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	// Not WriteFile, which would keep an existing file's mode.
+	if err := fscopy.WriteWhole(path, []byte(token+"\n")); err != nil {
 		return fmt.Errorf("writing git token: %w", err)
 	}
 	return nil

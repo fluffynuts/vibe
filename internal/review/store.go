@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"vibe/internal/fscopy"
 )
 
 // A review's State.
@@ -680,10 +681,10 @@ func (s *Store) save(r Review) error {
 	if err != nil {
 		return err
 	}
-	if err := writeWhole(s.file(), data); err != nil {
+	if err := fscopy.WriteWhole(s.file(), data); err != nil {
 		return err
 	}
-	return writeWhole(filepath.Join(s.View(), "review.json"), data)
+	return fscopy.WriteWhole(filepath.Join(s.View(), "review.json"), data)
 }
 
 // viewed copies the review to the view when it isn't there: one kept
@@ -693,32 +694,6 @@ func (s *Store) viewed(r Review) error {
 		return nil
 	}
 	return s.save(r)
-}
-
-// writeWhole makes path hold data, through a temporary file of its own
-// (created afresh, never one already there) renamed over it.
-func writeWhole(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
-	if err != nil {
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmp.Name())
-		return err
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		os.Remove(tmp.Name())
-		return err
-	}
-	return nil
 }
 
 // CloseOver closes the review started at started, as over, saying why:

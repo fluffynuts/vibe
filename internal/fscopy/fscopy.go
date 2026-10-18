@@ -158,3 +158,31 @@ func copyInRoots(from, to *os.Root, path string, mode os.FileMode) error {
 	}
 	return out.Close()
 }
+
+// WriteWhole makes path hold data, readable by the user alone, through a
+// temporary file of its own (created afresh, never one already there)
+// renamed over it: a reader never sees it half-written, and it never sits
+// in a file someone else could read, even briefly.
+func WriteWhole(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	return nil
+}

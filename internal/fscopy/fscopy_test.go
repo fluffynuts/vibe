@@ -157,3 +157,26 @@ func TestFileCopiesIntoAFolderItMakesAndKeepsTheMode(t *testing.T) {
 		t.Error("copying a file that isn't there succeeded")
 	}
 }
+
+func TestWriteWholeLeavesOnlyTheFileReadableByTheUserAlone(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "new")
+	path := filepath.Join(dir, "token")
+	write(t, path, "old")
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteWhole(path, []byte("new")); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "new" {
+		t.Errorf("content = %q", data)
+	}
+	if runtime.GOOS != "windows" {
+		if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+			t.Errorf("mode = %v, want 0600 (not the old file's)", info.Mode().Perm())
+		}
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Errorf("left beside it: %v", entries)
+	}
+}

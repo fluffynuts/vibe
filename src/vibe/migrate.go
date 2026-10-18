@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"vibe/internal/cliargs"
+	"vibe/internal/fscopy"
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
 	"vibe/internal/running"
@@ -233,9 +234,5 @@ func refileTranscript(file, from, to string) error {
 	if err := gzOut.Close(); err != nil {
 		return err
 	}
-	tmp := file + ".tmp"
-	if err := os.WriteFile(tmp, out.Bytes(), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, file)
+	return fscopy.WriteWhole(file, out.Bytes())
 }

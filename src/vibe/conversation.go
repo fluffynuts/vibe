@@ -7,12 +7,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"vibe/internal/companion"
+	"vibe/internal/fscopy"
 	"vibe/internal/sbxrun"
 )
 
@@ -175,13 +175,7 @@ func keepingTranscript(converse companion.Converser, t transcripts, file string)
 		if err != nil || len(tgz) == 0 {
 			return
 		}
-		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
-			return
-		}
-		tmp := file + ".tmp"
-		if err := os.WriteFile(tmp, tgz, 0o600); err == nil {
-			os.Rename(tmp, file)
-		}
+		fscopy.WriteWhole(file, tgz)
 	}
 	return func(ctx context.Context, prompt, session string, delivered func(), onLine func([]byte)) error {
 		if companion.SessionID.MatchString(session) {

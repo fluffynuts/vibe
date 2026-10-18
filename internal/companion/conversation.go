@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -15,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"vibe/internal/fscopy"
 )
 
 // Converser runs one turn of the conversation: it sends prompt to the agent
@@ -167,14 +167,7 @@ func (c *conversation) save() {
 	if err != nil {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(c.file), 0o700); err != nil {
-		return
-	}
-	tmp := c.file + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return
-	}
-	os.Rename(tmp, c.file)
+	fscopy.WriteWhole(c.file, data)
 }
 
 // close saves the conversation as it is, for the next vibe to pick up.
