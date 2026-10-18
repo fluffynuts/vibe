@@ -14,6 +14,7 @@ import (
 	"vibe/internal/clockskew"
 	"vibe/internal/instructions"
 	"vibe/internal/layout"
+	"vibe/internal/pathresolve"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
 	"vibe/internal/termtitle"
@@ -205,11 +206,11 @@ func remindOfInstructions(lay layout.Layout, name string) {
 			continue
 		}
 		if data, err := os.ReadFile(f.path); err == nil && strings.TrimSpace(string(data)) != "" {
-			used = append(used, displayPath(f.path))
+			used = append(used, pathresolve.Tilde(f.path))
 			continue
 		}
 		note("tip: instructions to the agent for %s go in %s (empty so far; the companion page's Admin tab edits it too)",
-			f.forWhom, displayPath(f.path))
+			f.forWhom, pathresolve.Tilde(f.path))
 	}
 	if len(used) > 0 {
 		note("agent instructions: %s", strings.Join(used, ", "))

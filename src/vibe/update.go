@@ -13,6 +13,7 @@ import (
 	"vibe/internal/gittoken"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
+	"vibe/internal/pathresolve"
 	"vibe/internal/profilegen"
 	"vibe/internal/prompt"
 	"vibe/internal/running"
@@ -86,7 +87,7 @@ type profileOutcome struct {
 func assessProfile(lay layout.Layout, profile string) (profileOutcome, []string, error) {
 	dir := lay.HomePath("profiles", profile)
 	if info, err := os.Stat(dir); dir == "" || err != nil || !info.IsDir() {
-		return profileOutcome{profileNotComposed, "it is vibe's own, not one in " + displayPath(lay.HomePath("profiles"))}, nil, nil
+		return profileOutcome{profileNotComposed, "it is vibe's own, not one in " + pathresolve.Tilde(lay.HomePath("profiles"))}, nil, nil
 	}
 	if !profilegen.IsGuided(dir) {
 		return profileOutcome{profileNotComposed, "it wasn't composed from the library"}, nil, nil

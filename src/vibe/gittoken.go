@@ -11,6 +11,7 @@ import (
 	"vibe/internal/browser"
 	"vibe/internal/cliargs"
 	"vibe/internal/gittoken"
+	"vibe/internal/pathresolve"
 	"vibe/internal/prompt"
 	"vibe/internal/review"
 	"vibe/internal/sbxrun"
@@ -859,6 +860,6 @@ func setUpDefaultGitToken(vibeHome string) {
 	if !ok {
 		return
 	}
-	note("  saving the default GitHub token in %s (only you can read it)", displayPath(path))
+	note("  saving the default GitHub token in %s (only you can read it)", pathresolve.Tilde(path))
 	shareDefaultToken(vibeHome, token, expires, "")
 }

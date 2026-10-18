@@ -17,6 +17,7 @@ import (
 	"vibe/internal/instructions"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
+	"vibe/internal/pathresolve"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
 	"vibe/internal/termtitle"
@@ -141,7 +142,7 @@ func (a *companionAdmin) instructionsFile(which string) (file companion.AdminIns
 	// which would hide the shipped one.
 	file.Path = filepath.Join(a.lay.ProfileDir(profile), instructions.File)
 	file.Note = fmt.Sprintf("Profile '%s' ships with vibe: copy it into %s to give it instructions of its own.",
-		profile, displayPath(a.lay.HomePath("profiles")))
+		profile, pathresolve.Tilde(a.lay.HomePath("profiles")))
 	return file, profile
 }
 
@@ -162,7 +163,7 @@ func (a *companionAdmin) Instructions() companion.AdminInstructions {
 		file, _ := a.instructionsFile(which)
 		file.Text = readText(file.Path)
 		file.Version = textVersion(file.Text)
-		file.Path = displayPath(file.Path)
+		file.Path = pathresolve.Tilde(file.Path)
 		out.Files = append(out.Files, file)
 	}
 	_, agent, _ := instructionsFor(a.lay, a.name)
@@ -277,7 +278,7 @@ func (a *companionAdmin) Optimise(ctx context.Context, which, text string) (stri
 	prompt := instructions.OptimisePrompt(which == "universal", text, readText(otherFile.Path))
 
 	// The terminal's own screen belongs to the agent: say so in its title.
-	title := "VIBE: " + displayPath(a.target)
+	title := "VIBE: " + pathresolve.Tilde(a.target)
 	termtitle.Set(title + " — optimising instructions…")
 	defer termtitle.Set(title)
 	noteIfFree("asking the agent to optimise the %s instructions…", which)

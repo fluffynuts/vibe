@@ -8,21 +8,6 @@ import (
 	"testing"
 )
 
-func TestShortenPath(t *testing.T) {
-	home := filepath.Join(string(filepath.Separator), "home", "me")
-	cases := map[string]string{
-		home:                                "~",
-		filepath.Join(home, "code", "vibe"): filepath.Join("~", "code", "vibe"),
-		filepath.Join(home+"x", "code"):     filepath.Join(home+"x", "code"),
-		filepath.Join(string(filepath.Separator), "srv"): filepath.Join(string(filepath.Separator), "srv"),
-	}
-	for in, want := range cases {
-		if got := shortenPath(in, home); got != want {
-			t.Errorf("shortenPath(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestReadGit(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
@@ -63,7 +48,7 @@ func TestReadingGitStatusDoesntRunTheRepositorysCommands(t *testing.T) {
 }
 
 func TestStateSaysWhereTheWorkspaceIs(t *testing.T) {
-	home := homeDir()
+	home, _ := os.UserHomeDir()
 	s := New(Config{Sandbox: "vibe", Token: token, Port: testPort,
 		Workspace: filepath.Join(home, "code", "vibe"),
 		Git:       func(string) *GitInfo { return &GitInfo{Branch: "master", Modified: 2} },

@@ -44,6 +44,7 @@ import (
 	"sync"
 	"time"
 
+	"vibe/internal/pathresolve"
 	"vibe/internal/policy"
 )
 
@@ -487,7 +488,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"themeColor":        theme,
 		"sandbox":           s.cfg.Sandbox,
 		"agent":             s.cfg.Agent,
-		"folder":            shortenPath(s.cfg.Workspace, homeDir()),
+		"folder":            pathresolve.Tilde(s.cfg.Workspace),
 		"git":               git,
 		"clipboardUrl":      clipboard,
 		"clipboardReady":    ready,

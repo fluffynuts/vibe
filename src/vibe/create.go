@@ -16,6 +16,7 @@ import (
 	"vibe/internal/layout"
 	"vibe/internal/library"
 	agentmem "vibe/internal/memory"
+	"vibe/internal/pathresolve"
 	"vibe/internal/portalloc"
 	"vibe/internal/profilegen"
 	"vibe/internal/sbxrun"
@@ -163,7 +164,7 @@ func setClaudeTheme(lay layout.Layout, profile string, doc kitspec.Doc, fromSand
 		resolved, ok := claudetheme.Resolve(preferred, known)
 		if !ok {
 			note("  claude theme '%s' (from %s) isn't among the themes in %s — using the default",
-				preferred, source, displayPath(filepath.Join(lay.DefaultsDir(), "agent-files", ".claude", "themes")))
+				preferred, source, pathresolve.Tilde(filepath.Join(lay.DefaultsDir(), "agent-files", ".claude", "themes")))
 		}
 		choice = resolved
 	}

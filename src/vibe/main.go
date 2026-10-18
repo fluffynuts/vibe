@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 
 	"vibe"
 	"vibe/internal/cliargs"
@@ -330,7 +329,7 @@ func run(argv []string) error {
 
 	// Windows PowerShell hands "~\project" over as it is, and vibe shows
 	// folders that way itself, so the "~" is vibe's to expand.
-	target := expandHome(args.Path)
+	target := pathresolve.ExpandHome(args.Path)
 	if target == "" {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -362,7 +361,7 @@ func run(argv []string) error {
 	}
 	switch {
 	case args.Migrate:
-		return doMigrate(lay, args, name, target, expandHome(args.MigrateTo))
+		return doMigrate(lay, args, name, target, pathresolve.ExpandHome(args.MigrateTo))
 	case args.Stop:
 		return doStop(vibeHome, name, target, args.Force)
 	case args.Cancel:
@@ -394,7 +393,7 @@ func run(argv []string) error {
 		return err
 	}
 	if !args.Delete {
-		termtitle.Set("VIBE: " + displayPath(target))
+		termtitle.Set("VIBE: " + pathresolve.Tilde(target))
 	}
 
 	switch {
@@ -422,25 +421,6 @@ func vibeHomeDir() string {
 	return filepath.Join(home, ".vibe")
 }
 
-// expandHome expands a leading "~", "~/" or "~\" in a path: a settings.yaml
-// value, or a folder given on the command line.
-func expandHome(path string) string {
-	if path == "" || path[0] != '~' {
-		return path
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return path
-	}
-	if path == "~" {
-		return home
-	}
-	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
-		return filepath.Join(home, path[2:])
-	}
-	return path
-}
-
 func resolveProfileName(args cliargs.Args, target string) string {
 	if args.Profile != "" {
 		return args.Profile
@@ -449,18 +429,4 @@ func resolveProfileName(args cliargs.Args, target string) string {
 		return args.Name
 	}
 	return pathresolve.DeriveName(target)
-}
-
-// displayPath shortens a path under the home directory to ~/..., the way
-// the user thinks of it.
-func displayPath(path string) string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return path
-	}
-	if pathresolve.Within(home, path) {
-		rel, _ := filepath.Rel(home, path)
-		return filepath.Join("~", rel)
-	}
-	return path
 }

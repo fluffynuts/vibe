@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"vibe"
+	"vibe/internal/pathresolve"
 	"vibe/internal/prompt"
 	"vibe/internal/sbxinstall"
 	"vibe/internal/selfupdate"
@@ -302,7 +303,7 @@ func upgradeVibe(tag string, force bool, strategyValue string) error {
 // package's. Taking the package's version wholesale shows those two side by
 // side first, to confirm.
 func decideConflict(c upgrade.Conflict) (upgrade.Choice, error) {
-	path := displayPath(c.Mine)
+	path := pathresolve.Tilde(c.Mine)
 	for {
 		if c.CanMerge {
 			note("%s already exists and is different from the package source.", path)

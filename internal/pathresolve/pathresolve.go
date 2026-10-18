@@ -52,3 +52,38 @@ func Within(dir, path string) bool {
 	rel, err := filepath.Rel(dir, path)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
+
+// Tilde is path with ~ in place of the user's home folder, when it's in
+// it: the way the user thinks of it.
+func Tilde(path string) string {
+	home, _ := os.UserHomeDir()
+	return tilde(path, home)
+}
+
+func tilde(path, home string) string {
+	if home == "" || !Within(home, path) {
+		return path
+	}
+	rel, _ := filepath.Rel(home, path)
+	return filepath.Join("~", rel)
+}
+
+// ExpandHome expands a leading "~", "~/" or "~\" in path to the user's
+// home folder: a settings.yaml value, or a folder given on the command line
+// (Windows PowerShell hands "~\project" over as it is).
+func ExpandHome(path string) string {
+	if path == "" || path[0] != '~' {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	if path == "~" {
+		return home
+	}
+	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+		return filepath.Join(home, path[2:])
+	}
+	return path
+}

@@ -13,6 +13,7 @@ import (
 
 	"vibe/internal/cliargs"
 	"vibe/internal/layout"
+	"vibe/internal/pathresolve"
 	"vibe/internal/running"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
@@ -90,7 +91,7 @@ func detachHeadless(lay layout.Layout, args cliargs.Args, name, target string) e
 	for _, c := range running.Claims(vibeHome, target) {
 		if c.Headless {
 			note("vibe is already running headless for %s (PID %d) — its page: %s", target, c.PID, companionURL(vibeHome, name))
-			note("  its log: %s; 'vibe --stop %s' stops it", displayPath(headlessLog(vibeHome, name)), target)
+			note("  its log: %s; 'vibe --stop %s' stops it", pathresolve.Tilde(headlessLog(vibeHome, name)), target)
 			return nil
 		}
 	}
@@ -146,14 +147,14 @@ func detachHeadless(lay layout.Layout, args cliargs.Args, name, target string) e
 	defer cmd.Process.Release()
 
 	status := newStatusLine()
-	status.show("starting vibe for sandbox '%s' in the background (log: %s)", name, displayPath(logPath))
+	status.show("starting vibe for sandbox '%s' in the background (log: %s)", name, pathresolve.Tilde(logPath))
 	url, err := awaitHeadlessReady(ready, headlessReadyWithin)
 	switch {
 	case errors.Is(err, errStillStarting):
-		status.done("the background vibe (PID %d) hasn't said its page is up after %s — it carries on; the log says how it's going: %s", pid, headlessReadyWithin, displayPath(logPath))
+		status.done("the background vibe (PID %d) hasn't said its page is up after %s — it carries on; the log says how it's going: %s", pid, headlessReadyWithin, pathresolve.Tilde(logPath))
 		return nil
 	case err != nil:
-		status.done("the background vibe ended before its page was up; the end of its log (%s):", displayPath(logPath))
+		status.done("the background vibe ended before its page was up; the end of its log (%s):", pathresolve.Tilde(logPath))
 		for _, line := range lastLines(logPath, 12) {
 			note("  %s", line)
 		}
@@ -161,7 +162,7 @@ func detachHeadless(lay layout.Layout, args cliargs.Args, name, target string) e
 	}
 	status.done("sandbox '%s' is running in the background (vibe PID %d)", name, pid)
 	note("  its page: %s", url)
-	note("  its log: %s; 'vibe --stop %s' stops it", displayPath(logPath), target)
+	note("  its log: %s; 'vibe --stop %s' stops it", pathresolve.Tilde(logPath), target)
 	note("  'vibe --info %s' says how to reach the page from another machine", target)
 	return nil
 }

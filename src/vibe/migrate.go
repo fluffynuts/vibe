@@ -67,7 +67,7 @@ func doMigrate(lay layout.Layout, args cliargs.Args, name, from, to string) erro
 		return fmt.Errorf("vibe (%s) is running for %s — end it first ('vibe --stop %s' ends it, and stops the sandbox), then migrate", pidList(pids), from, from)
 	}
 	steps := []string{
-		fmt.Sprintf("move %s to %s", displayPath(from), displayPath(to)),
+		fmt.Sprintf("move %s to %s", pathresolve.Tilde(from), pathresolve.Tilde(to)),
 		fmt.Sprintf("rebuild sandbox '%s' there as '%s': its agent's memories, conversation, GitHub token, clipboard history and reviews go with it;", name, newName),
 		"  anything installed in it by hand, or kept outside its folder, doesn't",
 	}
@@ -79,7 +79,7 @@ func doMigrate(lay layout.Layout, args cliargs.Args, name, from, to string) erro
 		return fmt.Errorf("aborted — nothing moved")
 	}
 	relocate := func() (string, string, error) {
-		note("moving %s to %s", displayPath(from), displayPath(to))
+		note("moving %s to %s", pathresolve.Tilde(from), pathresolve.Tilde(to))
 		if err := os.Rename(from, to); err != nil {
 			return "", "", fmt.Errorf("the old sandbox is gone, but %s couldn't be moved: %w — it's where it was, with what vibe keeps for it: 'vibe -r %s' builds its sandbox again there", from, err, from)
 		}
@@ -91,7 +91,7 @@ func doMigrate(lay layout.Layout, args cliargs.Args, name, from, to string) erro
 	if err := migrateRebuild(context.Background(), lay, args, name, from, true, false, relocate); err != nil {
 		return err
 	}
-	note("%s is now %s, with sandbox '%s' — 'vibe' there starts it", displayPath(from), displayPath(to), newName)
+	note("%s is now %s, with sandbox '%s' — 'vibe' there starts it", pathresolve.Tilde(from), pathresolve.Tilde(to), newName)
 	return nil
 }
 

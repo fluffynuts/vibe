@@ -2,9 +2,6 @@ package companion
 
 import (
 	"context"
-	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"vibe/internal/review"
@@ -38,23 +35,4 @@ func readGit(dir string) *GitInfo {
 	}
 	info := GitInfo(*st)
 	return &info
-}
-
-// shortenPath puts ~ for the user's home at the front of path.
-func shortenPath(path, home string) string {
-	if home == "" {
-		return path
-	}
-	if path == home {
-		return "~"
-	}
-	if rest, ok := strings.CutPrefix(path, home+string(filepath.Separator)); ok {
-		return "~" + string(filepath.Separator) + rest
-	}
-	return path
-}
-
-func homeDir() string {
-	home, _ := os.UserHomeDir()
-	return home
 }

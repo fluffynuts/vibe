@@ -15,6 +15,7 @@ import (
 	"vibe/internal/companion"
 	"vibe/internal/gittoken"
 	"vibe/internal/layout"
+	"vibe/internal/pathresolve"
 	"vibe/internal/profilegen"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
@@ -231,7 +232,7 @@ func printInfo(w io.Writer, info sandboxInfo, profileKnown bool) {
 		fmt.Fprintf(w, "%-10s%s\n", label, fmt.Sprintf(format, a...))
 	}
 	row("sandbox", "%s", info.name)
-	row("folder", "%s", displayPath(info.target))
+	row("folder", "%s", pathresolve.Tilde(info.target))
 	if !profileKnown {
 		row("profile", "%s (doesn't exist yet: vibe will offer to create it)", info.profile)
 	} else {

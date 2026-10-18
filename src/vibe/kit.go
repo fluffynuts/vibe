@@ -8,6 +8,7 @@ import (
 	"vibe/internal/instructions"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
+	"vibe/internal/pathresolve"
 	"vibe/internal/portalloc"
 	"vibe/internal/settings"
 	"vibe/internal/state"
@@ -24,8 +25,8 @@ func loadSettings(lay layout.Layout, profile string) (settings.Settings, error) 
 		return settings.Settings{}, err
 	}
 	merged := settings.Merge(baseSettings, profileSettings)
-	merged.NugetDir = expandHome(merged.NugetDir)
-	merged.MemoryRoot = expandHome(merged.MemoryRoot)
+	merged.NugetDir = pathresolve.ExpandHome(merged.NugetDir)
+	merged.MemoryRoot = pathresolve.ExpandHome(merged.MemoryRoot)
 	return merged, nil
 }
 
