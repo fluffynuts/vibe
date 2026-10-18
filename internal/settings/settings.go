@@ -28,6 +28,10 @@ type Settings struct {
 	BasePort int    `yaml:"basePort,omitempty"`
 	Agent    string `yaml:"agent,omitempty"`
 	NugetDir string `yaml:"nugetDir,omitempty"`
+	// Packages is what vibe does about a package the agent asks the host
+	// for: "ask" (the default) holds each request for the user's approval on
+	// the companion page's Admin tab; "allow" fetches at once.
+	Packages string `yaml:"packages,omitempty"`
 	// Nuget is how a sandbox gets the host's NuGet packages: "fallback"
 	// (the default) gives it the host's package cache read-only and
 	// nothing else of NugetDir; "shared" mounts all of NugetDir read-write,
@@ -97,6 +101,9 @@ func Merge(base, override Settings) Settings {
 	}
 	if override.NugetDir != "" {
 		out.NugetDir = override.NugetDir
+	}
+	if override.Packages != "" {
+		out.Packages = override.Packages
 	}
 	if override.Nuget != "" {
 		out.Nuget = override.Nuget

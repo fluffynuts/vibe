@@ -8,6 +8,7 @@ import (
 	"vibe/internal/instructions"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
+	"vibe/internal/packagereq"
 	"vibe/internal/pathresolve"
 	"vibe/internal/portalloc"
 	"vibe/internal/settings"
@@ -28,6 +29,10 @@ func loadSettings(lay layout.Layout, profile string) (settings.Settings, error) 
 	if merged.Nuget != "" && merged.Nuget != nugetFallback && merged.Nuget != nugetShared {
 		return settings.Settings{}, fmt.Errorf("settings: nuget is %q; it must be %q (the host's packages, read-only) or %q (all of the host's nuget folder, read-write)",
 			merged.Nuget, nugetFallback, nugetShared)
+	}
+	if merged.Packages != "" && merged.Packages != packagereq.PolicyAsk && merged.Packages != packagereq.PolicyAllow {
+		return settings.Settings{}, fmt.Errorf("settings: packages is %q; it must be %q (each request waits for you to approve it) or %q (requests are fetched at once)",
+			merged.Packages, packagereq.PolicyAsk, packagereq.PolicyAllow)
 	}
 	merged.NugetDir = pathresolve.ExpandHome(merged.NugetDir)
 	merged.MemoryRoot = pathresolve.ExpandHome(merged.MemoryRoot)

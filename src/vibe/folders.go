@@ -34,6 +34,16 @@ const (
 	nugetShared   = "shared"
 )
 
+// nugetFallbackPackages is the host's package cache, when the sandbox is
+// given it (read-only) and may ask the host for what isn't in it.
+func nugetFallbackPackages(merged settings.Settings) (string, bool) {
+	if merged.NugetDir == "" || merged.Nuget == nugetShared {
+		return "", false
+	}
+	packages := filepath.Join(merged.NugetDir, "packages")
+	return packages, isDir(packages)
+}
+
 // nugetFolders is what a sandbox is given of the host's NuGet folder, when
 // the host has what it would be given. Shared is all of it, read-write.
 // Otherwise only the package cache goes in, read-only (the rest holds
@@ -52,8 +62,8 @@ func nugetFolders(vibeHome, name string, merged settings.Settings) []folder {
 		return []folder{{path: merged.NugetDir, env: []string{"SBX_HOST_NUGET=" + merged.NugetDir},
 			note: "nuget:     " + merged.NugetDir + " (shared read-write: the agent can plant code in packages your builds use, and read your feeds' credentials)"}}
 	}
-	packages := filepath.Join(merged.NugetDir, "packages")
-	if !isDir(packages) {
+	packages, ok := nugetFallbackPackages(merged)
+	if !ok {
 		return nil
 	}
 	requests := state.PackagesPath(vibeHome, name)

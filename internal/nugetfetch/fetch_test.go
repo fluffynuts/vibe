@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"vibe/internal/packagereq"
 )
 
 // These restore for real, so they need dotnet, as the git tests need git.
@@ -161,5 +163,67 @@ func TestFetchStopsAtItsTimeLimitAndSaysSo(t *testing.T) {
 	_, err := Fetch(context.Background(), Request{ID: "Demo.Pkg", Version: "1.0.0", Framework: "net10.0"}, opts)
 	if err == nil || !strings.Contains(err.Error(), "time limit") {
 		t.Errorf("want a time-limit error, got %v", err)
+	}
+}
+
+func TestAnApprovedRequestIsFetchedThroughTheDeskIntoTheHostCache(t *testing.T) {
+	h := newHost(t)
+	box := packagereq.Mailbox{Dir: t.TempDir()}
+	must(t, os.MkdirAll(box.Inbox(), 0o755))
+	var said []string
+	desk := &packagereq.Desk{
+		Mailbox:    box,
+		Ecosystems: map[string]packagereq.Ecosystem{"nuget": Ecosystem{Options: func(packagereq.Request) Options { return h.options() }}},
+		Policy:     func() string { return packagereq.PolicyAsk },
+		Log:        func(line string) { said = append(said, line) },
+	}
+	must(t, os.WriteFile(filepath.Join(box.Inbox(), "1-a.json"),
+		[]byte(`{"ecosystem":"nuget","id":"Demo.Pkg","version":"1.0.0","framework":"net10.0"}`), 0o644))
+
+	desk.Poll(context.Background())
+	if _, err := os.Stat(filepath.Join(h.cache, "demo.pkg")); err == nil {
+		t.Fatal("fetched before the user approved")
+	}
+	pending := desk.Pending()
+	if len(pending) != 1 {
+		t.Fatalf("pending = %+v", pending)
+	}
+	desk.Allow([]string{pending[0].Key})
+	desk.Poll(context.Background())
+
+	if _, err := os.Stat(filepath.Join(h.cache, "demo.pkg", "1.0.0")); err != nil {
+		t.Errorf("not in the host cache: %v", err)
+	}
+	answer, err := os.ReadFile(filepath.Join(box.View(), "1-a.answer"))
+	if err != nil || !strings.HasPrefix(string(answer), "fetched\n") || !strings.Contains(string(answer), "demo.pkg 1.0.0") {
+		t.Errorf("answer = %q, %v", answer, err)
+	}
+}
+
+func TestAnUnknownPackageIsAnsweredFailedWithNuGetsWords(t *testing.T) {
+	h := newHost(t)
+	box := packagereq.Mailbox{Dir: t.TempDir()}
+	must(t, os.MkdirAll(box.Inbox(), 0o755))
+	desk := &packagereq.Desk{
+		Mailbox:    box,
+		Ecosystems: map[string]packagereq.Ecosystem{"nuget": Ecosystem{Options: func(packagereq.Request) Options { return h.options() }}},
+		Policy:     func() string { return packagereq.PolicyAllow },
+	}
+	must(t, os.WriteFile(filepath.Join(box.Inbox(), "1-a.json"),
+		[]byte(`{"ecosystem":"nuget","id":"Nope.Pkg","version":"1.0.0","framework":"net10.0"}`), 0o644))
+	desk.Poll(context.Background())
+	answer, _ := os.ReadFile(filepath.Join(box.View(), "1-a.answer"))
+	if !strings.HasPrefix(string(answer), "failed\n") || !strings.Contains(string(answer), "NU1101") {
+		t.Errorf("answer = %q", answer)
+	}
+}
+
+func TestOnlyNuGetRequestsAreValid(t *testing.T) {
+	e := Ecosystem{}
+	if err := e.Validate(packagereq.Request{Ecosystem: "npm", ID: "a", Version: "1.0.0", Framework: "net8.0"}); err == nil {
+		t.Error("an npm request was valid for NuGet")
+	}
+	if err := e.Validate(packagereq.Request{Ecosystem: "nuget", ID: "a", Version: "1.*", Framework: "net8.0"}); err == nil {
+		t.Error("a floating version was valid")
 	}
 }

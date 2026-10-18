@@ -147,3 +147,12 @@ func TestMergeNugetOverrideWins(t *testing.T) {
 		t.Errorf("Nuget = %q, want the base's when the override sets none", got.Nuget)
 	}
 }
+
+func TestMergePackagesOverrideWins(t *testing.T) {
+	if got := Merge(Settings{Packages: "ask"}, Settings{Packages: "allow"}); got.Packages != "allow" {
+		t.Errorf("Packages = %q", got.Packages)
+	}
+	if got := Merge(Settings{Packages: "allow"}, Settings{}); got.Packages != "allow" {
+		t.Errorf("Packages = %q, want the base's when the override sets none", got.Packages)
+	}
+}
