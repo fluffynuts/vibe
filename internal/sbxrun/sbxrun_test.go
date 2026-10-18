@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"vibe/internal/sbxtest"
 )
 
 // TestStartGivesUpOnASandboxItCannotBoot checks Start's failure path: with no
@@ -137,22 +139,14 @@ func TestStreamSaysWhenTheCommandHasTakenAllItsInput(t *testing.T) {
 // and stderr and exits with code; asked for anything else, it fails.
 func fakeSbx(t *testing.T, stdout, stderr string, code int) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the stand-in sbx is a shell script")
-	}
-	dir := t.TempDir()
-	write := func(name, content string) {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o755); err != nil {
+	dir := sbxtest.OnPath(t, fmt.Sprintf(
+		"[ \"$*\" = \"ls --json\" ] || { echo \"unexpected: sbx $*\" >&2; exit 2; }\n"+
+			"cd \"$(dirname \"$0\")\"\ncat stdout\ncat stderr >&2\nexit %d\n", code))
+	for name, content := range map[string]string{"stdout": stdout, "stderr": stderr} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write("stdout", stdout)
-	write("stderr", stderr)
-	write("sbx", fmt.Sprintf("#!/bin/sh\n"+
-		"[ \"$*\" = \"ls --json\" ] || { echo \"unexpected: sbx $*\" >&2; exit 2; }\n"+
-		"cat '%s'\ncat '%s' >&2\nexit %d\n",
-		filepath.Join(dir, "stdout"), filepath.Join(dir, "stderr"), code))
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 // realListing is 'sbx ls --json' from sbx v0.48, cut down to two sandboxes.

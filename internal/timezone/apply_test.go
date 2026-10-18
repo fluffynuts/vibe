@@ -3,9 +3,10 @@ package timezone
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
+
+	"vibe/internal/sbxtest"
 )
 
 // tzSandbox puts an `sbx` on PATH whose exec runs the command here, as root
@@ -16,27 +17,20 @@ import (
 // never end up in a file Apply reads and writes back.
 func tzSandbox(t *testing.T) string {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the fake sbx is a shell script")
-	}
 	root := t.TempDir()
 	for _, dir := range []string{"etc", "zoneinfo"} {
 		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	bin := t.TempDir()
-	script := "#!/bin/sh\n[ \"$1\" = exec ] || exit 1\nshift\n[ \"$1\" = -i ] && shift\nshift 2\n" +
+	script := "[ \"$1\" = exec ] || exit 1\nshift\n[ \"$1\" = -i ] && shift\nshift 2\n" +
 		"[ \"$1\" = sudo ] && shift 2\n" +
 		"echo \"$*\" >> " + root + "/ran\n" +
 		"echo 'A new version of sbx is available' >&2\n" +
 		"for a; do shift; set -- \"$@\" \"$(printf %s \"$a\" | sed -e \"s#^/usr/share/zoneinfo#" + root + "/zoneinfo#\" -e \"s#^/etc#" + root + "/etc#\")\"; done\n" +
 		"out=$(mktemp)\n\"$@\" > \"$out\"\nrc=$?\n" +
 		"sed -e \"s#" + root + "/zoneinfo#/usr/share/zoneinfo#g\" -e \"s#" + root + "/etc#/etc#g\" \"$out\"\nrm -f \"$out\"\nexit $rc\n"
-	if err := os.WriteFile(filepath.Join(bin, "sbx"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	sbxtest.OnPath(t, script)
 	write := func(rel, content string) {
 		t.Helper()
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, rel)), 0o755); err != nil {

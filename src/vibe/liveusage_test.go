@@ -2,28 +2,24 @@ package main
 
 import (
 	"context"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"vibe/internal/sbxtest"
 )
 
 // usageSandbox puts an `sbx` on PATH answering liveUsage's reads as a
 // sandbox would; a read named in fail fails instead.
 func usageSandbox(t *testing.T, fail ...string) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the stand-in sbx is a shell script")
-	}
 	answers := map[string]string{
 		"cat /proc/uptime":       "3723.5 100.0\n",
 		"cat /proc/meminfo":      "MemTotal:       4000000 kB\nMemFree:        1000 kB\nMemAvailable:   3000000 kB\n",
 		"df -Pk /":               "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/vda 1000 400 600 40% /\n",
 		"df -Pk /var/lib/docker": "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/vdb 2000 500 1500 25% /var/lib/docker\n",
 	}
-	script := "#!/bin/sh\nshift 3\ncase \"$*\" in\n"
+	script := "shift 3\ncase \"$*\" in\n"
 	for read, answer := range answers {
 		failing := false
 		for _, f := range fail {
@@ -36,11 +32,7 @@ func usageSandbox(t *testing.T, fail ...string) {
 		}
 	}
 	script += "*) exit 2;;\nesac\n"
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "sbx"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	sbxtest.OnPath(t, script)
 }
 
 func TestLiveUsageReadsUptimeMemoryAndDisks(t *testing.T) {

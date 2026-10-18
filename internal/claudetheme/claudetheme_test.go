@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"vibe/internal/kitspec"
+
+	"vibe/internal/sbxtest"
 )
 
 func kit(files ...kitspec.Doc) kitspec.Doc {
@@ -207,22 +209,14 @@ func TestProfileRoundTrip(t *testing.T) {
 // says something of its own on stderr, which is no part of what was read.
 func fakeSandbox(t *testing.T) string {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the fake sbx is a shell script")
-	}
 	root := t.TempDir()
-	bin := t.TempDir()
 	// The reachability check execs /bin/true, which macOS doesn't have (only
 	// /usr/bin/true), so the fake answers it itself.
-	script := "#!/bin/sh\n[ \"$1\" = exec ] || exit 1\nshift 3\n" +
-		"[ \"$1\" = /bin/true ] && exit 0\n" +
-		"echo 'A new version of sbx is available' >&2\n" +
-		"for a; do shift; set -- \"$@\" \"$(printf %s \"$a\" | sed \"s#^/home/agent#" + root + "#\")\"; done\n" +
-		"exec \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "sbx"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	sbxtest.OnPath(t, "[ \"$1\" = exec ] || exit 1\nshift 3\n"+
+		"[ \"$1\" = /bin/true ] && exit 0\n"+
+		"echo 'A new version of sbx is available' >&2\n"+
+		"for a; do shift; set -- \"$@\" \"$(printf %s \"$a\" | sed \"s#^/home/agent#"+root+"#\")\"; done\n"+
+		"exec \"$@\"\n")
 	return root
 }
 

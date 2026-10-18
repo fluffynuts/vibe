@@ -2,32 +2,21 @@ package sbxrun
 
 import (
 	"context"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
+
+	"vibe/internal/sbxtest"
 )
 
 // echoingSbx puts an sbx on PATH that prints its arguments on stdout,
 // anything it's given on stdin after them, and a line on stderr; it fails,
 // with exit code 3, when one of its arguments is "fail".
 func echoingSbx(t *testing.T) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the stand-in sbx is a shell script")
-	}
-	dir := t.TempDir()
-	script := "#!/bin/sh\n" +
-		"echo \"args: $*\"\n" +
-		"[ \"$2\" = -i ] && { printf 'in: '; cat; }\n" +
-		"echo 'on stderr' >&2\n" +
-		"for a in \"$@\"; do [ \"$a\" = fail ] && exit 3; done\n" +
-		"exit 0\n"
-	if err := os.WriteFile(filepath.Join(dir, "sbx"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	sbxtest.OnPath(t, "echo \"args: $*\"\n"+
+		"[ \"$2\" = -i ] && { printf 'in: '; cat; }\n"+
+		"echo 'on stderr' >&2\n"+
+		"for a in \"$@\"; do [ \"$a\" = fail ] && exit 3; done\n"+
+		"exit 0\n")
 }
 
 func TestExecStdoutIsStdoutAlone(t *testing.T) {
@@ -134,14 +123,7 @@ func TestPublishedPortsSaysWhatSbxSaidWhenItFails(t *testing.T) {
 // vibe takes in: past it, the read fails, saying so, rather than vibe
 // holding whatever it's given.
 func TestWhatIsReadFromASandboxHasALimit(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the stand-in sbx is a shell script")
-	}
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "sbx"), []byte("#!/bin/sh\nexec yes\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	sbxtest.OnPath(t, "exec yes\n")
 	old := maxCaptured
 	maxCaptured = 1 << 20
 	t.Cleanup(func() { maxCaptured = old })
