@@ -3,7 +3,9 @@
 package fscopy
 
 import (
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -71,28 +73,56 @@ func Tree(src, dst string) error {
 
 // TreeKeepTimes is Tree, giving every file and directory copied its
 // source's modification time too — for a copy that stands in for the
-// original, such as a backup put back.
+// original, such as a backup put back. Either folder may be one a sandbox
+// can write to while the copy runs (a memory store), so both are opened as
+// roots: nothing is read or written outside them, whatever links appear in
+// them, and a link is copied as a link, never followed.
 func TreeKeepTimes(src, dst string) error {
-	if err := Tree(src, dst); err != nil {
+	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
+	from, err := os.OpenRoot(src)
+	if err != nil {
+		return err
+	}
+	defer from.Close()
+	to, err := os.OpenRoot(dst)
+	if err != nil {
+		return err
+	}
+	defer to.Close()
 	type stamp struct {
 		path string
 		mod  time.Time
 	}
 	var stamps []stamp
-	err := filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+	err = fs.WalkDir(from.FS(), ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.Mode()&os.ModeSymlink != 0 || !(info.IsDir() || info.Mode().IsRegular()) {
-			return nil // a symlink's time can't be set portably; the rest weren't copied
-		}
-		rel, err := filepath.Rel(src, path)
+		info, err := d.Info()
 		if err != nil {
 			return err
 		}
-		stamps = append(stamps, stamp{filepath.Join(dst, rel), info.ModTime()})
+		switch {
+		case d.IsDir():
+			if err := to.MkdirAll(path, info.Mode().Perm()|0o700); err != nil {
+				return err
+			}
+		case info.Mode()&os.ModeSymlink != 0:
+			link, err := from.Readlink(path)
+			if err != nil {
+				return err
+			}
+			return to.Symlink(link, path)
+		case !info.Mode().IsRegular():
+			return nil
+		default:
+			if err := copyInRoots(from, to, path, info.Mode().Perm()); err != nil {
+				return err
+			}
+		}
+		stamps = append(stamps, stamp{path, info.ModTime()})
 		return nil
 	})
 	if err != nil {
@@ -101,9 +131,30 @@ func TreeKeepTimes(src, dst string) error {
 	// Only once everything is copied: copying into a directory updates its
 	// modification time.
 	for _, s := range stamps {
-		if err := os.Chtimes(s.path, s.mod, s.mod); err != nil {
+		if err := to.Chtimes(s.path, s.mod, s.mod); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// copyInRoots copies the file path in from to the same path in to.
+func copyInRoots(from, to *os.Root, path string, mode os.FileMode) error {
+	in, err := from.Open(path)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if info, err := in.Stat(); err != nil || !info.Mode().IsRegular() {
+		return fmt.Errorf("%s changed while it was being copied", path)
+	}
+	out, err := to.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }

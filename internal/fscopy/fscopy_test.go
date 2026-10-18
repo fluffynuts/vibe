@@ -83,3 +83,54 @@ func TestTreeRecreatesSymlinksAsSymlinks(t *testing.T) {
 		t.Errorf("link = %q, %v; want a symlink to %q", got, err, "real")
 	}
 }
+
+// The destination may be a folder a sandbox can write to (a memory store):
+// a link it puts where the copy is about to write must not take the copy
+// out of the folder.
+func TestTreeKeepTimesNeverWritesThroughALinkOutOfTheDestination(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	src, dst, outside := t.TempDir(), t.TempDir(), t.TempDir()
+	write(t, filepath.Join(src, "sub", "file.md"), "content")
+	write(t, filepath.Join(src, "top.md"), "content")
+	if err := os.Symlink(outside, filepath.Join(dst, "sub")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "top.md"), filepath.Join(dst, "top.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	TreeKeepTimes(src, dst)
+
+	for _, name := range []string{"file.md", "top.md"} {
+		if _, err := os.Lstat(filepath.Join(outside, name)); err == nil {
+			t.Errorf("%s was written outside the destination", name)
+		}
+	}
+}
+
+// The source may be such a folder too (a memory store being snapshotted):
+// a link in it is copied as a link, never followed out of it.
+func TestTreeKeepTimesNeverReadsThroughALinkOutOfTheSource(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	src, dst, outside := t.TempDir(), filepath.Join(t.TempDir(), "copy"), t.TempDir()
+	write(t, filepath.Join(outside, "secret"), "host only")
+	if err := os.Symlink(outside, filepath.Join(src, "dir")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "secret"), filepath.Join(src, "file")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := TreeKeepTimes(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"dir", "file"} {
+		if info, err := os.Lstat(filepath.Join(dst, name)); err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("%s: %v, %v; want it copied as a link", name, info, err)
+		}
+	}
+}
