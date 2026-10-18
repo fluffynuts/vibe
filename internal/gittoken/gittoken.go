@@ -24,12 +24,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+	"vibe/internal/fscopy"
+	"vibe/internal/kitspec"
 )
 
 // Repo is a GitHub repository a folder pushes to.
@@ -69,17 +69,6 @@ func ParseRemote(remote string) (repo Repo, ok bool) {
 		return Repo{Owner: m[1], Name: m[2], SSH: true}, true
 	}
 	return Repo{}, false
-}
-
-// RemoteOf is the GitHub repository dir's origin remote points at. ok is
-// false when dir isn't a git repository, has no origin, or its origin isn't
-// on GitHub — a new project, often, that hasn't been pushed anywhere yet.
-func RemoteOf(dir string) (repo Repo, ok bool) {
-	out, err := exec.Command("git", "-C", dir, "remote", "get-url", "origin").Output()
-	if err != nil {
-		return Repo{}, false
-	}
-	return ParseRemote(string(out))
 }
 
 // Kind says what sort of token a token is, from its prefix
@@ -530,7 +519,7 @@ var RuleOrder = []string{RuleFeatureBranch, RuleNoDefaultBranch}
 // instructions for pushing. The kit's own instructions (KitInstructions)
 // point the agent at it, since a token can be given to a sandbox long after
 // the kit made it.
-const SandboxFile = "/home/agent/.config/vibe/git-push.md"
+const SandboxFile = kitspec.AgentHome + "/.config/vibe/git-push.md"
 
 // KitInstructions is the part of every sandbox's agent instructions about
 // pushing: whether the agent may push is settled by SandboxFile being
@@ -617,25 +606,8 @@ func Load(path string) (token string, ok bool, err error) {
 
 // Save stores token at path, readable by the user alone.
 func Save(path, token string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("creating git token dir: %w", err)
-	}
-	// Written new (CreateTemp makes it 0600), then renamed, so the token
-	// never sits in a file someone else could read, even briefly —
-	// WriteFile would keep an existing file's mode.
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".token-*")
-	if err != nil {
-		return fmt.Errorf("writing git token: %w", err)
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.WriteString(token + "\n"); err != nil {
-		tmp.Close()
-		return fmt.Errorf("writing git token: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("writing git token: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	// Not WriteFile, which would keep an existing file's mode.
+	if err := fscopy.WriteWhole(path, []byte(token+"\n")); err != nil {
 		return fmt.Errorf("writing git token: %w", err)
 	}
 	return nil

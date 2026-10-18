@@ -30,6 +30,9 @@ import (
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/go-git/go-git/v5/storage/filesystem/dotgit"
 	"github.com/go-git/go-git/v5/storage/memory"
+
+	"vibe/internal/filekind"
+	"vibe/internal/pathresolve"
 )
 
 // The sandbox's folder is the sandbox's to write, .git and all: the
@@ -89,7 +92,7 @@ func openRepo(dir string) (*repository, error) {
 		}
 		top = parent
 	}
-	writable := inFolderTree(filepath.Join(top, ".git"), ws)
+	writable := pathresolve.Within(ws, filepath.Join(top, ".git"))
 	refuse := func(why string) (*repository, error) {
 		return nil, fmt.Errorf("its .git %s: the Review tab won't read a repository the sandbox could have pointed anywhere (a linked worktree? start vibe in the main checkout)", why)
 	}
@@ -118,12 +121,17 @@ func openRepo(dir string) (*repository, error) {
 		if gitDir, err = filepath.EvalSymlinks(target); err != nil {
 			return nil, err
 		}
-		if writable && !inFolderTree(gitDir, ws) {
+		if writable && !pathresolve.Within(ws, gitDir) {
 			return refuse("leads to a git directory outside the folder, " + gitDir)
 		}
 	}
 	r := &repository{top: top, trusted: !writable, attributes: map[string][]gitattributes.MatchAttribute{}}
-	if r.gitDir, err = openChecked(gitDir); err != nil {
+	// What the sandbox can write is opened from within its folder.
+	within := ""
+	if writable {
+		within = ws
+	}
+	if r.gitDir, err = openChecked(gitDir, within); err != nil {
 		return nil, err
 	}
 	r.common = r.gitDir
@@ -137,11 +145,11 @@ func openRepo(dir string) (*repository, error) {
 			r.close()
 			return nil, err
 		}
-		if writable && !inFolderTree(common, ws) {
+		if writable && !pathresolve.Within(ws, common) {
 			r.close()
 			return refuse("shares a git directory outside the folder, " + common)
 		}
-		if r.common, err = openChecked(common); err != nil {
+		if r.common, err = openChecked(common, within); err != nil {
 			r.close()
 			return nil, err
 		}
@@ -195,15 +203,32 @@ func (h hostFS) Chroot(name string) (billy.Filesystem, error) {
 
 // openChecked opens the folder at path, which must be a folder (not a link
 // to one), and be the one opened: else something was swapped in meanwhile.
-func openChecked(path string) (*os.Root, error) {
-	before, err := os.Lstat(path)
+// One checked to be in the folder within ("" for none) is opened from
+// within, through nothing leading out of it: a folder on its way swapped
+// for a link since the check isn't followed.
+func openChecked(path, within string) (*os.Root, error) {
+	lstat, openRoot := os.Lstat, os.OpenRoot
+	if within != "" {
+		folder, err := os.OpenRoot(within)
+		if err != nil {
+			return nil, err
+		}
+		defer folder.Close()
+		rel, err := filepath.Rel(within, path)
+		if err != nil {
+			return nil, err
+		}
+		lstat = func(string) (os.FileInfo, error) { return folder.Lstat(rel) }
+		openRoot = func(string) (*os.Root, error) { return folder.OpenRoot(rel) }
+	}
+	before, err := lstat(path)
 	if err != nil {
 		return nil, err
 	}
 	if !before.IsDir() {
 		return nil, fmt.Errorf("%s isn't a folder", path)
 	}
-	root, err := os.OpenRoot(path)
+	root, err := openRoot(path)
 	if err != nil {
 		return nil, err
 	}
@@ -221,12 +246,6 @@ func (r *repository) close() {
 			root.Close()
 		}
 	}
-}
-
-// inFolderTree says path is folder or in it.
-func inFolderTree(path, folder string) bool {
-	rel, err := filepath.Rel(folder, path)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // setting is a git setting, as the repository's config, else the user's,
@@ -545,13 +564,13 @@ func (r *repository) lfInRepository(p string, data []byte) (bool, error) {
 	case binary != nil && binary.IsSet(), text != nil && text.IsUnset():
 		return false, nil
 	case text != nil && text.IsValueSet() && text.Value() == "auto":
-		return !isBinary(data), nil
+		return !filekind.IsBinary(data), nil
 	case text != nil && text.IsSet():
 		return true, nil
 	case eol != nil && eol.IsValueSet():
-		return !isBinary(data), nil
+		return !filekind.IsBinary(data), nil
 	}
-	return r.autocrlf && !isBinary(data), nil
+	return r.autocrlf && !filekind.IsBinary(data), nil
 }
 
 // attributesFor are the .gitattributes patterns bearing on file p: the git
@@ -584,11 +603,6 @@ func (r *repository) attributesFor(p string) ([]gitattributes.MatchAttribute, er
 
 func isPointer(data []byte) bool {
 	return bytes.HasPrefix(data, []byte("version https://git-lfs.github.com/spec/"))
-}
-
-// isBinary is git's test: a NUL early on.
-func isBinary(data []byte) bool {
-	return bytes.IndexByte(data[:min(len(data), 8000)], 0) >= 0
 }
 
 // readIn reads the plain file name in root, up to limit bytes: nothing
@@ -668,7 +682,7 @@ func fileOfChange(c *object.Change, ignoreSpace bool, large map[plumbing.Hash]bo
 	switch {
 	case old.tooLarge || now.tooLarge:
 		f.TooLarge = true
-	case isBinary(old.data) || isBinary(now.data):
+	case filekind.IsBinary(old.data) || filekind.IsBinary(now.data):
 		f.Binary = true
 	default:
 		f.Hunks = hunksOf(old.data, now.data, ignoreSpace)

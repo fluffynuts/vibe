@@ -5,13 +5,12 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"vibe/internal/releasetest"
 )
 
 // makeZip builds a zip in memory: name → content, with modes.
@@ -47,26 +46,13 @@ func fakeGitHub(t *testing.T, tag string, assets map[string][]byte, sums map[str
 		h := sha256.Sum256(content)
 		sumLines.WriteString(hex.EncodeToString(h[:]) + "  " + name + "\n")
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/releases/latest", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/releases/tag/"+tag, http.StatusFound)
-	})
-	mux.HandleFunc("/releases/download/"+tag+"/", func(w http.ResponseWriter, r *http.Request) {
-		name := filepath.Base(r.URL.Path)
-		if name == SumsFile {
-			w.Write([]byte(sumLines.String()))
-			return
-		}
-		if content, ok := assets[name]; ok {
-			w.Write(content)
-			return
-		}
-		http.NotFound(w, r)
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
+	served := map[string][]byte{}
+	for name, content := range assets {
+		served[name] = content
+	}
+	served[SumsFile] = []byte(sumLines.String())
 	old := Releases
-	Releases = srv.URL + "/releases"
+	Releases = releasetest.Serve(t, tag, served)
 	t.Cleanup(func() { Releases = old })
 }
 

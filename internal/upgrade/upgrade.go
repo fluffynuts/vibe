@@ -36,6 +36,7 @@ import (
 	"sort"
 	"strings"
 
+	"vibe/internal/filekind"
 	"vibe/internal/fscopy"
 )
 
@@ -444,7 +445,7 @@ func merge(mine, base, theirs string, hasBase bool, mineText, baseText, theirsTe
 	switch {
 	case !hasBase:
 		return nil, false, "there's no saved original to merge against yet"
-	case isBinary(mineText) || isBinary(baseText) || isBinary(theirsText):
+	case filekind.IsBinary(mineText) || filekind.IsBinary(baseText) || filekind.IsBinary(theirsText):
 		return nil, false, "it isn't a text file"
 	}
 	git, err := exec.LookPath("git")
@@ -464,14 +465,6 @@ func merge(mine, base, theirs string, hasBase bool, mineText, baseText, theirsTe
 	default:
 		return nil, false, "git merge-file failed: " + strings.TrimSpace(errOut.String()+" "+err.Error())
 	}
-}
-
-// isBinary guesses the way git does: a NUL byte in the first 8000.
-func isBinary(b []byte) bool {
-	if len(b) > 8000 {
-		b = b[:8000]
-	}
-	return bytes.IndexByte(b, 0) >= 0
 }
 
 // pruneBase drops originals of files the package no longer ships.

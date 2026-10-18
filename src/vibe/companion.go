@@ -12,7 +12,9 @@ import (
 	"vibe/internal/claudetheme"
 	"vibe/internal/cliargs"
 	"vibe/internal/companion"
+	"vibe/internal/kitspec"
 	"vibe/internal/layout"
+	"vibe/internal/pathresolve"
 	"vibe/internal/policy"
 	"vibe/internal/portalloc"
 	"vibe/internal/review"
@@ -164,7 +166,7 @@ func clipboardTrouble(name string) string {
 
 // startClipboardScript starts the clipboard page's server in the sandbox,
 // and does nothing when it is already running (see the clipboard-bridge kit).
-const startClipboardScript = "/home/agent/.local/bin/start-clipboard"
+const startClipboardScript = kitspec.AgentHome + "/.local/bin/start-clipboard"
 
 // startClipboard is the companion page's "start it" for a clipboard page
 // that hasn't come up: it runs what on-start would have, and waits for it
@@ -173,7 +175,7 @@ func startClipboard(name string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	args := []string{"exec", name, "--", startClipboardScript}
-	if out, err := sbxrun.ExecCaptureContext(ctx, name, startClipboardScript); err != nil {
+	if out, err := sbxrun.ExecCapture(ctx, name, startClipboardScript); err != nil {
 		if out = strings.TrimSpace(out); out != "" {
 			return args, fmt.Errorf("start-clipboard failed: %s", out)
 		}
@@ -181,6 +183,10 @@ func startClipboard(name string) ([]string, error) {
 	}
 	return args, nil
 }
+
+// themeReadTimeout bounds reading the agent's theme from its sandbox: what
+// it reads is the agent's to make, and could be made never to end.
+const themeReadTimeout = 15 * time.Second
 
 // themeColorFor reads the colour of the theme the sandbox's agent uses, for
 // the companion page: as the agent has it now (it may have been changed with
@@ -195,7 +201,9 @@ func themeColorFor(lay layout.Layout, name string, inst state.Instance, agent st
 		// Asking the sandbox would start a stopped one again, every
 		// minute the page is open: the profile's record stands in.
 		if runningNow(context.Background(), name) {
-			choice, ok = claudetheme.FromSandbox(name)
+			ctx, cancel := context.WithTimeout(context.Background(), themeReadTimeout)
+			choice, ok = claudetheme.FromSandbox(ctx, name)
+			cancel()
 		}
 		if !ok {
 			if choice, ok = claudetheme.FromProfile(profileDir); !ok {
@@ -332,7 +340,28 @@ func reviewTabFor(vibeHome, name string, inst state.Instance) *companion.ReviewT
 		return nil
 	}
 	noteBelowRepositoryTop(inst.Target)
-	return &companion.ReviewTab{Workspace: inst.Target, Store: review.NewStore(state.ReviewPath(vibeHome, name))}
+	store := review.NewStore(state.ReviewPath(vibeHome, name))
+	store.AgentFile = agentMayComment(inst.Target)
+	return &companion.ReviewTab{Workspace: inst.Target, Store: store}
+}
+
+// agentMayComment says why the agent may not comment on a file: when it's
+// outside folder. The repository the folder is in can be one above it (the
+// folder's own .git gone, say), whose other files are the host's, and none
+// of the agent's to ask about.
+func agentMayComment(folder string) func(file string) error {
+	return func(file string) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		in, err := review.InFolder(ctx, folder, file)
+		switch {
+		case err != nil:
+			return fmt.Errorf("couldn't tell whether %s is in the sandbox's folder: %w", file, err)
+		case !in:
+			return fmt.Errorf("%s isn't in the sandbox's folder: only files there can be commented on", file)
+		}
+		return nil
+	}
 }
 
 // noteBelowRepositoryTop warns when the sandbox's folder is inside a git
@@ -354,7 +383,8 @@ func noteBelowRepositoryTop(folder string) {
 	// git names the top resolved (macOS's /var is /private/var): it's named
 	// as the user reaches it, the folder's path with the levels below the
 	// top taken off.
-	if rel, err := filepath.Rel(realTop, realFolder); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if pathresolve.Within(realTop, realFolder) {
+		rel, _ := filepath.Rel(realTop, realFolder)
 		top = folder
 		for range strings.Split(rel, string(filepath.Separator)) {
 			top = filepath.Dir(top)
@@ -391,7 +421,7 @@ func keepAwakeFor(name string) func() string {
 		ctx, cancel := context.WithTimeout(context.Background(), statusWithin)
 		defer cancel()
 		if runningNow(ctx, name) {
-			sbxrun.ExecSilentContext(ctx, name, "true")
+			sbxrun.ExecSilent(ctx, name, "true")
 			return ""
 		}
 		if err := vmCheck(); err != nil {
@@ -459,4 +489,4 @@ func sandboxGitFor(name, target string) func(ctx context.Context, args ...string
 
 // startSandboxForPage starts sandbox name for the page. A variable for
 // tests.
-var startSandboxForPage = sbxrun.StartContext
+var startSandboxForPage = sbxrun.Start

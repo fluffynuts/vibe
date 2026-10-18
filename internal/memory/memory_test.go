@@ -38,7 +38,7 @@ func TestProbeSaysUnknownRatherThanNoneWhenItCannotAsk(t *testing.T) {
 // TestBackupOfAnUnreachableSandboxReportsNothingSaved makes sure Unknown is
 // never mistaken for "backed up" further down the line.
 func TestBackupOfAnUnreachableSandboxReportsNothingSaved(t *testing.T) {
-	saved, err := Backup(nonexistentSandbox, t.TempDir())
+	saved, err := Backup(context.Background(), nonexistentSandbox, t.TempDir())
 	if err != nil {
 		t.Fatalf("Backup: %v", err)
 	}
@@ -48,8 +48,11 @@ func TestBackupOfAnUnreachableSandboxReportsNothingSaved(t *testing.T) {
 }
 
 func TestStoreForIsPerSandbox(t *testing.T) {
-	if got, want := StoreFor("/root", "alpha"), filepath.Join("/root", "alpha"); got != want {
+	if got, want := StoreFor("/home/u/.vibe", "/root", "alpha"), filepath.Join("/root", "alpha"); got != want {
 		t.Errorf("StoreFor = %q, want %q", got, want)
+	}
+	if got, want := StoreFor("/home/u/.vibe", "", "alpha"), filepath.Join("/home/u/.vibe", "memories", "alpha"); got != want {
+		t.Errorf("StoreFor with no root set = %q, want %q", got, want)
 	}
 }
 
@@ -204,7 +207,7 @@ func TestProbeAndBackupFindMemoriesHoweverSbxPassesArgs(t *testing.T) {
 			}
 
 			store := filepath.Join(t.TempDir(), "store")
-			saved, err := Backup("any", store)
+			saved, err := Backup(context.Background(), "any", store)
 			if err != nil || !saved {
 				t.Fatalf("Backup = %v, %v; want true, nil", saved, err)
 			}

@@ -16,6 +16,7 @@ import (
 	"vibe/internal/layout"
 	"vibe/internal/library"
 	agentmem "vibe/internal/memory"
+	"vibe/internal/pathresolve"
 	"vibe/internal/portalloc"
 	"vibe/internal/profilegen"
 	"vibe/internal/sbxrun"
@@ -51,7 +52,7 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 			return err
 		}
 		if found {
-			if !sbxrun.Reachable(name) {
+			if !sbxrun.Reachable(context.Background(), name) {
 				for _, rec := range inst.Publish {
 					if portalloc.InUse(rec.HostPort) {
 						reportPortHolder(rec.HostPort)
@@ -163,7 +164,7 @@ func setClaudeTheme(lay layout.Layout, profile string, doc kitspec.Doc, fromSand
 		resolved, ok := claudetheme.Resolve(preferred, known)
 		if !ok {
 			note("  claude theme '%s' (from %s) isn't among the themes in %s — using the default",
-				preferred, source, displayPath(filepath.Join(lay.DefaultsDir(), "agent-files", ".claude", "themes")))
+				preferred, source, pathresolve.Tilde(filepath.Join(lay.DefaultsDir(), "agent-files", ".claude", "themes")))
 		}
 		choice = resolved
 	}
@@ -240,12 +241,8 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 	}
 
 	if agentmem.Supported(agent) {
-		root := merged.MemoryRoot
-		if root == "" {
-			root = filepath.Join(vibeHome, "memories")
-		}
 		if memoryStore == "" {
-			memoryStore = agentmem.StoreFor(root, name)
+			memoryStore = agentmem.StoreFor(vibeHome, merged.MemoryRoot, name)
 		}
 		if err := os.MkdirAll(memoryStore, 0o755); err != nil {
 			return err
@@ -313,7 +310,7 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 		env = append(env, k+"="+merged.Env[k])
 	}
 
-	if err := sbxrun.CreateContext(ctx, sbxrun.CreateOpts{
+	if err := sbxrun.Create(ctx, sbxrun.CreateOpts{
 		Name:    name,
 		KitDir:  kitDir,
 		Memory:  memSize,

@@ -124,7 +124,7 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 			presence := agentmem.Probe(name)
 			if presence == agentmem.Unknown {
 				note("  '%s' is not running — starting it to check for memories", name)
-				if sbxrun.StartContext(ctx, name) {
+				if sbxrun.Start(ctx, name) {
 					presence = agentmem.Probe(name)
 				}
 			}
@@ -134,12 +134,8 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 			case presence == agentmem.None:
 				note("  no memories found in '%s' — nothing to preserve", name)
 			case confirmDefault(args.Force, true, fmt.Sprintf("Preserve agent memories from '%s'?", name)):
-				root := merged.MemoryRoot
-				if root == "" {
-					root = filepath.Join(vibeHome, "memories")
-				}
-				memoryStore = agentmem.StoreFor(root, name)
-				ok, err := agentmem.BackupContext(ctx, name, memoryStore)
+				memoryStore = agentmem.StoreFor(vibeHome, merged.MemoryRoot, name)
+				ok, err := agentmem.Backup(ctx, name, memoryStore)
 				if err != nil {
 					note("  WARNING: %s", err)
 				} else if !ok {
@@ -152,16 +148,18 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 		}
 		// Read after the memories: checking for those will have started a
 		// stopped sandbox, which is the only kind that can be asked.
-		if agent == "claude" && sbxrun.Reachable(name) {
-			if c, ok := claudetheme.FromSandbox(name); ok {
+		if agent == "claude" && sbxrun.Reachable(ctx, name) {
+			themeCtx, cancel := context.WithTimeout(ctx, themeReadTimeout)
+			if c, ok := claudetheme.FromSandbox(themeCtx, name); ok {
 				themeFromSandbox = c
 			}
+			cancel()
 		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		note("removing sandbox '%s'", name)
-		if err := sbxrun.RemoveToContext(ctx, name, true, actionOutput()); err != nil {
+		if err := sbxrun.Remove(ctx, name, true, actionOutput()); err != nil {
 			return err
 		}
 		// The instance record deliberately outlives the sandbox: it carries

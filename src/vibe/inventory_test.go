@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"vibe/internal/layout"
 	"vibe/internal/state"
+
+	"vibe/internal/sbxtest"
 )
 
 func record(t *testing.T, lay layout.Layout, name, profile, target string) {
@@ -115,12 +116,7 @@ func TestLikelyTrashProfiles(t *testing.T) {
 
 func TestTheInventoryFailsWhenSbxCantSay(t *testing.T) {
 	lay := updateLayout(t)
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "sbx"), "#!/bin/sh\necho 'daemon not running' >&2\nexit 1\n")
-	if err := os.Chmod(filepath.Join(dir, "sbx"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	sbxtest.OnPath(t, "echo 'daemon not running' >&2\nexit 1\n")
 	if _, err := gatherInventory(context.Background(), lay); err == nil {
 		t.Error("an inventory was taken without knowing what sbx has")
 	}

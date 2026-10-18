@@ -8,12 +8,14 @@ import (
 	"os/user"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"vibe/internal/cliargs"
 	"vibe/internal/companion"
 	"vibe/internal/gittoken"
 	"vibe/internal/layout"
+	"vibe/internal/pathresolve"
 	"vibe/internal/profilegen"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
@@ -98,7 +100,7 @@ func gatherInfo(ctx context.Context, lay layout.Layout, args cliargs.Args, name,
 		info.guided = profilegen.IsGuided(lay.ProfileDir(profile))
 		info.features, _ = profilegen.WithoutBase(profilegen.ComposedFrom(lay.ProfileDir(profile)), lay.BaseFeatures())
 	}
-	statuses, err := sbxrun.ListContext(ctx)
+	statuses, err := sbxrun.List(ctx)
 	if err != nil {
 		return info, false, err
 	}
@@ -119,32 +121,47 @@ func gatherInfo(ctx context.Context, lay layout.Layout, args cliargs.Args, name,
 }
 
 // liveUsage reads a running sandbox's uptime, memory and root disk use from
-// inside it.
+// inside it. Each read is an sbx exec, a round trip to the sandbox: they're
+// made at once.
 func liveUsage(ctx context.Context, name string) (sandboxUsage, error) {
+	type read struct {
+		command []string
+		out     string
+		err     error
+	}
+	uptime := &read{command: []string{"cat", "/proc/uptime"}}
+	meminfo := &read{command: []string{"cat", "/proc/meminfo"}}
+	root := &read{command: []string{"df", "-Pk", "/"}}
+	docker := &read{command: []string{"df", "-Pk", dockerDataDir}}
+	var wg sync.WaitGroup
+	for _, r := range []*read{uptime, meminfo, root, docker} {
+		wg.Go(func() { r.out, r.err = sbxrun.ExecStdout(ctx, name, r.command...) })
+	}
+	wg.Wait()
+
 	var u sandboxUsage
 	// Uptime is a nicety: not being able to read it is no reason to hide the
 	// memory and disk figures, which are what --info is for.
-	if out, err := sbxrun.ExecStdout(ctx, name, "cat", "/proc/uptime"); err == nil {
-		u.uptime, _ = parseUptime(out)
+	if uptime.err == nil {
+		u.uptime, _ = parseUptime(uptime.out)
 	}
-	out, err := sbxrun.ExecStdout(ctx, name, "cat", "/proc/meminfo")
-	if err != nil {
-		return u, fmt.Errorf("reading /proc/meminfo: %w", err)
+	if meminfo.err != nil {
+		return u, fmt.Errorf("reading /proc/meminfo: %w", meminfo.err)
 	}
-	if u.memTotal, u.memAvailable, err = parseMeminfo(out); err != nil {
+	var err error
+	if u.memTotal, u.memAvailable, err = parseMeminfo(meminfo.out); err != nil {
 		return u, err
 	}
-	out, err = sbxrun.ExecStdout(ctx, name, "df", "-Pk", "/")
-	if err != nil {
-		return u, fmt.Errorf("running df: %w", err)
+	if root.err != nil {
+		return u, fmt.Errorf("running df: %w", root.err)
 	}
-	if u.diskSize, u.diskUsed, _, err = parseDf(out); err != nil {
+	if u.diskSize, u.diskUsed, _, err = parseDf(root.out); err != nil {
 		return u, err
 	}
 	// No Docker in the sandbox, or Docker's data on the root filesystem:
 	// either way, nothing to report apart.
-	if out, err := sbxrun.ExecStdout(ctx, name, "df", "-Pk", dockerDataDir); err == nil {
-		if size, used, mount, err := parseDf(out); err == nil && mount == dockerDataDir {
+	if docker.err == nil {
+		if size, used, mount, err := parseDf(docker.out); err == nil && mount == dockerDataDir {
 			u.dockerSize, u.dockerUsed = size, used
 		}
 	}
@@ -215,7 +232,7 @@ func printInfo(w io.Writer, info sandboxInfo, profileKnown bool) {
 		fmt.Fprintf(w, "%-10s%s\n", label, fmt.Sprintf(format, a...))
 	}
 	row("sandbox", "%s", info.name)
-	row("folder", "%s", displayPath(info.target))
+	row("folder", "%s", pathresolve.Tilde(info.target))
 	if !profileKnown {
 		row("profile", "%s (doesn't exist yet: vibe will offer to create it)", info.profile)
 	} else {

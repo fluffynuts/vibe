@@ -13,6 +13,7 @@ import (
 	"vibe/internal/fscopy"
 	"vibe/internal/instructions"
 	"vibe/internal/layout"
+	"vibe/internal/pathresolve"
 	"vibe/internal/sbxinstall"
 	"vibe/internal/upgrade"
 )
@@ -61,9 +62,9 @@ func doInstall(lay layout.Layout, force bool, strategyValue string) error {
 	// The user's instructions for every sandbox's agent: theirs, so made
 	// once, empty, and never touched again.
 	if created, err := instructions.EnsureFile(lay.HomePath(instructions.File)); err != nil {
-		note("  WARNING: couldn't create %s: %s", displayPath(lay.HomePath(instructions.File)), err)
+		note("  WARNING: couldn't create %s: %s", pathresolve.Tilde(lay.HomePath(instructions.File)), err)
 	} else if created {
-		note("  created %s, for instructions to every sandbox's agent", displayPath(lay.HomePath(instructions.File)))
+		note("  created %s, for instructions to every sandbox's agent", pathresolve.Tilde(lay.HomePath(instructions.File)))
 	}
 	res, err := upgrade.Run(upgrade.Options{
 		Package:       lay.Bundle,
@@ -88,7 +89,7 @@ func doInstall(lay layout.Layout, force bool, strategyValue string) error {
 			return err
 		}
 	} else if err := lowerMemorySetting(lay.HomePath("settings.yaml")); err != nil {
-		note("  WARNING: couldn't check the memory setting in %s: %s", displayPath(lay.HomePath("settings.yaml")), err)
+		note("  WARNING: couldn't check the memory setting in %s: %s", pathresolve.Tilde(lay.HomePath("settings.yaml")), err)
 	}
 
 	binErr := installBinary()
@@ -98,23 +99,23 @@ func doInstall(lay layout.Layout, force bool, strategyValue string) error {
 		note("these couldn't be merged automatically — merge each by hand, then delete the .updated copy:")
 		for _, rel := range res.UpdatedCopies {
 			mine := filepath.Join(lay.Home, strings.TrimSuffix(rel, upgrade.UpdatedSuffix))
-			note("  yours: %s", displayPath(mine))
-			note("  new:   %s", displayPath(mine+upgrade.UpdatedSuffix))
+			note("  yours: %s", pathresolve.Tilde(mine))
+			note("  new:   %s", pathresolve.Tilde(mine+upgrade.UpdatedSuffix))
 		}
 	}
 	if len(res.UndecidedRetired) > 0 {
 		note("")
 		note("these are no longer in the package, but you had changed them, so they were kept — delete any you don't need:")
 		for _, rel := range res.UndecidedRetired {
-			note("  %s", displayPath(filepath.Join(lay.Home, rel)))
+			note("  %s", pathresolve.Tilde(filepath.Join(lay.Home, rel)))
 		}
 	}
 	if len(res.Unresolved) > 0 {
 		note("")
 		note("WARNING: %d file(s) changed both in %s and upstream in the package were left as they are:",
-			len(res.Unresolved), displayPath(lay.Home))
+			len(res.Unresolved), pathresolve.Tilde(lay.Home))
 		for _, rel := range res.Unresolved {
-			note("  %s", displayPath(filepath.Join(lay.Home, rel)))
+			note("  %s", pathresolve.Tilde(filepath.Join(lay.Home, rel)))
 		}
 		note("re-run with --update-strategy to settle them: %s", upgrade.StrategyValues)
 		note("  merge,keep    merge what merges; keep yours for the rest, with the new version beside it as .updated")
@@ -140,10 +141,10 @@ func retireShadowedFeatures(lay layout.Layout, now time.Time, remove func(name, 
 		}
 		if remove != nil && remove(name, dir) {
 			if err := os.RemoveAll(dir); err != nil {
-				note("  WARNING: couldn't remove %s: %s", displayPath(dir), err)
+				note("  WARNING: couldn't remove %s: %s", pathresolve.Tilde(dir), err)
 				continue
 			}
-			note("  removed: %s ('%s' is a base feature now)", displayPath(dir), name)
+			note("  removed: %s ('%s' is a base feature now)", pathresolve.Tilde(dir), name)
 			continue
 		}
 		to := lay.HomePath("retired", "library", name)
@@ -151,23 +152,23 @@ func retireShadowedFeatures(lay layout.Layout, now time.Time, remove func(name, 
 			to += "-" + now.Format("2006-01-02_150405")
 		}
 		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
-			note("  WARNING: couldn't move aside %s: %s", displayPath(dir), err)
+			note("  WARNING: couldn't move aside %s: %s", pathresolve.Tilde(dir), err)
 			continue
 		}
 		if err := os.Rename(dir, to); err != nil {
-			note("  WARNING: couldn't move aside %s: %s", displayPath(dir), err)
+			note("  WARNING: couldn't move aside %s: %s", pathresolve.Tilde(dir), err)
 			continue
 		}
-		note("  moved aside: %s → %s ('%s' is a base feature now, so nothing used this copy)", displayPath(dir), displayPath(to), name)
+		note("  moved aside: %s → %s ('%s' is a base feature now, so nothing used this copy)", pathresolve.Tilde(dir), pathresolve.Tilde(to), name)
 	}
 }
 
 // decideShadowedFeature asks what to do with a copy of a feature that is a
 // base feature now.
 func decideShadowedFeature(name, dir string) bool {
-	note("%s is an old copy of '%s', which is a base feature now: every profile has it, and this copy is never used.", displayPath(dir), name)
+	note("%s is an old copy of '%s', which is a base feature now: every profile has it, and this copy is never used.", pathresolve.Tilde(dir), name)
 	picked, ok := chooseFrom("What would you like to do with it?",
-		[]string{"move it to " + displayPath(retiredPath(dir)) + ", in case it holds anything of mine", "remove it"}, 0)
+		[]string{"move it to " + pathresolve.Tilde(retiredPath(dir)) + ", in case it holds anything of mine", "remove it"}, 0)
 	return ok && picked == 1
 }
 
@@ -181,7 +182,7 @@ func retiredPath(dir string) string {
 // decideRetiredFile asks whether to remove the user's changed copy of a
 // file the package no longer ships.
 func decideRetiredFile(rel, mine string) (bool, error) {
-	note("%s is no longer in the package, but you have changed it.", displayPath(mine))
+	note("%s is no longer in the package, but you have changed it.", pathresolve.Tilde(mine))
 	picked, ok := chooseFrom("What would you like to do?",
 		[]string{"keep my version", "remove it, as the package did"}, 0)
 	return ok && picked == 1, nil

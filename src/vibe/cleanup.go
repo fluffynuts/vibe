@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"vibe/internal/layout"
-	"vibe/internal/sbxrun"
+	"vibe/internal/pathresolve"
 )
 
 // cleanupRow is one line of --cleanup's checklist: a profile, one of its
@@ -82,7 +82,7 @@ func profileLabel(p inventoryProfile) string {
 
 // sandboxLabel is how a sandbox is shown in --cleanup's checklist.
 func sandboxLabel(s inventorySandbox) string {
-	return fmt.Sprintf("sandbox %s — %s [%s]", s.inst.Name, displayPath(s.inst.Target), strings.Join(sandboxFlags(s), ", "))
+	return fmt.Sprintf("sandbox %s — %s [%s]", s.inst.Name, pathresolve.Tilde(s.inst.Target), strings.Join(sandboxFlags(s), ", "))
 }
 
 // pickCleanup asks which rows to delete, with the likely trash ticked;
@@ -148,5 +148,5 @@ func doCleanup(lay layout.Layout) error {
 	if !confirmCleanup() {
 		return fmt.Errorf("aborted — nothing deleted")
 	}
-	return plan.run(lay, sbxrun.Remove)
+	return plan.run(lay, removeSandbox)
 }

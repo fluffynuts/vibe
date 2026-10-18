@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -10,7 +11,9 @@ import (
 	"vibe/internal/browser"
 	"vibe/internal/cliargs"
 	"vibe/internal/gittoken"
+	"vibe/internal/pathresolve"
 	"vibe/internal/prompt"
+	"vibe/internal/review"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
 )
@@ -57,27 +60,35 @@ var (
 	// running sandbox. A stopped one is left alone: every session start
 	// writes them afresh (see syncGitInstructions), so it gets them then.
 	writeGitInstructions = func(name, content string) error {
-		if !sbxrun.Reachable(name) {
+		if !sbxrun.Reachable(context.Background(), name) {
 			return nil
 		}
-		return sbxrun.ExecInput(name, content, "sh", "-c",
-			"mkdir -p \"$(dirname "+gittoken.SandboxFile+")\" && cat > "+gittoken.SandboxFile)
+		return writeSandboxFile(name, gittoken.SandboxFile, content)
 	}
 	removeGitInstructions = func(name string) error {
-		if !sbxrun.Reachable(name) {
+		if !sbxrun.Reachable(context.Background(), name) {
 			return nil
 		}
-		if out, err := sbxrun.ExecCapture(name, "rm", "-f", gittoken.SandboxFile); err != nil {
+		if out, err := sbxrun.ExecCapture(context.Background(), name, "rm", "-f", gittoken.SandboxFile); err != nil {
 			return fmt.Errorf("%w: %s", err, strings.TrimSpace(out))
 		}
 		return nil
 	}
 )
 
-// repoOf is the GitHub repository target pushes to, or nil when it has no
-// GitHub remote yet.
+// repoOf is the GitHub repository target's origin remote points at, or nil
+// when it has none (a new project, often, not pushed anywhere yet), or one
+// that isn't on GitHub. It's read with go-git, in the helper that reads
+// repositories for the Review tab: the sandbox can write the repository's
+// config, and git would run (or wait on) what that names.
 func repoOf(target string) *gittoken.Repo {
-	if repo, ok := gittoken.RemoteOf(target); ok {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	url, err := review.Origin(ctx, target)
+	if err != nil {
+		return nil
+	}
+	if repo, ok := gittoken.ParseRemote(url); ok {
 		return &repo
 	}
 	return nil
@@ -849,6 +860,6 @@ func setUpDefaultGitToken(vibeHome string) {
 	if !ok {
 		return
 	}
-	note("  saving the default GitHub token in %s (only you can read it)", displayPath(path))
+	note("  saving the default GitHub token in %s (only you can read it)", pathresolve.Tilde(path))
 	shareDefaultToken(vibeHome, token, expires, "")
 }

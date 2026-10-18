@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,17 +18,8 @@ import (
 
 func nudgeOnStart(lay layout.Layout, name string, reached func()) {
 	vibeHome := lay.Home
-	logPath := filepath.Join(os.TempDir(), "vibe-nudge.log")
-	logf := func(format string, a ...interface{}) {
-		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		if err != nil {
-			return
-		}
-		defer f.Close()
-		fmt.Fprintf(f, "[%s] %s: "+format+"\n",
-			append([]interface{}{time.Now().Format(time.RFC3339), name}, a...)...)
-	}
-	if !sbxrun.WaitReachable(name, 180) {
+	logf := sessionStartLogger(vibeHome, name)
+	if !sbxrun.WaitReachable(context.Background(), name, 180) {
 		logf("gave up waiting for reachability")
 		return
 	}
@@ -53,11 +45,36 @@ func nudgeOnStart(lay layout.Layout, name string, reached func()) {
 	// without starting anything. It runs in the foreground — sbx exec has
 	// no --detach — which is fine here, off the session's own goroutine:
 	// what it starts to keep running (the clipboard server) detaches itself.
-	if out, err := sbxrun.ExecCapture(name, "sudo", "-n", "/home/agent/.local/bin/on-start"); err != nil {
+	if out, err := sbxrun.ExecCapture(context.Background(), name, "sudo", "-n", kitspec.AgentHome+"/.local/bin/on-start"); err != nil {
 		logf("on-start nudge failed: %v: %s", err, strings.TrimSpace(out))
 		return
 	}
 	logf("on-start nudge ran")
+}
+
+// sessionStartLog is where what's done to a sandbox at the start of each
+// session is logged: in vibe's home, the user's alone, as what's logged
+// includes what the sandbox said.
+func sessionStartLog(vibeHome string) string {
+	return filepath.Join(vibeHome, "logs", "session-start.log")
+}
+
+// sessionStartLogger appends a line about sandbox name to sessionStartLog,
+// stamped with the time.
+func sessionStartLogger(vibeHome, name string) func(format string, a ...interface{}) {
+	path := sessionStartLog(vibeHome)
+	return func(format string, a ...interface{}) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return
+		}
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			return
+		}
+		defer f.Close()
+		fmt.Fprintf(f, "[%s] %s: "+format+"\n",
+			append([]interface{}{time.Now().Format(time.RFC3339), name}, a...)...)
+	}
 }
 
 // publishedURLDir is where, inside the sandbox, each published service's

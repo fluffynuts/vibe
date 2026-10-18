@@ -163,7 +163,7 @@ func Move(vibeHome, oldName, newName string) error {
 		{ClipboardPath(vibeHome, oldName), ClipboardPath(vibeHome, newName)},
 		{ReviewPath(vibeHome, oldName), ReviewPath(vibeHome, newName)},
 	} {
-		if err := moveIfThere(pair[0], pair[1]); err != nil {
+		if err := MoveIfThere(pair[0], pair[1]); err != nil {
 			return err
 		}
 	}
@@ -177,9 +177,12 @@ func Move(vibeHome, oldName, newName string) error {
 	return nil
 }
 
-// moveIfThere renames from to to, when from exists, refusing to replace
-// anything already at to.
-func moveIfThere(from, to string) error {
+// MoveIfThere renames from to to, when from exists and isn't to already,
+// refusing to replace anything already at to.
+func MoveIfThere(from, to string) error {
+	if from == to {
+		return nil
+	}
 	if _, err := os.Lstat(from); os.IsNotExist(err) {
 		return nil
 	}

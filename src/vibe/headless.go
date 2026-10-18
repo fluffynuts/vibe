@@ -17,7 +17,7 @@ import (
 // startHeadless starts sandbox name, when it isn't running. A variable for
 // tests.
 var startHeadless = func(ctx context.Context, name string) bool {
-	return sbxrun.StartContext(ctx, name)
+	return sbxrun.Start(ctx, name)
 }
 
 // headless is --headless's session: the sandbox started, its start-up run
@@ -105,7 +105,7 @@ func backUpAsHeadlessEnds(vibeHome, name string, asked bool) {
 		backUpWhileStopped(vibeHome, name)
 		return
 	}
-	if !sandboxReachable(name) {
+	if !sandboxReachable(context.Background(), name) {
 		return
 	}
 	backUpMemories(vibeHome, name)

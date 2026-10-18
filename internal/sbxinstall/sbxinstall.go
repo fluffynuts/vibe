@@ -21,10 +21,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
+	"vibe/internal/fscopy"
 	"vibe/internal/selfupdate"
+
+	"vibe/internal/pathresolve"
 )
 
 // Releases is where sbx's releases live. A variable so tests can point it at
@@ -156,10 +160,10 @@ func Unpack(tarGz, dir string) ([]string, error) {
 			continue
 		}
 		target := filepath.Join(dir, name)
-		if !within(dir, target) {
+		if !pathresolve.Within(dir, target) {
 			return nil, fmt.Errorf("%s: entry %q would land outside %s", tarGz, h.Name, dir)
 		}
-		if top := strings.SplitN(filepath.ToSlash(name), "/", 2)[0]; !contains(tops, top) {
+		if top := strings.SplitN(filepath.ToSlash(name), "/", 2)[0]; !slices.Contains(tops, top) {
 			tops = append(tops, top)
 		}
 		switch h.Typeflag {
@@ -168,11 +172,11 @@ func Unpack(tarGz, dir string) ([]string, error) {
 				return nil, err
 			}
 		case tar.TypeReg:
-			if err := extract(tr, target, os.FileMode(h.Mode).Perm()); err != nil {
+			if err := fscopy.WriteFrom(tr, target, os.FileMode(h.Mode).Perm()); err != nil {
 				return nil, err
 			}
 		case tar.TypeSymlink:
-			if rooted(h.Linkname) || !within(dir, filepath.Join(filepath.Dir(target), filepath.FromSlash(h.Linkname))) {
+			if rooted(h.Linkname) || !pathresolve.Within(dir, filepath.Join(filepath.Dir(target), filepath.FromSlash(h.Linkname))) {
 				return nil, fmt.Errorf("%s: link %q points outside %s", tarGz, h.Name, dir)
 			}
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
@@ -196,21 +200,6 @@ func Unpack(tarGz, dir string) ([]string, error) {
 // drive (C:x), neither of which filepath.IsAbs counts.
 func rooted(link string) bool {
 	return filepath.IsAbs(link) || filepath.VolumeName(link) != "" || strings.HasPrefix(filepath.ToSlash(link), "/")
-}
-
-// within reports whether path is dir or somewhere under it.
-func within(dir, path string) bool {
-	rel, err := filepath.Rel(dir, path)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 // Replace moves each of names from the folder from into the folder to,
@@ -280,27 +269,6 @@ func MSIOutcome(code int) (ok, restart bool, why string) {
 		return false, false, "another version of Docker Sandboxes is already installed"
 	}
 	return false, false, fmt.Sprintf("msiexec exited with code %d", code)
-}
-
-func extract(r io.Reader, target string, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return err
-	}
-	if mode == 0 {
-		mode = 0o644
-	}
-	out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, r); err != nil {
-		out.Close()
-		return err
-	}
-	if err := out.Close(); err != nil {
-		return err
-	}
-	return os.Chmod(target, mode) // past the umask, so 0755 stays 0755
 }
 
 // apparmorStep matches the installer's two lines that need root: copying

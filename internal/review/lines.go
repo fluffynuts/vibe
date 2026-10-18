@@ -16,7 +16,7 @@ const maxFileLines = 200000
 const maxFileBytes = 64 << 20
 
 // fileLines is path's lines, as the diff of r has its new side (see
-// NewTextOf). They're what the Review tab shows when asked for more of a
+// newTextOf). They're what the Review tab shows when asked for more of a
 // file's context than the diff has.
 func fileLines(ctx context.Context, dir string, r Review, path string) ([]string, error) {
 	text, err := newTextOf(ctx, dir, r, path)

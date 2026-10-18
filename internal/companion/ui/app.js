@@ -773,8 +773,16 @@
     }
   }
 
+  // namesOneHost says whether a logged host is a single host (with a port,
+  // perhaps), not a pattern: what the sandbox asked to reach can be one of
+  // the agent's making, and allowing it would let in far more than it says.
+  function namesOneHost(host) {
+    return !/[*?[\]!/]/.test(host.replace(/^\[[0-9A-Fa-f:.]+\]/, ''))
+  }
+
   function actionFor(entry) {
     if (entry.decision === 'blocked') {
+      if (!namesOneHost(entry.host)) return null
       return el('button', { type: 'button', class: 'small', text: 'Allow',
         onclick: () => confirmChange('allow', entry.host) })
     }
@@ -863,9 +871,9 @@
     })
   }
 
-  async function post(path, payload) {
-    const res = await api(path, { method: 'POST', body: JSON.stringify(payload) })
-    return res
+  // post sends payload to path as JSON; options are api's.
+  function post(path, payload, options) {
+    return api(path, Object.assign({}, options, { method: 'POST', body: JSON.stringify(payload) }))
   }
 
   function confirmThen(opts) {
@@ -925,7 +933,7 @@
       let res
       try {
         // It may wake the sandbox, to set it there.
-        res = await api('/api/default-branch', { method: 'POST', body: JSON.stringify({ name: input.value }), timeout: 4 * 60 * 1000 })
+        res = await post('/api/default-branch', { name: input.value }, { timeout: 4 * 60 * 1000 })
         reached(true)
       } catch (e) {
         reached(false)
@@ -1011,7 +1019,7 @@
           t.status === 'open' ? null : el('span', { class: 'pill', text: t.status }),
           awaiting ? el('span', { class: 'pill warn', text: 'awaiting your answer' }) : null),
         el('span', { class: 'comment-card-said' }, el('strong', { text: first.author === 'agent' ? 'Agent: ' : 'You: ' }), first.body.replace(/\s+/g, ' ').slice(0, 160)),
-        replies ? el('span', { class: 'comment-card-replies muted', text: replies === 1 ? '1 reply' : replies + ' replies' }) : null)
+        replies ? el('span', { class: 'comment-card-replies muted', text: plural(replies, 'reply', 'replies') }) : null)
     }) : [el('p', { class: 'muted', text: pane.filter === 'all' ? 'No comments yet.' : 'None of these.' })]))
   }
 
@@ -1502,7 +1510,7 @@
   // commentCount is a file's comment threads, for its row in the tree.
   function commentCount(n) {
     if (!n) return null
-    return el('span', { class: 'review-tree-comments', title: n + (n === 1 ? ' comment' : ' comments') }, commentIcon(), String(n))
+    return el('span', { class: 'review-tree-comments', title: plural(n, 'comment') }, commentIcon(), String(n))
   }
 
   function commentIcon() {
@@ -1615,7 +1623,7 @@
       } else reviewView.at = Math.max(0, R.positionOf(tops, threadLine()))
     }
     reviewView.at = Math.min(reviewView.at, Math.max(0, shown - 1))
-    const where = shown ? (reviewView.at + 1) + '/' + shown + (shown === 1 ? ' comment' : ' comments') : (all === 1 ? '1 comment' : all + ' comments')
+    const where = shown ? (reviewView.at + 1) + '/' + plural(shown, 'comment') : plural(all, 'comment')
     $('review-count').textContent = !all ? 'no comments yet' : where + (hiddenNote ? ' (' + hiddenNote + ')' : '')
     $('review-order').title = (all ? open + ' open of ' + all + ' comment threads. ' : '') +
       (reviewView.order === 'reading' ? "The arrows go in the agent's reading order" : 'The arrows go in path order, as the tree') + ': click to change.'
@@ -1764,7 +1772,7 @@
   // agent with the next message: the clipboard page can't be seen here.
   function showPastes(n) {
     $('review-pastes').hidden = !n
-    $('review-pastes').textContent = n === 1 ? '1 paste to send' : n + ' pastes to send'
+    $('review-pastes').textContent = plural(n, 'paste') + ' to send'
   }
 
   // reviewPaste sends what's pasted on the Review tab that isn't text (an
@@ -1951,7 +1959,7 @@
     const against = o.defaultBranch || o.emptyDefaultBranch
     if (against) kinds.push({ kind: 'branch', what: 'this branch against ' + against, review: 'Review against ' + against, show: 'Diff against ' + against, empty: !o.defaultBranch })
     if (o.upstream) {
-      const n = o.unpushed === 1 ? '1 unpushed commit' : o.unpushed + ' unpushed commits'
+      const n = plural(o.unpushed, 'unpushed commit')
       kinds.push({ kind: 'unpushed', what: 'the commits not yet pushed to ' + o.upstream, review: 'Review ' + n, show: 'Show ' + n })
     }
     // Why there's no reviewing against the default branch: it can't be told
@@ -2122,7 +2130,7 @@
     $('review-submit').disabled = !unsent || !state.conversation
     $('review-submit').textContent = unsent ? 'Submit ' + unsent + ' to agent' : 'Submit to agent'
     $('review-submit').title = !state.conversation ? "This sandbox's agent can't be talked to from the page"
-      : unsent ? 'Send the agent your ' + unsent + (unsent === 1 ? ' comment' : ' comments') + " it hasn't seen: it changes code only where you ask it to"
+      : unsent ? 'Send the agent your ' + plural(unsent, 'comment') + " it hasn't seen: it changes code only where you ask it to"
         : "Nothing new to send: comment on a line, or reply, first"
     $('review-error').hidden = !reviewView.diffError
     $('review-error').textContent = reviewView.diffError
@@ -2141,6 +2149,7 @@
     // The files as the tree lists them, so the tree, the files and the
     // comment arrows all go one way; the reading order is numbered on them.
     const ordered = R.inTreeOrder(files, rv.order)
+    reviewView.drawn = { files, ordered, placed, threads }
 
     $('review-files').replaceChildren(...(files.length || reviewView.files === null ? [] : [el('p', { class: 'muted', text: 'Nothing to review: no changes.' })]),
       ...ordered.map((o) => foldIfViewed(o.file, fileCard(o.file, o.stop, o.step, files.indexOf(o.file), placed, threads))))
@@ -2207,12 +2216,41 @@
     for (const { side, path } of colourSides(f)) {
       const key = f.path + '|' + side
       if (reviewView.colours.has(key)) continue
-      reviewView.colours.set(key, { loading: true })
-      api('/api/review/highlight?path=' + encodeURIComponent(path) + '&side=' + side)
+      const cancel = new AbortController()
+      reviewView.colours.set(key, { loading: true, cancel })
+      api('/api/review/highlight?path=' + encodeURIComponent(path) + '&side=' + side, { cancel })
         .then((res) => { reached(true); reviewView.colours.set(key, res.ok ? res.body : { error: (res.body && res.body.error) || 'vibe said no' }) },
-          () => { reached(false); reviewView.colours.delete(key) })
-        .then(() => { reviewView.key = null; drawReview() })
+          () => {
+            if (!cancel.signal.aborted) reached(false)
+            // One given up on may be asked for again before this lands.
+            if ((reviewView.colours.get(key) || {}).cancel === cancel) reviewView.colours.delete(key)
+          })
+        .then(() => { if (!cancel.signal.aborted) redrawCard(f) })
     }
+  }
+
+  // abandonColours gives up on file f's colours still on their way, as it's
+  // scrolled past: vibe stops colouring what nobody's looking at, and they're
+  // asked for again if it comes back.
+  function abandonColours(f) {
+    for (const { side } of colourSides(f)) {
+      const key = f.path + '|' + side
+      const c = reviewView.colours.get(key)
+      if (c && c.loading) { c.cancel.abort(); reviewView.colours.delete(key) }
+    }
+  }
+
+  // redrawCard draws file f's card afresh, alone, as its colours come: a
+  // whole redraw for each would take time growing with the square of the
+  // review's size. Where the card can't be (a reply being written in it, the
+  // files drawn since from another diff), the whole review is, as before.
+  function redrawCard(f) {
+    const d = reviewView.drawn
+    const o = d && d.files === reviewView.files ? d.ordered.find((x) => x.file === f) : null
+    const old = o && Array.from($('review-files').querySelectorAll('.review-file')).find((c) => c.dataset.path === f.path)
+    if (!old || old.querySelector('textarea')) { reviewView.key = null; drawReview(); return }
+    if (colourWatch) colourWatch.unobserve(old)
+    old.replaceWith(foldIfViewed(f, fileCard(f, o.stop, o.step, d.files.indexOf(f), d.placed, d.threads)))
   }
 
   // colourWhenNear asks for file f's colours once its card is near the
@@ -2225,10 +2263,10 @@
     if (!colourWatch) {
       colourWatch = new IntersectionObserver((entries) => {
         for (const e of entries) {
-          if (!e.isIntersecting) continue
-          colourWatch.unobserve(e.target)
           const file = (reviewView.files || []).find((x) => x.path === e.target.dataset.path)
-          if (file) fetchColours(file)
+          if (!file) continue
+          if (e.isIntersecting) fetchColours(file)
+          else abandonColours(file)
         }
       }, { rootMargin: '800px 0px' })
     }
@@ -2259,8 +2297,8 @@
     let adds = 0
     let dels = 0
     for (const h of f.hunks || []) for (const l of h.lines) { if (l.kind === 'add') adds++; else if (l.kind === 'del') dels++ }
-    const length = f.lines ? (f.status === 'deleted' ? 'was ' : '') + f.lines + (f.lines === 1 ? ' line' : ' lines') : ''
-    return el('span', { class: 'diffstat', title: adds + (adds === 1 ? ' line' : ' lines') + ' added, ' + dels + ' deleted' + (f.lines ? ', of ' + f.lines : '') },
+    const length = f.lines ? (f.status === 'deleted' ? 'was ' : '') + plural(f.lines, 'line') : ''
+    return el('span', { class: 'diffstat', title: plural(adds, 'line') + ' added, ' + dels + ' deleted' + (f.lines ? ', of ' + f.lines : '') },
       el('span', { class: 'adds', text: '+' + adds }), el('span', { class: 'dels', text: '−' + dels }),
       el('span', { class: 'squares' }, ...R.diffSquares(adds, dels).map((k) => el('span', { class: 'square ' + k }))),
       length ? el('span', { class: 'length muted', text: length }) : null)
@@ -3170,7 +3208,7 @@
         reached(true)
         if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
         const n = res.body.sent || 0
-        toast('Sent ' + n + (n === 1 ? ' comment' : ' comments') + ' to the agent: it answers on them, and says here what it did.')
+        toast('Sent ' + plural(n, 'comment') + ' to the agent: it answers on them, and says here what it did.')
         loadReview(false)
         select('conversation')
       } catch (e) {
@@ -3357,7 +3395,7 @@
     ed.save.disabled = ed.accept.disabled = true
     setStatus(ed, 'Saving…', '', true)
     try {
-      const res = await api('/api/admin/instructions', { method: 'POST', body: JSON.stringify(payload), timeout: 60000 })
+      const res = await post('/api/admin/instructions', payload, { timeout: 60000 })
       reached(true)
       if (res.status === 409 && res.body.conflict) { askChanged(ed, res.body); return }
       if (!res.ok || !res.body.saved) { setStatus(ed, (res.body && res.body.error) || 'That could not be saved.', 'bad'); return }
@@ -3429,8 +3467,7 @@
     ed.timer = setInterval(tickTime, 1000)
     ed.refresh()
     try {
-      const res = await api('/api/admin/instructions/optimise', {
-        method: 'POST', body: JSON.stringify({ which: ed.file.which, text: ed.box.value }),
+      const res = await post('/api/admin/instructions/optimise', { which: ed.file.which, text: ed.box.value }, {
         // The server gives up first (at 10 minutes) and says why.
         timeout: 11 * 60000, cancel: ed.running,
       })
@@ -3515,8 +3552,8 @@
     // inLink: in a link's text, where a button can't go.
     const inline = (nodes, inLink) => nodes.flatMap((n) => {
       switch (n.type) {
-        case 'text': return inLink ? document.createTextNode(n.text) : withThreadRefs(n.text)
-        case 'code': return el('code', { text: n.text })
+        case 'text': return inLink ? document.createTextNode(visible(n.text)) : withThreadRefs(visible(n.text))
+        case 'code': return el('code', { text: visible(n.text) })
         case 'br': return el('br')
         case 'strong': return el('strong', {}, ...inline(n.children, inLink))
         case 'em': return el('em', {}, ...inline(n.children, inLink))
@@ -3525,7 +3562,7 @@
           const link = localLink(n.href)
           if (link) { link.replaceChildren(...inline(n.children, true)); return link }
           const label = n.children.map((c) => c.text || '').join('')
-          return document.createTextNode(label === n.href ? n.href : label + ' (' + n.href + ')')
+          return document.createTextNode(visible(label === n.href ? n.href : label + ' (' + n.href + ')'))
         }
       }
       return document.createTextNode('')
@@ -3551,18 +3588,39 @@
     return el('div', { class: 'md' }, ...blocks(window.vibeMarkdown.parse(text)))
   }
 
+  // HIDDEN_CONTROL is what a terminal acts on but a page doesn't show: the
+  // control characters bar tab and newline. In code the agent wrote, one can
+  // hide a command (an escape ending a terminal's bracketed paste, so the
+  // rest runs), so a code block shows them and its copy leaves them out.
+  const HIDDEN_CONTROL = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g
+
+  // controlPicture is the symbol Unicode has for control character c (␛ for
+  // escape); ␦ for the C1 controls, which have none.
+  function controlPicture(c) {
+    const code = c.charCodeAt(0)
+    if (code < 0x20) return String.fromCharCode(0x2400 + code)
+    return code === 0x7f ? '\u2421' : '\u2426'
+  }
+
+  // visible is text with its hidden control characters shown as symbols.
+  function visible(text) {
+    return text.replace(/\r\n/g, '\n').replace(HIDDEN_CONTROL, controlPicture)
+  }
+
   // codeBlock is a block of code with a button copying it: selecting it by
   // hand means scrolling, as Ctrl+A takes the whole conversation.
   function codeBlock(code) {
+    const text = code.replace(/\r\n/g, '\n')
+    const hidden = text.match(HIDDEN_CONTROL) || []
     const copy = async () => {
       try {
-        await navigator.clipboard.writeText(code)
-        toast('Copied')
+        await navigator.clipboard.writeText(text.replace(HIDDEN_CONTROL, ''))
+        toast(hidden.length ? 'Copied, leaving out ' + plural(hidden.length, 'hidden control character') : 'Copied')
       } catch (err) {
         toast("Couldn't copy: " + err.message, true)
       }
     }
-    return el('div', { class: 'code-block' }, el('pre', {}, el('code', { text: code })),
+    return el('div', { class: 'code-block' }, el('pre', {}, el('code', { text: visible(text) })),
       el('button', { type: 'button', class: 'copy-code small', title: 'Copy', 'aria-label': 'Copy the code', onclick: copy }, copyIcon()))
   }
 
@@ -4135,7 +4193,8 @@
 
   function showIf(id, on) { $(id).hidden = !on }
 
-  function plural(n, word) { return n + ' ' + word + (n === 1 ? '' : 's') }
+  // plural is n with the word for one, or for more (one + 's' unless given).
+  function plural(n, one, more) { return n + ' ' + (n === 1 ? one : more || one + 's') }
 
   function openFresh() {
     if (fresh.cancel) fresh.cancel.abort()
@@ -4153,18 +4212,25 @@
     drawFresh()
     $('fresh').showModal()
     raiseToast()
-    const answered = (options) => {
+    askFreshOptions(false)
+  }
+
+  // askFreshOptions asks vibe what else the dialog can offer, and draws it,
+  // unless the dialog has been opened afresh meanwhile. Failing, it says
+  // why, and keep says whether what was offered before stays offered.
+  function askFreshOptions(keep) {
+    const generation = fresh.generation
+    const failed = (text) => {
       if (generation !== fresh.generation) return
-      fresh.options = options
-      drawFresh()
+      freshError(text)
+      if (!keep) { fresh.options = {}; drawFresh() }
     }
-    api('/api/conversation/new/options', { method: 'POST', body: '{}', timeout: FRESH_OPTIONS_MS, cancel: fresh.cancel }).then((res) => {
-      if (!res.ok) freshError(res.body.error || "vibe couldn't say what else can be done.")
-      answered(res.ok ? res.body : {})
-    }, () => {
-      freshError("Could not reach vibe to ask what else can be done.")
-      answered({})
-    })
+    post('/api/conversation/new/options', {}, { timeout: FRESH_OPTIONS_MS, cancel: fresh.cancel }).then((res) => {
+      if (!res.ok) { failed(res.body.error || "vibe couldn't say what else can be done."); return }
+      if (generation !== fresh.generation) return
+      fresh.options = res.body
+      drawFresh()
+    }, () => failed('Could not reach vibe to ask what else can be done.'))
   }
 
   function freshError(text) {
@@ -4227,13 +4293,7 @@
   // refreshFresh asks again what the dialog can offer, keeping what's
   // chosen: after the default branch has been set.
   function refreshFresh() {
-    const generation = fresh.generation
-    api('/api/conversation/new/options', { method: 'POST', body: '{}', timeout: FRESH_OPTIONS_MS, cancel: fresh.cancel }).then((res) => {
-      if (generation !== fresh.generation) return
-      if (!res.ok) { freshError(res.body.error || "vibe couldn't say what else can be done."); return }
-      fresh.options = res.body
-      drawFresh()
-    }, () => { if (generation === fresh.generation) freshError('Could not reach vibe to ask what else can be done.') })
+    askFreshOptions(true)
   }
 
   function drawFreshFetch(def) {
@@ -4270,7 +4330,7 @@
       $('fresh-update').checked = !!(fetched.checked && fetched.local && !fetched.ahead && fetched.behind > 0)
       drawFresh()
     }
-    api('/api/conversation/new/fetch', { method: 'POST', body: '{}', timeout: FRESH_FETCH_MS, cancel: fresh.cancel }).then(
+    post('/api/conversation/new/fetch', {}, { timeout: FRESH_FETCH_MS, cancel: fresh.cancel }).then(
       (res) => answered(res.ok ? res.body : { checked: false, why: res.body.error || 'vibe said ' + res.status }),
       () => answered({ checked: false, why: "vibe couldn't be reached" }))
   }
@@ -4306,7 +4366,7 @@
     $('fresh-run').textContent = 'Starting…'
     let res
     try {
-      res = await api('/api/conversation/new', { method: 'POST', body: JSON.stringify(body), timeout: FRESH_START_MS })
+      res = await post('/api/conversation/new', body, { timeout: FRESH_START_MS })
       reached(true)
     } catch (e) {
       reached(false)

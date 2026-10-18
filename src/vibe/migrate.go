@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"vibe/internal/cliargs"
+	"vibe/internal/fscopy"
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
 	"vibe/internal/running"
@@ -66,7 +67,7 @@ func doMigrate(lay layout.Layout, args cliargs.Args, name, from, to string) erro
 		return fmt.Errorf("vibe (%s) is running for %s — end it first ('vibe --stop %s' ends it, and stops the sandbox), then migrate", pidList(pids), from, from)
 	}
 	steps := []string{
-		fmt.Sprintf("move %s to %s", displayPath(from), displayPath(to)),
+		fmt.Sprintf("move %s to %s", pathresolve.Tilde(from), pathresolve.Tilde(to)),
 		fmt.Sprintf("rebuild sandbox '%s' there as '%s': its agent's memories, conversation, GitHub token, clipboard history and reviews go with it;", name, newName),
 		"  anything installed in it by hand, or kept outside its folder, doesn't",
 	}
@@ -78,7 +79,7 @@ func doMigrate(lay layout.Layout, args cliargs.Args, name, from, to string) erro
 		return fmt.Errorf("aborted — nothing moved")
 	}
 	relocate := func() (string, string, error) {
-		note("moving %s to %s", displayPath(from), displayPath(to))
+		note("moving %s to %s", pathresolve.Tilde(from), pathresolve.Tilde(to))
 		if err := os.Rename(from, to); err != nil {
 			return "", "", fmt.Errorf("the old sandbox is gone, but %s couldn't be moved: %w — it's where it was, with what vibe keeps for it: 'vibe -r %s' builds its sandbox again there", from, err, from)
 		}
@@ -90,7 +91,7 @@ func doMigrate(lay layout.Layout, args cliargs.Args, name, from, to string) erro
 	if err := migrateRebuild(context.Background(), lay, args, name, from, true, false, relocate); err != nil {
 		return err
 	}
-	note("%s is now %s, with sandbox '%s' — 'vibe' there starts it", displayPath(from), displayPath(to), newName)
+	note("%s is now %s, with sandbox '%s' — 'vibe' there starts it", pathresolve.Tilde(from), pathresolve.Tilde(to), newName)
 	return nil
 }
 
@@ -112,7 +113,7 @@ func checkMigration(vibeHome, name, from, to string, sbxHas func(string) (bool, 
 	if info, err := os.Stat(parent); err != nil || !info.IsDir() {
 		return "", fmt.Errorf("%s doesn't exist — make it first, then migrate", parent)
 	}
-	if rel, err := filepath.Rel(from, to); err == nil && !strings.HasPrefix(rel, "..") {
+	if pathresolve.Within(from, to) {
 		return "", fmt.Errorf("%s is inside it — a folder can't be moved into itself", to)
 	}
 	newName := pathresolve.DeriveName(to)
@@ -157,7 +158,7 @@ func migrateRecords(vibeHome, oldName, newName, from, to string) error {
 	if err := state.Move(vibeHome, oldName, newName); err != nil {
 		return err
 	}
-	if err := moveIfThere(headlessLog(vibeHome, oldName), headlessLog(vibeHome, newName)); err != nil {
+	if err := state.MoveIfThere(headlessLog(vibeHome, oldName), headlessLog(vibeHome, newName)); err != nil {
 		return err
 	}
 	store := inst.MemoryStore
@@ -165,13 +166,13 @@ func migrateRecords(vibeHome, oldName, newName, from, to string) error {
 	// name; one somewhere else (a profile's memoryRoot) is left where it is.
 	if dir, base := filepath.Split(store); store != "" && base == oldName {
 		moved := filepath.Join(dir, newName)
-		if err := moveIfThere(store, moved); err != nil {
+		if err := state.MoveIfThere(store, moved); err != nil {
 			return err
 		}
 		store = moved
 	}
 	if store != "" {
-		if err := moveIfThere(filepath.Join(store, projectFolder(from)), filepath.Join(store, projectFolder(to))); err != nil {
+		if err := state.MoveIfThere(filepath.Join(store, projectFolder(from)), filepath.Join(store, projectFolder(to))); err != nil {
 			return err
 		}
 	}
@@ -184,27 +185,6 @@ func migrateRecords(vibeHome, oldName, newName, from, to string) error {
 	}
 	inst.Target, inst.MemoryStore = to, store
 	return state.Save(vibeHome, inst)
-}
-
-// moveIfThere renames from to to, when from exists, refusing to replace
-// anything already at to.
-func moveIfThere(from, to string) error {
-	if from == to {
-		return nil
-	}
-	if _, err := os.Lstat(from); os.IsNotExist(err) {
-		return nil
-	}
-	if _, err := os.Lstat(to); err == nil {
-		return fmt.Errorf("%s is already there, so %s wasn't moved to it", to, from)
-	}
-	if err := os.MkdirAll(filepath.Dir(to), 0o700); err != nil {
-		return err
-	}
-	if err := os.Rename(from, to); err != nil {
-		return fmt.Errorf("moving %s: %w", from, err)
-	}
-	return nil
 }
 
 // refileTranscript rewrites the kept transcript at file (a gzipped tar of
@@ -254,9 +234,5 @@ func refileTranscript(file, from, to string) error {
 	if err := gzOut.Close(); err != nil {
 		return err
 	}
-	tmp := file + ".tmp"
-	if err := os.WriteFile(tmp, out.Bytes(), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, file)
+	return fscopy.WriteWhole(file, out.Bytes())
 }

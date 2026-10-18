@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"archive/zip"
 	"os"
 	"path/filepath"
 	"testing"
@@ -61,5 +62,32 @@ func TestListWithNoBackupDir(t *testing.T) {
 	got, err := List(filepath.Join(t.TempDir(), "nope"), "vibe")
 	if err != nil || len(got) != 0 {
 		t.Fatalf("got %v, %v", got, err)
+	}
+}
+
+// A backup is a zip on disk: one with an entry reaching out of the profile
+// ("../") is refused, and nothing is written outside it.
+func TestRestoreRefusesAnEntryOutsideTheProfile(t *testing.T) {
+	root := t.TempDir()
+	profile := filepath.Join(root, "profile")
+	os.MkdirAll(profile, 0o755)
+	zipPath := filepath.Join(root, "bad.zip")
+	f, err := os.Create(zipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+	for _, name := range []string{"config.yaml", "../escaped.txt"} {
+		w, _ := zw.Create(name)
+		w.Write([]byte("x"))
+	}
+	zw.Close()
+	f.Close()
+
+	if err := Restore(zipPath, profile); err == nil {
+		t.Error("a backup reaching out of the profile was restored")
+	}
+	if _, err := os.Stat(filepath.Join(root, "escaped.txt")); err == nil {
+		t.Error("an entry was written outside the profile")
 	}
 }

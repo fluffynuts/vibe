@@ -7,13 +7,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"vibe/internal/companion"
+	"vibe/internal/fscopy"
 	"vibe/internal/sbxrun"
 )
 
@@ -22,10 +21,6 @@ import (
 // approve anything on, and the sandbox is the boundary the agent was given,
 // so it runs the way sbx itself runs it.
 var agentArgs = []string{"claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions"}
-
-// A session id is put on the command line, so only what claude's own look
-// like gets there.
-var resumableSession = regexp.MustCompile(`^[A-Za-z0-9_-]{1,100}$`)
 
 // shellQuote makes s one word for a POSIX shell.
 func shellQuote(s string) string {
@@ -45,7 +40,7 @@ func conversationCommand(workspace, session, pidFile string) []string {
 	for _, a := range agentArgs {
 		words = append(words, shellQuote(a))
 	}
-	if resumableSession.MatchString(session) {
+	if companion.SessionID.MatchString(session) {
 		words = append(words, "--resume", shellQuote(session))
 	}
 	inner := strings.Join(words, " ")
@@ -180,16 +175,10 @@ func keepingTranscript(converse companion.Converser, t transcripts, file string)
 		if err != nil || len(tgz) == 0 {
 			return
 		}
-		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
-			return
-		}
-		tmp := file + ".tmp"
-		if err := os.WriteFile(tmp, tgz, 0o600); err == nil {
-			os.Rename(tmp, file)
-		}
+		fscopy.WriteWhole(file, tgz)
 	}
 	return func(ctx context.Context, prompt, session string, delivered func(), onLine func([]byte)) error {
-		if resumableSession.MatchString(session) {
+		if companion.SessionID.MatchString(session) {
 			mu.Lock()
 			known := checked[session]
 			mu.Unlock()
@@ -211,12 +200,12 @@ func keepingTranscript(converse companion.Converser, t transcripts, file string)
 			var head struct {
 				SessionID string `json:"session_id"`
 			}
-			if json.Unmarshal(line, &head) == nil && resumableSession.MatchString(head.SessionID) {
+			if json.Unmarshal(line, &head) == nil && companion.SessionID.MatchString(head.SessionID) {
 				latest = head.SessionID
 			}
 			onLine(line)
 		})
-		if resumableSession.MatchString(latest) {
+		if companion.SessionID.MatchString(latest) {
 			mu.Lock()
 			checked[latest] = true
 			mu.Unlock()
@@ -234,7 +223,7 @@ func asAgent(script string) []string {
 }
 
 // sandboxTranscripts reaches into sandbox name's ~/.claude for transcripts.
-// A session id is only ever one that resumableSession passes, so it is safe
+// A session id is only ever one that companion.SessionID passes, so it is safe
 // in a script; it is quoted all the same. Paths keep their projects/ in
 // front: claude's folders there start with a dash, which ls would take for
 // an option.
@@ -242,7 +231,7 @@ func sandboxTranscripts(name string) transcripts {
 	pattern := func(session string) string { return shellQuote(session + ".jsonl") }
 	return transcripts{
 		has: func(ctx context.Context, session string) bool {
-			return sbxrun.ExecSilentContext(ctx, name, asAgent(
+			return sbxrun.ExecSilent(ctx, name, asAgent(
 				`cd "$HOME/.claude" 2>/dev/null && ls projects/*/`+pattern(session)+` >/dev/null 2>&1`)...)
 		},
 		fetch: func(ctx context.Context, session string) ([]byte, error) {

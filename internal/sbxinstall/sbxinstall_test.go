@@ -4,13 +4,13 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
+	"vibe/internal/releasetest"
 )
 
 // makeTarGz builds a .tar.gz in memory: name → content, with modes; a name
@@ -50,21 +50,8 @@ func makeTarGz(t *testing.T, files map[string]string, modes map[string]int64) []
 // assets.
 func fakeGitHub(t *testing.T, tag string, assets map[string][]byte) {
 	t.Helper()
-	mux := http.NewServeMux()
-	mux.HandleFunc("/releases/latest", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/releases/tag/"+tag, http.StatusFound)
-	})
-	mux.HandleFunc("/releases/download/"+tag+"/", func(w http.ResponseWriter, r *http.Request) {
-		if content, ok := assets[filepath.Base(r.URL.Path)]; ok {
-			w.Write(content)
-			return
-		}
-		http.NotFound(w, r)
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
 	old := Releases
-	Releases = srv.URL + "/releases"
+	Releases = releasetest.Serve(t, tag, assets)
 	t.Cleanup(func() { Releases = old })
 }
 
@@ -279,7 +266,7 @@ func TestUnpackTheMacOSTarball(t *testing.T) {
 		t.Fatalf("Unpack: %v", err)
 	}
 	for _, want := range []string{"Sbx.app", "bin", "LICENSE"} {
-		if !contains(tops, want) {
+		if !slices.Contains(tops, want) {
 			t.Errorf("Unpack's top-level entries %v lack %s", tops, want)
 		}
 	}

@@ -152,6 +152,7 @@ func TestAMigrationIsRefusedBeforeAnythingChanges(t *testing.T) {
 		{"already there", "app", filepath.Join(root, "taken"), noSbx, "already exists"},
 		{"no parent", "app", filepath.Join(root, "missing", "app"), noSbx, "doesn't exist"},
 		{"into itself", "app", filepath.Join(from, "sub"), noSbx, "inside it"},
+		{"into itself, under a name starting ..", "app", filepath.Join(from, "..sub"), noSbx, "inside it"},
 		{"name taken by a record", "app", filepath.Join(root, "other"), noSbx, "'other'"},
 		{"name taken in sbx", "app", filepath.Join(root, "made-by-hand"), func(n string) (bool, error) { return n == "made-by-hand", nil }, "'made-by-hand'"},
 		{"sbx can't tell", "app", filepath.Join(root, "new-app"), func(string) (bool, error) { return false, errors.New("sbx ls --json: daemon not running") }, "daemon not running"},

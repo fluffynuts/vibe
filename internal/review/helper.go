@@ -53,6 +53,7 @@ type helperArgs struct {
 	Path   string    `json:"path,omitempty"`
 	Review Review    `json:"review"`
 	How    []Diffing `json:"how,omitempty"`
+	Old    bool      `json:"old,omitempty"`
 }
 
 // ServeHelperIfAsked, run first thing, serves as the helper when this
@@ -81,7 +82,7 @@ func watchMemory(limit int64) {
 		time.Sleep(10 * time.Millisecond)
 		runtime.ReadMemStats(&m)
 		if int64(m.HeapAlloc) > limit {
-			fmt.Fprintf(os.Stderr, "reading the repository needed more memory than vibe allows it (%d MB): it may be damaged, or built to exhaust memory\n", limit>>20)
+			fmt.Fprintln(os.Stderr, tooMuchMemory())
 			os.Exit(3)
 		}
 	}
@@ -114,18 +115,18 @@ func serve(in io.Reader) helperAnswer {
 		result, err = optionsOf(ctx, a.Dir)
 	case "defaultBranch":
 		result, err = defaultBranchOf(a.Dir)
+	case "origin":
+		result, err = originOf(a.Dir)
 	case "status":
 		result, err = statusOf(ctx, a.Dir)
-	case "textOf":
-		result, err = textOf(ctx, a.Dir, a.Review, a.Path)
 	case "moves":
 		result = moves(ctx, a.Dir, a.Review)
 	case "fileLines":
 		result, err = fileLines(ctx, a.Dir, a.Review, a.Path)
-	case "newTextOf":
-		result, err = newTextOf(ctx, a.Dir, a.Review, a.Path)
-	case "oldTextOf":
-		result, err = oldTextOf(ctx, a.Dir, a.Review, a.Path)
+	case "inFolder":
+		result, err = fileInFolder(a.Dir, a.Path)
+	case "colour":
+		result, err = colour(ctx, a.Dir, a.Review, a.Path, a.Old)
 	default:
 		err = fmt.Errorf("the helper has no %q", req.Op)
 	}
@@ -187,7 +188,7 @@ func isolated(ctx context.Context, op string, args helperArgs, out any) error {
 		if stdout.over {
 			why = "its answer was too large"
 		}
-		return fmt.Errorf("vibe's helper failed reading the repository: %s", lastLine(why))
+		return fmt.Errorf("vibe's helper failed reading the repository: %s", helperDied(why))
 	}
 	if answer.Error != "" {
 		return errors.New(answer.Error)
@@ -195,36 +196,57 @@ func isolated(ctx context.Context, op string, args helperArgs, out any) error {
 	return json.Unmarshal(answer.Result, out)
 }
 
-// lastLine is text's last line: what a process said as it ended, past what
-// it said before (a Go panic's trace, say).
-func lastLine(text string) string {
-	lines := strings.Split(strings.TrimSpace(text), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		if l := strings.TrimSpace(lines[i]); l != "" && !strings.HasPrefix(l, "goroutine ") {
+// tooMuchMemory is why the helper ended when it ran out of memory.
+func tooMuchMemory() string {
+	return fmt.Sprintf("reading the repository needed more memory than vibe allows it (%d MB): it may be damaged, or built to exhaust memory", helperMemory()>>20)
+}
+
+// helperDied is what the helper said as it ended (its stderr): a Go panic
+// or fatal error by its first line, not its trace's last; one for running
+// out of memory as such (the runtime can fail an allocation past the
+// address space the helper's given before watchMemory sees the heap grow);
+// else its last line.
+func helperDied(stderr string) string {
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	for _, l := range lines {
+		if strings.HasPrefix(l, "fatal error: ") || strings.HasPrefix(l, "panic: ") {
+			if strings.Contains(l, "out of memory") {
+				return tooMuchMemory()
+			}
 			return l
 		}
 	}
-	return text
+	for i := len(lines) - 1; i >= 0; i-- {
+		if l := strings.TrimSpace(lines[i]); l != "" {
+			return l
+		}
+	}
+	return stderr
 }
 
 // capped keeps up to max bytes written to it, and says when there were
-// more.
+// more. The buffer isn't embedded: its ReadFrom would let io.Copy go round
+// Write, and the limit.
 type capped struct {
-	bytes.Buffer
+	buf  bytes.Buffer
 	max  int
 	over bool
 }
 
 func (c *capped) Write(p []byte) (int, error) {
-	if room := c.max - c.Len(); room < len(p) {
+	if room := c.max - c.buf.Len(); room < len(p) {
 		c.over = true
 		if room > 0 {
-			c.Buffer.Write(p[:room])
+			c.buf.Write(p[:room])
 		}
 		return len(p), nil
 	}
-	return c.Buffer.Write(p)
+	return c.buf.Write(p)
 }
+
+func (c *capped) Len() int       { return c.buf.Len() }
+func (c *capped) Bytes() []byte  { return c.buf.Bytes() }
+func (c *capped) String() string { return c.buf.String() }
 
 // The repository's reading, each in a helper (see isolated).
 
@@ -274,6 +296,13 @@ func DefaultBranch(ctx context.Context, dir string) (Mainline, error) {
 	return out, isolated(ctx, "defaultBranch", helperArgs{Dir: dir}, &out)
 }
 
+// Origin is the URL the repository the folder dir is in has for its origin
+// remote: "" when it has none. An error is the repository not being read.
+func Origin(ctx context.Context, dir string) (string, error) {
+	var out string
+	return out, isolated(ctx, "origin", helperArgs{Dir: dir}, &out)
+}
+
 // Options are the reviews the folder dir can be started on.
 func Options(ctx context.Context, dir string) (StartOptions, error) {
 	var out StartOptions
@@ -290,12 +319,6 @@ func StatusOf(ctx context.Context, dir string) (*FolderStatus, error) {
 	return &out, nil
 }
 
-// TextOf is path's lines as review rv has it (see NewTextOf).
-func TextOf(ctx context.Context, dir string, rv Review, path string) ([]string, error) {
-	var out []string
-	return out, isolated(ctx, "textOf", helperArgs{Dir: dir, Review: rv, Path: path}, &out)
-}
-
 // Moves are rv's comments on the new side whose code (as it read when
 // they were made) is no longer at their lines but is elsewhere in the file:
 // where to. What can't be read moves nothing: its comments stay, and the
@@ -309,24 +332,26 @@ func Moves(ctx context.Context, dir string, rv Review) []Move {
 }
 
 // FileLines is path's lines, as the diff of r has its new side (see
-// NewTextOf). They're what the Review tab shows when asked for more of a
+// newTextOf). They're what the Review tab shows when asked for more of a
 // file's context than the diff has.
 func FileLines(ctx context.Context, dir string, r Review, path string) ([]string, error) {
 	var out []string
 	return out, isolated(ctx, "fileLines", helperArgs{Dir: dir, Review: r, Path: path}, &out)
 }
 
-// NewTextOf is path's text as review r has its new side: in the commit r is
-// of, at HEAD for unpushed commits, else in the folder dir as it is.
-func NewTextOf(ctx context.Context, dir string, r Review, path string) (string, error) {
-	var out string
-	return out, isolated(ctx, "newTextOf", helperArgs{Dir: dir, Review: r, Path: path}, &out)
+// Colour is path's text coloured (see Highlight), as review rv has it: its
+// old side when old, else its new one. It's coloured in the helper: Chroma's
+// lexers can be made to take without end (one loops for good on text as
+// short as "/*"), and the helper is ended when ctx is.
+func Colour(ctx context.Context, dir string, rv Review, path string, old bool) (Highlighted, error) {
+	var out Highlighted
+	return out, isolated(ctx, "colour", helperArgs{Dir: dir, Review: rv, Path: path, Old: old}, &out)
 }
 
-// OldTextOf is path's text where review rv's diff starts from: the commit
-// before rv's, where its branch parted from its ref, or the folder's last
-// commit.
-func OldTextOf(ctx context.Context, dir string, rv Review, path string) (string, error) {
-	var out string
-	return out, isolated(ctx, "oldTextOf", helperArgs{Dir: dir, Review: rv, Path: path}, &out)
+// InFolder says whether file, a path in the repository the folder is in (as
+// a thread names it), is in the folder: the repository's top may be above
+// it, and files outside the folder are none of the sandbox's.
+func InFolder(ctx context.Context, folder, file string) (bool, error) {
+	var out bool
+	return out, isolated(ctx, "inFolder", helperArgs{Dir: folder, Path: file}, &out)
 }

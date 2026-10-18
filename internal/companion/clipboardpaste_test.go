@@ -1,8 +1,11 @@
 package companion
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -130,5 +133,50 @@ func TestAPasteTooLargeSaysSo(t *testing.T) {
 	rec := do(t, s, pasteReq(strings.Repeat("x", maxPaste+1), "image/png", "huge.png"))
 	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), "50 MB") {
 		t.Errorf("paste: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// The clipboard page is the sandbox's, so its answer can be anything: a
+// status no response may be given with is the page failing, not one to
+// pass on (passing it on would panic the handler).
+func TestAPasteWithAnImpossibleStatusFromTheClipboardPageIsItFailing(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				http.ReadRequest(bufio.NewReader(c))
+				io.WriteString(c, "HTTP/1.1 099 Odd\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+			}()
+		}
+	}()
+	s, _ := reviewTabServer(t)
+	s.cfg.ClipboardURL = func() string { return "http://" + l.Addr().String() }
+	rec := do(t, s, pasteReq("png bytes", "image/png", "shot.png"))
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("paste: %d %s, want %d", rec.Code, rec.Body, http.StatusBadGateway)
+	}
+}
+
+// Nor is there any end to what it can send back: what's read of it is
+// bounded.
+func TestWhatIsReadOfTheClipboardPagesAnswerToADeleteIsBounded(t *testing.T) {
+	clip := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"deleted":1,"pad":"`+strings.Repeat("x", 2<<20)+`"}`)
+	}))
+	t.Cleanup(clip.Close)
+	var body struct {
+		Deleted int `json:"deleted"`
+	}
+	if err := clipboardDelete(context.Background(), clip.URL+"/api/items", &body); err == nil {
+		t.Error("an answer of over 2 MB was read whole")
 	}
 }

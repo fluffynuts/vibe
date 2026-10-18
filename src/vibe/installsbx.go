@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 
+	"vibe/internal/pathresolve"
 	"vibe/internal/sbxinstall"
 )
 
@@ -143,7 +144,7 @@ func sbxMethods() ([]sbxMethod, error) {
 	switch runtime.GOOS {
 	case "linux":
 		return []sbxMethod{{
-			label: "the release's install script, into " + displayPath(prefix),
+			label: "the release's install script, into " + pathresolve.Tilde(prefix),
 			asset: sbxinstall.AssetName(runtime.GOARCH), sbx: sbx, binDir: binDir,
 			install:   func(_, file string, _ bool) error { return installSbxLinux(file, prefix) },
 			installed: func() bool { return exists(sbx) },
@@ -155,13 +156,13 @@ func sbxMethods() ([]sbxMethod, error) {
 		}
 		methods := []sbxMethod{
 			{
-				label: "unpack the release into " + displayPath(prefix) + " (no admin rights needed)",
+				label: "unpack the release into " + pathresolve.Tilde(prefix) + " (no admin rights needed)",
 				asset: sbxinstall.DarwinTarball, sbx: sbx, binDir: binDir,
 				install:   func(_, file string, _ bool) error { return installSbxMacTarball(file, prefix) },
 				installed: func() bool { return resolvesInto(sbx, prefix) },
 			},
 			{
-				label: "install Sbx.app from the release's .dmg into /Applications, linking sbx into " + displayPath(binDir),
+				label: "install Sbx.app from the release's .dmg into /Applications, linking sbx into " + pathresolve.Tilde(binDir),
 				asset: sbxinstall.DarwinDMG, sbx: sbx, binDir: binDir,
 				install:   func(_, file string, _ bool) error { return installSbxMacDMG(file, binDir) },
 				installed: func() bool { return resolvesInto(sbx, filepath.Join(macApplications, "Sbx.app")) },
@@ -270,7 +271,7 @@ func installSbxMacTarball(tarball, prefix string) error {
 	if err := sbxinstall.Replace(unpacked, prefix, tops); err != nil {
 		return fmt.Errorf("installing into %s: %w", prefix, err)
 	}
-	note("installed Sbx.app into %s", displayPath(prefix))
+	note("installed Sbx.app into %s", pathresolve.Tilde(prefix))
 	return nil
 }
 
@@ -300,7 +301,7 @@ func installSbxMacDMG(dmg, binDir string) error {
 	staging, err := os.MkdirTemp(macApplications, ".vibe-sbx-")
 	if err != nil {
 		if errors.Is(err, os.ErrPermission) {
-			return fmt.Errorf("can't write to %s (only an admin user can) — pick the %s option instead", macApplications, displayPath(filepath.Dir(binDir)))
+			return fmt.Errorf("can't write to %s (only an admin user can) — pick the %s option instead", macApplications, pathresolve.Tilde(filepath.Dir(binDir)))
 		}
 		return err
 	}
@@ -322,9 +323,9 @@ func installSbxMacDMG(dmg, binDir string) error {
 			return fmt.Errorf("linking %s into %s: %w", name, binDir, err)
 		}
 	}
-	note("linked sbx into %s", displayPath(binDir))
+	note("linked sbx into %s", pathresolve.Tilde(binDir))
 	if old := filepath.Join(filepath.Dir(binDir), "Sbx.app"); isDir(old) {
-		note("  %s, from installing the tarball before, isn't used any more — you can delete it", displayPath(old))
+		note("  %s, from installing the tarball before, isn't used any more — you can delete it", pathresolve.Tilde(old))
 	}
 	return nil
 }
@@ -443,8 +444,7 @@ func resolvesInto(path, dir string) bool {
 	if d, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = d
 	}
-	rel, err := filepath.Rel(dir, resolved)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	return pathresolve.Within(dir, resolved)
 }
 
 func isDir(path string) bool {

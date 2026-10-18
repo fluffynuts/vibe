@@ -10,7 +10,6 @@
 package selfupdate
 
 import (
-	"archive/zip"
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
@@ -24,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"vibe/internal/fscopy"
 )
 
 // Releases is where vibe's releases live. A variable so tests can point it
@@ -189,64 +189,20 @@ func sha256File(p string) (string, error) {
 // Unzip unpacks a release zip into dir, keeping file modes (the binary's
 // executable bit), and returns the one top-level folder it holds.
 func Unzip(zipPath, dir string) (string, error) {
-	r, err := zip.OpenReader(zipPath)
+	names, err := fscopy.Unzip(zipPath, dir)
 	if err != nil {
 		return "", err
 	}
-	defer r.Close()
 	top := ""
-	for _, f := range r.File {
-		name := filepath.FromSlash(f.Name)
-		// Every entry must land inside dir: a "../" in a name ("zip slip")
-		// is refused, not followed.
-		target := filepath.Join(dir, name)
-		if rel, err := filepath.Rel(dir, target); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return "", fmt.Errorf("%s: entry %q would land outside %s", zipPath, f.Name, dir)
-		}
-		if first := strings.SplitN(filepath.ToSlash(name), "/", 2)[0]; top == "" {
+	for _, name := range names {
+		if first := strings.SplitN(name, "/", 2)[0]; top == "" {
 			top = first
 		} else if first != top {
 			return "", fmt.Errorf("%s holds more than one top-level folder (%s, %s)", zipPath, top, first)
-		}
-		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, 0o755); err != nil {
-				return "", err
-			}
-			continue
-		}
-		if err := extract(f, target); err != nil {
-			return "", err
 		}
 	}
 	if top == "" {
 		return "", errors.New(zipPath + " is empty")
 	}
 	return filepath.Join(dir, top), nil
-}
-
-func extract(f *zip.File, target string) error {
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return err
-	}
-	in, err := f.Open()
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	mode := f.Mode().Perm()
-	if mode == 0 {
-		mode = 0o644
-	}
-	out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
-	}
-	if err := out.Close(); err != nil {
-		return err
-	}
-	return os.Chmod(target, mode) // past the umask, so 0755 stays 0755
 }

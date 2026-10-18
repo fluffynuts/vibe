@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -15,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"vibe/internal/fscopy"
 )
 
 // Converser runs one turn of the conversation: it sends prompt to the agent
@@ -48,11 +48,15 @@ const (
 	// numbers keep counting past it, so a page that is behind just misses
 	// what was dropped.
 	maxEvents = 2000
+	// maxKept bounds the bytes of the events kept, as maxEvents bounds how
+	// many: each can be up to maxLine, and the whole is written out at
+	// every answer.
+	maxKept = 32 << 20
 )
 
-// A session id goes onto the agent's command line, so it is only ever what
-// the agent's own ids look like.
-var sessionID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,100}$`)
+// SessionID is what an agent's session id looks like. One goes onto the
+// agent's command line, so it is only ever taken when it looks like that.
+var SessionID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,100}$`)
 
 // event is one thing the page shows: what the user said, a line of the
 // agent's output, how a turn ended, or that the conversation began anew.
@@ -140,7 +144,7 @@ func (c *conversation) load(file string) error {
 	}
 	c.events, c.seq, c.prompt = was.Events, was.Seq, was.Prompt
 	c.commands, c.commandsSeq = slashCommands(was.Commands), was.CommandsSeq
-	if sessionID.MatchString(was.Session) {
+	if SessionID.MatchString(was.Session) {
 		c.session = was.Session
 	}
 	if was.Running {
@@ -163,14 +167,7 @@ func (c *conversation) save() {
 	if err != nil {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(c.file), 0o700); err != nil {
-		return
-	}
-	tmp := c.file + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return
-	}
-	os.Rename(tmp, c.file)
+	fscopy.WriteWhole(c.file, data)
 }
 
 // close saves the conversation as it is, for the next vibe to pick up.
@@ -183,7 +180,15 @@ func (c *conversation) close() {
 func (c *conversation) add(kind, text string, agent json.RawMessage) {
 	c.seq++
 	c.events = append(c.events, event{Seq: c.seq, Kind: kind, Text: text, Agent: agent, At: time.Now().UnixMilli()})
-	if over := len(c.events) - maxEvents; over > 0 {
+	over := len(c.events) - maxEvents
+	kept := 0
+	for i := len(c.events) - 1; i >= 0; i-- {
+		if kept += len(c.events[i].Text) + len(c.events[i].Agent); kept > maxKept {
+			over = max(over, i+1)
+			break
+		}
+	}
+	if over > 0 {
 		c.events = append([]event(nil), c.events[over:]...)
 	}
 }
@@ -257,7 +262,7 @@ func (c *conversation) line(raw []byte) string {
 	json.Unmarshal(raw, &head)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if sessionID.MatchString(head.SessionID) {
+	if SessionID.MatchString(head.SessionID) {
 		c.session = head.SessionID
 	}
 	if head.Type == "system" && head.Subtype == "init" && head.SlashCommands != nil {
@@ -538,18 +543,18 @@ func (s *Server) conversationSend(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "that prompt is too long"})
+			writeError(w, http.StatusRequestEntityTooLarge, "that prompt is too long")
 			return
 		}
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "expected {\"prompt\": ...}"})
+		writeError(w, http.StatusBadRequest, "expected {\"prompt\": ...}")
 		return
 	}
 	if strings.TrimSpace(req.Prompt) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "there is nothing to send"})
+		writeError(w, http.StatusBadRequest, "there is nothing to send")
 		return
 	}
 	if !s.startTurn(req.Prompt) {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "the agent is still answering the last prompt"})
+		writeError(w, http.StatusConflict, "the agent is still answering the last prompt")
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
@@ -590,44 +595,11 @@ func (s *Server) conversationStop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"stopped": s.convo.stop()})
 }
 
-// conversing wraps a call that changes the conversation: the same
-// protections as changing(), but with room for a prompt, and nothing of
-// sbx's rules to forget.
-func (s *Server) conversing(next http.HandlerFunc) http.HandlerFunc {
-	return s.authed(func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.Converse == nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "this sandbox has no conversation to have"})
-			return
-		}
-		if !sameOriginJSON(w, r) {
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, maxPrompt)
-		next(w, r)
-	})
-}
-
-// administering wraps a call from the Admin tab: the same protections as
-// conversing().
-func (s *Server) administering(next http.HandlerFunc) http.HandlerFunc {
-	return s.authed(func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.Admin == nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "this page has no admin tab"})
-			return
-		}
-		if !sameOriginJSON(w, r) {
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
-		next(w, r)
-	})
-}
-
 // sameOriginJSON refuses, and says so, anything that is not a same-origin
 // POST of JSON: what a page on another site could not make.
 func sameOriginJSON(w http.ResponseWriter, r *http.Request) bool {
 	if ct, _, _ := strings.Cut(r.Header.Get("Content-Type"), ";"); strings.TrimSpace(ct) != "application/json" {
-		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "expected application/json"})
+		writeError(w, http.StatusUnsupportedMediaType, "expected application/json")
 		return false
 	}
 	return sameOrigin(w, r)

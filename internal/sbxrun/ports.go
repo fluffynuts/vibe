@@ -2,9 +2,9 @@ package sbxrun
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"path"
 	"strings"
 )
@@ -18,24 +18,13 @@ import (
 // creation, sbx adds one of its own on a fresh ephemeral port at every
 // start.
 func PublishedPorts(name string) (map[int][]int, error) {
-	out, err := captureStdout("ports", name, "--json")
+	// stdout alone, so a warning on stderr can't corrupt what's parsed.
+	args := []string{"ports", name, "--json"}
+	out, stderr, err := captureSplitContext(context.Background(), args...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("sbx %s: %w", strings.Join(args, " "), saying(err, stderr))
 	}
-	return parsePorts(out)
-}
-
-// captureStdout runs sbx and returns stdout alone, so a warning on stderr
-// can't corrupt output that is meant to be parsed.
-func captureStdout(args ...string) ([]byte, error) {
-	cmd := exec.Command("sbx", args...)
-	var out, errOut bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errOut
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("sbx %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(errOut.String()))
-	}
-	return out.Bytes(), nil
+	return parsePorts([]byte(out))
 }
 
 // parsePorts reads `sbx ports --json`: an array with an object per
@@ -79,13 +68,11 @@ func addPort(ports map[int][]int, sandboxPort, hostPort int) {
 // to put it there — sbx exec may join its arguments into one command line,
 // which a quoted `sh -c` script doesn't survive.
 func WriteFile(name, file, content string) error {
-	if !ExecSilent(name, "mkdir", "-p", path.Dir(file)) {
+	if !ExecSilent(context.Background(), name, "mkdir", "-p", path.Dir(file)) {
 		return fmt.Errorf("could not create %s in the sandbox", path.Dir(file))
 	}
-	cmd := exec.Command("sbx", "exec", "-i", name, "--", "cp", "/dev/stdin", file)
-	cmd.Stdin = strings.NewReader(content)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("writing %s in the sandbox: %w: %s", file, err, strings.TrimSpace(string(out)))
+	if err := ExecInput(name, content, "cp", "/dev/stdin", file); err != nil {
+		return fmt.Errorf("writing %s in the sandbox: %w", file, err)
 	}
 	return nil
 }

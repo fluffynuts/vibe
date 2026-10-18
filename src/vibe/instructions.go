@@ -17,6 +17,7 @@ import (
 	"vibe/internal/instructions"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
+	"vibe/internal/pathresolve"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
 	"vibe/internal/termtitle"
@@ -62,6 +63,12 @@ if [ "$(id -u)" = 0 ]; then
   chown "$u:" "$d" "$f" 2>/dev/null || true
 fi`
 
+// writeSandboxFile makes path in sandbox name hold content (see
+// sandboxFileWrite).
+func writeSandboxFile(name, path, content string) error {
+	return sbxrun.ExecInput(name, content, "sh", "-c", sandboxFileWrite, "sh", path)
+}
+
 // applyInstructions gives the sandbox's agent the user's instructions: the
 // merged text in its own file (for an agent that follows imports), and
 // vibe's marked part of the agent's global instructions file pointing at it
@@ -88,7 +95,7 @@ func applyInstructions(lay layout.Layout, name string) (supported bool, err erro
 			if _, err := sbxrun.ExecStdout(ctx, name, "rm", "-f", mergedPath); err != nil {
 				return true, err
 			}
-		} else if err := sbxrun.ExecInput(name, merged, "sh", "-c", sandboxFileWrite, "sh", mergedPath); err != nil {
+		} else if err := writeSandboxFile(name, mergedPath, merged); err != nil {
 			return true, err
 		}
 	}
@@ -106,7 +113,7 @@ func applyInstructions(lay layout.Layout, name string) (supported bool, err erro
 		_, err = sbxrun.ExecStdout(ctx, name, "rm", "-f", global)
 		return true, err
 	}
-	return true, sbxrun.ExecInput(name, updated, "sh", "-c", sandboxFileWrite, "sh", global)
+	return true, writeSandboxFile(name, global, updated)
 }
 
 // --- the Admin tab's editors -------------------------------------------------
@@ -135,7 +142,7 @@ func (a *companionAdmin) instructionsFile(which string) (file companion.AdminIns
 	// which would hide the shipped one.
 	file.Path = filepath.Join(a.lay.ProfileDir(profile), instructions.File)
 	file.Note = fmt.Sprintf("Profile '%s' ships with vibe: copy it into %s to give it instructions of its own.",
-		profile, displayPath(a.lay.HomePath("profiles")))
+		profile, pathresolve.Tilde(a.lay.HomePath("profiles")))
 	return file, profile
 }
 
@@ -156,7 +163,7 @@ func (a *companionAdmin) Instructions() companion.AdminInstructions {
 		file, _ := a.instructionsFile(which)
 		file.Text = readText(file.Path)
 		file.Version = textVersion(file.Text)
-		file.Path = displayPath(file.Path)
+		file.Path = pathresolve.Tilde(file.Path)
 		out.Files = append(out.Files, file)
 	}
 	_, agent, _ := instructionsFor(a.lay, a.name)
@@ -208,7 +215,7 @@ func (a *companionAdmin) pushInstructions(profile string) (updated, notRunning [
 	defer cancel()
 	list := a.listSandboxes
 	if list == nil {
-		list = sbxrun.ListContext
+		list = sbxrun.List
 	}
 	statuses, err := list(ctx)
 	if err != nil {
@@ -260,7 +267,7 @@ func (a *companionAdmin) Optimise(ctx context.Context, which, text string) (stri
 	if spec.OneShot == nil {
 		return "", fmt.Errorf("optimising isn't available for %s yet", agent)
 	}
-	if !sbxrun.Reachable(a.name) {
+	if !sbxrun.Reachable(context.Background(), a.name) {
 		return "", errors.New("the sandbox isn't running: start it to optimise")
 	}
 	other := "project"
@@ -271,7 +278,7 @@ func (a *companionAdmin) Optimise(ctx context.Context, which, text string) (stri
 	prompt := instructions.OptimisePrompt(which == "universal", text, readText(otherFile.Path))
 
 	// The terminal's own screen belongs to the agent: say so in its title.
-	title := "VIBE: " + displayPath(a.target)
+	title := "VIBE: " + pathresolve.Tilde(a.target)
 	termtitle.Set(title + " — optimising instructions…")
 	defer termtitle.Set(title)
 	noteIfFree("asking the agent to optimise the %s instructions…", which)

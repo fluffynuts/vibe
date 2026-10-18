@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"vibe/internal/fscopy"
 )
 
 // A review's State.
@@ -193,6 +194,9 @@ type Store struct {
 	dir string
 	mu  sync.Mutex
 	now func() time.Time
+	// AgentFile, when set, says why the agent may not comment on file, or
+	// nil when it may.
+	AgentFile func(file string) error
 	// readFile reads a request from the inbox (readRequest), which a test
 	// stands in for, as no platform can be relied on for a file that can't
 	// be read (Windows has no such permission).
@@ -496,6 +500,11 @@ func (s *Store) apply(r *Review, req Request, author string) error {
 		if req.File == "" || req.Line < 1 || strings.TrimSpace(req.Body) == "" {
 			return fmt.Errorf("a comment needs a file, a line and something to say")
 		}
+		if author == Agent && s.AgentFile != nil {
+			if err := s.AgentFile(req.File); err != nil {
+				return err
+			}
+		}
 		side := req.Side
 		if side == "" {
 			side = "new"
@@ -680,10 +689,10 @@ func (s *Store) save(r Review) error {
 	if err != nil {
 		return err
 	}
-	if err := writeWhole(s.file(), data); err != nil {
+	if err := fscopy.WriteWhole(s.file(), data); err != nil {
 		return err
 	}
-	return writeWhole(filepath.Join(s.View(), "review.json"), data)
+	return fscopy.WriteWhole(filepath.Join(s.View(), "review.json"), data)
 }
 
 // viewed copies the review to the view when it isn't there: one kept
@@ -693,32 +702,6 @@ func (s *Store) viewed(r Review) error {
 		return nil
 	}
 	return s.save(r)
-}
-
-// writeWhole makes path hold data, through a temporary file of its own
-// (created afresh, never one already there) renamed over it.
-func writeWhole(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
-	if err != nil {
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmp.Name())
-		return err
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		os.Remove(tmp.Name())
-		return err
-	}
-	return nil
 }
 
 // CloseOver closes the review started at started, as over, saying why:

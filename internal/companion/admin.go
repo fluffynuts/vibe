@@ -169,7 +169,7 @@ func (s *Server) startUpgradeCheck(fresh bool) {
 
 func (s *Server) adminState(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.Admin == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "this page has no admin tab"})
+		writeError(w, http.StatusNotFound, "this page has no admin tab")
 		return
 	}
 	// The status is asked for every few seconds, by every tab showing it;
@@ -197,16 +197,16 @@ func (s *Server) adminCheckUpgrades(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminDo(w http.ResponseWriter, r *http.Request) {
 	var action AdminAction
 	if err := json.NewDecoder(r.Body).Decode(&action); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "expected {\"kind\": ...}"})
+		writeError(w, http.StatusBadRequest, "expected {\"kind\": ...}")
 		return
 	}
 	destructive, known := adminKinds[action.Kind]
 	if !known {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "there is no such action"})
+		writeError(w, http.StatusBadRequest, "there is no such action")
 		return
 	}
 	if err := s.beginAdmin(action, destructive); err != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})

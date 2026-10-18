@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"vibe/internal/filekind"
+	"vibe/internal/pathresolve"
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -213,7 +215,7 @@ func untrackedOf(root *os.Root, path string) File {
 	}
 	sum := sha256.Sum256(body)
 	f.stamp = hex.EncodeToString(sum[:])
-	if isBinary(body) {
+	if filekind.IsBinary(body) {
 		f.Binary = true
 		return f
 	}
@@ -382,6 +384,24 @@ func (r *repository) localBranches() []string {
 func (r *repository) hasRef(name plumbing.ReferenceName) bool {
 	_, err := r.git.Reference(name, true)
 	return err == nil
+}
+
+// originOf is the URL the repository dir is in has for its origin remote:
+// "" when it has none.
+func originOf(dir string) (string, error) {
+	r, err := open(dir)
+	if err != nil {
+		return "", err
+	}
+	defer r.close()
+	remote, err := r.git.Remote("origin")
+	if err != nil {
+		return "", nil
+	}
+	if urls := remote.Config().URLs; len(urls) > 0 {
+		return urls[0], nil
+	}
+	return "", nil
 }
 
 func defaultBranchOf(dir string) (Mainline, error) {
@@ -554,7 +574,7 @@ func (r *repository) stashes() int {
 	return strings.Count(string(data), "\n")
 }
 
-// textOf is path's lines as review rv has it (see NewTextOf).
+// textOf is path's lines as review rv has it (see newTextOf).
 func textOf(ctx context.Context, dir string, rv Review, path string) ([]string, error) {
 	text, err := newTextOf(ctx, dir, rv, path)
 	if err != nil {
@@ -574,15 +594,54 @@ func splitLines(text string) []string {
 	return lines
 }
 
+// inFolder says whether file, a path in the repository as a thread names
+// it, is in the folder dir: the repository's top may be above it.
+func (r *repository) inFolder(dir, file string) bool {
+	folder, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return false
+	}
+	within, err := filepath.Rel(r.top, folder)
+	if err != nil {
+		return false
+	}
+	clean, err := inFolder(file)
+	if err != nil {
+		return false
+	}
+	return pathresolve.Within(within, clean)
+}
+
+// fileInFolder is repository.inFolder, for the repository dir is in.
+func fileInFolder(dir, file string) (bool, error) {
+	r, err := open(dir)
+	if err != nil {
+		return false, err
+	}
+	defer r.close()
+	return r.inFolder(dir, file), nil
+}
+
 // moves are rv's comments on the new side whose code (as it read when
 // they were made) is no longer at their lines but is elsewhere in the file:
 // where to. A file that can't be read moves nothing: its comments stay, and
 // the page marks any whose lines read differently.
 func moves(ctx context.Context, dir string, rv Review) []Move {
+	r, err := open(dir)
+	if err != nil {
+		return nil
+	}
+	r.close()
 	var out []Move
 	files := map[string][]string{}
 	for _, t := range rv.Threads {
 		if t.File == "" || t.Side == "old" || t.Code == "" {
+			continue
+		}
+		// Where an agent's thread would move to says whether the line it
+		// guessed is there: on a file outside its folder, the host's, it
+		// says nothing.
+		if len(t.Comments) > 0 && t.Comments[0].Author == Agent && !r.inFolder(dir, t.File) {
 			continue
 		}
 		lines, seen := files[t.File]

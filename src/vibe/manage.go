@@ -15,6 +15,7 @@ import (
 	"vibe/internal/companion"
 	"vibe/internal/layout"
 	agentmem "vibe/internal/memory"
+	"vibe/internal/pathresolve"
 	"vibe/internal/portalloc"
 	"vibe/internal/running"
 	"vibe/internal/sbxrun"
@@ -201,7 +202,7 @@ func planRemoval(inv inventory, picked []string, own string) (removal, error) {
 func memoryStoreOf(lay layout.Layout, inst state.Instance) string {
 	store := inst.MemoryStore
 	if store == "" {
-		store = agentmem.StoreFor(lay.HomePath("memories"), inst.Name)
+		store = agentmem.StoreFor(lay.Home, "", inst.Name)
 	}
 	if filepath.Base(store) != inst.Name {
 		return ""
@@ -239,24 +240,24 @@ func (d removal) describe(lay layout.Layout) []string {
 		if s.inSbx {
 			what = "the sandbox, and its record"
 		}
-		lines = append(lines, fmt.Sprintf("%ssandbox '%s' (for %s): %s", indent, s.inst.Name, displayPath(s.inst.Target), what))
+		lines = append(lines, fmt.Sprintf("%ssandbox '%s' (for %s): %s", indent, s.inst.Name, pathresolve.Tilde(s.inst.Target), what))
 		if store := memoryStoreOf(lay, s.inst); store != "" && fileExists(store) {
-			lines = append(lines, indent+"  agent memories: "+displayPath(store))
+			lines = append(lines, indent+"  agent memories: "+pathresolve.Tilde(store))
 		}
 		if dir := state.ClipboardPath(lay.Home, s.inst.Name); fileExists(dir) {
-			lines = append(lines, indent+"  clipboard history: "+displayPath(dir))
+			lines = append(lines, indent+"  clipboard history: "+pathresolve.Tilde(dir))
 		}
 		if file := state.ConversationPath(lay.Home, s.inst.Name); fileExists(file) {
-			lines = append(lines, indent+"  conversation: "+displayPath(file))
+			lines = append(lines, indent+"  conversation: "+pathresolve.Tilde(file))
 		}
 		if s.inst.GitToken != "" {
 			lines = append(lines, indent+"  its GitHub token")
 		}
 	}
 	for _, p := range d.profiles {
-		lines = append(lines, fmt.Sprintf("profile '%s': %s", p.name, displayPath(lay.HomePath("profiles", p.name))))
+		lines = append(lines, fmt.Sprintf("profile '%s': %s", p.name, pathresolve.Tilde(lay.HomePath("profiles", p.name))))
 		if backups := profileBackups(lay, p); len(backups) > 0 {
-			lines = append(lines, fmt.Sprintf("  its %d backup(s), in %s", len(backups), displayPath(lay.HomePath("backup"))))
+			lines = append(lines, fmt.Sprintf("  its %d backup(s), in %s", len(backups), pathresolve.Tilde(lay.HomePath("backup"))))
 		}
 		for _, s := range p.sandboxes {
 			sandboxLines(s, "  ")
@@ -293,7 +294,7 @@ func (d removal) run(lay layout.Layout, remove func(name string, force bool) err
 		}
 		for _, path := range profileBackups(lay, p) {
 			if err := os.Remove(path); err != nil {
-				note("  WARNING: couldn't delete backup %s: %s", displayPath(path), err)
+				note("  WARNING: couldn't delete backup %s: %s", pathresolve.Tilde(path), err)
 			}
 		}
 		if err := os.RemoveAll(lay.HomePath("profiles", p.name)); err != nil {
@@ -383,7 +384,7 @@ func (m *companionManager) Inventory() companion.ManageInventory {
 		}
 		for _, s := range p.sandboxes {
 			mp.Sandboxes = append(mp.Sandboxes, companion.ManageSandbox{
-				ID: pickSandbox + s.inst.Name, Name: s.inst.Name, Folder: displayPath(s.inst.Target),
+				ID: pickSandbox + s.inst.Name, Name: s.inst.Name, Folder: pathresolve.Tilde(s.inst.Target),
 				Flags: nonNil(sandboxFlags(s)), Trash: s.likelyTrash(), Kept: whyKept(s, m.own), Own: s.inst.Name == m.own,
 				Attached: len(s.vibes) > 0,
 				Actions:  sandboxActions(s, m.own),
@@ -429,7 +430,7 @@ func (m *companionManager) Delete(ctx context.Context, ids []string, log func(st
 	if err != nil {
 		return err
 	}
-	err = plan.run(m.lay, func(name string, force bool) error { return sbxrun.RemoveToContext(ctx, name, force, actionOutput()) })
+	err = plan.run(m.lay, func(name string, force bool) error { return sbxrun.Remove(ctx, name, force, actionOutput()) })
 	if ctx.Err() != nil {
 		return fmt.Errorf("cancelled — what was deleted before then is gone; the list shows what's left")
 	}
@@ -645,7 +646,7 @@ func (m *companionManager) do(ctx context.Context, kind string, p *inventoryProf
 		switch kind {
 		case companion.ManageStart:
 			note("starting sandbox '%s'", s.inst.Name)
-			if !sbxrun.StartContext(ctx, s.inst.Name) {
+			if !sbxrun.Start(ctx, s.inst.Name) {
 				return fmt.Errorf("sbx couldn't start sandbox '%s' — 'sbx ls' shows its state", s.inst.Name)
 			}
 			note("sandbox '%s' is running", s.inst.Name)
@@ -663,7 +664,7 @@ func (m *companionManager) do(ctx context.Context, kind string, p *inventoryProf
 			}
 			stop := sbxStopper
 			stop.stop = func(name string) (int, error) {
-				if err := sbxrun.StopQuietContext(ctx, name); err != nil {
+				if err := sbxrun.StopQuiet(ctx, name); err != nil {
 					return 1, err
 				}
 				return 0, nil

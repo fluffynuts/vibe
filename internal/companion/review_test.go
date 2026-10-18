@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -594,6 +596,92 @@ func TestTheTabGetsAFileColoured(t *testing.T) {
 	}
 	if code, _ := coloured("path=../secret.go&side=new"); code != http.StatusBadRequest {
 		t.Errorf("outside the folder: %d", code)
+	}
+}
+
+// A file whose colouring never ends (Chroma's JSONata lexer, on a comment
+// that isn't closed) is shown uncoloured once its time is up, not waited on
+// for good.
+func TestAFileThatTakesTooLongToColourIsShownWithout(t *testing.T) {
+	old := colourWithin
+	colourWithin = time.Second
+	t.Cleanup(func() { colourWithin = old })
+	s, _ := reviewTabServer(t)
+	os.WriteFile(filepath.Join(s.cfg.ReviewTab.Workspace, "x.jsonata"), []byte("/*"), 0o644)
+	began := time.Now()
+	rec := do(t, s, req{path: "/api/review/highlight?path=x.jsonata&side=new", headers: authed(nil)})
+	var h review.Highlighted
+	json.Unmarshal(rec.Body.Bytes(), &h)
+	if rec.Code != http.StatusOK || h.Lines != nil || !strings.Contains(h.Skipped, "too long") {
+		t.Errorf("%d %s", rec.Code, rec.Body)
+	}
+	if took := time.Since(began); took > 10*time.Second {
+		t.Errorf("took %s", took)
+	}
+}
+
+// Files that take too long to colour may have been built to: past a few,
+// colouring is turned off for good (this vibe), every file shown plain,
+// saying why, rather than spending a core on each.
+func TestColouringIsTurnedOffOnceFilesKeepTakingTooLong(t *testing.T) {
+	old := colourWithin
+	colourWithin = 200 * time.Millisecond
+	t.Cleanup(func() { colourWithin = old })
+	s, _ := reviewTabServer(t)
+	dir := s.cfg.ReviewTab.Workspace
+	os.WriteFile(filepath.Join(dir, "x.jsonata"), []byte("/*"), 0o644)
+	os.WriteFile(filepath.Join(dir, "b.go"), []byte("package b\n"), 0o644)
+	colour := func(path string) review.Highlighted {
+		t.Helper()
+		rec := do(t, s, req{path: "/api/review/highlight?side=new&path=" + path, headers: authed(nil)})
+		var h review.Highlighted
+		json.Unmarshal(rec.Body.Bytes(), &h)
+		return h
+	}
+	if h := colour("b.go"); h.Language != "Go" {
+		t.Fatalf("before: %+v", h)
+	}
+	for i := 0; i < colourGiveUpAfter; i++ {
+		if h := colour("x.jsonata"); !strings.Contains(h.Skipped, "too long") {
+			t.Fatalf("try %d: %+v", i+1, h)
+		}
+	}
+	h := colour("b.go")
+	if h.Lines != nil || !strings.Contains(h.Skipped, "turned off") {
+		t.Errorf("after %d took too long: %+v", colourGiveUpAfter, h)
+	}
+}
+
+// No more than so many files are coloured at once, however many the page
+// asks for together: with two at a time, four that each take all their
+// time take two turns.
+func TestOnlyAFewFilesAreColouredAtOnce(t *testing.T) {
+	old := colourWithin
+	colourWithin = 500 * time.Millisecond
+	t.Cleanup(func() { colourWithin = old })
+	s, _ := reviewTabServer(t)
+	s.colours = newColourer(2)
+	os.WriteFile(filepath.Join(s.cfg.ReviewTab.Workspace, "x.jsonata"), []byte("/*"), 0o644)
+	began := time.Now()
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() { do(t, s, req{path: "/api/review/highlight?side=new&path=x.jsonata", headers: authed(nil)}) })
+	}
+	wg.Wait()
+	if took := time.Since(began); took < 2*colourWithin {
+		t.Errorf("4 files that each took %s were coloured in %s: more than 2 at once", colourWithin, took)
+	}
+}
+
+// Colouring takes half the machine's cores at most, and always has one.
+func TestColouringTakesHalfTheCores(t *testing.T) {
+	for cpus, want := range map[int]int{1: 1, 2: 1, 3: 1, 4: 2, 16: 8} {
+		if got := halfOf(cpus); got != want {
+			t.Errorf("halfOf(%d) = %d, want %d", cpus, got, want)
+		}
+	}
+	if colourAtOnce != halfOf(runtime.NumCPU()) {
+		t.Errorf("colourAtOnce = %d on %d cores", colourAtOnce, runtime.NumCPU())
 	}
 }
 

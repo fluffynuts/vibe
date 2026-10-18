@@ -14,6 +14,7 @@ import (
 	"vibe/internal/clockskew"
 	"vibe/internal/instructions"
 	"vibe/internal/layout"
+	"vibe/internal/pathresolve"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
 	"vibe/internal/termtitle"
@@ -141,7 +142,7 @@ func backUpWhileStopped(vibeHome, name string) {
 	}
 	backUpMemories(vibeHome, name)
 	session.Report("stopping its sandbox again")
-	if err := stopAfterBackUp(name); err != nil {
+	if err := stopAfterBackUp(context.Background(), name); err != nil {
 		note("couldn't stop sandbox '%s' again: %s — 'vibe --stop' stops it", name, oneLine(err.Error()))
 	}
 }
@@ -149,7 +150,7 @@ func backUpWhileStopped(vibeHome, name string) {
 // What backUpWhileStopped and backUpAsHeadlessEnds ask of sbx and the
 // memory store: variables for tests.
 var (
-	startToBackUp    = sbxrun.StartContext
+	startToBackUp    = sbxrun.Start
 	backUpMemories   = saveMemoriesOnExit
 	stopAfterBackUp  = sbxrun.StopQuiet
 	sandboxReachable = sbxrun.Reachable
@@ -164,7 +165,7 @@ func stoppedUnderSession(name string, code int, reached bool) bool {
 	if code == 0 || !reached {
 		return false
 	}
-	statuses, err := sbxrun.List()
+	statuses, err := sbxrun.List(context.Background())
 	if err != nil {
 		return false
 	}
@@ -205,11 +206,11 @@ func remindOfInstructions(lay layout.Layout, name string) {
 			continue
 		}
 		if data, err := os.ReadFile(f.path); err == nil && strings.TrimSpace(string(data)) != "" {
-			used = append(used, displayPath(f.path))
+			used = append(used, pathresolve.Tilde(f.path))
 			continue
 		}
 		note("tip: instructions to the agent for %s go in %s (empty so far; the companion page's Admin tab edits it too)",
-			f.forWhom, displayPath(f.path))
+			f.forWhom, pathresolve.Tilde(f.path))
 	}
 	if len(used) > 0 {
 		note("agent instructions: %s", strings.Join(used, ", "))

@@ -9,16 +9,18 @@
 //
 //   - it listens on 127.0.0.1 only;
 //   - it answers only requests whose Host is localhost, 127.0.0.1 or ::1 on
-//     its own port, which defeats DNS rebinding — and also anything the
-//     sandbox sends through host.docker.internal;
+//     its own port, which defeats DNS rebinding. It doesn't stop the
+//     sandbox: a request sent through host.docker.internal (where its
+//     network rules let one through) can say any Host it likes;
 //   - every call to /api (bar the ping that tells two vibes apart) needs the
 //     sandbox's secret token in a header, which a page on another site
 //     can't add without a CORS preflight this server never allows. The token
-//     is only ever in the URL's fragment, which a browser keeps from the
-//     server, from logs and from Referer headers;
+//     is what keeps the sandbox out: it is only ever in the URL's fragment,
+//     which a browser keeps from the server, from logs and from Referer
+//     headers, and it is never written into the sandbox;
 //   - changes need POST, a JSON body, and a same-origin request;
-//   - it never offers a rule that would match every host, and it only ever
-//     scopes a rule to this sandbox.
+//   - it never offers a rule that would match every host, or far more than
+//     one site, and it only ever scopes a rule to this sandbox.
 //
 // What sbx printed — host names, which the sandbox itself chooses — is only
 // ever shown as text, never as markup (see ui/app.js).
@@ -42,6 +44,7 @@ import (
 	"sync"
 	"time"
 
+	"vibe/internal/pathresolve"
 	"vibe/internal/policy"
 )
 
@@ -152,6 +155,7 @@ type Server struct {
 	// pageVersion stands for the page's files as this vibe serves them: a
 	// page left open across a rebuild of vibe can tell it's out of date.
 	pageVersion string
+	colours     *colourer
 }
 
 // asked is the thread of the review the user last asked the agent about,
@@ -166,7 +170,7 @@ type asked struct {
 // New makes a Server without listening, which is how tests drive Handler.
 func New(cfg Config) *Server {
 	ui, _ := fs.Sub(uiFiles, "ui")
-	return &Server{cfg: cfg, ui: ui, cache: newCache(time.Second), pageVersion: versionOf(ui)}
+	return &Server{cfg: cfg, ui: ui, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer(colourAtOnce)}
 }
 
 // Start listens on 127.0.0.1 at cfg.Port and serves in the background.
@@ -195,6 +199,10 @@ func Start(cfg Config) (*Server, error) {
 	s.http = &http.Server{
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
+		// A connection left open between requests is let go: the sandbox
+		// may be able to reach this port, and could hold open as many as
+		// it liked.
+		IdleTimeout: time.Minute,
 	}
 	go s.http.Serve(ln)
 	s.done = make(chan struct{})
@@ -290,36 +298,36 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"POST /api/remove", s.authed(s.changing(s.remove))},
 		{"POST /api/clipboard/start", s.authed(s.changing(s.startClipboard))},
 		{"GET /api/conversation", s.authed(s.conversationEvents)},
-		{"POST /api/conversation/send", s.conversing(s.conversationSend)},
-		{"POST /api/conversation/stop", s.conversing(s.conversationStop)},
-		{"POST /api/conversation/new", s.conversing(s.conversationNew)},
-		{"POST /api/conversation/new/options", s.conversing(s.conversationNewOptions)},
-		{"POST /api/conversation/new/fetch", s.conversing(s.conversationNewFetch)},
-		{"GET /api/default-branch", s.defaultBranching(s.defaultBranchState)},
-		{"POST /api/default-branch", s.defaultBranching(s.defaultBranchSet)},
+		{"POST /api/conversation/send", s.serving(conversationFeature, s.conversationSend)},
+		{"POST /api/conversation/stop", s.serving(conversationFeature, s.conversationStop)},
+		{"POST /api/conversation/new", s.serving(conversationFeature, s.conversationNew)},
+		{"POST /api/conversation/new/options", s.serving(conversationFeature, s.conversationNewOptions)},
+		{"POST /api/conversation/new/fetch", s.serving(conversationFeature, s.conversationNewFetch)},
+		{"GET /api/default-branch", s.serving(defaultBranchFeature, s.defaultBranchState)},
+		{"POST /api/default-branch", s.serving(defaultBranchFeature, s.defaultBranchSet)},
 		{"GET /api/admin", s.authed(s.adminState)},
-		{"POST /api/admin/do", s.administering(s.adminDo)},
-		{"POST /api/admin/upgrades", s.administering(s.adminCheckUpgrades)},
-		{"POST /api/admin/cancel", s.administering(s.adminCancel)},
+		{"POST /api/admin/do", s.serving(adminFeature, s.adminDo)},
+		{"POST /api/admin/upgrades", s.serving(adminFeature, s.adminCheckUpgrades)},
+		{"POST /api/admin/cancel", s.serving(adminFeature, s.adminCancel)},
 		{"GET /api/admin/instructions", s.authed(s.instructionsState)},
-		{"POST /api/admin/instructions", s.editing(s.instructionsSave)},
-		{"POST /api/admin/instructions/optimise", s.editing(s.instructionsOptimise)},
+		{"POST /api/admin/instructions", s.serving(instructionsFeature, s.instructionsSave)},
+		{"POST /api/admin/instructions/optimise", s.serving(instructionsFeature, s.instructionsOptimise)},
 		{"POST /api/awake", s.authed(s.changing(s.keepAwake))},
-		{"GET /api/review", s.reviewing(s.reviewState)},
-		{"GET /api/review/file", s.reviewing(s.reviewFile)},
-		{"POST /api/review/do", s.reviewing(s.reviewDo)},
-		{"POST /api/review/ask", s.reviewing(s.reviewAsk)},
-		{"POST /api/review/submit", s.reviewing(s.reviewSubmit)},
-		{"GET /api/review/options", s.reviewing(s.reviewOptions)},
-		{"GET /api/review/highlight", s.reviewing(s.reviewHighlight)},
+		{"GET /api/review", s.serving(reviewFeature, s.reviewState)},
+		{"GET /api/review/file", s.serving(reviewFeature, s.reviewFile)},
+		{"POST /api/review/do", s.serving(reviewFeature, s.reviewDo)},
+		{"POST /api/review/ask", s.serving(reviewFeature, s.reviewAsk)},
+		{"POST /api/review/submit", s.serving(reviewFeature, s.reviewSubmit)},
+		{"GET /api/review/options", s.serving(reviewFeature, s.reviewOptions)},
+		{"GET /api/review/highlight", s.serving(reviewFeature, s.reviewHighlight)},
 		{"POST /api/clipboard/paste", s.authed(s.clipboardPaste)},
-		{"POST /api/review/start", s.reviewing(s.reviewStart)},
-		{"POST /api/review/afresh", s.reviewing(s.reviewAfresh)},
+		{"POST /api/review/start", s.serving(reviewFeature, s.reviewStart)},
+		{"POST /api/review/afresh", s.serving(reviewFeature, s.reviewAfresh)},
 		{"GET /api/manage", s.authed(s.managed(s.manageState))},
-		{"POST /api/manage/plan", s.managing(s.managePlan)},
-		{"POST /api/manage/delete", s.managing(s.manageDelete)},
-		{"POST /api/manage/do", s.managing(s.manageDo)},
-		{"POST /api/manage/cancel", s.managing(s.adminCancel)},
+		{"POST /api/manage/plan", s.serving(manageFeature, s.managePlan)},
+		{"POST /api/manage/delete", s.serving(manageFeature, s.manageDelete)},
+		{"POST /api/manage/do", s.serving(manageFeature, s.manageDo)},
+		{"POST /api/manage/cancel", s.serving(manageFeature, s.adminCancel)},
 	}
 }
 
@@ -358,6 +366,51 @@ func (s *Server) hostOK(hostport string) bool {
 		return true
 	}
 	return false
+}
+
+// feature is a part of the page a server may or may not have: a tab, or
+// what one works on.
+type feature struct {
+	present func(*Server) bool
+	// missing is why a call to it is refused when it isn't there.
+	missing string
+	// limit is the most a change's body may be.
+	limit int64
+}
+
+var (
+	conversationFeature = feature{func(s *Server) bool { return s.cfg.Converse != nil },
+		"this sandbox has no conversation to have", maxPrompt}
+	adminFeature = feature{func(s *Server) bool { return s.cfg.Admin != nil },
+		"this page has no admin tab", 64 * 1024}
+	// Room for the text and the base it was loaded as, escaped.
+	instructionsFeature = feature{adminFeature.present, adminFeature.missing, 3 * maxInstructions}
+	manageFeature       = feature{func(s *Server) bool { return s.cfg.Manage != nil },
+		"this page has no Profiles tab", 64 * 1024}
+	reviewFeature = feature{func(s *Server) bool { return s.cfg.ReviewTab != nil },
+		"this page has no review tab", maxPrompt}
+	defaultBranchFeature = feature{(*Server).repositoryHere,
+		"this sandbox's folder isn't a git repository", 1 << 10}
+)
+
+// serving wraps a call to feature f: it needs the page's token, and f to be
+// there. A change (a POST) also needs a same-origin JSON body, of at most
+// f's limit; one from anywhere else is refused before anything is said of
+// what the page has.
+func (s *Server) serving(f feature, next http.HandlerFunc) http.HandlerFunc {
+	return s.authed(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			if !sameOriginJSON(w, r) {
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, f.limit)
+		}
+		if !f.present(s) {
+			writeError(w, http.StatusNotFound, f.missing)
+			return
+		}
+		next(w, r)
+	})
 }
 
 func (s *Server) authed(next http.HandlerFunc) http.HandlerFunc {
@@ -435,7 +488,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"themeColor":        theme,
 		"sandbox":           s.cfg.Sandbox,
 		"agent":             s.cfg.Agent,
-		"folder":            shortenPath(s.cfg.Workspace, homeDir()),
+		"folder":            pathresolve.Tilde(s.cfg.Workspace),
 		"git":               git,
 		"clipboardUrl":      clipboard,
 		"clipboardReady":    ready,
@@ -483,8 +536,6 @@ func probeClipboard(url string) bool {
 	return res.StatusCode == http.StatusOK
 }
 
-// keepAwake runs KeepAwake in the background, unless it's running already;
-// the page doesn't wait on it (starting a sandbox takes a while).
 // workingAwakeEvery is how often the sandbox is kept awake while the agent
 // works: as often as the page asks, well within sbx's idle stop.
 const workingAwakeEvery = 20 * time.Second
@@ -514,6 +565,8 @@ func (s *Server) keepAwakeIfWorking() {
 	}
 }
 
+// keepAwake runs KeepAwake in the background, unless it's running already;
+// the page doesn't wait on it (starting a sandbox takes a while).
 func (s *Server) keepAwake([]byte) ([]string, error) {
 	if s.cfg.KeepAwake == nil || !s.awake.TryLock() {
 		return nil, nil
@@ -563,7 +616,7 @@ func (s *Server) changing(do change) http.HandlerFunc {
 		}
 		body, err := io.ReadAll(io.LimitReader(r.Body, 4096))
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unreadable body"})
+			writeError(w, http.StatusBadRequest, "unreadable body")
 			return
 		}
 		command, err := do(body)
@@ -633,12 +686,18 @@ func writeSbxError(w http.ResponseWriter, err error) {
 	var bad invalid
 	switch {
 	case errors.As(err, &bad):
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": bad.Error()})
+		writeError(w, http.StatusBadRequest, bad.Error())
 	case errors.Is(err, policy.ErrNotSignedIn):
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error(), "code": "not-signed-in"})
 	default:
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error(), "code": "sbx"})
 	}
+}
+
+// writeError answers with status and {"error": msg}: what the page shows
+// when something fails.
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

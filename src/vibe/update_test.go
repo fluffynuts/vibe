@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -17,6 +16,8 @@ import (
 	"vibe/internal/prompt"
 	"vibe/internal/running"
 	"vibe/internal/state"
+
+	"vibe/internal/sbxtest"
 )
 
 func fingerprint(t *testing.T, lay layout.Layout, agent string) string {
@@ -344,17 +345,7 @@ func TestAutoUpdateCanBeTurnedOff(t *testing.T) {
 
 // sbxListing puts an sbx on PATH whose 'sbx ls' lists rows.
 func sbxListing(t *testing.T, rows string) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the stand-in sbx is a shell script")
-	}
-	dir := t.TempDir()
-	script := "#!/bin/sh\n" + sbxLsJSON(rows) + "exit 0\n"
-	writeFile(t, filepath.Join(dir, "sbx"), script)
-	if err := os.Chmod(filepath.Join(dir, "sbx"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	sbxtest.OnPath(t, sbxLsJSON(rows)+"exit 0\n")
 }
 
 // sbxLsJSON is a stand-in sbx's answer to 'sbx ls --json': rows, each
@@ -386,8 +377,8 @@ func batchStandIns(t *testing.T, failing ...string) *[]string {
 		}
 		return state.Save(lay.Home, inst)
 	}
-	startRebuilt = func(name string) bool { did = append(did, "start "+name); return true }
-	stopRebuilt = func(name string) error { did = append(did, "stop "+name); return nil }
+	startRebuilt = func(_ context.Context, name string) bool { did = append(did, "start "+name); return true }
+	stopRebuilt = func(_ context.Context, name string) error { did = append(did, "stop "+name); return nil }
 	return &did
 }
 
@@ -462,22 +453,11 @@ func TestUpdateSandboxesCarriesOnPastAFailureAndSaysSo(t *testing.T) {
 // loggingSbx puts an sbx on PATH that lists rows for 'sbx ls', succeeds at
 // everything else, and logs every call; it returns the log's path.
 func loggingSbx(t *testing.T, rows string) string {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the stand-in sbx is a shell script")
-	}
-	dir := t.TempDir()
-	log := filepath.Join(dir, "calls")
 	// 'sbx ls --quiet' lists just the names, as sbx does.
-	script := "#!/bin/sh\necho \"$*\" >>'" + log + "'\n" +
-		"[ \"$1\" = ls ] && [ \"$2\" = --quiet ] && { printf '" + rows + "' | cut -d' ' -f1; exit 0; }\n" +
-		sbxLsJSON(rows) + "exit 0\n"
-	writeFile(t, filepath.Join(dir, "sbx"), script)
-	if err := os.Chmod(filepath.Join(dir, "sbx"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return log
+	dir := sbxtest.OnPath(t, "echo \"$*\" >>\"$(dirname \"$0\")/calls\"\n"+
+		"[ \"$1\" = ls ] && [ \"$2\" = --quiet ] && { printf '"+rows+"' | cut -d' ' -f1; exit 0; }\n"+
+		sbxLsJSON(rows)+"exit 0\n")
+	return filepath.Join(dir, "calls")
 }
 
 // A sandbox whose folder is gone can't be built again, so rebuilding it

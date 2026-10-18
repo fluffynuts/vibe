@@ -758,6 +758,34 @@ test('a code block the agent wrote has a button copying just its code', async ()
   } finally { p.close() }
 })
 
+// What the agent writes can hide control characters in code (an escape that
+// ends a terminal's bracketed paste, so what follows runs): a code block
+// shows them, and its copy leaves them out, saying so. Newlines are kept
+// (and tabs, as the Markdown reader has them: spaces); a CRLF line end is a
+// line end.
+test('a code block shows hidden control characters, and copies without them', async () => {
+  const code = 'echo safe\x1b[201~\r\nrm -rf ~\x07\tdone\x9b'
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, '```\n' + code + '\n```')], running: false })
+  try {
+    const written = clipboardOf(p)
+    const shown = p.$('convo-log').querySelector('.msg.agent .code-block code').textContent
+    assert.equal(shown, 'echo safe\u241b[201~\nrm -rf ~\u2407    done\u2426')
+    await p.click(p.$('convo-log').querySelector('button.copy-code'))
+    assert.deepEqual(written, ['echo safe[201~\nrm -rf ~    done'])
+    assert.equal(p.$('toast').textContent, 'Copied, leaving out 3 hidden control characters')
+  } finally { p.close() }
+})
+
+// Nor does the rest of what the agent writes hide them, from the eye or
+// from a copy made by selecting it.
+test("the agent's text shows hidden control characters too", async () => {
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, 'run `ls\x1b[201~` then\x07 go')], running: false })
+  try {
+    const text = p.$('convo-log').querySelector('.msg.agent .md').textContent
+    assert.ok(text.includes('ls\u241b[201~') && text.includes('then\u2407 go'), text)
+  } finally { p.close() }
+})
+
 test("a copy the browser refuses says so", async () => {
   const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, '```\nx\n```')], running: false })
   try {
@@ -1496,6 +1524,82 @@ test('code is coloured by its language, on both sides', async () => {
     assert.equal(codeOf(p, 'new', 2), 'kw:var : x  op:= :  num:2')
     assert.equal(codeOf(p, 'old', 2), 'kw:var : x  op:= :  num:1')
     assert.equal(codeOf(p, 'new', 1), 'kw:package :  type:main')
+  } finally { p.close() }
+})
+
+// A file's colours arriving redraw its own card alone: redrawing every
+// file for each would take time growing with the square of the review's
+// size (minutes of a frozen tab, for a big one, scrolled through).
+test("a file's colours redraw its own card, not the others'", async () => {
+  const twoGo = [goDiff[0], { ...goDiff[0], path: 'other.go' }]
+  let release
+  const held = new Promise((resolve) => { release = resolve })
+  const colours = { ...goColours, 'other.go|old': goColours['main.go|old'], 'other.go|new': goColours['main.go|new'] }
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': { review: { ...none, started: '2026-10-16T10:00:00Z' }, diff: twoGo },
+      '/api/review/highlight': async (call) => {
+        const q = new URLSearchParams(call.query)
+        if (q.get('path') === 'other.go') await held
+        return colours[q.get('path') + '|' + q.get('side')] || {}
+      },
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+    settled: false,
+  })
+  try {
+    const card = (path) => Array.from(p.$('review-files').querySelectorAll('.review-file')).find((c) => c.dataset.path === path)
+    const coloured = (path) => !!card(path) && !!card(path).querySelector('.hl-kw')
+    for (let i = 0; i < 200 && !coloured('main.go'); i++) await new Promise((resolve) => setImmediate(resolve))
+    assert.ok(coloured('main.go'), 'main.go coloured first')
+    const mainCard = card('main.go')
+    release()
+    await p.settle()
+    assert.ok(coloured('other.go'), 'other.go coloured when its colours came')
+    assert.equal(card('main.go'), mainCard, "main.go's card wasn't drawn again for other.go's colours")
+  } finally { p.close() }
+})
+
+// A file is coloured when it comes near the screen. Scrolled past before
+// its colours come, it's given up on (vibe stops colouring it), and asked
+// for again if it comes back.
+test('colouring a file scrolled past is given up, and asked for again on coming back', async () => {
+  const twoGo = [goDiff[0], { ...goDiff[0], path: 'other.go' }]
+  let release
+  let gate = new Promise((resolve) => { release = resolve })
+  const colours = { ...goColours, 'other.go|old': goColours['main.go|old'], 'other.go|new': goColours['main.go|new'] }
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': { review: { ...none, started: '2026-10-16T10:00:00Z' }, diff: twoGo },
+      '/api/review/highlight': async (call) => {
+        const q = new URLSearchParams(call.query)
+        if (q.get('path') === 'other.go') await gate
+        return colours[q.get('path') + '|' + q.get('side')] || {}
+      },
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+    seeing: true,
+  })
+  try {
+    const card = (path) => Array.from(p.$('review-files').querySelectorAll('.review-file')).find((c) => c.dataset.path === path)
+    const asked = (path) => p.calls.filter((c) => c.path === '/api/review/highlight' && new URLSearchParams(c.query).get('path') === path)
+    assert.equal(asked('other.go').length, 0, 'nothing asked for before it comes near the screen')
+    await p.seen((el) => el.dataset.path === 'other.go')
+    assert.equal(asked('other.go').length, 2, 'both sides asked for, coming near')
+    await p.seen((el) => el.dataset.path === 'other.go', false)
+    assert.ok(asked('other.go').every((c) => c.aborted), 'given up on, scrolled past')
+    release()
+    await p.settle()
+    assert.equal(card('other.go').querySelector('.hl-kw'), null, 'not coloured by what was given up on')
+    gate = Promise.resolve()
+    await p.seen((el) => el.dataset.path === 'other.go')
+    await p.settle()
+    assert.equal(asked('other.go').length, 4, 'asked for again, coming back')
+    assert.ok(card('other.go').querySelector('.hl-kw'), 'coloured this time')
   } finally { p.close() }
 })
 
@@ -2748,5 +2852,26 @@ test('a set default branch is branched from as it is here: origin is not checked
     assert.match(p.$('fresh-from-default-row').textContent, /Branch from master \(local\)/)
     assert.deepEqual(p.posted('/api/conversation/new/fetch'), [])
     assert.ok(!shown(p, 'fresh-fetch'))
+  } finally { p.close() }
+})
+
+// --- network log ------------------------------------------------------------
+
+// The hosts in the log are whatever the sandbox asked to reach, so one can
+// be a pattern of the agent's making: Allow is offered only for a single
+// host, never one that would let in a whole domain, range or port.
+test('a logged host is offered Allow only when it names one host', async () => {
+  const entries = ['api.example.com', 'example.com:443', '[2001:db8::1]:443', '10.0.0.1',
+    '**.com:443', '*.example.com', 'api?.example.com', 'api[12].example.com', '0.0.0.0/0']
+    .map((host) => ({ host, decision: 'blocked', hits: 1 }))
+  const p = await openPage({ routes: {
+    '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, attention: {} }),
+    '/api/log': { entries },
+  }, storage: { 'vibe-companion-tab': 'log' } })
+  try {
+    const offered = [...p.$('log-table').tBodies[0].rows]
+      .filter((row) => [...row.querySelectorAll('button')].some((b) => b.textContent === 'Allow'))
+      .map((row) => row.querySelector('.host').textContent)
+    assert.deepEqual(offered, ['api.example.com', 'example.com:443', '[2001:db8::1]:443', '10.0.0.1'])
   } finally { p.close() }
 })

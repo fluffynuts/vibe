@@ -38,12 +38,12 @@ func setUpSettings(lay layout.Layout, ask bool) error {
 	}
 	current, err := settings.Parse(data)
 	if err != nil {
-		note("  WARNING: can't set up %s, which doesn't parse: %s", displayPath(path), err)
+		note("  WARNING: can't set up %s, which doesn't parse: %s", pathresolve.Tilde(path), err)
 		return nil
 	}
 	ask = ask && interactive()
 	if ask {
-		note("setting up %s: the defaults every sandbox starts from", displayPath(path))
+		note("setting up %s: the defaults every sandbox starts from", pathresolve.Tilde(path))
 	}
 
 	values := []struct {
@@ -76,7 +76,7 @@ func setUpSettings(lay layout.Layout, ask bool) error {
 	if err := os.WriteFile(path, changed, 0o644); err != nil {
 		return err
 	}
-	note("  saved your choices in %s", displayPath(path))
+	note("  saved your choices in %s", pathresolve.Tilde(path))
 	return nil
 }
 
@@ -93,7 +93,7 @@ func doSetup(vibeHome string, force bool) error {
 	}
 	lay := layout.New(vibeHome, bundleRoot)
 	if _, err := os.Stat(lay.HomePath("settings.yaml")); os.IsNotExist(err) {
-		return fmt.Errorf("%s doesn't exist yet — run 'vibe --install' first", displayPath(lay.HomePath("settings.yaml")))
+		return fmt.Errorf("%s doesn't exist yet — run 'vibe --install' first", pathresolve.Tilde(lay.HomePath("settings.yaml")))
 	}
 	if err := setUpSettings(lay, true); err != nil {
 		return err
@@ -123,7 +123,7 @@ func lowerMemorySetting(path string) error {
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return err
 	}
-	note("  saved memory: %s in %s", memory, displayPath(path))
+	note("  saved memory: %s in %s", memory, pathresolve.Tilde(path))
 	return nil
 }
 
@@ -247,7 +247,7 @@ func rememberDefaultBranch(path string) func(name string) error {
 			return err
 		}
 		if data, err = settings.Set(data, "defaultBranch", name); err != nil {
-			return fmt.Errorf("updating %s: %w", displayPath(path), err)
+			return fmt.Errorf("updating %s: %w", pathresolve.Tilde(path), err)
 		}
 		return os.WriteFile(path, data, 0o644)
 	}

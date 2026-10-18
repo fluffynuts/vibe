@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os/exec"
 	"regexp"
 	"sort"
@@ -333,7 +334,39 @@ func ValidHost(host string) error {
 	if strings.Trim(host, "*?.") == "" {
 		return fmt.Errorf("refusing a rule that matches every host: %q — use the sbx CLI for that", host)
 	}
+	if tooBroad(host) {
+		return fmt.Errorf("refusing a rule that matches far more than one site: %q — use the sbx CLI for that", host)
+	}
 	return nil
+}
+
+// bracketedIPv6 is an IPv6 address in brackets, with a port perhaps.
+var bracketedIPv6 = regexp.MustCompile(`^\[[0-9A-Fa-f:.]+\](:\d+)?$`)
+
+// tooBroad says whether host is a pattern or range that takes in far more
+// than one site: an address range wider than an IPv4 /8 or an IPv6 /16, or
+// a wildcard with less than a domain and its top level fixed (every .com,
+// every host on a port). A host to allow can come from the network log,
+// which is whatever the sandbox asked to reach.
+func tooBroad(host string) bool {
+	if _, network, err := net.ParseCIDR(host); err == nil {
+		ones, bits := network.Mask.Size()
+		return (bits == 32 && ones < 8) || (bits == 128 && ones < 16)
+	}
+	if bracketedIPv6.MatchString(host) || strings.Count(host, ":") > 1 {
+		return false
+	}
+	name, _, _ := strings.Cut(host, ":")
+	if !strings.ContainsAny(name, "*?[]!") {
+		return false
+	}
+	fixed := 0
+	for _, label := range strings.Split(name, ".") {
+		if label != "" && !strings.ContainsAny(label, "*?[]!") {
+			fixed++
+		}
+	}
+	return fixed < 2
 }
 
 // --- parsing ----------------------------------------------------------

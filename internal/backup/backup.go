@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"vibe/internal/fscopy"
 )
 
 // Keep is how many backups are kept per sandbox.
@@ -142,49 +143,8 @@ func zipDir(src, dest string) (err error) {
 }
 
 func unzipTo(zipPath, dest string) error {
-	zr, err := zip.OpenReader(zipPath)
-	if err != nil {
-		return err
-	}
-	defer zr.Close()
-	if err := os.MkdirAll(dest, 0o755); err != nil {
-		return err
-	}
-	root := filepath.Clean(dest) + string(os.PathSeparator)
-	for _, zf := range zr.File {
-		target := filepath.Join(dest, filepath.FromSlash(zf.Name))
-		if !strings.HasPrefix(target, root) {
-			return fmt.Errorf("backup %s has an entry outside the profile: %s", zipPath, zf.Name)
-		}
-		if zf.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, 0o755); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
-		}
-		if err := extract(zf, target); err != nil {
-			return err
-		}
+	if _, err := fscopy.Unzip(zipPath, dest); err != nil {
+		return fmt.Errorf("restoring backup: %w", err)
 	}
 	return nil
-}
-
-func extract(zf *zip.File, target string) error {
-	in, err := zf.Open()
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, zf.Mode().Perm())
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
-	}
-	return out.Close()
 }

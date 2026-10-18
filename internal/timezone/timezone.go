@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"vibe/internal/sbxrun"
 )
@@ -105,53 +106,59 @@ const zoneinfo = "/usr/share/zoneinfo"
 // processes with a TZ of its own, though — a bare offset like "SAST-2",
 // which carries no zone name and overrides /etc/localtime — so TZ is also
 // exported from the sandbox's persistent environment file, which every
-// shell the agent runs sources first. Nothing is changed that's right
-// already. Each exec is a plain argv — sbx exec may join its arguments into
-// one command line, which a `sh -c` script doesn't survive.
+// shell the agent runs sources first; a sandbox without that file is left
+// without one. Nothing is changed that's right already. Each exec is a
+// plain argv — sbx exec may join its arguments into one command line,
+// which a `sh -c` script doesn't survive — and a round trip to the
+// sandbox, so the reads are all made at once.
 func Apply(name, zone string) error {
 	if !Valid(zone) {
 		return fmt.Errorf("%q is not a timezone", zone)
 	}
 	file := path.Join(zoneinfo, zone)
-	if !sbxrun.ExecSilent(name, "test", "-f", file) {
+	ctx := context.Background()
+	var (
+		hasZone, hasEnv bool
+		link, current   string
+		env             string
+		envErr          error
+		reads           sync.WaitGroup
+	)
+	reads.Go(func() { hasZone = sbxrun.ExecSilent(context.Background(), name, "test", "-f", file) })
+	reads.Go(func() { link, _ = sbxrun.ExecStdout(ctx, name, "readlink", "/etc/localtime") })
+	reads.Go(func() { current, _ = sbxrun.ExecStdout(ctx, name, "cat", "/etc/timezone") })
+	reads.Go(func() { hasEnv = sbxrun.ExecSilent(context.Background(), name, "test", "-f", persistentEnv) })
+	reads.Go(func() { env, envErr = sbxrun.ExecStdout(ctx, name, "cat", persistentEnv) })
+	reads.Wait()
+
+	if !hasZone {
 		return fmt.Errorf("the sandbox has no timezone %s (no %s)", zone, file)
 	}
-	link, _ := sbxrun.ExecStdout(context.Background(), name, "readlink", "/etc/localtime")
-	current, _ := sbxrun.ExecStdout(context.Background(), name, "cat", "/etc/timezone")
 	if strings.TrimSpace(link) != file || strings.TrimSpace(current) != zone {
-		if out, err := sbxrun.ExecCapture(name, "sudo", "-n", "ln", "-sfn", file, "/etc/localtime"); err != nil {
+		if out, err := sbxrun.ExecCapture(context.Background(), name, "sudo", "-n", "ln", "-sfn", file, "/etc/localtime"); err != nil {
 			return fmt.Errorf("linking /etc/localtime to %s: %w: %s", file, err, strings.TrimSpace(out))
 		}
 		if err := sbxrun.ExecInput(name, zone+"\n", "sudo", "-n", "tee", "/etc/timezone"); err != nil {
 			return errors.New("writing /etc/timezone: " + err.Error())
 		}
 	}
-	return exportTZ(name, zone)
+	if !hasEnv {
+		return nil
+	}
+	if envErr != nil {
+		return fmt.Errorf("reading %s: %w", persistentEnv, envErr)
+	}
+	if updated := withTZ(env, zone); updated != env {
+		if err := sbxrun.ExecInput(name, updated, "sudo", "-n", "tee", persistentEnv); err != nil {
+			return fmt.Errorf("writing %s: %w", persistentEnv, err)
+		}
+	}
+	return nil
 }
 
 // persistentEnv is the file sbx has every shell in the sandbox source
 // before it runs (BASH_ENV, CLAUDE_ENV_FILE).
 const persistentEnv = "/etc/sandbox-persistent.sh"
-
-// exportTZ makes persistentEnv export TZ as zone, leaving the rest of it
-// alone. A sandbox without the file is left without one.
-func exportTZ(name, zone string) error {
-	if !sbxrun.ExecSilent(name, "test", "-f", persistentEnv) {
-		return nil
-	}
-	content, err := sbxrun.ExecStdout(context.Background(), name, "cat", persistentEnv)
-	if err != nil {
-		return fmt.Errorf("reading %s: %w", persistentEnv, err)
-	}
-	updated := withTZ(content, zone)
-	if updated == content {
-		return nil
-	}
-	if err := sbxrun.ExecInput(name, updated, "sudo", "-n", "tee", persistentEnv); err != nil {
-		return fmt.Errorf("writing %s: %w", persistentEnv, err)
-	}
-	return nil
-}
 
 // tzMarker ends the line vibe exports TZ on, so it can find it again.
 const tzMarker = "# vibe: timezone"

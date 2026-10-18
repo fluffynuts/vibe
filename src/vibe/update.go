@@ -13,6 +13,7 @@ import (
 	"vibe/internal/gittoken"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
+	"vibe/internal/pathresolve"
 	"vibe/internal/profilegen"
 	"vibe/internal/prompt"
 	"vibe/internal/running"
@@ -86,7 +87,7 @@ type profileOutcome struct {
 func assessProfile(lay layout.Layout, profile string) (profileOutcome, []string, error) {
 	dir := lay.HomePath("profiles", profile)
 	if info, err := os.Stat(dir); dir == "" || err != nil || !info.IsDir() {
-		return profileOutcome{profileNotComposed, "it is vibe's own, not one in " + displayPath(lay.HomePath("profiles"))}, nil, nil
+		return profileOutcome{profileNotComposed, "it is vibe's own, not one in " + pathresolve.Tilde(lay.HomePath("profiles"))}, nil, nil
 	}
 	if !profilegen.IsGuided(dir) {
 		return profileOutcome{profileNotComposed, "it wasn't composed from the library"}, nil, nil
@@ -412,10 +413,10 @@ func rebuildAsItWas(ctx context.Context, lay layout.Layout, inst state.Instance,
 		return err
 	}
 	if wasRunning {
-		if !startRebuilt(inst.Name) {
+		if !startRebuilt(context.Background(), inst.Name) {
 			return fmt.Errorf("rebuilt, but couldn't start it again, as it was running before — 'sbx ls' shows its state")
 		}
-	} else if err := stopRebuilt(inst.Name); err != nil {
+	} else if err := stopRebuilt(context.Background(), inst.Name); err != nil {
 		return fmt.Errorf("rebuilt, but couldn't stop it again, as it was stopped before: %w", err)
 	}
 	return nil

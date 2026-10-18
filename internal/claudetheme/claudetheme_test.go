@@ -1,6 +1,7 @@
 package claudetheme
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -11,6 +12,8 @@ import (
 	"testing"
 
 	"vibe/internal/kitspec"
+
+	"vibe/internal/sbxtest"
 )
 
 func kit(files ...kitspec.Doc) kitspec.Doc {
@@ -204,22 +207,14 @@ func TestProfileRoundTrip(t *testing.T) {
 // says something of its own on stderr, which is no part of what was read.
 func fakeSandbox(t *testing.T) string {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the fake sbx is a shell script")
-	}
 	root := t.TempDir()
-	bin := t.TempDir()
 	// The reachability check execs /bin/true, which macOS doesn't have (only
 	// /usr/bin/true), so the fake answers it itself.
-	script := "#!/bin/sh\n[ \"$1\" = exec ] || exit 1\nshift 3\n" +
-		"[ \"$1\" = /bin/true ] && exit 0\n" +
-		"echo 'A new version of sbx is available' >&2\n" +
-		"for a; do shift; set -- \"$@\" \"$(printf %s \"$a\" | sed \"s#^/home/agent#" + root + "#\")\"; done\n" +
-		"exec \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "sbx"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	sbxtest.OnPath(t, "[ \"$1\" = exec ] || exit 1\nshift 3\n"+
+		"[ \"$1\" = /bin/true ] && exit 0\n"+
+		"echo 'A new version of sbx is available' >&2\n"+
+		"for a; do shift; set -- \"$@\" \"$(printf %s \"$a\" | sed \"s#^/home/agent#"+root+"#\")\"; done\n"+
+		"exec \"$@\"\n")
 	return root
 }
 
@@ -231,7 +226,7 @@ func TestFromSandboxReadsWhateverTheAgentIsSetTo(t *testing.T) {
 
 	check := func(label, want string) {
 		t.Helper()
-		if got, ok := FromSandbox("any"); !ok || got != want {
+		if got, ok := FromSandbox(context.Background(), "any"); !ok || got != want {
 			t.Errorf("%s: FromSandbox = %q, %v; want %q", label, got, ok, want)
 		}
 	}
@@ -244,7 +239,7 @@ func TestFromSandboxReadsWhateverTheAgentIsSetTo(t *testing.T) {
 	check("settings with a custom theme", "amber")
 
 	os.WriteFile(settings, []byte(`not json`), 0o644)
-	if _, ok := FromSandbox("any"); ok {
+	if _, ok := FromSandbox(context.Background(), "any"); ok {
 		t.Error("an unreadable settings.json was taken as an answer")
 	}
 }

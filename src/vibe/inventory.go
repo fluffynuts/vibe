@@ -79,7 +79,7 @@ func (p inventoryProfile) likelyTrash() bool {
 // with what sbx says of it; and the sandboxes sbx has that vibe has no
 // record of. ctx bounds the call to sbx.
 func gatherInventory(ctx context.Context, lay layout.Layout) (inventory, error) {
-	statuses, err := sbxrun.ListContext(ctx)
+	statuses, err := sbxrun.List(ctx)
 	if err != nil {
 		return inventory{}, err
 	}

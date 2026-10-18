@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,11 +20,12 @@ import (
 	"golang.org/x/term"
 )
 
-// Available reports whether sbx is on PATH and responds.
+// Available reports whether sbx is on PATH. It's looked for, not run: every
+// vibe asks first thing, and one that's there but broken says why itself
+// at the first command.
 func Available() bool {
-	cmd := exec.Command("sbx", "version")
-	cmd.Stdin = nil
-	return cmd.Run() == nil
+	_, err := exec.LookPath("sbx")
+	return err == nil
 }
 
 // Agents lists the agents sbx can run, read from the "Available agents:"
@@ -59,41 +61,75 @@ func ParseAgents(help string) []string {
 	return nil
 }
 
-// captureOut runs sbx with the given args and returns combined stdout.
-func captureOut(args ...string) (string, error) {
-	return captureOutContext(context.Background(), args...)
-}
-
-// captureOutContext is captureOut, killing sbx if ctx is cancelled. An sbx
-// run with a cancellable ctx is also kept apart from the terminal's Ctrl-C:
-// the caller has taken on deciding when it ends, and a Ctrl-C would
-// otherwise reach sbx before the caller could ask what was meant.
+// captureOutContext runs sbx with args and returns what it printed, stdout
+// and stderr together, killing sbx if ctx is cancelled.
 func captureOutContext(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "sbx", args...)
-	if ctx.Done() != nil {
-		ignoreTerminalInterrupt(cmd)
-		cmd.WaitDelay = time.Second
-	}
-	var out bytes.Buffer
+	cmd := cancellable(ctx, args...)
+	var out capped
 	cmd.Stdout = &out
 	cmd.Stderr = &out
-	err := cmd.Run()
+	err := out.run(cmd)
 	return out.String(), err
 }
 
 // captureSplitContext is captureOutContext, keeping what sbx prints on
 // stderr apart from stdout, for output that's read as data.
 func captureSplitContext(ctx context.Context, args ...string) (stdout, stderr string, err error) {
-	cmd := exec.CommandContext(ctx, "sbx", args...)
-	if ctx.Done() != nil {
-		ignoreTerminalInterrupt(cmd)
-		cmd.WaitDelay = time.Second
-	}
-	var out, errOut bytes.Buffer
+	return split(cancellable(ctx, args...))
+}
+
+// split runs cmd, giving what it printed on stdout and on stderr apart.
+func split(cmd *exec.Cmd) (stdout, stderr string, err error) {
+	var out, errOut capped
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
-	err = cmd.Run()
+	err = out.run(cmd, &errOut)
 	return out.String(), errOut.String(), err
+}
+
+// maxCaptured is the most vibe keeps of what an sbx command prints: what's
+// read from a sandbox is the agent's to make, and could be made endless.
+var maxCaptured = 256 << 20
+
+// capped is what a command printed, up to maxCaptured: past it, the write
+// fails, which ends the command's output. The buffer isn't embedded: its
+// ReadFrom would let io.Copy go round Write, and the limit.
+type capped struct {
+	buf  bytes.Buffer
+	over bool
+}
+
+func (c *capped) Write(p []byte) (int, error) {
+	if c.buf.Len()+len(p) > maxCaptured {
+		c.over = true
+		return 0, errTooMuch
+	}
+	return c.buf.Write(p)
+}
+
+func (c *capped) String() string { return c.buf.String() }
+
+var errTooMuch = errors.New("more than vibe takes in")
+
+// run runs cmd, whose output goes to c (and to others): an error when any
+// of them was given more than maxCaptured.
+func (c *capped) run(cmd *exec.Cmd, others ...*capped) error {
+	err := cmd.Run()
+	for _, b := range append(others, c) {
+		if b.over {
+			return fmt.Errorf("sbx printed %w (%d MB)", errTooMuch, maxCaptured>>20)
+		}
+	}
+	return err
+}
+
+// saying is err with what the command said on stderr, when it said
+// anything.
+func saying(err error, stderr string) error {
+	if msg := strings.TrimSpace(stderr); err != nil && msg != "" {
+		return fmt.Errorf("%w: %s", err, msg)
+	}
+	return err
 }
 
 // runInherit runs sbx with stdio connected to the current process, returning
@@ -184,7 +220,7 @@ func resetTerminal(tty *term.State) {
 // couldn't say: a "no" sbx never gave would lead vibe to create a sandbox
 // that's already there.
 func Exists(name string) (bool, error) {
-	statuses, err := List()
+	statuses, err := List(context.Background())
 	if err != nil {
 		return false, err
 	}
@@ -197,21 +233,25 @@ func Exists(name string) (bool, error) {
 }
 
 // Reachable reports whether the sandbox will currently accept an exec.
-func Reachable(name string) bool {
-	return ReachableContext(context.Background(), name)
-}
-
-// ReachableContext is Reachable, giving up if ctx is cancelled.
-func ReachableContext(ctx context.Context, name string) bool {
+// It gives up if ctx is cancelled.
+func Reachable(ctx context.Context, name string) bool {
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
 	_, err := captureOutContext(ctx, "exec", name, "--", "/bin/true")
 	return err == nil
 }
+
+// probeTimeout is the backstop on one reachability probe: many times what
+// even booting a stopped sandbox takes. The sandbox can make the probe
+// never answer (the agent can replace /bin/true), and every caller,
+// WaitReachable's count of probes too, would wait on it for good.
+var probeTimeout = 2 * time.Minute
 
 // Running says whether sandbox name is running, as `sbx ls` lists it:
 // unlike Reachable, which runs something in it, asking doesn't start a
 // sandbox sbx has stopped. ok is false when sbx couldn't say.
 func Running(ctx context.Context, name string) (running, ok bool) {
-	statuses, err := ListContext(ctx)
+	statuses, err := List(ctx)
 	if err != nil {
 		return false, false
 	}
@@ -233,14 +273,10 @@ type Status struct {
 }
 
 // List returns every sandbox sbx knows about and whether it is running.
-func List() ([]Status, error) {
-	return ListContext(context.Background())
-}
-
-// ListContext is List, giving up (and ending sbx) when ctx ends. It reads
+// It gives up (and ends sbx) when ctx ends. It reads
 // `sbx ls --json`, sbx's output for scripts, rather than its table, which
 // is laid out for people and may change.
-func ListContext(ctx context.Context) ([]Status, error) {
+func List(ctx context.Context) ([]Status, error) {
 	stdout, stderr, err := captureSplitContext(ctx, "ls", "--json")
 	if err != nil {
 		if ctx.Err() != nil {
@@ -299,13 +335,9 @@ type CreateOpts struct {
 	Output io.Writer
 }
 
-// Create provisions a new sandbox (does not start it).
-func Create(opts CreateOpts) error {
-	return CreateContext(context.Background(), opts)
-}
-
-// CreateContext is Create, ending sbx when ctx ends.
-func CreateContext(ctx context.Context, opts CreateOpts) error {
+// Create provisions a new sandbox (does not start it), ending sbx when ctx
+// ends.
+func Create(ctx context.Context, opts CreateOpts) error {
 	args := []string{"create", "--name", opts.Name, "--kit", opts.KitDir}
 	if opts.Memory != "" {
 		args = append(args, "--memory", opts.Memory)
@@ -340,9 +372,10 @@ func outputTo(cmd *exec.Cmd, out io.Writer) {
 	cmd.Stdout, cmd.Stderr = out, out
 }
 
-// cancellable is sbx with args, ended when ctx ends — and, being the
-// caller's to end, kept apart from the terminal's Ctrl-C, as in
-// captureOutContext. A ctx that never ends gives a plain command.
+// cancellable is sbx with args, ended when ctx ends. It is also kept apart
+// from the terminal's Ctrl-C: the caller has taken on deciding when it ends,
+// and a Ctrl-C would otherwise reach sbx before the caller could ask what
+// was meant. A ctx that never ends gives a plain command.
 func cancellable(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "sbx", args...)
 	if ctx.Done() != nil {
@@ -365,12 +398,8 @@ func Stop(name string) (int, error) {
 
 // StopQuiet stops a running sandbox without touching the terminal, so several
 // can be stopped at once. A failure carries sbx's output.
-func StopQuiet(name string) error {
-	return StopQuietContext(context.Background(), name)
-}
-
-// StopQuietContext is StopQuiet, ending sbx when ctx ends.
-func StopQuietContext(ctx context.Context, name string) error {
+// sbx is ended when ctx ends.
+func StopQuiet(ctx context.Context, name string) error {
 	out, err := captureOutContext(ctx, "stop", name)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -424,14 +453,10 @@ func SshConfigured(host string) bool {
 
 // WaitReachable polls until the sandbox will accept an exec, or limit
 // seconds pass. sbx create provisions but does not start; sbx run boots it.
-func WaitReachable(name string, limit int) bool {
-	return WaitReachableContext(context.Background(), name, limit)
-}
-
-// WaitReachableContext is WaitReachable, giving up early when ctx ends.
-func WaitReachableContext(ctx context.Context, name string, limit int) bool {
+// It gives up early when ctx ends.
+func WaitReachable(ctx context.Context, name string, limit int) bool {
 	for i := 0; i < limit; i++ {
-		if ReachableContext(ctx, name) {
+		if Reachable(ctx, name) {
 			return true
 		}
 		select {
@@ -451,19 +476,15 @@ func WaitReachableContext(ctx context.Context, name string, limit int) bool {
 // the agent, blocking until that session ends. An sbx without a `start`
 // command leaves Start returning false rather than pretending, so callers
 // can say what they could not do instead of assuming an answer.
-func Start(name string) bool {
-	return StartContext(context.Background(), name)
-}
-
-// StartContext is Start, ending sbx (and the wait) when ctx ends.
-func StartContext(ctx context.Context, name string) bool {
-	if ReachableContext(ctx, name) {
+// sbx (and the wait) is ended when ctx ends.
+func Start(ctx context.Context, name string) bool {
+	if Reachable(ctx, name) {
 		return true
 	}
 	if err := cancellable(ctx, "start", name).Run(); err != nil {
-		return ctx.Err() == nil && ReachableContext(ctx, name)
+		return ctx.Err() == nil && Reachable(ctx, name)
 	}
-	return WaitReachableContext(ctx, name, startTimeout)
+	return WaitReachable(ctx, name, startTimeout)
 }
 
 // startTimeout is how long Start waits for a booting sandbox to accept an
@@ -471,19 +492,10 @@ func StartContext(ctx context.Context, name string) bool {
 // has already committed to the operation the start is for.
 const startTimeout = 60
 
-// Remove deletes a sandbox. force maps to `sbx rm -f`.
-func Remove(name string, force bool) error {
-	return RemoveContext(context.Background(), name, force)
-}
-
-// RemoveContext is Remove, ending sbx when ctx ends.
-func RemoveContext(ctx context.Context, name string, force bool) error {
-	return RemoveToContext(ctx, name, force, nil)
-}
-
-// RemoveToContext is RemoveContext, sending what sbx prints to out rather
-// than the terminal (see CreateOpts.Output).
-func RemoveToContext(ctx context.Context, name string, force bool, out io.Writer) error {
+// Remove deletes a sandbox, ending sbx when ctx ends. force maps to
+// `sbx rm -f`. What sbx prints goes to out, or the terminal when out is nil
+// (see CreateOpts.Output).
+func Remove(ctx context.Context, name string, force bool, out io.Writer) error {
 	args := []string{"rm"}
 	if force {
 		args = append(args, "-f")
@@ -495,12 +507,8 @@ func RemoveToContext(ctx context.Context, name string, force bool, out io.Writer
 }
 
 // ExecCapture runs a command inside the sandbox and returns combined output.
-func ExecCapture(name string, args ...string) (string, error) {
-	return ExecCaptureContext(context.Background(), name, args...)
-}
-
-// ExecCaptureContext is ExecCapture, ending the exec if ctx is cancelled.
-func ExecCaptureContext(ctx context.Context, name string, args ...string) (string, error) {
+// The exec is ended if ctx is cancelled.
+func ExecCapture(ctx context.Context, name string, args ...string) (string, error) {
 	full := append([]string{"exec", name, "--"}, args...)
 	return captureOutContext(ctx, full...)
 }
@@ -509,53 +517,24 @@ func ExecCaptureContext(ctx context.Context, name string, args ...string) (strin
 // stdout alone, for when that output is file content: anything sbx says on
 // stderr stays out of it (and is in the error, if the command fails).
 func ExecStdout(ctx context.Context, name string, args ...string) (string, error) {
-	full := append([]string{"exec", name, "--"}, args...)
-	cmd := exec.CommandContext(ctx, "sbx", full...)
-	if ctx.Done() != nil {
-		ignoreTerminalInterrupt(cmd)
-		cmd.WaitDelay = time.Second
-	}
-	var out, errOut bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errOut
-	if err := cmd.Run(); err != nil {
-		if msg := strings.TrimSpace(errOut.String()); msg != "" {
-			return out.String(), fmt.Errorf("%w: %s", err, msg)
-		}
-		return out.String(), err
-	}
-	return out.String(), nil
+	stdout, stderr, err := captureSplitContext(ctx, append([]string{"exec", name, "--"}, args...)...)
+	return stdout, saying(err, stderr)
 }
 
 // ExecInputStdout runs a command inside the sandbox with input on its
 // stdin, returning its stdout alone; ctx ending kills it.
 func ExecInputStdout(ctx context.Context, name, input string, args ...string) (string, error) {
-	full := append([]string{"exec", "-i", name, "--"}, args...)
-	cmd := exec.CommandContext(ctx, "sbx", full...)
-	ignoreTerminalInterrupt(cmd)
-	cmd.WaitDelay = time.Second
+	cmd := cancellable(ctx, append([]string{"exec", "-i", name, "--"}, args...)...)
 	cmd.Stdin = strings.NewReader(input)
-	var out, errOut bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errOut
-	if err := cmd.Run(); err != nil {
-		if msg := strings.TrimSpace(errOut.String()); msg != "" {
-			return out.String(), fmt.Errorf("%w: %s", err, msg)
-		}
-		return out.String(), err
-	}
-	return out.String(), nil
+	stdout, stderr, err := split(cmd)
+	return stdout, saying(err, stderr)
 }
 
 // ExecSilent runs a command inside the sandbox, discarding output, and
 // reports only success/failure.
-func ExecSilent(name string, args ...string) bool {
-	return ExecSilentContext(context.Background(), name, args...)
-}
-
-// ExecSilentContext is ExecSilent, ending the exec if ctx is cancelled.
-func ExecSilentContext(ctx context.Context, name string, args ...string) bool {
-	_, err := ExecCaptureContext(ctx, name, args...)
+// The exec is ended if ctx is cancelled.
+func ExecSilent(ctx context.Context, name string, args ...string) bool {
+	_, err := ExecCapture(ctx, name, args...)
 	return err == nil
 }
 
@@ -565,8 +544,11 @@ func ExecInput(name, input string, args ...string) error {
 	full := append([]string{"exec", "-i", name, "--"}, args...)
 	cmd := exec.Command("sbx", full...)
 	cmd.Stdin = strings.NewReader(input)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	var out capped
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := out.run(cmd); err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(out.String()))
 	}
 	return nil
 }
@@ -584,12 +566,6 @@ func ExecStream(ctx context.Context, name, input string, delivered func(), onLin
 	full := append([]string{"exec", "-i", name, "--"}, args...)
 	cmd := exec.CommandContext(ctx, "sbx", full...)
 	return stream(cmd, input, delivered, onLine)
-}
-
-// streamLines runs cmd with input on its stdin, handing each line of its
-// stdout to onLine.
-func streamLines(cmd *exec.Cmd, input string, onLine func(line []byte)) error {
-	return stream(cmd, input, nil, onLine)
 }
 
 // signalAtEOF calls done when the reader it wraps has been read to its end.

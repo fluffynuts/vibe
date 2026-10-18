@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"vibe/internal/sbxtest"
 )
 
 // TestStartGivesUpOnASandboxItCannotBoot checks Start's failure path: with no
@@ -18,7 +20,7 @@ import (
 // waiting out startTimeout on something that is never going to answer.
 func TestStartGivesUpOnASandboxItCannotBoot(t *testing.T) {
 	done := make(chan bool, 1)
-	go func() { done <- Start("vibe-test-no-such-sandbox-3f9c1") }()
+	go func() { done <- Start(context.Background(), "vibe-test-no-such-sandbox-3f9c1") }()
 	select {
 	case started := <-done:
 		if started {
@@ -42,13 +44,13 @@ func TestParseAgents(t *testing.T) {
 	}
 }
 
-func TestStreamLinesHandsOverEachLineAndFeedsStdin(t *testing.T) {
+func TestStreamHandsOverEachLineAndFeedsStdin(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("wants sh")
 	}
 	var got []string
 	cmd := exec.Command("sh", "-c", "read first; echo \"one $first\"; echo two; printf three")
-	err := streamLines(cmd, "typed\n", func(l []byte) { got = append(got, string(l)) })
+	err := stream(cmd, "typed\n", nil, func(l []byte) { got = append(got, string(l)) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,13 +59,13 @@ func TestStreamLinesHandsOverEachLineAndFeedsStdin(t *testing.T) {
 	}
 }
 
-func TestStreamLinesReportsWhatAFailedCommandSaid(t *testing.T) {
+func TestStreamReportsWhatAFailedCommandSaid(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("wants sh")
 	}
 	var got []string
 	cmd := exec.Command("sh", "-c", "echo before; echo oops >&2; exit 3")
-	err := streamLines(cmd, "", func(l []byte) { got = append(got, string(l)) })
+	err := stream(cmd, "", nil, func(l []byte) { got = append(got, string(l)) })
 	if err == nil || !strings.Contains(err.Error(), "oops") || !strings.Contains(err.Error(), "exit status 3") {
 		t.Errorf("err = %v", err)
 	}
@@ -72,13 +74,13 @@ func TestStreamLinesReportsWhatAFailedCommandSaid(t *testing.T) {
 	}
 }
 
-func TestStreamLinesDropsWhatIsPastTheLimitButKeepsGoing(t *testing.T) {
+func TestStreamDropsWhatIsPastTheLimitButKeepsGoing(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("wants sh")
 	}
 	var lens []int
 	cmd := exec.Command("sh", "-c", "head -c 1100000 /dev/zero | tr '\\0' a; echo; echo next")
-	if err := streamLines(cmd, "", func(l []byte) { lens = append(lens, len(l)) }); err != nil {
+	if err := stream(cmd, "", nil, func(l []byte) { lens = append(lens, len(l)) }); err != nil {
 		t.Fatal(err)
 	}
 	if len(lens) != 2 || lens[0] > maxStreamLine || lens[1] != 4 {
@@ -86,7 +88,7 @@ func TestStreamLinesDropsWhatIsPastTheLimitButKeepsGoing(t *testing.T) {
 	}
 }
 
-func TestStreamLinesEndsWhenItsContextIsCancelled(t *testing.T) {
+func TestStreamEndsWhenItsContextIsCancelled(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("wants sh")
 	}
@@ -95,7 +97,7 @@ func TestStreamLinesEndsWhenItsContextIsCancelled(t *testing.T) {
 	done := make(chan error, 1)
 	started := make(chan struct{})
 	go func() {
-		done <- streamLines(cmd, "", func([]byte) { close(started) })
+		done <- stream(cmd, "", nil, func([]byte) { close(started) })
 	}()
 	<-started
 	cancel()
@@ -137,22 +139,14 @@ func TestStreamSaysWhenTheCommandHasTakenAllItsInput(t *testing.T) {
 // and stderr and exits with code; asked for anything else, it fails.
 func fakeSbx(t *testing.T, stdout, stderr string, code int) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the stand-in sbx is a shell script")
-	}
-	dir := t.TempDir()
-	write := func(name, content string) {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o755); err != nil {
+	dir := sbxtest.OnPath(t, fmt.Sprintf(
+		"[ \"$*\" = \"ls --json\" ] || { echo \"unexpected: sbx $*\" >&2; exit 2; }\n"+
+			"cd \"$(dirname \"$0\")\"\ncat stdout\ncat stderr >&2\nexit %d\n", code))
+	for name, content := range map[string]string{"stdout": stdout, "stderr": stderr} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write("stdout", stdout)
-	write("stderr", stderr)
-	write("sbx", fmt.Sprintf("#!/bin/sh\n"+
-		"[ \"$*\" = \"ls --json\" ] || { echo \"unexpected: sbx $*\" >&2; exit 2; }\n"+
-		"cat '%s'\ncat '%s' >&2\nexit %d\n",
-		filepath.Join(dir, "stdout"), filepath.Join(dir, "stderr"), code))
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 // realListing is 'sbx ls --json' from sbx v0.48, cut down to two sandboxes.
@@ -199,7 +193,7 @@ const realListing = `[
 
 func TestListReadsSbxsJSON(t *testing.T) {
 	fakeSbx(t, realListing, "", 0)
-	got, err := ListContext(context.Background())
+	got, err := List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,52 +202,52 @@ func TestListReadsSbxsJSON(t *testing.T) {
 		{Name: "vibe", Running: true, State: "running"},
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("ListContext = %+v\nwant %+v", got, want)
+		t.Errorf("List = %+v\nwant %+v", got, want)
 	}
 }
 
 func TestListKeepsAStateItDoesNotKnow(t *testing.T) {
 	fakeSbx(t, `[{"name": "odd-one", "status": "Creating"}]`, "", 0)
-	got, err := ListContext(context.Background())
+	got, err := List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := []Status{{Name: "odd-one", State: "creating"}}; !reflect.DeepEqual(got, want) {
-		t.Errorf("ListContext = %+v, want %+v", got, want)
+		t.Errorf("List = %+v, want %+v", got, want)
 	}
 }
 
 func TestListIsNothingWhenSbxHasNoSandboxes(t *testing.T) {
 	for _, out := range []string{"[]\n", "null\n", ""} {
 		fakeSbx(t, out, "", 0)
-		got, err := ListContext(context.Background())
+		got, err := List(context.Background())
 		if err != nil || len(got) != 0 {
-			t.Errorf("ListContext of %q = %+v, %v; want nothing", out, got, err)
+			t.Errorf("List of %q = %+v, %v; want nothing", out, got, err)
 		}
 	}
 }
 
 func TestListIgnoresWhatSbxSaysOnStderr(t *testing.T) {
 	fakeSbx(t, realListing, "A new version of sbx is available\n", 0)
-	got, err := ListContext(context.Background())
+	got, err := List(context.Background())
 	if err != nil || len(got) != 2 {
-		t.Errorf("ListContext = %+v, %v; want the two sandboxes", got, err)
+		t.Errorf("List = %+v, %v; want the two sandboxes", got, err)
 	}
 }
 
 func TestListSaysToUpgradeAnSbxWithoutJSON(t *testing.T) {
 	fakeSbx(t, "", "Error: unknown flag: --json\n", 1)
-	_, err := ListContext(context.Background())
+	_, err := List(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "unknown flag: --json") || !strings.Contains(err.Error(), "vibe --install-sbx") {
-		t.Errorf("ListContext error = %v, want sbx's reason and how to upgrade it", err)
+		t.Errorf("List error = %v, want sbx's reason and how to upgrade it", err)
 	}
 }
 
 func TestListSaysWhatItCouldNotRead(t *testing.T) {
 	fakeSbx(t, "SANDBOX  AGENT  STATUS\n", "", 0)
-	_, err := ListContext(context.Background())
+	_, err := List(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "sbx ls --json") {
-		t.Errorf("ListContext error = %v, want it to name the command it couldn't read", err)
+		t.Errorf("List error = %v, want it to name the command it couldn't read", err)
 	}
 }
 

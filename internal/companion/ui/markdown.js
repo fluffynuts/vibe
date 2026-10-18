@@ -206,6 +206,10 @@
     let buf = ''
     const flush = () => { if (buf) { out.push({ type: 'text', text: buf }); buf = '' } }
     const s = String(text)
+    // Each opener searched to the end afresh would take time growing with
+    // the square of the text: what one search learns is kept for the rest.
+    const closers = { '*': new Map(), _: new Map() }
+    let brackets = null
     let i = 0
     while (i < s.length) {
       const c = s[i]
@@ -229,7 +233,8 @@
         continue
       }
       if (c === '[') {
-        const close = matchingBracket(s, i)
+        if (!brackets) brackets = bracketPairs(s)
+        const close = brackets.has(i) ? brackets.get(i) : -1
         if (close > 0 && s[close + 1] === '(') {
           const end = s.indexOf(')', close + 2)
           if (end > 0) {
@@ -251,8 +256,7 @@
         }
       }
       if ((c === '*' || c === '_') && s[i + 1] !== c && i + 1 < s.length && !/\s/.test(s[i + 1])) {
-        let end = i + 1
-        while ((end = s.indexOf(c, end)) > 0 && (s[end + 1] === c || /\s/.test(s[end - 1]))) end += s[end + 1] === c ? 2 : 1
+        const end = emCloser(s, c, i + 1, closers[c])
         if (end > i + 1 && (c !== '_' || wordEdge(s, i, end + 1))) {
           flush()
           out.push({ type: 'em', children: parseInline(s.slice(i + 1, end)) })
@@ -284,14 +288,33 @@
     return (open === 0 || !/\w/.test(s[open - 1])) && (after >= s.length || !/\w/.test(s[after]))
   }
 
-  function matchingBracket(s, open) {
-    let depth = 0
-    for (let i = open; i < s.length; i++) {
-      if (s[i] === '\\') { i++; continue }
-      if (s[i] === '[') depth++
-      else if (s[i] === ']' && --depth === 0) return i
+  // emCloser is where emphasis opened with c just before from closes: the
+  // first c from there that's neither half of a pair (strong's) nor after
+  // a space, or -1. Where the search went from each c it passed is the same
+  // whichever opener it's for, so it's kept in memo for the next.
+  function emCloser(s, c, from, memo) {
+    const passed = []
+    let end = s.indexOf(c, from)
+    while (end > 0 && !memo.has(end) && (s[end + 1] === c || /\s/.test(s[end - 1]))) {
+      passed.push(end)
+      end = s.indexOf(c, end + (s[end + 1] === c ? 2 : 1))
     }
-    return -1
+    if (end > 0 && memo.has(end)) end = memo.get(end)
+    for (const p of passed) memo.set(p, end)
+    return end
+  }
+
+  // bracketPairs is where each [ in s closes, as its index: brackets nest,
+  // and a backslash escapes the character after it.
+  function bracketPairs(s) {
+    const pairs = new Map()
+    const open = []
+    for (let i = 0; i < s.length; i++) {
+      if (s[i] === '\\') { i++; continue }
+      if (s[i] === '[') open.push(i)
+      else if (s[i] === ']' && open.length) pairs.set(open.pop(), i)
+    }
+    return pairs
   }
 
   const api = { parse, parseInline }

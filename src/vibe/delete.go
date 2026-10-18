@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 
 	"vibe/internal/cliargs"
 	"vibe/internal/layout"
+	"vibe/internal/pathresolve"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
 )
@@ -102,7 +104,7 @@ func (d deletion) run(vibeHome string, sandbox, profile bool, remove func(name s
 		if err := os.RemoveAll(d.profileDir); err != nil {
 			return fmt.Errorf("could not delete profile '%s': %w", d.profile, err)
 		}
-		note("deleted profile '%s' from %s", d.profile, displayPath(d.profileDir))
+		note("deleted profile '%s' from %s", d.profile, pathresolve.Tilde(d.profileDir))
 	} else if d.profileDir != "" {
 		note("kept profile '%s'", d.profile)
 	}
@@ -147,11 +149,17 @@ func doDelete(lay layout.Layout, args cliargs.Args, name, target string) error {
 	}
 	if !sandbox && !prof {
 		if !d.sandbox && d.profileDir == "" {
-			note("no sandbox '%s' and no profile '%s' in %s — nothing to delete", name, profile, displayPath(lay.HomePath("profiles")))
+			note("no sandbox '%s' and no profile '%s' in %s — nothing to delete", name, profile, pathresolve.Tilde(lay.HomePath("profiles")))
 		} else {
 			note("nothing checked — nothing deleted")
 		}
 		return nil
 	}
-	return d.run(lay.Home, sandbox, prof, sbxrun.Remove)
+	return d.run(lay.Home, sandbox, prof, removeSandbox)
+}
+
+// removeSandbox removes sandbox name from sbx, telling the terminal how
+// it goes.
+func removeSandbox(name string, force bool) error {
+	return sbxrun.Remove(context.Background(), name, force, nil)
 }

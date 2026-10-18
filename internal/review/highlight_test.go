@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // joined is a line's runs put back together: always the line's text.
@@ -75,17 +76,17 @@ func TestAFileTooLongIsntColoured(t *testing.T) {
 func TestTheOldSideIsReadWhereTheDiffStartsFrom(t *testing.T) {
 	dir := repo(t, map[string]string{"a.go": "package old\n"})
 	write(t, dir, "a.go", "package changed\n")
-	text, err := OldTextOf(context.Background(), dir, Review{}, "a.go")
+	text, err := oldTextOf(context.Background(), dir, Review{}, "a.go")
 	if err != nil || text != "package old\n" {
 		t.Errorf("working tree's old side: %q, %v", text, err)
 	}
 	git(t, dir, "checkout", "-q", "-b", "feat")
 	git(t, dir, "commit", "-q", "-am", "changed")
-	text, err = OldTextOf(context.Background(), dir, Review{Ref: "main"}, "a.go")
+	text, err = oldTextOf(context.Background(), dir, Review{Ref: "main"}, "a.go")
 	if err != nil || text != "package old\n" {
 		t.Errorf("against main: %q, %v", text, err)
 	}
-	text, err = OldTextOf(context.Background(), dir, Review{Commit: "HEAD"}, "a.go")
+	text, err = oldTextOf(context.Background(), dir, Review{Commit: "HEAD"}, "a.go")
 	if err != nil || text != "package old\n" {
 		t.Errorf("a commit's: %q, %v", text, err)
 	}
@@ -115,11 +116,48 @@ func TestNothingOutsideTheFolderIsRead(t *testing.T) {
 		t.Skip("can't make a symbolic link here:", err)
 	}
 	for _, path := range []string{"../" + filepath.Base(outside) + "/secret.txt", filepath.Join(outside, "secret.txt"), "link.txt"} {
-		if text, err := NewTextOf(context.Background(), dir, Review{}, path); err == nil {
+		if text, err := newTextOf(context.Background(), dir, Review{}, path); err == nil {
 			t.Errorf("%s read: %q", path, text)
 		}
-		if _, err := OldTextOf(context.Background(), dir, Review{}, path); err == nil && path != "link.txt" {
+		if _, err := oldTextOf(context.Background(), dir, Review{}, path); err == nil && path != "link.txt" {
 			t.Errorf("%s read from git", path)
+		}
+	}
+}
+
+// A file's colouring can be made never to end: the lexer Chroma has for
+// JSONata loops for good on a comment that isn't closed. It's coloured in
+// the helper, which is ended when the caller's time is up.
+func TestColouringThatNeverEndsIsStopped(t *testing.T) {
+	dir := repo(t, map[string]string{"a.txt": "a\n"})
+	write(t, dir, "x.jsonata", "/*")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := Colour(ctx, dir, Review{}, "x.jsonata", false)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("a colouring that never ended was given as done")
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("colouring went on past its time")
+	}
+}
+
+func TestAFileIsColouredFromEitherSide(t *testing.T) {
+	dir := repo(t, map[string]string{"a.go": "package old\n"})
+	write(t, dir, "a.go", "package new\n")
+	for old, want := range map[bool]string{true: "package old", false: "package new"} {
+		h, err := Colour(context.Background(), dir, Review{}, "a.go", old)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h.Language != "Go" || len(h.Lines) != 1 || joined(h.Lines[0]) != want {
+			t.Errorf("old=%v: %+v", old, h)
 		}
 	}
 }

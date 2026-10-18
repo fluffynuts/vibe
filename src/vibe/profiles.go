@@ -12,6 +12,7 @@ import (
 	"vibe/internal/instructions"
 	"vibe/internal/layout"
 	"vibe/internal/library"
+	"vibe/internal/pathresolve"
 	"vibe/internal/profilegen"
 	"vibe/internal/settings"
 	"vibe/internal/upgrade"
@@ -86,7 +87,7 @@ func prepareInstructions(lay layout.Layout, profile string) error {
 		if created, err := instructions.EnsureFile(path); err != nil {
 			return err
 		} else if created {
-			note("created %s: instructions for every sandbox's agent go there", displayPath(path))
+			note("created %s: instructions for every sandbox's agent go there", pathresolve.Tilde(path))
 		}
 	}
 	dir := lay.HomePath("profiles", profile)
@@ -289,7 +290,7 @@ func pickDefaultFeatures(lay layout.Layout, defaults []string) ([]string, error)
 	defaults, _ = profilegen.WithoutBase(defaults, lay.BaseFeatures())
 	defaults = withoutRetiredDefaults(defaults, lay.HomePath("settings.yaml"))
 	if err := library.Validate(defaults, names); err != nil {
-		return nil, fmt.Errorf("defaultFeatures in %s: %w", displayPath(lay.HomePath("settings.yaml")), err)
+		return nil, fmt.Errorf("defaultFeatures in %s: %w", pathresolve.Tilde(lay.HomePath("settings.yaml")), err)
 	}
 	features, labels, checked := featureChecklist(lay, names, defaults)
 	idxs, ok := checklistFrom("which features should a guided profile start with selected?", labels, checked)
@@ -311,7 +312,7 @@ func pickDefaultFeatures(lay layout.Layout, defaults []string) ([]string, error)
 func withoutRetiredDefaults(defaults []string, settingsPath string) []string {
 	kept, retired := library.WithoutRetired(defaults)
 	for _, name := range retired {
-		note("defaultFeatures in %s names '%s', which vibe no longer has (%s): it's left out (take it out of there to stop this note)", displayPath(settingsPath), name, library.Retired[name])
+		note("defaultFeatures in %s names '%s', which vibe no longer has (%s): it's left out (take it out of there to stop this note)", pathresolve.Tilde(settingsPath), name, library.Retired[name])
 	}
 	return kept
 }

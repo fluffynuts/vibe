@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -66,7 +67,7 @@ type stopper struct {
 var sbxStopper = stopper{
 	exists: sbxrun.Exists,
 	running: func(name string) (bool, bool) {
-		statuses, err := sbxrun.List()
+		statuses, err := sbxrun.List(context.Background())
 		if err != nil {
 			return false, false
 		}

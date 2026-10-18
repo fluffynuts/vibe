@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -23,7 +24,7 @@ const maxParallelStops = 8
 // --- stop all ---------------------------------------------------------------
 
 func doStopAll(vibeHome string, force bool) error {
-	statuses, err := sbxrun.List()
+	statuses, err := sbxrun.List(context.Background())
 	if err != nil {
 		return err
 	}
@@ -64,7 +65,7 @@ func doStopAll(vibeHome string, force bool) error {
 	// stops it again, unless it was killed part-way: sbx says which are
 	// running now.
 	if len(failed) < len(plan.names) {
-		if statuses, err = sbxrun.List(); err != nil {
+		if statuses, err = sbxrun.List(context.Background()); err != nil {
 			return err
 		}
 	}
@@ -75,7 +76,7 @@ func doStopAll(vibeHome string, force bool) error {
 		}
 	}
 	sort.Strings(names)
-	failed = append(failed, stopSandboxes(os.Stderr, prompt.IsTerminal(os.Stderr), names, sbxrun.StopQuiet)...)
+	failed = append(failed, stopSandboxes(os.Stderr, prompt.IsTerminal(os.Stderr), names, func(name string) error { return sbxrun.StopQuiet(context.Background(), name) })...)
 	if len(failed) > 0 {
 		sort.Strings(failed)
 		return fmt.Errorf("could not stop: %s", strings.Join(failed, ", "))
