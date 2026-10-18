@@ -161,3 +161,14 @@ func TestWhatIsReadFromASandboxHasALimit(t *testing.T) {
 		}
 	}
 }
+
+func TestSbxIsAvailableWhenItIsOnPath(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	if Available() {
+		t.Error("sbx was available with no sbx on PATH")
+	}
+	echoingSbx(t)
+	if !Available() {
+		t.Error("sbx wasn't available, though it's on PATH")
+	}
+}

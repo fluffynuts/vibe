@@ -20,11 +20,12 @@ import (
 	"golang.org/x/term"
 )
 
-// Available reports whether sbx is on PATH and responds.
+// Available reports whether sbx is on PATH. It's looked for, not run: every
+// vibe asks first thing, and one that's there but broken says why itself
+// at the first command.
 func Available() bool {
-	cmd := exec.Command("sbx", "version")
-	cmd.Stdin = nil
-	return cmd.Run() == nil
+	_, err := exec.LookPath("sbx")
+	return err == nil
 }
 
 // Agents lists the agents sbx can run, read from the "Available agents:"
