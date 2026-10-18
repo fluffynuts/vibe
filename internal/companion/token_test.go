@@ -57,3 +57,35 @@ func TestThePageUsesNoStyleTheBrowserWouldDrop(t *testing.T) {
 		}
 	}
 }
+
+// The clipboard pane is a page the sandbox serves, so whatever is there may
+// be the agent's: it gets only what the real one uses — scripts, its own
+// origin (to reach its own server) and writing to the clipboard. Never
+// reading it, nor navigating this page or opening windows past its sandbox.
+func TestTheClipboardFrameGetsNoMoreThanItNeeds(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("ui", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := regexp.MustCompile(`<iframe id="convo-clipboard-frame"[^>]*>`).FindString(string(data))
+	if frame == "" {
+		t.Fatal("index.html has no clipboard frame")
+	}
+	attr := func(name string) (string, bool) {
+		m := regexp.MustCompile(`\s` + name + `="([^"]*)"`).FindStringSubmatch(frame)
+		if m == nil {
+			return "", false
+		}
+		return m[1], true
+	}
+	if allow, _ := attr("allow"); allow != "clipboard-write" {
+		t.Errorf("allow = %q, want only clipboard-write", allow)
+	}
+	sandbox, ok := attr("sandbox")
+	if !ok {
+		t.Fatalf("the frame isn't sandboxed: %s", frame)
+	}
+	if got := strings.Join(strings.Fields(sandbox), " "); got != "allow-scripts allow-same-origin" {
+		t.Errorf("sandbox = %q, want only allow-scripts allow-same-origin", got)
+	}
+}
