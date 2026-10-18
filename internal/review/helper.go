@@ -82,7 +82,7 @@ func watchMemory(limit int64) {
 		time.Sleep(10 * time.Millisecond)
 		runtime.ReadMemStats(&m)
 		if int64(m.HeapAlloc) > limit {
-			fmt.Fprintf(os.Stderr, "reading the repository needed more memory than vibe allows it (%d MB): it may be damaged, or built to exhaust memory\n", limit>>20)
+			fmt.Fprintln(os.Stderr, tooMuchMemory())
 			os.Exit(3)
 		}
 	}
@@ -188,7 +188,7 @@ func isolated(ctx context.Context, op string, args helperArgs, out any) error {
 		if stdout.over {
 			why = "its answer was too large"
 		}
-		return fmt.Errorf("vibe's helper failed reading the repository: %s", lastLine(why))
+		return fmt.Errorf("vibe's helper failed reading the repository: %s", helperDied(why))
 	}
 	if answer.Error != "" {
 		return errors.New(answer.Error)
@@ -196,16 +196,32 @@ func isolated(ctx context.Context, op string, args helperArgs, out any) error {
 	return json.Unmarshal(answer.Result, out)
 }
 
-// lastLine is text's last line: what a process said as it ended, past what
-// it said before (a Go panic's trace, say).
-func lastLine(text string) string {
-	lines := strings.Split(strings.TrimSpace(text), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		if l := strings.TrimSpace(lines[i]); l != "" && !strings.HasPrefix(l, "goroutine ") {
+// tooMuchMemory is why the helper ended when it ran out of memory.
+func tooMuchMemory() string {
+	return fmt.Sprintf("reading the repository needed more memory than vibe allows it (%d MB): it may be damaged, or built to exhaust memory", helperMemory()>>20)
+}
+
+// helperDied is what the helper said as it ended (its stderr): a Go panic
+// or fatal error by its first line, not its trace's last; one for running
+// out of memory as such (the runtime can fail an allocation past the
+// address space the helper's given before watchMemory sees the heap grow);
+// else its last line.
+func helperDied(stderr string) string {
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	for _, l := range lines {
+		if strings.HasPrefix(l, "fatal error: ") || strings.HasPrefix(l, "panic: ") {
+			if strings.Contains(l, "out of memory") {
+				return tooMuchMemory()
+			}
 			return l
 		}
 	}
-	return text
+	for i := len(lines) - 1; i >= 0; i-- {
+		if l := strings.TrimSpace(lines[i]); l != "" {
+			return l
+		}
+	}
+	return stderr
 }
 
 // capped keeps up to max bytes written to it, and says when there were
