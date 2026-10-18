@@ -489,8 +489,6 @@ func probeClipboard(url string) bool {
 	return res.StatusCode == http.StatusOK
 }
 
-// keepAwake runs KeepAwake in the background, unless it's running already;
-// the page doesn't wait on it (starting a sandbox takes a while).
 // workingAwakeEvery is how often the sandbox is kept awake while the agent
 // works: as often as the page asks, well within sbx's idle stop.
 const workingAwakeEvery = 20 * time.Second
@@ -520,6 +518,8 @@ func (s *Server) keepAwakeIfWorking() {
 	}
 }
 
+// keepAwake runs KeepAwake in the background, unless it's running already;
+// the page doesn't wait on it (starting a sandbox takes a while).
 func (s *Server) keepAwake([]byte) ([]string, error) {
 	if s.cfg.KeepAwake == nil || !s.awake.TryLock() {
 		return nil, nil

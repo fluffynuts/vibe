@@ -605,12 +605,6 @@ func ExecStream(ctx context.Context, name, input string, delivered func(), onLin
 	return stream(cmd, input, delivered, onLine)
 }
 
-// streamLines runs cmd with input on its stdin, handing each line of its
-// stdout to onLine.
-func streamLines(cmd *exec.Cmd, input string, onLine func(line []byte)) error {
-	return stream(cmd, input, nil, onLine)
-}
-
 // signalAtEOF calls done when the reader it wraps has been read to its end.
 type signalAtEOF struct {
 	io.Reader

@@ -44,13 +44,13 @@ func TestParseAgents(t *testing.T) {
 	}
 }
 
-func TestStreamLinesHandsOverEachLineAndFeedsStdin(t *testing.T) {
+func TestStreamHandsOverEachLineAndFeedsStdin(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("wants sh")
 	}
 	var got []string
 	cmd := exec.Command("sh", "-c", "read first; echo \"one $first\"; echo two; printf three")
-	err := streamLines(cmd, "typed\n", func(l []byte) { got = append(got, string(l)) })
+	err := stream(cmd, "typed\n", nil, func(l []byte) { got = append(got, string(l)) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,13 +59,13 @@ func TestStreamLinesHandsOverEachLineAndFeedsStdin(t *testing.T) {
 	}
 }
 
-func TestStreamLinesReportsWhatAFailedCommandSaid(t *testing.T) {
+func TestStreamReportsWhatAFailedCommandSaid(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("wants sh")
 	}
 	var got []string
 	cmd := exec.Command("sh", "-c", "echo before; echo oops >&2; exit 3")
-	err := streamLines(cmd, "", func(l []byte) { got = append(got, string(l)) })
+	err := stream(cmd, "", nil, func(l []byte) { got = append(got, string(l)) })
 	if err == nil || !strings.Contains(err.Error(), "oops") || !strings.Contains(err.Error(), "exit status 3") {
 		t.Errorf("err = %v", err)
 	}
@@ -74,13 +74,13 @@ func TestStreamLinesReportsWhatAFailedCommandSaid(t *testing.T) {
 	}
 }
 
-func TestStreamLinesDropsWhatIsPastTheLimitButKeepsGoing(t *testing.T) {
+func TestStreamDropsWhatIsPastTheLimitButKeepsGoing(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("wants sh")
 	}
 	var lens []int
 	cmd := exec.Command("sh", "-c", "head -c 1100000 /dev/zero | tr '\\0' a; echo; echo next")
-	if err := streamLines(cmd, "", func(l []byte) { lens = append(lens, len(l)) }); err != nil {
+	if err := stream(cmd, "", nil, func(l []byte) { lens = append(lens, len(l)) }); err != nil {
 		t.Fatal(err)
 	}
 	if len(lens) != 2 || lens[0] > maxStreamLine || lens[1] != 4 {
@@ -88,7 +88,7 @@ func TestStreamLinesDropsWhatIsPastTheLimitButKeepsGoing(t *testing.T) {
 	}
 }
 
-func TestStreamLinesEndsWhenItsContextIsCancelled(t *testing.T) {
+func TestStreamEndsWhenItsContextIsCancelled(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("wants sh")
 	}
@@ -97,7 +97,7 @@ func TestStreamLinesEndsWhenItsContextIsCancelled(t *testing.T) {
 	done := make(chan error, 1)
 	started := make(chan struct{})
 	go func() {
-		done <- streamLines(cmd, "", func([]byte) { close(started) })
+		done <- stream(cmd, "", nil, func([]byte) { close(started) })
 	}()
 	<-started
 	cancel()

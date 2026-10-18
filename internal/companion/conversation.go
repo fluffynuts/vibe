@@ -54,9 +54,9 @@ const (
 	maxKept = 32 << 20
 )
 
-// A session id goes onto the agent's command line, so it is only ever what
-// the agent's own ids look like.
-var sessionID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,100}$`)
+// SessionID is what an agent's session id looks like. One goes onto the
+// agent's command line, so it is only ever taken when it looks like that.
+var SessionID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,100}$`)
 
 // event is one thing the page shows: what the user said, a line of the
 // agent's output, how a turn ended, or that the conversation began anew.
@@ -144,7 +144,7 @@ func (c *conversation) load(file string) error {
 	}
 	c.events, c.seq, c.prompt = was.Events, was.Seq, was.Prompt
 	c.commands, c.commandsSeq = slashCommands(was.Commands), was.CommandsSeq
-	if sessionID.MatchString(was.Session) {
+	if SessionID.MatchString(was.Session) {
 		c.session = was.Session
 	}
 	if was.Running {
@@ -269,7 +269,7 @@ func (c *conversation) line(raw []byte) string {
 	json.Unmarshal(raw, &head)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if sessionID.MatchString(head.SessionID) {
+	if SessionID.MatchString(head.SessionID) {
 		c.session = head.SessionID
 	}
 	if head.Type == "system" && head.Subtype == "init" && head.SlashCommands != nil {
