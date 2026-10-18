@@ -163,20 +163,3 @@ func (s *Server) instructionsOptimise(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"text": text})
 	}
 }
-
-// editing wraps a call that sends a file's text: as administering, with
-// room for the file.
-func (s *Server) editing(next http.HandlerFunc) http.HandlerFunc {
-	return s.authed(func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.Admin == nil {
-			writeError(w, http.StatusNotFound, "this page has no admin tab")
-			return
-		}
-		if !sameOriginJSON(w, r) {
-			return
-		}
-		// Room for the text and the base it was loaded as, escaped.
-		r.Body = http.MaxBytesReader(w, r.Body, 3*maxInstructions)
-		next(w, r)
-	})
-}

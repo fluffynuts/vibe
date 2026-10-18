@@ -16,24 +16,6 @@ import (
 // it for the repository, in its git config, and vibe remembers the name to
 // suggest it next time (see docs/plan-new-conversation.md).
 
-// defaultBranching wraps the default branch's calls: the same protections
-// as reviewing, for the sandbox's folder.
-func (s *Server) defaultBranching(next http.HandlerFunc) http.HandlerFunc {
-	return s.authed(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			if !sameOriginJSON(w, r) {
-				return
-			}
-			r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
-		}
-		if !s.repositoryHere() {
-			writeError(w, http.StatusNotFound, "this sandbox's folder isn't a git repository")
-			return
-		}
-		next(w, r)
-	})
-}
-
 // defaultBranchState is the folder's default branch, with what to suggest
 // for setting one when it can't be told.
 func (s *Server) defaultBranchState(w http.ResponseWriter, r *http.Request) {

@@ -555,21 +555,3 @@ func writeStoreError(w http.ResponseWriter, err error) {
 	}
 	writeJSON(w, http.StatusInternalServerError, body)
 }
-
-// reviewing wraps the Review tab's calls: there's no such tab without a
-// review to show; changes get the same protections as the other tabs'.
-func (s *Server) reviewing(next http.HandlerFunc) http.HandlerFunc {
-	return s.authed(func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.ReviewTab == nil {
-			writeError(w, http.StatusNotFound, "this page has no review tab")
-			return
-		}
-		if r.Method == http.MethodPost {
-			if !sameOriginJSON(w, r) {
-				return
-			}
-			r.Body = http.MaxBytesReader(w, r.Body, maxPrompt)
-		}
-		next(w, r)
-	})
-}

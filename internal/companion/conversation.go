@@ -595,39 +595,6 @@ func (s *Server) conversationStop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"stopped": s.convo.stop()})
 }
 
-// conversing wraps a call that changes the conversation: the same
-// protections as changing(), but with room for a prompt, and nothing of
-// sbx's rules to forget.
-func (s *Server) conversing(next http.HandlerFunc) http.HandlerFunc {
-	return s.authed(func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.Converse == nil {
-			writeError(w, http.StatusNotFound, "this sandbox has no conversation to have")
-			return
-		}
-		if !sameOriginJSON(w, r) {
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, maxPrompt)
-		next(w, r)
-	})
-}
-
-// administering wraps a call from the Admin tab: the same protections as
-// conversing().
-func (s *Server) administering(next http.HandlerFunc) http.HandlerFunc {
-	return s.authed(func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.Admin == nil {
-			writeError(w, http.StatusNotFound, "this page has no admin tab")
-			return
-		}
-		if !sameOriginJSON(w, r) {
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
-		next(w, r)
-	})
-}
-
 // sameOriginJSON refuses, and says so, anything that is not a same-origin
 // POST of JSON: what a page on another site could not make.
 func sameOriginJSON(w http.ResponseWriter, r *http.Request) bool {

@@ -209,19 +209,3 @@ func (s *Server) managed(next http.HandlerFunc) http.HandlerFunc {
 		next(w, r)
 	}
 }
-
-// managing wraps a change from the Profiles tab: the same protections as
-// administering().
-func (s *Server) managing(next http.HandlerFunc) http.HandlerFunc {
-	return s.authed(func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.Manage == nil {
-			writeError(w, http.StatusNotFound, "this page has no Profiles tab")
-			return
-		}
-		if !sameOriginJSON(w, r) {
-			return
-		}
-		r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
-		next(w, r)
-	})
-}
