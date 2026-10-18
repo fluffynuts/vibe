@@ -60,16 +60,9 @@ func ParseAgents(help string) []string {
 }
 
 // captureOutContext runs sbx with args and returns what it printed, stdout
-// and stderr together, killing sbx if ctx is cancelled. An sbx
-// run with a cancellable ctx is also kept apart from the terminal's Ctrl-C:
-// the caller has taken on deciding when it ends, and a Ctrl-C would
-// otherwise reach sbx before the caller could ask what was meant.
+// and stderr together, killing sbx if ctx is cancelled.
 func captureOutContext(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "sbx", args...)
-	if ctx.Done() != nil {
-		ignoreTerminalInterrupt(cmd)
-		cmd.WaitDelay = time.Second
-	}
+	cmd := cancellable(ctx, args...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -80,16 +73,25 @@ func captureOutContext(ctx context.Context, args ...string) (string, error) {
 // captureSplitContext is captureOutContext, keeping what sbx prints on
 // stderr apart from stdout, for output that's read as data.
 func captureSplitContext(ctx context.Context, args ...string) (stdout, stderr string, err error) {
-	cmd := exec.CommandContext(ctx, "sbx", args...)
-	if ctx.Done() != nil {
-		ignoreTerminalInterrupt(cmd)
-		cmd.WaitDelay = time.Second
-	}
+	return split(cancellable(ctx, args...))
+}
+
+// split runs cmd, giving what it printed on stdout and on stderr apart.
+func split(cmd *exec.Cmd) (stdout, stderr string, err error) {
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
 	err = cmd.Run()
 	return out.String(), errOut.String(), err
+}
+
+// saying is err with what the command said on stderr, when it said
+// anything.
+func saying(err error, stderr string) error {
+	if msg := strings.TrimSpace(stderr); err != nil && msg != "" {
+		return fmt.Errorf("%w: %s", err, msg)
+	}
+	return err
 }
 
 // runInherit runs sbx with stdio connected to the current process, returning
@@ -332,9 +334,10 @@ func outputTo(cmd *exec.Cmd, out io.Writer) {
 	cmd.Stdout, cmd.Stderr = out, out
 }
 
-// cancellable is sbx with args, ended when ctx ends — and, being the
-// caller's to end, kept apart from the terminal's Ctrl-C, as in
-// captureOutContext. A ctx that never ends gives a plain command.
+// cancellable is sbx with args, ended when ctx ends. It is also kept apart
+// from the terminal's Ctrl-C: the caller has taken on deciding when it ends,
+// and a Ctrl-C would otherwise reach sbx before the caller could ask what
+// was meant. A ctx that never ends gives a plain command.
 func cancellable(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "sbx", args...)
 	if ctx.Done() != nil {
@@ -501,42 +504,17 @@ func ExecCaptureContext(ctx context.Context, name string, args ...string) (strin
 // stdout alone, for when that output is file content: anything sbx says on
 // stderr stays out of it (and is in the error, if the command fails).
 func ExecStdout(ctx context.Context, name string, args ...string) (string, error) {
-	full := append([]string{"exec", name, "--"}, args...)
-	cmd := exec.CommandContext(ctx, "sbx", full...)
-	if ctx.Done() != nil {
-		ignoreTerminalInterrupt(cmd)
-		cmd.WaitDelay = time.Second
-	}
-	var out, errOut bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errOut
-	if err := cmd.Run(); err != nil {
-		if msg := strings.TrimSpace(errOut.String()); msg != "" {
-			return out.String(), fmt.Errorf("%w: %s", err, msg)
-		}
-		return out.String(), err
-	}
-	return out.String(), nil
+	stdout, stderr, err := captureSplitContext(ctx, append([]string{"exec", name, "--"}, args...)...)
+	return stdout, saying(err, stderr)
 }
 
 // ExecInputStdout runs a command inside the sandbox with input on its
 // stdin, returning its stdout alone; ctx ending kills it.
 func ExecInputStdout(ctx context.Context, name, input string, args ...string) (string, error) {
-	full := append([]string{"exec", "-i", name, "--"}, args...)
-	cmd := exec.CommandContext(ctx, "sbx", full...)
-	ignoreTerminalInterrupt(cmd)
-	cmd.WaitDelay = time.Second
+	cmd := cancellable(ctx, append([]string{"exec", "-i", name, "--"}, args...)...)
 	cmd.Stdin = strings.NewReader(input)
-	var out, errOut bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errOut
-	if err := cmd.Run(); err != nil {
-		if msg := strings.TrimSpace(errOut.String()); msg != "" {
-			return out.String(), fmt.Errorf("%w: %s", err, msg)
-		}
-		return out.String(), err
-	}
-	return out.String(), nil
+	stdout, stderr, err := split(cmd)
+	return stdout, saying(err, stderr)
 }
 
 // ExecSilent runs a command inside the sandbox, discarding output, and
