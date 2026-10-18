@@ -758,6 +758,34 @@ test('a code block the agent wrote has a button copying just its code', async ()
   } finally { p.close() }
 })
 
+// What the agent writes can hide control characters in code (an escape that
+// ends a terminal's bracketed paste, so what follows runs): a code block
+// shows them, and its copy leaves them out, saying so. Newlines are kept
+// (and tabs, as the Markdown reader has them: spaces); a CRLF line end is a
+// line end.
+test('a code block shows hidden control characters, and copies without them', async () => {
+  const code = 'echo safe\x1b[201~\r\nrm -rf ~\x07\tdone\x9b'
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, '```\n' + code + '\n```')], running: false })
+  try {
+    const written = clipboardOf(p)
+    const shown = p.$('convo-log').querySelector('.msg.agent .code-block code').textContent
+    assert.equal(shown, 'echo safe\u241b[201~\nrm -rf ~\u2407    done\u2426')
+    await p.click(p.$('convo-log').querySelector('button.copy-code'))
+    assert.deepEqual(written, ['echo safe[201~\nrm -rf ~    done'])
+    assert.equal(p.$('toast').textContent, 'Copied, leaving out 3 hidden control characters')
+  } finally { p.close() }
+})
+
+// Nor does the rest of what the agent writes hide them, from the eye or
+// from a copy made by selecting it.
+test("the agent's text shows hidden control characters too", async () => {
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, 'run `ls\x1b[201~` then\x07 go')], running: false })
+  try {
+    const text = p.$('convo-log').querySelector('.msg.agent .md').textContent
+    assert.ok(text.includes('ls\u241b[201~') && text.includes('then\u2407 go'), text)
+  } finally { p.close() }
+})
+
 test("a copy the browser refuses says so", async () => {
   const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, '```\nx\n```')], running: false })
   try {

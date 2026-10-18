@@ -3523,8 +3523,8 @@
     // inLink: in a link's text, where a button can't go.
     const inline = (nodes, inLink) => nodes.flatMap((n) => {
       switch (n.type) {
-        case 'text': return inLink ? document.createTextNode(n.text) : withThreadRefs(n.text)
-        case 'code': return el('code', { text: n.text })
+        case 'text': return inLink ? document.createTextNode(visible(n.text)) : withThreadRefs(visible(n.text))
+        case 'code': return el('code', { text: visible(n.text) })
         case 'br': return el('br')
         case 'strong': return el('strong', {}, ...inline(n.children, inLink))
         case 'em': return el('em', {}, ...inline(n.children, inLink))
@@ -3533,7 +3533,7 @@
           const link = localLink(n.href)
           if (link) { link.replaceChildren(...inline(n.children, true)); return link }
           const label = n.children.map((c) => c.text || '').join('')
-          return document.createTextNode(label === n.href ? n.href : label + ' (' + n.href + ')')
+          return document.createTextNode(visible(label === n.href ? n.href : label + ' (' + n.href + ')'))
         }
       }
       return document.createTextNode('')
@@ -3559,18 +3559,39 @@
     return el('div', { class: 'md' }, ...blocks(window.vibeMarkdown.parse(text)))
   }
 
+  // HIDDEN_CONTROL is what a terminal acts on but a page doesn't show: the
+  // control characters bar tab and newline. In code the agent wrote, one can
+  // hide a command (an escape ending a terminal's bracketed paste, so the
+  // rest runs), so a code block shows them and its copy leaves them out.
+  const HIDDEN_CONTROL = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g
+
+  // controlPicture is the symbol Unicode has for control character c (␛ for
+  // escape); ␦ for the C1 controls, which have none.
+  function controlPicture(c) {
+    const code = c.charCodeAt(0)
+    if (code < 0x20) return String.fromCharCode(0x2400 + code)
+    return code === 0x7f ? '\u2421' : '\u2426'
+  }
+
+  // visible is text with its hidden control characters shown as symbols.
+  function visible(text) {
+    return text.replace(/\r\n/g, '\n').replace(HIDDEN_CONTROL, controlPicture)
+  }
+
   // codeBlock is a block of code with a button copying it: selecting it by
   // hand means scrolling, as Ctrl+A takes the whole conversation.
   function codeBlock(code) {
+    const text = code.replace(/\r\n/g, '\n')
+    const hidden = text.match(HIDDEN_CONTROL) || []
     const copy = async () => {
       try {
-        await navigator.clipboard.writeText(code)
-        toast('Copied')
+        await navigator.clipboard.writeText(text.replace(HIDDEN_CONTROL, ''))
+        toast(hidden.length ? 'Copied, leaving out ' + plural(hidden.length, 'hidden control character') : 'Copied')
       } catch (err) {
         toast("Couldn't copy: " + err.message, true)
       }
     }
-    return el('div', { class: 'code-block' }, el('pre', {}, el('code', { text: code })),
+    return el('div', { class: 'code-block' }, el('pre', {}, el('code', { text: visible(text) })),
       el('button', { type: 'button', class: 'copy-code small', title: 'Copy', 'aria-label': 'Copy the code', onclick: copy }, copyIcon()))
   }
 
