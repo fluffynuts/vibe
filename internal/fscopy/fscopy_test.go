@@ -134,3 +134,26 @@ func TestTreeKeepTimesNeverReadsThroughALinkOutOfTheSource(t *testing.T) {
 		}
 	}
 }
+
+func TestFileCopiesIntoAFolderItMakesAndKeepsTheMode(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "on-start")
+	write(t, src, "#!/bin/sh\n")
+	if err := os.Chmod(src, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(t.TempDir(), "agent-files", ".local", "bin", "on-start")
+	if err := File(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(dst); err != nil || string(data) != "#!/bin/sh\n" {
+		t.Errorf("copy = %q, %v", data, err)
+	}
+	if runtime.GOOS != "windows" {
+		if info, _ := os.Stat(dst); info.Mode().Perm() != 0o750 {
+			t.Errorf("mode = %v, want 0750", info.Mode().Perm())
+		}
+	}
+	if err := File(filepath.Join(t.TempDir(), "missing"), dst); err == nil {
+		t.Error("copying a file that isn't there succeeded")
+	}
+}
