@@ -122,9 +122,17 @@ func (d *Desk) take(t Taken) {
 		return
 	}
 
+	key := keyOf(t.Request)
+	// Describing can be slow (it reads the project), so it's done without
+	// holding what the page reads. Only Poll adds requests, on one
+	// goroutine, so nothing else can hold this key meanwhile.
+	note := ""
+	if d.Describe != nil && !d.holds(key) {
+		note = d.Describe(t.Request)
+	}
+
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	key := keyOf(t.Request)
 	var p *pending
 	for _, existing := range d.pending {
 		if existing.Key == key {
@@ -132,10 +140,7 @@ func (d *Desk) take(t Taken) {
 		}
 	}
 	if p == nil {
-		p = &pending{Pending: Pending{Key: key, Request: t.Request}}
-		if d.Describe != nil {
-			p.Note = d.Describe(t.Request)
-		}
+		p = &pending{Pending: Pending{Key: key, Request: t.Request, Note: note}}
 		d.pending = append(d.pending, p)
 		d.log("package request: %s", describe(t.Request))
 		if d.Policy != nil && d.Policy() == PolicyAllow {
@@ -146,6 +151,17 @@ func (d *Desk) take(t Taken) {
 	if !p.approved {
 		d.reply(t.Nonce, Waiting, waitingMessage)
 	}
+}
+
+func (d *Desk) holds(key string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, p := range d.pending {
+		if p.Key == key {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *Desk) fetchApproved(ctx context.Context) {

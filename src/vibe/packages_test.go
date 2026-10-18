@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -63,5 +64,41 @@ func TestAFolderTheAgentCanWriteIsComparedWithItsLinksFollowed(t *testing.T) {
 	}
 	if why := packagesUnavailable(alias, vibeHome, settings.Settings{}); why == "" {
 		t.Error("a link to the folder holding vibe's own passed as a project")
+	}
+}
+
+// What a request is to the project is worked out from the project's own
+// files, on the repository's default branch (set here, as with no origin).
+func TestARequestIsDescribedFromTheProjectOnTheDefaultBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git isn't installed")
+	}
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	project := func(version string) string {
+		return `<Project><ItemGroup><PackageReference Include="Corp.Lib" Version="` + version + `" /></ItemGroup></Project>`
+	}
+	run("init", "-q", "-b", "main")
+	run("config", "vibe.defaultBranch", "main")
+	writeFile(t, filepath.Join(dir, "App.csproj"), project("1.0.0"))
+	run("add", "-A")
+	run("commit", "-q", "-m", "start")
+	run("checkout", "-q", "-b", "feature")
+	writeFile(t, filepath.Join(dir, "App.csproj"), project("2.0.0"))
+
+	got := describeRequest(dir, packagereq.Request{Ecosystem: "nuget", ID: "Corp.Lib", Version: "2.0.0", Framework: "net8.0"})
+	if !strings.HasPrefix(got, "upgrade") || !strings.Contains(got, "1.0.0") {
+		t.Errorf("got %q", got)
+	}
+	got = describeRequest(dir, packagereq.Request{Ecosystem: "nuget", ID: "Other.Lib", Version: "1.0.0", Framework: "net8.0"})
+	if !strings.HasPrefix(got, "new") {
+		t.Errorf("got %q", got)
 	}
 }

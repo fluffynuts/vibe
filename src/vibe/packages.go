@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"vibe/internal/nugetfetch"
 	"vibe/internal/packagereq"
 	"vibe/internal/pathresolve"
+	"vibe/internal/review"
 	"vibe/internal/settings"
 	"vibe/internal/state"
 )
@@ -79,6 +81,28 @@ func packageDeskFor(lay layout.Layout, name string, inst state.Instance, merged 
 				return nugetfetch.Options{Root: root, Cache: cache, Env: os.Environ(), Timeout: fetchWithin}
 			},
 		}},
-		Log: func(line string) { note("%s", line) },
+		Describe: func(r packagereq.Request) string { return describeRequest(inst.Target, r) },
+		Log:      func(line string) { note("%s", line) },
 	}
+}
+
+// describeWithin bounds reading a project to say what a request is.
+const describeWithin = 30 * time.Second
+
+// describeRequest says what a request is to the project in target (new,
+// an upgrade, only missing), from the project's files; the agent's word
+// isn't asked.
+func describeRequest(target string, r packagereq.Request) string {
+	ctx, cancel := context.WithTimeout(context.Background(), describeWithin)
+	defer cancel()
+	mainline, err := review.DefaultBranch(ctx, target)
+	if err != nil {
+		return "couldn't read the project to say what this is: " + err.Error()
+	}
+	files, err := review.ReadProjectFiles(ctx, target, mainline.Name)
+	if err != nil {
+		return "couldn't read the project to say what this is: " + err.Error()
+	}
+	return nugetfetch.Classify(nugetfetch.Request{ID: r.ID, Version: r.Version, Framework: r.Framework},
+		nugetfetch.ProjectFiles{Committed: files.Committed, Working: files.Working}, mainline.Name)
 }
