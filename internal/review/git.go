@@ -384,6 +384,24 @@ func (r *repository) hasRef(name plumbing.ReferenceName) bool {
 	return err == nil
 }
 
+// originOf is the URL the repository dir is in has for its origin remote:
+// "" when it has none.
+func originOf(dir string) (string, error) {
+	r, err := open(dir)
+	if err != nil {
+		return "", err
+	}
+	defer r.close()
+	remote, err := r.git.Remote("origin")
+	if err != nil {
+		return "", nil
+	}
+	if urls := remote.Config().URLs; len(urls) > 0 {
+		return urls[0], nil
+	}
+	return "", nil
+}
+
 func defaultBranchOf(dir string) (Mainline, error) {
 	r, err := open(dir)
 	if err != nil {

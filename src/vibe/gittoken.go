@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"vibe/internal/cliargs"
 	"vibe/internal/gittoken"
 	"vibe/internal/prompt"
+	"vibe/internal/review"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
 )
@@ -74,10 +76,19 @@ var (
 	}
 )
 
-// repoOf is the GitHub repository target pushes to, or nil when it has no
-// GitHub remote yet.
+// repoOf is the GitHub repository target's origin remote points at, or nil
+// when it has none (a new project, often, not pushed anywhere yet), or one
+// that isn't on GitHub. It's read with go-git, in the helper that reads
+// repositories for the Review tab: the sandbox can write the repository's
+// config, and git would run (or wait on) what that names.
 func repoOf(target string) *gittoken.Repo {
-	if repo, ok := gittoken.RemoteOf(target); ok {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	url, err := review.Origin(ctx, target)
+	if err != nil {
+		return nil
+	}
+	if repo, ok := gittoken.ParseRemote(url); ok {
 		return &repo
 	}
 	return nil

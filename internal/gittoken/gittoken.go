@@ -24,7 +24,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -69,17 +68,6 @@ func ParseRemote(remote string) (repo Repo, ok bool) {
 		return Repo{Owner: m[1], Name: m[2], SSH: true}, true
 	}
 	return Repo{}, false
-}
-
-// RemoteOf is the GitHub repository dir's origin remote points at. ok is
-// false when dir isn't a git repository, has no origin, or its origin isn't
-// on GitHub — a new project, often, that hasn't been pushed anywhere yet.
-func RemoteOf(dir string) (repo Repo, ok bool) {
-	out, err := exec.Command("git", "-C", dir, "remote", "get-url", "origin").Output()
-	if err != nil {
-		return Repo{}, false
-	}
-	return ParseRemote(string(out))
 }
 
 // Kind says what sort of token a token is, from its prefix

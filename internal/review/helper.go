@@ -114,6 +114,8 @@ func serve(in io.Reader) helperAnswer {
 		result, err = optionsOf(ctx, a.Dir)
 	case "defaultBranch":
 		result, err = defaultBranchOf(a.Dir)
+	case "origin":
+		result, err = originOf(a.Dir)
 	case "status":
 		result, err = statusOf(ctx, a.Dir)
 	case "moves":
@@ -270,6 +272,13 @@ func Root(ctx context.Context, dir string) (string, error) {
 func DefaultBranch(ctx context.Context, dir string) (Mainline, error) {
 	var out Mainline
 	return out, isolated(ctx, "defaultBranch", helperArgs{Dir: dir}, &out)
+}
+
+// Origin is the URL the repository the folder dir is in has for its origin
+// remote: "" when it has none. An error is the repository not being read.
+func Origin(ctx context.Context, dir string) (string, error) {
+	var out string
+	return out, isolated(ctx, "origin", helperArgs{Dir: dir}, &out)
 }
 
 // Options are the reviews the folder dir can be started on.
