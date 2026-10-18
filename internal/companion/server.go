@@ -9,16 +9,18 @@
 //
 //   - it listens on 127.0.0.1 only;
 //   - it answers only requests whose Host is localhost, 127.0.0.1 or ::1 on
-//     its own port, which defeats DNS rebinding — and also anything the
-//     sandbox sends through host.docker.internal;
+//     its own port, which defeats DNS rebinding. It doesn't stop the
+//     sandbox: a request sent through host.docker.internal (where its
+//     network rules let one through) can say any Host it likes;
 //   - every call to /api (bar the ping that tells two vibes apart) needs the
 //     sandbox's secret token in a header, which a page on another site
 //     can't add without a CORS preflight this server never allows. The token
-//     is only ever in the URL's fragment, which a browser keeps from the
-//     server, from logs and from Referer headers;
+//     is what keeps the sandbox out: it is only ever in the URL's fragment,
+//     which a browser keeps from the server, from logs and from Referer
+//     headers, and it is never written into the sandbox;
 //   - changes need POST, a JSON body, and a same-origin request;
-//   - it never offers a rule that would match every host, and it only ever
-//     scopes a rule to this sandbox.
+//   - it never offers a rule that would match every host, or far more than
+//     one site, and it only ever scopes a rule to this sandbox.
 //
 // What sbx printed — host names, which the sandbox itself chooses — is only
 // ever shown as text, never as markup (see ui/app.js).
@@ -195,6 +197,10 @@ func Start(cfg Config) (*Server, error) {
 	s.http = &http.Server{
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
+		// A connection left open between requests is let go: the sandbox
+		// may be able to reach this port, and could hold open as many as
+		// it liked.
+		IdleTimeout: time.Minute,
 	}
 	go s.http.Serve(ln)
 	s.done = make(chan struct{})
