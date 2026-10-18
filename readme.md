@@ -202,7 +202,7 @@ when they're needed:
     nothing to update.
 - **A sandbox** is out of date when what it would be built from now differs from what it was
   built from: the kit, the agent, the environment, the published ports, and the folders of this
-  machine's it's given (its memories, the review's inbox, the clipboard's history, a NuGet folder).
+  machine's it's given (its memories, the review's inbox, the clipboard's history, the NuGet packages and package requests).
   Its Claude theme doesn't count. A sandbox built before vibe kept track (of any of these) is out
   of date. Rebuilding carries across
   what vibe knows of (agent memories, theme, GitHub token, timezone, the conversation), but
@@ -814,6 +814,46 @@ sandbox gets no token unless `--git-token-env VAR` names an environment variable
 the token itself on the command line, where anyone on the machine can read it). That token is
 checked the same way, and turned down if GitHub won't let it push. `--git-rules` picks the rules.
 
+### NuGet packages and private feeds
+
+The `dotnet` feature gives a sandbox the host's NuGet **package cache**, read-only, and nothing
+else of `~/.nuget`: its config (private feeds' addresses and credentials) and its plugins stay
+on the host, and the agent can't plant code in a package your own builds then run.
+
+- **Packages the host already has** are used as they are.
+- **Public packages** (nuget.org) the sandbox restores into a cache of its own. Rider on the host
+  doesn't resolve those until the host restores them itself.
+- **A package from a private feed** the sandbox can't sign in to. When its restore fails with
+  `NU1101` or `NU1102`, the agent asks you for it with `vibe-nuget fetch <id> <version>`. The
+  request waits on the companion page's **Admin tab**, with what it is to your project (a new
+  package, an upgrade or a downgrade from what the default branch has, or one already used
+  that's only missing from your cache, worked out from the project's files and not from the
+  agent's word). Tick what to allow and press **Allow selected** (or **Deny all**); vibe then
+  fetches them on this machine with your own NuGet config, so every feed and credential you have
+  works with nothing to set up, into the cache the sandbox reads. Set `packages: allow` in
+  `settings.yaml` to skip the asking.
+- **vibe never restores the agent's project** on the host, which could run its code. It restores
+  a throwaway project of its own, for exactly the package asked for, with `Directory.Build.props`,
+  `.targets` and `Directory.Packages.props` switched off.
+- **A `nuget.config` in the sandbox's folder** is used for a fetch only once you approve it on the
+  Admin tab, which shows its sources and warns of any that take the name of one of yours (the
+  credentials you keep for that name would be sent to the new address). An approval is of the
+  file's content: any change asks again.
+- Requests are answered while vibe is running for the sandbox with its companion page served
+  (not `-N`, nor `companion: off`); otherwise they wait. A sandbox whose folder holds vibe's own
+  (your home folder, say) or NuGet's gets no fetches, and says why: the agent could change what
+  a fetch does.
+- `nuget: shared` in `settings.yaml` goes back to sharing all of `~/.nuget` read-write, for
+  anyone who'd rather have no friction. Creating such a sandbox says what the agent can then do.
+
+Existing sandboxes pick this up when they're rebuilt (`vibe --update-sandboxes` does it).
+
+**Not yet tried:** credential providers (NuGet plugins, such as Azure Artifacts'), which should
+work for the host's fetch as for any restore. If you rely on one, please try `vibe-nuget fetch`
+and file an issue saying what happened. Windows and macOS hosts are covered by the standalone
+scripts in `docs/vm-tests/nuget`, which haven't all been run yet. A source in an approved
+`nuget.config` given as a relative path is relative to vibe's throwaway folder, not your project.
+
 ### Checkbox prompts
 
 Anywhere vibe asks you to select several things — the guided feature picker, `-x`/`--cleanup`, `-d`/`--delete` —
@@ -945,7 +985,9 @@ into a real script or config file.
 memory: 12g          # sandbox memory limit; a new sandbox asks, starting here, capped at
                      #    half the host's memory
 agent: claude         # which coding agent to run
-nugetDir: ~/.nuget    # mounted into the sandbox and symlinked in, if it exists on the host
+nugetDir: ~/.nuget    # the host's NuGet folder: its packages are given to the sandbox, if it has them
+nuget: fallback       # fallback (default): packages read-only, nothing else; shared: all of nugetDir, read-write
+packages: ask         # ask (default): packages the agent asks for wait for you on the Admin tab; allow: fetched at once
 memoryRoot: ~/.vibe/memories   # where per-sandbox agent memories are backed up
 defaultFeatures:      # library features a guided profile starts with selected
   - dotnet

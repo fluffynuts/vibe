@@ -50,6 +50,7 @@ vibe-unpacked/
                     /bin
                         start-rabbit
                         link-nuget
+                        vibe-nuget
                         start-elasticsearch
                         on-start
             agent-instructions.md
