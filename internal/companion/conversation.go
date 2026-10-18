@@ -349,8 +349,9 @@ func (c *conversation) stop() bool {
 	return true
 }
 
-// reset forgets the conversation, unless a turn is running.
-func (c *conversation) reset() bool {
+// afresh forgets the conversation, unless a turn is running, and begins
+// the new one saying what was done for it, and what failed, if anything.
+func (c *conversation) afresh(done string, failed []string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.running {
@@ -359,6 +360,12 @@ func (c *conversation) reset() bool {
 	c.events, c.session, c.prompt = nil, "", 0
 	// Pages showing the old events are told to clear them.
 	c.add("reset", "", nil)
+	if done != "" {
+		c.add("note", done, nil)
+	}
+	for _, why := range failed {
+		c.add("error", why, nil)
+	}
 	c.save()
 	return true
 }
@@ -581,14 +588,6 @@ func (s *Server) claimTurn(prompt string) (launch func(), abandon func(error), o
 
 func (s *Server) conversationStop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"stopped": s.convo.stop()})
-}
-
-func (s *Server) conversationNew(w http.ResponseWriter, r *http.Request) {
-	if !s.convo.supersede() || !s.convo.reset() {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "stop the agent first"})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // conversing wraps a call that changes the conversation: the same

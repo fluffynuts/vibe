@@ -226,3 +226,29 @@ func recordedAgent(vibeHome, name, def string) string {
 func recordedTimezone(vibeHome, name string) string {
 	return recorded(vibeHome, name, timezone.Host(), func(i state.Instance) string { return i.Timezone })
 }
+
+// preferredDefaultBranch is the name the companion page suggests for a
+// repository's default branch, from the settings.yaml at path: the one last
+// set. A file that can't be read suggests nothing; setting one says why.
+func preferredDefaultBranch(path string) func() string {
+	return func() string {
+		s, _ := settings.Load(path)
+		return s.DefaultBranch
+	}
+}
+
+// rememberDefaultBranch keeps the name just set for a repository's default
+// branch in the settings.yaml at path, to suggest next time, leaving the
+// rest of the file as it was.
+func rememberDefaultBranch(path string) func(name string) error {
+	return func(name string) error {
+		data, err := os.ReadFile(path)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if data, err = settings.Set(data, "defaultBranch", name); err != nil {
+			return fmt.Errorf("updating %s: %w", displayPath(path), err)
+		}
+		return os.WriteFile(path, data, 0o644)
+	}
+}

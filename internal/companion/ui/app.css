@@ -218,6 +218,12 @@ dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top
 pre.info { margin: 0; padding: 8px; overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; font: 12px var(--mono); white-space: pre-wrap; }
 pre.log { max-height: 280px; }
 .bad-text { color: var(--bad); }
+.default-setter { display: flex; flex-direction: column; gap: 4px; }
+.default-setter-row { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.default-setter-row input[type="text"] { min-width: 0; width: 10em; }
+/* on the Review tab, it wraps to the buttons' width, rather than widening them */
+.review-start-options .default-setter { width: 0; min-width: 100%; }
+.review-start-options .default-setter-row { justify-content: center; }
 ul.checks, ul.plain { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 ul.checks label { display: flex; gap: 8px; align-items: baseline; cursor: pointer; }
 ul.checks .was { font-size: 11px; color: var(--muted); }
@@ -348,6 +354,8 @@ ul.plain li .spacer { flex: 1; }
 .review-start { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 15vh 16px 32px; text-align: center; }
 .review-start-options { display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 18em; }
 .review-start-options .gap { height: 12px; }
+/* a note wraps to the buttons' width, rather than widening them */
+.review-start-options .note { width: 0; min-width: 100%; }
 .review-body { display: grid; grid-template-columns: var(--review-tree-width, 25%) 6px minmax(0, 1fr); align-items: start; }
 /* The tab scrolls in a box of its own, as the Admin tab does, so the project
    line and the tabs stay put; its title bar stays at the top of the box,
@@ -434,6 +442,16 @@ html.themed .commands li[aria-selected="true"] {
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
 #changed .choices { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 14px; }
 #changed .choices label { display: flex; gap: 8px; align-items: baseline; }
+
+/* the "New conversation" dialog's options: what each one leads to is indented under it */
+.fresh-options { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 4px; }
+.fresh-options label { display: flex; gap: 8px; align-items: baseline; }
+.fresh-options .sub { margin-left: 24px; }
+.fresh-options .note { margin-top: 2px; }
+#fresh-branch-details { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+#fresh-branch-details[hidden] { display: none; }
+#fresh-branch-name { font: 13px var(--mono); }
+#fresh .choices { display: flex; flex-direction: column; gap: 4px; }
 
 /* the agent's replies, as Markdown */
 .msg.agent, .msg.user { white-space: normal; }

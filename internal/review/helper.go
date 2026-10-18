@@ -112,6 +112,8 @@ func serve(in io.Reader) helperAnswer {
 		result, err = root(ctx, a.Dir)
 	case "options":
 		result, err = optionsOf(ctx, a.Dir)
+	case "defaultBranch":
+		result, err = defaultBranchOf(a.Dir)
 	case "status":
 		result, err = statusOf(ctx, a.Dir)
 	case "textOf":
@@ -262,6 +264,14 @@ func Unpushed(ctx context.Context, dir, upstream string, how ...Diffing) ([]File
 func Root(ctx context.Context, dir string) (string, error) {
 	var out string
 	return out, isolated(ctx, "root", helperArgs{Dir: dir}, &out)
+}
+
+// DefaultBranch is the main line of the repository the folder dir is in:
+// the branch origin's HEAD names, else the one set for it; none is guessed.
+// An error is the repository not being read.
+func DefaultBranch(ctx context.Context, dir string) (Mainline, error) {
+	var out Mainline
+	return out, isolated(ctx, "defaultBranch", helperArgs{Dir: dir}, &out)
 }
 
 // Options are the reviews the folder dir can be started on.

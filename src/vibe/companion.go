@@ -289,24 +289,28 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 	}
 
 	srv, err := companion.Start(companion.Config{
-		Sandbox:          name,
-		Agent:            agent,
-		Token:            token,
-		Port:             port,
-		Policy:           &policy.Client{Sandbox: name},
-		ClipboardURL:     func() string { return clipboardPageURL(vibeHome, name) },
-		StartClipboard:   func() ([]string, error) { return startClipboard(name) },
-		ClipboardTrouble: func() string { return clipboardTrouble(name) },
-		Workspace:        inst.Target,
-		Converse:         conversationFor(vibeHome, name, inst),
-		Prepare:          readyForTurn(name),
-		History:          state.ConversationPath(vibeHome, name),
-		ReviewTab:        reviewTabFor(vibeHome, name, inst),
-		Admin:            adminFor(lay, name, inst.Target),
-		Manage:           &companionManager{lay: lay, own: name},
-		ThemeColor:       themeColorFor(lay, name, inst, agent),
-		KeepAwake:        keepAwakeFor(name),
-		Log:              func(line string) { note("%s", line) },
+		Sandbox:                name,
+		Agent:                  agent,
+		Token:                  token,
+		Port:                   port,
+		Policy:                 &policy.Client{Sandbox: name},
+		ClipboardURL:           func() string { return clipboardPageURL(vibeHome, name) },
+		StartClipboard:         func() ([]string, error) { return startClipboard(name) },
+		ClipboardTrouble:       func() string { return clipboardTrouble(name) },
+		Workspace:              inst.Target,
+		Converse:               conversationFor(vibeHome, name, inst),
+		Prepare:                readyForTurn(name),
+		SandboxGit:             sandboxGitFor(name, inst.Target),
+		PreferredDefaultBranch: preferredDefaultBranch(lay.HomePath("settings.yaml")),
+		RememberDefaultBranch:  rememberDefaultBranch(lay.HomePath("settings.yaml")),
+		Wake:                   readyForTurn(name),
+		History:                state.ConversationPath(vibeHome, name),
+		ReviewTab:              reviewTabFor(vibeHome, name, inst),
+		Admin:                  adminFor(lay, name, inst.Target),
+		Manage:                 &companionManager{lay: lay, own: name},
+		ThemeColor:             themeColorFor(lay, name, inst, agent),
+		KeepAwake:              keepAwakeFor(name),
+		Log:                    func(line string) { note("%s", line) },
 	})
 	if err != nil {
 		note("companion: could not serve the page on port %d: %v", port, err)
@@ -436,6 +440,20 @@ func readyForTurn(name string) func(ctx context.Context, say func(string)) error
 		// carries on, running its start-up again, as after the Admin tab's Start.
 		hold.release()
 		return nil
+	}
+}
+
+// sandboxGitFor runs git in sandbox name on its folder, target (the same
+// path there as here). It never prompts: with nobody to answer, a missing
+// credential fails at once rather than waiting. Nil for a sandbox with no
+// folder on record.
+func sandboxGitFor(name, target string) func(ctx context.Context, args ...string) (string, error) {
+	if target == "" {
+		return nil
+	}
+	return func(ctx context.Context, args ...string) (string, error) {
+		full := append([]string{"env", "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -o BatchMode=yes", "git", "-C", target}, args...)
+		return sbxrun.ExecStdout(ctx, name, full...)
 	}
 }
 

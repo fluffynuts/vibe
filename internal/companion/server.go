@@ -88,6 +88,20 @@ type Config struct {
 	// shows; an error ends the turn with it, unrun. Nil means nothing is
 	// done first.
 	Prepare func(ctx context.Context, say func(string)) error
+	// SandboxGit runs git, with args, in the sandbox on its folder (the
+	// same path as Workspace), giving what it wrote to stdout; a failure
+	// carries what it said. Nil means the page can't start a new branch.
+	SandboxGit func(ctx context.Context, args ...string) (string, error)
+	// Wake gets the sandbox running for something the user asked of it,
+	// starting it if it's stopped, and saying what it does through say; an
+	// error says why it can't. Nil means nothing is done first.
+	Wake func(ctx context.Context, say func(string)) error
+	// PreferredDefaultBranch is the name to suggest for a repository's
+	// default branch, when origin can't say which it is: the one last set
+	// ("" for none). RememberDefaultBranch keeps the one just set, for next
+	// time. Nil means nothing is suggested, or kept.
+	PreferredDefaultBranch func() string
+	RememberDefaultBranch  func(name string) error
 	// ReviewTab is what the Review tab shows; nil means the page has no
 	// such tab.
 	ReviewTab *ReviewTab
@@ -279,6 +293,10 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"POST /api/conversation/send", s.conversing(s.conversationSend)},
 		{"POST /api/conversation/stop", s.conversing(s.conversationStop)},
 		{"POST /api/conversation/new", s.conversing(s.conversationNew)},
+		{"POST /api/conversation/new/options", s.conversing(s.conversationNewOptions)},
+		{"POST /api/conversation/new/fetch", s.conversing(s.conversationNewFetch)},
+		{"GET /api/default-branch", s.defaultBranching(s.defaultBranchState)},
+		{"POST /api/default-branch", s.defaultBranching(s.defaultBranchSet)},
 		{"GET /api/admin", s.authed(s.adminState)},
 		{"POST /api/admin/do", s.administering(s.adminDo)},
 		{"POST /api/admin/upgrades", s.administering(s.adminCheckUpgrades)},

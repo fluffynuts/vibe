@@ -43,6 +43,10 @@ type Settings struct {
 	// AutoUpdate false stops a session start bringing an out-of-date
 	// profile and sandbox up to date. Unset means it does.
 	AutoUpdate *bool `yaml:"autoUpdate,omitempty"`
+	// DefaultBranch is the name the companion page suggests for a
+	// repository's default branch when origin can't say which it is: the
+	// one last set there.
+	DefaultBranch string `yaml:"defaultBranch,omitempty"`
 }
 
 // Load reads a settings.yaml file. A missing file yields a zero Settings and

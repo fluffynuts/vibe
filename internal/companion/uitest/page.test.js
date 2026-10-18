@@ -543,10 +543,11 @@ const allOptions = { uncommitted: true, defaultBranch: 'master', upstream: 'orig
 
 // startPage is a page whose fake vibe keeps the review as the page starts,
 // closes and reopens it.
-async function startPage({ review = none, options = allOptions, conversation = true } = {}) {
+async function startPage({ review = none, options = allOptions, conversation = true, defaultBranch = { why: '' } } = {}) {
   let current = review
   return openPage({
     routes: {
+      '/api/default-branch': (call) => (typeof defaultBranch === 'function' ? defaultBranch(call) : defaultBranch),
       '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation, reviewAt: '', attention: {} },
       '/api/review': () => ({ review: current, diff: [] }),
       '/api/review/options': options,
@@ -2328,5 +2329,424 @@ test("the log says when it couldn't be checked against the rules", async () => {
   const p = await logPage({ entries: [], unresolved: "The rules couldn't be read" })
   try {
     assert.equal(p.$('banner').textContent, "The rules couldn't be read")
+  } finally { p.close() }
+})
+
+// --- "New conversation" ---------------------------------------------------------------------
+
+// freshPage is a page whose "New conversation" dialog is offered options;
+// fetched is what checking origin says, and answer what starting anew does.
+// A function for options or fetched answers when the test says (a promise).
+// A call left unanswered keeps the page from settling: such a test clicks
+// with clickNow, which lets the page run a few turns (see turns).
+const clickNow = async (p, id) => { p.$(id).click(); await turns() }
+
+async function freshPage({ options = { review: false }, fetched = { checked: true, local: true, ahead: 0, behind: 0 }, answer = { ok: true }, open = true } = {}) {
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, attention: {} },
+      '/api/conversation': { events: [], last: 0, running: false },
+      '/api/conversation/new/options': typeof options === 'function' ? options : () => options,
+      '/api/conversation/new/fetch': typeof fetched === 'function' ? fetched : () => fetched,
+      '/api/conversation/new': () => answer,
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+  })
+  if (open) await p.click('convo-new')
+  return p
+}
+
+const shown = (p, id) => { const n = p.$(id); return !!n && !n.hidden && !n.closest('[hidden]') }
+const clean = { current: 'feat/a', dirty: false, conflicted: false, default: 'master' }
+
+test('New conversation asks first, offering only what applies', async () => {
+  const p = await freshPage()
+  try {
+    assert.ok(p.$('fresh').open)
+    assert.ok(!shown(p, 'fresh-clipboard-row'), 'no clipboard')
+    assert.ok(!shown(p, 'fresh-review-row'), 'no review')
+    assert.ok(!shown(p, 'fresh-branch-row'), 'no repository')
+    await p.click('fresh-run')
+    assert.deepEqual(p.posted('/api/conversation/new'), [{ clipboard: '', review: false, branch: null }])
+    assert.ok(!p.$('fresh').open)
+  } finally { p.close() }
+})
+
+test('cancelling starts nothing', async () => {
+  const p = await freshPage()
+  try {
+    p.$('fresh').close('cancel')
+    await p.settle()
+    assert.deepEqual(p.posted('/api/conversation/new'), [])
+  } finally { p.close() }
+})
+
+test('the clipboard and the review are ticked to be cleared and closed', async () => {
+  const p = await freshPage({ options: { review: true, clipboard: { sent: 2, unsent: 1 } } })
+  try {
+    assert.ok(shown(p, 'fresh-clipboard-row') && p.$('fresh-clipboard').checked)
+    assert.ok(shown(p, 'fresh-unsent-row') && p.$('fresh-unsent').checked, 'unsent items, so asked about')
+    assert.match(p.$('fresh-unsent-row').textContent, /1 /)
+    assert.ok(shown(p, 'fresh-review-row') && p.$('fresh-review').checked)
+    await p.click('fresh-run')
+    assert.deepEqual(p.posted('/api/conversation/new'), [{ clipboard: 'all', review: true, branch: null }])
+  } finally { p.close() }
+})
+
+test('unsent items are kept when that box is unticked', async () => {
+  const p = await freshPage({ options: { clipboard: { sent: 2, unsent: 1 } } })
+  try {
+    await p.click('fresh-unsent')
+    await p.click('fresh-run')
+    assert.equal(p.posted('/api/conversation/new')[0].clipboard, 'sent')
+  } finally { p.close() }
+})
+
+test('with nothing unsent, only the sent items are offered for clearing', async () => {
+  const p = await freshPage({ options: { clipboard: { sent: 2, unsent: 0 } } })
+  try {
+    assert.ok(shown(p, 'fresh-clipboard-row'))
+    assert.ok(!shown(p, 'fresh-unsent-row'))
+    await p.click('fresh-run')
+    assert.equal(p.posted('/api/conversation/new')[0].clipboard, 'sent')
+  } finally { p.close() }
+})
+
+test('an empty clipboard is not offered for clearing', async () => {
+  const p = await freshPage({ options: { clipboard: { sent: 0, unsent: 0 } } })
+  try {
+    assert.ok(!shown(p, 'fresh-clipboard-row'))
+  } finally { p.close() }
+})
+
+test('the dialog waits for the sandbox before it can start, saying so', async () => {
+  let answer
+  const p = await freshPage({ options: () => new Promise((resolve) => { answer = resolve }), open: false })
+  try {
+    await clickNow(p, 'convo-new')
+    assert.ok(p.$('fresh-run').disabled)
+    assert.ok(shown(p, 'fresh-loading'))
+    assert.match(p.$('fresh-loading').textContent, /sandbox/)
+    answer({ review: true })
+    await p.settle()
+    assert.ok(!p.$('fresh-run').disabled)
+    assert.ok(!shown(p, 'fresh-loading'))
+  } finally { p.close() }
+})
+
+test("what the sandbox can't do is said, not offered", async () => {
+  const why = 'The sandbox was stopped, so it is left stopped.'
+  const p = await freshPage({ options: { clipboard: { sent: 0, unsent: 0, unavailable: why }, branch: { unavailable: why } } })
+  try {
+    assert.ok(shown(p, 'fresh-clipboard-row') && p.$('fresh-clipboard').disabled && !p.$('fresh-clipboard').checked)
+    assert.ok(shown(p, 'fresh-branch-row') && p.$('fresh-branch').disabled)
+    assert.ok(p.$('fresh').textContent.includes(why))
+    await p.click('fresh-run')
+    assert.deepEqual(p.posted('/api/conversation/new'), [{ clipboard: '', review: false, branch: null }])
+  } finally { p.close() }
+})
+
+test('a new branch is unticked; ticking it offers a name starting feat/, with the cursor at its end', async () => {
+  const p = await freshPage({ options: { branch: clean } })
+  try {
+    assert.ok(shown(p, 'fresh-branch-row') && !p.$('fresh-branch').checked)
+    assert.ok(!shown(p, 'fresh-branch-details'))
+    await p.click('fresh-branch')
+    assert.ok(shown(p, 'fresh-branch-details'))
+    const name = p.$('fresh-branch-name')
+    assert.equal(name.value, 'feat/')
+    assert.equal(p.window.document.activeElement, name)
+    assert.equal(name.selectionStart, 5)
+    assert.equal(name.selectionEnd, 5)
+    assert.ok(p.$('fresh-from-here').checked, 'from here by default')
+    assert.match(p.$('fresh-from-default-row').textContent, /origin\/master/)
+  } finally { p.close() }
+})
+
+test('the new branch is asked for as named, from where it was chosen', async () => {
+  const p = await freshPage({ options: { branch: clean } })
+  try {
+    await p.click('fresh-branch')
+    await p.type(p.$('fresh-branch-name'), 'feat/thing')
+    await p.click('fresh-from-default')
+    await p.click('fresh-run')
+    assert.deepEqual(p.posted('/api/conversation/new')[0].branch, { name: 'feat/thing', from: 'default', update: false })
+  } finally { p.close() }
+})
+
+test('on the default branch, branching from it is not offered, and origin is not asked', async () => {
+  const p = await freshPage({ options: { branch: Object.assign({}, clean, { current: 'master' }) } })
+  try {
+    await p.click('fresh-branch')
+    assert.ok(!shown(p, 'fresh-from-default-row'))
+    assert.deepEqual(p.posted('/api/conversation/new/fetch'), [])
+  } finally { p.close() }
+})
+
+test("without origin/HEAD the default branch isn't guessed: the fix is given", async () => {
+  const p = await freshPage({ options: { branch: { current: 'feat/a', noDefault: 'origin/HEAD isn\'t set. `git remote set-head origin --auto` sets it.' } } })
+  try {
+    await p.click('fresh-branch')
+    assert.ok(!shown(p, 'fresh-from-default-row'))
+    assert.ok(p.$('fresh-branch-details').textContent.includes('git remote set-head origin --auto'))
+    assert.deepEqual(p.posted('/api/conversation/new/fetch'), [])
+  } finally { p.close() }
+})
+
+test('a dirty tree: warned that the changes come along, and branching from the default branch is disabled', async () => {
+  const p = await freshPage({ options: { branch: Object.assign({}, clean, { dirty: true }) } })
+  try {
+    await p.click('fresh-branch')
+    assert.ok(shown(p, 'fresh-dirty'))
+    assert.match(p.$('fresh-dirty').textContent, /come with you/)
+    assert.ok(p.$('fresh-from-default').disabled)
+    assert.match(p.$('fresh-from-default-row').textContent, /uncommitted changes/)
+  } finally { p.close() }
+})
+
+test('a clean tree: no warning', async () => {
+  const p = await freshPage({ options: { branch: clean } })
+  try {
+    await p.click('fresh-branch')
+    assert.ok(!shown(p, 'fresh-dirty'))
+    assert.ok(!p.$('fresh-from-default').disabled)
+  } finally { p.close() }
+})
+
+test('ticking a new branch checks origin once, saying so while it does', async () => {
+  let answer
+  const p = await freshPage({ options: { branch: clean }, fetched: () => new Promise((resolve) => { answer = resolve }) })
+  try {
+    await clickNow(p, 'fresh-branch')
+    assert.match(p.$('fresh-fetch').textContent, /Checking whether origin\/master is up to date/)
+    answer({ checked: true, local: true, ahead: 0, behind: 0 })
+    await p.settle()
+    await p.click('fresh-branch')
+    await p.click('fresh-branch')
+    assert.equal(p.posted('/api/conversation/new/fetch').length, 1)
+    assert.ok(!shown(p, 'fresh-fetch'), 'up to date: nothing to say')
+    assert.ok(!shown(p, 'fresh-update-row'))
+  } finally { p.close() }
+})
+
+test("a check that couldn't be made says so, and to check yourself", async () => {
+  const p = await freshPage({ options: { branch: clean }, fetched: { checked: false, why: 'could not read Username' } })
+  try {
+    await p.click('fresh-branch')
+    assert.ok(shown(p, 'fresh-fetch'))
+    assert.match(p.$('fresh-fetch').textContent, /Couldn't check whether origin\/master is up to date: could not read Username/)
+    assert.match(p.$('fresh-fetch').textContent, /yourself/)
+    assert.ok(!shown(p, 'fresh-update-row'))
+  } finally { p.close() }
+})
+
+test('a local default branch behind origin is offered, ticked, for a fast-forward', async () => {
+  const p = await freshPage({ options: { branch: clean }, fetched: { checked: true, local: true, ahead: 0, behind: 3 } })
+  try {
+    await p.click('fresh-branch')
+    assert.ok(shown(p, 'fresh-update-row') && p.$('fresh-update').checked)
+    assert.match(p.$('fresh-update-row').textContent, /master is 3 commits behind origin/)
+    await p.type(p.$('fresh-branch-name'), 'feat/x')
+    await p.click('fresh-run')
+    assert.deepEqual(p.posted('/api/conversation/new')[0].branch, { name: 'feat/x', from: 'here', update: true })
+  } finally { p.close() }
+})
+
+test('a local default branch with its own commits is left alone, saying so', async () => {
+  const p = await freshPage({ options: { branch: clean }, fetched: { checked: true, local: true, ahead: 2, behind: 1 } })
+  try {
+    await p.click('fresh-branch')
+    assert.ok(!shown(p, 'fresh-update-row'))
+    assert.ok(shown(p, 'fresh-fetch'))
+    assert.match(p.$('fresh-fetch').textContent, /master has 2 commits not on origin/)
+  } finally { p.close() }
+})
+
+test('a refusal keeps the dialog open, saying why', async () => {
+  const p = await freshPage({ options: { branch: clean }, answer: { status: 400, body: { error: 'There\'s already a branch called feat/x.' } } })
+  try {
+    await p.click('fresh-branch')
+    await p.type(p.$('fresh-branch-name'), 'feat/x')
+    await p.click('fresh-run')
+    assert.ok(p.$('fresh').open)
+    assert.ok(shown(p, 'fresh-error'))
+    assert.match(p.$('fresh-error').textContent, /already a branch called feat\/x/)
+  } finally { p.close() }
+})
+
+test('a branch with no name is asked for before anything is sent', async () => {
+  const p = await freshPage({ options: { branch: clean } })
+  try {
+    await p.click('fresh-branch')
+    await p.type(p.$('fresh-branch-name'), '  ')
+    await p.click('fresh-run')
+    assert.deepEqual(p.posted('/api/conversation/new'), [])
+    assert.ok(shown(p, 'fresh-error'))
+  } finally { p.close() }
+})
+
+test('opening it again starts from the defaults', async () => {
+  const p = await freshPage({ options: { review: true, branch: clean } })
+  try {
+    await p.click('fresh-review')
+    await p.click('fresh-branch')
+    await p.type(p.$('fresh-branch-name'), 'feat/x')
+    p.$('fresh').close('cancel')
+    await p.settle()
+    await p.click('convo-new')
+    assert.ok(p.$('fresh-review').checked)
+    assert.ok(!p.$('fresh-branch').checked)
+    assert.ok(!shown(p, 'fresh-branch-details'))
+    assert.equal(p.$('fresh-branch-name').value, 'feat/')
+  } finally { p.close() }
+})
+
+// More of the form follows the name, so Enter there would start before the
+// rest was seen; and the form's first button, which Enter would otherwise
+// press, is Cancel.
+test('Enter in the branch name neither starts nor cancels', async () => {
+  const p = await freshPage({ options: { branch: clean } })
+  try {
+    await p.click('fresh-branch')
+    const name = p.$('fresh-branch-name')
+    const enter = new p.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    name.dispatchEvent(enter)
+    await p.settle()
+    assert.ok(enter.defaultPrevented, "the browser's own Enter (pressing Cancel) is stopped")
+    assert.deepEqual(p.posted('/api/conversation/new'), [])
+    assert.ok(p.$('fresh').open)
+  } finally { p.close() }
+})
+
+test("with no default branch to review against, the Review tab says why", async () => {
+  const why = "Can't tell the default branch: origin/HEAD isn't set. `git remote set-head origin --auto` sets it."
+  const p = await startPage({ options: { uncommitted: true, noDefaultBranch: why } })
+  try {
+    assert.deepEqual(startButtons(p), ['Review uncommitted changes', 'Show uncommitted changes', 'Set'])
+    assert.ok(p.$('review-start-options').textContent.includes(why))
+  } finally { p.close() }
+})
+
+test('with nothing to review and no default branch, the Review tab says both', async () => {
+  const why = "Can't tell the default branch: there's no origin remote."
+  const p = await startPage({ options: { noDefaultBranch: why } })
+  try {
+    assert.deepEqual(startButtons(p), ['Set'])
+    assert.match(p.$('review-start-options').textContent, /Nothing to review/)
+    assert.ok(p.$('review-start-options').textContent.includes(why))
+  } finally { p.close() }
+})
+
+test('a default branch to review against needs no explaining', async () => {
+  const p = await startPage()
+  try {
+    assert.ok(!p.$('review-start-options').textContent.includes("Can't tell the default branch"))
+  } finally { p.close() }
+})
+
+test('with no default branch, the Review tab offers to set one, suggesting the name last set', async () => {
+  const why = "Can't tell the default branch: there's no origin remote."
+  const options = { current: { uncommitted: true, noDefaultBranch: why } }
+  const p = await startPage({
+    options: () => options.current,
+    defaultBranch: (call) => {
+      if (call.method === 'POST') { options.current = { uncommitted: true, defaultBranch: call.body.name }; return { name: call.body.name, set: true, preferred: call.body.name } }
+      return { why, branches: ['feat', 'trunk'], preferred: 'master' }
+    },
+  })
+  try {
+    const name = p.$('review-start-options').querySelector('.default-setter input')
+    assert.equal(name.value, 'master')
+    const suggested = Array.from(p.$('review-start-options').querySelectorAll('datalist option')).map((o) => o.value)
+    assert.deepEqual(suggested, ['feat', 'trunk'])
+    await p.type(name, 'trunk')
+    await p.click(p.button('Set', p.$('review-start-options')))
+    assert.deepEqual(p.posted('/api/default-branch'), [{ name: 'trunk' }])
+    assert.deepEqual(startButtons(p), ['Review uncommitted changes', 'Review against trunk', 'Show uncommitted changes', 'Diff against trunk'])
+  } finally { p.close() }
+})
+
+test('a default branch that cannot be set says why, keeping what was typed', async () => {
+  const p = await startPage({
+    options: { uncommitted: true, noDefaultBranch: "Can't tell the default branch: there's no origin remote." },
+    defaultBranch: (call) => (call.method === 'POST' ? { status: 400, body: { error: '"a b" isn\'t a branch name' } } : { why: 'x', preferred: '' }),
+  })
+  try {
+    const name = p.$('review-start-options').querySelector('.default-setter input')
+    await p.type(name, 'a b')
+    await p.click(p.button('Refresh'))
+    assert.equal(p.$('review-start-options').querySelector('.default-setter input').value, 'a b', 'kept across a redraw')
+    await p.click(p.button('Set', p.$('review-start-options')))
+    assert.match(p.$('review-start-options').textContent, /isn't a branch name/)
+    assert.equal(p.$('review-start-options').querySelector('.default-setter input').value, 'a b')
+  } finally { p.close() }
+})
+
+test('a default branch with no commits yet: reviewing against it is shown, but not offered, saying why', async () => {
+  const p = await startPage({ options: { uncommitted: true, emptyDefaultBranch: 'master' } })
+  try {
+    const against = p.button('Review against master')
+    assert.ok(against && against.disabled)
+    assert.ok(p.button('Diff against master').disabled)
+    assert.match(p.$('review-start-options').textContent, /master has no commits yet/)
+  } finally { p.close() }
+})
+
+test('with no default branch, the dialog offers to set one; then branching from it is offered, as it is here', async () => {
+  const noDefault = { current: 'feat/a', dirty: false, noDefault: "Can't tell the default branch: there's no origin remote." }
+  const options = { current: { branch: noDefault } }
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, attention: {} },
+      '/api/conversation': { events: [], last: 0, running: false },
+      '/api/conversation/new/options': () => options.current,
+      '/api/default-branch': (call) => {
+        if (call.method !== 'POST') return { why: noDefault.noDefault, preferred: 'master' }
+        options.current = { branch: { current: 'feat/a', dirty: false, default: call.body.name, defaultSet: true } }
+        return { name: call.body.name, set: true, preferred: call.body.name }
+      },
+      '/api/conversation/new': () => ({ ok: true }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+  })
+  try {
+    await p.click('convo-new')
+    await p.click('fresh-branch')
+    assert.ok(!shown(p, 'fresh-from-default-row'))
+    const name = p.$('fresh-branch-details').querySelector('.default-setter input')
+    assert.equal(name.value, 'master')
+    await p.click(p.button('Set', p.$('fresh-branch-details')))
+    assert.deepEqual(p.posted('/api/default-branch'), [{ name: 'master' }])
+    assert.ok(p.$('fresh-branch').checked, 'still ticked')
+    assert.ok(shown(p, 'fresh-from-default-row'))
+    assert.match(p.$('fresh-from-default-row').textContent, /Branch from master \(local\)/)
+    assert.deepEqual(p.posted('/api/conversation/new/fetch'), [], 'no origin to check')
+    assert.ok(!shown(p, 'fresh-fetch'))
+    await p.type(p.$('fresh-branch-name'), 'feat/x')
+    await p.click('fresh-from-default')
+    await p.click('fresh-run')
+    assert.deepEqual(p.posted('/api/conversation/new')[0].branch, { name: 'feat/x', from: 'default', update: false })
+  } finally { p.close() }
+})
+
+test('a set default branch with no commits yet: branching from it is disabled, saying so', async () => {
+  const p = await freshPage({ options: { branch: { current: 'feat/a', dirty: false, default: 'main', defaultSet: true, defaultEmpty: true } } })
+  try {
+    await p.click('fresh-branch')
+    assert.ok(shown(p, 'fresh-from-default-row'))
+    assert.ok(p.$('fresh-from-default').disabled)
+    assert.match(p.$('fresh-from-default-row').textContent, /main has no commits yet/)
+  } finally { p.close() }
+})
+
+test('a set default branch is branched from as it is here: origin is not checked', async () => {
+  const p = await freshPage({ options: { branch: { current: 'feat/a', dirty: false, default: 'master', defaultSet: true } } })
+  try {
+    await p.click('fresh-branch')
+    assert.match(p.$('fresh-from-default-row').textContent, /Branch from master \(local\)/)
+    assert.deepEqual(p.posted('/api/conversation/new/fetch'), [])
+    assert.ok(!shown(p, 'fresh-fetch'))
   } finally { p.close() }
 })

@@ -317,6 +317,47 @@
     </form>
   </dialog>
 
+  <dialog id="fresh">
+    <form method="dialog" id="fresh-form">
+      <h2>Start a new conversation?</h2>
+      <p>This one is cleared from the page (and any other page open for this sandbox), and the agent starts afresh, without remembering it. There's no undo. The agent's long-term memories and the terminal session aren't touched.</p>
+      <div class="fresh-options">
+        <p id="fresh-loading" class="muted note">Checking the sandbox (waking it if it's asleep)…</p>
+        <div id="fresh-clipboard-row" hidden>
+          <label><input type="checkbox" id="fresh-clipboard"> Clear the clipboard <span id="fresh-clipboard-count" class="muted"></span></label>
+          <p id="fresh-clipboard-why" class="muted note sub" hidden></p>
+          <label id="fresh-unsent-row" class="sub"><input type="checkbox" id="fresh-unsent"> Clear unsent items too <span id="fresh-unsent-count" class="muted"></span></label>
+        </div>
+        <div id="fresh-review-row" hidden>
+          <label><input type="checkbox" id="fresh-review"> Close the open review</label>
+        </div>
+        <div id="fresh-branch-row" hidden>
+          <label><input type="checkbox" id="fresh-branch"> Start a new branch</label>
+          <p id="fresh-branch-why" class="muted note sub" hidden></p>
+          <div id="fresh-branch-details" class="sub" hidden>
+            <input type="text" id="fresh-branch-name" aria-label="Name of the new branch" spellcheck="false" autocomplete="off">
+            <div class="choices" role="radiogroup" aria-label="Branch from">
+              <label><input type="radio" name="fresh-from" id="fresh-from-here" value="here"> Branch from here <span id="fresh-from-here-name" class="muted"></span></label>
+              <div id="fresh-from-default-row">
+                <label><input type="radio" name="fresh-from" id="fresh-from-default" value="default"> <span>Branch from <span id="fresh-default-name"></span></span></label>
+                <p id="fresh-from-default-why" class="muted note sub"></p>
+              </div>
+            </div>
+            <div id="fresh-no-default" hidden></div>
+            <p id="fresh-fetch" class="note" hidden></p>
+            <label id="fresh-update-row" hidden><input type="checkbox" id="fresh-update"> <span id="fresh-update-text"></span></label>
+            <p id="fresh-dirty" class="note warn-text" hidden>Your uncommitted changes will come with you to the new branch. Commit them there before switching back, or they'll follow you again.</p>
+          </div>
+        </div>
+      </div>
+      <p id="fresh-error" class="note bad-text" role="alert" hidden></p>
+      <div class="actions">
+        <button value="cancel" class="ghost" formnovalidate>Cancel</button>
+        <button value="run" id="fresh-run" class="danger">Start a new conversation</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast" role="status" popover="manual" hidden></div>
   <script src="/markdown.js"></script>
   <script src="/manage.js"></script>

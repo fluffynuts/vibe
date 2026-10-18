@@ -246,8 +246,12 @@ type StartOptions struct {
 	// Uncommitted says there are changes not yet committed.
 	Uncommitted bool `json:"uncommitted"`
 	// DefaultBranch is the repository's main line to review this branch
-	// against: "" when it can't be told, or the folder is on it.
-	DefaultBranch string `json:"defaultBranch,omitempty"`
+	// against: the local branch, else origin's; "" when it can't be told
+	// (NoDefaultBranch says why), when it has no commits yet
+	// (EmptyDefaultBranch names it), or when the folder is on it.
+	DefaultBranch      string `json:"defaultBranch,omitempty"`
+	NoDefaultBranch    string `json:"noDefaultBranch,omitempty"`
+	EmptyDefaultBranch string `json:"emptyDefaultBranch,omitempty"`
 	// Upstream is the branch this one pushes to, when it has commits not
 	// pushed there yet: Unpushed of them.
 	Upstream string `json:"upstream,omitempty"`
@@ -268,8 +272,17 @@ func optionsOf(ctx context.Context, dir string) (StartOptions, error) {
 	}
 	o.Uncommitted = len(files) > 0
 	current := r.branch()
-	if def := r.defaultBranch(); def != "" && def != current {
-		o.DefaultBranch = def
+	if def := r.defaultBranch(); def.Name == "" {
+		o.NoDefaultBranch = def.Why
+	} else if def.Name != current {
+		switch {
+		case r.hasRef(plumbing.NewBranchReferenceName(def.Name)):
+			o.DefaultBranch = def.Name
+		case !def.Set && r.hasRef(plumbing.NewRemoteReferenceName("origin", def.Name)):
+			o.DefaultBranch = "origin/" + def.Name
+		default:
+			o.EmptyDefaultBranch = def.Name
+		}
 	}
 	if up, upstream := r.upstream(current); up != nil {
 		head, err := r.head()
@@ -293,27 +306,91 @@ func (r *repository) branch() string {
 	return ref.Target().Short()
 }
 
-// defaultBranch is the repository's main line, as origin says (its HEAD),
-// else main or master, whichever is there; "" when none is. The local
-// branch's name when there is one, else the remote's.
-func (r *repository) defaultBranch() string {
-	exists := func(name plumbing.ReferenceName) bool {
-		_, err := r.git.Reference(name, true)
-		return err == nil
-	}
-	if ref, err := r.git.Storer.Reference("refs/remotes/origin/HEAD"); err == nil && ref.Type() == plumbing.SymbolicReference {
-		remote := ref.Target().Short()
-		if local := strings.TrimPrefix(remote, "origin/"); exists(plumbing.NewBranchReferenceName(local)) {
-			return local
+// DefaultBranchKey is the git config key a repository's default branch
+// can be set under, for when origin can't say which it is.
+const DefaultBranchKey = "vibe.defaultBranch"
+
+// Why the default branch can't be told. It's only ever what origin's HEAD
+// names, else what was set for the repository: a guess (main, master) that's
+// wrong is worse than none.
+const (
+	noOrigin     = "Can't tell the default branch: there's no origin remote."
+	noOriginHEAD = "Can't tell the default branch: origin/HEAD isn't set. `git remote set-head origin --auto` sets it."
+)
+
+// Mainline is the repository's default branch, as far as it can be told.
+type Mainline struct {
+	// Name is the branch, without "origin/"; "" when it can't be told, Why
+	// saying why.
+	Name string `json:"name,omitempty"`
+	// Set says Name is the one set for the repository (DefaultBranchKey),
+	// origin not saying.
+	Set bool   `json:"set,omitempty"`
+	Why string `json:"why,omitempty"`
+	// Branches are the repository's local branches, when Name can't be
+	// told: what it might be set to.
+	Branches []string `json:"branches,omitempty"`
+}
+
+// defaultBranch is the repository's main line: the branch origin's HEAD
+// names, else the one set for the repository.
+func (r *repository) defaultBranch() Mainline {
+	why := noOrigin
+	if _, err := r.git.Remote("origin"); err == nil {
+		why = noOriginHEAD
+		if ref, err := r.git.Storer.Reference("refs/remotes/origin/HEAD"); err == nil && ref.Type() == plumbing.SymbolicReference {
+			if name, ok := strings.CutPrefix(ref.Target().Short(), "origin/"); ok && name != "" {
+				return Mainline{Name: name}
+			}
 		}
-		return remote
 	}
-	for _, name := range []string{"main", "master"} {
-		if exists(plumbing.NewBranchReferenceName(name)) {
-			return name
+	if set := r.setDefaultBranch(); set != "" {
+		// The sandbox can write the repository's config: what's there is
+		// used only as a branch's name, and only once it's a valid one.
+		if plumbing.NewBranchReferenceName(set).Validate() != nil || strings.HasPrefix(set, "-") {
+			why = fmt.Sprintf("Can't tell the default branch: %s is set to %q, which isn't a branch name.", DefaultBranchKey, set)
+		} else {
+			return Mainline{Name: set, Set: true}
 		}
 	}
-	return ""
+	return Mainline{Why: why, Branches: r.localBranches()}
+}
+
+func (r *repository) setDefaultBranch() string {
+	cfg, err := r.git.Config()
+	if err != nil {
+		return ""
+	}
+	section, key, _ := strings.Cut(DefaultBranchKey, ".")
+	return cfg.Raw.Section(section).Option(key)
+}
+
+func (r *repository) localBranches() []string {
+	refs, err := r.git.Branches()
+	if err != nil {
+		return nil
+	}
+	var names []string
+	refs.ForEach(func(ref *plumbing.Reference) error {
+		names = append(names, ref.Name().Short())
+		return nil
+	})
+	sort.Strings(names)
+	return names
+}
+
+func (r *repository) hasRef(name plumbing.ReferenceName) bool {
+	_, err := r.git.Reference(name, true)
+	return err == nil
+}
+
+func defaultBranchOf(dir string) (Mainline, error) {
+	r, err := open(dir)
+	if err != nil {
+		return Mainline{}, err
+	}
+	defer r.close()
+	return r.defaultBranch(), nil
 }
 
 // upstream is the commit branch pushes to, and its name; nil when it has

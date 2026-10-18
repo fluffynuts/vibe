@@ -904,6 +904,55 @@
     raiseToast()
   }
 
+  // --- the default branch, when origin can't say ---------------------------
+
+  // defaultBranchSetter offers to set the repository's default branch, for
+  // when origin can't say which it is (see docs/plan-new-conversation.md):
+  // the name last set is suggested, and the repository's branches offered.
+  // set is called with what vibe then says of it.
+  let defaultBranchSetters = 0
+  function defaultBranchSetter(why, set) {
+    const listId = 'default-branches-' + (++defaultBranchSetters)
+    const input = el('input', { type: 'text', list: listId, spellcheck: 'false', autocomplete: 'off', 'aria-label': 'The default branch' })
+    const list = el('datalist', { id: listId })
+    const error = el('p', { class: 'note bad-text', role: 'alert', hidden: true })
+    const button = el('button', { type: 'button', class: 'ghost', text: 'Set' })
+    const fail = (text) => { error.textContent = text; error.hidden = false }
+    button.addEventListener('click', async () => {
+      if (!input.value.trim()) { fail('Name the default branch.'); return }
+      error.hidden = true
+      button.disabled = true
+      let res
+      try {
+        // It may wake the sandbox, to set it there.
+        res = await api('/api/default-branch', { method: 'POST', body: JSON.stringify({ name: input.value }), timeout: 4 * 60 * 1000 })
+        reached(true)
+      } catch (e) {
+        reached(false)
+        res = { ok: false, body: { error: 'Could not reach vibe.' } }
+      }
+      button.disabled = false
+      if (!res.ok) { fail(res.body.error || 'That failed.'); return }
+      if (res.body.warning) toast(res.body.warning, true)
+      set(res.body)
+    })
+    // Enter sets it: in a form, it would press the form's first button.
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' && !ev.isComposing) { ev.preventDefault(); button.click() }
+    })
+    // The suggestions are a help, not a need: without them, a name can
+    // still be typed.
+    api('/api/default-branch').then((res) => {
+      if (!res.ok) return
+      if (!input.value) input.value = res.body.preferred || ''
+      list.replaceChildren(...(res.body.branches || []).map((b) => el('option', { value: b })))
+    }, () => {})
+    return el('div', { class: 'default-setter' },
+      el('p', { class: 'muted note', text: why }),
+      el('div', { class: 'default-setter-row' }, el('span', { class: 'muted', text: 'Set it for this repository:' }), input, button),
+      list, error)
+  }
+
   // --- the Review tab -----------------------------------------------------
 
   // The review, and the diff it's of: the diff is worked out when the tab
@@ -1899,22 +1948,37 @@
     }
     const kinds = []
     if (o.uncommitted) kinds.push({ kind: 'uncommitted', what: 'the uncommitted changes', review: 'Review uncommitted changes', show: 'Show uncommitted changes' })
-    if (o.defaultBranch) kinds.push({ kind: 'branch', what: 'this branch against ' + o.defaultBranch, review: 'Review against ' + o.defaultBranch, show: 'Diff against ' + o.defaultBranch })
+    const against = o.defaultBranch || o.emptyDefaultBranch
+    if (against) kinds.push({ kind: 'branch', what: 'this branch against ' + against, review: 'Review against ' + against, show: 'Diff against ' + against, empty: !o.defaultBranch })
     if (o.upstream) {
       const n = o.unpushed === 1 ? '1 unpushed commit' : o.unpushed + ' unpushed commits'
       kinds.push({ kind: 'unpushed', what: 'the commits not yet pushed to ' + o.upstream, review: 'Review ' + n, show: 'Show ' + n })
     }
+    // Why there's no reviewing against the default branch: it can't be told
+    // (it's never guessed, but it can be set), or it has no commits yet. The
+    // setter is kept across redraws, with what's typed in it.
+    let noDefault = null
+    if (o.noDefaultBranch) {
+      if (!reviewView.setter || reviewView.setter.why !== o.noDefaultBranch) {
+        reviewView.setter = { why: o.noDefaultBranch, node: defaultBranchSetter(o.noDefaultBranch, () => { reviewView.setter = null; loadOptions() }) }
+      }
+      noDefault = reviewView.setter.node
+    } else if (o.emptyDefaultBranch) {
+      noDefault = el('p', { class: 'muted note', text: o.emptyDefaultBranch + " has no commits yet, so there's nothing to review against it." })
+    }
     if (!kinds.length) {
       $('review-start-options').replaceChildren(el('p', { class: 'muted',
-        text: 'Nothing to review: no uncommitted changes, no commits waiting to be pushed, and no other branch to compare this one with.' }))
+        text: 'Nothing to review: no uncommitted changes, no commits waiting to be pushed, and no other branch to compare this one with.' }),
+      ...(noDefault ? [noDefault] : []))
       return
     }
-    const button = (k, agent) => el('button', { type: 'button', class: agent ? '' : 'ghost', text: agent ? k.review : k.show,
+    const button = (k, agent) => el('button', { type: 'button', class: agent ? '' : 'ghost', text: agent ? k.review : k.show, disabled: !!k.empty,
       title: agent ? 'Ask the agent to review ' + k.what + ': the diff shows at once, its comments as it makes them' : 'Show the diff of ' + k.what + ', to review yourself',
       onclick: () => startReview(k.kind, agent) })
     $('review-start-options').replaceChildren(
       ...(state.conversation ? [...kinds.map((k) => button(k, true)), el('div', { class: 'gap' })] : []),
-      ...kinds.map((k) => button(k, false)))
+      ...kinds.map((k) => button(k, false)),
+      ...(noDefault ? [el('div', { class: 'gap' }), noDefault] : []))
   }
 
   async function loadOptions() {
@@ -4055,6 +4119,239 @@
     }
   }
 
+  // --- "New conversation" -----------------------------------------------
+
+  // The dialog offers only what applies (see docs/plan-new-conversation.md).
+  // What the sandbox can do is asked when it opens, which may wake the
+  // sandbox; origin is checked once a new branch is ticked, once per opening.
+  // generation tells an answer for an earlier opening, which is dropped.
+  const FRESH_BRANCH_START = 'feat/'
+  // Backstops, past vibe's own: waking a sandbox takes up to 3 minutes,
+  // a fetch up to 2.
+  const FRESH_OPTIONS_MS = 4 * 60 * 1000
+  const FRESH_FETCH_MS = 3 * 60 * 1000
+  const FRESH_START_MS = 5 * 60 * 1000
+  const fresh = { generation: 0, options: null, fetching: false, fetched: null, cancel: null }
+
+  function showIf(id, on) { $(id).hidden = !on }
+
+  function plural(n, word) { return n + ' ' + word + (n === 1 ? '' : 's') }
+
+  function openFresh() {
+    if (fresh.cancel) fresh.cancel.abort()
+    const generation = ++fresh.generation
+    Object.assign(fresh, { options: null, fetching: false, fetched: null, setterWhy: null, cancel: new AbortController() })
+    $('fresh-clipboard').checked = true
+    $('fresh-unsent').checked = true
+    $('fresh-review').checked = true
+    $('fresh-branch').checked = false
+    $('fresh-branch-name').value = FRESH_BRANCH_START
+    $('fresh-from-here').checked = true
+    $('fresh-update').checked = false
+    $('fresh-run').textContent = 'Start a new conversation'
+    showIf('fresh-error', false)
+    drawFresh()
+    $('fresh').showModal()
+    raiseToast()
+    const answered = (options) => {
+      if (generation !== fresh.generation) return
+      fresh.options = options
+      drawFresh()
+    }
+    api('/api/conversation/new/options', { method: 'POST', body: '{}', timeout: FRESH_OPTIONS_MS, cancel: fresh.cancel }).then((res) => {
+      if (!res.ok) freshError(res.body.error || "vibe couldn't say what else can be done.")
+      answered(res.ok ? res.body : {})
+    }, () => {
+      freshError("Could not reach vibe to ask what else can be done.")
+      answered({})
+    })
+  }
+
+  function freshError(text) {
+    $('fresh-error').textContent = text
+    showIf('fresh-error', true)
+  }
+
+  // freshDefault is the default branch the dialog offers to branch from, or
+  // '' when it doesn't.
+  function freshDefault() {
+    const b = fresh.options && fresh.options.branch
+    return b && !b.unavailable && b.default && b.current !== b.default ? b.default : ''
+  }
+
+  function drawFresh() {
+    const o = fresh.options
+    showIf('fresh-loading', !o)
+    $('fresh-run').disabled = !o
+    const c = o && o.clipboard
+    showIf('fresh-clipboard-row', !!c && (!!c.unavailable || c.sent + c.unsent > 0))
+    if (c) {
+      $('fresh-clipboard').disabled = !!c.unavailable
+      if (c.unavailable) $('fresh-clipboard').checked = false
+      $('fresh-clipboard-why').textContent = c.unavailable || ''
+      showIf('fresh-clipboard-why', !!c.unavailable)
+      $('fresh-clipboard-count').textContent = !c.unavailable && c.sent ? '(' + plural(c.sent, 'item') + ' sent)' : ''
+      showIf('fresh-unsent-row', !c.unavailable && c.unsent > 0 && $('fresh-clipboard').checked)
+      $('fresh-unsent-count').textContent = '(' + c.unsent + ' waiting to go with your next message)'
+    }
+    showIf('fresh-review-row', !!(o && o.review))
+    const b = o && o.branch
+    showIf('fresh-branch-row', !!b)
+    if (!b) return
+    $('fresh-branch').disabled = !!b.unavailable
+    if (b.unavailable) $('fresh-branch').checked = false
+    $('fresh-branch-why').textContent = b.unavailable || ''
+    showIf('fresh-branch-why', !!b.unavailable)
+    showIf('fresh-branch-details', $('fresh-branch').checked)
+    $('fresh-from-here-name').textContent = b.current ? '(' + b.current + ')' : '(the detached HEAD)'
+    const def = freshDefault()
+    showIf('fresh-from-default-row', !!def)
+    // A default branch set for the repository, origin not saying, is
+    // branched from as it is here.
+    $('fresh-default-name').textContent = b.defaultSet ? def + ' (local)' : 'origin/' + def
+    $('fresh-from-default').disabled = !!b.dirty || !!b.defaultEmpty
+    if ($('fresh-from-default').disabled) $('fresh-from-here').checked = true
+    $('fresh-from-default-why').textContent = b.dirty
+      ? 'The current branch has uncommitted changes.'
+      : b.defaultEmpty
+        ? def + ' has no commits yet.'
+        : 'Switching to its files changes them under anything else using this folder: your editor, or an agent in the terminal.'
+    const noDefault = !b.default && b.noDefault ? b.noDefault : ''
+    showIf('fresh-no-default', !!noDefault)
+    if (noDefault && fresh.setterWhy !== noDefault) $('fresh-no-default').replaceChildren(defaultBranchSetter(noDefault, refreshFresh))
+    fresh.setterWhy = noDefault
+    showIf('fresh-dirty', !!b.dirty)
+    drawFreshFetch(b.defaultSet ? '' : def)
+  }
+
+  // refreshFresh asks again what the dialog can offer, keeping what's
+  // chosen: after the default branch has been set.
+  function refreshFresh() {
+    const generation = fresh.generation
+    api('/api/conversation/new/options', { method: 'POST', body: '{}', timeout: FRESH_OPTIONS_MS, cancel: fresh.cancel }).then((res) => {
+      if (generation !== fresh.generation) return
+      if (!res.ok) { freshError(res.body.error || "vibe couldn't say what else can be done."); return }
+      fresh.options = res.body
+      drawFresh()
+    }, () => { if (generation === fresh.generation) freshError('Could not reach vibe to ask what else can be done.') })
+  }
+
+  function drawFreshFetch(def) {
+    const f = fresh.fetched
+    let text = ''
+    let warn = false
+    let behind = 0
+    if (def && fresh.fetching) {
+      text = 'Checking whether origin/' + def + ' is up to date…'
+    } else if (def && f && !f.checked) {
+      text = "Couldn't check whether origin/" + def + ' is up to date: ' + String(f.why || 'no reason given').replace(/\.$/, '') + '. Check it yourself.'
+      warn = true
+    } else if (def && f && f.local && f.ahead > 0) {
+      text = 'Local ' + def + ' has ' + plural(f.ahead, 'commit') + " not on origin, so it's left as it is."
+    } else if (def && f && f.local) {
+      behind = f.behind
+    }
+    $('fresh-fetch').textContent = text
+    $('fresh-fetch').className = 'note' + (warn ? ' warn-text' : ' muted')
+    showIf('fresh-fetch', !!text)
+    showIf('fresh-update-row', behind > 0)
+    $('fresh-update-text').textContent = behind > 0 ? 'Local ' + def + ' is ' + plural(behind, 'commit') + ' behind origin: update it too?' : ''
+  }
+
+  function fetchOrigin() {
+    if (!freshDefault() || fresh.options.branch.defaultSet || fresh.fetching || fresh.fetched) return
+    const generation = fresh.generation
+    fresh.fetching = true
+    const answered = (fetched) => {
+      if (generation !== fresh.generation) return
+      fresh.fetching = false
+      fresh.fetched = fetched
+      // A fast-forward loses nothing: it's offered ticked.
+      $('fresh-update').checked = !!(fetched.checked && fetched.local && !fetched.ahead && fetched.behind > 0)
+      drawFresh()
+    }
+    api('/api/conversation/new/fetch', { method: 'POST', body: '{}', timeout: FRESH_FETCH_MS, cancel: fresh.cancel }).then(
+      (res) => answered(res.ok ? res.body : { checked: false, why: res.body.error || 'vibe said ' + res.status }),
+      () => answered({ checked: false, why: "vibe couldn't be reached" }))
+  }
+
+  function freshRequest() {
+    const o = fresh.options
+    const body = { clipboard: '', review: false, branch: null }
+    if (!$('fresh-clipboard-row').hidden && !$('fresh-clipboard').disabled && $('fresh-clipboard').checked) {
+      body.clipboard = !$('fresh-unsent-row').hidden && $('fresh-unsent').checked ? 'all' : 'sent'
+    }
+    if (o.review && $('fresh-review').checked) body.review = true
+    if (o.branch && !o.branch.unavailable && $('fresh-branch').checked) {
+      const fromDefault = !!freshDefault() && !$('fresh-from-default').disabled && $('fresh-from-default').checked
+      body.branch = {
+        name: $('fresh-branch-name').value,
+        from: fromDefault ? 'default' : 'here',
+        update: !$('fresh-update-row').hidden && $('fresh-update').checked,
+      }
+    }
+    return body
+  }
+
+  async function startFresh() {
+    if (!fresh.options || $('fresh-run').disabled) return
+    const body = freshRequest()
+    if (body.branch && !body.branch.name.trim()) {
+      freshError('Name the new branch.')
+      $('fresh-branch-name').focus()
+      return
+    }
+    showIf('fresh-error', false)
+    $('fresh-run').disabled = true
+    $('fresh-run').textContent = 'Starting…'
+    let res
+    try {
+      res = await api('/api/conversation/new', { method: 'POST', body: JSON.stringify(body), timeout: FRESH_START_MS })
+      reached(true)
+    } catch (e) {
+      reached(false)
+      res = { ok: false, body: { error: 'Could not reach vibe.' } }
+    }
+    $('fresh-run').textContent = 'Start a new conversation'
+    $('fresh-run').disabled = false
+    if (!res.ok) {
+      freshError(res.body.error || 'That failed.')
+      return
+    }
+    $('fresh').close('done')
+    toast('Started a new conversation.', false)
+    tick()
+  }
+
+  function setUpFresh() {
+    $('convo-new').addEventListener('click', openFresh)
+    $('fresh-form').addEventListener('submit', (ev) => {
+      ev.preventDefault()
+      if (ev.submitter && ev.submitter.value === 'cancel') $('fresh').close('cancel')
+      else startFresh()
+    })
+    // Enter in the name does nothing: more of the form follows it, to be
+    // seen before starting, and the browser would press the form's first
+    // button, which is Cancel.
+    $('fresh-branch-name').addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' && !ev.isComposing) ev.preventDefault()
+    })
+    $('fresh').addEventListener('close', () => {
+      if (fresh.cancel) fresh.cancel.abort()
+      fresh.generation++
+    })
+    $('fresh-clipboard').addEventListener('change', drawFresh)
+    $('fresh-branch').addEventListener('change', () => {
+      drawFresh()
+      if (!$('fresh-branch').checked) return
+      const name = $('fresh-branch-name')
+      name.focus()
+      name.setSelectionRange(name.value.length, name.value.length)
+      fetchOrigin()
+      drawFresh()
+    })
+  }
+
   function setUpConversation() {
     setUpCommands()
     $('convo-form').addEventListener('submit', (ev) => { ev.preventDefault(); sendPrompt() })
@@ -4077,16 +4374,7 @@
     $('convo-input').addEventListener('focus', fitPrompt)
     requestAnimationFrame(fitPrompt)
     $('convo-stop').addEventListener('click', () => conversationCall('/api/conversation/stop'))
-    $('convo-new').addEventListener('click', () => confirmThen({
-      title: 'Start a new conversation?',
-      text: "This one is cleared from the page (and any other page open for this sandbox), and the agent starts afresh, without remembering it. There's no undo. The agent's long-term memories and the terminal session aren't touched.",
-      commandNote: '',
-      command: '',
-      danger: true,
-      runLabel: 'Start a new conversation',
-      started: 'Started a new conversation.',
-      run: () => post('/api/conversation/new', {}),
-    }))
+    setUpFresh()
     $('convo-md').checked = promptsAsMarkdown.on
     $('convo-md').addEventListener('change', () => setPromptsAsMarkdown($('convo-md').checked))
     document.addEventListener('paste', onPaste)

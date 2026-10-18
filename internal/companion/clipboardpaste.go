@@ -83,28 +83,52 @@ func (s *Server) pastesWaiting() (int, bool) {
 		return 0, false
 	}
 	n := cached(s.cache, "pastes-waiting "+base, 2*time.Second, func() int {
-		res, err := probeClient.Get(base + "/api/items")
+		items, err := clipboardItems(context.Background(), probeClient, base)
 		if err != nil {
 			return -1
 		}
-		defer res.Body.Close()
-		var body struct {
-			Items []struct {
-				Delivered *string `json:"delivered"`
-			} `json:"items"`
-		}
-		if res.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&body) != nil {
-			return -1
-		}
 		waiting := 0
-		for _, item := range body.Items {
-			if item.Delivered == nil {
+		for _, item := range items {
+			if !item.sent() {
 				waiting++
 			}
 		}
 		return waiting
 	})
 	return n, n >= 0
+}
+
+// clipboardItem is one of the clipboard page's items, as far as the
+// companion needs to know.
+type clipboardItem struct {
+	ID        int     `json:"id"`
+	Delivered *string `json:"delivered"`
+}
+
+// sent says the item has gone to the agent already.
+func (i clipboardItem) sent() bool { return i.Delivered != nil }
+
+// clipboardItems are the items on the clipboard page at base.
+func clipboardItems(ctx context.Context, client *http.Client, base string) ([]clipboardItem, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/items", nil)
+	if err != nil {
+		return nil, err
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("the clipboard page said %s", res.Status)
+	}
+	var body struct {
+		Items []clipboardItem `json:"items"`
+	}
+	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&body); err != nil {
+		return nil, fmt.Errorf("the clipboard page's list of items couldn't be read: %w", err)
+	}
+	return body.Items, nil
 }
 
 // sameOrigin refuses a request made from another site: the token stops

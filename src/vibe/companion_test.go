@@ -345,3 +345,23 @@ func TestTheRepositorysTopIsNamedAsTheUserReachesIt(t *testing.T) {
 		t.Errorf("notes: %q", notes)
 	}
 }
+
+// Git for the page's "new branch" runs in the sandbox, on its folder, and
+// never waits for a credential nobody is there to give.
+func TestTheSandboxsGitRunsThereOnItsFolderWithoutPrompting(t *testing.T) {
+	calls := loggingSbx(t, "box running\\n")
+	if _, err := sandboxGitFor("box", "/work/here")(context.Background(), "status", "--porcelain=v1"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(calls)
+	want := "exec box -- env GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND=ssh -o BatchMode=yes git -C /work/here status --porcelain=v1"
+	if !strings.Contains(string(data), want) {
+		t.Errorf("sbx was called with:\n%s\nwant %q", data, want)
+	}
+}
+
+func TestNoFolderMeansNoGitInTheSandbox(t *testing.T) {
+	if sandboxGitFor("box", "") != nil {
+		t.Error("a sandbox with no folder on record got git to run")
+	}
+}

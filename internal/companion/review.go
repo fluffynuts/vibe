@@ -473,7 +473,11 @@ func (s *Server) reviewStart(w http.ResponseWriter, r *http.Request) {
 		}
 	case "branch":
 		if o.DefaultBranch == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "there's no default branch to review against: none is main or master, and origin doesn't say"})
+			why := o.NoDefaultBranch
+			if why == "" {
+				why = "You're on the default branch: there's nothing to review against it."
+			}
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
 			return
 		}
 		start.Ref, what = o.DefaultBranch, "this branch's changes against "+o.DefaultBranch+", from where they parted (uncommitted ones too)"
