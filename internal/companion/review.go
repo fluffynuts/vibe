@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"vibe/internal/review"
@@ -416,18 +417,54 @@ func (s *Server) reviewHighlight(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	path := r.URL.Query().Get("path")
+	if why := s.colours.off(); why != "" {
+		writeJSON(w, http.StatusOK, review.Highlighted{Skipped: why})
+		return
+	}
+	select {
+	case s.colours.slots <- struct{}{}:
+		defer func() { <-s.colours.slots }()
+	case <-r.Context().Done():
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), colourWithin)
 	defer cancel()
-	path := r.URL.Query().Get("path")
 	h, err := review.Colour(ctx, s.cfg.ReviewTab.Workspace, rv, path, r.URL.Query().Get("side") == "old")
 	switch {
 	case ctx.Err() == context.DeadlineExceeded:
+		s.colours.tooLong.Add(1)
 		writeJSON(w, http.StatusOK, review.Highlighted{Skipped: fmt.Sprintf("took too long to colour (over %s)", colourWithin)})
 	case err != nil:
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
 		writeJSON(w, http.StatusOK, h)
 	}
+}
+
+// colourAtOnce is how many files are coloured at a time, each in a helper
+// that may take a core for all of colourWithin.
+const colourAtOnce = 2
+
+// colourGiveUpAfter is how many files taking too long to colour turn
+// colouring off: a file can be built to take without end, and the sandbox
+// writes them.
+const colourGiveUpAfter = 5
+
+// colourer bounds the colouring of files.
+type colourer struct {
+	slots   chan struct{}
+	tooLong atomic.Int32
+}
+
+func newColourer() *colourer { return &colourer{slots: make(chan struct{}, colourAtOnce)} }
+
+// off is why colouring is turned off, or "" while it isn't.
+func (c *colourer) off() string {
+	if n := c.tooLong.Load(); n >= colourGiveUpAfter {
+		return fmt.Sprintf("colouring is turned off until vibe restarts: %d files took too long to colour, which a file can be built to do", n)
+	}
+	return ""
 }
 
 // reviewOptions is the reviews the page can start on the folder as it is.

@@ -154,6 +154,7 @@ type Server struct {
 	// pageVersion stands for the page's files as this vibe serves them: a
 	// page left open across a rebuild of vibe can tell it's out of date.
 	pageVersion string
+	colours     *colourer
 }
 
 // asked is the thread of the review the user last asked the agent about,
@@ -168,7 +169,7 @@ type asked struct {
 // New makes a Server without listening, which is how tests drive Handler.
 func New(cfg Config) *Server {
 	ui, _ := fs.Sub(uiFiles, "ui")
-	return &Server{cfg: cfg, ui: ui, cache: newCache(time.Second), pageVersion: versionOf(ui)}
+	return &Server{cfg: cfg, ui: ui, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer()}
 }
 
 // Start listens on 127.0.0.1 at cfg.Port and serves in the background.
