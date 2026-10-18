@@ -230,7 +230,7 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 	if agentmem.Supported(agent) && memoryStore == "" {
 		memoryStore = agentmem.StoreFor(vibeHome, merged.MemoryRoot, name)
 	}
-	if _, mounted := nugetFolder(merged); merged.NugetDir != "" && !mounted {
+	if merged.NugetDir != "" && len(nugetFolders(vibeHome, name, merged)) == 0 {
 		note("  nuget:     no packages folder in %s on the host — not mounting", merged.NugetDir)
 	}
 	var mounts, env []string

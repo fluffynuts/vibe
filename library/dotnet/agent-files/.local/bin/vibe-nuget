@@ -1,0 +1,105 @@
+#!/bin/sh
+# vibe: description: Ask the host for a NuGet package this sandbox can't get itself (a private feed's)
+# vibe: startup: false
+# The host's NuGet config holds the private feeds and their credentials; the
+# sandbox has none of it, so a package from such a feed is asked of the host
+# with this. The request is dropped in an inbox folder of the host's
+# (VIBE_PACKAGES_DIR/inbox) and the answer read from a read-only view of it:
+# vibe on the host fetches the package into its cache, which the sandbox
+# reads, and may ask the user first. No braced shell expansions in this
+# file: sbx validates every brace-form substitution in file content against
+# its own placeholder list.
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: vibe-nuget fetch ID VERSION [--framework TFM]
+
+  Ask the host to fetch the NuGet package ID at exactly VERSION, from the
+  feeds in the host's NuGet config, then restore again. TFM is the target
+  framework, such as net8.0; it defaults to the project's here.
+USAGE
+  exit 2
+}
+
+fail() {
+  echo "vibe-nuget: $1" >&2
+  exit "$2"
+}
+
+[ "$1" = fetch ] || usage
+shift
+[ $# -ge 2 ] || usage
+id=$1
+version=$2
+shift 2
+framework=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --framework)
+      [ $# -ge 2 ] || fail "--framework needs a value, such as net8.0" 2
+      framework=$2
+      shift 2
+      ;;
+    *) usage ;;
+  esac
+done
+
+if [ -z "$VIBE_PACKAGES_DIR" ]; then
+  fail "VIBE_PACKAGES_DIR isn't set: this sandbox wasn't given a place to ask for packages. Rebuild it ('vibe -r' on the host), and check that settings.yaml's nuget isn't 'shared' (then the whole host cache is already here)." 1
+fi
+inbox=$VIBE_PACKAGES_DIR/inbox
+view=$VIBE_PACKAGES_DIR/view
+[ -d "$inbox" ] || fail "$inbox isn't there: rebuild this sandbox ('vibe -r' on the host)" 1
+
+# The host checks all of this again; here, so a mistake is said at once, and
+# so nothing but these characters ever goes in the request.
+case "$id" in
+  "" | *[!A-Za-z0-9_.-]*) fail "'$id' isn't a NuGet package id: letters, digits, '.', '_' and '-'" 2 ;;
+esac
+case "$version" in
+  "" | *[!0-9A-Za-z.+-]*) fail "'$version' isn't one exact version, such as 1.2.3 or 1.2.3-beta.1" 2 ;;
+esac
+
+if [ -z "$framework" ]; then
+  framework=$(dotnet msbuild -nologo -getProperty:TargetFramework 2>/dev/null | tr -d '[:space:]')
+  if [ -z "$framework" ]; then
+    frameworks=$(dotnet msbuild -nologo -getProperty:TargetFrameworks 2>/dev/null | tr -d '[:space:]')
+    framework=$(printf '%s' "$frameworks" | cut -d';' -f1)
+  fi
+  [ -n "$framework" ] || fail "couldn't tell this project's target framework: say it with --framework, such as --framework net8.0" 2
+fi
+case "$framework" in
+  "" | *[!0-9a-z.]*) fail "'$framework' isn't a target framework such as net8.0" 2 ;;
+esac
+
+nonce=$(date +%s)-$$
+tmp=$inbox/.$nonce.tmp
+printf '{"ecosystem":"nuget","id":"%s","version":"%s","framework":"%s"}\n' "$id" "$version" "$framework" >"$tmp" ||
+  fail "couldn't write a request in $inbox" 1
+mv "$tmp" "$inbox/$nonce.json" || fail "couldn't put the request in $inbox" 1
+echo "vibe-nuget: asked the host for $id $version ($framework)"
+
+answer=$view/$nonce.answer
+shown=
+waited=0
+while :; do
+  if [ -f "$answer" ]; then
+    status=$(sed -n 1p "$answer")
+    message=$(sed -n '2,$p' "$answer")
+    if [ "$status" = waiting ]; then
+      if [ "$shown" != "$message" ]; then
+        echo "vibe-nuget: $message"
+        shown=$message
+      fi
+    else
+      echo "$message"
+      [ "$status" = fetched ] && exit 0
+      exit 1
+    fi
+  fi
+  sleep 1
+  waited=$((waited + 1))
+  if [ $((waited % 30)) -eq 0 ]; then
+    echo "vibe-nuget: still waiting for the host ($waited seconds): vibe has to be running on the host to answer, and the user may have to approve the request on the page's Admin tab. The request stays; asking again for the same package is fine."
+  fi
+done

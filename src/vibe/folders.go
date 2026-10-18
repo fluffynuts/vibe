@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 
 	agentmem "vibe/internal/memory"
@@ -35,24 +34,35 @@ const (
 	nugetShared   = "shared"
 )
 
-// nugetFolder is what a sandbox is given of the host's NuGet folder, when
+// nugetFolders is what a sandbox is given of the host's NuGet folder, when
 // the host has what it would be given. Shared is all of it, read-write.
-// Otherwise only the package cache goes in, read-only: the rest holds
+// Otherwise only the package cache goes in, read-only (the rest holds
 // feeds' credentials and plugins NuGet runs, and a package the agent can
-// write to runs on the host at its next build.
-func nugetFolder(merged settings.Settings) (folder, bool) {
+// write to runs on the host at its next build), with an inbox and a view
+// for asking the host for a package the sandbox can't get (see
+// internal/packagereq).
+func nugetFolders(vibeHome, name string, merged settings.Settings) []folder {
 	if merged.NugetDir == "" {
-		return folder{}, false
+		return nil
 	}
-	path, env, note := filepath.Join(merged.NugetDir, "packages"), "SBX_HOST_NUGET_PACKAGES=", " (packages, read-only)"
-	readOnly := true
 	if merged.Nuget == nugetShared {
-		path, env, note, readOnly = merged.NugetDir, "SBX_HOST_NUGET=", " (shared read-write: the agent can plant code in packages your builds use, and read your feeds' credentials)", false
+		if !isDir(merged.NugetDir) {
+			return nil
+		}
+		return []folder{{path: merged.NugetDir, env: []string{"SBX_HOST_NUGET=" + merged.NugetDir},
+			note: "nuget:     " + merged.NugetDir + " (shared read-write: the agent can plant code in packages your builds use, and read your feeds' credentials)"}}
 	}
-	if info, err := os.Stat(path); err != nil || !info.IsDir() {
-		return folder{}, false
+	packages := filepath.Join(merged.NugetDir, "packages")
+	if !isDir(packages) {
+		return nil
 	}
-	return folder{path: path, readOnly: readOnly, env: []string{env + path}, note: "nuget:     " + path + note}, true
+	requests := state.PackagesPath(vibeHome, name)
+	return []folder{
+		{path: packages, readOnly: true, env: []string{"SBX_HOST_NUGET_PACKAGES=" + packages},
+			note: "nuget:     " + packages + " (packages, read-only)"},
+		{path: filepath.Join(requests, "inbox"), made: true, env: []string{"VIBE_PACKAGES_DIR=" + requests}},
+		{path: filepath.Join(requests, "view"), readOnly: true, made: true},
+	}
 }
 
 // sandboxFolders is every folder of the host's that sandbox name, working
@@ -62,9 +72,7 @@ func nugetFolder(merged settings.Settings) (folder, bool) {
 // date rather than on the old ones, unnoticed.
 func sandboxFolders(vibeHome, name, target string, merged settings.Settings, agent, memoryStore string) []folder {
 	var folders []folder
-	if f, ok := nugetFolder(merged); ok {
-		folders = append(folders, f)
-	}
+	folders = append(folders, nugetFolders(vibeHome, name, merged)...)
 	if agentmem.Supported(agent) {
 		if memoryStore == "" {
 			memoryStore = agentmem.StoreFor(vibeHome, merged.MemoryRoot, name)

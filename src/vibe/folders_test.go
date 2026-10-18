@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"vibe/internal/pathresolve"
 	"vibe/internal/settings"
+	"vibe/internal/state"
 )
 
 func foldersFor(t *testing.T, s settings.Settings) []folder {
@@ -91,5 +93,65 @@ func TestLoadSettingsRefusesAnUnknownNugetMode(t *testing.T) {
 	_, err := loadSettings(lay, "p")
 	if err == nil || !strings.Contains(err.Error(), "everything") || !strings.Contains(err.Error(), "shared") {
 		t.Errorf("want an error naming the value and the choices, got %v", err)
+	}
+}
+
+func packageFolders(t *testing.T, s settings.Settings) (inbox, view folder, found bool) {
+	t.Helper()
+	home := t.TempDir()
+	mailbox := state.PackagesPath(home, "box")
+	folders := sandboxFolders(home, "box", t.TempDir(), s, "claude", "")
+	inbox, hasInbox := folderAt(folders, filepath.Join(mailbox, "inbox"))
+	view, hasView := folderAt(folders, filepath.Join(mailbox, "view"))
+	return inbox, view, hasInbox && hasView
+}
+
+// The agent asks for what it can't get by dropping a request in the inbox
+// and reading the answer in the view, which it can't write: both folders are
+// the host's, which acts on what's in them.
+func TestNugetByDefaultGivesTheSandboxAPlaceToAskForPackages(t *testing.T) {
+	inbox, view, found := packageFolders(t, settings.Settings{NugetDir: hostNuget(t)})
+	if !found {
+		t.Fatal("the package inbox and view aren't mounted")
+	}
+	if inbox.readOnly || !inbox.made {
+		t.Errorf("the inbox is the agent's to write, and vibe makes it: %+v", inbox)
+	}
+	if !view.readOnly || !view.made {
+		t.Errorf("the view must be read-only: %+v", view)
+	}
+	want := "VIBE_PACKAGES_DIR=" + filepath.Dir(inbox.path)
+	if !slices.Contains(inbox.env, want) {
+		t.Errorf("env %v lacks %s", inbox.env, want)
+	}
+}
+
+func TestNoPackageRequestsWhereThereIsNothingToAskForOrSharingIsTotal(t *testing.T) {
+	cases := map[string]settings.Settings{
+		"shared":        {NugetDir: hostNuget(t), Nuget: "shared"},
+		"no nuget":      {},
+		"no host cache": {NugetDir: filepath.Join(t.TempDir(), "nope")},
+	}
+	for name, s := range cases {
+		if _, _, found := packageFolders(t, s); found {
+			t.Errorf("%s: package request folders mounted", name)
+		}
+	}
+}
+
+// NuGet reads a nuget.config from every folder above the one it restores
+// in, so no folder the agent can write may be, or be above, the folder
+// vibe fetches in: a config planted there would redirect the host's fetch.
+func TestNoFolderTheAgentWritesIsAtOrAboveWhereVibeFetches(t *testing.T) {
+	home := t.TempDir()
+	s := settings.Settings{NugetDir: hostNuget(t)}
+	fetchRoot := state.NugetFetchPath(home)
+	for _, f := range sandboxFolders(home, "box", t.TempDir(), s, "claude", "") {
+		if f.readOnly {
+			continue
+		}
+		if pathresolve.Within(f.path, fetchRoot) {
+			t.Errorf("%s is writable in the sandbox, and is at or above %s", f.path, fetchRoot)
+		}
 	}
 }

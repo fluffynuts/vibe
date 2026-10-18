@@ -126,6 +126,27 @@ func TestRemoveDeletesTheClipboardHistoryButNotAnotherSandboxs(t *testing.T) {
 	}
 }
 
+func TestRemoveDeletesPackageRequestsButNotAnotherSandboxs(t *testing.T) {
+	home := t.TempDir()
+	for _, name := range []string{"vibe", "other"} {
+		if err := Save(home, Instance{Name: name}); err != nil {
+			t.Fatal(err)
+		}
+		answer := filepath.Join(PackagesPath(home, name), "view", "1.answer")
+		os.MkdirAll(filepath.Dir(answer), 0o755)
+		os.WriteFile(answer, []byte("fetched"), 0o644)
+	}
+	if err := Remove(home, "vibe"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(PackagesPath(home, "vibe")); !os.IsNotExist(err) {
+		t.Errorf("the package requests are still there: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(PackagesPath(home, "other"), "view", "1.answer")); err != nil {
+		t.Errorf("another sandbox's went too: %v", err)
+	}
+}
+
 func TestTheProfilesPageKeepsItsOwnTokenAndPort(t *testing.T) {
 	home := t.TempDir()
 	token, err := ManageToken(home)
