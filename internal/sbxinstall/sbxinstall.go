@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -161,7 +162,7 @@ func Unpack(tarGz, dir string) ([]string, error) {
 		if !pathresolve.Within(dir, target) {
 			return nil, fmt.Errorf("%s: entry %q would land outside %s", tarGz, h.Name, dir)
 		}
-		if top := strings.SplitN(filepath.ToSlash(name), "/", 2)[0]; !contains(tops, top) {
+		if top := strings.SplitN(filepath.ToSlash(name), "/", 2)[0]; !slices.Contains(tops, top) {
 			tops = append(tops, top)
 		}
 		switch h.Typeflag {
@@ -198,15 +199,6 @@ func Unpack(tarGz, dir string) ([]string, error) {
 // drive (C:x), neither of which filepath.IsAbs counts.
 func rooted(link string) bool {
 	return filepath.IsAbs(link) || filepath.VolumeName(link) != "" || strings.HasPrefix(filepath.ToSlash(link), "/")
-}
-
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 // Replace moves each of names from the folder from into the folder to,

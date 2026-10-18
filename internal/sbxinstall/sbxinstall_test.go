@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"vibe/internal/releasetest"
@@ -265,7 +266,7 @@ func TestUnpackTheMacOSTarball(t *testing.T) {
 		t.Fatalf("Unpack: %v", err)
 	}
 	for _, want := range []string{"Sbx.app", "bin", "LICENSE"} {
-		if !contains(tops, want) {
+		if !slices.Contains(tops, want) {
 			t.Errorf("Unpack's top-level entries %v lack %s", tops, want)
 		}
 	}

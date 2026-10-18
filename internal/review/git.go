@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"vibe/internal/filekind"
 	"vibe/internal/pathresolve"
 
 	"github.com/go-git/go-git/v5/plumbing"
@@ -214,7 +215,7 @@ func untrackedOf(root *os.Root, path string) File {
 	}
 	sum := sha256.Sum256(body)
 	f.stamp = hex.EncodeToString(sum[:])
-	if isBinary(body) {
+	if filekind.IsBinary(body) {
 		f.Binary = true
 		return f
 	}

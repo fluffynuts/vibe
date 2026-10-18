@@ -31,6 +31,7 @@ import (
 	"github.com/go-git/go-git/v5/storage/filesystem/dotgit"
 	"github.com/go-git/go-git/v5/storage/memory"
 
+	"vibe/internal/filekind"
 	"vibe/internal/pathresolve"
 )
 
@@ -563,13 +564,13 @@ func (r *repository) lfInRepository(p string, data []byte) (bool, error) {
 	case binary != nil && binary.IsSet(), text != nil && text.IsUnset():
 		return false, nil
 	case text != nil && text.IsValueSet() && text.Value() == "auto":
-		return !isBinary(data), nil
+		return !filekind.IsBinary(data), nil
 	case text != nil && text.IsSet():
 		return true, nil
 	case eol != nil && eol.IsValueSet():
-		return !isBinary(data), nil
+		return !filekind.IsBinary(data), nil
 	}
-	return r.autocrlf && !isBinary(data), nil
+	return r.autocrlf && !filekind.IsBinary(data), nil
 }
 
 // attributesFor are the .gitattributes patterns bearing on file p: the git
@@ -602,11 +603,6 @@ func (r *repository) attributesFor(p string) ([]gitattributes.MatchAttribute, er
 
 func isPointer(data []byte) bool {
 	return bytes.HasPrefix(data, []byte("version https://git-lfs.github.com/spec/"))
-}
-
-// isBinary is git's test: a NUL early on.
-func isBinary(data []byte) bool {
-	return bytes.IndexByte(data[:min(len(data), 8000)], 0) >= 0
 }
 
 // readIn reads the plain file name in root, up to limit bytes: nothing
@@ -686,7 +682,7 @@ func fileOfChange(c *object.Change, ignoreSpace bool, large map[plumbing.Hash]bo
 	switch {
 	case old.tooLarge || now.tooLarge:
 		f.TooLarge = true
-	case isBinary(old.data) || isBinary(now.data):
+	case filekind.IsBinary(old.data) || filekind.IsBinary(now.data):
 		f.Binary = true
 	default:
 		f.Hunks = hunksOf(old.data, now.data, ignoreSpace)
