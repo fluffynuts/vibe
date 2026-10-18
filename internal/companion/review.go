@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -443,8 +444,12 @@ func (s *Server) reviewHighlight(w http.ResponseWriter, r *http.Request) {
 }
 
 // colourAtOnce is how many files are coloured at a time, each in a helper
-// that may take a core for all of colourWithin.
-const colourAtOnce = 2
+// that may take a core for all of colourWithin: half the machine's cores, so
+// the rest are left for everything else.
+var colourAtOnce = halfOf(runtime.NumCPU())
+
+// halfOf is half of cpus, and at least one.
+func halfOf(cpus int) int { return max(1, cpus/2) }
 
 // colourGiveUpAfter is how many files taking too long to colour turn
 // colouring off: a file can be built to take without end, and the sandbox
@@ -457,7 +462,7 @@ type colourer struct {
 	tooLong atomic.Int32
 }
 
-func newColourer() *colourer { return &colourer{slots: make(chan struct{}, colourAtOnce)} }
+func newColourer(atOnce int) *colourer { return &colourer{slots: make(chan struct{}, atOnce)} }
 
 // off is why colouring is turned off, or "" while it isn't.
 func (c *colourer) off() string {

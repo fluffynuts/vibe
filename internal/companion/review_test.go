@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -651,14 +652,15 @@ func TestColouringIsTurnedOffOnceFilesKeepTakingTooLong(t *testing.T) {
 	}
 }
 
-// No more than a couple of files are coloured at once, however many the
-// page asks for together: four that each take all their time take two
-// turns.
+// No more than so many files are coloured at once, however many the page
+// asks for together: with two at a time, four that each take all their
+// time take two turns.
 func TestOnlyAFewFilesAreColouredAtOnce(t *testing.T) {
 	old := colourWithin
 	colourWithin = 500 * time.Millisecond
 	t.Cleanup(func() { colourWithin = old })
 	s, _ := reviewTabServer(t)
+	s.colours = newColourer(2)
 	os.WriteFile(filepath.Join(s.cfg.ReviewTab.Workspace, "x.jsonata"), []byte("/*"), 0o644)
 	began := time.Now()
 	var wg sync.WaitGroup
@@ -668,6 +670,18 @@ func TestOnlyAFewFilesAreColouredAtOnce(t *testing.T) {
 	wg.Wait()
 	if took := time.Since(began); took < 2*colourWithin {
 		t.Errorf("4 files that each took %s were coloured in %s: more than 2 at once", colourWithin, took)
+	}
+}
+
+// Colouring takes half the machine's cores at most, and always has one.
+func TestColouringTakesHalfTheCores(t *testing.T) {
+	for cpus, want := range map[int]int{1: 1, 2: 1, 3: 1, 4: 2, 16: 8} {
+		if got := halfOf(cpus); got != want {
+			t.Errorf("halfOf(%d) = %d, want %d", cpus, got, want)
+		}
+	}
+	if colourAtOnce != halfOf(runtime.NumCPU()) {
+		t.Errorf("colourAtOnce = %d on %d cores", colourAtOnce, runtime.NumCPU())
 	}
 }
 
