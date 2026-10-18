@@ -611,7 +611,7 @@ func TestAChangeOnlyToTheFoldersASandboxIsGivenLeavesItOutOfDate(t *testing.T) {
 	if why, err := sandboxOutOfDate(lay, inst); err != nil || why != "" {
 		t.Fatalf("just built: %q, %v", why, err)
 	}
-	if err := os.Mkdir(nuget, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(nuget, "packages"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if why, err := sandboxOutOfDate(lay, inst); err != nil || why == "" {

@@ -25,6 +25,10 @@ func loadSettings(lay layout.Layout, profile string) (settings.Settings, error) 
 		return settings.Settings{}, err
 	}
 	merged := settings.Merge(baseSettings, profileSettings)
+	if merged.Nuget != "" && merged.Nuget != nugetFallback && merged.Nuget != nugetShared {
+		return settings.Settings{}, fmt.Errorf("settings: nuget is %q; it must be %q (the host's packages, read-only) or %q (all of the host's nuget folder, read-write)",
+			merged.Nuget, nugetFallback, nugetShared)
+	}
 	merged.NugetDir = pathresolve.ExpandHome(merged.NugetDir)
 	merged.MemoryRoot = pathresolve.ExpandHome(merged.MemoryRoot)
 	return merged, nil

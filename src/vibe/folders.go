@@ -30,6 +30,31 @@ func (f folder) mount() string {
 	return f.path
 }
 
+const (
+	nugetFallback = "fallback"
+	nugetShared   = "shared"
+)
+
+// nugetFolder is what a sandbox is given of the host's NuGet folder, when
+// the host has what it would be given. Shared is all of it, read-write.
+// Otherwise only the package cache goes in, read-only: the rest holds
+// feeds' credentials and plugins NuGet runs, and a package the agent can
+// write to runs on the host at its next build.
+func nugetFolder(merged settings.Settings) (folder, bool) {
+	if merged.NugetDir == "" {
+		return folder{}, false
+	}
+	path, env, note := filepath.Join(merged.NugetDir, "packages"), "SBX_HOST_NUGET_PACKAGES=", " (packages, read-only)"
+	readOnly := true
+	if merged.Nuget == nugetShared {
+		path, env, note, readOnly = merged.NugetDir, "SBX_HOST_NUGET=", " (shared read-write: the agent can plant code in packages your builds use, and read your feeds' credentials)", false
+	}
+	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+		return folder{}, false
+	}
+	return folder{path: path, readOnly: readOnly, env: []string{env + path}, note: "nuget:     " + path + note}, true
+}
+
 // sandboxFolders is every folder of the host's that sandbox name, working
 // in target, is given, in the order they're mounted. It is the one place
 // they're decided: creating a sandbox mounts these, and its fingerprint
@@ -37,11 +62,8 @@ func (f folder) mount() string {
 // date rather than on the old ones, unnoticed.
 func sandboxFolders(vibeHome, name, target string, merged settings.Settings, agent, memoryStore string) []folder {
 	var folders []folder
-	if merged.NugetDir != "" {
-		if info, err := os.Stat(merged.NugetDir); err == nil && info.IsDir() {
-			folders = append(folders, folder{path: merged.NugetDir, env: []string{"SBX_HOST_NUGET=" + merged.NugetDir},
-				note: "nuget:     " + merged.NugetDir + " (shared with host)"})
-		}
+	if f, ok := nugetFolder(merged); ok {
+		folders = append(folders, f)
 	}
 	if agentmem.Supported(agent) {
 		if memoryStore == "" {

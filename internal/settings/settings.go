@@ -24,10 +24,16 @@ type PublishEntry struct {
 // Settings is the merged configuration used to drive sandbox creation.
 // Zero values mean "unset" for every scalar field.
 type Settings struct {
-	Memory     string `yaml:"memory,omitempty"`
-	BasePort   int    `yaml:"basePort,omitempty"`
-	Agent      string `yaml:"agent,omitempty"`
-	NugetDir   string `yaml:"nugetDir,omitempty"`
+	Memory   string `yaml:"memory,omitempty"`
+	BasePort int    `yaml:"basePort,omitempty"`
+	Agent    string `yaml:"agent,omitempty"`
+	NugetDir string `yaml:"nugetDir,omitempty"`
+	// Nuget is how a sandbox gets the host's NuGet packages: "fallback"
+	// (the default) gives it the host's package cache read-only and
+	// nothing else of NugetDir; "shared" mounts all of NugetDir read-write,
+	// which lets the agent plant code in packages the host builds with,
+	// and read its feeds' credentials.
+	Nuget      string `yaml:"nuget,omitempty"`
 	MemoryRoot string `yaml:"memoryRoot,omitempty"`
 	// Companion says what vibe does about the companion page it serves for
 	// a running sandbox: "open" serves it and opens it in the browser,
@@ -91,6 +97,9 @@ func Merge(base, override Settings) Settings {
 	}
 	if override.NugetDir != "" {
 		out.NugetDir = override.NugetDir
+	}
+	if override.Nuget != "" {
+		out.Nuget = override.Nuget
 	}
 	if override.MemoryRoot != "" {
 		out.MemoryRoot = override.MemoryRoot

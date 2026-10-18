@@ -137,3 +137,13 @@ func TestMergeAutoUpdateOnlyWhenSet(t *testing.T) {
 		t.Errorf("Parse(autoUpdate: false) = %v, %v", parsed.AutoUpdate, err)
 	}
 }
+
+func TestMergeNugetOverrideWins(t *testing.T) {
+	got := Merge(Settings{Nuget: "fallback"}, Settings{Nuget: "shared"})
+	if got.Nuget != "shared" {
+		t.Errorf("Nuget = %q, want the override's", got.Nuget)
+	}
+	if got = Merge(Settings{Nuget: "shared"}, Settings{}); got.Nuget != "shared" {
+		t.Errorf("Nuget = %q, want the base's when the override sets none", got.Nuget)
+	}
+}
