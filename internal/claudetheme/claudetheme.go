@@ -134,8 +134,8 @@ func FromSandbox(ctx context.Context, name string) (choice string, ok bool) {
 // isn't there reads as having no theme; one that can't be read or parsed
 // is not ok.
 func themeIn(ctx context.Context, name, file string) (value string, found, ok bool) {
-	if !sbxrun.ExecSilentContext(ctx, name, "test", "-e", file) {
-		return "", false, sbxrun.ReachableContext(ctx, name)
+	if !sbxrun.ExecSilent(ctx, name, "test", "-e", file) {
+		return "", false, sbxrun.Reachable(ctx, name)
 	}
 	out, err := sbxrun.ExecStdout(ctx, name, "cat", file)
 	if err != nil {

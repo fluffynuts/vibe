@@ -220,7 +220,7 @@ func resetTerminal(tty *term.State) {
 // couldn't say: a "no" sbx never gave would lead vibe to create a sandbox
 // that's already there.
 func Exists(name string) (bool, error) {
-	statuses, err := List()
+	statuses, err := List(context.Background())
 	if err != nil {
 		return false, err
 	}
@@ -233,12 +233,8 @@ func Exists(name string) (bool, error) {
 }
 
 // Reachable reports whether the sandbox will currently accept an exec.
-func Reachable(name string) bool {
-	return ReachableContext(context.Background(), name)
-}
-
-// ReachableContext is Reachable, giving up if ctx is cancelled.
-func ReachableContext(ctx context.Context, name string) bool {
+// It gives up if ctx is cancelled.
+func Reachable(ctx context.Context, name string) bool {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	_, err := captureOutContext(ctx, "exec", name, "--", "/bin/true")
@@ -255,7 +251,7 @@ var probeTimeout = 2 * time.Minute
 // unlike Reachable, which runs something in it, asking doesn't start a
 // sandbox sbx has stopped. ok is false when sbx couldn't say.
 func Running(ctx context.Context, name string) (running, ok bool) {
-	statuses, err := ListContext(ctx)
+	statuses, err := List(ctx)
 	if err != nil {
 		return false, false
 	}
@@ -277,14 +273,10 @@ type Status struct {
 }
 
 // List returns every sandbox sbx knows about and whether it is running.
-func List() ([]Status, error) {
-	return ListContext(context.Background())
-}
-
-// ListContext is List, giving up (and ending sbx) when ctx ends. It reads
+// It gives up (and ends sbx) when ctx ends. It reads
 // `sbx ls --json`, sbx's output for scripts, rather than its table, which
 // is laid out for people and may change.
-func ListContext(ctx context.Context) ([]Status, error) {
+func List(ctx context.Context) ([]Status, error) {
 	stdout, stderr, err := captureSplitContext(ctx, "ls", "--json")
 	if err != nil {
 		if ctx.Err() != nil {
@@ -406,12 +398,8 @@ func Stop(name string) (int, error) {
 
 // StopQuiet stops a running sandbox without touching the terminal, so several
 // can be stopped at once. A failure carries sbx's output.
-func StopQuiet(name string) error {
-	return StopQuietContext(context.Background(), name)
-}
-
-// StopQuietContext is StopQuiet, ending sbx when ctx ends.
-func StopQuietContext(ctx context.Context, name string) error {
+// sbx is ended when ctx ends.
+func StopQuiet(ctx context.Context, name string) error {
 	out, err := captureOutContext(ctx, "stop", name)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -465,14 +453,10 @@ func SshConfigured(host string) bool {
 
 // WaitReachable polls until the sandbox will accept an exec, or limit
 // seconds pass. sbx create provisions but does not start; sbx run boots it.
-func WaitReachable(name string, limit int) bool {
-	return WaitReachableContext(context.Background(), name, limit)
-}
-
-// WaitReachableContext is WaitReachable, giving up early when ctx ends.
-func WaitReachableContext(ctx context.Context, name string, limit int) bool {
+// It gives up early when ctx ends.
+func WaitReachable(ctx context.Context, name string, limit int) bool {
 	for i := 0; i < limit; i++ {
-		if ReachableContext(ctx, name) {
+		if Reachable(ctx, name) {
 			return true
 		}
 		select {
@@ -492,19 +476,15 @@ func WaitReachableContext(ctx context.Context, name string, limit int) bool {
 // the agent, blocking until that session ends. An sbx without a `start`
 // command leaves Start returning false rather than pretending, so callers
 // can say what they could not do instead of assuming an answer.
-func Start(name string) bool {
-	return StartContext(context.Background(), name)
-}
-
-// StartContext is Start, ending sbx (and the wait) when ctx ends.
-func StartContext(ctx context.Context, name string) bool {
-	if ReachableContext(ctx, name) {
+// sbx (and the wait) is ended when ctx ends.
+func Start(ctx context.Context, name string) bool {
+	if Reachable(ctx, name) {
 		return true
 	}
 	if err := cancellable(ctx, "start", name).Run(); err != nil {
-		return ctx.Err() == nil && ReachableContext(ctx, name)
+		return ctx.Err() == nil && Reachable(ctx, name)
 	}
-	return WaitReachableContext(ctx, name, startTimeout)
+	return WaitReachable(ctx, name, startTimeout)
 }
 
 // startTimeout is how long Start waits for a booting sandbox to accept an
@@ -512,19 +492,10 @@ func StartContext(ctx context.Context, name string) bool {
 // has already committed to the operation the start is for.
 const startTimeout = 60
 
-// Remove deletes a sandbox. force maps to `sbx rm -f`.
-func Remove(name string, force bool) error {
-	return RemoveContext(context.Background(), name, force)
-}
-
-// RemoveContext is Remove, ending sbx when ctx ends.
-func RemoveContext(ctx context.Context, name string, force bool) error {
-	return RemoveToContext(ctx, name, force, nil)
-}
-
-// RemoveToContext is RemoveContext, sending what sbx prints to out rather
-// than the terminal (see CreateOpts.Output).
-func RemoveToContext(ctx context.Context, name string, force bool, out io.Writer) error {
+// Remove deletes a sandbox, ending sbx when ctx ends. force maps to
+// `sbx rm -f`. What sbx prints goes to out, or the terminal when out is nil
+// (see CreateOpts.Output).
+func Remove(ctx context.Context, name string, force bool, out io.Writer) error {
 	args := []string{"rm"}
 	if force {
 		args = append(args, "-f")
@@ -536,12 +507,8 @@ func RemoveToContext(ctx context.Context, name string, force bool, out io.Writer
 }
 
 // ExecCapture runs a command inside the sandbox and returns combined output.
-func ExecCapture(name string, args ...string) (string, error) {
-	return ExecCaptureContext(context.Background(), name, args...)
-}
-
-// ExecCaptureContext is ExecCapture, ending the exec if ctx is cancelled.
-func ExecCaptureContext(ctx context.Context, name string, args ...string) (string, error) {
+// The exec is ended if ctx is cancelled.
+func ExecCapture(ctx context.Context, name string, args ...string) (string, error) {
 	full := append([]string{"exec", name, "--"}, args...)
 	return captureOutContext(ctx, full...)
 }
@@ -565,13 +532,9 @@ func ExecInputStdout(ctx context.Context, name, input string, args ...string) (s
 
 // ExecSilent runs a command inside the sandbox, discarding output, and
 // reports only success/failure.
-func ExecSilent(name string, args ...string) bool {
-	return ExecSilentContext(context.Background(), name, args...)
-}
-
-// ExecSilentContext is ExecSilent, ending the exec if ctx is cancelled.
-func ExecSilentContext(ctx context.Context, name string, args ...string) bool {
-	_, err := ExecCaptureContext(ctx, name, args...)
+// The exec is ended if ctx is cancelled.
+func ExecSilent(ctx context.Context, name string, args ...string) bool {
+	_, err := ExecCapture(ctx, name, args...)
 	return err == nil
 }
 

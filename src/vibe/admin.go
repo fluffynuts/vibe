@@ -32,7 +32,7 @@ import (
 type companionAdmin struct {
 	lay          layout.Layout
 	name, target string
-	// listSandboxes is sbx ls (sbxrun.ListContext when nil), for tests to
+	// listSandboxes is sbx ls (sbxrun.List when nil), for tests to
 	// stand in for.
 	listSandboxes func(ctx context.Context) ([]sbxrun.Status, error)
 
@@ -172,7 +172,7 @@ func (a *companionAdmin) Do(ctx context.Context, action companion.AdminAction, l
 func (a *companionAdmin) sandboxState() string {
 	ctx, cancel := context.WithTimeout(context.Background(), statusWithin)
 	defer cancel()
-	statuses, err := sbxrun.ListContext(ctx)
+	statuses, err := sbxrun.List(ctx)
 	if err != nil {
 		return "and sbx can't say what state the sandbox is in (" + err.Error() + ")"
 	}
@@ -199,7 +199,7 @@ func (a *companionAdmin) do(ctx context.Context, action companion.AdminAction) e
 	case companion.AdminStop:
 		hold.begin()
 		note("stopping sandbox '%s'", a.name)
-		if err := sbxrun.StopQuietContext(ctx, a.name); err != nil {
+		if err := sbxrun.StopQuiet(ctx, a.name); err != nil {
 			a.settle()
 			return err
 		}
@@ -219,7 +219,7 @@ func (a *companionAdmin) do(ctx context.Context, action companion.AdminAction) e
 	case companion.AdminRestore:
 		return a.rebuild(ctx, func() error { return a.restore(action.Backup) })
 	case companion.AdminMemories:
-		if !sbxrun.ReachableContext(ctx, a.name) {
+		if !sbxrun.Reachable(ctx, a.name) {
 			return errors.New("the sandbox isn't running: its memories can only be read while it is")
 		}
 		saveMemories(ctx, a.lay.Home, a.name)
@@ -232,7 +232,7 @@ func (a *companionAdmin) do(ctx context.Context, action companion.AdminAction) e
 // start starts the sandbox, and lets the terminal attach to it again.
 func (a *companionAdmin) start(ctx context.Context) error {
 	note("starting sandbox '%s'", a.name)
-	if !sbxrun.StartContext(ctx, a.name) {
+	if !sbxrun.Start(ctx, a.name) {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -263,7 +263,7 @@ func (a *companionAdmin) rebuild(ctx context.Context, prepare func() error) erro
 // keeps its terminal; one gone or stopped leaves the terminal waiting for
 // the page (or Ctrl-C).
 func (a *companionAdmin) settle() {
-	if sbxrun.Reachable(a.name) {
+	if sbxrun.Reachable(context.Background(), a.name) {
 		hold.release()
 	}
 }

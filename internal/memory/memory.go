@@ -60,14 +60,14 @@ func Probe(sandboxName string) Presence {
 }
 
 func probe(ctx context.Context, sandboxName string) Presence {
-	if !sbxrun.ReachableContext(ctx, sandboxName) {
+	if !sbxrun.Reachable(ctx, sandboxName) {
 		return Unknown
 	}
 	// Every exec here is a plain argv with no shell script in it: sbx exec
 	// may join its arguments into one command line, and a `sh -c "<script>"`
 	// that gets split that way runs only the script's first word — which
 	// fails, and so reported every sandbox as having no memories.
-	if !sbxrun.ExecSilentContext(ctx, sandboxName, "test", "-d", agentPath) {
+	if !sbxrun.ExecSilent(ctx, sandboxName, "test", "-d", agentPath) {
 		return None
 	}
 	out, err := sbxrun.ExecStdout(ctx, sandboxName, "find", agentPath, "-mindepth", "1", "-maxdepth", "1", "-print", "-quit")
@@ -83,8 +83,8 @@ func probe(ctx context.Context, sandboxName string) Presence {
 // copyInSandbox copies the contents of dir src into dir dst, inside the
 // sandbox, creating dst if need be.
 func copyInSandbox(ctx context.Context, sandboxName, src, dst string) bool {
-	return sbxrun.ExecSilentContext(ctx, sandboxName, "mkdir", "-p", dst) &&
-		sbxrun.ExecSilentContext(ctx, sandboxName, "cp", "-a", src+"/.", dst+"/")
+	return sbxrun.ExecSilent(ctx, sandboxName, "mkdir", "-p", dst) &&
+		sbxrun.ExecSilent(ctx, sandboxName, "cp", "-a", src+"/.", dst+"/")
 }
 
 // Backup copies memories out of a running sandbox into store — before it is
@@ -135,7 +135,7 @@ func Restore(sandboxName, store string) error {
 	if err != nil || len(entries) == 0 {
 		return nil
 	}
-	if !sbxrun.WaitReachable(sandboxName, 120) {
+	if !sbxrun.WaitReachable(context.Background(), sandboxName, 120) {
 		return fmt.Errorf("sandbox not reachable — memories left in %s", store)
 	}
 	inside, err := sandboxPath(context.Background(), sandboxName, store)
@@ -171,7 +171,7 @@ func sandboxPath(ctx context.Context, sandboxName, store string) (string, error)
 	}
 	defer os.Remove(filepath.Join(store, marker))
 	for _, candidate := range windowsMountCandidates(store) {
-		if sbxrun.ExecSilentContext(ctx, sandboxName, "test", "-e", candidate+"/"+marker) {
+		if sbxrun.ExecSilent(ctx, sandboxName, "test", "-e", candidate+"/"+marker) {
 			return candidate, nil
 		}
 	}

@@ -231,7 +231,7 @@ func sandboxTranscripts(name string) transcripts {
 	pattern := func(session string) string { return shellQuote(session + ".jsonl") }
 	return transcripts{
 		has: func(ctx context.Context, session string) bool {
-			return sbxrun.ExecSilentContext(ctx, name, asAgent(
+			return sbxrun.ExecSilent(ctx, name, asAgent(
 				`cd "$HOME/.claude" 2>/dev/null && ls projects/*/`+pattern(session)+` >/dev/null 2>&1`)...)
 		},
 		fetch: func(ctx context.Context, session string) ([]byte, error) {

@@ -51,7 +51,7 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 			return err
 		}
 		if found {
-			if !sbxrun.Reachable(name) {
+			if !sbxrun.Reachable(context.Background(), name) {
 				for _, rec := range inst.Publish {
 					if portalloc.InUse(rec.HostPort) {
 						reportPortHolder(rec.HostPort)

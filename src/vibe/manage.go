@@ -429,7 +429,7 @@ func (m *companionManager) Delete(ctx context.Context, ids []string, log func(st
 	if err != nil {
 		return err
 	}
-	err = plan.run(m.lay, func(name string, force bool) error { return sbxrun.RemoveToContext(ctx, name, force, actionOutput()) })
+	err = plan.run(m.lay, func(name string, force bool) error { return sbxrun.Remove(ctx, name, force, actionOutput()) })
 	if ctx.Err() != nil {
 		return fmt.Errorf("cancelled — what was deleted before then is gone; the list shows what's left")
 	}
@@ -645,7 +645,7 @@ func (m *companionManager) do(ctx context.Context, kind string, p *inventoryProf
 		switch kind {
 		case companion.ManageStart:
 			note("starting sandbox '%s'", s.inst.Name)
-			if !sbxrun.StartContext(ctx, s.inst.Name) {
+			if !sbxrun.Start(ctx, s.inst.Name) {
 				return fmt.Errorf("sbx couldn't start sandbox '%s' — 'sbx ls' shows its state", s.inst.Name)
 			}
 			note("sandbox '%s' is running", s.inst.Name)
@@ -663,7 +663,7 @@ func (m *companionManager) do(ctx context.Context, kind string, p *inventoryProf
 			}
 			stop := sbxStopper
 			stop.stop = func(name string) (int, error) {
-				if err := sbxrun.StopQuietContext(ctx, name); err != nil {
+				if err := sbxrun.StopQuiet(ctx, name); err != nil {
 					return 1, err
 				}
 				return 0, nil

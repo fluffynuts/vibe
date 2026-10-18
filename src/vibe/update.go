@@ -412,10 +412,10 @@ func rebuildAsItWas(ctx context.Context, lay layout.Layout, inst state.Instance,
 		return err
 	}
 	if wasRunning {
-		if !startRebuilt(inst.Name) {
+		if !startRebuilt(context.Background(), inst.Name) {
 			return fmt.Errorf("rebuilt, but couldn't start it again, as it was running before — 'sbx ls' shows its state")
 		}
-	} else if err := stopRebuilt(inst.Name); err != nil {
+	} else if err := stopRebuilt(context.Background(), inst.Name); err != nil {
 		return fmt.Errorf("rebuilt, but couldn't stop it again, as it was stopped before: %w", err)
 	}
 	return nil

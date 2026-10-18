@@ -214,7 +214,7 @@ func (a *companionAdmin) pushInstructions(profile string) (updated, notRunning [
 	defer cancel()
 	list := a.listSandboxes
 	if list == nil {
-		list = sbxrun.ListContext
+		list = sbxrun.List
 	}
 	statuses, err := list(ctx)
 	if err != nil {
@@ -266,7 +266,7 @@ func (a *companionAdmin) Optimise(ctx context.Context, which, text string) (stri
 	if spec.OneShot == nil {
 		return "", fmt.Errorf("optimising isn't available for %s yet", agent)
 	}
-	if !sbxrun.Reachable(a.name) {
+	if !sbxrun.Reachable(context.Background(), a.name) {
 		return "", errors.New("the sandbox isn't running: start it to optimise")
 	}
 	other := "project"

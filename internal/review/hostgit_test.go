@@ -13,8 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-git/go-billy/v5/osfs"
 	"time"
+
+	"github.com/go-git/go-billy/v5/osfs"
 )
 
 // ranMarker is a file a command the repository asks git to run would make:

@@ -141,7 +141,7 @@ func backUpWhileStopped(vibeHome, name string) {
 	}
 	backUpMemories(vibeHome, name)
 	session.Report("stopping its sandbox again")
-	if err := stopAfterBackUp(name); err != nil {
+	if err := stopAfterBackUp(context.Background(), name); err != nil {
 		note("couldn't stop sandbox '%s' again: %s — 'vibe --stop' stops it", name, oneLine(err.Error()))
 	}
 }
@@ -149,7 +149,7 @@ func backUpWhileStopped(vibeHome, name string) {
 // What backUpWhileStopped and backUpAsHeadlessEnds ask of sbx and the
 // memory store: variables for tests.
 var (
-	startToBackUp    = sbxrun.StartContext
+	startToBackUp    = sbxrun.Start
 	backUpMemories   = saveMemoriesOnExit
 	stopAfterBackUp  = sbxrun.StopQuiet
 	sandboxReachable = sbxrun.Reachable
@@ -164,7 +164,7 @@ func stoppedUnderSession(name string, code int, reached bool) bool {
 	if code == 0 || !reached {
 		return false
 	}
-	statuses, err := sbxrun.List()
+	statuses, err := sbxrun.List(context.Background())
 	if err != nil {
 		return false
 	}

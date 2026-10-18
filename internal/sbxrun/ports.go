@@ -68,7 +68,7 @@ func addPort(ports map[int][]int, sandboxPort, hostPort int) {
 // to put it there — sbx exec may join its arguments into one command line,
 // which a quoted `sh -c` script doesn't survive.
 func WriteFile(name, file, content string) error {
-	if !ExecSilent(name, "mkdir", "-p", path.Dir(file)) {
+	if !ExecSilent(context.Background(), name, "mkdir", "-p", path.Dir(file)) {
 		return fmt.Errorf("could not create %s in the sandbox", path.Dir(file))
 	}
 	if err := ExecInput(name, content, "cp", "/dev/stdin", file); err != nil {

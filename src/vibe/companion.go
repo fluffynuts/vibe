@@ -175,7 +175,7 @@ func startClipboard(name string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	args := []string{"exec", name, "--", startClipboardScript}
-	if out, err := sbxrun.ExecCaptureContext(ctx, name, startClipboardScript); err != nil {
+	if out, err := sbxrun.ExecCapture(ctx, name, startClipboardScript); err != nil {
 		if out = strings.TrimSpace(out); out != "" {
 			return args, fmt.Errorf("start-clipboard failed: %s", out)
 		}
@@ -400,7 +400,7 @@ func keepAwakeFor(name string) func() string {
 		ctx, cancel := context.WithTimeout(context.Background(), statusWithin)
 		defer cancel()
 		if runningNow(ctx, name) {
-			sbxrun.ExecSilentContext(ctx, name, "true")
+			sbxrun.ExecSilent(ctx, name, "true")
 			return ""
 		}
 		if err := vmCheck(); err != nil {
@@ -468,4 +468,4 @@ func sandboxGitFor(name, target string) func(ctx context.Context, args ...string
 
 // startSandboxForPage starts sandbox name for the page. A variable for
 // tests.
-var startSandboxForPage = sbxrun.StartContext
+var startSandboxForPage = sbxrun.Start

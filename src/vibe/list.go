@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -43,7 +44,7 @@ type listRow struct {
 }
 
 func doList(vibeHome string) error {
-	statuses, err := sbxrun.List()
+	statuses, err := sbxrun.List(context.Background())
 	if err != nil {
 		return err
 	}

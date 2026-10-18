@@ -20,7 +20,7 @@ import (
 // waiting out startTimeout on something that is never going to answer.
 func TestStartGivesUpOnASandboxItCannotBoot(t *testing.T) {
 	done := make(chan bool, 1)
-	go func() { done <- Start("vibe-test-no-such-sandbox-3f9c1") }()
+	go func() { done <- Start(context.Background(), "vibe-test-no-such-sandbox-3f9c1") }()
 	select {
 	case started := <-done:
 		if started {
@@ -193,7 +193,7 @@ const realListing = `[
 
 func TestListReadsSbxsJSON(t *testing.T) {
 	fakeSbx(t, realListing, "", 0)
-	got, err := ListContext(context.Background())
+	got, err := List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,52 +202,52 @@ func TestListReadsSbxsJSON(t *testing.T) {
 		{Name: "vibe", Running: true, State: "running"},
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("ListContext = %+v\nwant %+v", got, want)
+		t.Errorf("List = %+v\nwant %+v", got, want)
 	}
 }
 
 func TestListKeepsAStateItDoesNotKnow(t *testing.T) {
 	fakeSbx(t, `[{"name": "odd-one", "status": "Creating"}]`, "", 0)
-	got, err := ListContext(context.Background())
+	got, err := List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := []Status{{Name: "odd-one", State: "creating"}}; !reflect.DeepEqual(got, want) {
-		t.Errorf("ListContext = %+v, want %+v", got, want)
+		t.Errorf("List = %+v, want %+v", got, want)
 	}
 }
 
 func TestListIsNothingWhenSbxHasNoSandboxes(t *testing.T) {
 	for _, out := range []string{"[]\n", "null\n", ""} {
 		fakeSbx(t, out, "", 0)
-		got, err := ListContext(context.Background())
+		got, err := List(context.Background())
 		if err != nil || len(got) != 0 {
-			t.Errorf("ListContext of %q = %+v, %v; want nothing", out, got, err)
+			t.Errorf("List of %q = %+v, %v; want nothing", out, got, err)
 		}
 	}
 }
 
 func TestListIgnoresWhatSbxSaysOnStderr(t *testing.T) {
 	fakeSbx(t, realListing, "A new version of sbx is available\n", 0)
-	got, err := ListContext(context.Background())
+	got, err := List(context.Background())
 	if err != nil || len(got) != 2 {
-		t.Errorf("ListContext = %+v, %v; want the two sandboxes", got, err)
+		t.Errorf("List = %+v, %v; want the two sandboxes", got, err)
 	}
 }
 
 func TestListSaysToUpgradeAnSbxWithoutJSON(t *testing.T) {
 	fakeSbx(t, "", "Error: unknown flag: --json\n", 1)
-	_, err := ListContext(context.Background())
+	_, err := List(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "unknown flag: --json") || !strings.Contains(err.Error(), "vibe --install-sbx") {
-		t.Errorf("ListContext error = %v, want sbx's reason and how to upgrade it", err)
+		t.Errorf("List error = %v, want sbx's reason and how to upgrade it", err)
 	}
 }
 
 func TestListSaysWhatItCouldNotRead(t *testing.T) {
 	fakeSbx(t, "SANDBOX  AGENT  STATUS\n", "", 0)
-	_, err := ListContext(context.Background())
+	_, err := List(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "sbx ls --json") {
-		t.Errorf("ListContext error = %v, want it to name the command it couldn't read", err)
+		t.Errorf("List error = %v, want it to name the command it couldn't read", err)
 	}
 }
 

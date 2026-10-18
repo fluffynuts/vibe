@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"vibe/internal/layout"
-	"vibe/internal/sbxrun"
 )
 
 // cleanupRow is one line of --cleanup's checklist: a profile, one of its
@@ -148,5 +147,5 @@ func doCleanup(lay layout.Layout) error {
 	if !confirmCleanup() {
 		return fmt.Errorf("aborted — nothing deleted")
 	}
-	return plan.run(lay, sbxrun.Remove)
+	return plan.run(lay, removeSandbox)
 }

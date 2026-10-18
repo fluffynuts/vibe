@@ -19,11 +19,11 @@ func hangingSbx(t *testing.T) {
 func TestCancellingEndsAStuckSbx(t *testing.T) {
 	hangingSbx(t)
 	for name, call := range map[string]func(context.Context) error{
-		"stop":   func(ctx context.Context) error { return StopQuietContext(ctx, "box") },
-		"rm":     func(ctx context.Context) error { return RemoveContext(ctx, "box", true) },
+		"stop":   func(ctx context.Context) error { return StopQuiet(ctx, "box") },
+		"rm":     func(ctx context.Context) error { return Remove(ctx, "box", true, nil) },
 		"create": func(ctx context.Context) error { return Create(ctx, CreateOpts{Name: "box"}) },
 		"start": func(ctx context.Context) error {
-			if StartContext(ctx, "box") {
+			if Start(ctx, "box") {
 				t.Error("start: a sandbox that never came up was reported up")
 			}
 			return ctx.Err()
@@ -93,7 +93,7 @@ func TestCreateAndRemoveCanSayWhatTheyDoSomewhereElse(t *testing.T) {
 	if !strings.Contains(create.String(), "sbx create --name box") || !strings.Contains(create.String(), "--no-progress") || !strings.Contains(create.String(), "to stderr") {
 		t.Errorf("create's output = %q", create.String())
 	}
-	if err := RemoveToContext(context.Background(), "box", true, &remove); err != nil {
+	if err := Remove(context.Background(), "box", true, &remove); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(remove.String(), "sbx rm -f box") {
@@ -110,10 +110,10 @@ func TestAReachabilityProbeThatNeverAnswersIsNo(t *testing.T) {
 	probeTimeout = 200 * time.Millisecond
 	t.Cleanup(func() { probeTimeout = old })
 	began := time.Now()
-	if Reachable("box") {
+	if Reachable(context.Background(), "box") {
 		t.Error("a sandbox that never answered was reported reachable")
 	}
-	if WaitReachable("box", 2) {
+	if WaitReachable(context.Background(), "box", 2) {
 		t.Error("a sandbox that never answered was waited for and reported reachable")
 	}
 	if took := time.Since(began); took > 10*time.Second {

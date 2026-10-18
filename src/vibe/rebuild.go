@@ -124,7 +124,7 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 			presence := agentmem.Probe(name)
 			if presence == agentmem.Unknown {
 				note("  '%s' is not running — starting it to check for memories", name)
-				if sbxrun.StartContext(ctx, name) {
+				if sbxrun.Start(ctx, name) {
 					presence = agentmem.Probe(name)
 				}
 			}
@@ -148,7 +148,7 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 		}
 		// Read after the memories: checking for those will have started a
 		// stopped sandbox, which is the only kind that can be asked.
-		if agent == "claude" && sbxrun.ReachableContext(ctx, name) {
+		if agent == "claude" && sbxrun.Reachable(ctx, name) {
 			themeCtx, cancel := context.WithTimeout(ctx, themeReadTimeout)
 			if c, ok := claudetheme.FromSandbox(themeCtx, name); ok {
 				themeFromSandbox = c
@@ -159,7 +159,7 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 			return err
 		}
 		note("removing sandbox '%s'", name)
-		if err := sbxrun.RemoveToContext(ctx, name, true, actionOutput()); err != nil {
+		if err := sbxrun.Remove(ctx, name, true, actionOutput()); err != nil {
 			return err
 		}
 		// The instance record deliberately outlives the sandbox: it carries

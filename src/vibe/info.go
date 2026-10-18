@@ -99,7 +99,7 @@ func gatherInfo(ctx context.Context, lay layout.Layout, args cliargs.Args, name,
 		info.guided = profilegen.IsGuided(lay.ProfileDir(profile))
 		info.features, _ = profilegen.WithoutBase(profilegen.ComposedFrom(lay.ProfileDir(profile)), lay.BaseFeatures())
 	}
-	statuses, err := sbxrun.ListContext(ctx)
+	statuses, err := sbxrun.List(ctx)
 	if err != nil {
 		return info, false, err
 	}

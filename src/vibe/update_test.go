@@ -377,8 +377,8 @@ func batchStandIns(t *testing.T, failing ...string) *[]string {
 		}
 		return state.Save(lay.Home, inst)
 	}
-	startRebuilt = func(name string) bool { did = append(did, "start "+name); return true }
-	stopRebuilt = func(name string) error { did = append(did, "stop "+name); return nil }
+	startRebuilt = func(_ context.Context, name string) bool { did = append(did, "start "+name); return true }
+	stopRebuilt = func(_ context.Context, name string) error { did = append(did, "stop "+name); return nil }
 	return &did
 }
 

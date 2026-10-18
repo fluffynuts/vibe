@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -153,5 +154,11 @@ func doDelete(lay layout.Layout, args cliargs.Args, name, target string) error {
 		}
 		return nil
 	}
-	return d.run(lay.Home, sandbox, prof, sbxrun.Remove)
+	return d.run(lay.Home, sandbox, prof, removeSandbox)
+}
+
+// removeSandbox removes sandbox name from sbx, telling the terminal how
+// it goes.
+func removeSandbox(name string, force bool) error {
+	return sbxrun.Remove(context.Background(), name, force, nil)
 }

@@ -59,16 +59,16 @@ var (
 	// running sandbox. A stopped one is left alone: every session start
 	// writes them afresh (see syncGitInstructions), so it gets them then.
 	writeGitInstructions = func(name, content string) error {
-		if !sbxrun.Reachable(name) {
+		if !sbxrun.Reachable(context.Background(), name) {
 			return nil
 		}
 		return writeSandboxFile(name, gittoken.SandboxFile, content)
 	}
 	removeGitInstructions = func(name string) error {
-		if !sbxrun.Reachable(name) {
+		if !sbxrun.Reachable(context.Background(), name) {
 			return nil
 		}
-		if out, err := sbxrun.ExecCapture(name, "rm", "-f", gittoken.SandboxFile); err != nil {
+		if out, err := sbxrun.ExecCapture(context.Background(), name, "rm", "-f", gittoken.SandboxFile); err != nil {
 			return fmt.Errorf("%w: %s", err, strings.TrimSpace(out))
 		}
 		return nil

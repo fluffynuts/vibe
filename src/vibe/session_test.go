@@ -116,7 +116,7 @@ func fakeWake(t *testing.T, starts bool, stopErr error) *[]string {
 	t.Cleanup(func() { startToBackUp, backUpMemories, stopAfterBackUp = oldStart, oldSave, oldStop })
 	startToBackUp = func(_ context.Context, name string) bool { calls = append(calls, "start "+name); return starts }
 	backUpMemories = func(_, name string) { calls = append(calls, "save "+name) }
-	stopAfterBackUp = func(name string) error { calls = append(calls, "stop "+name); return stopErr }
+	stopAfterBackUp = func(_ context.Context, name string) error { calls = append(calls, "stop "+name); return stopErr }
 	return &calls
 }
 
@@ -157,7 +157,7 @@ func fakeSandboxState(t *testing.T, running, known, reachable bool) {
 	oldRunning, oldReachable := sandboxRunning, sandboxReachable
 	t.Cleanup(func() { sandboxRunning, sandboxReachable = oldRunning, oldReachable })
 	sandboxRunning = func(string) (bool, bool) { return running, known }
-	sandboxReachable = func(string) bool { return reachable }
+	sandboxReachable = func(context.Context, string) bool { return reachable }
 }
 
 // A headless vibe ending with its sandbox asleep wakes it to back up its

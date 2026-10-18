@@ -124,10 +124,10 @@ func Apply(name, zone string) error {
 		envErr          error
 		reads           sync.WaitGroup
 	)
-	reads.Go(func() { hasZone = sbxrun.ExecSilent(name, "test", "-f", file) })
+	reads.Go(func() { hasZone = sbxrun.ExecSilent(context.Background(), name, "test", "-f", file) })
 	reads.Go(func() { link, _ = sbxrun.ExecStdout(ctx, name, "readlink", "/etc/localtime") })
 	reads.Go(func() { current, _ = sbxrun.ExecStdout(ctx, name, "cat", "/etc/timezone") })
-	reads.Go(func() { hasEnv = sbxrun.ExecSilent(name, "test", "-f", persistentEnv) })
+	reads.Go(func() { hasEnv = sbxrun.ExecSilent(context.Background(), name, "test", "-f", persistentEnv) })
 	reads.Go(func() { env, envErr = sbxrun.ExecStdout(ctx, name, "cat", persistentEnv) })
 	reads.Wait()
 
@@ -135,7 +135,7 @@ func Apply(name, zone string) error {
 		return fmt.Errorf("the sandbox has no timezone %s (no %s)", zone, file)
 	}
 	if strings.TrimSpace(link) != file || strings.TrimSpace(current) != zone {
-		if out, err := sbxrun.ExecCapture(name, "sudo", "-n", "ln", "-sfn", file, "/etc/localtime"); err != nil {
+		if out, err := sbxrun.ExecCapture(context.Background(), name, "sudo", "-n", "ln", "-sfn", file, "/etc/localtime"); err != nil {
 			return fmt.Errorf("linking /etc/localtime to %s: %w: %s", file, err, strings.TrimSpace(out))
 		}
 		if err := sbxrun.ExecInput(name, zone+"\n", "sudo", "-n", "tee", "/etc/timezone"); err != nil {

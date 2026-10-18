@@ -68,34 +68,34 @@ func TestExecInputGivesTheCommandItsInputAndSaysWhyItFailed(t *testing.T) {
 
 func TestExecCaptureIsAllSbxPrinted(t *testing.T) {
 	echoingSbx(t)
-	out, err := ExecCapture("box", "ls")
+	out, err := ExecCapture(context.Background(), "box", "ls")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out, "args: exec box -- ls\n") || !strings.Contains(out, "on stderr") {
 		t.Errorf("out = %q", out)
 	}
-	if out, err := ExecCapture("box", "fail"); err == nil || !strings.Contains(out, "on stderr") {
+	if out, err := ExecCapture(context.Background(), "box", "fail"); err == nil || !strings.Contains(out, "on stderr") {
 		t.Errorf("failed: out = %q, err = %v", out, err)
 	}
 }
 
 func TestExecSilentSaysOnlyWhetherItWorked(t *testing.T) {
 	echoingSbx(t)
-	if !ExecSilent("box", "true") {
+	if !ExecSilent(context.Background(), "box", "true") {
 		t.Error("a command that worked was reported failed")
 	}
-	if ExecSilentContext(context.Background(), "box", "fail") {
+	if ExecSilent(context.Background(), "box", "fail") {
 		t.Error("a command that failed was reported working")
 	}
 }
 
 func TestStopQuietSaysWhatSbxSaidWhenItFails(t *testing.T) {
 	echoingSbx(t)
-	if err := StopQuiet("box"); err != nil {
+	if err := StopQuiet(context.Background(), "box"); err != nil {
 		t.Fatal(err)
 	}
-	if err := StopQuiet("fail"); err == nil || !strings.Contains(err.Error(), "args: stop fail") {
+	if err := StopQuiet(context.Background(), "fail"); err == nil || !strings.Contains(err.Error(), "args: stop fail") {
 		t.Errorf("err = %v, want what sbx printed", err)
 	}
 }
@@ -130,7 +130,7 @@ func TestWhatIsReadFromASandboxHasALimit(t *testing.T) {
 
 	for name, read := range map[string]func() (string, error){
 		"ExecStdout":      func() (string, error) { return ExecStdout(context.Background(), "box", "cat", "/f") },
-		"ExecCapture":     func() (string, error) { return ExecCapture("box", "cat", "/f") },
+		"ExecCapture":     func() (string, error) { return ExecCapture(context.Background(), "box", "cat", "/f") },
 		"ExecInputStdout": func() (string, error) { return ExecInputStdout(context.Background(), "box", "", "cat") },
 		"ExecInput":       func() (string, error) { return "", ExecInput("box", "", "cat") },
 	} {
