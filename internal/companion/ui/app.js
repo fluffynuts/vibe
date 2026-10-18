@@ -871,9 +871,9 @@
     })
   }
 
-  async function post(path, payload) {
-    const res = await api(path, { method: 'POST', body: JSON.stringify(payload) })
-    return res
+  // post sends payload to path as JSON; options are api's.
+  function post(path, payload, options) {
+    return api(path, Object.assign({}, options, { method: 'POST', body: JSON.stringify(payload) }))
   }
 
   function confirmThen(opts) {
@@ -933,7 +933,7 @@
       let res
       try {
         // It may wake the sandbox, to set it there.
-        res = await api('/api/default-branch', { method: 'POST', body: JSON.stringify({ name: input.value }), timeout: 4 * 60 * 1000 })
+        res = await post('/api/default-branch', { name: input.value }, { timeout: 4 * 60 * 1000 })
         reached(true)
       } catch (e) {
         reached(false)
@@ -1019,7 +1019,7 @@
           t.status === 'open' ? null : el('span', { class: 'pill', text: t.status }),
           awaiting ? el('span', { class: 'pill warn', text: 'awaiting your answer' }) : null),
         el('span', { class: 'comment-card-said' }, el('strong', { text: first.author === 'agent' ? 'Agent: ' : 'You: ' }), first.body.replace(/\s+/g, ' ').slice(0, 160)),
-        replies ? el('span', { class: 'comment-card-replies muted', text: replies === 1 ? '1 reply' : replies + ' replies' }) : null)
+        replies ? el('span', { class: 'comment-card-replies muted', text: plural(replies, 'reply', 'replies') }) : null)
     }) : [el('p', { class: 'muted', text: pane.filter === 'all' ? 'No comments yet.' : 'None of these.' })]))
   }
 
@@ -1510,7 +1510,7 @@
   // commentCount is a file's comment threads, for its row in the tree.
   function commentCount(n) {
     if (!n) return null
-    return el('span', { class: 'review-tree-comments', title: n + (n === 1 ? ' comment' : ' comments') }, commentIcon(), String(n))
+    return el('span', { class: 'review-tree-comments', title: plural(n, 'comment') }, commentIcon(), String(n))
   }
 
   function commentIcon() {
@@ -1623,7 +1623,7 @@
       } else reviewView.at = Math.max(0, R.positionOf(tops, threadLine()))
     }
     reviewView.at = Math.min(reviewView.at, Math.max(0, shown - 1))
-    const where = shown ? (reviewView.at + 1) + '/' + shown + (shown === 1 ? ' comment' : ' comments') : (all === 1 ? '1 comment' : all + ' comments')
+    const where = shown ? (reviewView.at + 1) + '/' + plural(shown, 'comment') : plural(all, 'comment')
     $('review-count').textContent = !all ? 'no comments yet' : where + (hiddenNote ? ' (' + hiddenNote + ')' : '')
     $('review-order').title = (all ? open + ' open of ' + all + ' comment threads. ' : '') +
       (reviewView.order === 'reading' ? "The arrows go in the agent's reading order" : 'The arrows go in path order, as the tree') + ': click to change.'
@@ -1772,7 +1772,7 @@
   // agent with the next message: the clipboard page can't be seen here.
   function showPastes(n) {
     $('review-pastes').hidden = !n
-    $('review-pastes').textContent = n === 1 ? '1 paste to send' : n + ' pastes to send'
+    $('review-pastes').textContent = plural(n, 'paste') + ' to send'
   }
 
   // reviewPaste sends what's pasted on the Review tab that isn't text (an
@@ -1959,7 +1959,7 @@
     const against = o.defaultBranch || o.emptyDefaultBranch
     if (against) kinds.push({ kind: 'branch', what: 'this branch against ' + against, review: 'Review against ' + against, show: 'Diff against ' + against, empty: !o.defaultBranch })
     if (o.upstream) {
-      const n = o.unpushed === 1 ? '1 unpushed commit' : o.unpushed + ' unpushed commits'
+      const n = plural(o.unpushed, 'unpushed commit')
       kinds.push({ kind: 'unpushed', what: 'the commits not yet pushed to ' + o.upstream, review: 'Review ' + n, show: 'Show ' + n })
     }
     // Why there's no reviewing against the default branch: it can't be told
@@ -2130,7 +2130,7 @@
     $('review-submit').disabled = !unsent || !state.conversation
     $('review-submit').textContent = unsent ? 'Submit ' + unsent + ' to agent' : 'Submit to agent'
     $('review-submit').title = !state.conversation ? "This sandbox's agent can't be talked to from the page"
-      : unsent ? 'Send the agent your ' + unsent + (unsent === 1 ? ' comment' : ' comments') + " it hasn't seen: it changes code only where you ask it to"
+      : unsent ? 'Send the agent your ' + plural(unsent, 'comment') + " it hasn't seen: it changes code only where you ask it to"
         : "Nothing new to send: comment on a line, or reply, first"
     $('review-error').hidden = !reviewView.diffError
     $('review-error').textContent = reviewView.diffError
@@ -2267,8 +2267,8 @@
     let adds = 0
     let dels = 0
     for (const h of f.hunks || []) for (const l of h.lines) { if (l.kind === 'add') adds++; else if (l.kind === 'del') dels++ }
-    const length = f.lines ? (f.status === 'deleted' ? 'was ' : '') + f.lines + (f.lines === 1 ? ' line' : ' lines') : ''
-    return el('span', { class: 'diffstat', title: adds + (adds === 1 ? ' line' : ' lines') + ' added, ' + dels + ' deleted' + (f.lines ? ', of ' + f.lines : '') },
+    const length = f.lines ? (f.status === 'deleted' ? 'was ' : '') + plural(f.lines, 'line') : ''
+    return el('span', { class: 'diffstat', title: plural(adds, 'line') + ' added, ' + dels + ' deleted' + (f.lines ? ', of ' + f.lines : '') },
       el('span', { class: 'adds', text: '+' + adds }), el('span', { class: 'dels', text: '−' + dels }),
       el('span', { class: 'squares' }, ...R.diffSquares(adds, dels).map((k) => el('span', { class: 'square ' + k }))),
       length ? el('span', { class: 'length muted', text: length }) : null)
@@ -3178,7 +3178,7 @@
         reached(true)
         if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
         const n = res.body.sent || 0
-        toast('Sent ' + n + (n === 1 ? ' comment' : ' comments') + ' to the agent: it answers on them, and says here what it did.')
+        toast('Sent ' + plural(n, 'comment') + ' to the agent: it answers on them, and says here what it did.')
         loadReview(false)
         select('conversation')
       } catch (e) {
@@ -3365,7 +3365,7 @@
     ed.save.disabled = ed.accept.disabled = true
     setStatus(ed, 'Saving…', '', true)
     try {
-      const res = await api('/api/admin/instructions', { method: 'POST', body: JSON.stringify(payload), timeout: 60000 })
+      const res = await post('/api/admin/instructions', payload, { timeout: 60000 })
       reached(true)
       if (res.status === 409 && res.body.conflict) { askChanged(ed, res.body); return }
       if (!res.ok || !res.body.saved) { setStatus(ed, (res.body && res.body.error) || 'That could not be saved.', 'bad'); return }
@@ -3437,8 +3437,7 @@
     ed.timer = setInterval(tickTime, 1000)
     ed.refresh()
     try {
-      const res = await api('/api/admin/instructions/optimise', {
-        method: 'POST', body: JSON.stringify({ which: ed.file.which, text: ed.box.value }),
+      const res = await post('/api/admin/instructions/optimise', { which: ed.file.which, text: ed.box.value }, {
         // The server gives up first (at 10 minutes) and says why.
         timeout: 11 * 60000, cancel: ed.running,
       })
@@ -4164,7 +4163,8 @@
 
   function showIf(id, on) { $(id).hidden = !on }
 
-  function plural(n, word) { return n + ' ' + word + (n === 1 ? '' : 's') }
+  // plural is n with the word for one, or for more (one + 's' unless given).
+  function plural(n, one, more) { return n + ' ' + (n === 1 ? one : more || one + 's') }
 
   function openFresh() {
     if (fresh.cancel) fresh.cancel.abort()
@@ -4182,18 +4182,25 @@
     drawFresh()
     $('fresh').showModal()
     raiseToast()
-    const answered = (options) => {
+    askFreshOptions(false)
+  }
+
+  // askFreshOptions asks vibe what else the dialog can offer, and draws it,
+  // unless the dialog has been opened afresh meanwhile. Failing, it says
+  // why, and keep says whether what was offered before stays offered.
+  function askFreshOptions(keep) {
+    const generation = fresh.generation
+    const failed = (text) => {
       if (generation !== fresh.generation) return
-      fresh.options = options
-      drawFresh()
+      freshError(text)
+      if (!keep) { fresh.options = {}; drawFresh() }
     }
-    api('/api/conversation/new/options', { method: 'POST', body: '{}', timeout: FRESH_OPTIONS_MS, cancel: fresh.cancel }).then((res) => {
-      if (!res.ok) freshError(res.body.error || "vibe couldn't say what else can be done.")
-      answered(res.ok ? res.body : {})
-    }, () => {
-      freshError("Could not reach vibe to ask what else can be done.")
-      answered({})
-    })
+    post('/api/conversation/new/options', {}, { timeout: FRESH_OPTIONS_MS, cancel: fresh.cancel }).then((res) => {
+      if (!res.ok) { failed(res.body.error || "vibe couldn't say what else can be done."); return }
+      if (generation !== fresh.generation) return
+      fresh.options = res.body
+      drawFresh()
+    }, () => failed('Could not reach vibe to ask what else can be done.'))
   }
 
   function freshError(text) {
@@ -4256,13 +4263,7 @@
   // refreshFresh asks again what the dialog can offer, keeping what's
   // chosen: after the default branch has been set.
   function refreshFresh() {
-    const generation = fresh.generation
-    api('/api/conversation/new/options', { method: 'POST', body: '{}', timeout: FRESH_OPTIONS_MS, cancel: fresh.cancel }).then((res) => {
-      if (generation !== fresh.generation) return
-      if (!res.ok) { freshError(res.body.error || "vibe couldn't say what else can be done."); return }
-      fresh.options = res.body
-      drawFresh()
-    }, () => { if (generation === fresh.generation) freshError('Could not reach vibe to ask what else can be done.') })
+    askFreshOptions(true)
   }
 
   function drawFreshFetch(def) {
@@ -4299,7 +4300,7 @@
       $('fresh-update').checked = !!(fetched.checked && fetched.local && !fetched.ahead && fetched.behind > 0)
       drawFresh()
     }
-    api('/api/conversation/new/fetch', { method: 'POST', body: '{}', timeout: FRESH_FETCH_MS, cancel: fresh.cancel }).then(
+    post('/api/conversation/new/fetch', {}, { timeout: FRESH_FETCH_MS, cancel: fresh.cancel }).then(
       (res) => answered(res.ok ? res.body : { checked: false, why: res.body.error || 'vibe said ' + res.status }),
       () => answered({ checked: false, why: "vibe couldn't be reached" }))
   }
@@ -4335,7 +4336,7 @@
     $('fresh-run').textContent = 'Starting…'
     let res
     try {
-      res = await api('/api/conversation/new', { method: 'POST', body: JSON.stringify(body), timeout: FRESH_START_MS })
+      res = await post('/api/conversation/new', body, { timeout: FRESH_START_MS })
       reached(true)
     } catch (e) {
       reached(false)
