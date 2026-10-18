@@ -199,6 +199,25 @@
           <p id="admin-error" class="note bad-text" hidden></p>
         </section>
 
+        <section class="card" id="admin-packages-card" aria-labelledby="admin-packages-h" hidden>
+          <h2 id="admin-packages-h">Package requests <span id="admin-packages-count" class="pill"></span></h2>
+          <p class="note muted">The agent asks vibe for packages it can't get itself (a private feed's), by name and version. vibe fetches them on this machine, with your own NuGet config, only once you allow them.</p>
+          <p id="admin-packages-none" class="note muted">Nothing is waiting.</p>
+          <ul id="admin-packages" class="checks"></ul>
+          <div class="bar" id="admin-packages-bar" hidden>
+            <button type="button" id="admin-packages-allow">Allow selected</button>
+            <button type="button" id="admin-packages-deny" class="danger">Deny all</button>
+          </div>
+          <div id="admin-nugetconfig" hidden>
+            <h3 id="admin-nugetconfig-h">The folder's nuget.config</h3>
+            <p id="admin-nugetconfig-note" class="note"></p>
+            <ul id="admin-nugetconfig-sources" class="plain"></ul>
+            <ul id="admin-nugetconfig-warnings" class="plain bad-text"></ul>
+            <details><summary>The whole file</summary><pre id="admin-nugetconfig-text" class="info"></pre></details>
+            <div class="bar"><button type="button" id="admin-nugetconfig-approve">Approve this nuget.config</button></div>
+          </div>
+        </section>
+
         <section class="card" id="admin-job-card" aria-labelledby="admin-job-h" hidden>
           <h2 id="admin-job-h" tabindex="-1">Last action <span id="admin-job-state" class="pill"></span></h2>
           <pre id="admin-job" class="info log" role="log" aria-live="polite"></pre>

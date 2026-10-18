@@ -661,7 +661,7 @@
       post('/api/awake', {}).catch(() => {})
     }
     const loads = state.tab === 'conversation' ? [loadState()]
-      : state.tab === 'admin' ? [loadState(), loadAdmin(), loadInstructions(false)]
+      : state.tab === 'admin' ? [loadState(), loadAdmin(), loadPackages(), loadInstructions(false)]
       : state.tab === 'manage' ? [loadState(), loadManage()]
       : state.tab === 'review' ? [loadState(), loadReview(reviewView.files === null)]
       : [loadState(), load(state.tab)]
@@ -2641,6 +2641,103 @@
     }
   }
 
+  // --- package requests on the Admin tab -----------------------------------
+
+  // unticked is the keys of the requests the user has unticked: all are
+  // ticked until then, and a poll doesn't undo it.
+  const packagesView = { key: '', unticked: new Set(), config: '' }
+
+  async function loadPackages() {
+    try {
+      const res = await api('/api/packages')
+      reached(true)
+      // A sandbox that can't ask for packages has no such card.
+      $('admin-packages-card').hidden = !res.ok
+      if (res.ok) renderPackages(res.body)
+    } catch (e) {
+      reached(false)
+    }
+  }
+
+  function describeRequest(r) {
+    return r.ecosystem + ' ' + r.id + ' ' + r.version + (r.framework ? ' (' + r.framework + ')' : '')
+  }
+
+  function renderPackages(data) {
+    const requests = data.requests || []
+    const keys = new Set(requests.map((r) => r.key))
+    for (const k of packagesView.unticked) if (!keys.has(k)) packagesView.unticked.delete(k)
+    const key = JSON.stringify(requests)
+    if (key !== packagesView.key) {
+      packagesView.key = key
+      $('admin-packages').replaceChildren(...requests.map((r) => {
+        const box = el('input', { type: 'checkbox', 'data-key': r.key, disabled: !!r.fetching })
+        box.checked = !packagesView.unticked.has(r.key)
+        box.addEventListener('change', () => {
+          if (box.checked) packagesView.unticked.delete(r.key)
+          else packagesView.unticked.add(r.key)
+        })
+        return el('li', {}, el('label', {}, box, el('span', { text: describeRequest(r) }),
+          el('span', { class: 'was', text: r.fetching ? 'fetching…' : r.note || '' })))
+      }))
+    }
+    $('admin-packages-none').hidden = requests.length > 0
+    $('admin-packages-bar').hidden = requests.length === 0
+    pill('admin-packages-count', requests.length ? String(requests.length) + ' waiting' : '', requests.length ? 'bad' : '')
+    renderNugetConfig(data.config, data.configProblem)
+  }
+
+  function renderNugetConfig(config, problemText) {
+    const box = $('admin-nugetconfig')
+    box.hidden = !config && !problemText
+    if (!config) { $('admin-nugetconfig-note').textContent = problemText || ''; return }
+    const key = JSON.stringify(config)
+    if (key === packagesView.config) return
+    packagesView.config = key
+    $('admin-nugetconfig-note').textContent = config.problem ? config.problem
+      : config.approved ? 'Approved: vibe uses it, as it reads now, for fetches. Any change asks again.'
+      : "Not approved, so vibe ignores it for fetches. It can name feeds (and change more than that): read it before you approve it."
+    $('admin-nugetconfig-sources').replaceChildren(...(config.sources || []).map((s) => el('li', {}, el('code', { text: s.name }), ' ', s.url)))
+    $('admin-nugetconfig-warnings').replaceChildren(...(config.redefines || []).map((w) => el('li', { text: 'Warning: ' + w })))
+    $('admin-nugetconfig-text').textContent = config.text || ''
+    const approve = $('admin-nugetconfig-approve')
+    approve.hidden = config.approved || !config.hash
+    approve.dataset.hash = config.hash || ''
+  }
+
+  async function packagesDecide(path, keys) {
+    try {
+      const res = await post(path, { keys })
+      reached(true)
+      if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true)
+      else renderPackages(res.body)
+      loadState()
+    } catch (e) {
+      reached(false)
+      toast('Could not reach vibe.', true)
+    }
+  }
+
+  function wirePackages() {
+    $('admin-packages-allow').addEventListener('click', () => {
+      const keys = Array.from($('admin-packages').querySelectorAll('input:checked:not(:disabled)')).map((b) => b.dataset.key)
+      if (!keys.length) { toast('Nothing is ticked.', true); return }
+      packagesDecide('/api/packages/allow', keys)
+    })
+    $('admin-packages-deny').addEventListener('click', () => packagesDecide('/api/packages/deny-all', []))
+    $('admin-nugetconfig-approve').addEventListener('click', async () => {
+      try {
+        const res = await post('/api/packages/approve-config', { hash: $('admin-nugetconfig-approve').dataset.hash })
+        reached(true)
+        if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true)
+        else renderPackages(res.body)
+      } catch (e) {
+        reached(false)
+        toast('Could not reach vibe.', true)
+      }
+    })
+  }
+
   function pill(id, text, cls) {
     const p = $(id)
     p.textContent = text
@@ -2874,6 +2971,7 @@
   }
 
   function setUpAdmin() {
+    wirePackages()
     $('admin-cancel').addEventListener('click', () => {
       if (!REBUILDS.includes(adminView.jobKind)) { cancelAdmin(); return }
       confirmThen({

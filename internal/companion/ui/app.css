@@ -535,3 +535,8 @@ html.themed .commands li[aria-selected="true"] {
 .review-lines .hl-const { color: var(--hl-const); }
 .review-lines .hl-op { color: var(--hl-op); }
 .review-uncoloured { font-size: 12px; }
+
+#admin-nugetconfig { margin-top: 12px; border-top: 1px solid var(--line, #8883); padding-top: 8px; }
+#admin-nugetconfig h3 { margin: 0 0 4px; font-size: 13px; }
+#admin-nugetconfig details { margin: 6px 0; }
+#admin-nugetconfig pre { max-height: 240px; overflow: auto; }
