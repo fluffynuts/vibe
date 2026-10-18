@@ -7,8 +7,18 @@ import (
 	"net/http"
 	"time"
 
+	"vibe/internal/nugetfetch"
 	"vibe/internal/packagereq"
 )
+
+// PackageConfig is the nuget.config in the sandbox's folder, which the user
+// approves before vibe uses it for a fetch (see nugetfetch.WorkspaceConfig).
+type PackageConfig interface {
+	// Look is the config as it is now; nil when there's none.
+	Look() (*nugetfetch.ConfigInfo, error)
+	// Approve approves the content with hash, if it's still the content.
+	Approve(hash string) error
+}
 
 // PackageDesk is where a sandbox's requests for packages are held for the
 // user, and decided (see internal/packagereq).
@@ -95,7 +105,30 @@ func (s *Server) packagesWaiting() string {
 }
 
 func (s *Server) packagesState(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]interface{}{"requests": s.packageRequests()})
+	body := map[string]interface{}{"requests": s.packageRequests(), "config": (*nugetfetch.ConfigInfo)(nil)}
+	if s.cfg.PackageConfig != nil {
+		info, err := s.cfg.PackageConfig.Look()
+		if err != nil {
+			body["configProblem"] = "the folder's nuget.config can't be looked at: " + err.Error()
+		}
+		body["config"] = info
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+func (s *Server) packagesApproveConfig(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Hash string `json:"hash"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || s.cfg.PackageConfig == nil {
+		writeError(w, http.StatusBadRequest, "expected {\"hash\": ...}")
+		return
+	}
+	if err := s.cfg.PackageConfig.Approve(body.Hash); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	s.packagesState(w, r)
 }
 
 func (s *Server) packagesDecide(decide func(keys []string)) http.HandlerFunc {

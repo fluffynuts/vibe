@@ -227,3 +227,12 @@ func TestOnlyNuGetRequestsAreValid(t *testing.T) {
 		t.Error("a floating version was valid")
 	}
 }
+
+func TestAFailureCarriesTheHintForWhatTheUserCouldDo(t *testing.T) {
+	h := newHost(t)
+	e := Ecosystem{Options: func(packagereq.Request) Options { return h.options() }, Hint: func() string { return "approve the nuget.config" }}
+	msg, err := e.Fetch(context.Background(), packagereq.Request{Ecosystem: "nuget", ID: "Nope.Pkg", Version: "1.0.0", Framework: "net10.0"})
+	if err == nil || !strings.Contains(msg, "NU1101") || !strings.HasSuffix(msg, "approve the nuget.config") {
+		t.Errorf("msg = %q, err = %v", msg, err)
+	}
+}

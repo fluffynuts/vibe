@@ -13,6 +13,9 @@ type Ecosystem struct {
 	// Options are where a fetch for r happens, asked for each fetch: the
 	// workspace config the user has approved can change between them.
 	Options func(r packagereq.Request) Options
+	// Hint, when set, is added to a failure for what the user could do to
+	// make it work ("" for nothing).
+	Hint func() string
 }
 
 func nugetRequest(r packagereq.Request) Request {
@@ -35,7 +38,13 @@ const maxReported = 3000
 func (e Ecosystem) Fetch(ctx context.Context, r packagereq.Request) (string, error) {
 	res, err := Fetch(ctx, nugetRequest(r), e.Options(r))
 	if err != nil {
-		return reportable(err.Error() + "\n" + res.Output), err
+		report := reportable(err.Error() + "\n" + res.Output)
+		if e.Hint != nil {
+			if hint := e.Hint(); hint != "" {
+				report += "\n\n" + hint
+			}
+		}
+		return report, err
 	}
 	if len(res.Fetched) == 0 {
 		return fmt.Sprintf("%s %s is in the host's package cache already: restore again", r.ID, r.Version), nil

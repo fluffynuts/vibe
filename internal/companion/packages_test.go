@@ -3,12 +3,14 @@ package companion
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"vibe/internal/nugetfetch"
 	"vibe/internal/packagereq"
 )
 
@@ -170,5 +172,62 @@ func TestTheDeskIsPolledForRequestsUntilTheServerEnds(t *testing.T) {
 	case <-ended:
 	case <-time.After(5 * time.Second):
 		t.Fatal("still polling after the server ended")
+	}
+}
+
+type fakeConfig struct {
+	info     *nugetfetch.ConfigInfo
+	approved []string
+	err      error
+}
+
+func (f *fakeConfig) Look() (*nugetfetch.ConfigInfo, error) { return f.info, nil }
+func (f *fakeConfig) Approve(hash string) error {
+	f.approved = append(f.approved, hash)
+	return f.err
+}
+
+func configServer(c *fakeConfig) *Server {
+	return New(Config{Sandbox: "box", Token: token, Port: testPort, Packages: &fakeDesk{}, PackageConfig: c})
+}
+
+func TestThePageShowsTheWorkspaceConfigWithItsSourcesToBeApproved(t *testing.T) {
+	c := &fakeConfig{info: &nugetfetch.ConfigInfo{File: "nuget.config", Hash: "abc",
+		Sources: []nugetfetch.Source{{Name: "corp", URL: "https://nuget.corp.example/"}}, Redefines: []string{"it gives your source \"corp\" another address"}}}
+	rec := do(t, configServer(c), req{path: "/api/packages", headers: authed(nil)})
+	var got struct {
+		Config *nugetfetch.ConfigInfo `json:"config"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Config == nil || got.Config.Hash != "abc" || got.Config.Sources[0].Name != "corp" || len(got.Config.Redefines) != 1 {
+		t.Errorf("config = %+v", got.Config)
+	}
+}
+
+func TestAPageWithNoWorkspaceConfigSaysSo(t *testing.T) {
+	rec := do(t, configServer(&fakeConfig{}), req{path: "/api/packages", headers: authed(nil)})
+	if !strings.Contains(rec.Body.String(), `"config":null`) {
+		t.Errorf("body = %s", rec.Body)
+	}
+}
+
+func TestApprovingTheConfigApprovesTheContentThePageShowed(t *testing.T) {
+	c := &fakeConfig{info: &nugetfetch.ConfigInfo{Hash: "abc"}}
+	s := configServer(c)
+	if rec := do(t, s, post("/api/packages/approve-config", `{"hash":"abc"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if len(c.approved) != 1 || c.approved[0] != "abc" {
+		t.Errorf("approved %v", c.approved)
+	}
+}
+
+func TestAConfigThatChangedUnderTheUserIsRefusedWithWhy(t *testing.T) {
+	c := &fakeConfig{err: errors.New("the nuget.config has changed since you looked at it")}
+	rec := do(t, configServer(c), post("/api/packages/approve-config", `{"hash":"old"}`))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "has changed") {
+		t.Errorf("%d %s", rec.Code, rec.Body)
 	}
 }

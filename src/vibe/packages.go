@@ -66,6 +66,7 @@ func packageDeskFor(lay layout.Layout, name string, inst state.Instance, merged 
 		return nil
 	}
 	root := state.NugetFetchPath(lay.Home)
+	workspace := workspaceConfigFor(lay.Home, name, inst, merged)
 	return &packagereq.Desk{
 		Mailbox:     packagereq.Mailbox{Dir: state.PackagesPath(lay.Home, name)},
 		Unavailable: packagesUnavailable(inst.Target, lay.Home, merged),
@@ -78,7 +79,15 @@ func packageDeskFor(lay layout.Layout, name string, inst state.Instance, merged 
 		},
 		Ecosystems: map[string]packagereq.Ecosystem{"nuget": nugetfetch.Ecosystem{
 			Options: func(packagereq.Request) nugetfetch.Options {
-				return nugetfetch.Options{Root: root, Cache: cache, Env: os.Environ(), Timeout: fetchWithin}
+				return nugetfetch.Options{Root: root, Cache: cache, Env: os.Environ(), Timeout: fetchWithin,
+					ApprovedConfig: workspace.ApprovedContent()}
+			},
+			Hint: func() string {
+				if info, err := workspace.Look(); err == nil && info != nil && !info.Approved && info.Problem == "" {
+					return "This folder has a nuget.config that isn't approved, so it wasn't used: if the package is on a feed it names, " +
+						"the user can approve it on the companion page's Admin tab, and then you can ask again."
+				}
+				return ""
 			},
 		}},
 		Describe: func(r packagereq.Request) string { return describeRequest(inst.Target, r) },
@@ -105,4 +114,20 @@ func describeRequest(target string, r packagereq.Request) string {
 	}
 	return nugetfetch.Classify(nugetfetch.Request{ID: r.ID, Version: r.Version, Framework: r.Framework},
 		nugetfetch.ProjectFiles{Committed: files.Committed, Working: files.Working}, mainline.Name)
+}
+
+// workspaceConfigFor is the nuget.config in the sandbox's folder, which the
+// user approves on the page before a fetch uses it.
+func workspaceConfigFor(vibeHome, name string, inst state.Instance, merged settings.Settings) nugetfetch.WorkspaceConfig {
+	w := nugetfetch.WorkspaceConfig{
+		Dir:       inst.Target,
+		Approvals: filepath.Join(state.PackagesPath(vibeHome, name), "approved-configs.json"),
+	}
+	if merged.NugetDir != "" {
+		w.HostConfigs = append(w.HostConfigs, filepath.Join(merged.NugetDir, "NuGet", "NuGet.Config"))
+	}
+	if config, err := os.UserConfigDir(); err == nil {
+		w.HostConfigs = append(w.HostConfigs, filepath.Join(config, "NuGet", "NuGet.Config"))
+	}
+	return w
 }

@@ -114,6 +114,9 @@ type Config struct {
 	// Packages holds the sandbox's requests for packages for the user to
 	// approve, on the Admin tab; nil means the sandbox can't ask.
 	Packages PackageDesk
+	// PackageConfig is the folder's nuget.config, to approve on the same
+	// tab; nil means none is offered.
+	PackageConfig PackageConfig
 	// KeepAwake is what the page asks for while it's in view (and as it
 	// comes back into view), to keep the sandbox from being stopped for
 	// being idle, or start it again if it was; it returns what it did, if
@@ -327,6 +330,7 @@ func (s *Server) apiRoutes() []apiRoute {
 			s.packagesDecide(s.cfg.Packages.Deny)(w, r)
 		})},
 		{"POST /api/packages/deny-all", s.serving(packagesFeature, s.packagesDenyAll)},
+		{"POST /api/packages/approve-config", s.serving(packagesFeature, s.packagesApproveConfig)},
 		{"GET /api/admin/instructions", s.authed(s.instructionsState)},
 		{"POST /api/admin/instructions", s.serving(instructionsFeature, s.instructionsSave)},
 		{"POST /api/admin/instructions/optimise", s.serving(instructionsFeature, s.instructionsOptimise)},

@@ -249,10 +249,14 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 	setting := ""
 	agent := inst.Agent
 	var desk *packagereq.Desk
+	var workspaceConfig companion.PackageConfig
 	if found && lay.ProfileExists(inst.Profile) {
 		if merged, err := loadSettings(lay, inst.Profile); err == nil {
 			setting = merged.Companion
 			desk = packageDeskFor(lay, name, inst, merged)
+			if desk != nil {
+				workspaceConfig = workspaceConfigFor(lay.Home, name, inst, merged)
+			}
 			if agent == "" {
 				agent = agentOf(merged)
 			}
@@ -319,6 +323,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		ReviewTab:              reviewTabFor(vibeHome, name, inst),
 		Admin:                  adminFor(lay, name, inst.Target),
 		Packages:               packageDesk(desk),
+		PackageConfig:          workspaceConfig,
 		Manage:                 &companionManager{lay: lay, own: name},
 		ThemeColor:             themeColorFor(lay, name, inst, agent),
 		KeepAwake:              keepAwakeFor(name),
