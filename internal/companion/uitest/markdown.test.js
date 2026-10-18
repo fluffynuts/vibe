@@ -115,3 +115,16 @@ test('nothing, or only blank lines, is no blocks', () => {
   assert.deepEqual(parse('\n  \n'), [])
   assert.deepEqual(parse(undefined), [])
 })
+
+// What the agent writes is read here, and could be written to make each
+// opener search to the end afresh: the time grows with the text, not its
+// square. (The bound is many times what it takes; the old way took 11s.)
+test('emphasis and links that never close take time in proportion to the text', () => {
+  for (const unit of ['*a ', '_a ', '**a ', '[a ']) {
+    const text = unit.repeat(40000)
+    const began = process.hrtime.bigint()
+    parse(text)
+    const ms = Number(process.hrtime.bigint() - began) / 1e6
+    assert.ok(ms < 2000, `${JSON.stringify(unit)} × 40000 took ${ms.toFixed(0)}ms`)
+  }
+})
