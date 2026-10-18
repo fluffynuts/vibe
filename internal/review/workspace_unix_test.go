@@ -265,3 +265,28 @@ func TestSystemConfigIsLookedForBesideALinkedGit(t *testing.T) {
 		}
 	}
 }
+
+// The git directory is checked to be in the folder, then opened: a folder
+// on its way swapped for a link out of it in between (the sandbox can) must
+// not be followed. This is the state that swap leaves.
+func TestAGitDirectoryReachedThroughALinkOutOfTheFolderIsntOpened(t *testing.T) {
+	ws, outside := t.TempDir(), t.TempDir()
+	if err := os.MkdirAll(filepath.Join(outside, "gd"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(ws, "sub")); err != nil {
+		t.Fatal(err)
+	}
+	if root, err := openChecked(filepath.Join(ws, "sub", "gd"), ws); err == nil {
+		root.Close()
+		t.Error("a git directory out of the folder, through a link, was opened")
+	}
+	if err := os.MkdirAll(filepath.Join(ws, "real", "gd"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, err := openChecked(filepath.Join(ws, "real", "gd"), ws)
+	if err != nil {
+		t.Fatalf("one in the folder: %v", err)
+	}
+	root.Close()
+}

@@ -123,7 +123,12 @@ func openRepo(dir string) (*repository, error) {
 		}
 	}
 	r := &repository{top: top, trusted: !writable, attributes: map[string][]gitattributes.MatchAttribute{}}
-	if r.gitDir, err = openChecked(gitDir); err != nil {
+	// What the sandbox can write is opened from within its folder.
+	within := ""
+	if writable {
+		within = ws
+	}
+	if r.gitDir, err = openChecked(gitDir, within); err != nil {
 		return nil, err
 	}
 	r.common = r.gitDir
@@ -141,7 +146,7 @@ func openRepo(dir string) (*repository, error) {
 			r.close()
 			return refuse("shares a git directory outside the folder, " + common)
 		}
-		if r.common, err = openChecked(common); err != nil {
+		if r.common, err = openChecked(common, within); err != nil {
 			r.close()
 			return nil, err
 		}
@@ -195,15 +200,32 @@ func (h hostFS) Chroot(name string) (billy.Filesystem, error) {
 
 // openChecked opens the folder at path, which must be a folder (not a link
 // to one), and be the one opened: else something was swapped in meanwhile.
-func openChecked(path string) (*os.Root, error) {
-	before, err := os.Lstat(path)
+// One checked to be in the folder within ("" for none) is opened from
+// within, through nothing leading out of it: a folder on its way swapped
+// for a link since the check isn't followed.
+func openChecked(path, within string) (*os.Root, error) {
+	lstat, openRoot := os.Lstat, os.OpenRoot
+	if within != "" {
+		folder, err := os.OpenRoot(within)
+		if err != nil {
+			return nil, err
+		}
+		defer folder.Close()
+		rel, err := filepath.Rel(within, path)
+		if err != nil {
+			return nil, err
+		}
+		lstat = func(string) (os.FileInfo, error) { return folder.Lstat(rel) }
+		openRoot = func(string) (*os.Root, error) { return folder.OpenRoot(rel) }
+	}
+	before, err := lstat(path)
 	if err != nil {
 		return nil, err
 	}
 	if !before.IsDir() {
 		return nil, fmt.Errorf("%s isn't a folder", path)
 	}
-	root, err := os.OpenRoot(path)
+	root, err := openRoot(path)
 	if err != nil {
 		return nil, err
 	}
