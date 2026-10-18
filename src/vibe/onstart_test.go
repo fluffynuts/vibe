@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -44,6 +47,31 @@ func TestPublishedURLsKeepTheRecordedMappingWhileSbxListsIt(t *testing.T) {
 		got := publishedURLs(records, live)
 		if len(got) != 1 || got[0].url() != "http://localhost:5405" || got[0].unverified {
 			t.Errorf("publishedURLs with %v = %+v, want the recorded port 5405, verified", live, got)
+		}
+	}
+}
+
+// What the sandbox said goes into the session-start log, so it's kept in
+// vibe's home, readable by the user alone — not in a shared temp folder.
+func TestTheSessionStartLogIsTheUsersAlone(t *testing.T) {
+	home := t.TempDir()
+	logf := sessionStartLogger(home, "box")
+	logf("on-start said %s", "hello")
+	logf("again")
+	path := sessionStartLog(home)
+	if !strings.HasPrefix(path, home+string(filepath.Separator)) {
+		t.Errorf("the log is at %s, outside vibe's home", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "box: on-start said hello\n") || !strings.Contains(string(data), "box: again\n") {
+		t.Errorf("log = %q", data)
+	}
+	if runtime.GOOS != "windows" {
+		if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+			t.Errorf("the log's mode is %v, want 0600", info.Mode().Perm())
 		}
 	}
 }

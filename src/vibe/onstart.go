@@ -17,16 +17,7 @@ import (
 
 func nudgeOnStart(lay layout.Layout, name string, reached func()) {
 	vibeHome := lay.Home
-	logPath := filepath.Join(os.TempDir(), "vibe-nudge.log")
-	logf := func(format string, a ...interface{}) {
-		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		if err != nil {
-			return
-		}
-		defer f.Close()
-		fmt.Fprintf(f, "[%s] %s: "+format+"\n",
-			append([]interface{}{time.Now().Format(time.RFC3339), name}, a...)...)
-	}
+	logf := sessionStartLogger(vibeHome, name)
 	if !sbxrun.WaitReachable(name, 180) {
 		logf("gave up waiting for reachability")
 		return
@@ -58,6 +49,31 @@ func nudgeOnStart(lay layout.Layout, name string, reached func()) {
 		return
 	}
 	logf("on-start nudge ran")
+}
+
+// sessionStartLog is where what's done to a sandbox at the start of each
+// session is logged: in vibe's home, the user's alone, as what's logged
+// includes what the sandbox said.
+func sessionStartLog(vibeHome string) string {
+	return filepath.Join(vibeHome, "logs", "session-start.log")
+}
+
+// sessionStartLogger appends a line about sandbox name to sessionStartLog,
+// stamped with the time.
+func sessionStartLogger(vibeHome, name string) func(format string, a ...interface{}) {
+	path := sessionStartLog(vibeHome)
+	return func(format string, a ...interface{}) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return
+		}
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			return
+		}
+		defer f.Close()
+		fmt.Fprintf(f, "[%s] %s: "+format+"\n",
+			append([]interface{}{time.Now().Format(time.RFC3339), name}, a...)...)
+	}
 }
 
 // publishedURLDir is where, inside the sandbox, each published service's
