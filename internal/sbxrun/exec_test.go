@@ -129,3 +129,35 @@ func TestPublishedPortsSaysWhatSbxSaidWhenItFails(t *testing.T) {
 		t.Errorf("err = %v, want the command and what sbx said", err)
 	}
 }
+
+// What's read from a sandbox is the agent's to make, so there's a most
+// vibe takes in: past it, the read fails, saying so, rather than vibe
+// holding whatever it's given.
+func TestWhatIsReadFromASandboxHasALimit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in sbx is a shell script")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "sbx"), []byte("#!/bin/sh\nexec yes\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	old := maxCaptured
+	maxCaptured = 1 << 20
+	t.Cleanup(func() { maxCaptured = old })
+
+	for name, read := range map[string]func() (string, error){
+		"ExecStdout":      func() (string, error) { return ExecStdout(context.Background(), "box", "cat", "/f") },
+		"ExecCapture":     func() (string, error) { return ExecCapture("box", "cat", "/f") },
+		"ExecInputStdout": func() (string, error) { return ExecInputStdout(context.Background(), "box", "", "cat") },
+		"ExecInput":       func() (string, error) { return "", ExecInput("box", "", "cat") },
+	} {
+		out, err := read()
+		if err == nil || !strings.Contains(err.Error(), "more than vibe takes in") {
+			t.Errorf("%s: err = %v, want the limit", name, err)
+		}
+		if len(out) > maxCaptured {
+			t.Errorf("%s: kept %d bytes, past the limit of %d", name, len(out), maxCaptured)
+		}
+	}
+}

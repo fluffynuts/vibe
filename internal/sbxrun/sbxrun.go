@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -63,10 +64,10 @@ func ParseAgents(help string) []string {
 // and stderr together, killing sbx if ctx is cancelled.
 func captureOutContext(ctx context.Context, args ...string) (string, error) {
 	cmd := cancellable(ctx, args...)
-	var out bytes.Buffer
+	var out capped
 	cmd.Stdout = &out
 	cmd.Stderr = &out
-	err := cmd.Run()
+	err := out.run(cmd)
 	return out.String(), err
 }
 
@@ -78,11 +79,47 @@ func captureSplitContext(ctx context.Context, args ...string) (stdout, stderr st
 
 // split runs cmd, giving what it printed on stdout and on stderr apart.
 func split(cmd *exec.Cmd) (stdout, stderr string, err error) {
-	var out, errOut bytes.Buffer
+	var out, errOut capped
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
-	err = cmd.Run()
+	err = out.run(cmd, &errOut)
 	return out.String(), errOut.String(), err
+}
+
+// maxCaptured is the most vibe keeps of what an sbx command prints: what's
+// read from a sandbox is the agent's to make, and could be made endless.
+var maxCaptured = 256 << 20
+
+// capped is what a command printed, up to maxCaptured: past it, the write
+// fails, which ends the command's output. The buffer isn't embedded: its
+// ReadFrom would let io.Copy go round Write, and the limit.
+type capped struct {
+	buf  bytes.Buffer
+	over bool
+}
+
+func (c *capped) Write(p []byte) (int, error) {
+	if c.buf.Len()+len(p) > maxCaptured {
+		c.over = true
+		return 0, errTooMuch
+	}
+	return c.buf.Write(p)
+}
+
+func (c *capped) String() string { return c.buf.String() }
+
+var errTooMuch = errors.New("more than vibe takes in")
+
+// run runs cmd, whose output goes to c (and to others): an error when any
+// of them was given more than maxCaptured.
+func (c *capped) run(cmd *exec.Cmd, others ...*capped) error {
+	err := cmd.Run()
+	for _, b := range append(others, c) {
+		if b.over {
+			return fmt.Errorf("sbx printed %w (%d MB)", errTooMuch, maxCaptured>>20)
+		}
+	}
+	return err
 }
 
 // saying is err with what the command said on stderr, when it said
@@ -535,8 +572,11 @@ func ExecInput(name, input string, args ...string) error {
 	full := append([]string{"exec", "-i", name, "--"}, args...)
 	cmd := exec.Command("sbx", full...)
 	cmd.Stdin = strings.NewReader(input)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	var out capped
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := out.run(cmd); err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(out.String()))
 	}
 	return nil
 }

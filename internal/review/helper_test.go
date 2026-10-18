@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -59,5 +60,17 @@ func TestReadingStopsWhenItsTimeIsUp(t *testing.T) {
 	time.Sleep(time.Millisecond)
 	if _, err := StatusOf(ctx, dir); err == nil || !strings.Contains(err.Error(), "took too long") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// The helper's answer is copied in as os/exec copies a pipe: with io.Copy,
+// which takes a writer's ReadFrom over its Write when it has one.
+func TestCappedKeepsNoMoreThanItsMaxHoweverItIsCopiedInto(t *testing.T) {
+	c := &capped{max: 10}
+	if _, err := io.Copy(c, struct{ io.Reader }{strings.NewReader(strings.Repeat("x", 100))}); err != nil {
+		t.Fatal(err)
+	}
+	if !c.over || c.Len() != 10 {
+		t.Errorf("kept %d bytes, over = %v; want 10, and over", c.Len(), c.over)
 	}
 }

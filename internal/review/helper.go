@@ -208,23 +208,28 @@ func lastLine(text string) string {
 }
 
 // capped keeps up to max bytes written to it, and says when there were
-// more.
+// more. The buffer isn't embedded: its ReadFrom would let io.Copy go round
+// Write, and the limit.
 type capped struct {
-	bytes.Buffer
+	buf  bytes.Buffer
 	max  int
 	over bool
 }
 
 func (c *capped) Write(p []byte) (int, error) {
-	if room := c.max - c.Len(); room < len(p) {
+	if room := c.max - c.buf.Len(); room < len(p) {
 		c.over = true
 		if room > 0 {
-			c.Buffer.Write(p[:room])
+			c.buf.Write(p[:room])
 		}
 		return len(p), nil
 	}
-	return c.Buffer.Write(p)
+	return c.buf.Write(p)
 }
+
+func (c *capped) Len() int       { return c.buf.Len() }
+func (c *capped) Bytes() []byte  { return c.buf.Bytes() }
+func (c *capped) String() string { return c.buf.String() }
 
 // The repository's reading, each in a helper (see isolated).
 
