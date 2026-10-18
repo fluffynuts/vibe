@@ -115,6 +115,8 @@ func serve(in io.Reader) helperAnswer {
 		result, err = optionsOf(ctx, a.Dir)
 	case "defaultBranch":
 		result, err = defaultBranchOf(a.Dir)
+	case "projectFiles":
+		result, err = projectFilesOf(ctx, a.Dir, a.Ref)
 	case "origin":
 		result, err = originOf(a.Dir)
 	case "status":
