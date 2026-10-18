@@ -157,7 +157,7 @@ func migrateRecords(vibeHome, oldName, newName, from, to string) error {
 	if err := state.Move(vibeHome, oldName, newName); err != nil {
 		return err
 	}
-	if err := moveIfThere(headlessLog(vibeHome, oldName), headlessLog(vibeHome, newName)); err != nil {
+	if err := state.MoveIfThere(headlessLog(vibeHome, oldName), headlessLog(vibeHome, newName)); err != nil {
 		return err
 	}
 	store := inst.MemoryStore
@@ -165,13 +165,13 @@ func migrateRecords(vibeHome, oldName, newName, from, to string) error {
 	// name; one somewhere else (a profile's memoryRoot) is left where it is.
 	if dir, base := filepath.Split(store); store != "" && base == oldName {
 		moved := filepath.Join(dir, newName)
-		if err := moveIfThere(store, moved); err != nil {
+		if err := state.MoveIfThere(store, moved); err != nil {
 			return err
 		}
 		store = moved
 	}
 	if store != "" {
-		if err := moveIfThere(filepath.Join(store, projectFolder(from)), filepath.Join(store, projectFolder(to))); err != nil {
+		if err := state.MoveIfThere(filepath.Join(store, projectFolder(from)), filepath.Join(store, projectFolder(to))); err != nil {
 			return err
 		}
 	}
@@ -184,27 +184,6 @@ func migrateRecords(vibeHome, oldName, newName, from, to string) error {
 	}
 	inst.Target, inst.MemoryStore = to, store
 	return state.Save(vibeHome, inst)
-}
-
-// moveIfThere renames from to to, when from exists, refusing to replace
-// anything already at to.
-func moveIfThere(from, to string) error {
-	if from == to {
-		return nil
-	}
-	if _, err := os.Lstat(from); os.IsNotExist(err) {
-		return nil
-	}
-	if _, err := os.Lstat(to); err == nil {
-		return fmt.Errorf("%s is already there, so %s wasn't moved to it", to, from)
-	}
-	if err := os.MkdirAll(filepath.Dir(to), 0o700); err != nil {
-		return err
-	}
-	if err := os.Rename(from, to); err != nil {
-		return fmt.Errorf("moving %s: %w", from, err)
-	}
-	return nil
 }
 
 // refileTranscript rewrites the kept transcript at file (a gzipped tar of
