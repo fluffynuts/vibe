@@ -119,7 +119,7 @@ func picked(w http.ResponseWriter, r *http.Request) ([]string, bool) {
 		IDs []string `json:"ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.IDs) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "expected {\"ids\": [...]}, picking at least one"})
+		writeError(w, http.StatusBadRequest, "expected {\"ids\": [...]}, picking at least one")
 		return nil, false
 	}
 	return body.IDs, true
@@ -132,7 +132,7 @@ func (s *Server) managePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	lines, err := s.cfg.Manage.Plan(ids)
 	if err != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"lines": lines})
@@ -145,13 +145,13 @@ func (s *Server) manageDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	// Refused before it starts, with why, rather than failing in the log.
 	if _, err := s.cfg.Manage.Plan(ids); err != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 	s.admin.mu.Lock()
 	defer s.admin.mu.Unlock()
 	if s.admin.job != nil && s.admin.job.Running {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "something is already being done: wait for it to finish"})
+		writeError(w, http.StatusConflict, "something is already being done: wait for it to finish")
 		return
 	}
 	s.startJob("delete", "the Profiles tab's delete", manageSlow, func(ctx context.Context, log func(string)) error {
@@ -163,22 +163,22 @@ func (s *Server) manageDelete(w http.ResponseWriter, r *http.Request) {
 func (s *Server) manageDo(w http.ResponseWriter, r *http.Request) {
 	var action ManageAction
 	if err := json.NewDecoder(r.Body).Decode(&action); err != nil || action.ID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "expected {\"kind\": ..., \"id\": ...}"})
+		writeError(w, http.StatusBadRequest, "expected {\"kind\": ..., \"id\": ...}")
 		return
 	}
 	words, known := manageWords[action.Kind]
 	if !known {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "there is no such action"})
+		writeError(w, http.StatusBadRequest, "there is no such action")
 		return
 	}
 	if err := s.cfg.Manage.CanDo(action); err != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 	s.admin.mu.Lock()
 	defer s.admin.mu.Unlock()
 	if s.admin.job != nil && s.admin.job.Running {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "something is already being done: wait for it to finish"})
+		writeError(w, http.StatusConflict, "something is already being done: wait for it to finish")
 		return
 	}
 	s.startJob(action.Kind, "the Profiles tab's "+words, manageSlowAfter[action.Kind], func(ctx context.Context, log func(string)) error {
@@ -203,7 +203,7 @@ func (s *Server) jobSnapshot() *adminJob {
 func (s *Server) managed(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.Manage == nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "this page has no Profiles tab"})
+			writeError(w, http.StatusNotFound, "this page has no Profiles tab")
 			return
 		}
 		next(w, r)
@@ -215,7 +215,7 @@ func (s *Server) managed(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) managing(next http.HandlerFunc) http.HandlerFunc {
 	return s.authed(func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.Manage == nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "this page has no Profiles tab"})
+			writeError(w, http.StatusNotFound, "this page has no Profiles tab")
 			return
 		}
 		if !sameOriginJSON(w, r) {

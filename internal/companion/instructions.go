@@ -93,14 +93,14 @@ const optimiseLimit = 10 * time.Minute
 func (s *Server) instructor(w http.ResponseWriter) (AdminInstructor, bool) {
 	in, ok := s.cfg.Admin.(AdminInstructor)
 	if !ok {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "this page can't edit the agent's instructions"})
+		writeError(w, http.StatusNotFound, "this page can't edit the agent's instructions")
 	}
 	return in, ok
 }
 
 func (s *Server) instructionsState(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.Admin == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "this page has no admin tab"})
+		writeError(w, http.StatusNotFound, "this page has no admin tab")
 		return
 	}
 	in, ok := s.instructor(w)
@@ -117,16 +117,16 @@ func (s *Server) instructionsSave(w http.ResponseWriter, r *http.Request) {
 	}
 	var save AdminSave
 	if err := json.NewDecoder(r.Body).Decode(&save); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "expected {\"which\": ..., \"text\": ...}"})
+		writeError(w, http.StatusBadRequest, "expected {\"which\": ..., \"text\": ...}")
 		return
 	}
 	if save.Which != "universal" && save.Which != "project" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "there is no such file"})
+		writeError(w, http.StatusBadRequest, "there is no such file")
 		return
 	}
 	saved, err := in.SaveInstructions(save)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	status := http.StatusOK
@@ -146,7 +146,7 @@ func (s *Server) instructionsOptimise(w http.ResponseWriter, r *http.Request) {
 		Text  string `json:"text"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "expected {\"which\": ..., \"text\": ...}"})
+		writeError(w, http.StatusBadRequest, "expected {\"which\": ..., \"text\": ...}")
 		return
 	}
 	// The page cancelling the request (its Cancel button) ends it too.
@@ -155,10 +155,10 @@ func (s *Server) instructionsOptimise(w http.ResponseWriter, r *http.Request) {
 	text, err := in.Optimise(ctx, req.Which, req.Text)
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
-		writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": "the agent didn't answer within 10 minutes, so vibe stopped waiting — nothing changed. " +
-			"sbx or the agent may be stuck: 'sbx ls' shows the sandbox's state, and Stop then Start on this tab restarts it."})
+		writeError(w, http.StatusGatewayTimeout, "the agent didn't answer within 10 minutes, so vibe stopped waiting — nothing changed. "+
+			"sbx or the agent may be stuck: 'sbx ls' shows the sandbox's state, and Stop then Start on this tab restarts it.")
 	case err != nil:
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadGateway, err.Error())
 	default:
 		writeJSON(w, http.StatusOK, map[string]string{"text": text})
 	}
@@ -169,7 +169,7 @@ func (s *Server) instructionsOptimise(w http.ResponseWriter, r *http.Request) {
 func (s *Server) editing(next http.HandlerFunc) http.HandlerFunc {
 	return s.authed(func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.Admin == nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "this page has no admin tab"})
+			writeError(w, http.StatusNotFound, "this page has no admin tab")
 			return
 		}
 		if !sameOriginJSON(w, r) {

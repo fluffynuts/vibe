@@ -210,21 +210,21 @@ func (s *Server) defaultBranch(ctx context.Context) (review.Mainline, error) {
 // fetch failed.
 func (s *Server) conversationNewFetch(w http.ResponseWriter, r *http.Request) {
 	if !s.repositoryHere() {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "this sandbox's folder isn't a git repository"})
+		writeError(w, http.StatusNotFound, "this sandbox's folder isn't a git repository")
 		return
 	}
 	ctx := r.Context()
 	mainline, err := s.defaultBranch(ctx)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if mainline.Name == "" {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": mainline.Why})
+		writeError(w, http.StatusConflict, mainline.Why)
 		return
 	}
 	if mainline.Set {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "the default branch was set for this repository, as origin doesn't say: there's no copy at origin to check"})
+		writeError(w, http.StatusConflict, "the default branch was set for this repository, as origin doesn't say: there's no copy at origin to check")
 		return
 	}
 	def := mainline.Name
@@ -290,15 +290,15 @@ func refuse(status int, format string, args ...interface{}) refused {
 func (s *Server) conversationNew(w http.ResponseWriter, r *http.Request) {
 	var req newConversation
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "expected a request"})
+		writeError(w, http.StatusBadRequest, "expected a request")
 		return
 	}
 	if req.Clipboard != "" && req.Clipboard != "sent" && req.Clipboard != "all" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("clearing the clipboard is \"sent\" or \"all\", not %q", req.Clipboard)})
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("clearing the clipboard is \"sent\" or \"all\", not %q", req.Clipboard))
 		return
 	}
 	if s.convo.answering() {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "stop the agent first"})
+		writeError(w, http.StatusConflict, "stop the agent first")
 		return
 	}
 	ctx := r.Context()
@@ -309,7 +309,7 @@ func (s *Server) conversationNew(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Branch != nil {
 		if asleep != nil {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": asleep.Error()})
+			writeError(w, http.StatusConflict, asleep.Error())
 			return
 		}
 		said, problem, err := s.makeBranch(ctx, *req.Branch)
@@ -319,7 +319,7 @@ func (s *Server) conversationNew(w http.ResponseWriter, r *http.Request) {
 			if errors.As(err, &no) {
 				status = no.status
 			}
-			writeJSON(w, status, map[string]string{"error": err.Error()})
+			writeError(w, status, err.Error())
 			return
 		}
 		done = append(done, said)
@@ -348,7 +348,7 @@ func (s *Server) conversationNew(w http.ResponseWriter, r *http.Request) {
 		if len(done) > 0 {
 			msg += " (already done: " + strings.Join(done, " ") + ")"
 		}
-		writeJSON(w, http.StatusConflict, map[string]string{"error": msg})
+		writeError(w, http.StatusConflict, msg)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

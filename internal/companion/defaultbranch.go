@@ -27,7 +27,7 @@ func (s *Server) defaultBranching(next http.HandlerFunc) http.HandlerFunc {
 			r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
 		}
 		if !s.repositoryHere() {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "this sandbox's folder isn't a git repository"})
+			writeError(w, http.StatusNotFound, "this sandbox's folder isn't a git repository")
 			return
 		}
 		next(w, r)
@@ -39,7 +39,7 @@ func (s *Server) defaultBranching(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) defaultBranchState(w http.ResponseWriter, r *http.Request) {
 	mainline, err := s.defaultBranch(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, s.describeDefaultBranch(mainline))
@@ -60,34 +60,34 @@ func (s *Server) defaultBranchSet(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "expected a branch name"})
+		writeError(w, http.StatusBadRequest, "expected a branch name")
 		return
 	}
 	// Anything starting with - would be taken for one of git's options.
 	if req.Name == "" || strings.HasPrefix(req.Name, "-") || plumbing.NewBranchReferenceName(req.Name).Validate() != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("%q isn't a branch name (no spaces, and no ending in / or .lock, among git's rules).", req.Name)})
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("%q isn't a branch name (no spaces, and no ending in / or .lock, among git's rules).", req.Name))
 		return
 	}
 	ctx := r.Context()
 	mainline, err := s.defaultBranch(ctx)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if mainline.Name != "" && !mainline.Set {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "origin says the default branch is " + mainline.Name + ", and that's what's used."})
+		writeError(w, http.StatusConflict, "origin says the default branch is "+mainline.Name+", and that's what's used.")
 		return
 	}
 	if err := s.wake(ctx); err != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 	if _, err := s.sandboxGit(ctx, gitWithin, "config", review.DefaultBranchKey, req.Name); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "the default branch couldn't be set: " + err.Error()})
+		writeError(w, http.StatusInternalServerError, "the default branch couldn't be set: "+err.Error())
 		return
 	}
 	if mainline, err = s.defaultBranch(ctx); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	body := s.describeDefaultBranch(mainline)

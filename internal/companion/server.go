@@ -569,7 +569,7 @@ func (s *Server) changing(do change) http.HandlerFunc {
 		}
 		body, err := io.ReadAll(io.LimitReader(r.Body, 4096))
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unreadable body"})
+			writeError(w, http.StatusBadRequest, "unreadable body")
 			return
 		}
 		command, err := do(body)
@@ -639,12 +639,18 @@ func writeSbxError(w http.ResponseWriter, err error) {
 	var bad invalid
 	switch {
 	case errors.As(err, &bad):
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": bad.Error()})
+		writeError(w, http.StatusBadRequest, bad.Error())
 	case errors.Is(err, policy.ErrNotSignedIn):
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error(), "code": "not-signed-in"})
 	default:
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error(), "code": "sbx"})
 	}
+}
+
+// writeError answers with status and {"error": msg}: what the page shows
+// when something fails.
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

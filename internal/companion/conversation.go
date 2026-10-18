@@ -543,18 +543,18 @@ func (s *Server) conversationSend(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "that prompt is too long"})
+			writeError(w, http.StatusRequestEntityTooLarge, "that prompt is too long")
 			return
 		}
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "expected {\"prompt\": ...}"})
+		writeError(w, http.StatusBadRequest, "expected {\"prompt\": ...}")
 		return
 	}
 	if strings.TrimSpace(req.Prompt) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "there is nothing to send"})
+		writeError(w, http.StatusBadRequest, "there is nothing to send")
 		return
 	}
 	if !s.startTurn(req.Prompt) {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "the agent is still answering the last prompt"})
+		writeError(w, http.StatusConflict, "the agent is still answering the last prompt")
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
@@ -601,7 +601,7 @@ func (s *Server) conversationStop(w http.ResponseWriter, r *http.Request) {
 func (s *Server) conversing(next http.HandlerFunc) http.HandlerFunc {
 	return s.authed(func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.Converse == nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "this sandbox has no conversation to have"})
+			writeError(w, http.StatusNotFound, "this sandbox has no conversation to have")
 			return
 		}
 		if !sameOriginJSON(w, r) {
@@ -617,7 +617,7 @@ func (s *Server) conversing(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) administering(next http.HandlerFunc) http.HandlerFunc {
 	return s.authed(func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.Admin == nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "this page has no admin tab"})
+			writeError(w, http.StatusNotFound, "this page has no admin tab")
 			return
 		}
 		if !sameOriginJSON(w, r) {
@@ -632,7 +632,7 @@ func (s *Server) administering(next http.HandlerFunc) http.HandlerFunc {
 // POST of JSON: what a page on another site could not make.
 func sameOriginJSON(w http.ResponseWriter, r *http.Request) bool {
 	if ct, _, _ := strings.Cut(r.Header.Get("Content-Type"), ";"); strings.TrimSpace(ct) != "application/json" {
-		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "expected application/json"})
+		writeError(w, http.StatusUnsupportedMediaType, "expected application/json")
 		return false
 	}
 	return sameOrigin(w, r)

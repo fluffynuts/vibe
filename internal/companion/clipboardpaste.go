@@ -38,14 +38,14 @@ func (s *Server) clipboardPaste(w http.ResponseWriter, r *http.Request) {
 	}
 	base := s.clipboardAt()
 	if base == "" {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "this sandbox has no clipboard page to paste to: its profile hasn't the clipboard bridge"})
+		writeError(w, http.StatusNotFound, "this sandbox has no clipboard page to paste to: its profile hasn't the clipboard bridge")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), pasteClient.Timeout)
 	defer cancel()
 	out, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/items", http.MaxBytesReader(w, r.Body, maxPaste))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	out.Header.Set("Content-Type", r.Header.Get("Content-Type"))
@@ -56,19 +56,19 @@ func (s *Server) clipboardPaste(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": fmt.Sprintf("that's over %d MB: too large to paste", maxPaste>>20)})
+			writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("that's over %d MB: too large to paste", maxPaste>>20))
 			return
 		}
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "the clipboard page couldn't be reached (is the sandbox running?): " + err.Error()})
+		writeError(w, http.StatusBadGateway, "the clipboard page couldn't be reached (is the sandbox running?): "+err.Error())
 		return
 	}
 	defer res.Body.Close()
 	if res.StatusCode >= 300 && res.StatusCode < 400 {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "the clipboard page answered with a redirect, which isn't followed: try pasting on the clipboard page itself"})
+		writeError(w, http.StatusBadGateway, "the clipboard page answered with a redirect, which isn't followed: try pasting on the clipboard page itself")
 		return
 	}
 	if res.StatusCode < 200 || res.StatusCode > 599 {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("the clipboard page answered with status %d, which no answer has", res.StatusCode)})
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("the clipboard page answered with status %d, which no answer has", res.StatusCode))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -139,11 +139,11 @@ func clipboardItems(ctx context.Context, client *http.Client, base string) ([]cl
 // most, but a page's calls need never come from anywhere else.
 func sameOrigin(w http.ResponseWriter, r *http.Request) bool {
 	if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-origin request refused"})
+		writeError(w, http.StatusForbidden, "cross-origin request refused")
 		return false
 	}
 	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-site request refused"})
+		writeError(w, http.StatusForbidden, "cross-site request refused")
 		return false
 	}
 	return true

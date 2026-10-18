@@ -85,11 +85,11 @@ func (s *Server) reviewState(w http.ResponseWriter, r *http.Request) {
 			// Comments follow their code when lines above them came or went.
 			if moves := review.Moves(ctx, folder, rv); len(moves) > 0 {
 				if err := s.cfg.ReviewTab.Store.Move(moves); err != nil {
-					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "comments couldn't be moved to where their code is now: " + err.Error()})
+					writeError(w, http.StatusInternalServerError, "comments couldn't be moved to where their code is now: "+err.Error())
 					return
 				}
 				if rv, err = s.cfg.ReviewTab.Store.Load(); err != nil {
-					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+					writeError(w, http.StatusInternalServerError, err.Error())
 					return
 				}
 				body["review"] = rv
@@ -109,7 +109,7 @@ func (s *Server) reviewState(w http.ResponseWriter, r *http.Request) {
 			if over && rv.Closed == "" && !s.convo.working() && (!rv.Started.IsZero() || len(rv.Threads) > 0) {
 				closed, _, err := s.cfg.ReviewTab.Store.CloseOver(rv.Started, overBecause(rv))
 				if err != nil {
-					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "the review has nothing left in it, but couldn't be closed: " + err.Error()})
+					writeError(w, http.StatusInternalServerError, "the review has nothing left in it, but couldn't be closed: "+err.Error())
 					return
 				}
 				body["review"] = closed
@@ -178,14 +178,14 @@ func diffOf(ctx context.Context, dir string, rv review.Review, how review.Diffin
 func (s *Server) reviewFile(w http.ResponseWriter, r *http.Request) {
 	rv, err := s.cfg.ReviewTab.Store.Load()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), diffWithin)
 	defer cancel()
 	lines, err := review.FileLines(ctx, s.cfg.ReviewTab.Workspace, rv, r.URL.Query().Get("path"))
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"lines": lines})
@@ -196,7 +196,7 @@ func (s *Server) reviewFile(w http.ResponseWriter, r *http.Request) {
 func (s *Server) reviewDo(w http.ResponseWriter, r *http.Request) {
 	var req review.Request
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "expected a request"})
+		writeError(w, http.StatusBadRequest, "expected a request")
 		return
 	}
 	rv, err := s.cfg.ReviewTab.Store.Do(req, review.User)
@@ -205,7 +205,7 @@ func (s *Server) reviewDo(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &review.Refused{}) {
 			status = http.StatusBadRequest
 		}
-		writeJSON(w, status, map[string]string{"error": err.Error()})
+		writeError(w, status, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"review": rv})
@@ -220,21 +220,21 @@ func (s *Server) reviewAsk(w http.ResponseWriter, r *http.Request) {
 		Body   string `json:"body"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "expected {\"thread\": n, \"body\": ...}"})
+		writeError(w, http.StatusBadRequest, "expected {\"thread\": n, \"body\": ...}")
 		return
 	}
 	question := strings.TrimSpace(req.Body)
 	if question == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "type what you want to ask first"})
+		writeError(w, http.StatusBadRequest, "type what you want to ask first")
 		return
 	}
 	if s.cfg.Converse == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "this sandbox's agent can't be talked to from the page"})
+		writeError(w, http.StatusNotFound, "this sandbox's agent can't be talked to from the page")
 		return
 	}
 	rv, err := s.cfg.ReviewTab.Store.Load()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	var thread *review.Thread
@@ -244,11 +244,11 @@ func (s *Server) reviewAsk(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if thread == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("there's no comment #%d", req.Thread)})
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("there's no comment #%d", req.Thread))
 		return
 	}
 	if !s.startTurn(askPrompt(*thread, question)) {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "the agent is still answering the last prompt — ask once it's done"})
+		writeError(w, http.StatusConflict, "the agent is still answering the last prompt — ask once it's done")
 		return
 	}
 	prompt, _ := s.convo.turn()
@@ -262,7 +262,7 @@ func (s *Server) reviewAsk(w http.ResponseWriter, r *http.Request) {
 		err = s.cfg.ReviewTab.Store.MarkSent(unsentOn(after, req.Thread))
 	}
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "asked, but the question couldn't be kept on the comment: " + err.Error()})
+		writeError(w, http.StatusInternalServerError, "asked, but the question couldn't be kept on the comment: "+err.Error())
 		return
 	}
 	// The review as it now is, the question on it: the page takes it, so
@@ -290,25 +290,25 @@ func unsentOn(rv review.Review, id int) []review.Ref {
 // a turn; they're sent once it has begun. Refused, they stay unsent.
 func (s *Server) reviewSubmit(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.Converse == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "this sandbox's agent can't be talked to from the page"})
+		writeError(w, http.StatusNotFound, "this sandbox's agent can't be talked to from the page")
 		return
 	}
 	rv, err := s.cfg.ReviewTab.Store.Load()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	refs := review.Unsent(rv)
 	if len(refs) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "there's nothing new to send"})
+		writeError(w, http.StatusBadRequest, "there's nothing new to send")
 		return
 	}
 	if !s.startTurn(submitPrompt(rv, refs)) {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "the agent is still answering the last prompt — submit once it's done"})
+		writeError(w, http.StatusConflict, "the agent is still answering the last prompt — submit once it's done")
 		return
 	}
 	if err := s.cfg.ReviewTab.Store.MarkSent(refs); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "sent, but they couldn't be marked as sent, so Submit would send them again: " + err.Error()})
+		writeError(w, http.StatusInternalServerError, "sent, but they couldn't be marked as sent, so Submit would send them again: "+err.Error())
 		return
 	}
 	body := map[string]interface{}{"ok": true, "sent": len(refs)}
@@ -409,7 +409,7 @@ func askPrompt(t review.Thread, question string) string {
 func (s *Server) reviewHighlight(w http.ResponseWriter, r *http.Request) {
 	rv, err := s.cfg.ReviewTab.Store.Load()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), diffWithin)
@@ -421,7 +421,7 @@ func (s *Server) reviewHighlight(w http.ResponseWriter, r *http.Request) {
 	}
 	text, err := read(ctx, s.cfg.ReviewTab.Workspace, rv, path)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, review.Highlight(path, text))
@@ -433,7 +433,7 @@ func (s *Server) reviewOptions(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	o, err := review.Options(ctx, s.cfg.ReviewTab.Workspace)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, o)
@@ -449,18 +449,18 @@ func (s *Server) reviewStart(w http.ResponseWriter, r *http.Request) {
 		Agent bool   `json:"agent"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": `expected {"kind": "uncommitted", "branch" or "unpushed", "agent": true or false}`})
+		writeError(w, http.StatusBadRequest, `expected {"kind": "uncommitted", "branch" or "unpushed", "agent": true or false}`)
 		return
 	}
 	if req.Agent && s.cfg.Converse == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "this sandbox's agent can't be talked to from the page: show the diff instead"})
+		writeError(w, http.StatusNotFound, "this sandbox's agent can't be talked to from the page: show the diff instead")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), diffWithin)
 	defer cancel()
 	o, err := review.Options(ctx, s.cfg.ReviewTab.Workspace)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	start := review.Request{Op: "start", Reviewing: req.Agent}
@@ -468,7 +468,7 @@ func (s *Server) reviewStart(w http.ResponseWriter, r *http.Request) {
 	switch req.Kind {
 	case "uncommitted":
 		if !o.Uncommitted {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "there are no uncommitted changes to review"})
+			writeError(w, http.StatusBadRequest, "there are no uncommitted changes to review")
 			return
 		}
 	case "branch":
@@ -477,18 +477,18 @@ func (s *Server) reviewStart(w http.ResponseWriter, r *http.Request) {
 			if why == "" {
 				why = "You're on the default branch: there's nothing to review against it."
 			}
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": why})
+			writeError(w, http.StatusBadRequest, why)
 			return
 		}
 		start.Ref, what = o.DefaultBranch, "this branch's changes against "+o.DefaultBranch+", from where they parted (uncommitted ones too)"
 	case "unpushed":
 		if o.Upstream == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "there are no commits waiting to be pushed"})
+			writeError(w, http.StatusBadRequest, "there are no commits waiting to be pushed")
 			return
 		}
 		start.Ref, start.Unpushed, what = o.Upstream, true, "the commits not yet pushed to "+o.Upstream
 	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("there's no review of kind %q: uncommitted, branch or unpushed", req.Kind)})
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("there's no review of kind %q: uncommitted, branch or unpushed", req.Kind))
 		return
 	}
 	// A review that can't be read refuses before the agent's turn is claimed
@@ -504,14 +504,14 @@ func (s *Server) reviewStart(w http.ResponseWriter, r *http.Request) {
 	if req.Agent {
 		var ok bool
 		if launch, abandon, ok = s.claimTurn(startPrompt(what)); !ok {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "the agent is still answering the last prompt — start the review once it's done, or show the diff for now"})
+			writeError(w, http.StatusConflict, "the agent is still answering the last prompt — start the review once it's done, or show the diff for now")
 			return
 		}
 	}
 	rv, err := s.cfg.ReviewTab.Store.Do(start, review.User)
 	if err != nil {
 		abandon(fmt.Errorf("the review couldn't be started, so this wasn't given to the agent: %w", err))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	launch()
@@ -539,7 +539,7 @@ func (s *Server) reviewAfresh(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &review.Refused{}) {
 			status = http.StatusBadRequest
 		}
-		writeJSON(w, status, map[string]string{"error": err.Error()})
+		writeError(w, status, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"review": rv})
@@ -561,7 +561,7 @@ func writeStoreError(w http.ResponseWriter, err error) {
 func (s *Server) reviewing(next http.HandlerFunc) http.HandlerFunc {
 	return s.authed(func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.ReviewTab == nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "this page has no review tab"})
+			writeError(w, http.StatusNotFound, "this page has no review tab")
 			return
 		}
 		if r.Method == http.MethodPost {
