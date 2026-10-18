@@ -72,6 +72,20 @@ func Highlight(path, text string) Highlighted {
 	return out
 }
 
+// colour is path's text, from review rv's old side or its new one,
+// coloured.
+func colour(ctx context.Context, dir string, rv Review, path string, old bool) (Highlighted, error) {
+	read := newTextOf
+	if old {
+		read = oldTextOf
+	}
+	text, err := read(ctx, dir, rv, path)
+	if err != nil {
+		return Highlighted{}, err
+	}
+	return Highlight(path, text), nil
+}
+
 // oldTextOf is path's text where review rv's diff starts from: the commit
 // before rv's, where its branch parted from its ref, or the folder's last
 // commit.

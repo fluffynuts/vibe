@@ -597,6 +597,27 @@ func TestTheTabGetsAFileColoured(t *testing.T) {
 	}
 }
 
+// A file whose colouring never ends (Chroma's JSONata lexer, on a comment
+// that isn't closed) is shown uncoloured once its time is up, not waited on
+// for good.
+func TestAFileThatTakesTooLongToColourIsShownWithout(t *testing.T) {
+	old := colourWithin
+	colourWithin = time.Second
+	t.Cleanup(func() { colourWithin = old })
+	s, _ := reviewTabServer(t)
+	os.WriteFile(filepath.Join(s.cfg.ReviewTab.Workspace, "x.jsonata"), []byte("/*"), 0o644)
+	began := time.Now()
+	rec := do(t, s, req{path: "/api/review/highlight?path=x.jsonata&side=new", headers: authed(nil)})
+	var h review.Highlighted
+	json.Unmarshal(rec.Body.Bytes(), &h)
+	if rec.Code != http.StatusOK || h.Lines != nil || !strings.Contains(h.Skipped, "too long") {
+		t.Errorf("%d %s", rec.Code, rec.Body)
+	}
+	if took := time.Since(began); took > 10*time.Second {
+		t.Errorf("took %s", took)
+	}
+}
+
 // A sandbox's folder may be a repository's subfolder: git's paths are the
 // repository's, so that's what the tab works in, files read where they are.
 func TestASubfoldersReviewIsOfItsRepository(t *testing.T) {

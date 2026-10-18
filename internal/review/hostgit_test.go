@@ -102,7 +102,7 @@ func TestTheOldSideRefusesAnOptionForACommit(t *testing.T) {
 	dir := repo(t, map[string]string{"a.txt": "a\n"})
 	out := filepath.Join(t.TempDir(), "written")
 	for _, rv := range []Review{{Commit: "--output=" + out}, {Ref: "--output=" + out}} {
-		if _, err := OldTextOf(context.Background(), dir, rv, "a.txt"); err == nil {
+		if _, err := oldTextOf(context.Background(), dir, rv, "a.txt"); err == nil {
 			t.Errorf("%+v: no error", rv)
 		}
 	}

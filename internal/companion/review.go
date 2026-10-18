@@ -52,6 +52,10 @@ func (s *Server) takeInbox(done <-chan struct{}, every time.Duration) {
 // well within it.
 const diffWithin = 30 * time.Second
 
+// colourWithin bounds colouring a file, past which it's shown without:
+// Chroma's lexers can be made to take without end. A variable for tests.
+var colourWithin = 15 * time.Second
+
 // reviewState is the review, with what the agent has dropped since taken
 // in; with ?diff=1, the diff too, worked out afresh (without whitespace
 // changes, with &whitespace=ignore). Polls leave the diff
@@ -412,19 +416,18 @@ func (s *Server) reviewHighlight(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), diffWithin)
+	ctx, cancel := context.WithTimeout(r.Context(), colourWithin)
 	defer cancel()
 	path := r.URL.Query().Get("path")
-	read := review.NewTextOf
-	if r.URL.Query().Get("side") == "old" {
-		read = review.OldTextOf
-	}
-	text, err := read(ctx, s.cfg.ReviewTab.Workspace, rv, path)
-	if err != nil {
+	h, err := review.Colour(ctx, s.cfg.ReviewTab.Workspace, rv, path, r.URL.Query().Get("side") == "old")
+	switch {
+	case ctx.Err() == context.DeadlineExceeded:
+		writeJSON(w, http.StatusOK, review.Highlighted{Skipped: fmt.Sprintf("took too long to colour (over %s)", colourWithin)})
+	case err != nil:
 		writeError(w, http.StatusBadRequest, err.Error())
-		return
+	default:
+		writeJSON(w, http.StatusOK, h)
 	}
-	writeJSON(w, http.StatusOK, review.Highlight(path, text))
 }
 
 // reviewOptions is the reviews the page can start on the folder as it is.

@@ -572,7 +572,7 @@ func (r *repository) stashes() int {
 	return strings.Count(string(data), "\n")
 }
 
-// textOf is path's lines as review rv has it (see NewTextOf).
+// textOf is path's lines as review rv has it (see newTextOf).
 func textOf(ctx context.Context, dir string, rv Review, path string) ([]string, error) {
 	text, err := newTextOf(ctx, dir, rv, path)
 	if err != nil {

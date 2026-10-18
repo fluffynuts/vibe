@@ -53,6 +53,7 @@ type helperArgs struct {
 	Path   string    `json:"path,omitempty"`
 	Review Review    `json:"review"`
 	How    []Diffing `json:"how,omitempty"`
+	Old    bool      `json:"old,omitempty"`
 }
 
 // ServeHelperIfAsked, run first thing, serves as the helper when this
@@ -122,10 +123,8 @@ func serve(in io.Reader) helperAnswer {
 		result = moves(ctx, a.Dir, a.Review)
 	case "fileLines":
 		result, err = fileLines(ctx, a.Dir, a.Review, a.Path)
-	case "newTextOf":
-		result, err = newTextOf(ctx, a.Dir, a.Review, a.Path)
-	case "oldTextOf":
-		result, err = oldTextOf(ctx, a.Dir, a.Review, a.Path)
+	case "colour":
+		result, err = colour(ctx, a.Dir, a.Review, a.Path, a.Old)
 	default:
 		err = fmt.Errorf("the helper has no %q", req.Op)
 	}
@@ -315,24 +314,18 @@ func Moves(ctx context.Context, dir string, rv Review) []Move {
 }
 
 // FileLines is path's lines, as the diff of r has its new side (see
-// NewTextOf). They're what the Review tab shows when asked for more of a
+// newTextOf). They're what the Review tab shows when asked for more of a
 // file's context than the diff has.
 func FileLines(ctx context.Context, dir string, r Review, path string) ([]string, error) {
 	var out []string
 	return out, isolated(ctx, "fileLines", helperArgs{Dir: dir, Review: r, Path: path}, &out)
 }
 
-// NewTextOf is path's text as review r has its new side: in the commit r is
-// of, at HEAD for unpushed commits, else in the folder dir as it is.
-func NewTextOf(ctx context.Context, dir string, r Review, path string) (string, error) {
-	var out string
-	return out, isolated(ctx, "newTextOf", helperArgs{Dir: dir, Review: r, Path: path}, &out)
-}
-
-// OldTextOf is path's text where review rv's diff starts from: the commit
-// before rv's, where its branch parted from its ref, or the folder's last
-// commit.
-func OldTextOf(ctx context.Context, dir string, rv Review, path string) (string, error) {
-	var out string
-	return out, isolated(ctx, "oldTextOf", helperArgs{Dir: dir, Review: rv, Path: path}, &out)
+// Colour is path's text coloured (see Highlight), as review rv has it: its
+// old side when old, else its new one. It's coloured in the helper: Chroma's
+// lexers can be made to take without end (one loops for good on text as
+// short as "/*"), and the helper is ended when ctx is.
+func Colour(ctx context.Context, dir string, rv Review, path string, old bool) (Highlighted, error) {
+	var out Highlighted
+	return out, isolated(ctx, "colour", helperArgs{Dir: dir, Review: rv, Path: path, Old: old}, &out)
 }
