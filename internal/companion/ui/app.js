@@ -2216,11 +2216,27 @@
     for (const { side, path } of colourSides(f)) {
       const key = f.path + '|' + side
       if (reviewView.colours.has(key)) continue
-      reviewView.colours.set(key, { loading: true })
-      api('/api/review/highlight?path=' + encodeURIComponent(path) + '&side=' + side)
+      const cancel = new AbortController()
+      reviewView.colours.set(key, { loading: true, cancel })
+      api('/api/review/highlight?path=' + encodeURIComponent(path) + '&side=' + side, { cancel })
         .then((res) => { reached(true); reviewView.colours.set(key, res.ok ? res.body : { error: (res.body && res.body.error) || 'vibe said no' }) },
-          () => { reached(false); reviewView.colours.delete(key) })
-        .then(() => redrawCard(f))
+          () => {
+            if (!cancel.signal.aborted) reached(false)
+            // One given up on may be asked for again before this lands.
+            if ((reviewView.colours.get(key) || {}).cancel === cancel) reviewView.colours.delete(key)
+          })
+        .then(() => { if (!cancel.signal.aborted) redrawCard(f) })
+    }
+  }
+
+  // abandonColours gives up on file f's colours still on their way, as it's
+  // scrolled past: vibe stops colouring what nobody's looking at, and they're
+  // asked for again if it comes back.
+  function abandonColours(f) {
+    for (const { side } of colourSides(f)) {
+      const key = f.path + '|' + side
+      const c = reviewView.colours.get(key)
+      if (c && c.loading) { c.cancel.abort(); reviewView.colours.delete(key) }
     }
   }
 
@@ -2233,6 +2249,7 @@
     const o = d && d.files === reviewView.files ? d.ordered.find((x) => x.file === f) : null
     const old = o && Array.from($('review-files').querySelectorAll('.review-file')).find((c) => c.dataset.path === f.path)
     if (!old || old.querySelector('textarea')) { reviewView.key = null; drawReview(); return }
+    if (colourWatch) colourWatch.unobserve(old)
     old.replaceWith(foldIfViewed(f, fileCard(f, o.stop, o.step, d.files.indexOf(f), d.placed, d.threads)))
   }
 
@@ -2246,10 +2263,10 @@
     if (!colourWatch) {
       colourWatch = new IntersectionObserver((entries) => {
         for (const e of entries) {
-          if (!e.isIntersecting) continue
-          colourWatch.unobserve(e.target)
           const file = (reviewView.files || []).find((x) => x.path === e.target.dataset.path)
-          if (file) fetchColours(file)
+          if (!file) continue
+          if (e.isIntersecting) fetchColours(file)
+          else abandonColours(file)
         }
       }, { rootMargin: '800px 0px' })
     }

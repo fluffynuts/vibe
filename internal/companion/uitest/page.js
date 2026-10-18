@@ -15,8 +15,10 @@ const TOKEN = 'a'.repeat(64)
 // body, ... }, matched on the path without its query; anything else is
 // answered {}. storage seeds localStorage. With settled false, it comes back
 // as soon as the page's scripts have run, for a test of what the page shows
-// while answers are still on their way.
-async function openPage({ routes = {}, storage = {}, settled = true } = {}) {
+// while answers are still on their way. With seeing true, the page gets an
+// IntersectionObserver (jsdom has none) whose elements come into and go out
+// of view when the test says (see seen).
+async function openPage({ routes = {}, storage = {}, settled = true, seeing = false } = {}) {
   const html = fs.readFileSync(path.join(UI, 'index.html'), 'utf8').replace(/<script src="\/[^"]+"><\/script>/g, '')
   const dom = new JSDOM(html, { url: 'http://localhost:1/#' + TOKEN, runScripts: 'outside-only', pretendToBeVisual: true })
   const w = dom.window
@@ -32,8 +34,16 @@ async function openPage({ routes = {}, storage = {}, settled = true } = {}) {
     inFlight++
     try {
       const route = routes[u.pathname]
-      // A route may answer later: a promise, for a call still on its way.
-      const body = typeof route === 'function' ? await route(call) : route || {}
+      // A route may answer later: a promise, for a call still on its way,
+      // which the page can give up on, as a browser's fetch can be.
+      const answer = typeof route === 'function' ? Promise.resolve(route(call)) : Promise.resolve(route || {})
+      const signal = options.signal
+      const body = !signal ? await answer : await new Promise((resolve, reject) => {
+        const abort = () => { call.aborted = true; reject(new w.DOMException('aborted', 'AbortError')) }
+        if (signal.aborted) return abort()
+        signal.addEventListener('abort', abort)
+        answer.then(resolve, reject)
+      })
       // jsdom has no Response of its own: node's is the one fetch gives.
       // A route answers with an error status as { status, body }.
       const status = body && body.status && body.body ? body.status : 200
@@ -57,6 +67,15 @@ async function openPage({ routes = {}, storage = {}, settled = true } = {}) {
   const intervals = []
   w.setInterval = (fn, ms) => { intervals.push({ fn, ms }); return intervals.length }
   w.clearInterval = () => {}
+  const observers = []
+  if (seeing) {
+    w.IntersectionObserver = class {
+      constructor(callback) { this.callback = callback; this.watched = new Set(); observers.push(this) }
+      observe(el) { this.watched.add(el) }
+      unobserve(el) { this.watched.delete(el) }
+      disconnect() { this.watched.clear() }
+    }
+  }
   for (const [k, v] of Object.entries(storage)) w.localStorage.setItem(k, v)
   for (const f of SCRIPTS) w.eval(fs.readFileSync(path.join(UI, f), 'utf8'))
 
@@ -80,6 +99,16 @@ async function openPage({ routes = {}, storage = {}, settled = true } = {}) {
     settle,
     // poll runs the page's regular poll (its tick), as its timer would.
     async poll() { await this.every('tick') },
+    // seen brings the watched elements match picks into view (or, with
+    // inView false, out of it), as scrolling to or past them would.
+    async seen(match, inView = true) {
+      for (const o of observers) {
+        const entries = [...o.watched].filter(match).map((target) => ({ target, isIntersecting: inView }))
+        if (entries.length) o.callback(entries, o)
+      }
+      // Not settle: what's in view may be asked for an answer still held.
+      for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve))
+    },
     // every runs the page's timer that calls the function named name, as
     // the timer would.
     async every(name) {

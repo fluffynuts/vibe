@@ -1562,6 +1562,47 @@ test("a file's colours redraw its own card, not the others'", async () => {
   } finally { p.close() }
 })
 
+// A file is coloured when it comes near the screen. Scrolled past before
+// its colours come, it's given up on (vibe stops colouring it), and asked
+// for again if it comes back.
+test('colouring a file scrolled past is given up, and asked for again on coming back', async () => {
+  const twoGo = [goDiff[0], { ...goDiff[0], path: 'other.go' }]
+  let release
+  let gate = new Promise((resolve) => { release = resolve })
+  const colours = { ...goColours, 'other.go|old': goColours['main.go|old'], 'other.go|new': goColours['main.go|new'] }
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': { review: { ...none, started: '2026-10-16T10:00:00Z' }, diff: twoGo },
+      '/api/review/highlight': async (call) => {
+        const q = new URLSearchParams(call.query)
+        if (q.get('path') === 'other.go') await gate
+        return colours[q.get('path') + '|' + q.get('side')] || {}
+      },
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+    seeing: true,
+  })
+  try {
+    const card = (path) => Array.from(p.$('review-files').querySelectorAll('.review-file')).find((c) => c.dataset.path === path)
+    const asked = (path) => p.calls.filter((c) => c.path === '/api/review/highlight' && new URLSearchParams(c.query).get('path') === path)
+    assert.equal(asked('other.go').length, 0, 'nothing asked for before it comes near the screen')
+    await p.seen((el) => el.dataset.path === 'other.go')
+    assert.equal(asked('other.go').length, 2, 'both sides asked for, coming near')
+    await p.seen((el) => el.dataset.path === 'other.go', false)
+    assert.ok(asked('other.go').every((c) => c.aborted), 'given up on, scrolled past')
+    release()
+    await p.settle()
+    assert.equal(card('other.go').querySelector('.hl-kw'), null, 'not coloured by what was given up on')
+    gate = Promise.resolve()
+    await p.seen((el) => el.dataset.path === 'other.go')
+    await p.settle()
+    assert.equal(asked('other.go').length, 4, 'asked for again, coming back')
+    assert.ok(card('other.go').querySelector('.hl-kw'), 'coloured this time')
+  } finally { p.close() }
+})
+
 test("a line that no longer reads as it was coloured is shown plain", async () => {
   const stale = { ...goColours, 'main.go|new': { language: 'Go', lines: [goColours['main.go|new'].lines[0], [{ c: 'kd', t: 'var' }, { t: ' y = 3' }]] } }
   const p = await colourPage(goDiff, stale)
