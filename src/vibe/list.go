@@ -112,8 +112,10 @@ func listStateOf(sbxState string) string {
 	return listUnknown
 }
 
-// writeList prints rows as "STATE  OWNER  NAME", the name last so that only
-// it varies in width; a GONE row adds its folder, lined up after the names.
+// writeList prints rows as "STATE  NAME", the name last so that only it
+// varies in width. A sandbox made with sbx itself is marked "(sbx)" after
+// its name: most are vibe's, and saying so on every row would say nothing.
+// A GONE row (always vibe's) adds its folder, lined up after the names.
 // Only the state is coloured, and only when color is set, so what a script
 // reads is the same either way.
 func writeList(w io.Writer, rows []listRow, color bool) {
@@ -128,19 +130,26 @@ func writeList(w io.Writer, rows []listRow, color bool) {
 		if color {
 			label = "\x1b[" + listColor[r.state] + "m" + label + "\x1b[0m"
 		}
-		if r.folder == "" {
-			fmt.Fprintf(w, "%s  %-4s  %s\n", label, r.owner, r.name)
-		} else {
-			fmt.Fprintf(w, "%s  %-4s  %-*s  %s\n", label, r.owner, nameWidth, r.name, r.folder)
+		switch {
+		case r.folder != "":
+			fmt.Fprintf(w, "%s  %-*s  %s\n", label, nameWidth, r.name, r.folder)
+		case r.owner == "sbx":
+			fmt.Fprintf(w, "%s  %s (sbx)\n", label, r.name)
+		default:
+			fmt.Fprintf(w, "%s  %s\n", label, r.name)
 		}
 	}
 }
 
 // explainList says, on stderr where it doesn't get in a script's way, what
-// a SLEEPING, UNKNOWN or GONE row means and what to do about it.
+// the (sbx) mark and a SLEEPING, UNKNOWN or GONE row mean, and what to do
+// about them.
 func explainList(rows []listRow) {
-	var gone, remakeable, sleeping []string
+	var gone, remakeable, sleeping, bySbx []string
 	for _, r := range rows {
+		if r.owner == "sbx" {
+			bySbx = append(bySbx, r.name)
+		}
 		switch r.state {
 		case listSleeping:
 			sleeping = append(sleeping, r.name)
@@ -156,6 +165,13 @@ func explainList(rows []listRow) {
 				remakeable = append(remakeable, r.folder)
 			}
 		}
+	}
+	switch len(bySbx) {
+	case 0:
+	case 1:
+		note("(sbx): %s was made with sbx itself, not vibe, so vibe has no record of it", bySbx[0])
+	default:
+		note("(sbx): %s were made with sbx itself, not vibe, so vibe has no record of them", strings.Join(bySbx, ", "))
 	}
 	if len(sleeping) > 0 {
 		note("SLEEPING: sbx stopped %s while a vibe was attached, which is waiting for it — the vibe's companion page starts it again; 'vibe --stop' in its folder ends the vibe (saving its agent's memories) and leaves it stopped", strings.Join(sleeping, ", "))

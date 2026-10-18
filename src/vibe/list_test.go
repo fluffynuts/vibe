@@ -29,25 +29,27 @@ func TestListGroupsByStateThenSortsByNameIgnoringCase(t *testing.T) {
 		{Name: "blank"},
 	}, nil, false)
 	want := "" +
-		"RUNNING   sbx   alpha\n" +
-		"RUNNING   sbx   Beta\n" +
-		"UNKNOWN   sbx   blank\n" +
-		"UNKNOWN   sbx   odd\n" +
-		"STOPPED   sbx   Gamma\n" +
-		"STOPPED   sbx   zeta\n"
+		"RUNNING   alpha (sbx)\n" +
+		"RUNNING   Beta (sbx)\n" +
+		"UNKNOWN   blank (sbx)\n" +
+		"UNKNOWN   odd (sbx)\n" +
+		"STOPPED   Gamma (sbx)\n" +
+		"STOPPED   zeta (sbx)\n"
 	if got != want {
 		t.Errorf("list =\n%s\nwant\n%s", got, want)
 	}
 }
 
-func TestListSaysWhichSandboxesVibeMade(t *testing.T) {
+// Only a sandbox vibe didn't make (one made with sbx itself) is marked:
+// most are vibe's, and a column saying so on every row says nothing.
+func TestListMarksOnlyTheSandboxesMadeWithSbx(t *testing.T) {
 	got := renderList([]sbxrun.Status{
 		{Name: "handmade", State: "stopped"},
 		{Name: "mine", State: "stopped"},
 	}, []state.Instance{{Name: "mine", Target: "/work/mine"}}, false)
 	want := "" +
-		"STOPPED   sbx   handmade\n" +
-		"STOPPED   vibe  mine\n"
+		"STOPPED   handmade (sbx)\n" +
+		"STOPPED   mine\n"
 	if got != want {
 		t.Errorf("list =\n%s\nwant\n%s", got, want)
 	}
@@ -62,9 +64,9 @@ func TestListShowsRecordsSbxNoLongerHasAsGoneWithTheirFoldersLast(t *testing.T) 
 		{Name: "older-one", Target: "/work/older one"},
 	}, false)
 	want := "" +
-		"RUNNING   vibe  a-sandbox-with-a-very-long-name\n" +
-		"GONE      vibe  old        /work/old\n" +
-		"GONE      vibe  older-one  /work/older one\n"
+		"RUNNING   a-sandbox-with-a-very-long-name\n" +
+		"GONE      old        /work/old\n" +
+		"GONE      older-one  /work/older one\n"
 	if got != want {
 		t.Errorf("list =\n%s\nwant\n%s", got, want)
 	}
@@ -79,10 +81,10 @@ func TestListColoursOnlyTheState(t *testing.T) {
 	records := []state.Instance{{Name: "gone", Target: "/work/gone"}}
 	got := renderList(statuses, records, true)
 	want := "" +
-		"\x1b[32mRUNNING \x1b[0m  sbx   up\n" +
-		"\x1b[33mUNKNOWN \x1b[0m  sbx   odd\n" +
-		"\x1b[31mSTOPPED \x1b[0m  sbx   down\n" +
-		"\x1b[90mGONE    \x1b[0m  vibe  gone  /work/gone\n"
+		"\x1b[32mRUNNING \x1b[0m  up (sbx)\n" +
+		"\x1b[33mUNKNOWN \x1b[0m  odd (sbx)\n" +
+		"\x1b[31mSTOPPED \x1b[0m  down (sbx)\n" +
+		"\x1b[90mGONE    \x1b[0m  gone  /work/gone\n"
 	if got != want {
 		t.Errorf("list =\n%q\nwant\n%q", got, want)
 	}
@@ -107,17 +109,29 @@ func TestListShowsASandboxStoppedUnderAVibeAsSleeping(t *testing.T) {
 		"/w/rebuilding": {{PID: 2, Work: "rebuilding sandbox 'rebuilding'"}},
 	}, false)
 	want := "" +
-		"RUNNING   sbx   up\n" +
-		"SLEEPING  vibe  asleep\n" +
-		"STOPPED   vibe  down\n" +
-		"STOPPED   vibe  rebuilding\n"
+		"RUNNING   up (sbx)\n" +
+		"SLEEPING  asleep\n" +
+		"STOPPED   down\n" +
+		"STOPPED   rebuilding\n"
 	if got != want {
 		t.Errorf("list =\n%s\nwant\n%s", got, want)
 	}
 	if coloured := renderListWith([]sbxrun.Status{{Name: "asleep", State: "stopped"}},
 		[]state.Instance{{Name: "asleep", Target: "/w/asleep"}},
-		map[string][]running.Claim{"/w/asleep": {{PID: 1}}}, true); coloured != "\x1b[36mSLEEPING\x1b[0m  vibe  asleep\n" {
+		map[string][]running.Claim{"/w/asleep": {{PID: 1}}}, true); coloured != "\x1b[36mSLEEPING\x1b[0m  asleep\n" {
 		t.Errorf("coloured: %q", coloured)
+	}
+}
+
+func TestListSaysWhatTheSbxMarkMeansOnlyWhenThereIsOne(t *testing.T) {
+	said := strings.Join(notesOf(func() {
+		explainList([]listRow{{state: listStopped, owner: "sbx", name: "handmade"}, {state: listStopped, owner: "vibe", name: "mine"}})
+	}), "\n")
+	if !strings.Contains(said, "(sbx)") || !strings.Contains(said, "handmade") || strings.Contains(said, "mine") {
+		t.Errorf("said %q, want what (sbx) means, naming the one made with sbx", said)
+	}
+	if said := notesOf(func() { explainList([]listRow{{state: listStopped, owner: "vibe", name: "mine"}}) }); len(said) != 0 {
+		t.Errorf("with none made with sbx, said %q", said)
 	}
 }
 
