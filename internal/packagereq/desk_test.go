@@ -193,3 +193,13 @@ func TestAnUnavailableDeskSaysWhyToEveryRequest(t *testing.T) {
 		t.Error("fetched anyway")
 	}
 }
+
+func TestAHeldRequestCarriesWhatTheDeskSaysOfIt(t *testing.T) {
+	rig := newDesk(t, "ask")
+	rig.desk.Describe = func(r Request) string { return "an upgrade from 1.0.0 to " + r.Version }
+	rig.ask(t, "1-a", "A.Lib", "2.0.0")
+	rig.desk.Poll(context.Background())
+	if p := rig.desk.Pending(); len(p) != 1 || p[0].Note != "an upgrade from 1.0.0 to 2.0.0" {
+		t.Errorf("pending = %+v", p)
+	}
+}

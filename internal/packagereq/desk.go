@@ -34,6 +34,10 @@ type Desk struct {
 	// Unavailable, when set, is why no request can be carried out: each is
 	// answered with it, unfetched.
 	Unavailable string
+	// Describe says what the user should know of a request in the project's
+	// terms (a new package, an upgrade from 1.0.0), worked out by vibe from
+	// the project, never from the agent's word; nil says nothing.
+	Describe func(Request) string
 	// Log says what's asked and what came of it, in vibe's own output.
 	Log func(string)
 
@@ -52,6 +56,8 @@ type Pending struct {
 	// Key stands for the request, for the page to say which it means.
 	Key     string
 	Request Request
+	// Note is Describe's, for the page to show with the request.
+	Note string
 	// Fetching is a request the user has approved, which is being fetched.
 	Fetching bool
 }
@@ -127,6 +133,9 @@ func (d *Desk) take(t Taken) {
 	}
 	if p == nil {
 		p = &pending{Pending: Pending{Key: key, Request: t.Request}}
+		if d.Describe != nil {
+			p.Note = d.Describe(t.Request)
+		}
 		d.pending = append(d.pending, p)
 		d.log("package request: %s", describe(t.Request))
 		if d.Policy != nil && d.Policy() == PolicyAllow {

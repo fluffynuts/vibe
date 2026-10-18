@@ -111,6 +111,9 @@ type Config struct {
 	// Admin is what the page's Admin tab does to the sandbox; nil means the
 	// page has no such tab.
 	Admin Admin
+	// Packages holds the sandbox's requests for packages for the user to
+	// approve, on the Admin tab; nil means the sandbox can't ask.
+	Packages PackageDesk
 	// KeepAwake is what the page asks for while it's in view (and as it
 	// comes back into view), to keep the sandbox from being stopped for
 	// being idle, or start it again if it was; it returns what it did, if
@@ -207,6 +210,13 @@ func Start(cfg Config) (*Server, error) {
 	go s.http.Serve(ln)
 	s.done = make(chan struct{})
 	go s.keepAwakeWhileWorking(s.done)
+	if cfg.Packages != nil {
+		s.loops.Add(1)
+		go func(done <-chan struct{}) {
+			defer s.loops.Done()
+			s.pollPackages(done, packagesPollEvery)
+		}(s.done)
+	}
 	if cfg.ReviewTab != nil {
 		s.loops.Add(1)
 		go func(done <-chan struct{}) {
@@ -309,6 +319,14 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"POST /api/admin/do", s.serving(adminFeature, s.adminDo)},
 		{"POST /api/admin/upgrades", s.serving(adminFeature, s.adminCheckUpgrades)},
 		{"POST /api/admin/cancel", s.serving(adminFeature, s.adminCancel)},
+		{"GET /api/packages", s.serving(packagesFeature, s.packagesState)},
+		{"POST /api/packages/allow", s.serving(packagesFeature, func(w http.ResponseWriter, r *http.Request) {
+			s.packagesDecide(s.cfg.Packages.Allow)(w, r)
+		})},
+		{"POST /api/packages/deny", s.serving(packagesFeature, func(w http.ResponseWriter, r *http.Request) {
+			s.packagesDecide(s.cfg.Packages.Deny)(w, r)
+		})},
+		{"POST /api/packages/deny-all", s.serving(packagesFeature, s.packagesDenyAll)},
 		{"GET /api/admin/instructions", s.authed(s.instructionsState)},
 		{"POST /api/admin/instructions", s.serving(instructionsFeature, s.instructionsSave)},
 		{"POST /api/admin/instructions/optimise", s.serving(instructionsFeature, s.instructionsOptimise)},
@@ -387,6 +405,8 @@ var (
 	instructionsFeature = feature{adminFeature.present, adminFeature.missing, 3 * maxInstructions}
 	manageFeature       = feature{func(s *Server) bool { return s.cfg.Manage != nil },
 		"this page has no Profiles tab", 64 * 1024}
+	packagesFeature = feature{func(s *Server) bool { return s.cfg.Packages != nil },
+		"this sandbox can't ask for packages", 16 * 1024}
 	reviewFeature = feature{func(s *Server) bool { return s.cfg.ReviewTab != nil },
 		"this page has no review tab", maxPrompt}
 	defaultBranchFeature = feature{(*Server).repositoryHere,
@@ -469,6 +489,9 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 			attention["admin"] = []string{"Upgrades available: " + strings.Join(s.admin.upgrades, ", ") + " — this tab says how to get them"}
 		}
 		s.admin.mu.Unlock()
+	}
+	if waiting := s.packagesWaiting(); waiting != "" {
+		attention["admin"] = append(attention["admin"], waiting)
 	}
 	// reviewAt is when the agent last updated the review: the page marks the
 	// Review tab when it's later than the user has seen. Taken in here, as
