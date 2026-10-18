@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"vibe/internal/cliargs"
 	"vibe/internal/gittoken"
@@ -21,13 +22,26 @@ import (
 	"vibe/internal/state"
 )
 
-// kitFingerprint fingerprints what a sandbox on profile, running agent, is
-// built from: the kit sbx is handed, the agent, the environment and the
-// published ports. A sandbox whose recorded fingerprint differs from this
-// is out of date. The Claude theme is left out: it's a choice rather than a
-// feature, and sandboxes sharing a profile can differ in it.
-func kitFingerprint(lay layout.Layout, profile, agent string) (string, error) {
-	doc, merged, err := loadKit(lay, profile)
+// fingerprintVersion begins every fingerprint: one made before the host's
+// folders were counted has none, and vibe can say why that sandbox is out
+// of date.
+const fingerprintVersion = "2:"
+
+// kitFingerprint fingerprints what the sandbox inst records is built from:
+// the kit sbx is handed, the agent, the environment, the published ports,
+// and the host's folders it's given (sandboxFolders). A sandbox whose
+// recorded fingerprint differs from this is out of date. The Claude theme
+// is left out: it's a choice rather than a feature, and sandboxes sharing a
+// profile can differ in it.
+func kitFingerprint(lay layout.Layout, inst state.Instance) (string, error) {
+	agent := inst.Agent
+	if agent == "" {
+		var err error
+		if agent, err = defaultAgentFor(lay, inst.Profile); err != nil {
+			return "", err
+		}
+	}
+	doc, merged, err := loadKit(lay, inst.Profile)
 	if err != nil {
 		return "", err
 	}
@@ -52,8 +66,11 @@ func kitFingerprint(lay layout.Layout, profile, agent string) (string, error) {
 	for _, p := range merged.Publish {
 		fmt.Fprintf(h, "publish %s %v %s\x00", p.Name, p.Ports, p.UrlEnv)
 	}
+	for _, f := range sandboxFolders(lay.Home, inst.Name, inst.Target, merged, agent, inst.MemoryStore) {
+		fmt.Fprintf(h, "folder %s %v\x00", f.mount(), f.env)
+	}
 	h.Write(spec)
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return fingerprintVersion + hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // profileState is how a profile stands against the library, or what
@@ -150,22 +167,17 @@ func updateProfile(lay layout.Layout, profile, backupName string) (profileOutcom
 // sandboxOutOfDate says why the sandbox inst records is out of date, or ""
 // when it isn't.
 func sandboxOutOfDate(lay layout.Layout, inst state.Instance) (string, error) {
-	agent := inst.Agent
-	if agent == "" {
-		var err error
-		if agent, err = defaultAgentFor(lay, inst.Profile); err != nil {
-			return "", err
-		}
-	}
-	now, err := kitFingerprint(lay, inst.Profile, agent)
+	now, err := kitFingerprint(lay, inst)
 	if err != nil {
 		return "", err
 	}
-	switch inst.KitHash {
-	case now:
+	switch {
+	case inst.KitHash == now:
 		return "", nil
-	case "":
+	case inst.KitHash == "":
 		return "it was built before vibe kept track of what it was built from", nil
+	case !strings.HasPrefix(inst.KitHash, fingerprintVersion):
+		return "it was built before vibe kept track of the host's folders it gives a sandbox", nil
 	default:
 		return "what it's built from has changed", nil
 	}
@@ -292,6 +304,36 @@ func pendingUpdates(inv inventory) []string {
 		}
 	}
 	return lines
+}
+
+// reportOutOfDate says, after an install (an upgrade's included), which
+// profiles and sandboxes the vibe just installed takes as out of date, and
+// what to do about them, so none is left on what it was built with
+// unnoticed. With no sandboxes yet (a first install) it says nothing; when
+// sbx can't say what it has, it says it couldn't check.
+func reportOutOfDate(lay layout.Layout) {
+	instances, err := state.List(lay.Home)
+	if err != nil || len(instances) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	inv, err := gatherInventory(ctx, lay)
+	if err != nil {
+		note("couldn't check which sandboxes are out of date (%s) — 'vibe --update-sandboxes' checks, and asks before changing anything", err)
+		return
+	}
+	pending := pendingUpdates(inv)
+	if len(pending) == 0 {
+		note("your sandboxes are up to date")
+		return
+	}
+	note("out of date with this vibe:")
+	for _, line := range pending {
+		note("  %s", line)
+	}
+	note("'vibe --update-sandboxes' brings them up to date now (it lists them and asks first); " +
+		"otherwise each is brought up to date when its next session starts, unless autoUpdate is off")
 }
 
 // doUpdateSandboxes is --update-sandboxes: every profile in ~/.vibe, then

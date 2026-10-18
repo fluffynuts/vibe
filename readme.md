@@ -201,8 +201,10 @@ when they're needed:
   - **Not composed from the library** (written by hand, copied, blank, or vibe's own): there's
     nothing to update.
 - **A sandbox** is out of date when what it would be built from now differs from what it was
-  built from: the kit, the agent, the environment and the published ports. Its Claude theme
-  doesn't count. A sandbox built before vibe kept track is out of date. Rebuilding carries across
+  built from: the kit, the agent, the environment, the published ports, and the folders of this
+  machine's it's given (its memories, the review's inbox, the clipboard's history, a NuGet folder).
+  Its Claude theme doesn't count. A sandbox built before vibe kept track (of any of these) is out
+  of date. Rebuilding carries across
   what vibe knows of (agent memories, theme, GitHub token, timezone, the conversation), but
   anything you installed by hand, or kept outside the workspace, goes with the old sandbox.
 
@@ -235,6 +237,11 @@ exits non-zero when anything failed, so with `-f` it suits a cron job:
 ```
 vibe --upgrade -f && vibe --update-sandboxes -f
 ```
+
+**After an install** (`vibe --upgrade` runs one from the new release), vibe lists the profiles and
+sandboxes the new vibe takes as out of date, and says what to do: `vibe --update-sandboxes` now, or
+leave each to be brought up to date when its next session starts. When sbx can't say what it has, it
+says it couldn't check.
 
 ## Building
 

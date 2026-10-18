@@ -26,8 +26,10 @@ What matters is whether what a sandbox is built from has changed.
   it records, and compares the two. Files that are the user's rather than the composition's are left out of
   the comparison: `agent-instructions.md` and the recorded Claude theme.
 - **A sandbox vs what it was built from.** When a sandbox is built, vibe records a fingerprint of what it
-  handed sbx: the kit (profile + `~/.vibe/config.yaml` + `defaults/`), the agent, the environment and the
-  published ports. A different fingerprint now means a rebuild is due. The Claude theme is left out: it is
+  handed sbx: the kit (profile + `~/.vibe/config.yaml` + `defaults/`), the agent, the environment, the
+  published ports, and (since 2026-10-18) the host's folders it's mounted (`sandboxFolders`, the one place
+  they're decided). A different fingerprint now means a rebuild is due; one made before the folders were
+  counted (no `2:` prefix) says so. After an install, vibe lists what's out of date (`reportOutOfDate`). The Claude theme is left out: it is
   a choice, not a feature, and sandboxes sharing a profile can differ in it.
 
 Both comparisons need composition and kit-building to be deterministic: composing the same thing twice must

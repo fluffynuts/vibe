@@ -22,7 +22,7 @@ import (
 
 func fingerprint(t *testing.T, lay layout.Layout, agent string) string {
 	t.Helper()
-	sum, err := kitFingerprint(lay, bundledProfile, agent)
+	sum, err := kitFingerprint(lay, state.Instance{Name: "box", Profile: bundledProfile, Agent: agent})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func sandboxFor(t *testing.T, lay layout.Layout, built bool) state.Instance {
 	inst := state.Instance{Name: "box", Profile: "p", Target: t.TempDir(), Agent: "claude"}
 	if built {
 		var err error
-		if inst.KitHash, err = kitFingerprint(lay, "p", "claude"); err != nil {
+		if inst.KitHash, err = kitFingerprint(lay, inst); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -372,7 +372,7 @@ func batchStandIns(t *testing.T, failing ...string) *[]string {
 		if err != nil {
 			return err
 		}
-		if inst.KitHash, err = kitFingerprint(lay, inst.Profile, inst.Agent); err != nil {
+		if inst.KitHash, err = kitFingerprint(lay, inst); err != nil {
 			return err
 		}
 		return state.Save(lay.Home, inst)
@@ -387,7 +387,7 @@ func saveSandbox(t *testing.T, lay layout.Layout, name string, built bool) {
 	inst := state.Instance{Name: name, Profile: "p", Target: t.TempDir(), Agent: "claude"}
 	if built {
 		var err error
-		if inst.KitHash, err = kitFingerprint(lay, "p", "claude"); err != nil {
+		if inst.KitHash, err = kitFingerprint(lay, inst); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -595,5 +595,84 @@ func TestAProfileWithARetiredFeatureIsUpdatedWithoutIt(t *testing.T) {
 	}
 	if found, _ := filepath.Glob(lay.HomePath("profiles", "p", "install-scripts", "*-diffity")); len(found) != 0 {
 		t.Errorf("diffity's script is still there: %v", found)
+	}
+}
+
+// What a sandbox is built from includes the host's folders it's given: a
+// change to those alone leaves it out of date, as a change to its kit does.
+// Here the profile names a NuGet folder from the start, which isn't there
+// when the sandbox is built (so isn't mounted), and is made after: its kit
+// and settings are as they were, only its folders differ.
+func TestAChangeOnlyToTheFoldersASandboxIsGivenLeavesItOutOfDate(t *testing.T) {
+	lay := updateLayout(t)
+	nuget := filepath.Join(t.TempDir(), "nuget")
+	writeFile(t, lay.HomePath("profiles", "p", "settings.yaml"), "nugetDir: "+nuget+"\n")
+	inst := sandboxFor(t, lay, true)
+	if why, err := sandboxOutOfDate(lay, inst); err != nil || why != "" {
+		t.Fatalf("just built: %q, %v", why, err)
+	}
+	if err := os.Mkdir(nuget, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if why, err := sandboxOutOfDate(lay, inst); err != nil || why == "" {
+		t.Errorf("given a folder it wasn't built with: %q, %v; want it out of date", why, err)
+	}
+}
+
+// A sandbox recorded before vibe kept track of the folders it gives one is
+// out of date, saying so: vibe can't tell what it was given.
+func TestASandboxRecordedBeforeItsFoldersWereTrackedSaysSo(t *testing.T) {
+	lay := updateLayout(t)
+	inst := sandboxFor(t, lay, false)
+	inst.KitHash = strings.Repeat("ab", 32) // a fingerprint as they were made before
+	why, err := sandboxOutOfDate(lay, inst)
+	if err != nil || !strings.Contains(why, "folders") {
+		t.Errorf("why = %q, %v; want it to say vibe didn't track its folders then", why, err)
+	}
+}
+
+// After an install (an upgrade's included), the vibe just installed says
+// which sandboxes it takes as out of date, and what to do: they aren't left
+// on what they were built with, unnoticed.
+func TestAnInstallSaysWhichSandboxesAreOutOfDate(t *testing.T) {
+	lay := updateLayout(t)
+	saveSandbox(t, lay, "fresh", true)
+	saveSandbox(t, lay, "stale", false)
+	sbxListing(t, "fresh running\\nstale stopped\\n")
+	got := strings.Join(notesOf(func() { reportOutOfDate(lay) }), "\n")
+	if !strings.Contains(got, "sandbox 'stale'") || strings.Contains(got, "sandbox 'fresh'") {
+		t.Errorf("said:\n%s\nwant 'stale' listed and 'fresh' not", got)
+	}
+	if !strings.Contains(got, "vibe --update-sandboxes") || !strings.Contains(got, "next session") {
+		t.Errorf("said:\n%s\nwant what to do about it", got)
+	}
+}
+
+func TestAnInstallSaysWhenAllSandboxesAreUpToDate(t *testing.T) {
+	lay := updateLayout(t)
+	saveSandbox(t, lay, "fresh", true)
+	sbxListing(t, "fresh running\\n")
+	if got := strings.Join(notesOf(func() { reportOutOfDate(lay) }), "\n"); !strings.Contains(got, "up to date") {
+		t.Errorf("said:\n%s\nwant them said to be up to date", got)
+	}
+}
+
+// A first install has no sandboxes to speak of.
+func TestAnInstallWithNoSandboxesSaysNothingOfThem(t *testing.T) {
+	lay := updateLayout(t)
+	if got := notesOf(func() { reportOutOfDate(lay) }); len(got) != 0 {
+		t.Errorf("said %q", got)
+	}
+}
+
+// When sbx can't say what it has, the install says it couldn't check, and
+// how to: not that all is well.
+func TestAnInstallSaysWhenItCouldntCheckTheSandboxes(t *testing.T) {
+	lay := updateLayout(t)
+	saveSandbox(t, lay, "box", true)
+	sbxtest.OnPath(t, "echo 'daemon not running' >&2\nexit 1\n")
+	got := strings.Join(notesOf(func() { reportOutOfDate(lay) }), "\n")
+	if !strings.Contains(got, "couldn't check") || !strings.Contains(got, "vibe --update-sandboxes") {
+		t.Errorf("said:\n%s\nwant it to say it couldn't check, and how to", got)
 	}
 }
