@@ -347,6 +347,26 @@ func TestALongConversationKeepsOnlyTheLastEvents(t *testing.T) {
 	}
 }
 
+// Lines can each be long, and the agent decides how many: what's kept is
+// bounded in bytes as well as events, the oldest going first.
+func TestALongConversationKeepsNoMoreThanItsBytes(t *testing.T) {
+	var c conversation
+	big := []byte(`{"type":"assistant","x":"` + strings.Repeat("a", maxLine-100) + `"}`)
+	for i := 0; i < 2*maxKept/maxLine; i++ {
+		c.line(big)
+	}
+	kept := 0
+	for _, e := range c.events {
+		kept += len(e.Text) + len(e.Agent)
+	}
+	if kept > maxKept {
+		t.Errorf("kept %d bytes, past the most, %d", kept, maxKept)
+	}
+	if last := c.events[len(c.events)-1].Seq; last != c.seq {
+		t.Errorf("the last event kept is %d, not the newest, %d", last, c.seq)
+	}
+}
+
 func TestAPromptsReceiptAdvancesFromSentToDeliveredToSeen(t *testing.T) {
 	var c conversation
 	c.begin("hello")

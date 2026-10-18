@@ -48,6 +48,10 @@ const (
 	// numbers keep counting past it, so a page that is behind just misses
 	// what was dropped.
 	maxEvents = 2000
+	// maxKept bounds the bytes of the events kept, as maxEvents bounds how
+	// many: each can be up to maxLine, and the whole is written out at
+	// every answer.
+	maxKept = 32 << 20
 )
 
 // A session id goes onto the agent's command line, so it is only ever what
@@ -183,7 +187,15 @@ func (c *conversation) close() {
 func (c *conversation) add(kind, text string, agent json.RawMessage) {
 	c.seq++
 	c.events = append(c.events, event{Seq: c.seq, Kind: kind, Text: text, Agent: agent, At: time.Now().UnixMilli()})
-	if over := len(c.events) - maxEvents; over > 0 {
+	over := len(c.events) - maxEvents
+	kept := 0
+	for i := len(c.events) - 1; i >= 0; i-- {
+		if kept += len(c.events[i].Text) + len(c.events[i].Agent); kept > maxKept {
+			over = max(over, i+1)
+			break
+		}
+	}
+	if over > 0 {
 		c.events = append([]event(nil), c.events[over:]...)
 	}
 }
