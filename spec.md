@@ -171,7 +171,9 @@ Decisions, and why:
   ports) and kept in the instance record (`companionPort`); the token is stable too. A second vibe on the same
   sandbox finds the first one's page (`/api/ping`) and doesn't start another.
 - Changes only ever add/remove a rule scoped to this sandbox (`--sandbox NAME`); global/org rules are shown
-  and never touched. Rules that match everything (`*`, `**`) are refused by the server. Every change is
+  and never touched. Rules that match everything (`*`, `**`), or far more than one site
+  (`*.com`, `*:443`, `0.0.0.0/0`), are refused by the server, and a log row offers Allow only for a single host
+  (the log's hosts are whatever the sandbox asked for). Every change is
   confirmed in a dialog showing the exact `sbx` command.
 - `settings.yaml` `companion: open|serve|off` (default open); `-N/--no-companion` for one run. The browser
   isn't opened over ssh or on a display-less Linux box (xdg-open would fall back to a text browser over vibe's TUI).

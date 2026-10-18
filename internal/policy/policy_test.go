@@ -249,6 +249,7 @@ func TestValidHost(t *testing.T) {
 	good := []string{
 		"github.com", "*.github.com", "**.example.com", "api?.example.com", "api[12].example.com",
 		"example.com:443", "10.0.0.0/8", "[2001:db8::1]:443", "2001:db8::1/128", "host_name.internal",
+		"*.example.com:443", "2001:db8::/32", "localhost", "::1",
 	}
 	for _, h := range good {
 		if err := ValidHost(h); err != nil {
@@ -258,6 +259,9 @@ func TestValidHost(t *testing.T) {
 	bad := []string{
 		"", "-rf", "--sandbox", "a.com,b.com", "a.com b.com", "a.com;rm -rf /", "$(id).com", "a.com\n",
 		"*", "**", "*.*", "?", strings.Repeat("a", 301),
+		// Patterns that would let in far more than one site: a whole
+		// top-level domain, every host on a port, all addresses.
+		"*.com", "**.com", "**.com:443", "*:443", "[a-z]*", "*.[a-z]*", "0.0.0.0/0", "8.0.0.0/7", "::/0", "2001::/15",
 	}
 	for _, h := range bad {
 		if err := ValidHost(h); err == nil {

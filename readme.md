@@ -660,7 +660,9 @@ you're looking at:
 
 Every change shows the exact `sbx` command it will run and waits for you to confirm. A change only ever
 adds or removes a rule scoped to *this* sandbox: global and org rules are listed but not touched, and a
-rule that would match every host (`*`, `**`) is refused — that is for the sbx CLI.
+rule that would match every host (`*`, `**`), or far more than one site (`*.com`, `*:443`, `0.0.0.0/0`), is
+refused — that is for the sbx CLI. The network log offers **Allow** only for a single host: what's logged is
+whatever the sandbox asked to reach, so it can be a pattern of the agent's making.
 
 The page needs `sbx` to be signed in (`sbx login`), the same as `sbx policy` does; until then it says so.
 

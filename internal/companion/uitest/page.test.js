@@ -2750,3 +2750,24 @@ test('a set default branch is branched from as it is here: origin is not checked
     assert.ok(!shown(p, 'fresh-fetch'))
   } finally { p.close() }
 })
+
+// --- network log ------------------------------------------------------------
+
+// The hosts in the log are whatever the sandbox asked to reach, so one can
+// be a pattern of the agent's making: Allow is offered only for a single
+// host, never one that would let in a whole domain, range or port.
+test('a logged host is offered Allow only when it names one host', async () => {
+  const entries = ['api.example.com', 'example.com:443', '[2001:db8::1]:443', '10.0.0.1',
+    '**.com:443', '*.example.com', 'api?.example.com', 'api[12].example.com', '0.0.0.0/0']
+    .map((host) => ({ host, decision: 'blocked', hits: 1 }))
+  const p = await openPage({ routes: {
+    '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, attention: {} }),
+    '/api/log': { entries },
+  }, storage: { 'vibe-companion-tab': 'log' } })
+  try {
+    const offered = [...p.$('log-table').tBodies[0].rows]
+      .filter((row) => [...row.querySelectorAll('button')].some((b) => b.textContent === 'Allow'))
+      .map((row) => row.querySelector('.host').textContent)
+    assert.deepEqual(offered, ['api.example.com', 'example.com:443', '[2001:db8::1]:443', '10.0.0.1'])
+  } finally { p.close() }
+})

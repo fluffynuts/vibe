@@ -773,8 +773,16 @@
     }
   }
 
+  // namesOneHost says whether a logged host is a single host (with a port,
+  // perhaps), not a pattern: what the sandbox asked to reach can be one of
+  // the agent's making, and allowing it would let in far more than it says.
+  function namesOneHost(host) {
+    return !/[*?[\]!/]/.test(host.replace(/^\[[0-9A-Fa-f:.]+\]/, ''))
+  }
+
   function actionFor(entry) {
     if (entry.decision === 'blocked') {
+      if (!namesOneHost(entry.host)) return null
       return el('button', { type: 'button', class: 'small', text: 'Allow',
         onclick: () => confirmChange('allow', entry.host) })
     }
