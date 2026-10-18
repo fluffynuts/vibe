@@ -2824,9 +2824,13 @@
   // --- the Profiles tab ---------------------------------------------------
 
   // What the tab last showed, and what's ticked, by ID (see manage.js).
-  // The filter is kept for this tab, so a reload (or vibe restarting) keeps it.
+  // The filters are kept for this tab, so a reload (or vibe restarting) keeps them.
   const MANAGE_FILTER = 'vibe-manage-filter'
-  const manageView = { inv: null, key: '', ticked: new Set(), jobLines: -1, busy: false, filter: sessionGet(MANAGE_FILTER) }
+  const MANAGE_STATE = 'vibe-manage-state'
+  const manageView = {
+    inv: null, key: '', ticked: new Set(), jobLines: -1, busy: false,
+    filter: sessionGet(MANAGE_FILTER), state: sessionGet(MANAGE_STATE) || 'all',
+  }
 
   function sessionGet(key) {
     try { return sessionStorage.getItem(key) || '' } catch (e) { return '' }
@@ -2985,8 +2989,8 @@
     const inv = manageView.inv
     const list = $('manage-list')
     if (!inv) return
-    const view = M.filtered(inv, manageView.filter)
-    $('manage-shown').textContent = manageView.filter.trim() ? 'showing ' + view.shown + ' of ' + view.total + ' sandboxes' : ''
+    const view = M.filtered(inv, manageView.filter, manageView.state)
+    $('manage-shown').textContent = manageView.filter.trim() || manageView.state !== 'all' ? 'showing ' + view.shown + ' of ' + view.total + ' sandboxes' : ''
     const groups = view.profiles.map((p) => {
       const head = el('div', { class: 'mgr-row mgr-head' },
         tickBox(p, el('span', {}, el('strong', {}, ...marked(p.name)),
@@ -2999,7 +3003,7 @@
       return el('div', { class: 'mgr-profile' }, head, sandboxes.length ? el('ul', { class: 'mgr-sandboxes' }, ...sandboxes) : null)
     })
     if (!groups.length && !inv.error) {
-      groups.push(el('p', { class: 'muted', text: (inv.profiles || []).length ? 'No profile matches the filter.' : 'No profiles yet.' }))
+      groups.push(el('p', { class: 'muted', text: (inv.profiles || []).length ? 'No profile matches the filters.' : 'No profiles yet.' }))
     }
     const unknown = view.unknown
     if (unknown.length) {
@@ -3131,6 +3135,18 @@
       showReviewLayout()
       redrawReview()
     })
+    const showState = () => {
+      for (const b of $('manage-state').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.state === manageView.state))
+    }
+    showState()
+    for (const b of $('manage-state').querySelectorAll('button')) {
+      b.addEventListener('click', () => {
+        manageView.state = b.dataset.state
+        sessionSet(MANAGE_STATE, manageView.state)
+        showState()
+        drawManage()
+      })
+    }
     const filter = $('manage-filter')
     filter.value = manageView.filter
     filter.addEventListener('input', () => {

@@ -103,3 +103,20 @@ test('the count is of sandboxes shown, of all of them', () => {
   assert.equal(f.shown, 2)
   assert.equal(f.total, 4)
 })
+
+test('the state filter shows only running, or only stopped, sandboxes', () => {
+  assert.deepEqual(shownIds(filtered(many, '', 'running')), ['profile:yumbi', 'sandbox:api', 'profile:go', 'sandbox:vibe'])
+  assert.deepEqual(shownIds(filtered(many, '', 'stopped')), ['profile:yumbi', 'sandbox:web', 'unknown:handmade'])
+  assert.deepEqual(shownIds(filtered(many, '', 'all')), shownIds(many))
+})
+
+test("the state filter narrows a profile's own match to sandboxes in that state", () => {
+  assert.deepEqual(shownIds(filtered(many, 'yumbi', 'stopped')), ['profile:yumbi', 'sandbox:web'])
+  assert.deepEqual(shownIds(filtered(many, 'test', 'running')), [])
+})
+
+test('the state filter counts what it hides', () => {
+  const f = filtered(many, '', 'running')
+  assert.equal(f.shown, 2)
+  assert.equal(f.total, 4)
+})

@@ -246,6 +246,11 @@
       <div class="bar">
         <button type="button" id="manage-trash" class="ghost">Select likely trash</button>
         <button type="button" id="manage-none" class="ghost">Select none</button>
+        <div class="seg" id="manage-state" role="group" aria-label="Show sandboxes">
+          <button type="button" data-state="all" aria-pressed="true">All</button>
+          <button type="button" data-state="running" aria-pressed="false">Running</button>
+          <button type="button" data-state="stopped" aria-pressed="false">Stopped</button>
+        </div>
         <input type="search" id="manage-filter" class="mgr-filter" aria-label="Filter profiles and sandboxes"
           title="Matches names, folders, features, and words like running, stopped, out of date, trash. Press / to get here."
           placeholder="Filter (/): name, folder, running, trash…">

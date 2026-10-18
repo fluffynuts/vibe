@@ -78,29 +78,41 @@
 
   const matchesAll = (wanted, hay) => wanted.every((w) => hay.includes(w))
 
-  // filtered is inv narrowed to what matches query: every word of it has
-  // to match, each anywhere in a sandbox's own text or its profile's. A
-  // profile that matches by itself keeps all its sandboxes. shown and total
-  // count sandboxes, with the ones vibe has no record of.
-  function filtered(inv, query) {
+  // inState says whether a sandbox whose state is "running" or "stopped"
+  // (or neither, when it's gone from sbx) is shown by the state filter:
+  // "all", "running" or "stopped".
+  const inState = (state, sandboxState) => !state || state === 'all' || state === sandboxState
+
+  const stateOf = (s) => (s.flags || []).find((f) => f === 'running' || f === 'stopped')
+
+  // filtered is inv narrowed to the sandboxes in state (see inState) that
+  // match query: every word of it has to match, each anywhere in a
+  // sandbox's own text or its profile's. A profile that matches by itself
+  // keeps all its sandboxes in state, and shows with none only when every
+  // state is. shown and total count sandboxes, with the ones vibe has no
+  // record of.
+  function filtered(inv, query, state) {
     const wanted = words(query)
+    const everyState = inState(state, undefined)
     const profiles = inv.profiles || []
     const unknown = inv.unknown || []
     const total = profiles.reduce((n, p) => n + (p.sandboxes || []).length, 0) + unknown.length
-    if (!wanted.length) return { profiles, unknown, shown: total, total }
+    if (!wanted.length && everyState) return { profiles, unknown, shown: total, total }
     let shown = 0
     const keptProfiles = []
     for (const p of profiles) {
       const own = text(p.name, p.features, p.flags, p.trash ? 'trash' : '')
+      const ofState = (p.sandboxes || []).filter((s) => inState(state, stateOf(s)))
       const sandboxes = matchesAll(wanted, own)
-        ? (p.sandboxes || [])
-        : (p.sandboxes || []).filter((s) => matchesAll(wanted, own + ' ' + text(s.name, s.folder, s.flags, s.trash ? 'trash' : '')))
-      if (sandboxes.length || matchesAll(wanted, own)) {
+        ? ofState
+        : ofState.filter((s) => matchesAll(wanted, own + ' ' + text(s.name, s.folder, s.flags, s.trash ? 'trash' : '')))
+      if (sandboxes.length || (everyState && matchesAll(wanted, own))) {
         keptProfiles.push(Object.assign({}, p, { sandboxes }))
         shown += sandboxes.length
       }
     }
-    const keptUnknown = unknown.filter((u) => matchesAll(wanted, text(u.name, u.running ? 'running' : 'stopped')))
+    const keptUnknown = unknown.filter((u) => inState(state, u.running ? 'running' : 'stopped') &&
+      matchesAll(wanted, text(u.name, u.running ? 'running' : 'stopped')))
     shown += keptUnknown.length
     return { profiles: keptProfiles, unknown: keptUnknown, shown, total }
   }
