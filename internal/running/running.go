@@ -42,8 +42,8 @@ func answerPath(vibeHome string, pid int) string {
 	return filepath.Join(Dir(vibeHome), strconv.Itoa(pid)+".cancelled")
 }
 
-func holdPath(vibeHome string, pid int) string {
-	return filepath.Join(Dir(vibeHome), strconv.Itoa(pid)+".hold")
+func stepPath(vibeHome string, pid int) string {
+	return filepath.Join(Dir(vibeHome), strconv.Itoa(pid)+".step")
 }
 
 // Session is this process's claim on a folder. The file must stay open for
@@ -51,7 +51,10 @@ func holdPath(vibeHome string, pid int) string {
 type Session struct {
 	file     *os.File
 	stopFile string
-	holdFile string
+	// stepFile is where Report says how winding down is going; steps
+	// numbers each report, so one repeated still counts as news.
+	stepFile string
+	steps    atomic.Int64
 	// cancelFile is a request to cancel what the page has under way, which
 	// is answered in answerFile; cancels passes each request on.
 	cancelFile, answerFile string
@@ -75,9 +78,9 @@ func register(vibeHome, target string, pid int) (*Session, error) {
 	// A request left over from an earlier process with this PID is not
 	// meant for this one.
 	os.Remove(stopPath(vibeHome, pid))
-	os.Remove(holdPath(vibeHome, pid))
 	os.Remove(cancelPath(vibeHome, pid))
 	os.Remove(answerPath(vibeHome, pid))
+	os.Remove(stepPath(vibeHome, pid))
 	f, err := claim(lockPath(vibeHome, pid), target)
 	if err != nil {
 		return nil, err
@@ -85,7 +88,7 @@ func register(vibeHome, target string, pid int) (*Session, error) {
 	s := &Session{
 		file:       f,
 		stopFile:   stopPath(vibeHome, pid),
-		holdFile:   holdPath(vibeHome, pid),
+		stepFile:   stepPath(vibeHome, pid),
 		cancelFile: cancelPath(vibeHome, pid),
 		answerFile: answerPath(vibeHome, pid),
 		cancels:    make(chan struct{}, 1),
@@ -189,10 +192,26 @@ func (s *Session) Release() {
 	s.file = nil
 	os.Remove(name)
 	os.Remove(s.stopFile)
-	os.Remove(s.holdFile)
 	os.Remove(s.cancelFile)
 	os.Remove(s.answerFile)
 	os.Remove(s.answerFile + ".new")
+	os.Remove(s.stepFile)
+	os.Remove(s.stepFile + ".new")
+}
+
+// Report says, in words, what this vibe is doing as it winds down after
+// being asked to stop ("backing up memories"): the vibe that asked (see
+// Stop) passes it on, and gives it longer for showing it's still going.
+// Written beside and renamed into place, so it's never read half-written.
+// A nil Session, or one that isn't a session's, has nobody to tell.
+func (s *Session) Report(step string) {
+	if s == nil || s.stepFile == "" {
+		return
+	}
+	text := strconv.FormatInt(s.steps.Add(1), 10) + "\n" + step
+	if os.WriteFile(s.stepFile+".new", []byte(text), 0o644) == nil {
+		os.Rename(s.stepFile+".new", s.stepFile)
+	}
 }
 
 // CancelRequested delivers each request another vibe makes (AskToCancel)
@@ -243,27 +262,6 @@ func AskToCancel(vibeHome string, pid int, within time.Duration) (string, error)
 	}
 }
 
-// AskToHold tells the vibe with pid that its sandbox is about to be stopped
-// on purpose, from outside it ('vibe --stop'): when its session ends, that
-// is why, and it should keep its companion page up rather than end.
-func AskToHold(vibeHome string, pid int) error {
-	return os.WriteFile(holdPath(vibeHome, pid), nil, 0o644)
-}
-
-// CancelHold takes AskToHold back, for a stop that didn't happen.
-func CancelHold(vibeHome string, pid int) {
-	os.Remove(holdPath(vibeHome, pid))
-}
-
-// HoldAsked says whether another vibe has asked this one to hold (see
-// AskToHold), and takes the request: it answers for one session ending.
-func (s *Session) HoldAsked() bool {
-	if s == nil || s.holdFile == "" {
-		return false
-	}
-	return os.Remove(s.holdFile) == nil
-}
-
 // held reports whether a live process still holds the lock file at path,
 // removing the file when it turns out to be stale.
 func held(path string) bool {
@@ -278,7 +276,7 @@ func held(path string) bool {
 	f.Close()
 	os.Remove(path)
 	os.Remove(strings.TrimSuffix(path, ".lock") + ".stop")
-	os.Remove(strings.TrimSuffix(path, ".lock") + ".hold")
+	os.Remove(strings.TrimSuffix(path, ".lock") + ".step")
 	os.Remove(strings.TrimSuffix(path, ".lock") + ".cancel")
 	os.Remove(strings.TrimSuffix(path, ".lock") + ".cancelled")
 	return false
@@ -368,9 +366,12 @@ const killWait = 5 * time.Second
 
 // Stop asks the vibe process pid to end its session — which it does by
 // ending its sbx session, saving its agent's memories and exiting — and
-// waits up to timeout for it to be gone. One that doesn't go in time is
-// killed outright, and killed reports that it came to that.
-func Stop(vibeHome string, pid int, timeout time.Duration) (killed bool, err error) {
+// waits for it to be gone, passing each step it reports (see Report) to
+// progress, which may be nil. One that goes quiet for as long as quiet,
+// without a step, is killed outright, and killed reports that it came to
+// that: saving memories can mean waking a sandbox first, which takes as
+// long as it takes, but a vibe saying nothing for that long is stuck.
+func Stop(vibeHome string, pid int, quiet time.Duration, progress func(step string)) (killed bool, err error) {
 	path := lockPath(vibeHome, pid)
 	if !held(path) {
 		return false, nil
@@ -378,20 +379,32 @@ func Stop(vibeHome string, pid int, timeout time.Duration) (killed bool, err err
 	if err := os.WriteFile(stopPath(vibeHome, pid), nil, 0o644); err != nil {
 		return false, fmt.Errorf("asking PID %d to stop: %w", pid, err)
 	}
-	if waitGone(path, timeout) {
+	if waitGone(path, quiet, stepPath(vibeHome, pid), progress) {
 		return false, nil
 	}
 	if p, err := os.FindProcess(pid); err == nil {
 		p.Kill()
 	}
-	if waitGone(path, killWait) {
+	if waitGone(path, killWait, "", nil) {
 		return true, nil
 	}
 	return true, fmt.Errorf("PID %d is still running, even after being killed", pid)
 }
 
-func waitGone(path string, timeout time.Duration) bool {
-	for deadline := time.Now().Add(timeout); ; {
+// waitGone waits for the lock at path to be let go, for up to quiet since
+// the last step read from stepFile (passed to progress); "" has none.
+func waitGone(path string, quiet time.Duration, stepFile string, progress func(string)) bool {
+	last := ""
+	for deadline := time.Now().Add(quiet); ; {
+		if stepFile != "" {
+			if b, err := os.ReadFile(stepFile); err == nil && string(b) != last {
+				last = string(b)
+				deadline = time.Now().Add(quiet)
+				if _, step, ok := strings.Cut(last, "\n"); ok && progress != nil {
+					progress(step)
+				}
+			}
+		}
 		if !held(path) {
 			return true
 		}

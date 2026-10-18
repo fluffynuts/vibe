@@ -66,57 +66,20 @@ func TestStopReportsAFailureUnlessForceFindsItStoppedAnyway(t *testing.T) {
 	}
 }
 
-func TestStopAsksWhatIsAttachedToHoldOnlyWhileTheStopHolds(t *testing.T) {
-	var events []string
-	withHold := func(f *fakeStopper) stopper {
-		s := f.stopper()
-		s.stop = func(name string) (int, error) {
-			events = append(events, "stop")
-			f.stopped++
-			if f.code == 0 || f.stopsAnyway {
-				f.running = false
-			}
-			return f.code, nil
-		}
-		s.hold = func() { events = append(events, "hold") }
-		s.unhold = func() { events = append(events, "unhold") }
-		return s
-	}
-
-	stopsFine := &fakeStopper{there: true, running: true, known: true}
-	stopSandbox(withHold(stopsFine), "box", "/w", false)
-	if got := strings.Join(events, ","); got != "hold,stop" {
-		t.Errorf("a stop that worked: %s", got)
-	}
-
-	events = nil
-	stuck := &fakeStopper{there: true, running: true, known: true, code: 1}
-	stopSandbox(withHold(stuck), "box", "/w", true)
-	if got := strings.Join(events, ","); got != "hold,stop,unhold" {
-		t.Errorf("a stop that left it running: %s", got)
-	}
-
-	events = nil
-	stopped := &fakeStopper{there: true, known: true}
-	stopSandbox(withHold(stopped), "box", "/w", false)
-	if len(events) != 0 {
-		t.Errorf("a sandbox already stopped: %v", events)
-	}
-}
-
-// 'vibe --stop' ends a headless vibe (nobody would see it carry on), and
-// leaves one with a terminal to keep its page up.
-func TestStoppingEndsAHeadlessVibeOnly(t *testing.T) {
+// 'vibe --stop' ends every vibe attached to the sandbox, terminal or
+// headless (each saves its agent's memories as it ends), but not one only
+// holding the folder for a rebuild.
+func TestStoppingEndsEveryAttachedVibe(t *testing.T) {
 	var ended []int
 	old := stopVibe
 	t.Cleanup(func() { stopVibe = old })
 	stopVibe = func(_ string, pid int) (bool, error) { ended = append(ended, pid); return false, nil }
-	err := endHeadlessVibes(t.TempDir(), []running.Claim{{PID: 10}, {PID: 11, Headless: true}, {PID: 12, Work: "rebuilding sandbox 'a'"}})
-	if err != nil || len(ended) != 1 || ended[0] != 11 {
-		t.Errorf("endHeadlessVibes = %v, ended %v; want just the headless one", err, ended)
+	err := endVibes(t.TempDir(), []running.Claim{{PID: 10}, {PID: 11, Headless: true}, {PID: 12, Work: "rebuilding sandbox 'a'"}}, "the sandbox was left running")
+	if err != nil || len(ended) != 2 || ended[0] != 10 || ended[1] != 11 {
+		t.Errorf("endVibes = %v, ended %v; want the terminal and the headless one", err, ended)
 	}
 	stopVibe = func(string, int) (bool, error) { return false, errors.New("no such process") }
-	if err := endHeadlessVibes(t.TempDir(), []running.Claim{{PID: 11, Headless: true}}); err == nil || !strings.Contains(err.Error(), "left running") {
+	if err := endVibes(t.TempDir(), []running.Claim{{PID: 10}}, "the sandbox was left running"); err == nil || !strings.Contains(err.Error(), "left running") {
 		t.Errorf("when it can't be ended: %v", err)
 	}
 }

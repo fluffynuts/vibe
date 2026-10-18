@@ -83,7 +83,15 @@
   // "all", "running" or "stopped".
   const inState = (state, sandboxState) => !state || state === 'all' || state === sandboxState
 
-  const stateOf = (s) => (s.flags || []).find((f) => f === 'running' || f === 'stopped')
+  // stateOf is a sandbox's state, for the state filter: a sleeping one (sbx
+  // stopped it under a vibe that is waiting for it) is still in use, so
+  // running.
+  function stateOf(s) {
+    const flags = s.flags || []
+    if (flags.includes('running') || flags.includes('sleeping')) return 'running'
+    if (flags.includes('stopped')) return 'stopped'
+    return undefined
+  }
 
   // filtered is inv narrowed to the sandboxes in state (see inState) that
   // match query: every word of it has to match, each anywhere in a

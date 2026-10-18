@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"sync/atomic"
 
 	"path/filepath"
@@ -65,8 +66,8 @@ func finish(lay layout.Layout, args cliargs.Args, name string) error {
 		switch {
 		case resume != nil:
 			note("the sandbox was stopped or is being rebuilt from the companion page, which carries on;")
-		case companionUp && (session.HoldAsked() || stoppedUnderSession(name, code, reached.Load())):
-			// Stopped by 'vibe --stop' (which says so) or by sbx: the
+		case companionUp && stoppedUnderSession(name, code, reached.Load()):
+			// Stopped by sbx (as one left idle) or with sbx directly: the
 			// page's Admin tab can start it again.
 			stoppedOnPurpose.Store(true)
 			hold.begin()
@@ -83,6 +84,10 @@ func finish(lay layout.Layout, args cliargs.Args, name string) error {
 		}
 		note("  this terminal attaches again once the sandbox is back (Ctrl-C ends vibe)")
 		if !awaitResume(resume, session.StopRequested()) {
+			// A rebuild under way leaves no sandbox fit to wake.
+			if stoppedOnPurpose.Load() {
+				backUpWhileStopped(vibeHome, name)
+			}
 			left = true
 			break
 		}
@@ -93,8 +98,7 @@ func finish(lay layout.Layout, args cliargs.Args, name string) error {
 		return err
 	}
 	if left {
-		// The sandbox is stopped or half-rebuilt: there are no memories
-		// to copy out of it.
+		// Any memories to copy out of the sandbox have been already.
 		termtitle.Restore()
 		session.Release()
 		os.Exit(0)
@@ -123,6 +127,34 @@ func finish(lay layout.Layout, args cliargs.Args, name string) error {
 	os.Exit(code)
 	return nil
 }
+
+// backUpWhileStopped backs up the agent's memories from a sandbox stopped
+// under its session (by sbx, as one left idle, or from the page) as vibe
+// ends: they are still in it, and the host's copy is what a rebuild or a
+// delete keeps. It is started for the backup, then stopped again.
+func backUpWhileStopped(vibeHome, name string) {
+	note("waking sandbox '%s' to back up its agent's memories, then stopping it again", name)
+	session.Report("waking its sandbox, to back up its agent's memories")
+	if !startToBackUp(context.Background(), name) {
+		note("sandbox '%s' didn't start, so its agent's memories weren't backed up: they're still in it, and are backed up when a session in it next ends", name)
+		return
+	}
+	backUpMemories(vibeHome, name)
+	session.Report("stopping its sandbox again")
+	if err := stopAfterBackUp(name); err != nil {
+		note("couldn't stop sandbox '%s' again: %s — 'vibe --stop' stops it", name, oneLine(err.Error()))
+	}
+}
+
+// What backUpWhileStopped and backUpAsHeadlessEnds ask of sbx and the
+// memory store: variables for tests.
+var (
+	startToBackUp    = sbxrun.StartContext
+	backUpMemories   = saveMemoriesOnExit
+	stopAfterBackUp  = sbxrun.StopQuiet
+	sandboxReachable = sbxrun.Reachable
+	sandboxRunning   = func(name string) (running, known bool) { return sbxrun.Running(context.Background(), name) }
+)
 
 // stoppedUnderSession says a session that ended with code ended because its
 // sandbox was stopped (or removed) from outside it — by sbx itself, say —

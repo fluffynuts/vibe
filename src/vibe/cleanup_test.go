@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -440,5 +441,23 @@ func TestStoppingASandboxFromThePageEndsTheVibeAttachedToIt(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(calls); !strings.Contains(string(data), "stop busy") {
 		t.Errorf("the sandbox wasn't stopped; sbx was asked:\n%s", data)
+	}
+}
+
+func TestAVibeThatWontEndLeavesThePagesSandboxRunningAndSaysSo(t *testing.T) {
+	lay := updateLayout(t)
+	inst := sandboxRecord(t, lay, "busy", "p").inst
+	calls := loggingSbx(t, "busy running\\n")
+	old := stopVibe
+	t.Cleanup(func() { stopVibe = old })
+	stopVibe = func(string, int) (bool, error) { return false, errors.New("no such process") }
+	m := &companionManager{lay: lay}
+	s := &inventorySandbox{inst: inst, inSbx: true, attached: true, vibes: []int{4242}}
+	err := m.do(context.Background(), "stop", &inventoryProfile{name: "p"}, s)
+	if err == nil || !strings.Contains(err.Error(), "PID 4242") || !strings.Contains(err.Error(), "sandbox 'busy' was left running") {
+		t.Errorf("err = %v, want which vibe, and that the sandbox was left running", err)
+	}
+	if data, _ := os.ReadFile(calls); strings.Contains(string(data), "stop busy") {
+		t.Error("the sandbox was stopped though its vibe didn't end")
 	}
 }

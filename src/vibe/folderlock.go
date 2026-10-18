@@ -15,9 +15,11 @@ import (
 // guardFolder. It lives for the whole run, since dropping it drops the claim.
 var session *running.Session
 
-// stopOtherTimeout is how long to wait for another vibe to wind down after
-// being asked to stop: long enough for it to save its agent's memories.
-const stopOtherTimeout = 60 * time.Second
+// stopOtherQuiet is how long another vibe asked to stop may go without
+// reporting a step of winding down (see running.Stop) before it's killed:
+// longer than any one step takes, the longest being waking a sandbox that
+// sbx has stopped, to save its agent's memories.
+const stopOtherQuiet = 90 * time.Second
 
 // guardFolder checks for other vibe processes with target open — two agents
 // taking instructions against one workspace is easy to do by accident — and
@@ -178,13 +180,16 @@ func resolveOthers(vibeHome, target string, claims []running.Claim, force bool) 
 	for _, pid := range others {
 		status := newStatusLine()
 		status.show("Stopping vibe (PID %d)", pid)
-		killed, err := running.Stop(vibeHome, pid, stopOtherTimeout)
+		killed, err := running.Stop(vibeHome, pid, stopOtherQuiet, func(step string) {
+			status.done("Stopping vibe (PID %d): %s", pid, step)
+			status.show("Stopping vibe (PID %d)", pid)
+		})
 		switch {
 		case err != nil:
 			status.done("Stopping vibe (PID %d) failed: %s", pid, err)
 			return fmt.Errorf("could not stop the other vibe for %s", target)
 		case killed:
-			status.done("Killed vibe (PID %d): it did not stop within %s, so its memories may not have been saved", pid, stopOtherTimeout)
+			status.done("Killed vibe (PID %d): it went %s without getting any further, so its memories may not have been saved", pid, stopOtherQuiet)
 		default:
 			status.done("Stopped vibe (PID %d)", pid)
 		}

@@ -120,3 +120,12 @@ test('the state filter counts what it hides', () => {
   assert.equal(f.shown, 2)
   assert.equal(f.total, 4)
 })
+
+test('a sleeping sandbox (stopped under a vibe) counts as running', () => {
+  const inv = { profiles: [{ id: 'profile:p', name: 'p', features: [], flags: [], sandboxes: [
+    { id: 'sandbox:asleep', name: 'asleep', folder: '~/a', flags: ['sleeping', 'a vibe is attached'] },
+    { id: 'sandbox:down', name: 'down', folder: '~/d', flags: ['stopped'] },
+  ] }], unknown: [] }
+  assert.deepEqual(shownIds(filtered(inv, '', 'running')), ['profile:p', 'sandbox:asleep'])
+  assert.deepEqual(shownIds(filtered(inv, '', 'stopped')), ['profile:p', 'sandbox:down'])
+})

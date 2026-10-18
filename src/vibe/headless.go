@@ -90,14 +90,26 @@ func headless(lay layout.Layout, args cliargs.Args, name string) error {
 		}
 		break
 	}
-	if sbxrun.Reachable(name) {
-		saveMemoriesOnExit(vibeHome, name)
-		// Asked to stop, it's for whoever asked to say what becomes of the
-		// sandbox ('vibe --stop' stops it next).
-		if !asked {
-			note("left sandbox '%s' running — 'vibe --stop' stops it", name)
-		}
-	}
+	backUpAsHeadlessEnds(vibeHome, name, asked)
 	termtitle.Restore()
 	return nil
+}
+
+// backUpAsHeadlessEnds backs up the agent's memories as a headless vibe
+// ends: from a sandbox sbx has stopped (left idle) by waking it, and
+// leaving it stopped (see backUpWhileStopped); from one that's up, leaving
+// it running. Asked to stop, it's for whoever asked to say what becomes of
+// the sandbox ('vibe --stop' stops it next).
+func backUpAsHeadlessEnds(vibeHome, name string, asked bool) {
+	if running, known := sandboxRunning(name); known && !running {
+		backUpWhileStopped(vibeHome, name)
+		return
+	}
+	if !sandboxReachable(name) {
+		return
+	}
+	backUpMemories(vibeHome, name)
+	if !asked {
+		note("left sandbox '%s' running — 'vibe --stop' stops it", name)
+	}
 }

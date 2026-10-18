@@ -73,6 +73,8 @@ func sandboxFlags(s inventorySandbox) []string {
 		flags = append(flags, "gone from sbx")
 	case s.running:
 		flags = append(flags, "running")
+	case len(s.vibes) > 0:
+		flags = append(flags, "sleeping")
 	default:
 		flags = append(flags, "stopped")
 	}
@@ -652,19 +654,14 @@ func (m *companionManager) do(ctx context.Context, kind string, p *inventoryProf
 			// A vibe attached to it ends first, saving its agent's
 			// memories, as 'vibe' asked to stop another does: a session
 			// (terminal or headless) is no use without its sandbox.
-			for _, pid := range s.vibes {
-				note("ending vibe (PID %d), which is attached to it — it saves its agent's memories first", pid)
-				killed, err := stopVibe(m.lay.Home, pid)
-				switch {
-				case err != nil:
-					return fmt.Errorf("couldn't end vibe (PID %d), so sandbox '%s' was left running: %w", pid, s.inst.Name, err)
-				case killed:
-					note("  vibe (PID %d) didn't end within %s and was killed, so its agent's memories may not have been saved", pid, stopOtherTimeout)
-				default:
-					note("  vibe (PID %d) has ended", pid)
-				}
+			vibes := make([]running.Claim, len(s.vibes))
+			for i, pid := range s.vibes {
+				vibes[i] = running.Claim{PID: pid}
 			}
-			stop := holdingStopper(m.lay.Home, s.inst.Target)
+			if err := endVibes(m.lay.Home, vibes, fmt.Sprintf("sandbox '%s' was left running", s.inst.Name)); err != nil {
+				return err
+			}
+			stop := sbxStopper
 			stop.stop = func(name string) (int, error) {
 				if err := sbxrun.StopQuietContext(ctx, name); err != nil {
 					return 1, err
@@ -735,9 +732,10 @@ func (m *companionManager) do(ctx context.Context, kind string, p *inventoryProf
 }
 
 // stopVibe asks the vibe with pid to end, waiting for it to (and killing it
-// when it doesn't), saying whether it came to that. A variable for tests.
+// when it goes quiet), saying each step it reports and whether it came to
+// a kill. A variable for tests.
 var stopVibe = func(vibeHome string, pid int) (killed bool, err error) {
-	return running.Stop(vibeHome, pid, stopOtherTimeout)
+	return running.Stop(vibeHome, pid, stopOtherQuiet, func(step string) { note("  vibe (PID %d): %s", pid, step) })
 }
 
 // whyNotRebuilt says why a profile's action leaves its sandbox s alone, or

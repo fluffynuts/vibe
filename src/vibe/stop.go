@@ -9,10 +9,10 @@ import (
 )
 
 func doStop(vibeHome, name, target string, force bool) error {
-	if err := endHeadlessVibes(vibeHome, running.Claims(vibeHome, target)); err != nil {
+	if err := endVibes(vibeHome, running.Claims(vibeHome, target), "the sandbox was left running"); err != nil {
 		return err
 	}
-	code, err := stopSandbox(holdingStopper(vibeHome, target), name, target, force)
+	code, err := stopSandbox(sbxStopper, name, target, force)
 	if err != nil {
 		return err
 	}
@@ -20,23 +20,21 @@ func doStop(vibeHome, name, target string, force bool) error {
 	return nil
 }
 
-// endHeadlessVibes ends each headless vibe among claims (saving its agent's
-// memories as it ends), leaving the sandbox as it is: 'vibe --stop' then
-// stops the sandbox, as nobody would see a headless vibe carry on without
-// it, and --restart starts a fresh one. A vibe with a terminal is left to
-// keep its page up, as its terminal says.
-func endHeadlessVibes(vibeHome string, claims []running.Claim) error {
-	for _, c := range claims {
-		if !c.Headless {
-			continue
-		}
-		note("ending headless vibe (PID %d) — it saves its agent's memories first", c.PID)
+// endVibes ends each vibe among claims, terminal or headless, saving its
+// agent's memories as it ends (waking a sandbox that has stopped under it
+// to), before its sandbox is stopped or it is restarted: stopping is for
+// the whole workspace. One only holding the folder for a rebuild is left to
+// finish. One that can't be ended is an error, saying what that leaves as
+// it is: unlessEnded ("the sandbox was left running").
+func endVibes(vibeHome string, claims []running.Claim, unlessEnded string) error {
+	for _, c := range sessions(claims) {
+		note("ending vibe (PID %d) — it saves its agent's memories first", c.PID)
 		killed, err := stopVibe(vibeHome, c.PID)
 		switch {
 		case err != nil:
-			return fmt.Errorf("couldn't end headless vibe (PID %d), so the sandbox was left running: %w", c.PID, err)
+			return fmt.Errorf("couldn't end vibe (PID %d), so %s: %w", c.PID, unlessEnded, err)
 		case killed:
-			note("  it didn't end within %s and was killed, so its agent's memories may not have been saved", stopOtherTimeout)
+			note("  it went %s without getting any further and was killed, so its agent's memories may not have been saved", stopOtherQuiet)
 		default:
 			note("  it has ended")
 		}
@@ -44,24 +42,16 @@ func endHeadlessVibes(vibeHome string, claims []running.Claim) error {
 	return nil
 }
 
-// holdingStopper is sbxStopper, telling a vibe attached to target that its
-// session ending is on purpose: it would otherwise take that for the agent
-// being quit, and end, rather than keep its companion page up to start the
-// sandbox again from.
-func holdingStopper(vibeHome, target string) stopper {
-	s := sbxStopper
-	attached := running.Others(vibeHome, target)
-	s.hold = func() {
-		for _, pid := range attached {
-			running.AskToHold(vibeHome, pid)
+// sessions is claims without those only holding a folder for a rebuild:
+// the vibes attached to its sandbox.
+func sessions(claims []running.Claim) []running.Claim {
+	var out []running.Claim
+	for _, c := range claims {
+		if c.Work == "" {
+			out = append(out, c)
 		}
 	}
-	s.unhold = func() {
-		for _, pid := range attached {
-			running.CancelHold(vibeHome, pid)
-		}
-	}
-	return s
+	return out
 }
 
 // stopper is what --stop asks of sbx: sbxStopper, or a stub under test.
@@ -71,10 +61,6 @@ type stopper struct {
 	// could say.
 	running func(name string) (running, known bool)
 	stop    func(name string) (int, error)
-	// hold tells whatever is attached to the sandbox, just before it is
-	// stopped, that the stop is on purpose; unhold takes that back when the
-	// sandbox is still running after all. Either may be nil.
-	hold, unhold func()
 }
 
 var sbxStopper = stopper{
@@ -115,9 +101,6 @@ func stopSandbox(s stopper, name, target string, force bool) (int, error) {
 		return 0, nil
 	}
 	note("stopping sandbox '%s'", name)
-	if s.hold != nil {
-		s.hold()
-	}
 	code, err := s.stop(name)
 	if err == nil && code == 0 {
 		return 0, nil
@@ -125,9 +108,6 @@ func stopSandbox(s stopper, name, target string, force bool) (int, error) {
 	running, known := s.running(name)
 	stillThere, existsErr := s.exists(name)
 	stopped := (existsErr == nil && !stillThere) || (known && !running)
-	if !stopped && s.unhold != nil {
-		s.unhold()
-	}
 	if force && stopped {
 		note("sbx couldn't stop '%s', but it isn't running", name)
 		return 0, nil

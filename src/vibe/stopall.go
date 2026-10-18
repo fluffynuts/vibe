@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"vibe/internal/prompt"
+	"vibe/internal/running"
 	"vibe/internal/sbxrun"
+	"vibe/internal/state"
 )
 
 // maxParallelStops bounds how many "sbx stop" run at once: stopping is
@@ -20,34 +22,100 @@ const maxParallelStops = 8
 
 // --- stop all ---------------------------------------------------------------
 
-func doStopAll(force bool) error {
+func doStopAll(vibeHome string, force bool) error {
 	statuses, err := sbxrun.List()
 	if err != nil {
 		return err
 	}
-	var names []string
-	for _, s := range statuses {
-		if s.Running {
-			names = append(names, s.Name)
-		}
+	records, err := state.List(vibeHome)
+	if err != nil {
+		return err
 	}
-	if len(names) == 0 {
+	plan := planStopAll(statuses, records, func(target string) []running.Claim { return running.Claims(vibeHome, target) })
+	if len(plan.names) == 0 {
 		note("no running sandboxes — nothing to stop")
 		return nil
 	}
-	sort.Strings(names)
 	if !force {
-		note("running sandboxes: %s", strings.Join(names, ", "))
+		listed := make([]string, len(plan.names))
+		for i, n := range plan.names {
+			listed[i] = n
+			if plan.sleeping[n] {
+				listed[i] += " (sleeping, with a vibe attached)"
+			}
+		}
+		note("running sandboxes: %s", strings.Join(listed, ", "))
 	}
-	if !confirm(force, "Are you sure you want to stop all running sandboxes?") {
+	if !confirm(force, "Are you sure you want to stop all running sandboxes, and the vibes attached to them?") {
 		note("aborted — nothing stopped")
 		return nil
 	}
-	failed := stopSandboxes(os.Stderr, prompt.IsTerminal(os.Stderr), names, sbxrun.StopQuiet)
+	var failed []string
+	ended := map[string]bool{}
+	for _, name := range plan.names {
+		if err := endVibes(vibeHome, plan.vibes[name], "sandbox '"+name+"' was left running"); err != nil {
+			note("%s", err)
+			failed = append(failed, name)
+			continue
+		}
+		ended[name] = true
+	}
+	// A sleeping sandbox's vibe wakes it to save its agent's memories and
+	// stops it again, unless it was killed part-way: sbx says which are
+	// running now.
+	if len(failed) < len(plan.names) {
+		if statuses, err = sbxrun.List(); err != nil {
+			return err
+		}
+	}
+	var names []string
+	for _, s := range statuses {
+		if s.Running && ended[s.Name] {
+			names = append(names, s.Name)
+		}
+	}
+	sort.Strings(names)
+	failed = append(failed, stopSandboxes(os.Stderr, prompt.IsTerminal(os.Stderr), names, sbxrun.StopQuiet)...)
 	if len(failed) > 0 {
+		sort.Strings(failed)
 		return fmt.Errorf("could not stop: %s", strings.Join(failed, ", "))
 	}
 	return nil
+}
+
+// stopAllPlan is what --stop-all stops: the names of the sandboxes, sorted,
+// which of them are sleeping, and the vibes attached to each.
+type stopAllPlan struct {
+	names    []string
+	sleeping map[string]bool
+	vibes    map[string][]running.Claim
+}
+
+// planStopAll is every running sandbox, and every sleeping one: one sbx
+// says is stopped (as it does of one left idle) with a vibe still
+// attached, waiting for it. claims are the vibes' claims on a folder.
+func planStopAll(statuses []sbxrun.Status, records []state.Instance, claims func(target string) []running.Claim) stopAllPlan {
+	plan := stopAllPlan{sleeping: map[string]bool{}, vibes: map[string][]running.Claim{}}
+	targets := map[string]string{}
+	for _, r := range records {
+		targets[r.Name] = r.Target
+	}
+	for _, s := range statuses {
+		var vibes []running.Claim
+		if target, ok := targets[s.Name]; ok {
+			vibes = sessions(claims(target))
+		}
+		if !s.Running && len(vibes) == 0 {
+			continue
+		}
+		plan.names = append(plan.names, s.Name)
+		plan.sleeping[s.Name] = s.State == "stopped"
+		if len(vibes) > 0 {
+			plan.vibes[s.Name] = vibes
+		}
+	}
+	sort.Strings(plan.names)
+	return plan
 }
 
 type stopPhase int

@@ -125,3 +125,20 @@ func TestTheInventoryFailsWhenSbxCantSay(t *testing.T) {
 		t.Error("an inventory was taken without knowing what sbx has")
 	}
 }
+
+// The Profiles tab flags a sandbox sbx has stopped under a vibe as
+// sleeping, as 'vibe -l' lists it: still in use, unlike one stopped. A vibe
+// only rebuilding it doesn't count.
+func TestASandboxStoppedUnderAVibeIsFlaggedSleeping(t *testing.T) {
+	asleep := inventorySandbox{inSbx: true, attached: true, vibes: []int{10}}
+	rebuilding := inventorySandbox{inSbx: true, attached: true, rebuilding: "rebuilding sandbox 'a'"}
+	down := inventorySandbox{inSbx: true}
+	for _, c := range []struct {
+		s    inventorySandbox
+		want string
+	}{{asleep, "sleeping"}, {rebuilding, "stopped"}, {down, "stopped"}} {
+		if got := sandboxFlags(c.s); len(got) == 0 || got[0] != c.want {
+			t.Errorf("sandboxFlags(%+v) = %v, want it first flagged %s", c.s, got, c.want)
+		}
+	}
+}

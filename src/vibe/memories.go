@@ -58,6 +58,7 @@ func saveMemories(parent context.Context, vibeHome, name string) {
 	}
 	finished := make(chan outcome, 1)
 	status.show("Backing up memories to %s", store)
+	session.Report("backing up its agent's memories")
 	go func() {
 		saved, err := agentmem.BackupContext(ctx, name, store)
 		finished <- outcome{saved, err}

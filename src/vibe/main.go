@@ -26,13 +26,17 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe /path/to/code         use an explicit folder
   vibe -n/--name custom .    override the derived sandbox name
   vibe -p/--profile foo      use profile "foo" instead of the derived one
-  vibe -s/--stop [path]      stop the sandbox for path (default: $PWD); with
-                             -f, no sandbox there isn't an error
+  vibe -s/--stop [path]      end any vibe attached to the sandbox for path
+                             (default: $PWD), saving its agent's memories,
+                             and stop the sandbox; with -f, no sandbox there
+                             isn't an error
   vibe --cancel [path]       cancel what the companion page for path has under
                              way (the agent's turn, an Admin action), leaving
                              the sandbox running
-  vibe -S/--stop-all         stop every running sandbox, in parallel (asks
-                             first; -f stops them without asking)
+  vibe -S/--stop-all         stop every running sandbox, and every sleeping
+                             one a vibe is attached to, in parallel, ending
+                             those vibes first (asks first; -f stops them
+                             without asking)
   vibe -c/--ssh [path]       ssh into the sandbox for path
   vibe -r/--re-init [path]   remove and recreate the sandbox from its profile
   vibe -r -f/--force         ...without prompting
@@ -288,7 +292,7 @@ func run(argv []string) error {
 		if args.Path != "" {
 			return fmt.Errorf("--stop-all takes no path argument")
 		}
-		return doStopAll(args.Force)
+		return doStopAll(vibeHome, args.Force)
 	}
 
 	bundleRoot, err := pathresolve.BundleRoot()

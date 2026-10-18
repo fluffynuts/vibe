@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -80,5 +81,14 @@ func TestAFolderBeingRebuiltIsntRestarted(t *testing.T) {
 	err := restart(t.TempDir(), "box", "/work", []running.Claim{{PID: 7, Work: "rebuilding sandbox 'box'"}}, true)
 	if err == nil || !strings.Contains(err.Error(), "rebuilding sandbox 'box'") || len(*ended) != 0 {
 		t.Errorf("err %v, ended %v", err, *ended)
+	}
+}
+
+func TestAVibeThatWontEndRestartsNothingAndSaysSo(t *testing.T) {
+	restartStandIns(t, false, true, true, true)
+	stopVibe = func(string, int) (bool, error) { return false, errors.New("no such process") }
+	err := restart(t.TempDir(), "box", "/work", []running.Claim{{PID: 7, Headless: true}}, true)
+	if err == nil || !strings.Contains(err.Error(), "PID 7") || !strings.Contains(err.Error(), "nothing was restarted") {
+		t.Errorf("err = %v, want which vibe, and that nothing was restarted", err)
 	}
 }

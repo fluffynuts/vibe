@@ -25,6 +25,14 @@ func TestMain(m *testing.M) {
 			time.Sleep(time.Hour)
 		}
 		<-s.StopRequested()
+		// Winding down slowly, as a vibe waking its sandbox to save its
+		// agent's memories does, but saying how it's getting on.
+		if steps := os.Getenv("RUNNING_TEST_STEPS"); steps != "" {
+			for _, step := range strings.Split(steps, ",") {
+				s.Report(step)
+				time.Sleep(time.Second)
+			}
+		}
 		s.Release()
 		os.Exit(0)
 	}
@@ -123,7 +131,7 @@ func TestStopEndsTheOtherProcessAndWaitsForIt(t *testing.T) {
 	if got := Others(home, "/work/a"); !reflect.DeepEqual(got, []int{pid}) {
 		t.Fatalf("Others = %v, want [%d]", got, pid)
 	}
-	killed, err := Stop(home, pid, 10*time.Second)
+	killed, err := Stop(home, pid, 10*time.Second, nil)
 	if err != nil || killed {
 		t.Fatalf("Stop = %v, %v; want a clean stop", killed, err)
 	}
@@ -135,7 +143,7 @@ func TestStopEndsTheOtherProcessAndWaitsForIt(t *testing.T) {
 func TestStopKillsAProcessThatIgnoresTheRequest(t *testing.T) {
 	home := t.TempDir()
 	pid := startHolder(t, home, "RUNNING_TEST_STUBBORN=1").Process.Pid
-	killed, err := Stop(home, pid, 500*time.Millisecond)
+	killed, err := Stop(home, pid, 500*time.Millisecond, nil)
 	if err != nil || !killed {
 		t.Fatalf("Stop = %v, %v; want it killed", killed, err)
 	}
@@ -144,8 +152,25 @@ func TestStopKillsAProcessThatIgnoresTheRequest(t *testing.T) {
 	}
 }
 
+// A vibe that reports each step as it winds down is given as long as it
+// keeps going: only silence for the whole of quiet gets it killed. Each
+// step is passed on, so whoever asked can say what it's doing.
+func TestStopWaitsOnAVibeThatReportsProgressAndPassesItOn(t *testing.T) {
+	home := t.TempDir()
+	pid := startHolder(t, home, "RUNNING_TEST_STEPS=waking,saving,stopping,done").Process.Pid
+	var seen []string
+	start := time.Now()
+	killed, err := Stop(home, pid, 3*time.Second, func(step string) { seen = append(seen, step) })
+	if err != nil || killed {
+		t.Fatalf("Stop = %v, %v after %s; want a clean stop", killed, err, time.Since(start))
+	}
+	if got := strings.Join(seen, ","); got != "waking,saving,stopping,done" {
+		t.Errorf("progress = %q, want each step once, in order", got)
+	}
+}
+
 func TestStopOfAGoneProcessSucceeds(t *testing.T) {
-	if killed, err := Stop(t.TempDir(), 1<<30, time.Second); err != nil || killed {
+	if killed, err := Stop(t.TempDir(), 1<<30, time.Second, nil); err != nil || killed {
 		t.Errorf("Stop of a vibe that is not running = %v, %v; want false, nil", killed, err)
 	}
 }
@@ -164,45 +189,6 @@ func TestStopRequestedFiresOnRequest(t *testing.T) {
 	case <-s.StopRequested():
 	case <-time.After(5 * time.Second):
 		t.Fatal("stop request never noticed")
-	}
-}
-
-func TestAHoldIsAskedForOnceAndThenGone(t *testing.T) {
-	home := t.TempDir()
-	s, err := register(home, "/work/a", 101)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Release()
-	if s.HoldAsked() {
-		t.Fatal("asked before anyone asked")
-	}
-	if err := AskToHold(home, 101); err != nil {
-		t.Fatal(err)
-	}
-	if !s.HoldAsked() {
-		t.Error("the request wasn't seen")
-	}
-	if s.HoldAsked() {
-		t.Error("one request answered for two session endings")
-	}
-	AskToHold(home, 101)
-	CancelHold(home, 101)
-	if s.HoldAsked() {
-		t.Error("a cancelled request was still seen")
-	}
-}
-
-func TestAHoldLeftByAnEarlierProcessIsNotForThisOne(t *testing.T) {
-	home := t.TempDir()
-	AskToHold(home, 101)
-	s, err := register(home, "/work/a", 101)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Release()
-	if s.HoldAsked() {
-		t.Error("a stale request was taken for this process's")
 	}
 }
 

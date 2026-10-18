@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"vibe/internal/prompt"
+	"vibe/internal/running"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
 )
@@ -15,19 +16,21 @@ import (
 // The states --list shows, in the order it groups them. Each is padded to
 // the same width, so the columns after it line up.
 const (
-	listRunning = "RUNNING"
-	listUnknown = "UNKNOWN"
-	listStopped = "STOPPED"
-	listGone    = "GONE"
+	listRunning  = "RUNNING"
+	listSleeping = "SLEEPING"
+	listUnknown  = "UNKNOWN"
+	listStopped  = "STOPPED"
+	listGone     = "GONE"
 )
 
-var listOrder = map[string]int{listRunning: 0, listUnknown: 1, listStopped: 2, listGone: 3}
+var listOrder = map[string]int{listRunning: 0, listSleeping: 1, listUnknown: 2, listStopped: 3, listGone: 4}
 
 var listColor = map[string]string{
-	listRunning: colorGreen,
-	listUnknown: colorYellow,
-	listStopped: colorRed,
-	listGone:    colorGrey,
+	listRunning:  colorGreen,
+	listSleeping: colorCyan,
+	listUnknown:  colorYellow,
+	listStopped:  colorRed,
+	listGone:     colorGrey,
 }
 
 // listRow is one line of --list: state, owner (vibe, for a sandbox vibe has
@@ -48,7 +51,7 @@ func doList(vibeHome string) error {
 	if err != nil {
 		return err
 	}
-	rows := listRows(statuses, records)
+	rows := listRows(statuses, records, func(target string) []running.Claim { return running.Claims(vibeHome, target) })
 	if len(rows) == 0 {
 		note("no sandboxes found")
 		return nil
@@ -61,7 +64,9 @@ func doList(vibeHome string) error {
 
 // listRows is every sandbox sbx has, and every one vibe has a record of
 // that sbx no longer has, grouped by state and sorted by name within each.
-func listRows(statuses []sbxrun.Status, records []state.Instance) []listRow {
+// One sbx says is stopped is SLEEPING when a vibe is attached to it (see
+// planStopAll); claims are the vibes' claims on a folder.
+func listRows(statuses []sbxrun.Status, records []state.Instance, claims func(target string) []running.Claim) []listRow {
 	recorded := map[string]state.Instance{}
 	for _, r := range records {
 		recorded[r.Name] = r
@@ -71,8 +76,11 @@ func listRows(statuses []sbxrun.Status, records []state.Instance) []listRow {
 	for _, s := range statuses {
 		inSbx[s.Name] = true
 		row := listRow{state: listStateOf(s.State), owner: "sbx", name: s.Name, sbxState: s.State}
-		if _, ok := recorded[s.Name]; ok {
+		if r, ok := recorded[s.Name]; ok {
 			row.owner = "vibe"
+			if row.state == listStopped && len(sessions(claims(r.Target))) > 0 {
+				row.state = listSleeping
+			}
 		}
 		rows = append(rows, row)
 	}
@@ -116,7 +124,7 @@ func writeList(w io.Writer, rows []listRow, color bool) {
 		}
 	}
 	for _, r := range rows {
-		label := fmt.Sprintf("%-7s", r.state)
+		label := fmt.Sprintf("%-8s", r.state)
 		if color {
 			label = "\x1b[" + listColor[r.state] + "m" + label + "\x1b[0m"
 		}
@@ -129,11 +137,13 @@ func writeList(w io.Writer, rows []listRow, color bool) {
 }
 
 // explainList says, on stderr where it doesn't get in a script's way, what
-// an UNKNOWN or GONE row means and what to do about it.
+// a SLEEPING, UNKNOWN or GONE row means and what to do about it.
 func explainList(rows []listRow) {
-	var gone, remakeable []string
+	var gone, remakeable, sleeping []string
 	for _, r := range rows {
 		switch r.state {
+		case listSleeping:
+			sleeping = append(sleeping, r.name)
 		case listUnknown:
 			if r.sbxState == "" {
 				note("%s: sbx ls didn't say what state it is in", r.name)
@@ -146,6 +156,9 @@ func explainList(rows []listRow) {
 				remakeable = append(remakeable, r.folder)
 			}
 		}
+	}
+	if len(sleeping) > 0 {
+		note("SLEEPING: sbx stopped %s while a vibe was attached, which is waiting for it — the vibe's companion page starts it again; 'vibe --stop' in its folder ends the vibe (saving its agent's memories) and leaves it stopped", strings.Join(sleeping, ", "))
 	}
 	if len(gone) == 0 {
 		return

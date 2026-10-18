@@ -97,22 +97,5 @@ func restart(vibeHome, name, target string, claims []running.Claim, force bool) 
 			return fmt.Errorf("aborted — nothing restarted")
 		}
 	}
-	seen := map[int]bool{}
-	for _, c := range claims {
-		if seen[c.PID] {
-			continue
-		}
-		seen[c.PID] = true
-		note("ending vibe (PID %d) — it saves its agent's memories first", c.PID)
-		killed, err := stopVibe(vibeHome, c.PID)
-		switch {
-		case err != nil:
-			return fmt.Errorf("couldn't end vibe (PID %d), so nothing was restarted: %w", c.PID, err)
-		case killed:
-			note("  it didn't end within %s and was killed, so its agent's memories may not have been saved", stopOtherTimeout)
-		default:
-			note("  it has ended")
-		}
-	}
-	return nil
+	return endVibes(vibeHome, claims, "nothing was restarted")
 }

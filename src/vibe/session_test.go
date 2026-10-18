@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -102,5 +104,86 @@ func TestSbxsOutputGoesToTheActionsLogWhileOneRuns(t *testing.T) {
 	out.Write([]byte("ing\rdone\n"))
 	if want := []string{"✓ image ready", "  creating", "done"}; strings.Join(lines, "|") != strings.Join(want, "|") {
 		t.Errorf("lines = %q, want %q", lines, want)
+	}
+}
+
+// fakeWake stands in for sbx and the memory backup while a session that
+// was waiting on its stopped sandbox ends, recording what was asked of them.
+func fakeWake(t *testing.T, starts bool, stopErr error) *[]string {
+	t.Helper()
+	var calls []string
+	oldStart, oldSave, oldStop := startToBackUp, backUpMemories, stopAfterBackUp
+	t.Cleanup(func() { startToBackUp, backUpMemories, stopAfterBackUp = oldStart, oldSave, oldStop })
+	startToBackUp = func(_ context.Context, name string) bool { calls = append(calls, "start "+name); return starts }
+	backUpMemories = func(_, name string) { calls = append(calls, "save "+name) }
+	stopAfterBackUp = func(name string) error { calls = append(calls, "stop "+name); return stopErr }
+	return &calls
+}
+
+// A session that ends while its sandbox is stopped (asleep, or stopped
+// from the page) still has its agent's memories in the sandbox: vibe wakes
+// it to back them up, then leaves it stopped as it found it.
+func TestEndingWhileTheSandboxIsStoppedWakesItToBackUpMemories(t *testing.T) {
+	calls := fakeWake(t, true, nil)
+	notesOf(func() { backUpWhileStopped(t.TempDir(), "box") })
+	if got, want := strings.Join(*calls, ", "), "start box, save box, stop box"; got != want {
+		t.Errorf("asked %q, want %q", got, want)
+	}
+}
+
+func TestASandboxThatWontWakeSaysTheMemoriesAreStillInIt(t *testing.T) {
+	calls := fakeWake(t, false, nil)
+	notes := notesOf(func() { backUpWhileStopped(t.TempDir(), "box") })
+	if got := strings.Join(*calls, ", "); got != "start box" {
+		t.Errorf("asked %q, want only the start", got)
+	}
+	if said := strings.Join(notes, "\n"); !strings.Contains(said, "weren't backed up") || !strings.Contains(said, "still in it") {
+		t.Errorf("said %q, want why the memories weren't backed up and that they aren't lost", said)
+	}
+}
+
+func TestASandboxThatWontStopAgainSaysHowToStopIt(t *testing.T) {
+	fakeWake(t, true, errors.New("sbx stop: daemon not running"))
+	notes := notesOf(func() { backUpWhileStopped(t.TempDir(), "box") })
+	if said := strings.Join(notes, "\n"); !strings.Contains(said, "daemon not running") || !strings.Contains(said, "vibe --stop") {
+		t.Errorf("said %q, want sbx's reason and what to do", said)
+	}
+}
+
+// fakeSandboxState says whether the sandbox is running, and reachable, as
+// a headless vibe ends.
+func fakeSandboxState(t *testing.T, running, known, reachable bool) {
+	t.Helper()
+	oldRunning, oldReachable := sandboxRunning, sandboxReachable
+	t.Cleanup(func() { sandboxRunning, sandboxReachable = oldRunning, oldReachable })
+	sandboxRunning = func(string) (bool, bool) { return running, known }
+	sandboxReachable = func(string) bool { return reachable }
+}
+
+// A headless vibe ending with its sandbox asleep wakes it to back up its
+// agent's memories, saying so, and leaves it stopped as it found it.
+func TestAHeadlessVibeEndingWithItsSandboxAsleepWakesItToBackUp(t *testing.T) {
+	calls := fakeWake(t, true, nil)
+	fakeSandboxState(t, false, true, false)
+	notesOf(func() { backUpAsHeadlessEnds(t.TempDir(), "box", true) })
+	if got, want := strings.Join(*calls, ", "), "start box, save box, stop box"; got != want {
+		t.Errorf("asked %q, want %q", got, want)
+	}
+}
+
+func TestAHeadlessVibeEndingWithItsSandboxUpBacksUpAndLeavesItRunning(t *testing.T) {
+	calls := fakeWake(t, true, nil)
+	fakeSandboxState(t, true, true, true)
+	notes := notesOf(func() { backUpAsHeadlessEnds(t.TempDir(), "box", false) })
+	if got := strings.Join(*calls, ", "); got != "save box" {
+		t.Errorf("asked %q, want just the backup", got)
+	}
+	if said := strings.Join(notes, "\n"); !strings.Contains(said, "left sandbox 'box' running") {
+		t.Errorf("said %q, want that it was left running", said)
+	}
+	*calls = nil
+	notes = notesOf(func() { backUpAsHeadlessEnds(t.TempDir(), "box", true) })
+	if strings.Contains(strings.Join(notes, "\n"), "left sandbox") {
+		t.Errorf("asked to stop, it said the sandbox was left running: %q", notes)
 	}
 }
