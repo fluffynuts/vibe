@@ -125,3 +125,23 @@ func TestCreateAndRemoveCanSayWhatTheyDoSomewhereElse(t *testing.T) {
 		t.Errorf("rm's output = %q", remove.String())
 	}
 }
+
+// A sandbox that takes an exec and never answers (its /bin/true replaced,
+// say) is not reachable: the probe has a backstop of its own, so neither
+// it nor a wait made of probes waits for good.
+func TestAReachabilityProbeThatNeverAnswersIsNo(t *testing.T) {
+	hangingSbx(t)
+	old := probeTimeout
+	probeTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { probeTimeout = old })
+	began := time.Now()
+	if Reachable("box") {
+		t.Error("a sandbox that never answered was reported reachable")
+	}
+	if WaitReachable("box", 2) {
+		t.Error("a sandbox that never answered was waited for and reported reachable")
+	}
+	if took := time.Since(began); took > 10*time.Second {
+		t.Errorf("took %s", took)
+	}
+}

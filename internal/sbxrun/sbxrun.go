@@ -238,9 +238,17 @@ func Reachable(name string) bool {
 
 // ReachableContext is Reachable, giving up if ctx is cancelled.
 func ReachableContext(ctx context.Context, name string) bool {
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
 	_, err := captureOutContext(ctx, "exec", name, "--", "/bin/true")
 	return err == nil
 }
+
+// probeTimeout is the backstop on one reachability probe: many times what
+// even booting a stopped sandbox takes. The sandbox can make the probe
+// never answer (the agent can replace /bin/true), and every caller,
+// WaitReachable's count of probes too, would wait on it for good.
+var probeTimeout = 2 * time.Minute
 
 // Running says whether sandbox name is running, as `sbx ls` lists it:
 // unlike Reachable, which runs something in it, asking doesn't start a
