@@ -116,8 +116,6 @@ func serve(in io.Reader) helperAnswer {
 		result, err = defaultBranchOf(a.Dir)
 	case "status":
 		result, err = statusOf(ctx, a.Dir)
-	case "textOf":
-		result, err = textOf(ctx, a.Dir, a.Review, a.Path)
 	case "moves":
 		result = moves(ctx, a.Dir, a.Review)
 	case "fileLines":
@@ -288,12 +286,6 @@ func StatusOf(ctx context.Context, dir string) (*FolderStatus, error) {
 		return nil, err
 	}
 	return &out, nil
-}
-
-// TextOf is path's lines as review rv has it (see NewTextOf).
-func TextOf(ctx context.Context, dir string, rv Review, path string) ([]string, error) {
-	var out []string
-	return out, isolated(ctx, "textOf", helperArgs{Dir: dir, Review: rv, Path: path}, &out)
 }
 
 // Moves are rv's comments on the new side whose code (as it read when

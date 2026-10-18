@@ -84,16 +84,12 @@ func copyInSandbox(ctx context.Context, sandboxName, src, dst string) bool {
 
 // Backup copies memories out of a running sandbox into store — before it is
 // destroyed, or when a session ends. Returns false (no error) when the
-// sandbox has no memories to preserve, or cannot be asked.
-func Backup(sandboxName, store string) (bool, error) {
-	return BackupContext(context.Background(), sandboxName, store)
-}
-
-// BackupContext is Backup, abandoned part-way if ctx is cancelled — in which
-// case store may hold some of the sandbox's memories and not others (see
-// Snapshot). The sbx calls it makes don't see the terminal's Ctrl-C: with a
-// cancellable ctx, interrupting is the caller's to decide.
-func BackupContext(ctx context.Context, sandboxName, store string) (bool, error) {
+// sandbox has no memories to preserve, or cannot be asked. Abandoned
+// part-way if ctx is cancelled, store may hold some of the sandbox's
+// memories and not others (see Snapshot). The sbx calls it makes don't see
+// the terminal's Ctrl-C: with a cancellable ctx, interrupting is the
+// caller's to decide.
+func Backup(ctx context.Context, sandboxName, store string) (bool, error) {
 	if err := os.MkdirAll(store, 0o755); err != nil {
 		return false, fmt.Errorf("creating memory store: %w", err)
 	}
@@ -129,7 +125,7 @@ func dropLostFound(store string) {
 // Restore waits for the (re-created) sandbox to come up and copies memories
 // back in from store, before the agent starts.
 func Restore(sandboxName, store string) error {
-	dropLostFound(store) // from a backup made before BackupContext dropped it
+	dropLostFound(store) // from a backup made before Backup dropped it
 	entries, err := os.ReadDir(store)
 	if err != nil || len(entries) == 0 {
 		return nil

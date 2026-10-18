@@ -59,12 +59,8 @@ func ParseAgents(help string) []string {
 	return nil
 }
 
-// captureOut runs sbx with the given args and returns combined stdout.
-func captureOut(args ...string) (string, error) {
-	return captureOutContext(context.Background(), args...)
-}
-
-// captureOutContext is captureOut, killing sbx if ctx is cancelled. An sbx
+// captureOutContext runs sbx with args and returns what it printed, stdout
+// and stderr together, killing sbx if ctx is cancelled. An sbx
 // run with a cancellable ctx is also kept apart from the terminal's Ctrl-C:
 // the caller has taken on deciding when it ends, and a Ctrl-C would
 // otherwise reach sbx before the caller could ask what was meant.
@@ -299,13 +295,9 @@ type CreateOpts struct {
 	Output io.Writer
 }
 
-// Create provisions a new sandbox (does not start it).
-func Create(opts CreateOpts) error {
-	return CreateContext(context.Background(), opts)
-}
-
-// CreateContext is Create, ending sbx when ctx ends.
-func CreateContext(ctx context.Context, opts CreateOpts) error {
+// Create provisions a new sandbox (does not start it), ending sbx when ctx
+// ends.
+func Create(ctx context.Context, opts CreateOpts) error {
 	args := []string{"create", "--name", opts.Name, "--kit", opts.KitDir}
 	if opts.Memory != "" {
 		args = append(args, "--memory", opts.Memory)

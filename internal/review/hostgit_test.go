@@ -263,7 +263,7 @@ func TestACarriageReturnIsntPartOfALine(t *testing.T) {
 			}
 		}
 	}
-	lines, err := TextOf(context.Background(), dir, Review{}, "a.txt")
+	lines, err := FileLines(context.Background(), dir, Review{}, "a.txt")
 	if err != nil {
 		t.Fatal(err)
 	}

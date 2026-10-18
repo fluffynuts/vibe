@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -199,17 +200,35 @@ func TestTheAgentsDiffIsTheTabs(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, out)
 	}
-	files, err := review.Parse(out)
+	tabs, err := review.WorkingTree(context.Background(), work)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got []string
-	for _, f := range files {
-		got = append(got, f.Status+" "+f.Path)
+	var want []string
+	for _, f := range tabs {
+		want = append(want, f.Status+" "+f.Path)
 	}
-	if strings.Join(got, ", ") != "modified a.txt, added new.txt" {
-		t.Errorf("files: %v\n%s", got, out)
+	if strings.Join(want, ", ") != "modified a.txt, added new.txt" {
+		t.Fatalf("the tab's files: %v", want)
 	}
+	if got := diffedFiles(out); strings.Join(got, ", ") != strings.Join(want, ", ") {
+		t.Errorf("the agent's files: %v, the tab's: %v\n%s", got, want, out)
+	}
+}
+
+// diffedFiles is each file a unified diff (git's, a/ and b/ prefixed) is
+// of, as its status and path: "added" when it's a new file, else "modified".
+func diffedFiles(unified string) []string {
+	var files []string
+	for _, line := range strings.Split(unified, "\n") {
+		switch {
+		case strings.HasPrefix(line, "diff --git "):
+			files = append(files, "modified "+line[strings.LastIndex(line, " b/")+3:])
+		case strings.HasPrefix(line, "new file mode") && len(files) > 0:
+			files[len(files)-1] = "added" + strings.TrimPrefix(files[len(files)-1], "modified")
+		}
+	}
+	return files
 }
 
 // A comment records the lines it's on as they read, so the tab can tell
@@ -269,12 +288,8 @@ func TestTheAgentReviewsUnpushedCommitsAsTheTabDoes(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("diff: exit %d\n%s", code, out)
 	}
-	files, err := review.Parse(out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(files) != 1 || files[0].Path != "a.txt" {
-		t.Errorf("files: %+v\n%s", files, out)
+	if files := diffedFiles(out); strings.Join(files, ", ") != "modified a.txt" {
+		t.Errorf("files: %v\n%s", files, out)
 	}
 }
 
@@ -338,15 +353,7 @@ func TestTheAgentsDiffIsTheWorkspacesFromASubfolder(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, out)
 	}
-	files, err := review.Parse(out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got []string
-	for _, f := range files {
-		got = append(got, f.Status+" "+f.Path)
-	}
-	if strings.Join(got, ", ") != "added sub/inner.txt, added top.txt" {
+	if got := diffedFiles(out); strings.Join(got, ", ") != "added sub/inner.txt, added top.txt" {
 		t.Errorf("files: %v\n%s", got, out)
 	}
 }
@@ -425,7 +432,7 @@ func TestAStartIsTakenInBeforeItReturns(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("diff: exit %d\n%s", code, out)
 	}
-	if files, _ := review.Parse(out); len(files) != 1 || files[0].Path != "b.txt" {
+	if files := diffedFiles(out); len(files) != 1 || !strings.HasSuffix(files[0], " b.txt") {
 		t.Errorf("the diff isn't the branch's:\n%s", out)
 	}
 }

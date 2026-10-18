@@ -139,7 +139,7 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 					root = filepath.Join(vibeHome, "memories")
 				}
 				memoryStore = agentmem.StoreFor(root, name)
-				ok, err := agentmem.BackupContext(ctx, name, memoryStore)
+				ok, err := agentmem.Backup(ctx, name, memoryStore)
 				if err != nil {
 					note("  WARNING: %s", err)
 				} else if !ok {

@@ -313,7 +313,7 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 		env = append(env, k+"="+merged.Env[k])
 	}
 
-	if err := sbxrun.CreateContext(ctx, sbxrun.CreateOpts{
+	if err := sbxrun.Create(ctx, sbxrun.CreateOpts{
 		Name:    name,
 		KitDir:  kitDir,
 		Memory:  memSize,

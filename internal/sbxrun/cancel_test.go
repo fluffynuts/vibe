@@ -29,7 +29,7 @@ func TestCancellingEndsAStuckSbx(t *testing.T) {
 	for name, call := range map[string]func(context.Context) error{
 		"stop":   func(ctx context.Context) error { return StopQuietContext(ctx, "box") },
 		"rm":     func(ctx context.Context) error { return RemoveContext(ctx, "box", true) },
-		"create": func(ctx context.Context) error { return CreateContext(ctx, CreateOpts{Name: "box"}) },
+		"create": func(ctx context.Context) error { return Create(ctx, CreateOpts{Name: "box"}) },
 		"start": func(ctx context.Context) error {
 			if StartContext(ctx, "box") {
 				t.Error("start: a sandbox that never came up was reported up")
@@ -83,7 +83,7 @@ func TestACreateWithNoInputFailsAtAQuestionInsteadOfWaiting(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err = CreateContext(ctx, CreateOpts{Name: "box", NoInput: true})
+	err = Create(ctx, CreateOpts{Name: "box", NoInput: true})
 	if ctx.Err() != nil {
 		t.Fatal("the create waited for an answer nobody could give")
 	}
@@ -112,7 +112,7 @@ func chattySbx(t *testing.T) {
 func TestCreateAndRemoveCanSayWhatTheyDoSomewhereElse(t *testing.T) {
 	chattySbx(t)
 	var create, remove bytes.Buffer
-	if err := CreateContext(context.Background(), CreateOpts{Name: "box", Output: &create}); err != nil {
+	if err := Create(context.Background(), CreateOpts{Name: "box", Output: &create}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(create.String(), "sbx create --name box") || !strings.Contains(create.String(), "--no-progress") || !strings.Contains(create.String(), "to stderr") {

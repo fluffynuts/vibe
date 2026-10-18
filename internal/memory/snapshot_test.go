@@ -118,7 +118,7 @@ func assertOnlyStoreLeft(t *testing.T, store string) {
 	}
 }
 
-func TestBackupContextStopsWhenCancelled(t *testing.T) {
+func TestBackupStopsWhenCancelled(t *testing.T) {
 	fakeSbx(t, false)
 	agent := filepath.Join(t.TempDir(), "projects")
 	useAgentPath(t, agent)
@@ -127,9 +127,9 @@ func TestBackupContextStopsWhenCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	store := filepath.Join(t.TempDir(), "store")
-	saved, err := BackupContext(ctx, "any", store)
+	saved, err := Backup(ctx, "any", store)
 	if saved || !errors.Is(err, context.Canceled) {
-		t.Errorf("BackupContext after cancel = %v, %v; want false, context.Canceled", saved, err)
+		t.Errorf("Backup after cancel = %v, %v; want false, context.Canceled", saved, err)
 	}
 	if _, err := os.Stat(filepath.Join(store, "-proj")); !os.IsNotExist(err) {
 		t.Errorf("a cancelled backup still copied memories")
