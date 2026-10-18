@@ -274,7 +274,11 @@ func run(argv []string) error {
 		}
 		ensureWindowsFeatures(lay, args.Force)
 		checkKVM()
-		return offerSbxInstall(args.Force)
+		if err := offerSbxInstall(args.Force); err != nil {
+			return err
+		}
+		reportOutOfDate(lay)
+		return nil
 	}
 
 	if !sbxrun.Available() {

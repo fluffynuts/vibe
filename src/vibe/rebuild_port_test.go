@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"vibe/internal/cliargs"
+	agentmem "vibe/internal/memory"
 	"vibe/internal/state"
 )
 
@@ -63,6 +64,50 @@ func TestASandboxIsBuiltWithItsReviewFolderMounted(t *testing.T) {
 	for _, d := range []string{inbox, view} {
 		if info, err := os.Stat(d); err != nil || !info.IsDir() {
 			t.Errorf("%s wasn't made", d)
+		}
+	}
+}
+
+// createCall is the 'sbx create' a logging stand-in sbx saw.
+func createCall(t *testing.T, calls string) string {
+	t.Helper()
+	data, _ := os.ReadFile(calls)
+	for _, call := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(call, "create ") {
+			return call
+		}
+	}
+	t.Fatalf("sbx create wasn't run:\n%s", data)
+	return ""
+}
+
+// Every folder of the host's a sandbox is given, and the variable that
+// tells the sandbox where it is: the NuGet folder the profile names (when
+// it's there), the agent's memories, the review's inbox and (read-only)
+// view, and the clipboard's history.
+func TestASandboxIsGivenEachOfItsFolders(t *testing.T) {
+	lay := updateLayout(t)
+	nuget := t.TempDir()
+	writeFile(t, lay.HomePath("profiles", "p", "settings.yaml"), "nugetDir: "+nuget+"\n"+
+		"publish:\n  - name: clipboard\n    ports:\n      - 5390\n")
+	inst := sandboxRecord(t, lay, "box", "p").inst
+	calls := loggingSbx(t, "box running\\n")
+	if err := rebuildSandbox(context.Background(), lay, cliargs.Args{Force: true}, "box", inst.Target, true, false); err != nil {
+		t.Fatal(err)
+	}
+	create := createCall(t, calls)
+	reviews := state.ReviewPath(lay.Home, "box")
+	memories := agentmem.StoreFor(lay.Home, "", "box")
+	clipboard := state.ClipboardPath(lay.Home, "box")
+	for _, want := range []string{
+		" " + nuget + " ", "-e SBX_HOST_NUGET=" + nuget,
+		" " + memories + " ", "-e VIBE_MEMORY_STORE=" + memories,
+		" " + filepath.Join(reviews, "inbox") + " ", " " + filepath.Join(reviews, "view") + ":ro",
+		"-e VIBE_REVIEW_DIR=" + reviews,
+		" " + clipboard, "-e VIBE_CLIPBOARD_DIR=" + clipboard,
+	} {
+		if !strings.Contains(create+" ", want) {
+			t.Errorf("sbx create lacks %q:\n%s", want, create)
 		}
 	}
 }

@@ -227,65 +227,36 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 	note("  memory:    %s", memSize)
 	note("  timezone:  %s", zone)
 
-	var mounts []string
-	var env []string
-
+	if agentmem.Supported(agent) && memoryStore == "" {
+		memoryStore = agentmem.StoreFor(vibeHome, merged.MemoryRoot, name)
+	}
 	if merged.NugetDir != "" {
-		if info, err := os.Stat(merged.NugetDir); err == nil && info.IsDir() {
-			mounts = append(mounts, merged.NugetDir)
-			env = append(env, "SBX_HOST_NUGET="+merged.NugetDir)
-			note("  nuget:     %s (shared with host)", merged.NugetDir)
-		} else {
+		if info, err := os.Stat(merged.NugetDir); err != nil || !info.IsDir() {
 			note("  nuget:     %s not found on host — not mounting", merged.NugetDir)
 		}
 	}
-
-	if agentmem.Supported(agent) {
-		if memoryStore == "" {
-			memoryStore = agentmem.StoreFor(vibeHome, merged.MemoryRoot, name)
+	var mounts, env []string
+	for _, f := range sandboxFolders(vibeHome, name, target, merged, agent, memoryStore) {
+		if f.made {
+			if err := os.MkdirAll(f.path, 0o755); err != nil {
+				return err
+			}
 		}
-		if err := os.MkdirAll(memoryStore, 0o755); err != nil {
-			return err
+		if f.note != "" {
+			note("  %s", f.note)
 		}
-		mounts = append(mounts, memoryStore)
-		env = append(env, "VIBE_MEMORY_STORE="+memoryStore)
-		note("  memories:  %s", memoryStore)
+		mounts = append(mounts, f.mount())
+		env = append(env, f.env...)
 	}
 
 	publishMappings, err := allocatePublish(vibeHome, name, merged)
 	if err != nil {
 		return err
 	}
-	// The companion page's Review tab keeps the sandbox's reviews on the
-	// host; vibe-review, in the sandbox, drops the agent's comments in the
-	// inbox there, and reads the review from the view, read-only (see
-	// docs/plan-review-tab.md). Nothing else of it is the sandbox's to
-	// touch: the host acts on what's there.
-	reviews := state.ReviewPath(vibeHome, name)
-	inbox, view := filepath.Join(reviews, "inbox"), filepath.Join(reviews, "view")
-	for _, dir := range []string{inbox, view} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-	}
-	mounts = append(mounts, inbox, view+":ro")
-	// vibe-review runs git where the tab does: from the workspace's top.
-	env = append(env, "VIBE_REVIEW_DIR="+reviews, "VIBE_REVIEW_WORKSPACE="+target)
 
 	var publishArgs []string
 	var publishRecords []state.PublishRecord
 	for _, m := range publishMappings {
-		if m.name == "clipboard" {
-			// The clipboard page's history is kept on the host, so what
-			// was pasted outlives the sandbox (see start-clipboard).
-			store := state.ClipboardPath(vibeHome, name)
-			if err := os.MkdirAll(store, 0o755); err != nil {
-				return err
-			}
-			mounts = append(mounts, store)
-			env = append(env, "VIBE_CLIPBOARD_DIR="+store)
-			note("  clipboard: %s", store)
-		}
 		publishArgs = append(publishArgs, fmt.Sprintf("%d:%d", m.hostPort, m.containerPort))
 		publishRecords = append(publishRecords, state.PublishRecord{Name: m.name, ContainerPort: m.containerPort, HostPort: m.hostPort})
 		if m.urlEnv != "" {
@@ -349,7 +320,7 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 	if was, found, err := state.Load(vibeHome, name); err == nil && found {
 		inst.CompanionPort = was.CompanionPort
 	}
-	if inst.KitHash, err = kitFingerprint(lay, profile, agent); err != nil {
+	if inst.KitHash, err = kitFingerprint(lay, inst); err != nil {
 		note("WARNING: couldn't record what sandbox '%s' was built from, so it will be taken as out of date: %s", name, err)
 	}
 	if git = giveGitAccess(vibeHome, name, git, repoOf(target)); git != nil {
