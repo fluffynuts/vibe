@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 
+	"vibe/internal/fscopy"
 	"vibe/internal/selfupdate"
 
 	"vibe/internal/pathresolve"
@@ -171,7 +172,7 @@ func Unpack(tarGz, dir string) ([]string, error) {
 				return nil, err
 			}
 		case tar.TypeReg:
-			if err := extract(tr, target, os.FileMode(h.Mode).Perm()); err != nil {
+			if err := fscopy.WriteFrom(tr, target, os.FileMode(h.Mode).Perm()); err != nil {
 				return nil, err
 			}
 		case tar.TypeSymlink:
@@ -268,27 +269,6 @@ func MSIOutcome(code int) (ok, restart bool, why string) {
 		return false, false, "another version of Docker Sandboxes is already installed"
 	}
 	return false, false, fmt.Sprintf("msiexec exited with code %d", code)
-}
-
-func extract(r io.Reader, target string, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return err
-	}
-	if mode == 0 {
-		mode = 0o644
-	}
-	out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, r); err != nil {
-		out.Close()
-		return err
-	}
-	if err := out.Close(); err != nil {
-		return err
-	}
-	return os.Chmod(target, mode) // past the umask, so 0755 stays 0755
 }
 
 // apparmorStep matches the installer's two lines that need root: copying

@@ -3,12 +3,14 @@
 package fscopy
 
 import (
+	"archive/zip"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
+	"vibe/internal/pathresolve"
 )
 
 // File copies src to dst, creating dst's parent directory and giving dst
@@ -30,15 +32,7 @@ func fileWithMode(src, dst string, mode os.FileMode) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
-	}
-	return out.Close()
+	return WriteFrom(in, dst, mode)
 }
 
 // Tree copies the directory tree rooted at src to dst, creating dst.
@@ -185,4 +179,65 @@ func WriteWhole(path string, data []byte) error {
 		return err
 	}
 	return nil
+}
+
+// WriteFrom writes what r holds to target, making its folder, with mode
+// (0644 when 0) applied past the umask, so an executable stays one.
+func WriteFrom(r io.Reader, target string, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return err
+	}
+	if mode == 0 {
+		mode = 0o644
+	}
+	out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, r); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return os.Chmod(target, mode)
+}
+
+// Unzip extracts the zip at zipPath into dest, modes and all, and returns
+// its entries' names. Every entry must land inside dest: one whose name
+// reaches out of it ("../", "zip slip") is refused, not followed.
+func Unzip(zipPath, dest string) ([]string, error) {
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return nil, err
+	}
+	defer zr.Close()
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, f := range zr.File {
+		target := filepath.Join(dest, filepath.FromSlash(f.Name))
+		if !pathresolve.Within(dest, target) {
+			return nil, fmt.Errorf("%s: entry %q would land outside %s", zipPath, f.Name, dest)
+		}
+		names = append(names, f.Name)
+		if f.FileInfo().IsDir() {
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		in, err := f.Open()
+		if err != nil {
+			return nil, err
+		}
+		err = WriteFrom(in, target, f.Mode().Perm())
+		in.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return names, nil
 }
