@@ -2149,6 +2149,7 @@
     // The files as the tree lists them, so the tree, the files and the
     // comment arrows all go one way; the reading order is numbered on them.
     const ordered = R.inTreeOrder(files, rv.order)
+    reviewView.drawn = { files, ordered, placed, threads }
 
     $('review-files').replaceChildren(...(files.length || reviewView.files === null ? [] : [el('p', { class: 'muted', text: 'Nothing to review: no changes.' })]),
       ...ordered.map((o) => foldIfViewed(o.file, fileCard(o.file, o.stop, o.step, files.indexOf(o.file), placed, threads))))
@@ -2219,8 +2220,20 @@
       api('/api/review/highlight?path=' + encodeURIComponent(path) + '&side=' + side)
         .then((res) => { reached(true); reviewView.colours.set(key, res.ok ? res.body : { error: (res.body && res.body.error) || 'vibe said no' }) },
           () => { reached(false); reviewView.colours.delete(key) })
-        .then(() => { reviewView.key = null; drawReview() })
+        .then(() => redrawCard(f))
     }
+  }
+
+  // redrawCard draws file f's card afresh, alone, as its colours come: a
+  // whole redraw for each would take time growing with the square of the
+  // review's size. Where the card can't be (a reply being written in it, the
+  // files drawn since from another diff), the whole review is, as before.
+  function redrawCard(f) {
+    const d = reviewView.drawn
+    const o = d && d.files === reviewView.files ? d.ordered.find((x) => x.file === f) : null
+    const old = o && Array.from($('review-files').querySelectorAll('.review-file')).find((c) => c.dataset.path === f.path)
+    if (!old || old.querySelector('textarea')) { reviewView.key = null; drawReview(); return }
+    old.replaceWith(foldIfViewed(f, fileCard(f, o.stop, o.step, d.files.indexOf(f), d.placed, d.threads)))
   }
 
   // colourWhenNear asks for file f's colours once its card is near the

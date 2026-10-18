@@ -1527,6 +1527,41 @@ test('code is coloured by its language, on both sides', async () => {
   } finally { p.close() }
 })
 
+// A file's colours arriving redraw its own card alone: redrawing every
+// file for each would take time growing with the square of the review's
+// size (minutes of a frozen tab, for a big one, scrolled through).
+test("a file's colours redraw its own card, not the others'", async () => {
+  const twoGo = [goDiff[0], { ...goDiff[0], path: 'other.go' }]
+  let release
+  const held = new Promise((resolve) => { release = resolve })
+  const colours = { ...goColours, 'other.go|old': goColours['main.go|old'], 'other.go|new': goColours['main.go|new'] }
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': { review: { ...none, started: '2026-10-16T10:00:00Z' }, diff: twoGo },
+      '/api/review/highlight': async (call) => {
+        const q = new URLSearchParams(call.query)
+        if (q.get('path') === 'other.go') await held
+        return colours[q.get('path') + '|' + q.get('side')] || {}
+      },
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+    settled: false,
+  })
+  try {
+    const card = (path) => Array.from(p.$('review-files').querySelectorAll('.review-file')).find((c) => c.dataset.path === path)
+    const coloured = (path) => !!card(path) && !!card(path).querySelector('.hl-kw')
+    for (let i = 0; i < 200 && !coloured('main.go'); i++) await new Promise((resolve) => setImmediate(resolve))
+    assert.ok(coloured('main.go'), 'main.go coloured first')
+    const mainCard = card('main.go')
+    release()
+    await p.settle()
+    assert.ok(coloured('other.go'), 'other.go coloured when its colours came')
+    assert.equal(card('main.go'), mainCard, "main.go's card wasn't drawn again for other.go's colours")
+  } finally { p.close() }
+})
+
 test("a line that no longer reads as it was coloured is shown plain", async () => {
   const stale = { ...goColours, 'main.go|new': { language: 'Go', lines: [goColours['main.go|new'].lines[0], [{ c: 'kd', t: 'var' }, { t: ' y = 3' }]] } }
   const p = await colourPage(goDiff, stale)
