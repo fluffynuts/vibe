@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -501,5 +502,5 @@ func clipboardDelete(ctx context.Context, url string, out interface{}) error {
 	if out == nil {
 		return nil
 	}
-	return json.NewDecoder(res.Body).Decode(out)
+	return json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(out)
 }

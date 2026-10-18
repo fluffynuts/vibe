@@ -67,6 +67,10 @@ func (s *Server) clipboardPaste(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "the clipboard page answered with a redirect, which isn't followed: try pasting on the clipboard page itself"})
 		return
 	}
+	if res.StatusCode < 200 || res.StatusCode > 599 {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("the clipboard page answered with status %d, which no answer has", res.StatusCode)})
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(res.StatusCode)
 	io.Copy(w, io.LimitReader(res.Body, 1<<20))
