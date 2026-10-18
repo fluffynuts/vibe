@@ -117,14 +117,14 @@ func choiceFromSetting(value string) string {
 
 // FromSandbox reads the theme a running sandbox's agent is set to, however
 // it was set — at creation, or by /theme since. ok is false when the
-// sandbox can't be asked, or its settings can't be read.
-func FromSandbox(name string) (choice string, ok bool) {
-	if value, found, ok := themeIn(name, settingsPath); !ok {
+// sandbox can't be asked, or its settings can't be read before ctx ends.
+func FromSandbox(ctx context.Context, name string) (choice string, ok bool) {
+	if value, found, ok := themeIn(ctx, name, settingsPath); !ok {
 		return "", false
 	} else if found {
 		return choiceFromSetting(value), true
 	}
-	if value, found, _ := themeIn(name, legacyConfigPath); found {
+	if value, found, _ := themeIn(ctx, name, legacyConfigPath); found {
 		return choiceFromSetting(value), true
 	}
 	return Default, true
@@ -133,11 +133,11 @@ func FromSandbox(name string) (choice string, ok bool) {
 // themeIn reads the "theme" key of a JSON file in the sandbox. A file that
 // isn't there reads as having no theme; one that can't be read or parsed
 // is not ok.
-func themeIn(name, file string) (value string, found, ok bool) {
-	if !sbxrun.ExecSilent(name, "test", "-e", file) {
-		return "", false, sbxrun.Reachable(name)
+func themeIn(ctx context.Context, name, file string) (value string, found, ok bool) {
+	if !sbxrun.ExecSilentContext(ctx, name, "test", "-e", file) {
+		return "", false, sbxrun.ReachableContext(ctx, name)
 	}
-	out, err := sbxrun.ExecStdout(context.Background(), name, "cat", file)
+	out, err := sbxrun.ExecStdout(ctx, name, "cat", file)
 	if err != nil {
 		return "", false, false
 	}

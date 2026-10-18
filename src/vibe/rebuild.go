@@ -152,10 +152,12 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 		}
 		// Read after the memories: checking for those will have started a
 		// stopped sandbox, which is the only kind that can be asked.
-		if agent == "claude" && sbxrun.Reachable(name) {
-			if c, ok := claudetheme.FromSandbox(name); ok {
+		if agent == "claude" && sbxrun.ReachableContext(ctx, name) {
+			themeCtx, cancel := context.WithTimeout(ctx, themeReadTimeout)
+			if c, ok := claudetheme.FromSandbox(themeCtx, name); ok {
 				themeFromSandbox = c
 			}
+			cancel()
 		}
 		if err := ctx.Err(); err != nil {
 			return err

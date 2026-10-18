@@ -182,6 +182,10 @@ func startClipboard(name string) ([]string, error) {
 	return args, nil
 }
 
+// themeReadTimeout bounds reading the agent's theme from its sandbox: what
+// it reads is the agent's to make, and could be made never to end.
+const themeReadTimeout = 15 * time.Second
+
 // themeColorFor reads the colour of the theme the sandbox's agent uses, for
 // the companion page: as the agent has it now (it may have been changed with
 // /theme), else as its profile recorded it. Only claude has themes.
@@ -195,7 +199,9 @@ func themeColorFor(lay layout.Layout, name string, inst state.Instance, agent st
 		// Asking the sandbox would start a stopped one again, every
 		// minute the page is open: the profile's record stands in.
 		if runningNow(context.Background(), name) {
-			choice, ok = claudetheme.FromSandbox(name)
+			ctx, cancel := context.WithTimeout(context.Background(), themeReadTimeout)
+			choice, ok = claudetheme.FromSandbox(ctx, name)
+			cancel()
 		}
 		if !ok {
 			if choice, ok = claudetheme.FromProfile(profileDir); !ok {
