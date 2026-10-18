@@ -112,7 +112,7 @@ func checkMigration(vibeHome, name, from, to string, sbxHas func(string) (bool, 
 	if info, err := os.Stat(parent); err != nil || !info.IsDir() {
 		return "", fmt.Errorf("%s doesn't exist — make it first, then migrate", parent)
 	}
-	if rel, err := filepath.Rel(from, to); err == nil && !strings.HasPrefix(rel, "..") {
+	if pathresolve.Within(from, to) {
 		return "", fmt.Errorf("%s is inside it — a folder can't be moved into itself", to)
 	}
 	newName := pathresolve.DeriveName(to)

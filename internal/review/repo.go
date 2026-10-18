@@ -30,6 +30,8 @@ import (
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/go-git/go-git/v5/storage/filesystem/dotgit"
 	"github.com/go-git/go-git/v5/storage/memory"
+
+	"vibe/internal/pathresolve"
 )
 
 // The sandbox's folder is the sandbox's to write, .git and all: the
@@ -89,7 +91,7 @@ func openRepo(dir string) (*repository, error) {
 		}
 		top = parent
 	}
-	writable := inFolderTree(filepath.Join(top, ".git"), ws)
+	writable := pathresolve.Within(ws, filepath.Join(top, ".git"))
 	refuse := func(why string) (*repository, error) {
 		return nil, fmt.Errorf("its .git %s: the Review tab won't read a repository the sandbox could have pointed anywhere (a linked worktree? start vibe in the main checkout)", why)
 	}
@@ -118,7 +120,7 @@ func openRepo(dir string) (*repository, error) {
 		if gitDir, err = filepath.EvalSymlinks(target); err != nil {
 			return nil, err
 		}
-		if writable && !inFolderTree(gitDir, ws) {
+		if writable && !pathresolve.Within(ws, gitDir) {
 			return refuse("leads to a git directory outside the folder, " + gitDir)
 		}
 	}
@@ -142,7 +144,7 @@ func openRepo(dir string) (*repository, error) {
 			r.close()
 			return nil, err
 		}
-		if writable && !inFolderTree(common, ws) {
+		if writable && !pathresolve.Within(ws, common) {
 			r.close()
 			return refuse("shares a git directory outside the folder, " + common)
 		}
@@ -243,12 +245,6 @@ func (r *repository) close() {
 			root.Close()
 		}
 	}
-}
-
-// inFolderTree says path is folder or in it.
-func inFolderTree(path, folder string) bool {
-	rel, err := filepath.Rel(folder, path)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // setting is a git setting, as the repository's config, else the user's,

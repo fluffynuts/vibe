@@ -24,6 +24,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"vibe/internal/pathresolve"
 )
 
 // Releases is where vibe's releases live. A variable so tests can point it
@@ -200,7 +202,7 @@ func Unzip(zipPath, dir string) (string, error) {
 		// Every entry must land inside dir: a "../" in a name ("zip slip")
 		// is refused, not followed.
 		target := filepath.Join(dir, name)
-		if rel, err := filepath.Rel(dir, target); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if !pathresolve.Within(dir, target) {
 			return "", fmt.Errorf("%s: entry %q would land outside %s", zipPath, f.Name, dir)
 		}
 		if first := strings.SplitN(filepath.ToSlash(name), "/", 2)[0]; top == "" {

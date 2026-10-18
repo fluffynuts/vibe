@@ -44,3 +44,11 @@ func DeriveName(path string) string {
 	}
 	return raw
 }
+
+// Within reports whether path is dir or somewhere under it, as the two are
+// written: links aren't followed. A name that only starts with ".." (a
+// folder "..cache") is under it.
+func Within(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}

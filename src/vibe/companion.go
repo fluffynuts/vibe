@@ -13,6 +13,7 @@ import (
 	"vibe/internal/cliargs"
 	"vibe/internal/companion"
 	"vibe/internal/layout"
+	"vibe/internal/pathresolve"
 	"vibe/internal/policy"
 	"vibe/internal/portalloc"
 	"vibe/internal/review"
@@ -360,7 +361,8 @@ func noteBelowRepositoryTop(folder string) {
 	// git names the top resolved (macOS's /var is /private/var): it's named
 	// as the user reaches it, the folder's path with the levels below the
 	// top taken off.
-	if rel, err := filepath.Rel(realTop, realFolder); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if pathresolve.Within(realTop, realFolder) {
+		rel, _ := filepath.Rel(realTop, realFolder)
 		top = folder
 		for range strings.Split(rel, string(filepath.Separator)) {
 			top = filepath.Dir(top)

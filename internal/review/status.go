@@ -19,6 +19,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 	"github.com/go-git/go-git/v5/plumbing/format/index"
 	"github.com/go-git/go-git/v5/plumbing/object"
+
+	"vibe/internal/pathresolve"
 )
 
 // scanned is the folder compared as git status compares it: HEAD with the
@@ -310,7 +312,7 @@ func (r *repository) excludes() ([]gitignore.Pattern, error) {
 				if data, err := hostRead(own); err == nil {
 					out = append(out, parseIgnore(data, nil)...)
 				}
-			case !filepath.IsAbs(own) || inFolderTree(own, r.top):
+			case !filepath.IsAbs(own) || pathresolve.Within(r.top, own):
 				rel := own
 				if filepath.IsAbs(own) {
 					rel, _ = filepath.Rel(r.top, own)

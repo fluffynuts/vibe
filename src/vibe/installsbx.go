@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 
+	"vibe/internal/pathresolve"
 	"vibe/internal/sbxinstall"
 )
 
@@ -443,8 +444,7 @@ func resolvesInto(path, dir string) bool {
 	if d, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = d
 	}
-	rel, err := filepath.Rel(dir, resolved)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	return pathresolve.Within(dir, resolved)
 }
 
 func isDir(path string) bool {

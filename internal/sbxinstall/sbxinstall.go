@@ -25,6 +25,8 @@ import (
 	"strings"
 
 	"vibe/internal/selfupdate"
+
+	"vibe/internal/pathresolve"
 )
 
 // Releases is where sbx's releases live. A variable so tests can point it at
@@ -156,7 +158,7 @@ func Unpack(tarGz, dir string) ([]string, error) {
 			continue
 		}
 		target := filepath.Join(dir, name)
-		if !within(dir, target) {
+		if !pathresolve.Within(dir, target) {
 			return nil, fmt.Errorf("%s: entry %q would land outside %s", tarGz, h.Name, dir)
 		}
 		if top := strings.SplitN(filepath.ToSlash(name), "/", 2)[0]; !contains(tops, top) {
@@ -172,7 +174,7 @@ func Unpack(tarGz, dir string) ([]string, error) {
 				return nil, err
 			}
 		case tar.TypeSymlink:
-			if rooted(h.Linkname) || !within(dir, filepath.Join(filepath.Dir(target), filepath.FromSlash(h.Linkname))) {
+			if rooted(h.Linkname) || !pathresolve.Within(dir, filepath.Join(filepath.Dir(target), filepath.FromSlash(h.Linkname))) {
 				return nil, fmt.Errorf("%s: link %q points outside %s", tarGz, h.Name, dir)
 			}
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
@@ -196,12 +198,6 @@ func Unpack(tarGz, dir string) ([]string, error) {
 // drive (C:x), neither of which filepath.IsAbs counts.
 func rooted(link string) bool {
 	return filepath.IsAbs(link) || filepath.VolumeName(link) != "" || strings.HasPrefix(filepath.ToSlash(link), "/")
-}
-
-// within reports whether path is dir or somewhere under it.
-func within(dir, path string) bool {
-	rel, err := filepath.Rel(dir, path)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func contains(list []string, s string) bool {

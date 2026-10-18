@@ -458,7 +458,8 @@ func displayPath(path string) string {
 	if err != nil || home == "" {
 		return path
 	}
-	if rel, err := filepath.Rel(home, path); err == nil && !strings.HasPrefix(rel, "..") {
+	if pathresolve.Within(home, path) {
+		rel, _ := filepath.Rel(home, path)
 		return filepath.Join("~", rel)
 	}
 	return path
