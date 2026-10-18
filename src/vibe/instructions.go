@@ -62,6 +62,12 @@ if [ "$(id -u)" = 0 ]; then
   chown "$u:" "$d" "$f" 2>/dev/null || true
 fi`
 
+// writeSandboxFile makes path in sandbox name hold content (see
+// sandboxFileWrite).
+func writeSandboxFile(name, path, content string) error {
+	return sbxrun.ExecInput(name, content, "sh", "-c", sandboxFileWrite, "sh", path)
+}
+
 // applyInstructions gives the sandbox's agent the user's instructions: the
 // merged text in its own file (for an agent that follows imports), and
 // vibe's marked part of the agent's global instructions file pointing at it
@@ -88,7 +94,7 @@ func applyInstructions(lay layout.Layout, name string) (supported bool, err erro
 			if _, err := sbxrun.ExecStdout(ctx, name, "rm", "-f", mergedPath); err != nil {
 				return true, err
 			}
-		} else if err := sbxrun.ExecInput(name, merged, "sh", "-c", sandboxFileWrite, "sh", mergedPath); err != nil {
+		} else if err := writeSandboxFile(name, mergedPath, merged); err != nil {
 			return true, err
 		}
 	}
@@ -106,7 +112,7 @@ func applyInstructions(lay layout.Layout, name string) (supported bool, err erro
 		_, err = sbxrun.ExecStdout(ctx, name, "rm", "-f", global)
 		return true, err
 	}
-	return true, sbxrun.ExecInput(name, updated, "sh", "-c", sandboxFileWrite, "sh", global)
+	return true, writeSandboxFile(name, global, updated)
 }
 
 // --- the Admin tab's editors -------------------------------------------------

@@ -62,8 +62,7 @@ var (
 		if !sbxrun.Reachable(name) {
 			return nil
 		}
-		return sbxrun.ExecInput(name, content, "sh", "-c",
-			"mkdir -p \"$(dirname "+gittoken.SandboxFile+")\" && cat > "+gittoken.SandboxFile)
+		return writeSandboxFile(name, gittoken.SandboxFile, content)
 	}
 	removeGitInstructions = func(name string) error {
 		if !sbxrun.Reachable(name) {
