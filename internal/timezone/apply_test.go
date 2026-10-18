@@ -12,6 +12,8 @@ import (
 // would (sudo -n is dropped), with /etc and /usr/share/zoneinfo standing for
 // folders in the returned directory, and paths in what it prints put back.
 // Each command it runs is added to the returned directory's "ran" file.
+// Like a real sbx can, it says something of its own on stderr, which must
+// never end up in a file Apply reads and writes back.
 func tzSandbox(t *testing.T) string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -27,6 +29,7 @@ func tzSandbox(t *testing.T) string {
 	script := "#!/bin/sh\n[ \"$1\" = exec ] || exit 1\nshift\n[ \"$1\" = -i ] && shift\nshift 2\n" +
 		"[ \"$1\" = sudo ] && shift 2\n" +
 		"echo \"$*\" >> " + root + "/ran\n" +
+		"echo 'A new version of sbx is available' >&2\n" +
 		"for a; do shift; set -- \"$@\" \"$(printf %s \"$a\" | sed -e \"s#^/usr/share/zoneinfo#" + root + "/zoneinfo#\" -e \"s#^/etc#" + root + "/etc#\")\"; done\n" +
 		"out=$(mktemp)\n\"$@\" > \"$out\"\nrc=$?\n" +
 		"sed -e \"s#" + root + "/zoneinfo#/usr/share/zoneinfo#g\" -e \"s#" + root + "/etc#/etc#g\" \"$out\"\nrm -f \"$out\"\nexit $rc\n"
