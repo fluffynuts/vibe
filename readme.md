@@ -752,7 +752,7 @@ with all cores, say) can leave your machine nothing to run vibe, your browser an
 the companion page then goes slow, and may say vibe has disconnected. vibe tells `sbx` how many to
 give (`sbx create --cpus`): the `cpus` setting, and when there's none, **half the machine's**,
 rounded down. A new sandbox asks, offering any number from 1 to one less than the machine has, so
-the host always keeps one. It's the same question as the memory one: `-f`, or no terminal, uses the
+the host always keeps one, in a list that scrolls and narrows as you type (like the timezone one). It's the same question as the memory one: `-f`, or no terminal, uses the
 setting, or half. A `cpus` more than the machine can spare is lowered to the most it can.
 
 The choice isn't remembered per sandbox, as memory's isn't: a rebuilt sandbox gets the setting (or

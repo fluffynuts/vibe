@@ -169,7 +169,8 @@ func pickMemory(want string, ask bool, question string) string {
 }
 
 // pickCPUs settles how many CPUs a sandbox gets, starting from want (0 for
-// none: half this machine's): with ask, the user picks any number from 1 to
+// none: half this machine's): with ask, the user picks, from a list that
+// scrolls and narrows as they type, any number from 1 to
 // one less than the machine has; without, want is kept unless it's more than
 // that, when it's lowered to the most. sbx, left to itself, gives a sandbox
 // every CPU, and a build in it then leaves the host nothing to run on.
@@ -186,7 +187,7 @@ func pickCPUs(want int, ask bool, question string) int {
 	for i, n := range options {
 		labels[i] = strconv.Itoa(n)
 	}
-	i, ok := chooseFrom(fmt.Sprintf("%s (this machine has %d)", question, total), labels, idx)
+	i, ok := filterFrom(fmt.Sprintf("%s (this machine has %d)", question, total), labels, idx)
 	if !ok {
 		note("  keeping cpus: %d", options[idx])
 		return options[idx]

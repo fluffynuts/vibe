@@ -100,6 +100,14 @@ func chooseFrom(question string, labels []string, def int) (int, bool) {
 	})
 }
 
+// filterFrom is chooseFrom for a list too long to show whole: it scrolls, and
+// typing narrows it (see prompt.Filter).
+func filterFrom(question string, labels []string, def int) (int, bool) {
+	return asking(question, func(tty *prompt.Terminal) (int, bool) {
+		return prompt.Filter(tty, labels, def)
+	})
+}
+
 // asking prints question, then lets ask drive an interactive prompt on the
 // terminal; ok is false when there is no terminal to ask on.
 func asking[T any](question string, ask func(tty *prompt.Terminal) (T, bool)) (answer T, ok bool) {

@@ -19,6 +19,16 @@ func TestPickCPUsWithoutAsking(t *testing.T) {
 	}
 }
 
+// With nobody to answer (the tests have no terminal), asking keeps where the
+// choice starts, as it does for memory.
+func TestPickCPUsAskingWithNoTerminalKeepsTheStart(t *testing.T) {
+	for want, got := range map[int]int{0: 8, 3: 3, 99: 15} {
+		if c := pickCPUs(want, true, "how many?"); c != got {
+			t.Errorf("pickCPUs(%d) with no terminal to ask on = %d, want %d", want, c, got)
+		}
+	}
+}
+
 func TestPickMemoryWithoutAsking(t *testing.T) {
 	onHost(t, 32)
 	for want, got := range map[string]string{"12g": "12g", "6g": "6g", "24g": "16g", "lots": "16g"} {
