@@ -228,3 +228,110 @@ func answerable(t *testing.T) {
 	}
 	t.Cleanup(func() { openTerminalInput = old })
 }
+
+// answeringAgent stands in for the user picking an agent on a rebuild: it
+// answers with picked, and says what the question started on.
+func answeringAgent(t *testing.T, picked string, startedOn *string, asked *bool) {
+	t.Helper()
+	old := pickRebuildAgent
+	pickRebuildAgent = func(current string, ask bool, question string) string {
+		*asked = ask
+		*startedOn = current
+		return picked
+	}
+	t.Cleanup(func() { pickRebuildAgent = old })
+}
+
+// A rebuild is the moment to change agent: the question starts on the one the
+// sandbox has, and what's picked is what's built and what's recorded.
+func TestARebuildAtATerminalCanSwitchTheAgent(t *testing.T) {
+	answerable(t)
+	var startedOn string
+	var asked bool
+	answeringAgent(t, "shell", &startedOn, &asked)
+	lay := updateLayout(t)
+	inst := sandboxRecord(t, lay, "box", "p").inst
+	inst.Agent = "claude"
+	if err := state.Save(lay.Home, inst); err != nil {
+		t.Fatal(err)
+	}
+	calls := loggingSbx(t, "box running\\n")
+	if err := rebuildSandbox(context.Background(), lay, cliargs.Args{}, "box", inst.Target, true, false); err != nil {
+		t.Fatal(err)
+	}
+	if !asked || startedOn != "claude" {
+		t.Errorf("asked %v, started on %q: want it asked, starting on claude", asked, startedOn)
+	}
+	if create := createCall(t, calls); !strings.Contains(create, " shell ") || strings.Contains(create, " claude ") {
+		t.Errorf("sbx create wasn't for the shell agent:\\n%s", create)
+	}
+	got, _, _ := state.Load(lay.Home, "box")
+	if got.Agent != "shell" {
+		t.Errorf("the record says %q, want shell", got.Agent)
+	}
+}
+
+func TestARebuildWithForceKeepsTheAgentAndDoesntAsk(t *testing.T) {
+	var startedOn string
+	asked := false
+	answeringAgent(t, "shell", &startedOn, &asked)
+	lay := updateLayout(t)
+	inst := sandboxRecord(t, lay, "box", "p").inst
+	inst.Agent = "claude"
+	state.Save(lay.Home, inst)
+	calls := loggingSbx(t, "box running\\n")
+	if err := rebuildSandbox(context.Background(), lay, cliargs.Args{Force: true}, "box", inst.Target, true, false); err != nil {
+		t.Fatal(err)
+	}
+	if startedOn != "" {
+		t.Errorf("the agent was asked about with -f, starting on %q", startedOn)
+	}
+	if create := createCall(t, calls); !strings.Contains(create, " claude ") {
+		t.Errorf("the agent changed under -f:\\n%s", create)
+	}
+}
+
+// What a Claude sandbox holds is checked for, whatever agent comes next: a
+// sandbox rebuilt as another agent mustn't lose its memories unasked.
+func TestSwitchingAwayFromClaudeStillChecksTheOldSandboxForMemories(t *testing.T) {
+	answerable(t)
+	var startedOn string
+	var asked bool
+	answeringAgent(t, "shell", &startedOn, &asked)
+	lay := updateLayout(t)
+	inst := sandboxRecord(t, lay, "box", "p").inst
+	inst.Agent = "claude"
+	state.Save(lay.Home, inst)
+	calls := loggingSbx(t, "box running\\n")
+	notes := notesOf(func() {
+		if err := rebuildSandbox(context.Background(), lay, cliargs.Args{}, "box", inst.Target, true, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if got := strings.Join(notes, "\\n"); !strings.Contains(got, "no memories found in 'box'") {
+		t.Errorf("the old sandbox wasn't checked for memories:\\n%s", got)
+	}
+	if data, _ := os.ReadFile(calls); !strings.Contains(string(data), "exec box") {
+		t.Errorf("sbx wasn't asked to look in the sandbox being replaced:\\n%s", data)
+	}
+}
+
+func TestSwitchingToClaudeDoesntLookForMemoriesTheOldAgentCouldntHave(t *testing.T) {
+	answerable(t)
+	var startedOn string
+	var asked bool
+	answeringAgent(t, "claude", &startedOn, &asked)
+	lay := updateLayout(t)
+	inst := sandboxRecord(t, lay, "box", "p").inst
+	inst.Agent = "shell"
+	state.Save(lay.Home, inst)
+	loggingSbx(t, "box running\\n")
+	notes := notesOf(func() {
+		// Claude also asks which theme: no terminal, so that ends the test
+		// before the build; what's checked is what came first.
+		rebuildSandbox(context.Background(), lay, cliargs.Args{}, "box", inst.Target, true, false)
+	})
+	if got := strings.Join(notes, "\\n"); strings.Contains(got, "memories") {
+		t.Errorf("a shell sandbox was looked in for Claude's memories:\\n%s", got)
+	}
+}

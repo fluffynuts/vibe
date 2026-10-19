@@ -130,7 +130,7 @@ has, starting on half of them (see [CPUs](#cpus-a-sandbox-gets)). It asks which 
 starts on the package's choice. Creating a new sandbox asks again which agent it should run,
 starting on that default (or on the profile's own `agent`, when the profile exists already). It asks
 this first, before any profile is made, because a guided profile only offers the features that work
-with that agent; a re-init or re-create keeps the agent the sandbox was created with. With `-f`, or no terminal, it keeps the package's choices and only
+with that agent. A rebuild (`-r`, `-R`, `-C`) at a terminal asks again, starting on the sandbox's agent: it's the way to change it (the profile's features it can't use are warned of, and a Claude sandbox's memories are checked for first, and kept in the host store rather than discarded if the new agent can't use them). `-f`, `--update-sandboxes` and the page's Rebuild keep the agent. With `-f`, or no terminal, it keeps the package's choices and only
 lowers the memory, if it's more than your machine can give (and a `cpus` already set, if it's more
 than your machine can spare). Every later `--install` makes the same checks on your `settings.yaml`,
 and changes nothing else in it.
@@ -757,7 +757,7 @@ setting, or half. A `cpus` more than the machine can spare is lowered to the mos
 
 A sandbox's memory and CPUs are kept in its record, so a rebuild keeps what it was created with, not
 whatever the settings say by then (a sandbox made before vibe kept them uses the settings). A rebuild
-you start at a terminal (`-r`, `-R`, `-C`) asks both questions again, starting on the sandbox's own
+you start at a terminal (`-r`, `-R`, `-C`) asks both questions again (and which agent it runs), starting on the sandbox's own
 values: it's the way to change them. With `-f`, `--update-sandboxes`, `--migrate` or the page's
 Rebuild, nothing is asked and the recorded values are kept. A sandbox already built keeps the CPUs
 it has until it's rebuilt.
