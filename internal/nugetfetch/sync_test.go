@@ -283,3 +283,66 @@ func TestAnEndToEndSyncPutsWhatTheSandboxRestoredInTheHostCache(t *testing.T) {
 		t.Errorf("after: count %d, last %+v", st.Count, st.Last)
 	}
 }
+
+// A restore of hundreds of packages is one process saying nothing until it ends,
+// so how far it has got is read from the cache: how many of the packages the run
+// is for have come.
+func TestWhileFetchingItSaysHowManyOfThePackagesHaveComeSoFar(t *testing.T) {
+	rig := newSyncRig(t)
+	rig.project(t, "A", map[string][]string{"net8.0": {"Pkg.A/1.0.0", "Pkg.B/1.0.0", "Pkg.C/1.0.0"}})
+	landed, proceed := make(chan struct{}), make(chan struct{})
+	rig.result = func(_ string, pkgs []Package) (BatchResult, error) {
+		put(t, rig.cache, pkgs[0])
+		close(landed)
+		<-proceed
+		for _, p := range pkgs[1:] {
+			put(t, rig.cache, p)
+		}
+		return BatchResult{Fetched: pkgs}, nil
+	}
+	rig.s.Check()
+	if rig.s.State().Progress != nil {
+		t.Errorf("progress %+v before any run", *rig.s.State().Progress)
+	}
+	done := make(chan error, 1)
+	go func() { done <- rig.s.Run(context.Background()) }()
+	<-landed
+	if got := rig.s.State().Progress; got == nil || *got != (Progress{Done: 1, Total: 3}) {
+		t.Errorf("progress = %+v, want 1 of 3", got)
+	}
+	close(proceed)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if got := rig.s.State().Progress; got != nil {
+		t.Errorf("progress %+v after the run ended", *got)
+	}
+}
+
+// What two frameworks share is fetched once, so it's counted once.
+func TestAPackageInTwoFrameworksIsOneOfTheTotal(t *testing.T) {
+	rig := newSyncRig(t)
+	rig.project(t, "A", map[string][]string{
+		"net462": {"Shared.Pkg/1.0.0", "Old.Only/1.0.0"},
+		"net8.0": {"Shared.Pkg/1.0.0", "New.Only/1.0.0"},
+	})
+	started, release := make(chan struct{}), make(chan struct{})
+	rig.result = func(string, []Package) (BatchResult, error) {
+		select {
+		case <-started:
+		default:
+			close(started)
+		}
+		<-release
+		return BatchResult{}, nil
+	}
+	rig.s.Check()
+	done := make(chan error, 1)
+	go func() { done <- rig.s.Run(context.Background()) }()
+	<-started
+	if got := rig.s.State().Progress; got == nil || got.Total != 3 || got.Done != 0 {
+		t.Errorf("progress = %+v, want 0 of 3", got)
+	}
+	close(release)
+	<-done
+}

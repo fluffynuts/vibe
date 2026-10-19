@@ -890,7 +890,8 @@ on the host, and the agent can't plant code in a package your own builds then ru
   sandbox's restores left that your cache lacks (it reads the `obj/project.assets.json`
   files in the sandbox's folder, as data, and checks each name and exact version), lists them by
   framework, and **Fetch them** downloads them on this machine, with your own NuGet config, into your
-  cache, in one restore per framework. The Admin tab's dot says when there are some to fetch; with
+  cache, in one restore per framework, with a bar across the top of the card showing how many of them are in
+  your cache so far (the host counts them there, since a restore says nothing until it ends). The Admin tab's dot says when there are some to fetch; with
   `packages: allow` they're fetched without asking. A package no feed has is named and left. It's
   the same fetch, into the same place, as a package the agent asks for: only the sandbox's own
   packages are never moved into your cache, since a file the sandbox wrote there would run on your

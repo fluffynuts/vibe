@@ -164,3 +164,52 @@ test('nothing to fetch, nothing said; and it goes when they are fetched', async 
     assert.equal(p.$('convo-sync').hidden, true, 'and goes when there are none')
   } finally { p.close() }
 })
+
+// A restore of hundreds of packages says nothing until it ends, so a bar across the
+// top of the card shows how many have come (counted by the host, in the cache).
+test('a fetch under way shows a bar of how far it has got, across the top of the card', async () => {
+  const p = await syncPage(missing({ count: 405, running: true, progress: { done: 120, total: 405 } }))
+  try {
+    const bar = p.$('admin-sync-progress')
+    assert.equal(bar.hidden, false)
+    assert.equal(bar.max, 405)
+    assert.equal(bar.value, 120)
+    assert.match(p.$('admin-sync-status').textContent, /120 of 405/)
+    assert.equal(p.$('admin-sync-card').firstElementChild, bar, 'it runs across the top of the card')
+    assert.ok(bar.getAttribute('aria-label'), 'it has a name for a screen reader')
+  } finally { p.close() }
+})
+
+test('the bar moves as packages come, and goes when the run ends', async () => {
+  const p = await syncPage(missing({ count: 405, running: true, progress: { done: 10, total: 405 } }))
+  try {
+    assert.equal(p.$('admin-sync-progress').value, 10)
+    p.at.answer = missing({ count: 405, running: true, progress: { done: 250, total: 405 } })
+    await p.poll()
+    assert.equal(p.$('admin-sync-progress').value, 250)
+    assert.match(p.$('admin-sync-status').textContent, /250 of 405/)
+    p.at.answer = nothing({ last: { fetched: 405, at: '2026-10-19T12:00:00Z' } })
+    await p.poll()
+    assert.equal(p.$('admin-sync-progress').hidden, true)
+  } finally { p.close() }
+})
+
+test('with no bar to show, nothing is claimed: no bar when idle, and a bar of unknown length if the host says no more than that it is fetching', async () => {
+  let p = await syncPage(missing())
+  try { assert.equal(p.$('admin-sync-progress').hidden, true) } finally { p.close() }
+  p = await syncPage(missing({ running: true }))
+  try {
+    const bar = p.$('admin-sync-progress')
+    assert.equal(bar.hidden, false)
+    assert.equal(bar.hasAttribute('value'), false, 'no value is an unknown length, not zero')
+    assert.match(p.$('admin-sync-status').textContent, /Fetching/)
+  } finally { p.close() }
+})
+
+test('the bar is full, and says it is finishing, when every package is in but the restore has not ended', async () => {
+  const p = await syncPage(missing({ count: 3, running: true, progress: { done: 3, total: 3 } }))
+  try {
+    assert.equal(p.$('admin-sync-progress').value, 3)
+    assert.match(p.$('admin-sync-status').textContent, /finishing/i)
+  } finally { p.close() }
+})

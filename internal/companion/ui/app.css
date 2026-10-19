@@ -215,6 +215,12 @@ dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top
    agent's theme, or the accent where it has none, see --theme), so it stands out
    among the others. A ring beside the border, so nothing moves. */
 .card.wants-you { border-color: var(--theme); box-shadow: 0 0 0 1px var(--theme); }
+/* A bar across the top of a card, edge to edge, for what takes a while. */
+.card-progress { appearance: none; border: 0; display: block; height: 4px; width: calc(100% + 24px); margin: -10px -12px 0; border-radius: 8px 8px 0 0; background: var(--line); overflow: hidden; }
+.card-progress::-webkit-progress-bar { background: var(--line); }
+.card-progress::-webkit-progress-value { background: var(--theme); }
+.card-progress::-moz-progress-bar { background: var(--theme); }
+.card-progress[hidden] { display: none; }
 .card h2 { margin: 0; font-size: 14px; display: flex; align-items: center; gap: 8px; }
 .pill { font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 .pill.ok { color: var(--ok); border-color: var(--ok); }

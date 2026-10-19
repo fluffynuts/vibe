@@ -30,6 +30,12 @@ type SyncResult struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+// Progress is how far a run has got: Done of its Total packages are in the cache.
+type Progress struct {
+	Done  int `json:"done"`
+	Total int `json:"total"`
+}
+
 // SyncState is where Sync stands.
 type SyncState struct {
 	// Missing is what the sandbox's restores resolved that the cache lacks,
@@ -39,7 +45,9 @@ type SyncState struct {
 	// Checked is when the workspace was last looked at.
 	Checked time.Time
 	Running bool
-	Last    *SyncResult
+	// Progress is set while Running.
+	Progress *Progress
+	Last     *SyncResult
 	// Skipped is what the assets files named that wasn't a package id and an
 	// exact version (not fetched); Problems are files that couldn't be read.
 	Skipped  int
@@ -69,6 +77,9 @@ type Sync struct {
 	parsed  map[string]parsedAssets
 	state   SyncState
 	running bool
+	// runGroups is what the run under way, or the last, is fetching; State
+	// only reads it while one is under way.
+	runGroups []Group
 }
 
 // parsedAssets is a file read, kept until it changes.
@@ -158,7 +169,27 @@ func (s *Sync) State() SyncState {
 	defer s.mu.Unlock()
 	st := s.state
 	st.Running = s.running
+	if s.running {
+		st.Progress = s.progressLocked()
+	}
 	return st
+}
+
+// progressLocked counts, in the cache, how many of the packages the run is for
+// have come: a restore of hundreds says nothing until it ends, but each package
+// shows in the cache when it's done. A package two frameworks share is one.
+func (s *Sync) progressLocked() *Progress {
+	total := map[Package]bool{}
+	lacking := map[Package]bool{}
+	for _, g := range s.runGroups {
+		for _, p := range g.Packages {
+			total[p] = true
+		}
+		for _, p := range Missing(s.Cache, g.Packages) {
+			lacking[p] = true
+		}
+	}
+	return &Progress{Done: len(total) - len(lacking), Total: len(total)}
 }
 
 // Run fetches what's missing, a framework at a time (what one brought isn't
@@ -174,6 +205,7 @@ func (s *Sync) Run(ctx context.Context) error {
 	s.running = true
 	s.checkLocked()
 	groups := s.state.Missing
+	s.runGroups = groups
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()

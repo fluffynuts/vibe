@@ -125,6 +125,9 @@ func (s *Server) packageSyncState(w http.ResponseWriter, r *http.Request) {
 	if !st.Checked.IsZero() {
 		body["checked"] = st.Checked
 	}
+	if st.Progress != nil {
+		body["progress"] = st.Progress
+	}
 	writeJSON(w, http.StatusOK, body)
 }
 

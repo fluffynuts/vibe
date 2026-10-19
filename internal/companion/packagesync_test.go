@@ -61,8 +61,12 @@ type syncBody struct {
 			Version string `json:"version"`
 		} `json:"packages"`
 	} `json:"missing"`
-	Running bool `json:"running"`
-	Last    *struct {
+	Running  bool `json:"running"`
+	Progress *struct {
+		Done  int `json:"done"`
+		Total int `json:"total"`
+	} `json:"progress"`
+	Last *struct {
 		Fetched    int    `json:"fetched"`
 		Error      string `json:"error"`
 		Unresolved []struct {
@@ -297,5 +301,18 @@ func TestThePageStateSaysHowManyPackagesAFetchCouldBring(t *testing.T) {
 	running.Running = true
 	if got := fetchable(&fakeSync{state: running}); got != 0 {
 		t.Errorf("packagesToFetch = %d while fetching, want 0", got)
+	}
+}
+
+func TestThePageIsToldHowFarAFetchHasGot(t *testing.T) {
+	running := someMissing
+	running.Running = true
+	running.Progress = &nugetfetch.Progress{Done: 120, Total: 405}
+	b := getSync(t, syncServer(&fakeSync{state: running}))
+	if b.Progress == nil || b.Progress.Done != 120 || b.Progress.Total != 405 {
+		t.Errorf("progress = %+v, want 120 of 405", b.Progress)
+	}
+	if b = getSync(t, syncServer(&fakeSync{state: someMissing})); b.Progress != nil {
+		t.Errorf("progress %+v when nothing is running", b.Progress)
 	}
 }

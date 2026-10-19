@@ -2825,9 +2825,17 @@
     const status = $('admin-sync-status')
     const last = b.last
     status.classList.remove('bad-text')
+    const bar = $('admin-sync-progress')
+    bar.hidden = !running
     if (running) {
+      // The host counts them in the cache; without a count the bar is of unknown length.
+      const got = b.progress
+      if (got && got.total > 0) { bar.max = got.total; bar.value = got.done } else { bar.removeAttribute('value'); bar.removeAttribute('max') }
       status.hidden = false
-      status.textContent = 'Fetching… the host downloads them with your own NuGet config; this can take a few minutes.'
+      status.textContent = got && got.total > 0 && got.done >= got.total
+        ? 'Finishing… all ' + got.total + ' are in your cache; the restore is wrapping up.'
+        : 'Fetching…' + (got && got.total > 0 ? ' ' + got.done + ' of ' + got.total + ' packages are in your cache.' : '') +
+          ' The host downloads them with your own NuGet config; this can take a few minutes.'
     } else if (last && last.error) {
       status.hidden = false
       status.classList.add('bad-text')
