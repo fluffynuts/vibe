@@ -1,7 +1,18 @@
 ---
 name: vibe-nuget
-description: Get a NuGet package this sandbox can't restore, or can't find after a restore. Use when dotnet restore or build fails with NU1101 or NU1102 (unable to find a package, or only older versions of it), or a package should come from a private feed or isn't on nuget.org - ask the user's machine with vibe-nuget fetch, and never edit nuget.config or add a source instead. Also use when a build fails with CS0246 for a package's types, or MSB3030 could not copy a file under .nuget/packages, right after a restore that said it was up to date - run dotnet restore --force.
+description: Get a NuGet package this sandbox can't restore, or can't find after a restore. Use when dotnet restore or build fails with NU1101 or NU1102 (unable to find a package, or only older versions of it), or a package should come from a private feed or isn't on nuget.org - ask the user's machine with vibe-nuget fetch, and never edit nuget.config or add a source instead. Also use when a build fails with CS0246 for a package's types, or MSB3030 could not copy a file under .nuget/packages, right after a restore that said it was up to date - run dotnet restore --force. Before the first restore or build of a session, run vibe-nuget status to learn what the user has waiting, and tell them if something is.
 ---
+
+# Before a restore or build
+
+Run `vibe-nuget status` before the first restore, build or test of a session,
+and again once the user says they've dealt with what it named. It asks the
+user's machine, at once, what is waiting for them: package requests to
+approve, or packages this sandbox restored that their package cache lacks (so
+their IDE can't see them). If it says something is, Tell the user what it
+says, and wait for them: a restore or build now would download your own copies
+of the packages, which their IDE won't see either. If it says nothing is
+waiting, carry on. If it can't answer, carry on and say so.
 
 # Packages from private feeds
 

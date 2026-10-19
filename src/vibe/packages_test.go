@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"vibe/internal/layout"
+	"vibe/internal/nugetfetch"
 	"vibe/internal/packagereq"
 	"vibe/internal/settings"
 	"vibe/internal/state"
@@ -162,5 +165,119 @@ func TestSyncingRunsWithoutAskingOnlyWhenPackagesAreAllowed(t *testing.T) {
 		if got := packageSyncAuto(lay, "p")(); got != want {
 			t.Errorf("settings %q: auto = %v, want %v", setting, got, want)
 		}
+	}
+}
+
+// What the agent is told when it asks what's waiting for the user, before it builds: said so it
+// can pass it on, and wait, instead of downloading its own copies of what the user's cache lacks.
+func TestWhatIsWaitingIsSaidToTheAgentInTheTermsItCanActOn(t *testing.T) {
+	t.Run("nothing", func(t *testing.T) {
+		got := overviewText(nil, 0, false)
+		if !strings.Contains(got, "Nothing is waiting") || strings.Contains(got, "Tell the user") {
+			t.Errorf("%q", got)
+		}
+	})
+	t.Run("requests to approve", func(t *testing.T) {
+		got := overviewText([]string{"Corp.Lib 1.2.3", "Corp.Other 2.0.0"}, 0, false)
+		for _, want := range []string{"2 package requests", "Corp.Lib 1.2.3", "Corp.Other 2.0.0", "Admin tab", "Tell the user", "wait"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("lacks %q: %q", want, got)
+			}
+		}
+	})
+	t.Run("one request is a request", func(t *testing.T) {
+		if got := overviewText([]string{"Corp.Lib 1.2.3"}, 0, false); !strings.Contains(got, "1 package request ") {
+			t.Errorf("%q", got)
+		}
+	})
+	t.Run("packages the user's IDE can't see", func(t *testing.T) {
+		got := overviewText(nil, 405, false)
+		for _, want := range []string{"405 packages", "IDE can't see", "download your own copies", "Fetch them", "Tell the user", "vibe-nuget status again"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("lacks %q: %q", want, got)
+			}
+		}
+	})
+	t.Run("a fetch under way", func(t *testing.T) {
+		got := overviewText(nil, 3, true)
+		if !strings.Contains(got, "being fetched") || !strings.Contains(got, "vibe-nuget status again") || strings.Contains(got, "Fetch them") {
+			t.Errorf("%q", got)
+		}
+	})
+	t.Run("both are said", func(t *testing.T) {
+		got := overviewText([]string{"Corp.Lib 1.2.3"}, 2, false)
+		if !strings.Contains(got, "Corp.Lib") || !strings.Contains(got, "2 packages") {
+			t.Errorf("%q", got)
+		}
+	})
+	t.Run("a long list of requests is cut short, and says so", func(t *testing.T) {
+		var many []string
+		for i := 0; i < 12; i++ {
+			many = append(many, fmt.Sprintf("Corp.Lib%02d 1.0.0", i))
+		}
+		got := overviewText(many, 0, false)
+		if !strings.Contains(got, "12 package requests") || !strings.Contains(got, "Corp.Lib00") || strings.Contains(got, "Corp.Lib11") || !strings.Contains(got, "and 7 more") {
+			t.Errorf("%q", got)
+		}
+	})
+}
+
+type quietEcosystem struct{}
+
+func (quietEcosystem) Validate(packagereq.Request) error { return nil }
+func (quietEcosystem) Fetch(_ context.Context, rs []packagereq.Request) []packagereq.Outcome {
+	return make([]packagereq.Outcome, len(rs))
+}
+
+// The overview is of now: what the desk holds undecided, and what the workspace says the cache lacks
+// as the agent asks, not as of the last scan.
+func TestTheOverviewIsOfWhatIsWaitingNow(t *testing.T) {
+	box := packagereq.Mailbox{Dir: t.TempDir()}
+	if err := os.MkdirAll(box.Inbox(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	desk := &packagereq.Desk{Mailbox: box, Ecosystems: map[string]packagereq.Ecosystem{"nuget": quietEcosystem{}}, Policy: func() string { return packagereq.PolicyAsk }}
+	if err := os.WriteFile(filepath.Join(box.Inbox(), "1-a.json"), []byte(`{"ecosystem":"nuget","id":"Corp.Lib","version":"1.2.3","framework":"net8.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	desk.Poll(context.Background())
+
+	ws, cache := t.TempDir(), t.TempDir()
+	sync := &nugetfetch.Sync{Workspace: ws, Cache: cache, Options: func() nugetfetch.Options { return nugetfetch.Options{Cache: cache} }}
+	overview := packagesOverview(desk, sync)
+
+	// Written after the sync was made and never checked: asking looks.
+	obj := filepath.Join(ws, "App", "obj")
+	if err := os.MkdirAll(obj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	assets := `{"version":3,"targets":{"net8.0":{"Dapper/2.1.86":{"type":"package"}}},"libraries":{"Dapper/2.1.86":{"type":"package","path":"dapper/2.1.86"}}}`
+	if err := os.WriteFile(filepath.Join(obj, "project.assets.json"), []byte(assets), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := overview()
+	if !strings.Contains(got, "Corp.Lib 1.2.3") || !strings.Contains(got, "1 package") || !strings.Contains(got, "IDE can't see") {
+		t.Errorf("overview = %q", got)
+	}
+
+	// Approved, it's no longer waiting for the user; and once the cache has the package, nothing is.
+	desk.Allow([]string{desk.Pending()[0].Key})
+	dapper := filepath.Join(cache, "dapper", "2.1.86")
+	if err := os.MkdirAll(dapper, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dapper, ".nupkg.metadata"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := overview(); !strings.Contains(got, "Nothing is waiting") {
+		t.Errorf("overview = %q, want nothing waiting", got)
+	}
+}
+
+func TestTheOverviewWithNoSyncSaysOnlyWhatTheDeskHolds(t *testing.T) {
+	box := packagereq.Mailbox{Dir: t.TempDir()}
+	desk := &packagereq.Desk{Mailbox: box, Ecosystems: map[string]packagereq.Ecosystem{"nuget": quietEcosystem{}}, Policy: func() string { return packagereq.PolicyAsk }}
+	if got := packagesOverview(desk, nil)(); !strings.Contains(got, "Nothing is waiting") {
+		t.Errorf("overview = %q", got)
 	}
 }

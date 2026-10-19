@@ -260,6 +260,9 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 				workspaceConfig = workspaceConfigFor(lay.Home, name, inst, merged)
 			}
 			packageSync = packageSyncFor(lay, name, inst, merged)
+			if desk != nil {
+				desk.Overview = packagesOverview(desk, packageSync)
+			}
 			if agent == "" {
 				agent = agentOf(merged)
 			}

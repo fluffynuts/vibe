@@ -333,3 +333,33 @@ func TestTheDotnetInstructionsSayWhatToDoWhenABuildCantFindAPackageAfterARestore
 		t.Error("the instructions should say to try a forced restore before deleting the path caches")
 	}
 }
+
+// An agent that builds before the user has dealt with what vibe is holding for them downloads its own
+// copies of packages the user's cache lacks, which the user's IDE can't see. Asking first, and telling
+// the user, is the agent's part of that; the instructions are always read, the skill when it matches.
+func TestTheAgentIsToldToAskWhatIsWaitingBeforeItRestoresOrBuilds(t *testing.T) {
+	dotnet := filepath.Join("..", "..", "library", "dotnet")
+	instructions, err := os.ReadFile(filepath.Join(dotnet, "agent-instructions.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	skill, err := os.ReadFile(filepath.Join(dotnet, "agent-files", ".claude", "skills", "vibe-nuget", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	front, _, _ := strings.Cut(strings.TrimPrefix(string(skill), "---\n"), "\n---\n")
+	if !strings.Contains(front, "vibe-nuget status") {
+		t.Errorf("the skill's description should say to run vibe-nuget status before a restore or build:\n%s", front)
+	}
+	for name, text := range map[string]string{"instructions": string(instructions), "skill": string(skill)} {
+		for _, want := range []string{"vibe-nuget status", "Tell the user", "wait"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("the %s don't say %q", name, want)
+			}
+		}
+	}
+	text := string(instructions)
+	if strings.Index(text, "vibe-nuget status") > strings.Index(text, "## NuGet packages from private feeds") {
+		t.Error("the instructions should come to asking what is waiting before the rest: it's what the agent does first")
+	}
+}

@@ -471,3 +471,53 @@ func TestDenyLeavesWhatIsAlreadyApproved(t *testing.T) {
 		t.Errorf("1-a %q, 2-b %q", rig.answer(t, "1-a"), rig.answer(t, "2-b"))
 	}
 }
+
+// A request to say what is waiting for the user is answered at once, from what the host knows; it
+// is never held for approval, and no package is fetched for it.
+func TestAStatusRequestIsAnsweredAtOnceWithWhatTheHostSaysIsWaiting(t *testing.T) {
+	rig := newDesk(t, "ask")
+	rig.desk.Overview = func() string { return "2 package requests are waiting for the user" }
+	drop(t, rig.box, "1-a.json", `{"kind":"status"}`)
+	rig.desk.Poll(context.Background())
+	if got := rig.answer(t, "1-a"); got != "info\n2 package requests are waiting for the user\n" {
+		t.Errorf("answer = %q", got)
+	}
+	if len(rig.desk.Pending()) != 0 || len(rig.eco.fetched) != 0 {
+		t.Errorf("pending %v, fetched %v: a status request is neither held nor fetched", rig.desk.Pending(), rig.eco.fetched)
+	}
+}
+
+func TestAStatusRequestIsAnsweredFailedWhereThereIsNoWayToSay(t *testing.T) {
+	rig := newDesk(t, "ask")
+	drop(t, rig.box, "1-a.json", `{"kind":"status"}`)
+	rig.desk.Poll(context.Background())
+	if got := rig.answer(t, "1-a"); !strings.HasPrefix(got, "failed\n") {
+		t.Errorf("answer = %q", got)
+	}
+}
+
+func TestAnUnavailableDeskSaysWhyToAStatusRequestToo(t *testing.T) {
+	rig := newDesk(t, "ask")
+	rig.desk.Unavailable = "the sandbox's folder holds vibe's own"
+	rig.desk.Overview = func() string { return "all well" }
+	drop(t, rig.box, "1-a.json", `{"kind":"status"}`)
+	rig.desk.Poll(context.Background())
+	if got := rig.answer(t, "1-a"); !strings.HasPrefix(got, "failed\n") || !strings.Contains(got, "holds vibe's own") {
+		t.Errorf("answer = %q", got)
+	}
+}
+
+// What isn't a kind of request the host knows isn't taken for a package request, with the rest of
+// it ignored.
+func TestARequestOfAnUnknownKindIsRefused(t *testing.T) {
+	rig := newDesk(t, "allow")
+	drop(t, rig.box, "1-a.json", `{"kind":"explode","ecosystem":"nuget","id":"A.Lib","version":"1.0.0","framework":"net8.0"}`)
+	rig.desk.Poll(context.Background())
+	rig.desk.Wait()
+	if got := rig.answer(t, "1-a"); !strings.HasPrefix(got, "failed\n") || !strings.Contains(got, "explode") {
+		t.Errorf("answer = %q", got)
+	}
+	if len(rig.eco.fetched) != 0 {
+		t.Error("fetched for a request of a kind it doesn't know")
+	}
+}

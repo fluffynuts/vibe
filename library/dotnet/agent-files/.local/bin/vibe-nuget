@@ -13,10 +13,13 @@
 usage() {
   cat >&2 <<'USAGE'
 usage: vibe-nuget fetch ID VERSION [--framework TFM]
+       vibe-nuget status
 
-  Ask the host to fetch the NuGet package ID at exactly VERSION, from the
-  feeds in the host's NuGet config, then restore again. TFM is the target
-  framework, such as net8.0; it defaults to the project's here.
+  fetch  Ask the host to fetch the NuGet package ID at exactly VERSION, from
+         the feeds in the host's NuGet config, then restore again. TFM is the
+         target framework, such as net8.0; it defaults to the project's here.
+  status Ask the host what is waiting for the user (requests to approve,
+         packages their IDE can't see), before you restore or build.
 USAGE
   exit 2
 }
@@ -26,23 +29,33 @@ fail() {
   exit "$2"
 }
 
-[ "$1" = fetch ] || usage
+command=$1
+case "$command" in
+  fetch | status) ;;
+  *) usage ;;
+esac
 shift
-[ $# -ge 2 ] || usage
-id=$1
-version=$2
-shift 2
+id=
+version=
 framework=
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --framework)
-      [ $# -ge 2 ] || fail "--framework needs a value, such as net8.0" 2
-      framework=$2
-      shift 2
-      ;;
-    *) usage ;;
-  esac
-done
+if [ "$command" = fetch ]; then
+  [ $# -ge 2 ] || usage
+  id=$1
+  version=$2
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --framework)
+        [ $# -ge 2 ] || fail "--framework needs a value, such as net8.0" 2
+        framework=$2
+        shift 2
+        ;;
+      *) usage ;;
+    esac
+  done
+else
+  [ $# -eq 0 ] || usage
+fi
 
 if [ -z "$VIBE_PACKAGES_DIR" ]; then
   fail "VIBE_PACKAGES_DIR isn't set: this sandbox wasn't given a place to ask for packages. Rebuild it ('vibe -r' on the host), and check that settings.yaml's nuget isn't 'shared' (then the whole host cache is already here)." 1
@@ -51,6 +64,7 @@ inbox=$VIBE_PACKAGES_DIR/inbox
 view=$VIBE_PACKAGES_DIR/view
 [ -d "$inbox" ] || fail "$inbox isn't there: rebuild this sandbox ('vibe -r' on the host)" 1
 
+if [ "$command" = fetch ]; then
 # The host checks all of this again; here, so a mistake is said at once, and
 # so nothing but these characters ever goes in the request.
 case "$id" in
@@ -94,6 +108,7 @@ fi
 case "$framework" in
   "" | *[!0-9a-z.]*) fail "'$framework' isn't a target framework such as net8.0" 2 ;;
 esac
+fi
 
 # With the host's cache overlaid here (see link-nuget), a package this
 # sandbox looked for before the host fetched it is still answered as missing:
@@ -113,10 +128,16 @@ forget_what_was_missing() {
 
 nonce=$(date +%s)-$$
 tmp=$inbox/.$nonce.tmp
-printf '{"ecosystem":"nuget","id":"%s","version":"%s","framework":"%s"}\n' "$id" "$version" "$framework" >"$tmp" ||
-  fail "couldn't write a request in $inbox" 1
+if [ "$command" = status ]; then
+  printf '{"kind":"status"}\n' >"$tmp" || fail "couldn't write a request in $inbox" 1
+else
+  printf '{"ecosystem":"nuget","id":"%s","version":"%s","framework":"%s"}\n' "$id" "$version" "$framework" >"$tmp" ||
+    fail "couldn't write a request in $inbox" 1
+fi
 mv "$tmp" "$inbox/$nonce.json" || fail "couldn't put the request in $inbox" 1
-echo "vibe-nuget: asked the host for $id $version ($framework)"
+if [ "$command" = fetch ]; then
+  echo "vibe-nuget: asked the host for $id $version ($framework)"
+fi
 
 answer=$view/$nonce.answer
 shown=
@@ -132,6 +153,7 @@ while :; do
       fi
     else
       echo "$message"
+      [ "$status" = info ] && exit 0
       if [ "$status" = fetched ]; then
         forget_what_was_missing
         exit 0

@@ -26,34 +26,16 @@ type PackageSync interface {
 // tests.
 var packageSyncEvery = 10 * time.Second
 
-// actionableMissing is the packages the cache lacks that fetching could
-// bring: not those the last run found no feed to have.
+// actionableMissing is what a fetch could bring (see nugetfetch.SyncState.Actionable), even while
+// one is under way: the poll asks it when none is.
 func actionableMissing(st nugetfetch.SyncState) int {
-	nowhere := map[nugetfetch.Package]bool{}
-	if st.Last != nil {
-		for _, p := range st.Last.Unresolved {
-			nowhere[p] = true
-		}
-	}
-	distinct := map[nugetfetch.Package]bool{}
-	for _, g := range st.Missing {
-		for _, p := range g.Packages {
-			if !nowhere[p] {
-				distinct[p] = true
-			}
-		}
-	}
-	return len(distinct)
+	st.Running = false
+	return st.Actionable()
 }
 
 // fixableNow is actionableMissing, but none while a fetch is under way: what
 // the Admin tab's dot and its card's highlight are both drawn for.
-func fixableNow(st nugetfetch.SyncState) int {
-	if st.Running {
-		return 0
-	}
-	return actionableMissing(st)
-}
+func fixableNow(st nugetfetch.SyncState) int { return st.Actionable() }
 
 // packagesToFetch is fixableNow for the sandbox's sync, 0 for a sandbox with none.
 func (s *Server) packagesToFetch() int {

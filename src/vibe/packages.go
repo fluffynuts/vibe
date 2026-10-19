@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"vibe/internal/layout"
@@ -166,4 +167,75 @@ func workspaceConfigFor(vibeHome, name string, inst state.Instance, merged setti
 		w.HostConfigs = append(w.HostConfigs, filepath.Join(config, "NuGet", "NuGet.Config"))
 	}
 	return w
+}
+
+// maxOverviewListed is how many waiting requests the overview names; the rest are counted.
+const maxOverviewListed = 5
+
+// packagesOverview says, for an agent that asks (vibe-nuget status), what the user has waiting: the
+// requests held for their approval, and what the sandbox restored that their package cache lacks,
+// looked at as it's asked. sync is nil where the sandbox has none.
+func packagesOverview(desk *packagereq.Desk, sync *nugetfetch.Sync) func() string {
+	return func() string {
+		var requests []string
+		for _, p := range desk.Pending() {
+			if !p.Approved {
+				requests = append(requests, p.Request.ID+" "+p.Request.Version)
+			}
+		}
+		missing, fetching := 0, false
+		if sync != nil {
+			sync.Check()
+			st := sync.State()
+			fetching = st.Running
+			st.Running = false
+			missing = st.Actionable()
+		}
+		return overviewText(requests, missing, fetching)
+	}
+}
+
+// overviewText is the overview, in the terms an agent can act on: what is waiting for the user, and
+// that it should tell them and wait, not build and download its own copies of what their cache lacks.
+func overviewText(requests []string, missing int, fetching bool) string {
+	var parts []string
+	if n := len(requests); n > 0 {
+		listed := requests
+		more := ""
+		if n > maxOverviewListed {
+			listed = requests[:maxOverviewListed]
+			more = fmt.Sprintf(" and %d more", n-maxOverviewListed)
+		}
+		noun := either(n == 1, "package request", "package requests")
+		parts = append(parts, fmt.Sprintf("The user has %d %s waiting for their approval on the Admin tab's Packages card (%s%s). "+
+			"Tell the user, and wait for them to approve before you restore or build: you can't have those packages until they do.",
+			n, noun, strings.Join(listed, ", "), more))
+	}
+	if missing > 0 {
+		one := missing == 1
+		noun := either(one, "package", "packages")
+		if fetching {
+			parts = append(parts, fmt.Sprintf("%d %s this sandbox restored %s being fetched into the user's package cache. "+
+				"Wait for that to finish, then run vibe-nuget status again before you restore or build.",
+				missing, noun, either(one, "is", "are")))
+		} else {
+			parts = append(parts, fmt.Sprintf("%d %s this sandbox restored %s in the user's package cache, so their IDE can't see %s. "+
+				"If you restore or build now you'll download your own copies of any that are missing, which their IDE won't see either. "+
+				"Tell the user: the Admin tab's Packages card has a Fetch them button, which fetches them on their machine. "+
+				"Wait until they have, then run vibe-nuget status again.",
+				missing, noun, either(one, "isn't", "aren't"), either(one, "it", "them")))
+		}
+	}
+	if len(parts) == 0 {
+		return "Nothing is waiting for the user: no package requests to approve, and every package this sandbox restored is in their package cache."
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// either is a when yes, and b when not.
+func either(yes bool, a, b string) string {
+	if yes {
+		return a
+	}
+	return b
 }

@@ -483,3 +483,20 @@ func TestWhenSeveralSetsFailItIsTheFirstThatIsSaid(t *testing.T) {
 		t.Errorf("last %+v, want the first set's failure", last)
 	}
 }
+
+// What a fetch could bring: the missing, less what the last run found no feed to have, and none while a run is on.
+func TestWhatAFetchCouldBringIsWhatIsMissingLessWhatNoFeedHas(t *testing.T) {
+	missing := []Group{{Framework: "net8.0", Packages: []Package{{"A", "1.0.0"}, {"B", "1.0.0"}, {"Gone", "9.0.0"}}}, {Framework: "net462", Packages: []Package{{"A", "1.0.0"}}}}
+	st := SyncState{Missing: missing, Count: 3}
+	if got := st.Actionable(); got != 3 {
+		t.Errorf("Actionable = %d, want the 3 different packages", got)
+	}
+	st.Last = &SyncResult{Unresolved: []Package{{"Gone", "9.0.0"}}}
+	if got := st.Actionable(); got != 2 {
+		t.Errorf("Actionable = %d, want 2 once one is known to be nowhere", got)
+	}
+	st.Running = true
+	if got := st.Actionable(); got != 0 {
+		t.Errorf("Actionable = %d while a run is on, want 0", got)
+	}
+}

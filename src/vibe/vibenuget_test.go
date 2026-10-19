@@ -254,3 +254,38 @@ func TestVibeNugetMakesAnOverlaidCacheSeeWhatTheHostFetched(t *testing.T) {
 		})
 	}
 }
+
+// Before it builds, the agent can ask what the user has waiting: vibe-nuget status prints what the
+// host says, at once, so it can tell the user before downloading its own copies of packages.
+func TestVibeNugetStatusSaysWhatTheHostSaysIsWaiting(t *testing.T) {
+	m := sandboxMailbox(t)
+	var asked packagereq.Request
+	res := runVibeNuget(t, m, func(tk packagereq.Taken) {
+		asked = tk.Request
+		m.Reply(tk.Nonce, packagereq.Answer{Status: packagereq.Info, Message: "2 package requests are waiting for the user"})
+	}, "status")
+	if res.code != 0 || !strings.Contains(res.out, "2 package requests are waiting for the user") {
+		t.Errorf("exit %d:\n%s", res.code, res.out)
+	}
+	if asked.Kind != packagereq.KindStatus || asked.ID != "" || asked.Ecosystem != "" {
+		t.Errorf("the host was asked %+v, want only the status", asked)
+	}
+}
+
+func TestVibeNugetStatusFailsWhenTheHostCannotSay(t *testing.T) {
+	m := sandboxMailbox(t)
+	res := runVibeNuget(t, m, func(tk packagereq.Taken) {
+		m.Reply(tk.Nonce, packagereq.Answer{Status: packagereq.Failed, Message: "the host has nothing to say"})
+	}, "status")
+	if res.code != 1 || !strings.Contains(res.out, "the host has nothing to say") {
+		t.Errorf("exit %d:\n%s", res.code, res.out)
+	}
+}
+
+func TestVibeNugetStatusTakesNothingElseAndAsksNothing(t *testing.T) {
+	m := sandboxMailbox(t)
+	res := runVibeNuget(t, m, func(packagereq.Taken) { t.Error("asked the host") }, "status", "Corp.Lib")
+	if res.code != 2 || !strings.Contains(res.out, "usage") {
+		t.Errorf("exit %d:\n%s", res.code, res.out)
+	}
+}

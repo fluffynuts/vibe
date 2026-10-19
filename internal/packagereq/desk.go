@@ -46,6 +46,9 @@ type Desk struct {
 	// terms (a new package, an upgrade from 1.0.0), worked out by vibe from
 	// the project, never from the agent's word; nil says nothing.
 	Describe func(Request) string
+	// Overview says what is waiting for the user, for an agent that asks (KindStatus); a desk
+	// with none says it can't.
+	Overview func() string
 	// Parallel is how many fetches run at once; DefaultParallel when 0.
 	Parallel int
 	// Log says what's asked and what came of it, in vibe's own output.
@@ -134,6 +137,15 @@ func (d *Desk) take(t Taken) {
 		d.refuse(t, d.Unavailable)
 		return
 	}
+	switch t.Request.Kind {
+	case "":
+	case KindStatus:
+		d.status(t)
+		return
+	default:
+		d.refuse(t, fmt.Sprintf("there is no kind of request %q", t.Request.Kind))
+		return
+	}
 	eco, ok := d.Ecosystems[t.Request.Ecosystem]
 	if !ok {
 		d.refuse(t, fmt.Sprintf("there's no way here to fetch %q packages", t.Request.Ecosystem))
@@ -172,6 +184,17 @@ func (d *Desk) take(t Taken) {
 	p.nonces = append(p.nonces, t.Nonce)
 	if !p.Approved {
 		d.reply(t.Nonce, Waiting, waitingMessage)
+	}
+}
+
+// status answers a request for what is waiting for the user, at once and from what the host knows now.
+func (d *Desk) status(t Taken) {
+	if d.Overview == nil {
+		d.refuse(t, "the host has nothing to say of what is waiting for the user")
+		return
+	}
+	if t.Nonce != "" {
+		d.reply(t.Nonce, Info, d.Overview())
 	}
 }
 

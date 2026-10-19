@@ -57,6 +57,29 @@ type SyncState struct {
 	Problems []string
 }
 
+// Actionable is how many of the missing packages a fetch could bring: not those the last run found
+// no feed to have, and none while a run is on (they're on their way).
+func (st SyncState) Actionable() int {
+	if st.Running {
+		return 0
+	}
+	nowhere := map[Package]bool{}
+	if st.Last != nil {
+		for _, p := range st.Last.Unresolved {
+			nowhere[p] = true
+		}
+	}
+	distinct := map[Package]bool{}
+	for _, g := range st.Missing {
+		for _, p := range g.Packages {
+			if !nowhere[p] {
+				distinct[p] = true
+			}
+		}
+	}
+	return len(distinct)
+}
+
 // ErrSyncRunning is what Run says when one is under way.
 var ErrSyncRunning = errors.New("packages are already being fetched")
 

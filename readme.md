@@ -902,6 +902,7 @@ on the host, and the agent can't plant code in a package your own builds then ru
   packages are never moved into your cache, since a file the sandbox wrote there would run on your
   next build. After a fetch, restore in the IDE if it still shows red: the files the sandbox generated
   name its own cache first (with `nuget: overlay`, they name yours).
+- **Before it restores or builds**, the agent asks `vibe-nuget status` what you have waiting (requests to approve, packages your IDE can't see), and is told to say so and wait, not to download its own copies meanwhile. That's the agent's instructions, not something vibe enforces; the Conversation tab's own check on Send (above) is the one that holds your prompt.
 - **A package from a private feed** the sandbox can't sign in to. When its restore fails with
   `NU1101` or `NU1102`, the agent asks you for it with `vibe-nuget fetch <id> <version>`. The
   request waits on the companion page's **Admin tab**, with what it is to your project (a new

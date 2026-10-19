@@ -1,3 +1,18 @@
+## Before you restore or build
+
+The user's machine can be holding something for them that you would otherwise
+work around: package requests waiting for their approval, or packages this
+sandbox restored that their package cache doesn't have yet (their IDE can't see
+what you download yourself, and the files the build generates name your cache).
+Before the first `dotnet restore`, `build` or `test` of a session, and again
+after the user says they've dealt with it, run:
+
+    vibe-nuget status
+
+If it says something is waiting for the user, Tell the user what it says, and
+wait for them: don't download your own copies of the packages in the meantime.
+If it says nothing is waiting, carry on. If it can't answer, carry on and say so.
+
 ## NuGet packages from private feeds
 
 This sandbox can restore packages from public feeds (nuget.org), but has none

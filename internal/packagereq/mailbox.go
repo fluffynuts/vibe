@@ -25,8 +25,13 @@ const (
 	maxTakeAtOnce = 100
 )
 
+// KindStatus is a request that isn't for a package: it asks what is waiting for the user.
+const KindStatus = "status"
+
 // Request is what the agent asks for.
 type Request struct {
+	// Kind is empty for a request for a package, or what else is asked (KindStatus).
+	Kind      string `json:"kind,omitempty"`
 	Ecosystem string `json:"ecosystem"`
 	ID        string `json:"id"`
 	Version   string `json:"version"`
@@ -42,6 +47,8 @@ const (
 	Denied  Status = "denied"
 	// Waiting is for a request that's with the user, to approve or not.
 	Waiting Status = "waiting"
+	// Info is the answer to a request that asked for no package, only to be told something.
+	Info Status = "info"
 )
 
 // Answer is what the host says of a request: the sandbox's command prints
