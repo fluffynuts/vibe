@@ -540,3 +540,5 @@ html.themed .commands li[aria-selected="true"] {
 #admin-nugetconfig h3 { margin: 0 0 4px; font-size: 13px; }
 #admin-nugetconfig details { margin: 6px 0; }
 #admin-nugetconfig pre { max-height: 240px; overflow: auto; }
+
+#convo-packages { display: flex; gap: 8px; align-items: center; padding: 6px 10px; margin-bottom: 6px; border: 1px solid var(--bad, #c33); border-radius: 6px; }

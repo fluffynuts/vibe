@@ -126,3 +126,48 @@ test('a folder with no nuget.config shows no config section', async () => {
     assert.equal(p.$('admin-nugetconfig').hidden, true)
   } finally { p.close() }
 })
+
+// conversationPage is the Conversation tab of a sandbox with package
+// requests waiting, as vibe's state says: waiting of them.
+function conversationPage(waiting) {
+  const at = { waiting }
+  const routes = {
+    '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, admin: true, conversation: true, packagesWaiting: at.waiting, attention: {} }),
+    '/api/admin': { status: { exists: true, running: true }, upgrades: {} },
+    '/api/packages': { requests: [], config: null },
+    '/api/conversation': { entries: [] },
+  }
+  return openPage({ routes, storage: { 'vibe-companion-tab': 'conversation' } }).then((p) => Object.assign(p, { at }))
+}
+
+test('requests waiting are said in the conversation, with a way to the Admin tab', async () => {
+  const p = await conversationPage(3)
+  try {
+    assert.equal(p.$('convo-packages').hidden, false)
+    assert.match(p.$('convo-packages-text').textContent, /3 package requests are waiting/)
+    assert.equal(p.$('panel-conversation').hidden, false)
+    await p.click('convo-packages-review')
+    assert.equal(p.$('panel-admin').hidden, false, 'the button goes to the Admin tab')
+    assert.equal(p.$('panel-conversation').hidden, true)
+  } finally { p.close() }
+})
+
+test('one request waiting is said in the singular', async () => {
+  const p = await conversationPage(1)
+  try {
+    assert.match(p.$('convo-packages-text').textContent, /1 package request is waiting/)
+  } finally { p.close() }
+})
+
+test('nothing waiting, nothing said; and it goes when the requests are decided', async () => {
+  const p = await conversationPage(0)
+  try {
+    assert.equal(p.$('convo-packages').hidden, true)
+    p.at.waiting = 2
+    await p.poll()
+    assert.equal(p.$('convo-packages').hidden, false, 'it appears when requests arrive')
+    p.at.waiting = 0
+    await p.poll()
+    assert.equal(p.$('convo-packages').hidden, true, 'and goes when they are decided')
+  } finally { p.close() }
+})

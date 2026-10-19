@@ -231,3 +231,27 @@ func TestAConfigThatChangedUnderTheUserIsRefusedWithWhy(t *testing.T) {
 		t.Errorf("%d %s", rec.Code, rec.Body)
 	}
 }
+
+func TestTheStateSaysHowManyPackageRequestsAreWaitingForApproval(t *testing.T) {
+	desk := &fakeDesk{}
+	s := packagesServer(desk)
+	waiting := func() int {
+		rec := do(t, s, req{path: "/api/state", headers: authed(nil)})
+		var st struct {
+			Waiting *int `json:"packagesWaiting"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil || st.Waiting == nil {
+			t.Fatalf("no packagesWaiting in %s (%v)", rec.Body, err)
+		}
+		return *st.Waiting
+	}
+	if got := waiting(); got != 0 {
+		t.Errorf("waiting = %d with nothing held", got)
+	}
+	desk.pending = append(demoPending(), demoPending()[0], demoPending()[0])
+	desk.pending[1].Key, desk.pending[2].Key = "b", "c"
+	desk.pending[2].Fetching = true
+	if got := waiting(); got != 2 {
+		t.Errorf("waiting = %d, want 2: a request already being fetched has been approved", got)
+	}
+}

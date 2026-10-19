@@ -510,6 +510,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"attention":         attention,
+		"packagesWaiting":   s.packagesWaitingCount(),
 		"reviewAt":          reviewAt,
 		"pageVersion":       s.pageVersion,
 		"themeColor":        theme,

@@ -83,11 +83,11 @@ func (s *Server) packageRequests() []packageRequest {
 	return out
 }
 
-// packagesWaiting says, for the Admin tab's dot, how many requests wait
-// for the user; "" when none do.
-func (s *Server) packagesWaiting() string {
+// packagesWaitingCount is how many requests wait for the user to decide:
+// one already being fetched has been approved.
+func (s *Server) packagesWaitingCount() int {
 	if s.cfg.Packages == nil {
-		return ""
+		return 0
 	}
 	waiting := 0
 	for _, p := range s.cfg.Packages.Pending() {
@@ -95,13 +95,20 @@ func (s *Server) packagesWaiting() string {
 			waiting++
 		}
 	}
-	switch waiting {
+	return waiting
+}
+
+// packagesWaiting says, for the Admin tab's dot, how many requests wait
+// for the user; "" when none do.
+func (s *Server) packagesWaiting() string {
+	switch waiting := s.packagesWaitingCount(); waiting {
 	case 0:
 		return ""
 	case 1:
 		return "1 package request is waiting for your approval — see the Admin tab"
+	default:
+		return fmt.Sprintf("%d package requests are waiting for your approval — see the Admin tab", waiting)
 	}
-	return fmt.Sprintf("%d package requests are waiting for your approval — see the Admin tab", waiting)
 }
 
 func (s *Server) packagesState(w http.ResponseWriter, r *http.Request) {

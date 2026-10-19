@@ -553,6 +553,7 @@
       $('tab-review').hidden = !res.body.review
       for (const t of SANDBOX_TABS) $('tab-' + t).hidden = res.body.sandboxTabs === false
       state.attention = res.body.attention || {}
+      renderPackagesWaiting(res.body.packagesWaiting || 0)
       state.reviewAt = res.body.review ? res.body.reviewAt || '' : ''
       showAllAttention()
       // A page left open across a rebuild of vibe is the old page: say so.
@@ -2659,6 +2660,14 @@
     }
   }
 
+  // The conversation says when the agent is waiting on the user for
+  // packages: it can't, itself, while its command waits for the approval.
+  function renderPackagesWaiting(waiting) {
+    $('convo-packages').hidden = waiting === 0
+    $('convo-packages-text').textContent = waiting === 1 ? '1 package request is waiting for your approval.'
+      : waiting + ' package requests are waiting for your approval.'
+  }
+
   function describeRequest(r) {
     return r.ecosystem + ' ' + r.id + ' ' + r.version + (r.framework ? ' (' + r.framework + ')' : '')
   }
@@ -2719,6 +2728,11 @@
   }
 
   function wirePackages() {
+    $('convo-packages-review').addEventListener('click', () => {
+      select('admin')
+      $('admin-packages-card').scrollIntoView({ block: 'start' })
+      tick()
+    })
     $('admin-packages-allow').addEventListener('click', () => {
       const keys = Array.from($('admin-packages').querySelectorAll('input:checked:not(:disabled)')).map((b) => b.dataset.key)
       if (!keys.length) { toast('Nothing is ticked.', true); return }
