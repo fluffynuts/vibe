@@ -571,3 +571,5 @@ html.themed .commands li[aria-selected="true"] {
 .agent-light.quiet { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
 @keyframes agent-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 @media (prefers-reduced-motion: reduce) { .agent-light.on { animation: none; } }
+#admin-sync-failed { margin: 0; padding-left: 18px; }
+#admin-sync-failed .was { white-space: pre-wrap; overflow-wrap: anywhere; }

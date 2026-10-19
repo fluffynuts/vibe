@@ -1,6 +1,8 @@
 package nugetfetch
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -345,4 +347,139 @@ func TestAPackageInTwoFrameworksIsOneOfTheTotal(t *testing.T) {
 	}
 	close(release)
 	<-done
+}
+
+// addPackage puts a package with no files, only dependencies, in the feed: what
+// a restore needs of it is its identity and what it depends on.
+func addPackage(t *testing.T, feed, id, version string, deps map[string]string) {
+	t.Helper()
+	var group strings.Builder
+	for dep, from := range deps {
+		group.WriteString(`<dependency id="` + dep + `" version="` + from + `"/>`)
+	}
+	nuspec := `<?xml version="1.0"?><package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd"><metadata><id>` + id +
+		`</id><version>` + version + `</version><authors>t</authors><description>t</description><dependencies><group targetFramework="net10.0">` +
+		group.String() + `</group></dependencies></metadata></package>`
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create(id + ".nuspec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte(nuspec)); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(feed, strings.ToLower(id)+"."+version+".nupkg"), buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Each project's restore is consistent with itself, but what two projects resolved
+// need not be consistent together: one has Demo.Lib at 1.0.0, another has Demo.Needs,
+// which wants Demo.Lib from 2.0.0 (and so has it). Asked for all at once, that is a
+// downgrade NuGet refuses (NU1605) and nothing comes; each project's own is fetched
+// on its own, so it does.
+func TestWhatTwoProjectsResolvedDifferentlyIsStillFetched(t *testing.T) {
+	h := newHost(t)
+	addPackage(t, h.feed, "Demo.Lib", "1.0.0", nil)
+	addPackage(t, h.feed, "Demo.Lib", "2.0.0", nil)
+	addPackage(t, h.feed, "Demo.Needs", "1.0.0", map[string]string{"Demo.Lib": "2.0.0"})
+	ws := t.TempDir()
+	writeAssets(t, filepath.Join(ws, "A"), assetsJSON(map[string][]string{"net10.0": {"Demo.Lib/1.0.0"}}))
+	writeAssets(t, filepath.Join(ws, "B"), assetsJSON(map[string][]string{"net10.0": {"Demo.Needs/1.0.0", "Demo.Lib/2.0.0"}}))
+	s := &Sync{Workspace: ws, Cache: h.cache, Options: h.options}
+	s.Check()
+	if err := s.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v\n%+v", err, s.State().Last)
+	}
+	for _, want := range []string{"demo.lib/1.0.0", "demo.lib/2.0.0", "demo.needs/1.0.0"} {
+		if _, err := os.Stat(filepath.Join(h.cache, filepath.FromSlash(want), ".nupkg.metadata")); err != nil {
+			t.Errorf("%s: %v", want, err)
+		}
+	}
+	if st := s.State(); st.Count != 0 {
+		t.Errorf("still missing %v", st.Missing)
+	}
+}
+
+// A set that can't be fetched mustn't stop the others being tried.
+func TestAFailedSetDoesNotStopTheOthers(t *testing.T) {
+	rig := newSyncRig(t)
+	rig.project(t, "A", map[string][]string{"net8.0": {"Bad.Pkg/1.0.0"}})
+	rig.project(t, "B", map[string][]string{"net8.0": {"Good.Pkg/1.0.0"}})
+	rig.result = func(_ string, pkgs []Package) (BatchResult, error) {
+		if pkgs[0].ID == "Bad.Pkg" {
+			return BatchResult{Output: "error : the feed fell over"}, errors.New("fetching 1 packages: exit status 1")
+		}
+		for _, p := range pkgs {
+			put(t, rig.cache, p)
+		}
+		return BatchResult{Fetched: pkgs}, nil
+	}
+	rig.s.Check()
+	if err := rig.s.Run(context.Background()); err == nil {
+		t.Error("a set failed and the run doesn't say so")
+	}
+	st := rig.s.State()
+	if st.Last == nil || st.Last.Fetched != 1 || st.Last.Error == "" || st.Last.Detail == "" {
+		t.Errorf("last %+v, want the one that came counted and the failure said", st.Last)
+	}
+	if st.Count != 1 {
+		t.Errorf("count = %d, want only Bad.Pkg still missing", st.Count)
+	}
+}
+
+// Packages NuGet failed on are said, each with its words, and the run isn't an error:
+// the rest came.
+func TestPackagesNuGetFailedOnAreSaidWithTheirWords(t *testing.T) {
+	rig := newSyncRig(t)
+	rig.project(t, "A", map[string][]string{"net8.0": {"Bad.Pkg/1.0.0", "Good.Pkg/1.0.0"}})
+	rig.result = func(_ string, pkgs []Package) (BatchResult, error) {
+		put(t, rig.cache, Package{"Good.Pkg", "1.0.0"})
+		return BatchResult{Fetched: []Package{{"Good.Pkg", "1.0.0"}}, Failed: []Failure{{Package{"Bad.Pkg", "1.0.0"}, "Central Directory corrupt"}}}, nil
+	}
+	rig.s.Check()
+	if err := rig.s.Run(context.Background()); err != nil {
+		t.Errorf("Run = %v: the rest came", err)
+	}
+	want := []Failure{{Package{"Bad.Pkg", "1.0.0"}, "Central Directory corrupt"}}
+	if st := rig.s.State(); st.Last == nil || !reflect.DeepEqual(st.Last.Failed, want) || st.Last.Fetched != 1 {
+		t.Errorf("last %+v, want failed %v", st.Last, want)
+	}
+}
+
+func TestACancelledRunDoesNotGoOnToTheOtherSets(t *testing.T) {
+	rig := newSyncRig(t)
+	rig.project(t, "A", map[string][]string{"net8.0": {"One.Pkg/1.0.0"}})
+	rig.project(t, "B", map[string][]string{"net8.0": {"Two.Pkg/1.0.0"}})
+	ctx, cancel := context.WithCancel(context.Background())
+	asked := 0
+	rig.result = func(string, []Package) (BatchResult, error) {
+		asked++
+		cancel()
+		return BatchResult{}, errors.New("fetching 1 packages: signal: killed")
+	}
+	rig.s.Check()
+	rig.s.Run(ctx)
+	if asked != 1 {
+		t.Errorf("%d sets asked for, want the run to stop at the cancel", asked)
+	}
+}
+
+func TestWhenSeveralSetsFailItIsTheFirstThatIsSaid(t *testing.T) {
+	rig := newSyncRig(t)
+	rig.project(t, "A", map[string][]string{"net8.0": {"A.First/1.0.0"}})
+	rig.project(t, "B", map[string][]string{"net8.0": {"B.Second/1.0.0"}})
+	rig.result = func(_ string, pkgs []Package) (BatchResult, error) {
+		return BatchResult{Output: "output for " + pkgs[0].ID}, errors.New("failed for " + pkgs[0].ID)
+	}
+	rig.s.Check()
+	rig.s.Run(context.Background())
+	last := rig.s.State().Last
+	if last == nil || !strings.Contains(last.Error, "A.First") || !strings.Contains(last.Detail, "A.First") || strings.Contains(last.Error, "B.Second") {
+		t.Errorf("last %+v, want the first set's failure", last)
+	}
 }

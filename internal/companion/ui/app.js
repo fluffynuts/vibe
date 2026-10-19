@@ -2836,17 +2836,22 @@
         ? 'Finishing… all ' + got.total + ' are in your cache; the restore is wrapping up.'
         : 'Fetching…' + (got && got.total > 0 ? ' ' + got.done + ' of ' + got.total + ' packages are in your cache.' : '') +
           ' The host downloads them with your own NuGet config; this can take a few minutes.'
-    } else if (last && last.error) {
+    } else if (last && last.error && count > 0) {
+      // Said only while something is still missing: once it's all come, however
+      // (a retry, the IDE's own restore), a failure from before would say the card is wrong.
       status.hidden = false
       status.classList.add('bad-text')
       status.textContent = last.error + (last.detail ? '\n' + last.detail : '')
-    } else if (last) {
+    } else if (last && !last.error) {
       status.hidden = false
       status.textContent = packagesWord(last.fetched || 0) + ' fetched' +
         ((last.unresolved || []).length ? '; no feed has: ' + last.unresolved.map(packageName).join(', ') : '') + '.'
     } else {
       status.hidden = true
     }
+    const failed = !running && count > 0 && last && last.failed ? last.failed : []
+    $('admin-sync-failed').hidden = failed.length === 0
+    $('admin-sync-failed').replaceChildren(...failed.map((f) => el('li', {}, el('code', { text: packageName(f.package) }), ' ', el('span', { class: 'was', text: f.message }))))
   }
 
   async function runSync() {

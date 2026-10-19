@@ -25,7 +25,10 @@ type SyncResult struct {
 	Fetched int `json:"fetched"`
 	// Unresolved are the packages no feed has.
 	Unresolved []Package `json:"unresolved,omitempty"`
-	// Error says why a run failed; Detail is what NuGet said.
+	// Failed are packages NuGet failed on, each with its words: the rest came.
+	Failed []Failure `json:"failed,omitempty"`
+	// Error says why a run couldn't fetch a set at all (it couldn't be run, ran
+	// out of time, was cancelled); Detail is what NuGet said.
 	Error  string `json:"error,omitempty"`
 	Detail string `json:"detail,omitempty"`
 }
@@ -77,6 +80,9 @@ type Sync struct {
 	parsed  map[string]parsedAssets
 	state   SyncState
 	running bool
+	// graphs are what each project's restore resolved, a framework at a time:
+	// every one consistent with itself, which a mix of them need not be.
+	graphs []Group
 	// runGroups is what the run under way, or the last, is fetching; State
 	// only reads it while one is under way.
 	runGroups []Group
@@ -102,6 +108,8 @@ func (s *Sync) checkLocked() {
 		s.parsed = map[string]parsedAssets{}
 	}
 	frameworks := map[string]map[Package]bool{}
+	var graphs []Group
+	graphKeys := map[string]bool{}
 	seen := map[string]bool{}
 	var problems []string
 	skipped := 0
@@ -129,6 +137,10 @@ func (s *Sync) checkLocked() {
 			}
 			for _, p := range pkgs {
 				frameworks[fw][p] = true
+			}
+			if key := graphKey(fw, pkgs); !graphKeys[key] {
+				graphKeys[key] = true
+				graphs = append(graphs, Group{Framework: fw, Packages: pkgs})
 			}
 		}
 	}
@@ -158,9 +170,26 @@ func (s *Sync) checkLocked() {
 			}
 		}
 	}
+	sort.Slice(graphs, func(i, j int) bool {
+		if graphs[i].Framework != graphs[j].Framework {
+			return graphs[i].Framework < graphs[j].Framework
+		}
+		return graphKey("", graphs[i].Packages) < graphKey("", graphs[j].Packages)
+	})
+	s.graphs = graphs
 	s.state.Missing, s.state.Count = missing, len(distinct)
 	s.state.Skipped, s.state.Problems = skipped, problems
 	s.state.Checked = time.Now()
+}
+
+// graphKey says whether two graphs are the same one.
+func graphKey(framework string, pkgs []Package) string {
+	names := make([]string, len(pkgs))
+	for i, p := range pkgs {
+		names[i] = p.ID + "/" + p.Version
+	}
+	sort.Strings(names)
+	return framework + "|" + strings.Join(names, ",")
 }
 
 // State is where Sync stands.
@@ -192,8 +221,11 @@ func (s *Sync) progressLocked() *Progress {
 	return &Progress{Done: len(total) - len(lacking), Total: len(total)}
 }
 
-// Run fetches what's missing, a framework at a time (what one brought isn't
-// fetched again for the next), and says how it went in State's Last. One run
+// Run fetches what's missing, a project's resolved set at a time (what one
+// brought isn't fetched again for the next), and says how it went in State's
+// Last. Each set is consistent with itself; a mix of two projects' need not be
+// (one with a package at 1.0, another with one that wants it from 2.0), and
+// NuGet won't restore that. One run
 // at a time. A package no feed has doesn't fail it: it's said, and stays
 // missing.
 func (s *Sync) Run(ctx context.Context) error {
@@ -205,6 +237,7 @@ func (s *Sync) Run(ctx context.Context) error {
 	s.running = true
 	s.checkLocked()
 	groups := s.state.Missing
+	graphs := s.graphs
 	s.runGroups = groups
 	s.mu.Unlock()
 	defer func() {
@@ -224,21 +257,28 @@ func (s *Sync) Run(ctx context.Context) error {
 	result := &SyncResult{At: time.Now()}
 	unresolved := map[Package]bool{}
 	var failure error
-	for _, g := range groups {
+	for _, g := range graphs {
 		lacking := Missing(s.Cache, g.Packages)
 		if len(lacking) == 0 {
 			continue
 		}
 		res, err := fetch(ctx, g.Framework, lacking, s.Options())
 		result.Fetched += len(res.Fetched)
+		result.Failed = append(result.Failed, res.Failed...)
 		for _, p := range res.Unresolved {
 			unresolved[p] = true
 		}
 		if err != nil {
-			result.Error = fmt.Sprintf("fetching for %s: %s", g.Framework, err)
-			result.Detail = reportable(res.Output)
-			failure = err
-			break
+			// One set not fetching mustn't keep the others from it; the first
+			// failure is the one said.
+			if failure == nil {
+				result.Error = fmt.Sprintf("fetching for %s: %s", g.Framework, err)
+				result.Detail = reportable(res.Output)
+				failure = err
+			}
+			if ctx.Err() != nil {
+				break
+			}
 		}
 	}
 	for p := range unresolved {

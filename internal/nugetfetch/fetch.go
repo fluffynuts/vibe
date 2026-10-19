@@ -56,6 +56,12 @@ func Fetch(ctx context.Context, r Request, opts Options) (Result, error) {
 // restore restores the throwaway project projectXML in a folder of its own
 // under opts.Root, which is removed after, giving what dotnet said. A restore
 // that ran out of time says so.
+// timedOut is a restore that ran out of time: not a package's fault, so not
+// something to split a batch over.
+type timedOut struct{ limit time.Duration }
+
+func (e timedOut) Error() string { return fmt.Sprintf("passed its time limit of %s", e.limit) }
+
 func restore(ctx context.Context, projectXML string, opts Options) (string, error) {
 	if err := os.MkdirAll(opts.Root, 0o700); err != nil {
 		return "", fmt.Errorf("making %s to fetch in: %w", opts.Root, err)
@@ -83,7 +89,7 @@ func restore(ctx context.Context, projectXML string, opts Options) (string, erro
 	cmd.Env = RestoreEnv(opts.Env, opts.Cache)
 	out, err := cmd.CombinedOutput()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return string(out), fmt.Errorf("passed its time limit of %s", opts.Timeout)
+		return string(out), timedOut{opts.Timeout}
 	}
 	return string(out), err
 }

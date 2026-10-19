@@ -213,3 +213,44 @@ test('the bar is full, and says it is finishing, when every package is in but th
     assert.match(p.$('admin-sync-status').textContent, /finishing/i)
   } finally { p.close() }
 })
+
+// NuGet can fail on one package and fetch none of the others; vibe finds the one and
+// fetches the rest, and says which, with NuGet's words.
+test('packages NuGet failed on are listed, each with what it said', async () => {
+  const p = await syncPage(missing({ count: 1, actionable: 1, last: { fetched: 404, at: '2026-10-19T12:00:00Z',
+    failed: [{ package: { id: 'Bad.Pkg', version: '1.0.0' }, message: 'Central Directory corrupt' }] } }))
+  try {
+    const list = p.$('admin-sync-failed')
+    assert.equal(list.hidden, false)
+    assert.match(list.textContent, /Bad\.Pkg 1\.0\.0/)
+    assert.match(list.textContent, /Central Directory corrupt/)
+    assert.match(p.$('admin-sync-status').textContent, /404 packages fetched/)
+  } finally { p.close() }
+})
+
+test('no failures, no list of them', async () => {
+  const p = await syncPage(missing({ last: { fetched: 3, at: '2026-10-19T12:00:00Z' } }))
+  try { assert.equal(p.$('admin-sync-failed').hidden, true) } finally { p.close() }
+})
+
+// What failed once is no news when everything has come since, however it did (a retry,
+// the IDE's own restore): the red message would say the card is wrong.
+test('a failure from before is not shown once nothing is missing any more', async () => {
+  const p = await syncPage(nothing({ last: { fetched: 0, at: '2026-10-19T12:00:00Z', error: 'fetching for net8.0: exit status 1', detail: 'NU1605 …',
+    failed: [{ package: { id: 'Bad.Pkg', version: '1.0.0' }, message: 'x' }] } }))
+  try {
+    assert.equal(p.$('admin-sync-status').classList.contains('bad-text'), false)
+    assert.doesNotMatch(p.$('admin-sync-status').textContent, /NU1605|exit status/)
+    assert.equal(p.$('admin-sync-failed').hidden, true)
+    assert.match(p.$('admin-sync-summary').textContent, /in your package cache/)
+  } finally { p.close() }
+})
+
+test('a failure is still shown while packages are missing', async () => {
+  const p = await syncPage(missing({ last: { fetched: 0, at: '2026-10-19T12:00:00Z', error: 'fetching for net8.0: exit status 1', detail: 'NU1301 unreachable' } }))
+  try {
+    assert.equal(p.$('admin-sync-status').classList.contains('bad-text'), true)
+    assert.match(p.$('admin-sync-status').textContent, /exit status 1/)
+    assert.match(p.$('admin-sync-status').textContent, /NU1301 unreachable/)
+  } finally { p.close() }
+})

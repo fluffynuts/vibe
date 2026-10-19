@@ -2,6 +2,7 @@ package nugetfetch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -15,7 +16,10 @@ func BatchProjectXML(framework string, pkgs []Package) string {
 	sorted := append([]Package(nil), pkgs...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
 	var b strings.Builder
-	fmt.Fprintf(&b, "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>%s</TargetFramework>\n  </PropertyGroup>\n  <ItemGroup>\n", framework)
+	// The job is only to get these exact versions into the cache, so what NuGet
+	// would warn the project's owner of (known vulnerabilities, a package a
+	// direct reference is lower than) isn't a reason to fetch none of them.
+	fmt.Fprintf(&b, "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>%s</TargetFramework>\n    <NuGetAudit>false</NuGetAudit>\n    <NoWarn>$(NoWarn);NU1605</NoWarn>\n  </PropertyGroup>\n  <ItemGroup>\n", framework)
 	for _, p := range sorted {
 		fmt.Fprintf(&b, "    <PackageReference Include=\"%s\" Version=\"[%s]\" />\n", p.ID, p.Version)
 	}
@@ -32,18 +36,33 @@ type BatchResult struct {
 	// Unresolved are the packages no feed has (NuGet said so, by name): set
 	// aside, so they don't keep the rest from coming.
 	Unresolved []Package
+	// Failed are the packages NuGet failed on otherwise, each with its words, found
+	// by restoring halves: one it fails on keeps it from fetching any of the others.
+	Failed []Failure
 }
 
-// maxBatchRounds is how many times a batch is run, each time without what
-// NuGet said no feed had.
-const maxBatchRounds = 4
+// Failure is a package NuGet couldn't fetch, and what it said.
+type Failure struct {
+	Package Package `json:"package"`
+	Message string  `json:"message"`
+}
+
+// maxBatchRestores is how many restores one batch may take, in all: setting aside what
+// no feed has, and finding what else NuGet fails on. What's left when they're spent is
+// said as not tried, not left out.
+const maxBatchRestores = 40
 
 var unresolvedPattern = regexp.MustCompile(`NU110[12]: Unable to find package ([A-Za-z0-9_.-]+)`)
 
-// FetchBatch restores pkgs for framework into opts.Cache, in one restore.
-// A package NuGet says no feed has is named from its own message, set aside
-// and the rest restored again: a restore that can't find one doesn't fetch the
-// others. Anything else that fails is an error.
+// restoreBatch is what FetchBatch restores with; tests stand in for it.
+var restoreBatch = restore
+
+// FetchBatch restores pkgs for framework into opts.Cache. A package NuGet says no feed
+// has is named from its own message, set aside, and the rest restored again: a
+// restore that can't find one doesn't fetch the others. A failure NuGet doesn't put a
+// name to is found by restoring halves, the package it fails on is said with NuGet's
+// words, and the rest still come: so an error is only for what isn't a package's fault,
+// a restore that can't be run, or that ran out of time, or was cancelled.
 func FetchBatch(ctx context.Context, framework string, pkgs []Package, opts Options) (BatchResult, error) {
 	if !frameworkPattern.MatchString(framework) {
 		return BatchResult{}, fmt.Errorf("framework %q is not a target framework such as net8.0", framework)
@@ -56,29 +75,63 @@ func FetchBatch(ctx context.Context, framework string, pkgs []Package, opts Opti
 			return BatchResult{}, fmt.Errorf("%q %q is not a package id and an exact version", p.ID, p.Version)
 		}
 	}
-	var res BatchResult
+	run := &batchRun{ctx: ctx, framework: framework, opts: opts, budget: maxBatchRestores}
 	absent := Missing(opts.Cache, pkgs)
-	todo := append([]Package(nil), pkgs...)
-	for round := 0; round < maxBatchRounds && len(todo) > 0; round++ {
-		out, err := restore(ctx, BatchProjectXML(framework, todo), opts)
-		res.Output = out
-		if err == nil {
-			break
-		}
-		set := unresolvedIn(out, todo)
-		if len(set) == 0 {
-			return res, fmt.Errorf("fetching %d packages: %w", len(todo), err)
-		}
-		res.Unresolved = append(res.Unresolved, set...)
-		todo = without(todo, set)
-	}
+	err := run.attempt(append([]Package(nil), pkgs...))
 	for _, p := range absent {
 		if len(Missing(opts.Cache, []Package{p})) == 0 {
-			res.Fetched = append(res.Fetched, p)
+			run.res.Fetched = append(run.res.Fetched, p)
 		}
 	}
-	sort.Slice(res.Unresolved, func(i, j int) bool { return res.Unresolved[i].ID < res.Unresolved[j].ID })
-	return res, nil
+	sort.Slice(run.res.Unresolved, func(i, j int) bool { return run.res.Unresolved[i].ID < run.res.Unresolved[j].ID })
+	sort.Slice(run.res.Failed, func(i, j int) bool { return run.res.Failed[i].Package.ID < run.res.Failed[j].Package.ID })
+	return run.res, err
+}
+
+// batchRun is one FetchBatch under way.
+type batchRun struct {
+	ctx       context.Context
+	framework string
+	opts      Options
+	budget    int
+	res       BatchResult
+}
+
+// attempt fetches todo: in one restore if NuGet will, else without what no feed has,
+// else half at a time until the package it fails on is alone.
+func (b *batchRun) attempt(todo []Package) error {
+	if len(todo) == 0 {
+		return nil
+	}
+	if b.budget <= 0 {
+		for _, p := range todo {
+			b.res.Failed = append(b.res.Failed, Failure{p, "not tried: finding which packages NuGet fails on took more restores than one fetch is allowed"})
+		}
+		return nil
+	}
+	b.budget--
+	out, err := restoreBatch(b.ctx, BatchProjectXML(b.framework, todo), b.opts)
+	b.res.Output = out
+	if err == nil {
+		return nil
+	}
+	var late timedOut
+	if errors.As(err, &late) || b.ctx.Err() != nil {
+		return fmt.Errorf("fetching %d packages: %w", len(todo), err)
+	}
+	if set := unresolvedIn(out, todo); len(set) > 0 {
+		b.res.Unresolved = append(b.res.Unresolved, set...)
+		return b.attempt(without(todo, set))
+	}
+	if len(todo) == 1 {
+		b.res.Failed = append(b.res.Failed, Failure{todo[0], reportable(out)})
+		return nil
+	}
+	half := len(todo) / 2
+	if err := b.attempt(todo[:half]); err != nil {
+		return err
+	}
+	return b.attempt(todo[half:])
 }
 
 // unresolvedIn is the packages of among that NuGet's output says it couldn't
