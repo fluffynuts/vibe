@@ -1,0 +1,117 @@
+// Tests of the Admin tab's card for making what the sandbox restored visible to
+// the user's IDE, in jsdom (see page.js), run with page.test.js.
+'use strict'
+const test = require('node:test')
+const assert = require('node:assert/strict')
+const { openPage } = require('./page.js')
+
+const missing = (extra) => Object.assign({
+  count: 3, running: false, skipped: 0, problems: [],
+  missing: [{ framework: 'net8.0', packages: [{ id: 'Dapper', version: '2.1.86' }, { id: 'Acornima', version: '1.1.0' }] },
+    { framework: 'net462', packages: [{ id: 'Legacy.Lib', version: '1.2.3' }] }],
+}, extra)
+
+const nothing = (extra) => Object.assign({ count: 0, running: false, missing: [], skipped: 0, problems: [] }, extra)
+
+function syncPage(answer) {
+  const at = { answer, runs: 0 }
+  const routes = {
+    '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, admin: true, attention: {} }),
+    '/api/admin': { status: { exists: true, running: true }, upgrades: {} },
+    '/api/packages/sync': () => at.answer,
+    '/api/packages/sync/run': () => { at.runs++; return at.afterRun || Object.assign({}, at.answer, { running: true }) },
+  }
+  return openPage({ routes, storage: { 'vibe-companion-tab': 'admin' } }).then((p) => Object.assign(p, { at }))
+}
+
+test('a sandbox with nothing to fetch for an IDE has no such card', async () => {
+  const p = await openPage({ routes: {
+    '/api/state': { sandbox: 'box', sandboxTabs: true, admin: true, attention: {} },
+    '/api/admin': { status: {}, upgrades: {} },
+    '/api/packages/sync': { status: 404, body: { error: 'this sandbox has no packages to make visible to an IDE' } },
+  }, storage: { 'vibe-companion-tab': 'admin' } })
+  try { assert.equal(p.$('admin-sync-card').hidden, true) } finally { p.close() }
+})
+
+test('everything being in the cache says so, with nothing to press', async () => {
+  const p = await syncPage(nothing())
+  try {
+    assert.equal(p.$('admin-sync-card').hidden, false)
+    assert.match(p.$('admin-sync-summary').textContent, /in your package cache/)
+    assert.equal(p.$('admin-sync-run').disabled, true)
+  } finally { p.close() }
+})
+
+test('what is missing is counted, and listed by framework to read before fetching', async () => {
+  const p = await syncPage(missing())
+  try {
+    assert.match(p.$('admin-sync-summary').textContent, /3 packages/)
+    assert.match(p.$('admin-sync-summary').textContent, /IDE/)
+    const list = p.$('admin-sync-list').textContent
+    assert.match(list, /net8\.0/)
+    assert.match(list, /Dapper 2\.1\.86/)
+    assert.match(list, /net462/)
+    assert.match(list, /Legacy\.Lib 1\.2\.3/)
+    assert.equal(p.$('admin-sync-run').disabled, false)
+  } finally { p.close() }
+})
+
+test('one is a package, not packages', async () => {
+  const p = await syncPage(missing({ count: 1, missing: [{ framework: 'net8.0', packages: [{ id: 'Dapper', version: '2.1.86' }] }] }))
+  try { assert.match(p.$('admin-sync-summary').textContent, /1 package /) } finally { p.close() }
+})
+
+test('Fetch them asks the host once, and the card shows it under way, with the button off', async () => {
+  const p = await syncPage(missing())
+  try {
+    await p.click('admin-sync-run')
+    assert.equal(p.at.runs, 1)
+    assert.equal(p.$('admin-sync-run').disabled, true)
+    assert.match(p.$('admin-sync-status').textContent, /Fetching/)
+  } finally { p.close() }
+})
+
+test('a run under way is shown as one, however the page came by it', async () => {
+  const p = await syncPage(missing({ running: true }))
+  try {
+    assert.equal(p.$('admin-sync-run').disabled, true)
+    assert.match(p.$('admin-sync-status').textContent, /Fetching/)
+  } finally { p.close() }
+})
+
+test('the last run says how many came', async () => {
+  const p = await syncPage(nothing({ last: { fetched: 199, at: '2026-10-19T12:00:00Z' } }))
+  try { assert.match(p.$('admin-sync-status').textContent, /199 packages fetched/) } finally { p.close() }
+})
+
+test('what no feed has is named, and not offered as something to fetch again', async () => {
+  const p = await syncPage(missing({ count: 1, missing: [{ framework: 'net8.0', packages: [{ id: 'Gone.Pkg', version: '9.9.9' }] }],
+    last: { fetched: 2, unresolved: [{ id: 'Gone.Pkg', version: '9.9.9' }] } }))
+  try {
+    assert.match(p.$('admin-sync-status').textContent, /no feed has.*Gone\.Pkg 9\.9\.9/s)
+  } finally { p.close() }
+})
+
+test('a failed run says why, with what NuGet said to read', async () => {
+  const p = await syncPage(missing({ last: { fetched: 0, error: 'fetching for net8.0: exit status 1', detail: 'error NU1301: the feed isn\'t reachable' } }))
+  try {
+    assert.match(p.$('admin-sync-status').textContent, /fetching for net8\.0/)
+    assert.match(p.$('admin-sync-status').textContent, /NU1301/)
+    assert.ok(p.$('admin-sync-status').classList.contains('bad-text'))
+  } finally { p.close() }
+})
+
+test('assets files that couldn\'t be read are said, so a missing package isn\'t put down to nothing', async () => {
+  const p = await syncPage(nothing({ problems: ['BLL/obj/project.assets.json: not json'] }))
+  try { assert.match(p.$('admin-sync-problems').textContent, /BLL\/obj\/project\.assets\.json/) } finally { p.close() }
+})
+
+test('the card follows the host as the page polls', async () => {
+  const p = await syncPage(missing())
+  try {
+    p.at.answer = nothing({ last: { fetched: 3 } })
+    await p.poll()
+    assert.match(p.$('admin-sync-summary').textContent, /in your package cache/)
+    assert.equal(p.$('admin-sync-run').disabled, true)
+  } finally { p.close() }
+})

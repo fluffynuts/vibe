@@ -44,40 +44,48 @@ func Fetch(ctx context.Context, r Request, opts Options) (Result, error) {
 	if err := r.Validate(); err != nil {
 		return Result{}, err
 	}
+	before := cached(opts.Cache)
+	out, err := restore(ctx, r.ProjectXML(), opts)
+	res := Result{Output: out, Fetched: added(before, cached(opts.Cache))}
+	if err != nil {
+		return res, fmt.Errorf("fetching %s %s: %w", r.ID, r.Version, err)
+	}
+	return res, nil
+}
+
+// restore restores the throwaway project projectXML in a folder of its own
+// under opts.Root, which is removed after, giving what dotnet said. A restore
+// that ran out of time says so.
+func restore(ctx context.Context, projectXML string, opts Options) (string, error) {
 	if err := os.MkdirAll(opts.Root, 0o700); err != nil {
-		return Result{}, fmt.Errorf("making %s to fetch in: %w", opts.Root, err)
+		return "", fmt.Errorf("making %s to fetch in: %w", opts.Root, err)
 	}
 	dir, err := os.MkdirTemp(opts.Root, "fetch-")
 	if err != nil {
-		return Result{}, fmt.Errorf("making a folder to fetch in under %s: %w", opts.Root, err)
+		return "", fmt.Errorf("making a folder to fetch in under %s: %w", opts.Root, err)
 	}
 	defer os.RemoveAll(dir)
 
 	project := filepath.Join(dir, "fetch.csproj")
-	if err := os.WriteFile(project, []byte(r.ProjectXML()), 0o644); err != nil {
-		return Result{}, err
+	if err := os.WriteFile(project, []byte(projectXML), 0o644); err != nil {
+		return "", err
 	}
 	if opts.ApprovedConfig != nil {
 		if err := os.WriteFile(filepath.Join(dir, "nuget.config"), opts.ApprovedConfig, 0o644); err != nil {
-			return Result{}, err
+			return "", err
 		}
 	}
 
-	before := cached(opts.Cache)
 	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "dotnet", RestoreArgs(project)...)
 	cmd.Dir = dir
 	cmd.Env = RestoreEnv(opts.Env, opts.Cache)
 	out, err := cmd.CombinedOutput()
-	res := Result{Output: string(out), Fetched: added(before, cached(opts.Cache))}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return res, fmt.Errorf("fetching %s %s passed its time limit of %s", r.ID, r.Version, opts.Timeout)
+		return string(out), fmt.Errorf("passed its time limit of %s", opts.Timeout)
 	}
-	if err != nil {
-		return res, fmt.Errorf("fetching %s %s: %w", r.ID, r.Version, err)
-	}
-	return res, nil
+	return string(out), err
 }
 
 // cached lists the cache as "id version", ids lowercase as NuGet keeps them.

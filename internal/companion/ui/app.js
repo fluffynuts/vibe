@@ -727,7 +727,7 @@
       post('/api/awake', {}).catch(() => {})
     }
     const loads = state.tab === 'conversation' ? [unlessBusy('state', loadState)]
-      : state.tab === 'admin' ? [unlessBusy('state', loadState), unlessBusy('admin', loadAdmin), unlessBusy('packages', loadPackages), unlessBusy('instructions', () => loadInstructions(false))]
+      : state.tab === 'admin' ? [unlessBusy('state', loadState), unlessBusy('admin', loadAdmin), unlessBusy('packages', loadPackages), unlessBusy('sync', loadSync), unlessBusy('instructions', () => loadInstructions(false))]
       : state.tab === 'manage' ? [unlessBusy('state', loadState), unlessBusy('manage', loadManage)]
       : state.tab === 'review' ? [unlessBusy('state', loadState), unlessBusy('review', () => loadReview(reviewView.files === null))]
       : [unlessBusy('state', loadState), unlessBusy('tab ' + state.tab, () => load(state.tab))]
@@ -2778,6 +2778,80 @@
     }
   }
 
+  // --- making what the sandbox restored visible to the user's IDE -----------
+
+  const syncView = { listKey: '' }
+  const MAX_LISTED = 300
+
+  async function loadSync() {
+    try {
+      const res = await api('/api/packages/sync')
+      reached(true)
+      // A sandbox with nothing of the kind has no such card.
+      $('admin-sync-card').hidden = !res.ok
+      if (res.ok) renderSync(res.body)
+    } catch (e) {
+      reached(false)
+    }
+  }
+
+  const packagesWord = (n) => n + (n === 1 ? ' package' : ' packages')
+  const packageName = (p) => p.id + ' ' + p.version
+
+  function renderSync(b) {
+    const count = b.count || 0
+    const running = !!b.running
+    $('admin-sync-summary').textContent = count
+      ? packagesWord(count) + " the sandbox restored " + (count === 1 ? "isn't" : "aren't") + " in your package cache, so your IDE (Rider, say) can't find " +
+        (count === 1 ? 'it' : 'them') + '. Fetching uses your own NuGet config on this machine, as for a package the agent asks for.'
+      : 'Everything the sandbox restored is in your package cache, so your IDE can find it.'
+    $('admin-sync-details').hidden = count === 0
+    const key = JSON.stringify(b.missing || [])
+    if (key !== syncView.listKey) {
+      syncView.listKey = key
+      $('admin-sync-list').replaceChildren(...(b.missing || []).flatMap((g) => {
+        const shown = g.packages.slice(0, MAX_LISTED).map(packageName).join(', ')
+        const more = g.packages.length > MAX_LISTED ? ' … and ' + (g.packages.length - MAX_LISTED) + ' more' : ''
+        return [el('p', { text: g.framework + ' (' + g.packages.length + ')' }), el('p', { class: 'muted', text: shown + more })]
+      }))
+    }
+    $('admin-sync-run').disabled = running || count === 0
+    const problems = b.problems || []
+    $('admin-sync-problems').hidden = problems.length === 0
+    $('admin-sync-problems').textContent = problems.length ? "Couldn't read: " + problems.join('; ') : ''
+
+    const status = $('admin-sync-status')
+    const last = b.last
+    status.classList.remove('bad-text')
+    if (running) {
+      status.hidden = false
+      status.textContent = 'Fetching… the host downloads them with your own NuGet config; this can take a few minutes.'
+    } else if (last && last.error) {
+      status.hidden = false
+      status.classList.add('bad-text')
+      status.textContent = last.error + (last.detail ? '\n' + last.detail : '')
+    } else if (last) {
+      status.hidden = false
+      status.textContent = packagesWord(last.fetched || 0) + ' fetched' +
+        ((last.unresolved || []).length ? '; no feed has: ' + last.unresolved.map(packageName).join(', ') : '') + '.'
+    } else {
+      status.hidden = true
+    }
+  }
+
+  async function runSync() {
+    $('admin-sync-run').disabled = true
+    try {
+      const res = await post('/api/packages/sync/run', {})
+      reached(true)
+      if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true)
+      else renderSync(res.body)
+    } catch (e) {
+      reached(false)
+      toast('Could not reach vibe.', true)
+    }
+  }
+
   // --- package requests on the Admin tab -----------------------------------
 
   // unticked is the keys of the requests the user has unticked: all are
@@ -2882,6 +2956,7 @@
   }
 
   function wirePackages() {
+    $('admin-sync-run').addEventListener('click', runSync)
     $('convo-packages-review').addEventListener('click', () => {
       select('admin')
       $('admin-packages-card').scrollIntoView({ block: 'start' })

@@ -238,6 +238,18 @@
           </div>
         </section>
 
+        <section class="card" id="admin-sync-card" aria-labelledby="admin-sync-h" hidden>
+          <h2 id="admin-sync-h">Packages your IDE can't see</h2>
+          <p id="admin-sync-summary" class="note"></p>
+          <details id="admin-sync-details" hidden>
+            <summary>The packages</summary>
+            <div id="admin-sync-list" class="info"></div>
+          </details>
+          <p id="admin-sync-problems" class="note bad-text" hidden></p>
+          <div class="bar"><button type="button" id="admin-sync-run">Fetch them</button></div>
+          <p id="admin-sync-status" class="note" role="status" hidden></p>
+        </section>
+
         <section class="card" id="admin-job-card" aria-labelledby="admin-job-h" hidden>
           <h2 id="admin-job-h" tabindex="-1">Last action <span id="admin-job-state" class="pill"></span></h2>
           <pre id="admin-job" class="info log" role="log" aria-live="polite"></pre>
