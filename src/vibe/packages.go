@@ -95,6 +95,42 @@ func packageDeskFor(lay layout.Layout, name string, inst state.Instance, merged 
 	}
 }
 
+// syncWithin bounds one fetch of what the sandbox restored: a whole solution's
+// packages, downloaded in one go.
+const syncWithin = 15 * time.Minute
+
+// packageSyncFor is what fetches, for the user's IDE, the packages the sandbox
+// restored into its own cache (an IDE on the host reads the host's), or nil
+// when the sandbox isn't given the host's packages to fall back on, or its
+// folder holds what NuGet reads on the host (nothing is fetched for it: see
+// packagesUnavailable).
+func packageSyncFor(lay layout.Layout, name string, inst state.Instance, merged settings.Settings) *nugetfetch.Sync {
+	cache, ok := nugetFallbackPackages(merged)
+	if !ok || packagesUnavailable(inst.Target, lay.Home, merged) != "" {
+		return nil
+	}
+	root := state.NugetFetchPath(lay.Home)
+	workspace := workspaceConfigFor(lay.Home, name, inst, merged)
+	return &nugetfetch.Sync{
+		Workspace: inst.Target,
+		Cache:     cache,
+		Options: func() nugetfetch.Options {
+			return nugetfetch.Options{Root: root, Cache: cache, Env: os.Environ(), Timeout: syncWithin,
+				ApprovedConfig: workspace.ApprovedContent()}
+		},
+	}
+}
+
+// packageSyncAuto says whether to fetch what the sandbox restored without
+// asking: when the user's settings allow package fetches, as they're read each
+// time.
+func packageSyncAuto(lay layout.Layout, profile string) func() bool {
+	return func() bool {
+		now, err := loadSettings(lay, profile)
+		return err == nil && packagesPolicy(now) == packagereq.PolicyAllow
+	}
+}
+
 // describeWithin bounds reading a project to say what a request is.
 const describeWithin = 30 * time.Second
 

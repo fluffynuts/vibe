@@ -6,9 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"vibe/internal/layout"
 	"vibe/internal/packagereq"
 	"vibe/internal/settings"
+	"vibe/internal/state"
 )
 
 func TestLoadSettingsRefusesAnUnknownPackagesPolicy(t *testing.T) {
@@ -100,5 +103,64 @@ func TestARequestIsDescribedFromTheProjectOnTheDefaultBranch(t *testing.T) {
 	got = describeRequest(dir, packagereq.Request{Ecosystem: "nuget", ID: "Other.Lib", Version: "1.0.0", Framework: "net8.0"})
 	if !strings.HasPrefix(got, "new") {
 		t.Errorf("got %q", got)
+	}
+}
+
+// What the sandbox restores into its own cache is fetched into the host's, for
+// the user's IDE: from the sandbox's folder, into the packages folder the
+// sandbox is given read-only.
+func TestTheSyncReadsTheSandboxsFolderAndFillsTheHostsPackages(t *testing.T) {
+	nuget := hostNuget(t)
+	lay := updateLayout(t)
+	target := filepath.Join(t.TempDir(), "project")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	merged := settings.Settings{NugetDir: nuget}
+	sync := packageSyncFor(lay, "box", state.Instance{Name: "box", Profile: "p", Target: target}, merged)
+	if sync == nil {
+		t.Fatal("no sync for a sandbox that's given the host's packages")
+	}
+	if sync.Workspace != target || sync.Cache != filepath.Join(nuget, "packages") {
+		t.Errorf("workspace %q, cache %q", sync.Workspace, sync.Cache)
+	}
+	opts := sync.Options()
+	if opts.Root != state.NugetFetchPath(lay.Home) || opts.Cache != sync.Cache || opts.Timeout < 10*time.Minute {
+		t.Errorf("options = %+v: fetches go in vibe's own folder, to the same cache, with time for a whole solution", opts)
+	}
+}
+
+func TestThereIsNoSyncWhereTheSandboxIsntGivenTheHostsPackages(t *testing.T) {
+	lay := updateLayout(t)
+	inst := state.Instance{Name: "box", Profile: "p", Target: t.TempDir()}
+	for name, merged := range map[string]settings.Settings{
+		"no nuget":      {},
+		"shared":        {NugetDir: hostNuget(t), Nuget: "shared"},
+		"no host cache": {NugetDir: filepath.Join(t.TempDir(), "nope")},
+	} {
+		if packageSyncFor(lay, "box", inst, merged) != nil {
+			t.Errorf("%s: a sync for it", name)
+		}
+	}
+}
+
+// If the agent could change what a fetch does, nothing is fetched for it.
+func TestThereIsNoSyncWhenTheSandboxsFolderHoldsWhatNuGetReadsOnTheHost(t *testing.T) {
+	home := t.TempDir()
+	lay := layout.New(filepath.Join(home, ".vibe"), t.TempDir())
+	nuget := filepath.Join(home, ".nuget")
+	os.MkdirAll(filepath.Join(nuget, "packages"), 0o755)
+	if packageSyncFor(lay, "box", state.Instance{Name: "box", Target: home}, settings.Settings{NugetDir: nuget}) != nil {
+		t.Error("a sync for a sandbox in the user's home folder")
+	}
+}
+
+func TestSyncingRunsWithoutAskingOnlyWhenPackagesAreAllowed(t *testing.T) {
+	lay := updateLayout(t)
+	for setting, want := range map[string]bool{"": false, "packages: ask\n": false, "packages: allow\n": true} {
+		writeFile(t, lay.HomePath("profiles", "p", "settings.yaml"), setting)
+		if got := packageSyncAuto(lay, "p")(); got != want {
+			t.Errorf("settings %q: auto = %v, want %v", setting, got, want)
+		}
 	}
 }
