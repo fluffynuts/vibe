@@ -2,11 +2,13 @@ package nugetfetch
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -46,18 +48,75 @@ func newHost(t *testing.T) host {
 	return h
 }
 
+// demoPackages is where the test packages are packed, once for the whole run:
+// packing is slow, and every test wants the same ones.
+var demoPackages struct {
+	once sync.Once
+	dir  string
+	err  error
+}
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if demoPackages.dir != "" {
+		os.RemoveAll(demoPackages.dir)
+	}
+	os.Exit(code)
+}
+
+func packDemoOnce() (string, error) {
+	demoPackages.once.Do(func() {
+		dir, err := os.MkdirTemp("", "nugetfetch-demo-")
+		if err != nil {
+			demoPackages.err = err
+			return
+		}
+		demoPackages.dir = dir
+		home := filepath.Join(dir, "home")
+		if demoPackages.err = os.MkdirAll(home, 0o755); demoPackages.err != nil {
+			return
+		}
+		for _, id := range []string{"Demo.Pkg", "Demo.Two", "Demo.Three"} {
+			src := filepath.Join(dir, "src", id)
+			if demoPackages.err = os.MkdirAll(src, 0o755); demoPackages.err != nil {
+				return
+			}
+			project := `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><PackageId>` + id + `</PackageId><Version>1.0.0</Version></PropertyGroup></Project>`
+			if demoPackages.err = os.WriteFile(filepath.Join(src, id+".csproj"), []byte(project), 0o644); demoPackages.err != nil {
+				return
+			}
+			if demoPackages.err = os.WriteFile(filepath.Join(src, "C.cs"), []byte("class C {}"), 0o644); demoPackages.err != nil {
+				return
+			}
+			cmd := exec.Command("dotnet", "pack", "-o", filepath.Join(dir, "feed"))
+			cmd.Dir = src
+			cmd.Env = append(os.Environ(), "HOME="+home, "NUGET_PACKAGES="+filepath.Join(dir, "cache"),
+				"DOTNET_CLI_TELEMETRY_OPTOUT=1", "DOTNET_NOLOGO=1")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				demoPackages.err = fmt.Errorf("packing %s: %v\n%s", id, err, out)
+				return
+			}
+		}
+	})
+	return filepath.Join(demoPackages.dir, "feed"), demoPackages.err
+}
+
 func packDemo(t *testing.T, h host) {
 	t.Helper()
-	src := t.TempDir()
-	must(t, os.WriteFile(filepath.Join(src, "Demo.Pkg.csproj"), []byte(
-		`<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><PackageId>Demo.Pkg</PackageId><Version>1.0.0</Version></PropertyGroup></Project>`), 0o644))
-	must(t, os.WriteFile(filepath.Join(src, "C.cs"), []byte("class C {}"), 0o644))
-	cmd := exec.Command("dotnet", "pack", "-o", h.feed)
-	cmd.Dir = src
-	cmd.Env = append(os.Environ(), "HOME="+h.home, "NUGET_PACKAGES="+filepath.Join(t.TempDir(), "p"),
-		"DOTNET_CLI_TELEMETRY_OPTOUT=1", "DOTNET_NOLOGO=1")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("packing the demo package: %v\n%s", err, out)
+	feed, err := packDemoOnce()
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := os.ReadDir(feed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		data, err := os.ReadFile(filepath.Join(feed, f.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		must(t, os.WriteFile(filepath.Join(h.feed, f.Name()), data, 0o644))
 	}
 }
 
@@ -190,6 +249,7 @@ func TestAnApprovedRequestIsFetchedThroughTheDeskIntoTheHostCache(t *testing.T) 
 	}
 	desk.Allow([]string{pending[0].Key})
 	desk.Poll(context.Background())
+	desk.Wait()
 
 	if _, err := os.Stat(filepath.Join(h.cache, "demo.pkg", "1.0.0")); err != nil {
 		t.Errorf("not in the host cache: %v", err)
@@ -212,6 +272,7 @@ func TestAnUnknownPackageIsAnsweredFailedWithNuGetsWords(t *testing.T) {
 	must(t, os.WriteFile(filepath.Join(box.Inbox(), "1-a.json"),
 		[]byte(`{"ecosystem":"nuget","id":"Nope.Pkg","version":"1.0.0","framework":"net10.0"}`), 0o644))
 	desk.Poll(context.Background())
+	desk.Wait()
 	answer, _ := os.ReadFile(filepath.Join(box.View(), "1-a.answer"))
 	if !strings.HasPrefix(string(answer), "failed\n") || !strings.Contains(string(answer), "NU1101") {
 		t.Errorf("answer = %q", answer)
@@ -251,5 +312,38 @@ func TestFetchMakesItsRootWhenItIsNotThereYet(t *testing.T) {
 	}
 	if left, _ := os.ReadDir(opts.Root); len(left) != 0 {
 		t.Errorf("throwaway folder left behind: %v", left)
+	}
+}
+
+// Fetches run together (the desk runs several at once), into one cache: NuGet
+// locks per package, so each lands whole, even the same package asked twice.
+func TestFetchesRunTogetherIntoOneCacheAllLandWhole(t *testing.T) {
+	h := newHost(t)
+	var wg sync.WaitGroup
+	errs := make(chan string, 6)
+	for _, id := range []string{"Demo.Pkg", "Demo.Two", "Demo.Three", "Demo.Pkg", "Demo.Two", "Demo.Three"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			res, err := Fetch(context.Background(), Request{ID: id, Version: "1.0.0", Framework: "net10.0"}, h.options())
+			if err != nil {
+				errs <- id + ": " + err.Error() + "\n" + res.Output
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for e := range errs {
+		t.Error(e)
+	}
+	for _, id := range []string{"demo.pkg", "demo.two", "demo.three"} {
+		for _, file := range []string{id + ".1.0.0.nupkg", id + ".nuspec"} {
+			if _, err := os.Stat(filepath.Join(h.cache, id, "1.0.0", file)); err != nil {
+				t.Errorf("%s: %v", id, err)
+			}
+		}
+	}
+	if left, _ := os.ReadDir(h.root); len(left) != 0 {
+		t.Errorf("throwaway folders left behind: %v", left)
 	}
 }

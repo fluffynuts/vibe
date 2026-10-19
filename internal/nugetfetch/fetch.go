@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"sync"
 	"time"
 )
 
@@ -38,19 +37,13 @@ type Result struct {
 	Fetched []string
 }
 
-// One at a time: a restore holds locks in the cache, and a flood of
-// requests should queue rather than pile up.
-var one sync.Mutex
-
 // Fetch restores r into opts.Cache and removes what it made. It never reads
-// the agent's workspace.
+// the agent's workspace. Fetches may run together: each has a folder of its
+// own, and NuGet locks the cache per package.
 func Fetch(ctx context.Context, r Request, opts Options) (Result, error) {
 	if err := r.Validate(); err != nil {
 		return Result{}, err
 	}
-	one.Lock()
-	defer one.Unlock()
-
 	if err := os.MkdirAll(opts.Root, 0o700); err != nil {
 		return Result{}, fmt.Errorf("making %s to fetch in: %w", opts.Root, err)
 	}

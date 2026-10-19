@@ -38,17 +38,24 @@ type Desk struct {
 	// terms (a new package, an upgrade from 1.0.0), worked out by vibe from
 	// the project, never from the agent's word; nil says nothing.
 	Describe func(Request) string
+	// Parallel is how many fetches run at once; DefaultParallel when 0.
+	Parallel int
 	// Log says what's asked and what came of it, in vibe's own output.
 	Log func(string)
 
 	mu      sync.Mutex
 	pending []*pending
+	running int
+	work    sync.WaitGroup
 }
+
+// DefaultParallel is how many fetches run at once: enough to hide each one's
+// start-up and round trips, few enough not to flood the user's feeds.
+const DefaultParallel = 3
 
 type pending struct {
 	Pending
-	nonces   []string
-	approved bool
+	nonces []string
 }
 
 // Pending is a request held for the user.
@@ -56,9 +63,12 @@ type Pending struct {
 	// Key stands for the request, for the page to say which it means.
 	Key     string
 	Request Request
+	// Approved is a request the user has allowed (or policy has): it is
+	// fetched when its turn comes, and can't be taken back.
+	Approved bool
 	// Note is Describe's, for the page to show with the request.
 	Note string
-	// Fetching is a request the user has approved, which is being fetched.
+	// Fetching is a request being fetched now.
 	Fetching bool
 }
 
@@ -87,14 +97,18 @@ func (d *Desk) reply(nonce string, status Status, message string) {
 
 const waitingMessage = "waiting for the user to approve it on the companion page's Admin tab (vibe has to be running for this sandbox)"
 
-// Poll takes in what's in the inbox, then fetches what the user has
-// approved, one at a time.
+// Poll takes in what's in the inbox, and starts fetching what's approved.
+// It doesn't wait for the fetches: requests keep being taken in while they
+// run, and each one finished starts the next.
 func (d *Desk) Poll(ctx context.Context) {
 	for _, taken := range d.Mailbox.Take() {
 		d.take(taken)
 	}
-	d.fetchApproved(ctx)
+	d.dispatch(ctx)
 }
+
+// Wait waits for the fetches under way, and those that follow them.
+func (d *Desk) Wait() { d.work.Wait() }
 
 func (d *Desk) refuse(t Taken, why string) {
 	d.log("package request refused: %s", why)
@@ -144,11 +158,11 @@ func (d *Desk) take(t Taken) {
 		d.pending = append(d.pending, p)
 		d.log("package request: %s", describe(t.Request))
 		if d.Policy != nil && d.Policy() == PolicyAllow {
-			p.approved = true
+			p.Approved = true
 		}
 	}
 	p.nonces = append(p.nonces, t.Nonce)
-	if !p.approved {
+	if !p.Approved {
 		d.reply(t.Nonce, Waiting, waitingMessage)
 	}
 }
@@ -164,42 +178,61 @@ func (d *Desk) holds(key string) bool {
 	return false
 }
 
-func (d *Desk) fetchApproved(ctx context.Context) {
+func (d *Desk) parallel() int {
+	if d.Parallel > 0 {
+		return d.Parallel
+	}
+	return DefaultParallel
+}
+
+// dispatch starts fetches for approved requests, while there's room.
+func (d *Desk) dispatch(ctx context.Context) {
 	for {
 		d.mu.Lock()
 		var p *pending
-		for _, candidate := range d.pending {
-			if candidate.approved {
-				p = candidate
-				p.Fetching = true
-				break
+		if d.running < d.parallel() {
+			for _, candidate := range d.pending {
+				if candidate.Approved && !candidate.Fetching {
+					p = candidate
+					break
+				}
 			}
 		}
-		d.mu.Unlock()
 		if p == nil {
+			d.mu.Unlock()
 			return
 		}
-
-		message, err := d.Ecosystems[p.Request.Ecosystem].Fetch(ctx, p.Request)
-
-		d.mu.Lock()
-		d.remove(p)
-		nonces := append([]string(nil), p.nonces...)
+		p.Fetching = true
+		d.running++
+		d.work.Add(1)
 		d.mu.Unlock()
-		status := Fetched
-		if err != nil {
-			status = Failed
-			if message == "" {
-				message = err.Error()
-			}
-			d.log("package request failed: %s: %v", describe(p.Request), err)
-		} else {
-			d.log("package request fetched: %s", describe(p.Request))
-		}
-		for _, nonce := range nonces {
-			d.reply(nonce, status, message)
-		}
+		go d.fetch(ctx, p)
 	}
+}
+
+func (d *Desk) fetch(ctx context.Context, p *pending) {
+	defer d.work.Done()
+	message, err := d.Ecosystems[p.Request.Ecosystem].Fetch(ctx, p.Request)
+
+	d.mu.Lock()
+	d.remove(p)
+	d.running--
+	nonces := append([]string(nil), p.nonces...)
+	d.mu.Unlock()
+	status := Fetched
+	if err != nil {
+		status = Failed
+		if message == "" {
+			message = err.Error()
+		}
+		d.log("package request failed: %s: %v", describe(p.Request), err)
+	} else {
+		d.log("package request fetched: %s", describe(p.Request))
+	}
+	for _, nonce := range nonces {
+		d.reply(nonce, status, message)
+	}
+	d.dispatch(ctx)
 }
 
 // remove forgets p; the caller holds d.mu.
@@ -223,28 +256,28 @@ func (d *Desk) Pending() []Pending {
 	return out
 }
 
-// Allow approves the held requests with these keys: they're fetched at the
-// next Poll. A key that isn't held (it was answered meanwhile) is passed over.
+// Allow approves the held requests with these keys: they're fetched as room
+// comes, from the next Poll. A key that isn't held (it was answered meanwhile) is passed over.
 func (d *Desk) Allow(keys []string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, key := range keys {
 		for _, p := range d.pending {
 			if p.Key == key {
-				p.approved = true
+				p.Approved = true
 			}
 		}
 	}
 }
 
 // Deny answers the held requests with these keys that way, unfetched. One
-// being fetched has been approved, and is let be.
+// already approved is let be: it is queued or being fetched.
 func (d *Desk) Deny(keys []string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, key := range keys {
 		for _, p := range append([]*pending(nil), d.pending...) {
-			if p.Key == key && !p.Fetching {
+			if p.Key == key && !p.Approved {
 				d.remove(p)
 				d.log("package request denied: %s", describe(p.Request))
 				for _, nonce := range p.nonces {
