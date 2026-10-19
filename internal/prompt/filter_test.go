@@ -16,19 +16,37 @@ func TestFilterMatchesIgnoresCase(t *testing.T) {
 	}
 }
 
-func TestScrollTopKeepsTheCursorOnScreen(t *testing.T) {
-	cases := []struct{ cursor, top, n, want int }{
-		{0, 0, 100, 0},
-		{9, 0, 100, 0},
-		{10, 0, 100, 1},  // one past the bottom scrolls by one
-		{50, 0, 100, 41}, // a far jump puts it on the last row
-		{5, 20, 100, 5},  // above the top scrolls up to it
-		{99, 95, 100, 90},
-		{3, 7, 5, 0}, // fewer matches than rows: all of them, from the top
+// The highlighted row sits in the middle of the window wherever the list
+// allows, so the list is seen to scroll under it; near either end it can't,
+// and the highlight moves toward the edge instead, which says there's no more.
+func TestScrollTopCentresTheCursorUnlessAnEndGetsInTheWay(t *testing.T) {
+	cases := []struct{ cursor, n, want int }{
+		{0, 100, 0},   // the first: nothing above to centre on
+		{5, 100, 0},   // still the first rows
+		{6, 100, 1},   // from here the highlight stays in the middle
+		{50, 100, 45}, // a far jump centres on it
+		{94, 100, 89},
+		{95, 100, 90}, // the last window: the highlight moves down
+		{99, 100, 90},
+		{3, 5, 0},  // fewer matches than rows: all of them, from the top
+		{7, 12, 2}, // the last window of a short list
+		{0, 0, 0},  // nothing matched
 	}
 	for _, c := range cases {
-		if got := scrollTop(c.cursor, c.top, c.n); got != c.want {
-			t.Errorf("scrollTop(%d, %d, %d) = %d, want %d", c.cursor, c.top, c.n, got, c.want)
+		if got := scrollTop(c.cursor, c.n); got != c.want {
+			t.Errorf("scrollTop(%d, %d) = %d, want %d", c.cursor, c.n, got, c.want)
+		}
+	}
+}
+
+func TestMovingTheCursorOnePlaceScrollsTheListOneRowUnderAStillHighlight(t *testing.T) {
+	for cursor := 6; cursor < 90; cursor++ {
+		before, after := scrollTop(cursor, 100), scrollTop(cursor+1, 100)
+		if after-before != 1 {
+			t.Fatalf("cursor %d to %d moved the window by %d, want 1", cursor, cursor+1, after-before)
+		}
+		if cursor-before != cursor+1-after {
+			t.Fatalf("the highlight moved on screen at cursor %d", cursor)
 		}
 	}
 }

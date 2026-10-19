@@ -31,7 +31,7 @@ func Filter(rw *Terminal, labels []string, def int) (choice int, ok bool) {
 	typed := ""
 	matches := filterMatches(labels, typed)
 	cursor := def
-	top := scrollTop(cursor, 0, len(matches))
+	top := scrollTop(cursor, len(matches))
 	f.draw(filterLines(labels, matches, cursor, top, typed))
 
 	for {
@@ -99,7 +99,7 @@ func Filter(rw *Terminal, labels []string, def int) (choice int, ok bool) {
 				}
 			}
 		}
-		top = scrollTop(cursor, top, len(matches))
+		top = scrollTop(cursor, len(matches))
 		f.draw(filterLines(labels, matches, cursor, top, typed))
 	}
 }
@@ -117,22 +117,13 @@ func filterMatches(labels []string, typed string) []int {
 	return out
 }
 
-// scrollTop returns the first of n matches to show so that cursor is on
-// screen, moving as little as it can from top.
-func scrollTop(cursor, top, n int) int {
-	if cursor < top {
-		top = cursor
-	}
-	if cursor >= top+filterRows {
-		top = cursor - filterRows + 1
-	}
-	if max := n - filterRows; top > max {
-		top = max
-	}
-	if top < 0 {
-		top = 0
-	}
-	return top
+// scrollTop returns the first of n matches to show with the cursor in the
+// middle of the filterRows on screen, so the list is seen to scroll under it.
+// Near either end it can't be centred (there's nothing to show above the
+// first, or below the last), and the highlight moves toward the edge instead:
+// the hint that there's no more.
+func scrollTop(cursor, n int) int {
+	return max(0, min(cursor-filterRows/2, n-filterRows))
 }
 
 // filterLines is a Filter's display: what's been typed, the matches on
