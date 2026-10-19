@@ -348,7 +348,8 @@ func TestTheDotnetInstructionsSayWhatToDoWhenABuildCantFindAPackageAfterARestore
 
 // An agent that builds before the user has dealt with what vibe is holding for them downloads its own
 // copies of packages the user's cache lacks, which the user's IDE can't see. Asking first, and telling
-// the user, is the agent's part of that; the instructions are always read, the skill when it matches.
+// the user, is the agent's part of that; a feature's instructions are only offered to the agent by sbx, as reading for when the feature is relevant,
+// while a skill's description is always in its context: so the skill is what the agent reliably acts on, and both say it.
 func TestTheAgentIsToldToAskWhatIsWaitingBeforeItRestoresOrBuilds(t *testing.T) {
 	dotnet := filepath.Join("..", "..", "library", "dotnet")
 	instructions, err := os.ReadFile(filepath.Join(dotnet, "agent-instructions.md"))
