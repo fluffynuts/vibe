@@ -75,3 +75,12 @@ test('the ring is the page\'s own colour: the agent\'s theme when it has one, el
   // --theme is the agent's colour, or the accent where there is none (see :root).
   assert.match(rule[1], /var\(--theme\)/)
 })
+
+// A pill with nothing to say (the count of requests, when there are none) is only a border and padding:
+// drawn, it's an artifact beside the heading.
+test('a pill with no text is not drawn', () => {
+  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'ui', 'app.css'), 'utf8')
+  const rule = css.match(/\.pill:empty\s*\{([^}]*)\}/)
+  assert.ok(rule, 'a .pill:empty rule')
+  assert.match(rule[1], /display:\s*none/)
+})
