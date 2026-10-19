@@ -2885,7 +2885,7 @@
 
   // unticked is the keys of the requests the user has unticked: all are
   // ticked until then, and a poll doesn't undo it.
-  const packagesView = { key: '', unticked: new Set(), config: '' }
+  const packagesView = { key: '', unticked: new Set(), config: '', byKey: new Map() }
 
   async function loadPackages() {
     try {
@@ -2924,13 +2924,21 @@
   // or being fetched, and can't be taken back.
   function packageButtons() {
     const undecided = Array.from($('admin-packages').querySelectorAll('input:not(:disabled)'))
-    $('admin-packages-allow').disabled = !undecided.some((b) => b.checked)
+    const ticked = undecided.filter((b) => b.checked).length
+    const left = undecided.length - ticked
+    // The button says what it will do: what's ticked is allowed, and what isn't is left out.
+    const allow = $('admin-packages-allow')
+    allow.disabled = ticked === 0
+    allow.textContent = ticked === 0 ? 'Allow selected'
+      : left > 0 ? 'Allow ' + ticked + ', deny ' + left
+      : ticked === 1 ? 'Allow it' : 'Allow all ' + ticked
     $('admin-packages-deny').disabled = undecided.length === 0
   }
 
   function renderPackages(data) {
     const requests = data.requests || []
     const keys = new Set(requests.map((r) => r.key))
+    packagesView.byKey = new Map(requests.map((r) => [r.key, r]))
     for (const k of packagesView.unticked) if (!keys.has(k)) packagesView.unticked.delete(k)
     const key = JSON.stringify(requests)
     if (key !== packagesView.key) {
@@ -2979,20 +2987,36 @@
     approve.dataset.hash = config.hash || ''
   }
 
-  async function packagesDecide(path, keys) {
+  // packagesDecide sends the user's word to vibe and, once it is taken, says what it was: the request
+  // leaves the list as it's decided, so without the line nothing would show what was done.
+  async function packagesDecide(path, decision, line) {
     // At once, not at the next poll: the answer shows what happened.
     $('admin-packages-allow').disabled = true
     $('admin-packages-deny').disabled = true
     try {
-      const res = await post(path, { keys })
+      const res = await post(path, decision)
       reached(true)
       if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true)
-      else renderPackages(res.body)
+      else {
+        renderPackages(res.body)
+        $('admin-packages-decision').textContent = line
+        $('admin-packages-decision').hidden = false
+      }
       loadState()
     } catch (e) {
       reached(false)
       toast('Could not reach vibe.', true)
     }
+  }
+
+  const requestName = (key) => {
+    const r = packagesView.byKey.get(key)
+    return r ? r.id + ' ' + r.version : key
+  }
+
+  function decisionLine(allow, notSelected) {
+    return 'Allowed ' + allow.length +
+      (notSelected.length ? '; left out ' + notSelected.map(requestName).join(', ') + ': the agent will ask you about ' + (notSelected.length === 1 ? 'it' : 'them') : '') + '.'
   }
 
   function wirePackages() {
@@ -3026,11 +3050,16 @@
       tick()
     })
     $('admin-packages-allow').addEventListener('click', () => {
-      const keys = Array.from($('admin-packages').querySelectorAll('input:checked:not(:disabled)')).map((b) => b.dataset.key)
-      if (!keys.length) { toast('Nothing is ticked.', true); return }
-      packagesDecide('/api/packages/allow', keys)
+      const undecided = Array.from($('admin-packages').querySelectorAll('input:not(:disabled)'))
+      const allow = undecided.filter((b) => b.checked).map((b) => b.dataset.key)
+      const notSelected = undecided.filter((b) => !b.checked).map((b) => b.dataset.key)
+      if (!allow.length) { toast('Nothing is ticked.', true); return }
+      packagesDecide('/api/packages/decide', { allow, notSelected }, decisionLine(allow, notSelected))
     })
-    $('admin-packages-deny').addEventListener('click', () => packagesDecide('/api/packages/deny-all', []))
+    $('admin-packages-deny').addEventListener('click', () => {
+      const n = $('admin-packages').querySelectorAll('input:not(:disabled)').length
+      packagesDecide('/api/packages/decline-all', {}, 'Declined ' + n + ": the agent will tell you and ask what you'd like instead.")
+    })
     $('admin-nugetconfig-approve').addEventListener('click', async () => {
       try {
         const res = await post('/api/packages/approve-config', { hash: $('admin-nugetconfig-approve').dataset.hash })

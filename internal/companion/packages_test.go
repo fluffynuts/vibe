@@ -15,12 +15,12 @@ import (
 )
 
 type fakeDesk struct {
-	mu      sync.Mutex
-	pending []packagereq.Pending
-	allowed [][]string
-	denied  [][]string
-	all     int
-	polls   int
+	mu          sync.Mutex
+	pending     []packagereq.Pending
+	allowed     [][]string
+	notSelected [][]string
+	declined    int
+	polls       int
 }
 
 func (f *fakeDesk) Poll(context.Context) {
@@ -33,13 +33,13 @@ func (f *fakeDesk) Pending() []packagereq.Pending {
 	defer f.mu.Unlock()
 	return append([]packagereq.Pending(nil), f.pending...)
 }
-func (f *fakeDesk) Allow(keys []string) {
+func (f *fakeDesk) Decide(allow, notSelected []string) {
 	f.mu.Lock()
-	f.allowed = append(f.allowed, keys)
+	f.allowed = append(f.allowed, allow)
+	f.notSelected = append(f.notSelected, notSelected)
 	f.mu.Unlock()
 }
-func (f *fakeDesk) Deny(keys []string) { f.mu.Lock(); f.denied = append(f.denied, keys); f.mu.Unlock() }
-func (f *fakeDesk) DenyAll()           { f.mu.Lock(); f.all++; f.mu.Unlock() }
+func (f *fakeDesk) DeclineAll() { f.mu.Lock(); f.declined++; f.mu.Unlock() }
 
 func demoPending() []packagereq.Pending {
 	return []packagereq.Pending{{
@@ -90,20 +90,29 @@ func TestTheListSaysWhichRequestsAreApprovedAndWhichAreBeingFetched(t *testing.T
 	}
 }
 
-func TestApprovingAndDenyingReachTheDesk(t *testing.T) {
+func TestDecidingAndDecliningReachTheDesk(t *testing.T) {
 	desk := &fakeDesk{pending: demoPending()}
 	s := packagesServer(desk)
-	if rec := do(t, s, post("/api/packages/allow", `{"keys":["a","b"]}`)); rec.Code != http.StatusOK {
-		t.Fatalf("allow: %d %s", rec.Code, rec.Body)
+	if rec := do(t, s, post("/api/packages/decide", `{"allow":["a","b"],"notSelected":["c"]}`)); rec.Code != http.StatusOK {
+		t.Fatalf("decide: %d %s", rec.Code, rec.Body)
 	}
-	if rec := do(t, s, post("/api/packages/deny", `{"keys":["c"]}`)); rec.Code != http.StatusOK {
-		t.Fatalf("deny: %d %s", rec.Code, rec.Body)
+	if rec := do(t, s, post("/api/packages/decline-all", `{}`)); rec.Code != http.StatusOK {
+		t.Fatalf("decline-all: %d %s", rec.Code, rec.Body)
 	}
-	if rec := do(t, s, post("/api/packages/deny-all", `{}`)); rec.Code != http.StatusOK {
-		t.Fatalf("deny-all: %d %s", rec.Code, rec.Body)
+	if len(desk.allowed) != 1 || strings.Join(desk.allowed[0], ",") != "a,b" || len(desk.notSelected) != 1 || strings.Join(desk.notSelected[0], ",") != "c" || desk.declined != 1 {
+		t.Errorf("allowed %v, not selected %v, declined %d", desk.allowed, desk.notSelected, desk.declined)
 	}
-	if len(desk.allowed) != 1 || strings.Join(desk.allowed[0], ",") != "a,b" || len(desk.denied) != 1 || desk.denied[0][0] != "c" || desk.all != 1 {
-		t.Errorf("allowed %v, denied %v, all %d", desk.allowed, desk.denied, desk.all)
+}
+
+// What the page sends is both lists, together, so the desk decides them in one go.
+func TestADecisionWithNoKeysSaysSoAndChangesNothing(t *testing.T) {
+	desk := &fakeDesk{pending: demoPending()}
+	s := packagesServer(desk)
+	if rec := do(t, s, post("/api/packages/decide", `keys=a`)); rec.Code == http.StatusOK {
+		t.Error("answered what isn't a decision")
+	}
+	if len(desk.allowed) != 0 {
+		t.Errorf("decided %v", desk.allowed)
 	}
 }
 
@@ -111,11 +120,11 @@ func TestPackageRequestsAreOnlyTakenFromThePageItself(t *testing.T) {
 	desk := &fakeDesk{pending: demoPending()}
 	s := packagesServer(desk)
 	cases := map[string]req{
-		"no token": {method: "POST", path: "/api/packages/allow", body: `{"keys":["a"]}`,
+		"no token": {method: "POST", path: "/api/packages/decide", body: `{"allow":["a"]}`,
 			headers: map[string]string{"Content-Type": "application/json"}},
-		"another origin": {method: "POST", path: "/api/packages/allow", body: `{"keys":["a"]}`,
+		"another origin": {method: "POST", path: "/api/packages/decide", body: `{"allow":["a"]}`,
 			headers: authed(map[string]string{"Content-Type": "application/json", "Origin": "http://evil.example"})},
-		"not json": {method: "POST", path: "/api/packages/allow", body: `keys=a`,
+		"not json": {method: "POST", path: "/api/packages/decide", body: `keys=a`,
 			headers: authed(map[string]string{"Content-Type": "text/plain"})},
 	}
 	for name, r := range cases {

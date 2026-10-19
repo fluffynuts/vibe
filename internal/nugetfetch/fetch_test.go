@@ -247,7 +247,7 @@ func TestAnApprovedRequestIsFetchedThroughTheDeskIntoTheHostCache(t *testing.T) 
 	if len(pending) != 1 {
 		t.Fatalf("pending = %+v", pending)
 	}
-	desk.Allow([]string{pending[0].Key})
+	desk.Decide([]string{pending[0].Key}, nil)
 	desk.Poll(context.Background())
 	desk.Wait()
 

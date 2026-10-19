@@ -312,43 +312,60 @@ func (d *Desk) Pending() []Pending {
 	return out
 }
 
-// Allow approves the held requests with these keys: they're fetched as room
-// comes, from the next Poll. A key that isn't held (it was answered meanwhile) is passed over.
-func (d *Desk) Allow(keys []string) {
+// Decide is the user's word on the held requests: those in allow are approved, and fetched as room
+// comes, from the next Poll; those in notSelected are answered at once, unfetched, as not selected
+// (which may be a slip, and the agent is to ask). A request in both is allowed; one in neither is
+// still held (it came after the user's list was drawn, so they haven't seen it); a key that isn't
+// held is passed over. One already approved is let be: it is queued or being fetched.
+func (d *Desk) Decide(allow, notSelected []string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	for _, key := range keys {
+	for _, key := range allow {
 		for _, p := range d.pending {
 			if p.Key == key {
 				p.Approved = true
 			}
 		}
 	}
+	// What was just approved is let be by answerNo, so a key in both lists is allowed.
+	d.answerNo(notSelected, "not selected", notSelectedMessage)
 }
 
-// Deny answers the held requests with these keys that way, unfetched. One
-// already approved is let be: it is queued or being fetched.
-func (d *Desk) Deny(keys []string) {
+// DeclineAll answers every request not yet approved as declined, unfetched: the user's own word.
+func (d *Desk) DeclineAll() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	var keys []string
+	for _, p := range d.pending {
+		keys = append(keys, p.Key)
+	}
+	d.answerNo(keys, "declined", declinedMessage)
+}
+
+// answerNo answers the held, unapproved requests with these keys Denied, in words of say's making;
+// the caller holds d.mu.
+func (d *Desk) answerNo(keys []string, how string, say func(Request) string) {
 	for _, key := range keys {
 		for _, p := range append([]*pending(nil), d.pending...) {
 			if p.Key == key && !p.Approved {
 				d.remove(p)
-				d.log("package request denied: %s", describe(p.Request))
+				d.log("package request %s: %s", how, describe(p.Request))
 				for _, nonce := range p.nonces {
-					d.reply(nonce, Denied, "the user denied this request: don't look for another way to this package; say so, and ask them")
+					d.reply(nonce, Denied, say(p.Request))
 				}
 			}
 		}
 	}
 }
 
-// DenyAll denies every request held.
-func (d *Desk) DenyAll() {
-	var keys []string
-	for _, p := range d.Pending() {
-		keys = append(keys, p.Key)
-	}
-	d.Deny(keys)
+func notSelectedMessage(r Request) string {
+	return fmt.Sprintf("The user did not select %s %s when deciding on the package requests, so it was not fetched. "+
+		"That may be deliberate (they may already have it, or want something else) or a slip. "+
+		"Don't look for another way to get it. Tell the user which package was left out and ask whether they meant to: "+
+		"if it was a slip, ask for it again; otherwise ask what they'd like instead.", r.ID, r.Version)
+}
+
+func declinedMessage(r Request) string {
+	return fmt.Sprintf("The user declined this request, so %s %s was not fetched. They may already have the package or want something else. "+
+		"Don't look for another way to get it: tell them it was declined and ask what they'd like instead.", r.ID, r.Version)
 }

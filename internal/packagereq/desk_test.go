@@ -120,7 +120,7 @@ func TestApprovingFetchesOnlyWhatWasApprovedAtThePolling(t *testing.T) {
 			keep = p.Key
 		}
 	}
-	rig.desk.Allow([]string{take})
+	rig.desk.Decide([]string{take}, nil)
 	rig.desk.Poll(context.Background())
 	rig.desk.Wait()
 	if len(rig.eco.fetched) != 1 || rig.eco.fetched[0].ID != "A.Lib" {
@@ -139,7 +139,7 @@ func TestDenyAnswersDeniedAndFetchesNothing(t *testing.T) {
 	rig.ask(t, "1-a", "A.Lib", "1.0.0")
 	rig.ask(t, "2-b", "B.Lib", "2.0.0")
 	rig.desk.Poll(context.Background())
-	rig.desk.DenyAll()
+	rig.desk.DeclineAll()
 	for _, n := range []string{"1-a", "2-b"} {
 		if got := rig.answer(t, n); !strings.HasPrefix(got, "denied\n") {
 			t.Errorf("%s: %q", n, got)
@@ -159,7 +159,7 @@ func TestTheSameRequestAskedTwiceIsFetchedOnceAndBothAreAnswered(t *testing.T) {
 	if p := rig.desk.Pending(); len(p) != 1 {
 		t.Fatalf("pending = %+v, want the one", p)
 	}
-	rig.desk.Allow([]string{rig.desk.Pending()[0].Key})
+	rig.desk.Decide([]string{rig.desk.Pending()[0].Key}, nil)
 	rig.desk.Poll(context.Background())
 	rig.desk.Wait()
 	if len(rig.eco.fetched) != 1 {
@@ -420,7 +420,7 @@ func TestWhatIsApprovedIsSaidAsSoonAsItIsApprovedNotWhenItsFetchBegins(t *testin
 			t.Errorf("%+v is neither approved nor fetching yet", p)
 		}
 	}
-	rig.desk.Allow([]string{rig.desk.Pending()[0].Key})
+	rig.desk.Decide([]string{rig.desk.Pending()[0].Key}, nil)
 	approved := 0
 	for _, p := range rig.desk.Pending() {
 		if p.Approved {
@@ -460,8 +460,8 @@ func TestDenyLeavesWhatIsAlreadyApproved(t *testing.T) {
 	rig.ask(t, "1-a", "A.Lib", "1.0.0")
 	rig.ask(t, "2-b", "B.Lib", "2.0.0")
 	rig.desk.Poll(context.Background())
-	rig.desk.Allow([]string{rig.desk.Pending()[0].Key})
-	rig.desk.DenyAll()
+	rig.desk.Decide([]string{rig.desk.Pending()[0].Key}, nil)
+	rig.desk.DeclineAll()
 	if pending := rig.desk.Pending(); len(pending) != 1 || !pending[0].Approved {
 		t.Fatalf("pending = %+v, want the approved one still there", pending)
 	}
@@ -519,5 +519,127 @@ func TestARequestOfAnUnknownKindIsRefused(t *testing.T) {
 	}
 	if len(rig.eco.fetched) != 0 {
 		t.Error("fetched for a request of a kind it doesn't know")
+	}
+}
+
+// --- deciding: some approved, some not selected, or all declined -----------------------------
+
+func keyFor(rig *deskRig, id string) string {
+	for _, p := range rig.desk.Pending() {
+		if p.Request.ID == id {
+			return p.Key
+		}
+	}
+	return ""
+}
+
+func fiveHeld(t *testing.T) *deskRig {
+	t.Helper()
+	rig := newDesk(t, "ask")
+	for i, id := range []string{"A.Lib", "B.Lib", "C.Lib", "D.Lib", "E.Lib"} {
+		rig.ask(t, fmt.Sprintf("%d-x", i+1), id, "1.0.0")
+	}
+	rig.desk.Poll(context.Background())
+	return rig
+}
+
+// The user ticks four of five and decides: four are fetched, and the fifth is answered at once, so the
+// agent isn't left waiting on a command that will never return. It's told it wasn't selected: that may
+// be deliberate, or a slip, and the agent is to ask.
+func TestDecidingFetchesTheSelectedAndAnswersTheOthersNotSelected(t *testing.T) {
+	rig := fiveHeld(t)
+	rig.desk.Decide([]string{keyFor(rig, "A.Lib"), keyFor(rig, "B.Lib"), keyFor(rig, "C.Lib"), keyFor(rig, "D.Lib")}, []string{keyFor(rig, "E.Lib")})
+	rig.desk.Poll(context.Background())
+	rig.desk.Wait()
+	if len(rig.eco.fetched) != 4 {
+		t.Errorf("fetched %v, want the four", rig.eco.fetched)
+	}
+	got := rig.answer(t, "5-x")
+	if !strings.HasPrefix(got, "denied\n") {
+		t.Fatalf("E.Lib: %q", got)
+	}
+	for _, want := range []string{"E.Lib 1.0.0", "did not select", "deliberate", "slip", "Don't look for another way", "ask whether they meant to", "ask for it again"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the message lacks %q:\n%s", want, got)
+		}
+	}
+	if len(rig.desk.Pending()) != 0 {
+		t.Errorf("pending %v: the user has decided them all", rig.desk.Pending())
+	}
+}
+
+// What arrived after the user's list was drawn is in neither: the user hasn't seen it, so it isn't decided for them.
+func TestARequestInNeitherListIsStillHeld(t *testing.T) {
+	rig := fiveHeld(t)
+	rig.desk.Decide([]string{keyFor(rig, "A.Lib")}, []string{keyFor(rig, "B.Lib")})
+	var left []string
+	for _, p := range rig.desk.Pending() {
+		left = append(left, p.Request.ID)
+	}
+	if strings.Join(left, ",") != "A.Lib,C.Lib,D.Lib,E.Lib" {
+		t.Errorf("held %v, want A.Lib (approved, not yet fetched) and the three not in either list", left)
+	}
+	if got := rig.answer(t, "3-x"); !strings.HasPrefix(got, "waiting\n") {
+		t.Errorf("C.Lib: %q, it still waits", got)
+	}
+}
+
+func TestAKeyInBothListsIsAllowed(t *testing.T) {
+	rig := fiveHeld(t)
+	k := keyFor(rig, "A.Lib")
+	rig.desk.Decide([]string{k}, []string{k})
+	rig.desk.Poll(context.Background())
+	rig.desk.Wait()
+	if got := rig.answer(t, "1-x"); !strings.HasPrefix(got, "fetched\n") {
+		t.Errorf("A.Lib: %q", got)
+	}
+}
+
+func TestWhatIsAlreadyApprovedCannotBeNotSelectedAfterwards(t *testing.T) {
+	rig := fiveHeld(t)
+	k := keyFor(rig, "A.Lib")
+	rig.desk.Decide([]string{k}, nil)
+	rig.desk.Decide(nil, []string{k})
+	rig.desk.Poll(context.Background())
+	rig.desk.Wait()
+	if got := rig.answer(t, "1-x"); !strings.HasPrefix(got, "fetched\n") {
+		t.Errorf("A.Lib: %q: approved, it is being fetched", got)
+	}
+}
+
+// Declining is the user's own word, not a gap in what they ticked: said as that, with the reasons it may be.
+func TestDecliningEverythingIsSaidAsDeclinedAndLeavesWhatIsApproved(t *testing.T) {
+	rig := fiveHeld(t)
+	rig.desk.Decide([]string{keyFor(rig, "A.Lib")}, nil)
+	rig.desk.DeclineAll()
+	rig.desk.Poll(context.Background())
+	rig.desk.Wait()
+	if got := rig.answer(t, "1-x"); !strings.HasPrefix(got, "fetched\n") {
+		t.Errorf("A.Lib: %q", got)
+	}
+	got := rig.answer(t, "2-x")
+	if !strings.HasPrefix(got, "denied\n") {
+		t.Fatalf("B.Lib: %q", got)
+	}
+	for _, want := range []string{"B.Lib 1.0.0", "declined", "already have", "Don't look for another way", "what they'd like instead"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the message lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "slip") {
+		t.Errorf("a declined request isn't a gap in the ticks:\n%s", got)
+	}
+}
+
+func TestEveryRequestAskedTwiceForIsAnsweredWhenItIsNotSelected(t *testing.T) {
+	rig := newDesk(t, "ask")
+	rig.ask(t, "1-a", "A.Lib", "1.0.0")
+	rig.ask(t, "2-a", "A.Lib", "1.0.0")
+	rig.desk.Poll(context.Background())
+	rig.desk.Decide(nil, []string{keyFor(rig, "A.Lib")})
+	for _, n := range []string{"1-a", "2-a"} {
+		if got := rig.answer(t, n); !strings.HasPrefix(got, "denied\n") {
+			t.Errorf("%s: %q", n, got)
+		}
 	}
 }

@@ -261,7 +261,7 @@ func TestTheOverviewIsOfWhatIsWaitingNow(t *testing.T) {
 	}
 
 	// Approved, it's no longer waiting for the user; and once the cache has the package, nothing is.
-	desk.Allow([]string{desk.Pending()[0].Key})
+	desk.Decide([]string{desk.Pending()[0].Key}, nil)
 	dapper := filepath.Join(cache, "dapper", "2.1.86")
 	if err := os.MkdirAll(dapper, 0o755); err != nil {
 		t.Fatal(err)

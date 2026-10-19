@@ -363,3 +363,24 @@ func TestTheAgentIsToldToAskWhatIsWaitingBeforeItRestoresOrBuilds(t *testing.T) 
 		t.Error("the instructions should come to asking what is waiting before the rest: it's what the agent does first")
 	}
 }
+
+// A request the user didn't select, or declined, comes back denied: the agent is to tell the user and ask,
+// not to retry and not to find another way, and to ask for it again only when the user says it was a slip.
+func TestTheSkillSaysWhatToDoWithARequestTheUserDidNotSelectOrDeclined(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "library", "dotnet", "agent-files", ".claude", "skills", "vibe-nuget", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, body, _ := strings.Cut(strings.TrimPrefix(string(data), "---\n"), "\n---\n")
+	i := strings.Index(body, "If it isn't fetched")
+	if i < 0 {
+		t.Fatal("the skill has no section for a package that isn't fetched")
+	}
+	// Wrapped lines are no matter to what it says.
+	section := strings.Join(strings.Fields(body[i:]), " ")
+	for _, want := range []string{"did not select", "slip", "declined", "ask the user", "don't ask again", "unless the user says"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the section on what isn't fetched lacks %q:\n%s", want, section)
+		}
+	}
+}

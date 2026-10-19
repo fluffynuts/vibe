@@ -354,13 +354,8 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"POST /api/packages/sync/check", s.serving(packageSyncFeature, s.packageSyncCheck)},
 		{"POST /api/packages/sync/run", s.serving(packageSyncFeature, s.packageSyncRun)},
 		{"GET /api/packages", s.serving(packagesFeature, s.packagesState)},
-		{"POST /api/packages/allow", s.serving(packagesFeature, func(w http.ResponseWriter, r *http.Request) {
-			s.packagesDecide(s.cfg.Packages.Allow)(w, r)
-		})},
-		{"POST /api/packages/deny", s.serving(packagesFeature, func(w http.ResponseWriter, r *http.Request) {
-			s.packagesDecide(s.cfg.Packages.Deny)(w, r)
-		})},
-		{"POST /api/packages/deny-all", s.serving(packagesFeature, s.packagesDenyAll)},
+		{"POST /api/packages/decide", s.serving(packagesFeature, s.packagesDecide)},
+		{"POST /api/packages/decline-all", s.serving(packagesFeature, s.packagesDeclineAll)},
 		{"POST /api/packages/approve-config", s.serving(packagesFeature, s.packagesApproveConfig)},
 		{"GET /api/admin/instructions", s.authed(s.instructionsState)},
 		{"POST /api/admin/instructions", s.serving(instructionsFeature, s.instructionsSave)},

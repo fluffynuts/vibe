@@ -15,8 +15,8 @@ function packagesPage(answer, { attention = {} } = {}) {
     '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, admin: true, attention }),
     '/api/admin': { status: { exists: true, running: true }, upgrades: {} },
     '/api/packages': () => at.answer,
-    '/api/packages/allow': (call) => { at.allowed = call.body.keys; return at.afterAllow || { requests: [], config: null } },
-    '/api/packages/deny-all': () => { at.denied = true; return { requests: [], config: null } },
+    '/api/packages/decide': (call) => { at.decided = call.body; return at.afterAllow || { requests: [], config: null } },
+    '/api/packages/decline-all': () => { at.declinedAll = true; return { requests: [], config: null } },
     '/api/packages/approve-config': (call) => { at.approved = call.body.hash; return { requests: [], config: null } },
   }
   return openPage({ routes, storage: { 'vibe-companion-tab': 'admin' } }).then((p) => Object.assign(p, { at }))
@@ -68,15 +68,17 @@ test('Allow selected sends only what is ticked, and unticking survives a poll', 
     assert.equal(rows(p)[1].querySelector('input').checked, false, 'a poll undid the unticking')
     assert.equal(rows(p)[2].querySelector('input').checked, true, 'a new request is ticked')
     await p.click('admin-packages-allow')
-    assert.deepEqual(p.at.allowed, ['nuget|A.Lib|1.0.0|net8.0', 'nuget|C.Lib|1.0.0|net8.0'])
+    assert.deepEqual(p.at.decided.allow, ['nuget|A.Lib|1.0.0|net8.0', 'nuget|C.Lib|1.0.0|net8.0'])
+    assert.deepEqual(p.at.decided.notSelected, ['nuget|B.Lib|1.0.0|net8.0'], 'what was unticked is said, so the agent isn\'t left waiting')
   } finally { p.close() }
 })
 
-test('Deny all denies everything held', async () => {
+test('Deny them all declines everything held', async () => {
   const p = await packagesPage({ requests: [request('A.Lib')], config: null })
   try {
+    assert.equal(p.$('admin-packages-deny').textContent, 'Deny them all')
     await p.click('admin-packages-deny')
-    assert.equal(p.at.denied, true)
+    assert.equal(p.at.declinedAll, true)
   } finally { p.close() }
 })
 
@@ -115,7 +117,8 @@ test('new requests arriving after an approval turn the buttons back on, for thos
     await p.poll()
     assert.equal(p.$('admin-packages-allow').disabled, false)
     await p.click('admin-packages-allow')
-    assert.deepEqual(p.at.allowed, ['nuget|B.Lib|1.0.0|net8.0'], 'the approved one is not sent again')
+    assert.deepEqual(p.at.decided.allow, ['nuget|B.Lib|1.0.0|net8.0'], 'the approved one is not sent again')
+    assert.deepEqual(p.at.decided.notSelected, [], 'nor is it counted as left out')
   } finally { p.close() }
 })
 
@@ -224,4 +227,101 @@ test('nothing waiting, nothing said; and it goes when the requests are decided',
     await p.poll()
     assert.equal(p.$('convo-packages').hidden, true, 'and goes when they are decided')
   } finally { p.close() }
+})
+
+// --- one button that says what it will do ----------------------------------------------------------
+
+const tick = (p, i, on) => {
+  const box = rows(p)[i].querySelector('input')
+  box.checked = on
+  box.dispatchEvent(new p.window.Event('change', { bubbles: true }))
+}
+const allowText = (p) => p.$('admin-packages-allow').textContent
+
+test('the button says what it will do: all, one, or some allowed and the rest not', async () => {
+  const p = await packagesPage({ requests: [request('A.Lib'), request('B.Lib'), request('C.Lib')], config: null })
+  try {
+    assert.equal(allowText(p), 'Allow all 3')
+    tick(p, 1, false)
+    assert.equal(allowText(p), 'Allow 2, deny 1')
+    tick(p, 2, false)
+    assert.equal(allowText(p), 'Allow 1, deny 2')
+    tick(p, 0, false)
+    assert.equal(p.$('admin-packages-allow').disabled, true, 'with nothing ticked there is nothing to allow: Deny them all is the button')
+    assert.equal(p.$('admin-packages-deny').disabled, false)
+  } finally { p.close() }
+})
+
+test('one request is Allow it', async () => {
+  const p = await packagesPage({ requests: [request('A.Lib')], config: null })
+  try { assert.equal(allowText(p), 'Allow it') } finally { p.close() }
+})
+
+test('what is already approved is in no count', async () => {
+  const p = await packagesPage({ requests: [request('A.Lib', { approved: true }), request('B.Lib'), request('C.Lib')], config: null })
+  try {
+    assert.equal(allowText(p), 'Allow all 2')
+    tick(p, 2, false)
+    assert.equal(allowText(p), 'Allow 1, deny 1')
+  } finally { p.close() }
+})
+
+test('deciding sends both lists at once, and says what was left out, for the agent will ask', async () => {
+  const p = await packagesPage({ requests: [request('A.Lib'), request('B.Lib'), request('C.Lib'), request('D.Lib')], config: null })
+  try {
+    tick(p, 3, false)
+    await p.click('admin-packages-allow')
+    assert.deepEqual(p.at.decided.allow, ['nuget|A.Lib|1.0.0|net8.0', 'nuget|B.Lib|1.0.0|net8.0', 'nuget|C.Lib|1.0.0|net8.0'])
+    assert.deepEqual(p.at.decided.notSelected, ['nuget|D.Lib|1.0.0|net8.0'])
+    const line = p.$('admin-packages-decision')
+    assert.equal(line.hidden, false)
+    assert.match(line.textContent, /Allowed 3; left out D\.Lib 1\.0\.0: the agent will ask you about it\./)
+  } finally { p.close() }
+})
+
+test('with none left out the line says only what was allowed', async () => {
+  const p = await packagesPage({ requests: [request('A.Lib'), request('B.Lib')], config: null })
+  try {
+    await p.click('admin-packages-allow')
+    assert.match(p.$('admin-packages-decision').textContent, /^Allowed 2\.$/)
+  } finally { p.close() }
+})
+
+test('several left out are all named, and the agent will ask about them', async () => {
+  const p = await packagesPage({ requests: [request('A.Lib'), request('B.Lib'), request('C.Lib')], config: null })
+  try {
+    tick(p, 1, false)
+    tick(p, 2, false)
+    await p.click('admin-packages-allow')
+    assert.match(p.$('admin-packages-decision').textContent, /left out B\.Lib 1\.0\.0, C\.Lib 1\.0\.0: the agent will ask you about them\./)
+  } finally { p.close() }
+})
+
+test('declining everything is said, and what happens next', async () => {
+  const p = await packagesPage({ requests: [request('A.Lib'), request('B.Lib')], config: null })
+  try {
+    await p.click('admin-packages-deny')
+    assert.match(p.$('admin-packages-decision').textContent, /Declined 2: the agent will tell you and ask what you'd like instead\./)
+  } finally { p.close() }
+})
+
+test('the line stays through the polls and is replaced by the next decision', async () => {
+  const p = await packagesPage({ requests: [request('A.Lib'), request('B.Lib')], config: null })
+  try {
+    tick(p, 1, false)
+    p.at.afterAllow = { requests: [], config: null }
+    await p.click('admin-packages-allow')
+    const first = p.$('admin-packages-decision').textContent
+    await p.poll()
+    assert.equal(p.$('admin-packages-decision').textContent, first, 'a poll cleared it')
+    p.at.answer = { requests: [request('C.Lib')], config: null }
+    await p.poll()
+    await p.click('admin-packages-allow')
+    assert.match(p.$('admin-packages-decision').textContent, /^Allowed 1\.$/)
+  } finally { p.close() }
+})
+
+test('before any decision there is no line', async () => {
+  const p = await packagesPage({ requests: [request('A.Lib')], config: null })
+  try { assert.equal(p.$('admin-packages-decision').hidden, true) } finally { p.close() }
 })

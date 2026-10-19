@@ -27,9 +27,11 @@ type PackageDesk interface {
 	// approved; it is called every so often, on one goroutine.
 	Poll(ctx context.Context)
 	Pending() []packagereq.Pending
-	Allow(keys []string)
-	Deny(keys []string)
-	DenyAll()
+	// Decide approves the requests with the keys in allow and answers those in notSelected as
+	// such; one in neither is still held.
+	Decide(allow, notSelected []string)
+	// DeclineAll answers every request not yet approved as declined.
+	DeclineAll()
 }
 
 // packagesPollEvery is how often the agent's requests are taken in. A
@@ -139,21 +141,21 @@ func (s *Server) packagesApproveConfig(w http.ResponseWriter, r *http.Request) {
 	s.packagesState(w, r)
 }
 
-func (s *Server) packagesDecide(decide func(keys []string)) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Keys []string `json:"keys"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "expected {\"keys\": [...]}")
-			return
-		}
-		decide(body.Keys)
-		s.packagesState(w, r)
+// packagesDecide is the user's word on the held requests: the keys approved, and the keys they left out.
+func (s *Server) packagesDecide(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Allow       []string `json:"allow"`
+		NotSelected []string `json:"notSelected"`
 	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "expected {\"allow\": [...], \"notSelected\": [...]}")
+		return
+	}
+	s.cfg.Packages.Decide(body.Allow, body.NotSelected)
+	s.packagesState(w, r)
 }
 
-func (s *Server) packagesDenyAll(w http.ResponseWriter, r *http.Request) {
-	s.cfg.Packages.DenyAll()
+func (s *Server) packagesDeclineAll(w http.ResponseWriter, r *http.Request) {
+	s.cfg.Packages.DeclineAll()
 	s.packagesState(w, r)
 }

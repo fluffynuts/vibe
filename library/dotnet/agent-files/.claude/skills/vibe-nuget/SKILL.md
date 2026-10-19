@@ -49,8 +49,12 @@ fails on one of those, ask for it the same way.
 
 ## If it isn't fetched
 
-- **Denied:** tell the user, and stop. Don't look for another way to the
-  package.
+- **Denied:** the message says whether the user *declined* the request, or
+  *did not select* it when deciding on several, which may have been a slip.
+  Either way, tell the user which package it was and ask the user what they'd
+  like: they may already have it, want something else, or say it was a slip.
+  Don't look for another way to the package, and don't ask again unless the
+  user says to.
 - **Failed:** the message is NuGet's own. Tell the user what it said. If it says
   the folder's `nuget.config` isn't approved, say that the user can approve it
   on the Admin tab, then ask again.

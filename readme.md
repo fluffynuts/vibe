@@ -908,7 +908,7 @@ on the host, and the agent can't plant code in a package your own builds then ru
   request waits on the companion page's **Admin tab**, with what it is to your project (a new
   package, an upgrade or a downgrade from what the default branch has, or one already used
   that's only missing from your cache, worked out from the project's files and not from the
-  agent's word). Tick what to allow and press **Allow selected** (or **Deny all**); vibe then
+  agent's word). Tick what to allow and press the button, which says what it will do (**Allow all 3**, or **Allow 2, deny 1** when you've unticked one; what you leave out is answered at once, so the agent isn't left waiting, and told it may be a slip so it asks you), or **Deny them all**; a line on the card says what you decided; vibe then
   fetches them on this machine with your own NuGet config, so every feed and credential you have
   works with nothing to set up, into the cache the sandbox reads. What you approve together is fetched together, in one restore for each target framework, by the same
   code that fetches what your IDE can't see; a package NuGet fails on fails its own request, in NuGet's words,
