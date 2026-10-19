@@ -49,7 +49,7 @@ type usageCache struct {
 }
 
 func (s *Server) usageHandler(w http.ResponseWriter, r *http.Request) {
-	now := s.usageNow()
+	now := s.clock()
 	u := &s.usage
 	u.mu.Lock()
 	if !u.refreshing && (u.checked.IsZero() || now.Sub(u.checked) >= usageEvery) {
@@ -68,7 +68,7 @@ func (s *Server) readUsage() {
 	defer cancel()
 	reading, err := s.cfg.Usage(ctx)
 	if reading.At.IsZero() {
-		reading.At = s.usageNow()
+		reading.At = s.clock()
 	}
 	u := &s.usage
 	u.mu.Lock()

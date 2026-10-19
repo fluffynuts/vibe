@@ -629,7 +629,11 @@ you're looking at:
 - **Network log** — every host the sandbox has tried to reach, with hit counts and whether it was
   allowed or blocked, refreshing every couple of seconds while the tab is showing. Filter by status or
   search for a host. A blocked host has an **Allow** button, an allowed one a **Block** button; click
-  a row to see everything sbx said about it.
+  a row to see everything sbx said about it. A dot on the tab says when a host is **newly blocked**:
+  one you haven't seen blocked. Opening the tab clears it, and a host you've seen and left blocked
+  (or chose to block) doesn't raise it again; one that was allowed and is blocked again does. A
+  browser's first visit takes what's already blocked as seen, so a long history isn't news, and the
+  dot is per browser. Hosts a rule now allows aren't counted.
 - **Network rules** — the rules that apply to the sandbox, a box to allow or block a host, and
   **Remove** for the sandbox's own rules.
 - **Filesystem rules** — the same, read-only (sbx doesn't log filesystem access yet).

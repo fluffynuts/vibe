@@ -56,7 +56,7 @@ func newUsageRig(t *testing.T, reader *fakeReader) *usageRig {
 	t.Helper()
 	rig := &usageRig{reader: reader, now: t0}
 	rig.s = New(Config{Sandbox: "box", Token: token, Port: testPort, Usage: reader.read})
-	rig.s.usageNow = func() time.Time { rig.mu.Lock(); defer rig.mu.Unlock(); return rig.now }
+	rig.s.clock = func() time.Time { rig.mu.Lock(); defer rig.mu.Unlock(); return rig.now }
 	return rig
 }
 

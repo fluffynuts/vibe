@@ -156,10 +156,11 @@ type Server struct {
 	convo conversation
 	admin admin
 	asked asked
-	// usage is the last reading of the sandbox's load, and usageNow the
+	// usage is the last reading of the sandbox's load, and clock the
 	// clock it's aged by.
-	usage    usageCache
-	usageNow func() time.Time
+	usage   usageCache
+	blocked blockedCache
+	clock   func() time.Time
 	// pageVersion stands for the page's files as this vibe serves them: a
 	// page left open across a rebuild of vibe can tell it's out of date.
 	pageVersion string
@@ -178,7 +179,7 @@ type asked struct {
 // New makes a Server without listening, which is how tests drive Handler.
 func New(cfg Config) *Server {
 	ui, _ := fs.Sub(uiFiles, "ui")
-	return &Server{cfg: cfg, ui: ui, usageNow: time.Now, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer(colourAtOnce)}
+	return &Server{cfg: cfg, ui: ui, clock: time.Now, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer(colourAtOnce)}
 }
 
 // Start listens on 127.0.0.1 at cfg.Port and serves in the background.
@@ -481,6 +482,12 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		}
 		s.admin.mu.Unlock()
 	}
+	// blockedHosts is what the network log says is blocked, for the page to
+	// tell the user of the ones they haven't seen; null until it's been read.
+	var blockedHosts []string
+	if hosts, known := s.blockedHosts(); known {
+		blockedHosts = hosts
+	}
 	// reviewAt is when the agent last updated the review: the page marks the
 	// Review tab when it's later than the user has seen. Taken in here, as
 	// the Review tab only polls the review while it's open.
@@ -494,6 +501,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"attention":         attention,
+		"blockedHosts":      blockedHosts,
 		"reviewAt":          reviewAt,
 		"pageVersion":       s.pageVersion,
 		"themeColor":        theme,

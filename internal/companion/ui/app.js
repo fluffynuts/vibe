@@ -367,7 +367,7 @@
   // Conversation tab's, when it has said something out of sight (pulsing
   // while it's still at work).
   function showAllAttention() {
-    const attention = withReviewNews(state.attention)
+    const attention = withBlockedNews(withReviewNews(state.attention))
     if (!convo.news) { showAttention(attention); return }
     showAttention(Object.assign({}, attention, { conversation: [convo.running ? 'The agent is working' : 'The agent has answered'] }),
       convo.running ? new Set(['conversation']) : null)
@@ -389,6 +389,55 @@
   function reviewSeen() {
     if (!state.loaded || !R.agentUpdated(state.reviewAt, store.get(REVIEW_SEEN))) return
     store.set(REVIEW_SEEN, state.reviewAt)
+    showAllAttention()
+  }
+
+  // BLOCKED_SEEN keeps the hosts the user has seen blocked and left that way,
+  // as a JSON list, per browser (and per sandbox: storage is per origin). It's
+  // what makes a dot on the Network log tab mean a host that's new: one the
+  // user has looked at and left blocked, or chose to block, isn't news.
+  const BLOCKED_SEEN = 'vibe-companion-blocked-seen'
+
+  function seenBlocked() {
+    const stored = store.get(BLOCKED_SEEN)
+    if (stored === null || stored === undefined || stored === '') return null
+    try {
+      const list = JSON.parse(stored)
+      return Array.isArray(list) ? list : null
+    } catch (e) { return null }
+  }
+
+  // noteBlocked works out which of the hosts vibe says are blocked are new.
+  // Not known yet (null) is not "none are": nothing is taken as seen. With
+  // nothing kept (a browser's first visit), what's blocked now is taken as
+  // seen: a long history isn't news. A host that stops being blocked is
+  // forgotten, so being blocked again is news. And what's blocked while the
+  // Network log tab is open is being looked at.
+  function noteBlocked(hosts) {
+    state.newBlocked = []
+    if (!Array.isArray(hosts)) return
+    const seen = seenBlocked()
+    if (seen === null) { store.set(BLOCKED_SEEN, JSON.stringify(hosts)); return }
+    const kept = state.tab === 'log' ? hosts : seen.filter((h) => hosts.includes(h))
+    if (kept.length !== seen.length || kept.some((h, i) => h !== seen[i])) store.set(BLOCKED_SEEN, JSON.stringify(kept))
+    state.newBlocked = hosts.filter((h) => !kept.includes(h))
+  }
+
+  // withBlockedNews is attention with the Network log tab's, when hosts are
+  // blocked that the user hasn't seen.
+  function withBlockedNews(attention) {
+    const hosts = state.newBlocked || []
+    if (!hosts.length) return attention
+    const named = hosts.slice(0, 3).join(', ') + (hosts.length > 3 ? ' and ' + (hosts.length - 3) + ' more' : '')
+    const text = hosts.length + ' new blocked host' + (hosts.length === 1 ? '' : 's') + ': ' + named
+    return Object.assign({}, attention, { log: (attention.log || []).concat(text) })
+  }
+
+  // blockedSeen takes the dot off the Network log tab: the user is looking at
+  // what's blocked.
+  function blockedSeen() {
+    if (!(state.newBlocked || []).length) return
+    noteBlocked(state.blockedHosts)
     showAllAttention()
   }
 
@@ -555,6 +604,8 @@
       $('tab-review').hidden = !res.body.review
       for (const t of SANDBOX_TABS) $('tab-' + t).hidden = res.body.sandboxTabs === false
       state.attention = res.body.attention || {}
+      state.blockedHosts = res.body.blockedHosts
+      noteBlocked(state.blockedHosts)
       state.reviewAt = res.body.review ? res.body.reviewAt || '' : ''
       showAllAttention()
       // A page left open across a rebuild of vibe is the old page: say so.
@@ -697,6 +748,7 @@
       button.setAttribute('aria-selected', String(t === tab))
       button.tabIndex = t === tab ? 0 : -1
     }
+    if (tab === 'log') blockedSeen()
     if (tab === 'review') reviewSeen()
     // A comment asked for, not yet gone to, isn't gone to once you're elsewhere.
     else reviewView.goTo = null
