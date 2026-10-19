@@ -605,6 +605,7 @@
       for (const t of SANDBOX_TABS) $('tab-' + t).hidden = res.body.sandboxTabs === false
       state.attention = res.body.attention || {}
       renderPackagesWaiting(res.body.packagesWaiting || 0)
+      renderSyncWaiting(res.body.packagesToFetch || 0)
       state.blockedHosts = res.body.blockedHosts
       noteBlocked(state.blockedHosts)
       state.reviewAt = res.body.review ? res.body.reviewAt || '' : ''
@@ -2879,6 +2880,14 @@
       : waiting + ' package requests are waiting for your approval.'
   }
 
+  // The conversation says too when packages the sandbox restored could be
+  // fetched for the user's IDE: it can't find them until the user allows it.
+  function renderSyncWaiting(count) {
+    $('convo-sync').hidden = count === 0
+    $('convo-sync-text').textContent = packagesWord(count) + " the sandbox restored " + (count === 1 ? "isn't" : "aren't") +
+      " in your package cache, so your IDE can't find " + (count === 1 ? 'it' : 'them') + '.'
+  }
+
   function describeRequest(r) {
     return r.ecosystem + ' ' + r.id + ' ' + r.version + (r.framework ? ' (' + r.framework + ')' : '')
   }
@@ -2959,6 +2968,11 @@
 
   function wirePackages() {
     $('admin-sync-run').addEventListener('click', runSync)
+    $('convo-sync-review').addEventListener('click', () => {
+      select('admin')
+      $('admin-sync-card').scrollIntoView({ block: 'start' })
+      tick()
+    })
     $('convo-packages-review').addEventListener('click', () => {
       select('admin')
       $('admin-packages-card').scrollIntoView({ block: 'start' })

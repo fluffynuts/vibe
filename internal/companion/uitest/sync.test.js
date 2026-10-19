@@ -115,3 +115,52 @@ test('the card follows the host as the page polls', async () => {
     assert.equal(p.$('admin-sync-run').disabled, true)
   } finally { p.close() }
 })
+
+// conversationPage is the Conversation tab of a sandbox whose state says
+// fetchable packages could be fetched for the IDE.
+function conversationPage(fetchable) {
+  const at = { fetchable }
+  const routes = {
+    '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, admin: true, conversation: true, packagesToFetch: at.fetchable, attention: {} }),
+    '/api/admin': { status: { exists: true, running: true }, upgrades: {} },
+    '/api/packages': { requests: [], config: null },
+    '/api/packages/sync': () => missing(),
+    '/api/conversation': { entries: [] },
+  }
+  return openPage({ routes, storage: { 'vibe-companion-tab': 'conversation' } }).then((p) => Object.assign(p, { at }))
+}
+
+test('packages the IDE can\'t see are said in the conversation, with a way to the Admin tab', async () => {
+  const p = await conversationPage(405)
+  try {
+    assert.equal(p.$('convo-sync').hidden, false)
+    assert.match(p.$('convo-sync-text').textContent, /405 packages the sandbox restored aren't in your package cache/)
+    assert.match(p.$('convo-sync-text').textContent, /IDE/)
+    assert.equal(p.$('panel-conversation').hidden, false)
+    await p.click('convo-sync-review')
+    assert.equal(p.$('panel-admin').hidden, false, 'the button goes to the Admin tab')
+    assert.equal(p.$('panel-conversation').hidden, true)
+    assert.equal(p.$('admin-sync-run').disabled, false, 'it fetches nothing itself: the card\'s own button does')
+    assert.equal(p.at.runs, undefined)
+  } finally { p.close() }
+})
+
+test('one package is said in the singular', async () => {
+  const p = await conversationPage(1)
+  try {
+    assert.match(p.$('convo-sync-text').textContent, /^1 package the sandbox restored isn't in your package cache/)
+  } finally { p.close() }
+})
+
+test('nothing to fetch, nothing said; and it goes when they are fetched', async () => {
+  const p = await conversationPage(0)
+  try {
+    assert.equal(p.$('convo-sync').hidden, true)
+    p.at.fetchable = 3
+    await p.poll()
+    assert.equal(p.$('convo-sync').hidden, false, 'it appears when there are some')
+    p.at.fetchable = 0
+    await p.poll()
+    assert.equal(p.$('convo-sync').hidden, true, 'and goes when there are none')
+  } finally { p.close() }
+})

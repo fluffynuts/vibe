@@ -273,3 +273,29 @@ func TestThePageIsToldHowManyOfThePackagesAFetchCouldBring(t *testing.T) {
 		t.Errorf("actionable = %d while it's being fetched, want 0", got)
 	}
 }
+
+// The Conversation tab says there are packages to fetch without the Admin tab
+// being open, so the page's state carries the count.
+func TestThePageStateSaysHowManyPackagesAFetchCouldBring(t *testing.T) {
+	fetchable := func(f *fakeSync) int {
+		rec := do(t, syncServer(f), req{path: "/api/state", headers: authed(nil)})
+		var st struct {
+			PackagesToFetch int `json:"packagesToFetch"`
+		}
+		json.Unmarshal(rec.Body.Bytes(), &st)
+		return st.PackagesToFetch
+	}
+	if got := fetchable(&fakeSync{state: someMissing}); got != 3 {
+		t.Errorf("packagesToFetch = %d, want 3", got)
+	}
+	nowhere := someMissing
+	nowhere.Last = &nugetfetch.SyncResult{Unresolved: []nugetfetch.Package{{ID: "Gone.Pkg", Version: "9.9.9"}}}
+	if got := fetchable(&fakeSync{state: nowhere}); got != 2 {
+		t.Errorf("packagesToFetch = %d, want 2", got)
+	}
+	running := someMissing
+	running.Running = true
+	if got := fetchable(&fakeSync{state: running}); got != 0 {
+		t.Errorf("packagesToFetch = %d while fetching, want 0", got)
+	}
+}

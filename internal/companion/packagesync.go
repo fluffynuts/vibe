@@ -55,6 +55,14 @@ func fixableNow(st nugetfetch.SyncState) int {
 	return actionableMissing(st)
 }
 
+// packagesToFetch is fixableNow for the sandbox's sync, 0 for a sandbox with none.
+func (s *Server) packagesToFetch() int {
+	if s.cfg.PackageSync == nil {
+		return 0
+	}
+	return fixableNow(s.cfg.PackageSync.State())
+}
+
 // packageSyncWaiting says, for the Admin tab's dot, how many packages the
 // sandbox restored that the user's IDE can't see, when fetching them would
 // help; "" when none, or while they're being fetched.
