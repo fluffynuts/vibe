@@ -26,9 +26,9 @@ func loadSettings(lay layout.Layout, profile string) (settings.Settings, error) 
 		return settings.Settings{}, err
 	}
 	merged := settings.Merge(baseSettings, profileSettings)
-	if merged.Nuget != "" && merged.Nuget != nugetFallback && merged.Nuget != nugetShared {
-		return settings.Settings{}, fmt.Errorf("settings: nuget is %q; it must be %q (the host's packages, read-only) or %q (all of the host's nuget folder, read-write)",
-			merged.Nuget, nugetFallback, nugetShared)
+	if merged.Nuget != "" && merged.Nuget != nugetFallback && merged.Nuget != nugetOverlay && merged.Nuget != nugetShared {
+		return settings.Settings{}, fmt.Errorf("settings: nuget is %q; it must be %q (the host's packages, read-only), %q (the same, overlaid at their own path: experimental) or %q (all of the host's nuget folder, read-write)",
+			merged.Nuget, nugetFallback, nugetOverlay, nugetShared)
 	}
 	if merged.Packages != "" && merged.Packages != packagereq.PolicyAsk && merged.Packages != packagereq.PolicyAllow {
 		return settings.Settings{}, fmt.Errorf("settings: packages is %q; it must be %q (each request waits for you to approve it) or %q (requests are fetched at once)",

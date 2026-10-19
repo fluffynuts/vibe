@@ -126,7 +126,9 @@ elif [ -n "$SBX_HOST_NUGET_PACKAGES" ]; then
     echo "ERROR: $SBX_HOST_NUGET_PACKAGES is not mounted"
     exit 1
   fi
-  if overlay_packages "$SBX_HOST_NUGET_PACKAGES"; then
+  # Only when asked (nuget: overlay): a directory the overlay shows from the host's
+  # cache is root's to the agent, so adding a version beside one the host has fails.
+  if [ "$SBX_NUGET_OVERLAY" = 1 ] && overlay_packages "$SBX_HOST_NUGET_PACKAGES"; then
     persist NUGET_PACKAGES "$SBX_HOST_NUGET_PACKAGES"
     persist VIBE_NUGET_OVERLAY 1
     unpersist NUGET_FALLBACK_PACKAGES

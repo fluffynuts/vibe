@@ -37,7 +37,10 @@ type Settings struct {
 	Packages string `yaml:"packages,omitempty"`
 	// Nuget is how a sandbox gets the host's NuGet packages: "fallback"
 	// (the default) gives it the host's package cache read-only and
-	// nothing else of NugetDir; "shared" mounts all of NugetDir read-write,
+	// nothing else of NugetDir; "overlay" is that cache overlaid at its own
+	// path in the sandbox, so what a restore writes names the host's path
+	// (experimental: a version can't be added beside one the host has);
+	// "shared" mounts all of NugetDir read-write,
 	// which lets the agent plant code in packages the host builds with,
 	// and read its feeds' credentials.
 	Nuget      string `yaml:"nuget,omitempty"`

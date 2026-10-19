@@ -60,6 +60,28 @@ func TestNugetByDefaultGivesTheHostsPackagesReadOnlyAndNothingElse(t *testing.T)
 	}
 }
 
+// The overlay (the host's cache at its own path, with what the sandbox writes kept
+// in the sandbox) is opt-in: the agent can't add a version beside one the host has
+// in it (every directory of the host's looks root's to it), so a default that
+// builds on it breaks restores. Off, the cache is a fallback beside the sandbox's own.
+func TestTheOverlayIsOptInAndTheSandboxIsOnlyToldToUseItWhenAsked(t *testing.T) {
+	nuget := hostNuget(t)
+	packages := filepath.Join(nuget, "packages")
+	asked := func(mode string) bool {
+		f, ok := folderAt(foldersFor(t, settings.Settings{NugetDir: nuget, Nuget: mode}), packages)
+		if !ok || !f.readOnly {
+			t.Fatalf("%q: the packages should still be mounted read-only: %+v", mode, f)
+		}
+		return slices.Contains(f.env, "SBX_NUGET_OVERLAY=1")
+	}
+	if asked("") || asked("fallback") {
+		t.Error("the overlay is on without being asked for")
+	}
+	if !asked("overlay") {
+		t.Error("nuget: overlay doesn't tell the sandbox to overlay the cache")
+	}
+}
+
 func TestNugetSharedGivesTheWholeFolderReadWrite(t *testing.T) {
 	nuget := hostNuget(t)
 	folders := foldersFor(t, settings.Settings{NugetDir: nuget, Nuget: "shared"})
@@ -91,7 +113,7 @@ func TestLoadSettingsRefusesAnUnknownNugetMode(t *testing.T) {
 	lay := updateLayout(t)
 	writeFile(t, lay.HomePath("profiles", "p", "settings.yaml"), "nuget: everything\n")
 	_, err := loadSettings(lay, "p")
-	if err == nil || !strings.Contains(err.Error(), "everything") || !strings.Contains(err.Error(), "shared") {
+	if err == nil || !strings.Contains(err.Error(), "everything") || !strings.Contains(err.Error(), "shared") || !strings.Contains(err.Error(), "overlay") {
 		t.Errorf("want an error naming the value and the choices, got %v", err)
 	}
 }

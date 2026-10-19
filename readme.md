@@ -875,15 +875,17 @@ else of `~/.nuget`: its config (private feeds' addresses and credentials) and it
 on the host, and the agent can't plant code in a package your own builds then run.
 
 - **Packages the host already has** are used as they are.
-- **Public packages** (nuget.org) the sandbox restores itself, into a layer of its own. Where it can
-  (the sandbox has a disk that survives sleep, and your cache's path has no comma or colon in it),
-  your cache is **overlaid at its own path**: your packages below, read-only, and what the sandbox
-  writes above, kept in the sandbox and never in your cache. The files the sandbox's restore writes
-  (`obj/project.assets.json`, `obj/*.nuget.g.props`) then name your cache's path, which your IDE
-  resolves. Where it can't (a Windows host's `C:\...` path, say), your cache is a read-only
-  fallback beside the sandbox's own, and those files name the sandbox's cache. `vibe-nuget fetch`
-  makes the sandbox look again for a package it had looked for before you fetched it. The reason is
-  that an overlay keeps its "not found" after the lower layer changes.
+- **Public packages** (nuget.org) the sandbox restores itself, into a cache of its own, with your
+  cache as a read-only fallback beside it. The files the sandbox's restore writes
+  (`obj/project.assets.json`, `obj/*.nuget.g.props`) name the sandbox's cache, so your IDE needs
+  its own restore after a fetch (see below). `nuget: overlay` in `settings.yaml` is an
+  **experiment** that overlays your cache at its own path in the sandbox instead, so those files
+  name your cache's path and your IDE resolves them once the packages are in it. It isn't the
+  default because a restore that needs a version *beside* one your cache already has fails with
+  "Permission denied" (the overlay shows every directory from your cache as root's, which the agent
+  can't write to). It also needs a disk that survives sleep in the sandbox and a cache path with no
+  comma or colon, and falls back to the above without them. `vibe-nuget fetch` makes the sandbox look
+  again for a package it had looked for before you fetched it, since an overlay keeps its "not found".
 - **Your IDE and what the sandbox restored.** What the sandbox restores from nuget.org lands in its
   own layer, which your IDE (Rider, say) can't read: references go red until your cache has the
   packages. The Admin tab's **Packages your IDE can't see** card says how many packages the
@@ -898,9 +900,8 @@ on the host, and the agent can't plant code in a package your own builds then ru
   says which and what NuGet said, and fetches the rest. It's
   the same fetch, into the same place, as a package the agent asks for: only the sandbox's own
   packages are never moved into your cache, since a file the sandbox wrote there would run on your
-  next build. When the sandbox has overlaid your cache, that's all it takes; otherwise restore in the
-  IDE after a fetch if it still shows red, since the files the sandbox generated name its own cache
-  first.
+  next build. After a fetch, restore in the IDE if it still shows red: the files the sandbox generated
+  name its own cache first (with `nuget: overlay`, they name yours).
 - **A package from a private feed** the sandbox can't sign in to. When its restore fails with
   `NU1101` or `NU1102`, the agent asks you for it with `vibe-nuget fetch <id> <version>`. The
   request waits on the companion page's **Admin tab**, with what it is to your project (a new
@@ -1066,7 +1067,7 @@ cpus: 8              # CPUs a sandbox gets; a new sandbox asks, from 1 to one le
                      #    host has. Unset: half the host's (sbx alone would give all of them)
 agent: claude         # which coding agent to run
 nugetDir: ~/.nuget    # the host's NuGet folder: its packages are given to the sandbox, if it has them
-nuget: fallback       # fallback (default): packages read-only, nothing else; shared: all of nugetDir, read-write
+nuget: fallback       # fallback (default): packages read-only, nothing else; overlay: the same, overlaid at their own path (experimental); shared: all of nugetDir, read-write
 packages: ask         # ask (default): packages the agent asks for wait for you on the Admin tab; allow: fetched at once
 memoryRoot: ~/.vibe/memories   # where per-sandbox agent memories are backed up
 defaultFeatures:      # library features a guided profile starts with selected

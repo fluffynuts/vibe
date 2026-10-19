@@ -31,6 +31,7 @@ func (f folder) mount() string {
 
 const (
 	nugetFallback = "fallback"
+	nugetOverlay  = "overlay"
 	nugetShared   = "shared"
 )
 
@@ -67,8 +68,12 @@ func nugetFolders(vibeHome, name string, merged settings.Settings) []folder {
 		return nil
 	}
 	requests := state.PackagesPath(vibeHome, name)
+	env := []string{"SBX_HOST_NUGET_PACKAGES=" + packages}
+	if merged.Nuget == nugetOverlay {
+		env = append(env, "SBX_NUGET_OVERLAY=1")
+	}
 	return []folder{
-		{path: packages, readOnly: true, env: []string{"SBX_HOST_NUGET_PACKAGES=" + packages},
+		{path: packages, readOnly: true, env: env,
 			note: "nuget:     " + packages + " (packages, read-only)"},
 		{path: filepath.Join(requests, "inbox"), made: true, env: []string{"VIBE_PACKAGES_DIR=" + requests}},
 		{path: filepath.Join(requests, "view"), readOnly: true, made: true},

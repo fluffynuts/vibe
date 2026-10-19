@@ -165,7 +165,7 @@ func TestLinkNugetOverlaysTheHostsPackagesAtTheirOwnPath(t *testing.T) {
 	packages := t.TempDir()
 	base := filepath.Join(t.TempDir(), "vibe-nuget")
 	mounting := newFakeMounting(t, true)
-	got := runLinkNugetMounting(t, mounting, "export NUGET_FALLBACK_PACKAGES=/old\n", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_UPPER_BASE="+base)
+	got := runLinkNugetMounting(t, mounting, "export NUGET_FALLBACK_PACKAGES=/old\n", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_OVERLAY=1", "SBX_NUGET_UPPER_BASE="+base)
 	calls := mounting.mounts(t)
 	if len(calls) != 1 {
 		t.Fatalf("want one mount, got %q", calls)
@@ -191,7 +191,7 @@ func TestLinkNugetOverlaysTheHostsPackagesAtTheirOwnPath(t *testing.T) {
 func TestLinkNugetKeepsTheFallbackWhenTheOverlayCantBeMounted(t *testing.T) {
 	packages := t.TempDir()
 	base := filepath.Join(t.TempDir(), "vibe-nuget")
-	got := runLinkNugetMounting(t, newFakeMounting(t, false), "export NUGET_PACKAGES=/old\nexport VIBE_NUGET_OVERLAY=1\n", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_UPPER_BASE="+base)
+	got := runLinkNugetMounting(t, newFakeMounting(t, false), "export NUGET_PACKAGES=/old\nexport VIBE_NUGET_OVERLAY=1\n", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_OVERLAY=1", "SBX_NUGET_UPPER_BASE="+base)
 	if !strings.Contains(got, "export NUGET_FALLBACK_PACKAGES="+packages) {
 		t.Errorf("no fallback:\n%s", got)
 	}
@@ -203,7 +203,7 @@ func TestLinkNugetKeepsTheFallbackWhenTheOverlayCantBeMounted(t *testing.T) {
 func TestLinkNugetMountsNothingWhereThereIsNoDiskForTheUpperLayer(t *testing.T) {
 	packages := t.TempDir()
 	mounting := newFakeMounting(t, true)
-	runLinkNugetMounting(t, mounting, "", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_UPPER_BASE="+filepath.Join(t.TempDir(), "no", "such", "disk", "vibe-nuget"))
+	runLinkNugetMounting(t, mounting, "", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_OVERLAY=1", "SBX_NUGET_UPPER_BASE="+filepath.Join(t.TempDir(), "no", "such", "disk", "vibe-nuget"))
 	if calls := mounting.mounts(t); len(calls) != 0 {
 		t.Errorf("mounted anyway: %q", calls)
 	}
@@ -218,7 +218,7 @@ func TestLinkNugetDoesNotOverlayAPathOverlayfsCantTake(t *testing.T) {
 			t.Fatal(err)
 		}
 		mounting := newFakeMounting(t, true)
-		got := runLinkNugetMounting(t, mounting, "", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_UPPER_BASE="+filepath.Join(t.TempDir(), "vibe-nuget"))
+		got := runLinkNugetMounting(t, mounting, "", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_OVERLAY=1", "SBX_NUGET_UPPER_BASE="+filepath.Join(t.TempDir(), "vibe-nuget"))
 		if calls := mounting.mounts(t); len(calls) != 0 {
 			t.Errorf("%s: mounted anyway: %q", name, calls)
 		}
@@ -236,7 +236,7 @@ func TestLinkNugetDoesNotOverlayTwice(t *testing.T) {
 		t.Fatal(err)
 	}
 	mounting := newFakeMounting(t, true)
-	got := runLinkNugetMounting(t, mounting, "", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_UPPER_BASE="+base, "SBX_PROC_MOUNTS="+mounts)
+	got := runLinkNugetMounting(t, mounting, "", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_OVERLAY=1", "SBX_NUGET_UPPER_BASE="+base, "SBX_PROC_MOUNTS="+mounts)
 	if calls := mounting.mounts(t); len(calls) != 0 {
 		t.Errorf("mounted over a mount: %q", calls)
 	}
@@ -253,7 +253,7 @@ func TestLinkNugetOverlaysOverAnOverlayThatIsntItsOwn(t *testing.T) {
 		t.Fatal(err)
 	}
 	mounting := newFakeMounting(t, true)
-	runLinkNugetMounting(t, mounting, "", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_UPPER_BASE="+filepath.Join(t.TempDir(), "vibe-nuget"), "SBX_PROC_MOUNTS="+mounts)
+	runLinkNugetMounting(t, mounting, "", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_OVERLAY=1", "SBX_NUGET_UPPER_BASE="+filepath.Join(t.TempDir(), "vibe-nuget"), "SBX_PROC_MOUNTS="+mounts)
 	if calls := mounting.mounts(t); len(calls) != 1 {
 		t.Errorf("want the overlay mounted, got %q", calls)
 	}
@@ -266,8 +266,27 @@ func TestLinkNugetGivesTheUpperLayerToTheAgent(t *testing.T) {
 	packages := t.TempDir()
 	base := filepath.Join(t.TempDir(), "vibe-nuget")
 	mounting := newFakeMounting(t, true)
-	runLinkNugetMounting(t, mounting, "", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_UPPER_BASE="+base)
+	runLinkNugetMounting(t, mounting, "", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_OVERLAY=1", "SBX_NUGET_UPPER_BASE="+base)
 	if got := mounting.chowned(t); len(got) != 1 || got[0] != "agent: "+base+"/upper" {
 		t.Errorf("the upper layer's owner: %q", got)
+	}
+}
+
+// Without being asked for (nuget: overlay) nothing is mounted over the host's cache, whatever
+// the sandbox could do: the overlay breaks a restore that needs a version beside one the host
+// has, so the cache stays a read-only fallback beside the sandbox's own.
+func TestLinkNugetDoesNotOverlayUnlessAskedTo(t *testing.T) {
+	packages := t.TempDir()
+	mounting := newFakeMounting(t, true)
+	got := runLinkNugetMounting(t, mounting, "export NUGET_PACKAGES=/old\nexport VIBE_NUGET_OVERLAY=1\n",
+		"SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_UPPER_BASE="+filepath.Join(t.TempDir(), "vibe-nuget"))
+	if calls := mounting.mounts(t); len(calls) != 0 {
+		t.Errorf("mounted without being asked: %q", calls)
+	}
+	if !strings.Contains(got, "export NUGET_FALLBACK_PACKAGES="+packages) {
+		t.Errorf("no fallback:\n%s", got)
+	}
+	if strings.Contains(got, "export NUGET_PACKAGES=") || strings.Contains(got, "VIBE_NUGET_OVERLAY") {
+		t.Errorf("what an earlier overlay set is left behind:\n%s", got)
 	}
 }
