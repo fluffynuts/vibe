@@ -236,3 +236,20 @@ func TestAFailureCarriesTheHintForWhatTheUserCouldDo(t *testing.T) {
 		t.Errorf("msg = %q, err = %v", msg, err)
 	}
 }
+
+// A fresh machine has no ~/.vibe/nuget-fetch yet: the fetch makes it.
+func TestFetchMakesItsRootWhenItIsNotThereYet(t *testing.T) {
+	h := newHost(t)
+	opts := h.options()
+	opts.Root = filepath.Join(t.TempDir(), "not", "yet", "nuget-fetch")
+	res, err := Fetch(context.Background(), Request{ID: "Demo.Pkg", Version: "1.0.0", Framework: "net10.0"}, opts)
+	if err != nil {
+		t.Fatalf("Fetch: %v\n%s", err, res.Output)
+	}
+	if _, err := os.Stat(filepath.Join(h.cache, "demo.pkg", "1.0.0")); err != nil {
+		t.Errorf("package not in the cache: %v", err)
+	}
+	if left, _ := os.ReadDir(opts.Root); len(left) != 0 {
+		t.Errorf("throwaway folder left behind: %v", left)
+	}
+}

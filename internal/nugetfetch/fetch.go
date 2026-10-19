@@ -51,6 +51,9 @@ func Fetch(ctx context.Context, r Request, opts Options) (Result, error) {
 	one.Lock()
 	defer one.Unlock()
 
+	if err := os.MkdirAll(opts.Root, 0o700); err != nil {
+		return Result{}, fmt.Errorf("making %s to fetch in: %w", opts.Root, err)
+	}
 	dir, err := os.MkdirTemp(opts.Root, "fetch-")
 	if err != nil {
 		return Result{}, fmt.Errorf("making a folder to fetch in under %s: %w", opts.Root, err)
