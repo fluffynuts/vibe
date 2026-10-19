@@ -69,6 +69,7 @@ type packageRequest struct {
 	Version   string `json:"version"`
 	Framework string `json:"framework,omitempty"`
 	Note      string `json:"note,omitempty"`
+	Approved  bool   `json:"approved,omitempty"`
 	Fetching  bool   `json:"fetching,omitempty"`
 }
 
@@ -77,21 +78,21 @@ func (s *Server) packageRequests() []packageRequest {
 	for _, p := range s.cfg.Packages.Pending() {
 		out = append(out, packageRequest{
 			Key: p.Key, Ecosystem: p.Request.Ecosystem, ID: p.Request.ID, Version: p.Request.Version,
-			Framework: p.Request.Framework, Note: p.Note, Fetching: p.Fetching,
+			Framework: p.Request.Framework, Note: p.Note, Approved: p.Approved, Fetching: p.Fetching,
 		})
 	}
 	return out
 }
 
 // packagesWaitingCount is how many requests wait for the user to decide:
-// one already being fetched has been approved.
+// one approved has been decided, whether it's being fetched yet or not.
 func (s *Server) packagesWaitingCount() int {
 	if s.cfg.Packages == nil {
 		return 0
 	}
 	waiting := 0
 	for _, p := range s.cfg.Packages.Pending() {
-		if !p.Fetching {
+		if !p.Approved {
 			waiting++
 		}
 	}

@@ -67,14 +67,26 @@ func TestThePageListsTheRequestsHeldForTheUser(t *testing.T) {
 			Version   string `json:"version"`
 			Framework string `json:"framework"`
 			Note      string `json:"note"`
+			Approved  bool   `json:"approved"`
+			Fetching  bool   `json:"fetching"`
 		} `json:"requests"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
 	if len(got.Requests) != 1 || got.Requests[0].ID != "Corp.Lib" || got.Requests[0].Note != "new to this project" ||
-		got.Requests[0].Key != "nuget|Corp.Lib|1.2.3|net8.0" {
+		got.Requests[0].Key != "nuget|Corp.Lib|1.2.3|net8.0" || got.Requests[0].Approved || got.Requests[0].Fetching {
 		t.Errorf("requests = %+v", got.Requests)
+	}
+}
+
+func TestTheListSaysWhichRequestsAreApprovedAndWhichAreBeingFetched(t *testing.T) {
+	pending := demoPending()
+	pending[0].Approved = true
+	s := packagesServer(&fakeDesk{pending: pending})
+	rec := do(t, s, req{path: "/api/packages", headers: authed(nil)})
+	if !strings.Contains(rec.Body.String(), `"approved":true`) {
+		t.Errorf("body = %s", rec.Body)
 	}
 }
 
@@ -250,8 +262,12 @@ func TestTheStateSaysHowManyPackageRequestsAreWaitingForApproval(t *testing.T) {
 	}
 	desk.pending = append(demoPending(), demoPending()[0], demoPending()[0])
 	desk.pending[1].Key, desk.pending[2].Key = "b", "c"
-	desk.pending[2].Fetching = true
+	desk.pending[2].Approved, desk.pending[2].Fetching = true, true
 	if got := waiting(); got != 2 {
 		t.Errorf("waiting = %d, want 2: a request already being fetched has been approved", got)
+	}
+	desk.pending[1].Approved = true
+	if got := waiting(); got != 1 {
+		t.Errorf("waiting = %d, want 1: one approved and queued, not yet fetching, is decided too", got)
 	}
 }

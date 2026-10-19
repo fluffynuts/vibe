@@ -2672,6 +2672,14 @@
     return r.ecosystem + ' ' + r.id + ' ' + r.version + (r.framework ? ' (' + r.framework + ')' : '')
   }
 
+  // The buttons act on requests not yet decided: approved ones are queued
+  // or being fetched, and can't be taken back.
+  function packageButtons() {
+    const undecided = Array.from($('admin-packages').querySelectorAll('input:not(:disabled)'))
+    $('admin-packages-allow').disabled = !undecided.some((b) => b.checked)
+    $('admin-packages-deny').disabled = undecided.length === 0
+  }
+
   function renderPackages(data) {
     const requests = data.requests || []
     const keys = new Set(requests.map((r) => r.key))
@@ -2680,19 +2688,26 @@
     if (key !== packagesView.key) {
       packagesView.key = key
       $('admin-packages').replaceChildren(...requests.map((r) => {
-        const box = el('input', { type: 'checkbox', 'data-key': r.key, disabled: !!r.fetching })
+        const box = el('input', { type: 'checkbox', 'data-key': r.key, disabled: !!r.approved })
         box.checked = !packagesView.unticked.has(r.key)
         box.addEventListener('change', () => {
           if (box.checked) packagesView.unticked.delete(r.key)
           else packagesView.unticked.add(r.key)
+          packageButtons()
         })
-        return el('li', {}, el('label', {}, box, el('span', { text: describeRequest(r) }),
-          el('span', { class: 'was', text: r.fetching ? 'fetching…' : r.note || '' })))
+        const state = r.fetching ? 'fetching…' : r.approved ? 'approved — waiting its turn' : r.note || ''
+        return el('li', {}, el('label', {}, box, el('span', { text: describeRequest(r) }), el('span', { class: 'was', text: state })))
       }))
     }
+    const approved = requests.filter((r) => r.approved).length
+    const undecided = requests.length - approved
     $('admin-packages-none').hidden = requests.length > 0
     $('admin-packages-bar').hidden = requests.length === 0
-    pill('admin-packages-count', requests.length ? String(requests.length) + ' waiting' : '', requests.length ? 'bad' : '')
+    $('admin-packages-status').hidden = approved === 0
+    $('admin-packages-status').textContent = approved + ' approved — fetching a few at a time; each one done starts the next.' +
+      (undecided ? ' ' + undecided + ' more to decide.' : '')
+    pill('admin-packages-count', requests.length ? String(undecided) + ' waiting' + (approved ? ' · ' + approved + ' approved' : '') : '', undecided ? 'bad' : '')
+    packageButtons()
     renderNugetConfig(data.config, data.configProblem)
   }
 
@@ -2715,6 +2730,9 @@
   }
 
   async function packagesDecide(path, keys) {
+    // At once, not at the next poll: the answer shows what happened.
+    $('admin-packages-allow').disabled = true
+    $('admin-packages-deny').disabled = true
     try {
       const res = await post(path, { keys })
       reached(true)

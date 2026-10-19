@@ -15,7 +15,7 @@ function packagesPage(answer, { attention = {} } = {}) {
     '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, admin: true, attention }),
     '/api/admin': { status: { exists: true, running: true }, upgrades: {} },
     '/api/packages': () => at.answer,
-    '/api/packages/allow': (call) => { at.allowed = call.body.keys; return { requests: [], config: null } },
+    '/api/packages/allow': (call) => { at.allowed = call.body.keys; return at.afterAllow || { requests: [], config: null } },
     '/api/packages/deny-all': () => { at.denied = true; return { requests: [], config: null } },
     '/api/packages/approve-config': (call) => { at.approved = call.body.hash; return { requests: [], config: null } },
   }
@@ -81,10 +81,63 @@ test('Deny all denies everything held', async () => {
 })
 
 test('a request being fetched can no longer be unticked or allowed again', async () => {
-  const p = await packagesPage({ requests: [request('A.Lib', { fetching: true })], config: null })
+  const p = await packagesPage({ requests: [request('A.Lib', { approved: true, fetching: true })], config: null })
   try {
     assert.equal(rows(p)[0].querySelector('input').disabled, true)
     assert.match(rows(p)[0].textContent, /fetching/)
+  } finally { p.close() }
+})
+
+test('an approved request waiting its turn says so, and can no longer be changed', async () => {
+  const p = await packagesPage({ requests: [request('A.Lib', { approved: true }), request('B.Lib')], config: null })
+  try {
+    assert.match(rows(p)[0].textContent, /approved.*its turn/)
+    assert.equal(rows(p)[0].querySelector('input').disabled, true)
+    assert.equal(rows(p)[1].querySelector('input').disabled, false, 'the undecided one can still be ticked')
+  } finally { p.close() }
+})
+
+test('with every request approved, both buttons are off and a line says what is happening', async () => {
+  const p = await packagesPage({ requests: [request('A.Lib', { approved: true, fetching: true }), request('B.Lib', { approved: true })], config: null })
+  try {
+    assert.equal(p.$('admin-packages-allow').disabled, true)
+    assert.equal(p.$('admin-packages-deny').disabled, true)
+    assert.match(p.$('admin-packages-status').textContent, /2 approved.*fetching/)
+  } finally { p.close() }
+})
+
+test('new requests arriving after an approval turn the buttons back on, for those only', async () => {
+  const p = await packagesPage({ requests: [request('A.Lib', { approved: true })], config: null })
+  try {
+    assert.equal(p.$('admin-packages-allow').disabled, true)
+    p.at.answer = { requests: [request('A.Lib', { approved: true }), request('B.Lib')], config: null }
+    await p.poll()
+    assert.equal(p.$('admin-packages-allow').disabled, false)
+    await p.click('admin-packages-allow')
+    assert.deepEqual(p.at.allowed, ['nuget|B.Lib|1.0.0|net8.0'], 'the approved one is not sent again')
+  } finally { p.close() }
+})
+
+test('allowing disables the buttons at once, before the next poll', async () => {
+  const p = await packagesPage({ requests: [request('A.Lib')], config: null })
+  try {
+    p.at.afterAllow = { requests: [request('A.Lib', { approved: true })], config: null }
+    await p.click('admin-packages-allow')
+    assert.equal(p.$('admin-packages-allow').disabled, true)
+    assert.match(rows(p)[0].textContent, /approved/)
+  } finally { p.close() }
+})
+
+test('Allow selected is off while nothing undecided is ticked', async () => {
+  const p = await packagesPage({ requests: [request('A.Lib')], config: null })
+  try {
+    const box = rows(p)[0].querySelector('input')
+    box.checked = false
+    box.dispatchEvent(new p.window.Event('change', { bubbles: true }))
+    assert.equal(p.$('admin-packages-allow').disabled, true)
+    box.checked = true
+    box.dispatchEvent(new p.window.Event('change', { bubbles: true }))
+    assert.equal(p.$('admin-packages-allow').disabled, false)
   } finally { p.close() }
 })
 
