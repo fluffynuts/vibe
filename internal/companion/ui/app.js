@@ -3944,7 +3944,29 @@
   // without a word: long enough that it may be stuck. The turn isn't
   // stopped — that's the user's call. compacting is the agent making room
   // in a full context first, which can take minutes with nothing to show.
+  const LIGHT_USE = 'This light is on while the agent is working on a prompt, or has left something running; it is off when the agent is idle.'
+
+  // drawAgentLight shows whether the agent is busy, in the tab bar, so it can be
+  // seen from every tab, whether or not the conversation has said anything lately.
+  function drawAgentLight(running, background, quietMinutes, compacting) {
+    const light = $('agent-light')
+    light.hidden = !state.conversation
+    const on = running || background
+    light.classList.toggle('on', on)
+    light.classList.toggle('busy', running)
+    light.classList.toggle('background', !running && background)
+    light.classList.toggle('quiet', running && quietMinutes > 0)
+    const now = running && compacting ? 'The agent is compacting its context.'
+      : running && quietMinutes ? 'The agent is working on a prompt, but there has been no output for ' + quietMinutes + ' minutes: it may be stuck.'
+      : running ? 'The agent is working on a prompt.'
+      : background ? 'The agent has answered and left something running in the sandbox.'
+      : 'The agent is idle.'
+    light.title = now + ' ' + LIGHT_USE
+    light.setAttribute('aria-label', light.title)
+  }
+
   function setConvoRunning(running, background, quietMinutes, compacting) {
+    drawAgentLight(running, background, quietMinutes, compacting)
     if (running) setFaviconDot('working')
     else if (convo.running) setFaviconDot(document.visibilityState === 'visible' && document.hasFocus() ? '' : 'done')
     convo.running = running

@@ -538,10 +538,19 @@ html.themed .commands li[aria-selected="true"] {
 .review-uncoloured { font-size: 12px; }
 
 /* The bars at the tab bar's far end: pushed there when there's room, scrolling with the tabs when there isn't. */
-.usage { margin-left: auto; padding-left: 16px; flex: none; display: flex; flex-direction: column; justify-content: center; gap: 3px; font-size: 11px; color: var(--muted); }
+.tabbar-end { margin-left: auto; padding-left: 16px; flex: none; display: flex; align-items: center; gap: 14px; }
+.usage { flex: none; display: flex; flex-direction: column; justify-content: center; gap: 3px; font-size: 11px; color: var(--muted); }
 .usage-row { display: flex; align-items: center; justify-content: flex-end; gap: 6px; white-space: nowrap; }
 .meter { display: inline-block; width: 90px; height: 7px; border-radius: 3px; background: var(--line); overflow: hidden; }
 .meter-fill { display: block; height: 100%; width: 0; background: var(--ok); }
 .meter.warm .meter-fill { background: var(--amber); }
 .meter.hot .meter-fill { background: var(--bad); }
 .usage.stale, .usage.off { opacity: 0.5; filter: grayscale(1); }
+
+/* The agent's light: dark when it's idle, lit and blinking while it works (slower for what it left running). */
+.agent-light { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--line); flex: none; }
+.agent-light.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); animation: agent-blink 1s ease-in-out infinite; }
+.agent-light.background { animation-duration: 2.4s; }
+.agent-light.quiet { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+@keyframes agent-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .agent-light.on { animation: none; } }

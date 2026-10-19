@@ -29,14 +29,17 @@
       <button role="tab" data-tab="admin" id="tab-admin" hidden>Admin</button>
       <button role="tab" data-tab="manage" id="tab-manage" hidden>Profiles</button>
     </nav>
-    <div id="usage" class="usage" hidden>
-      <div class="usage-row">
-        <span id="usage-cpu-label" class="usage-label">CPU</span>
-        <span id="usage-cpu" class="meter" role="meter" aria-label="CPU in use" aria-valuemin="0" aria-valuemax="100"><span id="usage-cpu-fill" class="meter-fill"></span></span>
-      </div>
-      <div class="usage-row">
-        <span id="usage-mem-label" class="usage-label">MEM</span>
-        <span id="usage-mem" class="meter" role="meter" aria-label="Memory in use" aria-valuemin="0" aria-valuemax="100"><span id="usage-mem-fill" class="meter-fill"></span></span>
+    <div class="tabbar-end">
+      <span id="agent-light" class="agent-light" role="img" hidden></span>
+      <div id="usage" class="usage" hidden>
+        <div class="usage-row">
+          <span id="usage-cpu-label" class="usage-label">CPU</span>
+          <span id="usage-cpu" class="meter" role="meter" aria-label="CPU in use" aria-valuemin="0" aria-valuemax="100"><span id="usage-cpu-fill" class="meter-fill"></span></span>
+        </div>
+        <div class="usage-row">
+          <span id="usage-mem-label" class="usage-label">MEM</span>
+          <span id="usage-mem" class="meter" role="meter" aria-label="Memory in use" aria-valuemin="0" aria-valuemax="100"><span id="usage-mem-fill" class="meter-fill"></span></span>
+        </div>
       </div>
     </div>
   </div>

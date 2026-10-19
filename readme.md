@@ -766,6 +766,16 @@ values: it's the way to change them. With `-f`, `--update-sandboxes`, `--migrate
 Rebuild, nothing is asked and the recorded values are kept. A sandbox already built keeps the CPUs
 it has until it's rebuilt.
 
+### The agent's light
+
+Beside the CPU and memory bars, a small light says whether the agent is busy: it blinks while the
+agent is working on a prompt from the Conversation tab, more slowly while it has answered and left
+something running (a server, a watcher), amber if it has been quiet for minutes and may be stuck, and
+is dark when the agent is idle. It's there on every tab, so it says so when the Conversation tab has
+nothing new to show; its tooltip says what it is for. It follows the conversation the page has with
+the agent: work in an attached terminal session isn't seen, and agents the page can't talk to have
+no light.
+
 ### CPU and memory bars
 
 At the far right of the companion page's tab bar, whichever tab is showing, two small bars say how busy
