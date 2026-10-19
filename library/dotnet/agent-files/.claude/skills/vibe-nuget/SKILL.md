@@ -50,16 +50,15 @@ fails on one of those, ask for it the same way.
 ## If it isn't fetched
 
 - **Denied:** the message says whether the user *declined* the request, or
-  *did not select* it when deciding on several, which may have been a slip.
-  Either way it is their decision, not an error in vibe or the page: don't
-  guess at a bug, and don't suggest the tool is at fault. The request is gone
-  from their list. In your reply, say plainly that you are blocked on that
-  package and what needs it, and ask the user what they'd like: they may
-  already have it, want something else, or say it was a slip. If it was a slip,
-  run `vibe-nuget fetch` for it again, which raises a fresh request for them to
-  approve; never tell them to approve it again, since there is nothing to
-  approve until you ask. Otherwise don't look for another way to the package,
-  and don't ask again unless the user says to.
+  *left it out* when deciding on several, which may have been a slip. Nothing
+  is broken: it's their choice, and the request is gone from their list. Say
+  what you're blocked on and ask the user kindly and openly, for example: "Did
+  you mean to leave out Foo? If not, I'll ask again and you can approve it; if
+  you did, what shall we do instead?" If it was a slip, run `vibe-nuget fetch`
+  for it again, which raises a fresh request for them to approve; never tell
+  them to approve it again, since there is nothing to approve until you ask.
+  Otherwise don't look for another way to the package, and don't ask again
+  unless the user says to.
 - **Failed:** the message is NuGet's own. Tell the user what it said. If it says
   the folder's `nuget.config` isn't approved, say that the user can approve it
   on the Admin tab, then ask again.

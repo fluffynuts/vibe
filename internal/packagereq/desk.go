@@ -359,15 +359,16 @@ func (d *Desk) answerNo(keys []string, how string, say func(Request) string) {
 }
 
 // The messages the agent is told a request was not fetched in are short, and say what to do before anything
-// else: an agent may show only the first part of what it's told.
+// else: an agent may show only the first part of what it's told. They ask for a friendly, open tone by showing it
+// (an example question), and say that nothing is broken, instead of forbidding the stiffness or the guessing.
 func notSelectedMessage(r Request) string {
-	return fmt.Sprintf("NOT FETCHED: the user did not select %s %s, so it is no longer on their list. That is their decision, not an error; it may be a slip. "+
-		"Don't look for another way to get it. Tell the user plainly that you are blocked on it and what needs it, and ask whether leaving it out was deliberate. "+
-		"If it was a slip, run vibe-nuget fetch for it again: that raises a fresh request for them to approve (don't tell them to approve it again). "+
-		"If deliberate, ask what they'd like instead.", r.ID, r.Version)
+	return fmt.Sprintf("Not fetched: the user left out %[1]s %[2]s, so it's off their list. Nothing is broken: it's their choice, and it may be a slip. "+
+		"Don't look for another way to get it. Say what you're blocked on, and ask kindly and openly, for example: "+
+		"\"Did you mean to leave out %[1]s? If not, I'll ask again and you can approve it; if you did, what shall we do instead?\" "+
+		"To ask again, run vibe-nuget fetch for it: that raises a fresh request (don't send them to approve the old one).", r.ID, r.Version)
 }
 
 func declinedMessage(r Request) string {
-	return fmt.Sprintf("NOT FETCHED: the user declined %s %s. That is their decision, not an error: they may already have the package or want something else. "+
-		"Don't look for another way to get it. Tell the user plainly that you are blocked on it and what needs it, and ask what they'd like instead.", r.ID, r.Version)
+	return fmt.Sprintf("Not fetched: the user declined %s %s. Nothing is broken: it's their choice, and they may already have the package or want something else. "+
+		"Don't look for another way to get it. Say what you're blocked on, and ask kindly what they'd like instead.", r.ID, r.Version)
 }
