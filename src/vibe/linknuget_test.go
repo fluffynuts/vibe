@@ -290,3 +290,20 @@ func TestLinkNugetDoesNotOverlayUnlessAskedTo(t *testing.T) {
 		t.Errorf("what an earlier overlay set is left behind:\n%s", got)
 	}
 }
+
+// A package that used to come from the host's cache (the fallback) and is gone from it is
+// downloaded into the sandbox's own; the build still looks where it was, and keeps failing,
+// whatever the restore says, until the SDK's cache of package paths is deleted. The agent
+// has to be told: nothing else makes it look there.
+func TestTheDotnetInstructionsSayWhatToDoWhenABuildCantFindAPackageAfterARestore(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "library", "dotnet", "agent-instructions.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{"CS0246", "MSB3030", "assets.cache", "find . -path '*/obj/*' -name '*.assets.cache' -delete", "--force"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the instructions don't mention %q", want)
+		}
+	}
+}
