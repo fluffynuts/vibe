@@ -46,6 +46,15 @@ func actionableMissing(st nugetfetch.SyncState) int {
 	return len(distinct)
 }
 
+// fixableNow is actionableMissing, but none while a fetch is under way: what
+// the Admin tab's dot and its card's highlight are both drawn for.
+func fixableNow(st nugetfetch.SyncState) int {
+	if st.Running {
+		return 0
+	}
+	return actionableMissing(st)
+}
+
 // packageSyncWaiting says, for the Admin tab's dot, how many packages the
 // sandbox restored that the user's IDE can't see, when fetching them would
 // help; "" when none, or while they're being fetched.
@@ -53,11 +62,7 @@ func (s *Server) packageSyncWaiting() string {
 	if s.cfg.PackageSync == nil {
 		return ""
 	}
-	st := s.cfg.PackageSync.State()
-	if st.Running {
-		return ""
-	}
-	switch n := actionableMissing(st); n {
+	switch n := fixableNow(s.cfg.PackageSync.State()); n {
 	case 0:
 		return ""
 	case 1:
@@ -106,7 +111,7 @@ func (s *Server) packageSyncState(w http.ResponseWriter, r *http.Request) {
 		groups = []nugetfetch.Group{}
 	}
 	body := map[string]interface{}{
-		"count": st.Count, "missing": groups, "running": st.Running, "skipped": st.Skipped,
+		"count": st.Count, "actionable": fixableNow(st), "missing": groups, "running": st.Running, "skipped": st.Skipped,
 		"problems": st.Problems, "last": st.Last,
 	}
 	if !st.Checked.IsZero() {

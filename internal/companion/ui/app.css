@@ -211,6 +211,10 @@ dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top
 .panel-admin { overflow: auto; }
 .admin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; align-items: start; }
 .card { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+/* A card that is why the Admin tab has a dot: ringed in the page's colour (the
+   agent's theme, or the accent where it has none, see --theme), so it stands out
+   among the others. A ring beside the border, so nothing moves. */
+.card.wants-you { border-color: var(--theme); box-shadow: 0 0 0 1px var(--theme); }
 .card h2 { margin: 0; font-size: 14px; display: flex; align-items: center; gap: 8px; }
 .pill { font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 .pill.ok { color: var(--ok); border-color: var(--ok); }

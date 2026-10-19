@@ -2816,6 +2816,7 @@
       }))
     }
     $('admin-sync-run').disabled = running || count === 0
+    $('admin-sync-card').classList.toggle('wants-you', (b.actionable || 0) > 0)
     const problems = b.problems || []
     $('admin-sync-problems').hidden = problems.length === 0
     $('admin-sync-problems').textContent = problems.length ? "Couldn't read: " + problems.join('; ') : ''
@@ -2916,6 +2917,7 @@
     $('admin-packages-status').hidden = approved === 0
     $('admin-packages-status').textContent = approved + ' approved — fetching a few at a time; each one done starts the next.' +
       (undecided ? ' ' + undecided + ' more to decide.' : '')
+    $('admin-packages-card').classList.toggle('wants-you', undecided > 0)
     pill('admin-packages-count', requests.length ? String(undecided) + ' waiting' + (approved ? ' · ' + approved + ' approved' : '') : '', undecided ? 'bad' : '')
     packageButtons()
     renderNugetConfig(data.config, data.configProblem)
@@ -3090,6 +3092,7 @@
       : !up.checked ? 'Not checked yet.'
       : found.length ? 'Newer releases are available:' : 'vibe and Docker SBX are up to date.'
     $('admin-upgrades-list').replaceChildren(...found.map((l) => el('li', { text: l })))
+    $('admin-upgrades-card').classList.toggle('wants-you', found.length > 0)
     $('admin-check').disabled = !!up.checking
     const cmd = $('admin-upgrade-command')
     cmd.hidden = !found.length

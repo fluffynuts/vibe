@@ -52,8 +52,9 @@ func syncServer(f *fakeSync) *Server {
 }
 
 type syncBody struct {
-	Count   int `json:"count"`
-	Missing []struct {
+	Count      int `json:"count"`
+	Actionable int `json:"actionable"`
+	Missing    []struct {
 		Framework string `json:"framework"`
 		Packages  []struct {
 			ID      string `json:"id"`
@@ -252,5 +253,23 @@ func TestWhenFetchesNeedApprovalNothingIsFetchedByItself(t *testing.T) {
 	<-ended
 	if f.runs != 0 {
 		t.Errorf("fetched %d times unasked", f.runs)
+	}
+}
+
+// The page marks the card with the same count the Admin tab's dot is drawn
+// for: what a fetch could bring, not what no feed has, and none while one runs.
+func TestThePageIsToldHowManyOfThePackagesAFetchCouldBring(t *testing.T) {
+	if got := getSync(t, syncServer(&fakeSync{state: someMissing})).Actionable; got != 3 {
+		t.Errorf("actionable = %d, want 3", got)
+	}
+	nowhere := someMissing
+	nowhere.Last = &nugetfetch.SyncResult{Unresolved: []nugetfetch.Package{{ID: "Gone.Pkg", Version: "9.9.9"}}}
+	if got := getSync(t, syncServer(&fakeSync{state: nowhere})).Actionable; got != 2 {
+		t.Errorf("actionable = %d, want 2 (one is known to be nowhere)", got)
+	}
+	running := someMissing
+	running.Running = true
+	if got := getSync(t, syncServer(&fakeSync{state: running})).Actionable; got != 0 {
+		t.Errorf("actionable = %d while it's being fetched, want 0", got)
 	}
 }
