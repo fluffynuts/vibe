@@ -95,7 +95,7 @@ func detachHeadless(lay layout.Layout, args cliargs.Args, name, target string) e
 			return nil
 		}
 	}
-	if err := guardFolder(vibeHome, target, args.Force, false); err != nil {
+	if err := guardFolder(vibeHome, target, args.Force, false, false); err != nil {
 		return err
 	}
 	if !args.NoAutoUpdate {

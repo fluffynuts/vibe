@@ -393,7 +393,8 @@ func run(argv []string) error {
 	}
 
 	attaching := !args.ReInit && !args.ReCreate && !args.ReCompose && !args.Delete && !args.Headless
-	if err := guardFolder(vibeHome, target, args.Force, attaching); err != nil {
+	destroying := args.ReInit || args.ReCreate || args.ReCompose || args.Delete
+	if err := guardFolder(vibeHome, target, args.Force, attaching, destroying); err != nil {
 		return err
 	}
 	if !args.Delete {

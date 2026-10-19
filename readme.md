@@ -1111,7 +1111,11 @@ state:
 - `running/<pid>.lock` — one per vibe process with a folder open (anything but `--ssh`, `--stop`,
   `--stop-all`, `--list`, `--install` and `--cleanup`), locked for as long as that process lives. A second vibe
   for the same folder warns that one is already running, gives its PID, and offers to exit,
-  continue anyway, or stop the other one first. `-f` continues anyway without asking.
+  continue anyway (leaving the other running beside it), or stop the other one first (it saves its
+  agent's memories, and is killed if it goes 90 seconds without getting any further). `-f` continues
+  anyway without asking. A rebuild, re-compose or delete takes the sandbox away from the other vibe,
+  so it isn't offered "continue anyway", and `-f` stops the other one first, unless it's in the
+  middle of work (a rebuild half done), which `-f` won't end: it refuses, and says so.
 - `running/<pid>-<n>.lock` — a vibe holding another folder for a while, besides its own: rebuilding
   that folder's sandbox from the Profiles page, or with `--update-sandboxes`. The file says what it's
   doing, so a vibe started in that folder says so too ("vibe (PID n) is rebuilding sandbox 'x'"),

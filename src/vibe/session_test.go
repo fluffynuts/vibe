@@ -74,14 +74,81 @@ func TestAFolderTakenForARebuildSaysWhy(t *testing.T) {
 		t.Errorf("busy %v, stop = %q", busy, stop)
 	}
 	why, stop, busy = othersSay("/work/a", []running.Claim{{PID: 7}})
-	if busy || stop != "stop vibe (PID 7), then continue" || len(why) != 1 {
+	if busy || stop != "stop vibe (PID 7) — it saves its agent's memories first — then continue" || len(why) != 1 {
 		t.Errorf("a session alone: why %v, stop %q, busy %v", why, stop, busy)
+	}
+}
+
+// The menu says what each choice does to the other vibe: stopping ends it
+// properly (its agent's memories are saved), carrying on leaves it running.
+func TestTheMenuForATakenFolderSaysWhatEachChoiceDoesToTheOtherVibe(t *testing.T) {
+	menu := folderMenu([]running.Claim{{PID: 7}}, false)
+	if len(menu.labels) != 3 || menu.choices[1] != chooseContinue || menu.choices[2] != chooseStop {
+		t.Fatalf("menu = %+v, want exit, continue, stop", menu)
+	}
+	if menu.labels[1] != "continue anyway, leaving vibe (PID 7) running beside this one" {
+		t.Errorf("continue is %q", menu.labels[1])
+	}
+	if !strings.Contains(menu.labels[2], "stop vibe (PID 7)") || !strings.Contains(menu.labels[2], "memories") {
+		t.Errorf("stop is %q", menu.labels[2])
+	}
+}
+
+// A rebuild or delete takes the sandbox away from whatever else is using it:
+// carrying on beside the other vibe isn't offered.
+func TestNoContinuingBesideAnotherVibeWhenTheSandboxIsAboutToGo(t *testing.T) {
+	menu := folderMenu([]running.Claim{{PID: 7}}, true)
+	if len(menu.labels) != 2 || menu.choices[0] != chooseExit || menu.choices[1] != chooseStop {
+		t.Errorf("menu = %+v, want just exit and stop", menu)
+	}
+	for _, label := range menu.labels {
+		if strings.Contains(label, "continue anyway") {
+			t.Errorf("offered %q", label)
+		}
+	}
+}
+
+// -f doesn't leave two vibes on a sandbox that's being rebuilt or deleted: it
+// stops the other first, as the menu's third choice does.
+func TestForceStopsTheOtherVibeBeforeARebuildRatherThanCarryingOnBesideIt(t *testing.T) {
+	var said []string
+	teeNotes(func(line string) { said = append(said, line) })
+	defer teeNotes(nil)
+	// No live vibe holds this home's folder, so there's nothing to stop.
+	if err := resolveOthers(t.TempDir(), "/work/a", []running.Claim{{PID: 7}}, true, true); err != nil {
+		t.Fatalf("resolveOthers = %v", err)
+	}
+	got := strings.Join(said, "\n")
+	if strings.Contains(got, "continuing anyway") || !strings.Contains(got, "stopping") {
+		t.Errorf("said:\n%s\nwant it to say it's stopping the other, not carrying on beside it", got)
+	}
+}
+
+// ...but never one in the middle of work (a rebuild half done): -f won't end
+// that unasked.
+func TestForceWontEndAnotherVibesWorkPartWayToStartARebuild(t *testing.T) {
+	err := resolveOthers(t.TempDir(), "/work/a", []running.Claim{{PID: 8, Work: "rebuilding sandbox 'a'"}}, true, true)
+	if err == nil || !strings.Contains(err.Error(), "rebuilding sandbox 'a'") || !strings.Contains(err.Error(), "without -f") {
+		t.Errorf("resolveOthers = %v, want a refusal saying why and what to do", err)
+	}
+}
+
+// Anything that isn't taking the sandbox away keeps -f's old meaning.
+func TestForceStillCarriesOnBesideAnotherVibeWhenNothingIsBeingTakenAway(t *testing.T) {
+	var said []string
+	teeNotes(func(line string) { said = append(said, line) })
+	defer teeNotes(nil)
+	if err := resolveOthers(t.TempDir(), "/work/a", []running.Claim{{PID: 7}}, true, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(said, "\n"), "continuing anyway") {
+		t.Errorf("said %q", said)
 	}
 }
 
 // With no terminal, the refusal says why the folder is taken.
 func TestARefusalForATakenFolderSaysWhy(t *testing.T) {
-	err := resolveOthers(t.TempDir(), "/work/a", []running.Claim{{PID: 8, Work: "rebuilding sandbox 'a'"}}, false)
+	err := resolveOthers(t.TempDir(), "/work/a", []running.Claim{{PID: 8, Work: "rebuilding sandbox 'a'"}}, false, false)
 	if err == nil || !strings.Contains(err.Error(), "rebuilding sandbox 'a'") {
 		t.Errorf("resolveOthers = %v", err)
 	}
