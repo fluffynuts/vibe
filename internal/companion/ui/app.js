@@ -2940,7 +2940,7 @@
           else packagesView.unticked.add(r.key)
           packageButtons()
         })
-        const state = r.fetching ? 'fetching…' : r.approved ? 'approved — waiting its turn' : r.note || ''
+        const state = r.fetching ? 'fetching…' : r.approved ? 'approved — about to be fetched' : r.note || ''
         return el('li', {}, el('label', {}, box, el('span', { text: describeRequest(r) }), el('span', { class: 'was', text: state })))
       }))
     }
@@ -2949,7 +2949,7 @@
     $('admin-packages-none').hidden = requests.length > 0
     $('admin-packages-bar').hidden = requests.length === 0
     $('admin-packages-status').hidden = approved === 0
-    $('admin-packages-status').textContent = approved + ' approved — fetching a few at a time; each one done starts the next.' +
+    $('admin-packages-status').textContent = approved + ' approved — being fetched together.' +
       (undecided ? ' ' + undecided + ' more to decide.' : '')
     packagesWant.requests = undecided > 0
     showPackagesCard()

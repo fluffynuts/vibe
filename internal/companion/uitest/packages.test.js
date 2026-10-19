@@ -88,10 +88,10 @@ test('a request being fetched can no longer be unticked or allowed again', async
   } finally { p.close() }
 })
 
-test('an approved request waiting its turn says so, and can no longer be changed', async () => {
+test('an approved request about to be fetched says so, and can no longer be changed', async () => {
   const p = await packagesPage({ requests: [request('A.Lib', { approved: true }), request('B.Lib')], config: null })
   try {
-    assert.match(rows(p)[0].textContent, /approved.*its turn/)
+    assert.match(rows(p)[0].textContent, /approved.*about to be fetched/)
     assert.equal(rows(p)[0].querySelector('input').disabled, true)
     assert.equal(rows(p)[1].querySelector('input').disabled, false, 'the undecided one can still be ticked')
   } finally { p.close() }
@@ -102,7 +102,8 @@ test('with every request approved, both buttons are off and a line says what is 
   try {
     assert.equal(p.$('admin-packages-allow').disabled, true)
     assert.equal(p.$('admin-packages-deny').disabled, true)
-    assert.match(p.$('admin-packages-status').textContent, /2 approved.*fetching/)
+    assert.match(p.$('admin-packages-status').textContent, /2 approved.*fetched together/)
+    assert.doesNotMatch(p.$('admin-packages-status').textContent, /a few at a time|each one done/)
   } finally { p.close() }
 })
 
