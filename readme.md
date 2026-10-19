@@ -762,6 +762,25 @@ values: it's the way to change them. With `-f`, `--update-sandboxes`, `--migrate
 Rebuild, nothing is asked and the recorded values are kept. A sandbox already built keeps the CPUs
 it has until it's rebuilt.
 
+### CPU and memory bars
+
+At the far right of the companion page's tab bar, whichever tab is showing, two small bars say how busy
+the sandbox is:
+
+```
+CPU (12 cores) [====      ]
+MEM (8g)       [=====     ]
+```
+
+CPU is the share of the time the cores were busy over the last few seconds; memory is what the sandbox
+can't hand back on demand (the page cache isn't counted), the same as `--info`'s "mem used". The labels
+say what the sandbox was given. A bar turns amber from 70% and red from 90%; the tooltip has the figures
+and how old they are, and a screen reader is told the percentages. Both are read from inside the sandbox
+every few seconds, in the background, so a sandbox with every CPU busy never holds the page up: when it's
+too slow to answer, the bars grey and say how long ago they were read. A stopped sandbox shows empty,
+greyed bars and isn't woken to be measured. In a narrow window the bars move toward the tabs, then scroll
+with them.
+
 ### Letting the agent push
 
 Out of the box, the agent in a vibe sandbox has no git credentials: it can commit, but you push — and

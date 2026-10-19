@@ -19,15 +19,27 @@
     <div id="link" class="link" role="status"><span class="dot"></span><span id="link-text">connecting…</span></div>
   </header>
 
-  <nav class="tabs" role="tablist" id="tabs">
-    <button role="tab" data-tab="conversation" id="tab-conversation" hidden>Conversation</button>
-    <button role="tab" data-tab="review" id="tab-review" hidden>Review</button>
-    <button role="tab" data-tab="log" id="tab-log">Network log</button>
-    <button role="tab" data-tab="rules" id="tab-rules">Network rules</button>
-    <button role="tab" data-tab="fs" id="tab-fs">Filesystem rules</button>
-    <button role="tab" data-tab="admin" id="tab-admin" hidden>Admin</button>
-    <button role="tab" data-tab="manage" id="tab-manage" hidden>Profiles</button>
-  </nav>
+  <div class="tabbar" id="tabbar">
+    <nav class="tabs" role="tablist" id="tabs">
+      <button role="tab" data-tab="conversation" id="tab-conversation" hidden>Conversation</button>
+      <button role="tab" data-tab="review" id="tab-review" hidden>Review</button>
+      <button role="tab" data-tab="log" id="tab-log">Network log</button>
+      <button role="tab" data-tab="rules" id="tab-rules">Network rules</button>
+      <button role="tab" data-tab="fs" id="tab-fs">Filesystem rules</button>
+      <button role="tab" data-tab="admin" id="tab-admin" hidden>Admin</button>
+      <button role="tab" data-tab="manage" id="tab-manage" hidden>Profiles</button>
+    </nav>
+    <div id="usage" class="usage" hidden>
+      <div class="usage-row">
+        <span id="usage-cpu-label" class="usage-label">CPU</span>
+        <span id="usage-cpu" class="meter" role="meter" aria-label="CPU in use" aria-valuemin="0" aria-valuemax="100"><span id="usage-cpu-fill" class="meter-fill"></span></span>
+      </div>
+      <div class="usage-row">
+        <span id="usage-mem-label" class="usage-label">MEM</span>
+        <span id="usage-mem" class="meter" role="meter" aria-label="Memory in use" aria-valuemin="0" aria-valuemax="100"><span id="usage-mem-fill" class="meter-fill"></span></span>
+      </div>
+    </div>
+  </div>
 
   <div id="banner" class="banner" role="alert" hidden></div>
 

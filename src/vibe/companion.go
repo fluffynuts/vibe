@@ -315,6 +315,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		History:                state.ConversationPath(vibeHome, name),
 		ReviewTab:              reviewTabFor(vibeHome, name, inst),
 		Admin:                  adminFor(lay, name, inst.Target),
+		Usage:                  usageFor(vibeHome, name),
 		Manage:                 &companionManager{lay: lay, own: name},
 		ThemeColor:             themeColorFor(lay, name, inst, agent),
 		KeepAwake:              keepAwakeFor(name),

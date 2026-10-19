@@ -548,6 +548,8 @@
       state.conversation = !!res.body.conversation
       $('tab-conversation').hidden = !state.conversation
       state.admin = !!res.body.admin
+      state.usage = !!res.body.usage
+      $('usage').hidden = !state.usage
       $('tab-admin').hidden = !state.admin
       $('tab-manage').hidden = !res.body.manage
       $('tab-review').hidden = !res.body.review
@@ -677,6 +679,7 @@
       : state.tab === 'manage' ? [unlessBusy('state', loadState), unlessBusy('manage', loadManage)]
       : state.tab === 'review' ? [unlessBusy('state', loadState), unlessBusy('review', () => loadReview(reviewView.files === null))]
       : [unlessBusy('state', loadState), unlessBusy('tab ' + state.tab, () => load(state.tab))]
+    if (state.usage) loads.push(unlessBusy('usage', loadUsage))
     Promise.allSettled(loads).then(startedIfReady)
   }
 
@@ -2633,6 +2636,75 @@
         open ? el('button', { type: 'button', class: 'ghost', text: 'Resolve', title: 'With your reply, if you typed one', onclick: act('resolve') }) : null,
         open ? el('button', { type: 'button', class: 'ghost', text: 'Dismiss', title: 'With your reply, if you typed one', onclick: act('dismiss') }) : null,
         open ? null : el('button', { type: 'button', class: 'ghost', text: 'Reopen', onclick: act('reopen') })))
+  }
+
+  // --- the CPU and memory bars in the tab bar -------------------------------
+
+  // A reading older than this is greyed: the sandbox is too busy to answer, or
+  // gone.
+  const USAGE_STALE_MS = 15000
+  const GIB = 1024 * 1024 * 1024
+
+  async function loadUsage() {
+    try {
+      const res = await api('/api/usage')
+      reached(true)
+      if (res.ok) renderUsage(res.body)
+    } catch (e) {
+      reached(false)
+    }
+  }
+
+  const gib = (bytes) => (bytes / GIB).toFixed(1)
+  const hotness = (pct) => (pct >= 90 ? 'hot' : pct >= 70 ? 'warm' : 'ok')
+  const agoText = (ms) => (ms >= 90000 ? Math.round(ms / 60000) + 'm ago' : Math.round(ms / 1000) + 's ago')
+
+  // meter draws one bar at pct (null: none); it's also what a screen reader is told.
+  function meter(which, pct, name) {
+    const m = $('usage-' + which)
+    $('usage-' + which + '-fill').style.width = (pct === null ? 0 : pct) + '%'
+    m.className = 'meter' + (pct === null ? '' : ' ' + hotness(pct))
+    if (pct === null) {
+      m.removeAttribute('aria-valuenow')
+      m.setAttribute('aria-valuetext', 'not known')
+    } else {
+      m.setAttribute('aria-valuenow', String(Math.round(pct)))
+      m.setAttribute('aria-valuetext', Math.round(pct) + '% ' + name)
+    }
+  }
+
+  function renderUsage(b) {
+    const box = $('usage')
+    box.classList.remove('stale', 'off')
+    if (b.state !== 'ok') {
+      $('usage-cpu-label').textContent = 'CPU'
+      $('usage-mem-label').textContent = 'MEM'
+      meter('cpu', null, '')
+      meter('mem', null, '')
+      if (b.state === 'stopped') { box.classList.add('off'); box.title = 'The sandbox is stopped: there is nothing to measure.' }
+      else if (b.state === 'unreachable') { box.classList.add('stale'); box.title = "The sandbox can't be read: " + (b.error || 'it did not answer') }
+      else { box.classList.add('off'); box.title = 'Reading the sandbox…' }
+      return
+    }
+    const cores = b.coresSetting || b.cores
+    const coresText = cores + (cores === 1 ? ' core' : ' cores')
+    $('usage-cpu-label').textContent = 'CPU (' + coresText + ')'
+    $('usage-mem-label').textContent = 'MEM (' + (b.memSetting || gib(b.memTotal) + ' GiB') + ')'
+    const memPct = b.memTotal ? (b.memUsed / b.memTotal) * 100 : null
+    const cpuPct = b.cpu === null || b.cpu === undefined ? null : b.cpu
+    meter('cpu', cpuPct, 'of the CPU in use')
+    meter('mem', memPct, 'of the memory in use')
+    const parts = [
+      cpuPct === null ? 'CPU: measuring…' : 'CPU ' + Math.round(cpuPct) + '% of ' + coresText,
+      'MEM ' + gib(b.memUsed) + ' of ' + gib(b.memTotal) + ' GiB (' + Math.round(memPct) + '%)',
+      'read ' + agoText(b.ageMs),
+    ]
+    box.title = parts.join(' · ')
+    if (b.ageMs > USAGE_STALE_MS || b.error) {
+      box.classList.add('stale')
+      box.title = 'Last read ' + agoText(b.ageMs) + ": the sandbox can't be read now (it may be too busy to answer)" +
+        (b.error ? ': ' + b.error : '') + '. ' + parts.slice(0, 2).join(' · ')
+    }
   }
 
   // --- the Admin tab ------------------------------------------------------
