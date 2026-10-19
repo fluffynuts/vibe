@@ -5,7 +5,7 @@ of the user's NuGet configuration: private feeds and their credentials stay on
 the host. A restore that fails with `NU1101` or `NU1102` for a package that
 should come from a private feed is not yours to fix by configuration.
 
-- Ask the host for it: `vibe-nuget fetch <id> <version>` (`--framework net8.0`
+- Use the `vibe-nuget` skill. In short, ask the host for it: `vibe-nuget fetch <id> <version>` (`--framework net8.0`
   if the project's can't be read). It waits for the answer, which may need the
   user to approve the request on the companion page's Admin tab, then prints
   what happened. After it says the package is fetched, restore again.

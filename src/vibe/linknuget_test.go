@@ -70,3 +70,27 @@ func TestLinkNugetWithNothingMountedChangesNothing(t *testing.T) {
 		t.Errorf("changed the file: %q", got)
 	}
 }
+
+// Claude lists each skill's name and description in the agent's context, and
+// reads the rest only when the description fits what it's doing: the kit's
+// instructions alone weren't found by an agent whose restore failed with
+// NU1101. The description is what makes it reach for vibe-nuget then.
+func TestTheDotnetFeatureHasASkillForAPackageARestoreCantFind(t *testing.T) {
+	path := filepath.Join("..", "..", "library", "dotnet", "agent-files", ".claude", "skills", "vibe-nuget", "SKILL.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("no skill for vibe-nuget: %v", err)
+	}
+	front, _, ok := strings.Cut(strings.TrimPrefix(string(data), "---\n"), "\n---\n")
+	if !ok || !strings.HasPrefix(string(data), "---\n") {
+		t.Fatalf("the skill has no frontmatter:\n%s", data)
+	}
+	if !strings.Contains(front, "name: vibe-nuget\n") {
+		t.Errorf("frontmatter lacks the name:\n%s", front)
+	}
+	for _, trigger := range []string{"NU1101", "NU1102", "private", "vibe-nuget fetch"} {
+		if !strings.Contains(front, trigger) {
+			t.Errorf("the description should mention %q, so the agent matches it to its failure:\n%s", trigger, front)
+		}
+	}
+}
