@@ -875,20 +875,28 @@ else of `~/.nuget`: its config (private feeds' addresses and credentials) and it
 on the host, and the agent can't plant code in a package your own builds then run.
 
 - **Packages the host already has** are used as they are.
-- **Public packages** (nuget.org) the sandbox restores into a cache of its own. Rider on the host
-  doesn't resolve those until the host restores them itself.
-- **Your IDE and what the sandbox restored.** The sandbox can't write your package cache, so what it
-  restores from nuget.org lands in a cache of its own, where an IDE on this machine (Rider, say)
-  can't find it: references go red. The Admin tab's **Packages your IDE can't see** card says how many
-  packages the sandbox's restores left that your cache lacks (it reads the `obj/project.assets.json`
+- **Public packages** (nuget.org) the sandbox restores itself, into a layer of its own. Where it can
+  (the sandbox has a disk that survives sleep, and your cache's path has no comma or colon in it),
+  your cache is **overlaid at its own path**: your packages below, read-only, and what the sandbox
+  writes above, kept in the sandbox and never in your cache. The files the sandbox's restore writes
+  (`obj/project.assets.json`, `obj/*.nuget.g.props`) then name your cache's path, which your IDE
+  resolves. Where it can't (a Windows host's `C:\...` path, say), your cache is a read-only
+  fallback beside the sandbox's own, and those files name the sandbox's cache. `vibe-nuget fetch`
+  makes the sandbox look again for a package it had looked for before you fetched it. The reason is
+  that an overlay keeps its "not found" after the lower layer changes.
+- **Your IDE and what the sandbox restored.** What the sandbox restores from nuget.org lands in its
+  own layer, which your IDE (Rider, say) can't read: references go red until your cache has the
+  packages. The Admin tab's **Packages your IDE can't see** card says how many packages the
+  sandbox's restores left that your cache lacks (it reads the `obj/project.assets.json`
   files in the sandbox's folder, as data, and checks each name and exact version), lists them by
   framework, and **Fetch them** downloads them on this machine, with your own NuGet config, into your
   cache, in one restore per framework. The Admin tab's dot says when there are some to fetch; with
   `packages: allow` they're fetched without asking. A package no feed has is named and left. It's
   the same fetch, into the same place, as a package the agent asks for: only the sandbox's own
   packages are never moved into your cache, since a file the sandbox wrote there would run on your
-  next build. After a fetch, restore in the IDE if it still shows red: the files the sandbox
-  generated (`obj/*.nuget.g.props`) name the sandbox's own cache first.
+  next build. When the sandbox has overlaid your cache, that's all it takes; otherwise restore in the
+  IDE after a fetch if it still shows red, since the files the sandbox generated name its own cache
+  first.
 - **A package from a private feed** the sandbox can't sign in to. When its restore fails with
   `NU1101` or `NU1102`, the agent asks you for it with `vibe-nuget fetch <id> <version>`. The
   request waits on the companion page's **Admin tab**, with what it is to your project (a new

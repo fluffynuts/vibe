@@ -148,6 +148,22 @@ the user's `NuGet.Config` alone is read; a `nuget.config` in the workspace is ig
 `~/.vibe` (an ancestor) is read, so ancestors must be unwritable by the agent; an approved config beside the
 project is layered over the user's. Windows and macOS: unverified.
 
+## Overlay of the host's cache (2026-10-19)
+
+`link-nuget` overlays the host's cache at its own path (lower: the read-only mount; upper: a folder on a disk
+that isn't an overlay, `/var/lib/docker/vibe-nuget`) and sets `NUGET_PACKAGES` to it, so the files a restore
+writes name the host's path, which Rider resolves. Tried in the sandbox this was written in: root can mount it
+(sudo); the upper can't be on the sandbox's root, itself an overlay; the host's read-only virtiofs mount stays
+read-only to the agent whichever way it's remounted (`remount,rw` and `remount,bind,rw` both leave writes
+failing with EROFS), so the lower can't be written through. An overlay answers "missing" for what it looked for
+before the host added it, until the kernel drops its dentry caches (`echo 2 > /proc/sys/vm/drop_caches`), so
+`vibe-nuget fetch` does that on success. Without it (no such disk, an unusable path, a mount that fails) the
+fallback above applies. Not tried: a Windows or macOS host (paths), Rider on the result, a real fetch behind a
+live overlay on virtiofs.
+
+Careful with `mount -o remount,rw|ro <path>` on a virtiofs mount of the sandbox: without `bind` it changes the
+superblock all the sandbox's host mounts share (the repo included). Use `remount,bind,ro|rw`.
+
 ## Open questions
 
 1. Windows and macOS: does the no-`--configfile` fetch read the same configs? (VM scripts.)

@@ -95,6 +95,22 @@ case "$framework" in
   "" | *[!0-9a-z.]*) fail "'$framework' isn't a target framework such as net8.0" 2 ;;
 esac
 
+# With the host's cache overlaid here (see link-nuget), a package this
+# sandbox looked for before the host fetched it is still answered as missing:
+# overlayfs keeps what it found below, and the host changed that behind its
+# back. Dropping the kernel's dentry caches (2) makes it look again.
+forget_what_was_missing() {
+  [ "$VIBE_NUGET_OVERLAY" = 1 ] || return 0
+  target=$VIBE_DROP_CACHES
+  if [ -z "$target" ]; then
+    target=/proc/sys/vm/drop_caches
+  fi
+  sync
+  if ! sudo sh -c 'echo 2 > "$1"' sh "$target"; then
+    echo "vibe-nuget: couldn't make this sandbox look again for packages it already looked for: if restore still says $id is missing, run 'sudo sh -c \"echo 2 > /proc/sys/vm/drop_caches\"' and restore again" >&2
+  fi
+}
+
 nonce=$(date +%s)-$$
 tmp=$inbox/.$nonce.tmp
 printf '{"ecosystem":"nuget","id":"%s","version":"%s","framework":"%s"}\n' "$id" "$version" "$framework" >"$tmp" ||
@@ -116,7 +132,10 @@ while :; do
       fi
     else
       echo "$message"
-      [ "$status" = fetched ] && exit 0
+      if [ "$status" = fetched ]; then
+        forget_what_was_missing
+        exit 0
+      fi
       exit 1
     fi
   fi

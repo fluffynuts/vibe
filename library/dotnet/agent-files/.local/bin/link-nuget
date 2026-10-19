@@ -41,6 +41,53 @@ unpersist() {
   fi
 }
 
+# Overlays the host's cache (read-only) at its own path, with what the
+# sandbox writes kept in the sandbox. restore bakes the cache's path into
+# obj/project.assets.json and the *.nuget.g.props files, so with the host's
+# path here the host's IDE resolves what the sandbox restored, once the host
+# has the package (see the Admin tab's sync). Says whether it did; a sandbox
+# that can't keeps the host's cache as a fallback beside its own.
+# The upper layer needs a disk that isn't itself an overlay, which the
+# sandbox's root is: /var/lib/docker is one. SBX_NUGET_UPPER_BASE and
+# SBX_PROC_MOUNTS are for tests.
+overlay_packages() {
+  lower=$1
+  base=$SBX_NUGET_UPPER_BASE
+  if [ -z "$base" ]; then
+    base=/var/lib/docker/vibe-nuget
+  fi
+  mounts=$SBX_PROC_MOUNTS
+  if [ -z "$mounts" ]; then
+    mounts=/proc/mounts
+  fi
+  # Ours, by its upper layer: a bind of a folder on an overlay is one too.
+  if grep "^overlay $lower overlay " "$mounts" 2>/dev/null | grep -q "upperdir=$base/upper"; then
+    echo "$lower is already an overlay"
+    return 0
+  fi
+  # overlayfs splits its options on commas and colons.
+  case "$lower" in
+    *,* | *:*)
+      echo "not overlaying $lower: overlayfs can't take a comma or colon in a path"
+      return 1
+      ;;
+  esac
+  if [ ! -d "$(dirname "$base")" ]; then
+    echo "not overlaying $lower: no disk at $(dirname "$base") to keep what is written"
+    return 1
+  fi
+  if ! sudo mkdir -p "$base/upper" "$base/work" || ! sudo chown "$(id -u):$(id -g)" "$base/upper"; then
+    echo "not overlaying $lower: could not make $base"
+    return 1
+  fi
+  if err=$(sudo mount -t overlay overlay -o "lowerdir=$lower,upperdir=$base/upper,workdir=$base/work" "$lower" 2>&1); then
+    echo "overlaid $lower: the host's packages below (read-only), writes in $base/upper"
+    return 0
+  fi
+  echo "not overlaying $lower: mount said: $err"
+  return 1
+}
+
 if [ -n "$SBX_HOST_NUGET" ]; then
   # Shared: ~/.nuget is the host's, and restore bakes absolute package
   # paths into obj/project.assets.json. Left to itself NuGet resolves via
@@ -67,18 +114,27 @@ if [ -n "$SBX_HOST_NUGET" ]; then
   persist NUGET_PACKAGES "$SBX_HOST_NUGET/packages"
   unpersist NUGET_FALLBACK_PACKAGES
   unpersist RestoreIgnoreFailedSources
+  unpersist VIBE_NUGET_OVERLAY
 elif [ -n "$SBX_HOST_NUGET_PACKAGES" ]; then
   if [ ! -d "$SBX_HOST_NUGET_PACKAGES" ]; then
     echo "ERROR: $SBX_HOST_NUGET_PACKAGES is not mounted"
     exit 1
   fi
-  # The host's cache is read-only, and a fallback: packages found there are
-  # used in place, anything else lands in the sandbox's own ~/.nuget/packages.
-  persist NUGET_FALLBACK_PACKAGES "$SBX_HOST_NUGET_PACKAGES"
+  if overlay_packages "$SBX_HOST_NUGET_PACKAGES"; then
+    persist NUGET_PACKAGES "$SBX_HOST_NUGET_PACKAGES"
+    persist VIBE_NUGET_OVERLAY 1
+    unpersist NUGET_FALLBACK_PACKAGES
+  else
+    # The host's cache is read-only, and a fallback: packages found there
+    # are used in place, anything else lands in the sandbox's own
+    # ~/.nuget/packages.
+    persist NUGET_FALLBACK_PACKAGES "$SBX_HOST_NUGET_PACKAGES"
+    unpersist NUGET_PACKAGES
+    unpersist VIBE_NUGET_OVERLAY
+  fi
   # A private feed the sandbox can't sign in to is a warning, not a failed
   # restore: what it holds is asked of the host (vibe-nuget fetch).
   persist RestoreIgnoreFailedSources true
-  unpersist NUGET_PACKAGES
 else
   echo "SBX_HOST_NUGET and SBX_HOST_NUGET_PACKAGES unset — nothing to do"
 fi

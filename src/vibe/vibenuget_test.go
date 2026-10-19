@@ -28,6 +28,12 @@ func runVibeNuget(t *testing.T, mailbox packagereq.Mailbox, respond func(package
 // test is).
 func runVibeNugetIn(t *testing.T, dir string, mailbox packagereq.Mailbox, respond func(packagereq.Taken), args ...string) askResult {
 	t.Helper()
+	return runVibeNugetEnv(t, dir, nil, mailbox, respond, args...)
+}
+
+// runVibeNugetEnv is runVibeNugetIn with env set in the script's environment.
+func runVibeNugetEnv(t *testing.T, dir string, env []string, mailbox packagereq.Mailbox, respond func(packagereq.Taken), args ...string) askResult {
+	t.Helper()
 	script, err := filepath.Abs(filepath.Join("..", "..", "library", "dotnet", "agent-files", ".local", "bin", "vibe-nuget"))
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +56,7 @@ func runVibeNugetIn(t *testing.T, dir string, mailbox packagereq.Mailbox, respon
 	}()
 	cmd := exec.Command("sh", append([]string{script}, args...)...)
 	cmd.Dir = dir
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "VIBE_PACKAGES_DIR=" + mailbox.Dir, "HOME=" + os.TempDir()}
+	cmd.Env = append([]string{"PATH=" + os.Getenv("PATH"), "VIBE_PACKAGES_DIR=" + mailbox.Dir, "HOME=" + os.TempDir()}, env...)
 	out, err := cmd.CombinedOutput()
 	close(stop)
 	<-done
@@ -201,5 +207,50 @@ func TestVibeNugetWithNoProjectsHereSaysToGiveTheFramework(t *testing.T) {
 	asked, res := askedFramework(t, t.TempDir())
 	if res.code != 2 || asked.ID != "" || !strings.Contains(res.out, "--framework") {
 		t.Errorf("exit %d, asked %+v:\n%s", res.code, asked, res.out)
+	}
+}
+
+// The sandbox's overlay of the host's cache remembers a package it looked for
+// and didn't find, and keeps saying so after the host has fetched it; the
+// kernel forgets when it drops its dentry caches.
+func TestVibeNugetMakesAnOverlaidCacheSeeWhatTheHostFetched(t *testing.T) {
+	fetched := func(m packagereq.Mailbox) func(packagereq.Taken) {
+		return func(tk packagereq.Taken) {
+			m.Reply(tk.Nonce, packagereq.Answer{Status: packagereq.Fetched, Message: "fetched Corp.Lib 1.2.3"})
+		}
+	}
+	refused := func(m packagereq.Mailbox) func(packagereq.Taken) {
+		return func(tk packagereq.Taken) {
+			m.Reply(tk.Nonce, packagereq.Answer{Status: packagereq.Denied, Message: "the user said no"})
+		}
+	}
+	cases := []struct {
+		name    string
+		overlay bool
+		answer  func(packagereq.Mailbox) func(packagereq.Taken)
+		dropped bool
+	}{
+		{"fetched, overlaid", true, fetched, true},
+		{"fetched, not overlaid", false, fetched, false},
+		{"refused, overlaid", true, refused, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := sandboxMailbox(t)
+			drop := filepath.Join(t.TempDir(), "drop_caches")
+			env := []string{"PATH=" + newFakeMounting(t, true).bin + string(os.PathListSeparator) + os.Getenv("PATH"), "VIBE_DROP_CACHES=" + drop}
+			if c.overlay {
+				env = append(env, "VIBE_NUGET_OVERLAY=1")
+			}
+			runVibeNugetEnv(t, "", env, m, c.answer(m), "fetch", "Corp.Lib", "1.2.3", "--framework", "net8.0")
+			data, err := os.ReadFile(drop)
+			if c.dropped {
+				if err != nil || strings.TrimSpace(string(data)) != "2" {
+					t.Errorf("want 2 written to the drop_caches file, got %q (%v)", data, err)
+				}
+			} else if err == nil {
+				t.Errorf("dropped the caches: %q", data)
+			}
+		})
 	}
 }
