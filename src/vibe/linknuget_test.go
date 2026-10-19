@@ -390,7 +390,8 @@ func TestTheSkillSaysWhatToDoWithARequestTheUserDidNotSelectOrDeclined(t *testin
 	}
 	// Wrapped lines are no matter to what it says.
 	section := strings.Join(strings.Fields(body[i:]), " ")
-	for _, want := range []string{"did not select", "slip", "declined", "ask the user", "don't ask again", "unless the user says"} {
+	for _, want := range []string{"did not select", "slip", "declined", "ask the user", "don't ask again", "unless the user says",
+		"blocked", "fresh request", "approve it again"} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the section on what isn't fetched lacks %q:\n%s", want, section)
 		}

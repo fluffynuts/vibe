@@ -359,13 +359,16 @@ func (d *Desk) answerNo(keys []string, how string, say func(Request) string) {
 }
 
 func notSelectedMessage(r Request) string {
-	return fmt.Sprintf("The user did not select %s %s when deciding on the package requests, so it was not fetched. "+
+	return fmt.Sprintf("The user did not select %s %s when deciding on the package requests, so it was not fetched, and it is no longer on their list. "+
 		"That may be deliberate (they may already have it, or want something else) or a slip. "+
-		"Don't look for another way to get it. Tell the user which package was left out and ask whether they meant to: "+
-		"if it was a slip, ask for it again; otherwise ask what they'd like instead.", r.ID, r.Version)
+		"Don't look for another way to get it. In your reply, say plainly that you are blocked on this package and what needs it, "+
+		"and ask whether leaving it out was deliberate. If it was a slip they will say so: then run vibe-nuget fetch for it again, "+
+		"which raises a fresh request for them to approve. Don't tell them to approve it again: there is nothing for them to approve until you ask. "+
+		"If it was deliberate, ask what they'd like instead.", r.ID, r.Version)
 }
 
 func declinedMessage(r Request) string {
 	return fmt.Sprintf("The user declined this request, so %s %s was not fetched. They may already have the package or want something else. "+
-		"Don't look for another way to get it: tell them it was declined and ask what they'd like instead.", r.ID, r.Version)
+		"Don't look for another way to get it: tell them it was declined, say plainly that you are blocked on this package and what needs it, "+
+		"and ask what they'd like instead.", r.ID, r.Version)
 }

@@ -558,7 +558,10 @@ func TestDecidingFetchesTheSelectedAndAnswersTheOthersNotSelected(t *testing.T) 
 	if !strings.HasPrefix(got, "denied\n") {
 		t.Fatalf("E.Lib: %q", got)
 	}
-	for _, want := range []string{"E.Lib 1.0.0", "did not select", "deliberate", "slip", "Don't look for another way", "ask whether they meant to", "ask for it again"} {
+	// What the agent is to do, and how: the request is gone from the user's list, so a slip is mended by the
+	// agent asking again, which raises one for them to approve (never by telling them to approve it again).
+	for _, want := range []string{"E.Lib 1.0.0", "did not select", "no longer on their list", "deliberate", "slip", "Don't look for another way",
+		"say plainly that you are blocked", "ask whether leaving it out was deliberate", "run vibe-nuget fetch for it again", "fresh request", "nothing for them to approve"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the message lacks %q:\n%s", want, got)
 		}
@@ -621,7 +624,7 @@ func TestDecliningEverythingIsSaidAsDeclinedAndLeavesWhatIsApproved(t *testing.T
 	if !strings.HasPrefix(got, "denied\n") {
 		t.Fatalf("B.Lib: %q", got)
 	}
-	for _, want := range []string{"B.Lib 1.0.0", "declined", "already have", "Don't look for another way", "what they'd like instead"} {
+	for _, want := range []string{"B.Lib 1.0.0", "declined", "already have", "Don't look for another way", "say plainly that you are blocked", "what they'd like instead"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the message lacks %q:\n%s", want, got)
 		}
