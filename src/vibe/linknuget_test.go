@@ -12,14 +12,15 @@ import (
 // mount that records its arguments in calls (one line each) and succeeds when
 // succeeds, so no test mounts anything for real.
 type fakeMounting struct {
-	bin   string
-	calls string
+	bin    string
+	calls  string
+	chowns string
 }
 
 func newFakeMounting(t *testing.T, succeeds bool) fakeMounting {
 	t.Helper()
 	dir := t.TempDir()
-	f := fakeMounting{bin: filepath.Join(dir, "bin"), calls: filepath.Join(dir, "mount-calls")}
+	f := fakeMounting{bin: filepath.Join(dir, "bin"), calls: filepath.Join(dir, "mount-calls"), chowns: filepath.Join(dir, "chown-calls")}
 	if err := os.MkdirAll(f.bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -30,6 +31,7 @@ func newFakeMounting(t *testing.T, succeeds bool) fakeMounting {
 	scripts := map[string]string{
 		"sudo":  "#!/bin/sh\nexec \"$@\"\n",
 		"mount": "#!/bin/sh\necho \"$*\" >> '" + f.calls + "'\nexit " + status + "\n",
+		"chown": "#!/bin/sh\necho \"$*\" >> '" + f.chowns + "'\n",
 	}
 	for name, body := range scripts {
 		if err := os.WriteFile(filepath.Join(f.bin, name), []byte(body), 0o755); err != nil {
@@ -41,7 +43,17 @@ func newFakeMounting(t *testing.T, succeeds bool) fakeMounting {
 
 func (f fakeMounting) mounts(t *testing.T) []string {
 	t.Helper()
-	data, err := os.ReadFile(f.calls)
+	return linesOf(t, f.calls)
+}
+
+func (f fakeMounting) chowned(t *testing.T) []string {
+	t.Helper()
+	return linesOf(t, f.chowns)
+}
+
+func linesOf(t *testing.T, file string) []string {
+	t.Helper()
+	data, err := os.ReadFile(file)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -70,7 +82,7 @@ func runLinkNugetMounting(t *testing.T, mounting fakeMounting, persisted string,
 		t.Fatal(err)
 	}
 	cmd := exec.Command("sh", script)
-	cmd.Env = append([]string{"PATH=" + mounting.bin + string(os.PathListSeparator) + os.Getenv("PATH"), "SBX_PERSIST_FILE=" + file, "SBX_NUGET_LINK=" + filepath.Join(t.TempDir(), ".nuget"), "HOME=" + t.TempDir()}, env...)
+	cmd.Env = append([]string{"PATH=" + mounting.bin + string(os.PathListSeparator) + os.Getenv("PATH"), "SBX_PERSIST_FILE=" + file, "SBX_LINK_NUGET_LOG=" + filepath.Join(t.TempDir(), "link-nuget.log"), "SBX_NUGET_LINK=" + filepath.Join(t.TempDir(), ".nuget"), "HOME=" + t.TempDir()}, env...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("link-nuget: %v\n%s", err, out)
 	}
@@ -244,5 +256,18 @@ func TestLinkNugetOverlaysOverAnOverlayThatIsntItsOwn(t *testing.T) {
 	runLinkNugetMounting(t, mounting, "", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_UPPER_BASE="+filepath.Join(t.TempDir(), "vibe-nuget"), "SBX_PROC_MOUNTS="+mounts)
 	if calls := mounting.mounts(t); len(calls) != 1 {
 		t.Errorf("want the overlay mounted, got %q", calls)
+	}
+}
+
+// link-nuget runs as root when the sandbox is set up, so the upper layer (whose
+// owner is the owner of the overlay's root) has to be given to the agent
+// explicitly: root's would leave NuGet unable to write a package.
+func TestLinkNugetGivesTheUpperLayerToTheAgent(t *testing.T) {
+	packages := t.TempDir()
+	base := filepath.Join(t.TempDir(), "vibe-nuget")
+	mounting := newFakeMounting(t, true)
+	runLinkNugetMounting(t, mounting, "", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_UPPER_BASE="+base)
+	if got := mounting.chowned(t); len(got) != 1 || got[0] != "agent: "+base+"/upper" {
+		t.Errorf("the upper layer's owner: %q", got)
 	}
 }

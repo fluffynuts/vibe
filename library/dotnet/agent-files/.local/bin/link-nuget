@@ -5,7 +5,11 @@
 # the host's ~/.nuget is mounted. No braced shell expansions here: sbx
 # validates every brace-form substitution in file content against its own
 # placeholder list.
-exec >>/tmp/link-nuget.log 2>&1
+LOG=/tmp/link-nuget.log
+if [ -n "$SBX_LINK_NUGET_LOG" ]; then
+  LOG=$SBX_LINK_NUGET_LOG
+fi
+exec >>"$LOG" 2>&1
 echo "=== link-nuget at $(date -Is) ==="
 
 PERSIST=/etc/sandbox-persistent.sh
@@ -48,7 +52,9 @@ unpersist() {
 # has the package (see the Admin tab's sync). Says whether it did; a sandbox
 # that can't keeps the host's cache as a fallback beside its own.
 # The upper layer needs a disk that isn't itself an overlay, which the
-# sandbox's root is: /var/lib/docker is one. SBX_NUGET_UPPER_BASE and
+# sandbox's root is: /var/lib/docker is one. It's the agent's: this runs as
+# root when the sandbox is set up, and a root-owned upper layer leaves NuGet
+# unable to write a package. SBX_NUGET_UPPER_BASE and
 # SBX_PROC_MOUNTS are for tests.
 overlay_packages() {
   lower=$1
@@ -76,7 +82,7 @@ overlay_packages() {
     echo "not overlaying $lower: no disk at $(dirname "$base") to keep what is written"
     return 1
   fi
-  if ! sudo mkdir -p "$base/upper" "$base/work" || ! sudo chown "$(id -u):$(id -g)" "$base/upper"; then
+  if ! sudo mkdir -p "$base/upper" "$base/work" || ! sudo chown agent: "$base/upper"; then
     echo "not overlaying $lower: could not make $base"
     return 1
   fi
