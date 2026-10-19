@@ -358,17 +358,16 @@ func (d *Desk) answerNo(keys []string, how string, say func(Request) string) {
 	}
 }
 
+// The messages the agent is told a request was not fetched in are short, and say what to do before anything
+// else: an agent may show only the first part of what it's told.
 func notSelectedMessage(r Request) string {
-	return fmt.Sprintf("The user did not select %s %s when deciding on the package requests, so it was not fetched, and it is no longer on their list. "+
-		"That may be deliberate (they may already have it, or want something else) or a slip. "+
-		"Don't look for another way to get it. In your reply, say plainly that you are blocked on this package and what needs it, "+
-		"and ask whether leaving it out was deliberate. If it was a slip they will say so: then run vibe-nuget fetch for it again, "+
-		"which raises a fresh request for them to approve. Don't tell them to approve it again: there is nothing for them to approve until you ask. "+
-		"If it was deliberate, ask what they'd like instead.", r.ID, r.Version)
+	return fmt.Sprintf("NOT FETCHED: the user did not select %s %s, so it is no longer on their list. That is their decision, not an error; it may be a slip. "+
+		"Don't look for another way to get it. Tell the user plainly that you are blocked on it and what needs it, and ask whether leaving it out was deliberate. "+
+		"If it was a slip, run vibe-nuget fetch for it again: that raises a fresh request for them to approve (don't tell them to approve it again). "+
+		"If deliberate, ask what they'd like instead.", r.ID, r.Version)
 }
 
 func declinedMessage(r Request) string {
-	return fmt.Sprintf("The user declined this request, so %s %s was not fetched. They may already have the package or want something else. "+
-		"Don't look for another way to get it: tell them it was declined, say plainly that you are blocked on this package and what needs it, "+
-		"and ask what they'd like instead.", r.ID, r.Version)
+	return fmt.Sprintf("NOT FETCHED: the user declined %s %s. That is their decision, not an error: they may already have the package or want something else. "+
+		"Don't look for another way to get it. Tell the user plainly that you are blocked on it and what needs it, and ask what they'd like instead.", r.ID, r.Version)
 }

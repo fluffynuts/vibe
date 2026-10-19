@@ -560,8 +560,10 @@ func TestDecidingFetchesTheSelectedAndAnswersTheOthersNotSelected(t *testing.T) 
 	}
 	// What the agent is to do, and how: the request is gone from the user's list, so a slip is mended by the
 	// agent asking again, which raises one for them to approve (never by telling them to approve it again).
-	for _, want := range []string{"E.Lib 1.0.0", "did not select", "no longer on their list", "deliberate", "slip", "Don't look for another way",
-		"say plainly that you are blocked", "ask whether leaving it out was deliberate", "run vibe-nuget fetch for it again", "fresh request", "nothing for them to approve"} {
+	// And that it's their decision, not an error: an agent told only "may be a slip" guessed at a bug.
+	for _, want := range []string{"NOT FETCHED", "E.Lib 1.0.0", "did not select", "no longer on their list", "their decision, not an error", "slip",
+		"Don't look for another way", "plainly that you are blocked", "ask whether leaving it out was deliberate",
+		"run vibe-nuget fetch for it again", "fresh request", "don't tell them to approve it again", "ask what they'd like instead"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the message lacks %q:\n%s", want, got)
 		}
@@ -624,7 +626,8 @@ func TestDecliningEverythingIsSaidAsDeclinedAndLeavesWhatIsApproved(t *testing.T
 	if !strings.HasPrefix(got, "denied\n") {
 		t.Fatalf("B.Lib: %q", got)
 	}
-	for _, want := range []string{"B.Lib 1.0.0", "declined", "already have", "Don't look for another way", "say plainly that you are blocked", "what they'd like instead"} {
+	for _, want := range []string{"NOT FETCHED", "B.Lib 1.0.0", "declined", "their decision, not an error", "already have", "Don't look for another way",
+		"plainly that you are blocked", "what they'd like instead"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the message lacks %q:\n%s", want, got)
 		}
@@ -644,5 +647,20 @@ func TestEveryRequestAskedTwiceForIsAnsweredWhenItIsNotSelected(t *testing.T) {
 		if got := rig.answer(t, n); !strings.HasPrefix(got, "denied\n") {
 			t.Errorf("%s: %q", n, got)
 		}
+	}
+}
+
+// An agent may show only the start of what it's told (the one asked to read these cut at 600 characters), so
+// the messages are short, and the last thing each has to say is not the thing that matters most.
+func TestWhatTheAgentIsToldOfARequestNotFetchedFitsWhereItMightBeCut(t *testing.T) {
+	r := Request{ID: "Corp.Core.SqlMigrations", Version: "1.0.5"}
+	for name, m := range map[string]string{"not selected": notSelectedMessage(r), "declined": declinedMessage(r)} {
+		if len(m) > 540 {
+			t.Errorf("%s is %d characters: an agent that shows the first 600 of what it's told would lose its end", name, len(m))
+		}
+	}
+	m := notSelectedMessage(r)
+	if i := strings.Index(m, "run vibe-nuget fetch for it again"); i < 0 || i > 330 {
+		t.Errorf("how to mend a slip starts at %d: it should come early", i)
 	}
 }
