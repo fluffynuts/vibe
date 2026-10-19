@@ -69,7 +69,13 @@ frameworks_in_project_files() {
 }
 
 if [ -z "$framework" ]; then
-  framework=$(dotnet msbuild -nologo -getProperty:TargetFramework 2>/dev/null | tr -d '[:space:]')
+  # msbuild says why it can't (no project, or a solution) on stdout, with a
+  # status: only what it says when it succeeds is a framework.
+  if framework=$(dotnet msbuild -nologo -getProperty:TargetFramework 2>/dev/null); then
+    framework=$(printf '%s' "$framework" | tr -d '[:space:]')
+  else
+    framework=
+  fi
   if [ -z "$framework" ]; then
     found=$(frameworks_in_project_files)
     count=$(printf '%s\n' "$found" | sed '/^$/d' | wc -l | tr -d ' ')
