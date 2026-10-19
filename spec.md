@@ -20,7 +20,7 @@ download-and-use route for the user, since we can build platform-native binaries
 and osx.
 
 The app would be bundled in a zip file, with some starter profiles. Profiles are stored as a folder
-containing items to be used during creation, for example, let's consider the profile for yumbi: if
+containing items to be used during creation, for example, let's consider the profile for widget: if
 we unpack the app and data, we would see a directory listing like:
 
 vibe-unpacked/
@@ -32,7 +32,7 @@ vibe-unpacked/
         /install-scripts
         /agent-files
     /profiles
-        /yumbi
+        /widget
             config.yaml
             settings.yaml
             /install-scripts
@@ -64,7 +64,7 @@ should be displayed whilst running the script at creation time.
 The user should be able to simply start up with `vibe` in a folder. The profile name should be picked up from
 the leaf node name of the folder (eg, for `/home/user/code/company/foo-browser`, the profile would be
 `foo-browser`). The profile may be specifically selected with the cli parameter `--profile`, eg 
-`vibe --profile yumbi`. All other cli parameters already supported by the example script must also
+`vibe --profile widget`. All other cli parameters already supported by the example script must also
 be supported:
 - `vibe /path/to/code` should open vibe in `/path/to/code` instead of the current working directory
 - `vibe -n <custom name>` should override the name of the generated sandbox, and, if there is no `--profile`
@@ -94,7 +94,7 @@ than guessing.
 In addition, I'd like `vibe --list` to list all known sandbox containers and their current status, eg:
 ```
 vibe --list
-yumbi       running
+widget       running
 phoenix     not running
 ```
 
@@ -141,7 +141,7 @@ which configures the sandbox memory max to 12 gig and opens the two ports 1234 a
 3. The `install` section is generated from profile files: each file under install-script is inlined
    into run in sequence, ordered by the leading index number (eg 1 for refresh-apt-indices). 
 4. the app should generate a script like the existing one and store it in `~/.vibe/start-<sandbox-name>`,
-    eg `~/.vibe/start-yumbi`. This script should be used to launch the sandbox every time after creation,
+    eg `~/.vibe/start-widget`. This script should be used to launch the sandbox every time after creation,
     when it exists. A `--re-init` would re-generate that file from the selected profile, to allow
     the user to make modifications and recreate the sandbox. Note that a re-init allows for restoring
     agent memories, so these have to be gleaned from the sandbox before attempting re-initialisation,

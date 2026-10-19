@@ -30,7 +30,7 @@ func TestDoInstallCopiesEverythingAndLeavesCustomizationsAlone(t *testing.T) {
 	writeFile(t, filepath.Join(bundle, "config.yaml"), "name: vibe\n")
 	writeFile(t, filepath.Join(bundle, "settings.yaml"), "memory: 12g\n")
 	writeFile(t, filepath.Join(bundle, "defaults", "install-scripts", "01-a"), "echo a\n")
-	writeFile(t, filepath.Join(bundle, "profiles", "yumbi", "config.yaml"), "name: yumbi\n")
+	writeFile(t, filepath.Join(bundle, "profiles", "widget", "config.yaml"), "name: widget\n")
 	writeFile(t, filepath.Join(bundle, "library", "mysql", "install-scripts", "01-a"), "echo mysql\n")
 
 	vibeHome := filepath.Join(home, ".vibe")
@@ -54,7 +54,7 @@ func TestDoInstallCopiesEverythingAndLeavesCustomizationsAlone(t *testing.T) {
 	}
 	for _, p := range []string{
 		filepath.Join(vibeHome, "defaults", "install-scripts", "01-a"),
-		filepath.Join(vibeHome, "profiles", "yumbi", "config.yaml"),
+		filepath.Join(vibeHome, "profiles", "widget", "config.yaml"),
 		filepath.Join(vibeHome, "library", "mysql", "install-scripts", "01-a"),
 	} {
 		if _, err := os.Stat(p); err != nil {

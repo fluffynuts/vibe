@@ -39,7 +39,7 @@ test('detached head shows the short oid', async () => {
 
 test('shortens home paths with ~', async () => {
   expect(shortenPath('/home/agent/x', '/home/agent')).toBe('~/x')
-  expect(shortenPath('/home/davydm/code/opensource/vibe', '/home/agent')).toBe(
+  expect(shortenPath('/home/user/code/opensource/vibe', '/home/agent')).toBe(
     '~/code/opensource/vibe',
   )
   expect(shortenPath('/Users/someone', undefined)).toBe('~')

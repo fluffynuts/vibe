@@ -6,11 +6,11 @@ import (
 )
 
 func TestParseBasics(t *testing.T) {
-	a, err := Parse([]string{"-n", "custom", "--profile", "yumbi", "/path/to/code"})
+	a, err := Parse([]string{"-n", "custom", "--profile", "widget", "/path/to/code"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Name != "custom" || a.Profile != "yumbi" || a.Path != "/path/to/code" {
+	if a.Name != "custom" || a.Profile != "widget" || a.Path != "/path/to/code" {
 		t.Errorf("unexpected args: %+v", a)
 	}
 }

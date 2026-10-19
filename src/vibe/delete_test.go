@@ -21,29 +21,29 @@ func TestDeletionOptions(t *testing.T) {
 	}{
 		{
 			"both",
-			deletion{name: "proj", sandbox: true, profile: "yumbi", profileDir: "/p"},
-			[]string{"remove the sandbox proj", "remove the profile yumbi"},
+			deletion{name: "proj", sandbox: true, profile: "widget", profileDir: "/p"},
+			[]string{"remove the sandbox proj", "remove the profile widget"},
 			[]bool{true, false},
 		},
 		{
 			"a shared profile",
-			deletion{name: "proj", sandbox: true, profile: "yumbi", profileDir: "/p", sharedWith: []string{"a", "b"}},
-			[]string{"remove the sandbox proj", "remove the profile yumbi (also used by a, b)"},
+			deletion{name: "proj", sandbox: true, profile: "widget", profileDir: "/p", sharedWith: []string{"a", "b"}},
+			[]string{"remove the sandbox proj", "remove the profile widget (also used by a, b)"},
 			[]bool{true, false},
 		},
 		{
 			"no sandbox",
-			deletion{name: "proj", profile: "yumbi", profileDir: "/p"},
-			[]string{"remove the profile yumbi"},
+			deletion{name: "proj", profile: "widget", profileDir: "/p"},
+			[]string{"remove the profile widget"},
 			[]bool{false},
 		},
 		{
 			"a profile only the bundle has",
-			deletion{name: "proj", sandbox: true, profile: "yumbi"},
+			deletion{name: "proj", sandbox: true, profile: "widget"},
 			[]string{"remove the sandbox proj"},
 			[]bool{true},
 		},
-		{"nothing", deletion{name: "proj", profile: "yumbi"}, nil, nil},
+		{"nothing", deletion{name: "proj", profile: "widget"}, nil, nil},
 	} {
 		labels, checked, _ := tt.d.options()
 		if !reflect.DeepEqual(labels, tt.labels) || !reflect.DeepEqual(checked, tt.checked) {
@@ -53,12 +53,12 @@ func TestDeletionOptions(t *testing.T) {
 }
 
 func TestDeletionChoose(t *testing.T) {
-	d := deletion{name: "proj", sandbox: true, profile: "yumbi", profileDir: "/p"}
+	d := deletion{name: "proj", sandbox: true, profile: "widget", profileDir: "/p"}
 
 	if sandbox, profile, err := d.choose(true); err != nil || !sandbox || !profile {
 		t.Errorf("choose with -f = %v, %v, %v; want both", sandbox, profile, err)
 	}
-	if sandbox, profile, err := (deletion{name: "proj", sandbox: true, profile: "yumbi"}).choose(true); err != nil || !sandbox || profile {
+	if sandbox, profile, err := (deletion{name: "proj", sandbox: true, profile: "widget"}).choose(true); err != nil || !sandbox || profile {
 		t.Errorf("choose with -f and no overlay profile = %v, %v, %v; want the sandbox only", sandbox, profile, err)
 	}
 	if _, _, err := d.choose(false); err == nil || !strings.Contains(err.Error(), "needs a terminal") {
@@ -99,12 +99,12 @@ func TestDeletionChoose(t *testing.T) {
 func TestDeletionRun(t *testing.T) {
 	setUp := func(t *testing.T) (string, deletion) {
 		home := t.TempDir()
-		dir := filepath.Join(home, "profiles", "yumbi")
+		dir := filepath.Join(home, "profiles", "widget")
 		writeFile(t, filepath.Join(dir, "kit.yaml"), "x")
-		if err := state.Save(home, state.Instance{Name: "proj", Profile: "yumbi", CreatedAt: time.Now()}); err != nil {
+		if err := state.Save(home, state.Instance{Name: "proj", Profile: "widget", CreatedAt: time.Now()}); err != nil {
 			t.Fatal(err)
 		}
-		return home, deletion{name: "proj", sandbox: true, profile: "yumbi", profileDir: dir}
+		return home, deletion{name: "proj", sandbox: true, profile: "widget", profileDir: dir}
 	}
 	var removed []string
 	remove := func(name string, force bool) error {

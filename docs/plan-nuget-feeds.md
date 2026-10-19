@@ -164,7 +164,7 @@ live overlay on virtiofs.
 Careful with `mount -o remount,rw|ro <path>` on a virtiofs mount of the sandbox: without `bind` it changes the
 superblock all the sandbox's host mounts share (the repo included). Use `remount,bind,ro|rw`.
 
-**Decision 2026-10-19, later: the overlay is opt-in** (`nuget: overlay`; default `fallback`). A yumbi restore failed
+**Decision 2026-10-19, later: the overlay is opt-in** (`nuget: overlay`; default `fallback`). A restore in a real project failed
 with "Permission denied" creating `<id>/<version>` beside a host-fetched version: the host mount reports a file's owner
 as whoever is asking, and an overlay looks its lower layer up as its mounter, root, so every lower directory is root's
 775 to the agent. `nooverride_creds` was accepted with no effect; mounting with `setfsuid(1000)` failed (the upper under
