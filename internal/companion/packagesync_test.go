@@ -316,3 +316,50 @@ func TestThePageIsToldHowFarAFetchHasGot(t *testing.T) {
 		t.Errorf("progress %+v when nothing is running", b.Progress)
 	}
 }
+
+// Pressing Send looks first: the host reads the project files again at once, and not at its next
+// scan, which an agent that is asked to build straight away would be ahead of.
+func TestAFreshCheckLooksAtTheWorkspaceNowAndSaysWhatTheCacheLacks(t *testing.T) {
+	f := &fakeSync{state: someMissing}
+	s := syncServer(f)
+	before := f.checks
+	rec := do(t, s, post("/api/packages/sync/check", `{}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	if f.checks != before+1 {
+		t.Errorf("%d checks, want one more than %d", f.checks, before)
+	}
+	var b syncBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &b); err != nil {
+		t.Fatal(err)
+	}
+	if b.Actionable != 3 {
+		t.Errorf("actionable = %d", b.Actionable)
+	}
+}
+
+func TestAFreshCheckIsOnlyAskedForFromThePageItselfAndOnlyWhereThereIsASync(t *testing.T) {
+	if rec := do(t, New(Config{Sandbox: "box", Token: token, Port: testPort}), post("/api/packages/sync/check", `{}`)); rec.Code != http.StatusNotFound {
+		t.Errorf("a sandbox with no sync: status %d", rec.Code)
+	}
+	s := syncServer(&fakeSync{state: someMissing})
+	rec := do(t, s, req{method: "POST", path: "/api/packages/sync/check", body: `{}`})
+	if rec.Code == http.StatusOK {
+		t.Error("answered a request that wasn't from the page")
+	}
+}
+
+func TestThePageIsToldWhetherPackagesAreFetchedWithoutAsking(t *testing.T) {
+	for _, auto := range []bool{false, true} {
+		s := New(Config{Sandbox: "box", Token: token, Port: testPort, PackageSync: &fakeSync{state: someMissing}, PackageSyncAuto: func() bool { return auto }})
+		rec := do(t, s, post("/api/packages/sync/check", `{}`))
+		var b struct {
+			Auto bool `json:"auto"`
+		}
+		json.Unmarshal(rec.Body.Bytes(), &b)
+		if b.Auto != auto {
+			t.Errorf("auto = %v, want %v", b.Auto, auto)
+		}
+	}
+}

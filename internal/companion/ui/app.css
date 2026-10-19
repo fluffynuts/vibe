@@ -578,3 +578,12 @@ html.themed .commands li[aria-selected="true"] {
 .card-part[hidden] { display: none; }
 .card-part { display: flex; flex-direction: column; gap: 8px; }
 .card-part h3 { margin: 0; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+/* What holds a prompt back while packages are fetched first: it stands between the user and Send, so it stands out. */
+.gate { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; padding: 8px 10px; border: 1px solid var(--theme); border-radius: 8px; background: var(--panel); }
+.gate[hidden] { display: none; }
+.gate-progress { appearance: none; border: 0; display: block; flex-basis: 100%; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.gate-progress[hidden] { display: none; }
+.gate-progress::-webkit-progress-bar { background: var(--line); }
+.gate-progress::-webkit-progress-value { background: var(--theme); }
+.gate-progress::-moz-progress-bar { background: var(--theme); }
+.gate-buttons { display: inline-flex; gap: 6px; }

@@ -733,6 +733,7 @@
       : state.tab === 'review' ? [unlessBusy('state', loadState), unlessBusy('review', () => loadReview(reviewView.files === null))]
       : [unlessBusy('state', loadState), unlessBusy('tab ' + state.tab, () => load(state.tab))]
     if (state.usage) loads.push(unlessBusy('usage', loadUsage))
+    if (gate.active && gate.fetching) loads.push(unlessBusy('gate', refreshGate))
     Promise.allSettled(loads).then(startedIfReady)
   }
 
@@ -2996,6 +2997,16 @@
 
   function wirePackages() {
     $('admin-sync-run').addEventListener('click', runSync)
+    $('convo-gate-fetch').addEventListener('click', async () => {
+      await startGateFetch()
+      renderGate()
+    })
+    $('convo-gate-send').addEventListener('click', () => {
+      const prompt = gate.prompt
+      closeGate()
+      deliverPrompt(prompt)
+    })
+    $('convo-gate-cancel').addEventListener('click', closeGate)
     $('convo-sync-review').addEventListener('click', () => {
       select('admin')
       $('admin-sync-card').scrollIntoView({ block: 'start' })
@@ -4307,7 +4318,13 @@
   async function sendPrompt() {
     const input = $('convo-input')
     const prompt = input.value.trim()
-    if (!prompt || convo.running) return
+    if (!prompt || convo.running || gate.active) return
+    if (await holdForPackages(prompt)) return
+    await deliverPrompt(prompt)
+  }
+
+  async function deliverPrompt(prompt) {
+    const input = $('convo-input')
     try {
       const res = await post('/api/conversation/send', { prompt })
       reached(true)
@@ -4322,6 +4339,92 @@
       reached(false)
       toast('Could not reach vibe.', true)
     }
+  }
+
+  // --- packages, looked at when the user sends -----------------------------
+
+  // An agent that builds downloads its own copy of a package the user's cache lacks, which the
+  // user's IDE can't see; so a prompt is held, and the user asked, while some are missing. The
+  // host looks at the workspace at that moment, not at its last scan. When the user's settings
+  // fetch them without asking, they are fetched first without being asked about.
+  const gate = { active: false, fetching: false, prompt: '', failed: '' }
+
+  async function checkPackages() {
+    try {
+      const res = await post('/api/packages/sync/check', {})
+      reached(true)
+      return res.ok && res.body ? res.body : {}
+    } catch (e) {
+      // Can't tell: not a reason to stand in the way. Sending says if vibe is out of reach.
+      return {}
+    }
+  }
+
+  async function holdForPackages(prompt) {
+    const b = await checkPackages()
+    if (!(b.actionable > 0) && !b.running) return false
+    gate.active = true
+    gate.prompt = prompt
+    gate.failed = ''
+    gate.fetching = !!b.running
+    if (!gate.fetching && b.auto) await startGateFetch()
+    renderGate(gate.fetching && !b.running ? Object.assign({}, b, { running: true }) : b)
+    return true
+  }
+
+  async function startGateFetch() {
+    gate.failed = ''
+    try {
+      const res = await post('/api/packages/sync/run', {})
+      reached(true)
+      // A fetch already under way (409) is as good as one just begun.
+      gate.fetching = res.ok || res.status === 409
+      if (!gate.fetching) gate.failed = (res.body && res.body.error) || 'The fetch could not be started.'
+    } catch (e) {
+      reached(false)
+      gate.failed = 'Could not reach vibe.'
+    }
+  }
+
+  function renderGate(b) {
+    const el = $('convo-gate')
+    el.hidden = !gate.active
+    if (!gate.active) return
+    const got = b && b.progress
+    const missing = (b && b.actionable) || (b && b.count) || 0
+    $('convo-gate-progress').hidden = !gate.fetching
+    if (gate.fetching && got && got.total > 0) { $('convo-gate-progress').max = got.total; $('convo-gate-progress').value = got.done }
+    else { $('convo-gate-progress').removeAttribute('value'); $('convo-gate-progress').removeAttribute('max') }
+    $('convo-gate-text').textContent = gate.fetching
+      ? 'Fetching' + (got && got.total > 0 ? ': ' + got.done + ' of ' + got.total + ' packages are in your cache' : ' the packages') + '. Your prompt goes when they are.'
+      : gate.failed ? "Fetching didn't finish: " + gate.failed
+      : packagesWord(missing) + " the agent will build with aren't in your package cache. Your IDE can't see them, and the agent will download its own copies. Fetch them first?"
+    $('convo-gate-fetch').hidden = gate.fetching
+    $('convo-gate-send').hidden = false
+  }
+
+  function closeGate() {
+    gate.active = false
+    gate.fetching = false
+    renderGate()
+  }
+
+  async function refreshGate() {
+    if (!gate.active || !gate.fetching) return
+    const b = await checkPackages()
+    if (!gate.active) return
+    if (b.running) { renderGate(b); return }
+    if (!(b.actionable > 0)) {
+      // All in the cache: the prompt goes.
+      const prompt = gate.prompt
+      closeGate()
+      await deliverPrompt(prompt)
+      return
+    }
+    // The fetch is over and some are still missing.
+    gate.fetching = false
+    gate.failed = (b.last && b.last.error) || 'some packages are still missing.'
+    renderGate(b)
   }
 
   async function conversationCall(path) {

@@ -893,7 +893,7 @@ on the host, and the agent can't plant code in a package your own builds then ru
   files in the sandbox's folder, as data, and checks each name and exact version), lists them by
   framework, and **Fetch them** downloads them on this machine, with your own NuGet config, into your
   cache, in one restore per framework, with a bar across the top of the card showing how many of them are in
-  your cache so far (the host counts them there, since a restore says nothing until it ends). The Admin tab's dot says when there are some to fetch; with
+  your cache so far (the host counts them there, since a restore says nothing until it ends). Pressing Send on the Conversation tab looks first: if some are missing, your prompt is held and you're asked whether to fetch them first (the agent that builds would download its own copies, which your IDE can't see), with **Send anyway** and **Cancel**; with `packages: allow` they're fetched first without asking, and your prompt goes when they're in. The Admin tab's dot says when there are some to fetch; with
   `packages: allow` they're fetched without asking. A package no feed has is named and left. Each project's
   own resolved set is fetched as its own restore (what two projects resolved needn't be consistent together,
   and NuGet refuses a mix), and when NuGet fails on a package it won't name, vibe finds it by restoring halves,

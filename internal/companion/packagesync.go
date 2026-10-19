@@ -112,6 +112,13 @@ func (s *Server) pollPackageSync(done <-chan struct{}, every time.Duration) {
 	}
 }
 
+// packageSyncCheck looks at the workspace now, and says what it found: for the page to ask when the
+// user presses Send, before the agent is, at its own pace, ahead of the next scan.
+func (s *Server) packageSyncCheck(w http.ResponseWriter, r *http.Request) {
+	s.cfg.PackageSync.Check()
+	s.packageSyncState(w, r)
+}
+
 func (s *Server) packageSyncState(w http.ResponseWriter, r *http.Request) {
 	st := s.cfg.PackageSync.State()
 	groups := st.Missing
@@ -119,6 +126,7 @@ func (s *Server) packageSyncState(w http.ResponseWriter, r *http.Request) {
 		groups = []nugetfetch.Group{}
 	}
 	body := map[string]interface{}{
+		"auto":  s.cfg.PackageSyncAuto != nil && s.cfg.PackageSyncAuto(),
 		"count": st.Count, "actionable": fixableNow(st), "missing": groups, "running": st.Running, "skipped": st.Skipped,
 		"problems": st.Problems, "last": st.Last,
 	}

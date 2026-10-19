@@ -66,6 +66,15 @@
             <button type="button" id="convo-sync-review">Review them</button>
           </div>
           <div id="convo-log" class="convo-log" role="log" aria-live="polite"></div>
+          <div id="convo-gate" class="gate" role="alert" hidden>
+            <progress id="convo-gate-progress" class="gate-progress" aria-label="Packages fetched" hidden></progress>
+            <span id="convo-gate-text"></span>
+            <span class="gate-buttons">
+              <button type="button" id="convo-gate-fetch">Fetch them first</button>
+              <button type="button" id="convo-gate-send" class="ghost">Send anyway</button>
+              <button type="button" id="convo-gate-cancel" class="ghost">Cancel</button>
+            </span>
+          </div>
           <form id="convo-form" class="convo-form" autocomplete="off">
             <div class="prompt-wrap">
               <ul id="convo-commands" class="commands" role="listbox" aria-label="Slash commands" hidden></ul>

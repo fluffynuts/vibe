@@ -37,7 +37,7 @@ func TestThePageItself(t *testing.T) {
 		}
 		t.Skip(how)
 	}
-	for _, file := range []string{"page.test.js", "packages.test.js", "polling.test.js", "usage.test.js", "blocked.test.js", "light.test.js", "sync.test.js", "wantsyou.test.js", "clipboard-page.test.js"} {
+	for _, file := range []string{"page.test.js", "packages.test.js", "polling.test.js", "usage.test.js", "blocked.test.js", "light.test.js", "sync.test.js", "sendcheck.test.js", "wantsyou.test.js", "clipboard-page.test.js"} {
 		out, err := exec.Command(node, "--test", filepath.Join("uitest", file)).CombinedOutput()
 		if err != nil {
 			t.Fatalf("node --test uitest/%s failed: %v\n%s", file, err, out)

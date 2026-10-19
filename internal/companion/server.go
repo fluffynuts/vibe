@@ -351,6 +351,7 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"POST /api/admin/upgrades", s.serving(adminFeature, s.adminCheckUpgrades)},
 		{"POST /api/admin/cancel", s.serving(adminFeature, s.adminCancel)},
 		{"GET /api/packages/sync", s.serving(packageSyncFeature, s.packageSyncState)},
+		{"POST /api/packages/sync/check", s.serving(packageSyncFeature, s.packageSyncCheck)},
 		{"POST /api/packages/sync/run", s.serving(packageSyncFeature, s.packageSyncRun)},
 		{"GET /api/packages", s.serving(packagesFeature, s.packagesState)},
 		{"POST /api/packages/allow", s.serving(packagesFeature, func(w http.ResponseWriter, r *http.Request) {
