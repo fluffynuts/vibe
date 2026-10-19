@@ -361,8 +361,10 @@ func TestParseHeadless(t *testing.T) {
 	if a, _ := Parse([]string{"--headless", "--foreground"}); !a.Foreground || a.ExclusiveActions() != 1 {
 		t.Errorf("--headless --foreground = %+v", a)
 	}
-	if a, _ := Parse([]string{"--headless", "-C"}); a.ExclusiveActions() != 2 {
-		t.Error("--headless with -C should count as two actions")
+	// With a rebuild it's what follows the rebuild (see TestHeadlessGoesWithTheRebuilds);
+	// with anything else it's still a second action.
+	if a, _ := Parse([]string{"--headless", "--delete"}); a.ExclusiveActions() != 2 {
+		t.Error("--headless with --delete should count as two actions")
 	}
 }
 
@@ -395,5 +397,46 @@ func TestParseMigrate(t *testing.T) {
 	}
 	if a, _ := Parse([]string{"--migrate", "/a", "/b", "-C"}); a.ExclusiveActions() != 2 {
 		t.Error("--migrate with -C should count as two actions")
+	}
+}
+
+// --headless on its own is an action; with a rebuild it's what to do once the
+// rebuild is done instead of attaching a terminal: still one action.
+func TestHeadlessGoesWithTheRebuilds(t *testing.T) {
+	for _, rebuild := range []string{"-r", "--re-init", "-R", "--re-create", "-C", "--re-compose"} {
+		for _, argv := range [][]string{{rebuild, "--headless"}, {"--headless", rebuild}, {rebuild, "-H"}} {
+			a, err := Parse(argv)
+			if err != nil {
+				t.Fatalf("Parse(%v): %v", argv, err)
+			}
+			if !a.Headless || a.ExclusiveActions() != 1 {
+				t.Errorf("Parse(%v): headless %v, %d actions; want headless, and one action", argv, a.Headless, a.ExclusiveActions())
+			}
+		}
+	}
+}
+
+func TestHeadlessAloneIsStillOneAction(t *testing.T) {
+	a, _ := Parse([]string{"--headless"})
+	if a.ExclusiveActions() != 1 {
+		t.Errorf("--headless alone counts %d actions, want 1", a.ExclusiveActions())
+	}
+}
+
+// What a rebuild can't be followed by still conflicts with it, and two
+// rebuilds still conflict with each other, headless or not.
+func TestHeadlessStillConflictsWithWhatItCantFollow(t *testing.T) {
+	for _, argv := range [][]string{
+		{"--delete", "--headless"}, {"--info", "--headless"}, {"--stop", "--headless"}, {"--list", "--headless"},
+		{"--ssh", "--headless"}, {"--migrate", "/old", "/new", "--headless"}, {"--update-sandboxes", "--headless"},
+		{"-r", "-C", "--headless"}, {"-r", "-R", "--headless"},
+	} {
+		a, err := Parse(argv)
+		if err != nil {
+			t.Fatalf("Parse(%v): %v", argv, err)
+		}
+		if a.ExclusiveActions() < 2 {
+			t.Errorf("Parse(%v): %d actions, want them to conflict", argv, a.ExclusiveActions())
+		}
 	}
 }

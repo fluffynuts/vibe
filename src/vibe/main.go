@@ -82,6 +82,8 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              cut off an agent's turn or another terminal's
                              session (-f: doesn't)
   vibe --headless --restart  ...taking over headless
+  vibe -r/-R/-C --headless   rebuild (or re-create, or re-compose), then go
+                             headless, instead of attaching a terminal
   vibe -M/--manage           serve the Profiles page on its own, until Ctrl-C:
                              every profile and its sandboxes, to clean up as
                              --cleanup does (every companion page has it as
@@ -223,7 +225,7 @@ func run(argv []string) error {
 		return fmt.Errorf("--update-strategy only applies to --install and --upgrade")
 	}
 	if args.ExclusiveActions() > 1 {
-		return fmt.Errorf("--migrate, --stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info, --setup, --git-token, --update-sandboxes, --manage and --headless are mutually exclusive")
+		return fmt.Errorf("--migrate, --stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info, --setup, --git-token, --update-sandboxes, --manage and --headless are mutually exclusive (--headless goes with --re-init, --re-create and --re-compose alone: the rebuild, then headless)")
 	}
 
 	if (args.GitTokenEnv != "" || args.NoGitToken || args.GitRules != "") && args.ExclusiveActions() > 0 && !args.GitToken {
@@ -389,7 +391,10 @@ func run(argv []string) error {
 		}
 	}
 	if args.Headless && !args.Foreground && !detachedChild() {
-		return detachHeadless(lay, args, name, target)
+		if args.Rebuilds() {
+			return rebuildThenHeadless(lay, args, name, target)
+		}
+		return startHeadlessInBackground(lay, args, name, target)
 	}
 
 	attaching := !args.ReInit && !args.ReCreate && !args.ReCompose && !args.Delete && !args.Headless
@@ -401,13 +406,10 @@ func run(argv []string) error {
 		termtitle.Set("VIBE: " + pathresolve.Tilde(target))
 	}
 
+	if rebuild := rebuildAction(args); rebuild != nil {
+		return rebuild(lay, args, name, target)
+	}
 	switch {
-	case args.ReInit:
-		return doReInit(lay, args, name, target)
-	case args.ReCreate:
-		return doReCreate(lay, args, name, target)
-	case args.ReCompose:
-		return doReCompose(lay, args, name, target)
 	case args.Delete:
 		return doDelete(lay, args, name, target)
 	default:

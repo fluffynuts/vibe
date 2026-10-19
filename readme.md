@@ -311,6 +311,8 @@ vibe --restart [path]      # end the vibe already running for path, leaving its 
                            #    running, and take over (asks first if that would
                            #    interrupt anything; -f: doesn't)
 vibe --headless --restart  # ...taking over headless
+vibe -r --headless         # rebuild the sandbox, then go headless (also with -R and -C):
+                           #    what `vibe -r --no-start && vibe --headless` does
 vibe -M/--manage           # serve the Profiles page on its own, until Ctrl-C
 vibe -x/--cleanup          # pick profiles and sandboxes to delete, grouped by
                            #    profile, with the likely trash selected
@@ -721,7 +723,7 @@ headless vibe, to pick up a new vibe after `--upgrade` say, and `vibe --restart`
 on a sandbox that was headless too. It asks first when that would interrupt something: another
 terminal's session, or an agent part-way through a turn (it asks the other vibe's page). `-f` doesn't
 ask; with no terminal and no `-f`, it says what would be interrupted and doesn't. A folder held for a
-rebuild isn't restarted. `vibe --stop && vibe --headless` restarts the sandbox too. `--foreground` keeps it in the
+rebuild isn't restarted. `vibe --stop && vibe --headless` restarts the sandbox too. `vibe -r --headless` (or `-R`, `-C`) rebuilds the sandbox and then goes headless, as `vibe -r --no-start && vibe --headless` does: the rebuild's questions come first, at your terminal, as they would without `--headless`, and nothing is started if the rebuild fails. It doesn't go with the other actions (`--delete`, `--info`, `--stop` and so on). `--foreground` keeps it in the
 foreground instead, for tmux, `nohup` or a systemd user unit.
 
 It carries on until another vibe asks it to stop (or, in the foreground, Ctrl-C or SIGTERM), and then

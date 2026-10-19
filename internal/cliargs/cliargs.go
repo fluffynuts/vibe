@@ -273,12 +273,19 @@ func valueArg(argv []string, i int) (string, int, error) {
 // ExclusiveActions counts how many of the mutually-exclusive action flags
 // (migrate/stop/stop-all/ssh/re-init/re-create/re-compose/restore/list/install/upgrade/install-sbx/setup/
 // cleanup/delete/info/git-token/update-sandboxes/manage/headless) are set.
+// --headless with one of the rebuilds (re-init, re-create, re-compose) isn't
+// a second: it says what to do when the rebuild is done, instead of attaching
+// a terminal, as 'vibe -r --no-start && vibe --headless' does.
 func (a Args) ExclusiveActions() int {
 	n := 0
-	for _, b := range []bool{a.Migrate, a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info, a.Setup, a.GitToken, a.UpdateSandboxes, a.Manage, a.Headless} {
+	for _, b := range []bool{a.Migrate, a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info, a.Setup, a.GitToken, a.UpdateSandboxes, a.Manage, a.Headless && !a.Rebuilds()} {
 		if b {
 			n++
 		}
 	}
 	return n
 }
+
+// Rebuilds says one of the rebuilds is asked for: --re-init, --re-create or
+// --re-compose.
+func (a Args) Rebuilds() bool { return a.ReInit || a.ReCreate || a.ReCompose }

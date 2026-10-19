@@ -74,6 +74,46 @@ func companionURL(vibeHome, name string) string {
 	return fmt.Sprintf("http://localhost:%d/#%s", inst.CompanionPort, token)
 }
 
+// startHeadlessInBackground starts the background vibe, which tests stand in
+// for.
+var startHeadlessInBackground = detachHeadless
+
+// rebuildAction is the rebuild args asks for (--re-init, --re-create or
+// --re-compose), or nil when it asks for none.
+func rebuildAction(args cliargs.Args) func(layout.Layout, cliargs.Args, string, string) error {
+	switch {
+	case args.ReInit:
+		return doReInit
+	case args.ReCreate:
+		return doReCreate
+	case args.ReCompose:
+		return doReCompose
+	}
+	return nil
+}
+
+// rebuildThenHeadless is a rebuild with --headless: the rebuild, as it would
+// be without it but with no terminal session after, then the background vibe
+// once this one has let go of the folder (it takes the folder itself), as
+// 'vibe -r --no-start && vibe --headless' does. A rebuild that fails starts
+// nothing.
+func rebuildThenHeadless(lay layout.Layout, args cliargs.Args, name, target string) error {
+	if err := guardFolder(lay.Home, target, args.Force, false, true); err != nil {
+		return err
+	}
+	rebuilt := args
+	rebuilt.NoStart = true
+	err := rebuildAction(args)(lay, rebuilt, name, target)
+	if session != nil {
+		session.Release()
+		session = nil
+	}
+	if err != nil {
+		return err
+	}
+	return startHeadlessInBackground(lay, args, name, target)
+}
+
 // detachHeadless is --headless without --foreground. What needs the
 // terminal is done here first (another vibe in the folder, the countdown to
 // rebuilding an out-of-date sandbox); then a copy of vibe is started in the

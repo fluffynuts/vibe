@@ -27,7 +27,8 @@ import (
 func finish(lay layout.Layout, args cliargs.Args, name string) error {
 	vibeHome := lay.Home
 	if args.NoStart {
-		if !args.Force {
+		// A rebuild going on to headless has started it, not stopped short.
+		if !args.Force && !args.Headless {
 			note("type vibe to get started")
 		}
 		return nil
