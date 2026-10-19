@@ -126,28 +126,35 @@ func scrollTop(cursor, n int) int {
 	return max(0, min(cursor-filterRows/2, n-filterRows))
 }
 
+// windowLines is the filterRows of labels on screen from top, the one at
+// cursor highlighted, with how many more there are above and below.
+func windowLines(labels []string, cursor, top int) []string {
+	var lines []string
+	end := min(top+filterRows, len(labels))
+	if top > 0 {
+		lines = append(lines, fmt.Sprintf("\x1b[2m  ↑ %d more\x1b[0m", top))
+	}
+	list := listLines(labels[top:end], cursor-top, noPrefix, "")
+	lines = append(lines, list[:len(list)-1]...)
+	if end < len(labels) {
+		lines = append(lines, fmt.Sprintf("\x1b[2m  ↓ %d more\x1b[0m", len(labels)-end))
+	}
+	return lines
+}
+
 // filterLines is a Filter's display: what's been typed, the matches on
 // screen with how many more there are either side, then the keys.
 func filterLines(labels []string, matches []int, cursor, top int, typed string) []string {
 	lines := []string{"filter: " + typed}
-	end := top + filterRows
-	if end > len(matches) {
-		end = len(matches)
-	}
-	if top > 0 {
-		lines = append(lines, fmt.Sprintf("\x1b[2m  ↑ %d more\x1b[0m", top))
-	}
 	if len(matches) == 0 {
 		lines = append(lines, "\x1b[2m  (no matches)\x1b[0m")
 	}
-	shown := make([]string, 0, end-top)
-	for _, m := range matches[top:end] {
+	shown := make([]string, 0, len(matches))
+	for _, m := range matches {
 		shown = append(shown, labels[m])
 	}
-	list := listLines(shown, cursor-top, noPrefix, "")
-	lines = append(lines, list[:len(list)-1]...)
-	if end < len(matches) {
-		lines = append(lines, fmt.Sprintf("\x1b[2m  ↓ %d more\x1b[0m", len(matches)-end))
+	if len(matches) > 0 {
+		lines = append(lines, windowLines(shown, cursor, top)...)
 	}
 	return append(lines, "\x1b[2m(type to filter, ↑/↓ to move, enter to select, esc to quit)\x1b[0m")
 }

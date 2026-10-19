@@ -469,8 +469,19 @@ func listLines(labels []string, cursor int, prefix func(i int) string, hint stri
 
 func noPrefix(int) string { return "" }
 
+// selectScrollOver is how many entries a menu has before it stops being
+// drawn whole: what fits a screen, with a few to spare so a list only just
+// over the window (the eleven agents sbx lists) isn't made to scroll.
+const selectScrollOver = 12
+
+// selectLines draws a menu: whole when it's short, else filterRows of it at a
+// time, with the highlighted entry in the middle, as a Filter does.
 func selectLines(labels []string, sel int) []string {
-	return listLines(labels, sel, noPrefix, "(↑/↓ to move, enter to select, q to quit)")
+	const hint = "(↑/↓ to move, enter to select, q to quit)"
+	if len(labels) <= selectScrollOver {
+		return listLines(labels, sel, noPrefix, hint)
+	}
+	return append(windowLines(labels, sel, scrollTop(sel, len(labels))), "\x1b[2m"+hint+"\x1b[0m")
 }
 
 func checklistLines(labels []string, marks []bool, cursor int) []string {
