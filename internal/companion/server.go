@@ -451,14 +451,14 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		if read == nil {
 			read = readGit
 		}
-		git = cached(s.cache, "git", 2*time.Second, func() *GitInfo {
+		git = cachedStale(s.cache, "git", 2*time.Second, func() *GitInfo {
 			return read(s.cfg.Workspace)
 		})
 	}
 	theme := ""
 	if s.cfg.ThemeColor != nil {
 		// /theme in the agent can change it at any time, but that's seldom.
-		theme = cached(s.cache, "theme", time.Minute, s.cfg.ThemeColor)
+		theme = cachedStale(s.cache, "theme", time.Minute, s.cfg.ThemeColor)
 	}
 	// attention is, by tab, why that tab wants looking at: the page draws a
 	// dot on it, with these as its tooltip, so a dot always says why.
@@ -509,7 +509,7 @@ func (s *Server) clipboardTrouble(url string, ready bool) string {
 	if url == "" || ready || s.cfg.ClipboardTrouble == nil {
 		return ""
 	}
-	return cached(s.cache, "clipboard-trouble", 10*time.Second, s.cfg.ClipboardTrouble)
+	return cachedStale(s.cache, "clipboard-trouble", 10*time.Second, s.cfg.ClipboardTrouble)
 }
 
 // probeClient is for probeClipboard: never through a proxy (the page is on
@@ -719,6 +719,9 @@ type cacheEntry struct {
 	at   time.Time
 	val  interface{}
 	err  error
+	// refreshing is set (under the cache's lock) while getStale is fetching
+	// a newer answer than this one.
+	refreshing bool
 }
 
 func newCache(ttl time.Duration) *cache {
@@ -754,6 +757,61 @@ func (c *cache) get(key string, ttl time.Duration, fn func() (interface{}, error
 	e.at = time.Now()
 	close(e.done)
 	return e.val, e.err
+}
+
+// getStale is get for what is slow to ask (the sandbox, the repository) and
+// asked for by the page every couple of seconds: once there is an answer,
+// however old, it's given at once, and a newer one is fetched in the
+// background, by one call whatever the number of askers. A slow fetch would
+// otherwise hold every poll waiting, and the page's few connections to vibe
+// with them, until it looks as if vibe has gone. Only the first answer is
+// waited for: there's nothing to give before it.
+func (c *cache) getStale(key string, ttl time.Duration, fn func() (interface{}, error)) (interface{}, error) {
+	if ttl == 0 {
+		ttl = c.ttl
+	}
+	c.mu.Lock()
+	if e, ok := c.entries[key]; ok {
+		select {
+		case <-e.done:
+			if time.Since(e.at) >= ttl && !e.refreshing {
+				e.refreshing = true
+				go c.refresh(key, fn)
+			}
+			c.mu.Unlock()
+			return e.val, e.err
+		default:
+			c.mu.Unlock()
+			<-e.done
+			return e.val, e.err
+		}
+	}
+	e := &cacheEntry{done: make(chan struct{})}
+	c.entries[key] = e
+	c.mu.Unlock()
+
+	e.val, e.err = fn()
+	e.at = time.Now()
+	close(e.done)
+	return e.val, e.err
+}
+
+// refresh replaces key's answer with a fresh one. The old entry is left as it
+// was, for those already holding it.
+func (c *cache) refresh(key string, fn func() (interface{}, error)) {
+	val, err := fn()
+	fresh := &cacheEntry{done: make(chan struct{}), at: time.Now(), val: val, err: err}
+	close(fresh.done)
+	c.mu.Lock()
+	c.entries[key] = fresh
+	c.mu.Unlock()
+}
+
+// cachedStale is c.getStale for a call that can't fail, typed.
+func cachedStale[T any](c *cache, key string, ttl time.Duration, fn func() T) T {
+	v, _ := c.getStale(key, ttl, func() (interface{}, error) { return fn(), nil })
+	t, _ := v.(T)
+	return t
 }
 
 // cached is c.get for a call that can't fail, typed.
