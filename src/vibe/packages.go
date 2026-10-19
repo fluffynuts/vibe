@@ -51,12 +51,21 @@ func packagesUnavailable(target, vibeHome string, merged settings.Settings) stri
 	return ""
 }
 
-// resolved is path with its links followed, as far as it exists.
+// resolved is path with its links followed: where it is, or will be, if it isn't made yet. The links
+// of the part that exists are followed, and the rest is kept as it was named.
 func resolved(path string) string {
-	if real, err := filepath.EvalSymlinks(path); err == nil {
-		return real
+	rest := ""
+	for p := path; ; {
+		if real, err := filepath.EvalSymlinks(p); err == nil {
+			return filepath.Join(real, rest)
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return path
+		}
+		rest = filepath.Join(filepath.Base(p), rest)
+		p = parent
 	}
-	return path
 }
 
 // packageDeskFor is where the sandbox's requests for packages are decided,

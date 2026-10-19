@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -28,7 +29,14 @@ func newFakeMounting(t *testing.T, succeeds bool) fakeMounting {
 	if succeeds {
 		status = "0"
 	}
+	// sed -i takes a suffix on BSD (macOS) and none on GNU: the script mustn't use it, and a sed that
+	// refuses it, as BSD's does the form GNU's takes, makes the tests say so on any host.
+	realSed, err := exec.LookPath("sed")
+	if err != nil {
+		t.Fatal(err)
+	}
 	scripts := map[string]string{
+		"sed":   "#!/bin/sh\nfor a in \"$@\"; do case \"$a\" in -i*) echo 'sed: -i is not portable: BSD sed wants a suffix' >&2; exit 1;; esac; done\nexec '" + realSed + "' \"$@\"\n",
 		"sudo":  "#!/bin/sh\nexec \"$@\"\n",
 		"mount": "#!/bin/sh\necho \"$*\" >> '" + f.calls + "'\nexit " + status + "\n",
 		"chown": "#!/bin/sh\necho \"$*\" >> '" + f.chowns + "'\n",
@@ -73,6 +81,10 @@ func runLinkNuget(t *testing.T, persisted string, env ...string) string {
 
 func runLinkNugetMounting(t *testing.T, mounting fakeMounting, persisted string, env ...string) string {
 	t.Helper()
+	// The script runs in the sandbox, a Linux guest, never on a Windows host.
+	if runtime.GOOS == "windows" {
+		t.Skip("link-nuget runs in the Linux sandbox")
+	}
 	script, err := filepath.Abs(filepath.Join("..", "..", "library", "dotnet", "agent-files", ".local", "bin", "link-nuget"))
 	if err != nil {
 		t.Fatal(err)

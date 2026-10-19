@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -32,6 +33,12 @@ type host struct {
 func newHost(t *testing.T) host {
 	t.Helper()
 	requireDotnet(t)
+	// The fake home is how NuGet is pointed at a test feed: it reads ~/.nuget/NuGet/NuGet.Config. On
+	// Windows it reads the user's known folders, which no environment variable redirects, so there is
+	// no feed of ours for it to find; the Windows host is for docs/vm-tests/nuget/check-nuget.ps1.
+	if runtime.GOOS == "windows" {
+		t.Skip("NuGet's user config on Windows can't be redirected to a test feed: see docs/vm-tests/nuget")
+	}
 	dir := t.TempDir()
 	h := host{
 		home:  filepath.Join(dir, "home"),

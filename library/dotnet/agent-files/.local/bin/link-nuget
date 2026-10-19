@@ -17,6 +17,23 @@ if [ -n "$SBX_PERSIST_FILE" ]; then
   PERSIST=$SBX_PERSIST_FILE
 fi
 
+# The persistent file without NAME's line, and LINE (when given) at the end,
+# written back in place (what sed -i would do, which GNU and BSD take
+# differently), by sudo when the file isn't ours to write.
+rewrite_persist() {
+  tmp=$(mktemp) || return 1
+  {
+    grep -v "^export $1=" "$PERSIST" 2>/dev/null
+    [ -z "$2" ] || echo "$2"
+  } >"$tmp"
+  if ! cat "$tmp" >"$PERSIST" 2>/dev/null; then
+    sudo sh -c 'cat "$1" > "$2"' sh "$tmp" "$PERSIST"
+  fi
+  status=$?
+  rm -f "$tmp"
+  return $status
+}
+
 # Written to the persistent env file rather than passed at create time so it
 # cannot go missing on a sandbox created before this change. Replaces any
 # line for the same variable, so a rebuilt sandbox never keeps the old ones.
@@ -27,21 +44,12 @@ persist() {
     echo "$name already persisted"
     return
   fi
-  edit="sed -i '/^export $name=/d' '$PERSIST' 2>/dev/null; echo '$want' >> '$PERSIST'"
-  if [ -w "$PERSIST" ]; then
-    sh -c "$edit"
-  else
-    sudo sh -c "$edit"
-  fi && echo "persisted: $want" || echo "WARN: could not write $PERSIST"
+  rewrite_persist "$name" "$want" && echo "persisted: $want" || echo "WARN: could not write $PERSIST"
 }
 
 unpersist() {
   if [ -f "$PERSIST" ] && grep -q "^export $1=" "$PERSIST"; then
-    if [ -w "$PERSIST" ]; then
-      sed -i "/^export $1=/d" "$PERSIST"
-    else
-      sudo sed -i "/^export $1=/d" "$PERSIST"
-    fi && echo "removed $1 from $PERSIST"
+    rewrite_persist "$1" && echo "removed $1 from $PERSIST"
   fi
 }
 

@@ -103,3 +103,21 @@ func TestAProjectFileTooLargeToBeOneIsLeftOut(t *testing.T) {
 		t.Error("the others are read")
 	}
 }
+
+// A folder reached through a link (macOS's /var is one; a Windows temp folder has a short name and a
+// long) is the same folder: its committed files are those of its place in the repository, found by
+// where it really is, not by how it was named.
+func TestProjectFilesAreReadThroughALinkToTheFolder(t *testing.T) {
+	top := repo(t, map[string]string{"a/A.csproj": oldRef, "b/B.csproj": oldRef})
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(filepath.Join(top, "a"), link); err != nil {
+		t.Skipf("no links here: %v", err)
+	}
+	got, err := ReadProjectFiles(context.Background(), link, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Committed["A.csproj"] != oldRef || len(got.Committed) != 1 {
+		t.Errorf("committed %v: the folder behind the link is a/, whose files are these", got.Committed)
+	}
+}

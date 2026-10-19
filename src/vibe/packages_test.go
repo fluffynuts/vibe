@@ -281,3 +281,46 @@ func TestTheOverviewWithNoSyncSaysOnlyWhatTheDeskHolds(t *testing.T) {
 		t.Errorf("overview = %q", got)
 	}
 }
+
+// A folder not made yet (~/.nuget on a fresh machine) is where it will be, by the links above it:
+// the sandbox's own folder is compared with its links followed, so it must be too. Else a sandbox in
+// a home reached through a link (macOS's /var; a short Windows name) isn't seen to hold it.
+func TestAFolderNotMadeYetIsComparedByWhereItWillBe(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "home-link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("no links here: %v", err)
+	}
+	vibeHome := filepath.Join(link, ".vibe") // not made
+	merged := settings.Settings{NugetDir: filepath.Join(link, ".nuget")}
+	if why := packagesUnavailable(real, vibeHome, merged); why == "" {
+		t.Error("a sandbox in the home that vibe's folder, not made yet, will be in: it's above it, and must be refused")
+	}
+	if why := packagesUnavailable(filepath.Join(real, "code", "project"), vibeHome, merged); why != "" {
+		t.Errorf("an ordinary project folder in that home: %q", why)
+	}
+}
+
+func TestResolvedFollowsTheLinksOfWhatExistsAndKeepsTheRest(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("no links here: %v", err)
+	}
+	want := filepath.Join(evalReal(t, real), "a", "b")
+	if got := resolved(filepath.Join(link, "a", "b")); got != want {
+		t.Errorf("resolved = %q, want %q", got, want)
+	}
+	if got := resolved(real); got != evalReal(t, real) {
+		t.Errorf("an existing folder: %q", got)
+	}
+}
+
+func evalReal(t *testing.T, path string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return real
+}

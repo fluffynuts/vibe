@@ -111,8 +111,13 @@ func (r *repository) committedProjectFiles(ref, dir string, into map[string]stri
 	if err != nil {
 		return err
 	}
+	// r.top is where the repository really is: the folder is found against that, by where it really is.
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return err
+	}
 	prefix := ""
-	if rel, err := filepath.Rel(r.top, dir); err == nil && rel != "." {
+	if rel, err := filepath.Rel(r.top, real); err == nil && rel != "." {
 		prefix = filepath.ToSlash(rel) + "/"
 	}
 	files := tree.Files()
