@@ -888,7 +888,7 @@ on the host, and the agent can't plant code in a package your own builds then ru
   again for a package it had looked for before you fetched it, since an overlay keeps its "not found".
 - **Your IDE and what the sandbox restored.** What the sandbox restores from nuget.org lands in its
   own layer, which your IDE (Rider, say) can't read: references go red until your cache has the
-  packages. The Admin tab's **Packages your IDE can't see** card says how many packages the
+  packages. The Admin tab's **Packages** card, whose second part is **Packages your IDE can't see** (the first, **Packages the agent asked for**, is the requests below), says how many packages the
   sandbox's restores left that your cache lacks (it reads the `obj/project.assets.json`
   files in the sandbox's folder, as data, and checks each name and exact version), lists them by
   framework, and **Fetch them** downloads them on this machine, with your own NuGet config, into your

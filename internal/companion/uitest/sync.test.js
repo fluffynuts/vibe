@@ -175,7 +175,7 @@ test('a fetch under way shows a bar of how far it has got, across the top of the
     assert.equal(bar.max, 405)
     assert.equal(bar.value, 120)
     assert.match(p.$('admin-sync-status').textContent, /120 of 405/)
-    assert.equal(p.$('admin-sync-card').firstElementChild, bar, 'it runs across the top of the card')
+    assert.equal(p.$('admin-packages-all').firstElementChild, bar, 'it runs across the top of the card')
     assert.ok(bar.getAttribute('aria-label'), 'it has a name for a screen reader')
   } finally { p.close() }
 })
@@ -253,4 +253,54 @@ test('a failure is still shown while packages are missing', async () => {
     assert.match(p.$('admin-sync-status').textContent, /exit status 1/)
     assert.match(p.$('admin-sync-status').textContent, /NU1301 unreachable/)
   } finally { p.close() }
+})
+
+// --- the agent's requests and what the IDE can't see are one card ---------------------------
+
+function bothPage({ sync, requests = [] } = {}) {
+  const routes = {
+    '/api/state': { sandbox: 'box', sandboxTabs: true, admin: true, attention: {} },
+    '/api/admin': { status: { exists: true, running: true }, upgrades: {} },
+    '/api/packages': { requests, config: null },
+    '/api/packages/sync': sync || { status: 404, body: { error: 'no sync' } },
+  }
+  return openPage({ routes, storage: { 'vibe-companion-tab': 'admin' } })
+}
+
+test('what the agent asked for, and what the IDE can\'t see, are in one card, the agent\'s first', async () => {
+  const p = await bothPage({ sync: missing() })
+  try {
+    const card = p.$('admin-packages-all')
+    assert.equal(card.hidden, false)
+    assert.ok(card.contains(p.$('admin-packages-card')) && card.contains(p.$('admin-sync-card')), 'both are in it')
+    assert.ok(p.$('admin-packages-card').compareDocumentPosition(p.$('admin-sync-card')) & 4, 'the agent\'s requests come first')
+    assert.match(p.$('admin-packages-all-h').textContent, /Packages/)
+  } finally { p.close() }
+})
+
+test('the packages card is there when only one of its parts is', async () => {
+  let p = await bothPage({ sync: missing() })
+  try {
+    assert.equal(p.$('admin-packages-all').hidden, false)
+  } finally { p.close() }
+  p = await openPage({ routes: {
+    '/api/state': { sandbox: 'box', sandboxTabs: true, admin: true, attention: {} },
+    '/api/admin': { status: {}, upgrades: {} },
+    '/api/packages': { requests: [], config: null },
+    '/api/packages/sync': { status: 404, body: { error: 'no sync' } },
+  }, storage: { 'vibe-companion-tab': 'admin' } })
+  try {
+    assert.equal(p.$('admin-packages-all').hidden, false, 'requests alone')
+    assert.equal(p.$('admin-sync-card').hidden, true)
+  } finally { p.close() }
+})
+
+test('with neither the card is not there', async () => {
+  const p = await openPage({ routes: {
+    '/api/state': { sandbox: 'box', sandboxTabs: true, admin: true, attention: {} },
+    '/api/admin': { status: {}, upgrades: {} },
+    '/api/packages': { status: 404, body: { error: 'no packages' } },
+    '/api/packages/sync': { status: 404, body: { error: 'no sync' } },
+  }, storage: { 'vibe-companion-tab': 'admin' } })
+  try { assert.equal(p.$('admin-packages-all').hidden, true) } finally { p.close() }
 })

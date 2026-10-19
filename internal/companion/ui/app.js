@@ -2790,10 +2790,20 @@
       reached(true)
       // A sandbox with nothing of the kind has no such card.
       $('admin-sync-card').hidden = !res.ok
+      showPackagesCard()
       if (res.ok) renderSync(res.body)
     } catch (e) {
       reached(false)
     }
+  }
+
+  // The packages are one card, of the agent's requests and of what the IDE can't see:
+  // it's there when either is, and ringed when either wants the user.
+  const packagesWant = { requests: false, sync: false }
+  function showPackagesCard() {
+    const card = $('admin-packages-all')
+    card.hidden = $('admin-packages-card').hidden && $('admin-sync-card').hidden
+    card.classList.toggle('wants-you', packagesWant.requests || packagesWant.sync)
   }
 
   const packagesWord = (n) => n + (n === 1 ? ' package' : ' packages')
@@ -2817,7 +2827,8 @@
       }))
     }
     $('admin-sync-run').disabled = running || count === 0
-    $('admin-sync-card').classList.toggle('wants-you', (b.actionable || 0) > 0)
+    packagesWant.sync = (b.actionable || 0) > 0
+    showPackagesCard()
     const problems = b.problems || []
     $('admin-sync-problems').hidden = problems.length === 0
     $('admin-sync-problems').textContent = problems.length ? "Couldn't read: " + problems.join('; ') : ''
@@ -2879,6 +2890,7 @@
       reached(true)
       // A sandbox that can't ask for packages has no such card.
       $('admin-packages-card').hidden = !res.ok
+      showPackagesCard()
       if (res.ok) renderPackages(res.body)
     } catch (e) {
       reached(false)
@@ -2939,7 +2951,8 @@
     $('admin-packages-status').hidden = approved === 0
     $('admin-packages-status').textContent = approved + ' approved — fetching a few at a time; each one done starts the next.' +
       (undecided ? ' ' + undecided + ' more to decide.' : '')
-    $('admin-packages-card').classList.toggle('wants-you', undecided > 0)
+    packagesWant.requests = undecided > 0
+    showPackagesCard()
     pill('admin-packages-count', requests.length ? String(undecided) + ' waiting' + (approved ? ' · ' + approved + ' approved' : '') : '', undecided ? 'bad' : '')
     packageButtons()
     renderNugetConfig(data.config, data.configProblem)

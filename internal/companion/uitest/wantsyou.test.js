@@ -23,30 +23,42 @@ const someSync = (extra) => Object.assign({
   missing: [{ framework: 'net8.0', packages: [{ id: 'Dapper', version: '2.1.86' }] }],
 }, extra)
 
-test('the card of packages the IDE can\'t see is ringed when a fetch could bring some', async () => {
+// The packages are one card: the agent's requests, and what the IDE can't see. It's
+// ringed when either wants the user.
+const CARD = 'admin-packages-all'
+
+test('the packages card is ringed when a fetch could bring packages the IDE can\'t see', async () => {
   const p = await adminPage({ sync: someSync() })
-  try { assert.equal(ringed(p, 'admin-sync-card'), true) } finally { p.close() }
+  try { assert.equal(ringed(p, CARD), true) } finally { p.close() }
 })
 
-test('the sync card is not ringed with nothing to fetch, nor while fetching, nor for what no feed has', async () => {
+test('the packages card is not ringed with nothing to fetch, nor while fetching, nor for what no feed has', async () => {
   for (const [name, answer] of [
     ['nothing missing', someSync({ count: 0, actionable: 0, missing: [] })],
     ['fetching', someSync({ running: true, actionable: 0 })],
     ['only what no feed has', someSync({ actionable: 0 })],
   ]) {
     const p = await adminPage({ sync: answer })
-    try { assert.equal(ringed(p, 'admin-sync-card'), false, name) } finally { p.close() }
+    try { assert.equal(ringed(p, CARD), false, name) } finally { p.close() }
   }
 })
 
-test('the package requests card is ringed while a request is undecided, and not when all are approved', async () => {
+test('the packages card is ringed while a request is undecided, and not when all are approved', async () => {
   const request = (id, extra) => Object.assign({ key: id, ecosystem: 'nuget', id, version: '1.0.0', framework: 'net8.0', note: 'new' }, extra)
   let p = await adminPage({ requests: [request('A.Lib'), request('B.Lib', { approved: true })] })
-  try { assert.equal(ringed(p, 'admin-packages-card'), true) } finally { p.close() }
+  try { assert.equal(ringed(p, CARD), true) } finally { p.close() }
   p = await adminPage({ requests: [request('B.Lib', { approved: true })] })
-  try { assert.equal(ringed(p, 'admin-packages-card'), false) } finally { p.close() }
+  try { assert.equal(ringed(p, CARD), false) } finally { p.close() }
   p = await adminPage({ requests: [] })
-  try { assert.equal(ringed(p, 'admin-packages-card'), false) } finally { p.close() }
+  try { assert.equal(ringed(p, CARD), false) } finally { p.close() }
+})
+
+test('the packages card is ringed for a request even when there is nothing for the IDE, and the other way round', async () => {
+  const request = { key: 'k', ecosystem: 'nuget', id: 'A.Lib', version: '1.0.0', framework: 'net8.0', note: 'new' }
+  let p = await adminPage({ requests: [request], sync: someSync({ count: 0, actionable: 0, missing: [] }) })
+  try { assert.equal(ringed(p, CARD), true, 'a request alone') } finally { p.close() }
+  p = await adminPage({ requests: [], sync: someSync() })
+  try { assert.equal(ringed(p, CARD), true, 'the IDE alone') } finally { p.close() }
 })
 
 test('the upgrades card is ringed when newer releases are found, and not when up to date', async () => {

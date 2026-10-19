@@ -573,3 +573,7 @@ html.themed .commands li[aria-selected="true"] {
 @media (prefers-reduced-motion: reduce) { .agent-light.on { animation: none; } }
 #admin-sync-failed { margin: 0; padding-left: 18px; }
 #admin-sync-failed .was { white-space: pre-wrap; overflow-wrap: anywhere; }
+.card-part:not([hidden]) ~ .card-part:not([hidden]) { border-top: 1px solid var(--line); padding-top: 8px; }
+.card-part[hidden] { display: none; }
+.card-part { display: flex; flex-direction: column; gap: 8px; }
+.card-part h3 { margin: 0; font-size: 13px; display: flex; align-items: center; gap: 8px; }
