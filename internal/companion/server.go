@@ -117,6 +117,10 @@ type Config struct {
 	// PackageConfig is the folder's nuget.config, to approve on the same
 	// tab; nil means none is offered.
 	PackageConfig PackageConfig
+	// Usage reads how busy the sandbox is, for the page's CPU and memory
+	// bars; it may be slow (it asks the sandbox), and says ErrNotRunning for
+	// a sandbox that isn't. Nil means the page has no such bars.
+	Usage func(ctx context.Context) (UsageReading, error)
 	// KeepAwake is what the page asks for while it's in view (and as it
 	// comes back into view), to keep the sandbox from being stopped for
 	// being idle, or start it again if it was; it returns what it did, if
@@ -158,6 +162,11 @@ type Server struct {
 	convo conversation
 	admin admin
 	asked asked
+	// usage is the last reading of the sandbox's load, and clock the
+	// clock it's aged by.
+	usage   usageCache
+	blocked blockedCache
+	clock   func() time.Time
 	// pageVersion stands for the page's files as this vibe serves them: a
 	// page left open across a rebuild of vibe can tell it's out of date.
 	pageVersion string
@@ -176,7 +185,7 @@ type asked struct {
 // New makes a Server without listening, which is how tests drive Handler.
 func New(cfg Config) *Server {
 	ui, _ := fs.Sub(uiFiles, "ui")
-	return &Server{cfg: cfg, ui: ui, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer(colourAtOnce)}
+	return &Server{cfg: cfg, ui: ui, clock: time.Now, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer(colourAtOnce)}
 }
 
 // Start listens on 127.0.0.1 at cfg.Port and serves in the background.
@@ -318,6 +327,7 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"POST /api/conversation/new/fetch", s.serving(conversationFeature, s.conversationNewFetch)},
 		{"GET /api/default-branch", s.serving(defaultBranchFeature, s.defaultBranchState)},
 		{"POST /api/default-branch", s.serving(defaultBranchFeature, s.defaultBranchSet)},
+		{"GET /api/usage", s.serving(usageFeature, s.usageHandler)},
 		{"GET /api/admin", s.authed(s.adminState)},
 		{"POST /api/admin/do", s.serving(adminFeature, s.adminDo)},
 		{"POST /api/admin/upgrades", s.serving(adminFeature, s.adminCheckUpgrades)},
@@ -401,6 +411,8 @@ type feature struct {
 }
 
 var (
+	usageFeature = feature{func(s *Server) bool { return s.cfg.Usage != nil },
+		"this page has no way to read the sandbox's load", 1 << 10}
 	conversationFeature = feature{func(s *Server) bool { return s.cfg.Converse != nil },
 		"this sandbox has no conversation to have", maxPrompt}
 	adminFeature = feature{func(s *Server) bool { return s.cfg.Admin != nil },
@@ -497,6 +509,12 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	if waiting := s.packagesWaiting(); waiting != "" {
 		attention["admin"] = append(attention["admin"], waiting)
 	}
+	// blockedHosts is what the network log says is blocked, for the page to
+	// tell the user of the ones they haven't seen; null until it's been read.
+	var blockedHosts []string
+	if hosts, known := s.blockedHosts(); known {
+		blockedHosts = hosts
+	}
 	// reviewAt is when the agent last updated the review: the page marks the
 	// Review tab when it's later than the user has seen. Taken in here, as
 	// the Review tab only polls the review while it's open.
@@ -511,6 +529,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"attention":         attention,
 		"packagesWaiting":   s.packagesWaitingCount(),
+		"blockedHosts":      blockedHosts,
 		"reviewAt":          reviewAt,
 		"pageVersion":       s.pageVersion,
 		"themeColor":        theme,
@@ -526,6 +545,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"admin":             s.cfg.Admin != nil,
 		"manage":            s.cfg.Manage != nil,
 		"review":            s.cfg.ReviewTab != nil,
+		"usage":             s.cfg.Usage != nil,
 		// A page for no sandbox has only the Profiles tab.
 		"sandboxTabs": s.cfg.Sandbox != "",
 	})

@@ -124,16 +124,18 @@ to date, when a check fails, or when the checks haven't finished by the time you
 
 The first `vibe --install` (and vibe's first run, if you skip `--install`) also sets up
 `~/.vibe/settings.yaml` for your machine. It asks how much memory each sandbox gets, in 4g steps
-up to half your machine's memory. It asks which agent sandboxes run by default, from the agents `sbx run
+up to half your machine's memory, and how many CPUs, any number from 1 to one less than your machine
+has, starting on half of them (see [CPUs](#cpus-a-sandbox-gets)). It asks which agent sandboxes run by default, from the agents `sbx run
 --help` lists, and which library features a guided profile starts with selected. Each question
 starts on the package's choice. Creating a new sandbox asks again which agent it should run,
 starting on that default (or on the profile's own `agent`, when the profile exists already). It asks
 this first, before any profile is made, because a guided profile only offers the features that work
-with that agent; a re-init or re-create keeps the agent the sandbox was created with. With `-f`, or no terminal, it keeps the package's choices and only
-lowers the memory, if it's more than your machine can give. Every later `--install` makes the same
-memory check on your `settings.yaml`, and changes nothing else in it.
+with that agent. A rebuild (`-r`, `-R`, `-C`) at a terminal asks again, starting on the sandbox's agent: it's the way to change it (the profile's features it can't use are warned of, and a Claude sandbox's memories are checked for first, and kept in the host store rather than discarded if the new agent can't use them). `-f`, `--update-sandboxes` and the page's Rebuild keep the agent. With `-f`, or no terminal, it keeps the package's choices and only
+lowers the memory, if it's more than your machine can give (and a `cpus` already set, if it's more
+than your machine can spare). Every later `--install` makes the same checks on your `settings.yaml`,
+and changes nothing else in it.
 
-`vibe --setup` asks those questions again (default memory, default agent, and the features a guided
+`vibe --setup` asks those questions again (default memory, CPUs, default agent, and the features a guided
 profile starts with selected), starting on your current choices, and saves the answers in
 `~/.vibe/settings.yaml`. It then offers to store a default GitHub token for new sandboxes to push with
 (see [Letting the agent push](#letting-the-agent-push)). It needs a terminal, and
@@ -309,6 +311,8 @@ vibe --restart [path]      # end the vibe already running for path, leaving its 
                            #    running, and take over (asks first if that would
                            #    interrupt anything; -f: doesn't)
 vibe --headless --restart  # ...taking over headless
+vibe -r --headless         # rebuild the sandbox, then go headless (also with -R and -C):
+                           #    what `vibe -r --no-start && vibe --headless` does
 vibe -M/--manage           # serve the Profiles page on its own, until Ctrl-C
 vibe -x/--cleanup          # pick profiles and sandboxes to delete, grouped by
                            #    profile, with the likely trash selected
@@ -627,7 +631,11 @@ you're looking at:
 - **Network log** — every host the sandbox has tried to reach, with hit counts and whether it was
   allowed or blocked, refreshing every couple of seconds while the tab is showing. Filter by status or
   search for a host. A blocked host has an **Allow** button, an allowed one a **Block** button; click
-  a row to see everything sbx said about it.
+  a row to see everything sbx said about it. A dot on the tab says when a host is **newly blocked**:
+  one you haven't seen blocked. Opening the tab clears it, and a host you've seen and left blocked
+  (or chose to block) doesn't raise it again; one that was allowed and is blocked again does. A
+  browser's first visit takes what's already blocked as seen, so a long history isn't news, and the
+  dot is per browser. Hosts a rule now allows aren't counted.
 - **Network rules** — the rules that apply to the sandbox, a box to allow or block a host, and
   **Remove** for the sandbox's own rules.
 - **Filesystem rules** — the same, read-only (sbx doesn't log filesystem access yet).
@@ -715,7 +723,7 @@ headless vibe, to pick up a new vibe after `--upgrade` say, and `vibe --restart`
 on a sandbox that was headless too. It asks first when that would interrupt something: another
 terminal's session, or an agent part-way through a turn (it asks the other vibe's page). `-f` doesn't
 ask; with no terminal and no `-f`, it says what would be interrupted and doesn't. A folder held for a
-rebuild isn't restarted. `vibe --stop && vibe --headless` restarts the sandbox too. `--foreground` keeps it in the
+rebuild isn't restarted. `vibe --stop && vibe --headless` restarts the sandbox too. `vibe -r --headless` (or `-R`, `-C`) rebuilds the sandbox and then goes headless, as `vibe -r --no-start && vibe --headless` does: the rebuild's questions come first, at your terminal, as they would without `--headless`, and nothing is started if the rebuild fails. It doesn't go with the other actions (`--delete`, `--info`, `--stop` and so on). `--foreground` keeps it in the
 foreground instead, for tmux, `nohup` or a systemd user unit.
 
 It carries on until another vibe asks it to stop (or, in the foreground, Ctrl-C or SIGTERM), and then
@@ -742,6 +750,52 @@ it's being served, and it opens the one already there.
 serve it and open the browser), `serve` (serve it and only print the address — for when you have a bookmark,
 or no desktop), or `off`. `-N/--no-companion` turns it off for one run. vibe doesn't open a browser
 over ssh, or on Linux without a display; it prints the address instead.
+
+### CPUs a sandbox gets
+
+`sbx` gives a sandbox every CPU of the host's unless told otherwise, so a build in it (`dotnet build`
+with all cores, say) can leave your machine nothing to run vibe, your browser and `sbx` itself on:
+the companion page then goes slow, and may say vibe has disconnected. vibe tells `sbx` how many to
+give (`sbx create --cpus`): the `cpus` setting, and when there's none, **half the machine's**,
+rounded down. A new sandbox asks, offering any number from 1 to one less than the machine has, so
+the host always keeps one, in a list that scrolls and narrows as you type (like the timezone one). It's the same question as the memory one: `-f`, or no terminal, uses the
+setting, or half. A `cpus` more than the machine can spare is lowered to the most it can.
+
+A sandbox's memory and CPUs are kept in its record, so a rebuild keeps what it was created with, not
+whatever the settings say by then (a sandbox made before vibe kept them uses the settings). A rebuild
+you start at a terminal (`-r`, `-R`, `-C`) asks both questions again (and which agent it runs), starting on the sandbox's own
+values: it's the way to change them. With `-f`, `--update-sandboxes`, `--migrate` or the page's
+Rebuild, nothing is asked and the recorded values are kept. A sandbox already built keeps the CPUs
+it has until it's rebuilt.
+
+### The agent's light
+
+Beside the CPU and memory bars, a small light says whether the agent is busy: it blinks while the
+agent is working on a prompt from the Conversation tab, more slowly while it has answered and left
+something running (a server, a watcher), amber if it has been quiet for minutes and may be stuck, and
+is dark when the agent is idle. It's there on every tab, so it says so when the Conversation tab has
+nothing new to show; its tooltip says what it is for. It follows the conversation the page has with
+the agent: work in an attached terminal session isn't seen, and agents the page can't talk to have
+no light.
+
+### CPU and memory bars
+
+At the far right of the companion page's tab bar, whichever tab is showing, two small bars say how busy
+the sandbox is:
+
+```
+CPU (12 cores) [====      ]
+MEM (8g)       [=====     ]
+```
+
+CPU is the share of the time the cores were busy over the last few seconds; memory is what the sandbox
+can't hand back on demand (the page cache isn't counted), the same as `--info`'s "mem used". The labels
+say what the sandbox was given. A bar turns amber from 70% and red from 90%; the tooltip has the figures
+and how old they are, and a screen reader is told the percentages. Both are read from inside the sandbox
+every few seconds, in the background, so a sandbox with every CPU busy never holds the page up: when it's
+too slow to answer, the bars grey and say how long ago they were read. A stopped sandbox shows empty,
+greyed bars and isn't woken to be measured. In a narrow window the bars move toward the tabs, then scroll
+with them.
 
 ### Letting the agent push
 
@@ -984,6 +1038,8 @@ into a real script or config file.
 ```yaml
 memory: 12g          # sandbox memory limit; a new sandbox asks, starting here, capped at
                      #    half the host's memory
+cpus: 8              # CPUs a sandbox gets; a new sandbox asks, from 1 to one less than the
+                     #    host has. Unset: half the host's (sbx alone would give all of them)
 agent: claude         # which coding agent to run
 nugetDir: ~/.nuget    # the host's NuGet folder: its packages are given to the sandbox, if it has them
 nuget: fallback       # fallback (default): packages read-only, nothing else; shared: all of nugetDir, read-write
@@ -1132,7 +1188,11 @@ state:
 - `running/<pid>.lock` — one per vibe process with a folder open (anything but `--ssh`, `--stop`,
   `--stop-all`, `--list`, `--install` and `--cleanup`), locked for as long as that process lives. A second vibe
   for the same folder warns that one is already running, gives its PID, and offers to exit,
-  continue anyway, or stop the other one first. `-f` continues anyway without asking.
+  continue anyway (leaving the other running beside it), or stop the other one first (it saves its
+  agent's memories, and is killed if it goes 90 seconds without getting any further). `-f` continues
+  anyway without asking. A rebuild, re-compose or delete takes the sandbox away from the other vibe,
+  so it isn't offered "continue anyway", and `-f` stops the other one first, unless it's in the
+  middle of work (a rebuild half done), which `-f` won't end: it refuses, and says so.
 - `running/<pid>-<n>.lock` — a vibe holding another folder for a while, besides its own: rebuilding
   that folder's sandbox from the Profiles page, or with `--update-sandboxes`. The file says what it's
   doing, so a vibe started in that folder says so too ("vibe (PID n) is rebuilding sandbox 'x'"),

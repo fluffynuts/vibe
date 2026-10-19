@@ -24,7 +24,10 @@ type PublishEntry struct {
 // Settings is the merged configuration used to drive sandbox creation.
 // Zero values mean "unset" for every scalar field.
 type Settings struct {
-	Memory   string `yaml:"memory,omitempty"`
+	Memory string `yaml:"memory,omitempty"`
+	// CPUs is how many CPUs a sandbox gets; 0 (unset) means half the host's.
+	// sbx itself would give a sandbox all of them.
+	CPUs     int    `yaml:"cpus,omitempty"`
 	BasePort int    `yaml:"basePort,omitempty"`
 	Agent    string `yaml:"agent,omitempty"`
 	NugetDir string `yaml:"nugetDir,omitempty"`
@@ -92,6 +95,9 @@ func Merge(base, override Settings) Settings {
 
 	if override.Memory != "" {
 		out.Memory = override.Memory
+	}
+	if override.CPUs != 0 {
+		out.CPUs = override.CPUs
 	}
 	if override.BasePort != 0 {
 		out.BasePort = override.BasePort

@@ -367,7 +367,7 @@
   // Conversation tab's, when it has said something out of sight (pulsing
   // while it's still at work).
   function showAllAttention() {
-    const attention = withReviewNews(state.attention)
+    const attention = withBlockedNews(withReviewNews(state.attention))
     if (!convo.news) { showAttention(attention); return }
     showAttention(Object.assign({}, attention, { conversation: [convo.running ? 'The agent is working' : 'The agent has answered'] }),
       convo.running ? new Set(['conversation']) : null)
@@ -389,6 +389,55 @@
   function reviewSeen() {
     if (!state.loaded || !R.agentUpdated(state.reviewAt, store.get(REVIEW_SEEN))) return
     store.set(REVIEW_SEEN, state.reviewAt)
+    showAllAttention()
+  }
+
+  // BLOCKED_SEEN keeps the hosts the user has seen blocked and left that way,
+  // as a JSON list, per browser (and per sandbox: storage is per origin). It's
+  // what makes a dot on the Network log tab mean a host that's new: one the
+  // user has looked at and left blocked, or chose to block, isn't news.
+  const BLOCKED_SEEN = 'vibe-companion-blocked-seen'
+
+  function seenBlocked() {
+    const stored = store.get(BLOCKED_SEEN)
+    if (stored === null || stored === undefined || stored === '') return null
+    try {
+      const list = JSON.parse(stored)
+      return Array.isArray(list) ? list : null
+    } catch (e) { return null }
+  }
+
+  // noteBlocked works out which of the hosts vibe says are blocked are new.
+  // Not known yet (null) is not "none are": nothing is taken as seen. With
+  // nothing kept (a browser's first visit), what's blocked now is taken as
+  // seen: a long history isn't news. A host that stops being blocked is
+  // forgotten, so being blocked again is news. And what's blocked while the
+  // Network log tab is open is being looked at.
+  function noteBlocked(hosts) {
+    state.newBlocked = []
+    if (!Array.isArray(hosts)) return
+    const seen = seenBlocked()
+    if (seen === null) { store.set(BLOCKED_SEEN, JSON.stringify(hosts)); return }
+    const kept = state.tab === 'log' ? hosts : seen.filter((h) => hosts.includes(h))
+    if (kept.length !== seen.length || kept.some((h, i) => h !== seen[i])) store.set(BLOCKED_SEEN, JSON.stringify(kept))
+    state.newBlocked = hosts.filter((h) => !kept.includes(h))
+  }
+
+  // withBlockedNews is attention with the Network log tab's, when hosts are
+  // blocked that the user hasn't seen.
+  function withBlockedNews(attention) {
+    const hosts = state.newBlocked || []
+    if (!hosts.length) return attention
+    const named = hosts.slice(0, 3).join(', ') + (hosts.length > 3 ? ' and ' + (hosts.length - 3) + ' more' : '')
+    const text = hosts.length + ' new blocked host' + (hosts.length === 1 ? '' : 's') + ': ' + named
+    return Object.assign({}, attention, { log: (attention.log || []).concat(text) })
+  }
+
+  // blockedSeen takes the dot off the Network log tab: the user is looking at
+  // what's blocked.
+  function blockedSeen() {
+    if (!(state.newBlocked || []).length) return
+    noteBlocked(state.blockedHosts)
     showAllAttention()
   }
 
@@ -548,12 +597,16 @@
       state.conversation = !!res.body.conversation
       $('tab-conversation').hidden = !state.conversation
       state.admin = !!res.body.admin
+      state.usage = !!res.body.usage
+      $('usage').hidden = !state.usage
       $('tab-admin').hidden = !state.admin
       $('tab-manage').hidden = !res.body.manage
       $('tab-review').hidden = !res.body.review
       for (const t of SANDBOX_TABS) $('tab-' + t).hidden = res.body.sandboxTabs === false
       state.attention = res.body.attention || {}
       renderPackagesWaiting(res.body.packagesWaiting || 0)
+      state.blockedHosts = res.body.blockedHosts
+      noteBlocked(state.blockedHosts)
       state.reviewAt = res.body.review ? res.body.reviewAt || '' : ''
       showAllAttention()
       // A page left open across a rebuild of vibe is the old page: say so.
@@ -678,6 +731,7 @@
       : state.tab === 'manage' ? [unlessBusy('state', loadState), unlessBusy('manage', loadManage)]
       : state.tab === 'review' ? [unlessBusy('state', loadState), unlessBusy('review', () => loadReview(reviewView.files === null))]
       : [unlessBusy('state', loadState), unlessBusy('tab ' + state.tab, () => load(state.tab))]
+    if (state.usage) loads.push(unlessBusy('usage', loadUsage))
     Promise.allSettled(loads).then(startedIfReady)
   }
 
@@ -695,6 +749,7 @@
       button.setAttribute('aria-selected', String(t === tab))
       button.tabIndex = t === tab ? 0 : -1
     }
+    if (tab === 'log') blockedSeen()
     if (tab === 'review') reviewSeen()
     // A comment asked for, not yet gone to, isn't gone to once you're elsewhere.
     else reviewView.goTo = null
@@ -2636,6 +2691,75 @@
         open ? null : el('button', { type: 'button', class: 'ghost', text: 'Reopen', onclick: act('reopen') })))
   }
 
+  // --- the CPU and memory bars in the tab bar -------------------------------
+
+  // A reading older than this is greyed: the sandbox is too busy to answer, or
+  // gone.
+  const USAGE_STALE_MS = 15000
+  const GIB = 1024 * 1024 * 1024
+
+  async function loadUsage() {
+    try {
+      const res = await api('/api/usage')
+      reached(true)
+      if (res.ok) renderUsage(res.body)
+    } catch (e) {
+      reached(false)
+    }
+  }
+
+  const gib = (bytes) => (bytes / GIB).toFixed(1)
+  const hotness = (pct) => (pct >= 90 ? 'hot' : pct >= 70 ? 'warm' : 'ok')
+  const agoText = (ms) => (ms >= 90000 ? Math.round(ms / 60000) + 'm ago' : Math.round(ms / 1000) + 's ago')
+
+  // meter draws one bar at pct (null: none); it's also what a screen reader is told.
+  function meter(which, pct, name) {
+    const m = $('usage-' + which)
+    $('usage-' + which + '-fill').style.width = (pct === null ? 0 : pct) + '%'
+    m.className = 'meter' + (pct === null ? '' : ' ' + hotness(pct))
+    if (pct === null) {
+      m.removeAttribute('aria-valuenow')
+      m.setAttribute('aria-valuetext', 'not known')
+    } else {
+      m.setAttribute('aria-valuenow', String(Math.round(pct)))
+      m.setAttribute('aria-valuetext', Math.round(pct) + '% ' + name)
+    }
+  }
+
+  function renderUsage(b) {
+    const box = $('usage')
+    box.classList.remove('stale', 'off')
+    if (b.state !== 'ok') {
+      $('usage-cpu-label').textContent = 'CPU'
+      $('usage-mem-label').textContent = 'MEM'
+      meter('cpu', null, '')
+      meter('mem', null, '')
+      if (b.state === 'stopped') { box.classList.add('off'); box.title = 'The sandbox is stopped: there is nothing to measure.' }
+      else if (b.state === 'unreachable') { box.classList.add('stale'); box.title = "The sandbox can't be read: " + (b.error || 'it did not answer') }
+      else { box.classList.add('off'); box.title = 'Reading the sandbox…' }
+      return
+    }
+    const cores = b.coresSetting || b.cores
+    const coresText = cores + (cores === 1 ? ' core' : ' cores')
+    $('usage-cpu-label').textContent = 'CPU (' + coresText + ')'
+    $('usage-mem-label').textContent = 'MEM (' + (b.memSetting || gib(b.memTotal) + ' GiB') + ')'
+    const memPct = b.memTotal ? (b.memUsed / b.memTotal) * 100 : null
+    const cpuPct = b.cpu === null || b.cpu === undefined ? null : b.cpu
+    meter('cpu', cpuPct, 'of the CPU in use')
+    meter('mem', memPct, 'of the memory in use')
+    const parts = [
+      cpuPct === null ? 'CPU: measuring…' : 'CPU ' + Math.round(cpuPct) + '% of ' + coresText,
+      'MEM ' + gib(b.memUsed) + ' of ' + gib(b.memTotal) + ' GiB (' + Math.round(memPct) + '%)',
+      'read ' + agoText(b.ageMs),
+    ]
+    box.title = parts.join(' · ')
+    if (b.ageMs > USAGE_STALE_MS || b.error) {
+      box.classList.add('stale')
+      box.title = 'Last read ' + agoText(b.ageMs) + ": the sandbox can't be read now (it may be too busy to answer)" +
+        (b.error ? ': ' + b.error : '') + '. ' + parts.slice(0, 2).join(' · ')
+    }
+  }
+
   // --- the Admin tab ------------------------------------------------------
 
   // What the tab last showed: the server's answer, and the features as the
@@ -3950,7 +4074,29 @@
   // without a word: long enough that it may be stuck. The turn isn't
   // stopped — that's the user's call. compacting is the agent making room
   // in a full context first, which can take minutes with nothing to show.
+  const LIGHT_USE = 'This light is on while the agent is working on a prompt, or has left something running; it is off when the agent is idle.'
+
+  // drawAgentLight shows whether the agent is busy, in the tab bar, so it can be
+  // seen from every tab, whether or not the conversation has said anything lately.
+  function drawAgentLight(running, background, quietMinutes, compacting) {
+    const light = $('agent-light')
+    light.hidden = !state.conversation
+    const on = running || background
+    light.classList.toggle('on', on)
+    light.classList.toggle('busy', running)
+    light.classList.toggle('background', !running && background)
+    light.classList.toggle('quiet', running && quietMinutes > 0)
+    const now = running && compacting ? 'The agent is compacting its context.'
+      : running && quietMinutes ? 'The agent is working on a prompt, but there has been no output for ' + quietMinutes + ' minutes: it may be stuck.'
+      : running ? 'The agent is working on a prompt.'
+      : background ? 'The agent has answered and left something running in the sandbox.'
+      : 'The agent is idle.'
+    light.title = now + ' ' + LIGHT_USE
+    light.setAttribute('aria-label', light.title)
+  }
+
   function setConvoRunning(running, background, quietMinutes, compacting) {
+    drawAgentLight(running, background, quietMinutes, compacting)
     if (running) setFaviconDot('working')
     else if (convo.running) setFaviconDot(document.visibilityState === 'visible' && document.hasFocus() ? '' : 'done')
     convo.running = running

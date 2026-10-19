@@ -195,12 +195,12 @@ func setClaudeTheme(lay layout.Layout, profile string, doc kitspec.Doc, fromSand
 	return doc, nil
 }
 
-// askMemory offers a choice of how much memory the sandbox gets, starting
-// on the memory setting; without it, that setting is used as long as this
-// machine can give it. git, when not nil, is the GitHub token the agent may
+// askResources offers a choice of how much memory and how many CPUs the
+// sandbox gets, starting on the memory and cpus settings; without it, those
+// settings are used as long as this machine can give them. git, when not nil, is the GitHub token the agent may
 // push with. sbxMayAsk lets sbx ask on the terminal; without it, a question
 // from sbx fails the create, for when nobody is there to answer.
-func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile string, doc kitspec.Doc, merged settings.Settings, askMemory bool, zone string, askZone, restoreAfterCreate bool, memoryStore string, git *gitAccess, sbxMayAsk bool) error {
+func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile string, doc kitspec.Doc, merged settings.Settings, askResources bool, zone string, askZone, restoreAfterCreate bool, memoryStore string, git *gitAccess, sbxMayAsk bool) error {
 	vibeHome := lay.Home
 	// Every sandbox's agent is told where to look for its rules for
 	// pushing, since a token can be given to a sandbox after it's made.
@@ -219,12 +219,14 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 	if memSize == "" {
 		memSize = "12g"
 	}
-	memSize = pickMemory(memSize, askMemory && interactive(), fmt.Sprintf("how much memory should sandbox '%s' get?", name))
+	memSize = pickMemory(memSize, askResources && interactive(), fmt.Sprintf("how much memory should sandbox '%s' get?", name))
+	cpus := pickCPUs(merged.CPUs, askResources && interactive(), fmt.Sprintf("how many CPUs should sandbox '%s' get?", name))
 	zone = pickTimezone(zone, askZone && interactive(), fmt.Sprintf("which timezone should sandbox '%s' keep its time in?", name))
 
 	note("creating sandbox '%s'", name)
 	note("  workspace: %s", target)
 	note("  memory:    %s", memSize)
+	note("  cpus:      %d", cpus)
 	note("  timezone:  %s", zone)
 
 	if agentmem.Supported(agent) && memoryStore == "" {
@@ -283,6 +285,7 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 		Name:    name,
 		KitDir:  kitDir,
 		Memory:  memSize,
+		CPUs:    cpus,
 		Publish: publishArgs,
 		Env:     env,
 		Agent:   agent,
@@ -311,7 +314,7 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 	}
 
 	inst := state.Instance{
-		Name: name, Profile: profile, Target: target, Publish: publishRecords, MemoryStore: memoryStore, Timezone: zone, Agent: agent, CreatedAt: time.Now(),
+		Name: name, Profile: profile, Target: target, Publish: publishRecords, MemoryStore: memoryStore, Timezone: zone, Agent: agent, Memory: memSize, CPUs: cpus, CreatedAt: time.Now(),
 	}
 	// A rebuild keeps the page on the port it had, as it keeps the published
 	// ports: its address (a bookmark, another machine's ssh forwards) stays.

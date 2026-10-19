@@ -156,3 +156,19 @@ func TestMergePackagesOverrideWins(t *testing.T) {
 		t.Errorf("Packages = %q, want the base's when the override sets none", got.Packages)
 	}
 }
+
+func TestMergeCPUsOverrideWins(t *testing.T) {
+	if got := Merge(Settings{CPUs: 4}, Settings{CPUs: 6}); got.CPUs != 6 {
+		t.Errorf("CPUs = %d, want the override's", got.CPUs)
+	}
+	if got := Merge(Settings{CPUs: 4}, Settings{}); got.CPUs != 4 {
+		t.Errorf("CPUs = %d, want the base's when the override sets none", got.CPUs)
+	}
+}
+
+func TestCPUsAreReadFromTheSettingsFile(t *testing.T) {
+	got, err := Parse([]byte("cpus: 6\n"))
+	if err != nil || got.CPUs != 6 {
+		t.Errorf("CPUs = %d, err %v", got.CPUs, err)
+	}
+}

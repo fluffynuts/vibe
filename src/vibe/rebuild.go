@@ -55,6 +55,10 @@ func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandb
 	return finish(lay, args, name)
 }
 
+// pickRebuildAgent asks which agent a rebuilt sandbox runs: pickAgent, which
+// tests stand in for.
+var pickRebuildAgent = pickAgent
+
 // rebuildSandbox is reInit without the session after it: the sandbox is
 // removed (its memories kept, if agreed) and created again from its profile.
 //
@@ -84,13 +88,22 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 		return err
 	}
 
-	// A rebuild keeps the agent the sandbox was created with; it isn't asked
-	// again.
+	// A rebuild starts on the agent the sandbox has, and one started at a
+	// terminal asks again, as a rebuild is the way to change it. A migration
+	// moves a sandbox, and a rebuild with -f or from the page has no one to
+	// ask.
 	defaultAgent, err := defaultAgentFor(lay, profile)
 	if err != nil {
 		return err
 	}
-	agent := recordedAgent(vibeHome, name, defaultAgent)
+	was := recordedAgent(vibeHome, name, defaultAgent)
+	agent := was
+	if !args.Force && relocate == nil {
+		agent = pickRebuildAgent(was, interactive(), fmt.Sprintf("which agent should sandbox '%s' run?", name))
+		if agent != was {
+			note("  agent: %s, not %s", agent, was)
+		}
+	}
 	if err := ensureProfile(lay, profile, args.Force, agent); err != nil {
 		return err
 	}
@@ -105,6 +118,16 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 	var memoryStore string
 	var themeFromSandbox string
 	zone := recordedTimezone(vibeHome, name)
+	// A rebuilt sandbox keeps the memory and CPUs it was created with, not
+	// whatever the settings say now.
+	if inst, found, err := state.Load(vibeHome, name); err == nil && found {
+		if inst.Memory != "" {
+			merged.Memory = inst.Memory
+		}
+		if inst.CPUs > 0 {
+			merged.CPUs = inst.CPUs
+		}
+	}
 	git := recordedGitAccess(vibeHome, name)
 
 	exists, err := sbxrun.Exists(name)
@@ -115,7 +138,9 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 		if !skipSandboxConfirm && !confirmDefault(args.Force, true, fmt.Sprintf("Remove sandbox '%s' (workspace %s)?", name, target)) {
 			return fmt.Errorf("aborted — sandbox left alone")
 		}
-		if agentmem.Supported(agent) {
+		// What the sandbox being replaced holds is the agent it has now's,
+		// whichever agent comes next.
+		if agentmem.Supported(was) {
 			// Memories can only be read out of a running sandbox, and the
 			// one being replaced is often stopped. Since removing it is
 			// already agreed, boot it just long enough to ask — otherwise a
@@ -140,6 +165,9 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 					note("  WARNING: %s", err)
 				} else if !ok {
 					note("  no memories found in '%s' — nothing to preserve", name)
+				} else if !agentmem.Supported(agent) {
+					note("  memories saved to %s, and left there: %s can't use them", memoryStore, agent)
+					memoryStore = ""
 				} else {
 					note("  memories saved to %s", memoryStore)
 					restoreAfterCreate = true
@@ -148,7 +176,7 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 		}
 		// Read after the memories: checking for those will have started a
 		// stopped sandbox, which is the only kind that can be asked.
-		if agent == "claude" && sbxrun.Reachable(ctx, name) {
+		if was == "claude" && agent == "claude" && sbxrun.Reachable(ctx, name) {
 			themeCtx, cancel := context.WithTimeout(ctx, themeReadTimeout)
 			if c, ok := claudetheme.FromSandbox(themeCtx, name); ok {
 				themeFromSandbox = c
@@ -194,7 +222,12 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return createSandbox(ctx, lay, name, target, profile, doc, merged, false, zone, askZone, restoreAfterCreate, memoryStore, git, !args.Force)
+	// A rebuild started at a terminal asks how big the sandbox should be,
+	// starting on what it has: it's the one way to change that. A migration
+	// moves a sandbox rather than resizing it, and a rebuild with -f, or from
+	// the page, has no one to ask.
+	askSize := !args.Force && relocate == nil
+	return createSandbox(ctx, lay, name, target, profile, doc, merged, askSize, zone, askZone, restoreAfterCreate, memoryStore, git, !args.Force)
 }
 
 // folderGone says, when a sandbox's folder target no longer exists, why

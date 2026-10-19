@@ -3,6 +3,8 @@ package prompt
 import (
 	"os"
 	"reflect"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -86,4 +88,76 @@ func emptyFile(t *testing.T) *os.File {
 	}
 	t.Cleanup(func() { f.Close() })
 	return f
+}
+
+func numbered(n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = strconv.Itoa(i + 1)
+	}
+	return out
+}
+
+func plain(lines []string) string {
+	return ansi.ReplaceAllString(strings.Join(lines, "\n"), "")
+}
+
+var (
+	ansi      = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	moreAbove = regexp.MustCompile(`↑ \d+ more`)
+	moreBelow = regexp.MustCompile(`↓ \d+ more`)
+)
+
+// A menu that fits a screen is drawn whole, as it always was; the eleven
+// agents sbx lists, and a dozen of anything, are no reason to start scrolling.
+func TestAMenuOfADozenOrFewerIsDrawnWholeWithNoScrolling(t *testing.T) {
+	for _, n := range []int{1, 4, 11, 12} {
+		lines := selectLines(numbered(n), n/2)
+		if len(lines) != n+1 {
+			t.Errorf("%d entries drew %d lines, want %d (each, and the keys)", n, len(lines), n+1)
+		}
+		if strings.Contains(plain(lines), "more") {
+			t.Errorf("%d entries scrolled:\n%s", n, plain(lines))
+		}
+	}
+}
+
+// Past that it scrolls, with the highlighted row kept in the middle and the
+// rest counted either side, as the filter list does.
+func TestALongerMenuScrollsWithTheHighlightInTheMiddle(t *testing.T) {
+	lines := selectLines(numbered(30), 14) // the 15th
+	if len(lines) != 13 {
+		t.Fatalf("drew %d lines, want 13 (↑ more, 10 rows, ↓ more, keys):\n%s", len(lines), plain(lines))
+	}
+	got := plain(lines)
+	for _, want := range []string{"↑ 9 more", "↓ 11 more", "❯ 15"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("no %q in:\n%s", want, got)
+		}
+	}
+	if !strings.Contains(plain(lines[6:7]), "❯ 15") {
+		t.Errorf("the highlight isn't in the middle of the ten rows:\n%s", got)
+	}
+	if !strings.Contains(got, "q to quit") {
+		t.Errorf("the keys aren't shown:\n%s", got)
+	}
+}
+
+func TestAMenuHighlightMovesToTheEdgeNearTheEnds(t *testing.T) {
+	first := plain(selectLines(numbered(30), 0))
+	if moreAbove.MatchString(first) || !strings.Contains(first, "↓ 20 more") || !strings.Contains(first, "❯ 1") {
+		t.Errorf("at the start:\n%s", first)
+	}
+	last := plain(selectLines(numbered(30), 29))
+	if moreBelow.MatchString(last) || !strings.Contains(last, "↑ 20 more") || !strings.Contains(last, "❯ 30") {
+		t.Errorf("at the end:\n%s", last)
+	}
+}
+
+func TestEveryEntryOfALongMenuCanBeReachedAndHighlighted(t *testing.T) {
+	for cursor := 0; cursor < 40; cursor++ {
+		if !strings.Contains(plain(selectLines(numbered(40), cursor)), "❯ "+strconv.Itoa(cursor+1)+"\n") {
+			t.Fatalf("entry %d isn't shown highlighted", cursor+1)
+		}
+	}
 }

@@ -324,6 +324,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		Admin:                  adminFor(lay, name, inst.Target),
 		Packages:               packageDesk(desk),
 		PackageConfig:          workspaceConfig,
+		Usage:                  usageFor(vibeHome, name),
 		Manage:                 &companionManager{lay: lay, own: name},
 		ThemeColor:             themeColorFor(lay, name, inst, agent),
 		KeepAwake:              keepAwakeFor(name),

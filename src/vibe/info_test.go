@@ -11,23 +11,6 @@ import (
 	"vibe/internal/state"
 )
 
-// Read from inside a 12g sandbox.
-const sampleMeminfo = `MemTotal:       12328776 kB
-MemFree:        10300996 kB
-MemAvailable:   11649836 kB
-Buffers:          123456 kB
-`
-
-func TestParseMeminfo(t *testing.T) {
-	total, available, err := parseMeminfo(sampleMeminfo)
-	if err != nil || total != 12328776*1024 || available != 11649836*1024 {
-		t.Errorf("parseMeminfo = %d, %d, %v", total, available, err)
-	}
-	if _, _, err := parseMeminfo("MemTotal: 1 kB\n"); err == nil {
-		t.Error("parseMeminfo accepted output with no MemAvailable")
-	}
-}
-
 func TestParseUptime(t *testing.T) {
 	got, err := parseUptime("12948.18 310606.19\n")
 	if err != nil || got != 12948180*time.Millisecond {

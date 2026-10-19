@@ -19,6 +19,7 @@ import (
 	"vibe/internal/profilegen"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
+	sandboxload "vibe/internal/usage"
 )
 
 // sandboxInfo is what --info shows about one folder's sandbox.
@@ -149,7 +150,7 @@ func liveUsage(ctx context.Context, name string) (sandboxUsage, error) {
 		return u, fmt.Errorf("reading /proc/meminfo: %w", meminfo.err)
 	}
 	var err error
-	if u.memTotal, u.memAvailable, err = parseMeminfo(meminfo.out); err != nil {
+	if u.memTotal, u.memAvailable, err = sandboxload.ParseMeminfo(meminfo.out); err != nil {
 		return u, err
 	}
 	if root.err != nil {
@@ -182,31 +183,6 @@ func parseUptime(out string) (time.Duration, error) {
 		return 0, fmt.Errorf("can't read /proc/uptime: %q", out)
 	}
 	return time.Duration(secs * float64(time.Second)), nil
-}
-
-// parseMeminfo reads MemTotal and MemAvailable, in bytes, from /proc/meminfo.
-func parseMeminfo(out string) (total, available uint64, err error) {
-	var haveTotal, haveAvailable bool
-	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		n, err := strconv.ParseUint(fields[1], 10, 64)
-		if err != nil {
-			continue
-		}
-		switch fields[0] {
-		case "MemTotal:":
-			total, haveTotal = n*1024, true
-		case "MemAvailable:":
-			available, haveAvailable = n*1024, true
-		}
-	}
-	if !haveTotal || !haveAvailable {
-		return 0, 0, fmt.Errorf("no MemTotal and MemAvailable in /proc/meminfo")
-	}
-	return total, available, nil
 }
 
 // parseDf reads the size and use, in bytes, of the one filesystem

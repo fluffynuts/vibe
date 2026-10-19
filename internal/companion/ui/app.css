@@ -76,7 +76,8 @@ body {
 .link.up .dot { background: var(--ok); }
 .link.down .dot { background: var(--bad); }
 
-.tabs { display: flex; gap: 2px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--panel); overflow-x: auto; }
+.tabbar { display: flex; align-items: stretch; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--panel); overflow-x: auto; }
+.tabs { display: flex; gap: 2px; flex: none; }
 .tabs button {
   background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
   padding: 10px 14px; color: var(--muted); cursor: pointer; font: inherit; white-space: nowrap;
@@ -542,3 +543,21 @@ html.themed .commands li[aria-selected="true"] {
 #admin-nugetconfig pre { max-height: 240px; overflow: auto; }
 
 #convo-packages { display: flex; gap: 8px; align-items: center; padding: 6px 10px; margin-bottom: 6px; border: 1px solid var(--bad, #c33); border-radius: 6px; }
+
+/* The bars at the tab bar's far end: pushed there when there's room, scrolling with the tabs when there isn't. */
+.tabbar-end { margin-left: auto; padding-left: 16px; flex: none; display: flex; align-items: center; gap: 14px; }
+.usage { flex: none; display: flex; flex-direction: column; justify-content: center; gap: 3px; font-size: 11px; color: var(--muted); }
+.usage-row { display: flex; align-items: center; justify-content: flex-end; gap: 6px; white-space: nowrap; }
+.meter { display: inline-block; width: 90px; height: 7px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.meter-fill { display: block; height: 100%; width: 0; background: var(--ok); }
+.meter.warm .meter-fill { background: var(--amber); }
+.meter.hot .meter-fill { background: var(--bad); }
+.usage.stale, .usage.off { opacity: 0.5; filter: grayscale(1); }
+
+/* The agent's light: dark when it's idle, lit and blinking while it works (slower for what it left running). */
+.agent-light { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--line); flex: none; }
+.agent-light.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); animation: agent-blink 1s ease-in-out infinite; }
+.agent-light.background { animation-duration: 2.4s; }
+.agent-light.quiet { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+@keyframes agent-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .agent-light.on { animation: none; } }
