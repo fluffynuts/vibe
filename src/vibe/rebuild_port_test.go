@@ -216,14 +216,14 @@ func TestARebuildWithForceAsksNothingOfTheSize(t *testing.T) {
 // none can be drawn on: each question is then kept as it started.
 func answerable(t *testing.T) {
 	t.Helper()
-	in, err := os.CreateTemp(t.TempDir(), "keys")
-	if err != nil {
+	// Written and closed: Windows can't delete a folder with a file open in it.
+	keys := filepath.Join(t.TempDir(), "keys")
+	if err := os.WriteFile(keys, []byte(strings.Repeat("\n", 64)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	in.WriteString(strings.Repeat("\n", 64))
 	old := openTerminalInput
 	openTerminalInput = func() (*os.File, func(), bool) {
-		f, err := os.Open(in.Name())
+		f, err := os.Open(keys)
 		return f, func() { f.Close() }, err == nil
 	}
 	t.Cleanup(func() { openTerminalInput = old })
