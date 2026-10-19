@@ -184,11 +184,16 @@ func TestOneReadingIsUnderWayAtATimeHoweverManyPollsComeWhileItIs(t *testing.T) 
 		// that holds the next off, not how soon it was asked.
 		rig.advance(2 * usageEvery)
 	}
+	// Counted where it's decided, not when a reading's goroutine happens to
+	// run: once it's let go, the next poll rightly starts another.
+	rig.s.usage.mu.Lock()
+	launched := rig.s.usage.launched
+	rig.s.usage.mu.Unlock()
+	if launched != 1 {
+		t.Errorf("%d readings were begun, want 1", launched)
+	}
 	close(reader.release)
 	rig.untilState(t, "ok")
-	if n := reader.calls.Load(); n != 1 {
-		t.Errorf("read %d times, want 1", n)
-	}
 }
 
 func TestHowOldTheReadingIsIsSaidSoThePageCanTellWhenItIsStale(t *testing.T) {

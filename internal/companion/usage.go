@@ -42,6 +42,7 @@ var usageReadWithin = 20 * time.Second
 type usageCache struct {
 	mu         sync.Mutex
 	refreshing bool
+	launched   int       // how many readings have been begun
 	checked    time.Time // when a reading was last begun
 	last       *UsageReading
 	lastErr    error
@@ -54,6 +55,7 @@ func (s *Server) usageHandler(w http.ResponseWriter, r *http.Request) {
 	u.mu.Lock()
 	if !u.refreshing && (u.checked.IsZero() || now.Sub(u.checked) >= usageEvery) {
 		u.refreshing = true
+		u.launched++
 		u.checked = now
 		go s.readUsage()
 	}
