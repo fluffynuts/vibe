@@ -1,6 +1,6 @@
 ---
 name: vibe-nuget
-description: Get a NuGet package this sandbox can't restore. Use when dotnet restore or build fails with NU1101 or NU1102 (unable to find a package, or only older versions of it), or a package should come from a private feed or isn't on nuget.org. Asks the user's machine for it with vibe-nuget fetch; never edit nuget.config or add a source instead.
+description: Get a NuGet package this sandbox can't restore, or can't find after a restore. Use when dotnet restore or build fails with NU1101 or NU1102 (unable to find a package, or only older versions of it), or a package should come from a private feed or isn't on nuget.org - ask the user's machine with vibe-nuget fetch, and never edit nuget.config or add a source instead. Also use when a build fails with CS0246 for a package's types, or MSB3030 could not copy a file under .nuget/packages, right after a restore that said it was up to date - run dotnet restore --force.
 ---
 
 # Packages from private feeds
@@ -43,3 +43,24 @@ fails on one of those, ask for it the same way.
 - **Failed:** the message is NuGet's own. Tell the user what it said. If it says
   the folder's `nuget.config` isn't approved, say that the user can approve it
   on the Admin tab, then ask again.
+
+# A build that can't find a package, after a restore that worked
+
+A different failure, with no `NU1101`: the restore exits 0, perhaps saying
+"up to date", and the build then fails with `CS0246` for a type from a
+package, or `MSB3030` "could not copy" a file under `.nuget/packages`. A
+package this sandbox found in the user's cache (the read-only folder it falls
+back on) has gone from it: they cleared it, say. A plain restore can miss that.
+
+1. Run `dotnet restore --force`. It downloads the package into this sandbox's
+   own cache. A package from nuget.org needs nothing more; ask the host for it
+   (above) only if the restore then fails with `NU1101` or `NU1102`.
+2. If the build still fails the same way, the SDK's cache of where each package
+   is (`obj/<configuration>/<framework>/<project>.assets.cache`) still names the
+   old place, and a restore doesn't refresh it. Delete those files and build
+   again:
+
+       find . -path '*/obj/*' -name '*.assets.cache' -delete
+
+They are derived files; nothing is lost. Neither step is a reason to change a
+`nuget.config`, the packages folder or `NUGET_PACKAGES`.

@@ -156,6 +156,29 @@ func TestTheDotnetFeatureHasASkillForAPackageARestoreCantFind(t *testing.T) {
 	}
 }
 
+// The other way a package is missing: the restore succeeds, even saying it is up to date, and
+// the build can't find the package's files. That is no NU1101, so the skill's description has to
+// say it, or the agent only finds the cure by trying things.
+func TestTheSkillIsAlsoForABuildThatCantFindAPackageAfterARestoreThatWorked(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "library", "dotnet", "agent-files", ".claude", "skills", "vibe-nuget", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	front, body, _ := strings.Cut(strings.TrimPrefix(string(data), "---\n"), "\n---\n")
+	for _, trigger := range []string{"CS0246", "MSB3030", "up to date"} {
+		if !strings.Contains(front, trigger) {
+			t.Errorf("the description should mention %q:\n%s", trigger, front)
+		}
+	}
+	force, clear := strings.Index(body, "dotnet restore --force"), strings.Index(body, "assets.cache")
+	if force < 0 || clear < 0 || force > clear {
+		t.Errorf("the skill should say to restore with --force first (at %d), and only then to delete the assets.cache files (at %d)", force, clear)
+	}
+	if !strings.Contains(body, "find . -path '*/obj/*' -name '*.assets.cache' -delete") {
+		t.Error("the skill doesn't give the command that deletes the stale path caches")
+	}
+}
+
 // With the host's cache overlaid at its own path (the host's packages below,
 // read-only; what the sandbox writes above, in the sandbox), restore bakes
 // the host's path into obj/project.assets.json and the *.nuget.g.props files,
@@ -301,9 +324,12 @@ func TestTheDotnetInstructionsSayWhatToDoWhenABuildCantFindAPackageAfterARestore
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, want := range []string{"CS0246", "MSB3030", "assets.cache", "find . -path '*/obj/*' -name '*.assets.cache' -delete", "--force"} {
+	for _, want := range []string{"CS0246", "MSB3030", "up to date", "assets.cache", "find . -path '*/obj/*' -name '*.assets.cache' -delete", "dotnet restore --force"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the instructions don't mention %q", want)
 		}
+	}
+	if strings.Index(text, "dotnet restore --force") > strings.Index(text, "assets.cache") {
+		t.Error("the instructions should say to try a forced restore before deleting the path caches")
 	}
 }
