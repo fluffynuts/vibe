@@ -105,6 +105,16 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 	var memoryStore string
 	var themeFromSandbox string
 	zone := recordedTimezone(vibeHome, name)
+	// A rebuilt sandbox keeps the memory and CPUs it was created with, not
+	// whatever the settings say now.
+	if inst, found, err := state.Load(vibeHome, name); err == nil && found {
+		if inst.Memory != "" {
+			merged.Memory = inst.Memory
+		}
+		if inst.CPUs > 0 {
+			merged.CPUs = inst.CPUs
+		}
+	}
 	git := recordedGitAccess(vibeHome, name)
 
 	exists, err := sbxrun.Exists(name)
@@ -194,7 +204,12 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return createSandbox(ctx, lay, name, target, profile, doc, merged, false, zone, askZone, restoreAfterCreate, memoryStore, git, !args.Force)
+	// A rebuild started at a terminal asks how big the sandbox should be,
+	// starting on what it has: it's the one way to change that. A migration
+	// moves a sandbox rather than resizing it, and a rebuild with -f, or from
+	// the page, has no one to ask.
+	askSize := !args.Force && relocate == nil
+	return createSandbox(ctx, lay, name, target, profile, doc, merged, askSize, zone, askZone, restoreAfterCreate, memoryStore, git, !args.Force)
 }
 
 // folderGone says, when a sandbox's folder target no longer exists, why

@@ -755,9 +755,12 @@ rounded down. A new sandbox asks, offering any number from 1 to one less than th
 the host always keeps one, in a list that scrolls and narrows as you type (like the timezone one). It's the same question as the memory one: `-f`, or no terminal, uses the
 setting, or half. A `cpus` more than the machine can spare is lowered to the most it can.
 
-The choice isn't remembered per sandbox, as memory's isn't: a rebuilt sandbox gets the setting (or
-half) again, so set `cpus` in `settings.yaml` (or a profile's) to keep a number. A sandbox already
-built keeps the CPUs it has until it's rebuilt.
+A sandbox's memory and CPUs are kept in its record, so a rebuild keeps what it was created with, not
+whatever the settings say by then (a sandbox made before vibe kept them uses the settings). A rebuild
+you start at a terminal (`-r`, `-R`, `-C`) asks both questions again, starting on the sandbox's own
+values: it's the way to change them. With `-f`, `--update-sandboxes`, `--migrate` or the page's
+Rebuild, nothing is asked and the recorded values are kept. A sandbox already built keeps the CPUs
+it has until it's rebuilt.
 
 ### Letting the agent push
 

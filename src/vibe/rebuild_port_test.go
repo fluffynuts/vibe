@@ -128,3 +128,103 @@ func TestASandboxIsGivenHalfTheMachinesCPUsUnlessTheProfileSaysOtherwise(t *test
 		}
 	}
 }
+
+// What a sandbox was created with is kept in its record, so a rebuild keeps it.
+func TestACreatedSandboxRecordsItsMemoryAndCPUs(t *testing.T) {
+	lay := updateLayout(t)
+	writeFile(t, lay.HomePath("profiles", "p", "settings.yaml"), "memory: 6g\ncpus: 3\n")
+	inst := sandboxRecord(t, lay, "box", "p").inst
+	loggingSbx(t, "box running\\n")
+	if err := rebuildSandbox(context.Background(), lay, cliargs.Args{Force: true}, "box", inst.Target, true, false); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := state.Load(lay.Home, "box")
+	if err != nil || !found || got.Memory != "6g" || got.CPUs != 3 {
+		t.Errorf("record = %+v (found %v, %v), want 6g and 3 CPUs", got, found, err)
+	}
+}
+
+func rebuiltWith(t *testing.T, recorded state.Instance, settingsYaml string, args cliargs.Args) (create string, notes []string) {
+	t.Helper()
+	lay := updateLayout(t)
+	writeFile(t, lay.HomePath("profiles", "p", "settings.yaml"), settingsYaml)
+	inst := sandboxRecord(t, lay, "box", "p").inst
+	recorded.Name, recorded.Profile, recorded.Target = "box", "p", inst.Target
+	if err := state.Save(lay.Home, recorded); err != nil {
+		t.Fatal(err)
+	}
+	calls := loggingSbx(t, "box running\\n")
+	notes = notesOf(func() {
+		if err := rebuildSandbox(context.Background(), lay, args, "box", inst.Target, true, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	return createCall(t, calls), notes
+}
+
+func TestARebuildKeepsTheMemoryAndCPUsTheSandboxWasCreatedWith(t *testing.T) {
+	create, _ := rebuiltWith(t, state.Instance{Memory: "8g", CPUs: 5}, "memory: 12g\ncpus: 10\n", cliargs.Args{Force: true})
+	for _, want := range []string{"--cpus 5 ", "--memory 8g "} {
+		if !strings.Contains(create+" ", want) {
+			t.Errorf("sbx create lacks %q (the settings say 12g and 10, the sandbox was made with 8g and 5):\n%s", want, create)
+		}
+	}
+}
+
+func TestARebuildOfASandboxWithNoRecordedSizesUsesTheSettings(t *testing.T) {
+	create, _ := rebuiltWith(t, state.Instance{}, "memory: 4g\ncpus: 2\n", cliargs.Args{Force: true})
+	for _, want := range []string{"--cpus 2 ", "--memory 4g "} {
+		if !strings.Contains(create+" ", want) {
+			t.Errorf("sbx create lacks %q:\n%s", want, create)
+		}
+	}
+}
+
+func TestARebuildLowersWhatItRecordedIfThisMachineCantGiveItNow(t *testing.T) {
+	create, _ := rebuiltWith(t, state.Instance{Memory: "200g", CPUs: 40}, "", cliargs.Args{Force: true})
+	for _, want := range []string{"--cpus 15 ", "--memory 32g "} {
+		if !strings.Contains(create+" ", want) {
+			t.Errorf("sbx create lacks %q:\n%s", want, create)
+		}
+	}
+}
+
+// A rebuild started at a terminal asks, starting on what the sandbox has: it's
+// the one way to change them. Nobody is there to answer in these tests, so
+// "keeping" says what the question started on.
+func TestARebuildAtATerminalAsksStartingOnWhatTheSandboxHas(t *testing.T) {
+	answerable(t)
+	// An agent with no theme to ask about as well.
+	_, notes := rebuiltWith(t, state.Instance{Agent: "shell", Memory: "8g", CPUs: 5}, "memory: 12g\ncpus: 10\n", cliargs.Args{})
+	got := strings.Join(notes, "\n")
+	for _, want := range []string{"keeping cpus: 5", "keeping memory: 8g"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the questions didn't start on the sandbox's own sizes; no %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestARebuildWithForceAsksNothingOfTheSize(t *testing.T) {
+	answerable(t)
+	_, notes := rebuiltWith(t, state.Instance{Memory: "8g", CPUs: 5}, "", cliargs.Args{Force: true})
+	if got := strings.Join(notes, "\n"); strings.Contains(got, "keeping cpus") || strings.Contains(got, "keeping memory") {
+		t.Errorf("asked with -f:\n%s", got)
+	}
+}
+
+// answerable makes vibe think there's a terminal to ask on (so it asks), while
+// none can be drawn on: each question is then kept as it started.
+func answerable(t *testing.T) {
+	t.Helper()
+	in, err := os.CreateTemp(t.TempDir(), "keys")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.WriteString(strings.Repeat("\n", 64))
+	old := openTerminalInput
+	openTerminalInput = func() (*os.File, func(), bool) {
+		f, err := os.Open(in.Name())
+		return f, func() { f.Close() }, err == nil
+	}
+	t.Cleanup(func() { openTerminalInput = old })
+}

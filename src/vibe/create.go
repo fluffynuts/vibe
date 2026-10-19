@@ -316,7 +316,7 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 	}
 
 	inst := state.Instance{
-		Name: name, Profile: profile, Target: target, Publish: publishRecords, MemoryStore: memoryStore, Timezone: zone, Agent: agent, CreatedAt: time.Now(),
+		Name: name, Profile: profile, Target: target, Publish: publishRecords, MemoryStore: memoryStore, Timezone: zone, Agent: agent, Memory: memSize, CPUs: cpus, CreatedAt: time.Now(),
 	}
 	// A rebuild keeps the page on the port it had, as it keeps the published
 	// ports: its address (a bookmark, another machine's ssh forwards) stays.

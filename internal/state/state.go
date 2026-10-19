@@ -42,6 +42,12 @@ type Instance struct {
 	// it rather than falling back to the settings' default. Empty in records
 	// from before it was chosen per sandbox, which use the settings'.
 	Agent string `yaml:"agent,omitempty"`
+	// Memory and CPUs are what the sandbox was created with (the sizes sbx
+	// takes, "12g" and a number), so a rebuild keeps them rather than
+	// falling back to the settings. Empty and zero in records from before
+	// they were kept, which use the settings'.
+	Memory string `yaml:"memory,omitempty"`
+	CPUs   int    `yaml:"cpus,omitempty"`
 	// CompanionPort is the host port the companion page is served on, kept
 	// so its URL (and a bookmark of it) survives restarts. Zero until the
 	// page has first been served.
