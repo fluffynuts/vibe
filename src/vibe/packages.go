@@ -16,9 +16,9 @@ import (
 	"vibe/internal/state"
 )
 
-// fetchWithin bounds one fetch: a restore of one package, and what it
-// brings, is well within it.
-const fetchWithin = 3 * time.Minute
+// fetchWithin bounds one restore of what the agent asked for: the requests
+// approved together go in one, which can be dozens of packages.
+const fetchWithin = 15 * time.Minute
 
 func packagesPolicy(merged settings.Settings) string {
 	if merged.Packages == packagereq.PolicyAllow {

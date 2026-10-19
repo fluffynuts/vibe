@@ -99,6 +99,19 @@ func TestAPackageNoFeedHasIsNamedAndTheRestStillComes(t *testing.T) {
 	}
 }
 
+// NuGet's words about a package no feed has are kept with it, for the request that asked.
+func TestWhatNuGetSaidOfAPackageNoFeedHasIsKept(t *testing.T) {
+	h := newHost(t)
+	res, err := FetchBatch(context.Background(), "net10.0", []Package{{"Demo.Pkg", "1.0.0"}, {"Nope.Pkg", "1.0.0"}}, h.options())
+	if err != nil {
+		t.Fatalf("FetchBatch: %v\n%s", err, res.Output)
+	}
+	why := res.UnresolvedWhy[Package{"Nope.Pkg", "1.0.0"}]
+	if !strings.Contains(why, "NU1101") || !strings.Contains(why, "Nope.Pkg") || strings.Contains(why, "Demo.Pkg") {
+		t.Errorf("why = %q", why)
+	}
+}
+
 func TestSeveralUnresolvedPackagesAreAllNamed(t *testing.T) {
 	h := newHost(t)
 	res, err := FetchBatch(context.Background(), "net10.0", fetchTargets("Demo.Pkg", "Nope.One", "Nope.Two"), h.options())

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -15,17 +16,29 @@ import (
 // fake is an ecosystem that fetches nothing, and says what it was asked.
 type fake struct {
 	fetched []Request
+	batches [][]Request
 	failure error
 	invalid error
+	// failFor makes the requests with these ids fail, the rest succeeding.
+	failFor map[string]error
 }
 
 func (f *fake) Validate(Request) error { return f.invalid }
-func (f *fake) Fetch(_ context.Context, r Request) (string, error) {
-	f.fetched = append(f.fetched, r)
-	if f.failure != nil {
-		return "NuGet said: no", f.failure
+func (f *fake) Fetch(_ context.Context, rs []Request) []Outcome {
+	f.batches = append(f.batches, append([]Request(nil), rs...))
+	out := make([]Outcome, len(rs))
+	for i, r := range rs {
+		f.fetched = append(f.fetched, r)
+		switch {
+		case f.failure != nil:
+			out[i] = Outcome{"NuGet said: no", f.failure}
+		case f.failFor[r.ID] != nil:
+			out[i] = Outcome{"NuGet said: no to " + r.ID, f.failFor[r.ID]}
+		default:
+			out[i] = Outcome{Message: "fetched " + r.ID + " " + r.Version}
+		}
 	}
-	return "fetched " + r.ID + " " + r.Version, nil
+	return out
 }
 
 type deskRig struct {
@@ -214,41 +227,59 @@ func TestAHeldRequestCarriesWhatTheDeskSaysOfIt(t *testing.T) {
 }
 
 // gate is an ecosystem whose fetches wait to be let go, saying how many are
-// under way at once.
+// under way at once, and which requests each took.
 type gate struct {
 	mu      sync.Mutex
 	running int
 	most    int
-	started chan string
+	started chan []string
 	release chan struct{}
 }
 
-func newGate() *gate { return &gate{started: make(chan string, 100), release: make(chan struct{})} }
+func newGate() *gate { return &gate{started: make(chan []string, 100), release: make(chan struct{})} }
 
 func (g *gate) Validate(Request) error { return nil }
-func (g *gate) Fetch(_ context.Context, r Request) (string, error) {
+func (g *gate) Fetch(_ context.Context, rs []Request) []Outcome {
 	g.mu.Lock()
 	g.running++
 	if g.running > g.most {
 		g.most = g.running
 	}
 	g.mu.Unlock()
-	g.started <- r.ID
+	var ids []string
+	for _, r := range rs {
+		ids = append(ids, r.ID)
+	}
+	g.started <- ids
 	<-g.release
 	g.mu.Lock()
 	g.running--
 	g.mu.Unlock()
-	return "fetched " + r.ID, nil
+	out := make([]Outcome, len(rs))
+	for i, r := range rs {
+		out[i] = Outcome{Message: "fetched " + r.ID}
+	}
+	return out
 }
 
-func (g *gate) awaitStarted(t *testing.T, n int) {
+// awaitBatch is the requests of the next fetch to begin.
+func (g *gate) awaitBatch(t *testing.T) []string {
 	t.Helper()
-	for i := 0; i < n; i++ {
-		select {
-		case <-g.started:
-		case <-time.After(5 * time.Second):
-			t.Fatalf("only %d fetches began; wanted %d", i, n)
-		}
+	select {
+	case ids := <-g.started:
+		return ids
+	case <-time.After(5 * time.Second):
+		t.Fatal("no fetch began")
+		return nil
+	}
+}
+
+func (g *gate) noBatchWithin(t *testing.T, d time.Duration) {
+	t.Helper()
+	select {
+	case ids := <-g.started:
+		t.Fatalf("%v began, with the desk at its limit", ids)
+	case <-time.After(d):
 	}
 }
 
@@ -260,39 +291,108 @@ func gatedDesk(t *testing.T, parallel int) (*Desk, *gate, Mailbox) {
 		Policy: func() string { return PolicyAllow }}, g, box
 }
 
-func askMany(t *testing.T, box Mailbox, n int) {
+func askMany(t *testing.T, box Mailbox, n int) { askRange(t, box, 1, n) }
+
+// askRange asks for Lib<from> to Lib<to>.
+func askRange(t *testing.T, box Mailbox, from, to int) {
 	t.Helper()
-	for i := 0; i < n; i++ {
-		drop(t, box, fmt.Sprintf("%d-a.json", i+1), fmt.Sprintf(`{"ecosystem":"nuget","id":"Lib%d","version":"1.0.0","framework":"net8.0"}`, i+1))
+	for i := from; i <= to; i++ {
+		drop(t, box, fmt.Sprintf("%d-a.json", i), fmt.Sprintf(`{"ecosystem":"nuget","id":"Lib%d","version":"1.0.0","framework":"net8.0"}`, i))
 	}
 }
 
-func TestSeveralFetchesRunAtOnceButNeverMoreThanTheDeskAllows(t *testing.T) {
+// What's approved together is fetched together: one restore of all of it brings the same
+// packages sooner than one each, and what NuGet fails on one doesn't stop the others.
+func TestRequestsApprovedTogetherAreFetchedTogether(t *testing.T) {
 	desk, g, box := gatedDesk(t, 3)
 	askMany(t, box, 7)
 	desk.Poll(context.Background())
-	g.awaitStarted(t, 3)
-	select {
-	case id := <-g.started:
-		t.Fatalf("%s began as a fourth fetch at once", id)
-	case <-time.After(50 * time.Millisecond):
+	if got := g.awaitBatch(t); len(got) != 7 {
+		t.Errorf("first fetch took %v, want all 7", got)
 	}
-	// Each one finished starts the next: no Poll needed.
-	for done := 0; done < 7; done++ {
-		g.release <- struct{}{}
-		if done+3 < 7 {
-			g.awaitStarted(t, 1)
-		}
-	}
+	g.noBatchWithin(t, 50*time.Millisecond)
+	g.release <- struct{}{}
 	desk.Wait()
-	if g.most != 3 {
-		t.Errorf("at most %d at once, want 3", g.most)
-	}
 	for i := 1; i <= 7; i++ {
 		if got := answerFor(t, box, fmt.Sprintf("%d-a", i)); !strings.HasPrefix(got, "fetched\n") {
 			t.Errorf("request %d: %q", i, got)
 		}
 	}
+}
+
+// Requests that come while a fetch is under way are fetched together as the next, alongside
+// it, so the agent that is waiting isn't held behind it; never more at once than the desk allows.
+func TestWhatIsApprovedWhileAFetchIsUnderWayIsFetchedTogetherAlongsideItUpToTheLimit(t *testing.T) {
+	desk, g, box := gatedDesk(t, 2)
+	askRange(t, box, 1, 1)
+	desk.Poll(context.Background())
+	if got := g.awaitBatch(t); !reflect.DeepEqual(got, []string{"Lib1"}) {
+		t.Fatalf("first fetch took %v", got)
+	}
+	askRange(t, box, 2, 3)
+	desk.Poll(context.Background())
+	if got := g.awaitBatch(t); !reflect.DeepEqual(got, []string{"Lib2", "Lib3"}) {
+		t.Fatalf("second fetch took %v, want what came meanwhile together", got)
+	}
+	askRange(t, box, 4, 5)
+	desk.Poll(context.Background())
+	g.noBatchWithin(t, 50*time.Millisecond)
+	g.release <- struct{}{}
+	if got := g.awaitBatch(t); !reflect.DeepEqual(got, []string{"Lib4", "Lib5"}) {
+		t.Fatalf("third fetch took %v, want it to begin when room came", got)
+	}
+	g.release <- struct{}{}
+	g.release <- struct{}{}
+	desk.Wait()
+	if g.most != 2 {
+		t.Errorf("at most %d at once, want 2", g.most)
+	}
+}
+
+func TestEachRequestInAFetchedTogetherSetIsAnsweredWithItsOwnOutcome(t *testing.T) {
+	rig := newDesk(t, "allow")
+	rig.eco.failFor = map[string]error{"B.Lib": errors.New("no feed has it")}
+	rig.ask(t, "1-a", "A.Lib", "1.0.0")
+	rig.ask(t, "2-b", "B.Lib", "2.0.0")
+	rig.ask(t, "3-c", "C.Lib", "3.0.0")
+	rig.desk.Poll(context.Background())
+	rig.desk.Wait()
+	if len(rig.eco.batches) != 1 || len(rig.eco.batches[0]) != 3 {
+		t.Fatalf("batches %v, want one of three", rig.eco.batches)
+	}
+	for n, want := range map[string]string{"1-a": "fetched\nfetched A.Lib 1.0.0", "2-b": "failed\nNuGet said: no to B.Lib", "3-c": "fetched\nfetched C.Lib 3.0.0"} {
+		if got := rig.answer(t, n); !strings.HasPrefix(got, want) {
+			t.Errorf("%s: %q, want %q", n, got, want)
+		}
+	}
+	if len(rig.desk.Pending()) != 0 {
+		t.Errorf("pending %v", rig.desk.Pending())
+	}
+}
+
+// An ecosystem that answers for fewer requests than it was given has a bug; the
+// requests it has no answer for aren't left waiting for ever.
+func TestARequestAnEcosystemGivesNoOutcomeForIsAnsweredFailed(t *testing.T) {
+	box := newMailbox(t)
+	desk := &Desk{Mailbox: box, Ecosystems: map[string]Ecosystem{"nuget": shortChanging{}}, Policy: func() string { return PolicyAllow }}
+	drop(t, box, "1-a.json", `{"ecosystem":"nuget","id":"A.Lib","version":"1.0.0","framework":"net8.0"}`)
+	drop(t, box, "2-b.json", `{"ecosystem":"nuget","id":"B.Lib","version":"1.0.0","framework":"net8.0"}`)
+	desk.Poll(context.Background())
+	desk.Wait()
+	if got := answerFor(t, box, "2-b"); !strings.HasPrefix(got, "failed\n") {
+		t.Errorf("answer = %q", got)
+	}
+	if got := answerFor(t, box, "1-a"); !strings.HasPrefix(got, "fetched\n") {
+		t.Errorf("answer = %q", got)
+	}
+}
+
+// shortChanging answers for the first request only.
+type shortChanging struct{}
+
+func (shortChanging) Validate(Request) error { return nil }
+func (shortChanging) Fetch(_ context.Context, rs []Request) []Outcome {
+	return []Outcome{{Message: "fetched " + rs[0].ID}}
 }
 
 func TestPollDoesNotWaitForTheFetchesItStarts(t *testing.T) {
@@ -305,7 +405,7 @@ func TestPollDoesNotWaitForTheFetchesItStarts(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Poll waited on a fetch: requests would go untaken meanwhile")
 	}
-	g.awaitStarted(t, 1)
+	g.awaitBatch(t)
 	close(g.release)
 	desk.Wait()
 }
@@ -336,7 +436,7 @@ func TestWithAllowEveryRequestIsApprovedAtOnce(t *testing.T) {
 	desk, g, box := gatedDesk(t, 1)
 	askMany(t, box, 2)
 	desk.Poll(context.Background())
-	g.awaitStarted(t, 1)
+	g.awaitBatch(t)
 	for _, p := range desk.Pending() {
 		if !p.Approved {
 			t.Errorf("%+v waits for approval under allow", p)

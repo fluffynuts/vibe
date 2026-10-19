@@ -36,6 +36,8 @@ type BatchResult struct {
 	// Unresolved are the packages no feed has (NuGet said so, by name): set
 	// aside, so they don't keep the rest from coming.
 	Unresolved []Package
+	// UnresolvedWhy is what NuGet said of each, from the restore that said it.
+	UnresolvedWhy map[Package]string
 	// Failed are the packages NuGet failed on otherwise, each with its words, found
 	// by restoring halves: one it fails on keeps it from fetching any of the others.
 	Failed []Failure
@@ -121,6 +123,12 @@ func (b *batchRun) attempt(todo []Package) error {
 	}
 	if set := unresolvedIn(out, todo); len(set) > 0 {
 		b.res.Unresolved = append(b.res.Unresolved, set...)
+		if b.res.UnresolvedWhy == nil {
+			b.res.UnresolvedWhy = map[Package]string{}
+		}
+		for _, p := range set {
+			b.res.UnresolvedWhy[p] = linesAbout(out, p.ID)
+		}
 		return b.attempt(without(todo, set))
 	}
 	if len(todo) == 1 {
@@ -148,6 +156,17 @@ func unresolvedIn(output string, among []Package) []Package {
 		}
 	}
 	return out
+}
+
+// linesAbout is the lines of NuGet's output that name id (whatever the case), as it said them.
+func linesAbout(output, id string) string {
+	var lines []string
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(strings.ToLower(line), strings.ToLower(id)) {
+			lines = append(lines, strings.TrimSpace(line))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func without(pkgs, drop []Package) []Package {

@@ -909,7 +909,9 @@ on the host, and the agent can't plant code in a package your own builds then ru
   that's only missing from your cache, worked out from the project's files and not from the
   agent's word). Tick what to allow and press **Allow selected** (or **Deny all**); vibe then
   fetches them on this machine with your own NuGet config, so every feed and credential you have
-  works with nothing to set up, into the cache the sandbox reads. Set `packages: allow` in
+  works with nothing to set up, into the cache the sandbox reads. What you approve together is fetched together, in one restore for each target framework, by the same
+  code that fetches what your IDE can't see; a package NuGet fails on fails its own request, in NuGet's words,
+  and the others still come. Set `packages: allow` in
   `settings.yaml` to skip the asking.
 - **vibe never restores the agent's project** on the host, which could run its code. It restores
   a throwaway project of its own, for exactly the package asked for, with `Directory.Build.props`,

@@ -292,9 +292,9 @@ func TestOnlyNuGetRequestsAreValid(t *testing.T) {
 func TestAFailureCarriesTheHintForWhatTheUserCouldDo(t *testing.T) {
 	h := newHost(t)
 	e := Ecosystem{Options: func(packagereq.Request) Options { return h.options() }, Hint: func() string { return "approve the nuget.config" }}
-	msg, err := e.Fetch(context.Background(), packagereq.Request{Ecosystem: "nuget", ID: "Nope.Pkg", Version: "1.0.0", Framework: "net10.0"})
-	if err == nil || !strings.Contains(msg, "NU1101") || !strings.HasSuffix(msg, "approve the nuget.config") {
-		t.Errorf("msg = %q, err = %v", msg, err)
+	out := e.Fetch(context.Background(), []packagereq.Request{{Ecosystem: "nuget", ID: "Nope.Pkg", Version: "1.0.0", Framework: "net10.0"}})
+	if len(out) != 1 || out[0].Err == nil || !strings.Contains(out[0].Message, "NU1101") || !strings.HasSuffix(out[0].Message, "approve the nuget.config") {
+		t.Errorf("out = %+v", out)
 	}
 }
 
@@ -345,5 +345,134 @@ func TestFetchesRunTogetherIntoOneCacheAllLandWhole(t *testing.T) {
 	}
 	if left, _ := os.ReadDir(h.root); len(left) != 0 {
 		t.Errorf("throwaway folders left behind: %v", left)
+	}
+}
+
+func nuget(id, version, framework string) packagereq.Request {
+	return packagereq.Request{Ecosystem: "nuget", ID: id, Version: version, Framework: framework}
+}
+
+// countingRestores counts the restores FetchBatch runs, by the framework of the project.
+func countingRestores(t *testing.T) map[string]int {
+	t.Helper()
+	by := map[string]int{}
+	was := restoreBatch
+	restoreBatch = func(ctx context.Context, xml string, opts Options) (string, error) {
+		for _, fw := range []string{"net8.0", "net10.0"} {
+			if strings.Contains(xml, "<TargetFramework>"+fw+"</TargetFramework>") {
+				by[fw]++
+			}
+		}
+		return was(ctx, xml, opts)
+	}
+	t.Cleanup(func() { restoreBatch = was })
+	return by
+}
+
+// What is approved together is fetched in one restore, and each request is answered for itself.
+func TestRequestsForOneFrameworkAreFetchedInOneRestoreAndEachAnswered(t *testing.T) {
+	h := newHost(t)
+	restores := countingRestores(t)
+	e := Ecosystem{Options: func(packagereq.Request) Options { return h.options() }}
+	out := e.Fetch(context.Background(), []packagereq.Request{nuget("Demo.Pkg", "1.0.0", "net10.0"), nuget("Demo.Two", "1.0.0", "net10.0"), nuget("Demo.Three", "1.0.0", "net10.0")})
+	if len(out) != 3 {
+		t.Fatalf("%d outcomes for 3 requests", len(out))
+	}
+	for i, want := range []string{"demo.pkg 1.0.0", "demo.two 1.0.0", "demo.three 1.0.0"} {
+		if out[i].Err != nil || !strings.Contains(out[i].Message, "fetched "+want) {
+			t.Errorf("outcome %d = %+v, want fetched %s", i, out[i], want)
+		}
+	}
+	if restores["net10.0"] != 1 {
+		t.Errorf("%d restores, want 1", restores["net10.0"])
+	}
+}
+
+// A package no feed has fails its own request only, in NuGet's words, with the hint.
+func TestAPackageNoFeedHasFailsItsOwnRequestOnly(t *testing.T) {
+	h := newHost(t)
+	e := Ecosystem{Options: func(packagereq.Request) Options { return h.options() }, Hint: func() string { return "approve the nuget.config" }}
+	out := e.Fetch(context.Background(), []packagereq.Request{nuget("Demo.Pkg", "1.0.0", "net10.0"), nuget("Nope.Pkg", "1.0.0", "net10.0"), nuget("Demo.Two", "1.0.0", "net10.0")})
+	if out[0].Err != nil || out[2].Err != nil {
+		t.Errorf("the others should come: %+v / %+v", out[0], out[2])
+	}
+	if out[1].Err == nil || !strings.Contains(out[1].Message, "NU1101") || !strings.Contains(out[1].Message, "Nope.Pkg") || !strings.HasSuffix(out[1].Message, "approve the nuget.config") {
+		t.Errorf("Nope.Pkg: %+v", out[1])
+	}
+}
+
+// What NuGet fails on without naming it is found and fails only its own request.
+func TestACorruptPackageFailsItsOwnRequestOnly(t *testing.T) {
+	h := newHost(t)
+	must(t, os.WriteFile(filepath.Join(h.feed, "bad.pkg.1.0.0.nupkg"), []byte("this is not a zip"), 0o644))
+	e := Ecosystem{Options: func(packagereq.Request) Options { return h.options() }}
+	out := e.Fetch(context.Background(), []packagereq.Request{nuget("Demo.Pkg", "1.0.0", "net10.0"), nuget("Bad.Pkg", "1.0.0", "net10.0")})
+	if out[0].Err != nil || !strings.Contains(out[0].Message, "demo.pkg 1.0.0") {
+		t.Errorf("Demo.Pkg: %+v", out[0])
+	}
+	if out[1].Err == nil || !strings.Contains(out[1].Message, "corrupt") {
+		t.Errorf("Bad.Pkg: %+v", out[1])
+	}
+}
+
+func TestARequestForWhatTheCacheHasAlreadyIsSaidSo(t *testing.T) {
+	h := newHost(t)
+	put(t, h.cache, Package{"Demo.Pkg", "1.0.0"})
+	restoring(t, func(xml string) (string, error) { return "", nil })
+	e := Ecosystem{Options: func(packagereq.Request) Options { return h.options() }}
+	out := e.Fetch(context.Background(), []packagereq.Request{nuget("Demo.Pkg", "1.0.0", "net10.0")})
+	if out[0].Err != nil || !strings.Contains(out[0].Message, "already") {
+		t.Errorf("outcome = %+v", out[0])
+	}
+}
+
+// Frameworks are restored separately, and each outcome is where its request was.
+func TestRequestsForSeveralFrameworksAreRestoredByFrameworkAndAnsweredInOrder(t *testing.T) {
+	cache := t.TempDir()
+	by := map[string]int{}
+	restoring(t, func(xml string) (string, error) {
+		for _, fw := range []string{"net8.0", "net10.0"} {
+			if strings.Contains(xml, "<TargetFramework>"+fw+"</TargetFramework>") {
+				by[fw]++
+			}
+		}
+		for _, id := range []string{"A.Lib", "B.Lib", "C.Lib"} {
+			if strings.Contains(xml, `Include="`+id+`"`) {
+				put(t, cache, Package{id, "1.0.0"})
+			}
+		}
+		return "", nil
+	})
+	e := Ecosystem{Options: func(packagereq.Request) Options { return Options{Cache: cache, Timeout: time.Minute} }}
+	out := e.Fetch(context.Background(), []packagereq.Request{nuget("A.Lib", "1.0.0", "net8.0"), nuget("B.Lib", "1.0.0", "net10.0"), nuget("C.Lib", "1.0.0", "net8.0")})
+	if by["net8.0"] != 1 || by["net10.0"] != 1 {
+		t.Errorf("restores by framework %v, want one each", by)
+	}
+	for i, want := range []string{"a.lib", "b.lib", "c.lib"} {
+		if out[i].Err != nil || !strings.Contains(out[i].Message, want) {
+			t.Errorf("outcome %d = %+v, want %s", i, out[i], want)
+		}
+	}
+}
+
+// Nothing is claimed that isn't so: a restore that said nothing of a package and left it
+// out of the cache is a failure of that request.
+func TestARequestWhosePackageIsNotInTheCacheAfterAllIsFailed(t *testing.T) {
+	restoring(t, func(xml string) (string, error) { return "", nil })
+	e := Ecosystem{Options: func(packagereq.Request) Options { return Options{Cache: t.TempDir(), Timeout: time.Minute} }}
+	out := e.Fetch(context.Background(), []packagereq.Request{nuget("Ghost.Pkg", "1.0.0", "net8.0")})
+	if out[0].Err == nil || !strings.Contains(out[0].Message, "isn't in the host's package cache") {
+		t.Errorf("outcome = %+v", out[0])
+	}
+}
+
+func TestAFetchThatCouldNotRunFailsEveryRequestInItsFramework(t *testing.T) {
+	restoring(t, func(string) (string, error) { return "", timedOut{time.Minute} })
+	e := Ecosystem{Options: func(packagereq.Request) Options { return Options{Cache: t.TempDir(), Timeout: time.Minute} }}
+	out := e.Fetch(context.Background(), []packagereq.Request{nuget("A.Lib", "1.0.0", "net8.0"), nuget("B.Lib", "1.0.0", "net8.0")})
+	for i, o := range out {
+		if o.Err == nil || !strings.Contains(o.Message, "time limit") {
+			t.Errorf("outcome %d = %+v", i, o)
+		}
 	}
 }

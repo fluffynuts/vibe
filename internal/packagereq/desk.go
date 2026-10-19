@@ -11,9 +11,17 @@ type Ecosystem interface {
 	// Validate says what's wrong with r, in the agent's terms, or nil.
 	// Nothing of r is used before it's valid.
 	Validate(r Request) error
-	// Fetch fetches r onto the host, giving what to tell the asker: what
-	// was fetched, or on failure the ecosystem's own words.
-	Fetch(ctx context.Context, r Request) (string, error)
+	// Fetch fetches rs onto the host, together: what is approved together
+	// comes together, and what the ecosystem fails on one request doesn't
+	// keep the others from coming. It gives one outcome for each, in order.
+	Fetch(ctx context.Context, rs []Request) []Outcome
+}
+
+// Outcome is what came of one request in a Fetch: what to tell its asker (what
+// was fetched or, on failure, the ecosystem's own words) and, when it failed, why.
+type Outcome struct {
+	Message string
+	Err     error
 }
 
 // Policy values for Desk.Policy: "ask" holds each request for the user's
@@ -185,52 +193,77 @@ func (d *Desk) parallel() int {
 	return DefaultParallel
 }
 
-// dispatch starts fetches for approved requests, while there's room.
+// dispatch starts fetches for approved requests, while there's room: all that
+// are approved and waiting, of one ecosystem, go together.
 func (d *Desk) dispatch(ctx context.Context) {
 	for {
 		d.mu.Lock()
-		var p *pending
+		var batch []*pending
 		if d.running < d.parallel() {
-			for _, candidate := range d.pending {
-				if candidate.Approved && !candidate.Fetching {
-					p = candidate
-					break
-				}
-			}
+			batch = d.nextBatch()
 		}
-		if p == nil {
+		if batch == nil {
 			d.mu.Unlock()
 			return
 		}
-		p.Fetching = true
+		for _, p := range batch {
+			p.Fetching = true
+		}
 		d.running++
 		d.work.Add(1)
 		d.mu.Unlock()
-		go d.fetch(ctx, p)
+		go d.fetch(ctx, batch)
 	}
 }
 
-func (d *Desk) fetch(ctx context.Context, p *pending) {
+// nextBatch is every approved request not yet being fetched that is of the
+// first one's ecosystem, or nil; the caller holds d.mu.
+func (d *Desk) nextBatch() []*pending {
+	var batch []*pending
+	for _, candidate := range d.pending {
+		if !candidate.Approved || candidate.Fetching {
+			continue
+		}
+		if len(batch) == 0 || candidate.Request.Ecosystem == batch[0].Request.Ecosystem {
+			batch = append(batch, candidate)
+		}
+	}
+	return batch
+}
+
+func (d *Desk) fetch(ctx context.Context, batch []*pending) {
 	defer d.work.Done()
-	message, err := d.Ecosystems[p.Request.Ecosystem].Fetch(ctx, p.Request)
+	requests := make([]Request, len(batch))
+	for i, p := range batch {
+		requests[i] = p.Request
+	}
+	outcomes := d.Ecosystems[requests[0].Ecosystem].Fetch(ctx, requests)
 
 	d.mu.Lock()
-	d.remove(p)
-	d.running--
-	nonces := append([]string(nil), p.nonces...)
-	d.mu.Unlock()
-	status := Fetched
-	if err != nil {
-		status = Failed
-		if message == "" {
-			message = err.Error()
-		}
-		d.log("package request failed: %s: %v", describe(p.Request), err)
-	} else {
-		d.log("package request fetched: %s", describe(p.Request))
+	for _, p := range batch {
+		d.remove(p)
 	}
-	for _, nonce := range nonces {
-		d.reply(nonce, status, message)
+	d.running--
+	d.mu.Unlock()
+	for i, p := range batch {
+		outcome := Outcome{Err: fmt.Errorf("the %s fetcher gave no outcome for this request", p.Request.Ecosystem)}
+		if i < len(outcomes) {
+			outcome = outcomes[i]
+		}
+		status := Fetched
+		message := outcome.Message
+		if outcome.Err != nil {
+			status = Failed
+			if message == "" {
+				message = outcome.Err.Error()
+			}
+			d.log("package request failed: %s: %v", describe(p.Request), outcome.Err)
+		} else {
+			d.log("package request fetched: %s", describe(p.Request))
+		}
+		for _, nonce := range p.nonces {
+			d.reply(nonce, status, message)
+		}
 	}
 	d.dispatch(ctx)
 }
