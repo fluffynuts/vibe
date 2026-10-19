@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -124,13 +125,20 @@ func TestStreamSaysWhenTheCommandHasTakenAllItsInput(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("wants sh")
 	}
+	// delivered and onLine are called on different goroutines.
+	var mu sync.Mutex
 	var order []string
-	cmd := exec.Command("sh", "-c", "cat; echo out")
-	err := stream(cmd, "typed\n", func() { order = append(order, "delivered") }, func(l []byte) { order = append(order, string(l)) })
+	say := func(s string) { mu.Lock(); order = append(order, s); mu.Unlock() }
+	// The command says nothing until its input ends, which the pipe says
+	// only after delivered has been called: so what it says comes after.
+	cmd := exec.Command("sh", "-c", `read -r typed; cat >/dev/null; echo "got $typed"`)
+	err := stream(cmd, "typed\n", func() { say("delivered") }, func(l []byte) { say(string(l)) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"delivered", "typed", "out"}; !reflect.DeepEqual(order, want) {
+	mu.Lock()
+	defer mu.Unlock()
+	if want := []string{"delivered", "got typed"}; !reflect.DeepEqual(order, want) {
 		t.Errorf("order = %q, want %q", order, want)
 	}
 }

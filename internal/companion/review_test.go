@@ -625,7 +625,6 @@ func TestAFileThatTakesTooLongToColourIsShownWithout(t *testing.T) {
 // saying why, rather than spending a core on each.
 func TestColouringIsTurnedOffOnceFilesKeepTakingTooLong(t *testing.T) {
 	old := colourWithin
-	colourWithin = 200 * time.Millisecond
 	t.Cleanup(func() { colourWithin = old })
 	s, _ := reviewTabServer(t)
 	dir := s.cfg.ReviewTab.Workspace
@@ -638,9 +637,13 @@ func TestColouringIsTurnedOffOnceFilesKeepTakingTooLong(t *testing.T) {
 		json.Unmarshal(rec.Body.Bytes(), &h)
 		return h
 	}
+	// A file that colours is held to the usual time, however slow the
+	// machine (a race-instrumented helper starts slowly); only the file
+	// that never finishes is held to a short one, to keep the test quick.
 	if h := colour("b.go"); h.Language != "Go" {
 		t.Fatalf("before: %+v", h)
 	}
+	colourWithin = 200 * time.Millisecond
 	for i := 0; i < colourGiveUpAfter; i++ {
 		if h := colour("x.jsonata"); !strings.Contains(h.Skipped, "too long") {
 			t.Fatalf("try %d: %+v", i+1, h)
@@ -865,16 +868,22 @@ func TestAReviewThatCantBeStartedGivesTheTurnUp(t *testing.T) {
 // vibe's own output.
 func TestTheInboxFailingToBeTakenInIsSaid(t *testing.T) {
 	s, store := reviewTabServer(t)
-	var said []string
-	s.cfg.Log = func(line string) { said = append(said, line) }
+	said := make(chan string, 10)
+	s.cfg.Log = func(line string) { said <- line }
 	os.WriteFile(filepath.Join(filepath.Dir(store.Inbox()), "review.json"), []byte("{broken"), 0o600)
 	done := make(chan struct{})
-	go s.takeInbox(done, 5*time.Millisecond)
-	time.Sleep(50 * time.Millisecond)
-	close(done)
-	if len(said) == 0 || !strings.Contains(said[0], "review") {
-		t.Errorf("said %q", said)
+	ended := make(chan struct{})
+	go func() { s.takeInbox(done, 5*time.Millisecond); close(ended) }()
+	select {
+	case line := <-said:
+		if !strings.Contains(line, "review") {
+			t.Errorf("said %q", line)
+		}
+	case <-time.After(10 * time.Second):
+		t.Error("nothing was said of the inbox failing")
 	}
+	close(done)
+	<-ended
 }
 
 // A review that can't be read refuses a start before the agent's turn is
