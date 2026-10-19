@@ -60,13 +60,30 @@ case "$version" in
   "" | *[!0-9A-Za-z.+-]*) fail "'$version' isn't one exact version, such as 1.2.3 or 1.2.3-beta.1" 2 ;;
 esac
 
+# The frameworks the project files here name, one a line. msbuild can say a
+# single project's, but not a solution's.
+frameworks_in_project_files() {
+  grep -rhoE --include='*.csproj' --include='*.fsproj' --include='*.vbproj' --include=Directory.Build.props \
+    --exclude-dir=bin --exclude-dir=obj --exclude-dir=node_modules --exclude-dir=.git \
+    '<TargetFrameworks?>[^<]*' . 2>/dev/null | sed 's/<[^>]*>//' | tr ';' '\n' | sed 's/[[:space:]]//g' | sed '/^$/d' | sort -u
+}
+
 if [ -z "$framework" ]; then
   framework=$(dotnet msbuild -nologo -getProperty:TargetFramework 2>/dev/null | tr -d '[:space:]')
   if [ -z "$framework" ]; then
-    frameworks=$(dotnet msbuild -nologo -getProperty:TargetFrameworks 2>/dev/null | tr -d '[:space:]')
-    framework=$(printf '%s' "$frameworks" | cut -d';' -f1)
+    found=$(frameworks_in_project_files)
+    count=$(printf '%s\n' "$found" | sed '/^$/d' | wc -l | tr -d ' ')
+    case "$found" in
+      *'$'*) count=0; found="(some are set by a property)" ;;
+    esac
+    if [ "$count" = 1 ]; then
+      framework=$found
+    elif [ "$count" = 0 ]; then
+      fail "couldn't tell this project's target framework: say it with --framework, such as --framework net8.0 ${found:+(the project files here say: $found)}" 2
+    else
+      fail "the projects here target different frameworks ($(printf '%s' "$found" | tr '\n' ' ')): say which is meant with --framework, such as --framework net8.0" 2
+    fi
   fi
-  [ -n "$framework" ] || fail "couldn't tell this project's target framework: say it with --framework, such as --framework net8.0" 2
 fi
 case "$framework" in
   "" | *[!0-9a-z.]*) fail "'$framework' isn't a target framework such as net8.0" 2 ;;

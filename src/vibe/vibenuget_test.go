@@ -21,6 +21,13 @@ type askResult struct {
 // for it.
 func runVibeNuget(t *testing.T, mailbox packagereq.Mailbox, respond func(packagereq.Taken), args ...string) askResult {
 	t.Helper()
+	return runVibeNugetIn(t, "", mailbox, respond, args...)
+}
+
+// runVibeNugetIn is runVibeNuget run in the folder dir ("" for where the
+// test is).
+func runVibeNugetIn(t *testing.T, dir string, mailbox packagereq.Mailbox, respond func(packagereq.Taken), args ...string) askResult {
+	t.Helper()
 	script, err := filepath.Abs(filepath.Join("..", "..", "library", "dotnet", "agent-files", ".local", "bin", "vibe-nuget"))
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +49,8 @@ func runVibeNuget(t *testing.T, mailbox packagereq.Mailbox, respond func(package
 		}
 	}()
 	cmd := exec.Command("sh", append([]string{script}, args...)...)
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "VIBE_PACKAGES_DIR=" + mailbox.Dir}
+	cmd.Dir = dir
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "VIBE_PACKAGES_DIR=" + mailbox.Dir, "HOME=" + os.TempDir()}
 	out, err := cmd.CombinedOutput()
 	close(stop)
 	<-done
@@ -132,5 +140,66 @@ func TestVibeNugetSaysWhatToDoWithNoPlaceToAsk(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "vibe -r") {
 		t.Errorf("want it to say to rebuild: %v\n%s", err, out)
+	}
+}
+
+func project(t *testing.T, dir, name, frameworks string) {
+	t.Helper()
+	writeFile(t, filepath.Join(dir, name), `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup>`+frameworks+`</PropertyGroup></Project>`)
+}
+
+func askedFramework(t *testing.T, dir string) (asked packagereq.Request, res askResult) {
+	t.Helper()
+	m := sandboxMailbox(t)
+	res = runVibeNugetIn(t, dir, m, func(tk packagereq.Taken) {
+		asked = tk.Request
+		m.Reply(tk.Nonce, packagereq.Answer{Status: packagereq.Fetched, Message: "fetched"})
+	}, "fetch", "Corp.Lib", "1.2.3")
+	return asked, res
+}
+
+// In a folder with a solution (or several projects) msbuild can't say which
+// project's framework is meant. When every project's files agree, that's it.
+func TestVibeNugetTakesTheFrameworkAllTheProjectsAgreeOn(t *testing.T) {
+	dir := t.TempDir()
+	project(t, dir, "src/A/A.csproj", "<TargetFramework>net8.0</TargetFramework>")
+	project(t, dir, "src/B/B.csproj", "<TargetFramework>net8.0</TargetFramework>")
+	project(t, dir, "tests/T/T.csproj", "<TargetFrameworks>net8.0</TargetFrameworks>")
+	project(t, dir, "src/A/obj/Stale.csproj", "<TargetFramework>net6.0</TargetFramework>")
+	asked, res := askedFramework(t, dir)
+	if res.code != 0 || asked.Framework != "net8.0" {
+		t.Errorf("exit %d, asked %+v:\n%s", res.code, asked, res.out)
+	}
+}
+
+func TestVibeNugetSaysWhichFrameworksTheProjectsUseWhenTheyDisagree(t *testing.T) {
+	dir := t.TempDir()
+	project(t, dir, "A/A.csproj", "<TargetFramework>net8.0</TargetFramework>")
+	project(t, dir, "B/B.csproj", "<TargetFrameworks>net8.0;netstandard2.0</TargetFrameworks>")
+	asked, res := askedFramework(t, dir)
+	if res.code != 2 || asked.ID != "" {
+		t.Errorf("exit %d, asked %+v", res.code, asked)
+	}
+	for _, want := range []string{"net8.0", "netstandard2.0", "--framework"} {
+		if !strings.Contains(res.out, want) {
+			t.Errorf("the message should say %q:\n%s", want, res.out)
+		}
+	}
+}
+
+func TestVibeNugetWontGuessAFrameworkFromAProperty(t *testing.T) {
+	dir := t.TempDir()
+	project(t, dir, "A/A.csproj", "<TargetFramework>net8.0</TargetFramework>")
+	project(t, dir, "B/B.csproj", "<TargetFramework>$(Tfm)</TargetFramework>")
+	asked, res := askedFramework(t, dir)
+	if res.code != 2 || asked.ID != "" || !strings.Contains(res.out, "--framework") {
+		t.Errorf("exit %d, asked %+v:\n%s", res.code, asked, res.out)
+	}
+}
+
+func TestVibeNugetWithNoProjectsHereSaysToGiveTheFramework(t *testing.T) {
+	asked, res := askedFramework(t, t.TempDir())
+	if res.code != 2 || asked.ID != "" || !strings.Contains(res.out, "--framework") {
+		t.Errorf("exit %d, asked %+v:\n%s", res.code, asked, res.out)
 	}
 }
