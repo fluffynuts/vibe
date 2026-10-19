@@ -2856,7 +2856,9 @@
     } else if (last && !last.error) {
       status.hidden = false
       status.textContent = packagesWord(last.fetched || 0) + ' fetched' +
-        ((last.unresolved || []).length ? '; no feed has: ' + last.unresolved.map(packageName).join(', ') : '') + '.'
+        ((last.unresolved || []).length ? '; no feed has: ' + last.unresolved.map(packageName).join(', ') : '') + '.' +
+        // The files the sandbox generated name its own cache for what it downloaded itself.
+        (count === 0 && (last.fetched || 0) > 0 ? ' Your IDE may restore once, to point its files at your cache instead of the sandbox\'s.' : '')
     } else {
       status.hidden = true
     }

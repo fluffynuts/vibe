@@ -304,3 +304,20 @@ test('with neither the card is not there', async () => {
   }, storage: { 'vibe-companion-tab': 'admin' } })
   try { assert.equal(p.$('admin-packages-all').hidden, true) } finally { p.close() }
 })
+
+// What the sandbox downloaded itself, its generated files name its own cache for: once the packages
+// are in the user's cache the IDE may restore once, and it's better said than discovered.
+test('after a fetch that emptied the list the card says the IDE may restore once', async () => {
+  const p = await syncPage(nothing({ last: { fetched: 3, at: '2026-10-19T12:00:00Z' } }))
+  try {
+    assert.match(p.$('admin-sync-status').textContent, /3 packages fetched/)
+    assert.match(p.$('admin-sync-status').textContent, /IDE may restore once/)
+  } finally { p.close() }
+})
+
+test('that is not said while packages are still missing, nor when nothing was fetched', async () => {
+  let p = await syncPage(missing({ last: { fetched: 3, at: '2026-10-19T12:00:00Z' } }))
+  try { assert.doesNotMatch(p.$('admin-sync-status').textContent, /IDE may restore/) } finally { p.close() }
+  p = await syncPage(nothing({ last: { fetched: 0, at: '2026-10-19T12:00:00Z' } }))
+  try { assert.doesNotMatch(p.$('admin-sync-status').textContent, /IDE may restore/) } finally { p.close() }
+})
