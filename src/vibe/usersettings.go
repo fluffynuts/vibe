@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 
+	"vibe/internal/hostcpu"
 	"vibe/internal/hostmem"
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
@@ -23,7 +25,7 @@ var fallbackAgents = []string{"claude", "codex", "copilot", "cursor", "devin", "
 
 // setUpSettings writes ~/.vibe/settings.yaml for this machine, from the
 // copy just put there (the package's). With ask and a terminal, it asks how
-// much memory sandboxes get, which agent they run, and which features a
+// much memory and how many CPUs sandboxes get, which agent they run, and which features a
 // guided profile starts with ticked, starting on the package's choices;
 // otherwise it keeps those, with the memory lowered to what this machine
 // can give. Everything else in the file is left as it is.
@@ -52,6 +54,15 @@ func setUpSettings(lay layout.Layout, ask bool) error {
 	}{
 		{"memory", pickMemory(current.Memory, ask, "how much memory should each sandbox get? (you're asked again for each new sandbox)")},
 		{"agent", pickAgent(current.Agent, ask, "which agent should sandboxes run by default?")},
+	}
+	// Unset, cpus is half the machine's, whichever machine that is: it's
+	// written only for a choice made, or one to keep within what this
+	// machine can spare.
+	if ask || current.CPUs != 0 {
+		values = append(values, struct {
+			key   string
+			value interface{}
+		}{"cpus", pickCPUs(current.CPUs, ask, "how many CPUs should each sandbox get? (you're asked again for each new sandbox)")})
 	}
 	if ask {
 		features, err := pickDefaultFeatures(lay, current.DefaultFeatures)
@@ -152,6 +163,32 @@ func pickMemory(want string, ask bool, question string) string {
 	i, ok := chooseFrom(fmt.Sprintf("%s (this machine has %s)", question, host), options, idx)
 	if !ok {
 		note("  keeping memory: %s", options[idx])
+		return options[idx]
+	}
+	return options[i]
+}
+
+// pickCPUs settles how many CPUs a sandbox gets, starting from want (0 for
+// none: half this machine's): with ask, the user picks any number from 1 to
+// one less than the machine has; without, want is kept unless it's more than
+// that, when it's lowered to the most. sbx, left to itself, gives a sandbox
+// every CPU, and a build in it then leaves the host nothing to run on.
+func pickCPUs(want int, ask bool, question string) int {
+	total := hostcpu.Total()
+	options, idx, over := hostcpu.Pick(total, want)
+	if over {
+		note("  cpus: %d is more than this machine can spare (it has %d, and keeps one) — lowering it to %d", want, total, options[idx])
+	}
+	if !ask {
+		return options[idx]
+	}
+	labels := make([]string, len(options))
+	for i, n := range options {
+		labels[i] = strconv.Itoa(n)
+	}
+	i, ok := chooseFrom(fmt.Sprintf("%s (this machine has %d)", question, total), labels, idx)
+	if !ok {
+		note("  keeping cpus: %d", options[idx])
 		return options[idx]
 	}
 	return options[i]

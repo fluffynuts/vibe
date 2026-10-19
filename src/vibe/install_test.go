@@ -413,3 +413,27 @@ func TestAReleaseBuildReplacesAnInstalledVibe(t *testing.T) {
 		t.Errorf("a release build didn't replace the installed vibe")
 	}
 }
+
+// A first install with nobody to ask leaves cpus unset, so the default stays
+// half of whichever machine the settings are used on; one already set is kept,
+// lowered to what this machine can spare.
+func TestDoInstallLeavesCPUsUnsetButLowersOneThisMachineCantSpare(t *testing.T) {
+	for setting, want := range map[string]string{"": "", "cpus: 4\n": "cpus: 4\n", "cpus: 40\n": "cpus: 15\n"} {
+		home := t.TempDir()
+		bundle := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+		writeFile(t, filepath.Join(bundle, "settings.yaml"), shippedSettings+setting)
+		vibeHome := filepath.Join(home, ".vibe")
+		if err := doInstall(layout.New(vibeHome, bundle), true, ""); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(filepath.Join(vibeHome, "settings.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := string(data); !strings.Contains(got, want) || (want == "" && strings.Contains(got, "cpus")) {
+			t.Errorf("shipped with %q, the settings after install read:\n%s\nwant %q", setting, got, strings.TrimSpace(want))
+		}
+	}
+}

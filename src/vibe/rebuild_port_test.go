@@ -111,3 +111,20 @@ func TestASandboxIsGivenEachOfItsFolders(t *testing.T) {
 		}
 	}
 }
+
+// How many CPUs a sandbox gets is the cpus setting, else half the machine's:
+// sbx would give it all of them.
+func TestASandboxIsGivenHalfTheMachinesCPUsUnlessTheProfileSaysOtherwise(t *testing.T) {
+	for setting, want := range map[string]string{"": "--cpus 8 ", "cpus: 3\n": "--cpus 3 ", "cpus: 40\n": "--cpus 15 "} {
+		lay := updateLayout(t)
+		writeFile(t, lay.HomePath("profiles", "p", "settings.yaml"), setting)
+		inst := sandboxRecord(t, lay, "box", "p").inst
+		calls := loggingSbx(t, "box running\\n")
+		if err := rebuildSandbox(context.Background(), lay, cliargs.Args{Force: true}, "box", inst.Target, true, false); err != nil {
+			t.Fatal(err)
+		}
+		if create := createCall(t, calls); !strings.Contains(create+" ", want) {
+			t.Errorf("settings %q: sbx create lacks %q:\n%s", setting, want, create)
+		}
+	}
+}

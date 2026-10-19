@@ -124,16 +124,18 @@ to date, when a check fails, or when the checks haven't finished by the time you
 
 The first `vibe --install` (and vibe's first run, if you skip `--install`) also sets up
 `~/.vibe/settings.yaml` for your machine. It asks how much memory each sandbox gets, in 4g steps
-up to half your machine's memory. It asks which agent sandboxes run by default, from the agents `sbx run
+up to half your machine's memory, and how many CPUs, any number from 1 to one less than your machine
+has, starting on half of them (see [CPUs](#cpus-a-sandbox-gets)). It asks which agent sandboxes run by default, from the agents `sbx run
 --help` lists, and which library features a guided profile starts with selected. Each question
 starts on the package's choice. Creating a new sandbox asks again which agent it should run,
 starting on that default (or on the profile's own `agent`, when the profile exists already). It asks
 this first, before any profile is made, because a guided profile only offers the features that work
 with that agent; a re-init or re-create keeps the agent the sandbox was created with. With `-f`, or no terminal, it keeps the package's choices and only
-lowers the memory, if it's more than your machine can give. Every later `--install` makes the same
-memory check on your `settings.yaml`, and changes nothing else in it.
+lowers the memory, if it's more than your machine can give (and a `cpus` already set, if it's more
+than your machine can spare). Every later `--install` makes the same checks on your `settings.yaml`,
+and changes nothing else in it.
 
-`vibe --setup` asks those questions again (default memory, default agent, and the features a guided
+`vibe --setup` asks those questions again (default memory, CPUs, default agent, and the features a guided
 profile starts with selected), starting on your current choices, and saves the answers in
 `~/.vibe/settings.yaml`. It then offers to store a default GitHub token for new sandboxes to push with
 (see [Letting the agent push](#letting-the-agent-push)). It needs a terminal, and
@@ -743,6 +745,20 @@ serve it and open the browser), `serve` (serve it and only print the address —
 or no desktop), or `off`. `-N/--no-companion` turns it off for one run. vibe doesn't open a browser
 over ssh, or on Linux without a display; it prints the address instead.
 
+### CPUs a sandbox gets
+
+`sbx` gives a sandbox every CPU of the host's unless told otherwise, so a build in it (`dotnet build`
+with all cores, say) can leave your machine nothing to run vibe, your browser and `sbx` itself on:
+the companion page then goes slow, and may say vibe has disconnected. vibe tells `sbx` how many to
+give (`sbx create --cpus`): the `cpus` setting, and when there's none, **half the machine's**,
+rounded down. A new sandbox asks, offering any number from 1 to one less than the machine has, so
+the host always keeps one. It's the same question as the memory one: `-f`, or no terminal, uses the
+setting, or half. A `cpus` more than the machine can spare is lowered to the most it can.
+
+The choice isn't remembered per sandbox, as memory's isn't: a rebuilt sandbox gets the setting (or
+half) again, so set `cpus` in `settings.yaml` (or a profile's) to keep a number. A sandbox already
+built keeps the CPUs it has until it's rebuilt.
+
 ### Letting the agent push
 
 Out of the box, the agent in a vibe sandbox has no git credentials: it can commit, but you push — and
@@ -944,6 +960,8 @@ into a real script or config file.
 ```yaml
 memory: 12g          # sandbox memory limit; a new sandbox asks, starting here, capped at
                      #    half the host's memory
+cpus: 8              # CPUs a sandbox gets; a new sandbox asks, from 1 to one less than the
+                     #    host has. Unset: half the host's (sbx alone would give all of them)
 agent: claude         # which coding agent to run
 nugetDir: ~/.nuget    # mounted into the sandbox and symlinked in, if it exists on the host
 memoryRoot: ~/.vibe/memories   # where per-sandbox agent memories are backed up

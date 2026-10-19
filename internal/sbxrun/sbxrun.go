@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -317,9 +318,12 @@ func parseList(out string) ([]Status, error) {
 
 // CreateOpts configures a new sandbox.
 type CreateOpts struct {
-	Name    string
-	KitDir  string
-	Memory  string
+	Name   string
+	KitDir string
+	Memory string
+	// CPUs is how many CPUs the sandbox gets; 0 leaves it to sbx, which
+	// gives it all of the host's.
+	CPUs    int
 	Publish []string // "hostPort:containerPort" entries
 	Env     []string // "KEY=VALUE" entries
 	Agent   string
@@ -341,6 +345,9 @@ func Create(ctx context.Context, opts CreateOpts) error {
 	args := []string{"create", "--name", opts.Name, "--kit", opts.KitDir}
 	if opts.Memory != "" {
 		args = append(args, "--memory", opts.Memory)
+	}
+	if opts.CPUs > 0 {
+		args = append(args, "--cpus", strconv.Itoa(opts.CPUs))
 	}
 	for _, p := range opts.Publish {
 		args = append(args, "--publish", p)

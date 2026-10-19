@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"vibe/internal/hostcpu"
 	"vibe/internal/hostmem"
 	"vibe/internal/prompt"
 	"vibe/internal/review"
@@ -29,6 +30,8 @@ func TestMain(m *testing.M) {
 	// And on the same machine, whatever it really is: one big enough for
 	// any memory setting the tests use, so none is lowered unasked.
 	hostmem.Total = func() (uint64, error) { return 64 * hostmem.GiB, nil }
+	// With 16 CPUs, so the middle is 8 and 1 to 15 can be asked for.
+	hostcpu.Total = func() int { return 16 }
 	// One whose KVM works, whether this one's does or not (a CI runner, or
 	// a sandbox, may have none): tests of a machine where it doesn't say so.
 	vmCheck = func() error { return nil }
