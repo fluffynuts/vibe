@@ -652,6 +652,18 @@
   const AWAKE_MS = 20000
   let awakeAsked = 0
 
+  // unlessBusy runs load unless the last one of its name hasn't been answered:
+  // vibe can be slow (a sandbox with every CPU busy), and a poll started
+  // every couple of seconds on top of those unanswered would use up the
+  // browser's few connections to it, so that even the ping couldn't get
+  // through, and the page would say vibe had gone.
+  const polling = new Set()
+  function unlessBusy(name, load) {
+    if (polling.has(name)) return Promise.resolve()
+    polling.add(name)
+    return Promise.resolve(load()).finally(() => polling.delete(name))
+  }
+
   function tick() {
     if (document.visibilityState !== 'visible') return
     // Only in view: out of sight, sbx is left to stop an idle sandbox, and
@@ -661,11 +673,11 @@
       // Whether vibe is there at all is the ping's to say.
       post('/api/awake', {}).catch(() => {})
     }
-    const loads = state.tab === 'conversation' ? [loadState()]
-      : state.tab === 'admin' ? [loadState(), loadAdmin(), loadPackages(), loadInstructions(false)]
-      : state.tab === 'manage' ? [loadState(), loadManage()]
-      : state.tab === 'review' ? [loadState(), loadReview(reviewView.files === null)]
-      : [loadState(), load(state.tab)]
+    const loads = state.tab === 'conversation' ? [unlessBusy('state', loadState)]
+      : state.tab === 'admin' ? [unlessBusy('state', loadState), unlessBusy('admin', loadAdmin), unlessBusy('packages', loadPackages), unlessBusy('instructions', () => loadInstructions(false))]
+      : state.tab === 'manage' ? [unlessBusy('state', loadState), unlessBusy('manage', loadManage)]
+      : state.tab === 'review' ? [unlessBusy('state', loadState), unlessBusy('review', () => loadReview(reviewView.files === null))]
+      : [unlessBusy('state', loadState), unlessBusy('tab ' + state.tab, () => load(state.tab))]
     Promise.allSettled(loads).then(startedIfReady)
   }
 
