@@ -4253,8 +4253,22 @@
   // unless the user turned it off, in this browser.
   const promptsAsMarkdown = { on: store.get('vibe-prompts-markdown') !== 'off' }
 
-  function promptBody(text) {
+  function promptText(text) {
     return promptsAsMarkdown.on ? markdown(text) : el('span', { class: 'plain', text })
+  }
+
+  // What the Review tab's "Submit to agent" sends is long, and the user has its context: the first
+  // line says what it is, and the rest is folded away, to open if wanted, not to be read. A prompt
+  // is one of those when it begins with the words the page sends it with.
+  const REVIEW_PROMPT_START = 'On the Review tab, '
+
+  function promptBody(text) {
+    const line = text.indexOf('\n')
+    const rest = line < 0 ? '' : text.slice(line + 1).trim()
+    if (!text.startsWith(REVIEW_PROMPT_START) || !rest) return promptText(text)
+    return el('div', { class: 'prompt-folded' },
+      el('div', { class: 'prompt-first' }, promptText(text.slice(0, line))),
+      el('details', { class: 'prompt-more' }, el('summary', { text: 'Show what was sent' }), promptText(rest)))
   }
 
   function userNote(ev) {

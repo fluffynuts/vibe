@@ -2978,3 +2978,57 @@ test("a thread that is resolved says so in a part of its header of its own, and 
     assert.equal(state(2), null)
   } finally { p.close() }
 })
+
+// What "Submit to agent" sends is long, and the user has the context: its first line says what it
+// is, and the rest is there to open, not to be read.
+const submitted = "On the Review tab, I've left review comments for you. Here's each comment thread with something new of mine on it:\n\n## #27, on a.ts, lines 71-77\n\nThe code it's on:\n\n    if (loaded) {\n\n- user: which do you recommend?"
+
+async function promptsPage(texts) {
+  return convoPage({ events: texts.map((text, i) => ({ seq: i + 1, kind: 'user', text })), running: false })
+}
+
+test("what the review tab's submission says is folded away under its first line, to open", async () => {
+  const p = await promptsPage([submitted])
+  try {
+    const more = p.window.document.querySelector('#convo-log .msg.user details.prompt-more')
+    assert.ok(more, 'the rest is in a details')
+    assert.equal(more.open, false)
+    const visible = p.window.document.querySelector('#convo-log .msg.user .prompt-first').textContent
+    assert.match(visible, /^On the Review tab, I've left review comments for you\./)
+    assert.doesNotMatch(visible, /which do you recommend/)
+    assert.match(more.textContent, /which do you recommend/)
+    assert.match(more.querySelector('summary').textContent, /what was sent/i)
+  } finally { p.close() }
+})
+
+test("a prompt of the user's own is shown whole", async () => {
+  const p = await promptsPage(['Please look at\nthe build', 'On the Review tab I wrote this myself\nand more'])
+  try {
+    assert.equal(p.window.document.querySelectorAll('#convo-log .msg.user details').length, 0)
+    assert.match(p.window.document.querySelector('#convo-log .msg.user').textContent, /the build/)
+  } finally { p.close() }
+})
+
+test('a review prompt that is only its first line has nothing to fold', async () => {
+  const p = await promptsPage(["On the Review tab, I've started a review of the branch."])
+  try {
+    assert.equal(p.window.document.querySelectorAll('#convo-log .msg.user details').length, 0)
+  } finally { p.close() }
+})
+
+test('the fold stays when prompts are shown as plain text', async () => {
+  const q = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, attention: {} },
+      '/api/conversation': { events: [{ seq: 1, kind: 'user', text: submitted }], last: 1, running: false },
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'conversation', 'vibe-prompts-markdown': 'off' },
+  })
+  try {
+    await q.every('pollConversation')
+    const more = q.window.document.querySelector('#convo-log .msg.user details.prompt-more')
+    assert.ok(more)
+    assert.match(more.textContent, /which do you recommend/)
+  } finally { q.close() }
+})

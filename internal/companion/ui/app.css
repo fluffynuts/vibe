@@ -611,3 +611,6 @@ dialog.gate p { margin: 8px 0; }
 .gate-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-top: 10px; }
 
 input[aria-invalid="true"] { border-color: var(--bad); outline-color: var(--bad); }
+
+.prompt-more { margin-top: 4px; font-size: 13px; }
+.prompt-more summary { cursor: pointer; color: var(--muted); }
