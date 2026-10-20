@@ -57,7 +57,49 @@
               <input type="checkbox" id="convo-md"> My prompts as Markdown</label>
             <button type="button" id="convo-new" class="ghost">New conversation</button>
           </div>
-          <div id="convo-log" class="convo-log" role="log" aria-live="polite"></div>
+          <div id="convo-packages" class="notice" role="status" hidden>
+            <span id="convo-packages-text"></span>
+            <button type="button" id="convo-packages-review">Review them</button>
+          </div>
+          <div id="convo-stale" class="notice" role="status" hidden>
+            <span id="convo-stale-text"></span>
+            <button type="button" id="convo-stale-ask">Ask the agent to tidy up</button>
+            <button type="button" id="convo-stale-dismiss" class="ghost" title="Don't tell me again about these projects">Dismiss</button>
+          </div>
+          <div id="convo-sync" class="notice" role="status" hidden>
+            <span id="convo-sync-text"></span>
+            <button type="button" id="convo-sync-review">Review them</button>
+          </div>
+          <div id="convo-blocked" class="notice" role="status" hidden>
+            <span id="convo-blocked-text"></span>
+            <button type="button" id="convo-blocked-open">Open the Network log</button>
+            <button type="button" id="convo-blocked-dismiss" class="ghost" title="Don't tell me again about these hosts">Dismiss</button>
+          </div>
+          <div class="convo-log-wrap">
+            <div id="convo-log" class="convo-log" role="log" aria-live="polite"></div>
+            <button type="button" id="convo-find-open" class="find-open small ghost" title="Search the conversation (F3)" aria-label="Search the conversation">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6.5" cy="6.5" r="4.5"/><path d="M10 10l4.5 4.5"/></svg>
+            </button>
+            <div id="convo-find" class="find" role="search" hidden>
+              <input id="convo-find-input" type="search" autocomplete="off" aria-label="Search the conversation" placeholder="Find in the conversation">
+              <span id="convo-find-count" class="muted" role="status"></span>
+              <button type="button" id="convo-find-prev" class="small ghost" title="Previous match (Shift+Enter)" aria-label="Previous match">&#9650;</button>
+              <button type="button" id="convo-find-next" class="small ghost" title="Next match (Enter, F3)" aria-label="Next match">&#9660;</button>
+              <label class="find-tools"><input type="checkbox" id="convo-find-tools"> Include tool output</label>
+              <button type="button" id="convo-find-close" class="small ghost" title="Close (Escape)" aria-label="Close the search">&#10005;</button>
+            </div>
+          </div>
+          <dialog id="convo-gate" class="gate" aria-labelledby="convo-gate-h">
+            <h2 id="convo-gate-h">Packages are waiting for you</h2>
+            <progress id="convo-gate-progress" class="gate-progress" aria-label="Packages fetched" hidden></progress>
+            <p id="convo-gate-text"></p>
+            <div class="gate-buttons">
+              <button type="button" id="convo-gate-review" class="ghost">Review them</button>
+              <button type="button" id="convo-gate-fetch">Fetch them first</button>
+              <button type="button" id="convo-gate-send" class="ghost">Send anyway</button>
+              <button type="button" id="convo-gate-cancel" class="ghost">Cancel</button>
+            </div>
+          </dialog>
           <form id="convo-form" class="convo-form" autocomplete="off">
             <div class="prompt-wrap">
               <ul id="convo-commands" class="commands" role="listbox" aria-label="Slash commands" hidden></ul>
@@ -214,6 +256,49 @@
           <p id="admin-error" class="note bad-text" hidden></p>
         </section>
 
+        <section class="card card-packages" id="admin-packages-all" aria-labelledby="admin-packages-all-h" hidden>
+          <progress id="admin-sync-progress" class="card-progress" aria-label="Packages fetched" hidden></progress>
+          <h2 id="admin-packages-all-h">Packages</h2>
+
+          <div class="card-part" id="admin-packages-card" role="group" aria-labelledby="admin-packages-h" hidden>
+            <h3 id="admin-packages-h">Packages the agent asked for <span id="admin-packages-count" class="pill"></span></h3>
+            <p class="note muted">The agent asks vibe for packages it can't get itself (a private feed's), by name and version. vibe fetches them on this machine, with your own NuGet config, only once you allow them.</p>
+            <p id="admin-packages-none" class="note muted">Nothing is waiting.</p>
+            <ul id="admin-packages" class="checks"></ul>
+            <p id="admin-packages-status" class="note" role="status" hidden></p>
+            <div class="bar" id="admin-packages-bar" hidden>
+              <button type="button" id="admin-packages-allow">Allow selected</button>
+              <button type="button" id="admin-packages-deny" class="danger">Deny them all</button>
+            </div>
+            <p id="admin-packages-decision" class="note" role="status" hidden></p>
+            <div id="admin-nugetconfig" hidden>
+              <h4 id="admin-nugetconfig-h">The folder's nuget.config</h4>
+              <p id="admin-nugetconfig-note" class="note"></p>
+              <ul id="admin-nugetconfig-sources" class="plain"></ul>
+              <ul id="admin-nugetconfig-warnings" class="plain bad-text"></ul>
+              <details><summary>The whole file</summary><pre id="admin-nugetconfig-text" class="info"></pre></details>
+              <div class="bar"><button type="button" id="admin-nugetconfig-approve">Approve this nuget.config</button></div>
+            </div>
+          </div>
+
+          <div class="card-part" id="admin-sync-card" role="group" aria-labelledby="admin-sync-h" hidden>
+            <h3 id="admin-sync-h">Packages your IDE can't see</h3>
+            <p id="admin-sync-summary" class="note"></p>
+            <details id="admin-sync-details" hidden>
+              <summary>The packages</summary>
+              <div id="admin-sync-list" class="info"></div>
+            </details>
+            <div id="admin-sync-stale" hidden>
+              <p id="admin-sync-stale-text" class="note"></p>
+              <div class="bar"><button type="button" id="admin-sync-stale-ask">Ask the agent to tidy up</button></div>
+            </div>
+            <p id="admin-sync-problems" class="note bad-text" hidden></p>
+            <div class="bar"><button type="button" id="admin-sync-run">Fetch them</button></div>
+            <p id="admin-sync-status" class="note" role="status" hidden></p>
+            <ul id="admin-sync-failed" class="plain bad-text" hidden></ul>
+          </div>
+        </section>
+
         <section class="card" id="admin-job-card" aria-labelledby="admin-job-h" hidden>
           <h2 id="admin-job-h" tabindex="-1">Last action <span id="admin-job-state" class="pill"></span></h2>
           <pre id="admin-job" class="info log" role="log" aria-live="polite"></pre>
@@ -227,7 +312,7 @@
           <div class="bar"><button type="button" id="admin-recompose">Re-compose with these…</button></div>
         </section>
 
-        <section class="card" aria-labelledby="admin-upgrades-h">
+        <section class="card" id="admin-upgrades-card" aria-labelledby="admin-upgrades-h">
           <h2 id="admin-upgrades-h">Upgrades</h2>
           <p id="admin-upgrades" class="note"></p>
           <ul id="admin-upgrades-list" class="plain"></ul>
@@ -350,7 +435,8 @@
           <label><input type="checkbox" id="fresh-branch"> Start a new branch</label>
           <p id="fresh-branch-why" class="muted note sub" hidden></p>
           <div id="fresh-branch-details" class="sub" hidden>
-            <input type="text" id="fresh-branch-name" aria-label="Name of the new branch" spellcheck="false" autocomplete="off">
+            <input type="text" id="fresh-branch-name" aria-label="Name of the new branch" aria-describedby="fresh-branch-note" spellcheck="false" autocomplete="off">
+            <p id="fresh-branch-note" class="note" role="status" hidden></p>
             <div class="choices" role="radiogroup" aria-label="Branch from">
               <label><input type="radio" name="fresh-from" id="fresh-from-here" value="here"> Branch from here <span id="fresh-from-here-name" class="muted"></span></label>
               <div id="fresh-from-default-row">

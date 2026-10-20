@@ -1,0 +1,186 @@
+package review
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+const oldRef = `<Project><ItemGroup><PackageReference Include="Corp.Lib" Version="1.0.0" /></ItemGroup></Project>`
+const newRef = `<Project><ItemGroup><PackageReference Include="Corp.Lib" Version="2.0.0" /></ItemGroup></Project>`
+
+func TestProjectFilesAreReadAtTheBranchAndAsTheyAreNow(t *testing.T) {
+	dir := repo(t, map[string]string{"src/App/App.csproj": oldRef, "readme.md": "hi", "Directory.Packages.props": "<Project/>"})
+	git(t, dir, "checkout", "-q", "-b", "feature")
+	write(t, dir, "src/App/App.csproj", newRef)
+	write(t, dir, "src/Lib/Lib.fsproj", "<Project/>")
+
+	got, err := ReadProjectFiles(context.Background(), dir, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Committed["src/App/App.csproj"] != oldRef || got.Working["src/App/App.csproj"] != newRef {
+		t.Errorf("committed %v, working %v", got.Committed, got.Working)
+	}
+	if _, ok := got.Working["src/Lib/Lib.fsproj"]; !ok {
+		t.Errorf("a new, untracked project file is in the working tree: %v", got.Working)
+	}
+	if _, ok := got.Committed["src/Lib/Lib.fsproj"]; ok {
+		t.Errorf("it isn't on main: %v", got.Committed)
+	}
+	if _, ok := got.Committed["Directory.Packages.props"]; !ok {
+		t.Errorf("central package versions are project files: %v", got.Committed)
+	}
+	for _, side := range []map[string]string{got.Committed, got.Working} {
+		if _, ok := side["readme.md"]; ok {
+			t.Error("only files that name packages are read")
+		}
+	}
+}
+
+func TestProjectFilesAreOnlyThoseInTheFolder(t *testing.T) {
+	top := repo(t, map[string]string{"a/A.csproj": oldRef, "b/B.csproj": oldRef})
+	got, err := ReadProjectFiles(context.Background(), filepath.Join(top, "a"), "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Committed) != 1 || len(got.Working) != 1 || got.Committed["A.csproj"] == "" || got.Working["A.csproj"] == "" {
+		t.Errorf("committed %v, working %v: only the sandbox's own folder, paths from it", got.Committed, got.Working)
+	}
+}
+
+func TestProjectFilesDoNotFollowLinksOrReadBuildOutput(t *testing.T) {
+	dir := repo(t, map[string]string{"A.csproj": oldRef})
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "Secret.csproj"), []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "linked")); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "Secret.csproj"), filepath.Join(dir, "Sneaky.csproj")); err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "obj/Generated.csproj", "generated")
+	write(t, dir, "node_modules/x/X.csproj", "dependency")
+	got, err := ReadProjectFiles(context.Background(), dir, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, body := range got.Working {
+		if strings.Contains(body, "secret") || path == "obj/Generated.csproj" || strings.HasPrefix(path, "node_modules") || strings.HasPrefix(path, "linked") {
+			t.Errorf("read %s", path)
+		}
+	}
+}
+
+func TestProjectFilesWithNoBranchAreOnlyReadAsTheyAreNow(t *testing.T) {
+	dir := repo(t, map[string]string{"A.csproj": oldRef})
+	got, err := ReadProjectFiles(context.Background(), dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Committed) != 0 || got.Working["A.csproj"] != oldRef {
+		t.Errorf("committed %v, working %v", got.Committed, got.Working)
+	}
+}
+
+func TestAProjectFileTooLargeToBeOneIsLeftOut(t *testing.T) {
+	dir := repo(t, map[string]string{"Big.csproj": strings.Repeat("x", maxProjectFile+1), "A.csproj": oldRef})
+	got, err := ReadProjectFiles(context.Background(), dir, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.Working["Big.csproj"]; ok {
+		t.Error("read a file over the limit")
+	}
+	if _, ok := got.Committed["Big.csproj"]; ok {
+		t.Error("read a committed file over the limit")
+	}
+	if got.Working["A.csproj"] == "" {
+		t.Error("the others are read")
+	}
+}
+
+// A folder reached through a link (macOS's /var is one; a Windows temp folder has a short name and a
+// long) is the same folder: its committed files are those of its place in the repository, found by
+// where it really is, not by how it was named.
+func TestProjectFilesAreReadThroughALinkToTheFolder(t *testing.T) {
+	top := repo(t, map[string]string{"a/A.csproj": oldRef, "b/B.csproj": oldRef})
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(filepath.Join(top, "a"), link); err != nil {
+		t.Skipf("no links here: %v", err)
+	}
+	got, err := ReadProjectFiles(context.Background(), link, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Committed["A.csproj"] != oldRef || len(got.Committed) != 1 {
+		t.Errorf("committed %v: the folder behind the link is a/, whose files are these", got.Committed)
+	}
+}
+
+// A project file left unread (too big, or past the limit on how many) means a package seems not to be used
+// where it may be: what is read says so, so nothing is claimed from the gap.
+func TestProjectFilesLeftUnreadAreSaidSo(t *testing.T) {
+	big := "<Project>" + strings.Repeat(" ", maxProjectFile) + "</Project>"
+	dir := repo(t, map[string]string{"src/App/App.csproj": oldRef, "src/Big/Big.csproj": big})
+	got, err := ReadProjectFiles(context.Background(), dir, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Truncated {
+		t.Error("a project file over the limit was left out without saying so")
+	}
+	if _, ok := got.Working["src/Big/Big.csproj"]; ok {
+		t.Error("the big file was read")
+	}
+}
+
+func TestSoManyProjectFilesThatSomeAreLeftUnreadIsSaidSo(t *testing.T) {
+	files := map[string]string{}
+	for i := 0; i < maxProjectFiles+5; i++ {
+		files[filepath.Join("p", strings.Repeat("a", 1)+string(rune('a'+i%26)), "n"+itoa(i)+".csproj")] = "<Project/>"
+	}
+	dir := repo(t, files)
+	got, err := ReadProjectFiles(context.Background(), dir, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Truncated {
+		t.Errorf("%d committed and %d working files, with no word that some were left out", len(got.Committed), len(got.Working))
+	}
+}
+
+func TestProjectFilesAllReadAreNotSaidToBeTruncated(t *testing.T) {
+	dir := repo(t, map[string]string{"src/App/App.csproj": oldRef})
+	got, err := ReadProjectFiles(context.Background(), dir, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Truncated {
+		t.Error("said some were left out when none were")
+	}
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }
+
+// What the default branch has but the folder no longer does is read at the branch: left unread there, it is said too.
+func TestAProjectFileTooLargeAtTheBranchIsSaidSoEvenWhenTheFolderLacksIt(t *testing.T) {
+	big := "<Project>" + strings.Repeat(" ", maxProjectFile) + "</Project>"
+	dir := repo(t, map[string]string{"src/App/App.csproj": oldRef, "src/Big/Big.csproj": big})
+	git(t, dir, "checkout", "-q", "-b", "feature")
+	if err := os.Remove(filepath.Join(dir, "src", "Big", "Big.csproj")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadProjectFiles(context.Background(), dir, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Truncated {
+		t.Error("the branch's big file was left out without saying so")
+	}
+}

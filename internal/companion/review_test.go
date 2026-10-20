@@ -781,8 +781,16 @@ func TestTheInboxIsTakenInWithNoPageOpen(t *testing.T) {
 	os.MkdirAll(store.Inbox(), 0o755)
 	os.WriteFile(filepath.Join(store.Inbox(), "1.json"), []byte(`{"op":"general","body":"seen without a page"}`), 0o644)
 	done := make(chan struct{})
-	defer close(done)
-	go s.takeInbox(done, 10*time.Millisecond)
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		s.takeInbox(done, 10*time.Millisecond)
+	}()
+	// Until it has stopped it may be writing into the folders the test's cleanup removes.
+	defer func() {
+		close(done)
+		<-stopped
+	}()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		if r, _ := store.Load(); len(r.Threads) == 1 {

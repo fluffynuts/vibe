@@ -12,12 +12,13 @@ func TestMovingASandboxsRecordsTakesEverythingVibeKeepsForIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	files := map[string]string{
-		tokenPath(home, "old"):                                      "page token",
-		GitTokenPath(home, "old"):                                   "git token",
-		ConversationPath(home, "old"):                               "{}",
-		TranscriptPath(home, "old"):                                 "tgz",
-		filepath.Join(ClipboardPath(home, "old"), "items", "1.png"): "png",
-		filepath.Join(ReviewPath(home, "old"), "review.json"):       "{}",
+		tokenPath(home, "old"):                                       "page token",
+		GitTokenPath(home, "old"):                                    "git token",
+		ConversationPath(home, "old"):                                "{}",
+		TranscriptPath(home, "old"):                                  "tgz",
+		filepath.Join(ClipboardPath(home, "old"), "items", "1.png"):  "png",
+		filepath.Join(ReviewPath(home, "old"), "review.json"):        "{}",
+		filepath.Join(PackagesPath(home, "old"), "view", "1.answer"): "fetched",
 	}
 	for file, content := range files {
 		os.MkdirAll(filepath.Dir(file), 0o700)
@@ -39,6 +40,7 @@ func TestMovingASandboxsRecordsTakesEverythingVibeKeepsForIt(t *testing.T) {
 		tokenPath(home, "new"), GitTokenPath(home, "new"), ConversationPath(home, "new"), TranscriptPath(home, "new"),
 		filepath.Join(ClipboardPath(home, "new"), "items", "1.png"),
 		filepath.Join(ReviewPath(home, "new"), "review.json"),
+		filepath.Join(PackagesPath(home, "new"), "view", "1.answer"),
 	} {
 		if _, err := os.Stat(moved); err != nil {
 			t.Errorf("not moved: %s", moved)

@@ -14,6 +14,8 @@ import (
 	"vibe/internal/companion"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
+	"vibe/internal/nugetfetch"
+	"vibe/internal/packagereq"
 	"vibe/internal/pathresolve"
 	"vibe/internal/policy"
 	"vibe/internal/portalloc"
@@ -247,9 +249,20 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 	}
 	setting := ""
 	agent := inst.Agent
+	var desk *packagereq.Desk
+	var workspaceConfig companion.PackageConfig
+	var packageSync *nugetfetch.Sync
 	if found && lay.ProfileExists(inst.Profile) {
 		if merged, err := loadSettings(lay, inst.Profile); err == nil {
 			setting = merged.Companion
+			desk = packageDeskFor(lay, name, inst, merged)
+			if desk != nil {
+				workspaceConfig = workspaceConfigFor(lay.Home, name, inst, merged)
+			}
+			packageSync = packageSyncFor(lay, name, inst, merged)
+			if desk != nil {
+				desk.Overview = packagesOverview(desk, packageSync)
+			}
 			if agent == "" {
 				agent = agentOf(merged)
 			}
@@ -315,6 +328,10 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		History:                state.ConversationPath(vibeHome, name),
 		ReviewTab:              reviewTabFor(vibeHome, name, inst),
 		Admin:                  adminFor(lay, name, inst.Target),
+		Packages:               packageDesk(desk),
+		PackageConfig:          workspaceConfig,
+		PackageSync:            packageSyncOf(packageSync),
+		PackageSyncAuto:        packageSyncAuto(lay, inst.Profile),
 		Usage:                  usageFor(vibeHome, name),
 		Manage:                 &companionManager{lay: lay, own: name},
 		ThemeColor:             themeColorFor(lay, name, inst, agent),
@@ -491,3 +508,21 @@ func sandboxGitFor(name, target string) func(ctx context.Context, args ...string
 // startSandboxForPage starts sandbox name for the page. A variable for
 // tests.
 var startSandboxForPage = sbxrun.Start
+
+// packageSyncOf is sync for the page's Config, which takes none as nil: a nil
+// *Sync in an interface isn't.
+func packageSyncOf(sync *nugetfetch.Sync) companion.PackageSync {
+	if sync == nil {
+		return nil
+	}
+	return sync
+}
+
+// packageDesk is desk for the page's Config, which takes no desk as nil: a
+// nil *Desk in an interface isn't.
+func packageDesk(desk *packagereq.Desk) companion.PackageDesk {
+	if desk == nil {
+		return nil
+	}
+	return desk
+}

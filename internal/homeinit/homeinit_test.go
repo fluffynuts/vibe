@@ -14,7 +14,7 @@ func seedBundle(t *testing.T) layout.Layout {
 	l := layout.New(t.TempDir(), t.TempDir())
 	write(t, l.BundlePath("config.yaml"), "name: vibe\n")
 	write(t, l.BundlePath("settings.yaml"), "memory: 12g\n")
-	write(t, l.BundlePath("profiles", "yumbi", "config.yaml"), "name: yumbi\n")
+	write(t, l.BundlePath("profiles", "widget", "config.yaml"), "name: widget\n")
 	write(t, l.BundlePath("profiles", "phoenix", "config.yaml"), "name: phoenix\n")
 	write(t, l.BundlePath("defaults", "install-scripts", "01-a"), "echo a\n")
 	write(t, l.BundlePath("library", "mysql", "install-scripts", "01-install-mysql"), "echo mysql\n")
@@ -74,12 +74,12 @@ func TestRunCopiesBaseFilesAndAcceptedProfiles(t *testing.T) {
 	var asked []string
 	res, err := Run(l, func(profile string) bool {
 		asked = append(asked, profile)
-		return profile == "yumbi"
+		return profile == "widget"
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"phoenix", "yumbi"}; !reflect.DeepEqual(asked, want) {
+	if want := []string{"phoenix", "widget"}; !reflect.DeepEqual(asked, want) {
 		t.Errorf("asked about %v, want every bundled profile %v", asked, want)
 	}
 	if want := []string{"config.yaml", "settings.yaml", "defaults/"}; !reflect.DeepEqual(res.Files, want) {
@@ -100,10 +100,10 @@ func TestRunCopiesBaseFilesAndAcceptedProfiles(t *testing.T) {
 	if got, want := l.FeatureDir("mysql"), l.BundlePath("library", "mysql"); got != want {
 		t.Errorf("FeatureDir(mysql) = %s, want the bundle's %s", got, want)
 	}
-	if want := []string{"yumbi"}; !reflect.DeepEqual(res.Profiles, want) {
+	if want := []string{"widget"}; !reflect.DeepEqual(res.Profiles, want) {
 		t.Errorf("copied profiles %v, want %v", res.Profiles, want)
 	}
-	if _, err := os.Stat(l.HomePath("profiles", "yumbi", "config.yaml")); err != nil {
+	if _, err := os.Stat(l.HomePath("profiles", "widget", "config.yaml")); err != nil {
 		t.Errorf("accepted profile not copied: %v", err)
 	}
 	if _, err := os.Stat(l.HomePath("profiles", "phoenix")); err == nil {

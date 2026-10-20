@@ -34,11 +34,11 @@ func TestEnsureProfileCreatesBlank(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			lay := layout.New(t.TempDir(), t.TempDir())
 			if tc.seed {
-				dir := lay.BundlePath("profiles", "yumbi")
+				dir := lay.BundlePath("profiles", "widget")
 				if err := os.MkdirAll(dir, 0o755); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("name: yumbi\n"), 0o644); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("name: widget\n"), 0o644); err != nil {
 					t.Fatal(err)
 				}
 			}

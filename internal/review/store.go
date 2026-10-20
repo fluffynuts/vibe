@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,6 +11,7 @@ import (
 	"sync"
 	"time"
 	"vibe/internal/fscopy"
+	"vibe/internal/plainfile"
 )
 
 // A review's State.
@@ -214,37 +214,7 @@ func (s *Store) Inbox() string { return filepath.Join(s.dir, "inbox") }
 // View is the folder the review is copied to for the agent to read.
 func (s *Store) View() string { return filepath.Join(s.dir, "view") }
 
-func readRequest(path string) ([]byte, error) { return readPlain(path, maxRequest) }
-
-// readPlain reads the plain file at path, up to limit bytes: not a link
-// there, nor anything that isn't a file (a FIFO would wait forever).
-func readPlain(path string, limit int64) ([]byte, error) {
-	f, err := openNoFollow(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("it isn't a plain file")
-	}
-	data, err := io.ReadAll(io.LimitReader(f, limit+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > limit {
-		return nil, errTooLarge{limit}
-	}
-	return data, nil
-}
-
-// errTooLarge is a file over the limit it's read up to.
-type errTooLarge struct{ limit int64 }
-
-func (e errTooLarge) Error() string { return fmt.Sprintf("it's too large (over %d bytes)", e.limit) }
+func readRequest(path string) ([]byte, error) { return plainfile.Read(path, maxRequest) }
 
 // reviewSize is how large r is, saved: what Take holds under maxReview,
 // an eighth of it left for what's noted as it goes (problems, the taken).
@@ -304,11 +274,11 @@ func (s *Store) Load() (Review, error) {
 
 func (s *Store) load() (Review, error) {
 	r := Review{Threads: []Thread{}}
-	data, err := readPlain(s.file(), maxReview)
+	data, err := plainfile.Read(s.file(), maxReview)
 	if os.IsNotExist(err) {
 		return r, nil
 	}
-	if errors.As(err, &errTooLarge{}) {
+	if errors.As(err, &plainfile.TooLarge{}) {
 		return r, Unreadable{fmt.Errorf("the review in %s is too large to load (over %d MB): move it aside to start afresh (Start afresh on the Review tab does, keeping it in history/)", s.file(), maxReview>>20)}
 	}
 	if err != nil {

@@ -82,12 +82,16 @@ func createCall(t *testing.T, calls string) string {
 }
 
 // Every folder of the host's a sandbox is given, and the variable that
-// tells the sandbox where it is: the NuGet folder the profile names (when
-// it's there), the agent's memories, the review's inbox and (read-only)
+// tells the sandbox where it is: the packages in the NuGet folder the profile
+// names (read-only, when they're there), the agent's memories, the review's inbox and (read-only)
 // view, and the clipboard's history.
 func TestASandboxIsGivenEachOfItsFolders(t *testing.T) {
 	lay := updateLayout(t)
 	nuget := t.TempDir()
+	packages := filepath.Join(nuget, "packages")
+	if err := os.Mkdir(packages, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	writeFile(t, lay.HomePath("profiles", "p", "settings.yaml"), "nugetDir: "+nuget+"\n"+
 		"publish:\n  - name: clipboard\n    ports:\n      - 5390\n")
 	inst := sandboxRecord(t, lay, "box", "p").inst
@@ -100,7 +104,7 @@ func TestASandboxIsGivenEachOfItsFolders(t *testing.T) {
 	memories := agentmem.StoreFor(lay.Home, "", "box")
 	clipboard := state.ClipboardPath(lay.Home, "box")
 	for _, want := range []string{
-		" " + nuget + " ", "-e SBX_HOST_NUGET=" + nuget,
+		" " + packages + ":ro", "-e SBX_HOST_NUGET_PACKAGES=" + packages,
 		" " + memories + " ", "-e VIBE_MEMORY_STORE=" + memories,
 		" " + filepath.Join(reviews, "inbox") + " ", " " + filepath.Join(reviews, "view") + ":ro",
 		"-e VIBE_REVIEW_DIR=" + reviews,

@@ -29,8 +29,8 @@ sudo -u elasticsearch env ES_PATH_CONF=/etc/elasticsearch \
   ES_TMPDIR=/usr/share/elasticsearch/tmp \
   setsid /usr/share/elasticsearch/bin/elasticsearch -d -p /tmp/elasticsearch.pid
 
-# The wrapper in Yumbi probes for HTTP 200, so wait for that, not just
-# for the port to open.
+# What starts a sandbox's services probes for HTTP 200, so wait for that,
+# not just for the port to open.
 i=0
 while [ $i -lt 120 ]; do
   code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9200 2>/dev/null)
@@ -42,5 +42,5 @@ while [ $i -lt 120 ]; do
   sleep 1
 done
 echo "ERROR: elasticsearch not answering 200 after $i seconds (last code: $code)"
-echo "check /var/log/elasticsearch/yumbi-sandbox.log"
+echo "check /var/log/elasticsearch/vibe-sandbox.log"
 exit 1

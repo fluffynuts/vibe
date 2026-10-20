@@ -138,6 +138,25 @@ func TestMergeAutoUpdateOnlyWhenSet(t *testing.T) {
 	}
 }
 
+func TestMergeNugetOverrideWins(t *testing.T) {
+	got := Merge(Settings{Nuget: "fallback"}, Settings{Nuget: "shared"})
+	if got.Nuget != "shared" {
+		t.Errorf("Nuget = %q, want the override's", got.Nuget)
+	}
+	if got = Merge(Settings{Nuget: "shared"}, Settings{}); got.Nuget != "shared" {
+		t.Errorf("Nuget = %q, want the base's when the override sets none", got.Nuget)
+	}
+}
+
+func TestMergePackagesOverrideWins(t *testing.T) {
+	if got := Merge(Settings{Packages: "ask"}, Settings{Packages: "allow"}); got.Packages != "allow" {
+		t.Errorf("Packages = %q", got.Packages)
+	}
+	if got := Merge(Settings{Packages: "allow"}, Settings{}); got.Packages != "allow" {
+		t.Errorf("Packages = %q, want the base's when the override sets none", got.Packages)
+	}
+}
+
 func TestMergeCPUsOverrideWins(t *testing.T) {
 	if got := Merge(Settings{CPUs: 4}, Settings{CPUs: 6}); got.CPUs != 6 {
 		t.Errorf("CPUs = %d, want the override's", got.CPUs)

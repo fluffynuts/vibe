@@ -33,6 +33,7 @@ import (
 
 	"vibe/internal/filekind"
 	"vibe/internal/pathresolve"
+	"vibe/internal/plainfile"
 )
 
 // The sandbox's folder is the sandbox's to write, .git and all: the
@@ -106,7 +107,7 @@ func openRepo(dir string) (*repository, error) {
 			return nil, err
 		}
 	case dotGit.Mode().IsRegular():
-		data, err := readPlain(gitDir, 4096)
+		data, err := plainfile.Read(gitDir, 4096)
 		if err != nil {
 			return nil, err
 		}

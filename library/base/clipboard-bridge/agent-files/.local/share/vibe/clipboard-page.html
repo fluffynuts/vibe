@@ -64,13 +64,25 @@
   #clearbar { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; margin: 0 2px 10px; }
   #clearbar:empty { display: none; }
   #clearbar .ask { color: var(--danger); font-size: 14px; }
+  /* Fixed, so that it appearing and going never moves the page: it can come up while someone is
+     looking at the list, and a shift draws the eye to the very thing that isn't worth chasing. */
+  #link {
+    position: fixed; top: 8px; right: 12px; max-width: calc(100% - 24px); z-index: 1;
+    background: var(--panel); color: var(--danger); border: 1px solid var(--danger);
+    border-radius: 8px; padding: 3px 10px; font-size: 13px;
+  }
+  #link[hidden] { display: none; }
   /* Says what was just done, then goes: what needs reading stays in #status. */
   #toast {
     position: fixed; right: 12px; bottom: 12px; max-width: calc(100% - 24px);
     background: var(--panel); color: var(--text); border: 1px solid var(--accent);
     border-radius: 8px; padding: 8px 12px; font-size: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.3);
   }
-  #items { display: grid; gap: 12px; }
+  #items, #held { display: grid; gap: 12px; }
+  #held:not(:empty) { margin-bottom: 12px; }
+  #held .item { grid-template-columns: 1fr auto; align-items: center; padding: 8px 12px; border: 1px dashed var(--border); border-radius: 8px; }
+  #held .what { min-width: 0; overflow-wrap: anywhere; }
+  #held .why { color: var(--muted); font-size: 13px; }
   .item {
     display: grid; grid-template-columns: 160px 1fr; gap: 14px; align-items: start;
     background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px;
@@ -156,10 +168,12 @@
   </div>
   <div id="list">
   <div id="clearbar"></div>
+  <section id="held" aria-live="polite"></section>
   <section id="items" aria-live="polite"></section>
   </div>
 </main>
 <div id="zoom"><img alt=""></div>
+<div id="link" role="status" hidden></div>
 <div id="toast" role="status" hidden></div>
 
 <script>
@@ -373,11 +387,32 @@ function render(data) {
   });
 }
 
+// A sandbox waking from sleep restarts this server, so a look or two can fail without anything
+// being wrong; the page looks every couple of seconds, so it says so only once a few have failed
+// in a row, and takes it back as soon as one succeeds.
+var LOOKS_BEFORE_SAYING = 3;
+var failedLooks = 0;
+function showReachable(reachable) {
+  failedLooks = reachable ? 0 : failedLooks + 1;
+  var linkEl = document.getElementById("link");
+  linkEl.textContent = "Can't reach the clipboard server — is the sandbox running?";
+  linkEl.hidden = failedLooks < LOOKS_BEFORE_SAYING;
+}
+
 function refresh() {
-  return fetch("/api/items").then(function (r) { return r.json(); }).then(render).catch(function () {
-    setStatus("Can't reach the clipboard server — is the sandbox running?", true);
+  return fetch("/api/items").then(function (r) { return r.json(); }).then(function (data) {
+    showReachable(true);
+    render(data);
+    sendHeld();
+  }, function () {
+    showReachable(false);
   });
 }
+
+// A server that can't be reached is not the user's doing, and what they pasted is theirs to
+// keep: it waits here, in this page's memory (so not past closing it, which is asked about), and
+// goes when the server answers. An answer that refuses it is another matter, and is said.
+var held = [];
 
 function upload(blob, name) {
   var headers = { "Content-Type": blob.type || "application/octet-stream" };
@@ -385,19 +420,88 @@ function upload(blob, name) {
   return fetch("/api/items", { method: "POST", headers: headers, body: blob }).then(function (r) {
     if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || r.statusText); });
     return r.json();
+  }, function () {
+    var err = new Error("the clipboard server isn't answering");
+    err.unreachable = true;
+    throw err;
   });
 }
+
+// A server that has been away through a few pastes is a problem to look into, not one to keep adding to
+// (in this page's memory): so few are held, and no more than a total size; what isn't is said.
+var HOLD_MAX_ITEMS = 3;
+var HOLD_MAX_BYTES = 150 * 1024 * 1024;
+
+function heldBytes() {
+  return held.reduce(function (n, entry) { return n + entry.blob.size; }, 0);
+}
+
+// hold keeps what fits, and says how many items it couldn't (0 when all were kept).
+function hold(entries) {
+  var notKept = 0;
+  entries.forEach(function (entry) {
+    if (held.length < HOLD_MAX_ITEMS && heldBytes() + entry.blob.size <= HOLD_MAX_BYTES) held.push(entry);
+    else notKept++;
+  });
+  showHeld();
+  return notKept;
+}
+
+function notKeptText(n) {
+  return "Not kept: " + (n === 1 ? "1 item" : n + " items") + ". The server has been away for a while, and only " +
+    HOLD_MAX_ITEMS + " items, up to " + (HOLD_MAX_BYTES / (1024 * 1024)) + " MB, are held until it's back. Paste again then.";
+}
+
+function showHeld() {
+  var box = document.getElementById("held");
+  box.textContent = "";
+  held.forEach(function (entry) {
+    box.appendChild(el("article", { class: "item" }, [
+      el("div", { class: "what" }, [
+        el("div", { text: entry.name || (entry.blob.type || "pasted item") + " · " + formatSize(entry.blob.size) }),
+        el("div", { class: "why", text: "waiting for the server — it'll be added when the server is back" }),
+      ]),
+      el("button", { text: "Drop", onclick: function () { held = held.filter(function (h) { return h !== entry; }); showHeld(); } }),
+    ]));
+  });
+}
+
+// sendHeld is what's held, once the server has answered.
+function sendHeld() {
+  if (!held.length) return;
+  var entries = held;
+  held = [];
+  showHeld();
+  uploadAll(entries);
+}
+
+window.addEventListener("beforeunload", function (e) {
+  if (!held.length) return;
+  e.preventDefault();
+  e.returnValue = "";
+});
 
 function uploadAll(entries) {
   if (!entries.length) return;
   setStatus("Sending " + entries.length + (entries.length === 1 ? " item…" : " items…"));
-  Promise.all(entries.map(function (e) { return upload(e.blob, e.name); })).then(function (added) {
+  var unreachable = [];
+  Promise.all(entries.map(function (e) {
+    return upload(e.blob, e.name).catch(function (err) {
+      if (!err.unreachable) throw err;
+      unreachable.push(e);
+      return null;
+    });
+  })).then(function (added) {
+    var notKept = unreachable.length ? hold(unreachable) : 0;
+    var extra = notKept ? " " + notKeptText(notKept) : "";
+    added = added.filter(Boolean);
+    if (!added.length) { setStatus(notKept ? notKeptText(notKept) : "", notKept > 0); return; }
     // One already waiting to go to the agent isn't added again.
     var already = added.filter(function (a) { return a.duplicate; }).length;
     var fresh = added.length - already;
-    if (!fresh) setStatus(already === 1 ? "Already pasted: it's waiting to go with your next message." : "Already pasted, all " + already + ".");
+    if (!fresh) setStatus((already === 1 ? "Already pasted: it's waiting to go with your next message." : "Already pasted, all " + already + ".") + extra, notKept > 0);
     else setStatus((fresh === 1 ? "Added — it'll reach the agent with your next message." : "Added " + fresh + " items.") +
-      (already ? " (" + already + " already pasted.)" : ""));
+      (already ? " (" + already + " already pasted.)" : "") + extra, notKept > 0);
     return refresh();
   }).catch(function (err) {
     setStatus("Couldn't add that: " + err.message, true);

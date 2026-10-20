@@ -1,0 +1,284 @@
+#!/bin/sh
+# vibe: description: Ask the host for a NuGet package this sandbox can't get itself (a private feed's)
+# vibe: startup: false
+# The host's NuGet config holds the private feeds and their credentials; the
+# sandbox has none of it, so a package from such a feed is asked of the host
+# with this. The request is dropped in an inbox folder of the host's
+# (VIBE_PACKAGES_DIR/inbox) and the answer read from a read-only view of it:
+# vibe on the host fetches the package into its cache, which the sandbox
+# reads, and may ask the user first. No braced shell expansions in this
+# file: sbx validates every brace-form substitution in file content against
+# its own placeholder list.
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: vibe-nuget fetch ID VERSION [--framework TFM]
+       vibe-nuget status
+       vibe-nuget tidy
+
+  fetch  Ask the host to fetch the NuGet package ID at exactly VERSION, from
+         the feeds in the host's NuGet config, then restore again. TFM is the
+         target framework, such as net8.0; it defaults to the project's here.
+  status Ask the host what is waiting for the user (requests to approve,
+         packages their IDE can't see), before you restore or build.
+  tidy   Drop this sandbox's own copy of packages the user's package cache has
+         too, so the next restore points the generated files at theirs. Safe
+         and expected: no need to ask the user first.
+USAGE
+  exit 2
+}
+
+fail() {
+  echo "vibe-nuget: $1" >&2
+  exit "$2"
+}
+
+command=$1
+case "$command" in
+  fetch | status | tidy) ;;
+  *) usage ;;
+esac
+shift
+id=
+version=
+framework=
+if [ "$command" = fetch ]; then
+  [ $# -ge 2 ] || usage
+  id=$1
+  version=$2
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --framework)
+        [ $# -ge 2 ] || fail "--framework needs a value, such as net8.0" 2
+        framework=$2
+        shift 2
+        ;;
+      *) usage ;;
+    esac
+  done
+else
+  [ $# -eq 0 ] || usage
+fi
+
+# The sandbox's own package cache, and the user's (the read-only fallback), without a trailing slash.
+own=$NUGET_PACKAGES
+if [ -z "$own" ]; then
+  own=$HOME/.nuget/packages
+fi
+own=$(printf '%s' "$own" | sed 's#/*$##')
+host=$(printf '%s' "$NUGET_FALLBACK_PACKAGES" | sed 's#/*$##')
+
+# The packages (as "id/version") this sandbox holds its own copy of, that the user's cache has too, and that
+# the generated files here name: restore found the sandbox's first when it had to download them, and keeps
+# naming it. Only what a project.nuget.cache names in exactly the sandbox's own cache counts: those files are
+# written by the agent's own restores, but read as data here, and nothing outside the cache is ever removed.
+tidy_candidates() {
+  find . -path '*/obj/project.nuget.cache' -not -path '*/node_modules/*' 2>/dev/null | while read -r cache; do
+    grep -o '"[^"]*\.nupkg\.sha512"' "$cache" | tr -d '"'
+  done | sort -u | while read -r file; do
+    version_dir=$(dirname "$file")
+    id_dir=$(dirname "$version_dir")
+    [ "$(dirname "$id_dir")" = "$own" ] || continue
+    id=$(basename "$id_dir")
+    version=$(basename "$version_dir")
+    case "$id$version" in *[!a-z0-9._+-]*) continue ;; esac
+    case "$id" in . | ..) continue ;; esac
+    case "$version" in . | ..) continue ;; esac
+    [ -d "$own/$id/$version" ] || continue
+    [ -e "$host/$id/$version/.nupkg.metadata" ] || continue
+    echo "$id/$version"
+  done
+}
+
+count_lines() {
+  printf '%s\n' "$1" | sed '/^$/d' | wc -l | tr -d ' '
+}
+
+# The project files (one a line) whose project.nuget.cache names a package file in the sandbox's own cache that is
+# not there any more: tidy removed it, or restore moved on. Such a project is left as it is by a restore of a
+# solution that doesn't contain it, so it is said by name. The cache is data the agent can write, and what is
+# printed becomes a command: only a plain project file in this workspace, that exists, is ever named.
+dangling_projects() {
+  # By real paths: the workspace can be reached by a link, and dotnet writes one form where the shell holds the other.
+  root=$(pwd -P)
+  find . -path '*/obj/project.nuget.cache' -not -path '*/node_modules/*' 2>/dev/null | while read -r cache; do
+    grep -o '"[^"]*\.nupkg\.sha512"' "$cache" | tr -d '"' | while read -r file; do
+      case "$file" in "$own"/*) ;; *) continue ;; esac
+      [ -e "$file" ] || { echo gone; break; }
+    done | grep -q gone || continue
+    project=$(grep -o '"projectFilePath": *"[^"]*"' "$cache" | head -n 1 | sed 's/^[^:]*: *"//; s/"$//')
+    case "$project" in
+      *.csproj | *.fsproj | *.vbproj) ;;
+      *) continue ;;
+    esac
+    project_dir=$(cd "$(dirname "$project")" 2>/dev/null && pwd -P) || continue
+    project="$project_dir/$(basename "$project")"
+    case "$project" in
+      "$root"/*) ;;
+      *) continue ;;
+    esac
+    printf '%s' "$project" | LC_ALL=C grep -q -E '^[A-Za-z0-9._/ +@=,-]+$' || continue
+    [ -f "$project" ] || continue
+    echo "$project"
+  done | sort -u
+}
+
+restore_commands() {
+  printf '%s\n' "$1" | sed "s/^/  dotnet restore '/; s/\$/'/"
+}
+
+# restore_hint is for status: the projects a restore hasn't put right, which one of a solution doesn't reach if they
+# aren't in it.
+restore_hint() {
+  projects=$(dangling_projects)
+  [ -n "$projects" ] || return 0
+  echo
+  echo "vibe-nuget: these projects' generated files still name packages in your own cache that are gone, so a build or the user's IDE can't rely on them. Restore each (a restore of a solution covers only the projects in it, and one outside the solution is left as it was):"
+  restore_commands "$projects"
+}
+
+# tidy_hint is for status: what the agent can do now the user has packages it had to download itself.
+tidy_hint() {
+  [ -n "$host" ] || return 0
+  copies=$(tidy_candidates)
+  [ -n "$copies" ] || return 0
+  echo
+  echo "vibe-nuget: packages you downloaded yourself are in the user's package cache now too ($(count_lines "$copies") of them), but the files generated here still name your copies, which their IDE can't see. Run 'vibe-nuget tidy', then 'dotnet restore': the files will name the user's cache. Tidy only drops your own copies of exactly those packages, plus the build's derived path caches; it is safe and part of the normal flow, so there is no need to ask the user first."
+}
+
+if [ "$command" = tidy ]; then
+  [ -n "$host" ] || fail "NUGET_FALLBACK_PACKAGES isn't set: this sandbox isn't given the user's package cache, so there is nothing to tidy against" 1
+  copies=$(tidy_candidates)
+  if [ -z "$copies" ]; then
+    echo "vibe-nuget: nothing to tidy: no package the projects here use is a copy of one the user's cache has"
+    exit 0
+  fi
+  printf '%s\n' "$copies" | while read -r entry; do
+    rm -rf "$own/$entry"
+    rmdir "$(dirname "$own/$entry")" 2>/dev/null
+  done
+  # What the SDK worked out of where each package was is derived, and still names what was just removed.
+  find . -path '*/obj/*' -name '*.assets.cache' -not -path '*/node_modules/*' -delete 2>/dev/null
+  n=$(count_lines "$copies")
+  if [ "$n" = 1 ]; then noun=package; else noun=packages; fi
+  echo "vibe-nuget: removed this sandbox's own copy of $n $noun the user's cache has too:"
+  printf '%s\n' "$copies" | sed 's#/# #; s#^#  #'
+  echo "vibe-nuget: now run 'dotnet restore' (the generated files will name the user's cache); nothing else of yours was touched"
+  echo "vibe-nuget: a restore of a solution covers only the projects in it, and one outside the solution is left naming copies that are gone: after restoring, run 'vibe-nuget status', which names any project still to restore"
+  exit 0
+fi
+
+if [ -z "$VIBE_PACKAGES_DIR" ]; then
+  fail "VIBE_PACKAGES_DIR isn't set: this sandbox wasn't given a place to ask for packages. Rebuild it ('vibe -r' on the host), and check that settings.yaml's nuget isn't 'shared' (then the whole host cache is already here)." 1
+fi
+inbox=$VIBE_PACKAGES_DIR/inbox
+view=$VIBE_PACKAGES_DIR/view
+[ -d "$inbox" ] || fail "$inbox isn't there: rebuild this sandbox ('vibe -r' on the host)" 1
+
+if [ "$command" = fetch ]; then
+# The host checks all of this again; here, so a mistake is said at once, and
+# so nothing but these characters ever goes in the request.
+case "$id" in
+  "" | *[!A-Za-z0-9_.-]*) fail "'$id' isn't a NuGet package id: letters, digits, '.', '_' and '-'" 2 ;;
+esac
+case "$version" in
+  "" | *[!0-9A-Za-z.+-]*) fail "'$version' isn't one exact version, such as 1.2.3 or 1.2.3-beta.1" 2 ;;
+esac
+
+# The frameworks the project files here name, one a line. msbuild can say a
+# single project's, but not a solution's.
+frameworks_in_project_files() {
+  grep -rhoE --include='*.csproj' --include='*.fsproj' --include='*.vbproj' --include=Directory.Build.props \
+    --exclude-dir=bin --exclude-dir=obj --exclude-dir=node_modules --exclude-dir=.git \
+    '<TargetFrameworks?>[^<]*' . 2>/dev/null | sed 's/<[^>]*>//' | tr ';' '\n' | sed 's/[[:space:]]//g' | sed '/^$/d' | sort -u
+}
+
+if [ -z "$framework" ]; then
+  # msbuild says why it can't (no project, or a solution) on stdout, with a
+  # status: only what it says when it succeeds is a framework.
+  if framework=$(dotnet msbuild -nologo -getProperty:TargetFramework 2>/dev/null); then
+    framework=$(printf '%s' "$framework" | tr -d '[:space:]')
+  else
+    framework=
+  fi
+  if [ -z "$framework" ]; then
+    found=$(frameworks_in_project_files)
+    count=$(printf '%s\n' "$found" | sed '/^$/d' | wc -l | tr -d ' ')
+    case "$found" in
+      *'$'*) count=0; found="(some are set by a property)" ;;
+    esac
+    if [ "$count" = 1 ]; then
+      framework=$found
+    elif [ "$count" = 0 ]; then
+      fail "couldn't tell this project's target framework: say it with --framework, such as --framework net8.0 ${found:+(the project files here say: $found)}" 2
+    else
+      fail "the projects here target different frameworks ($(printf '%s' "$found" | tr '\n' ' ')): say which is meant with --framework, such as --framework net8.0" 2
+    fi
+  fi
+fi
+case "$framework" in
+  "" | *[!0-9a-z.]*) fail "'$framework' isn't a target framework such as net8.0" 2 ;;
+esac
+fi
+
+# With the host's cache overlaid here (see link-nuget), a package this
+# sandbox looked for before the host fetched it is still answered as missing:
+# overlayfs keeps what it found below, and the host changed that behind its
+# back. Dropping the kernel's dentry caches (2) makes it look again.
+forget_what_was_missing() {
+  [ "$VIBE_NUGET_OVERLAY" = 1 ] || return 0
+  target=$VIBE_DROP_CACHES
+  if [ -z "$target" ]; then
+    target=/proc/sys/vm/drop_caches
+  fi
+  sync
+  if ! sudo sh -c 'echo 2 > "$1"' sh "$target"; then
+    echo "vibe-nuget: couldn't make this sandbox look again for packages it already looked for: if restore still says $id is missing, run 'sudo sh -c \"echo 2 > /proc/sys/vm/drop_caches\"' and restore again" >&2
+  fi
+}
+
+nonce=$(date +%s)-$$
+tmp=$inbox/.$nonce.tmp
+if [ "$command" = status ]; then
+  printf '{"kind":"status"}\n' >"$tmp" || fail "couldn't write a request in $inbox" 1
+else
+  printf '{"ecosystem":"nuget","id":"%s","version":"%s","framework":"%s"}\n' "$id" "$version" "$framework" >"$tmp" ||
+    fail "couldn't write a request in $inbox" 1
+fi
+mv "$tmp" "$inbox/$nonce.json" || fail "couldn't put the request in $inbox" 1
+if [ "$command" = fetch ]; then
+  echo "vibe-nuget: asked the host for $id $version ($framework)"
+fi
+
+answer=$view/$nonce.answer
+shown=
+waited=0
+while :; do
+  if [ -f "$answer" ]; then
+    status=$(sed -n 1p "$answer")
+    message=$(sed -n '2,$p' "$answer")
+    if [ "$status" = waiting ]; then
+      if [ "$shown" != "$message" ]; then
+        echo "vibe-nuget: $message"
+        shown=$message
+      fi
+    else
+      echo "$message"
+      if [ "$status" = info ]; then
+        [ "$command" = status ] && { tidy_hint; restore_hint; }
+        exit 0
+      fi
+      if [ "$status" = fetched ]; then
+        forget_what_was_missing
+        exit 0
+      fi
+      exit 1
+    fi
+  fi
+  sleep 1
+  waited=$((waited + 1))
+  if [ $((waited % 30)) -eq 0 ]; then
+    echo "vibe-nuget: still waiting for the host ($waited seconds): vibe has to be running on the host to answer, and the user may have to approve the request on the page's Admin tab. The request stays; asking again for the same package is fine."
+  fi
+done

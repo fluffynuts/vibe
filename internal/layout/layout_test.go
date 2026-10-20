@@ -97,39 +97,39 @@ func TestFeaturesUnionsBothLayers(t *testing.T) {
 
 func TestProfileDirIsAWholeDirectoryOverride(t *testing.T) {
 	l := New(t.TempDir(), t.TempDir())
-	write(t, l.BundlePath("profiles", "yumbi", "config.yaml"), "name: yumbi\n")
-	write(t, l.BundlePath("profiles", "yumbi", "settings.yaml"), "nugetDir: ~/.nuget\n")
+	write(t, l.BundlePath("profiles", "widget", "config.yaml"), "name: widget\n")
+	write(t, l.BundlePath("profiles", "widget", "settings.yaml"), "nugetDir: ~/.nuget\n")
 
-	if got, want := l.ProfileDir("yumbi"), l.BundlePath("profiles", "yumbi"); got != want {
+	if got, want := l.ProfileDir("widget"), l.BundlePath("profiles", "widget"); got != want {
 		t.Errorf("ProfileDir = %s, want %s", got, want)
 	}
 
 	// once the overlay has a directory of that name it wins whole: the
 	// bundle's settings.yaml must not leak through
-	write(t, l.HomePath("profiles", "yumbi", "config.yaml"), "name: yumbi\n")
-	if got, want := l.ProfileDir("yumbi"), l.HomePath("profiles", "yumbi"); got != want {
+	write(t, l.HomePath("profiles", "widget", "config.yaml"), "name: widget\n")
+	if got, want := l.ProfileDir("widget"), l.HomePath("profiles", "widget"); got != want {
 		t.Errorf("ProfileDir = %s, want the overlay's %s", got, want)
 	}
-	if _, err := os.Stat(filepath.Join(l.ProfileDir("yumbi"), "settings.yaml")); err == nil {
+	if _, err := os.Stat(filepath.Join(l.ProfileDir("widget"), "settings.yaml")); err == nil {
 		t.Error("the bundle's settings.yaml is still visible — the override is not whole")
 	}
 }
 
 func TestProfilesUnionAndExistence(t *testing.T) {
 	l := New(t.TempDir(), t.TempDir())
-	write(t, l.BundlePath("profiles", "yumbi", "config.yaml"), "name: yumbi\n")
-	write(t, l.HomePath("profiles", "yumbi", "config.yaml"), "name: yumbi\n")
+	write(t, l.BundlePath("profiles", "widget", "config.yaml"), "name: widget\n")
+	write(t, l.HomePath("profiles", "widget", "config.yaml"), "name: widget\n")
 	write(t, l.HomePath("profiles", "phoenix", "config.yaml"), "name: phoenix\n")
 	// a directory with no config.yaml is not a profile
 	if err := os.MkdirAll(l.HomePath("profiles", "scratch"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	want := []string{"phoenix", "yumbi"}
+	want := []string{"phoenix", "widget"}
 	if got := l.Profiles(); !reflect.DeepEqual(got, want) {
 		t.Errorf("Profiles = %v, want %v", got, want)
 	}
-	if got, want := l.BundleProfiles(), []string{"yumbi"}; !reflect.DeepEqual(got, want) {
+	if got, want := l.BundleProfiles(), []string{"widget"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("BundleProfiles = %v, want %v", got, want)
 	}
 	if !l.ProfileExists("phoenix") || l.ProfileExists("scratch") || l.ProfileExists("nope") {
@@ -140,7 +140,7 @@ func TestProfilesUnionAndExistence(t *testing.T) {
 func TestNoOverlay(t *testing.T) {
 	l := New("", t.TempDir())
 	write(t, l.BundlePath("settings.yaml"), "memory: 12g\n")
-	write(t, l.BundlePath("profiles", "yumbi", "config.yaml"), "name: yumbi\n")
+	write(t, l.BundlePath("profiles", "widget", "config.yaml"), "name: widget\n")
 
 	if got, want := l.File("settings.yaml"), l.BundlePath("settings.yaml"); got != want {
 		t.Errorf("File = %s, want %s", got, want)
@@ -151,7 +151,7 @@ func TestNoOverlay(t *testing.T) {
 	if got, want := l.DefaultsDir(), l.BundlePath("defaults"); got != want {
 		t.Errorf("DefaultsDir = %s, want the bundle's %s", got, want)
 	}
-	if got, want := l.Profiles(), []string{"yumbi"}; !reflect.DeepEqual(got, want) {
+	if got, want := l.Profiles(), []string{"widget"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Profiles = %v, want %v", got, want)
 	}
 }

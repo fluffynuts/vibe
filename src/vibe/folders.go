@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 
 	agentmem "vibe/internal/memory"
@@ -30,6 +29,57 @@ func (f folder) mount() string {
 	return f.path
 }
 
+const (
+	nugetFallback = "fallback"
+	nugetOverlay  = "overlay"
+	nugetShared   = "shared"
+)
+
+// nugetFallbackPackages is the host's package cache, when the sandbox is
+// given it (read-only) and may ask the host for what isn't in it.
+func nugetFallbackPackages(merged settings.Settings) (string, bool) {
+	if merged.NugetDir == "" || merged.Nuget == nugetShared {
+		return "", false
+	}
+	packages := filepath.Join(merged.NugetDir, "packages")
+	return packages, isDir(packages)
+}
+
+// nugetFolders is what a sandbox is given of the host's NuGet folder, when
+// the host has what it would be given. Shared is all of it, read-write.
+// Otherwise only the package cache goes in, read-only (the rest holds
+// feeds' credentials and plugins NuGet runs, and a package the agent can
+// write to runs on the host at its next build), with an inbox and a view
+// for asking the host for a package the sandbox can't get (see
+// internal/packagereq).
+func nugetFolders(vibeHome, name string, merged settings.Settings) []folder {
+	if merged.NugetDir == "" {
+		return nil
+	}
+	if merged.Nuget == nugetShared {
+		if !isDir(merged.NugetDir) {
+			return nil
+		}
+		return []folder{{path: merged.NugetDir, env: []string{"SBX_HOST_NUGET=" + merged.NugetDir},
+			note: "nuget:     " + merged.NugetDir + " (shared read-write: the agent can plant code in packages your builds use, and read your feeds' credentials)"}}
+	}
+	packages, ok := nugetFallbackPackages(merged)
+	if !ok {
+		return nil
+	}
+	requests := state.PackagesPath(vibeHome, name)
+	env := []string{"SBX_HOST_NUGET_PACKAGES=" + packages}
+	if merged.Nuget == nugetOverlay {
+		env = append(env, "SBX_NUGET_OVERLAY=1")
+	}
+	return []folder{
+		{path: packages, readOnly: true, env: env,
+			note: "nuget:     " + packages + " (packages, read-only)"},
+		{path: filepath.Join(requests, "inbox"), made: true, env: []string{"VIBE_PACKAGES_DIR=" + requests}},
+		{path: filepath.Join(requests, "view"), readOnly: true, made: true},
+	}
+}
+
 // sandboxFolders is every folder of the host's that sandbox name, working
 // in target, is given, in the order they're mounted. It is the one place
 // they're decided: creating a sandbox mounts these, and its fingerprint
@@ -37,12 +87,7 @@ func (f folder) mount() string {
 // date rather than on the old ones, unnoticed.
 func sandboxFolders(vibeHome, name, target string, merged settings.Settings, agent, memoryStore string) []folder {
 	var folders []folder
-	if merged.NugetDir != "" {
-		if info, err := os.Stat(merged.NugetDir); err == nil && info.IsDir() {
-			folders = append(folders, folder{path: merged.NugetDir, env: []string{"SBX_HOST_NUGET=" + merged.NugetDir},
-				note: "nuget:     " + merged.NugetDir + " (shared with host)"})
-		}
-	}
+	folders = append(folders, nugetFolders(vibeHome, name, merged)...)
 	if agentmem.Supported(agent) {
 		if memoryStore == "" {
 			memoryStore = agentmem.StoreFor(vibeHome, merged.MemoryRoot, name)

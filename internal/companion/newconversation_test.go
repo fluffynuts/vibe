@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -160,14 +162,16 @@ type freshOptions struct {
 		Unavailable string `json:"unavailable"`
 	} `json:"clipboard"`
 	Branch *struct {
-		Current      string `json:"current"`
-		Dirty        bool   `json:"dirty"`
-		Conflicted   bool   `json:"conflicted"`
-		Default      string `json:"default"`
-		DefaultSet   bool   `json:"defaultSet"`
-		DefaultEmpty bool   `json:"defaultEmpty"`
-		NoDefault    string `json:"noDefault"`
-		Unavailable  string `json:"unavailable"`
+		Current      string   `json:"current"`
+		Dirty        bool     `json:"dirty"`
+		Conflicted   bool     `json:"conflicted"`
+		Default      string   `json:"default"`
+		DefaultSet   bool     `json:"defaultSet"`
+		DefaultEmpty bool     `json:"defaultEmpty"`
+		NoDefault    string   `json:"noDefault"`
+		Unavailable  string   `json:"unavailable"`
+		Branches     []string `json:"branches"`
+		Remote       []string `json:"remote"`
 	} `json:"branch"`
 }
 
@@ -324,6 +328,26 @@ func TestTheBranchOptionsSayWhereYouAreAndWhatTheDefaultBranchIs(t *testing.T) {
 	gitOut(t, work, "switch", "-q", "-c", "feat/a")
 	if o = options(t, s); o.Branch.Current != "feat/a" || o.Branch.Default != "master" {
 		t.Errorf("on feat/a: %+v", o.Branch)
+	}
+}
+
+// The dialog says as the name is typed that a branch of that name is there already, here or at
+// origin (as last fetched), so the options carry both lists.
+func TestTheBranchOptionsListTheBranchesHereAndAtOrigin(t *testing.T) {
+	work, upstream := repoWithOrigin(t)
+	gitOut(t, work, "branch", "feat/here-only")
+	gitOut(t, upstream, "branch", "feat/origin-only")
+	gitOut(t, upstream, "push", "-q", "origin", "feat/origin-only")
+	gitOut(t, work, "fetch", "-q", "origin")
+	s := freshServer(t, freshSetup{work: work})
+	o := options(t, s)
+	sort.Strings(o.Branch.Branches)
+	sort.Strings(o.Branch.Remote)
+	if want := []string{"feat/here-only", "master"}; !reflect.DeepEqual(o.Branch.Branches, want) {
+		t.Errorf("here: %v, want %v", o.Branch.Branches, want)
+	}
+	if want := []string{"feat/origin-only", "master"}; !reflect.DeepEqual(o.Branch.Remote, want) {
+		t.Errorf("origin: %v, want %v (not origin/HEAD)", o.Branch.Remote, want)
 	}
 }
 

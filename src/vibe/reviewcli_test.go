@@ -473,7 +473,11 @@ func TestAStartSaysSoWhenAnotherReviewLandsInstead(t *testing.T) {
 				if strings.HasSuffix(e.Name(), ".json") {
 					// Taken in, but the review that lands is the page's.
 					os.Remove(filepath.Join(dir, "inbox", e.Name()))
-					os.WriteFile(view, []byte(`{"note":"the page's","started":"2026-10-16T12:00:00Z","agentAt":"2026-10-16T12:00:01Z","threads":[]}`), 0o644)
+					// Whole or not at all, as the page writes it: a file written in place can be read empty, part
+					// way through, which Windows shows.
+					tmp := view + ".tmp"
+					os.WriteFile(tmp, []byte(`{"note":"the page's","started":"2026-10-16T12:00:00Z","agentAt":"2026-10-16T12:00:01Z","threads":[]}`), 0o644)
+					os.Rename(tmp, view)
 				}
 			}
 		}

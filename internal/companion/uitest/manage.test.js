@@ -49,9 +49,9 @@ const { filtered } = require('../ui/manage.js')
 
 const many = {
   profiles: [
-    { id: 'profile:yumbi', name: 'yumbi', features: ['dotnet'], flags: [], sandboxes: [
-      { id: 'sandbox:api', name: 'yumbi-api', folder: '~/code/yumbi/api', flags: ['running'] },
-      { id: 'sandbox:web', name: 'yumbi-web', folder: '~/code/yumbi/web', flags: ['stopped', 'folder gone'], trash: true },
+    { id: 'profile:widget', name: 'widget', features: ['dotnet'], flags: [], sandboxes: [
+      { id: 'sandbox:api', name: 'widget-api', folder: '~/code/widget/api', flags: ['running'] },
+      { id: 'sandbox:web', name: 'widget-web', folder: '~/code/widget/web', flags: ['stopped', 'folder gone'], trash: true },
     ] },
     { id: 'profile:go', name: 'go', features: ['go'], flags: [], sandboxes: [
       { id: 'sandbox:vibe', name: 'vibe', folder: '~/code/opensource/vibe', flags: ['running'] },
@@ -74,12 +74,12 @@ test('no filter shows everything', () => {
 
 test('a sandbox matches on its name or folder, ignoring case', () => {
   assert.deepEqual(shownIds(filtered(many, 'OPENSOURCE')), ['profile:go', 'sandbox:vibe'])
-  assert.deepEqual(shownIds(filtered(many, 'yumbi-web')), ['profile:yumbi', 'sandbox:web'])
+  assert.deepEqual(shownIds(filtered(many, 'widget-web')), ['profile:widget', 'sandbox:web'])
 })
 
 test("a profile's name match shows all its sandboxes", () => {
-  assert.deepEqual(shownIds(filtered(many, 'yumbi')), ['profile:yumbi', 'sandbox:api', 'sandbox:web'])
-  assert.deepEqual(shownIds(filtered(many, 'dotnet')), ['profile:yumbi', 'sandbox:api', 'sandbox:web'])
+  assert.deepEqual(shownIds(filtered(many, 'widget')), ['profile:widget', 'sandbox:api', 'sandbox:web'])
+  assert.deepEqual(shownIds(filtered(many, 'dotnet')), ['profile:widget', 'sandbox:api', 'sandbox:web'])
 })
 
 test('a profile with no sandboxes shows when it matches', () => {
@@ -87,31 +87,31 @@ test('a profile with no sandboxes shows when it matches', () => {
 })
 
 test('every word has to match, across the profile and the sandbox', () => {
-  assert.deepEqual(shownIds(filtered(many, 'yumbi running')), ['profile:yumbi', 'sandbox:api'])
-  assert.deepEqual(shownIds(filtered(many, 'folder gone')), ['profile:yumbi', 'sandbox:web'])
+  assert.deepEqual(shownIds(filtered(many, 'widget running')), ['profile:widget', 'sandbox:api'])
+  assert.deepEqual(shownIds(filtered(many, 'folder gone')), ['profile:widget', 'sandbox:web'])
   assert.deepEqual(shownIds(filtered(many, 'vibe stopped')), [])
 })
 
 test('likely trash, and sandboxes vibe has no record of, can be found too', () => {
-  assert.deepEqual(shownIds(filtered(many, 'trash')), ['profile:yumbi', 'sandbox:web', 'profile:test'])
+  assert.deepEqual(shownIds(filtered(many, 'trash')), ['profile:widget', 'sandbox:web', 'profile:test'])
   assert.deepEqual(shownIds(filtered(many, 'handmade')), ['unknown:handmade'])
-  assert.deepEqual(shownIds(filtered(many, 'stopped')), ['profile:yumbi', 'sandbox:web', 'unknown:handmade'])
+  assert.deepEqual(shownIds(filtered(many, 'stopped')), ['profile:widget', 'sandbox:web', 'unknown:handmade'])
 })
 
 test('the count is of sandboxes shown, of all of them', () => {
-  const f = filtered(many, 'yumbi')
+  const f = filtered(many, 'widget')
   assert.equal(f.shown, 2)
   assert.equal(f.total, 4)
 })
 
 test('the state filter shows only running, or only stopped, sandboxes', () => {
-  assert.deepEqual(shownIds(filtered(many, '', 'running')), ['profile:yumbi', 'sandbox:api', 'profile:go', 'sandbox:vibe'])
-  assert.deepEqual(shownIds(filtered(many, '', 'stopped')), ['profile:yumbi', 'sandbox:web', 'unknown:handmade'])
+  assert.deepEqual(shownIds(filtered(many, '', 'running')), ['profile:widget', 'sandbox:api', 'profile:go', 'sandbox:vibe'])
+  assert.deepEqual(shownIds(filtered(many, '', 'stopped')), ['profile:widget', 'sandbox:web', 'unknown:handmade'])
   assert.deepEqual(shownIds(filtered(many, '', 'all')), shownIds(many))
 })
 
 test("the state filter narrows a profile's own match to sandboxes in that state", () => {
-  assert.deepEqual(shownIds(filtered(many, 'yumbi', 'stopped')), ['profile:yumbi', 'sandbox:web'])
+  assert.deepEqual(shownIds(filtered(many, 'widget', 'stopped')), ['profile:widget', 'sandbox:web'])
   assert.deepEqual(shownIds(filtered(many, 'test', 'running')), [])
 })
 

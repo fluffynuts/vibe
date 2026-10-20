@@ -27,10 +27,23 @@ type Settings struct {
 	Memory string `yaml:"memory,omitempty"`
 	// CPUs is how many CPUs a sandbox gets; 0 (unset) means half the host's.
 	// sbx itself would give a sandbox all of them.
-	CPUs       int    `yaml:"cpus,omitempty"`
-	BasePort   int    `yaml:"basePort,omitempty"`
-	Agent      string `yaml:"agent,omitempty"`
-	NugetDir   string `yaml:"nugetDir,omitempty"`
+	CPUs     int    `yaml:"cpus,omitempty"`
+	BasePort int    `yaml:"basePort,omitempty"`
+	Agent    string `yaml:"agent,omitempty"`
+	NugetDir string `yaml:"nugetDir,omitempty"`
+	// Packages is what vibe does about a package the agent asks the host
+	// for: "ask" (the default) holds each request for the user's approval on
+	// the companion page's Admin tab; "allow" fetches at once.
+	Packages string `yaml:"packages,omitempty"`
+	// Nuget is how a sandbox gets the host's NuGet packages: "fallback"
+	// (the default) gives it the host's package cache read-only and
+	// nothing else of NugetDir; "overlay" is that cache overlaid at its own
+	// path in the sandbox, so what a restore writes names the host's path
+	// (experimental: a version can't be added beside one the host has);
+	// "shared" mounts all of NugetDir read-write,
+	// which lets the agent plant code in packages the host builds with,
+	// and read its feeds' credentials.
+	Nuget      string `yaml:"nuget,omitempty"`
 	MemoryRoot string `yaml:"memoryRoot,omitempty"`
 	// Companion says what vibe does about the companion page it serves for
 	// a running sandbox: "open" serves it and opens it in the browser,
@@ -97,6 +110,12 @@ func Merge(base, override Settings) Settings {
 	}
 	if override.NugetDir != "" {
 		out.NugetDir = override.NugetDir
+	}
+	if override.Packages != "" {
+		out.Packages = override.Packages
+	}
+	if override.Nuget != "" {
+		out.Nuget = override.Nuget
 	}
 	if override.MemoryRoot != "" {
 		out.MemoryRoot = override.MemoryRoot

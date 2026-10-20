@@ -204,7 +204,7 @@ when they're needed:
     nothing to update.
 - **A sandbox** is out of date when what it would be built from now differs from what it was
   built from: the kit, the agent, the environment, the published ports, and the folders of this
-  machine's it's given (its memories, the review's inbox, the clipboard's history, a NuGet folder).
+  machine's it's given (its memories, the review's inbox, the clipboard's history, the NuGet packages and package requests).
   Its Claude theme doesn't count. A sandbox built before vibe kept track (of any of these) is out
   of date. Rebuilding carries across
   what vibe knows of (agent memories, theme, GitHub token, timezone, the conversation), but
@@ -868,6 +868,75 @@ sandbox gets no token unless `--git-token-env VAR` names an environment variable
 the token itself on the command line, where anyone on the machine can read it). That token is
 checked the same way, and turned down if GitHub won't let it push. `--git-rules` picks the rules.
 
+### NuGet packages and private feeds
+
+The `dotnet` feature gives a sandbox the host's NuGet **package cache**, read-only, and nothing
+else of `~/.nuget`: its config (private feeds' addresses and credentials) and its plugins stay
+on the host, and the agent can't plant code in a package your own builds then run.
+
+- **Packages the host already has** are used as they are.
+- **Public packages** (nuget.org) the sandbox restores itself, into a cache of its own, with your
+  cache as a read-only fallback beside it. The files the sandbox's restore writes
+  (`obj/project.assets.json`, `obj/*.nuget.g.props`) name the sandbox's cache, so your IDE needs
+  its own restore after a fetch (see below). `nuget: overlay` in `settings.yaml` is an
+  **experiment** that overlays your cache at its own path in the sandbox instead, so those files
+  name your cache's path and your IDE resolves them once the packages are in it. It isn't the
+  default because a restore that needs a version *beside* one your cache already has fails with
+  "Permission denied" (the overlay shows every directory from your cache as root's, which the agent
+  can't write to). It also needs a disk that survives sleep in the sandbox and a cache path with no
+  comma or colon, and falls back to the above without them. `vibe-nuget fetch` makes the sandbox look
+  again for a package it had looked for before you fetched it, since an overlay keeps its "not found".
+- **Your IDE and what the sandbox restored.** What the sandbox restores from nuget.org lands in its
+  own layer, which your IDE (Rider, say) can't read: references go red until your cache has the
+  packages. The Admin tab's **Packages** card, whose second part is **Packages your IDE can't see** (the first, **Packages the agent asked for**, is the requests below), says how many packages the
+  sandbox's restores left that your cache lacks (it reads the `obj/project.assets.json`
+  files in the sandbox's folder, as data, and checks each name and exact version), lists them by
+  framework, and **Fetch them** downloads them on this machine, with your own NuGet config, into your
+  cache, in one restore per framework, with a bar across the top of the card showing how many of them are in
+  your cache so far (the host counts them there, since a restore says nothing until it ends). Pressing Send on the Conversation tab looks first: if some are missing, or the agent has requests waiting for your approval, a dialog holds your prompt and asks what to do: **Review them** (takes you to the Packages card), **Fetch them first** (the agent that builds would download its own copies, which your IDE can't see), **Send anyway** or **Cancel** (Escape is the same); Send stays pressable, and each press asks again; with `packages: allow` they're fetched first without asking, and your prompt goes when they're in. The Admin tab's dot says when there are some to fetch; with
+  `packages: allow` they're fetched without asking. A package no feed has is named and left. Each project's
+  own resolved set is fetched as its own restore (what two projects resolved needn't be consistent together,
+  and NuGet refuses a mix), and when NuGet fails on a package it won't name, vibe finds it by restoring halves,
+  says which and what NuGet said, and fetches the rest. It's
+  the same fetch, into the same place, as a package the agent asks for: only the sandbox's own
+  packages are never moved into your cache, since a file the sandbox wrote there would run on your
+  next build. After a fetch, restore in the IDE if it still shows red: the files the sandbox generated
+  name its own cache first (with `nuget: overlay`, they name yours).
+- **Before it restores or builds**, the agent asks `vibe-nuget status` what you have waiting (requests to approve, packages your IDE can't see), and is told to say so and wait, not to download its own copies meanwhile. That's the agent's instructions, not something vibe enforces; the Conversation tab's own check on Send (above) is the one that holds your prompt.
+- **After you fetch what the sandbox downloaded itself,** the files it generated (`obj/project.nuget.cache` and the like) still name its own copies, since its own cache is looked in first, and a restore, `--force` or not, leaves it so. Your IDE heals that with a restore of its own. `vibe-nuget status` tells the agent, and `vibe-nuget tidy` does it: it drops the sandbox's own copy of the packages those files name that your cache has too (nothing else, and never anything outside the sandbox's own cache), and the build's derived path caches; the agent's `dotnet restore` after that writes files naming your cache. Run it again and it finds nothing to do.
+- **A package from a private feed** the sandbox can't sign in to. When its restore fails with
+  `NU1101` or `NU1102`, the agent asks you for it with `vibe-nuget fetch <id> <version>`. The
+  request waits on the companion page's **Admin tab**, with what it is to your project (a new
+  package, an upgrade or a downgrade from what the default branch has, or one already used
+  that's only missing from your cache, worked out from the project's files and not from the
+  agent's word). Tick what to allow and press the button, which says what it will do (**Allow all 3**, or **Allow 2, deny 1** when you've unticked one; what you leave out is answered at once, so the agent isn't left waiting, and told it may be a slip so it asks you), or **Deny them all**; a line on the card says what you decided; vibe then
+  fetches them on this machine with your own NuGet config, so every feed and credential you have
+  works with nothing to set up, into the cache the sandbox reads. What you approve together is fetched together, in one restore for each target framework, by the same
+  code that fetches what your IDE can't see; a package NuGet fails on fails its own request, in NuGet's words,
+  and the others still come. Set `packages: allow` in
+  `settings.yaml` to skip the asking.
+- **vibe never restores the agent's project** on the host, which could run its code. It restores
+  a throwaway project of its own, for exactly the package asked for, with `Directory.Build.props`,
+  `.targets` and `Directory.Packages.props` switched off.
+- **A `nuget.config` in the sandbox's folder** is used for a fetch only once you approve it on the
+  Admin tab, which shows its sources and warns of any that take the name of one of yours (the
+  credentials you keep for that name would be sent to the new address). An approval is of the
+  file's content: any change asks again.
+- Requests are answered while vibe is running for the sandbox with its companion page served
+  (not `-N`, nor `companion: off`); otherwise they wait. A sandbox whose folder holds vibe's own
+  (your home folder, say) or NuGet's gets no fetches, and says why: the agent could change what
+  a fetch does.
+- `nuget: shared` in `settings.yaml` goes back to sharing all of `~/.nuget` read-write, for
+  anyone who'd rather have no friction. Creating such a sandbox says what the agent can then do.
+
+Existing sandboxes pick this up when they're rebuilt (`vibe --update-sandboxes` does it).
+
+**Not yet tried:** credential providers (NuGet plugins, such as Azure Artifacts'), which should
+work for the host's fetch as for any restore. If you rely on one, please try `vibe-nuget fetch`
+and file an issue saying what happened. Windows and macOS hosts are covered by the standalone
+scripts in `docs/vm-tests/nuget`, which haven't all been run yet. A source in an approved
+`nuget.config` given as a relative path is relative to vibe's throwaway folder, not your project.
+
 ### Checkbox prompts
 
 Anywhere vibe asks you to select several things — the guided feature picker, `-x`/`--cleanup`, `-d`/`--delete` —
@@ -1001,7 +1070,9 @@ memory: 12g          # sandbox memory limit; a new sandbox asks, starting here, 
 cpus: 8              # CPUs a sandbox gets; a new sandbox asks, from 1 to one less than the
                      #    host has. Unset: half the host's (sbx alone would give all of them)
 agent: claude         # which coding agent to run
-nugetDir: ~/.nuget    # mounted into the sandbox and symlinked in, if it exists on the host
+nugetDir: ~/.nuget    # the host's NuGet folder: its packages are given to the sandbox, if it has them
+nuget: fallback       # fallback (default): packages read-only, nothing else; overlay: the same, overlaid at their own path (experimental); shared: all of nugetDir, read-write
+packages: ask         # ask (default): packages the agent asks for wait for you on the Admin tab; allow: fetched at once
 memoryRoot: ~/.vibe/memories   # where per-sandbox agent memories are backed up
 defaultFeatures:      # library features a guided profile starts with selected
   - dotnet

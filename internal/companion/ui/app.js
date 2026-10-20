@@ -367,6 +367,7 @@
   // Conversation tab's, when it has said something out of sight (pulsing
   // while it's still at work).
   function showAllAttention() {
+    renderBlockedNotice()
     const attention = withBlockedNews(withReviewNews(state.attention))
     if (!convo.news) { showAttention(attention); return }
     showAttention(Object.assign({}, attention, { conversation: [convo.running ? 'The agent is working' : 'The agent has answered'] }),
@@ -407,6 +408,19 @@
     } catch (e) { return null }
   }
 
+  // BLOCKED_DISMISSED keeps the hosts the user said not to be told of again, as a JSON list, per
+  // browser and sandbox. Not forgotten when a host stops being blocked: one called every few
+  // minutes is blocked again each time, and isn't news each time.
+  const BLOCKED_DISMISSED = 'vibe-companion-blocked-dismissed'
+  const MAX_DISMISSED = 500
+
+  function dismissedBlocked() {
+    try {
+      const list = JSON.parse(store.get(BLOCKED_DISMISSED) || '[]')
+      return Array.isArray(list) ? list : []
+    } catch (e) { return [] }
+  }
+
   // noteBlocked works out which of the hosts vibe says are blocked are new.
   // Not known yet (null) is not "none are": nothing is taken as seen. With
   // nothing kept (a browser's first visit), what's blocked now is taken as
@@ -420,7 +434,27 @@
     if (seen === null) { store.set(BLOCKED_SEEN, JSON.stringify(hosts)); return }
     const kept = state.tab === 'log' ? hosts : seen.filter((h) => hosts.includes(h))
     if (kept.length !== seen.length || kept.some((h, i) => h !== seen[i])) store.set(BLOCKED_SEEN, JSON.stringify(kept))
-    state.newBlocked = hosts.filter((h) => !kept.includes(h))
+    const dismissed = dismissedBlocked()
+    state.newBlocked = hosts.filter((h) => !kept.includes(h) && !dismissed.includes(h))
+  }
+
+  function dismissBlocked() {
+    const hosts = state.newBlocked || []
+    if (!hosts.length) return
+    store.set(BLOCKED_DISMISSED, JSON.stringify(dismissedBlocked().concat(hosts).slice(-MAX_DISMISSED)))
+    noteBlocked(state.blockedHosts)
+    showAllAttention()
+  }
+
+  // The conversation says too that hosts are newly blocked, as it is there the agent will have said it
+  // couldn't get somewhere, and the Network log tab is where to let it.
+  function renderBlockedNotice() {
+    const hosts = state.newBlocked || []
+    $('convo-blocked').hidden = hosts.length === 0
+    if (!hosts.length) return
+    const named = hosts.slice(0, 3).join(', ') + (hosts.length > 3 ? ' and ' + (hosts.length - 3) + ' more' : '')
+    $('convo-blocked-text').textContent = (hosts.length === 1 ? '1 host the sandbox tried to reach is blocked: ' : hosts.length + ' hosts the sandbox tried to reach are blocked: ') +
+      named + '. You can unblock ' + (hosts.length === 1 ? 'it' : 'them') + ' in the Network log tab.'
   }
 
   // withBlockedNews is attention with the Network log tab's, when hosts are
@@ -604,6 +638,9 @@
       $('tab-review').hidden = !res.body.review
       for (const t of SANDBOX_TABS) $('tab-' + t).hidden = res.body.sandboxTabs === false
       state.attention = res.body.attention || {}
+      renderPackagesWaiting(res.body.packagesWaiting || 0)
+      renderSyncWaiting(res.body.packagesToFetch || 0)
+      renderStaleWaiting(res.body.packagesStale || 0, res.body.packagesStaleProjects || [])
       state.blockedHosts = res.body.blockedHosts
       noteBlocked(state.blockedHosts)
       state.reviewAt = res.body.review ? res.body.reviewAt || '' : ''
@@ -647,6 +684,7 @@
     for (const view of CLIPBOARD_VIEWS) {
       $(view.note).hidden = !kept || state.clipboardReady
       $(view.note).textContent = "— not answering just now; it picks up again by itself"
+      $(view.note).title = $(view.note).textContent
     }
     const waiting = !!state.clipboardUrl && !state.clipboardReady && !kept
     const late = Date.now() - state.clipboardWaitingSince >= CLIPBOARD_PATIENCE_MS
@@ -726,11 +764,12 @@
       post('/api/awake', {}).catch(() => {})
     }
     const loads = state.tab === 'conversation' ? [unlessBusy('state', loadState)]
-      : state.tab === 'admin' ? [unlessBusy('state', loadState), unlessBusy('admin', loadAdmin), unlessBusy('instructions', () => loadInstructions(false))]
+      : state.tab === 'admin' ? [unlessBusy('state', loadState), unlessBusy('admin', loadAdmin), unlessBusy('packages', loadPackages), unlessBusy('sync', loadSync), unlessBusy('instructions', () => loadInstructions(false))]
       : state.tab === 'manage' ? [unlessBusy('state', loadState), unlessBusy('manage', loadManage)]
       : state.tab === 'review' ? [unlessBusy('state', loadState), unlessBusy('review', () => loadReview(reviewView.files === null))]
       : [unlessBusy('state', loadState), unlessBusy('tab ' + state.tab, () => load(state.tab))]
     if (state.usage) loads.push(unlessBusy('usage', loadUsage))
+    if (gate.active && gate.fetching) loads.push(unlessBusy('gate', refreshGate))
     Promise.allSettled(loads).then(startedIfReady)
   }
 
@@ -2679,7 +2718,8 @@
     }
     const open = t.status === 'open'
     return el('div', { class: 'review-thread ' + t.status, id: 'review-thread-' + t.id, tabindex: '-1' },
-      el('div', { class: 'muted' }, '#' + t.id + ' · ' + where + (t.movedFrom ? ' · moved from line ' + t.movedFrom : '') + (open ? '' : ' · ' + t.status),
+      el('div', { class: 'muted' }, '#' + t.id + ' · ' + where + (t.movedFrom ? ' · moved from line ' + t.movedFrom : '') + (open ? '' : ' · '),
+        open ? null : el('span', { class: 'thread-state', text: t.status }),
         reviewView.outdated && reviewView.outdated.has(t.id) ? el('span', { class: 'review-outdated', text: ' · the code has changed since' }) : null),
       ...comments, askFeedback(t), formattable(box), box,
       el('div', { class: 'bar' },
@@ -2775,6 +2815,387 @@
     } catch (e) {
       reached(false)
     }
+  }
+
+  // --- making what the sandbox restored visible to the user's IDE -----------
+
+  const syncView = { listKey: '', last: null, starting: false }
+
+  // A fetch is heard of only once the host is under way with it, and a restore says nothing until
+  // it ends: so the bar is up at its start (5%) from the click, and the rest of it is the packages
+  // as they come into the cache, counted by the host.
+  const PROGRESS_START = 5
+  function showProgress(bar, got) {
+    bar.max = 100
+    bar.value = got && got.total > 0 ? PROGRESS_START + (100 - PROGRESS_START) * Math.min(got.done, got.total) / got.total : PROGRESS_START
+  }
+  const MAX_LISTED = 300
+
+  async function loadSync() {
+    try {
+      const res = await api('/api/packages/sync')
+      reached(true)
+      // A sandbox with nothing of the kind has no such card.
+      $('admin-sync-card').hidden = !res.ok
+      showPackagesCard()
+      if (res.ok) renderSync(res.body)
+    } catch (e) {
+      reached(false)
+    }
+  }
+
+  // The packages are one card, of the agent's requests and of what the IDE can't see:
+  // it's there when either is, and ringed when either wants the user.
+  const packagesWant = { requests: false, sync: false }
+  function showPackagesCard() {
+    const card = $('admin-packages-all')
+    card.hidden = $('admin-packages-card').hidden && $('admin-sync-card').hidden
+    card.classList.toggle('wants-you', packagesWant.requests || packagesWant.sync)
+  }
+
+  const packagesWord = (n) => n + (n === 1 ? ' package' : ' packages')
+  const packageName = (p) => p.id + ' ' + p.version
+
+  function renderSync(b) {
+    syncView.last = b
+    const count = b.count || 0
+    const running = !!b.running || syncView.starting
+    $('admin-sync-summary').textContent = count
+      ? packagesWord(count) + " the sandbox restored " + (count === 1 ? "isn't" : "aren't") + " in your package cache, so your IDE (Rider, say) can't find " +
+        (count === 1 ? 'it' : 'them') + '. Fetching uses your own NuGet config on this machine, as for a package the agent asks for.'
+      : (b.stale || 0) > 0
+        ? 'Everything the sandbox restored is in your package cache.'
+        : 'Everything the sandbox restored is in your package cache, so your IDE can find it.'
+    $('admin-sync-details').hidden = count === 0
+    const key = JSON.stringify(b.missing || [])
+    if (key !== syncView.listKey) {
+      syncView.listKey = key
+      $('admin-sync-list').replaceChildren(...(b.missing || []).flatMap((g) => {
+        // What was only downloaded (a targeting pack, say) is as missing as what was resolved.
+        const all = (g.packages || []).concat(g.downloads || [])
+        const shown = all.slice(0, MAX_LISTED).map(packageName).join(', ')
+        const more = all.length > MAX_LISTED ? ' … and ' + (all.length - MAX_LISTED) + ' more' : ''
+        return [el('p', { text: g.framework + ' (' + all.length + ')' }), el('p', { class: 'muted', text: shown + more })]
+      }))
+    }
+    $('admin-sync-run').disabled = running || count === 0
+    const stale = !running && !(b.actionable > 0) ? b.stale || 0 : 0
+    $('admin-sync-stale').hidden = stale === 0
+    $('admin-sync-stale-ask').hidden = !state.conversation
+    if (stale) $('admin-sync-stale-text').textContent = staleText(stale, b.staleProjects || [])
+    packagesWant.sync = (b.actionable || 0) > 0
+    showPackagesCard()
+    const problems = b.problems || []
+    $('admin-sync-problems').hidden = problems.length === 0
+    $('admin-sync-problems').textContent = problems.length ? "Couldn't read: " + problems.join('; ') : ''
+
+    const status = $('admin-sync-status')
+    const last = b.last
+    status.classList.remove('bad-text')
+    const bar = $('admin-sync-progress')
+    bar.hidden = !running
+    if (running) {
+      // The host counts them in the cache; without a count the bar is of unknown length.
+      const got = b.progress
+      showProgress(bar, got)
+      status.hidden = false
+      status.textContent = got && got.total > 0 && got.done >= got.total
+        ? 'Finishing… all ' + got.total + ' are in your cache; the restore is wrapping up.'
+        : 'Fetching…' + (got && got.total > 0 ? ' ' + got.done + ' of ' + got.total + ' packages are in your cache.' : '') +
+          ' The host downloads them with your own NuGet config; this can take a few minutes.'
+    } else if (last && last.error && count > 0) {
+      // Said only while something is still missing: once it's all come, however
+      // (a retry, the IDE's own restore), a failure from before would say the card is wrong.
+      status.hidden = false
+      status.classList.add('bad-text')
+      status.textContent = last.error + (last.detail ? '\n' + last.detail : '')
+    } else if (last && !last.error) {
+      status.hidden = false
+      status.textContent = packagesWord(last.fetched || 0) + ' fetched' +
+        ((last.unresolved || []).length ? '; no feed has: ' + last.unresolved.map(packageName).join(', ') : '') + '.' +
+        // The files the sandbox generated name its own cache for what it downloaded itself.
+        (count === 0 && (last.fetched || 0) > 0 ? ' Your IDE may restore once, to point its files at your cache instead of the sandbox\'s.' : '')
+    } else {
+      status.hidden = true
+    }
+    const failed = !running && count > 0 && last && last.failed ? last.failed : []
+    $('admin-sync-failed').hidden = failed.length === 0
+    $('admin-sync-failed').replaceChildren(...failed.map((f) => el('li', {}, el('code', { text: packageName(f.package) }), ' ', el('span', { class: 'was', text: f.message }))))
+  }
+
+  async function runSync() {
+    $('admin-sync-run').disabled = true
+    syncView.starting = true
+    if (syncView.last) renderSync(syncView.last)
+    try {
+      const res = await post('/api/packages/sync/run', {})
+      reached(true)
+      syncView.starting = false
+      if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); if (syncView.last) renderSync(syncView.last) }
+      else renderSync(res.body)
+    } catch (e) {
+      reached(false)
+      syncView.starting = false
+      toast('Could not reach vibe.', true)
+      if (syncView.last) renderSync(syncView.last)
+    }
+  }
+
+  // --- package requests on the Admin tab -----------------------------------
+
+  // unticked is the keys of the requests the user has unticked: all are
+  // ticked until then, and a poll doesn't undo it.
+  const packagesView = { key: '', unticked: new Set(), config: '', byKey: new Map() }
+
+  async function loadPackages() {
+    try {
+      const res = await api('/api/packages')
+      reached(true)
+      // A sandbox that can't ask for packages has no such card.
+      $('admin-packages-card').hidden = !res.ok
+      showPackagesCard()
+      if (res.ok) renderPackages(res.body)
+    } catch (e) {
+      reached(false)
+    }
+  }
+
+  // The conversation says when the agent is waiting on the user for
+  // packages: it can't, itself, while its command waits for the approval.
+  function renderPackagesWaiting(waiting) {
+    $('convo-packages').hidden = waiting === 0
+    $('convo-packages-text').textContent = waiting === 1 ? '1 package request is waiting for your approval.'
+      : waiting + ' package requests are waiting for your approval.'
+  }
+
+  // The conversation says too when packages the sandbox restored could be
+  // fetched for the user's IDE: it can't find them until the user allows it.
+  function renderSyncWaiting(count) {
+    $('convo-sync').hidden = count === 0
+    $('convo-sync-text').textContent = packagesWord(count) + " the sandbox restored " + (count === 1 ? "isn't" : "aren't") +
+      " in your package cache, so your IDE can't find " + (count === 1 ? 'it' : 'them') + '.'
+  }
+
+  // Once the packages are in the user's cache, the files the sandbox generated still name its own
+  // copies, which the IDE can't see. Nothing in the user's terms says so, so it's said here until
+  // the files are generated again (the host looks at them), with the way to do that.
+  const TIDY_PROMPT = 'The packages are in my package cache now. Please run vibe-nuget status, tidy up if it says to, ' +
+    'and restore, so the generated files name my cache.'
+  // inProjects says which projects, so that one outside the solution (which restoring the solution
+  // leaves as it was) can be found.
+  const inProjects = (projects) => !projects.length ? '' :
+    ' (in ' + plural(projects.length, 'project') + ': ' + projects.slice(0, 3).join(', ') +
+    (projects.length > 3 ? ' and ' + (projects.length - 3) + ' more' : '') + ')'
+
+  const staleText = (count, projects) => packagesWord(count) + ' the sandbox restored' + inProjects(projects) + ' ' + (count === 1 ? 'is' : 'are') +
+    ' in your package cache now, but the files it generated still point at its own ' + (count === 1 ? 'copy' : 'copies') +
+    ", so your IDE can't find " + (count === 1 ? 'it' : 'them') + ' yet. ' +
+    (state.conversation ? 'Ask the agent to tidy up, or restore in your IDE.' : 'Restore in your IDE.')
+
+  // STALE_DISMISSED keeps the projects the user said not to be told of again, as a JSON list, per
+  // browser and sandbox. A project not in it brings the notice back.
+  const STALE_DISMISSED = 'vibe-companion-stale-dismissed'
+  const MAX_STALE_DISMISSED = 200
+  const staleNow = { count: 0, projects: [] }
+
+  function dismissedStale() {
+    try {
+      const list = JSON.parse(store.get(STALE_DISMISSED) || '[]')
+      return Array.isArray(list) ? list : []
+    } catch (e) { return [] }
+  }
+
+  // staleNames is the projects the notice is about, "(unknown)" for a vibe that doesn't say.
+  const staleNames = (projects) => (projects.length ? projects : ['(unknown)'])
+
+  function renderStaleWaiting(count, projects) {
+    Object.assign(staleNow, { count, projects })
+    const dismissed = dismissedStale()
+    $('convo-stale').hidden = count === 0 || staleNames(projects).every((name) => dismissed.includes(name))
+    $('convo-stale').title = projects.join('\n')
+    if (count) $('convo-stale-text').textContent = staleText(count, projects)
+  }
+
+  function dismissStale() {
+    store.set(STALE_DISMISSED, JSON.stringify(dismissedStale().concat(staleNames(staleNow.projects)).slice(-MAX_STALE_DISMISSED)))
+    renderStaleWaiting(staleNow.count, staleNow.projects)
+  }
+
+  // Sent at once when the agent is free: pressing the button is the user's choice. While it works
+  // the message waits in the box (Send is off then), unless the box holds something already.
+  async function askAgentToTidy() {
+    select('conversation')
+    const input = $('convo-input')
+    if (convo.running) {
+      if (!input.value.trim()) { input.value = TIDY_PROMPT; promptChanged() }
+      toast('The agent is working: the message is in the box for you to send when it is done.')
+      return
+    }
+    const draft = input.value
+    await deliverPrompt(TIDY_PROMPT)
+    if (draft) { input.value = draft; promptChanged() }
+  }
+
+  function describeRequest(r) {
+    return r.ecosystem + ' ' + r.id + ' ' + r.version + (r.framework ? ' (' + r.framework + ')' : '')
+  }
+
+  // The buttons act on requests not yet decided: approved ones are queued
+  // or being fetched, and can't be taken back.
+  function packageButtons() {
+    const undecided = Array.from($('admin-packages').querySelectorAll('input:not(:disabled)'))
+    const ticked = undecided.filter((b) => b.checked).length
+    const left = undecided.length - ticked
+    // The button says what it will do: what's ticked is allowed, and what isn't is left out.
+    const allow = $('admin-packages-allow')
+    allow.disabled = ticked === 0
+    allow.textContent = ticked === 0 ? 'Allow selected'
+      : left > 0 ? 'Allow ' + ticked + ', deny ' + left
+      : ticked === 1 ? 'Allow it' : 'Allow all ' + ticked
+    $('admin-packages-deny').disabled = undecided.length === 0
+  }
+
+  function renderPackages(data) {
+    const requests = data.requests || []
+    const keys = new Set(requests.map((r) => r.key))
+    packagesView.byKey = new Map(requests.map((r) => [r.key, r]))
+    for (const k of packagesView.unticked) if (!keys.has(k)) packagesView.unticked.delete(k)
+    const key = JSON.stringify(requests)
+    if (key !== packagesView.key) {
+      packagesView.key = key
+      $('admin-packages').replaceChildren(...requests.map((r) => {
+        const box = el('input', { type: 'checkbox', 'data-key': r.key, disabled: !!r.approved })
+        box.checked = !packagesView.unticked.has(r.key)
+        box.addEventListener('change', () => {
+          if (box.checked) packagesView.unticked.delete(r.key)
+          else packagesView.unticked.add(r.key)
+          packageButtons()
+        })
+        const state = r.fetching ? 'fetching…' : r.approved ? 'approved — about to be fetched' : r.note || ''
+        return el('li', {}, el('label', {}, box, el('span', { text: describeRequest(r) }), el('span', { class: 'was', text: state })))
+      }))
+    }
+    const approved = requests.filter((r) => r.approved).length
+    const undecided = requests.length - approved
+    $('admin-packages-none').hidden = requests.length > 0
+    $('admin-packages-bar').hidden = requests.length === 0
+    $('admin-packages-status').hidden = approved === 0
+    $('admin-packages-status').textContent = approved + ' approved — being fetched together.' +
+      (undecided ? ' ' + undecided + ' more to decide.' : '')
+    packagesWant.requests = undecided > 0
+    showPackagesCard()
+    pill('admin-packages-count', requests.length ? String(undecided) + ' waiting' + (approved ? ' · ' + approved + ' approved' : '') : '', undecided ? 'bad' : '')
+    packageButtons()
+    renderNugetConfig(data.config, data.configProblem)
+  }
+
+  function renderNugetConfig(config, problemText) {
+    const box = $('admin-nugetconfig')
+    box.hidden = !config && !problemText
+    if (!config) { $('admin-nugetconfig-note').textContent = problemText || ''; return }
+    const key = JSON.stringify(config)
+    if (key === packagesView.config) return
+    packagesView.config = key
+    $('admin-nugetconfig-note').textContent = config.problem ? config.problem
+      : config.approved ? 'Approved: vibe uses it, as it reads now, for fetches. Any change asks again.'
+      : "Not approved, so vibe ignores it for fetches. It can name feeds (and change more than that): read it before you approve it."
+    $('admin-nugetconfig-sources').replaceChildren(...(config.sources || []).map((s) => el('li', {}, el('code', { text: s.name }), ' ', s.url)))
+    $('admin-nugetconfig-warnings').replaceChildren(...(config.redefines || []).map((w) => el('li', { text: 'Warning: ' + w })))
+    $('admin-nugetconfig-text').textContent = config.text || ''
+    const approve = $('admin-nugetconfig-approve')
+    approve.hidden = config.approved || !config.hash
+    approve.dataset.hash = config.hash || ''
+  }
+
+  // packagesDecide sends the user's word to vibe and, once it is taken, says what it was: the request
+  // leaves the list as it's decided, so without the line nothing would show what was done.
+  async function packagesDecide(path, decision, line) {
+    // At once, not at the next poll: the answer shows what happened.
+    $('admin-packages-allow').disabled = true
+    $('admin-packages-deny').disabled = true
+    try {
+      const res = await post(path, decision)
+      reached(true)
+      if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true)
+      else {
+        renderPackages(res.body)
+        $('admin-packages-decision').textContent = line
+        $('admin-packages-decision').hidden = false
+      }
+      loadState()
+    } catch (e) {
+      reached(false)
+      toast('Could not reach vibe.', true)
+    }
+  }
+
+  const requestName = (key) => {
+    const r = packagesView.byKey.get(key)
+    return r ? r.id + ' ' + r.version : key
+  }
+
+  function decisionLine(allow, notSelected) {
+    return 'Allowed ' + allow.length +
+      (notSelected.length ? '; left out ' + notSelected.map(requestName).join(', ') + ': the agent will ask you about ' + (notSelected.length === 1 ? 'it' : 'them') : '') + '.'
+  }
+
+  function wirePackages() {
+    $('admin-sync-run').addEventListener('click', runSync)
+    $('convo-gate-fetch').addEventListener('click', async () => {
+      await startGateFetch()
+      renderGate()
+    })
+    $('convo-gate-send').addEventListener('click', () => {
+      const prompt = gate.prompt
+      closeGate()
+      deliverPrompt(prompt)
+    })
+    $('convo-gate-cancel').addEventListener('click', closeGate)
+    // Escape closes the dialog: that's Cancel, the prompt kept.
+    $('convo-gate').addEventListener('close', () => { if (gate.active) closeGate() })
+    $('convo-gate-review').addEventListener('click', () => {
+      closeGate()
+      select('admin')
+      $('admin-packages-all').scrollIntoView({ block: 'start' })
+      tick()
+    })
+    $('convo-blocked-open').addEventListener('click', () => select('log'))
+    $('convo-blocked-dismiss').addEventListener('click', dismissBlocked)
+    $('convo-stale-ask').addEventListener('click', askAgentToTidy)
+    $('convo-stale-dismiss').addEventListener('click', dismissStale)
+    $('admin-sync-stale-ask').addEventListener('click', askAgentToTidy)
+    $('convo-sync-review').addEventListener('click', () => {
+      select('admin')
+      $('admin-sync-card').scrollIntoView({ block: 'start' })
+      tick()
+    })
+    $('convo-packages-review').addEventListener('click', () => {
+      select('admin')
+      $('admin-packages-card').scrollIntoView({ block: 'start' })
+      tick()
+    })
+    $('admin-packages-allow').addEventListener('click', () => {
+      const undecided = Array.from($('admin-packages').querySelectorAll('input:not(:disabled)'))
+      const allow = undecided.filter((b) => b.checked).map((b) => b.dataset.key)
+      const notSelected = undecided.filter((b) => !b.checked).map((b) => b.dataset.key)
+      if (!allow.length) { toast('Nothing is ticked.', true); return }
+      packagesDecide('/api/packages/decide', { allow, notSelected }, decisionLine(allow, notSelected))
+    })
+    $('admin-packages-deny').addEventListener('click', () => {
+      const n = $('admin-packages').querySelectorAll('input:not(:disabled)').length
+      packagesDecide('/api/packages/decline-all', {}, 'Declined ' + n + ": the agent will tell you and ask what you'd like instead.")
+    })
+    $('admin-nugetconfig-approve').addEventListener('click', async () => {
+      try {
+        const res = await post('/api/packages/approve-config', { hash: $('admin-nugetconfig-approve').dataset.hash })
+        reached(true)
+        if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true)
+        else renderPackages(res.body)
+      } catch (e) {
+        reached(false)
+        toast('Could not reach vibe.', true)
+      }
+    })
   }
 
   function pill(id, text, cls) {
@@ -2886,6 +3307,7 @@
       : !up.checked ? 'Not checked yet.'
       : found.length ? 'Newer releases are available:' : 'vibe and Docker SBX are up to date.'
     $('admin-upgrades-list').replaceChildren(...found.map((l) => el('li', { text: l })))
+    $('admin-upgrades-card').classList.toggle('wants-you', found.length > 0)
     $('admin-check').disabled = !!up.checking
     const cmd = $('admin-upgrade-command')
     cmd.hidden = !found.length
@@ -3010,6 +3432,7 @@
   }
 
   function setUpAdmin() {
+    wirePackages()
     $('admin-cancel').addEventListener('click', () => {
       if (!REBUILDS.includes(adminView.jobKind)) { cancelAdmin(); return }
       confirmThen({
@@ -3747,17 +4170,25 @@
   // hand means scrolling, as Ctrl+A takes the whole conversation.
   function codeBlock(code) {
     const text = code.replace(/\r\n/g, '\n')
-    const hidden = text.match(HIDDEN_CONTROL) || []
-    const copy = async () => {
-      try {
-        await navigator.clipboard.writeText(text.replace(HIDDEN_CONTROL, ''))
-        toast(hidden.length ? 'Copied, leaving out ' + plural(hidden.length, 'hidden control character') : 'Copied')
-      } catch (err) {
-        toast("Couldn't copy: " + err.message, true)
-      }
-    }
     return el('div', { class: 'code-block' }, el('pre', {}, el('code', { text: visible(text) })),
-      el('button', { type: 'button', class: 'copy-code small', title: 'Copy', 'aria-label': 'Copy the code', onclick: copy }, copyIcon()))
+      el('button', { type: 'button', class: 'copy-code small', title: 'Copy', 'aria-label': 'Copy the code', onclick: () => copyText(text) }, copyIcon()))
+  }
+
+  // copyText puts text on the user's clipboard, leaving out hidden control characters (an escape
+  // that ends a terminal's bracketed paste would make what follows run), and says what it did. A
+  // page has no clipboard unless it is on localhost or HTTPS: a forwarded port is neither.
+  async function copyText(text) {
+    const hidden = text.match(HIDDEN_CONTROL) || []
+    if (!navigator.clipboard) {
+      toast("Couldn't copy: the browser only lets a page copy from localhost or HTTPS. Open this page at http://localhost:<port>, not by a forwarded address.", true)
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(text.replace(HIDDEN_CONTROL, ''))
+      toast(hidden.length ? 'Copied, leaving out ' + plural(hidden.length, 'hidden control character') : 'Copied')
+    } catch (err) {
+      toast("Couldn't copy: " + err.message, true)
+    }
   }
 
   // copyIcon is two overlapping pages, the copy a step down and right.
@@ -3819,8 +4250,12 @@
   function convoNote(cls, text, at) {
     const time = stamp(at)
     const words = cls === 'agent' ? markdown(text) : el('span', { text })
-    $('convo-log').append(time
-      ? el('div', { class: 'msg ' + cls }, words, el('span', { class: 'foot' }, time))
+    // What the agent said can be copied whole, as the Markdown it wrote: its footer has the button.
+    const copy = cls === 'agent'
+      ? el('button', { type: 'button', class: 'copy-message small ghost', title: 'Copy this message', 'aria-label': 'Copy this message', onclick: () => copyText(text) }, copyIcon())
+      : null
+    $('convo-log').append(time || copy
+      ? el('div', { class: 'msg ' + cls }, words, el('span', { class: 'foot' }, time, copy))
       : el('div', { class: 'msg ' + cls }, words))
   }
 
@@ -3845,8 +4280,22 @@
   // unless the user turned it off, in this browser.
   const promptsAsMarkdown = { on: store.get('vibe-prompts-markdown') !== 'off' }
 
-  function promptBody(text) {
+  function promptText(text) {
     return promptsAsMarkdown.on ? markdown(text) : el('span', { class: 'plain', text })
+  }
+
+  // What the Review tab's "Submit to agent" sends is long, and the user has its context: the first
+  // line says what it is, and the rest is folded away, to open if wanted, not to be read. A prompt
+  // is one of those when it begins with the words the page sends it with.
+  const REVIEW_PROMPT_START = 'On the Review tab, '
+
+  function promptBody(text) {
+    const line = text.indexOf('\n')
+    const rest = line < 0 ? '' : text.slice(line + 1).trim()
+    if (!text.startsWith(REVIEW_PROMPT_START) || !rest) return promptText(text)
+    return el('div', { class: 'prompt-folded' },
+      el('div', { class: 'prompt-first' }, promptText(text.slice(0, line))),
+      el('details', { class: 'prompt-more' }, el('summary', { text: 'Show what was sent' }), promptText(rest)))
   }
 
   function userNote(ev) {
@@ -4057,7 +4506,13 @@
   async function sendPrompt() {
     const input = $('convo-input')
     const prompt = input.value.trim()
-    if (!prompt || convo.running) return
+    if (!prompt || convo.running || gate.active) return
+    if (await holdForPackages(prompt)) return
+    await deliverPrompt(prompt)
+  }
+
+  async function deliverPrompt(prompt) {
+    const input = $('convo-input')
     try {
       const res = await post('/api/conversation/send', { prompt })
       reached(true)
@@ -4065,6 +4520,10 @@
       input.value = ''
       promptChanged()
       closeCommands()
+      // Whoever scrolled up to read and forgot would see nothing happen: the reply
+      // would arrive below the fold. Being at the end also makes the renders that follow stick.
+      const log = $('convo-log')
+      log.scrollTop = log.scrollHeight
       setConvoRunning(true)
       showTyping()
       pollConversation()
@@ -4072,6 +4531,107 @@
       reached(false)
       toast('Could not reach vibe.', true)
     }
+  }
+
+  // --- packages, looked at when the user sends -----------------------------
+
+  // An agent that builds downloads its own copy of a package the user's cache lacks, which the
+  // user's IDE can't see; and one that has asked for a package waits on the user's word. So a
+  // prompt is held, and the user asked, while either is so: in a dialog, so pressing Send is
+  // never silently ignored. The host looks at the workspace at that moment, not at its last scan.
+  // When the user's settings fetch packages without asking, they are fetched first without being
+  // asked about.
+  const gate = { active: false, fetching: false, prompt: '', failed: '' }
+
+  async function checkPackages() {
+    const sync = post('/api/packages/sync/check', {}).then((res) => (res.ok && res.body ? res.body : {})).catch(() => ({}))
+    const requests = api('/api/packages').then((res) => (res.ok && res.body && res.body.requests) || []).catch(() => [])
+    const [b, asked] = await Promise.all([sync, requests])
+    return Object.assign({}, b, { undecided: asked.filter((r) => !r.approved).length })
+  }
+
+  async function holdForPackages(prompt) {
+    const b = await checkPackages()
+    if (!(b.actionable > 0) && !b.running && !(b.undecided > 0)) return false
+    gate.active = true
+    gate.prompt = prompt
+    gate.failed = ''
+    gate.fetching = !!b.running
+    if (!gate.fetching && b.auto && b.actionable > 0) await startGateFetch()
+    renderGate(gate.fetching && !b.running ? Object.assign({}, b, { running: true }) : b)
+    return true
+  }
+
+  async function startGateFetch() {
+    gate.failed = ''
+    try {
+      const res = await post('/api/packages/sync/run', {})
+      reached(true)
+      // A fetch already under way (409) is as good as one just begun.
+      gate.fetching = res.ok || res.status === 409
+      if (!gate.fetching) gate.failed = (res.body && res.body.error) || 'The fetch could not be started.'
+    } catch (e) {
+      reached(false)
+      gate.failed = 'Could not reach vibe.'
+    }
+  }
+
+  function renderGate(b) {
+    const dialog = $('convo-gate')
+    if (!gate.active) {
+      if (dialog.open) dialog.close()
+      return
+    }
+    const got = b && b.progress
+    const toFetch = (b && b.actionable) || 0
+    const undecided = (b && b.undecided) || 0
+    const asking = undecided > 0
+      ? undecided + (undecided === 1 ? ' package request from the agent is' : ' package requests from the agent are') +
+        ' waiting for your approval: it can\'t have ' + (undecided === 1 ? 'that package' : 'those packages') + ' until you decide.'
+      : ''
+    $('convo-gate-progress').hidden = !gate.fetching
+    showProgress($('convo-gate-progress'), got)
+    const ide = packagesWord(toFetch) + " the agent will build with aren't in your package cache. Your IDE can't see them, and the agent will download its own copies."
+    $('convo-gate-text').textContent = [
+      gate.fetching
+        ? 'Fetching' + (got && got.total > 0 ? ': ' + got.done + ' of ' + got.total + ' packages are in your cache' : ' the packages') + '. Your prompt goes when they are.'
+        : gate.failed ? "Fetching didn't finish: " + gate.failed
+        : toFetch > 0 ? ide + ' Fetch them first?' : '',
+      asking,
+    ].filter(Boolean).join(' ')
+    $('convo-gate-fetch').hidden = gate.fetching || toFetch === 0
+    if (!dialog.open) dialog.showModal()
+    raiseToast()
+  }
+
+  function closeGate() {
+    gate.active = false
+    gate.fetching = false
+    renderGate()
+  }
+
+  async function refreshGate() {
+    if (!gate.active || !gate.fetching) return
+    const b = await checkPackages()
+    if (!gate.active) return
+    if (b.running) { renderGate(b); return }
+    if (!(b.actionable > 0)) {
+      if (b.undecided > 0) {
+        // They're in; but the agent still waits on the user's word for what it asked for.
+        gate.fetching = false
+        renderGate(b)
+        return
+      }
+      // All in the cache: the prompt goes.
+      const prompt = gate.prompt
+      closeGate()
+      await deliverPrompt(prompt)
+      return
+    }
+    // The fetch is over and some are still missing.
+    gate.fetching = false
+    gate.failed = (b.last && b.last.error) || 'some packages are still missing.'
+    renderGate(b)
   }
 
   async function conversationCall(path) {
@@ -4085,6 +4645,171 @@
       toast('Could not reach vibe.', true)
     }
   }
+
+  // --- searching the conversation ----------------------------------------
+
+  // Matches are found in the text as it is rendered and coloured with CSS highlights, which change
+  // nothing in the log: it is redrawn as the agent speaks, and a mark put in it would be lost or
+  // would get in the way of copying. What is inside a collapsed tool result is left out unless
+  // asked for, as it isn't in view.
+  const find = { open: false, ranges: [], current: -1, queued: false, observer: null }
+
+  const findSupported = () => !!(window.CSS && window.CSS.highlights && window.Highlight)
+
+  // textOfLog is the log's text nodes that are in view (or, with tools, in a tool result too),
+  // as { node, start } where start is where the node begins in the text joined from them: a
+  // line break between one message and the next, so no match spans two.
+  function textOfLog(withTools) {
+    const log = $('convo-log')
+    const walker = document.createTreeWalker(log, NodeFilter.SHOW_TEXT)
+    const parts = []
+    let text = ''
+    let lastMessage = null
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const parent = node.parentElement
+      if (!parent || parent.closest('[hidden]')) continue
+      const result = parent.closest('details.tool-result')
+      if (result && !withTools && !parent.closest('summary')) continue
+      let message = node
+      while (message.parentNode && message.parentNode !== log) message = message.parentNode
+      if (lastMessage && message !== lastMessage) text += '\n'
+      lastMessage = message
+      parts.push({ node, start: text.length })
+      text += node.data
+    }
+    return { text, parts }
+  }
+
+  function findRanges(query, withTools) {
+    if (!query) return []
+    const { text, parts } = textOfLog(withTools)
+    const pattern = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+    const at = (offset) => {
+      let found = parts[0]
+      for (const part of parts) {
+        if (part.start > offset) break
+        found = part
+      }
+      return found
+    }
+    const ranges = []
+    for (let m = pattern.exec(text); m; m = pattern.exec(text)) {
+      const from = at(m.index)
+      const to = at(m.index + m[0].length - 1)
+      const range = document.createRange()
+      range.setStart(from.node, m.index - from.start)
+      range.setEnd(to.node, m.index + m[0].length - to.start)
+      ranges.push(range)
+    }
+    return ranges
+  }
+
+  // firstInView is the first match at or below the top of the log's view, as a browser's own
+  // search starts from where it is looking; else the first.
+  function firstInView(ranges) {
+    const top = $('convo-log').getBoundingClientRect().top
+    const i = ranges.findIndex((r) => r.startContainer.parentElement.getBoundingClientRect().top >= top)
+    return i < 0 ? 0 : i
+  }
+
+  function paintFind() {
+    if (!findSupported()) return
+    const { ranges, current } = find
+    if (ranges.length) {
+      CSS.highlights.set('find-match', new Highlight(...ranges))
+      CSS.highlights.set('find-current', new Highlight(ranges[current]))
+    } else {
+      CSS.highlights.delete('find-match')
+      CSS.highlights.delete('find-current')
+    }
+  }
+
+  function showFindCount(query) {
+    const n = find.ranges.length
+    $('convo-find-count').textContent = !query ? '' : n === 0 ? 'No matches' : (find.current + 1) + ' of ' + n
+    $('convo-find-input').classList.toggle('nomatch', !!query && n === 0)
+  }
+
+  // runFind looks again at the log: scrolling to the match only when the user asked for one, and
+  // keeping the match they were on when what is said afterwards adds to the others.
+  function runFind(scroll) {
+    if (!find.open) return
+    const query = $('convo-find-input').value
+    const had = find.current
+    find.ranges = findRanges(query, $('convo-find-tools').checked)
+    find.current = !find.ranges.length ? -1 : scroll ? firstInView(find.ranges) : Math.min(Math.max(had, 0), find.ranges.length - 1)
+    paintFind()
+    showFindCount(query)
+    if (scroll && find.current >= 0) showMatch()
+  }
+
+  function showMatch() {
+    const range = find.ranges[find.current]
+    const parent = range.startContainer.parentElement
+    for (let d = parent.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) d.open = true
+    parent.scrollIntoView({ block: 'center' })
+  }
+
+  function stepFind(by) {
+    if (!find.ranges.length) return
+    find.current = (find.current + by + find.ranges.length) % find.ranges.length
+    paintFind()
+    showFindCount($('convo-find-input').value)
+    showMatch()
+  }
+
+  function openFind() {
+    find.open = true
+    $('convo-find').hidden = false
+    $('convo-find-open').hidden = true
+    const input = $('convo-find-input')
+    input.focus()
+    input.select()
+    runFind(true)
+  }
+
+  function closeFind() {
+    find.open = false
+    find.ranges = []
+    find.current = -1
+    $('convo-find').hidden = true
+    $('convo-find-open').hidden = false
+    paintFind()
+    $('convo-input').focus()
+  }
+
+  // The log changes as the agent speaks: the matches are found again, once for all the changes
+  // that arrive together.
+  function findAgainSoon() {
+    if (!find.open || find.queued) return
+    find.queued = true
+    queueMicrotask(() => { find.queued = false; runFind(false) })
+  }
+
+  function setUpFind() {
+    $('convo-find-open').addEventListener('click', openFind)
+    $('convo-find-close').addEventListener('click', closeFind)
+    $('convo-find-next').addEventListener('click', () => stepFind(1))
+    $('convo-find-prev').addEventListener('click', () => stepFind(-1))
+    $('convo-find-input').addEventListener('input', () => runFind(true))
+    $('convo-find-tools').addEventListener('change', () => runFind(true))
+    $('convo-find-input').addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); stepFind(ev.shiftKey ? -1 : 1) }
+      else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeFind() }
+    })
+    new MutationObserver(findAgainSoon).observe($('convo-log'), { childList: true, subtree: true, characterData: true })
+    // F3 is the browser's find-next: taken here, on the conversation, for a search that knows the
+    // conversation (and what is collapsed in it); left alone on every other tab.
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'F3' || ev.ctrlKey || ev.metaKey || ev.altKey) return
+      if (!state.conversation || state.tab !== 'conversation') return
+      ev.preventDefault()
+      if (!find.open) openFind()
+      else if (document.activeElement === $('convo-find-input')) stepFind(ev.shiftKey ? -1 : 1)
+      else { $('convo-find-input').focus(); $('convo-find-input').select() }
+    })
+  }
+  setUpFind()
 
   // --- completing slash commands -----------------------------------------
 
@@ -4347,7 +5072,53 @@
   const FRESH_OPTIONS_MS = 4 * 60 * 1000
   const FRESH_FETCH_MS = 3 * 60 * 1000
   const FRESH_START_MS = 5 * 60 * 1000
-  const fresh = { generation: 0, options: null, fetching: false, fetched: null, cancel: null }
+  const fresh = { generation: 0, options: null, fetching: false, fetched: null, cancel: null, nameTyped: false }
+
+  // branchNameProblem is why git would refuse name for a branch (git check-ref-format's rules, as far
+  // as they matter to a name typed by hand), or "" when it wouldn't. Starting asks git itself: this is
+  // for saying so while it's typed.
+  function branchNameProblem(name) {
+    if (name.startsWith('-')) return "it can't start with -"
+    if (/[\s\x00-\x1f\x7f]/.test(name)) return "it can't have spaces or control characters"
+    const bad = name.match(/[~^:?*[\\]/)
+    if (bad) return "it can't have " + bad[0]
+    if (name.includes('..')) return "it can't have .."
+    if (name.includes('@{')) return "it can't have @{"
+    if (name === '@') return "it can't be just @"
+    if (name.endsWith('.')) return "it can't end with ."
+    const parts = name.split('/')
+    if (parts.some((part) => part === '')) return "it can't start or end with /, nor have // in it"
+    if (parts.some((part) => part.startsWith('.'))) return "no part of it can start with ."
+    if (parts.some((part) => part.endsWith('.lock'))) return "no part of it can end with .lock"
+    return ''
+  }
+
+  // drawBranchName says, under the new branch's name, what's wrong with it: an error for a name git
+  // would refuse or that is a branch here; a warning for one origin has, as a push of the new branch
+  // under that name would be refused. Nothing until the user has typed.
+  function drawBranchName(b) {
+    const input = $('fresh-branch-name')
+    const note = $('fresh-branch-note')
+    const name = input.value
+    let text = ''
+    let error = false
+    if (fresh.nameTyped && name) {
+      const problem = branchNameProblem(name)
+      if (problem) {
+        text = '"' + name + "\" can't be a branch name: " + problem + '.'
+        error = true
+      } else if ((b.branches || []).includes(name)) {
+        text = 'There is already a branch called ' + name + '.'
+        error = true
+      } else if ((b.remote || []).includes(name)) {
+        text = 'origin has a branch called ' + name + ", as last fetched. A push of this one under that name would be refused unless it's forced, so you may want a different name."
+      }
+    }
+    input.setAttribute('aria-invalid', String(error))
+    note.textContent = text
+    note.className = 'note ' + (error ? 'bad-text' : 'warn-text')
+    note.hidden = !text
+  }
 
   function showIf(id, on) { $(id).hidden = !on }
 
@@ -4363,6 +5134,7 @@
     $('fresh-review').checked = true
     $('fresh-branch').checked = false
     $('fresh-branch-name').value = FRESH_BRANCH_START
+    fresh.nameTyped = false
     $('fresh-from-here').checked = true
     $('fresh-update').checked = false
     $('fresh-run').textContent = 'Start a new conversation'
@@ -4445,6 +5217,7 @@
     if (noDefault && fresh.setterWhy !== noDefault) $('fresh-no-default').replaceChildren(defaultBranchSetter(noDefault, refreshFresh))
     fresh.setterWhy = noDefault
     showIf('fresh-dirty', !!b.dirty)
+    drawBranchName(b)
     drawFreshFetch(b.defaultSet ? '' : def)
   }
 
@@ -4462,7 +5235,7 @@
     if (def && fresh.fetching) {
       text = 'Checking whether origin/' + def + ' is up to date…'
     } else if (def && f && !f.checked) {
-      text = "Couldn't check whether origin/" + def + ' is up to date: ' + String(f.why || 'no reason given').replace(/\.$/, '') + '. Check it yourself.'
+      text = "Couldn't check whether origin/" + def + ' is up to date: ' + String(f.why || 'no reason given').replace(/\.$/, '') + '.'
       warn = true
     } else if (def && f && f.local && f.ahead > 0) {
       text = 'Local ' + def + ' has ' + plural(f.ahead, 'commit') + " not on origin, so it's left as it is."
@@ -4554,6 +5327,7 @@
     $('fresh-branch-name').addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter' && !ev.isComposing) ev.preventDefault()
     })
+    $('fresh-branch-name').addEventListener('input', () => { fresh.nameTyped = true; drawFresh() })
     $('fresh').addEventListener('close', () => {
       if (fresh.cancel) fresh.cancel.abort()
       fresh.generation++

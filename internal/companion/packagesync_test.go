@@ -1,0 +1,470 @@
+package companion
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"vibe/internal/nugetfetch"
+)
+
+type fakeSync struct {
+	mu      sync.Mutex
+	state   nugetfetch.SyncState
+	checks  int
+	runs    int
+	runErr  error
+	release chan struct{}
+}
+
+func (f *fakeSync) Check() { f.mu.Lock(); f.checks++; f.mu.Unlock() }
+func (f *fakeSync) State() nugetfetch.SyncState {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.state
+}
+
+// Start is Run in the background, under way when it returns: as the real one's is.
+func (f *fakeSync) Start(ctx context.Context) (<-chan error, error) {
+	f.mu.Lock()
+	if f.state.Running {
+		f.mu.Unlock()
+		return nil, nugetfetch.ErrSyncRunning
+	}
+	f.runs++
+	f.state.Running = true
+	f.mu.Unlock()
+	done := make(chan error, 1)
+	go func() {
+		if f.release != nil {
+			<-f.release
+		}
+		f.mu.Lock()
+		f.state.Running = false
+		f.mu.Unlock()
+		done <- f.runErr
+	}()
+	return done, nil
+}
+
+func (f *fakeSync) Run(ctx context.Context) error {
+	f.mu.Lock()
+	f.runs++
+	f.state.Running = true
+	f.mu.Unlock()
+	if f.release != nil {
+		<-f.release
+	}
+	f.mu.Lock()
+	f.state.Running = false
+	f.mu.Unlock()
+	return f.runErr
+}
+
+var someMissing = nugetfetch.SyncState{
+	Count:   3,
+	Missing: []nugetfetch.Group{{Framework: "net8.0", Packages: []nugetfetch.Package{{ID: "Dapper", Version: "2.1.86"}, {ID: "Acornima", Version: "1.1.0"}, {ID: "Gone.Pkg", Version: "9.9.9"}}}},
+	Checked: time.Now(),
+}
+
+func syncServer(f *fakeSync) *Server {
+	return New(Config{Sandbox: "box", Token: token, Port: testPort, PackageSync: f})
+}
+
+type syncBody struct {
+	Count      int `json:"count"`
+	Actionable int `json:"actionable"`
+	Missing    []struct {
+		Framework string `json:"framework"`
+		Packages  []struct {
+			ID      string `json:"id"`
+			Version string `json:"version"`
+		} `json:"packages"`
+	} `json:"missing"`
+	Running  bool `json:"running"`
+	Progress *struct {
+		Done  int `json:"done"`
+		Total int `json:"total"`
+	} `json:"progress"`
+	Last *struct {
+		Fetched    int    `json:"fetched"`
+		Error      string `json:"error"`
+		Unresolved []struct {
+			ID string `json:"id"`
+		} `json:"unresolved"`
+	} `json:"last"`
+	Skipped  int      `json:"skipped"`
+	Problems []string `json:"problems"`
+}
+
+func getSync(t *testing.T, s *Server) syncBody {
+	t.Helper()
+	rec := do(t, s, req{path: "/api/packages/sync", headers: authed(nil)})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET: %d %s", rec.Code, rec.Body)
+	}
+	var b syncBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &b); err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func TestThePageIsToldWhatTheCacheLacksByFramework(t *testing.T) {
+	b := getSync(t, syncServer(&fakeSync{state: someMissing}))
+	if b.Count != 3 || len(b.Missing) != 1 || b.Missing[0].Framework != "net8.0" || len(b.Missing[0].Packages) != 3 || b.Missing[0].Packages[0].ID != "Dapper" {
+		t.Errorf("body = %+v", b)
+	}
+}
+
+func TestAPageWithNoSyncHasNoSyncEndpoints(t *testing.T) {
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort})
+	if rec := do(t, s, req{path: "/api/packages/sync", headers: authed(nil)}); rec.Code != http.StatusNotFound {
+		t.Errorf("status %d", rec.Code)
+	}
+}
+
+// The answer to the press says the fetch is under way: by construction, not by waiting a moment to see.
+func TestTheAnswerToRunningSaysItIsRunning(t *testing.T) {
+	f := &fakeSync{state: someMissing, release: make(chan struct{})}
+	defer close(f.release)
+	s := syncServer(f)
+	rec := do(t, s, post("/api/packages/sync/run", `{}`))
+	var body syncBody
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if rec.Code != http.StatusOK || !body.Running {
+		t.Errorf("status %d, running %v: %s", rec.Code, body.Running, rec.Body)
+	}
+}
+
+func TestRunningStartsTheFetchAtOnceAndDoesntWaitForIt(t *testing.T) {
+	f := &fakeSync{state: someMissing, release: make(chan struct{})}
+	s := syncServer(f)
+	answered := make(chan int, 1)
+	go func() { answered <- do(t, s, post("/api/packages/sync/run", `{}`)).Code }()
+	select {
+	case code := <-answered:
+		if code != http.StatusOK {
+			t.Errorf("status %d", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request waited on the fetch")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !getSync(t, s).Running {
+		if time.Now().After(deadline) {
+			t.Fatal("never running")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(f.release)
+}
+
+func TestARunWhileOneIsUnderWayIsRefused(t *testing.T) {
+	f := &fakeSync{state: someMissing, release: make(chan struct{})}
+	f.state.Running = true
+	s := syncServer(f)
+	if rec := do(t, s, post("/api/packages/sync/run", `{}`)); rec.Code != http.StatusConflict {
+		t.Errorf("status %d, want 409", rec.Code)
+	}
+	close(f.release)
+}
+
+func TestARunIsOnlyAskedForFromThePageItself(t *testing.T) {
+	f := &fakeSync{state: someMissing}
+	s := syncServer(f)
+	for name, r := range map[string]req{
+		"no token":       {method: "POST", path: "/api/packages/sync/run", body: `{}`, headers: map[string]string{"Content-Type": "application/json"}},
+		"another origin": {method: "POST", path: "/api/packages/sync/run", body: `{}`, headers: authed(map[string]string{"Content-Type": "application/json", "Origin": "http://evil.example"})},
+	} {
+		if rec := do(t, s, r); rec.Code == http.StatusOK {
+			t.Errorf("%s: started from outside the page", name)
+		}
+	}
+	if f.runs != 0 {
+		t.Errorf("ran %d times", f.runs)
+	}
+}
+
+func TestWhatIsFixableDrawsAttentionToTheAdminTabButWhatNoFeedHasDoesNot(t *testing.T) {
+	attention := func(f *fakeSync) []string {
+		rec := do(t, syncServer(f), req{path: "/api/state", headers: authed(nil)})
+		var st struct {
+			Attention map[string][]string `json:"attention"`
+		}
+		json.Unmarshal(rec.Body.Bytes(), &st)
+		return st.Attention["admin"]
+	}
+	got := attention(&fakeSync{state: someMissing})
+	if len(got) != 1 || !strings.Contains(got[0], "3 packages") || !strings.Contains(got[0], "IDE") {
+		t.Errorf("attention = %v", got)
+	}
+	// Two of the three are all that's missing, and the third is known to be
+	// nowhere: nothing to do about it.
+	state := someMissing
+	state.Last = &nugetfetch.SyncResult{Unresolved: []nugetfetch.Package{{ID: "Gone.Pkg", Version: "9.9.9"}}}
+	got = attention(&fakeSync{state: state})
+	if len(got) != 1 || !strings.Contains(got[0], "2 packages") {
+		t.Errorf("attention = %v", got)
+	}
+	state.Missing = []nugetfetch.Group{{Framework: "net8.0", Packages: []nugetfetch.Package{{ID: "Gone.Pkg", Version: "9.9.9"}}}}
+	state.Count = 1
+	if got = attention(&fakeSync{state: state}); len(got) != 0 {
+		t.Errorf("attention = %v, want none for what no feed has", got)
+	}
+	running := someMissing
+	running.Running = true
+	if got = attention(&fakeSync{state: running}); len(got) != 0 {
+		t.Errorf("attention = %v while it's being fetched", got)
+	}
+}
+
+func TestTheWorkspaceIsLookedAtEverySoOftenUntilTheServerEnds(t *testing.T) {
+	f := &fakeSync{}
+	s := syncServer(f)
+	done := make(chan struct{})
+	ended := make(chan struct{})
+	go func() { s.pollPackageSync(done, time.Millisecond); close(ended) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		f.mu.Lock()
+		n := f.checks
+		f.mu.Unlock()
+		if n >= 3 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("looked %d times", n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(done)
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("still looking after the server ended")
+	}
+}
+
+func TestWhenFetchesAreAllowedAnythingFixableIsFetchedWithoutBeingAsked(t *testing.T) {
+	f := &fakeSync{state: someMissing}
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, PackageSync: f, PackageSyncAuto: func() bool { return true }})
+	done := make(chan struct{})
+	go s.pollPackageSync(done, time.Millisecond)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		f.mu.Lock()
+		n := f.runs
+		f.mu.Unlock()
+		if n >= 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("never fetched")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(done)
+}
+
+func TestWhenFetchesNeedApprovalNothingIsFetchedByItself(t *testing.T) {
+	f := &fakeSync{state: someMissing}
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, PackageSync: f, PackageSyncAuto: func() bool { return false }})
+	done := make(chan struct{})
+	ended := make(chan struct{})
+	go func() { s.pollPackageSync(done, time.Millisecond); close(ended) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		f.mu.Lock()
+		n := f.checks
+		f.mu.Unlock()
+		if n >= 20 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("never looked")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(done)
+	<-ended
+	if f.runs != 0 {
+		t.Errorf("fetched %d times unasked", f.runs)
+	}
+}
+
+// The page marks the card with the same count the Admin tab's dot is drawn
+// for: what a fetch could bring, not what no feed has, and none while one runs.
+func TestThePageIsToldHowManyOfThePackagesAFetchCouldBring(t *testing.T) {
+	if got := getSync(t, syncServer(&fakeSync{state: someMissing})).Actionable; got != 3 {
+		t.Errorf("actionable = %d, want 3", got)
+	}
+	nowhere := someMissing
+	nowhere.Last = &nugetfetch.SyncResult{Unresolved: []nugetfetch.Package{{ID: "Gone.Pkg", Version: "9.9.9"}}}
+	if got := getSync(t, syncServer(&fakeSync{state: nowhere})).Actionable; got != 2 {
+		t.Errorf("actionable = %d, want 2 (one is known to be nowhere)", got)
+	}
+	running := someMissing
+	running.Running = true
+	if got := getSync(t, syncServer(&fakeSync{state: running})).Actionable; got != 0 {
+		t.Errorf("actionable = %d while it's being fetched, want 0", got)
+	}
+}
+
+// The Conversation tab says there are packages to fetch without the Admin tab
+// being open, so the page's state carries the count.
+func TestThePageStateSaysHowManyPackagesAFetchCouldBring(t *testing.T) {
+	fetchable := func(f *fakeSync) int {
+		rec := do(t, syncServer(f), req{path: "/api/state", headers: authed(nil)})
+		var st struct {
+			PackagesToFetch int `json:"packagesToFetch"`
+		}
+		json.Unmarshal(rec.Body.Bytes(), &st)
+		return st.PackagesToFetch
+	}
+	if got := fetchable(&fakeSync{state: someMissing}); got != 3 {
+		t.Errorf("packagesToFetch = %d, want 3", got)
+	}
+	nowhere := someMissing
+	nowhere.Last = &nugetfetch.SyncResult{Unresolved: []nugetfetch.Package{{ID: "Gone.Pkg", Version: "9.9.9"}}}
+	if got := fetchable(&fakeSync{state: nowhere}); got != 2 {
+		t.Errorf("packagesToFetch = %d, want 2", got)
+	}
+	running := someMissing
+	running.Running = true
+	if got := fetchable(&fakeSync{state: running}); got != 0 {
+		t.Errorf("packagesToFetch = %d while fetching, want 0", got)
+	}
+}
+
+func TestThePageIsToldHowFarAFetchHasGot(t *testing.T) {
+	running := someMissing
+	running.Running = true
+	running.Progress = &nugetfetch.Progress{Done: 120, Total: 405}
+	b := getSync(t, syncServer(&fakeSync{state: running}))
+	if b.Progress == nil || b.Progress.Done != 120 || b.Progress.Total != 405 {
+		t.Errorf("progress = %+v, want 120 of 405", b.Progress)
+	}
+	if b = getSync(t, syncServer(&fakeSync{state: someMissing})); b.Progress != nil {
+		t.Errorf("progress %+v when nothing is running", b.Progress)
+	}
+}
+
+// Pressing Send looks first: the host reads the project files again at once, and not at its next
+// scan, which an agent that is asked to build straight away would be ahead of.
+func TestAFreshCheckLooksAtTheWorkspaceNowAndSaysWhatTheCacheLacks(t *testing.T) {
+	f := &fakeSync{state: someMissing}
+	s := syncServer(f)
+	before := f.checks
+	rec := do(t, s, post("/api/packages/sync/check", `{}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	if f.checks != before+1 {
+		t.Errorf("%d checks, want one more than %d", f.checks, before)
+	}
+	var b syncBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &b); err != nil {
+		t.Fatal(err)
+	}
+	if b.Actionable != 3 {
+		t.Errorf("actionable = %d", b.Actionable)
+	}
+}
+
+func TestAFreshCheckIsOnlyAskedForFromThePageItselfAndOnlyWhereThereIsASync(t *testing.T) {
+	if rec := do(t, New(Config{Sandbox: "box", Token: token, Port: testPort}), post("/api/packages/sync/check", `{}`)); rec.Code != http.StatusNotFound {
+		t.Errorf("a sandbox with no sync: status %d", rec.Code)
+	}
+	s := syncServer(&fakeSync{state: someMissing})
+	rec := do(t, s, req{method: "POST", path: "/api/packages/sync/check", body: `{}`})
+	if rec.Code == http.StatusOK {
+		t.Error("answered a request that wasn't from the page")
+	}
+}
+
+func TestThePageIsToldWhetherPackagesAreFetchedWithoutAsking(t *testing.T) {
+	for _, auto := range []bool{false, true} {
+		s := New(Config{Sandbox: "box", Token: token, Port: testPort, PackageSync: &fakeSync{state: someMissing}, PackageSyncAuto: func() bool { return auto }})
+		rec := do(t, s, post("/api/packages/sync/check", `{}`))
+		var b struct {
+			Auto bool `json:"auto"`
+		}
+		json.Unmarshal(rec.Body.Bytes(), &b)
+		if b.Auto != auto {
+			t.Errorf("auto = %v, want %v", b.Auto, auto)
+		}
+	}
+}
+
+// Once the packages are in the user's cache, the files the sandbox generated may still name its
+// own copies, which the IDE can't see: the page says so, but only once there's nothing left to fetch.
+func TestThePageStateSaysHowManyPackagesTheGeneratedFilesNameWrong(t *testing.T) {
+	stale := func(st nugetfetch.SyncState) int {
+		rec := do(t, syncServer(&fakeSync{state: st}), req{path: "/api/state", headers: authed(nil)})
+		var body struct {
+			PackagesStale int `json:"packagesStale"`
+		}
+		json.Unmarshal(rec.Body.Bytes(), &body)
+		return body.PackagesStale
+	}
+	if got := stale(nugetfetch.SyncState{Stale: 2}); got != 2 {
+		t.Errorf("packagesStale = %d, want 2", got)
+	}
+	if got := stale(nugetfetch.SyncState{}); got != 0 {
+		t.Errorf("packagesStale = %d with none, want 0", got)
+	}
+	waiting := someMissing
+	waiting.Stale = 2
+	if got := stale(waiting); got != 0 {
+		t.Errorf("packagesStale = %d while packages are still to fetch, want 0: fetching comes first", got)
+	}
+	running := nugetfetch.SyncState{Stale: 2, Running: true}
+	if got := stale(running); got != 0 {
+		t.Errorf("packagesStale = %d while fetching, want 0", got)
+	}
+}
+
+func TestTheSyncAnswerCarriesHowManyPackagesAreStale(t *testing.T) {
+	rec := do(t, syncServer(&fakeSync{state: nugetfetch.SyncState{Stale: 4}}), req{path: "/api/packages/sync", headers: authed(nil)})
+	var body struct {
+		Stale int `json:"stale"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body.Stale != 4 {
+		t.Errorf("stale = %d, want 4", body.Stale)
+	}
+}
+
+func TestThePageIsToldWhichProjectsStillNameTheSandboxsCopies(t *testing.T) {
+	st := nugetfetch.SyncState{Stale: 32, StaleProjects: []string{"TestMySqlConnection", "src/Tool"}}
+	rec := do(t, syncServer(&fakeSync{state: st}), req{path: "/api/state", headers: authed(nil)})
+	var body struct {
+		PackagesStaleProjects []string `json:"packagesStaleProjects"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if want := []string{"TestMySqlConnection", "src/Tool"}; !reflect.DeepEqual(body.PackagesStaleProjects, want) {
+		t.Errorf("state: %v, want %v", body.PackagesStaleProjects, want)
+	}
+	waiting := st
+	waiting.Running = true
+	rec = do(t, syncServer(&fakeSync{state: waiting}), req{path: "/api/state", headers: authed(nil)})
+	body.PackagesStaleProjects = nil
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if len(body.PackagesStaleProjects) != 0 {
+		t.Errorf("projects %v while fetching: fetching comes first", body.PackagesStaleProjects)
+	}
+	rec = do(t, syncServer(&fakeSync{state: st}), req{path: "/api/packages/sync", headers: authed(nil)})
+	var sync struct {
+		StaleProjects []string `json:"staleProjects"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &sync)
+	if len(sync.StaleProjects) != 2 {
+		t.Errorf("sync answer: %v", sync.StaleProjects)
+	}
+}

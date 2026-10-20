@@ -111,6 +111,17 @@ type Config struct {
 	// Admin is what the page's Admin tab does to the sandbox; nil means the
 	// page has no such tab.
 	Admin Admin
+	// Packages holds the sandbox's requests for packages for the user to
+	// approve, on the Admin tab; nil means the sandbox can't ask.
+	Packages PackageDesk
+	// PackageSync is what fetches, for the user's IDE, the packages the
+	// sandbox restored into its own cache; nil means none is offered.
+	// PackageSyncAuto says to fetch them without asking.
+	PackageSync     PackageSync
+	PackageSyncAuto func() bool
+	// PackageConfig is the folder's nuget.config, to approve on the same
+	// tab; nil means none is offered.
+	PackageConfig PackageConfig
 	// Usage reads how busy the sandbox is, for the page's CPU and memory
 	// bars; it may be slow (it asks the sandbox), and says ErrNotRunning for
 	// a sandbox that isn't. Nil means the page has no such bars.
@@ -161,6 +172,10 @@ type Server struct {
 	usage   usageCache
 	blocked blockedCache
 	clock   func() time.Time
+	// lifeCtx ends with the server: what it starts for the page (a fetch)
+	// ends with it.
+	lifeCtx    context.Context
+	lifeCancel context.CancelFunc
 	// pageVersion stands for the page's files as this vibe serves them: a
 	// page left open across a rebuild of vibe can tell it's out of date.
 	pageVersion string
@@ -179,7 +194,8 @@ type asked struct {
 // New makes a Server without listening, which is how tests drive Handler.
 func New(cfg Config) *Server {
 	ui, _ := fs.Sub(uiFiles, "ui")
-	return &Server{cfg: cfg, ui: ui, clock: time.Now, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer(colourAtOnce)}
+	life, cancel := context.WithCancel(context.Background())
+	return &Server{cfg: cfg, ui: ui, clock: time.Now, lifeCtx: life, lifeCancel: cancel, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer(colourAtOnce)}
 }
 
 // Start listens on 127.0.0.1 at cfg.Port and serves in the background.
@@ -216,6 +232,20 @@ func Start(cfg Config) (*Server, error) {
 	go s.http.Serve(ln)
 	s.done = make(chan struct{})
 	go s.keepAwakeWhileWorking(s.done)
+	if cfg.PackageSync != nil {
+		s.loops.Add(1)
+		go func(done <-chan struct{}) {
+			defer s.loops.Done()
+			s.pollPackageSync(done, packageSyncEvery)
+		}(s.done)
+	}
+	if cfg.Packages != nil {
+		s.loops.Add(1)
+		go func(done <-chan struct{}) {
+			defer s.loops.Done()
+			s.pollPackages(done, packagesPollEvery)
+		}(s.done)
+	}
 	if cfg.ReviewTab != nil {
 		s.loops.Add(1)
 		go func(done <-chan struct{}) {
@@ -228,6 +258,7 @@ func Start(cfg Config) (*Server, error) {
 
 // Close stops serving, saving the conversation for the next vibe.
 func (s *Server) Close() error {
+	s.lifeCancel()
 	if s.done != nil {
 		close(s.done)
 		s.done = nil
@@ -319,6 +350,13 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"POST /api/admin/do", s.serving(adminFeature, s.adminDo)},
 		{"POST /api/admin/upgrades", s.serving(adminFeature, s.adminCheckUpgrades)},
 		{"POST /api/admin/cancel", s.serving(adminFeature, s.adminCancel)},
+		{"GET /api/packages/sync", s.serving(packageSyncFeature, s.packageSyncState)},
+		{"POST /api/packages/sync/check", s.serving(packageSyncFeature, s.packageSyncCheck)},
+		{"POST /api/packages/sync/run", s.serving(packageSyncFeature, s.packageSyncRun)},
+		{"GET /api/packages", s.serving(packagesFeature, s.packagesState)},
+		{"POST /api/packages/decide", s.serving(packagesFeature, s.packagesDecide)},
+		{"POST /api/packages/decline-all", s.serving(packagesFeature, s.packagesDeclineAll)},
+		{"POST /api/packages/approve-config", s.serving(packagesFeature, s.packagesApproveConfig)},
 		{"GET /api/admin/instructions", s.authed(s.instructionsState)},
 		{"POST /api/admin/instructions", s.serving(instructionsFeature, s.instructionsSave)},
 		{"POST /api/admin/instructions/optimise", s.serving(instructionsFeature, s.instructionsOptimise)},
@@ -399,6 +437,10 @@ var (
 	instructionsFeature = feature{adminFeature.present, adminFeature.missing, 3 * maxInstructions}
 	manageFeature       = feature{func(s *Server) bool { return s.cfg.Manage != nil },
 		"this page has no Profiles tab", 64 * 1024}
+	packageSyncFeature = feature{func(s *Server) bool { return s.cfg.PackageSync != nil },
+		"this sandbox has no packages to make visible to an IDE", 1 << 10}
+	packagesFeature = feature{func(s *Server) bool { return s.cfg.Packages != nil },
+		"this sandbox can't ask for packages", 16 * 1024}
 	reviewFeature = feature{func(s *Server) bool { return s.cfg.ReviewTab != nil },
 		"this page has no review tab", maxPrompt}
 	defaultBranchFeature = feature{(*Server).repositoryHere,
@@ -482,6 +524,12 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		}
 		s.admin.mu.Unlock()
 	}
+	if waiting := s.packagesWaiting(); waiting != "" {
+		attention["admin"] = append(attention["admin"], waiting)
+	}
+	if waiting := s.packageSyncWaiting(); waiting != "" {
+		attention["admin"] = append(attention["admin"], waiting)
+	}
 	// blockedHosts is what the network log says is blocked, for the page to
 	// tell the user of the ones they haven't seen; null until it's been read.
 	var blockedHosts []string
@@ -500,24 +548,28 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"attention":         attention,
-		"blockedHosts":      blockedHosts,
-		"reviewAt":          reviewAt,
-		"pageVersion":       s.pageVersion,
-		"themeColor":        theme,
-		"sandbox":           s.cfg.Sandbox,
-		"agent":             s.cfg.Agent,
-		"folder":            pathresolve.Tilde(s.cfg.Workspace),
-		"git":               git,
-		"clipboardUrl":      clipboard,
-		"clipboardReady":    ready,
-		"clipboardTrouble":  s.clipboardTrouble(clipboard, ready),
-		"clipboardCanStart": clipboard != "" && s.cfg.StartClipboard != nil,
-		"conversation":      s.cfg.Converse != nil,
-		"admin":             s.cfg.Admin != nil,
-		"manage":            s.cfg.Manage != nil,
-		"review":            s.cfg.ReviewTab != nil,
-		"usage":             s.cfg.Usage != nil,
+		"attention":             attention,
+		"packagesWaiting":       s.packagesWaitingCount(),
+		"packagesToFetch":       s.packagesToFetch(),
+		"packagesStale":         s.packagesStale(),
+		"packagesStaleProjects": s.packagesStaleProjects(),
+		"blockedHosts":          blockedHosts,
+		"reviewAt":              reviewAt,
+		"pageVersion":           s.pageVersion,
+		"themeColor":            theme,
+		"sandbox":               s.cfg.Sandbox,
+		"agent":                 s.cfg.Agent,
+		"folder":                pathresolve.Tilde(s.cfg.Workspace),
+		"git":                   git,
+		"clipboardUrl":          clipboard,
+		"clipboardReady":        ready,
+		"clipboardTrouble":      s.clipboardTrouble(clipboard, ready),
+		"clipboardCanStart":     clipboard != "" && s.cfg.StartClipboard != nil,
+		"conversation":          s.cfg.Converse != nil,
+		"admin":                 s.cfg.Admin != nil,
+		"manage":                s.cfg.Manage != nil,
+		"review":                s.cfg.ReviewTab != nil,
+		"usage":                 s.cfg.Usage != nil,
 		// A page for no sandbox has only the Profiles tab.
 		"sandboxTabs": s.cfg.Sandbox != "",
 	})

@@ -24,3 +24,7 @@ port mapping, and their browser can't reach it.
 
 The page's history belongs to the user. Leave it alone unless they ask, and
 never delete items from it.
+
+If `clipboard-url` isn't there, this sandbox was composed before vibe had it.
+Tell the user so, and ask them to run `vibe -C` in the project's folder, which
+re-composes the sandbox with what vibe has now.

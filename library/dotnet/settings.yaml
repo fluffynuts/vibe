@@ -1,5 +1,6 @@
 # Settings for the dotnet feature, merged into the settings.yaml of any
 # profile composed with it. Without nugetDir set, vibe mounts nothing and
-# never passes SBX_HOST_NUGET, so the feature's own link-nuget has nothing
-# to link and logs "SBX_HOST_NUGET unset — nothing to link".
+# passes no SBX_HOST_NUGET_PACKAGES, so the feature's own link-nuget has nothing
+# to do and logs "unset — nothing to do". The `nuget` setting (fallback or shared) picks
+# how the host's packages are given; see docs/plan-nuget-feeds.md.
 nugetDir: ~/.nuget

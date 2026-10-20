@@ -20,9 +20,9 @@ import (
 
 func TestAProjectsFolderIsNamedAsTheAgentNamesIt(t *testing.T) {
 	for path, want := range map[string]string{
-		"/home/davydm/code/opensource/vibe": "-home-davydm-code-opensource-vibe",
-		"/home/me/code/my.app_2":            "-home-me-code-my-app-2",
-		"/tmp":                              "-tmp",
+		"/home/user/code/opensource/vibe": "-home-user-code-opensource-vibe",
+		"/home/me/code/my.app_2":          "-home-me-code-my-app-2",
+		"/tmp":                            "-tmp",
 	} {
 		if got := projectFolder(path); got != want {
 			t.Errorf("projectFolder(%q) = %q, want %q", path, got, want)

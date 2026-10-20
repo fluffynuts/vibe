@@ -166,9 +166,9 @@ const realListing = `[
     "status": "stopped",
     "last_used_at": "2026-10-14T11:23:09.177234797Z",
     "workspaces": [
-      "/home/davydm/code/opensource/convert-type-imports",
-      "/home/davydm/.vibe/memories/convert-type-imports",
-      "/home/davydm/.vibe/clipboard/convert-type-imports"
+      "/home/user/code/opensource/convert-type-imports",
+      "/home/user/.vibe/memories/convert-type-imports",
+      "/home/user/.vibe/clipboard/convert-type-imports"
     ],
     "memory": "12g",
     "memory_mib": 12288,
@@ -189,8 +189,8 @@ const realListing = `[
       }
     ],
     "workspaces": [
-      "/home/davydm/code/opensource/vibe",
-      "/home/davydm/.vibe/memories/vibe"
+      "/home/user/code/opensource/vibe",
+      "/home/user/.vibe/memories/vibe"
     ],
     "memory": "12g",
     "memory_mib": 12288,

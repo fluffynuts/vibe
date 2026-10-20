@@ -77,7 +77,7 @@ func TestFormatBytes(t *testing.T) {
 }
 
 func TestPrintInfo(t *testing.T) {
-	base := sandboxInfo{name: "proj", target: "/code/proj", profile: "yumbi", agent: "claude", memory: "12g", features: []string{"go", "node"}}
+	base := sandboxInfo{name: "proj", target: "/code/proj", profile: "widget", agent: "claude", memory: "12g", features: []string{"go", "node"}}
 	print := func(info sandboxInfo, profileKnown bool) string {
 		var out strings.Builder
 		printInfo(&out, info, profileKnown)
@@ -94,7 +94,7 @@ func TestPrintInfo(t *testing.T) {
 	}
 	got := print(running, true)
 	for _, want := range []string{
-		"sandbox   proj\n", "profile   yumbi\n", "agent     claude\n", "memory    12g\n",
+		"sandbox   proj\n", "profile   widget\n", "agent     claude\n", "memory    12g\n",
 		"features  go, node\n", "status    running\n", "uptime    3h 35m\n",
 		"mem used  3.0 GiB of 12.0 GiB (25%)\n",
 		"disk used 5.0 GiB of 20.0 GiB (25%)\n",

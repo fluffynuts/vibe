@@ -1,44 +1,181 @@
 #!/bin/sh
-# vibe: description: Point ~/.nuget at the mounted host NuGet dir, if one was passed
-# SBX_HOST_NUGET is set by vibe when it mounts the host ~/.nuget.
-# No braced shell expansions here: sbx validates every brace-form
-# substitution in file content against its own placeholder list.
-exec >>/tmp/link-nuget.log 2>&1
+# vibe: description: Tell NuGet where the host's packages are, if they were mounted
+# vibe passes SBX_HOST_NUGET_PACKAGES when it mounts the host's package cache
+# (read-only), or SBX_HOST_NUGET when settings say "nuget: shared" and all of
+# the host's ~/.nuget is mounted. No braced shell expansions here: sbx
+# validates every brace-form substitution in file content against its own
+# placeholder list.
+LOG=/tmp/link-nuget.log
+if [ -n "$SBX_LINK_NUGET_LOG" ]; then
+  LOG=$SBX_LINK_NUGET_LOG
+fi
+exec >>"$LOG" 2>&1
 echo "=== link-nuget at $(date -Is) ==="
-if [ -z "$SBX_HOST_NUGET" ]; then
-  echo "SBX_HOST_NUGET unset — nothing to link"
-  exit 0
-fi
-if [ ! -d "$SBX_HOST_NUGET" ]; then
-  echo "ERROR: $SBX_HOST_NUGET is not mounted"
-  exit 1
-fi
-LINK=/home/agent/.nuget
-if [ -L "$LINK" ]; then
-  ln -sfn "$SBX_HOST_NUGET" "$LINK"
-elif [ -e "$LINK" ]; then
-  echo "WARN: $LINK exists and is not a symlink; moving aside"
-  mv "$LINK" "$LINK.local" && ln -s "$SBX_HOST_NUGET" "$LINK"
-else
-  ln -s "$SBX_HOST_NUGET" "$LINK"
-fi
-echo "linked $LINK -> $(readlink "$LINK")"
-ls "$LINK" 2>/dev/null | head
 
-# Restore bakes absolute package paths into obj/project.assets.json.
-# Left to itself NuGet resolves via HOME, giving /home/agent/.nuget,
-# which does not exist on the host — so Rider cannot resolve a single
-# package after a container build. Pinning both sides to the host path
-# keeps the generated files identical. Written to the persistent env
-# file rather than passed at create time so it cannot go missing on a
-# sandbox created before this change.
 PERSIST=/etc/sandbox-persistent.sh
-WANT="export NUGET_PACKAGES=$SBX_HOST_NUGET/packages"
-if [ -f "$PERSIST" ] && grep -qxF "$WANT" "$PERSIST"; then
-  echo "NUGET_PACKAGES already persisted"
+if [ -n "$SBX_PERSIST_FILE" ]; then
+  PERSIST=$SBX_PERSIST_FILE
+fi
+
+# The persistent file is sourced before every command the agent runs, so it is only ever replaced whole, by
+# a new file renamed over it (a shell sourcing it meanwhile never sees it empty or part-written), with the mode
+# and owner it had; by sudo when the folder isn't the agent's to write (it lives in /etc).
+replace_whole() {
+  from=$1
+  to=$2
+  side=$to.new.$$
+  if cp -p "$to" "$side" 2>/dev/null || touch "$side" 2>/dev/null; then
+    if cat "$from" >"$side" 2>/dev/null && mv -f "$side" "$to" 2>/dev/null; then
+      return 0
+    fi
+    rm -f "$side" 2>/dev/null
+  fi
+  sudo sh -c 'cp -p "$2" "$2.new" 2>/dev/null; cat "$1" > "$2.new" && mv -f "$2.new" "$2"' sh "$from" "$to"
+}
+
+# The persistent file without NAME's line, and LINE (when given) at the end, written back whole.
+rewrite_persist() {
+  tmp=$(mktemp) || return 1
+  {
+    grep -v "^export $1=" "$PERSIST" 2>/dev/null
+    [ -z "$2" ] || echo "$2"
+  } >"$tmp"
+  replace_whole "$tmp" "$PERSIST"
+  status=$?
+  rm -f "$tmp"
+  return $status
+}
+
+# A value as a shell reads it back as it is: left alone when it has only characters a shell leaves be, else in
+# single quotes, with any quote in it ended, escaped and begun again.
+shell_value() {
+  case "$1" in
+    *[!A-Za-z0-9_./:@%+=,-]*)
+      printf "'"
+      printf '%s' "$1" | sed "s/'/'\\\\''/g"
+      printf "'"
+      ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# Written to the persistent env file rather than passed at create time so it
+# cannot go missing on a sandbox created before this change. Replaces any
+# line for the same variable, so a rebuilt sandbox never keeps the old ones.
+persist() {
+  name=$1
+  want="export $name=$(shell_value "$2")"
+  if [ -f "$PERSIST" ] && grep -qxF "$want" "$PERSIST"; then
+    echo "$name already persisted"
+    return
+  fi
+  rewrite_persist "$name" "$want" && echo "persisted: $want" || echo "WARN: could not write $PERSIST"
+}
+
+unpersist() {
+  if [ -f "$PERSIST" ] && grep -q "^export $1=" "$PERSIST"; then
+    rewrite_persist "$1" && echo "removed $1 from $PERSIST"
+  fi
+}
+
+# Overlays the host's cache (read-only) at its own path, with what the
+# sandbox writes kept in the sandbox. restore bakes the cache's path into
+# obj/project.assets.json and the *.nuget.g.props files, so with the host's
+# path here the host's IDE resolves what the sandbox restored, once the host
+# has the package (see the Admin tab's sync). Says whether it did; a sandbox
+# that can't keeps the host's cache as a fallback beside its own.
+# The upper layer needs a disk that isn't itself an overlay, which the
+# sandbox's root is: /var/lib/docker is one. It's the agent's: this runs as
+# root when the sandbox is set up, and a root-owned upper layer leaves NuGet
+# unable to write a package. SBX_NUGET_UPPER_BASE and
+# SBX_PROC_MOUNTS are for tests.
+overlay_packages() {
+  lower=$1
+  base=$SBX_NUGET_UPPER_BASE
+  if [ -z "$base" ]; then
+    base=/var/lib/docker/vibe-nuget
+  fi
+  mounts=$SBX_PROC_MOUNTS
+  if [ -z "$mounts" ]; then
+    mounts=/proc/mounts
+  fi
+  # Ours, by its upper layer: a bind of a folder on an overlay is one too.
+  if grep "^overlay $lower overlay " "$mounts" 2>/dev/null | grep -q "upperdir=$base/upper"; then
+    echo "$lower is already an overlay"
+    return 0
+  fi
+  # overlayfs splits its options on commas and colons.
+  case "$lower" in
+    *,* | *:*)
+      echo "not overlaying $lower: overlayfs can't take a comma or colon in a path"
+      return 1
+      ;;
+  esac
+  if [ ! -d "$(dirname "$base")" ]; then
+    echo "not overlaying $lower: no disk at $(dirname "$base") to keep what is written"
+    return 1
+  fi
+  if ! sudo mkdir -p "$base/upper" "$base/work" || ! sudo chown agent: "$base/upper"; then
+    echo "not overlaying $lower: could not make $base"
+    return 1
+  fi
+  if err=$(sudo mount -t overlay overlay -o "lowerdir=$lower,upperdir=$base/upper,workdir=$base/work" "$lower" 2>&1); then
+    echo "overlaid $lower: the host's packages below (read-only), writes in $base/upper"
+    return 0
+  fi
+  echo "not overlaying $lower: mount said: $err"
+  return 1
+}
+
+if [ -n "$SBX_HOST_NUGET" ]; then
+  # Shared: ~/.nuget is the host's, and restore bakes absolute package
+  # paths into obj/project.assets.json. Left to itself NuGet resolves via
+  # HOME, giving /home/agent/.nuget, which does not exist on the host — so
+  # Rider cannot resolve a single package after a container build. Pinning
+  # both sides to the host path keeps the generated files identical.
+  if [ ! -d "$SBX_HOST_NUGET" ]; then
+    echo "ERROR: $SBX_HOST_NUGET is not mounted"
+    exit 1
+  fi
+  LINK=/home/agent/.nuget
+  if [ -n "$SBX_NUGET_LINK" ]; then
+    LINK=$SBX_NUGET_LINK
+  fi
+  if [ -L "$LINK" ]; then
+    ln -sfn "$SBX_HOST_NUGET" "$LINK"
+  elif [ -e "$LINK" ]; then
+    echo "WARN: $LINK exists and is not a symlink; moving aside"
+    mv "$LINK" "$LINK.local" && ln -s "$SBX_HOST_NUGET" "$LINK"
+  else
+    ln -s "$SBX_HOST_NUGET" "$LINK"
+  fi
+  echo "linked $LINK -> $(readlink "$LINK")"
+  persist NUGET_PACKAGES "$SBX_HOST_NUGET/packages"
+  unpersist NUGET_FALLBACK_PACKAGES
+  unpersist RestoreIgnoreFailedSources
+  unpersist VIBE_NUGET_OVERLAY
+elif [ -n "$SBX_HOST_NUGET_PACKAGES" ]; then
+  if [ ! -d "$SBX_HOST_NUGET_PACKAGES" ]; then
+    echo "ERROR: $SBX_HOST_NUGET_PACKAGES is not mounted"
+    exit 1
+  fi
+  # Only when asked (nuget: overlay): a directory the overlay shows from the host's
+  # cache is root's to the agent, so adding a version beside one the host has fails.
+  if [ "$SBX_NUGET_OVERLAY" = 1 ] && overlay_packages "$SBX_HOST_NUGET_PACKAGES"; then
+    persist NUGET_PACKAGES "$SBX_HOST_NUGET_PACKAGES"
+    persist VIBE_NUGET_OVERLAY 1
+    unpersist NUGET_FALLBACK_PACKAGES
+  else
+    # The host's cache is read-only, and a fallback: packages found there
+    # are used in place, anything else lands in the sandbox's own
+    # ~/.nuget/packages.
+    persist NUGET_FALLBACK_PACKAGES "$SBX_HOST_NUGET_PACKAGES"
+    unpersist NUGET_PACKAGES
+    unpersist VIBE_NUGET_OVERLAY
+  fi
+  # A private feed the sandbox can't sign in to is a warning, not a failed
+  # restore: what it holds is asked of the host (vibe-nuget fetch).
+  persist RestoreIgnoreFailedSources true
 else
-  sudo sh -c "sed -i '/^export NUGET_PACKAGES=/d' '$PERSIST' 2>/dev/null; \
-    echo '$WANT' >> '$PERSIST'" \
-    && echo "persisted: $WANT" \
-    || echo "WARN: could not write $PERSIST"
+  echo "SBX_HOST_NUGET and SBX_HOST_NUGET_PACKAGES unset — nothing to do"
 fi

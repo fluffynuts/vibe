@@ -117,6 +117,14 @@ async function openPage({ routes = {}, storage = {}, settled = true, seeing = fa
       timer.fn()
       await settle()
     },
+    // kick runs the page's timer that calls the function named name, and gives its calls a few turns
+    // to be answered without waiting for all of them: for a test with a call held back.
+    async kick(name) {
+      const timer = intervals.find((i) => i.fn.name === name)
+      if (!timer) throw new Error('the page set no timer going for ' + name)
+      timer.fn()
+      for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve))
+    },
     async click(target) {
       const node = typeof target === 'string' ? $(target) : target
       if (!node) throw new Error('nothing to click: ' + target)
