@@ -321,3 +321,24 @@ test('that is not said while packages are still missing, nor when nothing was fe
   p = await syncPage(nothing({ last: { fetched: 0, at: '2026-10-19T12:00:00Z' } }))
   try { assert.doesNotMatch(p.$('admin-sync-status').textContent, /IDE may restore/) } finally { p.close() }
 })
+
+test('packages the sandbox only downloaded are listed with the rest', async () => {
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, admin: true, attention: {} },
+      '/api/admin': { status: { exists: true, running: true }, upgrades: {} },
+      '/api/packages': { requests: [], config: null },
+      '/api/packages/sync': {
+        count: 2, actionable: 2, running: false, skipped: 0, problems: [],
+        missing: [{ framework: 'net8.0', packages: [{ id: 'Dapper', version: '2.1.86' }], downloads: [{ id: 'Microsoft.NETCore.App.Ref', version: '8.0.32' }] }],
+      },
+    },
+    storage: { 'vibe-companion-tab': 'admin' },
+  })
+  try {
+    const text = p.$('admin-sync-list').textContent
+    assert.match(text, /net8\.0 \(2\)/)
+    assert.match(text, /Dapper 2\.1\.86/)
+    assert.match(text, /Microsoft\.NETCore\.App\.Ref 8\.0\.32/)
+  } finally { p.close() }
+})

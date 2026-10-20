@@ -2826,9 +2826,11 @@
     if (key !== syncView.listKey) {
       syncView.listKey = key
       $('admin-sync-list').replaceChildren(...(b.missing || []).flatMap((g) => {
-        const shown = g.packages.slice(0, MAX_LISTED).map(packageName).join(', ')
-        const more = g.packages.length > MAX_LISTED ? ' … and ' + (g.packages.length - MAX_LISTED) + ' more' : ''
-        return [el('p', { text: g.framework + ' (' + g.packages.length + ')' }), el('p', { class: 'muted', text: shown + more })]
+        // What was only downloaded (a targeting pack, say) is as missing as what was resolved.
+        const all = (g.packages || []).concat(g.downloads || [])
+        const shown = all.slice(0, MAX_LISTED).map(packageName).join(', ')
+        const more = all.length > MAX_LISTED ? ' … and ' + (all.length - MAX_LISTED) + ' more' : ''
+        return [el('p', { text: g.framework + ' (' + all.length + ')' }), el('p', { class: 'muted', text: shown + more })]
       }))
     }
     $('admin-sync-run').disabled = running || count === 0

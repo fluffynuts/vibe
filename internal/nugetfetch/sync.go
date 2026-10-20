@@ -17,6 +17,9 @@ import (
 type Group struct {
 	Framework string    `json:"framework"`
 	Packages  []Package `json:"packages"`
+	// Downloads are the packages the restore only downloaded (a targeting pack, say), which are
+	// fetched as downloads, not references.
+	Downloads []Package `json:"downloads,omitempty"`
 }
 
 // SyncResult is how the last run went.
@@ -76,7 +79,7 @@ func (st SyncState) Actionable() int {
 	}
 	distinct := map[Package]bool{}
 	for _, g := range st.Missing {
-		for _, p := range g.Packages {
+		for _, p := range append(append([]Package(nil), g.Packages...), g.Downloads...) {
 			if !nowhere[p] {
 				distinct[p] = true
 			}
@@ -102,7 +105,7 @@ type Sync struct {
 	Options func() Options
 
 	// fetch is FetchBatch; tests stand in for it.
-	fetch func(ctx context.Context, framework string, pkgs []Package, opts Options) (BatchResult, error)
+	fetch func(ctx context.Context, framework string, pkgs, downloads []Package, opts Options) (BatchResult, error)
 
 	mu      sync.Mutex
 	parsed  map[string]parsedAssets
@@ -148,6 +151,7 @@ func (s *Sync) checkLocked() {
 	}
 	elsewhere := map[Package]bool{}
 	frameworks := map[string]map[Package]bool{}
+	downloads := map[string]map[Package]bool{}
 	var graphs []Group
 	graphKeys := map[string]bool{}
 	seen := map[string]bool{}
@@ -174,16 +178,21 @@ func (s *Sync) checkLocked() {
 		for _, p := range s.namedElsewhere(filepath.Join(filepath.Dir(path), "project.nuget.cache")) {
 			elsewhere[p] = true
 		}
-		for fw, pkgs := range kept.assets.ByFramework {
+		for fw := range unionKeys(kept.assets.ByFramework, kept.assets.Downloads) {
+			pkgs, only := kept.assets.ByFramework[fw], kept.assets.Downloads[fw]
 			if frameworks[fw] == nil {
 				frameworks[fw] = map[Package]bool{}
+				downloads[fw] = map[Package]bool{}
 			}
 			for _, p := range pkgs {
 				frameworks[fw][p] = true
 			}
-			if key := graphKey(fw, pkgs); !graphKeys[key] {
+			for _, p := range only {
+				downloads[fw][p] = true
+			}
+			if key := graphKey(fw, pkgs) + "|downloads:" + graphKey("", only); !graphKeys[key] {
 				graphKeys[key] = true
-				graphs = append(graphs, Group{Framework: fw, Packages: pkgs})
+				graphs = append(graphs, Group{Framework: fw, Packages: pkgs, Downloads: only})
 			}
 		}
 	}
@@ -213,9 +222,17 @@ func (s *Sync) checkLocked() {
 			pkgs = append(pkgs, p)
 		}
 		sort.Slice(pkgs, func(i, j int) bool { return pkgs[i].ID < pkgs[j].ID })
-		if lacking := Missing(s.Cache, pkgs); len(lacking) > 0 {
-			missing = append(missing, Group{Framework: fw, Packages: lacking})
-			for _, p := range lacking {
+		var only []Package
+		for p := range downloads[fw] {
+			if !frameworks[fw][p] {
+				only = append(only, p)
+			}
+		}
+		sort.Slice(only, func(i, j int) bool { return only[i].ID < only[j].ID })
+		lacking, lackingDownloads := Missing(s.Cache, pkgs), Missing(s.Cache, only)
+		if len(lacking) > 0 || len(lackingDownloads) > 0 {
+			missing = append(missing, Group{Framework: fw, Packages: lacking, Downloads: lackingDownloads})
+			for _, p := range append(append([]Package(nil), lacking...), lackingDownloads...) {
 				distinct[p] = true
 			}
 		}
@@ -224,7 +241,7 @@ func (s *Sync) checkLocked() {
 		if graphs[i].Framework != graphs[j].Framework {
 			return graphs[i].Framework < graphs[j].Framework
 		}
-		return graphKey("", graphs[i].Packages) < graphKey("", graphs[j].Packages)
+		return graphKey("", graphs[i].Packages)+graphKey("", graphs[i].Downloads) < graphKey("", graphs[j].Packages)+graphKey("", graphs[j].Downloads)
 	})
 	s.graphs = graphs
 	s.state.Missing, s.state.Count = missing, len(distinct)
@@ -253,6 +270,18 @@ func (s *Sync) namedElsewhere(path string) []Package {
 	}
 	s.named[path] = namedFiles{info.ModTime(), info.Size(), pkgs}
 	return pkgs
+}
+
+// unionKeys is the frameworks either map has.
+func unionKeys(a, b map[string][]Package) map[string]bool {
+	keys := map[string]bool{}
+	for k := range a {
+		keys[k] = true
+	}
+	for k := range b {
+		keys[k] = true
+	}
+	return keys
 }
 
 // graphKey says whether two graphs are the same one.
@@ -284,10 +313,11 @@ func (s *Sync) progressLocked() *Progress {
 	total := map[Package]bool{}
 	lacking := map[Package]bool{}
 	for _, g := range s.runGroups {
-		for _, p := range g.Packages {
+		every := append(append([]Package(nil), g.Packages...), g.Downloads...)
+		for _, p := range every {
 			total[p] = true
 		}
-		for _, p := range Missing(s.Cache, g.Packages) {
+		for _, p := range Missing(s.Cache, every) {
 			lacking[p] = true
 		}
 	}
@@ -325,17 +355,17 @@ func (s *Sync) Run(ctx context.Context) error {
 
 	fetch := s.fetch
 	if fetch == nil {
-		fetch = FetchBatch
+		fetch = FetchBatchWith
 	}
 	result := &SyncResult{At: time.Now()}
 	unresolved := map[Package]bool{}
 	var failure error
 	for _, g := range graphs {
-		lacking := Missing(s.Cache, g.Packages)
-		if len(lacking) == 0 {
+		lacking, lackingDownloads := Missing(s.Cache, g.Packages), Missing(s.Cache, g.Downloads)
+		if len(lacking) == 0 && len(lackingDownloads) == 0 {
 			continue
 		}
-		res, err := fetch(ctx, g.Framework, lacking, s.Options())
+		res, err := fetch(ctx, g.Framework, lacking, lackingDownloads, s.Options())
 		result.Fetched += len(res.Fetched)
 		result.Failed = append(result.Failed, res.Failed...)
 		for _, p := range res.Unresolved {

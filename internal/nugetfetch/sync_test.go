@@ -30,7 +30,8 @@ func newSyncRig(t *testing.T) *syncRig {
 		Workspace: rig.dir,
 		Cache:     rig.cache,
 		Options:   func() Options { return Options{Cache: rig.cache} },
-		fetch: func(ctx context.Context, fw string, pkgs []Package, opts Options) (BatchResult, error) {
+		fetch: func(ctx context.Context, fw string, pkgs, downloads []Package, opts Options) (BatchResult, error) {
+			pkgs = append(append([]Package(nil), pkgs...), downloads...)
 			rig.mu.Lock()
 			rig.fetched[fw] = append(rig.fetched[fw], pkgs...)
 			rig.mu.Unlock()
@@ -353,12 +354,23 @@ func TestAPackageInTwoFrameworksIsOneOfTheTotal(t *testing.T) {
 // a restore needs of it is its identity and what it depends on.
 func addPackage(t *testing.T, feed, id, version string, deps map[string]string) {
 	t.Helper()
+	addPackageOfType(t, feed, id, version, "", deps)
+}
+
+// addPackageOfType is addPackage for a package of the given package type ("DotnetPlatform", for a
+// targeting pack, which NuGet will only restore as a download, never as a reference).
+func addPackageOfType(t *testing.T, feed, id, version, packageType string, deps map[string]string) {
+	t.Helper()
+	types := ""
+	if packageType != "" {
+		types = `<packageTypes><packageType name="` + packageType + `"/></packageTypes>`
+	}
 	var group strings.Builder
 	for dep, from := range deps {
 		group.WriteString(`<dependency id="` + dep + `" version="` + from + `"/>`)
 	}
 	nuspec := `<?xml version="1.0"?><package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd"><metadata><id>` + id +
-		`</id><version>` + version + `</version><authors>t</authors><description>t</description><dependencies><group targetFramework="net10.0">` +
+		`</id><version>` + version + `</version><authors>t</authors><description>t</description>` + types + `<dependencies><group targetFramework="net10.0">` +
 		group.String() + `</group></dependencies></metadata></package>`
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
@@ -592,5 +604,39 @@ func TestACacheFileThatCantBeReadIsNotStaleNorFatal(t *testing.T) {
 	rig.s.Check()
 	if st := rig.s.State(); st.Stale != 0 || st.Count != 1 {
 		t.Errorf("stale %d, missing %d: want 0 and 1", st.Stale, st.Count)
+	}
+}
+
+func TestAPackageTheSandboxOnlyDownloadedIsFetchedToo(t *testing.T) {
+	h := newHost(t)
+	addPackage(t, h.feed, "Demo.Lib", "1.0.0", nil)
+	addPackageOfType(t, h.feed, "Demo.Targeting.Ref", "8.0.0", "DotnetPlatform", nil)
+	ws := t.TempDir()
+	writeAssets(t, filepath.Join(ws, "A"), assetsWithDownloads(map[string][]string{"net10.0": {"Demo.Lib/1.0.0"}}, map[string][]string{"net10.0": {"Demo.Targeting.Ref/8.0.0"}}))
+	s := &Sync{Workspace: ws, Cache: h.cache, Options: h.options}
+	s.Check()
+	st := s.State()
+	if st.Count != 2 || st.Actionable() != 2 {
+		t.Fatalf("count %d, actionable %d: want both the reference and the download", st.Count, st.Actionable())
+	}
+	if err := s.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v\n%+v", err, s.State().Last)
+	}
+	for _, want := range []string{"demo.lib/1.0.0", "demo.targeting.ref/8.0.0"} {
+		if _, err := os.Stat(filepath.Join(h.cache, filepath.FromSlash(want), ".nupkg.metadata")); err != nil {
+			t.Errorf("%s didn't come: %v", want, err)
+		}
+	}
+	if st := s.State(); st.Count != 0 {
+		t.Errorf("%d still missing after the fetch", st.Count)
+	}
+}
+
+func TestADownloadThatIsAlsoReferencedIsOneMissingPackage(t *testing.T) {
+	rig := newSyncRig(t)
+	writeAssets(t, filepath.Join(rig.dir, "A"), assetsWithDownloads(map[string][]string{"net8.0": {"Both.Pkg/1.0.0"}}, map[string][]string{"net8.0": {"Both.Pkg/1.0.0"}}))
+	rig.s.Check()
+	if st := rig.s.State(); st.Count != 1 || st.Actionable() != 1 {
+		t.Errorf("count %d, actionable %d, want 1 and 1", st.Count, st.Actionable())
 	}
 }

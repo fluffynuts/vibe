@@ -36,6 +36,9 @@ const (
 type Assets struct {
 	// ByFramework is each target framework's packages, in order of id.
 	ByFramework map[string][]Package
+	// Downloads is each target framework's packages that were only downloaded (PackageDownload:
+	// targeting packs, say), which NuGet keeps apart from what it resolved, in order of id.
+	Downloads map[string][]Package
 	// Skipped is how many entries weren't taken: not a package id and exact
 	// version, past a limit, or of a framework that isn't one.
 	Skipped int
@@ -58,6 +61,14 @@ func ReadAssets(path string) (Assets, error) {
 		Targets map[string]map[string]struct {
 			Type string `json:"type"`
 		} `json:"targets"`
+		Project struct {
+			Frameworks map[string]struct {
+				DownloadDependencies []struct {
+					Name    string `json:"name"`
+					Version string `json:"version"`
+				} `json:"downloadDependencies"`
+			} `json:"frameworks"`
+		} `json:"project"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return Assets{}, fmt.Errorf("%s isn't a project.assets.json: %w", path, err)
@@ -65,7 +76,7 @@ func ReadAssets(path string) (Assets, error) {
 	if doc.Targets == nil {
 		return Assets{}, fmt.Errorf("%s isn't a project.assets.json: it has no targets", path)
 	}
-	out := Assets{ByFramework: map[string][]Package{}}
+	out := Assets{ByFramework: map[string][]Package{}, Downloads: map[string][]Package{}}
 	frameworks := make([]string, 0, len(doc.Targets))
 	for tfm := range doc.Targets {
 		frameworks = append(frameworks, tfm)
@@ -100,7 +111,59 @@ func ReadAssets(path string) (Assets, error) {
 			out.ByFramework[tfm] = pkgs
 		}
 	}
+	for _, tfm := range downloadFrameworks(doc.Project.Frameworks) {
+		entries := doc.Project.Frameworks[tfm].DownloadDependencies
+		if !frameworkPattern.MatchString(tfm) {
+			out.Skipped += len(entries)
+			continue
+		}
+		var pkgs []Package
+		for _, d := range entries {
+			version := exactVersion(d.Version)
+			if !valid(d.Name, version) {
+				out.Skipped++
+				continue
+			}
+			pkgs = append(pkgs, Package{d.Name, version})
+		}
+		sort.Slice(pkgs, func(i, j int) bool { return pkgs[i].ID < pkgs[j].ID })
+		if len(pkgs) > maxPackages {
+			out.Skipped += len(pkgs) - maxPackages
+			pkgs = pkgs[:maxPackages]
+		}
+		if len(pkgs) > 0 {
+			out.Downloads[tfm] = pkgs
+		}
+	}
 	return out, nil
+}
+
+// downloadFrameworks is the frameworks that have downloads, in order, at most maxFrameworks.
+func downloadFrameworks[T any](frameworks map[string]T) []string {
+	names := make([]string, 0, len(frameworks))
+	for tfm := range frameworks {
+		names = append(names, tfm)
+	}
+	sort.Strings(names)
+	if len(names) > maxFrameworks {
+		names = names[:maxFrameworks]
+	}
+	return names
+}
+
+// exactVersion is the version a range of NuGet's names alone: [1.0.0] or [1.0.0, 1.0.0], which is
+// how a download is written; anything else is a range, and no one version: "".
+func exactVersion(rng string) string {
+	rng = strings.TrimSpace(rng)
+	if !strings.HasPrefix(rng, "[") || !strings.HasSuffix(rng, "]") {
+		return ""
+	}
+	low, high, two := strings.Cut(strings.Trim(rng, "[]"), ",")
+	low = strings.TrimSpace(low)
+	if two && strings.TrimSpace(high) != low {
+		return ""
+	}
+	return low
 }
 
 func valid(id, version string) bool {

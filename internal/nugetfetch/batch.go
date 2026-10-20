@@ -13,18 +13,32 @@ import (
 // exactly its version, for one framework. In order, so the same batch is the
 // same project; the ids and versions must be valid, or they could be markup.
 func BatchProjectXML(framework string, pkgs []Package) string {
-	sorted := append([]Package(nil), pkgs...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
+	return BatchProjectXMLWith(framework, pkgs, nil)
+}
+
+// BatchProjectXMLWith is BatchProjectXML for a project that also downloads packages: ones the
+// sandbox's restore only downloaded (a targeting pack, say), which NuGet will not restore as a
+// reference, and so are asked for as downloads.
+func BatchProjectXMLWith(framework string, pkgs, downloads []Package) string {
 	var b strings.Builder
 	// The job is only to get these exact versions into the cache, so what NuGet
 	// would warn the project's owner of (known vulnerabilities, a package a
 	// direct reference is lower than) isn't a reason to fetch none of them.
 	fmt.Fprintf(&b, "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>%s</TargetFramework>\n    <NuGetAudit>false</NuGetAudit>\n    <NoWarn>$(NoWarn);NU1605</NoWarn>\n  </PropertyGroup>\n  <ItemGroup>\n", framework)
-	for _, p := range sorted {
+	for _, p := range sortedPackages(pkgs) {
 		fmt.Fprintf(&b, "    <PackageReference Include=\"%s\" Version=\"[%s]\" />\n", p.ID, p.Version)
+	}
+	for _, p := range sortedPackages(downloads) {
+		fmt.Fprintf(&b, "    <PackageDownload Include=\"%s\" Version=\"[%s]\" />\n", p.ID, p.Version)
 	}
 	b.WriteString("  </ItemGroup>\n</Project>\n")
 	return b.String()
+}
+
+func sortedPackages(pkgs []Package) []Package {
+	sorted := append([]Package(nil), pkgs...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
+	return sorted
 }
 
 // BatchResult is what a batch fetch did.
@@ -66,8 +80,25 @@ var restoreBatch = restore
 // words, and the rest still come: so an error is only for what isn't a package's fault,
 // a restore that can't be run, or that ran out of time, or was cancelled.
 func FetchBatch(ctx context.Context, framework string, pkgs []Package, opts Options) (BatchResult, error) {
+	return FetchBatchWith(ctx, framework, pkgs, nil, opts)
+}
+
+// FetchBatchWith is FetchBatch for pkgs that are referenced and downloads that are only downloaded
+// (see BatchProjectXMLWith); a package in both is a reference.
+func FetchBatchWith(ctx context.Context, framework string, pkgs, downloads []Package, opts Options) (BatchResult, error) {
 	if !frameworkPattern.MatchString(framework) {
 		return BatchResult{}, fmt.Errorf("framework %q is not a target framework such as net8.0", framework)
+	}
+	referenced := map[Package]bool{}
+	for _, p := range pkgs {
+		referenced[p] = true
+	}
+	onlyDownloaded := map[Package]bool{}
+	for _, p := range downloads {
+		if !referenced[p] {
+			onlyDownloaded[p] = true
+			pkgs = append(append([]Package(nil), pkgs...), p)
+		}
 	}
 	if len(pkgs) == 0 {
 		return BatchResult{}, fmt.Errorf("no packages to fetch")
@@ -77,7 +108,7 @@ func FetchBatch(ctx context.Context, framework string, pkgs []Package, opts Opti
 			return BatchResult{}, fmt.Errorf("%q %q is not a package id and an exact version", p.ID, p.Version)
 		}
 	}
-	run := &batchRun{ctx: ctx, framework: framework, opts: opts, budget: maxBatchRestores}
+	run := &batchRun{ctx: ctx, framework: framework, opts: opts, budget: maxBatchRestores, downloads: onlyDownloaded}
 	absent := Missing(opts.Cache, pkgs)
 	err := run.attempt(append([]Package(nil), pkgs...))
 	for _, p := range absent {
@@ -97,6 +128,8 @@ type batchRun struct {
 	opts      Options
 	budget    int
 	res       BatchResult
+	// downloads are the packages that are fetched as downloads, not references.
+	downloads map[Package]bool
 }
 
 // attempt fetches todo: in one restore if NuGet will, else without what no feed has,
@@ -112,7 +145,15 @@ func (b *batchRun) attempt(todo []Package) error {
 		return nil
 	}
 	b.budget--
-	out, err := restoreBatch(b.ctx, BatchProjectXML(b.framework, todo), b.opts)
+	var references, downloads []Package
+	for _, p := range todo {
+		if b.downloads[p] {
+			downloads = append(downloads, p)
+		} else {
+			references = append(references, p)
+		}
+	}
+	out, err := restoreBatch(b.ctx, BatchProjectXMLWith(b.framework, references, downloads), b.opts)
 	b.res.Output = out
 	if err == nil {
 		return nil

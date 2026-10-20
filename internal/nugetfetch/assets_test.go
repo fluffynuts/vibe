@@ -42,6 +42,63 @@ func writeAssets(t *testing.T, dir, content string) string {
 	return path
 }
 
+// assetsWithDownloads is assetsJSON for a project that also has packages it only downloads
+// (PackageDownload: targeting packs, say), which NuGet keeps apart from what it resolved, as
+// project.frameworks.<framework>.downloadDependencies with an exact version range.
+func assetsWithDownloads(targets, downloads map[string][]string) string {
+	var doc map[string]interface{}
+	json.Unmarshal([]byte(assetsJSON(targets)), &doc)
+	frameworks := map[string]map[string]interface{}{}
+	for tfm, entries := range downloads {
+		var deps []map[string]string
+		for _, e := range entries {
+			id, version, _ := strings.Cut(e, "/")
+			deps = append(deps, map[string]string{"name": id, "version": "[" + version + ", " + version + "]"})
+		}
+		frameworks[tfm] = map[string]interface{}{"downloadDependencies": deps}
+	}
+	doc["project"] = map[string]interface{}{"frameworks": frameworks}
+	out, _ := json.Marshal(doc)
+	return string(out)
+}
+
+func TestPackagesOnlyDownloadedAreReadWithTheirExactVersions(t *testing.T) {
+	path := writeAssets(t, t.TempDir(), assetsWithDownloads(
+		map[string][]string{"net8.0": {"Some.Lib/1.0.0"}},
+		map[string][]string{"net8.0": {"Targeting.Pack.Ref/8.0.32", "Newtonsoft.Json/12.0.1"}}))
+	got, err := ReadAssets(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Package{{"Newtonsoft.Json", "12.0.1"}, {"Targeting.Pack.Ref", "8.0.32"}}
+	if !reflect.DeepEqual(got.Downloads["net8.0"], want) {
+		t.Errorf("downloads %v, want %v", got.Downloads["net8.0"], want)
+	}
+	if !reflect.DeepEqual(got.ByFramework["net8.0"], []Package{{"Some.Lib", "1.0.0"}}) {
+		t.Errorf("what it resolved is %v: the downloads are kept apart", got.ByFramework["net8.0"])
+	}
+}
+
+func TestADownloadThatIsNotOneExactVersionOrNotAPackageIsSkipped(t *testing.T) {
+	doc := `{"version":3,"targets":{"net8.0":{}},"project":{"frameworks":{"net8.0":{"downloadDependencies":[` +
+		`{"name":"Range.Pkg","version":"[1.0.0, 2.0.0]"},` +
+		`{"name":"Open.Pkg","version":"1.0.0"},` +
+		`{"name":"Bad\"/><x","version":"[1.0.0, 1.0.0]"},` +
+		`{"name":"One.Version","version":"[3.0.0]"}]},` +
+		`"net8.0-windows":{"downloadDependencies":[{"name":"Other.Pkg","version":"[1.0.0, 1.0.0]"}]}}}}`
+	path := writeAssets(t, t.TempDir(), doc)
+	got, err := ReadAssets(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []Package{{"One.Version", "3.0.0"}}; !reflect.DeepEqual(got.Downloads["net8.0"], want) {
+		t.Errorf("downloads %v, want %v", got.Downloads["net8.0"], want)
+	}
+	if len(got.Downloads) != 1 || got.Skipped != 4 {
+		t.Errorf("downloads %v, skipped %d: want one framework and 4 skipped", got.Downloads, got.Skipped)
+	}
+}
+
 func TestTheAssetsGiveTheExactPackagesEachFrameworkResolved(t *testing.T) {
 	path := writeAssets(t, t.TempDir(), assetsJSON(map[string][]string{
 		"net8.0": {"Newtonsoft.Json/13.0.3", "AWSSDK.Core/4.0.102.6", "Mono.Unix/7.1.0-final.1.21458.1"},

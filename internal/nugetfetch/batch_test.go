@@ -28,6 +28,46 @@ func TestTheBatchProjectPinsEveryPackageAtItsExactVersionForOneFramework(t *test
 	}
 }
 
+func TestTheBatchProjectDownloadsWhatTheSandboxOnlyDownloaded(t *testing.T) {
+	xml := BatchProjectXMLWith("net8.0", []Package{{"A.Lib", "1.0.0"}}, []Package{{"Z.Targeting.Ref", "8.0.32"}, {"B.Tool", "2.0.0"}})
+	for _, want := range []string{
+		`<PackageReference Include="A.Lib" Version="[1.0.0]" />`,
+		`<PackageDownload Include="B.Tool" Version="[2.0.0]" />`,
+		`<PackageDownload Include="Z.Targeting.Ref" Version="[8.0.32]" />`,
+	} {
+		if !strings.Contains(xml, want) {
+			t.Errorf("project lacks %q:\n%s", want, xml)
+		}
+	}
+	if strings.Contains(xml, `<PackageReference Include="Z.Targeting.Ref"`) {
+		t.Error("a package that is only downloaded is referenced: NuGet refuses that for a targeting pack")
+	}
+}
+
+func TestATargetingPackIsFetchedAsADownload(t *testing.T) {
+	h := newHost(t)
+	addPackageOfType(t, h.feed, "Demo.Targeting.Ref", "8.0.0", "DotnetPlatform", nil)
+	res, err := FetchBatchWith(context.Background(), "net10.0", nil, []Package{{"Demo.Targeting.Ref", "8.0.0"}}, h.options())
+	if err != nil {
+		t.Fatalf("FetchBatchWith: %v\n%s", err, res.Output)
+	}
+	if len(res.Fetched) != 1 || len(res.Failed) != 0 {
+		t.Errorf("fetched %v, failed %v", res.Fetched, res.Failed)
+	}
+}
+
+func TestADownloadNoFeedHasIsSaidAsUnresolved(t *testing.T) {
+	h := newHost(t)
+	addPackage(t, h.feed, "Demo.Lib", "1.0.0", nil)
+	res, err := FetchBatchWith(context.Background(), "net10.0", []Package{{"Demo.Lib", "1.0.0"}}, []Package{{"Nope.Ref", "1.0.0"}}, h.options())
+	if err != nil {
+		t.Fatalf("FetchBatchWith: %v\n%s", err, res.Output)
+	}
+	if len(res.Fetched) != 1 || len(res.Unresolved) != 1 || res.Unresolved[0].ID != "Nope.Ref" {
+		t.Errorf("fetched %v, unresolved %v", res.Fetched, res.Unresolved)
+	}
+}
+
 // The batch is only to get these exact versions into the cache: a vulnerability NuGet
 // would tell the project's owner of, or a direct reference lower than what a package
 // wants, is no reason to fetch none of them.
