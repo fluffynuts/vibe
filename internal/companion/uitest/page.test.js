@@ -2875,3 +2875,93 @@ test('a logged host is offered Allow only when it names one host', async () => {
     assert.deepEqual(offered, ['api.example.com', 'example.com:443', '[2001:db8::1]:443', '10.0.0.1'])
   } finally { p.close() }
 })
+
+// The name of the new branch is checked as it is typed: against the branches there already are,
+// here and at origin, and against git's rules for a name. Starting checks again, as the branches
+// may have changed since the dialog opened.
+async function branchPage(branch) {
+  const p = await freshPage({ options: { review: false, branch: Object.assign({}, clean, branch) } })
+  await p.click('fresh-branch')
+  return p
+}
+
+async function nameIs(p, name) { await p.type(p.$('fresh-branch-name'), name) }
+const noteOf = (p) => (shown(p, 'fresh-branch-note') ? p.$('fresh-branch-note').textContent : '')
+const flagged = (p) => p.$('fresh-branch-name').getAttribute('aria-invalid') === 'true'
+
+test('a branch name that is taken here is said so as it is typed, and flagged', async () => {
+  const p = await branchPage({ branches: ['master', 'feat/a', 'feat/done'] })
+  try {
+    await nameIs(p, 'feat/done')
+    assert.match(noteOf(p), /already a branch called feat\/done/)
+    assert.equal(flagged(p), true)
+    assert.equal(p.$('fresh-run').disabled, false, 'starting still checks, and says')
+    await nameIs(p, 'feat/new')
+    assert.equal(noteOf(p), '')
+    assert.equal(flagged(p), false)
+  } finally { p.close() }
+})
+
+test('a branch name that origin has already is a warning, not an error', async () => {
+  const p = await branchPage({ branches: ['master'], remote: ['master', 'feat/theirs'] })
+  try {
+    await nameIs(p, 'feat/theirs')
+    assert.match(noteOf(p), /origin has a branch called feat\/theirs/)
+    assert.match(noteOf(p), /refused/)
+    assert.equal(flagged(p), false, 'it may be what they mean')
+    assert.equal(p.$('fresh-branch-note').classList.contains('warn-text'), true)
+    await p.click('fresh-run')
+    assert.equal(p.posted('/api/conversation/new').length, 1, 'it can still be started')
+  } finally { p.close() }
+})
+
+test('a name taken here and at origin is the error', async () => {
+  const p = await branchPage({ branches: ['master', 'feat/x'], remote: ['feat/x'] })
+  try {
+    await nameIs(p, 'feat/x')
+    assert.match(noteOf(p), /already a branch called feat\/x/)
+    assert.equal(flagged(p), true)
+  } finally { p.close() }
+})
+
+test('a name is compared as typed, case and all', async () => {
+  const p = await branchPage({ branches: ['Feat/A'] })
+  try {
+    await nameIs(p, 'feat/a')
+    assert.equal(noteOf(p), '')
+  } finally { p.close() }
+})
+
+test('names git would refuse are said so as they are typed', async () => {
+  const p = await branchPage({ branches: [] })
+  try {
+    for (const bad of ['feat/a b', 'a..b', 'feat/', '/a', 'a//b', '-x', 'x.lock', 'a/x.lock/b', '@', 'a@{b', 'a~b', 'a^b', 'a:b', 'a?b', 'a*b', 'a[b', 'a\\b', '.hidden', 'a/.b', 'ends.', 'tab\tbed']) {
+      await nameIs(p, bad)
+      assert.equal(flagged(p), true, JSON.stringify(bad))
+      assert.match(noteOf(p), /can't be a branch name/, JSON.stringify(bad))
+    }
+    for (const good of ['feat/new-thing', 'feat/a.b', 'hotfix_1', 'v1.2.3', 'a/b/c', 'ünï']) {
+      await nameIs(p, good)
+      assert.equal(flagged(p), false, JSON.stringify(good))
+      assert.equal(noteOf(p), '', JSON.stringify(good))
+    }
+  } finally { p.close() }
+})
+
+test('the starting text, feat/, is not scolded before anything has been typed', async () => {
+  const p = await branchPage({ branches: [] })
+  try {
+    assert.equal(p.$('fresh-branch-name').value, 'feat/')
+    assert.equal(noteOf(p), '')
+    assert.equal(flagged(p), false)
+  } finally { p.close() }
+})
+
+test('an emptied name is not scolded either: starting says to name it', async () => {
+  const p = await branchPage({ branches: [] })
+  try {
+    await nameIs(p, 'x')
+    await nameIs(p, '')
+    assert.equal(noteOf(p), '')
+  } finally { p.close() }
+})

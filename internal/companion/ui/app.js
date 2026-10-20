@@ -4964,7 +4964,53 @@
   const FRESH_OPTIONS_MS = 4 * 60 * 1000
   const FRESH_FETCH_MS = 3 * 60 * 1000
   const FRESH_START_MS = 5 * 60 * 1000
-  const fresh = { generation: 0, options: null, fetching: false, fetched: null, cancel: null }
+  const fresh = { generation: 0, options: null, fetching: false, fetched: null, cancel: null, nameTyped: false }
+
+  // branchNameProblem is why git would refuse name for a branch (git check-ref-format's rules, as far
+  // as they matter to a name typed by hand), or "" when it wouldn't. Starting asks git itself: this is
+  // for saying so while it's typed.
+  function branchNameProblem(name) {
+    if (name.startsWith('-')) return "it can't start with -"
+    if (/[\s\x00-\x1f\x7f]/.test(name)) return "it can't have spaces or control characters"
+    const bad = name.match(/[~^:?*[\\]/)
+    if (bad) return "it can't have " + bad[0]
+    if (name.includes('..')) return "it can't have .."
+    if (name.includes('@{')) return "it can't have @{"
+    if (name === '@') return "it can't be just @"
+    if (name.endsWith('.')) return "it can't end with ."
+    const parts = name.split('/')
+    if (parts.some((part) => part === '')) return "it can't start or end with /, nor have // in it"
+    if (parts.some((part) => part.startsWith('.'))) return "no part of it can start with ."
+    if (parts.some((part) => part.endsWith('.lock'))) return "no part of it can end with .lock"
+    return ''
+  }
+
+  // drawBranchName says, under the new branch's name, what's wrong with it: an error for a name git
+  // would refuse or that is a branch here; a warning for one origin has, as a push of the new branch
+  // under that name would be refused. Nothing until the user has typed.
+  function drawBranchName(b) {
+    const input = $('fresh-branch-name')
+    const note = $('fresh-branch-note')
+    const name = input.value
+    let text = ''
+    let error = false
+    if (fresh.nameTyped && name) {
+      const problem = branchNameProblem(name)
+      if (problem) {
+        text = '"' + name + "\" can't be a branch name: " + problem + '.'
+        error = true
+      } else if ((b.branches || []).includes(name)) {
+        text = 'There is already a branch called ' + name + '.'
+        error = true
+      } else if ((b.remote || []).includes(name)) {
+        text = 'origin has a branch called ' + name + ", as last fetched. A push of this one under that name would be refused unless it's forced, so you may want a different name."
+      }
+    }
+    input.setAttribute('aria-invalid', String(error))
+    note.textContent = text
+    note.className = 'note ' + (error ? 'bad-text' : 'warn-text')
+    note.hidden = !text
+  }
 
   function showIf(id, on) { $(id).hidden = !on }
 
@@ -4980,6 +5026,7 @@
     $('fresh-review').checked = true
     $('fresh-branch').checked = false
     $('fresh-branch-name').value = FRESH_BRANCH_START
+    fresh.nameTyped = false
     $('fresh-from-here').checked = true
     $('fresh-update').checked = false
     $('fresh-run').textContent = 'Start a new conversation'
@@ -5062,6 +5109,7 @@
     if (noDefault && fresh.setterWhy !== noDefault) $('fresh-no-default').replaceChildren(defaultBranchSetter(noDefault, refreshFresh))
     fresh.setterWhy = noDefault
     showIf('fresh-dirty', !!b.dirty)
+    drawBranchName(b)
     drawFreshFetch(b.defaultSet ? '' : def)
   }
 
@@ -5171,6 +5219,7 @@
     $('fresh-branch-name').addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter' && !ev.isComposing) ev.preventDefault()
     })
+    $('fresh-branch-name').addEventListener('input', () => { fresh.nameTyped = true; drawFresh() })
     $('fresh').addEventListener('close', () => {
       if (fresh.cancel) fresh.cancel.abort()
       fresh.generation++

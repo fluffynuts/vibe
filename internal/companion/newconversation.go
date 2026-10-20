@@ -53,6 +53,10 @@ type branchOffer struct {
 	DefaultEmpty bool   `json:"defaultEmpty,omitempty"`
 	NoDefault    string `json:"noDefault,omitempty"`
 	Unavailable  string `json:"unavailable,omitempty"`
+	// Branches are the local branches; Remote are origin's, as last fetched. The dialog says as a
+	// name is typed that one is taken.
+	Branches []string `json:"branches,omitempty"`
+	Remote   []string `json:"remote,omitempty"`
 }
 
 // conversationNewOptions is what the dialog can offer: a POST, as it may
@@ -136,6 +140,7 @@ func (s *Server) branchOffer(ctx context.Context, asleep string) branchOffer {
 	if tree.conflicted {
 		offer.Unavailable = "A merge has conflicts: resolve them before branching."
 	}
+	offer.Branches, offer.Remote = s.branchNames(ctx)
 	def, err := s.defaultBranch(ctx)
 	switch {
 	case err != nil:
@@ -147,6 +152,24 @@ func (s *Server) branchOffer(ctx context.Context, asleep string) branchOffer {
 		offer.DefaultEmpty = def.Set && !s.hasLocalBranch(ctx, def.Name)
 	}
 	return offer
+}
+
+// branchNames are the local branches and origin's, as last fetched. A repository git can't list
+// is as if it had none: the name is checked again when the branch is made.
+func (s *Server) branchNames(ctx context.Context) (local, remote []string) {
+	out, err := s.sandboxGit(ctx, gitWithin, "for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes/origin")
+	if err != nil {
+		return nil, nil
+	}
+	for _, ref := range strings.Fields(out) {
+		switch {
+		case strings.HasPrefix(ref, "refs/heads/"):
+			local = append(local, strings.TrimPrefix(ref, "refs/heads/"))
+		case strings.HasPrefix(ref, "refs/remotes/origin/") && ref != "refs/remotes/origin/HEAD":
+			remote = append(remote, strings.TrimPrefix(ref, "refs/remotes/origin/"))
+		}
+	}
+	return local, remote
 }
 
 func (s *Server) hasLocalBranch(ctx context.Context, name string) bool {

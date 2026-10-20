@@ -606,3 +606,5 @@ dialog.gate p { margin: 8px 0; }
 .gate-progress::-webkit-progress-value { background: var(--theme); }
 .gate-progress::-moz-progress-bar { background: var(--theme); }
 .gate-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-top: 10px; }
+
+input[aria-invalid="true"] { border-color: var(--bad); outline-color: var(--bad); }

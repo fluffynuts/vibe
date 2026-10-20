@@ -429,7 +429,8 @@
           <label><input type="checkbox" id="fresh-branch"> Start a new branch</label>
           <p id="fresh-branch-why" class="muted note sub" hidden></p>
           <div id="fresh-branch-details" class="sub" hidden>
-            <input type="text" id="fresh-branch-name" aria-label="Name of the new branch" spellcheck="false" autocomplete="off">
+            <input type="text" id="fresh-branch-name" aria-label="Name of the new branch" aria-describedby="fresh-branch-note" spellcheck="false" autocomplete="off">
+            <p id="fresh-branch-note" class="note" role="status" hidden></p>
             <div class="choices" role="radiogroup" aria-label="Branch from">
               <label><input type="radio" name="fresh-from" id="fresh-from-here" value="here"> Branch from here <span id="fresh-from-here-name" class="muted"></span></label>
               <div id="fresh-from-default-row">
