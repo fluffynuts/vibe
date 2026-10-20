@@ -107,6 +107,9 @@ type Sync struct {
 	// Options are where and how to fetch, asked for each run.
 	Options func() Options
 
+	// now is the time, for a test to set.
+	now func() time.Time
+
 	// fetch is FetchBatch; tests stand in for it.
 	fetch func(ctx context.Context, framework string, pkgs, downloads []Package, opts Options) (BatchResult, error)
 
@@ -143,6 +146,24 @@ func (s *Sync) Check() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.checkLocked()
+}
+
+// CheckWithin is Check, unless the last look was less than age ago: asked for as often as an
+// agent builds, a look at the whole workspace need not be made each time.
+func (s *Sync) CheckWithin(age time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.state.Checked.IsZero() && s.clock().Sub(s.state.Checked) < age {
+		return
+	}
+	s.checkLocked()
+}
+
+func (s *Sync) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
 }
 
 func (s *Sync) checkLocked() {
@@ -254,7 +275,7 @@ func (s *Sync) checkLocked() {
 	s.state.Missing, s.state.Count = missing, len(distinct)
 	s.state.Skipped, s.state.Problems, s.state.Stale = skipped, problems, stale
 	s.state.StaleProjects = sortedKeys(staleProjects)
-	s.state.Checked = time.Now()
+	s.state.Checked = s.clock()
 }
 
 // projectName is the folder of the project whose project.assets.json is at path, within the workspace.

@@ -727,3 +727,31 @@ func TestAStartedRunSaysHowItWentOnTheChannel(t *testing.T) {
 		t.Errorf("the run said %v", err)
 	}
 }
+
+// Asked for as often as an agent builds, a look at the workspace younger than a moment is not made again.
+func TestALookAskedForSoonAfterOneIsNotMadeAgain(t *testing.T) {
+	rig := newSyncRig(t)
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	rig.s.now = func() time.Time { return now }
+	rig.s.Check()
+	rig.project(t, "A", map[string][]string{"net8.0": {"Lack.One/1.0.0"}})
+	now = now.Add(time.Second)
+	rig.s.CheckWithin(2 * time.Second)
+	if got := rig.s.State().Count; got != 0 {
+		t.Errorf("looked again after a second: %d missing", got)
+	}
+	now = now.Add(2 * time.Second)
+	rig.s.CheckWithin(2 * time.Second)
+	if got := rig.s.State().Count; got != 1 {
+		t.Errorf("didn't look again after three seconds: %d missing", got)
+	}
+}
+
+func TestALookIsMadeWhenNoneHasBeen(t *testing.T) {
+	rig := newSyncRig(t)
+	rig.project(t, "A", map[string][]string{"net8.0": {"Lack.One/1.0.0"}})
+	rig.s.CheckWithin(time.Hour)
+	if got := rig.s.State().Count; got != 1 {
+		t.Errorf("%d missing", got)
+	}
+}

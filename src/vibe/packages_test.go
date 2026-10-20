@@ -245,6 +245,9 @@ func TestTheOverviewIsOfWhatIsWaitingNow(t *testing.T) {
 	ws, cache := t.TempDir(), t.TempDir()
 	sync := &nugetfetch.Sync{Workspace: ws, Cache: cache, Options: func() nugetfetch.Options { return nugetfetch.Options{Cache: cache} }}
 	overview := packagesOverview(desk, sync)
+	was := overviewScanAge
+	overviewScanAge = 0 // each ask looks afresh: this test changes the workspace between asks
+	defer func() { overviewScanAge = was }()
 
 	// Written after the sync was made and never checked: asking looks.
 	obj := filepath.Join(ws, "App", "obj")

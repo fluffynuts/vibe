@@ -178,6 +178,11 @@ func workspaceConfigFor(vibeHome, name string, inst state.Instance, merged setti
 	return w
 }
 
+// overviewScanAge is how old a look at the workspace may be and still say what's waiting: an agent asks
+// before every build, and a look reads the whole workspace. What its restore just wrote may take this
+// long to show. A variable for tests.
+var overviewScanAge = 2 * time.Second
+
 // maxOverviewListed is how many waiting requests the overview names; the rest are counted.
 const maxOverviewListed = 5
 
@@ -194,7 +199,7 @@ func packagesOverview(desk *packagereq.Desk, sync *nugetfetch.Sync) func() strin
 		}
 		missing, fetching := 0, false
 		if sync != nil {
-			sync.Check()
+			sync.CheckWithin(overviewScanAge)
 			st := sync.State()
 			fetching = st.Running
 			st.Running = false

@@ -479,6 +479,7 @@ func TestAStatusRequestIsAnsweredAtOnceWithWhatTheHostSaysIsWaiting(t *testing.T
 	rig.desk.Overview = func() string { return "2 package requests are waiting for the user" }
 	drop(t, rig.box, "1-a.json", `{"kind":"status"}`)
 	rig.desk.Poll(context.Background())
+	rig.desk.Wait()
 	if got := rig.answer(t, "1-a"); got != "info\n2 package requests are waiting for the user\n" {
 		t.Errorf("answer = %q", got)
 	}
@@ -502,6 +503,7 @@ func TestAnUnavailableDeskSaysWhyToAStatusRequestToo(t *testing.T) {
 	rig.desk.Overview = func() string { return "all well" }
 	drop(t, rig.box, "1-a.json", `{"kind":"status"}`)
 	rig.desk.Poll(context.Background())
+	rig.desk.Wait()
 	if got := rig.answer(t, "1-a"); !strings.HasPrefix(got, "failed\n") || !strings.Contains(got, "holds vibe's own") {
 		t.Errorf("answer = %q", got)
 	}
@@ -675,6 +677,68 @@ func TestWhatTheAgentIsToldOfARequestNotFetchedDoesNotScoldOrShout(t *testing.T)
 			if strings.Contains(m, steer) {
 				t.Errorf("%s says %q:\n%s", name, steer, m)
 			}
+		}
+	}
+}
+
+// Saying what is waiting can take a look at the whole workspace: the requests behind it in the inbox, and the
+// fetches under way, don't wait for it.
+func TestAStatusRequestThatIsSlowToAnswerHoldsUpNothingElse(t *testing.T) {
+	rig := newDesk(t, "ask")
+	looking, release := make(chan struct{}), make(chan struct{})
+	rig.desk.Overview = func() string {
+		close(looking)
+		<-release
+		return "slowly said"
+	}
+	drop(t, rig.box, "1-status.json", `{"kind":"status"}`)
+	rig.ask(t, "2-package", "Corp.Lib", "1.2.3")
+	polled := make(chan struct{})
+	go func() { rig.desk.Poll(context.Background()); close(polled) }()
+	select {
+	case <-polled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Poll waited for the status to be worked out")
+	}
+	<-looking
+	if got := rig.answer(t, "2-package"); !strings.HasPrefix(got, "waiting\n") {
+		t.Errorf("the package request, behind the status one, got %q", got)
+	}
+	close(release)
+	rig.desk.Wait()
+	if got := rig.answer(t, "1-status"); got != "info\nslowly said\n" {
+		t.Errorf("the status answer = %q", got)
+	}
+}
+
+func TestAFloodOfStatusRequestsIsLookedAtOneAtATime(t *testing.T) {
+	rig := newDesk(t, "ask")
+	var mu sync.Mutex
+	inside, most := 0, 0
+	rig.desk.Overview = func() string {
+		mu.Lock()
+		inside++
+		if inside > most {
+			most = inside
+		}
+		mu.Unlock()
+		time.Sleep(2 * time.Millisecond)
+		mu.Lock()
+		inside--
+		mu.Unlock()
+		return "said"
+	}
+	for i := 0; i < 20; i++ {
+		drop(t, rig.box, fmt.Sprintf("%02d-s.json", i), `{"kind":"status"}`)
+	}
+	rig.desk.Poll(context.Background())
+	rig.desk.Wait()
+	if most != 1 {
+		t.Errorf("%d looks at once, want 1", most)
+	}
+	for i := 0; i < 20; i++ {
+		if got := rig.answer(t, fmt.Sprintf("%02d-s", i)); got != "info\nsaid\n" {
+			t.Errorf("request %d: %q", i, got)
 		}
 	}
 }

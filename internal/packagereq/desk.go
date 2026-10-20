@@ -58,6 +58,8 @@ type Desk struct {
 	pending []*pending
 	running int
 	work    sync.WaitGroup
+	// looking is held while the overview is worked out, for one request at a time.
+	looking sync.Mutex
 }
 
 // DefaultParallel is how many fetches run at once: enough to hide each one's
@@ -187,15 +189,24 @@ func (d *Desk) take(t Taken) {
 	}
 }
 
-// status answers a request for what is waiting for the user, at once and from what the host knows now.
+// status answers a request for what is waiting for the user, from what the host knows when it looks.
 func (d *Desk) status(t Taken) {
 	if d.Overview == nil {
 		d.refuse(t, "the host has nothing to say of what is waiting for the user")
 		return
 	}
-	if t.Nonce != "" {
-		d.reply(t.Nonce, Info, d.Overview())
+	if t.Nonce == "" {
+		return
 	}
+	// Saying it can take a look at the whole workspace: not in the loop that takes requests in, which
+	// the ones behind it, and the fetches to start, would wait on; and one look at a time.
+	d.work.Add(1)
+	go func() {
+		defer d.work.Done()
+		d.looking.Lock()
+		defer d.looking.Unlock()
+		d.reply(t.Nonce, Info, d.Overview())
+	}()
 }
 
 func (d *Desk) holds(key string) bool {
