@@ -249,3 +249,35 @@ test('once a fetch is done the prompt still waits for requests that are undecide
     assert.equal(p.$('convo-gate-fetch').hidden, true, 'nothing left to fetch')
   } finally { p.close() }
 })
+
+// jsdom has no layout, so the log's geometry is faked: 1000 tall, 200 showing.
+function fakeScroll(log, top) {
+  let scrollTop = top
+  Object.defineProperty(log, 'scrollHeight', { configurable: true, get: () => 1000 })
+  Object.defineProperty(log, 'clientHeight', { configurable: true, get: () => 200 })
+  Object.defineProperty(log, 'scrollTop', { configurable: true, get: () => scrollTop, set: (v) => { scrollTop = v } })
+}
+
+test('sending a prompt scrolls the conversation to the end, even if the user had scrolled up', async () => {
+  const p = await sendPage(nothingMissing())
+  try {
+    const log = p.$('convo-log')
+    fakeScroll(log, 100)
+    await press(p, 'please build')
+    assert.deepEqual(p.at.sent, ['please build'])
+    assert.equal(log.scrollTop, 1000)
+  } finally { p.close() }
+})
+
+test('a prompt held for packages scrolls to the end once it is sent anyway', async () => {
+  const p = await sendPage(missing(3))
+  try {
+    const log = p.$('convo-log')
+    fakeScroll(log, 100)
+    await press(p, 'please build')
+    assert.deepEqual(p.at.sent, [])
+    await p.click('convo-gate-send')
+    assert.deepEqual(p.at.sent, ['please build'])
+    assert.equal(log.scrollTop, 1000)
+  } finally { p.close() }
+})

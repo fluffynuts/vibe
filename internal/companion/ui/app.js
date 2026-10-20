@@ -4369,6 +4369,10 @@
       input.value = ''
       promptChanged()
       closeCommands()
+      // Whoever scrolled up to read and forgot would see nothing happen: the reply
+      // would arrive below the fold. Being at the end also makes the renders that follow stick.
+      const log = $('convo-log')
+      log.scrollTop = log.scrollHeight
       setConvoRunning(true)
       showTyping()
       pollConversation()
