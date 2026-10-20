@@ -2634,13 +2634,13 @@ test('ticking a new branch checks origin once, saying so while it does', async (
   } finally { p.close() }
 })
 
-test("a check that couldn't be made says so, and to check yourself", async () => {
+test("a check that couldn't be made says so, and why, and no more", async () => {
   const p = await freshPage({ options: { branch: clean }, fetched: { checked: false, why: 'could not read Username' } })
   try {
     await p.click('fresh-branch')
     assert.ok(shown(p, 'fresh-fetch'))
     assert.match(p.$('fresh-fetch').textContent, /Couldn't check whether origin\/master is up to date: could not read Username/)
-    assert.match(p.$('fresh-fetch').textContent, /yourself/)
+    assert.match(p.$('fresh-fetch').textContent, /could not read Username\.$/)
     assert.ok(!shown(p, 'fresh-update-row'))
   } finally { p.close() }
 })

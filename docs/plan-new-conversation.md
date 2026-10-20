@@ -58,7 +58,7 @@ both say why and offer to set it: "Set it for this repository:", with a box and 
   from origin ("Checking whether origin/master is up to date…"). It fetches once per opening of the dialog. Cancelling
   the dialog cancels the fetch, and the fetch has a 2-minute backstop.
 - **The fetch failed** (no token in the sandbox, no network, …): "Couldn't check whether origin/master is up to date:
-  \<git's reason\>. Check it yourself." Branching from origin/master still works, from what was last fetched.
+  \<git's reason\>." Branching from origin/master still works, from what was last fetched.
 - **Local master is behind origin:** "Local master is N commits behind origin: update it too?", ticked. Done as a
   fast-forward only, with no network (`git fetch . refs/remotes/origin/master:refs/heads/master`), which also refuses
   a branch checked out in another worktree.

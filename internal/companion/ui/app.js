@@ -5079,7 +5079,7 @@
     if (def && fresh.fetching) {
       text = 'Checking whether origin/' + def + ' is up to date…'
     } else if (def && f && !f.checked) {
-      text = "Couldn't check whether origin/" + def + ' is up to date: ' + String(f.why || 'no reason given').replace(/\.$/, '') + '. Check it yourself.'
+      text = "Couldn't check whether origin/" + def + ' is up to date: ' + String(f.why || 'no reason given').replace(/\.$/, '') + '.'
       warn = true
     } else if (def && f && f.local && f.ahead > 0) {
       text = 'Local ' + def + ' has ' + plural(f.ahead, 'commit') + " not on origin, so it's left as it is."
