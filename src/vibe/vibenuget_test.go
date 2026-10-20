@@ -654,7 +654,12 @@ func TestAProjectFileThatIsNotAPlainOneInTheWorkspaceIsNeverSaidToRestore(t *tes
 			if err := os.WriteFile(path, []byte("<Project/>"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			data = []byte(strings.Replace(string(data), r.projectFile("App"), path, 1))
+			// The cache names the project as the rig wrote it, which may be by a link.
+			written := filepath.Join(r.ws, "App", "App.csproj")
+			if !strings.Contains(string(data), written) {
+				t.Fatalf("the cache doesn't name %s:\n%s", written, data)
+			}
+			data = []byte(strings.Replace(string(data), written, path, 1))
 			if err := os.WriteFile(cache, data, 0o644); err != nil {
 				t.Fatal(err)
 			}
