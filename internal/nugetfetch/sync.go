@@ -61,8 +61,11 @@ type SyncState struct {
 	Problems []string
 	// Stale is how many packages the user's cache has that the sandbox's generated files
 	// (project.nuget.cache) still name elsewhere: the sandbox's own copies. The IDE reads those
-	// files, so it can't find the packages until they're generated again.
-	Stale int
+	// files, so it can't find the packages until they're generated again. StaleProjects are the
+	// projects whose files do, by folder in the workspace: one outside the solution that was restored
+	// stays so until it is restored itself.
+	Stale         int
+	StaleProjects []string
 }
 
 // Actionable is how many of the missing packages a fetch could bring: not those the last run found
@@ -150,6 +153,7 @@ func (s *Sync) checkLocked() {
 		s.named = map[string]namedFiles{}
 	}
 	elsewhere := map[Package]bool{}
+	staleProjects := map[string]bool{}
 	frameworks := map[string]map[Package]bool{}
 	downloads := map[string]map[Package]bool{}
 	var graphs []Group
@@ -177,6 +181,9 @@ func (s *Sync) checkLocked() {
 		skipped += kept.assets.Skipped
 		for _, p := range s.namedElsewhere(filepath.Join(filepath.Dir(path), "project.nuget.cache")) {
 			elsewhere[p] = true
+			if len(Missing(s.Cache, []Package{p})) == 0 {
+				staleProjects[s.projectName(path)] = true
+			}
 		}
 		for fw := range unionKeys(kept.assets.ByFramework, kept.assets.Downloads) {
 			pkgs, only := kept.assets.ByFramework[fw], kept.assets.Downloads[fw]
@@ -246,7 +253,27 @@ func (s *Sync) checkLocked() {
 	s.graphs = graphs
 	s.state.Missing, s.state.Count = missing, len(distinct)
 	s.state.Skipped, s.state.Problems, s.state.Stale = skipped, problems, stale
+	s.state.StaleProjects = sortedKeys(staleProjects)
 	s.state.Checked = time.Now()
+}
+
+// projectName is the folder of the project whose project.assets.json is at path, within the workspace.
+func (s *Sync) projectName(assets string) string {
+	dir := filepath.Dir(filepath.Dir(assets))
+	rel, err := filepath.Rel(s.Workspace, dir)
+	if err != nil || rel == "." {
+		return filepath.Base(dir)
+	}
+	return filepath.ToSlash(rel)
+}
+
+func sortedKeys(set map[string]bool) []string {
+	var keys []string
+	for k := range set {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // namedElsewhere is what the project.nuget.cache at path names outside the user's cache; a file

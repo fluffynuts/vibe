@@ -59,6 +59,17 @@ func (s *Server) packagesStale() int {
 	return st.Stale
 }
 
+// packagesStaleProjects is the projects packagesStale is about, when it says any.
+func (s *Server) packagesStaleProjects() []string {
+	if s.packagesStale() == 0 {
+		return []string{}
+	}
+	if projects := s.cfg.PackageSync.State().StaleProjects; projects != nil {
+		return projects
+	}
+	return []string{}
+}
+
 // packageSyncWaiting says, for the Admin tab's dot, how many packages the
 // sandbox restored that the user's IDE can't see, when fetching them would
 // help; "" when none, or while they're being fetched.
@@ -124,7 +135,7 @@ func (s *Server) packageSyncState(w http.ResponseWriter, r *http.Request) {
 	body := map[string]interface{}{
 		"auto":  s.cfg.PackageSyncAuto != nil && s.cfg.PackageSyncAuto(),
 		"count": st.Count, "actionable": fixableNow(st), "missing": groups, "running": st.Running, "skipped": st.Skipped,
-		"problems": st.Problems, "last": st.Last, "stale": st.Stale,
+		"problems": st.Problems, "last": st.Last, "stale": st.Stale, "staleProjects": nonNil(st.StaleProjects),
 	}
 	if !st.Checked.IsZero() {
 		body["checked"] = st.Checked
@@ -155,3 +166,10 @@ func (s *Server) packageSyncRun(w http.ResponseWriter, r *http.Request) {
 // ErrPackageSyncRunning is what asking to fetch while a fetch is under way
 // is told.
 var ErrPackageSyncRunning = errors.New("the packages are already being fetched")
+
+func nonNil(list []string) []string {
+	if list == nil {
+		return []string{}
+	}
+	return list
+}

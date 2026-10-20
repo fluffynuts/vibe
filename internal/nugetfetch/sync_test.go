@@ -640,3 +640,46 @@ func TestADownloadThatIsAlsoReferencedIsOneMissingPackage(t *testing.T) {
 		t.Errorf("count %d, actionable %d, want 1 and 1", st.Count, st.Actionable())
 	}
 }
+
+// The notice says which projects, so that one outside the solution (which a restore of the solution leaves
+// as it was) can be found.
+func TestStaleSaysWhichProjectsStillNameTheSandboxsCopies(t *testing.T) {
+	rig := newSyncRig(t)
+	sandbox := t.TempDir()
+	mine, theirs, lacking := Package{"In.Mine", "1.0.0"}, Package{"In.Theirs", "1.0.0"}, Package{"Not.Here", "1.0.0"}
+	put(t, rig.cache, mine)
+	put(t, rig.cache, theirs)
+	for _, project := range []string{"A", "B", "src/C", "D"} {
+		rig.project(t, project, map[string][]string{"net8.0": {"In.Mine/1.0.0"}})
+	}
+	rig.namesFiles(t, "A", sha512In(sandbox, mine))
+	rig.namesFiles(t, "B", sha512In(rig.cache, theirs))
+	rig.namesFiles(t, "src/C", sha512In(sandbox, mine))
+	rig.namesFiles(t, "D", sha512In(sandbox, lacking)) // named there, and the user's cache lacks it: not stale
+	rig.s.Check()
+	st := rig.s.State()
+	if want := []string{"A", "src/C"}; !reflect.DeepEqual(st.StaleProjects, want) {
+		t.Errorf("projects %v, want %v", st.StaleProjects, want)
+	}
+	if st.Stale != 1 {
+		t.Errorf("%d packages, want 1: the one package both name", st.Stale)
+	}
+}
+
+func TestOnceTheProjectIsRestoredItIsNoLongerListed(t *testing.T) {
+	rig := newSyncRig(t)
+	sandbox := t.TempDir()
+	p := Package{"In.Mine", "1.0.0"}
+	put(t, rig.cache, p)
+	rig.project(t, "Orphan", map[string][]string{"net8.0": {"In.Mine/1.0.0"}})
+	rig.namesFiles(t, "Orphan", sha512In(sandbox, p))
+	rig.s.Check()
+	if len(rig.s.State().StaleProjects) != 1 {
+		t.Fatal("not listed to begin with")
+	}
+	rig.namesFiles(t, "Orphan", sha512In(rig.cache, p))
+	rig.s.Check()
+	if st := rig.s.State(); len(st.StaleProjects) != 0 {
+		t.Errorf("still listed: %v", st.StaleProjects)
+	}
+}

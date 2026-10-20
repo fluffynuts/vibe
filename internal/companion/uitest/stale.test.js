@@ -9,17 +9,17 @@ const { openPage } = require('./page.js')
 
 const syncBody = (extra) => Object.assign({ count: 0, actionable: 0, running: false, auto: false, missing: [], stale: 0, problems: [], skipped: 0 }, extra)
 
-async function stalePage({ stale = 2, running = false, tab = 'conversation', sync } = {}) {
-  const at = { sent: [], stale, running }
+async function stalePage({ stale = 2, running = false, tab = 'conversation', sync, projects = [], storage = {} } = {}) {
+  const at = { sent: [], stale, running, projects }
   const routes = {
-    '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, admin: true, conversation: true, attention: {}, packagesStale: at.stale }),
+    '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, admin: true, conversation: true, attention: {}, packagesStale: at.stale, packagesStaleProjects: at.projects }),
     '/api/conversation': () => ({ events: [], last: 0, running: at.running }),
     '/api/conversation/send': (call) => { at.sent.push(call.body.prompt); return { ok: true } },
     '/api/packages': { requests: [], config: null },
-    '/api/packages/sync': () => sync || syncBody({ stale: at.stale }),
-    '/api/packages/sync/check': () => syncBody({ stale: at.stale }),
+    '/api/packages/sync': () => sync || syncBody({ stale: at.stale, staleProjects: at.projects }),
+    '/api/packages/sync/check': () => syncBody({ stale: at.stale, staleProjects: at.projects }),
   }
-  const p = await openPage({ routes, storage: { 'vibe-companion-tab': tab } })
+  const p = await openPage({ routes, storage: Object.assign({ 'vibe-companion-tab': tab }, storage) })
   if (running) await p.every('pollConversation')
   return Object.assign(p, { at })
 }
@@ -120,4 +120,69 @@ test('the Admin tab says nothing of stale files while there is still something t
     const p = await stalePage({ stale: 3, tab: 'admin', sync: syncBody(Object.assign({ stale: 3 }, extra)) })
     try { assert.equal(shown(p, 'admin-sync-stale'), false, JSON.stringify(extra)) } finally { p.close() }
   }
+})
+
+// The number is how many packages, and the notice says in how many projects and which: one outside the
+// solution is not restored by restoring the solution, and nothing else says where to look.
+test('the notice names the projects the packages are in', async () => {
+  const p = await stalePage({ stale: 32, projects: ['TestMySqlConnection'] })
+  try {
+    assert.match(p.$('convo-stale-text').textContent, /32 packages the sandbox restored \(in 1 project: TestMySqlConnection\)/)
+  } finally { p.close() }
+})
+
+test('several projects are counted and named up to a few, and all are in the tooltip', async () => {
+  const projects = ['a', 'b', 'c', 'd', 'e']
+  const p = await stalePage({ stale: 9, projects })
+  try {
+    assert.match(p.$('convo-stale-text').textContent, /\(in 5 projects: a, b, c and 2 more\)/)
+    assert.equal(p.$('convo-stale').title, projects.join('\n'))
+  } finally { p.close() }
+})
+
+test('the Admin tab names the projects too', async () => {
+  const p = await stalePage({ stale: 3, tab: 'admin', projects: ['src/Orphan'] })
+  try {
+    assert.match(p.$('admin-sync-stale-text').textContent, /\(in 1 project: src\/Orphan\)/)
+  } finally { p.close() }
+})
+
+test('the notice can be dismissed, and stays dismissed for those projects across loads', async () => {
+  const p = await stalePage({ stale: 3, projects: ['Orphan'] })
+  let kept
+  try {
+    await p.click('convo-stale-dismiss')
+    assert.equal(shown(p, 'convo-stale'), false)
+    p.at.stale = 3
+    await p.poll()
+    assert.equal(shown(p, 'convo-stale'), false, 'no reminder')
+    kept = { 'vibe-companion-stale-dismissed': p.window.localStorage.getItem('vibe-companion-stale-dismissed') }
+  } finally { p.close() }
+  const again = await stalePage({ stale: 3, projects: ['Orphan'], storage: kept })
+  try { assert.equal(shown(again, 'convo-stale'), false) } finally { again.close() }
+})
+
+test('a project that turns up after a dismissal brings the notice back, naming them all', async () => {
+  const p = await stalePage({ stale: 3, projects: ['Orphan'] })
+  try {
+    await p.click('convo-stale-dismiss')
+    p.at.projects = ['Orphan', 'Another']
+    await p.poll()
+    assert.equal(shown(p, 'convo-stale'), true)
+    assert.match(p.$('convo-stale-text').textContent, /Orphan, Another/)
+    p.at.projects = ['Another']
+    await p.click('convo-stale-dismiss')
+    p.at.projects = ['Orphan']
+    await p.poll()
+    assert.equal(shown(p, 'convo-stale'), false, 'both are dismissed now')
+  } finally { p.close() }
+})
+
+test('dismissing the notice leaves the Admin tab saying so, for whoever goes to look', async () => {
+  const p = await stalePage({ stale: 3, projects: ['Orphan'], tab: 'admin' })
+  try {
+    p.window.localStorage.setItem('vibe-companion-stale-dismissed', JSON.stringify(['Orphan']))
+    await p.poll()
+    assert.equal(shown(p, 'admin-sync-stale'), true)
+  } finally { p.close() }
 })

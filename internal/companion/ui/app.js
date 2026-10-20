@@ -640,7 +640,7 @@
       state.attention = res.body.attention || {}
       renderPackagesWaiting(res.body.packagesWaiting || 0)
       renderSyncWaiting(res.body.packagesToFetch || 0)
-      renderStaleWaiting(res.body.packagesStale || 0)
+      renderStaleWaiting(res.body.packagesStale || 0, res.body.packagesStaleProjects || [])
       state.blockedHosts = res.body.blockedHosts
       noteBlocked(state.blockedHosts)
       state.reviewAt = res.body.review ? res.body.reviewAt || '' : ''
@@ -2872,7 +2872,7 @@
     const stale = !running && !(b.actionable > 0) ? b.stale || 0 : 0
     $('admin-sync-stale').hidden = stale === 0
     $('admin-sync-stale-ask').hidden = !state.conversation
-    if (stale) $('admin-sync-stale-text').textContent = staleText(stale)
+    if (stale) $('admin-sync-stale-text').textContent = staleText(stale, b.staleProjects || [])
     packagesWant.sync = (b.actionable || 0) > 0
     showPackagesCard()
     const problems = b.problems || []
@@ -2966,14 +2966,44 @@
   // the files are generated again (the host looks at them), with the way to do that.
   const TIDY_PROMPT = 'The packages are in my package cache now. Please run vibe-nuget status, tidy up if it says to, ' +
     'and restore, so the generated files name my cache.'
-  const staleText = (count) => packagesWord(count) + ' the sandbox restored ' + (count === 1 ? 'is' : 'are') +
+  // inProjects says which projects, so that one outside the solution (which restoring the solution
+  // leaves as it was) can be found.
+  const inProjects = (projects) => !projects.length ? '' :
+    ' (in ' + plural(projects.length, 'project') + ': ' + projects.slice(0, 3).join(', ') +
+    (projects.length > 3 ? ' and ' + (projects.length - 3) + ' more' : '') + ')'
+
+  const staleText = (count, projects) => packagesWord(count) + ' the sandbox restored' + inProjects(projects) + ' ' + (count === 1 ? 'is' : 'are') +
     ' in your package cache now, but the files it generated still point at its own ' + (count === 1 ? 'copy' : 'copies') +
     ", so your IDE can't find " + (count === 1 ? 'it' : 'them') + ' yet. ' +
     (state.conversation ? 'Ask the agent to tidy up, or restore in your IDE.' : 'Restore in your IDE.')
 
-  function renderStaleWaiting(count) {
-    $('convo-stale').hidden = count === 0
-    if (count) $('convo-stale-text').textContent = staleText(count)
+  // STALE_DISMISSED keeps the projects the user said not to be told of again, as a JSON list, per
+  // browser and sandbox. A project not in it brings the notice back.
+  const STALE_DISMISSED = 'vibe-companion-stale-dismissed'
+  const MAX_STALE_DISMISSED = 200
+  const staleNow = { count: 0, projects: [] }
+
+  function dismissedStale() {
+    try {
+      const list = JSON.parse(store.get(STALE_DISMISSED) || '[]')
+      return Array.isArray(list) ? list : []
+    } catch (e) { return [] }
+  }
+
+  // staleNames is the projects the notice is about, "(unknown)" for a vibe that doesn't say.
+  const staleNames = (projects) => (projects.length ? projects : ['(unknown)'])
+
+  function renderStaleWaiting(count, projects) {
+    Object.assign(staleNow, { count, projects })
+    const dismissed = dismissedStale()
+    $('convo-stale').hidden = count === 0 || staleNames(projects).every((name) => dismissed.includes(name))
+    $('convo-stale').title = projects.join('\n')
+    if (count) $('convo-stale-text').textContent = staleText(count, projects)
+  }
+
+  function dismissStale() {
+    store.set(STALE_DISMISSED, JSON.stringify(dismissedStale().concat(staleNames(staleNow.projects)).slice(-MAX_STALE_DISMISSED)))
+    renderStaleWaiting(staleNow.count, staleNow.projects)
   }
 
   // Sent at once when the agent is free: pressing the button is the user's choice. While it works
@@ -3117,6 +3147,7 @@
     $('convo-blocked-open').addEventListener('click', () => select('log'))
     $('convo-blocked-dismiss').addEventListener('click', dismissBlocked)
     $('convo-stale-ask').addEventListener('click', askAgentToTidy)
+    $('convo-stale-dismiss').addEventListener('click', dismissStale)
     $('admin-sync-stale-ask').addEventListener('click', askAgentToTidy)
     $('convo-sync-review').addEventListener('click', () => {
       select('admin')

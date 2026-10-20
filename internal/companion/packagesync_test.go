@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -400,5 +401,33 @@ func TestTheSyncAnswerCarriesHowManyPackagesAreStale(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &body)
 	if body.Stale != 4 {
 		t.Errorf("stale = %d, want 4", body.Stale)
+	}
+}
+
+func TestThePageIsToldWhichProjectsStillNameTheSandboxsCopies(t *testing.T) {
+	st := nugetfetch.SyncState{Stale: 32, StaleProjects: []string{"TestMySqlConnection", "src/Tool"}}
+	rec := do(t, syncServer(&fakeSync{state: st}), req{path: "/api/state", headers: authed(nil)})
+	var body struct {
+		PackagesStaleProjects []string `json:"packagesStaleProjects"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if want := []string{"TestMySqlConnection", "src/Tool"}; !reflect.DeepEqual(body.PackagesStaleProjects, want) {
+		t.Errorf("state: %v, want %v", body.PackagesStaleProjects, want)
+	}
+	waiting := st
+	waiting.Running = true
+	rec = do(t, syncServer(&fakeSync{state: waiting}), req{path: "/api/state", headers: authed(nil)})
+	body.PackagesStaleProjects = nil
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if len(body.PackagesStaleProjects) != 0 {
+		t.Errorf("projects %v while fetching: fetching comes first", body.PackagesStaleProjects)
+	}
+	rec = do(t, syncServer(&fakeSync{state: st}), req{path: "/api/packages/sync", headers: authed(nil)})
+	var sync struct {
+		StaleProjects []string `json:"staleProjects"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &sync)
+	if len(sync.StaleProjects) != 2 {
+		t.Errorf("sync answer: %v", sync.StaleProjects)
 	}
 }
