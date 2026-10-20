@@ -4,8 +4,8 @@ The user's machine can be holding something for them that you would otherwise
 work around: package requests waiting for their approval, or packages this
 sandbox restored that their package cache doesn't have yet (their IDE can't see
 what you download yourself, and the files the build generates name your cache).
-Before the first `dotnet restore`, `build` or `test` of a session, and again
-after the user says they've dealt with it, run:
+Before every `dotnet restore`, `build` or `test`, not only the first (they may
+have dealt with something, or fetched packages, since the last), run:
 
     vibe-nuget status
 

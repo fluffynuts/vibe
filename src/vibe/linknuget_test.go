@@ -424,3 +424,27 @@ func TestTheAgentIsToldWhatToDoWhenStatusSaysToTidy(t *testing.T) {
 		}
 	}
 }
+
+// A user can fetch what the agent downloaded while it is in the middle of a build, and nothing tells the agent
+// but status, so it asks before every restore or build, not once: the next one then finds out and tidies.
+func TestTheAgentIsToldToAskStatusBeforeEveryRestoreOrBuildNotOnlyTheFirst(t *testing.T) {
+	dotnet := filepath.Join("..", "..", "library", "dotnet")
+	instructions, err := os.ReadFile(filepath.Join(dotnet, "agent-instructions.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	skill, err := os.ReadFile(filepath.Join(dotnet, "agent-files", ".claude", "skills", "vibe-nuget", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	front, body, _ := strings.Cut(strings.TrimPrefix(string(skill), "---\n"), "\n---\n")
+	for name, text := range map[string]string{"skill's description": front, "skill": body, "instructions": string(instructions)} {
+		flat := strings.ToLower(strings.Join(strings.Fields(text), " "))
+		if !strings.Contains(flat, "before every") {
+			t.Errorf("the %s don't say to run status before every restore or build", name)
+		}
+		if strings.Contains(flat, "of a session") || strings.Contains(flat, "first restore") || strings.Contains(flat, "first `dotnet restore`") {
+			t.Errorf("the %s still say to do it once, for the first:\n%s", name, text)
+		}
+	}
+}
