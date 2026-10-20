@@ -159,7 +159,7 @@ func describeRequest(target string, r packagereq.Request) string {
 		return "couldn't read the project to say what this is: " + err.Error()
 	}
 	return nugetfetch.Classify(nugetfetch.Request{ID: r.ID, Version: r.Version, Framework: r.Framework},
-		nugetfetch.ProjectFiles{Committed: files.Committed, Working: files.Working}, mainline.Name)
+		nugetfetch.ProjectFiles{Committed: files.Committed, Working: files.Working, Truncated: files.Truncated}, mainline.Name)
 }
 
 // workspaceConfigFor is the nuget.config in the sandbox's folder, which the

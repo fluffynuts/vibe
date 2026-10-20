@@ -89,3 +89,20 @@ func TestVersionsAreReadHoweverTheProjectSpellsThem(t *testing.T) {
 		t.Errorf("a version from a property can't be compared: %q", got)
 	}
 }
+
+// A package the files read don't name may be named in one that wasn't read: nothing is said of it being new.
+func TestWithProjectFilesLeftUnreadAPackageNotFoundIsNotCalledNew(t *testing.T) {
+	files := map[string]string{"A.csproj": ref("Other.Lib", "1.0.0")}
+	got := Classify(Request{ID: "Corp.Lib", Version: "1.0.0", Framework: "net8.0"}, ProjectFiles{Committed: files, Working: files, Truncated: true}, "main")
+	if strings.HasPrefix(got, "new") || !strings.HasPrefix(got, "can't tell") {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestWithProjectFilesLeftUnreadAPackageFoundIsStillSaidWhatItIs(t *testing.T) {
+	files := map[string]string{"A.csproj": ref("Corp.Lib", "1.2.3")}
+	got := Classify(Request{ID: "Corp.Lib", Version: "1.2.3", Framework: "net8.0"}, ProjectFiles{Committed: files, Working: files, Truncated: true}, "main")
+	if !strings.HasPrefix(got, "missing") {
+		t.Errorf("got %q", got)
+	}
+}

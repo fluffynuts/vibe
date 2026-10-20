@@ -10,7 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
+	"vibe/internal/fscopy"
 	"vibe/internal/plainfile"
 )
 
@@ -19,6 +21,9 @@ const maxWorkspaceConfig = 256 << 10
 
 // maxApprovals is how many approvals are kept: the latest.
 const maxApprovals = 50
+
+// approvalsMu is held while approvals are read, added to and written back.
+var approvalsMu sync.Mutex
 
 // WorkspaceConfig is the nuget.config in the sandbox's folder. Many
 // repositories name their private feeds there, but the agent can write it:
@@ -144,6 +149,10 @@ func (w WorkspaceConfig) Approve(hash string) error {
 	case hashOf(data) != hash:
 		return errors.New("the nuget.config has changed since you looked at it: look again, then approve")
 	}
+	// Whoever else approves (another tab, another sandbox's page) adds to the same file, and each
+	// reads it, adds to it and writes it back: one at a time, or an approval is lost.
+	approvalsMu.Lock()
+	defer approvalsMu.Unlock()
 	list := w.approvedList()
 	if contains(list, hash) {
 		return nil
@@ -156,10 +165,7 @@ func (w WorkspaceConfig) Approve(hash string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(w.Approvals), 0o700); err != nil {
-		return err
-	}
-	return os.WriteFile(w.Approvals, out, 0o600)
+	return fscopy.WriteWhole(w.Approvals, out)
 }
 
 func (w WorkspaceConfig) approvedList() []string {

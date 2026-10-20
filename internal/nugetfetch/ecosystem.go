@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"vibe/internal/packagereq"
 )
@@ -101,7 +102,11 @@ func (e Ecosystem) outcome(r packagereq.Request, p Package, res BatchResult, err
 func reportable(text string) string {
 	text = strings.TrimSpace(text)
 	if len(text) > maxReported {
-		text = "…" + text[len(text)-maxReported:]
+		cut := len(text) - maxReported
+		for cut < len(text) && !utf8.RuneStart(text[cut]) {
+			cut++
+		}
+		text = "…" + text[cut:]
 	}
 	return text
 }

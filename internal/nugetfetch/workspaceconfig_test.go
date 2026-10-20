@@ -3,7 +3,9 @@ package nugetfetch
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -131,5 +133,89 @@ func TestAConfigTooLargeToReadIsNotUsed(t *testing.T) {
 	info, _ := w.Look()
 	if info == nil || info.Approved || info.Problem == "" || info.Hash != "" {
 		t.Errorf("info = %+v", info)
+	}
+}
+
+// Approvals are shared by whoever approves at once (two tabs, say): none is lost, and the file is always whole.
+func TestApprovalsMadeAtOnceAreAllKept(t *testing.T) {
+	approvals := filepath.Join(t.TempDir(), "approved.json")
+	const n = 24
+	var workspaces []WorkspaceConfig
+	var hashes []string
+	for i := 0; i < n; i++ {
+		dir := t.TempDir()
+		config := strings.Replace(wsConfig, "corp", "corp"+strings.Repeat("x", i+1), 1)
+		if err := os.WriteFile(filepath.Join(dir, "nuget.config"), []byte(config), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		w := WorkspaceConfig{Dir: dir, Approvals: approvals}
+		info, err := w.Look()
+		if err != nil || info == nil {
+			t.Fatal(err)
+		}
+		workspaces = append(workspaces, w)
+		hashes = append(hashes, info.Hash)
+	}
+	var wg sync.WaitGroup
+	for i := range workspaces {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if err := workspaces[i].Approve(hashes[i]); err != nil {
+				t.Errorf("approving %d: %v", i, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	for i, w := range workspaces {
+		if !w.approved(hashes[i]) {
+			t.Errorf("the approval of config %d was lost", i)
+		}
+	}
+}
+
+func TestTheApprovalsFileIsWrittenWholeAndLeavesNothingBeside(t *testing.T) {
+	w, _ := newWorkspace(t, wsConfig)
+	info, _ := w.Look()
+	if err := w.Approve(info.Hash); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(w.Approvals))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "approved.json" {
+		t.Errorf("the folder holds %v: a temporary file was left", entries)
+	}
+	data, _ := os.ReadFile(w.Approvals)
+	if !strings.Contains(string(data), info.Hash) {
+		t.Errorf("approvals hold %s", data)
+	}
+	if runtime.GOOS != "windows" {
+		if st, _ := os.Stat(w.Approvals); st.Mode().Perm() != 0o600 {
+			t.Errorf("mode %v: it should be the user's alone", st.Mode().Perm())
+		}
+	}
+}
+
+// Written whole, by a new file renamed over the old one: a reader never meets it half-written.
+func TestAnApprovalReplacesTheFileNotWritesInPlace(t *testing.T) {
+	approvals := filepath.Join(t.TempDir(), "approved.json")
+	first, _ := newWorkspace(t, wsConfig)
+	first.Approvals = approvals
+	second, _ := newWorkspace(t, strings.Replace(wsConfig, "corp", "other", 1))
+	second.Approvals = approvals
+	a, _ := first.Look()
+	b, _ := second.Look()
+	if err := first.Approve(a.Hash); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.Stat(approvals)
+	if err := second.Approve(b.Hash); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.Stat(approvals)
+	if os.SameFile(before, after) {
+		t.Error("the approvals were written into the same file, in place")
 	}
 }

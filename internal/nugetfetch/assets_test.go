@@ -254,3 +254,19 @@ func TestTheCacheIsKeptInLowerCaseWhateverTheAssetsSay(t *testing.T) {
 		t.Errorf("missing = %v: found by its lower-case folder", got)
 	}
 }
+
+// The folders it's given are the caller's: a caller passing a slice's elements finds them as they were.
+func TestReadingNamedPackagesLeavesTheFoldersItWasGivenAlone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "project.nuget.cache")
+	if err := os.WriteFile(path, []byte(`{"expectedPackageFiles":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	roots := []string{"/Home/User/.nuget/packages/", `C:\Users\Me\.nuget\packages`}
+	want := append([]string(nil), roots...)
+	if _, err := ReadNamedElsewhere(path, roots...); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(roots, want) {
+		t.Errorf("the caller's folders became %v", roots)
+	}
+}

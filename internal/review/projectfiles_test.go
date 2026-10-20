@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -119,5 +120,67 @@ func TestProjectFilesAreReadThroughALinkToTheFolder(t *testing.T) {
 	}
 	if got.Committed["A.csproj"] != oldRef || len(got.Committed) != 1 {
 		t.Errorf("committed %v: the folder behind the link is a/, whose files are these", got.Committed)
+	}
+}
+
+// A project file left unread (too big, or past the limit on how many) means a package seems not to be used
+// where it may be: what is read says so, so nothing is claimed from the gap.
+func TestProjectFilesLeftUnreadAreSaidSo(t *testing.T) {
+	big := "<Project>" + strings.Repeat(" ", maxProjectFile) + "</Project>"
+	dir := repo(t, map[string]string{"src/App/App.csproj": oldRef, "src/Big/Big.csproj": big})
+	got, err := ReadProjectFiles(context.Background(), dir, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Truncated {
+		t.Error("a project file over the limit was left out without saying so")
+	}
+	if _, ok := got.Working["src/Big/Big.csproj"]; ok {
+		t.Error("the big file was read")
+	}
+}
+
+func TestSoManyProjectFilesThatSomeAreLeftUnreadIsSaidSo(t *testing.T) {
+	files := map[string]string{}
+	for i := 0; i < maxProjectFiles+5; i++ {
+		files[filepath.Join("p", strings.Repeat("a", 1)+string(rune('a'+i%26)), "n"+itoa(i)+".csproj")] = "<Project/>"
+	}
+	dir := repo(t, files)
+	got, err := ReadProjectFiles(context.Background(), dir, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Truncated {
+		t.Errorf("%d committed and %d working files, with no word that some were left out", len(got.Committed), len(got.Working))
+	}
+}
+
+func TestProjectFilesAllReadAreNotSaidToBeTruncated(t *testing.T) {
+	dir := repo(t, map[string]string{"src/App/App.csproj": oldRef})
+	got, err := ReadProjectFiles(context.Background(), dir, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Truncated {
+		t.Error("said some were left out when none were")
+	}
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }
+
+// What the default branch has but the folder no longer does is read at the branch: left unread there, it is said too.
+func TestAProjectFileTooLargeAtTheBranchIsSaidSoEvenWhenTheFolderLacksIt(t *testing.T) {
+	big := "<Project>" + strings.Repeat(" ", maxProjectFile) + "</Project>"
+	dir := repo(t, map[string]string{"src/App/App.csproj": oldRef, "src/Big/Big.csproj": big})
+	git(t, dir, "checkout", "-q", "-b", "feature")
+	if err := os.Remove(filepath.Join(dir, "src", "Big", "Big.csproj")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadProjectFiles(context.Background(), dir, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Truncated {
+		t.Error("the branch's big file was left out without saying so")
 	}
 }

@@ -2,7 +2,6 @@ package review
 
 import (
 	"context"
-	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -32,6 +31,9 @@ type ProjectFiles struct {
 	Committed map[string]string `json:"committed"`
 	// Working are the files as the folder has them, untracked ones too.
 	Working map[string]string `json:"working"`
+	// Truncated says project files were left unread: too large, too many, or unreadable. A package
+	// none of the files read name may be named in one of them.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // projectFile is a file that names packages: a project, or the .props and
@@ -70,7 +72,7 @@ func projectFilesOf(ctx context.Context, dir, ref string) (ProjectFiles, error) 
 	}
 	defer r.close()
 	if ref != "" {
-		if err := r.committedProjectFiles(ref, dir, out.Committed); err != nil {
+		if err := r.committedProjectFiles(ref, dir, &out); err != nil {
 			return out, err
 		}
 	}
@@ -86,13 +88,19 @@ func projectFilesOf(ctx context.Context, dir, ref string) (ProjectFiles, error) 
 			if p != dir && notProjectFolder(d.Name()) {
 				return fs.SkipDir
 			}
-		case d.Type().IsRegular() && projectFile(d.Name()) && len(out.Working) < maxProjectFiles:
+		case d.Type().IsRegular() && projectFile(d.Name()):
+			if len(out.Working) >= maxProjectFiles {
+				out.Truncated = true
+				return nil
+			}
 			data, err := plainfile.Read(p, maxProjectFile)
-			if err == nil {
+			switch {
+			case err == nil:
 				rel, _ := filepath.Rel(dir, p)
 				out.Working[filepath.ToSlash(rel)] = string(data)
-			} else if !errors.As(err, &plainfile.TooLarge{}) && !os.IsNotExist(err) {
-				return nil
+			case !os.IsNotExist(err):
+				// Too large, or not readable: said, so what isn't in the files read isn't taken for absent.
+				out.Truncated = true
 			}
 		}
 		return nil
@@ -100,9 +108,9 @@ func projectFilesOf(ctx context.Context, dir, ref string) (ProjectFiles, error) 
 	return out, err
 }
 
-// committedProjectFiles reads into into the project files in the folder dir
+// committedProjectFiles reads into out.Committed the project files in the folder dir
 // as commit ref has them.
-func (r *repository) committedProjectFiles(ref, dir string, into map[string]string) error {
+func (r *repository) committedProjectFiles(ref, dir string, out *ProjectFiles) error {
 	c, err := r.commit(ref)
 	if err != nil {
 		return err
@@ -123,7 +131,7 @@ func (r *repository) committedProjectFiles(ref, dir string, into map[string]stri
 	files := tree.Files()
 	defer files.Close()
 	return files.ForEach(func(f *object.File) error {
-		if !f.Mode.IsFile() || !strings.HasPrefix(f.Name, prefix) || !projectFile(f.Name) || f.Size > maxProjectFile || len(into) >= maxProjectFiles {
+		if !f.Mode.IsFile() || !strings.HasPrefix(f.Name, prefix) || !projectFile(f.Name) {
 			return nil
 		}
 		rel := strings.TrimPrefix(f.Name, prefix)
@@ -132,16 +140,22 @@ func (r *repository) committedProjectFiles(ref, dir string, into map[string]stri
 				return nil
 			}
 		}
+		if f.Size > maxProjectFile || len(out.Committed) >= maxProjectFiles {
+			out.Truncated = true
+			return nil
+		}
 		reader, err := f.Reader()
 		if err != nil {
+			out.Truncated = true
 			return nil
 		}
 		defer reader.Close()
 		data, err := io.ReadAll(io.LimitReader(reader, maxProjectFile+1))
 		if err != nil || len(data) > maxProjectFile {
+			out.Truncated = true
 			return nil
 		}
-		into[rel] = string(data)
+		out.Committed[rel] = string(data)
 		return nil
 	})
 }

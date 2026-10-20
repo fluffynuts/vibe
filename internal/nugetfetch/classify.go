@@ -12,6 +12,9 @@ import (
 type ProjectFiles struct {
 	Committed map[string]string
 	Working   map[string]string
+	// Truncated says some project files weren't read (too large, or too many): a package none of the
+	// files read name may be named in one that wasn't.
+	Truncated bool
 }
 
 var (
@@ -151,6 +154,9 @@ func Classify(r Request, files ProjectFiles, defaultBranch string) string {
 	}
 	have := packageVersions(files.Committed)[id]
 	if len(have) == 0 {
+		if files.Truncated {
+			return fmt.Sprintf("can't tell whether this is new: some of the project files were too large or too many to read, and %s may use it in one of them", defaultBranch)
+		}
 		if len(packageVersions(files.Working)[id]) > 0 {
 			return fmt.Sprintf("new — %s doesn't use it, and this branch adds it", defaultBranch)
 		}

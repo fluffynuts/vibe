@@ -230,6 +230,7 @@ func ReadNamedElsewhere(path string, roots ...string) ([]Package, error) {
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("%s isn't a project.nuget.cache: %w", path, err)
 	}
+	roots = append([]string(nil), roots...)
 	for i := range roots {
 		roots[i] = strings.ToLower(strings.TrimRight(strings.ReplaceAll(roots[i], "\\", "/"), "/")) + "/"
 	}
