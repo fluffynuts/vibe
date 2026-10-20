@@ -903,6 +903,7 @@ on the host, and the agent can't plant code in a package your own builds then ru
   next build. After a fetch, restore in the IDE if it still shows red: the files the sandbox generated
   name its own cache first (with `nuget: overlay`, they name yours).
 - **Before it restores or builds**, the agent asks `vibe-nuget status` what you have waiting (requests to approve, packages your IDE can't see), and is told to say so and wait, not to download its own copies meanwhile. That's the agent's instructions, not something vibe enforces; the Conversation tab's own check on Send (above) is the one that holds your prompt.
+- **After you fetch what the sandbox downloaded itself,** the files it generated (`obj/project.nuget.cache` and the like) still name its own copies, since its own cache is looked in first, and a restore, `--force` or not, leaves it so. Your IDE heals that with a restore of its own. `vibe-nuget status` tells the agent, and `vibe-nuget tidy` does it: it drops the sandbox's own copy of the packages those files name that your cache has too (nothing else, and never anything outside the sandbox's own cache), and the build's derived path caches; the agent's `dotnet restore` after that writes files naming your cache. Run it again and it finds nothing to do.
 - **A package from a private feed** the sandbox can't sign in to. When its restore fails with
   `NU1101` or `NU1102`, the agent asks you for it with `vibe-nuget fetch <id> <version>`. The
   request waits on the companion page's **Admin tab**, with what it is to your project (a new

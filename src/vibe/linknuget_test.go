@@ -398,3 +398,29 @@ func TestTheSkillSaysWhatToDoWithARequestTheUserDidNotSelectOrDeclined(t *testin
 		}
 	}
 }
+
+// The agent is told to tidy by status, when there is something to tidy; the skill says what it is and to follow
+// it with a restore, and that the instructions (offered, not always read) say it too.
+func TestTheAgentIsToldWhatToDoWhenStatusSaysToTidy(t *testing.T) {
+	dotnet := filepath.Join("..", "..", "library", "dotnet")
+	instructions, err := os.ReadFile(filepath.Join(dotnet, "agent-instructions.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	skill, err := os.ReadFile(filepath.Join(dotnet, "agent-files", ".claude", "skills", "vibe-nuget", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	front, _, _ := strings.Cut(strings.TrimPrefix(string(skill), "---\n"), "\n---\n")
+	if !strings.Contains(front, "vibe-nuget tidy") {
+		t.Errorf("the skill's description should mention vibe-nuget tidy:\n%s", front)
+	}
+	for name, text := range map[string]string{"instructions": string(instructions), "skill": string(skill)} {
+		flat := strings.Join(strings.Fields(text), " ")
+		for _, want := range []string{"vibe-nuget tidy", "dotnet restore", "your own copies"} {
+			if !strings.Contains(flat, want) {
+				t.Errorf("the %s don't say %q", name, want)
+			}
+		}
+	}
+}

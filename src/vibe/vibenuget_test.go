@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -287,5 +288,256 @@ func TestVibeNugetStatusTakesNothingElseAndAsksNothing(t *testing.T) {
 	res := runVibeNuget(t, m, func(packagereq.Taken) { t.Error("asked the host") }, "status", "Corp.Lib")
 	if res.code != 2 || !strings.Contains(res.out, "usage") {
 		t.Errorf("exit %d:\n%s", res.code, res.out)
+	}
+}
+
+// --- tidy: pointing the generated files at the user's cache, once it has what the sandbox downloaded -----------
+
+// tidyRig is a workspace whose project.nuget.cache names packages in the sandbox's own cache, a host cache,
+// and what's in each. The script runs in the sandbox, a Linux guest, never on a Windows host.
+type tidyRig struct {
+	ws, own, host string
+}
+
+func newTidyRig(t *testing.T) tidyRig {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("vibe-nuget tidy runs in the Linux sandbox")
+	}
+	r := tidyRig{ws: t.TempDir(), own: filepath.Join(t.TempDir(), "own"), host: filepath.Join(t.TempDir(), "host")}
+	for _, d := range []string{r.own, r.host} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return r
+}
+
+func (r tidyRig) put(t *testing.T, cache, id, version string) {
+	t.Helper()
+	dir := filepath.Join(cache, id, version)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{".nupkg.metadata", id + "." + version + ".nupkg.sha512"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func (r tidyRig) has(cache, id, version string) bool {
+	_, err := os.Stat(filepath.Join(cache, id, version))
+	return err == nil
+}
+
+// project writes a project's obj files: its project.nuget.cache naming files at the given paths, as given.
+func (r tidyRig) project(t *testing.T, name string, expected ...string) {
+	t.Helper()
+	obj := filepath.Join(r.ws, name, "obj")
+	if err := os.MkdirAll(filepath.Join(obj, "Debug", "net8.0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var quoted []string
+	for _, e := range expected {
+		quoted = append(quoted, `"`+e+`"`)
+	}
+	body := `{"version":2,"expectedPackageFiles":[` + strings.Join(quoted, ",") + `],"logs":[]}`
+	for file, content := range map[string]string{
+		"project.nuget.cache": body, "project.assets.json": "{}", filepath.Join("Debug", "net8.0", name+".assets.cache"): "stale",
+	} {
+		if err := os.WriteFile(filepath.Join(obj, file), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func (r tidyRig) sha(cache, id, version string) string {
+	return filepath.Join(cache, id, version, id+"."+version+".nupkg.sha512")
+}
+
+func (r tidyRig) assetsCache(name string) string {
+	return filepath.Join(r.ws, name, "obj", "Debug", "net8.0", name+".assets.cache")
+}
+
+func (r tidyRig) run(t *testing.T, args ...string) askResult {
+	t.Helper()
+	return runVibeNugetEnv(t, r.ws, []string{"NUGET_PACKAGES=" + r.own, "NUGET_FALLBACK_PACKAGES=" + r.host}, sandboxMailbox(t),
+		func(packagereq.Taken) { t.Error("tidy asks the host nothing") }, args...)
+}
+
+// What the sandbox downloaded and the user's cache now has too is dropped from the sandbox's, so a restore
+// finds it in the user's first; and what the path caches held is gone with it.
+func TestTidyRemovesTheSandboxsCopiesTheUsersCacheHasToo(t *testing.T) {
+	r := newTidyRig(t)
+	r.put(t, r.own, "a.lib", "1.0.0") // named, and the host has it: tidied
+	r.put(t, r.host, "a.lib", "1.0.0")
+	r.put(t, r.own, "b.lib", "2.0.0") // named, the host lacks it: kept
+	r.put(t, r.own, "c.lib", "3.0.0") // the host has it, but no project names it: kept
+	r.put(t, r.host, "c.lib", "3.0.0")
+	r.project(t, "App", r.sha(r.own, "a.lib", "1.0.0"), r.sha(r.own, "b.lib", "2.0.0"))
+	res := r.run(t, "tidy")
+	if res.code != 0 {
+		t.Fatalf("exit %d:\n%s", res.code, res.out)
+	}
+	if r.has(r.own, "a.lib", "1.0.0") || !r.has(r.own, "b.lib", "2.0.0") || !r.has(r.own, "c.lib", "3.0.0") {
+		t.Errorf("a.lib gone: %v; b.lib kept: %v; c.lib kept: %v\n%s", !r.has(r.own, "a.lib", "1.0.0"), r.has(r.own, "b.lib", "2.0.0"), r.has(r.own, "c.lib", "3.0.0"), res.out)
+	}
+	if !r.has(r.host, "a.lib", "1.0.0") {
+		t.Error("the user's cache was touched")
+	}
+	if _, err := os.Stat(r.assetsCache("App")); err == nil {
+		t.Error("the path cache was left, still naming what was removed")
+	}
+	if _, err := os.Stat(filepath.Join(r.ws, "App", "obj", "project.assets.json")); err != nil {
+		t.Error("what restore wrote was deleted: only the derived path caches go")
+	}
+	for _, want := range []string{"a.lib 1.0.0", "dotnet restore", "copy of 1 package the user's cache has too"} {
+		if !strings.Contains(res.out, want) {
+			t.Errorf("the output lacks %q:\n%s", want, res.out)
+		}
+	}
+	if strings.Contains(res.out, "1 packages") {
+		t.Errorf("one package is not packages:\n%s", res.out)
+	}
+	if strings.Contains(res.out, "b.lib") {
+		t.Errorf("it says it did something about b.lib:\n%s", res.out)
+	}
+}
+
+func TestTidyWithNothingToDoSaysSoAndDeletesNothing(t *testing.T) {
+	r := newTidyRig(t)
+	r.put(t, r.own, "b.lib", "2.0.0")
+	r.project(t, "App", r.sha(r.own, "b.lib", "2.0.0"))
+	res := r.run(t, "tidy")
+	if res.code != 0 || !strings.Contains(res.out, "nothing to tidy") {
+		t.Errorf("exit %d:\n%s", res.code, res.out)
+	}
+	if _, err := os.Stat(r.assetsCache("App")); err != nil {
+		t.Error("the path cache was deleted with nothing tidied")
+	}
+	if !r.has(r.own, "b.lib", "2.0.0") {
+		t.Error("a copy the user's cache lacks was removed")
+	}
+}
+
+// Said twice, it does nothing the second time.
+func TestTidyAgainHasNothingLeftToDo(t *testing.T) {
+	r := newTidyRig(t)
+	r.put(t, r.own, "a.lib", "1.0.0")
+	r.put(t, r.host, "a.lib", "1.0.0")
+	r.project(t, "App", r.sha(r.own, "a.lib", "1.0.0"))
+	r.run(t, "tidy")
+	if res := r.run(t, "tidy"); res.code != 0 || !strings.Contains(res.out, "nothing to tidy") {
+		t.Errorf("the second time: exit %d:\n%s", res.code, res.out)
+	}
+}
+
+// What a project.nuget.cache names is data the agent can write: only a copy in exactly the sandbox's own cache, which
+// the file names there, is removed.
+func TestTidyRemovesNothingOutsideTheSandboxsOwnCache(t *testing.T) {
+	r := newTidyRig(t)
+	outside := filepath.Join(t.TempDir(), "elsewhere")
+	r.put(t, outside, "d.lib", "1.0.0") // named, but in another folder than the sandbox's own cache
+	r.put(t, r.own, "d.lib", "1.0.0")   // so this copy of it is not what the file names
+	r.put(t, r.host, "d.lib", "1.0.0")
+	r.put(t, r.host, "e.lib", "1.0.0") // named in the user's cache itself
+	r.put(t, r.own, "e.lib", "1.0.0")
+	r.project(t, "App", r.sha(outside, "d.lib", "1.0.0"), r.sha(r.host, "e.lib", "1.0.0"))
+	res := r.run(t, "tidy")
+	if !r.has(outside, "d.lib", "1.0.0") || !r.has(r.own, "d.lib", "1.0.0") || !r.has(r.host, "e.lib", "1.0.0") || !r.has(r.own, "e.lib", "1.0.0") {
+		t.Errorf("something not named in the sandbox's own cache was removed:\n%s", res.out)
+	}
+	if !strings.Contains(res.out, "nothing to tidy") {
+		t.Errorf("%s", res.out)
+	}
+}
+
+// A folder next to the cache, reached with .. in the file's path, is not the cache's to lose. (Both caches exist,
+// and so does what the .. leads to on each side, or the path would not get as far as the check.)
+func TestTidyDoesNotFollowADotDotOutOfTheCache(t *testing.T) {
+	r := newTidyRig(t)
+	victim := filepath.Join(filepath.Dir(r.own), "1.0.0") // what own/../1.0.0 is
+	if err := os.MkdirAll(victim, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(filepath.Dir(r.host), "1.0.0"), 0o755); err != nil { // what host/../1.0.0 is
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(r.host), "1.0.0", ".nupkg.metadata"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Written as is: filepath.Join would tidy the .. away.
+	r.project(t, "App", r.own+"/../1.0.0/x.nupkg.sha512")
+	res := r.run(t, "tidy")
+	if _, err := os.Stat(victim); err != nil {
+		t.Errorf("a folder beside the cache was removed through a ..:\n%s", res.out)
+	}
+}
+
+// Names NuGet makes are lowercase and plain; anything else isn't taken for one, whatever is on disk.
+func TestTidyLeavesWhatHasAnUnusualName(t *testing.T) {
+	r := newTidyRig(t)
+	r.put(t, r.own, "we ird", "1.0.0")
+	r.put(t, r.host, "we ird", "1.0.0")
+	r.put(t, r.own, "Mixed.Case", "1.0.0")
+	r.put(t, r.host, "Mixed.Case", "1.0.0")
+	r.project(t, "App", r.sha(r.own, "we ird", "1.0.0"), r.sha(r.own, "Mixed.Case", "1.0.0"))
+	res := r.run(t, "tidy")
+	if !r.has(r.own, "we ird", "1.0.0") || !r.has(r.own, "Mixed.Case", "1.0.0") {
+		t.Errorf("a copy with an unusual name was removed:\n%s", res.out)
+	}
+}
+
+func TestTidyNeedsTheUsersCacheToTidyAgainst(t *testing.T) {
+	r := newTidyRig(t)
+	res := runVibeNugetEnv(t, r.ws, []string{"NUGET_PACKAGES=" + r.own, "NUGET_FALLBACK_PACKAGES="}, sandboxMailbox(t), func(packagereq.Taken) {}, "tidy")
+	if res.code != 1 || !strings.Contains(res.out, "NUGET_FALLBACK_PACKAGES") {
+		t.Errorf("exit %d:\n%s", res.code, res.out)
+	}
+}
+
+func TestTidyTakesNothingElse(t *testing.T) {
+	r := newTidyRig(t)
+	if res := r.run(t, "tidy", "a.lib"); res.code != 2 || !strings.Contains(res.out, "usage") {
+		t.Errorf("exit %d:\n%s", res.code, res.out)
+	}
+}
+
+// The agent runs status first, so that's where it's told: the host's answer, then what it can do in the sandbox.
+func TestStatusSaysToTidyWhenTheUserHasWhatTheSandboxDownloaded(t *testing.T) {
+	r := newTidyRig(t)
+	r.put(t, r.own, "a.lib", "1.0.0")
+	r.put(t, r.host, "a.lib", "1.0.0")
+	r.put(t, r.own, "a.two", "1.0.0")
+	r.put(t, r.host, "a.two", "1.0.0")
+	r.project(t, "App", r.sha(r.own, "a.lib", "1.0.0"), r.sha(r.own, "a.two", "1.0.0"))
+	m := sandboxMailbox(t)
+	res := runVibeNugetEnv(t, r.ws, []string{"NUGET_PACKAGES=" + r.own, "NUGET_FALLBACK_PACKAGES=" + r.host}, m, func(tk packagereq.Taken) {
+		m.Reply(tk.Nonce, packagereq.Answer{Status: packagereq.Info, Message: "Nothing is waiting for the user."})
+	}, "status")
+	if res.code != 0 || !strings.Contains(res.out, "Nothing is waiting for the user.") {
+		t.Fatalf("exit %d:\n%s", res.code, res.out)
+	}
+	for _, want := range []string{"2 of them", "vibe-nuget tidy", "dotnet restore"} {
+		if !strings.Contains(res.out, want) {
+			t.Errorf("status lacks %q:\n%s", want, res.out)
+		}
+	}
+	if !r.has(r.own, "a.lib", "1.0.0") {
+		t.Error("status removed something: only tidy does")
+	}
+}
+
+func TestStatusSaysNothingOfTidyWhenThereIsNothingToTidy(t *testing.T) {
+	r := newTidyRig(t)
+	r.put(t, r.own, "b.lib", "2.0.0")
+	r.project(t, "App", r.sha(r.own, "b.lib", "2.0.0"))
+	m := sandboxMailbox(t)
+	res := runVibeNugetEnv(t, r.ws, []string{"NUGET_PACKAGES=" + r.own, "NUGET_FALLBACK_PACKAGES=" + r.host}, m, func(tk packagereq.Taken) {
+		m.Reply(tk.Nonce, packagereq.Answer{Status: packagereq.Info, Message: "Nothing is waiting for the user."})
+	}, "status")
+	if strings.Contains(res.out, "tidy") {
+		t.Errorf("status mentions tidy with nothing to tidy:\n%s", res.out)
 	}
 }

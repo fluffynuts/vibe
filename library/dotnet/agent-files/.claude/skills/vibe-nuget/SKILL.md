@@ -1,6 +1,6 @@
 ---
 name: vibe-nuget
-description: Get a NuGet package this sandbox can't restore, or can't find after a restore. Use when dotnet restore or build fails with NU1101 or NU1102 (unable to find a package, or only older versions of it), or a package should come from a private feed or isn't on nuget.org - ask the user's machine with vibe-nuget fetch, and never edit nuget.config or add a source instead. Also use when a build fails with CS0246 for a package's types, or MSB3030 could not copy a file under .nuget/packages, right after a restore that said it was up to date - run dotnet restore --force. Before the first restore or build of a session, run vibe-nuget status to learn what the user has waiting, and tell them if something is.
+description: Get a NuGet package this sandbox can't restore, or can't find after a restore. Use when dotnet restore or build fails with NU1101 or NU1102 (unable to find a package, or only older versions of it), or a package should come from a private feed or isn't on nuget.org - ask the user's machine with vibe-nuget fetch, and never edit nuget.config or add a source instead. Also use when a build fails with CS0246 for a package's types, or MSB3030 could not copy a file under .nuget/packages, right after a restore that said it was up to date - run dotnet restore --force. Before the first restore or build of a session, run vibe-nuget status to learn what the user has waiting, and tell them if something is. If it says to tidy, run vibe-nuget tidy and then dotnet restore.
 ---
 
 # Before a restore or build
@@ -13,6 +13,12 @@ their IDE can't see them). If it says something is, Tell the user what it
 says, and wait for them: a restore or build now would download your own copies
 of the packages, which their IDE won't see either. If it says nothing is
 waiting, carry on. If it can't answer, carry on and say so.
+
+If it also says packages you downloaded yourself are in the user's package cache
+now too, run `vibe-nuget tidy`, then `dotnet restore`. Tidy drops your own copies
+of just those packages (and the build's derived path caches), so the restore finds
+them in the user's cache and the files generated here name it, which their IDE can
+read; nothing else of yours is touched. It is quick, and safe to run again.
 
 # Packages from private feeds
 

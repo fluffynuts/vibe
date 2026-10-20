@@ -14,12 +14,15 @@ usage() {
   cat >&2 <<'USAGE'
 usage: vibe-nuget fetch ID VERSION [--framework TFM]
        vibe-nuget status
+       vibe-nuget tidy
 
   fetch  Ask the host to fetch the NuGet package ID at exactly VERSION, from
          the feeds in the host's NuGet config, then restore again. TFM is the
          target framework, such as net8.0; it defaults to the project's here.
   status Ask the host what is waiting for the user (requests to approve,
          packages their IDE can't see), before you restore or build.
+  tidy   Drop this sandbox's own copy of packages the user's package cache has
+         too, so the next restore points the generated files at theirs.
 USAGE
   exit 2
 }
@@ -31,7 +34,7 @@ fail() {
 
 command=$1
 case "$command" in
-  fetch | status) ;;
+  fetch | status | tidy) ;;
   *) usage ;;
 esac
 shift
@@ -55,6 +58,70 @@ if [ "$command" = fetch ]; then
   done
 else
   [ $# -eq 0 ] || usage
+fi
+
+# The sandbox's own package cache, and the user's (the read-only fallback), without a trailing slash.
+own=$NUGET_PACKAGES
+if [ -z "$own" ]; then
+  own=$HOME/.nuget/packages
+fi
+own=$(printf '%s' "$own" | sed 's#/*$##')
+host=$(printf '%s' "$NUGET_FALLBACK_PACKAGES" | sed 's#/*$##')
+
+# The packages (as "id/version") this sandbox holds its own copy of, that the user's cache has too, and that
+# the generated files here name: restore found the sandbox's first when it had to download them, and keeps
+# naming it. Only what a project.nuget.cache names in exactly the sandbox's own cache counts: those files are
+# written by the agent's own restores, but read as data here, and nothing outside the cache is ever removed.
+tidy_candidates() {
+  find . -path '*/obj/project.nuget.cache' -not -path '*/node_modules/*' 2>/dev/null | while read -r cache; do
+    grep -o '"[^"]*\.nupkg\.sha512"' "$cache" | tr -d '"'
+  done | sort -u | while read -r file; do
+    version_dir=$(dirname "$file")
+    id_dir=$(dirname "$version_dir")
+    [ "$(dirname "$id_dir")" = "$own" ] || continue
+    id=$(basename "$id_dir")
+    version=$(basename "$version_dir")
+    case "$id$version" in *[!a-z0-9._+-]*) continue ;; esac
+    case "$id" in . | ..) continue ;; esac
+    case "$version" in . | ..) continue ;; esac
+    [ -d "$own/$id/$version" ] || continue
+    [ -e "$host/$id/$version/.nupkg.metadata" ] || continue
+    echo "$id/$version"
+  done
+}
+
+count_lines() {
+  printf '%s\n' "$1" | sed '/^$/d' | wc -l | tr -d ' '
+}
+
+# tidy_hint is for status: what the agent can do now the user has packages it had to download itself.
+tidy_hint() {
+  [ -n "$host" ] || return 0
+  copies=$(tidy_candidates)
+  [ -n "$copies" ] || return 0
+  echo
+  echo "vibe-nuget: packages you downloaded yourself are in the user's package cache now too ($(count_lines "$copies") of them), but the files generated here still name your copies, which their IDE can't see. Run 'vibe-nuget tidy', then 'dotnet restore': the files will name the user's cache."
+}
+
+if [ "$command" = tidy ]; then
+  [ -n "$host" ] || fail "NUGET_FALLBACK_PACKAGES isn't set: this sandbox isn't given the user's package cache, so there is nothing to tidy against" 1
+  copies=$(tidy_candidates)
+  if [ -z "$copies" ]; then
+    echo "vibe-nuget: nothing to tidy: no package the projects here use is a copy of one the user's cache has"
+    exit 0
+  fi
+  printf '%s\n' "$copies" | while read -r entry; do
+    rm -rf "$own/$entry"
+    rmdir "$(dirname "$own/$entry")" 2>/dev/null
+  done
+  # What the SDK worked out of where each package was is derived, and still names what was just removed.
+  find . -path '*/obj/*' -name '*.assets.cache' -not -path '*/node_modules/*' -delete 2>/dev/null
+  n=$(count_lines "$copies")
+  if [ "$n" = 1 ]; then noun=package; else noun=packages; fi
+  echo "vibe-nuget: removed this sandbox's own copy of $n $noun the user's cache has too:"
+  printf '%s\n' "$copies" | sed 's#/# #; s#^#  #'
+  echo "vibe-nuget: now run 'dotnet restore' (the generated files will name the user's cache); nothing else of yours was touched"
+  exit 0
 fi
 
 if [ -z "$VIBE_PACKAGES_DIR" ]; then
@@ -153,7 +220,10 @@ while :; do
       fi
     else
       echo "$message"
-      [ "$status" = info ] && exit 0
+      if [ "$status" = info ]; then
+        [ "$command" = status ] && tidy_hint
+        exit 0
+      fi
       if [ "$status" = fetched ]; then
         forget_what_was_missing
         exit 0

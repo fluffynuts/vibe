@@ -13,6 +13,11 @@ If it says something is waiting for the user, Tell the user what it says, and
 wait for them: don't download your own copies of the packages in the meantime.
 If it says nothing is waiting, carry on. If it can't answer, carry on and say so.
 
+If it also says packages you downloaded yourself are now in the user's package
+cache too, run `vibe-nuget tidy` and then `dotnet restore`: your own copies of
+just those are dropped, so the files generated here name the user's cache, which
+their IDE can read.
+
 ## NuGet packages from private feeds
 
 This sandbox can restore packages from public feeds (nuget.org), but has none
