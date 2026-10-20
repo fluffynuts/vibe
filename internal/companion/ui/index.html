@@ -69,6 +69,11 @@
             <span id="convo-sync-text"></span>
             <button type="button" id="convo-sync-review">Review them</button>
           </div>
+          <div id="convo-blocked" class="notice" role="status" hidden>
+            <span id="convo-blocked-text"></span>
+            <button type="button" id="convo-blocked-open">Open the Network log</button>
+            <button type="button" id="convo-blocked-dismiss" class="ghost" title="Don't tell me again about these hosts">Dismiss</button>
+          </div>
           <div class="convo-log-wrap">
             <div id="convo-log" class="convo-log" role="log" aria-live="polite"></div>
             <button type="button" id="convo-find-open" class="find-open small ghost" title="Search the conversation (F3)" aria-label="Search the conversation">

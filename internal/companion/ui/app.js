@@ -367,6 +367,7 @@
   // Conversation tab's, when it has said something out of sight (pulsing
   // while it's still at work).
   function showAllAttention() {
+    renderBlockedNotice()
     const attention = withBlockedNews(withReviewNews(state.attention))
     if (!convo.news) { showAttention(attention); return }
     showAttention(Object.assign({}, attention, { conversation: [convo.running ? 'The agent is working' : 'The agent has answered'] }),
@@ -407,6 +408,19 @@
     } catch (e) { return null }
   }
 
+  // BLOCKED_DISMISSED keeps the hosts the user said not to be told of again, as a JSON list, per
+  // browser and sandbox. Not forgotten when a host stops being blocked: one called every few
+  // minutes is blocked again each time, and isn't news each time.
+  const BLOCKED_DISMISSED = 'vibe-companion-blocked-dismissed'
+  const MAX_DISMISSED = 500
+
+  function dismissedBlocked() {
+    try {
+      const list = JSON.parse(store.get(BLOCKED_DISMISSED) || '[]')
+      return Array.isArray(list) ? list : []
+    } catch (e) { return [] }
+  }
+
   // noteBlocked works out which of the hosts vibe says are blocked are new.
   // Not known yet (null) is not "none are": nothing is taken as seen. With
   // nothing kept (a browser's first visit), what's blocked now is taken as
@@ -420,7 +434,27 @@
     if (seen === null) { store.set(BLOCKED_SEEN, JSON.stringify(hosts)); return }
     const kept = state.tab === 'log' ? hosts : seen.filter((h) => hosts.includes(h))
     if (kept.length !== seen.length || kept.some((h, i) => h !== seen[i])) store.set(BLOCKED_SEEN, JSON.stringify(kept))
-    state.newBlocked = hosts.filter((h) => !kept.includes(h))
+    const dismissed = dismissedBlocked()
+    state.newBlocked = hosts.filter((h) => !kept.includes(h) && !dismissed.includes(h))
+  }
+
+  function dismissBlocked() {
+    const hosts = state.newBlocked || []
+    if (!hosts.length) return
+    store.set(BLOCKED_DISMISSED, JSON.stringify(dismissedBlocked().concat(hosts).slice(-MAX_DISMISSED)))
+    noteBlocked(state.blockedHosts)
+    showAllAttention()
+  }
+
+  // The conversation says too that hosts are newly blocked, as it is there the agent will have said it
+  // couldn't get somewhere, and the Network log tab is where to let it.
+  function renderBlockedNotice() {
+    const hosts = state.newBlocked || []
+    $('convo-blocked').hidden = hosts.length === 0
+    if (!hosts.length) return
+    const named = hosts.slice(0, 3).join(', ') + (hosts.length > 3 ? ' and ' + (hosts.length - 3) + ' more' : '')
+    $('convo-blocked-text').textContent = (hosts.length === 1 ? '1 host the sandbox tried to reach is blocked: ' : hosts.length + ' hosts the sandbox tried to reach are blocked: ') +
+      named + '. You can unblock ' + (hosts.length === 1 ? 'it' : 'them') + ' in the Network log tab.'
   }
 
   // withBlockedNews is attention with the Network log tab's, when hosts are
@@ -3079,6 +3113,8 @@
       $('admin-packages-all').scrollIntoView({ block: 'start' })
       tick()
     })
+    $('convo-blocked-open').addEventListener('click', () => select('log'))
+    $('convo-blocked-dismiss').addEventListener('click', dismissBlocked)
     $('convo-stale-ask').addEventListener('click', askAgentToTidy)
     $('admin-sync-stale-ask').addEventListener('click', askAgentToTidy)
     $('convo-sync-review').addEventListener('click', () => {

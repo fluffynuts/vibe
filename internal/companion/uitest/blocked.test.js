@@ -11,7 +11,8 @@ const { openPage } = require('./page.js')
 function blockedPage(blocked, { storage = {}, tab = 'rules' } = {}) {
   const at = { blocked }
   const routes = {
-    '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, attention: {}, blockedHosts: at.blocked }),
+    '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, conversation: true, attention: {}, blockedHosts: at.blocked }),
+    '/api/conversation': { events: [], last: 0, running: false },
     '/api/log': { entries: [] },
     '/api/rules': { rules: [] },
   }
@@ -138,4 +139,93 @@ test('the other tabs\' dots are left as they are', async () => {
     assert.match(p.$('tab-admin').title, /Upgrades available/)
     assert.match(dot(p), /1 new blocked host: a\.example/)
   } finally { p.close() }
+})
+
+// The conversation says so too when a host is newly blocked, with a way to the Network log tab, where
+// it can be unblocked; and a notice dismissed stays dismissed for those hosts, however often they are
+// blocked again (a host that is called every few minutes isn't news each time).
+const notice = (p) => (p.$('convo-blocked').hidden ? null : p.$('convo-blocked-text').textContent)
+
+test('a newly blocked host is said on the conversation, with where to unblock it', async () => {
+  const p = await blockedPage(['a.example'])
+  try {
+    assert.equal(notice(p), null)
+    p.at.blocked = ['a.example', 'new.example']
+    await p.poll()
+    assert.match(notice(p), /new\.example/)
+    assert.match(notice(p), /Network log/)
+  } finally { p.close() }
+})
+
+test('several hosts are counted and named up to a few', async () => {
+  const p = await blockedPage([])
+  try {
+    p.at.blocked = ['a.example', 'b.example', 'c.example', 'd.example', 'e.example']
+    await p.poll()
+    assert.match(notice(p), /5 hosts/)
+    assert.match(notice(p), /a\.example, b\.example, c\.example and 2 more/)
+  } finally { p.close() }
+})
+
+test('the button goes to the Network log tab, which is where it is seen to', async () => {
+  const p = await blockedPage(['a.example'], { tab: 'conversation' })
+  try {
+    p.at.blocked = ['a.example', 'new.example']
+    await p.poll()
+    assert.equal(p.$('panel-log').hidden, true, 'on the conversation to begin with')
+    await p.click('convo-blocked-open')
+    assert.equal(p.$('panel-log').hidden, false)
+    assert.equal(notice(p), null)
+    assert.equal(dot(p), null)
+  } finally { p.close() }
+})
+
+test('dismissing takes the notice and the dot away, and neither comes back for those hosts', async () => {
+  const p = await blockedPage(['a.example'])
+  try {
+    p.at.blocked = ['a.example', 'noisy.example']
+    await p.poll()
+    await p.click('convo-blocked-dismiss')
+    assert.equal(notice(p), null)
+    assert.equal(dot(p), null)
+    p.at.blocked = ['a.example'] // it stopped being blocked
+    await p.poll()
+    p.at.blocked = ['a.example', 'noisy.example'] // and was blocked again, as it is every few minutes
+    await p.poll()
+    assert.equal(notice(p), null, 'no reminder')
+    assert.equal(dot(p), null)
+  } finally { p.close() }
+})
+
+test('a host that arrives after others were dismissed is still news, and only it is named', async () => {
+  const p = await blockedPage(['a.example'])
+  try {
+    p.at.blocked = ['a.example', 'noisy.example']
+    await p.poll()
+    await p.click('convo-blocked-dismiss')
+    p.at.blocked = ['a.example', 'noisy.example', 'other.example']
+    await p.poll()
+    assert.match(notice(p), /other\.example/)
+    assert.doesNotMatch(notice(p), /noisy\.example/)
+  } finally { p.close() }
+})
+
+test('a dismissal is kept for the next page load', async () => {
+  const first = await blockedPage(['a.example'])
+  let kept
+  try {
+    first.at.blocked = ['a.example', 'noisy.example']
+    await first.poll()
+    await first.click('convo-blocked-dismiss')
+    kept = {
+      'vibe-companion-blocked-seen': first.window.localStorage.getItem('vibe-companion-blocked-seen') || '[]',
+      'vibe-companion-blocked-dismissed': first.window.localStorage.getItem('vibe-companion-blocked-dismissed'),
+    }
+  } finally { first.close() }
+  kept['vibe-companion-blocked-seen'] = '[]'
+  const second = await blockedPage(['noisy.example'], { storage: kept })
+  try {
+    assert.equal(notice(second), null)
+    assert.equal(dot(second), null)
+  } finally { second.close() }
 })
