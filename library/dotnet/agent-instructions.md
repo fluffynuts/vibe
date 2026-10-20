@@ -23,6 +23,11 @@ A restore of a solution covers only the projects in it. If tidy, or status after
 restore, lists projects to restore (`dotnet restore '<project>'`), restore each:
 one outside the solution is otherwise left naming copies that are gone.
 
+If `vibe-nuget` isn't there, this sandbox was composed before vibe had it. Tell
+the user so, and ask them to run `vibe -C` in the project's folder, which
+re-composes the sandbox with what vibe has now. Until then, don't work around it
+by editing a `nuget.config` or adding a package source.
+
 ## NuGet packages from private feeds
 
 This sandbox can restore packages from public feeds (nuget.org), but has none
