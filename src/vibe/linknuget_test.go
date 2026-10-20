@@ -36,8 +36,9 @@ func newFakeMounting(t *testing.T, succeeds bool) fakeMounting {
 		t.Fatal(err)
 	}
 	scripts := map[string]string{
-		"sed":   "#!/bin/sh\nfor a in \"$@\"; do case \"$a\" in -i*) echo 'sed: -i is not portable: BSD sed wants a suffix' >&2; exit 1;; esac; done\nexec '" + realSed + "' \"$@\"\n",
-		"sudo":  "#!/bin/sh\nexec \"$@\"\n",
+		"sed": "#!/bin/sh\nfor a in \"$@\"; do case \"$a\" in -i*) echo 'sed: -i is not portable: BSD sed wants a suffix' >&2; exit 1;; esac; done\nexec '" + realSed + "' \"$@\"\n",
+		// FAKE_SUDO_UNLOCK is a folder only root may write: sudo makes it writable first.
+		"sudo":  "#!/bin/sh\n[ -z \"$FAKE_SUDO_UNLOCK\" ] || chmod u+w \"$FAKE_SUDO_UNLOCK\"\nexec \"$@\"\n",
 		"mount": "#!/bin/sh\necho \"$*\" >> '" + f.calls + "'\nexit " + status + "\n",
 		"chown": "#!/bin/sh\necho \"$*\" >> '" + f.chowns + "'\n",
 	}
@@ -81,6 +82,14 @@ func runLinkNuget(t *testing.T, persisted string, env ...string) string {
 
 func runLinkNugetMounting(t *testing.T, mounting fakeMounting, persisted string, env ...string) string {
 	t.Helper()
+	got, _ := runLinkNugetOn(t, mounting, filepath.Join(t.TempDir(), "persistent.sh"), persisted, 0o644, env...)
+	return got
+}
+
+// runLinkNugetOn is runLinkNugetMounting with the persistent file at file, which starts with mode, and the file's
+// content as it was left; the second result says whether the file as it began was written into.
+func runLinkNugetOn(t *testing.T, mounting fakeMounting, file, persisted string, mode os.FileMode, env ...string) (string, bool) {
+	t.Helper()
 	// The script runs in the sandbox, a Linux guest, never on a Windows host.
 	if runtime.GOOS == "windows" {
 		t.Skip("link-nuget runs in the Linux sandbox")
@@ -89,9 +98,16 @@ func runLinkNugetMounting(t *testing.T, mounting fakeMounting, persisted string,
 	if err != nil {
 		t.Fatal(err)
 	}
-	file := filepath.Join(t.TempDir(), "persistent.sh")
-	if err := os.WriteFile(file, []byte(persisted), 0o644); err != nil {
+	if err := os.WriteFile(file, []byte(persisted), mode); err != nil {
 		t.Fatal(err)
+	}
+	if err := os.Chmod(file, mode); err != nil {
+		t.Fatal(err)
+	}
+	// A second name for the file as it was keeps it as it was: if it changes, the script wrote into it.
+	kept := file + ".original"
+	if os.Link(file, kept) == nil { // not in a folder the test has locked
+		defer os.Remove(kept)
 	}
 	cmd := exec.Command("sh", script)
 	cmd.Env = append([]string{"PATH=" + mounting.bin + string(os.PathListSeparator) + os.Getenv("PATH"), "SBX_PERSIST_FILE=" + file, "SBX_LINK_NUGET_LOG=" + filepath.Join(t.TempDir(), "link-nuget.log"), "SBX_NUGET_LINK=" + filepath.Join(t.TempDir(), ".nuget"), "HOME=" + t.TempDir()}, env...)
@@ -102,7 +118,8 @@ func runLinkNugetMounting(t *testing.T, mounting fakeMounting, persisted string,
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(data)
+	original, _ := os.ReadFile(kept)
+	return string(data), string(original) != persisted
 }
 
 func TestLinkNugetMakesTheHostsPackagesAReadOnlyFallback(t *testing.T) {
@@ -446,5 +463,86 @@ func TestTheAgentIsToldToAskStatusBeforeEveryRestoreOrBuildNotOnlyTheFirst(t *te
 		if strings.Contains(flat, "of a session") || strings.Contains(flat, "first restore") || strings.Contains(flat, "first `dotnet restore`") {
 			t.Errorf("the %s still say to do it once, for the first:\n%s", name, text)
 		}
+	}
+}
+
+// The persistent file is sourced before every command the agent runs: a path with a space in it, or a quote,
+// is written so that sourcing gives the path back, and says nothing.
+func TestLinkNugetWritesAPathThatNeedsQuotingSoItIsReadBackAsItIs(t *testing.T) {
+	for _, name := range []string{"my packages", "it's here", "dollar$HOME", "back`tick`", "semi;colon", "amp&ersand", "(paren)"} {
+		t.Run(name, func(t *testing.T) {
+			packages := filepath.Join(t.TempDir(), name)
+			if err := os.MkdirAll(packages, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			got := runLinkNuget(t, "export KEEP=1\n", "SBX_HOST_NUGET_PACKAGES="+packages)
+			file := filepath.Join(t.TempDir(), "p.sh")
+			if err := os.WriteFile(file, []byte(got), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, err := exec.Command("sh", "-c", ". \"$1\"; printf %s \"$NUGET_FALLBACK_PACKAGES\"", "sh", file).CombinedOutput()
+			if err != nil || string(out) != packages {
+				t.Errorf("sourcing the file gave %q (%v), want %q:\n%s", out, err, packages, got)
+			}
+			if !strings.Contains(got, "export KEEP=1") {
+				t.Errorf("another export was lost:\n%s", got)
+			}
+		})
+	}
+}
+
+func TestLinkNugetDoesNotRewriteALineForAPathThatNeedsQuotingEveryTime(t *testing.T) {
+	packages := filepath.Join(t.TempDir(), "my packages")
+	if err := os.MkdirAll(packages, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	once := runLinkNuget(t, "", "SBX_HOST_NUGET_PACKAGES="+packages)
+	twice := runLinkNuget(t, once, "SBX_HOST_NUGET_PACKAGES="+packages)
+	if once != twice || strings.Count(twice, "NUGET_FALLBACK_PACKAGES") != 1 {
+		t.Errorf("running again changed the file:\n%s\n---\n%s", once, twice)
+	}
+}
+
+// Every shell the agent starts sources this file: a new file is renamed over it, whole, with its mode.
+func TestLinkNugetReplacesThePersistentFileWholeAndKeepsItsMode(t *testing.T) {
+	packages := t.TempDir()
+	file := filepath.Join(t.TempDir(), "persistent.sh")
+	got, writtenInto := runLinkNugetOn(t, newFakeMounting(t, false), file, "export KEEP=1\n", 0o640, "SBX_HOST_NUGET_PACKAGES="+packages)
+	if !strings.Contains(got, "export NUGET_FALLBACK_PACKAGES="+packages) || !strings.Contains(got, "export KEEP=1") {
+		t.Errorf("content:\n%s", got)
+	}
+	if writtenInto {
+		t.Error("the file was written in place: a shell sourcing it meanwhile could see it empty")
+	}
+	if st, _ := os.Stat(file); runtime.GOOS != "windows" && st.Mode().Perm() != 0o640 {
+		t.Errorf("mode %v, want 0640", st.Mode().Perm())
+	}
+	entries, _ := os.ReadDir(filepath.Dir(file))
+	if len(entries) != 1 {
+		t.Errorf("the folder holds %v: something was left beside the file", entries)
+	}
+}
+
+// Where the agent can't write the file's folder (/etc, where it lives in the sandbox), root does it.
+func TestLinkNugetReplacesAPersistentFileInAFolderOnlyRootMayWrite(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes anywhere: nothing here is only root's")
+	}
+	packages := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "etc")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "persistent.sh")
+	if err := os.WriteFile(file, []byte("export KEEP=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	got, _ := runLinkNugetOn(t, newFakeMounting(t, false), file, "export KEEP=1\n", 0o644, "SBX_HOST_NUGET_PACKAGES="+packages, "FAKE_SUDO_UNLOCK="+dir)
+	if !strings.Contains(got, "export NUGET_FALLBACK_PACKAGES="+packages) || !strings.Contains(got, "export KEEP=1") {
+		t.Errorf("content:\n%s", got)
 	}
 }

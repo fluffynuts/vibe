@@ -17,21 +17,46 @@ if [ -n "$SBX_PERSIST_FILE" ]; then
   PERSIST=$SBX_PERSIST_FILE
 fi
 
-# The persistent file without NAME's line, and LINE (when given) at the end,
-# written back in place (what sed -i would do, which GNU and BSD take
-# differently), by sudo when the file isn't ours to write.
+# The persistent file is sourced before every command the agent runs, so it is only ever replaced whole, by
+# a new file renamed over it (a shell sourcing it meanwhile never sees it empty or part-written), with the mode
+# and owner it had; by sudo when the folder isn't the agent's to write (it lives in /etc).
+replace_whole() {
+  from=$1
+  to=$2
+  side=$to.new.$$
+  if cp -p "$to" "$side" 2>/dev/null || touch "$side" 2>/dev/null; then
+    if cat "$from" >"$side" 2>/dev/null && mv -f "$side" "$to" 2>/dev/null; then
+      return 0
+    fi
+    rm -f "$side" 2>/dev/null
+  fi
+  sudo sh -c 'cp -p "$2" "$2.new" 2>/dev/null; cat "$1" > "$2.new" && mv -f "$2.new" "$2"' sh "$from" "$to"
+}
+
+# The persistent file without NAME's line, and LINE (when given) at the end, written back whole.
 rewrite_persist() {
   tmp=$(mktemp) || return 1
   {
     grep -v "^export $1=" "$PERSIST" 2>/dev/null
     [ -z "$2" ] || echo "$2"
   } >"$tmp"
-  if ! cat "$tmp" >"$PERSIST" 2>/dev/null; then
-    sudo sh -c 'cat "$1" > "$2"' sh "$tmp" "$PERSIST"
-  fi
+  replace_whole "$tmp" "$PERSIST"
   status=$?
   rm -f "$tmp"
   return $status
+}
+
+# A value as a shell reads it back as it is: left alone when it has only characters a shell leaves be, else in
+# single quotes, with any quote in it ended, escaped and begun again.
+shell_value() {
+  case "$1" in
+    *[!A-Za-z0-9_./:@%+=,-]*)
+      printf "'"
+      printf '%s' "$1" | sed "s/'/'\\\\''/g"
+      printf "'"
+      ;;
+    *) printf '%s' "$1" ;;
+  esac
 }
 
 # Written to the persistent env file rather than passed at create time so it
@@ -39,7 +64,7 @@ rewrite_persist() {
 # line for the same variable, so a rebuilt sandbox never keeps the old ones.
 persist() {
   name=$1
-  want="export $name=$2"
+  want="export $name=$(shell_value "$2")"
   if [ -f "$PERSIST" ] && grep -qxF "$want" "$PERSIST"; then
     echo "$name already persisted"
     return
