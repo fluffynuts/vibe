@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -561,38 +562,41 @@ func (r tidyRig) projectFile(name string) string {
 }
 
 // A restore of the solution covers the projects in it: one outside it keeps naming the copies tidy removed, and
-// nothing restores it unless the agent is told which it is.
-func TestTidyNamesTheProjectsThatNamedTheCopiesItRemoved(t *testing.T) {
+// nothing restores it unless the agent is told which it is. Tidy doesn't list the projects (a solution's can be dozens,
+// and its restore covers nearly all): it points at status, which after that restore names only those left.
+func TestTidyPointsAtStatusForTheProjectsAndDoesNotListThem(t *testing.T) {
 	r := newTidyRig(t)
 	r.put(t, r.own, "a.lib", "1.0.0")
 	r.put(t, r.host, "a.lib", "1.0.0")
-	r.put(t, r.own, "b.lib", "2.0.0")
-	r.project(t, "InSolution", r.sha(r.own, "a.lib", "1.0.0"))
-	r.project(t, "Orphan", r.sha(r.own, "a.lib", "1.0.0"))
-	r.project(t, "Unrelated", r.sha(r.host, "a.lib", "1.0.0"))
-	res := r.run(t, "tidy")
-	for _, p := range []string{"InSolution", "Orphan"} {
-		if want := "dotnet restore '" + r.projectFile(p) + "'"; !strings.Contains(res.out, want) {
-			t.Errorf("tidy doesn't say to %s:\n%s", want, res.out)
-		}
+	for i := 0; i < 31; i++ {
+		r.project(t, fmt.Sprintf("P%d", i), r.sha(r.own, "a.lib", "1.0.0"))
 	}
-	if strings.Contains(res.out, "Unrelated") {
-		t.Errorf("a project that never named a removed copy is listed:\n%s", res.out)
+	res := r.run(t, "tidy")
+	if strings.Contains(res.out, "dotnet restore '") || strings.Contains(res.out, "P7") {
+		t.Errorf("tidy lists projects:\n%s", res.out)
+	}
+	for _, want := range []string{"vibe-nuget status", "outside the solution"} {
+		if !strings.Contains(res.out, want) {
+			t.Errorf("tidy lacks %q:\n%s", want, res.out)
+		}
 	}
 }
 
-func TestTidyNamesNoProjectWhenNoneNamedAnythingRemoved(t *testing.T) {
+// What is left after the restore is what status names.
+func TestStatusAfterATidyAndARestoreOfTheSolutionNamesOnlyTheProjectLeft(t *testing.T) {
 	r := newTidyRig(t)
 	r.put(t, r.own, "a.lib", "1.0.0")
 	r.put(t, r.host, "a.lib", "1.0.0")
-	r.project(t, "App", r.sha(r.own, "a.lib", "1.0.0"))
+	r.project(t, "InSolution", r.sha(r.own, "a.lib", "1.0.0"))
+	r.project(t, "Orphan", r.sha(r.own, "a.lib", "1.0.0"))
 	r.run(t, "tidy")
-	r.project(t, "App", r.sha(r.host, "a.lib", "1.0.0")) // restored: it names the user's cache now
-	r.put(t, r.own, "c.lib", "1.0.0")
-	r.put(t, r.host, "c.lib", "1.0.0")
-	res := r.run(t, "tidy")
-	if strings.Contains(res.out, "dotnet restore '") {
-		t.Errorf("a project that names the user's cache is listed:\n%s", res.out)
+	r.project(t, "InSolution", r.sha(r.host, "a.lib", "1.0.0")) // restoring the solution rewrote its file
+	m := sandboxMailbox(t)
+	res := runVibeNugetEnv(t, r.ws, []string{"NUGET_PACKAGES=" + r.own, "NUGET_FALLBACK_PACKAGES=" + r.host}, m, func(tk packagereq.Taken) {
+		m.Reply(tk.Nonce, packagereq.Answer{Status: packagereq.Info, Message: "Nothing is waiting for the user."})
+	}, "status")
+	if !strings.Contains(res.out, "dotnet restore '"+r.projectFile("Orphan")+"'") || strings.Contains(res.out, "InSolution") {
+		t.Errorf("status names:\n%s", res.out)
 	}
 }
 

@@ -25,10 +25,10 @@ read. It removes nothing but those copies and the build's derived path caches
 quick, safe to run again, and part of the normal flow: no need to ask the user
 first.
 
-A restore of a solution covers only the projects in it. If tidy, or status after
-a restore, lists projects to restore (`dotnet restore '<project>'`), restore each:
-one outside the solution is otherwise left naming copies that are gone, and the
-user's IDE still can't find its packages.
+A restore of a solution covers only the projects in it. After restoring, run
+`vibe-nuget status`: if it lists projects to restore (`dotnet restore '<project>'`),
+restore each: one outside the solution is otherwise left naming copies that are
+gone, and the user's IDE still can't find its packages.
 
 # Packages from private feeds
 

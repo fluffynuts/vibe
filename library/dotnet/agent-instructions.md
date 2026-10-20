@@ -19,9 +19,9 @@ just those are dropped (and the build's derived path caches, which the restore
 rebuilds), so the files generated here name the user's cache, which their IDE can
 read. It is safe and part of the normal flow: no need to ask the user first.
 
-A restore of a solution covers only the projects in it. If tidy, or status after a
-restore, lists projects to restore (`dotnet restore '<project>'`), restore each:
-one outside the solution is otherwise left naming copies that are gone.
+A restore of a solution covers only the projects in it. After restoring, run
+`vibe-nuget status`: if it lists projects to restore (`dotnet restore '<project>'`),
+restore each: one outside the solution is otherwise left naming copies that are gone.
 
 If `vibe-nuget` isn't there, this sandbox was composed before vibe had it. Tell
 the user so, and ask them to run `vibe -C` in the project's folder, which

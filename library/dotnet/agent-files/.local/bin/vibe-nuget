@@ -165,11 +165,7 @@ if [ "$command" = tidy ]; then
   echo "vibe-nuget: removed this sandbox's own copy of $n $noun the user's cache has too:"
   printf '%s\n' "$copies" | sed 's#/# #; s#^#  #'
   echo "vibe-nuget: now run 'dotnet restore' (the generated files will name the user's cache); nothing else of yours was touched"
-  projects=$(dangling_projects)
-  if [ -n "$projects" ]; then
-    echo "vibe-nuget: these projects' generated files named the copies just removed, so each needs restoring (a restore of a solution covers only the projects in it, and one outside the solution is left naming copies that are gone):"
-    restore_commands "$projects"
-  fi
+  echo "vibe-nuget: a restore of a solution covers only the projects in it, and one outside the solution is left naming copies that are gone: after restoring, run 'vibe-nuget status', which names any project still to restore"
   exit 0
 fi
 
