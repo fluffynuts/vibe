@@ -550,7 +550,15 @@ func TestStatusSaysNothingOfTidyWhenThereIsNothingToTidy(t *testing.T) {
 
 // --- projects the solution doesn't cover -----------------------------------------------------------------------
 
-func (r tidyRig) projectFile(name string) string { return filepath.Join(r.ws, name, name+".csproj") }
+// projectFile is the project file as the script says it: by the path it really has (a temp folder can be reached by
+// a link, as on macOS).
+func (r tidyRig) projectFile(name string) string {
+	dir, err := filepath.EvalSymlinks(filepath.Join(r.ws, name))
+	if err != nil {
+		return filepath.Join(r.ws, name, name+".csproj")
+	}
+	return filepath.Join(dir, name+".csproj")
+}
 
 // A restore of the solution covers the projects in it: one outside it keeps naming the copies tidy removed, and
 // nothing restores it unless the agent is told which it is.
@@ -658,5 +666,30 @@ func TestAProjectFileThatIsNotAPlainOneInTheWorkspaceIsNeverSaidToRestore(t *tes
 				t.Errorf("a command was suggested from %q:\n%s", path, res.out)
 			}
 		})
+	}
+}
+
+// A workspace can be reached by a link (the user's folder, in the sandbox; /var on macOS), while the shell's own
+// idea of where it is, and what dotnet writes into the cache file, are the real path or the linked one: the project
+// is in the workspace either way, and is said by its real path.
+func TestAProjectInAWorkspaceReachedByALinkIsStillNamed(t *testing.T) {
+	r := newTidyRig(t)
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(r.ws, link); err != nil {
+		t.Skip("can't make a link here: " + err.Error())
+	}
+	linked := r
+	linked.ws = link
+	linked.project(t, "Orphan", linked.sha(linked.own, "gone.lib", "1.0.0")) // the cache names the project by the link
+	m := sandboxMailbox(t)
+	res := runVibeNugetEnv(t, link, []string{"NUGET_PACKAGES=" + r.own, "NUGET_FALLBACK_PACKAGES=" + r.host}, m, func(tk packagereq.Taken) {
+		m.Reply(tk.Nonce, packagereq.Answer{Status: packagereq.Info, Message: "Nothing is waiting for the user."})
+	}, "status")
+	real, err := filepath.EvalSymlinks(r.ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "dotnet restore '" + filepath.Join(real, "Orphan", "Orphan.csproj") + "'"; !strings.Contains(res.out, want) {
+		t.Errorf("status doesn't say to %s:\n%s", want, res.out)
 	}
 }

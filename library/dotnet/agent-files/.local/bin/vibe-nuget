@@ -100,6 +100,8 @@ count_lines() {
 # solution that doesn't contain it, so it is said by name. The cache is data the agent can write, and what is
 # printed becomes a command: only a plain project file in this workspace, that exists, is ever named.
 dangling_projects() {
+  # By real paths: the workspace can be reached by a link, and dotnet writes one form where the shell holds the other.
+  root=$(pwd -P)
   find . -path '*/obj/project.nuget.cache' -not -path '*/node_modules/*' 2>/dev/null | while read -r cache; do
     grep -o '"[^"]*\.nupkg\.sha512"' "$cache" | tr -d '"' | while read -r file; do
       case "$file" in "$own"/*) ;; *) continue ;; esac
@@ -107,13 +109,16 @@ dangling_projects() {
     done | grep -q gone || continue
     project=$(grep -o '"projectFilePath": *"[^"]*"' "$cache" | head -n 1 | sed 's/^[^:]*: *"//; s/"$//')
     case "$project" in
-      "$PWD"/*.csproj | "$PWD"/*.fsproj | "$PWD"/*.vbproj) ;;
+      *.csproj | *.fsproj | *.vbproj) ;;
       *) continue ;;
     esac
+    project_dir=$(cd "$(dirname "$project")" 2>/dev/null && pwd -P) || continue
+    project="$project_dir/$(basename "$project")"
     case "$project" in
-      *[!A-Za-z0-9._/\ +@=,-]*) continue ;;
-      */../* | */./*) continue ;;
+      "$root"/*) ;;
+      *) continue ;;
     esac
+    printf '%s' "$project" | LC_ALL=C grep -q -E '^[A-Za-z0-9._/ +@=,-]+$' || continue
     [ -f "$project" ] || continue
     echo "$project"
   done | sort -u
