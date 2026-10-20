@@ -3032,3 +3032,74 @@ test('the fold stays when prompts are shown as plain text', async () => {
     assert.match(more.textContent, /which do you recommend/)
   } finally { q.close() }
 })
+
+// --- copying what the agent said -------------------------------------------------------------
+
+const SAID_AT = '2026-10-20T10:03:00Z'
+const saidAt = (seq, text, at) => Object.assign(agentSaid(seq, text), at ? { at } : {})
+const copyMessage = (p, nth = 0) => p.$('convo-log').querySelectorAll('.msg.agent button.copy-message')[nth]
+
+test('each thing the agent said has a button copying it as the Markdown it was written in', async () => {
+  const md = '## Test plan\n\n- **first** this\n- then `that`\n\n```\ncode\n```'
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, saidAt(2, md, SAID_AT), saidAt(3, 'and a second thing', SAID_AT)], running: false })
+  try {
+    const written = clipboardOf(p)
+    assert.equal(p.$('convo-log').querySelectorAll('.msg.agent button.copy-message').length, 2)
+    await p.click(copyMessage(p, 0))
+    assert.deepEqual(written, [md])
+    assert.equal(p.$('toast').textContent, 'Copied')
+    await p.click(copyMessage(p, 1))
+    assert.deepEqual(written, [md, 'and a second thing'])
+  } finally { p.close() }
+})
+
+test("the button is on the footer row, after the time, which is still there", async () => {
+  const p = await convoPage({ events: [saidAt(1, 'hello', SAID_AT)], running: false })
+  try {
+    const foot = p.$('convo-log').querySelector('.msg.agent .foot')
+    assert.ok(foot.querySelector('time.stamp'))
+    assert.equal(foot.lastElementChild, copyMessage(p))
+    assert.ok(copyMessage(p).getAttribute('aria-label'))
+  } finally { p.close() }
+})
+
+test('a message with no time still has the button', async () => {
+  const p = await convoPage({ events: [saidAt(1, 'hello')], running: false })
+  try {
+    assert.ok(copyMessage(p))
+    assert.equal(p.$('convo-log').querySelector('.msg.agent time'), null)
+  } finally { p.close() }
+})
+
+test('what is copied leaves out hidden control characters, and says how many', async () => {
+  const p = await convoPage({ events: [saidAt(1, 'run this\x1b[201~ now\x07', SAID_AT)], running: false })
+  try {
+    const written = clipboardOf(p)
+    await p.click(copyMessage(p))
+    assert.deepEqual(written, ['run this[201~ now'])
+    assert.equal(p.$('toast').textContent, 'Copied, leaving out 2 hidden control characters')
+  } finally { p.close() }
+})
+
+test('only what the agent said has the button: not the user, a tool, an error or the turn\'s cost', async () => {
+  const p = await convoPage({ events: [
+    { seq: 1, kind: 'user', text: 'hi', at: SAID_AT },
+    { seq: 2, kind: 'agent', at: SAID_AT, agent: { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'ls' } }] } } },
+    { seq: 3, kind: 'error', text: 'it broke', at: SAID_AT },
+    { seq: 4, kind: 'note', text: 'a note', at: SAID_AT },
+  ], running: false })
+  try {
+    assert.equal(p.$('convo-log').querySelectorAll('button.copy-message').length, 0)
+  } finally { p.close() }
+})
+
+test('where the browser gives the page no clipboard, the copy says why and what to do', async () => {
+  const p = await convoPage({ events: [saidAt(1, 'hello', SAID_AT)], running: false })
+  try {
+    Object.defineProperty(p.window.navigator, 'clipboard', { configurable: true, value: undefined })
+    await p.click(copyMessage(p))
+    assert.match(p.$('toast').textContent, /Couldn't copy/)
+    assert.match(p.$('toast').textContent, /localhost/)
+    assert.ok(p.$('toast').classList.contains('bad'))
+  } finally { p.close() }
+})

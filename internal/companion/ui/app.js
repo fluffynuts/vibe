@@ -4170,17 +4170,25 @@
   // hand means scrolling, as Ctrl+A takes the whole conversation.
   function codeBlock(code) {
     const text = code.replace(/\r\n/g, '\n')
-    const hidden = text.match(HIDDEN_CONTROL) || []
-    const copy = async () => {
-      try {
-        await navigator.clipboard.writeText(text.replace(HIDDEN_CONTROL, ''))
-        toast(hidden.length ? 'Copied, leaving out ' + plural(hidden.length, 'hidden control character') : 'Copied')
-      } catch (err) {
-        toast("Couldn't copy: " + err.message, true)
-      }
-    }
     return el('div', { class: 'code-block' }, el('pre', {}, el('code', { text: visible(text) })),
-      el('button', { type: 'button', class: 'copy-code small', title: 'Copy', 'aria-label': 'Copy the code', onclick: copy }, copyIcon()))
+      el('button', { type: 'button', class: 'copy-code small', title: 'Copy', 'aria-label': 'Copy the code', onclick: () => copyText(text) }, copyIcon()))
+  }
+
+  // copyText puts text on the user's clipboard, leaving out hidden control characters (an escape
+  // that ends a terminal's bracketed paste would make what follows run), and says what it did. A
+  // page has no clipboard unless it is on localhost or HTTPS: a forwarded port is neither.
+  async function copyText(text) {
+    const hidden = text.match(HIDDEN_CONTROL) || []
+    if (!navigator.clipboard) {
+      toast("Couldn't copy: the browser only lets a page copy from localhost or HTTPS. Open this page at http://localhost:<port>, not by a forwarded address.", true)
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(text.replace(HIDDEN_CONTROL, ''))
+      toast(hidden.length ? 'Copied, leaving out ' + plural(hidden.length, 'hidden control character') : 'Copied')
+    } catch (err) {
+      toast("Couldn't copy: " + err.message, true)
+    }
   }
 
   // copyIcon is two overlapping pages, the copy a step down and right.
@@ -4242,8 +4250,12 @@
   function convoNote(cls, text, at) {
     const time = stamp(at)
     const words = cls === 'agent' ? markdown(text) : el('span', { text })
-    $('convo-log').append(time
-      ? el('div', { class: 'msg ' + cls }, words, el('span', { class: 'foot' }, time))
+    // What the agent said can be copied whole, as the Markdown it wrote: its footer has the button.
+    const copy = cls === 'agent'
+      ? el('button', { type: 'button', class: 'copy-message small ghost', title: 'Copy this message', 'aria-label': 'Copy this message', onclick: () => copyText(text) }, copyIcon())
+      : null
+    $('convo-log').append(time || copy
+      ? el('div', { class: 'msg ' + cls }, words, el('span', { class: 'foot' }, time, copy))
       : el('div', { class: 'msg ' + cls }, words))
   }
 
