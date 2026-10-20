@@ -500,3 +500,97 @@ func TestWhatAFetchCouldBringIsWhatIsMissingLessWhatNoFeedHas(t *testing.T) {
 		t.Errorf("Actionable = %d while a run is on, want 0", got)
 	}
 }
+
+// namesFiles writes a project's project.nuget.cache, naming the given files as the packages' files.
+func (r *syncRig) namesFiles(t *testing.T, project string, files ...string) {
+	t.Helper()
+	var quoted []string
+	for _, f := range files {
+		quoted = append(quoted, `"`+filepath.ToSlash(f)+`"`)
+	}
+	body := `{"version":2,"expectedPackageFiles":[` + strings.Join(quoted, ",") + `],"logs":[]}`
+	obj := filepath.Join(r.dir, project, "obj")
+	if err := os.MkdirAll(obj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(obj, "project.nuget.cache"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func sha512In(root string, p Package) string {
+	id, version := strings.ToLower(p.ID), strings.ToLower(p.Version)
+	return filepath.Join(root, id, version, id+"."+version+".nupkg.sha512")
+}
+
+func TestPackagesTheGeneratedFilesNameElsewhereThatTheCacheHasAreStale(t *testing.T) {
+	rig := newSyncRig(t)
+	sandbox := t.TempDir()
+	rig.project(t, "A", map[string][]string{"net8.0": {"In.Theirs/1.0.0", "In.Mine/1.0.0", "Not.Yet/1.0.0"}})
+	for _, p := range []Package{{"In.Theirs", "1.0.0"}, {"In.Mine", "1.0.0"}} {
+		put(t, rig.cache, p)
+	}
+	rig.namesFiles(t, "A", sha512In(rig.cache, Package{"In.Theirs", "1.0.0"}), sha512In(sandbox, Package{"In.Mine", "1.0.0"}), sha512In(sandbox, Package{"Not.Yet", "1.0.0"}))
+	rig.s.Check()
+	st := rig.s.State()
+	if st.Stale != 1 {
+		t.Errorf("%d stale, want 1: the one named in the sandbox's cache that theirs has (not the one theirs lacks, nor the one named in theirs)", st.Stale)
+	}
+}
+
+func TestOnceTheFilesNameTheCachePackagesAreNoLongerStale(t *testing.T) {
+	rig := newSyncRig(t)
+	sandbox := t.TempDir()
+	p := Package{"In.Mine", "1.0.0"}
+	put(t, rig.cache, p)
+	rig.project(t, "A", map[string][]string{"net8.0": {"In.Mine/1.0.0"}})
+	rig.namesFiles(t, "A", sha512In(sandbox, p))
+	rig.s.Check()
+	if rig.s.State().Stale != 1 {
+		t.Fatal("not stale to begin with")
+	}
+	rig.namesFiles(t, "A", sha512In(rig.cache, p))
+	rig.s.Check()
+	if st := rig.s.State(); st.Stale != 0 {
+		t.Errorf("still %d stale after the files name the cache", st.Stale)
+	}
+}
+
+func TestAPackageTwoProjectsNameIsCountedOnce(t *testing.T) {
+	rig := newSyncRig(t)
+	sandbox := t.TempDir()
+	p := Package{"In.Mine", "1.0.0"}
+	put(t, rig.cache, p)
+	rig.project(t, "A", map[string][]string{"net8.0": {"In.Mine/1.0.0"}})
+	rig.project(t, "B", map[string][]string{"net8.0": {"In.Mine/1.0.0"}})
+	rig.namesFiles(t, "A", sha512In(sandbox, p))
+	rig.namesFiles(t, "B", sha512In(sandbox, p))
+	rig.s.Check()
+	if st := rig.s.State(); st.Stale != 1 {
+		t.Errorf("%d stale, want 1", st.Stale)
+	}
+}
+
+func TestFilesThatArentAPackagesAreNeverTakenForOne(t *testing.T) {
+	rig := newSyncRig(t)
+	put(t, rig.cache, Package{"In.Mine", "1.0.0"})
+	rig.project(t, "A", map[string][]string{"net8.0": {"In.Mine/1.0.0"}})
+	rig.namesFiles(t, "A", "/etc/passwd", "../../x/.nupkg.sha512", "/a/in.mine/../1.0.0/x.nupkg.sha512", "/a/in.mine/1.0.0/other.txt", "/a/b c/1.0.0/b c.1.0.0.nupkg.sha512", "/a/x;y/1.0.0/x;y.1.0.0.nupkg.sha512", "")
+	rig.s.Check()
+	if st := rig.s.State(); st.Stale != 0 {
+		t.Errorf("%d stale from files that name no package", st.Stale)
+	}
+}
+
+func TestACacheFileThatCantBeReadIsNotStaleNorFatal(t *testing.T) {
+	rig := newSyncRig(t)
+	rig.project(t, "A", map[string][]string{"net8.0": {"In.Mine/1.0.0"}})
+	obj := filepath.Join(rig.dir, "A", "obj")
+	if err := os.WriteFile(filepath.Join(obj, "project.nuget.cache"), []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rig.s.Check()
+	if st := rig.s.State(); st.Stale != 0 || st.Count != 1 {
+		t.Errorf("stale %d, missing %d: want 0 and 1", st.Stale, st.Count)
+	}
+}

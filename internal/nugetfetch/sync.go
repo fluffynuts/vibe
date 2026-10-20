@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -55,6 +56,10 @@ type SyncState struct {
 	// exact version (not fetched); Problems are files that couldn't be read.
 	Skipped  int
 	Problems []string
+	// Stale is how many packages the user's cache has that the sandbox's generated files
+	// (project.nuget.cache) still name elsewhere: the sandbox's own copies. The IDE reads those
+	// files, so it can't find the packages until they're generated again.
+	Stale int
 }
 
 // Actionable is how many of the missing packages a fetch could bring: not those the last run found
@@ -101,6 +106,7 @@ type Sync struct {
 
 	mu      sync.Mutex
 	parsed  map[string]parsedAssets
+	named   map[string]namedFiles
 	state   SyncState
 	running bool
 	// graphs are what each project's restore resolved, a framework at a time:
@@ -118,6 +124,13 @@ type parsedAssets struct {
 	assets   Assets
 }
 
+// namedFiles is the packages a project.nuget.cache names outside the cache, kept until it changes.
+type namedFiles struct {
+	modified  time.Time
+	size      int64
+	elsewhere []Package
+}
+
 // Check looks at the workspace's assets files, and works out what's missing.
 // A file that hasn't changed isn't read again.
 func (s *Sync) Check() {
@@ -130,6 +143,10 @@ func (s *Sync) checkLocked() {
 	if s.parsed == nil {
 		s.parsed = map[string]parsedAssets{}
 	}
+	if s.named == nil {
+		s.named = map[string]namedFiles{}
+	}
+	elsewhere := map[Package]bool{}
 	frameworks := map[string]map[Package]bool{}
 	var graphs []Group
 	graphKeys := map[string]bool{}
@@ -154,6 +171,9 @@ func (s *Sync) checkLocked() {
 			s.parsed[path] = kept
 		}
 		skipped += kept.assets.Skipped
+		for _, p := range s.namedElsewhere(filepath.Join(filepath.Dir(path), "project.nuget.cache")) {
+			elsewhere[p] = true
+		}
 		for fw, pkgs := range kept.assets.ByFramework {
 			if frameworks[fw] == nil {
 				frameworks[fw] = map[Package]bool{}
@@ -170,6 +190,13 @@ func (s *Sync) checkLocked() {
 	for path := range s.parsed {
 		if !seen[path] {
 			delete(s.parsed, path)
+			delete(s.named, filepath.Join(filepath.Dir(path), "project.nuget.cache"))
+		}
+	}
+	stale := 0
+	for p := range elsewhere {
+		if len(Missing(s.Cache, []Package{p})) == 0 {
+			stale++
 		}
 	}
 
@@ -201,8 +228,31 @@ func (s *Sync) checkLocked() {
 	})
 	s.graphs = graphs
 	s.state.Missing, s.state.Count = missing, len(distinct)
-	s.state.Skipped, s.state.Problems = skipped, problems
+	s.state.Skipped, s.state.Problems, s.state.Stale = skipped, problems, stale
 	s.state.Checked = time.Now()
+}
+
+// namedElsewhere is what the project.nuget.cache at path names outside the user's cache; a file
+// that can't be read names nothing (the assets file it sits by is what reports problems).
+func (s *Sync) namedElsewhere(path string) []Package {
+	info, err := os.Stat(path)
+	if err != nil {
+		delete(s.named, path)
+		return nil
+	}
+	if kept, ok := s.named[path]; ok && kept.modified.Equal(info.ModTime()) && kept.size == info.Size() {
+		return kept.elsewhere
+	}
+	roots := []string{s.Cache}
+	if real, err := filepath.EvalSymlinks(s.Cache); err == nil {
+		roots = append(roots, real)
+	}
+	pkgs, err := ReadNamedElsewhere(path, roots...)
+	if err != nil {
+		pkgs = nil
+	}
+	s.named[path] = namedFiles{info.ModTime(), info.Size(), pkgs}
+	return pkgs
 }
 
 // graphKey says whether two graphs are the same one.

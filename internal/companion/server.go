@@ -551,6 +551,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"attention":         attention,
 		"packagesWaiting":   s.packagesWaitingCount(),
 		"packagesToFetch":   s.packagesToFetch(),
+		"packagesStale":     s.packagesStale(),
 		"blockedHosts":      blockedHosts,
 		"reviewAt":          reviewAt,
 		"pageVersion":       s.pageVersion,

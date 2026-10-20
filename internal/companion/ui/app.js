@@ -606,6 +606,7 @@
       state.attention = res.body.attention || {}
       renderPackagesWaiting(res.body.packagesWaiting || 0)
       renderSyncWaiting(res.body.packagesToFetch || 0)
+      renderStaleWaiting(res.body.packagesStale || 0)
       state.blockedHosts = res.body.blockedHosts
       noteBlocked(state.blockedHosts)
       state.reviewAt = res.body.review ? res.body.reviewAt || '' : ''
@@ -2816,7 +2817,9 @@
     $('admin-sync-summary').textContent = count
       ? packagesWord(count) + " the sandbox restored " + (count === 1 ? "isn't" : "aren't") + " in your package cache, so your IDE (Rider, say) can't find " +
         (count === 1 ? 'it' : 'them') + '. Fetching uses your own NuGet config on this machine, as for a package the agent asks for.'
-      : 'Everything the sandbox restored is in your package cache, so your IDE can find it.'
+      : (b.stale || 0) > 0
+        ? 'Everything the sandbox restored is in your package cache.'
+        : 'Everything the sandbox restored is in your package cache, so your IDE can find it.'
     $('admin-sync-details').hidden = count === 0
     const key = JSON.stringify(b.missing || [])
     if (key !== syncView.listKey) {
@@ -2828,6 +2831,10 @@
       }))
     }
     $('admin-sync-run').disabled = running || count === 0
+    const stale = !running && !(b.actionable > 0) ? b.stale || 0 : 0
+    $('admin-sync-stale').hidden = stale === 0
+    $('admin-sync-stale-ask').hidden = !state.conversation
+    if (stale) $('admin-sync-stale-text').textContent = staleText(stale)
     packagesWant.sync = (b.actionable || 0) > 0
     showPackagesCard()
     const problems = b.problems || []
@@ -2914,6 +2921,36 @@
     $('convo-sync').hidden = count === 0
     $('convo-sync-text').textContent = packagesWord(count) + " the sandbox restored " + (count === 1 ? "isn't" : "aren't") +
       " in your package cache, so your IDE can't find " + (count === 1 ? 'it' : 'them') + '.'
+  }
+
+  // Once the packages are in the user's cache, the files the sandbox generated still name its own
+  // copies, which the IDE can't see. Nothing in the user's terms says so, so it's said here until
+  // the files are generated again (the host looks at them), with the way to do that.
+  const TIDY_PROMPT = 'The packages are in my package cache now. Please run vibe-nuget status, tidy up if it says to, ' +
+    'and restore, so the generated files name my cache.'
+  const staleText = (count) => packagesWord(count) + ' the sandbox restored ' + (count === 1 ? 'is' : 'are') +
+    ' in your package cache now, but the files it generated still point at its own ' + (count === 1 ? 'copy' : 'copies') +
+    ", so your IDE can't find " + (count === 1 ? 'it' : 'them') + ' yet. ' +
+    (state.conversation ? 'Ask the agent to tidy up, or restore in your IDE.' : 'Restore in your IDE.')
+
+  function renderStaleWaiting(count) {
+    $('convo-stale').hidden = count === 0
+    if (count) $('convo-stale-text').textContent = staleText(count)
+  }
+
+  // Sent at once when the agent is free: pressing the button is the user's choice. While it works
+  // the message waits in the box (Send is off then), unless the box holds something already.
+  async function askAgentToTidy() {
+    select('conversation')
+    const input = $('convo-input')
+    if (convo.running) {
+      if (!input.value.trim()) { input.value = TIDY_PROMPT; promptChanged() }
+      toast('The agent is working: the message is in the box for you to send when it is done.')
+      return
+    }
+    const draft = input.value
+    await deliverPrompt(TIDY_PROMPT)
+    if (draft) { input.value = draft; promptChanged() }
   }
 
   function describeRequest(r) {
@@ -3039,6 +3076,8 @@
       $('admin-packages-all').scrollIntoView({ block: 'start' })
       tick()
     })
+    $('convo-stale-ask').addEventListener('click', askAgentToTidy)
+    $('admin-sync-stale-ask').addEventListener('click', askAgentToTidy)
     $('convo-sync-review').addEventListener('click', () => {
       select('admin')
       $('admin-sync-card').scrollIntoView({ block: 'start' })

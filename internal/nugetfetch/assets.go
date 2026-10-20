@@ -147,3 +147,59 @@ func Missing(cache string, pkgs []Package) []Package {
 	}
 	return out
 }
+
+// ReadNamedElsewhere reads the project.nuget.cache at path, which names the file of each package a
+// restore used, and gives the packages whose files are anywhere but under root. Only what is
+// a package's own file, at <root>/<id>/<version>/<id>.<version>.nupkg.sha512, is taken: the file is
+// the sandbox's to write. The ids and versions are in the lower case the cache keeps.
+func ReadNamedElsewhere(path string, roots ...string) ([]Package, error) {
+	data, err := plainfile.Read(path, maxAssetsFile)
+	var tooLarge plainfile.TooLarge
+	switch {
+	case errors.As(err, &tooLarge):
+		return nil, fmt.Errorf("%s is too large to read (over %d MB)", path, maxAssetsFile>>20)
+	case err != nil:
+		return nil, err
+	}
+	var doc struct {
+		Expected []string `json:"expectedPackageFiles"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("%s isn't a project.nuget.cache: %w", path, err)
+	}
+	for i := range roots {
+		roots[i] = strings.ToLower(strings.TrimRight(strings.ReplaceAll(roots[i], "\\", "/"), "/")) + "/"
+	}
+	seen := map[Package]bool{}
+	var out []Package
+	for _, file := range doc.Expected {
+		if len(out) >= maxPackages {
+			break
+		}
+		slashed := strings.ReplaceAll(file, "\\", "/")
+		lower := strings.ToLower(slashed)
+		under := false
+		for _, root := range roots {
+			if strings.HasPrefix(lower, root) {
+				under = true
+			}
+		}
+		if under {
+			continue
+		}
+		parts := strings.Split(lower, "/")
+		if len(parts) < 3 {
+			continue
+		}
+		id, version, name := parts[len(parts)-3], parts[len(parts)-2], parts[len(parts)-1]
+		if id == "." || id == ".." || version == "." || version == ".." || name != id+"."+version+".nupkg.sha512" || !valid(id, version) {
+			continue
+		}
+		p := Package{id, version}
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}

@@ -61,6 +61,10 @@
             <span id="convo-packages-text"></span>
             <button type="button" id="convo-packages-review">Review them</button>
           </div>
+          <div id="convo-stale" class="notice" role="status" hidden>
+            <span id="convo-stale-text"></span>
+            <button type="button" id="convo-stale-ask">Ask the agent to tidy up</button>
+          </div>
           <div id="convo-sync" class="notice" role="status" hidden>
             <span id="convo-sync-text"></span>
             <button type="button" id="convo-sync-review">Review them</button>
@@ -265,6 +269,10 @@
               <summary>The packages</summary>
               <div id="admin-sync-list" class="info"></div>
             </details>
+            <div id="admin-sync-stale" hidden>
+              <p id="admin-sync-stale-text" class="note"></p>
+              <div class="bar"><button type="button" id="admin-sync-stale-ask">Ask the agent to tidy up</button></div>
+            </div>
             <p id="admin-sync-problems" class="note bad-text" hidden></p>
             <div class="bar"><button type="button" id="admin-sync-run">Fetch them</button></div>
             <p id="admin-sync-status" class="note" role="status" hidden></p>

@@ -45,6 +45,20 @@ func (s *Server) packagesToFetch() int {
 	return fixableNow(s.cfg.PackageSync.State())
 }
 
+// packagesStale is how many packages the user's cache has that the sandbox's generated files
+// still name in its own, once there's nothing left to fetch: until the files are generated again
+// the IDE can't find them, though the cache has them. Fetching comes first, so none before it.
+func (s *Server) packagesStale() int {
+	if s.cfg.PackageSync == nil {
+		return 0
+	}
+	st := s.cfg.PackageSync.State()
+	if st.Running || st.Actionable() > 0 {
+		return 0
+	}
+	return st.Stale
+}
+
 // packageSyncWaiting says, for the Admin tab's dot, how many packages the
 // sandbox restored that the user's IDE can't see, when fetching them would
 // help; "" when none, or while they're being fetched.
@@ -110,7 +124,7 @@ func (s *Server) packageSyncState(w http.ResponseWriter, r *http.Request) {
 	body := map[string]interface{}{
 		"auto":  s.cfg.PackageSyncAuto != nil && s.cfg.PackageSyncAuto(),
 		"count": st.Count, "actionable": fixableNow(st), "missing": groups, "running": st.Running, "skipped": st.Skipped,
-		"problems": st.Problems, "last": st.Last,
+		"problems": st.Problems, "last": st.Last, "stale": st.Stale,
 	}
 	if !st.Checked.IsZero() {
 		body["checked"] = st.Checked

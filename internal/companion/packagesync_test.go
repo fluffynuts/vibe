@@ -363,3 +363,42 @@ func TestThePageIsToldWhetherPackagesAreFetchedWithoutAsking(t *testing.T) {
 		}
 	}
 }
+
+// Once the packages are in the user's cache, the files the sandbox generated may still name its
+// own copies, which the IDE can't see: the page says so, but only once there's nothing left to fetch.
+func TestThePageStateSaysHowManyPackagesTheGeneratedFilesNameWrong(t *testing.T) {
+	stale := func(st nugetfetch.SyncState) int {
+		rec := do(t, syncServer(&fakeSync{state: st}), req{path: "/api/state", headers: authed(nil)})
+		var body struct {
+			PackagesStale int `json:"packagesStale"`
+		}
+		json.Unmarshal(rec.Body.Bytes(), &body)
+		return body.PackagesStale
+	}
+	if got := stale(nugetfetch.SyncState{Stale: 2}); got != 2 {
+		t.Errorf("packagesStale = %d, want 2", got)
+	}
+	if got := stale(nugetfetch.SyncState{}); got != 0 {
+		t.Errorf("packagesStale = %d with none, want 0", got)
+	}
+	waiting := someMissing
+	waiting.Stale = 2
+	if got := stale(waiting); got != 0 {
+		t.Errorf("packagesStale = %d while packages are still to fetch, want 0: fetching comes first", got)
+	}
+	running := nugetfetch.SyncState{Stale: 2, Running: true}
+	if got := stale(running); got != 0 {
+		t.Errorf("packagesStale = %d while fetching, want 0", got)
+	}
+}
+
+func TestTheSyncAnswerCarriesHowManyPackagesAreStale(t *testing.T) {
+	rec := do(t, syncServer(&fakeSync{state: nugetfetch.SyncState{Stale: 4}}), req{path: "/api/packages/sync", headers: authed(nil)})
+	var body struct {
+		Stale int `json:"stale"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body.Stale != 4 {
+		t.Errorf("stale = %d, want 4", body.Stale)
+	}
+}
