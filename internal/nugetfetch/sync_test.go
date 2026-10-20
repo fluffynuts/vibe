@@ -683,3 +683,47 @@ func TestOnceTheProjectIsRestoredItIsNoLongerListed(t *testing.T) {
 		t.Errorf("still listed: %v", st.StaleProjects)
 	}
 }
+
+// Whoever starts a run in the background is told at once, truly, that it is under way: by the time Start returns it is
+// running, however long a look at the workspace holds things up, and a second start is refused.
+func TestStartingARunMakesItRunningBeforeItReturns(t *testing.T) {
+	rig := newSyncRig(t)
+	rig.project(t, "A", map[string][]string{"net8.0": {"Lack.One/1.0.0"}})
+	release := make(chan struct{})
+	rig.result = func(string, []Package) (BatchResult, error) {
+		<-release
+		return BatchResult{}, nil
+	}
+	rig.s.Check()
+	done, err := rig.s.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rig.s.State().Running {
+		t.Error("Start returned and the run isn't said to be under way")
+	}
+	if _, err := rig.s.Start(context.Background()); !errors.Is(err, ErrSyncRunning) {
+		t.Errorf("a second Start = %v, want ErrSyncRunning", err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if rig.s.State().Running {
+		t.Error("still running after it ended")
+	}
+}
+
+func TestAStartedRunSaysHowItWentOnTheChannel(t *testing.T) {
+	rig := newSyncRig(t)
+	rig.project(t, "A", map[string][]string{"net8.0": {"Lack.One/1.0.0"}})
+	rig.result = func(string, []Package) (BatchResult, error) { return BatchResult{}, errors.New("dotnet fell over") }
+	rig.s.Check()
+	done, err := rig.s.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err == nil || !strings.Contains(err.Error(), "dotnet fell over") {
+		t.Errorf("the run said %v", err)
+	}
+}

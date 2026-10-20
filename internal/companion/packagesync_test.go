@@ -28,6 +28,30 @@ func (f *fakeSync) State() nugetfetch.SyncState {
 	defer f.mu.Unlock()
 	return f.state
 }
+
+// Start is Run in the background, under way when it returns: as the real one's is.
+func (f *fakeSync) Start(ctx context.Context) (<-chan error, error) {
+	f.mu.Lock()
+	if f.state.Running {
+		f.mu.Unlock()
+		return nil, nugetfetch.ErrSyncRunning
+	}
+	f.runs++
+	f.state.Running = true
+	f.mu.Unlock()
+	done := make(chan error, 1)
+	go func() {
+		if f.release != nil {
+			<-f.release
+		}
+		f.mu.Lock()
+		f.state.Running = false
+		f.mu.Unlock()
+		done <- f.runErr
+	}()
+	return done, nil
+}
+
 func (f *fakeSync) Run(ctx context.Context) error {
 	f.mu.Lock()
 	f.runs++
@@ -102,6 +126,19 @@ func TestAPageWithNoSyncHasNoSyncEndpoints(t *testing.T) {
 	s := New(Config{Sandbox: "box", Token: token, Port: testPort})
 	if rec := do(t, s, req{path: "/api/packages/sync", headers: authed(nil)}); rec.Code != http.StatusNotFound {
 		t.Errorf("status %d", rec.Code)
+	}
+}
+
+// The answer to the press says the fetch is under way: by construction, not by waiting a moment to see.
+func TestTheAnswerToRunningSaysItIsRunning(t *testing.T) {
+	f := &fakeSync{state: someMissing, release: make(chan struct{})}
+	defer close(f.release)
+	s := syncServer(f)
+	rec := do(t, s, post("/api/packages/sync/run", `{}`))
+	var body syncBody
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if rec.Code != http.StatusOK || !body.Running {
+		t.Errorf("status %d, running %v: %s", rec.Code, body.Running, rec.Body)
 	}
 }
 

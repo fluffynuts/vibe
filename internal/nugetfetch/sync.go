@@ -359,17 +359,41 @@ func (s *Sync) progressLocked() *Progress {
 // at a time. A package no feed has doesn't fail it: it's said, and stays
 // missing.
 func (s *Sync) Run(ctx context.Context) error {
+	groups, graphs, err := s.begin()
+	if err != nil {
+		return err
+	}
+	return s.run(ctx, groups, graphs)
+}
+
+// Start is Run in the background, once it is under way: by the time it returns the run is
+// running (State says so), or ErrSyncRunning says one already was. What the run comes to is on
+// the channel, when it ends.
+func (s *Sync) Start(ctx context.Context) (<-chan error, error) {
+	groups, graphs, err := s.begin()
+	if err != nil {
+		return nil, err
+	}
+	done := make(chan error, 1)
+	go func() { done <- s.run(ctx, groups, graphs) }()
+	return done, nil
+}
+
+// begin takes the right to run, looks at the workspace, and says what there is to fetch.
+func (s *Sync) begin() (groups, graphs []Group, err error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.running {
-		s.mu.Unlock()
-		return ErrSyncRunning
+		return nil, nil, ErrSyncRunning
 	}
 	s.running = true
 	s.checkLocked()
-	groups := s.state.Missing
-	graphs := s.graphs
-	s.runGroups = groups
-	s.mu.Unlock()
+	s.runGroups = s.state.Missing
+	return s.state.Missing, s.graphs, nil
+}
+
+// run fetches groups, a graph at a time, and ends the run begun.
+func (s *Sync) run(ctx context.Context, groups, graphs []Group) error {
 	defer func() {
 		s.mu.Lock()
 		s.running = false

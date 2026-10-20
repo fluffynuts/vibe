@@ -20,6 +20,9 @@ type PackageSync interface {
 	State() nugetfetch.SyncState
 	// Run fetches what's missing; ErrSyncRunning when a run is under way.
 	Run(ctx context.Context) error
+	// Start is Run in the background: running by the time it returns, or ErrSyncRunning. What
+	// the run comes to is on the channel, when it ends.
+	Start(ctx context.Context) (<-chan error, error)
 }
 
 // packageSyncEvery is how often the workspace is looked at. A variable for
@@ -147,19 +150,20 @@ func (s *Server) packageSyncState(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) packageSyncRun(w http.ResponseWriter, r *http.Request) {
-	if s.cfg.PackageSync.State().Running {
+	done, err := s.cfg.PackageSync.Start(s.lifeCtx)
+	if errors.Is(err, nugetfetch.ErrSyncRunning) {
 		writeError(w, http.StatusConflict, ErrPackageSyncRunning.Error())
 		return
 	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	go func() {
-		if err := s.cfg.PackageSync.Run(s.lifeCtx); err != nil && !errors.Is(err, nugetfetch.ErrSyncRunning) && s.cfg.Log != nil {
+		if err := <-done; err != nil && s.cfg.Log != nil {
 			s.cfg.Log("fetching the packages the sandbox restored failed: " + err.Error())
 		}
 	}()
-	// A moment for it to say it's running, so the page's next answer does.
-	for i := 0; i < 50 && !s.cfg.PackageSync.State().Running; i++ {
-		time.Sleep(2 * time.Millisecond)
-	}
 	s.packageSyncState(w, r)
 }
 
