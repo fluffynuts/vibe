@@ -18,9 +18,12 @@ function openClipboardPage(waiting) {
   const dom = new JSDOM(html.replace(/<script>[\s\S]*<\/script>/, ''), { url: 'http://localhost:5390/', runScripts: 'outside-only', pretendToBeVisual: true })
   const w = dom.window
   let inFlight = 0
+  let poll = () => {}
+  const server = { down: false }
   w.fetch = async (url, options = {}) => {
     inFlight++
     try {
+      if (server.down) throw new TypeError('Failed to fetch')
       let body = { items: [] }
       if (options.method === 'POST' && String(url) === '/api/items') {
         const name = decodeURIComponent(options.headers['X-Filename'] || '')
@@ -32,7 +35,7 @@ function openClipboardPage(waiting) {
     }
   }
   w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} })
-  w.setInterval = () => 0
+  w.setInterval = (fn) => { poll = fn; return 0 }
   w.eval(script)
   const settle = async () => {
     let quiet = 0
@@ -46,6 +49,10 @@ function openClipboardPage(waiting) {
   return {
     window: w,
     status: () => w.document.getElementById('status').textContent,
+    link: () => { const el = w.document.getElementById('link'); return el.hidden ? '' : el.textContent },
+    server,
+    async poll() { poll(); await settle() },
+    settle,
     async paste(...names) {
       const files = names.map((n) => new w.File(['content of ' + n], n, { type: 'image/png' }))
       const ev = new w.Event('paste', { bubbles: true, cancelable: true })
@@ -84,4 +91,58 @@ test('of several pasted at once, those already waiting are counted apart', async
     await all.paste('a.png', 'b.png')
     assert.equal(all.status(), 'Already pasted, all 2.')
   } finally { all.close() }
+})
+
+const NOT_REACHED = "Can't reach the clipboard server — is the sandbox running?"
+
+test('one failed look at the server says nothing: it may be waking up', async () => {
+  const p = openClipboardPage([])
+  try {
+    await p.settle()
+    p.server.down = true
+    await p.poll()
+    assert.equal(p.link(), '')
+  } finally { p.close() }
+})
+
+test('three failed looks in a row say the server can’t be reached, apart from the status line', async () => {
+  const p = openClipboardPage([])
+  try {
+    await p.settle()
+    p.server.down = true
+    await p.poll()
+    await p.poll()
+    assert.equal(p.link(), '')
+    await p.poll()
+    assert.equal(p.link(), NOT_REACHED)
+    assert.equal(p.status(), '', 'the status line, which would shift the page, is left alone')
+  } finally { p.close() }
+})
+
+test('a server that comes back clears the message', async () => {
+  const p = openClipboardPage([])
+  try {
+    await p.settle()
+    p.server.down = true
+    for (let i = 0; i < 3; i++) await p.poll()
+    assert.equal(p.link(), NOT_REACHED)
+    p.server.down = false
+    await p.poll()
+    assert.equal(p.link(), '')
+  } finally { p.close() }
+})
+
+test('failures that aren’t in a row don’t add up', async () => {
+  const p = openClipboardPage([])
+  try {
+    await p.settle()
+    for (let i = 0; i < 3; i++) {
+      p.server.down = true
+      await p.poll()
+      await p.poll()
+      p.server.down = false
+      await p.poll()
+    }
+    assert.equal(p.link(), '')
+  } finally { p.close() }
 })

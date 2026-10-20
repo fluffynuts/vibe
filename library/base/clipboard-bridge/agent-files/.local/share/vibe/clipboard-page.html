@@ -64,6 +64,14 @@
   #clearbar { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; margin: 0 2px 10px; }
   #clearbar:empty { display: none; }
   #clearbar .ask { color: var(--danger); font-size: 14px; }
+  /* Fixed, so that it appearing and going never moves the page: it can come up while someone is
+     looking at the list, and a shift draws the eye to the very thing that isn't worth chasing. */
+  #link {
+    position: fixed; top: 8px; right: 12px; max-width: calc(100% - 24px); z-index: 1;
+    background: var(--panel); color: var(--danger); border: 1px solid var(--danger);
+    border-radius: 8px; padding: 3px 10px; font-size: 13px;
+  }
+  #link[hidden] { display: none; }
   /* Says what was just done, then goes: what needs reading stays in #status. */
   #toast {
     position: fixed; right: 12px; bottom: 12px; max-width: calc(100% - 24px);
@@ -160,6 +168,7 @@
   </div>
 </main>
 <div id="zoom"><img alt=""></div>
+<div id="link" role="status" hidden></div>
 <div id="toast" role="status" hidden></div>
 
 <script>
@@ -373,9 +382,24 @@ function render(data) {
   });
 }
 
+// A sandbox waking from sleep restarts this server, so a look or two can fail without anything
+// being wrong; the page looks every couple of seconds, so it says so only once a few have failed
+// in a row, and takes it back as soon as one succeeds.
+var LOOKS_BEFORE_SAYING = 3;
+var failedLooks = 0;
+function showReachable(reachable) {
+  failedLooks = reachable ? 0 : failedLooks + 1;
+  var linkEl = document.getElementById("link");
+  linkEl.textContent = "Can't reach the clipboard server — is the sandbox running?";
+  linkEl.hidden = failedLooks < LOOKS_BEFORE_SAYING;
+}
+
 function refresh() {
-  return fetch("/api/items").then(function (r) { return r.json(); }).then(render).catch(function () {
-    setStatus("Can't reach the clipboard server — is the sandbox running?", true);
+  return fetch("/api/items").then(function (r) { return r.json(); }).then(function (data) {
+    showReachable(true);
+    render(data);
+  }, function () {
+    showReachable(false);
   });
 }
 
