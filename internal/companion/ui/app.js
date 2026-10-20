@@ -650,6 +650,7 @@
     for (const view of CLIPBOARD_VIEWS) {
       $(view.note).hidden = !kept || state.clipboardReady
       $(view.note).textContent = "— not answering just now; it picks up again by itself"
+      $(view.note).title = $(view.note).textContent
     }
     const waiting = !!state.clipboardUrl && !state.clipboardReady && !kept
     const late = Date.now() - state.clipboardWaitingSince >= CLIPBOARD_PATIENCE_MS
