@@ -78,7 +78,11 @@
     background: var(--panel); color: var(--text); border: 1px solid var(--accent);
     border-radius: 8px; padding: 8px 12px; font-size: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.3);
   }
-  #items { display: grid; gap: 12px; }
+  #items, #held { display: grid; gap: 12px; }
+  #held:not(:empty) { margin-bottom: 12px; }
+  #held .item { grid-template-columns: 1fr auto; align-items: center; padding: 8px 12px; border: 1px dashed var(--border); border-radius: 8px; }
+  #held .what { min-width: 0; overflow-wrap: anywhere; }
+  #held .why { color: var(--muted); font-size: 13px; }
   .item {
     display: grid; grid-template-columns: 160px 1fr; gap: 14px; align-items: start;
     background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px;
@@ -164,6 +168,7 @@
   </div>
   <div id="list">
   <div id="clearbar"></div>
+  <section id="held" aria-live="polite"></section>
   <section id="items" aria-live="polite"></section>
   </div>
 </main>
@@ -398,10 +403,16 @@ function refresh() {
   return fetch("/api/items").then(function (r) { return r.json(); }).then(function (data) {
     showReachable(true);
     render(data);
+    sendHeld();
   }, function () {
     showReachable(false);
   });
 }
+
+// A server that can't be reached is not the user's doing, and what they pasted is theirs to
+// keep: it waits here, in this page's memory (so not past closing it, which is asked about), and
+// goes when the server answers. An answer that refuses it is another matter, and is said.
+var held = [];
 
 function upload(blob, name) {
   var headers = { "Content-Type": blob.type || "application/octet-stream" };
@@ -409,13 +420,60 @@ function upload(blob, name) {
   return fetch("/api/items", { method: "POST", headers: headers, body: blob }).then(function (r) {
     if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || r.statusText); });
     return r.json();
+  }, function () {
+    var err = new Error("the clipboard server isn't answering");
+    err.unreachable = true;
+    throw err;
   });
 }
+
+function hold(entries) {
+  held = held.concat(entries);
+  showHeld();
+  setStatus("");
+}
+
+function showHeld() {
+  var box = document.getElementById("held");
+  box.textContent = "";
+  held.forEach(function (entry) {
+    box.appendChild(el("article", { class: "item" }, [
+      el("div", { class: "what" }, [
+        el("div", { text: entry.name || (entry.blob.type || "pasted item") + " · " + formatSize(entry.blob.size) }),
+        el("div", { class: "why", text: "waiting for the server — it'll be added when the server is back" }),
+      ]),
+      el("button", { text: "Drop", onclick: function () { held = held.filter(function (h) { return h !== entry; }); showHeld(); } }),
+    ]));
+  });
+}
+
+// sendHeld is what's held, once the server has answered.
+function sendHeld() {
+  if (!held.length) return;
+  var entries = held;
+  held = [];
+  showHeld();
+  uploadAll(entries);
+}
+
+window.addEventListener("beforeunload", function (e) {
+  if (!held.length) return;
+  e.preventDefault();
+  e.returnValue = "";
+});
 
 function uploadAll(entries) {
   if (!entries.length) return;
   setStatus("Sending " + entries.length + (entries.length === 1 ? " item…" : " items…"));
-  Promise.all(entries.map(function (e) { return upload(e.blob, e.name); })).then(function (added) {
+  Promise.all(entries.map(function (e) {
+    return upload(e.blob, e.name).catch(function (err) {
+      if (!err.unreachable) throw err;
+      hold([e]);
+      return null;
+    });
+  })).then(function (added) {
+    added = added.filter(Boolean);
+    if (!added.length) return;
     // One already waiting to go to the agent isn't added again.
     var already = added.filter(function (a) { return a.duplicate; }).length;
     var fresh = added.length - already;

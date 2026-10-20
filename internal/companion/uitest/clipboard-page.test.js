@@ -19,7 +19,7 @@ function openClipboardPage(waiting) {
   const w = dom.window
   let inFlight = 0
   let poll = () => {}
-  const server = { down: false }
+  const server = { down: false, refuse: null, uploads: [] }
   w.fetch = async (url, options = {}) => {
     inFlight++
     try {
@@ -27,6 +27,8 @@ function openClipboardPage(waiting) {
       let body = { items: [] }
       if (options.method === 'POST' && String(url) === '/api/items') {
         const name = decodeURIComponent(options.headers['X-Filename'] || '')
+        if (server.refuse) return new Response(JSON.stringify({ error: server.refuse }), { status: 413, headers: { 'Content-Type': 'application/json' } })
+        server.uploads.push(name)
         body = waiting.includes(name) ? { duplicate: true, id: 1 } : { id: 2 }
       }
       return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
@@ -51,6 +53,8 @@ function openClipboardPage(waiting) {
     status: () => w.document.getElementById('status').textContent,
     link: () => { const el = w.document.getElementById('link'); return el.hidden ? '' : el.textContent },
     server,
+    held: () => Array.from(w.document.querySelectorAll('#held .item')).map((n) => n.textContent),
+    clickIn(selector) { w.document.querySelector(selector).click() },
     async poll() { poll(); await settle() },
     settle,
     async paste(...names) {
@@ -144,5 +148,95 @@ test('failures that aren’t in a row don’t add up', async () => {
       await p.poll()
     }
     assert.equal(p.link(), '')
+  } finally { p.close() }
+})
+
+async function serverDownFor(p, polls = 3) {
+  await p.settle()
+  p.server.down = true
+  for (let i = 0; i < polls; i++) await p.poll()
+}
+
+test('a paste while the server can’t be reached is held, not refused', async () => {
+  const p = openClipboardPage([])
+  try {
+    await serverDownFor(p)
+    await p.paste('a.png')
+    assert.equal(p.held().length, 1)
+    assert.match(p.held()[0], /a\.png/)
+    assert.match(p.held()[0], /waiting for the server/)
+    assert.doesNotMatch(p.status(), /Couldn.t add/)
+  } finally { p.close() }
+})
+
+test('what is held is added once the server answers again', async () => {
+  const p = openClipboardPage([])
+  try {
+    await serverDownFor(p)
+    await p.paste('a.png', 'b.png')
+    assert.equal(p.held().length, 2)
+    await p.poll()
+    assert.deepEqual(p.server.uploads, [], 'still down: nothing is sent')
+    p.server.down = false
+    await p.poll()
+    assert.deepEqual(p.server.uploads.sort(), ['a.png', 'b.png'])
+    assert.deepEqual(p.held(), [])
+    assert.match(p.status(), /Added 2 items/)
+  } finally { p.close() }
+})
+
+test('a paste the server drops before it was known to be away is held too', async () => {
+  const p = openClipboardPage([])
+  try {
+    await p.settle()
+    p.server.down = true
+    await p.paste('a.png')
+    assert.equal(p.held().length, 1)
+    p.server.down = false
+    await p.poll()
+    assert.deepEqual(p.server.uploads, ['a.png'])
+    assert.deepEqual(p.held(), [])
+  } finally { p.close() }
+})
+
+test('what the server refuses is said, not held: it would be refused again', async () => {
+  const p = openClipboardPage([])
+  try {
+    await p.settle()
+    p.server.refuse = 'too big'
+    await p.paste('a.png')
+    assert.deepEqual(p.held(), [])
+    assert.match(p.status(), /Couldn.t add that: too big/)
+  } finally { p.close() }
+})
+
+test('a held paste can be dropped', async () => {
+  const p = openClipboardPage([])
+  try {
+    await serverDownFor(p)
+    await p.paste('a.png', 'b.png')
+    p.clickIn('#held .item button')
+    assert.equal(p.held().length, 1)
+    p.server.down = false
+    await p.poll()
+    assert.equal(p.server.uploads.length, 1, 'only the one kept is sent')
+  } finally { p.close() }
+})
+
+test('leaving the page while pastes are held asks first, and not otherwise', async () => {
+  const p = openClipboardPage([])
+  try {
+    const leave = () => {
+      const ev = new p.window.Event('beforeunload', { cancelable: true })
+      p.window.dispatchEvent(ev)
+      return ev.defaultPrevented
+    }
+    assert.equal(leave(), false)
+    await serverDownFor(p)
+    await p.paste('a.png')
+    assert.equal(leave(), true)
+    p.server.down = false
+    await p.poll()
+    assert.equal(leave(), false)
   } finally { p.close() }
 })
