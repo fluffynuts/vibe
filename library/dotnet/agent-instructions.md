@@ -19,6 +19,10 @@ just those are dropped (and the build's derived path caches, which the restore
 rebuilds), so the files generated here name the user's cache, which their IDE can
 read. It is safe and part of the normal flow: no need to ask the user first.
 
+A restore of a solution covers only the projects in it. If tidy, or status after a
+restore, lists projects to restore (`dotnet restore '<project>'`), restore each:
+one outside the solution is otherwise left naming copies that are gone.
+
 ## NuGet packages from private feeds
 
 This sandbox can restore packages from public feeds (nuget.org), but has none

@@ -342,7 +342,11 @@ func (r tidyRig) project(t *testing.T, name string, expected ...string) {
 	for _, e := range expected {
 		quoted = append(quoted, `"`+e+`"`)
 	}
-	body := `{"version":2,"expectedPackageFiles":[` + strings.Join(quoted, ",") + `],"logs":[]}`
+	projectFile := filepath.Join(r.ws, name, name+".csproj")
+	if err := os.WriteFile(projectFile, []byte("<Project/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"version":2,"projectFilePath":"` + projectFile + `","expectedPackageFiles":[` + strings.Join(quoted, ",") + `],"logs":[]}`
 	for file, content := range map[string]string{
 		"project.nuget.cache": body, "project.assets.json": "{}", filepath.Join("Debug", "net8.0", name+".assets.cache"): "stale",
 	} {
@@ -541,5 +545,118 @@ func TestStatusSaysNothingOfTidyWhenThereIsNothingToTidy(t *testing.T) {
 	}, "status")
 	if strings.Contains(res.out, "tidy") {
 		t.Errorf("status mentions tidy with nothing to tidy:\n%s", res.out)
+	}
+}
+
+// --- projects the solution doesn't cover -----------------------------------------------------------------------
+
+func (r tidyRig) projectFile(name string) string { return filepath.Join(r.ws, name, name+".csproj") }
+
+// A restore of the solution covers the projects in it: one outside it keeps naming the copies tidy removed, and
+// nothing restores it unless the agent is told which it is.
+func TestTidyNamesTheProjectsThatNamedTheCopiesItRemoved(t *testing.T) {
+	r := newTidyRig(t)
+	r.put(t, r.own, "a.lib", "1.0.0")
+	r.put(t, r.host, "a.lib", "1.0.0")
+	r.put(t, r.own, "b.lib", "2.0.0")
+	r.project(t, "InSolution", r.sha(r.own, "a.lib", "1.0.0"))
+	r.project(t, "Orphan", r.sha(r.own, "a.lib", "1.0.0"))
+	r.project(t, "Unrelated", r.sha(r.host, "a.lib", "1.0.0"))
+	res := r.run(t, "tidy")
+	for _, p := range []string{"InSolution", "Orphan"} {
+		if want := "dotnet restore '" + r.projectFile(p) + "'"; !strings.Contains(res.out, want) {
+			t.Errorf("tidy doesn't say to %s:\n%s", want, res.out)
+		}
+	}
+	if strings.Contains(res.out, "Unrelated") {
+		t.Errorf("a project that never named a removed copy is listed:\n%s", res.out)
+	}
+}
+
+func TestTidyNamesNoProjectWhenNoneNamedAnythingRemoved(t *testing.T) {
+	r := newTidyRig(t)
+	r.put(t, r.own, "a.lib", "1.0.0")
+	r.put(t, r.host, "a.lib", "1.0.0")
+	r.project(t, "App", r.sha(r.own, "a.lib", "1.0.0"))
+	r.run(t, "tidy")
+	r.project(t, "App", r.sha(r.host, "a.lib", "1.0.0")) // restored: it names the user's cache now
+	r.put(t, r.own, "c.lib", "1.0.0")
+	r.put(t, r.host, "c.lib", "1.0.0")
+	res := r.run(t, "tidy")
+	if strings.Contains(res.out, "dotnet restore '") {
+		t.Errorf("a project that names the user's cache is listed:\n%s", res.out)
+	}
+}
+
+// Status is where the agent looks after restoring: a project still naming copies that are gone says it is not done.
+func TestStatusNamesTheProjectsStillNamingCopiesThatAreGone(t *testing.T) {
+	r := newTidyRig(t)
+	r.project(t, "Orphan", r.sha(r.own, "gone.lib", "1.0.0")) // named in the sandbox's cache, and not there
+	r.put(t, r.own, "here.lib", "1.0.0")
+	r.project(t, "Fine", r.sha(r.own, "here.lib", "1.0.0"))
+	m := sandboxMailbox(t)
+	res := runVibeNugetEnv(t, r.ws, []string{"NUGET_PACKAGES=" + r.own, "NUGET_FALLBACK_PACKAGES=" + r.host}, m, func(tk packagereq.Taken) {
+		m.Reply(tk.Nonce, packagereq.Answer{Status: packagereq.Info, Message: "Nothing is waiting for the user."})
+	}, "status")
+	if want := "dotnet restore '" + r.projectFile("Orphan") + "'"; !strings.Contains(res.out, want) {
+		t.Errorf("status doesn't say to %s:\n%s", want, res.out)
+	}
+	if strings.Contains(res.out, "Fine") {
+		t.Errorf("a project whose copies are all there is listed:\n%s", res.out)
+	}
+	if !strings.Contains(res.out, "outside the solution") {
+		t.Errorf("status doesn't say why a solution's restore may not have covered it:\n%s", res.out)
+	}
+}
+
+func TestStatusSaysNothingOfProjectsWhenNoneNameCopiesThatAreGone(t *testing.T) {
+	r := newTidyRig(t)
+	r.put(t, r.own, "here.lib", "1.0.0")
+	r.project(t, "Fine", r.sha(r.own, "here.lib", "1.0.0"))
+	m := sandboxMailbox(t)
+	res := runVibeNugetEnv(t, r.ws, []string{"NUGET_PACKAGES=" + r.own, "NUGET_FALLBACK_PACKAGES=" + r.host}, m, func(tk packagereq.Taken) {
+		m.Reply(tk.Nonce, packagereq.Answer{Status: packagereq.Info, Message: "Nothing is waiting for the user."})
+	}, "status")
+	if strings.Contains(res.out, "dotnet restore") {
+		t.Errorf("status tells the agent to restore with nothing to restore:\n%s", res.out)
+	}
+}
+
+// The project file a cache names is data the agent can write, and what is printed is a command it is told to run.
+func TestAProjectFileThatIsNotAPlainOneInTheWorkspaceIsNeverSaidToRestore(t *testing.T) {
+	for name, path := range map[string]string{
+		"outside the workspace": "$OUT/x.csproj",
+		"a command in it":       "$WS/x$(touch pwned).csproj",
+		"a quote in it":         "$WS/x'y.csproj",
+		"a semicolon":           "$WS/x;y.csproj",
+		"a way back out":        "$WS/../elsewhere.csproj",
+		"not a project":         "$WS/App/App.txt",
+		"a line break":          "$WS/x\ny.csproj",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newTidyRig(t)
+			r.project(t, "App", r.sha(r.own, "gone.lib", "1.0.0"))
+			cache := filepath.Join(r.ws, "App", "obj", "project.nuget.cache")
+			data, err := os.ReadFile(cache)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path = strings.ReplaceAll(strings.ReplaceAll(path, "$WS", r.ws), "$OUT", t.TempDir())
+			// It exists, so that only what it is called keeps it from being named.
+			if err := os.WriteFile(path, []byte("<Project/>"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			data = []byte(strings.Replace(string(data), r.projectFile("App"), path, 1))
+			if err := os.WriteFile(cache, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			m := sandboxMailbox(t)
+			res := runVibeNugetEnv(t, r.ws, []string{"NUGET_PACKAGES=" + r.own, "NUGET_FALLBACK_PACKAGES=" + r.host}, m, func(tk packagereq.Taken) {
+				m.Reply(tk.Nonce, packagereq.Answer{Status: packagereq.Info, Message: "Nothing is waiting for the user."})
+			}, "status")
+			if strings.Contains(res.out, "dotnet restore") {
+				t.Errorf("a command was suggested from %q:\n%s", path, res.out)
+			}
+		})
 	}
 }

@@ -95,6 +95,44 @@ count_lines() {
   printf '%s\n' "$1" | sed '/^$/d' | wc -l | tr -d ' '
 }
 
+# The project files (one a line) whose project.nuget.cache names a package file in the sandbox's own cache that is
+# not there any more: tidy removed it, or restore moved on. Such a project is left as it is by a restore of a
+# solution that doesn't contain it, so it is said by name. The cache is data the agent can write, and what is
+# printed becomes a command: only a plain project file in this workspace, that exists, is ever named.
+dangling_projects() {
+  find . -path '*/obj/project.nuget.cache' -not -path '*/node_modules/*' 2>/dev/null | while read -r cache; do
+    grep -o '"[^"]*\.nupkg\.sha512"' "$cache" | tr -d '"' | while read -r file; do
+      case "$file" in "$own"/*) ;; *) continue ;; esac
+      [ -e "$file" ] || { echo gone; break; }
+    done | grep -q gone || continue
+    project=$(grep -o '"projectFilePath": *"[^"]*"' "$cache" | head -n 1 | sed 's/^[^:]*: *"//; s/"$//')
+    case "$project" in
+      "$PWD"/*.csproj | "$PWD"/*.fsproj | "$PWD"/*.vbproj) ;;
+      *) continue ;;
+    esac
+    case "$project" in
+      *[!A-Za-z0-9._/\ +@=,-]*) continue ;;
+      */../* | */./*) continue ;;
+    esac
+    [ -f "$project" ] || continue
+    echo "$project"
+  done | sort -u
+}
+
+restore_commands() {
+  printf '%s\n' "$1" | sed "s/^/  dotnet restore '/; s/\$/'/"
+}
+
+# restore_hint is for status: the projects a restore hasn't put right, which one of a solution doesn't reach if they
+# aren't in it.
+restore_hint() {
+  projects=$(dangling_projects)
+  [ -n "$projects" ] || return 0
+  echo
+  echo "vibe-nuget: these projects' generated files still name packages in your own cache that are gone, so a build or the user's IDE can't rely on them. Restore each (a restore of a solution covers only the projects in it, and one outside the solution is left as it was):"
+  restore_commands "$projects"
+}
+
 # tidy_hint is for status: what the agent can do now the user has packages it had to download itself.
 tidy_hint() {
   [ -n "$host" ] || return 0
@@ -122,6 +160,11 @@ if [ "$command" = tidy ]; then
   echo "vibe-nuget: removed this sandbox's own copy of $n $noun the user's cache has too:"
   printf '%s\n' "$copies" | sed 's#/# #; s#^#  #'
   echo "vibe-nuget: now run 'dotnet restore' (the generated files will name the user's cache); nothing else of yours was touched"
+  projects=$(dangling_projects)
+  if [ -n "$projects" ]; then
+    echo "vibe-nuget: these projects' generated files named the copies just removed, so each needs restoring (a restore of a solution covers only the projects in it, and one outside the solution is left naming copies that are gone):"
+    restore_commands "$projects"
+  fi
   exit 0
 fi
 
@@ -222,7 +265,7 @@ while :; do
     else
       echo "$message"
       if [ "$status" = info ]; then
-        [ "$command" = status ] && tidy_hint
+        [ "$command" = status ] && { tidy_hint; restore_hint; }
         exit 0
       fi
       if [ "$status" = fetched ]; then
