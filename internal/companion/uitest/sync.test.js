@@ -11,6 +11,10 @@ const missing = (extra) => Object.assign({
     { framework: 'net462', packages: [{ id: 'Legacy.Lib', version: '1.2.3' }] }],
 }, extra)
 
+// The bar starts at 5% the moment a fetch does, and the rest of it is the packages coming.
+const barAt = (done, total) => 5 + 95 * done / total
+const near = (a, b) => Math.abs(a - b) < 1e-9
+
 const nothing = (extra) => Object.assign({ count: 0, running: false, missing: [], skipped: 0, problems: [] }, extra)
 
 function syncPage(answer) {
@@ -19,7 +23,7 @@ function syncPage(answer) {
     '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, admin: true, attention: {} }),
     '/api/admin': { status: { exists: true, running: true }, upgrades: {} },
     '/api/packages/sync': () => at.answer,
-    '/api/packages/sync/run': () => { at.runs++; return at.afterRun || Object.assign({}, at.answer, { running: true }) },
+    '/api/packages/sync/run': () => { at.runs++; return at.hold || at.afterRun || Object.assign({}, at.answer, { running: true }) },
   }
   return openPage({ routes, storage: { 'vibe-companion-tab': 'admin' } }).then((p) => Object.assign(p, { at }))
 }
@@ -172,8 +176,8 @@ test('a fetch under way shows a bar of how far it has got, across the top of the
   try {
     const bar = p.$('admin-sync-progress')
     assert.equal(bar.hidden, false)
-    assert.equal(bar.max, 405)
-    assert.equal(bar.value, 120)
+    assert.equal(bar.max, 100)
+    assert.ok(near(bar.value, barAt(120, 405)), 'got ' + bar.value)
     assert.match(p.$('admin-sync-status').textContent, /120 of 405/)
     assert.equal(p.$('admin-packages-all').firstElementChild, bar, 'it runs across the top of the card')
     assert.ok(bar.getAttribute('aria-label'), 'it has a name for a screen reader')
@@ -183,10 +187,10 @@ test('a fetch under way shows a bar of how far it has got, across the top of the
 test('the bar moves as packages come, and goes when the run ends', async () => {
   const p = await syncPage(missing({ count: 405, running: true, progress: { done: 10, total: 405 } }))
   try {
-    assert.equal(p.$('admin-sync-progress').value, 10)
+    assert.ok(near(p.$('admin-sync-progress').value, barAt(10, 405)))
     p.at.answer = missing({ count: 405, running: true, progress: { done: 250, total: 405 } })
     await p.poll()
-    assert.equal(p.$('admin-sync-progress').value, 250)
+    assert.ok(near(p.$('admin-sync-progress').value, barAt(250, 405)))
     assert.match(p.$('admin-sync-status').textContent, /250 of 405/)
     p.at.answer = nothing({ last: { fetched: 405, at: '2026-10-19T12:00:00Z' } })
     await p.poll()
@@ -194,14 +198,15 @@ test('the bar moves as packages come, and goes when the run ends', async () => {
   } finally { p.close() }
 })
 
-test('with no bar to show, nothing is claimed: no bar when idle, and a bar of unknown length if the host says no more than that it is fetching', async () => {
+test('no bar when idle, and a bar at its start if the host says no more than that it is fetching', async () => {
   let p = await syncPage(missing())
   try { assert.equal(p.$('admin-sync-progress').hidden, true) } finally { p.close() }
   p = await syncPage(missing({ running: true }))
   try {
     const bar = p.$('admin-sync-progress')
     assert.equal(bar.hidden, false)
-    assert.equal(bar.hasAttribute('value'), false, 'no value is an unknown length, not zero')
+    assert.equal(bar.max, 100)
+    assert.equal(bar.value, 5, 'it has started, though nothing is counted yet')
     assert.match(p.$('admin-sync-status').textContent, /Fetching/)
   } finally { p.close() }
 })
@@ -209,7 +214,7 @@ test('with no bar to show, nothing is claimed: no bar when idle, and a bar of un
 test('the bar is full, and says it is finishing, when every package is in but the restore has not ended', async () => {
   const p = await syncPage(missing({ count: 3, running: true, progress: { done: 3, total: 3 } }))
   try {
-    assert.equal(p.$('admin-sync-progress').value, 3)
+    assert.equal(p.$('admin-sync-progress').value, 100)
     assert.match(p.$('admin-sync-status').textContent, /finishing/i)
   } finally { p.close() }
 })
@@ -340,5 +345,49 @@ test('packages the sandbox only downloaded are listed with the rest', async () =
     assert.match(text, /net8\.0 \(2\)/)
     assert.match(text, /Dapper 2\.1\.86/)
     assert.match(text, /Microsoft\.NETCore\.App\.Ref 8\.0\.32/)
+  } finally { p.close() }
+})
+
+// A fetch takes a while to be heard from: the bar is up, at its start, from the click, so the user
+// knows it has begun.
+test('pressing Fetch them shows the bar at once, before the host has answered', async () => {
+  const p = await syncPage(missing())
+  try {
+    let release
+    p.at.hold = new Promise((resolve) => { release = resolve })
+    p.$('admin-sync-run').click()
+    for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve))
+    const bar = p.$('admin-sync-progress')
+    assert.equal(bar.hidden, false)
+    assert.equal(bar.value, 5)
+    assert.equal(p.$('admin-sync-run').disabled, true)
+    assert.equal(p.$('admin-sync-status').hidden, false)
+    release(missing({ running: true, progress: { done: 1, total: 3 } }))
+    await p.settle()
+    assert.ok(near(bar.value, barAt(1, 3)))
+  } finally { p.close() }
+})
+
+test('a look at the card that comes before the host says it is fetching does not take the bar away', async () => {
+  const p = await syncPage(missing())
+  try {
+    let release
+    p.at.hold = new Promise((resolve) => { release = resolve })
+    p.$('admin-sync-run').click()
+    for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve))
+    p.at.answer = missing({ running: false })
+    await p.kick('tick')
+    assert.equal(p.$('admin-sync-progress').hidden, false)
+    release(missing({ running: true }))
+    await p.settle()
+  } finally { p.close() }
+})
+
+test('a fetch that could not be started takes the bar away and says so', async () => {
+  const p = await syncPage(missing())
+  try {
+    p.at.hold = Promise.resolve({ status: 409, body: { error: 'the packages are already being fetched' } })
+    await p.click('admin-sync-run')
+    assert.equal(p.$('admin-sync-progress').hidden, true)
   } finally { p.close() }
 })

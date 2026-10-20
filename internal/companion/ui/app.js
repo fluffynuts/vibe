@@ -2819,7 +2819,16 @@
 
   // --- making what the sandbox restored visible to the user's IDE -----------
 
-  const syncView = { listKey: '' }
+  const syncView = { listKey: '', last: null, starting: false }
+
+  // A fetch is heard of only once the host is under way with it, and a restore says nothing until
+  // it ends: so the bar is up at its start (5%) from the click, and the rest of it is the packages
+  // as they come into the cache, counted by the host.
+  const PROGRESS_START = 5
+  function showProgress(bar, got) {
+    bar.max = 100
+    bar.value = got && got.total > 0 ? PROGRESS_START + (100 - PROGRESS_START) * Math.min(got.done, got.total) / got.total : PROGRESS_START
+  }
   const MAX_LISTED = 300
 
   async function loadSync() {
@@ -2848,8 +2857,9 @@
   const packageName = (p) => p.id + ' ' + p.version
 
   function renderSync(b) {
+    syncView.last = b
     const count = b.count || 0
-    const running = !!b.running
+    const running = !!b.running || syncView.starting
     $('admin-sync-summary').textContent = count
       ? packagesWord(count) + " the sandbox restored " + (count === 1 ? "isn't" : "aren't") + " in your package cache, so your IDE (Rider, say) can't find " +
         (count === 1 ? 'it' : 'them') + '. Fetching uses your own NuGet config on this machine, as for a package the agent asks for.'
@@ -2887,7 +2897,7 @@
     if (running) {
       // The host counts them in the cache; without a count the bar is of unknown length.
       const got = b.progress
-      if (got && got.total > 0) { bar.max = got.total; bar.value = got.done } else { bar.removeAttribute('value'); bar.removeAttribute('max') }
+      showProgress(bar, got)
       status.hidden = false
       status.textContent = got && got.total > 0 && got.done >= got.total
         ? 'Finishing… all ' + got.total + ' are in your cache; the restore is wrapping up.'
@@ -2915,14 +2925,19 @@
 
   async function runSync() {
     $('admin-sync-run').disabled = true
+    syncView.starting = true
+    if (syncView.last) renderSync(syncView.last)
     try {
       const res = await post('/api/packages/sync/run', {})
       reached(true)
-      if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true)
+      syncView.starting = false
+      if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); if (syncView.last) renderSync(syncView.last) }
       else renderSync(res.body)
     } catch (e) {
       reached(false)
+      syncView.starting = false
       toast('Could not reach vibe.', true)
+      if (syncView.last) renderSync(syncView.last)
     }
   }
 
@@ -4563,8 +4578,7 @@
         ' waiting for your approval: it can\'t have ' + (undecided === 1 ? 'that package' : 'those packages') + ' until you decide.'
       : ''
     $('convo-gate-progress').hidden = !gate.fetching
-    if (gate.fetching && got && got.total > 0) { $('convo-gate-progress').max = got.total; $('convo-gate-progress').value = got.done }
-    else { $('convo-gate-progress').removeAttribute('value'); $('convo-gate-progress').removeAttribute('max') }
+    showProgress($('convo-gate-progress'), got)
     const ide = packagesWord(toFetch) + " the agent will build with aren't in your package cache. Your IDE can't see them, and the agent will download its own copies."
     $('convo-gate-text').textContent = [
       gate.fetching
