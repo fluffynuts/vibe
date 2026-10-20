@@ -91,7 +91,19 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .panel-conversation { padding-bottom: 0; }
 .convo-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 2fr 1fr; gap: 16px; padding-bottom: 16px; }
 .convo, .convo-clip { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
-.convo-log { flex: 1; min-height: 200px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.convo-log-wrap { position: relative; flex: 1; min-height: 200px; min-width: 0; display: flex; }
+/* The search sits over the log, not in it, so it stays put as the log scrolls. */
+.find-open, .find { position: absolute; top: 6px; right: 18px; z-index: 2; }
+.find-open { padding: 3px 5px; line-height: 0; opacity: 0.55; }
+.find-open:hover, .find-open:focus-visible { opacity: 1; }
+.find-open svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; }
+.find { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; max-width: calc(100% - 36px); padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.25); }
+.find input[type=search] { width: 14em; min-width: 0; }
+.find input.nomatch { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 22%, var(--panel)); }
+.find-tools { display: flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
+::highlight(find-match) { background: #f3d36b; color: #000; }
+::highlight(find-current) { background: #f08c2e; color: #000; }
+.convo-log { flex: 1; min-width: 0; min-height: 0; overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
 .msg { white-space: pre-wrap; word-break: break-word; }
 .msg.user { align-self: flex-end; max-width: 85%; background: var(--bubble); color: var(--text); padding: 6px 10px 4px; border-radius: 10px 10px 2px 10px; }
 .msg .foot { display: block; margin-top: 2px; font-size: 11px; line-height: 1; color: var(--muted); user-select: none; white-space: nowrap; }

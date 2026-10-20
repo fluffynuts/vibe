@@ -4538,6 +4538,171 @@
     }
   }
 
+  // --- searching the conversation ----------------------------------------
+
+  // Matches are found in the text as it is rendered and coloured with CSS highlights, which change
+  // nothing in the log: it is redrawn as the agent speaks, and a mark put in it would be lost or
+  // would get in the way of copying. What is inside a collapsed tool result is left out unless
+  // asked for, as it isn't in view.
+  const find = { open: false, ranges: [], current: -1, queued: false, observer: null }
+
+  const findSupported = () => !!(window.CSS && window.CSS.highlights && window.Highlight)
+
+  // textOfLog is the log's text nodes that are in view (or, with tools, in a tool result too),
+  // as { node, start } where start is where the node begins in the text joined from them: a
+  // line break between one message and the next, so no match spans two.
+  function textOfLog(withTools) {
+    const log = $('convo-log')
+    const walker = document.createTreeWalker(log, NodeFilter.SHOW_TEXT)
+    const parts = []
+    let text = ''
+    let lastMessage = null
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const parent = node.parentElement
+      if (!parent || parent.closest('[hidden]')) continue
+      const result = parent.closest('details.tool-result')
+      if (result && !withTools && !parent.closest('summary')) continue
+      let message = node
+      while (message.parentNode && message.parentNode !== log) message = message.parentNode
+      if (lastMessage && message !== lastMessage) text += '\n'
+      lastMessage = message
+      parts.push({ node, start: text.length })
+      text += node.data
+    }
+    return { text, parts }
+  }
+
+  function findRanges(query, withTools) {
+    if (!query) return []
+    const { text, parts } = textOfLog(withTools)
+    const pattern = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+    const at = (offset) => {
+      let found = parts[0]
+      for (const part of parts) {
+        if (part.start > offset) break
+        found = part
+      }
+      return found
+    }
+    const ranges = []
+    for (let m = pattern.exec(text); m; m = pattern.exec(text)) {
+      const from = at(m.index)
+      const to = at(m.index + m[0].length - 1)
+      const range = document.createRange()
+      range.setStart(from.node, m.index - from.start)
+      range.setEnd(to.node, m.index + m[0].length - to.start)
+      ranges.push(range)
+    }
+    return ranges
+  }
+
+  // firstInView is the first match at or below the top of the log's view, as a browser's own
+  // search starts from where it is looking; else the first.
+  function firstInView(ranges) {
+    const top = $('convo-log').getBoundingClientRect().top
+    const i = ranges.findIndex((r) => r.startContainer.parentElement.getBoundingClientRect().top >= top)
+    return i < 0 ? 0 : i
+  }
+
+  function paintFind() {
+    if (!findSupported()) return
+    const { ranges, current } = find
+    if (ranges.length) {
+      CSS.highlights.set('find-match', new Highlight(...ranges))
+      CSS.highlights.set('find-current', new Highlight(ranges[current]))
+    } else {
+      CSS.highlights.delete('find-match')
+      CSS.highlights.delete('find-current')
+    }
+  }
+
+  function showFindCount(query) {
+    const n = find.ranges.length
+    $('convo-find-count').textContent = !query ? '' : n === 0 ? 'No matches' : (find.current + 1) + ' of ' + n
+    $('convo-find-input').classList.toggle('nomatch', !!query && n === 0)
+  }
+
+  // runFind looks again at the log: scrolling to the match only when the user asked for one, and
+  // keeping the match they were on when what is said afterwards adds to the others.
+  function runFind(scroll) {
+    if (!find.open) return
+    const query = $('convo-find-input').value
+    const had = find.current
+    find.ranges = findRanges(query, $('convo-find-tools').checked)
+    find.current = !find.ranges.length ? -1 : scroll ? firstInView(find.ranges) : Math.min(Math.max(had, 0), find.ranges.length - 1)
+    paintFind()
+    showFindCount(query)
+    if (scroll && find.current >= 0) showMatch()
+  }
+
+  function showMatch() {
+    const range = find.ranges[find.current]
+    const parent = range.startContainer.parentElement
+    for (let d = parent.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) d.open = true
+    parent.scrollIntoView({ block: 'center' })
+  }
+
+  function stepFind(by) {
+    if (!find.ranges.length) return
+    find.current = (find.current + by + find.ranges.length) % find.ranges.length
+    paintFind()
+    showFindCount($('convo-find-input').value)
+    showMatch()
+  }
+
+  function openFind() {
+    find.open = true
+    $('convo-find').hidden = false
+    $('convo-find-open').hidden = true
+    const input = $('convo-find-input')
+    input.focus()
+    input.select()
+    runFind(true)
+  }
+
+  function closeFind() {
+    find.open = false
+    find.ranges = []
+    find.current = -1
+    $('convo-find').hidden = true
+    $('convo-find-open').hidden = false
+    paintFind()
+    $('convo-input').focus()
+  }
+
+  // The log changes as the agent speaks: the matches are found again, once for all the changes
+  // that arrive together.
+  function findAgainSoon() {
+    if (!find.open || find.queued) return
+    find.queued = true
+    queueMicrotask(() => { find.queued = false; runFind(false) })
+  }
+
+  function setUpFind() {
+    $('convo-find-open').addEventListener('click', openFind)
+    $('convo-find-close').addEventListener('click', closeFind)
+    $('convo-find-next').addEventListener('click', () => stepFind(1))
+    $('convo-find-prev').addEventListener('click', () => stepFind(-1))
+    $('convo-find-input').addEventListener('input', () => runFind(true))
+    $('convo-find-tools').addEventListener('change', () => runFind(true))
+    $('convo-find-input').addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); stepFind(ev.shiftKey ? -1 : 1) }
+      else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeFind() }
+    })
+    new MutationObserver(findAgainSoon).observe($('convo-log'), { childList: true, subtree: true, characterData: true })
+    // F3 is the browser's find-next: taken here, on the conversation, for a search that knows the
+    // conversation (and what is collapsed in it); left alone on every other tab.
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'F3' || ev.ctrlKey || ev.metaKey || ev.altKey) return
+      if (!state.conversation || state.tab !== 'conversation') return
+      ev.preventDefault()
+      if (!find.open) openFind()
+      else if (document.activeElement === $('convo-find-input')) stepFind(ev.shiftKey ? -1 : 1)
+      else { $('convo-find-input').focus(); $('convo-find-input').select() }
+    })
+  }
+  setUpFind()
+
   // --- completing slash commands -----------------------------------------
 
   // The slash commands the agent has (learned from it as it starts, so none

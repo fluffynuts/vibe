@@ -69,7 +69,20 @@
             <span id="convo-sync-text"></span>
             <button type="button" id="convo-sync-review">Review them</button>
           </div>
-          <div id="convo-log" class="convo-log" role="log" aria-live="polite"></div>
+          <div class="convo-log-wrap">
+            <div id="convo-log" class="convo-log" role="log" aria-live="polite"></div>
+            <button type="button" id="convo-find-open" class="find-open small ghost" title="Search the conversation (F3)" aria-label="Search the conversation">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6.5" cy="6.5" r="4.5"/><path d="M10 10l4.5 4.5"/></svg>
+            </button>
+            <div id="convo-find" class="find" role="search" hidden>
+              <input id="convo-find-input" type="search" autocomplete="off" aria-label="Search the conversation" placeholder="Find in the conversation">
+              <span id="convo-find-count" class="muted" role="status"></span>
+              <button type="button" id="convo-find-prev" class="small ghost" title="Previous match (Shift+Enter)" aria-label="Previous match">&#9650;</button>
+              <button type="button" id="convo-find-next" class="small ghost" title="Next match (Enter, F3)" aria-label="Next match">&#9660;</button>
+              <label class="find-tools"><input type="checkbox" id="convo-find-tools"> Include tool output</label>
+              <button type="button" id="convo-find-close" class="small ghost" title="Close (Escape)" aria-label="Close the search">&#10005;</button>
+            </div>
+          </div>
           <dialog id="convo-gate" class="gate" aria-labelledby="convo-gate-h">
             <h2 id="convo-gate-h">Packages are waiting for you</h2>
             <progress id="convo-gate-progress" class="gate-progress" aria-label="Packages fetched" hidden></progress>
