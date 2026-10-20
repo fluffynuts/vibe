@@ -198,7 +198,9 @@ func TestTheApprovalsFileIsWrittenWholeAndLeavesNothingBeside(t *testing.T) {
 	}
 }
 
-// Written whole, by a new file renamed over the old one: a reader never meets it half-written.
+// Written whole, by a new file renamed over the old one: a reader never meets it half-written. A second name for the
+// file as it was keeps it as it was, so writing into it shows (os.SameFile can't say: on Windows it looks at the path
+// as it is when asked).
 func TestAnApprovalReplacesTheFileNotWritesInPlace(t *testing.T) {
 	approvals := filepath.Join(t.TempDir(), "approved.json")
 	first, _ := newWorkspace(t, wsConfig)
@@ -210,12 +212,23 @@ func TestAnApprovalReplacesTheFileNotWritesInPlace(t *testing.T) {
 	if err := first.Approve(a.Hash); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := os.Stat(approvals)
+	original := approvals + ".original"
+	if err := os.Link(approvals, original); err != nil {
+		t.Skipf("no hard links here: %v", err)
+	}
+	before, err := os.ReadFile(original)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := second.Approve(b.Hash); err != nil {
 		t.Fatal(err)
 	}
-	after, _ := os.Stat(approvals)
-	if os.SameFile(before, after) {
-		t.Error("the approvals were written into the same file, in place")
+	after, _ := os.ReadFile(original)
+	if string(after) != string(before) {
+		t.Errorf("the approvals were written into the file in place: it was %s, and is %s", before, after)
+	}
+	now, _ := os.ReadFile(approvals)
+	if string(now) == string(before) {
+		t.Error("the second approval wasn't written")
 	}
 }
