@@ -417,7 +417,7 @@ func TestTheAgentIsToldWhatToDoWhenStatusSaysToTidy(t *testing.T) {
 	}
 	for name, text := range map[string]string{"instructions": string(instructions), "skill": string(skill)} {
 		flat := strings.Join(strings.Fields(text), " ")
-		for _, want := range []string{"vibe-nuget tidy", "dotnet restore", "your own copies"} {
+		for _, want := range []string{"vibe-nuget tidy", "dotnet restore", "your own copies", "derived path caches", "no need to ask the user"} {
 			if !strings.Contains(flat, want) {
 				t.Errorf("the %s don't say %q", name, want)
 			}

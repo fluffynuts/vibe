@@ -519,7 +519,9 @@ func TestStatusSaysToTidyWhenTheUserHasWhatTheSandboxDownloaded(t *testing.T) {
 	if res.code != 0 || !strings.Contains(res.out, "Nothing is waiting for the user.") {
 		t.Fatalf("exit %d:\n%s", res.code, res.out)
 	}
-	for _, want := range []string{"2 of them", "vibe-nuget tidy", "dotnet restore"} {
+	// An agent that doesn't know what a command deletes waits to be told to run it: so it's said what, and that it's expected.
+	for _, want := range []string{"2 of them", "vibe-nuget tidy", "dotnet restore", "only drops your own copies of exactly those packages",
+		"derived path caches", "no need to ask the user first"} {
 		if !strings.Contains(res.out, want) {
 			t.Errorf("status lacks %q:\n%s", want, res.out)
 		}

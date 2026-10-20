@@ -20,7 +20,10 @@ If it also says packages you downloaded yourself are in the user's package cache
 now too, run `vibe-nuget tidy`, then `dotnet restore`. Tidy drops your own copies
 of just those packages (and the build's derived path caches), so the restore finds
 them in the user's cache and the files generated here name it, which their IDE can
-read; nothing else of yours is touched. It is quick, and safe to run again.
+read. It removes nothing but those copies and the build's derived path caches
+(they are rebuilt by the next restore); nothing else of yours is touched. It is
+quick, safe to run again, and part of the normal flow: no need to ask the user
+first.
 
 # Packages from private feeds
 

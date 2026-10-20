@@ -15,8 +15,9 @@ If it says nothing is waiting, carry on. If it can't answer, carry on and say so
 
 If it also says packages you downloaded yourself are now in the user's package
 cache too, run `vibe-nuget tidy` and then `dotnet restore`: your own copies of
-just those are dropped, so the files generated here name the user's cache, which
-their IDE can read.
+just those are dropped (and the build's derived path caches, which the restore
+rebuilds), so the files generated here name the user's cache, which their IDE can
+read. It is safe and part of the normal flow: no need to ask the user first.
 
 ## NuGet packages from private feeds
 

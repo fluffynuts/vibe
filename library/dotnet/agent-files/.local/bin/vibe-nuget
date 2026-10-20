@@ -22,7 +22,8 @@ usage: vibe-nuget fetch ID VERSION [--framework TFM]
   status Ask the host what is waiting for the user (requests to approve,
          packages their IDE can't see), before you restore or build.
   tidy   Drop this sandbox's own copy of packages the user's package cache has
-         too, so the next restore points the generated files at theirs.
+         too, so the next restore points the generated files at theirs. Safe
+         and expected: no need to ask the user first.
 USAGE
   exit 2
 }
@@ -100,7 +101,7 @@ tidy_hint() {
   copies=$(tidy_candidates)
   [ -n "$copies" ] || return 0
   echo
-  echo "vibe-nuget: packages you downloaded yourself are in the user's package cache now too ($(count_lines "$copies") of them), but the files generated here still name your copies, which their IDE can't see. Run 'vibe-nuget tidy', then 'dotnet restore': the files will name the user's cache."
+  echo "vibe-nuget: packages you downloaded yourself are in the user's package cache now too ($(count_lines "$copies") of them), but the files generated here still name your copies, which their IDE can't see. Run 'vibe-nuget tidy', then 'dotnet restore': the files will name the user's cache. Tidy only drops your own copies of exactly those packages, plus the build's derived path caches; it is safe and part of the normal flow, so there is no need to ask the user first."
 }
 
 if [ "$command" = tidy ]; then
