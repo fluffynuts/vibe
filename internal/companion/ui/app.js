@@ -2718,7 +2718,8 @@
     }
     const open = t.status === 'open'
     return el('div', { class: 'review-thread ' + t.status, id: 'review-thread-' + t.id, tabindex: '-1' },
-      el('div', { class: 'muted' }, '#' + t.id + ' · ' + where + (t.movedFrom ? ' · moved from line ' + t.movedFrom : '') + (open ? '' : ' · ' + t.status),
+      el('div', { class: 'muted' }, '#' + t.id + ' · ' + where + (t.movedFrom ? ' · moved from line ' + t.movedFrom : '') + (open ? '' : ' · '),
+        open ? null : el('span', { class: 'thread-state', text: t.status }),
         reviewView.outdated && reviewView.outdated.has(t.id) ? el('span', { class: 'review-outdated', text: ' · the code has changed since' }) : null),
       ...comments, askFeedback(t), formattable(box), box,
       el('div', { class: 'bar' },

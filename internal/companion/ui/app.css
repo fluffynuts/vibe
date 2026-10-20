@@ -335,6 +335,8 @@ ul.plain li .spacer { flex: 1; }
 .review-lines tr.threads > td { padding: 6px 10px; font: inherit; font-family: inherit; }
 .review-thread { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 4px 0; background: var(--bg); font: 14px/1.45 system-ui, sans-serif; white-space: normal; }
 .review-thread.resolved, .review-thread.dismissed { opacity: .7; }
+/* The state of a thread that isn't open, in the page's colour: with some resolved and some not, it is what the eye looks for. */
+.review-thread .thread-state { color: var(--theme-ink); font-weight: 600; }
 /* the comment arrows scroll a thread to just under the sticky bar, and focus it */
 .review-thread { scroll-margin-top: calc(var(--review-bar-h, 48px) + var(--review-file-head-h, 0px) + 8px); }
 .review-thread:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -433,9 +435,10 @@ ol.steps code { font: 12px var(--mono); padding: 1px 4px; border: 1px solid var(
 
 /* The agent's theme colour, when vibe knows it (html.themed): a stripe along
    the top, the project's name, the chosen tab, focus outlines and the picked
-   slash command. Subtle on purpose: nothing that means something (Send,
-   links, status colours) changes. --theme-ink is it made readable as text
-   and thin lines on the page's own background. */
+   slash command, and the state of a review thread that isn't open. Subtle on
+   purpose: nothing else that means something (Send, links, status colours)
+   changes. --theme-ink is it made readable as text and thin lines on the
+   page's own background. */
 :root { --theme: var(--accent); --theme-ink: color-mix(in oklab, var(--theme) 78%, black); }
 @media (prefers-color-scheme: dark) {
   :root { --theme-ink: color-mix(in oklab, var(--theme) 70%, white); }

@@ -2965,3 +2965,16 @@ test('an emptied name is not scolded either: starting says to name it', async ()
     assert.equal(noteOf(p), '')
   } finally { p.close() }
 })
+
+// A thread that is not open says so in its header, in the page's colour: with some resolved and
+// others not, the state is what the eye is looking for.
+test("a thread that is resolved says so in a part of its header of its own, and an open one has none", async () => {
+  const p = await reviewPage({ review: commented, diff: twoFiles })
+  try {
+    await p.click('tab-review')
+    const state = (id) => p.$('review-thread-' + id).querySelector('.thread-state')
+    assert.equal(state(4).textContent, 'resolved')
+    assert.equal(state(1), null)
+    assert.equal(state(2), null)
+  } finally { p.close() }
+})
