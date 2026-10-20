@@ -57,6 +57,18 @@ function openClipboardPage(waiting) {
     clickIn(selector) { w.document.querySelector(selector).click() },
     async poll() { poll(); await settle() },
     settle,
+    // pasteSized pastes one file per [name, size], the size as the file says it is (none is that big).
+    async pasteSized(...files) {
+      const made = files.map(([name, size]) => {
+        const f = new w.File(['x'], name, { type: 'image/png' })
+        Object.defineProperty(f, 'size', { value: size })
+        return f
+      })
+      const ev = new w.Event('paste', { bubbles: true, cancelable: true })
+      ev.clipboardData = { files: made, getData: () => '' }
+      w.document.dispatchEvent(ev)
+      await settle()
+    },
     async paste(...names) {
       const files = names.map((n) => new w.File(['content of ' + n], n, { type: 'image/png' }))
       const ev = new w.Event('paste', { bubbles: true, cancelable: true })
@@ -238,5 +250,73 @@ test('leaving the page while pastes are held asks first, and not otherwise', asy
     p.server.down = false
     await p.poll()
     assert.equal(leave(), false)
+  } finally { p.close() }
+})
+
+// A server that has been away through three pastes is a problem to look into, not one to keep adding to: only a few
+// are held, and no more than a total size, and what isn't kept is said, so nobody thinks it is.
+const MB = 1024 * 1024
+
+test('only three pastes are held while the server is away, and the rest are said not to be kept', async () => {
+  const p = openClipboardPage([])
+  try {
+    await serverDownFor(p)
+    await p.paste('a.png', 'b.png', 'c.png')
+    assert.equal(p.held().length, 3)
+    await p.paste('d.png')
+    assert.equal(p.held().length, 3)
+    assert.match(p.status(), /not kept/i)
+    assert.match(p.status(), /d\.png|1 item/)
+    p.server.down = false
+    await p.poll()
+    assert.deepEqual(p.server.uploads.sort(), ['a.png', 'b.png', 'c.png'], 'what was kept goes, and only that')
+  } finally { p.close() }
+})
+
+test('of five pasted at once while it is away, three are kept and two are said not to be', async () => {
+  const p = openClipboardPage([])
+  try {
+    await serverDownFor(p)
+    await p.paste('a.png', 'b.png', 'c.png', 'd.png', 'e.png')
+    assert.equal(p.held().length, 3)
+    assert.match(p.status(), /2 items/)
+  } finally { p.close() }
+})
+
+test('no more than 150 MB is held, in all', async () => {
+  const p = openClipboardPage([])
+  try {
+    await serverDownFor(p)
+    await p.pasteSized(['big.png', 100 * MB])
+    assert.equal(p.held().length, 1)
+    await p.pasteSized(['more.png', 60 * MB])
+    assert.equal(p.held().length, 1, '160 MB is over')
+    assert.match(p.status(), /not kept/i)
+    await p.pasteSized(['fits.png', 50 * MB])
+    assert.equal(p.held().length, 2, '150 MB exactly is allowed')
+  } finally { p.close() }
+})
+
+test('a single paste over the limit is not kept, and is said not to be', async () => {
+  const p = openClipboardPage([])
+  try {
+    await serverDownFor(p)
+    await p.pasteSized(['huge.png', 151 * MB])
+    assert.equal(p.held().length, 0)
+    assert.match(p.status(), /not kept/i)
+  } finally { p.close() }
+})
+
+test('dropping a held paste makes room for another', async () => {
+  const p = openClipboardPage([])
+  try {
+    await serverDownFor(p)
+    await p.paste('a.png', 'b.png', 'c.png')
+    p.clickIn('#held .item button')
+    await p.paste('d.png')
+    assert.equal(p.held().length, 3)
+    p.server.down = false
+    await p.poll()
+    assert.deepEqual(p.server.uploads.sort(), ['b.png', 'c.png', 'd.png'])
   } finally { p.close() }
 })

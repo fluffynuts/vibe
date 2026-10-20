@@ -427,10 +427,29 @@ function upload(blob, name) {
   });
 }
 
+// A server that has been away through a few pastes is a problem to look into, not one to keep adding to
+// (in this page's memory): so few are held, and no more than a total size; what isn't is said.
+var HOLD_MAX_ITEMS = 3;
+var HOLD_MAX_BYTES = 150 * 1024 * 1024;
+
+function heldBytes() {
+  return held.reduce(function (n, entry) { return n + entry.blob.size; }, 0);
+}
+
+// hold keeps what fits, and says how many items it couldn't (0 when all were kept).
 function hold(entries) {
-  held = held.concat(entries);
+  var notKept = 0;
+  entries.forEach(function (entry) {
+    if (held.length < HOLD_MAX_ITEMS && heldBytes() + entry.blob.size <= HOLD_MAX_BYTES) held.push(entry);
+    else notKept++;
+  });
   showHeld();
-  setStatus("");
+  return notKept;
+}
+
+function notKeptText(n) {
+  return "Not kept: " + (n === 1 ? "1 item" : n + " items") + ". The server has been away for a while, and only " +
+    HOLD_MAX_ITEMS + " items, up to " + (HOLD_MAX_BYTES / (1024 * 1024)) + " MB, are held until it's back. Paste again then.";
 }
 
 function showHeld() {
@@ -465,21 +484,24 @@ window.addEventListener("beforeunload", function (e) {
 function uploadAll(entries) {
   if (!entries.length) return;
   setStatus("Sending " + entries.length + (entries.length === 1 ? " item…" : " items…"));
+  var unreachable = [];
   Promise.all(entries.map(function (e) {
     return upload(e.blob, e.name).catch(function (err) {
       if (!err.unreachable) throw err;
-      hold([e]);
+      unreachable.push(e);
       return null;
     });
   })).then(function (added) {
+    var notKept = unreachable.length ? hold(unreachable) : 0;
+    var extra = notKept ? " " + notKeptText(notKept) : "";
     added = added.filter(Boolean);
-    if (!added.length) return;
+    if (!added.length) { setStatus(notKept ? notKeptText(notKept) : "", notKept > 0); return; }
     // One already waiting to go to the agent isn't added again.
     var already = added.filter(function (a) { return a.duplicate; }).length;
     var fresh = added.length - already;
-    if (!fresh) setStatus(already === 1 ? "Already pasted: it's waiting to go with your next message." : "Already pasted, all " + already + ".");
+    if (!fresh) setStatus((already === 1 ? "Already pasted: it's waiting to go with your next message." : "Already pasted, all " + already + ".") + extra, notKept > 0);
     else setStatus((fresh === 1 ? "Added — it'll reach the agent with your next message." : "Added " + fresh + " items.") +
-      (already ? " (" + already + " already pasted.)" : ""));
+      (already ? " (" + already + " already pasted.)" : "") + extra, notKept > 0);
     return refresh();
   }).catch(function (err) {
     setStatus("Couldn't add that: " + err.message, true);
