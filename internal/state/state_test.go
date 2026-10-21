@@ -204,3 +204,41 @@ func TestMoveTakesTheKeptNetworkRulesAlong(t *testing.T) {
 		t.Errorf("still at the old name: %v", err)
 	}
 }
+
+func TestRemoveDeletesTheKeptModelListsButNotAnotherSandboxs(t *testing.T) {
+	home := t.TempDir()
+	for _, name := range []string{"vibe", "other"} {
+		if err := Save(home, Instance{Name: name}); err != nil {
+			t.Fatal(err)
+		}
+		os.MkdirAll(filepath.Dir(ModelOptionsPath(home, name)), 0o700)
+		os.WriteFile(ModelOptionsPath(home, name), []byte(`{}`), 0o600)
+	}
+	if err := Remove(home, "vibe"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(ModelOptionsPath(home, "vibe")); !os.IsNotExist(err) {
+		t.Errorf("the kept lists are still there: %v", err)
+	}
+	if _, err := os.Stat(ModelOptionsPath(home, "other")); err != nil {
+		t.Errorf("another sandbox's went too: %v", err)
+	}
+}
+
+func TestMoveTakesTheKeptModelListsAlong(t *testing.T) {
+	home := t.TempDir()
+	if err := Save(home, Instance{Name: "old"}); err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Dir(ModelOptionsPath(home, "old")), 0o700)
+	os.WriteFile(ModelOptionsPath(home, "old"), []byte(`{}`), 0o600)
+	if err := Move(home, "old", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(ModelOptionsPath(home, "new")); err != nil {
+		t.Errorf("not moved: %v", err)
+	}
+	if _, err := os.Stat(ModelOptionsPath(home, "old")); !os.IsNotExist(err) {
+		t.Errorf("still at the old name: %v", err)
+	}
+}

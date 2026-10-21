@@ -239,11 +239,11 @@ func conversationFor(vibeHome, name string, inst state.Instance, choice profileC
 
 // choiceFor is the page's way of choosing the model and effort of sandbox
 // name's agent, or nil when it has none to choose (see conversationFor).
-func choiceFor(name string, inst state.Instance, kept profileChoice) *companion.Choice {
+func choiceFor(vibeHome, name string, inst state.Instance, kept profileChoice) *companion.Choice {
 	if !hasConversation(inst) {
 		return nil
 	}
-	return sandboxChoice(name, inst.Target, kept)
+	return sandboxChoice(name, inst.Target, kept, state.ModelOptionsPath(vibeHome, name))
 }
 
 // startCompanion serves the companion page for the sandbox, as the user's
@@ -336,7 +336,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		ClipboardTrouble:       func() string { return clipboardTrouble(name) },
 		Workspace:              inst.Target,
 		Converse:               conversationFor(vibeHome, name, inst, profileChoice{lay: lay, profile: inst.Profile}),
-		Choice:                 choiceFor(name, inst, profileChoice{lay: lay, profile: inst.Profile}),
+		Choice:                 choiceFor(vibeHome, name, inst, profileChoice{lay: lay, profile: inst.Profile}),
 		Prepare:                readyForTurn(name),
 		SandboxGit:             sandboxGitFor(name, inst.Target),
 		PreferredDefaultBranch: preferredDefaultBranch(lay.HomePath("settings.yaml")),

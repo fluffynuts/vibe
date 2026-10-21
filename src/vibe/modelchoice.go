@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"vibe/internal/companion"
+	"vibe/internal/fscopy"
 	"vibe/internal/layout"
 	"vibe/internal/modelchoice"
 	"vibe/internal/pathresolve"
@@ -138,10 +140,58 @@ func agentOptions(ctx context.Context, ask askAgent, workspace string) (companio
 	return companion.Options{Models: models.Plain, OtherModels: models.Other, Efforts: efforts, Current: models.Current}, nil
 }
 
+// keptOptionsVersion is the layout of the file the agent's lists are kept in.
+const keptOptionsVersion = 1
+
+// keptOptionsFile is what is kept of the lists between runs: so the page has
+// them to show at once, while the agent is asked again.
+type keptOptionsFile struct {
+	Version int               `json:"version"`
+	At      time.Time         `json:"at"`
+	Options companion.Options `json:"options"`
+}
+
+// keptOptions is how the agent's lists are kept in file, for a sandbox: what
+// was last remembered, and a way to remember. It is only a cache, so a file
+// that can't be read is said, and not used, and the agent is asked as if
+// nothing were kept.
+func keptOptions(file string, now func() time.Time) (cached func() (companion.Options, time.Time, bool), remember func(companion.Options) error) {
+	cached = func() (companion.Options, time.Time, bool) {
+		data, err := os.ReadFile(file)
+		if os.IsNotExist(err) {
+			return companion.Options{}, time.Time{}, false
+		}
+		var kept keptOptionsFile
+		if err == nil {
+			err = json.Unmarshal(data, &kept)
+		}
+		if err == nil && kept.Version != keptOptionsVersion {
+			err = fmt.Errorf("it is version %d, and this vibe reads version %d", kept.Version, keptOptionsVersion)
+		}
+		if err == nil && len(kept.Options.Models) == 0 {
+			err = fmt.Errorf("it lists no models")
+		}
+		if err != nil {
+			note("the list of models kept in %s can't be used (%v): the agent is asked afresh", file, err)
+			return companion.Options{}, time.Time{}, false
+		}
+		return kept.Options, kept.At, true
+	}
+	remember = func(opts companion.Options) error {
+		data, err := json.Marshal(keptOptionsFile{Version: keptOptionsVersion, At: now(), Options: opts})
+		if err != nil {
+			return err
+		}
+		return fscopy.WriteWhole(file, data)
+	}
+	return cached, remember
+}
+
 // sandboxChoice is how the page chooses the model and effort for sandbox
 // name's claude, working in workspace: kept in the profile, and the lists
 // asked of the claude in the sandbox.
-func sandboxChoice(name, workspace string, kept profileChoice) *companion.Choice {
+func sandboxChoice(name, workspace string, kept profileChoice, optionsFile string) *companion.Choice {
+	cached, remember := keptOptions(optionsFile, time.Now)
 	ask := func(ctx context.Context, script string) (string, error) {
 		return sbxrun.ExecStdout(ctx, name, asAgent(script)...)
 	}
@@ -154,5 +204,7 @@ func sandboxChoice(name, workspace string, kept profileChoice) *companion.Choice
 		Options: func(ctx context.Context) (companion.Options, error) {
 			return agentOptions(ctx, ask, workspace)
 		},
+		Cached:   cached,
+		Remember: remember,
 	}
 }

@@ -8,7 +8,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"vibe/internal/companion"
 	"vibe/internal/layout"
 )
 
@@ -176,5 +178,44 @@ func TestTheAgentIsAskedInTheFolderTheSandboxWorksIn(t *testing.T) {
 	agentOptions(context.Background(), ask, "/home/me/my project")
 	if len(scripts) == 0 || !strings.HasPrefix(scripts[0], "cd '/home/me/my project' && ") {
 		t.Errorf("scripts = %q", scripts)
+	}
+}
+
+func TestTheListsTheAgentSaidAreKeptForNextTimeWithWhenTheyWereAsked(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "companion", "box.model-options.json")
+	cached, remember := keptOptions(file, func() time.Time { return time.Date(2026, 10, 21, 9, 30, 0, 0, time.UTC) })
+	if _, _, ok := cached(); ok {
+		t.Fatal("something was kept before anything was remembered")
+	}
+	want := companion.Options{Models: []string{"sonnet", "opus"}, OtherModels: []string{"best"}, Efforts: []string{"low", "high"}, Current: "Opus 5.5 (default)"}
+	if err := remember(want); err != nil {
+		t.Fatal(err)
+	}
+	got, at, ok := cached()
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v, %v; want %+v", got, ok, want)
+	}
+	if !at.Equal(time.Date(2026, 10, 21, 9, 30, 0, 0, time.UTC)) {
+		t.Errorf("asked at %v", at)
+	}
+}
+
+func TestKeptListsThatCantBeReadAreSaidAndAskedForAgainNotTrusted(t *testing.T) {
+	for name, content := range map[string]string{
+		"not JSON":        "{oops",
+		"another version": `{"version": 99, "at": "2026-10-21T09:30:00Z", "options": {"models": ["x"]}}`,
+		"no models":       `{"version": 1, "at": "2026-10-21T09:30:00Z", "options": {"models": []}}`,
+	} {
+		file := filepath.Join(t.TempDir(), "box.model-options.json")
+		os.WriteFile(file, []byte(content), 0o600)
+		cached, _ := keptOptions(file, time.Now)
+		var ok bool
+		said := notesOf(func() { _, _, ok = cached() })
+		if ok {
+			t.Errorf("%s: used", name)
+		}
+		if len(said) != 1 || !strings.Contains(said[0], file) {
+			t.Errorf("%s: said %q, want one note naming the file", name, said)
+		}
 	}
 }

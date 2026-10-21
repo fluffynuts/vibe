@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // choosing is the model and effort kept for the page, and the agent's lists.
@@ -21,6 +22,11 @@ type choosing struct {
 	asked    int
 	woke     int
 	setCalls [][2]string
+	// what was kept of the lists from an earlier run, and what was kept since
+	cached      *Options
+	cachedAt    time.Time
+	remembered  []Options
+	rememberErr error
 }
 
 func (c *choosing) config() *Choice {
@@ -46,6 +52,20 @@ func (c *choosing) config() *Choice {
 			c.asked++
 			return c.options, c.optsErr
 		},
+		Cached: func() (Options, time.Time, bool) {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if c.cached == nil {
+				return Options{}, time.Time{}, false
+			}
+			return *c.cached, c.cachedAt, true
+		},
+		Remember: func(o Options) error {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.remembered = append(c.remembered, o)
+			return c.rememberErr
+		},
 	}
 }
 
@@ -69,12 +89,14 @@ func choiceServer(t *testing.T, c *choosing) *Server {
 }
 
 type choiceState struct {
-	Model   string   `json:"model"`
-	Effort  string   `json:"effort"`
-	Running string   `json:"running"`
-	Session bool     `json:"session"`
-	Options *Options `json:"options"`
-	Error   string   `json:"error"`
+	Model        string   `json:"model"`
+	Effort       string   `json:"effort"`
+	Running      string   `json:"running"`
+	Session      bool     `json:"session"`
+	Options      *Options `json:"options"`
+	OptionsAt    int64    `json:"optionsAt"`
+	OptionsFresh bool     `json:"optionsFresh"`
+	Error        string   `json:"error"`
 }
 
 func readChoice(t *testing.T, s *Server) choiceState {
@@ -319,5 +341,95 @@ func TestASandboxThatCantBeWokenIsSaidAndNotAsked(t *testing.T) {
 	}
 	if c.asked != 0 {
 		t.Errorf("asked %d times", c.asked)
+	}
+}
+
+var oldOptions = Options{Models: []string{"sonnet", "opus"}, Efforts: []string{"low", "high"}, Current: "Sonnet 4.5 (default)"}
+
+func TestListsFromAnEarlierRunAreGivenAtOnceWithoutAskingTheAgent(t *testing.T) {
+	long := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	c := &choosing{cached: &oldOptions, cachedAt: long, options: claudeOptions}
+	s := choiceServer(t, c)
+	got := readChoice(t, s)
+	if got.Options == nil || len(got.Options.Models) != 2 || got.Options.Current != "Sonnet 4.5 (default)" {
+		t.Fatalf("the page isn't given the kept lists: %+v", got.Options)
+	}
+	if got.OptionsFresh {
+		t.Error("lists from an earlier run are said to be fresh")
+	}
+	if got.OptionsAt != long.UnixMilli() {
+		t.Errorf("they're from %d, want %d", got.OptionsAt, long.UnixMilli())
+	}
+	if c.asked != 0 {
+		t.Errorf("the agent was asked %d times just to read the page", c.asked)
+	}
+}
+
+func TestAskingAgainReplacesTheKeptListsAndIsRememberedForNextTime(t *testing.T) {
+	c := &choosing{cached: &oldOptions, cachedAt: time.Now().Add(-48 * time.Hour), options: claudeOptions}
+	s := choiceServer(t, c)
+	rec := do(t, s, post("/api/conversation/choice/options", `{}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	got := readChoice(t, s)
+	if got.Options == nil || len(got.Options.Models) != 3 || !got.OptionsFresh {
+		t.Errorf("after asking: %+v fresh %v", got.Options, got.OptionsFresh)
+	}
+	if len(c.remembered) != 1 || len(c.remembered[0].Models) != 3 {
+		t.Errorf("remembered %+v", c.remembered)
+	}
+	if rec := do(t, s, post("/api/conversation/choice/options", `{}`)); rec.Code != http.StatusOK || c.asked != 1 {
+		t.Errorf("a second ask went to the agent again: asked %d", c.asked)
+	}
+}
+
+func TestWhenTheAgentCantBeAskedTheKeptListsStayAndTheFailureIsSaid(t *testing.T) {
+	c := &choosing{cached: &oldOptions, cachedAt: time.Now().Add(-48 * time.Hour), optsErr: errors.New("sandbox is stopped")}
+	s := choiceServer(t, c)
+	rec := do(t, s, post("/api/conversation/choice/options", `{}`))
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "sandbox is stopped") {
+		t.Errorf("%d %s", rec.Code, rec.Body)
+	}
+	got := readChoice(t, s)
+	if got.Options == nil || len(got.Options.Models) != 2 || got.OptionsFresh {
+		t.Errorf("the kept lists were lost or called fresh: %+v fresh %v", got.Options, got.OptionsFresh)
+	}
+	if len(c.remembered) != 0 {
+		t.Errorf("a failure was remembered: %+v", c.remembered)
+	}
+}
+
+func TestAnEffortIsOnlyHeldToTheAgentsListOnceItIsFreshNotToOneFromAnEarlierRun(t *testing.T) {
+	c := &choosing{cached: &oldOptions, cachedAt: time.Now().Add(-48 * time.Hour), options: claudeOptions}
+	s := choiceServer(t, c)
+	if rec := do(t, s, post("/api/conversation/choice", `{"effort":"xhigh"}`)); rec.Code != http.StatusOK {
+		t.Errorf("an effort the old lists lack was refused though they may be out of date: %d %s", rec.Code, rec.Body)
+	}
+	if rec := do(t, s, post("/api/conversation/choice/options", `{}`)); rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if rec := do(t, s, post("/api/conversation/choice", `{"effort":"xhigh"}`)); rec.Code != http.StatusBadRequest {
+		t.Errorf("an effort the agent's own list lacks was kept: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestAFailureToRememberTheListsIsSaidInVibesOutputAndDoesntFailTheRequest(t *testing.T) {
+	c := &choosing{options: claudeOptions, rememberErr: errors.New("disk full")}
+	s := choiceServer(t, c)
+	var said []string
+	s.cfg.Log = func(line string) { said = append(said, line) }
+	if rec := do(t, s, post("/api/conversation/choice/options", `{}`)); rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if len(said) != 1 || !strings.Contains(said[0], "disk full") {
+		t.Errorf("said %q", said)
+	}
+}
+
+func TestWithNothingKeptAndNothingAskedThePageHasNoLists(t *testing.T) {
+	s := choiceServer(t, &choosing{options: claudeOptions})
+	if got := readChoice(t, s); got.Options != nil || got.OptionsFresh {
+		t.Errorf("got %+v", got)
 	}
 }

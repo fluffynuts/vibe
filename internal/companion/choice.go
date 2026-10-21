@@ -20,6 +20,12 @@ type Choice struct {
 	// Options asks the agent which models and efforts it has: the page's
 	// drop-downs are made of them, so they are as live as the agent is.
 	Options func(ctx context.Context) (Options, error)
+	// Cached is what was last remembered of the agent's lists, and when it
+	// was asked, from an earlier run: the page has it to show at once, while
+	// the agent is asked again. Nil means nothing is kept between runs.
+	Cached func() (opts Options, at time.Time, ok bool)
+	// Remember keeps the agent's lists for the next run.
+	Remember func(Options) error
 }
 
 // Options are the agent's own lists, as the page offers them.
@@ -38,22 +44,51 @@ type Options struct {
 // being woken: they are two quick commands.
 const optionsWithin = 2 * time.Minute
 
-// choiceOptions is what the agent said it has, kept once it has said it.
+// choiceOptions is what the page has of the agent's lists: from an earlier
+// run (kept, and perhaps out of date) until the agent has been asked in this
+// one, and then fresh.
 type choiceOptions struct {
-	mu   sync.Mutex
-	have *Options
+	loaded sync.Once
+	mu     sync.Mutex
+	have   *Options
+	at     time.Time
+	fresh  bool
 }
 
-func (o *choiceOptions) get() *Options {
+func (o *choiceOptions) get() (opts *Options, at time.Time, fresh bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	return o.have
+	return o.have, o.at, o.fresh
 }
 
-func (o *choiceOptions) put(opts Options) {
+func (o *choiceOptions) put(opts Options, at time.Time, fresh bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.have = &opts
+	o.have, o.at, o.fresh = &opts, at, fresh
+}
+
+// keptOptions gives the lists, from the earlier run if the agent hasn't been
+// asked in this one.
+func (s *Server) keptOptions() (*Options, time.Time, bool) {
+	s.options.loaded.Do(func() {
+		if s.cfg.Choice != nil && s.cfg.Choice.Cached != nil {
+			if opts, at, ok := s.cfg.Choice.Cached(); ok {
+				s.options.put(opts, at, false)
+			}
+		}
+	})
+	return s.options.get()
+}
+
+// optionsBody is what the page is told of the lists: when they're from, and
+// whether the agent was asked for them in this run.
+func (s *Server) optionsBody() map[string]interface{} {
+	opts, at, fresh := s.keptOptions()
+	body := map[string]interface{}{"options": opts, "optionsFresh": fresh}
+	if opts != nil {
+		body["optionsAt"] = at.UnixMilli()
+	}
+	return body
 }
 
 // choosing is the page's call on the model and effort, which needs a
@@ -67,12 +102,11 @@ func (s *Server) choiceBody() (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]interface{}{
-		"model": model, "effort": effort,
-		"running": s.convo.ranModel(),
-		"session": s.convo.hasSession(),
-		"options": s.options.get(),
-	}, nil
+	body := s.optionsBody()
+	body["model"], body["effort"] = model, effort
+	body["running"] = s.convo.ranModel()
+	body["session"] = s.convo.hasSession()
+	return body, nil
 }
 
 func (s *Server) choiceState(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +135,10 @@ func (s *Server) choiceSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var err error
-	if have := s.options.get(); have != nil {
+	// Held to the agent's own list only once it has been asked in this run:
+	// one from an earlier run may be out of date, and refusing what the agent
+	// now takes would be wrong (an effort it doesn't take it ignores, saying so).
+	if have, _, fresh := s.keptOptions(); have != nil && fresh {
 		err = modelchoice.CheckEffort(req.Effort, have.Efforts)
 	} else {
 		err = modelchoice.CheckEffortName(req.Effort)
@@ -125,7 +162,8 @@ func (s *Server) choiceSet(w http.ResponseWriter, r *http.Request) {
 	s.choiceState(w, r)
 }
 
-// choiceFetchOptions asks the agent what it has, and keeps the answer. It
+// choiceFetchOptions asks the agent what it has, and keeps the answer, in
+// memory and for the next run (the page shows what was kept meanwhile). It
 // doesn't wake a sleeping sandbox to ask, as opening the page shouldn't;
 // the page says wake when the user has asked for that. A failure is said and
 // not kept, so the next try asks again.
@@ -137,8 +175,8 @@ func (s *Server) choiceFetchOptions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, `expected {"wake": true or false}`)
 		return
 	}
-	if have := s.options.get(); have != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"options": have})
+	if _, _, fresh := s.keptOptions(); fresh {
+		writeJSON(w, http.StatusOK, s.optionsBody())
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), optionsWithin)
@@ -154,6 +192,12 @@ func (s *Server) choiceFetchOptions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "the agent couldn't say what it has: "+err.Error())
 		return
 	}
-	s.options.put(opts)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"options": s.options.get()})
+	s.options.put(opts, s.clock(), true)
+	if s.cfg.Choice.Remember != nil {
+		// Only a cache: not worth failing for, but not to go unsaid.
+		if err := s.cfg.Choice.Remember(opts); err != nil && s.cfg.Log != nil {
+			s.cfg.Log("couldn't keep the list of models for next time: " + err.Error())
+		}
+	}
+	writeJSON(w, http.StatusOK, s.optionsBody())
 }

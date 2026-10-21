@@ -129,7 +129,7 @@ func Remove(vibeHome, name string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing git token: %w", err)
 	}
-	for _, file := range []string{ConversationPath(vibeHome, name), TranscriptPath(vibeHome, name)} {
+	for _, file := range []string{ConversationPath(vibeHome, name), TranscriptPath(vibeHome, name), ModelOptionsPath(vibeHome, name)} {
 		if err := os.Remove(file); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("removing companion conversation: %w", err)
 		}
@@ -150,7 +150,7 @@ func Remove(vibeHome, name string) error {
 }
 
 // Move takes everything vibe keeps for sandbox oldName (its record, page
-// token, GitHub token, conversation, clipboard history, reviews, package requests and kept
+// token, GitHub token, conversation, the lists of models its agent has, clipboard history, reviews, package requests and kept
 // network rules) to newName, for
 // a sandbox that has moved folders. The record's Name follows; anything
 // else in it is the caller's to change. Another sandbox's record already at
@@ -174,6 +174,7 @@ func Move(vibeHome, oldName, newName string) error {
 		{GitTokenPath(vibeHome, oldName), GitTokenPath(vibeHome, newName)},
 		{ConversationPath(vibeHome, oldName), ConversationPath(vibeHome, newName)},
 		{TranscriptPath(vibeHome, oldName), TranscriptPath(vibeHome, newName)},
+		{ModelOptionsPath(vibeHome, oldName), ModelOptionsPath(vibeHome, newName)},
 		{ClipboardPath(vibeHome, oldName), ClipboardPath(vibeHome, newName)},
 		{ReviewPath(vibeHome, oldName), ReviewPath(vibeHome, newName)},
 		{PackagesPath(vibeHome, oldName), PackagesPath(vibeHome, newName)},
@@ -264,6 +265,12 @@ func DefaultGitTokenPath(vibeHome string) string {
 // a sandbox's agent between runs of vibe.
 func ConversationPath(vibeHome, name string) string {
 	return filepath.Join(vibeHome, "companion", name+".conversation.json")
+}
+
+// ModelOptionsPath is where the models and efforts a sandbox's agent said it
+// has are kept on the host, so the page has them to show at once next time.
+func ModelOptionsPath(vibeHome, name string) string {
+	return filepath.Join(vibeHome, "companion", name+".model-options.json")
 }
 
 // TranscriptPath is where the agent's own record of that conversation is
