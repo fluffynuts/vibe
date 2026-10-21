@@ -225,8 +225,8 @@ func TestTheAgentsListsAreAskedForOnceAndKept(t *testing.T) {
 	if c.asked != 1 {
 		t.Errorf("the agent was asked %d times, want 1", c.asked)
 	}
-	if c.woke == 0 {
-		t.Error("the sandbox wasn't woken to be asked")
+	if c.woke != 0 {
+		t.Error("the sandbox was woken though the page didn't ask for that")
 	}
 	got := readChoice(t, s)
 	if got.Options == nil || len(got.Options.Models) != 3 || got.Options.Current != "Opus 5.5 (default)" {
@@ -295,5 +295,29 @@ func TestANewConversationHasNotRunAnythingYet(t *testing.T) {
 	}
 	if got := readChoice(t, s); got.Running != "" || got.Session {
 		t.Errorf("got %+v, want nothing run and no session", got)
+	}
+}
+
+func TestTheSandboxIsWokenToBeAskedOnlyWhenThePageSaysSo(t *testing.T) {
+	c := &choosing{options: claudeOptions}
+	s := choiceServer(t, c)
+	if rec := do(t, s, post("/api/conversation/choice/options", `{"wake":true}`)); rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if c.woke != 1 {
+		t.Errorf("woken %d times, want 1", c.woke)
+	}
+}
+
+func TestASandboxThatCantBeWokenIsSaidAndNotAsked(t *testing.T) {
+	c := &choosing{options: claudeOptions}
+	s := choiceServer(t, c)
+	s.cfg.Wake = func(ctx context.Context, say func(string)) error { return errors.New("sbx run failed") }
+	rec := do(t, s, post("/api/conversation/choice/options", `{"wake":true}`))
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "sbx run failed") {
+		t.Errorf("%d %s", rec.Code, rec.Body)
+	}
+	if c.asked != 0 {
+		t.Errorf("asked %d times", c.asked)
 	}
 }

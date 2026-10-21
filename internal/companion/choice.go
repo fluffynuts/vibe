@@ -125,19 +125,29 @@ func (s *Server) choiceSet(w http.ResponseWriter, r *http.Request) {
 	s.choiceState(w, r)
 }
 
-// choiceFetchOptions asks the agent what it has, waking the sandbox to ask,
-// and keeps the answer. A failure is said and not kept, so the next try asks
-// again.
+// choiceFetchOptions asks the agent what it has, and keeps the answer. It
+// doesn't wake a sleeping sandbox to ask, as opening the page shouldn't;
+// the page says wake when the user has asked for that. A failure is said and
+// not kept, so the next try asks again.
 func (s *Server) choiceFetchOptions(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Wake bool `json:"wake"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, `expected {"wake": true or false}`)
+		return
+	}
 	if have := s.options.get(); have != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"options": have})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), optionsWithin)
 	defer cancel()
-	if err := s.wake(ctx); err != nil {
-		writeError(w, http.StatusBadGateway, "the sandbox couldn't be woken to ask the agent what it has: "+err.Error())
-		return
+	if req.Wake {
+		if err := s.wake(ctx); err != nil {
+			writeError(w, http.StatusBadGateway, "the sandbox couldn't be woken to ask the agent what it has: "+err.Error())
+			return
+		}
 	}
 	opts, err := s.cfg.Choice.Options(ctx)
 	if err != nil {
