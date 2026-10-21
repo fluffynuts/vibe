@@ -25,6 +25,12 @@ func (p profileChoice) path() string {
 	return filepath.Join(p.lay.ProfileDir(p.profile), "settings.yaml")
 }
 
+// own is the choice the profile's own settings.yaml holds.
+func (p profileChoice) own() (turnChoice, error) {
+	own, err := settings.Load(p.path())
+	return turnChoice{Model: own.Model, Effort: own.Effort}, err
+}
+
 // get is the choice that applies: the profile's own over the global settings'.
 func (p profileChoice) get() (turnChoice, error) {
 	global, err := settings.Load(p.lay.File("settings.yaml"))

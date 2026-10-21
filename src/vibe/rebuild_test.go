@@ -191,3 +191,27 @@ func TestAProfileMissingABaseFeatureIsToldWhich(t *testing.T) {
 		t.Errorf("notes: %q", notes)
 	}
 }
+
+func TestReComposingKeepsTheModelAndEffortChosenOnThePage(t *testing.T) {
+	lay, dir := instructionsFixture(t)
+	args := cliargs.Args{Force: true, Profile: "foo-browser"}
+	writeFile(t, filepath.Join(dir, "settings.yaml"), "memory: 8g\nmodel: sonnet\neffort: high\n")
+	if err := recomposeProfile(lay, args, "foo-browser", t.TempDir(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := profileChoice{lay: lay, profile: "foo-browser"}.get()
+	if err != nil || got != (turnChoice{Model: "sonnet", Effort: "high"}) {
+		t.Errorf("after re-composing, the choice is %+v, %v; want sonnet, high", got, err)
+	}
+}
+
+func TestReComposingAProfileWithNoChoiceMakesNone(t *testing.T) {
+	lay, dir := instructionsFixture(t)
+	args := cliargs.Args{Force: true, Profile: "foo-browser"}
+	if err := recomposeProfile(lay, args, "foo-browser", t.TempDir(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := readFile(t, filepath.Join(dir, "settings.yaml")); strings.Contains(got, "model") || strings.Contains(got, "effort") {
+		t.Errorf("settings.yaml = %q", got)
+	}
+}
