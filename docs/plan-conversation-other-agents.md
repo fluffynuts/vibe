@@ -71,9 +71,7 @@ Real output of `opencode run --help` and `opencode models`, not a guess:
   export [sessionID]` and `opencode import <file>` move a session as JSON: the likely way to keep a copy that
   survives a rebuild, in place of Claude's folder of transcripts.
 - Other things the CLI offers that may matter: `opencode serve` / `--attach` (a server to attach to, which might
-  be a better way to stream and to stop a turn), `opencode acp` (the Agent Client Protocol: a standard some agents
-  speak, which could serve several agents with one reader; worth a look before writing a reader per agent), and
-  `opencode session`.
+  be a better way to stream and to stop a turn), `opencode acp` (see "ACP" below), and `opencode session`.
 
 ## Design
 
@@ -149,10 +147,31 @@ to be relied on. A hang with no output is the kind of thing vibe's backstops mus
 2. Which hosts a free model needs besides `opencode.ai:443`, and whether `models.dev` (the model list) needs
    one: the list worked without an approval in this run, perhaps from a bundled copy.
 3. A SIGINT that does end a turn (or whether only SIGTERM does).
-4. Whether `opencode acp` (or `serve`/`--attach`) is a better channel than `run`: it could give live tool
-   events, the answering model, a clean stop, and one reader for several agents.
+4. Whether `opencode acp` (or `serve`/`--attach`) is a better channel than `run`: see the ACP section below.
 5. Images: whether a model that takes them can be sent one (`-f`).
 6. Slash commands and a cost line: nothing seen in the stream; cost is `part.cost` per step (0 on free models).
+
+## ACP (Agent Client Protocol): a possible common channel
+
+Raised by the user 2026-10-21; looked at lightly, **nothing has been run over it**.
+
+- `opencode acp` exists ("start ACP (Agent Client Protocol) server": seen in OpenCode's own `--help`).
+- From the protocol's own pages (as found by a web search, not read in the repositories; the registry snapshots
+  disagreed on version numbers): ACP began with the Zed editor; it is JSON-RPC between a client and a coding
+  agent, with a shared shape for prompts, streamed output, tool calls, permission requests and cancel. It is
+  **not** IBM's "Agent Communication Protocol", which shares the initials.
+- Listed there as ACP agents: OpenCode, Gemini CLI, Goose, Kimi CLI and others. **Claude Code and Codex CLI are
+  listed through adapters** (Zed publishes them), not natively: `claude --help` (2.1.306) shows no `acp` command.
+  An adapter is one more program to install and keep current in the sandbox, and another party's code between
+  vibe and the agent.
+- What it might give (from the protocol's description, unproven): one reader for several agents; a defined cancel
+  (instead of the SIGINT/SIGTERM guesswork above); permission requests handled instead of bypassed with `--auto`;
+  the answering model and live tool events, which `opencode run --format json` lacks.
+- Likely shape: keep Claude on `claude -p` stream-json (tested, works); use ACP for agents that speak it
+  natively, OpenCode first. Per-agent readers may remain for Claude and Codex.
+- **First step when this is picked up:** a read-only check. Start `opencode acp` in a scratch folder, drive a turn
+  by hand, and compare what it reports (model, tool events, cancel, permissions) with `run`. Decide on ACP from
+  that, before writing any per-agent reader.
 
 For Codex: the same list against its CLI, by someone with a subscription (or a free way, if one turns up). Until
 then, Codex gets a description written from its documentation, marked untested.
@@ -180,3 +199,4 @@ then, Codex gets a description written from its documentation, marked untested.
 2. Order: OpenCode (free models, the user tests), then Codex (a friend, or a free route if found), then the rest on
    user reports.
 3. Keep the work agent-neutral from the first change; Claude's behaviour must not change while it is made so.
+4. Branch: this is built on its own branch, after the model/effort feature is out (user, 2026-10-21).
