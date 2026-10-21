@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 )
 
@@ -67,6 +68,38 @@ var (
 	plainName    = regexp.MustCompile(`^[a-z]+$`)
 )
 
+// sizeOrder are the families whose size is known, biggest first. A name the
+// agent lists that isn't one of these has no size here to go by, so it comes
+// after them, alphabetically: nothing is claimed of it.
+var sizeOrder = []string{"opus", "sonnet", "haiku"}
+
+var nonLetters = regexp.MustCompile(`[^a-z]+`)
+
+// familyRank is where in sizeOrder the family of name is: the position of the
+// word in it that names one ("opus", "claude-opus-5-5", "opus[1m]"; not
+// "opusplan"), or after them all.
+func familyRank(name string) int {
+	for _, word := range nonLetters.Split(strings.ToLower(name), -1) {
+		if i := slices.Index(sizeOrder, word); i >= 0 {
+			return i
+		}
+	}
+	return len(sizeOrder)
+}
+
+// BySize gives names biggest first where the size of the family is known,
+// then the rest alphabetically. It leaves names as it was given it.
+func BySize(names []string) []string {
+	out := slices.Clone(names)
+	sort.SliceStable(out, func(i, j int) bool {
+		if ri, rj := familyRank(out[i]), familyRank(out[j]); ri != rj {
+			return ri < rj
+		}
+		return out[i] < out[j]
+	})
+	return out
+}
+
 // ParseModels reads what a "/model" prompt answers: "Current model: `X`"
 // and "Available: a, b, c, or a full model ID." Anything it can't find the
 // models in is an error, so a changed answer is said, not read as an empty
@@ -96,6 +129,7 @@ func ParseModels(answer string) (Models, error) {
 			out.Other = append(out.Other, name)
 		}
 	}
+	out.Plain, out.Other = BySize(out.Plain), BySize(out.Other)
 	if len(out.Plain)+len(out.Other) == 0 {
 		return Models{}, fmt.Errorf("the agent's answer to /model lists no models: %q", firstLine(answer))
 	}

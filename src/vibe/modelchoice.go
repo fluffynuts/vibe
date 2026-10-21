@@ -175,6 +175,8 @@ func keptOptions(file string, now func() time.Time) (cached func() (companion.Op
 			note("the list of models kept in %s can't be used (%v): the agent is asked afresh", file, err)
 			return companion.Options{}, time.Time{}, false
 		}
+		// Kept in whatever order it was in then.
+		kept.Options.Models, kept.Options.OtherModels = modelchoice.BySize(kept.Options.Models), modelchoice.BySize(kept.Options.OtherModels)
 		return kept.Options, kept.At, true
 	}
 	remember = func(opts companion.Options) error {

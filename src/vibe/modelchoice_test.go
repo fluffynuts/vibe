@@ -134,10 +134,10 @@ func TestTheAgentsListsAreMadeFromWhatTheRealClaudeSaid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"sonnet", "opus", "haiku", "fable"}; !reflect.DeepEqual(got.Models, want) {
+	if want := []string{"opus", "sonnet", "haiku", "fable"}; !reflect.DeepEqual(got.Models, want) {
 		t.Errorf("models = %v", got.Models)
 	}
-	if len(got.OtherModels) != 5 || got.OtherModels[0] != "best" {
+	if len(got.OtherModels) != 5 || got.OtherModels[0] != "opus[1m]" {
 		t.Errorf("other models = %v", got.OtherModels)
 	}
 	if want := []string{"low", "medium", "high", "xhigh", "max"}; !reflect.DeepEqual(got.Efforts, want) {
@@ -187,7 +187,7 @@ func TestTheListsTheAgentSaidAreKeptForNextTimeWithWhenTheyWereAsked(t *testing.
 	if _, _, ok := cached(); ok {
 		t.Fatal("something was kept before anything was remembered")
 	}
-	want := companion.Options{Models: []string{"sonnet", "opus"}, OtherModels: []string{"best"}, Efforts: []string{"low", "high"}, Current: "Opus 5.5 (default)"}
+	want := companion.Options{Models: []string{"opus", "sonnet"}, OtherModels: []string{"best"}, Efforts: []string{"low", "high"}, Current: "Opus 5.5 (default)"}
 	if err := remember(want); err != nil {
 		t.Fatal(err)
 	}
@@ -217,5 +217,15 @@ func TestKeptListsThatCantBeReadAreSaidAndAskedForAgainNotTrusted(t *testing.T) 
 		if len(said) != 1 || !strings.Contains(said[0], file) {
 			t.Errorf("%s: said %q, want one note naming the file", name, said)
 		}
+	}
+}
+
+func TestListsKeptInAnotherOrderComeBackBiggestFirst(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "box.model-options.json")
+	os.WriteFile(file, []byte(`{"version": 1, "at": "2026-10-21T09:30:00Z", "options": {"models": ["sonnet", "opus", "haiku", "fable"], "otherModels": ["best", "sonnet[1m]", "opus[1m]"], "efforts": ["low"]}}`), 0o600)
+	cached, _ := keptOptions(file, time.Now)
+	got, _, ok := cached()
+	if !ok || !reflect.DeepEqual(got.Models, []string{"opus", "sonnet", "haiku", "fable"}) || !reflect.DeepEqual(got.OtherModels, []string{"opus[1m]", "sonnet[1m]", "best"}) {
+		t.Errorf("got %+v, %v", got, ok)
 	}
 }

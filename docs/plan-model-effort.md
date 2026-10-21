@@ -234,3 +234,16 @@ at once and the agent is asked again in the background (stale while revalidate).
   (the bubble opens, amber, with Retry).
 - A known small untruth: "Default (Opus 5.5)" is part of what's kept, so it can be briefly out of date, until
   the refresh.
+
+### Order, and when the dot goes (2026-10-21)
+
+- **Models are listed biggest first** where the size is known: opus, sonnet, haiku (`modelchoice.BySize`, matching the
+  family as a whole word in the name: `opus[1m]` and `claude-opus-5-5` are opus, `opusplan` isn't). Any name
+  that isn't one of those (`fable`, `best`, `opusplan`) comes after them, alphabetically: no size is claimed
+  for it. Applied when the lists are read from the agent and again when read from the kept file, so lists
+  kept before this show in the new order. **Open question for the user: where `fable` belongs** (it is last
+  now); it's one entry in `sizeOrder`.
+- **The dot on the "i" says something hasn't been looked at.** It goes when the bubble is closed, whichever way
+  (the X, the button, Escape, a click elsewhere), and comes back with the next change, the next turn that ran
+  another model, or a new failure to refresh. The amber outline stays while the cause does (another model
+  ran; no lists), since that is a state, not a notice.

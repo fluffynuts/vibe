@@ -623,7 +623,7 @@ you're looking at:
   `~/.vibe/companion/`), so the drop-downs are full the moment the page opens, and asks claude again in the
   background, without waking a sandbox that's asleep; the first time there's nothing kept, so it just asks. If asking again
   fails, the kept lists carry on, and the **i** button's bubble says how old they are and why (with **Retry**, which wakes
-  the sandbox to ask). The plain model names are in the drop-down, and **Other…** opens the rest the agent lists, or
+  the sandbox to ask). The plain model names are in the drop-down, biggest first where vibe knows the size (opus, sonnet, haiku) and then any other by name, and **Other…** opens the rest the agent lists, or
   takes a model's full name. Efforts are the ones claude's `--effort` takes. A change applies from the next
   prompt, even while the agent is answering. Changing the model puts the effort back to **Default**, to be
   chosen again, as what an effort means differs between models; and for a conversation already under way it asks
@@ -633,7 +633,7 @@ you're looking at:
   `settings.yaml` is the default under it. What's good to know is in a bubble over the **i** button beside them,
   which takes no room, so nothing in the page moves when it comes and goes: that a change applies from your next
   prompt (the bubble has **Don't show me this again**, remembered by that browser, after which the button still
-  carries a dot when there's something to know, and opens the bubble when pressed); that the agent says it ran
+  carries a dot when there's something to know, which goes once the bubble has been looked at and closed, and opens the bubble when pressed); that the agent says it ran
   another model than was asked for, which is said at the end of every such turn, in amber, and can't be switched
   off; and, when there are no lists at all (nothing kept, and claude couldn't be asked), why (with **Retry**).
   A choice that couldn't be kept is said in a dialog over the frosted page, to be answered. Beside the

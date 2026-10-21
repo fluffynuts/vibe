@@ -5144,7 +5144,7 @@
   // Names the agent accepts that pick by a rule, not one model: what ran
   // can't be held against them.
   const NOT_A_MODEL = new Set(['best', 'opusplan'])
-  const choice = { model: '', effort: '', running: '', session: false, options: null, optionsAt: 0, optionsError: '', problem: '', pending: false, bubble: false, started: false }
+  const choice = { model: '', effort: '', running: '', session: false, options: null, optionsAt: 0, optionsError: '', problem: '', pending: false, bubble: false, unseen: false, started: false }
 
   // dialogAnswer shows a modal dialog and gives what it was closed with, ''
   // when it was dismissed (Escape).
@@ -5224,7 +5224,9 @@
     const info = $('choice-info')
     const stale = choiceStale()
     info.classList.toggle('warn', problem || odd)
-    info.classList.toggle('news', choice.pending || !!stale)
+    // The dot says there's something to know that hasn't been looked at:
+    // closing the bubble, whichever way, is looking.
+    info.classList.toggle('news', choice.unseen && (choice.pending || !!stale || odd || problem))
     info.setAttribute('aria-expanded', String(choice.bubble))
     $('choice-bubble').hidden = !choice.bubble
     $('choice-bubble-text').textContent = said.text
@@ -5237,6 +5239,7 @@
   }
 
   function setChoiceBubble(on) {
+    if (!on && choice.bubble) choice.unseen = false
     choice.bubble = on
     drawChoice()
   }
@@ -5266,6 +5269,7 @@
       reached(false)
       choice.problem = 'Could not reach vibe to ask what model and effort are chosen.'
     }
+    if (choice.problem) choice.unseen = true
     drawChoice()
   }
 
@@ -5280,6 +5284,7 @@
       reached(false)
       choice.optionsError = 'Could not reach vibe to ask the agent which models and efforts it has.'
     }
+    if (choice.optionsError) choice.unseen = true
     drawChoice()
   }
 
@@ -5304,9 +5309,9 @@
   // asked for is said at the end of every turn it happens.
   async function choiceTurnEnded() {
     choice.pending = false
-    if (!choiceProblem() && !choice.optionsError) choice.bubble = false
+    if (!choiceProblem() && !choice.optionsError) { choice.bubble = false; choice.unseen = false }
     await readChoice()
-    if (choiceOdd()) setChoiceBubble(true)
+    if (choiceOdd()) { choice.unseen = true; setChoiceBubble(true) }
   }
 
   // saveChoice asks vibe to keep model and effort, and shows what it kept: it
@@ -5324,7 +5329,10 @@
     }
     $('choice-model').disabled = $('choice-effort').disabled = false
     if (failed) { await choiceFailed(failed); return }
+    // After the bubble is settled, for closing it counts as having looked.
     setChoiceBubble(!choiceQuiet())
+    choice.unseen = true
+    drawChoice()
   }
 
   // pickOtherModel asks which of the models the agent lists beyond the

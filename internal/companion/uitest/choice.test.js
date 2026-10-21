@@ -431,3 +431,81 @@ test('the old lists are not what a change is held to: what was kept stays usable
     assert.deepEqual(p.posted('/api/conversation/choice'), [{ model: 'opus', effort: 'low' }])
   } finally { p.close() }
 })
+
+const dotted = (p) => p.$('choice-info').classList.contains('news')
+
+test('the dot on the button goes when the bubble is dismissed, by its X or by the button, and comes back with the next change', async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    await choose(p, 'choice-effort', 'low')
+    assert.ok(open(p) && dotted(p))
+    await p.click('choice-bubble-close')
+    assert.ok(!dotted(p), 'closed with the X')
+    await choose(p, 'choice-effort', 'high')
+    assert.ok(open(p) && dotted(p), 'a new change is news again')
+    await p.click('choice-info')
+    assert.ok(!open(p))
+    assert.ok(!dotted(p), 'closed by the button')
+  } finally { p.close() }
+})
+
+test('the dot goes too when the bubble is dismissed by Escape or a click elsewhere', async () => {
+  const p = await choicePage({ model: 'opus' })
+  const w = p.window
+  try {
+    await choose(p, 'choice-effort', 'low')
+    p.$('choice-bubble').dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    assert.ok(!dotted(p), 'Escape')
+    await choose(p, 'choice-effort', 'high')
+    w.document.body.dispatchEvent(new w.MouseEvent('click', { bubbles: true }))
+    assert.ok(!dotted(p), 'a click elsewhere')
+  } finally { p.close() }
+})
+
+test('when told not to show the bubble, the dot is there until the bubble has been looked at and closed', async () => {
+  const p = await choicePage({ model: 'opus' }, {}, { 'vibe-companion-choice-quiet': 'yes' })
+  try {
+    await choose(p, 'choice-effort', 'low')
+    assert.ok(!open(p) && dotted(p))
+    await p.click('choice-info')
+    await p.click('choice-info')
+    assert.ok(!dotted(p))
+  } finally { p.close() }
+})
+
+test('a dismissed notice about old lists stays on the button to be read again, without the dot', async () => {
+  const p = await choicePage({ model: 'opus', cached: KEPT, optionsError: 'sandbox is stopped' })
+  try {
+    assert.ok(dotted(p))
+    await p.click('choice-info')
+    await p.click('choice-bubble-close')
+    assert.ok(!dotted(p))
+    await p.click('choice-info')
+    assert.match(p.$('choice-bubble-stale').textContent, /sandbox is stopped/)
+  } finally { p.close() }
+})
+
+test('a dismissed warning that another model ran loses its dot but not its amber, while it is still so', async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    await endTurn(p, 'claude-sonnet-5-5')
+    assert.ok(open(p) && dotted(p))
+    await p.click('choice-bubble-close')
+    assert.ok(!dotted(p))
+    assert.ok(p.$('choice-info').classList.contains('warn'), 'it is still so')
+    assert.ok(p.$('choice-ran').classList.contains('warn-text'))
+    await endTurn(p, 'claude-sonnet-5-5')
+    assert.ok(open(p) && dotted(p), 'and the next turn says it again')
+  } finally { p.close() }
+})
+
+test('a change made while the bubble is open and told not to show still leaves the dot', async () => {
+  const p = await choicePage({ model: 'opus' }, {}, { 'vibe-companion-choice-quiet': 'yes' })
+  try {
+    await p.click('choice-info')
+    assert.ok(open(p))
+    await choose(p, 'choice-effort', 'low')
+    assert.ok(!open(p))
+    assert.ok(dotted(p))
+  } finally { p.close() }
+})

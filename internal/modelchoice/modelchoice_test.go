@@ -33,10 +33,10 @@ func TestTheModelListingOfTheRealClaudeIsRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"sonnet", "opus", "haiku", "fable"}; !reflect.DeepEqual(got.Plain, want) {
+	if want := []string{"opus", "sonnet", "haiku", "fable"}; !reflect.DeepEqual(got.Plain, want) {
 		t.Errorf("plain = %v, want %v", got.Plain, want)
 	}
-	if want := []string{"best", "sonnet[1m]", "opus[1m]", "fable[1m]", "opusplan"}; !reflect.DeepEqual(got.Other, want) {
+	if want := []string{"opus[1m]", "sonnet[1m]", "best", "fable[1m]", "opusplan"}; !reflect.DeepEqual(got.Other, want) {
 		t.Errorf("other = %v, want %v", got.Other, want)
 	}
 	if got.Current != "Opus 5.5 (default)" {
@@ -105,5 +105,28 @@ func TestAStoredEffortMustBeAPlainName(t *testing.T) {
 		if err := CheckEffortName(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
+	}
+}
+
+func TestModelsAreOrderedBiggestFirstWhereTheSizeIsKnownAndAlphabeticallyWhereItIsNot(t *testing.T) {
+	for _, tc := range []struct{ in, want []string }{
+		{[]string{"haiku", "sonnet", "opus"}, []string{"opus", "sonnet", "haiku"}},
+		{[]string{"sonnet[1m]", "opus[1m]"}, []string{"opus[1m]", "sonnet[1m]"}},
+		{[]string{"zeta", "alpha", "haiku", "opus"}, []string{"opus", "haiku", "alpha", "zeta"}},
+		{[]string{"claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"}, []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"}},
+		{[]string{"b", "a"}, []string{"a", "b"}},
+		{nil, nil},
+	} {
+		if got := BySize(tc.in); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("BySize(%v) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestOrderingDoesntChangeWhatItIsGiven(t *testing.T) {
+	in := []string{"haiku", "opus"}
+	BySize(in)
+	if in[0] != "haiku" {
+		t.Errorf("the list given was reordered in place: %v", in)
 	}
 }
