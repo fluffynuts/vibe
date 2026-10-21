@@ -722,11 +722,11 @@ test('the effort entries are in title case, and what is kept is still what the a
   } finally { p.close() }
 })
 
-test('an effort chosen that the lists lack is shown in title case too', async () => {
+test('an effort chosen that the lists lack is shown in title case too, xhigh as Extra High', async () => {
   const p = await choicePage({ model: 'opus', effort: 'xhigh' })
   try {
     assert.equal(p.$('choice-effort').value, 'xhigh')
-    assert.ok(texts(p.$('choice-effort')).includes('Xhigh'))
+    assert.ok(texts(p.$('choice-effort')).includes('Extra High'))
   } finally { p.close() }
 })
 
@@ -751,5 +751,14 @@ test('a full model id typed under Other… is shown exactly as typed, not title-
   const p = await choicePage({ model: 'claude-opus-4-1' })
   try {
     assert.ok(texts(p.$('choice-model')).includes('claude-opus-4-1'))
+  } finally { p.close() }
+})
+
+test('xhigh is called Extra High in the list, and is still kept and sent as xhigh', async () => {
+  const p = await choicePage({ model: 'opus', options: Object.assign({}, OPTIONS, { efforts: ['low', 'high', 'xhigh', 'max'] }) })
+  try {
+    assert.deepEqual(texts(p.$('choice-effort')), ['Default', 'Low', 'High', 'Extra High', 'Max'])
+    await choose(p, 'choice-effort', 'xhigh')
+    assert.deepEqual(p.posted('/api/conversation/choice'), [{ model: 'opus', effort: 'xhigh' }])
   } finally { p.close() }
 })

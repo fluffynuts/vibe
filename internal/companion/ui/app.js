@@ -5252,6 +5252,12 @@
     return text.replace(/(^|[^A-Za-z])([a-z])/g, (all, before, letter) => before + letter.toUpperCase())
   }
 
+  // effortLabel is how an effort is shown: in title case, but for the one
+  // whose name runs two words together.
+  function effortLabel(effort) {
+    return effort === 'xhigh' ? 'Extra High' : titleCase(effort)
+  }
+
   // modelLabel is how a model is shown: by the name the agent gives it where
   // it's one of the plain ones ("Opus 5.5", as the agent's own picker has it);
   // elsewhere with the alias it is kept as after the name, so what's chosen is
@@ -5275,8 +5281,8 @@
     models.push({ value: OTHER_MODEL, text: 'Other…' })
     fillSelect($('choice-model'), models, choice.model)
     const efforts = [{ value: '', text: 'Default' }]
-    for (const e of (o && o.efforts) || []) efforts.push({ value: e, text: titleCase(e) })
-    if (choice.effort && !efforts.some((e) => e.value === choice.effort)) efforts.push({ value: choice.effort, text: titleCase(choice.effort) })
+    for (const e of (o && o.efforts) || []) efforts.push({ value: e, text: effortLabel(e) })
+    if (choice.effort && !efforts.some((e) => e.value === choice.effort)) efforts.push({ value: choice.effort, text: effortLabel(choice.effort) })
     fillSelect($('choice-effort'), efforts, choice.effort)
 
     // Said beside the drop-downs only when it's news: that the models are on

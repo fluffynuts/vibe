@@ -277,7 +277,7 @@ at once and the agent is asked again in the background (stale while revalidate).
 - **Shown:** the plain models by that name alone ("Opus 5.5": what claude.ai's picker says); the rest, in
   **Other…** and when one is chosen, as `Name · alias` (changed from `alias — name` on 2026-10-21, to lead with a
   title-case name); an alias with no name as itself, **in title case** ("Opus[1M]"), as are the efforts ("Low",
-  "Xhigh"). Title case is only for the short names the agent hands out: a full model id typed under **Other…**
+  "High"), `xhigh` being "Extra High" (the one special case, the user's choice over "Xhigh"). Title case is only for the short names the agent hands out: a full model id typed under **Other…**
   is exact, and is shown as typed. What is kept and sent is never changed. The value kept in
   `settings.yaml` stays the alias, so a choice still means "the latest opus".
 - A failure to ask for the names doesn't fail the lists: it's said in vibe's output (a note), the page shows aliases,
