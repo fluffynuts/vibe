@@ -224,11 +224,11 @@ func themeColorFor(lay layout.Layout, name string, inst state.Instance, agent st
 
 // conversationFor is the companion page's way of talking to the sandbox's
 // agent, or nil when it has none: only claude can be driven this way so far.
-func conversationFor(vibeHome, name string, inst state.Instance) companion.Converser {
+func conversationFor(vibeHome, name string, inst state.Instance, choice profileChoice) companion.Converser {
 	if agent := inst.Agent; agent != "" && agent != "claude" {
 		return nil
 	}
-	return keepingTranscript(converse(name, inst.Target), sandboxTranscripts(name), state.TranscriptPath(vibeHome, name))
+	return keepingTranscript(converse(name, inst.Target, choice.forTurn), sandboxTranscripts(name), state.TranscriptPath(vibeHome, name))
 }
 
 // startCompanion serves the companion page for the sandbox, as the user's
@@ -320,7 +320,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		StartClipboard:         func() ([]string, error) { return startClipboard(name) },
 		ClipboardTrouble:       func() string { return clipboardTrouble(name) },
 		Workspace:              inst.Target,
-		Converse:               conversationFor(vibeHome, name, inst),
+		Converse:               conversationFor(vibeHome, name, inst, profileChoice{lay: lay, profile: inst.Profile}),
 		Prepare:                readyForTurn(name),
 		SandboxGit:             sandboxGitFor(name, inst.Target),
 		PreferredDefaultBranch: preferredDefaultBranch(lay.HomePath("settings.yaml")),

@@ -32,13 +32,26 @@ func shellQuote(s string) string {
 // sbx exec may be root or may be the agent, and this does not need to know.
 const asAgentScript = `if [ "$(id -u)" = 0 ]; then exec su - "$(id -un 1000 2>/dev/null || echo agent)" -c "$1"; else exec bash -lc "$1"; fi`
 
+// turnChoice is the model and effort a turn is asked to use: what the user
+// chose on the page, empty where they left the agent's own default.
+type turnChoice struct {
+	Model, Effort string
+}
+
 // conversationCommand is what sbx exec runs for one turn: claude, in the
-// folder the sandbox works in, resuming session when there is one, wrapped
+// folder the sandbox works in, with the model and effort chosen, resuming
+// session when there is one, wrapped
 // (see wrapTurn) to record in pidFile where it runs.
-func conversationCommand(workspace, session, pidFile string) []string {
-	words := make([]string, 0, len(agentArgs)+2)
+func conversationCommand(workspace, session, pidFile string, choice turnChoice) []string {
+	words := make([]string, 0, len(agentArgs)+6)
 	for _, a := range agentArgs {
 		words = append(words, shellQuote(a))
+	}
+	if choice.Model != "" {
+		words = append(words, "--model", shellQuote(choice.Model))
+	}
+	if choice.Effort != "" {
+		words = append(words, "--effort", shellQuote(choice.Effort))
 	}
 	if companion.SessionID.MatchString(session) {
 		words = append(words, "--resume", shellQuote(session))
@@ -112,10 +125,15 @@ var stopTurn = func(name, pidFile string) {
 // name, which works in workspace (the same path inside as out). A turn
 // ended early (stopped, or by the next prompt) is stopped in the sandbox
 // too, before it counts as ended, so a second can't start alongside it.
-func converse(name, workspace string) companion.Converser {
+func converse(name, workspace string, choose func() (turnChoice, error)) companion.Converser {
 	return func(ctx context.Context, prompt, session string, delivered func(), onLine func([]byte)) error {
+		// Read for each turn, so a change on the page is the next prompt's.
+		choice, err := choose()
+		if err != nil {
+			return err
+		}
 		pidFile := "/tmp/vibe-turn-" + turnID() + ".pid"
-		err := sbxrun.ExecStream(ctx, name, prompt, delivered, onLine, conversationCommand(workspace, session, pidFile)...)
+		err = sbxrun.ExecStream(ctx, name, prompt, delivered, onLine, conversationCommand(workspace, session, pidFile, choice)...)
 		if ctx.Err() != nil {
 			stopTurn(name, pidFile)
 		}
