@@ -172,3 +172,53 @@ func TestCPUsAreReadFromTheSettingsFile(t *testing.T) {
 		t.Errorf("CPUs = %d, err %v", got.CPUs, err)
 	}
 }
+
+func TestModelAndEffortAreReadFromTheSettingsFile(t *testing.T) {
+	s, err := Parse([]byte("model: sonnet\neffort: high\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Model != "sonnet" || s.Effort != "high" {
+		t.Errorf("got model %q, effort %q", s.Model, s.Effort)
+	}
+}
+
+func TestMergeModelAndEffortOverrideWhenSet(t *testing.T) {
+	merged := Merge(Settings{Model: "opus", Effort: "max"}, Settings{Model: "haiku"})
+	if merged.Model != "haiku" || merged.Effort != "max" {
+		t.Errorf("got model %q, effort %q; want haiku, max", merged.Model, merged.Effort)
+	}
+}
+
+func TestUnsetRemovesAKeyKeepingTheRest(t *testing.T) {
+	data, err := Unset([]byte(shipped+"model: opus\n"), "model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != shipped {
+		t.Errorf("Unset gave:\n%s\nwant:\n%s", data, shipped)
+	}
+}
+
+func TestUnsetOfAMissingKeyChangesNothing(t *testing.T) {
+	data, err := Unset([]byte(shipped), "model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != shipped {
+		t.Errorf("Unset gave:\n%s", data)
+	}
+}
+
+func TestUnsetOfTheOnlyKeyLeavesAnEmptyFile(t *testing.T) {
+	data, err := Unset([]byte("model: opus\n"), "model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(data)) != "{}" && strings.TrimSpace(string(data)) != "" {
+		t.Errorf("Unset gave %q", data)
+	}
+	if _, err := Parse(data); err != nil {
+		t.Errorf("what Unset gave can't be read: %v", err)
+	}
+}
