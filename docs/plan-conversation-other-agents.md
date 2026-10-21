@@ -1,7 +1,7 @@
 # Plan: the Conversation tab for agents other than Claude
 
-Status: planned 2026-10-21, first look at OpenCode done the same day (below). Not started. Nothing here has seen a
-*successful* OpenCode turn yet: the sandbox's firewall blocked inference (see "Still to find out").
+Status: planned 2026-10-21; OpenCode 1.19.3 checked for real the same day, on a free model (findings below; real
+output saved in `docs/samples/opencode/`). Not started. Codex not looked at.
 
 ## The outcome
 
@@ -52,7 +52,7 @@ Real output of `opencode run --help` and `opencode models`, not a guess:
   glm-5.3-flash-free, ll-alpha-free, longcat-2.5-preview-free, mimo-v2.6-flash-free,
   muse-spark-1.3-contributor-free, nemotron-3-ultra-free, nemotron-3.5-lightning-free,
   nemotron-3.5-super-vl-free, space-bunny-free. The list worked with no sign-in.
-- **A per-model effort list.** `opencode models --verbose` prints each model's JSON, including `variants`. It
+- **A per-model effort list** (confirmed real). `opencode models --verbose` prints each model's JSON, including `variants`. It
   differs by model and can be empty:
 
   | model | variants |
@@ -100,26 +100,59 @@ Not every agent can do everything Claude does, and the page says so rather than 
 - **Resume across a rebuild:** where the agent has a way to export and import a session; if not, say so, and the
   conversation starts fresh after a rebuild instead of failing.
 
-## Still to find out (needs a turn that gets through)
+## What the real OpenCode run showed (1.19.3, free models, 2026-10-21)
 
-The sandbox's firewall answered the first OpenCode call with 403 "Approval required for opencode.ai:443"
-(`https://opencode.ai/inference/...`). So no successful run has been seen. To finish the check the user approves it on
-the host (`sbx policy approval ls`, then `sbx policy approval respond <id> --option <option>`). Then, with the
-scratch install (`/tmp/oc-install`, to be deleted), capture:
+Inference needed `opencode.ai:443` allowed on the host; before that the first call was a 403 (an `error` event).
+Samples of real output: `docs/samples/opencode/` (a text-only turn, a turn with a tool call, the two error cases,
+and `opencode models opencode --verbose`).
 
-1. A whole successful `--format json` turn: every event type and its fields, including how a tool call and the
-   end of a turn look, whether a cost or token count is reported, and the session id's first appearance.
-2. `-s <id>` resuming: does it carry the earlier conversation, and does `-m` with another model work mid-session?
-3. Whether a turn waits for a permission answer without `--auto`, and what a denied tool looks like.
-4. Stopping: kill the process mid-turn; is the session left usable?
-5. `opencode export` / `import` round-trip: does a session survive moving to a fresh home?
-6. A bad model name: how it fails, and whether it is a line in the stream or only stderr.
-7. `--variant` with a value the model doesn't list: ignored (as Claude does), an error, or mapped?
-8. How the sandbox's `opencode` is installed and signed in (sbx's own image; whether its agent user, `PATH` and
-   home match what `conversationCommand` assumes for Claude).
-9. Whether the free models need the `opencode.ai` inference endpoint only (the one blocked), or others too, so the
-   user knows what to allow.
-10. Whether `opencode acp` could be the one reader for several agents (Codex too).
+**The event stream** (`--format json`, one JSON object a line, each with `type`, `timestamp`, `sessionID`, `part`):
+`step_start`, `text` (`part.text`), `tool_use` (`part.tool`, `part.state.status`/`input`/`output`; **only once the
+tool has finished**, so the page can't show "running a tool" live, only what it did), `step_finish` (`part.reason`:
+`tool-calls` means another step follows, `stop` means the turn is over; `part.tokens`, `part.cost`), `error`
+(`error.name`, `error.data`). The session id is on every line, from the first. The model that answered is **not**
+in the stream (Claude's `init` says; here the page can only show what was asked). A turn ends when `step_finish`
+says `stop`; the process then exits 0.
+
+**Resuming:** `-s <id>` carries the earlier conversation (it answered about the first message), and `-m` with a
+different model mid-session works. A turn killed mid-way leaves a session that resumes.
+
+**Errors are poor and exit 1:** an unknown model (`opencode/nonsense`, or an unknown provider) gives an `error`
+event "Unexpected server error. Check server logs for details." with a `ref`; a `--variant` the model doesn't
+list gives the same. (Claude, by contrast, said what was wrong, and ignored an unknown effort with a warning.) So
+the page validates against the model list *before* sending, and says what is wrong in the user's terms.
+`--variant high` on a model with *no* variants was accepted silently.
+
+**Permissions:** without `--auto` a request for something outside the project is auto-rejected ("permission
+requested: external_directory …; auto-rejecting", on stderr) and the tool_use comes back as an error: it doesn't
+hang, and the agent can't do the work. With `--auto` it ran a command writing outside the project. For parity with
+Claude's `bypassPermissions` the turn needs `--auto`.
+
+**Stopping:** SIGTERM ends it. SIGINT sent mid-turn did **not** end it within 3 seconds in the one run seen
+(it may take longer; not pursued). How vibe stops a Claude turn today needs reading before deciding.
+
+**A runaway is possible:** a free model given a vague prompt wrote and re-edited files in a loop for minutes.
+That is the agent being an agent; but it makes Stop matter, and a turn that never ends needs the user's Stop
+(vibe's existing backstops apply).
+
+**Keeping a session across a rebuild:** copying `~/.local/share/opencode` (the database and its `-wal` and `-shm`
+files, 5.6 MB after an afternoon) into a fresh home worked: the session resumed. `opencode export` then
+`opencode import` into a fresh home listed the session but **resuming it hung silently with no output** (twice,
+including from the original directory). So the copy is the way, taken when no turn is running; export/import is not
+to be relied on. A hang with no output is the kind of thing vibe's backstops must cover for any agent.
+
+**Not seen / still to find out:**
+
+1. How the sandbox's `opencode` is installed and signed in (sbx's own image; agent user, `PATH`, home as
+   `conversationCommand` assumes for Claude): the above ran with an npm install in a scratch folder on the
+   host-side sandbox, not in an sbx `opencode` sandbox.
+2. Which hosts a free model needs besides `opencode.ai:443`, and whether `models.dev` (the model list) needs
+   one: the list worked without an approval in this run, perhaps from a bundled copy.
+3. A SIGINT that does end a turn (or whether only SIGTERM does).
+4. Whether `opencode acp` (or `serve`/`--attach`) is a better channel than `run`: it could give live tool
+   events, the answering model, a clean stop, and one reader for several agents.
+5. Images: whether a model that takes them can be sent one (`-f`).
+6. Slash commands and a cost line: nothing seen in the stream; cost is `part.cost` per step (0 on free models).
 
 For Codex: the same list against its CLI, by someone with a subscription (or a free way, if one turns up). Until
 then, Codex gets a description written from its documentation, marked untested.
