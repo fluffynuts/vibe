@@ -71,7 +71,7 @@ var (
 // sizeOrder are the families whose size is known, biggest first. A name the
 // agent lists that isn't one of these has no size here to go by, so it comes
 // after them, alphabetically: nothing is claimed of it.
-var sizeOrder = []string{"opus", "sonnet", "haiku"}
+var sizeOrder = []string{"fable", "opus", "sonnet", "haiku"}
 
 var nonLetters = regexp.MustCompile(`[^a-z]+`)
 

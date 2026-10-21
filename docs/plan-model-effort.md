@@ -237,12 +237,13 @@ at once and the agent is asked again in the background (stale while revalidate).
 
 ### Order, and when the dot goes (2026-10-21)
 
-- **Models are listed biggest first** where the size is known: opus, sonnet, haiku (`modelchoice.BySize`, matching the
-  family as a whole word in the name: `opus[1m]` and `claude-opus-5-5` are opus, `opusplan` isn't). Any name
-  that isn't one of those (`fable`, `best`, `opusplan`) comes after them, alphabetically: no size is claimed
-  for it. Applied when the lists are read from the agent and again when read from the kept file, so lists
-  kept before this show in the new order. **Open question for the user: where `fable` belongs** (it is last
-  now); it's one entry in `sizeOrder`.
+- **Models are listed biggest first** where the size is known: fable, opus, sonnet, haiku (`modelchoice.BySize`,
+  matching the family as a whole word in the name: `opus[1m]` and `claude-opus-5-5` are opus, `opusplan`
+  isn't). Any name that isn't one of those (`best`, `opusplan`) comes after them, alphabetically: no size is
+  claimed for it. Applied when the lists are read from the agent and again when read from the kept file, so
+  lists kept before this show in the new order. Fable's place at the top is from the user's screenshot of
+  claude.ai's own picker (Fable 5.1 "for your toughest challenges", then Opus, Sonnet, Haiku), not from
+  anything the agent reports; it's one entry in `sizeOrder`.
 - **The dot on the "i" says something hasn't been looked at.** It goes when the bubble is closed, whichever way
   (the X, the button, Escape, a click elsewhere), and comes back with the next change, the next turn that ran
   another model, or a new failure to refresh. The amber outline stays while the cause does (another model

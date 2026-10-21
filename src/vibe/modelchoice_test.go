@@ -134,10 +134,10 @@ func TestTheAgentsListsAreMadeFromWhatTheRealClaudeSaid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"opus", "sonnet", "haiku", "fable"}; !reflect.DeepEqual(got.Models, want) {
+	if want := []string{"fable", "opus", "sonnet", "haiku"}; !reflect.DeepEqual(got.Models, want) {
 		t.Errorf("models = %v", got.Models)
 	}
-	if len(got.OtherModels) != 5 || got.OtherModels[0] != "opus[1m]" {
+	if len(got.OtherModels) != 5 || got.OtherModels[0] != "fable[1m]" {
 		t.Errorf("other models = %v", got.OtherModels)
 	}
 	if want := []string{"low", "medium", "high", "xhigh", "max"}; !reflect.DeepEqual(got.Efforts, want) {
@@ -225,7 +225,7 @@ func TestListsKeptInAnotherOrderComeBackBiggestFirst(t *testing.T) {
 	os.WriteFile(file, []byte(`{"version": 1, "at": "2026-10-21T09:30:00Z", "options": {"models": ["sonnet", "opus", "haiku", "fable"], "otherModels": ["best", "sonnet[1m]", "opus[1m]"], "efforts": ["low"]}}`), 0o600)
 	cached, _ := keptOptions(file, time.Now)
 	got, _, ok := cached()
-	if !ok || !reflect.DeepEqual(got.Models, []string{"opus", "sonnet", "haiku", "fable"}) || !reflect.DeepEqual(got.OtherModels, []string{"opus[1m]", "sonnet[1m]", "best"}) {
+	if !ok || !reflect.DeepEqual(got.Models, []string{"fable", "opus", "sonnet", "haiku"}) || !reflect.DeepEqual(got.OtherModels, []string{"opus[1m]", "sonnet[1m]", "best"}) {
 		t.Errorf("got %+v, %v", got, ok)
 	}
 }
