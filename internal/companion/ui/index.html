@@ -107,20 +107,22 @@
                 aria-autocomplete="list" aria-controls="convo-commands" aria-expanded="false"
                 placeholder="Ask the agent… Ctrl+Enter sends, Enter adds a line, / lists commands. Images and files you paste anywhere on this tab go to the clipboard on the right."></textarea>
             </div>
-            <div id="choice-note" class="notice" role="status" hidden>
-              <span id="choice-note-text"></span>
-              <button type="button" id="choice-retry" hidden>Retry</button>
-            </div>
             <div class="bar">
               <button type="button" id="convo-stop" class="danger" title="Escape, in the prompt box" hidden>Stop (Escape)</button>
-              <span id="convo-choice" class="choice" hidden>
+              <div id="convo-choice" class="choice" hidden>
                 <label class="muted" for="choice-model">Model</label>
                 <select id="choice-model" aria-describedby="choice-ran"></select>
                 <label class="muted" for="choice-effort">Effort</label>
                 <select id="choice-effort" aria-describedby="choice-ran"></select>
-                <span id="choice-ran" class="muted" role="status"></span>
-              </span>
-              <span class="spacer"></span>
+                <button type="button" id="choice-info" class="choice-info" aria-label="About the model and effort" aria-expanded="false" aria-controls="choice-bubble">i</button>
+                <span id="choice-ran" class="muted choice-ran" role="status"></span>
+                <div id="choice-bubble" class="choice-bubble" role="status" hidden>
+                  <button type="button" id="choice-bubble-close" class="choice-bubble-close ghost" aria-label="Close" title="Close (Escape)">&#10005;</button>
+                  <p id="choice-bubble-text"></p>
+                  <button type="button" id="choice-bubble-retry" hidden>Retry</button>
+                  <label id="choice-quiet-row" class="choice-quiet"><input type="checkbox" id="choice-quiet"> Don't show me this again</label>
+                </div>
+              </div>
               <button type="submit" id="convo-send" title="Ctrl+Enter">Send (Ctrl+Enter)</button>
             </div>
           </form>
@@ -435,6 +437,16 @@
       <div class="actions">
         <button value="cancel" class="ghost" formnovalidate>Cancel</button>
         <button value="go" id="choice-warn-go">Change the model</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="choice-error" class="glass" aria-labelledby="choice-error-title">
+    <form method="dialog">
+      <h2 id="choice-error-title">That wasn't kept</h2>
+      <p id="choice-error-text"></p>
+      <div class="actions">
+        <button value="ok" autofocus>OK</button>
       </div>
     </form>
   </dialog>

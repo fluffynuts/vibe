@@ -156,7 +156,6 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .convo-clip iframe { min-height: 440px; }
 }
 
-.convo-form .bar { justify-content: flex-end; }
 .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .spacer { flex: 1; }
 .summary { font-weight: 600; }
@@ -491,15 +490,53 @@ html.themed .commands li[aria-selected="true"] {
 #fresh-branch-name { font: 13px var(--mono); }
 #fresh .choices { display: flex; flex-direction: column; gap: 4px; }
 
-/* the model and effort drop-downs, in the conversation's bar */
-.choice { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+/* The bar under the prompt: Stop on the left, the model and effort in the middle, Send on the right. Three
+   columns, the sides equal, so the middle stays where it is whether or not Stop is showing. Too narrow for
+   that (the column, not the window, is what counts), the choice takes a row of its own above. */
+.convo-form { container-type: inline-size; }
+.convo-form .bar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; }
+.convo-form .bar > #convo-stop { grid-column: 1; justify-self: start; }
+.convo-form .bar > .choice { grid-column: 2; justify-self: center; }
+.convo-form .bar > #convo-send { grid-column: 3; justify-self: end; }
+@container (max-width: 820px) {
+  .convo-form .bar { grid-template-columns: 1fr 1fr; }
+  .convo-form .bar > .choice { grid-column: 1 / -1; grid-row: 1; }
+  .convo-form .bar > #convo-stop { grid-column: 1; grid-row: 2; }
+  .convo-form .bar > #convo-send { grid-column: 2; grid-row: 2; }
+}
+
+/* the model and effort drop-downs */
+.choice { position: relative; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 8px; }
 .choice[hidden] { display: none; }
 .choice select { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; max-width: 16em; }
 .choice select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* a slot of its own, so what the agent says it ran coming and going moves nothing */
+.choice-ran { display: inline-block; box-sizing: content-box; width: 21ch; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.choice-info { position: relative; box-sizing: border-box; width: 22px; height: 22px; padding: 0; border-radius: 50%; font: italic 700 13px Georgia, serif; line-height: 1; color: var(--muted); }
+.choice-info.warn { color: var(--amber); border-color: var(--amber); }
+/* something to know: a dot on the button */
+.choice-info.news::after { content: ""; position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.choice-info.warn::after { background: var(--amber); }
+.choice-bubble { position: absolute; z-index: 20; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%); box-sizing: border-box;
+  width: min(26em, 92vw); padding: 10px 34px 10px 12px; text-align: left; font-size: 13px; background: var(--panel); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 0, 0, .28); }
+.choice-bubble[hidden] { display: none; }
+.choice-bubble p { margin: 0 0 6px; }
+.choice-bubble-close { position: absolute; top: 4px; right: 4px; padding: 0 6px; line-height: 1.4; border: 0; }
+.choice-quiet { display: flex; gap: 6px; align-items: baseline; font-size: 12px; color: var(--muted); cursor: pointer; }
+.choice-quiet[hidden] { display: none; }
+#choice-bubble-retry { margin: 0 0 6px; }
 #choice-other .choices, .choice-name { margin-top: 10px; }
 #choice-other .choices { display: flex; flex-direction: column; gap: 4px; }
 #choice-other .choices label, .choice-name { display: flex; gap: 8px; align-items: baseline; }
 #choice-other-name { font: 13px var(--mono); flex: 1; min-width: 0; }
+/* a question that must be answered: the page behind is frosted, as when vibe isn't there (see .offline) */
+dialog.glass::backdrop { background: rgba(250, 250, 250, .55); backdrop-filter: blur(6px) saturate(.7); -webkit-backdrop-filter: blur(6px) saturate(.7); }
+@media (prefers-color-scheme: dark) { dialog.glass::backdrop { background: rgba(20, 22, 26, .55); } }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  dialog.glass::backdrop { background: rgba(250, 250, 250, .88); }
+  @media (prefers-color-scheme: dark) { dialog.glass::backdrop { background: rgba(20, 22, 26, .88); } }
+}
 
 /* the agent's replies, as Markdown */
 .msg.agent, .msg.user { white-space: normal; }

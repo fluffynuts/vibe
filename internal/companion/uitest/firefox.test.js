@@ -166,3 +166,68 @@ test('a toast shows over the comments pane', async () => {
     assert.deepEqual(where, [16, 16], 'in its place, bottom right')
   } finally { await page.close() }
 })
+
+// conversationPage opens the page on its Conversation tab, the model and
+// effort drop-downs drawn, at width pixels wide.
+async function conversationPage(width) {
+  const page = await browser.newPage({ viewport: { width, height: 900 } })
+  await page.goto(URL)
+  await page.click('#tab-conversation')
+  await page.waitForSelector('#choice-model option:nth-child(3)', { state: 'attached' })
+  return page
+}
+
+const box = (page, sel) => page.locator(sel).boundingBox()
+
+test('the model and effort stay where they are while Stop comes and goes, wide and narrow', async () => {
+  for (const width of [1500, 1000, 600]) {
+    const page = await conversationPage(width)
+    try {
+      const before = await box(page, '#convo-choice')
+      await page.evaluate(() => { document.getElementById('convo-stop').hidden = false })
+      const during = await box(page, '#convo-choice')
+      assert.deepEqual(during, before, `at ${width}px wide, Stop appearing moved them`)
+      const send = await box(page, '#convo-send')
+      const stop = await box(page, '#convo-stop')
+      assert.ok(stop.x + stop.width <= during.x || stop.y >= during.y + during.height, `at ${width}px, Stop overlaps them`)
+      assert.ok(send.x + send.width <= page.viewportSize().width, `at ${width}px, Send is off the page`)
+    } finally { await page.close() }
+  }
+})
+
+test('the model and effort are centred under the prompt when there is room, and on a row of their own when there is not', async () => {
+  const wide = await conversationPage(1500)
+  try {
+    const form = await box(wide, '#convo-form')
+    const group = await box(wide, '#convo-choice')
+    assert.ok(Math.abs((group.x + group.width / 2) - (form.x + form.width / 2)) <= 2, 'centred in the form')
+    const send = await box(wide, '#convo-send')
+    assert.ok(Math.abs(group.y + group.height / 2 - (send.y + send.height / 2)) <= 12, 'on the same row as Send')
+  } finally { await wide.close() }
+  const narrow = await conversationPage(600)
+  try {
+    const form = await box(narrow, '#convo-form')
+    const group = await box(narrow, '#convo-choice')
+    const send = await box(narrow, '#convo-send')
+    assert.ok(group.y + group.height <= send.y, 'above Send')
+    assert.ok(Math.abs((group.x + group.width / 2) - (form.x + form.width / 2)) <= 2, 'centred in the form')
+    assert.ok(group.x >= 0 && group.x + group.width <= 600, 'on the page')
+  } finally { await narrow.close() }
+})
+
+test('the bubble over the info button moves nothing, and stays on the page', async () => {
+  for (const width of [1500, 600]) {
+    const page = await conversationPage(width)
+    try {
+      const watched = ['#convo-input', '#convo-send', '#choice-model', '#choice-ran', '#convo-log']
+      const before = await Promise.all(watched.map((sel) => box(page, sel)))
+      await page.click('#choice-info')
+      await page.waitForSelector('#choice-bubble:not([hidden])')
+      const after = await Promise.all(watched.map((sel) => box(page, sel)))
+      assert.deepEqual(after, before, `at ${width}px wide, opening the bubble moved something`)
+      const bubble = await box(page, '#choice-bubble')
+      assert.ok(bubble.x >= 0 && bubble.x + bubble.width <= width, `at ${width}px, the bubble runs off the page: ${JSON.stringify(bubble)}`)
+      assert.ok(bubble.y >= 0, `at ${width}px, the bubble runs off the top`)
+    } finally { await page.close() }
+  }
+})

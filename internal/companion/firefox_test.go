@@ -74,7 +74,9 @@ func TestThePageInFirefox(t *testing.T) {
 	port := ln.Addr().(*net.TCPAddr).Port
 	srv := &http.Server{Handler: New(Config{Sandbox: "box", Token: pageToken, Port: port,
 		Policy:    &policy.Client{Sandbox: "box", Run: (&fakeSbx{}).run},
-		ReviewTab: &ReviewTab{Workspace: dir, Store: store}}).Handler()}
+		ReviewTab: &ReviewTab{Workspace: dir, Store: store},
+		Converse:  (&fakeAgent{}).converse,
+		Choice:    (&choosing{model: "opus", options: claudeOptions}).config()}).Handler()}
 	go srv.Serve(ln)
 	defer srv.Close()
 

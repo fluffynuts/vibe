@@ -4483,7 +4483,7 @@
     else if (convo.running) setFaviconDot(document.visibilityState === 'visible' && document.hasFocus() ? '' : 'done')
     convo.running = running
     // What the agent ran is known now, and what was chosen has been used.
-    if (ended && state.choice) { choice.pending = false; readChoice() }
+    if (ended && state.choice) choiceTurnEnded()
     $('convo-send').disabled = running
     // Only while it answers: what it has left running ends with the next
     // prompt anyway.
@@ -5127,15 +5127,24 @@
 
   // --- the model and effort ----------------------------------------------
 
-  // The drop-downs in the conversation's bar choose the model and effort the
-  // agent is asked to use (see docs/plan-model-effort.md). What they show is
-  // what vibe keeps, which the agent is asked for on each turn; the lists
-  // are the agent's own. A change applies from the next prompt.
+  // The drop-downs beside Send choose the model and effort the agent is asked
+  // to use (see docs/plan-model-effort.md). What they show is what vibe keeps,
+  // which the agent is asked for on each turn; the lists are the agent's own.
+  // A change applies from the next prompt.
+  //
+  // What is good to know goes in a bubble over the "i" button, which takes no
+  // room in the page so nothing moves when it comes and goes: that a change
+  // waits for the next prompt (which can be asked not to show again, in this
+  // browser, the button still telling there's something to know), that the
+  // agent ran another model than was asked for (always shown), and why the
+  // lists couldn't be had. What failed to be kept is a dialog that must be
+  // answered.
   const OTHER_MODEL = '__other__'
+  const CHOICE_QUIET = 'vibe-companion-choice-quiet'
   // Names the agent accepts that pick by a rule, not one model: what ran
   // can't be held against them.
   const NOT_A_MODEL = new Set(['best', 'opusplan'])
-  const choice = { model: '', effort: '', running: '', session: false, options: null, optionsError: '', problem: '', pending: false, started: false }
+  const choice = { model: '', effort: '', running: '', session: false, options: null, optionsError: '', problem: '', pending: false, bubble: false, started: false }
 
   // dialogAnswer shows a modal dialog and gives what it was closed with, ''
   // when it was dismissed (Escape).
@@ -5153,6 +5162,22 @@
   function ranAsAsked(asked, ran) {
     if (!asked || !ran || NOT_A_MODEL.has(asked)) return true
     return ran.toLowerCase().includes(asked.replace(/\[[^\]]*\]$/, '').toLowerCase())
+  }
+
+  // choiceOdd says the agent ran another model than was asked for. Not while
+  // a change waits for its first turn: what ran then is what was asked before.
+  function choiceOdd() { return !choice.pending && !ranAsAsked(choice.model, choice.running) }
+
+  function choiceQuiet() { return store.get(CHOICE_QUIET) === 'yes' }
+
+  // choiceBubble is what the bubble says now, and of what kind: "problem"
+  // (the lists, or what was chosen, couldn't be had), "odd" (ran something
+  // else), or news that a change waits.
+  function choiceBubble() {
+    const problem = choice.optionsError || choice.problem
+    if (problem) return { kind: 'problem', text: problem }
+    if (choiceOdd()) return { kind: 'odd', text: 'You asked for ' + choice.model + ', but the agent says it ran ' + choice.running + '.' }
+    return { kind: 'news', text: 'A change to the model or effort applies to your next prompt.' }
   }
 
   function fillSelect(select, items, value) {
@@ -5173,18 +5198,37 @@
     if (choice.effort && !efforts.some((e) => e.value === choice.effort)) efforts.push({ value: choice.effort, text: choice.effort })
     fillSelect($('choice-effort'), efforts, choice.effort)
 
+    const odd = choiceOdd()
     const ran = $('choice-ran')
-    const odd = !choice.pending && !ranAsAsked(choice.model, choice.running)
     ran.classList.toggle('warn-text', odd)
-    ran.textContent = !choice.running ? ''
-      : odd ? 'asked for ' + choice.model + ', but the agent says it ran ' + choice.running
-      : 'running ' + choice.running
+    ran.textContent = !choice.running ? '' : (odd ? 'ran ' : 'running ') + choice.running
+    ran.title = choice.running ? ran.textContent : ''
 
-    const text = choice.optionsError || choice.problem || (choice.pending ? 'This applies to your next prompt.' : '')
-    $('choice-note-text').textContent = text
-    $('choice-note-text').className = choice.optionsError || choice.problem ? 'warn-text' : 'muted'
-    $('choice-retry').hidden = !choice.optionsError
-    $('choice-note').hidden = !text
+    const said = choiceBubble()
+    const problem = said.kind === 'problem'
+    const info = $('choice-info')
+    info.classList.toggle('warn', problem || odd)
+    info.classList.toggle('news', choice.pending)
+    info.setAttribute('aria-expanded', String(choice.bubble))
+    $('choice-bubble').hidden = !choice.bubble
+    $('choice-bubble-text').textContent = said.text
+    $('choice-bubble-retry').hidden = !problem
+    // Only what can be told to stop is: not that the agent ran another model.
+    $('choice-quiet-row').hidden = said.kind !== 'news'
+    $('choice-quiet').checked = choiceQuiet()
+  }
+
+  function setChoiceBubble(on) {
+    choice.bubble = on
+    drawChoice()
+  }
+
+  // choiceFailed tells the user what couldn't be kept, in a dialog that has
+  // to be answered: the drop-downs go back to what vibe has behind it.
+  async function choiceFailed(text) {
+    drawChoice()
+    $('choice-error-text').textContent = text
+    await dialogAnswer($('choice-error'))
   }
 
   function takeChoice(body) {
@@ -5221,26 +5265,48 @@
     drawChoice()
   }
 
-  function initChoice() {
+  // Nothing the user did has failed when the page opens, so a problem then is
+  // said in the bubble, opened, and not in a dialog in the way.
+  async function initChoice() {
     if (choice.started) return
     choice.started = true
-    readChoice().then(() => askChoiceOptions(false))
+    await readChoice()
+    await askChoiceOptions(false)
+    if (choice.problem || choice.optionsError) setChoiceBubble(true)
+  }
+
+  async function retryChoice() {
+    if (choice.problem) await readChoice()
+    await askChoiceOptions(true)
+    if (!choice.problem && !choice.optionsError) setChoiceBubble(false)
+  }
+
+  // choiceTurnEnded: what the agent ran is known now, and what was chosen has
+  // been used, so what was said of it is out of date. Another model than
+  // asked for is said at the end of every turn it happens.
+  async function choiceTurnEnded() {
+    choice.pending = false
+    if (!choice.problem && !choice.optionsError) choice.bubble = false
+    await readChoice()
+    if (choiceOdd()) setChoiceBubble(true)
   }
 
   // saveChoice asks vibe to keep model and effort, and shows what it kept: it
   // may have changed the effort, or refused.
   async function saveChoice(model, effort) {
     $('choice-model').disabled = $('choice-effort').disabled = true
+    let failed = ''
     try {
       const res = await post('/api/conversation/choice', { model, effort })
       reached(true)
-      if (res.ok) { takeChoice(res.body); choice.problem = ''; choice.pending = true } else choice.problem = res.body.error || "that choice couldn't be kept."
+      if (res.ok) { takeChoice(res.body); choice.problem = ''; choice.pending = true } else failed = res.body.error || "that choice couldn't be kept."
     } catch (e) {
       reached(false)
-      choice.problem = 'Could not reach vibe to keep that choice.'
+      failed = 'Could not reach vibe to keep that choice.'
     }
     $('choice-model').disabled = $('choice-effort').disabled = false
-    drawChoice()
+    if (failed) { await choiceFailed(failed); return }
+    setChoiceBubble(!choiceQuiet())
   }
 
   // pickOtherModel asks which of the models the agent lists beyond the
@@ -5535,7 +5601,18 @@
     $('convo-new').addEventListener('click', openFresh)
     $('choice-model').addEventListener('change', modelPicked)
     $('choice-effort').addEventListener('change', () => saveChoice(choice.model, $('choice-effort').value))
-    $('choice-retry').addEventListener('click', () => askChoiceOptions(true))
+    $('choice-info').addEventListener('click', () => setChoiceBubble(!choice.bubble))
+    $('choice-bubble-close').addEventListener('click', () => { setChoiceBubble(false); $('choice-info').focus() })
+    $('choice-bubble-retry').addEventListener('click', retryChoice)
+    $('choice-quiet').addEventListener('change', () => { store.set(CHOICE_QUIET, $('choice-quiet').checked ? 'yes' : ''); drawChoice() })
+    // Escape is the agent's Stop in the prompt box, so it only closes the
+    // bubble from inside the choice.
+    $('convo-choice').addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && choice.bubble) { e.stopPropagation(); setChoiceBubble(false); $('choice-info').focus() }
+    })
+    document.addEventListener('click', (e) => {
+      if (choice.bubble && !$('convo-choice').contains(e.target)) setChoiceBubble(false)
+    })
     $('fresh-form').addEventListener('submit', (ev) => {
       ev.preventDefault()
       if (ev.submitter && ev.submitter.value === 'cancel') $('fresh').close('cancel')

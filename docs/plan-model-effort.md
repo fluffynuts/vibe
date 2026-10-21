@@ -185,3 +185,28 @@ resets the model and effort to that agent's defaults.
   at all for `best` / `opusplan`, and not while a change is waiting for its first turn.
 - Not done: other agents (see `plan-conversation-other-agents.md`); a global default beyond what settings
   already layer; the OpenCode-style per-model effort lists.
+
+### Layout, after the first real try (2026-10-21)
+
+The user tried it on another sandbox: it worked (the warning on a conversation under way, a new conversation on
+Haiku answered and the reported model matched, effort switched). Then asked for:
+
+- **Centred.** The bar under the prompt is a grid, `1fr auto 1fr`: Stop on the left, the drop-downs in the middle,
+  Send on the right, so Stop appearing doesn't move the middle. In a column under 820px (a container query on
+  the form: the column, not the window, is what counts) the drop-downs take a row of their own above Stop and
+  Send. What the agent ran has a slot of its own (fixed width, an ellipsis, the full text on hover).
+- **An "i" button with a bubble**, over the button, taking no room. It says that a change applies from the next
+  prompt, with **Don't show me this again** (kept in the browser, `vibe-companion-choice-quiet`: each sandbox's
+  page is its own origin, so once per sandbox for now; vibe-wide later if it annoys); after it, the button
+  still carries a dot and opens the bubble when pressed. The agent having run another model than asked for is
+  said in the same bubble, in amber, at the end of **every** turn it happens, with no tick to hide it. It isn't
+  said on a page just opened (the caption and the button show it, though). Closed by its button, by Escape
+  inside it (Escape in the prompt box stays the agent's Stop), and by a click elsewhere.
+- **Failures.** What the user asked for that couldn't be kept is a modal dialog over a frosted page (the
+  `.offline` glass, on `dialog.glass::backdrop`). A failure to get the lists when the page opens is not
+  something the user did, so it is in the bubble, opened, with **Retry**, not in the way: **this departs from
+  "errors in a dialog"** for that one case, and is easy to change.
+- The conversation-under-way warning is unchanged: asked every time, no tick.
+- Tests: the jsdom file (25), and three in real Firefox for the layout (the group doesn't move as Stop comes and
+  goes at three widths, is centred, the bubble moves nothing and stays on the page); the Firefox page is now
+  served with a fake agent and choice for that.

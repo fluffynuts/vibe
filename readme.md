@@ -613,18 +613,25 @@ you're looking at:
   while you're on another tab, until you open it. Once the agent has answered you can
   send the next prompt, even if it left something running that it is waiting on (a review page, say):
   sending ends that. Links to pages on `localhost` in what the agent says can be clicked.
-  The **Model** and **Effort** drop-downs, beside **Send**, choose what claude is asked to use (they're there for a
-  Claude sandbox). **Default** passes nothing, so claude's own settings decide, and says which model that is.
-  The lists are claude's own, read from it when the page opens (without waking a sandbox that's asleep: if it
-  can't be asked, the page says why and **Retry** wakes it): the plain model names are in the drop-down, and
-  **Other…** opens the rest the agent lists, or takes a model's full name. Efforts are the ones claude's
-  `--effort` takes. A change applies from the next prompt, even while the agent is answering. Changing the model
-  puts the effort back to **Default**, to be chosen again, as what an effort means differs between models; and
-  for a conversation already under way it asks first, because the next prompt re-reads the whole conversation,
-  which is slower and costs more (Cancel puts the drop-down back). The choice is kept as `model:` and `effort:`
-  in the profile's `settings.yaml`, so it outlives vibe, the page and a rebuild, and `--re-compose` carries it
-  across; what's in the global `settings.yaml` is the default under it. Beside the drop-downs the page says which
-  model claude reported running on its last turn, and says so plainly when that isn't what was asked for.
+  The **Model** and **Effort** drop-downs, under the prompt and centred between **Stop** and **Send** (so they
+  stay put while a turn runs; in a narrow column they take a row of their own), choose what claude is asked to
+  use (they're there for a Claude sandbox). **Default** passes nothing, so claude's own settings decide, and says
+  which model that is. The lists are claude's own, read from it when the page opens (without waking a sandbox
+  that's asleep): the plain model names are in the drop-down, and **Other…** opens the rest the agent lists, or
+  takes a model's full name. Efforts are the ones claude's `--effort` takes. A change applies from the next
+  prompt, even while the agent is answering. Changing the model puts the effort back to **Default**, to be
+  chosen again, as what an effort means differs between models; and for a conversation already under way it asks
+  first, because the next prompt re-reads the whole conversation, which is slower and costs more (Cancel puts
+  the drop-down back). The choice is kept as `model:` and `effort:` in the profile's `settings.yaml`, so it
+  outlives vibe, the page and a rebuild, and `--re-compose` carries it across; what's in the global
+  `settings.yaml` is the default under it. What's good to know is in a bubble over the **i** button beside them,
+  which takes no room, so nothing in the page moves when it comes and goes: that a change applies from your next
+  prompt (the bubble has **Don't show me this again**, remembered by that browser, after which the button still
+  carries a dot when there's something to know, and opens the bubble when pressed); that the agent says it ran
+  another model than was asked for, which is said at the end of every such turn, in amber, and can't be switched
+  off; and, when the page opens, why the lists couldn't be had (with **Retry**, which wakes the sandbox to ask).
+  A choice that couldn't be kept is said in a dialog over the frosted page, to be answered. Beside the
+  drop-downs, in a slot of its own, the page says which model claude reported running on its last turn.
 - **Review** — the changes in the sandbox's folder, worked out on this machine, read with go-git by a helper process (vibe itself, held to a memory limit and stopped when its time is up), which runs nothing the repository's own config names, since the sandbox can write that; no git is needed on the host. It covers uncommitted changes (
   untracked files with them; or a branch's, or a commit's), with the agent's review comments under the
   lines they're about: side by side (or in one column), with the hidden lines between changes a click away,
