@@ -210,3 +210,27 @@ Haiku answered and the reported model matched, effort switched). Then asked for:
 - Tests: the jsdom file (25), and three in real Firefox for the layout (the group doesn't move as Stop comes and
   goes at three widths, is centred, the bubble moves nothing and stays on the page); the Firefox page is now
   served with a fake agent and choice for that.
+
+### The agent's lists are kept (2026-10-21)
+
+Asked for by the user: the first time, a plain fetch with nothing known; after that, the last lists are shown
+at once and the agent is asked again in the background (stale while revalidate).
+
+- **Per sandbox** (the user's decision, after weighing per agent): `companion/<name>.model-options.json` under
+  vibe's home (`state.ModelOptionsPath`), removed with the sandbox by `Remove` and moved by `Move`. The lists
+  depend on the `claude` in that sandbox, the account and a project's settings, so another sandbox's would
+  not be the truth. Written whole (`fscopy.WriteWhole`) with a version and when it was asked.
+- A file that can't be read, is another version, or lists no models is **said** (one note naming it) and not
+  used: it's a cache, so the agent is asked as if nothing were kept.
+- The host serves what's kept at once (`GET /api/conversation/choice` carries `options`, `optionsAt`,
+  `optionsFresh`) and the page then asks (`POST .../choice/options`, no waking). A fresh answer replaces the kept
+  one in memory and on disk; a failure to write it is logged, and doesn't fail the request.
+- **Not held to a stale list:** an effort is checked against the agent's list only once it has been asked in
+  this run; before that, by shape. A list from an earlier run may lack what the agent now takes, and an unknown
+  effort is only ignored (with a warning) by claude anyway.
+- **A failed refresh with something kept is quiet:** the kept lists stay, the bubble doesn't open itself, the
+  button carries its dot, and the bubble, when asked, says "The lists are from <time>; they couldn't be
+  refreshed: <reason>" with **Retry** (which wakes the sandbox). With nothing kept, the failure is as before
+  (the bubble opens, amber, with Retry).
+- A known small untruth: "Default (Opus 5.5)" is part of what's kept, so it can be briefly out of date, until
+  the refresh.

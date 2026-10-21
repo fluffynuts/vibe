@@ -5144,7 +5144,7 @@
   // Names the agent accepts that pick by a rule, not one model: what ran
   // can't be held against them.
   const NOT_A_MODEL = new Set(['best', 'opusplan'])
-  const choice = { model: '', effort: '', running: '', session: false, options: null, optionsError: '', problem: '', pending: false, bubble: false, started: false }
+  const choice = { model: '', effort: '', running: '', session: false, options: null, optionsAt: 0, optionsError: '', problem: '', pending: false, bubble: false, started: false }
 
   // dialogAnswer shows a modal dialog and gives what it was closed with, ''
   // when it was dismissed (Escape).
@@ -5170,11 +5170,26 @@
 
   function choiceQuiet() { return store.get(CHOICE_QUIET) === 'yes' }
 
+  // choiceProblem is why there are no lists to choose from, or what was chosen
+  // couldn't be read: "" when there's nothing wrong, or when the lists are
+  // only out of date (see choiceStale).
+  function choiceProblem() {
+    return choice.problem || (choice.options ? '' : choice.optionsError)
+  }
+
+  // choiceStale says the lists are from an earlier run, and asking the agent
+  // again failed: they're used, and the bubble says how old they are.
+  function choiceStale() {
+    return choice.options && choice.optionsError
+      ? 'The lists are from ' + new Date(choice.optionsAt).toLocaleString() + "; they couldn't be refreshed: " + choice.optionsError
+      : ''
+  }
+
   // choiceBubble is what the bubble says now, and of what kind: "problem"
   // (the lists, or what was chosen, couldn't be had), "odd" (ran something
   // else), or news that a change waits.
   function choiceBubble() {
-    const problem = choice.optionsError || choice.problem
+    const problem = choiceProblem()
     if (problem) return { kind: 'problem', text: problem }
     if (choiceOdd()) return { kind: 'odd', text: 'You asked for ' + choice.model + ', but the agent says it ran ' + choice.running + '.' }
     return { kind: 'news', text: 'A change to the model or effort applies to your next prompt.' }
@@ -5207,12 +5222,15 @@
     const said = choiceBubble()
     const problem = said.kind === 'problem'
     const info = $('choice-info')
+    const stale = choiceStale()
     info.classList.toggle('warn', problem || odd)
-    info.classList.toggle('news', choice.pending)
+    info.classList.toggle('news', choice.pending || !!stale)
     info.setAttribute('aria-expanded', String(choice.bubble))
     $('choice-bubble').hidden = !choice.bubble
     $('choice-bubble-text').textContent = said.text
-    $('choice-bubble-retry').hidden = !problem
+    $('choice-bubble-stale').textContent = stale
+    $('choice-bubble-stale').hidden = !stale
+    $('choice-bubble-retry').hidden = !problem && !stale
     // Only what can be told to stop is: not that the agent ran another model.
     $('choice-quiet-row').hidden = said.kind !== 'news'
     $('choice-quiet').checked = choiceQuiet()
@@ -5236,7 +5254,7 @@
     choice.effort = body.effort || ''
     choice.running = body.running || ''
     choice.session = !!body.session
-    if (body.options) choice.options = body.options
+    if (body.options) { choice.options = body.options; choice.optionsAt = body.optionsAt || 0 }
   }
 
   async function readChoice() {
@@ -5257,7 +5275,7 @@
     try {
       const res = await post('/api/conversation/choice/options', { wake }, { timeout: 3 * 60 * 1000 })
       reached(true)
-      if (res.ok) { choice.options = res.body.options; choice.optionsError = '' } else choice.optionsError = res.body.error || "the agent couldn't say which models and efforts it has."
+      if (res.ok) { choice.options = res.body.options; choice.optionsAt = res.body.optionsAt || 0; choice.optionsError = '' } else choice.optionsError = res.body.error || "the agent couldn't say which models and efforts it has."
     } catch (e) {
       reached(false)
       choice.optionsError = 'Could not reach vibe to ask the agent which models and efforts it has.'
@@ -5272,13 +5290,13 @@
     choice.started = true
     await readChoice()
     await askChoiceOptions(false)
-    if (choice.problem || choice.optionsError) setChoiceBubble(true)
+    if (choiceProblem()) setChoiceBubble(true)
   }
 
   async function retryChoice() {
     if (choice.problem) await readChoice()
     await askChoiceOptions(true)
-    if (!choice.problem && !choice.optionsError) setChoiceBubble(false)
+    if (!choiceProblem() && !choice.optionsError) setChoiceBubble(false)
   }
 
   // choiceTurnEnded: what the agent ran is known now, and what was chosen has
@@ -5286,7 +5304,7 @@
   // asked for is said at the end of every turn it happens.
   async function choiceTurnEnded() {
     choice.pending = false
-    if (!choice.problem && !choice.optionsError) choice.bubble = false
+    if (!choiceProblem() && !choice.optionsError) choice.bubble = false
     await readChoice()
     if (choiceOdd()) setChoiceBubble(true)
   }

@@ -16,7 +16,11 @@ const OPTIONS = {
 // error for them), and what the agent is doing.
 async function choicePage(over = {}, { choice = true } = {}, storage = {}) {
   const at = Object.assign({ model: '', effort: '', running: '', session: false, options: OPTIONS, optionsError: null, busy: false, refuse: null }, over)
-  const body = () => ({ model: at.model, effort: at.effort, running: at.running, session: at.session, options: at.haveOptions ? at.options : null })
+  // The lists the page is given: the agent's, once asked in this run, else
+  // what an earlier run kept (at.cached, from at.cachedAt), if anything.
+  const listed = () => at.haveOptions ? { options: at.options, optionsAt: 1792000000000, optionsFresh: true }
+    : at.cached ? { options: at.cached, optionsAt: at.cachedAt || 1791000000000, optionsFresh: false } : { options: null, optionsFresh: false }
+  const body = () => Object.assign({ model: at.model, effort: at.effort, running: at.running, session: at.session }, listed())
   const routes = {
     '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, choice, attention: {} },
     '/api/conversation': () => ({ events: [], last: 0, running: at.busy }),
@@ -28,14 +32,15 @@ async function choicePage(over = {}, { choice = true } = {}, storage = {}) {
       at.model = call.body.model
       return body()
     },
-    '/api/conversation/choice/options': (call) => {
+    '/api/conversation/choice/options': async (call) => {
+      if (at.hold) await at.hold
       if (at.optionsError && !(call.body && call.body.wake)) return { status: 502, body: { error: at.optionsError } }
       at.haveOptions = true
-      return { options: at.options }
+      return listed()
     },
     '/api/log': { entries: [] },
   }
-  const p = await openPage({ routes, storage: Object.assign({ 'vibe-companion-tab': 'conversation' }, storage) })
+  const p = await openPage({ routes, storage: Object.assign({ 'vibe-companion-tab': 'conversation' }, storage), settled: !at.hold })
   return Object.assign(p, { at })
 }
 
@@ -375,4 +380,54 @@ test("what was said not to show again is remembered by the browser, for the next
     assert.ok(!open(again))
     assert.ok(again.$('choice-info').classList.contains('news'))
   } finally { again.close() }
+})
+
+// turns lets the page run a few turns of the event loop, for a test with a
+// call held back.
+const turns = async () => { for (let i = 0; i < 30; i++) await new Promise((resolve) => setImmediate(resolve)) }
+
+const KEPT = { models: ['sonnet', 'opus'], otherModels: [], efforts: ['low', 'high'], current: 'Sonnet 4.5 (default)' }
+
+test('lists kept from an earlier run fill the drop-downs before the agent has answered, and the fresh ones replace them', async () => {
+  let release
+  const p = await choicePage({ model: 'opus', cached: KEPT, hold: new Promise((resolve) => { release = resolve }) })
+  try {
+    await turns()
+    assert.deepEqual(values(p.$('choice-model')), ['', 'sonnet', 'opus', '__other__'], 'the kept lists, at once')
+    assert.equal(texts(p.$('choice-model'))[0], 'Default (Sonnet 4.5)')
+    assert.deepEqual(values(p.$('choice-effort')), ['', 'low', 'high'])
+    assert.ok(!open(p), 'nothing to say about them')
+    release()
+    await p.settle()
+    assert.deepEqual(values(p.$('choice-model')), ['', 'sonnet', 'opus', 'haiku', '__other__'], 'the agent has now said')
+    assert.equal(texts(p.$('choice-model'))[0], 'Default (Opus 5.5)')
+    assert.ok(!p.$('choice-info').classList.contains('news'))
+  } finally { p.close() }
+})
+
+test('when the agent cannot be asked again, the kept lists stay, quietly: the bubble, when asked, says how old they are and why', async () => {
+  const p = await choicePage({ model: 'opus', cached: KEPT, optionsError: 'sandbox is stopped' })
+  try {
+    assert.deepEqual(values(p.$('choice-model')), ['', 'sonnet', 'opus', '__other__'])
+    assert.ok(!p.$('choice-error').open)
+    assert.ok(!open(p), 'not opened by itself: there is something to use')
+    assert.ok(!p.$('choice-info').classList.contains('warn'))
+    assert.ok(p.$('choice-info').classList.contains('news'), 'but the button says there is something to know')
+    await p.click('choice-info')
+    assert.match(p.$('choice-bubble-stale').textContent, /from .*2026.*couldn't be refreshed.*sandbox is stopped/s)
+    assert.ok(!p.$('choice-bubble-stale').hidden)
+    await p.click('choice-bubble-retry')
+    assert.deepEqual(p.posted('/api/conversation/choice/options'), [{ wake: false }, { wake: true }])
+    assert.deepEqual(values(p.$('choice-model')), ['', 'sonnet', 'opus', 'haiku', '__other__'])
+    assert.ok(!open(p), 'it came, so there is nothing more to say')
+    assert.ok(!p.$('choice-info').classList.contains('news'))
+  } finally { p.close() }
+})
+
+test('the old lists are not what a change is held to: what was kept stays usable while stale', async () => {
+  const p = await choicePage({ model: 'opus', cached: KEPT, optionsError: 'sandbox is stopped' })
+  try {
+    await choose(p, 'choice-effort', 'low')
+    assert.deepEqual(p.posted('/api/conversation/choice'), [{ model: 'opus', effort: 'low' }])
+  } finally { p.close() }
 })
