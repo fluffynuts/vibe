@@ -613,7 +613,7 @@ you're looking at:
   while you're on another tab, until you open it. Once the agent has answered you can
   send the next prompt, even if it left something running that it is waiting on (a review page, say):
   sending ends that. Links to pages on `localhost` in what the agent says can be clicked.
-  The **Model** and **Effort** drop-downs in the bar choose what claude is asked to use (they're there for a
+  The **Model** and **Effort** drop-downs, beside **Send**, choose what claude is asked to use (they're there for a
   Claude sandbox). **Default** passes nothing, so claude's own settings decide, and says which model that is.
   The lists are claude's own, read from it when the page opens (without waking a sandbox that's asleep: if it
   can't be asked, the page says why and **Retry** wakes it): the plain model names are in the drop-down, and
