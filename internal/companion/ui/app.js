@@ -630,6 +630,9 @@
       state.clipboardCanStart = !!res.body.clipboardCanStart
       state.conversation = !!res.body.conversation
       $('tab-conversation').hidden = !state.conversation
+      state.choice = state.conversation && !!res.body.choice
+      $('convo-choice').hidden = !state.choice
+      if (state.choice) initChoice()
       state.admin = !!res.body.admin
       state.usage = !!res.body.usage
       $('usage').hidden = !state.usage
@@ -4474,10 +4477,13 @@
   }
 
   function setConvoRunning(running, background, quietMinutes, compacting) {
+    const ended = convo.running && !running
     drawAgentLight(running, background, quietMinutes, compacting)
     if (running) setFaviconDot('working')
     else if (convo.running) setFaviconDot(document.visibilityState === 'visible' && document.hasFocus() ? '' : 'done')
     convo.running = running
+    // What the agent ran is known now, and what was chosen has been used.
+    if (ended && state.choice) { choice.pending = false; readChoice() }
     $('convo-send').disabled = running
     // Only while it answers: what it has left running ends with the next
     // prompt anyway.
@@ -5119,6 +5125,158 @@
     }
   }
 
+  // --- the model and effort ----------------------------------------------
+
+  // The drop-downs in the conversation's bar choose the model and effort the
+  // agent is asked to use (see docs/plan-model-effort.md). What they show is
+  // what vibe keeps, which the agent is asked for on each turn; the lists
+  // are the agent's own. A change applies from the next prompt.
+  const OTHER_MODEL = '__other__'
+  // Names the agent accepts that pick by a rule, not one model: what ran
+  // can't be held against them.
+  const NOT_A_MODEL = new Set(['best', 'opusplan'])
+  const choice = { model: '', effort: '', running: '', session: false, options: null, optionsError: '', problem: '', pending: false, started: false }
+
+  // dialogAnswer shows a modal dialog and gives what it was closed with, ''
+  // when it was dismissed (Escape).
+  function dialogAnswer(dialog) {
+    return new Promise((resolve) => {
+      dialog.returnValue = ''
+      dialog.addEventListener('close', () => resolve(dialog.returnValue), { once: true })
+      dialog.showModal()
+      raiseToast()
+    })
+  }
+
+  // ranAsAsked says what the agent reported running fits what was asked for:
+  // an alias ("opus") is part of the full name it stands for.
+  function ranAsAsked(asked, ran) {
+    if (!asked || !ran || NOT_A_MODEL.has(asked)) return true
+    return ran.toLowerCase().includes(asked.replace(/\[[^\]]*\]$/, '').toLowerCase())
+  }
+
+  function fillSelect(select, items, value) {
+    select.replaceChildren(...items.map((i) => el('option', { value: i.value, text: i.text })))
+    select.value = value
+  }
+
+  function drawChoice() {
+    const o = choice.options
+    const current = o && o.current ? o.current.replace(/\s*\(default\)\s*$/i, '') : ''
+    const models = [{ value: '', text: current ? 'Default (' + current + ')' : 'Default' }]
+    for (const m of (o && o.models) || []) models.push({ value: m, text: m })
+    if (choice.model && !models.some((m) => m.value === choice.model)) models.push({ value: choice.model, text: choice.model })
+    models.push({ value: OTHER_MODEL, text: 'Other…' })
+    fillSelect($('choice-model'), models, choice.model)
+    const efforts = [{ value: '', text: 'Default' }]
+    for (const e of (o && o.efforts) || []) efforts.push({ value: e, text: e })
+    if (choice.effort && !efforts.some((e) => e.value === choice.effort)) efforts.push({ value: choice.effort, text: choice.effort })
+    fillSelect($('choice-effort'), efforts, choice.effort)
+
+    const ran = $('choice-ran')
+    const odd = !choice.pending && !ranAsAsked(choice.model, choice.running)
+    ran.classList.toggle('warn-text', odd)
+    ran.textContent = !choice.running ? ''
+      : odd ? 'asked for ' + choice.model + ', but the agent says it ran ' + choice.running
+      : 'running ' + choice.running
+
+    const text = choice.optionsError || choice.problem || (choice.pending ? 'This applies to your next prompt.' : '')
+    $('choice-note-text').textContent = text
+    $('choice-note-text').className = choice.optionsError || choice.problem ? 'warn-text' : 'muted'
+    $('choice-retry').hidden = !choice.optionsError
+    $('choice-note').hidden = !text
+  }
+
+  function takeChoice(body) {
+    choice.model = body.model || ''
+    choice.effort = body.effort || ''
+    choice.running = body.running || ''
+    choice.session = !!body.session
+    if (body.options) choice.options = body.options
+  }
+
+  async function readChoice() {
+    try {
+      const res = await api('/api/conversation/choice')
+      reached(true)
+      if (res.ok) { takeChoice(res.body); choice.problem = '' } else choice.problem = res.body.error || "vibe couldn't say what model and effort are chosen."
+    } catch (e) {
+      reached(false)
+      choice.problem = 'Could not reach vibe to ask what model and effort are chosen.'
+    }
+    drawChoice()
+  }
+
+  // askChoiceOptions asks for the agent's lists. wake says the sandbox may be
+  // woken to be asked: not when the page opens, only when the user retries.
+  async function askChoiceOptions(wake) {
+    try {
+      const res = await post('/api/conversation/choice/options', { wake }, { timeout: 3 * 60 * 1000 })
+      reached(true)
+      if (res.ok) { choice.options = res.body.options; choice.optionsError = '' } else choice.optionsError = res.body.error || "the agent couldn't say which models and efforts it has."
+    } catch (e) {
+      reached(false)
+      choice.optionsError = 'Could not reach vibe to ask the agent which models and efforts it has.'
+    }
+    drawChoice()
+  }
+
+  function initChoice() {
+    if (choice.started) return
+    choice.started = true
+    readChoice().then(() => askChoiceOptions(false))
+  }
+
+  // saveChoice asks vibe to keep model and effort, and shows what it kept: it
+  // may have changed the effort, or refused.
+  async function saveChoice(model, effort) {
+    $('choice-model').disabled = $('choice-effort').disabled = true
+    try {
+      const res = await post('/api/conversation/choice', { model, effort })
+      reached(true)
+      if (res.ok) { takeChoice(res.body); choice.problem = ''; choice.pending = true } else choice.problem = res.body.error || "that choice couldn't be kept."
+    } catch (e) {
+      reached(false)
+      choice.problem = 'Could not reach vibe to keep that choice.'
+    }
+    $('choice-model').disabled = $('choice-effort').disabled = false
+    drawChoice()
+  }
+
+  // pickOtherModel asks which of the models the agent lists beyond the
+  // plain names, or which full name, and gives it; null for none.
+  async function pickOtherModel() {
+    const others = (choice.options && choice.options.otherModels) || []
+    $('choice-other-intro').textContent = others.length
+      ? 'The agent also lists these, besides the ones in the drop-down.'
+      : "The agent lists no others, but it takes a model's full name."
+    $('choice-other-list').replaceChildren(...others.map((m) => el('label', {},
+      el('input', { type: 'radio', name: 'choice-other', value: m }), ' ', m)))
+    $('choice-other-name').value = ''
+    if ((await dialogAnswer($('choice-other'))) !== 'go') return null
+    const typed = $('choice-other-name').value.trim()
+    const picked = $('choice-other-list').querySelector('input:checked')
+    return typed || (picked ? picked.value : null)
+  }
+
+  async function changeModel(model) {
+    if (model === choice.model) { drawChoice(); return }
+    // Only a conversation under way has anything to re-read.
+    if (choice.session) {
+      $('choice-warn-title').textContent = 'Change the model to ' + (model || 'the default') + '?'
+      if ((await dialogAnswer($('choice-warn'))) !== 'go') { drawChoice(); return }
+    }
+    await saveChoice(model, choice.effort)
+  }
+
+  async function modelPicked() {
+    const value = $('choice-model').value
+    if (value !== OTHER_MODEL) { await changeModel(value); return }
+    const other = await pickOtherModel()
+    if (other == null) { drawChoice(); return }
+    await changeModel(other)
+  }
+
   // --- "New conversation" -----------------------------------------------
 
   // The dialog offers only what applies (see docs/plan-new-conversation.md).
@@ -5375,6 +5533,9 @@
 
   function setUpFresh() {
     $('convo-new').addEventListener('click', openFresh)
+    $('choice-model').addEventListener('change', modelPicked)
+    $('choice-effort').addEventListener('change', () => saveChoice(choice.model, $('choice-effort').value))
+    $('choice-retry').addEventListener('click', () => askChoiceOptions(true))
     $('fresh-form').addEventListener('submit', (ev) => {
       ev.preventDefault()
       if (ev.submitter && ev.submitter.value === 'cancel') $('fresh').close('cancel')

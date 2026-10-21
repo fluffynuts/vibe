@@ -53,9 +53,20 @@
           <div class="bar">
             <span id="convo-status" class="muted"></span>
             <span class="spacer"></span>
+            <span id="convo-choice" class="choice" hidden>
+              <label class="muted" for="choice-model">Model</label>
+              <select id="choice-model" aria-describedby="choice-ran"></select>
+              <label class="muted" for="choice-effort">Effort</label>
+              <select id="choice-effort" aria-describedby="choice-ran"></select>
+              <span id="choice-ran" class="muted" role="status"></span>
+            </span>
             <label class="muted inline-check" title="Show what you send as Markdown, as the agent's replies are. What's sent is what you typed, either way.">
               <input type="checkbox" id="convo-md"> My prompts as Markdown</label>
             <button type="button" id="convo-new" class="ghost">New conversation</button>
+          </div>
+          <div id="choice-note" class="notice" role="status" hidden>
+            <span id="choice-note-text"></span>
+            <button type="button" id="choice-retry" hidden>Retry</button>
           </div>
           <div id="convo-packages" class="notice" role="status" hidden>
             <span id="convo-packages-text"></span>
@@ -413,6 +424,30 @@
       <div class="actions">
         <button value="cancel" class="ghost">Cancel</button>
         <button value="run" id="confirm-run" autofocus>Run</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="choice-warn">
+    <form method="dialog">
+      <h2 id="choice-warn-title">Change the model?</h2>
+      <p>The next prompt re-reads the whole conversation, which is slower and costs more. The effort goes back to Default, for you to choose again.</p>
+      <div class="actions">
+        <button value="cancel" class="ghost" formnovalidate>Cancel</button>
+        <button value="go" id="choice-warn-go">Change the model</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="choice-other">
+    <form method="dialog">
+      <h2>Other models</h2>
+      <p id="choice-other-intro" class="muted"></p>
+      <div id="choice-other-list" class="choices" role="radiogroup" aria-label="Other models the agent lists"></div>
+      <label class="choice-name">Or a full model name <input type="text" id="choice-other-name" spellcheck="false" autocomplete="off"></label>
+      <div class="actions">
+        <button value="cancel" class="ghost" formnovalidate>Cancel</button>
+        <button value="go" id="choice-other-go">Use this model</button>
       </div>
     </form>
   </dialog>

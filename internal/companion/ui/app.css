@@ -491,6 +491,16 @@ html.themed .commands li[aria-selected="true"] {
 #fresh-branch-name { font: 13px var(--mono); }
 #fresh .choices { display: flex; flex-direction: column; gap: 4px; }
 
+/* the model and effort drop-downs, in the conversation's bar */
+.choice { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.choice[hidden] { display: none; }
+.choice select { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; max-width: 16em; }
+.choice select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+#choice-other .choices, .choice-name { margin-top: 10px; }
+#choice-other .choices { display: flex; flex-direction: column; gap: 4px; }
+#choice-other .choices label, .choice-name { display: flex; gap: 8px; align-items: baseline; }
+#choice-other-name { font: 13px var(--mono); flex: 1; min-width: 0; }
+
 /* the agent's replies, as Markdown */
 .msg.agent, .msg.user { white-space: normal; }
 .msg.user .md pre { background: var(--panel); }
