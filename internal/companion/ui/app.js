@@ -5252,10 +5252,12 @@
     return text.replace(/(^|[^A-Za-z])([a-z])/g, (all, before, letter) => before + letter.toUpperCase())
   }
 
-  // effortLabel is how an effort is shown: in title case, but for the one
-  // whose name runs two words together.
+  // effortLabel is how an effort is shown: in title case, and with the word
+  // "effort", since the drop-down has no label of its own and "High" alone
+  // wouldn't say what it is. "xhigh" runs two words together, so it's the one
+  // that's spelt out.
   function effortLabel(effort) {
-    return effort === 'xhigh' ? 'Extra High' : titleCase(effort)
+    return (effort === 'xhigh' ? 'Extra High' : titleCase(effort)) + ' effort'
   }
 
   // modelLabel is how a model is shown: by the name the agent gives it where
@@ -5280,7 +5282,7 @@
     if (choice.model && !models.some((m) => m.value === choice.model)) models.push({ value: choice.model, text: modelLabel(choice.model, false) })
     models.push({ value: OTHER_MODEL, text: 'Other…' })
     fillSelect($('choice-model'), models, choice.model)
-    const efforts = [{ value: '', text: 'Default' }]
+    const efforts = [{ value: '', text: 'Default effort' }]
     for (const e of (o && o.efforts) || []) efforts.push({ value: e, text: effortLabel(e) })
     if (choice.effort && !efforts.some((e) => e.value === choice.effort)) efforts.push({ value: choice.effort, text: effortLabel(choice.effort) })
     fillSelect($('choice-effort'), efforts, choice.effort)

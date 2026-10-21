@@ -192,7 +192,7 @@ The user tried it on another sandbox: it worked (the warning on a conversation u
 Haiku answered and the reported model matched, effort switched). Then asked for:
 
 - **Centred.** The bar under the prompt is a grid, `1fr auto 1fr`: Stop on the left, the drop-downs in the middle,
-  Send on the right, so Stop appearing doesn't move the middle. In a column under 820px (a container query on
+  Send on the right, so Stop appearing doesn't move the middle. In a column under 920px (raised from 820 when the drop-downs got wider and Send began to wrap; a container query on
   the form: the column, not the window, is what counts) the drop-downs take a row of their own above Stop and
   Send. What the agent ran has a slot of its own (fixed width, an ellipsis, the full text on hover).
 - **An "i" button with a bubble**, over the button, taking no room. It says that a change applies from the next
@@ -288,3 +288,12 @@ at once and the agent is asked again in the background (stale while revalidate).
 The spinner sits to the left of the widget, ahead of the Model label, in a 14px slot that is there whether or not it
 shows, so it coming and going moves nothing (a Firefox test at two widths checks that). The words ("Loading
 models…", "ran …") stay in the slot on the right.
+
+### No visible labels (2026-10-21)
+
+The user's idea, after the names carried the versions: "Model" says nothing the entries don't ("Opus 5.5"). Dropped, and
+the effort entries now say what they are instead: **Default effort, Low effort, Medium effort, High effort, Extra High
+effort, Max effort** (the user's pick of four options; "Default (Medium)" wasn't possible, as claude can't be asked what
+its default effort is). The labels stay for screen readers (`sr-only`, still tied to their drop-downs), and both drop-downs
+have a tooltip. The effort drop-down is 11em wide for "Extra High effort"; Firefox tests measure that the longest
+everyday entries fit, and that Send stays on one line at eleven widths from 520 to 1900px.

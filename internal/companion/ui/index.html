@@ -111,10 +111,10 @@
               <button type="button" id="convo-stop" class="danger" title="Escape, in the prompt box" hidden>Stop (Escape)</button>
               <div id="convo-choice" class="choice" hidden>
                 <span class="choice-spin"><span id="choice-spinner" class="spinner" aria-hidden="true" hidden></span></span>
-                <label class="muted" for="choice-model">Model</label>
-                <select id="choice-model" aria-describedby="choice-ran"></select>
-                <label class="muted" for="choice-effort">Effort</label>
-                <select id="choice-effort" aria-describedby="choice-ran"></select>
+                <label class="sr-only" for="choice-model">Model</label>
+                <select id="choice-model" title="Model" aria-describedby="choice-ran"></select>
+                <label class="sr-only" for="choice-effort">Effort</label>
+                <select id="choice-effort" title="Effort" aria-describedby="choice-ran"></select>
                 <button type="button" id="choice-info" class="choice-info" aria-label="About the model and effort" aria-expanded="false" aria-controls="choice-bubble">i</button>
                 <span id="choice-ran" class="muted choice-ran"></span>
                 <span id="choice-busy" class="sr-only" role="status"></span>

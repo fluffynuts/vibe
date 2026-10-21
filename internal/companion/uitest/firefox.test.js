@@ -267,3 +267,40 @@ test('the spinner coming and going moves nothing in the widget', async () => {
     } finally { await page.close() }
   }
 })
+
+test('the longest everyday entries fit their drop-downs without being cut off', async () => {
+  const page = await conversationPage(1500)
+  try {
+    const fits = await page.evaluate(() => {
+      const measure = document.createElement('canvas').getContext('2d')
+      const out = {}
+      for (const [id, texts] of [['choice-model', ['Default (Opus 5.5)', 'Sonnet 5.5', 'Fable 5.1', 'Haiku 5.5']], ['choice-effort', ['Default effort', 'Medium effort', 'Extra High effort']]]) {
+        const select = document.getElementById(id)
+        const style = getComputedStyle(select)
+        measure.font = style.font
+        // room for the text: the box, less its padding and the arrow the browser draws
+        const room = select.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - 26
+        out[id] = texts.map((t) => ({ t, width: Math.round(measure.measureText(t).width), room: Math.round(room) }))
+      }
+      return out
+    })
+    for (const rows of Object.values(fits)) for (const r of rows) assert.ok(r.width <= r.room, `"${r.t}" is ${r.width}px wide, and has ${r.room}px`)
+  } finally { await page.close() }
+})
+
+test('Send stays on one line at every width, wherever the widget is on the row or above it', async () => {
+  for (const width of [520, 700, 900, 1000, 1100, 1200, 1300, 1400, 1500, 1700, 1900]) {
+    const page = await conversationPage(width)
+    try {
+      const send = await box(page, '#convo-send')
+      const oneLine = await page.evaluate(() => {
+        const b = document.getElementById('convo-send')
+        return b.getBoundingClientRect().height <= parseFloat(getComputedStyle(b).lineHeight || 20) + parseFloat(getComputedStyle(b).paddingTop) * 2 + 8
+      })
+      assert.ok(oneLine, `at ${width}px wide, Send wraps (it is ${Math.round(send.width)}x${Math.round(send.height)}; the widget is ${Math.round((await box(page, '#convo-choice')).width)}px, the form ${Math.round((await box(page, '#convo-form')).width)}px)`)
+      const group = await box(page, '#convo-choice')
+      const form = await box(page, '#convo-form')
+      assert.ok(group.x >= form.x - 1 && group.x + group.width <= form.x + form.width + 1, `at ${width}px wide, the widget runs out of the form: ${JSON.stringify(group)} in ${JSON.stringify(form)}`)
+    } finally { await page.close() }
+  }
+})

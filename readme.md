@@ -618,7 +618,8 @@ you're looking at:
   sending ends that. Links to pages on `localhost` in what the agent says can be clicked.
   The **Model** and **Effort** drop-downs, under the prompt and centred between **Stop** and **Send** (so they
   stay put while a turn runs; in a narrow column they take a row of their own), choose what claude is asked to
-  use (they're there for a Claude sandbox). **Default** passes nothing, so claude's own settings decide, and says
+  use (they're there for a Claude sandbox). They have no labels: the entries say what they are ("Opus 5.5", "High effort"), and screen
+  readers and tooltips still have the names Model and Effort. **Default** passes nothing, so claude's own settings decide, and says
   which model that is. The lists are claude's own. vibe keeps the last ones it was given for each sandbox (in
   `~/.vibe/companion/`), so the drop-downs are full the moment the page opens, and asks claude again in the
   background, without waking a sandbox that's asleep; the first time there's nothing kept, so it just asks. If asking again

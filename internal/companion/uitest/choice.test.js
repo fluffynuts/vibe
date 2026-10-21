@@ -712,10 +712,10 @@ test('with no names kept (lists from before they were asked for), the aliases sh
   } finally { p.close() }
 })
 
-test('the effort entries are in title case, and what is kept is still what the agent takes', async () => {
+test('each effort entry says what it is, in title case, and what is kept is still what the agent takes', async () => {
   const p = await choicePage({ model: 'opus', effort: 'high' })
   try {
-    assert.deepEqual(texts(p.$('choice-effort')), ['Default', 'Low', 'Medium', 'High'])
+    assert.deepEqual(texts(p.$('choice-effort')), ['Default effort', 'Low effort', 'Medium effort', 'High effort'])
     assert.deepEqual(values(p.$('choice-effort')), ['', 'low', 'medium', 'high'])
     await choose(p, 'choice-effort', 'low')
     assert.deepEqual(p.posted('/api/conversation/choice'), [{ model: 'opus', effort: 'low' }])
@@ -726,7 +726,7 @@ test('an effort chosen that the lists lack is shown in title case too, xhigh as 
   const p = await choicePage({ model: 'opus', effort: 'xhigh' })
   try {
     assert.equal(p.$('choice-effort').value, 'xhigh')
-    assert.ok(texts(p.$('choice-effort')).includes('Extra High'))
+    assert.ok(texts(p.$('choice-effort')).includes('Extra High effort'))
   } finally { p.close() }
 })
 
@@ -757,7 +757,7 @@ test('a full model id typed under Other… is shown exactly as typed, not title-
 test('xhigh is called Extra High in the list, and is still kept and sent as xhigh', async () => {
   const p = await choicePage({ model: 'opus', options: Object.assign({}, OPTIONS, { efforts: ['low', 'high', 'xhigh', 'max'] }) })
   try {
-    assert.deepEqual(texts(p.$('choice-effort')), ['Default', 'Low', 'High', 'Extra High', 'Max'])
+    assert.deepEqual(texts(p.$('choice-effort')), ['Default effort', 'Low effort', 'High effort', 'Extra High effort', 'Max effort'])
     await choose(p, 'choice-effort', 'xhigh')
     assert.deepEqual(p.posted('/api/conversation/choice'), [{ model: 'opus', effort: 'xhigh' }])
   } finally { p.close() }
@@ -772,5 +772,17 @@ test('the spinner is the first thing in the widget, before the Model label', asy
     const label = group.querySelector('label[for=choice-model]')
     assert.ok(p.$('choice-spinner').compareDocumentPosition(label) & p.window.Node.DOCUMENT_POSITION_FOLLOWING, 'ahead of the label')
     assert.ok(!p.$('choice-ran').contains(p.$('choice-spinner')), 'and not in the caption slot')
+  } finally { p.close() }
+})
+
+test('the drop-downs have no visible labels: the entries say what they are, and screen readers and tooltips still have the names', async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    for (const [id, name] of [['choice-model', 'Model'], ['choice-effort', 'Effort']]) {
+      const select = p.$(id)
+      assert.deepEqual(Array.from(select.labels).map((l) => l.textContent.trim()), [name], id + ' is named by a label')
+      assert.ok(Array.from(select.labels).every((l) => l.classList.contains('sr-only')), 'the label is for screen readers only')
+      assert.equal(select.title, name, id + ' has a tooltip')
+    }
   } finally { p.close() }
 })

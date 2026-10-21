@@ -498,7 +498,7 @@ html.themed .commands li[aria-selected="true"] {
 .convo-form .bar > #convo-stop { grid-column: 1; justify-self: start; }
 .convo-form .bar > .choice { grid-column: 2; justify-self: center; }
 .convo-form .bar > #convo-send { grid-column: 3; justify-self: end; }
-@container (max-width: 820px) {
+@container (max-width: 920px) {
   .convo-form .bar { grid-template-columns: 1fr 1fr; }
   .convo-form .bar > .choice { grid-column: 1 / -1; grid-row: 1; }
   .convo-form .bar > #convo-stop { grid-column: 1; grid-row: 2; }
@@ -509,9 +509,9 @@ html.themed .commands li[aria-selected="true"] {
 .choice { position: relative; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 8px; }
 .choice[hidden] { display: none; }
 .choice select { box-sizing: border-box; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
-/* a width of their own, so what they hold arriving (the agent's lists) moves nothing: room for "Default (Opus 5.5)" */
+/* a width of their own, so what they hold arriving (the agent's lists) moves nothing: room for "Default (Opus 5.5)" and "Extra High effort" */
 #choice-model { width: 14em; }
-#choice-effort { width: 7em; }
+#choice-effort { width: 11em; }
 .choice select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* a slot of its own, so what's said there (that the models are loading, or that the agent ran another) coming and going moves nothing */
 .choice-ran { display: inline-block; box-sizing: content-box; width: 21ch; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
