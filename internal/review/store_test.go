@@ -553,3 +553,60 @@ func TestAnAgentsCommentOnAFileItMayNotIsRefused(t *testing.T) {
 		t.Errorf("problems: %q", r.Problems)
 	}
 }
+
+// What the agent sends after the user closed the review (it was still at
+// work when they did) is turned away, saying why; starting another isn't.
+func TestTheAgentCantAddToAClosedReview(t *testing.T) {
+	s := NewStore(t.TempDir())
+	clockAt(s)
+	drop(t, s, "1.json", Request{Op: "start"})
+	drop(t, s, "2.json", Request{Op: "comment", File: "a.go", Line: 1, Body: "first"})
+	s.Take()
+	if _, err := s.Do(Request{Op: "close", Body: "You closed it."}, User); err != nil {
+		t.Fatal(err)
+	}
+	for i, op := range []string{"comment", "general", "reply", "resolve", "dismiss", "reopen", "order", "done"} {
+		drop(t, s, fmt.Sprintf("%d.json", 10+i), Request{Op: op, File: "a.go", Line: 1, Thread: 1, Body: "late"})
+	}
+	r, err := s.Take()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Threads) != 1 || len(r.Threads[0].Comments) != 1 || r.Threads[0].Status != Open || r.State != InProgress || len(r.Order) != 0 {
+		t.Errorf("the closed review changed: %+v", r)
+	}
+	for _, taken := range r.Taken[len(r.Taken)-8:] {
+		if !strings.Contains(taken.Problem, "the user closed this review") {
+			t.Errorf("%s: refused for the wrong reason, or not at all: %q", taken.Name, taken.Problem)
+		}
+	}
+	drop(t, s, "30.json", Request{Op: "start", Note: "another"})
+	if r, _ := s.Take(); r.Note != "another" || r.Closed != "" {
+		t.Errorf("starting another: %+v", r)
+	}
+}
+
+// A review dropped (the user closed it before the agent had finished
+// writing it) is gone from the tab, with nothing to reopen, but kept in
+// history/; thread IDs aren't reused.
+func TestADroppedReviewLeavesNothingToReopen(t *testing.T) {
+	s := NewStore(t.TempDir())
+	clockAt(s)
+	drop(t, s, "1.json", Request{Op: "start"})
+	drop(t, s, "2.json", Request{Op: "comment", File: "a.go", Line: 1, Body: "half"})
+	s.Take()
+	r, err := s.Drop("You closed it while the agent was still writing it, so it was dropped.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Started.IsZero() || len(r.Threads) != 0 || r.State != "" || r.LastID != 1 || !strings.Contains(r.Closed, "dropped") {
+		t.Errorf("the review after dropping: %+v", r)
+	}
+	if loaded, _ := s.Load(); !loaded.Started.IsZero() || loaded.Closed != r.Closed {
+		t.Errorf("not saved: %+v", loaded)
+	}
+	kept, _ := filepath.Glob(filepath.Join(s.dir, "history", "*.json"))
+	if len(kept) != 1 {
+		t.Errorf("kept reviews: %v", kept)
+	}
+}

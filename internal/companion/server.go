@@ -62,6 +62,10 @@ type Config struct {
 	// Port is the host port to listen on, on 127.0.0.1.
 	Port   int
 	Policy *policy.Client
+	// RulesChanged, when set, is told of every change the page makes to
+	// the sandbox's rules: vibe keeps them afresh, so a rebuild gives back
+	// what the page left (see policy.Snapshot).
+	RulesChanged func() error
 	// ClipboardURL is where the sandbox's clipboard page is reachable on the
 	// host, or "" when the sandbox has none; it is asked for often, so it
 	// should be quick.
@@ -167,6 +171,13 @@ type Server struct {
 	convo conversation
 	admin admin
 	asked asked
+	// reviewTurn is the prompt of the turn the review last began (its
+	// start, a Submit or an Ask): closing the review may stop that turn,
+	// and no other.
+	reviewTurn struct {
+		mu     sync.Mutex
+		prompt int
+	}
 	// usage is the last reading of the sandbox's load, and clock the
 	// clock it's aged by.
 	usage   usageCache
@@ -370,6 +381,7 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"GET /api/review/highlight", s.serving(reviewFeature, s.reviewHighlight)},
 		{"POST /api/clipboard/paste", s.authed(s.clipboardPaste)},
 		{"POST /api/review/start", s.serving(reviewFeature, s.reviewStart)},
+		{"POST /api/review/close", s.serving(reviewFeature, s.reviewClose)},
 		{"POST /api/review/afresh", s.serving(reviewFeature, s.reviewAfresh)},
 		{"GET /api/manage", s.authed(s.managed(s.manageState))},
 		{"POST /api/manage/plan", s.serving(manageFeature, s.managePlan)},
@@ -697,10 +709,16 @@ func (s *Server) changing(do change) http.HandlerFunc {
 			writeSbxError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		answer := map[string]interface{}{
 			"ok":      true,
 			"command": "sbx " + strings.Join(command, " "),
-		})
+		}
+		if s.cfg.RulesChanged != nil {
+			if err := s.cfg.RulesChanged(); err != nil {
+				answer["warning"] = "Done, but a rebuild won't keep it: " + err.Error()
+			}
+		}
+		writeJSON(w, http.StatusOK, answer)
 	}
 }
 

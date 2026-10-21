@@ -225,6 +225,7 @@ func fakeSandboxState(t *testing.T, running, known, reachable bool) {
 	t.Cleanup(func() { sandboxRunning, sandboxReachable = oldRunning, oldReachable })
 	sandboxRunning = func(string) (bool, bool) { return running, known }
 	sandboxReachable = func(context.Context, string) bool { return reachable }
+	fakeRulesSbx(t, `{"rules": []}`, nil)
 }
 
 // A headless vibe ending with its sandbox asleep wakes it to back up its

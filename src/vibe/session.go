@@ -96,6 +96,7 @@ func finish(lay layout.Layout, args cliargs.Args, name string) error {
 		note("attaching to '%s' again", name)
 	}
 	stopCompanion()
+	noteKeptRules(vibeHome, name)
 	if err != nil {
 		return err
 	}

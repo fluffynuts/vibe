@@ -419,6 +419,11 @@ func (s *Store) apply(r *Review, req Request, author string) error {
 	if len(req.Body) > maxBody {
 		return fmt.Errorf("what it says is too long (over %d KB)", maxBody>>10)
 	}
+	// The agent can be at work on a review when the user closes it: what it
+	// sends after would land, unseen, in a review nobody is reading.
+	if author == Agent && r.Closed != "" && req.Op != "start" {
+		return fmt.Errorf("the user closed this review on the Review tab, so it takes nothing more: stop work on it, and start another only if they ask")
+	}
 	switch req.Op {
 	case "start":
 		// What a review is of reaches git: nothing in its place may be taken
@@ -690,6 +695,23 @@ func (s *Store) CloseOver(started time.Time, why string) (Review, bool, error) {
 	}
 	r.Closed = why
 	return r, true, s.save(r)
+}
+
+// Drop sets aside the review in history/ and leaves none in its place,
+// saying why: one the user closed before the agent had finished writing
+// it, of no use to reopen. Thread IDs carry on from where it was.
+func (s *Store) Drop(why string) (Review, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, err := s.load()
+	if err != nil {
+		return r, err
+	}
+	if err := s.keep(r); err != nil {
+		return r, fmt.Errorf("the review couldn't be kept in history/: %w", err)
+	}
+	dropped := Review{Threads: []Thread{}, Closed: why, LastID: r.LastID, Taken: r.Taken, AgentAt: r.AgentAt}
+	return dropped, s.save(dropped)
 }
 
 // Move is a comment (thread Thread) that has followed its code to Line.

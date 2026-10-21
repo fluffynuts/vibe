@@ -114,7 +114,8 @@ func Load(vibeHome, name string) (Instance, bool, error) {
 }
 
 // Remove deletes a sandbox's instance record, its companion and git
-// tokens, and what its companion page keeps of the conversation, if any.
+// tokens, what its companion page keeps of the conversation, and the
+// network rules kept for it, if any.
 func Remove(vibeHome, name string) error {
 	err := os.Remove(path(vibeHome, name))
 	if err != nil && !os.IsNotExist(err) {
@@ -142,11 +143,15 @@ func Remove(vibeHome, name string) error {
 	if err := os.RemoveAll(PackagesPath(vibeHome, name)); err != nil {
 		return fmt.Errorf("removing package requests: %w", err)
 	}
+	if err := os.Remove(RulesPath(vibeHome, name)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing the kept network rules: %w", err)
+	}
 	return nil
 }
 
 // Move takes everything vibe keeps for sandbox oldName (its record, page
-// token, GitHub token, conversation, clipboard history, reviews and package requests) to newName, for
+// token, GitHub token, conversation, clipboard history, reviews, package requests and kept
+// network rules) to newName, for
 // a sandbox that has moved folders. The record's Name follows; anything
 // else in it is the caller's to change. Another sandbox's record already at
 // newName is never overwritten.
@@ -172,6 +177,7 @@ func Move(vibeHome, oldName, newName string) error {
 		{ClipboardPath(vibeHome, oldName), ClipboardPath(vibeHome, newName)},
 		{ReviewPath(vibeHome, oldName), ReviewPath(vibeHome, newName)},
 		{PackagesPath(vibeHome, oldName), PackagesPath(vibeHome, newName)},
+		{RulesPath(vibeHome, oldName), RulesPath(vibeHome, newName)},
 	} {
 		if err := MoveIfThere(pair[0], pair[1]); err != nil {
 			return err
@@ -212,6 +218,13 @@ func MoveIfThere(from, to string) error {
 // sandbox's reviews in, on the host, so they outlive a rebuild.
 func ReviewPath(vibeHome, name string) string {
 	return filepath.Join(vibeHome, "reviews", name)
+}
+
+// RulesPath is where the sandbox's own network rules are kept on the host
+// (see policy.Snapshot): sbx forgets them with the sandbox, and a rebuild
+// gives them back from here.
+func RulesPath(vibeHome, name string) string {
+	return filepath.Join(vibeHome, "rules", name+".json")
 }
 
 // PackagesPath is the folder a sandbox's requests for packages are kept in,

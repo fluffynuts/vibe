@@ -101,6 +101,8 @@ func headless(lay layout.Layout, args cliargs.Args, name string) error {
 // it running. Asked to stop, it's for whoever asked to say what becomes of
 // the sandbox ('vibe --stop' stops it next).
 func backUpAsHeadlessEnds(vibeHome, name string, asked bool) {
+	// sbx answers for the rules whether the sandbox is running or not.
+	noteKeptRules(vibeHome, name)
 	if running, known := sandboxRunning(name); known && !running {
 		backUpWhileStopped(vibeHome, name)
 		return

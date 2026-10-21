@@ -543,13 +543,16 @@ const allOptions = { uncommitted: true, defaultBranch: 'master', upstream: 'orig
 
 // startPage is a page whose fake vibe keeps the review as the page starts,
 // closes and reopens it.
-async function startPage({ review = none, options = allOptions, conversation = true, defaultBranch = { why: '' } } = {}) {
+// agentAtWork is whether vibe says the agent is at work on the review; close
+// answers a close (else it's closed, as asked).
+async function startPage({ review = none, options = allOptions, conversation = true, defaultBranch = { why: '' }, agentAtWork = false, close = null, diff = [] } = {}) {
   let current = review
   return openPage({
     routes: {
       '/api/default-branch': (call) => (typeof defaultBranch === 'function' ? defaultBranch(call) : defaultBranch),
       '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation, reviewAt: '', attention: {} },
-      '/api/review': () => ({ review: current, diff: [] }),
+      '/api/review': () => ({ review: current, diff, agentAtWork: typeof agentAtWork === 'function' ? agentAtWork() : agentAtWork }),
+      '/api/review/close': (call) => (close && close(call)) || ({ review: (current = { ...current, closed: 'You closed it.' }) }),
       '/api/review/options': options,
       '/api/review/start': (call) => ({ review: (current = { ...none, started: '2026-10-16T12:00:00Z', state: call.body.agent ? 'in progress' : '' }) }),
       '/api/review/do': (call) => ({ review: (current = { ...current, closed: call.body.op === 'close' ? call.body.body : '' }) }),
@@ -631,26 +634,142 @@ const openReview = { ...none, started: '2026-10-16T10:00:00Z', lastId: 2, thread
   { id: 2, status: 'resolved', comments: said('y') },
 ] }
 
-test('closing a review with comments still open asks first', async () => {
+// shown is where the page scrolled to: each element it scrolled into view,
+// and how.
+function scrolledTo(p) {
+  const shown = []
+  p.window.Element.prototype.scrollIntoView = function (how) { shown.push({ el: this, how }) }
+  return shown
+}
+
+// confirmButtons is the confirmation's buttons, left to right: their
+// text, and which has the focus when it shows.
+const confirmButtons = (p) => Array.from(p.$('confirm').querySelectorAll('.actions button'))
+  .map((b) => b.textContent + (b.hasAttribute('autofocus') ? ' (focused)' : '') + (b.classList.contains('danger') ? ' (danger)' : ''))
+
+test('closing a review with comments still open says it is incomplete, Cancel the safe choice', async () => {
   const p = await startPage({ review: openReview })
   try {
     assert.equal(p.$('review-start').hidden, true)
     await p.click('review-close')
     assert.ok(p.$('confirm').open)
-    assert.match(p.$('confirm-text').textContent, /1 comment is still open/)
+    assert.match(p.$('confirm-text').textContent, /incomplete: 1 comment is still open/)
+    assert.match(p.$('confirm-text').textContent, /reopen it at any time/)
+    assert.doesNotMatch(p.$('confirm-text').textContent, /stops the agent/, 'the agent is not at work on it')
+    assert.deepEqual(confirmButtons(p), ['Close review (danger)', 'Cancel (focused)'])
     await p.confirm(true)
-    assert.deepEqual(p.posted('/api/review/do'), [{ op: 'close', body: 'You closed it.' }])
+    assert.deepEqual(p.posted('/api/review/close'), [{ stop: false }])
   } finally { p.close() }
 })
 
-test('closing a review with nothing open just closes it', async () => {
-  const p = await startPage({ review: { ...openReview, threads: [openReview.threads[1]] } })
+test('cancelling the close shows the first comment still open, at the top of the comments pane', async () => {
+  const review = { ...openReview, threads: [
+    { id: 1, status: 'resolved', comments: said('done') },
+    { id: 2, file: 'a.txt', side: 'new', line: 1, status: 'open', comments: said('still open') },
+    { id: 3, file: 'a.txt', side: 'new', line: 2, status: 'open', comments: said('also open') },
+  ] }
+  const p = await startPage({ review, diff: twoFiles })
+  try {
+    const shown = scrolledTo(p)
+    await p.click('review-close')
+    await p.confirm(false)
+    assert.deepEqual(p.posted('/api/review/close'), [], 'not closed')
+    assert.equal(p.$('review-comments').classList.contains('open'), true, 'the comments pane opened')
+    const card = p.$('review-comments-list').querySelector('[data-thread="2"]')
+    assert.ok(shown.some((s) => s.el === card && s.how && s.how.block === 'start'), 'scrolled to the top of the pane')
+    assert.equal(p.window.document.activeElement, card)
+  } finally { p.close() }
+})
+
+test("cancelling the close shows the open comment even when the pane's filter hid it", async () => {
+  const p = await startPage({ review: openReview })
+  try {
+    await p.click('review-comments-open')
+    await p.click(p.button('Yours', p.$('review-comments')))
+    await p.click('review-comments-close')
+    await p.click('review-close')
+    await p.confirm(false)
+    assert.ok(p.$('review-comments-list').querySelector('[data-thread="1"]'), 'shown')
+  } finally { p.close() }
+})
+
+test('closing a review the agent is still writing warns that it stops the agent, and drops the review', async () => {
+  const p = await startPage({ review: { ...none, started: '2026-10-16T10:00:00Z', state: 'in progress', threads: [{ id: 1, status: 'open', comments: said('x') }], lastId: 1 }, agentAtWork: true })
+  try {
+    await p.click('review-close')
+    assert.ok(p.$('confirm').open)
+    const text = p.$('confirm-text').textContent
+    assert.match(text, /still writing this review/)
+    assert.match(text, /stops the agent/)
+    assert.match(text, /start another at any time/)
+    assert.deepEqual(confirmButtons(p), ['Close review (danger)', 'Cancel (focused)'])
+    await p.confirm(false)
+    assert.equal(p.$('review-comments').classList.contains('open'), false, "a half-written review's comments aren't the point")
+    await p.click('review-close')
+    await p.confirm(true)
+    assert.deepEqual(p.posted('/api/review/close'), [{ stop: true }])
+  } finally { p.close() }
+})
+
+test('closing a review with comments open while the agent is at work on them warns of a change left half-done', async () => {
+  const p = await startPage({ review: { ...openReview, state: 'done' }, agentAtWork: true })
+  try {
+    await p.click('review-close')
+    const text = p.$('confirm-text').textContent
+    assert.match(text, /incomplete/)
+    assert.match(text, /stops the agent/)
+    assert.match(text, /partway through may be left half-done/)
+    await p.confirm(true)
+    assert.deepEqual(p.posted('/api/review/close'), [{ stop: true }])
+  } finally { p.close() }
+})
+
+test('closing a review with nothing open just closes it, leaving the agent to finish', async () => {
+  const p = await startPage({ review: { ...openReview, state: 'done', threads: [openReview.threads[1]] }, agentAtWork: true })
   try {
     await p.click('review-close')
     assert.equal(p.$('confirm').open, false)
-    assert.deepEqual(p.posted('/api/review/do'), [{ op: 'close', body: 'You closed it.' }])
+    assert.deepEqual(p.posted('/api/review/close'), [{ stop: false }])
     assert.equal(p.$('review-start').hidden, false, 'back to starting one')
     assert.match(p.$('review-closed').textContent, /You closed it/)
+  } finally { p.close() }
+})
+
+test('a close vibe refuses, the agent having begun work on the review since, asks again', async () => {
+  let atWork = false
+  const p = await startPage({
+    review: { ...openReview, state: 'in progress', threads: [] },
+    agentAtWork: () => atWork,
+    close: (call) => (call.body.stop ? null : { status: 409, body: { error: 'the agent is at work on this review, and closing it now stops the agent: it was left open' } }),
+  })
+  try {
+    atWork = true
+    await p.click('review-close')
+    assert.ok(p.$('confirm').open, 'asked, once vibe said the agent was at work')
+    assert.match(p.$('confirm-text').textContent, /still writing this review/)
+    await p.confirm(true)
+    assert.deepEqual(p.posted('/api/review/close'), [{ stop: false }, { stop: true }])
+  } finally { p.close() }
+})
+
+test('a close vibe keeps refusing is asked again once, then says why', async () => {
+  const refusal = 'the agent is at work on this review, and closing it now stops the agent: it was left open'
+  const p = await startPage({ review: { ...openReview, state: 'in progress', threads: [] }, close: () => ({ status: 409, body: { error: refusal } }) })
+  try {
+    await p.click('review-close')
+    assert.equal(p.$('confirm').open, true, 'asked again, as stopping the agent')
+    await p.confirm(true)
+    assert.deepEqual(p.posted('/api/review/close'), [{ stop: false }, { stop: true }])
+    assert.equal(p.$('confirm').open, false, 'not asked a third time')
+    assert.match(p.$('toast').textContent, /closing it now stops the agent/)
+  } finally { p.close() }
+})
+
+test('a dropped review says so, with nothing to reopen', async () => {
+  const p = await startPage({ review: { ...none, closed: 'You closed it while the agent was still writing it, so it was dropped: start another whenever you like.' } })
+  try {
+    assert.match(p.$('review-closed').textContent, /dropped/)
+    assert.equal(p.$('review-reopen').hidden, true)
   } finally { p.close() }
 })
 
@@ -3101,5 +3220,23 @@ test('where the browser gives the page no clipboard, the copy says why and what 
     assert.match(p.$('toast').textContent, /Couldn't copy/)
     assert.match(p.$('toast').textContent, /localhost/)
     assert.ok(p.$('toast').classList.contains('bad'))
+  } finally { p.close() }
+})
+
+// --- keeping the sandbox's own rules -----------------------------------------------------------
+
+test("a rule change vibe couldn't keep for the next rebuild says so", async () => {
+  const p = await openPage({ routes: {
+    '/api/state': { sandbox: 'box', sandboxTabs: true, attention: {} },
+    '/api/log': { entries: [] },
+    '/api/allow': { ok: true, command: 'sbx policy allow network --sandbox box a.example', warning: "Done, but a rebuild won't keep it: sbx is not signed in" },
+  } })
+  try {
+    p.$('rule-host').value = 'a.example'
+    p.$('rule-form').requestSubmit(p.button('Allow', p.$('rule-form')))
+    await p.settle()
+    await p.confirm(true)
+    assert.deepEqual(p.posted('/api/allow'), [{ host: 'a.example' }])
+    assert.match(p.$('toast').textContent, /a rebuild won't keep it: sbx is not signed in/)
   } finally { p.close() }
 })

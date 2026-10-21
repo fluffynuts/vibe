@@ -533,3 +533,34 @@ func TestAStartRefusedAgainSaysWhyAgain(t *testing.T) {
 		}
 	}
 }
+
+// A review the user closed while the agent was at work on it takes nothing
+// more: the agent is told at once, rather than leaving requests the tab
+// turns away unseen.
+func TestTheAgentIsToldAReviewTheUserClosedTakesNothingMore(t *testing.T) {
+	dir := reviewFolder(t)
+	store := review.NewStore(dir)
+	store.Do(review.Request{Op: "comment", File: "main.go", Line: 12, Body: "why?"}, review.Agent)
+	if _, err := store.Do(review.Request{Op: "close", Body: "You closed it."}, review.User); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"comment", "--file", "main.go", "--line", "1", "--body", "late"},
+		{"general", "--body", "late"},
+		{"reply", "--thread", "1", "--body", "late"},
+		{"resolve", "--thread", "1"},
+		{"dismiss", "--thread", "1"},
+		{"done"},
+	} {
+		out, code := vibeReview(t, dir, "", args...)
+		if code == 0 || !strings.Contains(out, "closed this review") {
+			t.Errorf("%s: exit %d, said %q", args[0], code, out)
+		}
+	}
+	if out, code := vibeReview(t, dir, "[]", "order"); code == 0 || !strings.Contains(out, "closed this review") {
+		t.Errorf("order: exit %d, said %q", code, out)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(dir, "inbox")); len(entries) != 0 {
+		t.Errorf("requests were left in the inbox: %v", entries)
+	}
+}

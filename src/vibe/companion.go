@@ -315,6 +315,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		Token:                  token,
 		Port:                   port,
 		Policy:                 &policy.Client{Sandbox: name},
+		RulesChanged:           func() error { return keepRules(vibeHome, name) },
 		ClipboardURL:           func() string { return clipboardPageURL(vibeHome, name) },
 		StartClipboard:         func() ([]string, error) { return startClipboard(name) },
 		ClipboardTrouble:       func() string { return clipboardTrouble(name) },

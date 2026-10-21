@@ -927,3 +927,180 @@ func TestAnUnreadableReviewCanBeStartedAfreshFromThePage(t *testing.T) {
 		t.Errorf("review after: %+v", r.Review)
 	}
 }
+
+// --- closing a review the agent is at work on ---------------------------------------
+
+// agentAtWork is whether the Review tab is told the agent is at work on
+// the review.
+func agentAtWork(t *testing.T, s *Server) bool {
+	t.Helper()
+	rec := do(t, s, req{path: "/api/review", headers: authed(nil)})
+	var body struct {
+		AgentAtWork bool `json:"agentAtWork"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	return body.AgentAtWork
+}
+
+// lastDone is how the latest turn ended: "stopped", or "" when it finished.
+func lastDone(t *testing.T, s *Server) string {
+	t.Helper()
+	p := idle(t, s)
+	for i := len(p.Events) - 1; i >= 0; i-- {
+		if p.Events[i].Kind == "done" {
+			return p.Events[i].Text
+		}
+	}
+	t.Fatal("no turn has ended")
+	return ""
+}
+
+func TestClosingAReviewTheAgentIsStillWritingStopsItAndDropsTheReview(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	defer close(f.release)
+	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted","agent":true}`)); rec.Code != http.StatusAccepted {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "half a review"}, review.Agent); err != nil {
+		t.Fatal(err)
+	}
+	if !agentAtWork(t, s) {
+		t.Fatal("the tab isn't told the agent is at work on the review")
+	}
+	if rec := do(t, s, post("/api/review/close", `{"stop":true}`)); rec.Code != http.StatusOK {
+		t.Fatalf("close: %d %s", rec.Code, rec.Body)
+	}
+	if got := lastDone(t, s); got != "stopped" {
+		t.Errorf("the agent's turn ended %q, not stopped", got)
+	}
+	r, _ := store.Load()
+	if !r.Started.IsZero() || len(r.Threads) != 0 {
+		t.Errorf("the half-written review is still there: %+v", r)
+	}
+	if !strings.Contains(r.Closed, "dropped") {
+		t.Errorf("why it closed doesn't say it was dropped: %q", r.Closed)
+	}
+	if _, err := store.Do(review.Request{Op: "comment", File: "a.txt", Line: 1, Body: "too late"}, review.Agent); err == nil {
+		t.Error("the agent could still comment on the dropped review")
+	}
+}
+
+func TestClosingAReviewTheAgentIsAtWithoutAgreeingToStopItIsRefused(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	defer close(f.release)
+	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted","agent":true}`)); rec.Code != http.StatusAccepted {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	rec := do(t, s, post("/api/review/close", `{}`))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("close without agreeing to stop the agent: %d %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "stops the agent") {
+		t.Errorf("the refusal doesn't say why: %s", rec.Body)
+	}
+	if r, _ := store.Load(); r.Closed != "" || r.State != review.InProgress {
+		t.Errorf("the review changed: %+v", r)
+	}
+	if !s.convo.working() {
+		t.Error("the agent was stopped")
+	}
+}
+
+// doneWithOpenThread is a finished review with one thread still open.
+func doneWithOpenThread(t *testing.T, s *Server, store *review.Store) {
+	t.Helper()
+	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	for _, r := range []review.Request{
+		{Op: "comment", File: "a.txt", Line: 2, Body: "P2: why two?"},
+		{Op: "done"},
+	} {
+		if _, err := store.Do(r, review.Agent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.Do(review.Request{Op: "reply", Thread: 1, Body: "please fix"}, review.User); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClosingAReviewWhileTheAgentFixesItsCommentsStopsItAndKeepsTheReview(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	defer close(f.release)
+	doneWithOpenThread(t, s, store)
+	if rec := do(t, s, post("/api/review/submit", `{}`)); rec.Code != http.StatusAccepted {
+		t.Fatalf("submit: %d %s", rec.Code, rec.Body)
+	}
+	if !agentAtWork(t, s) {
+		t.Fatal("the tab isn't told the agent is at work on the review")
+	}
+	if rec := do(t, s, post("/api/review/close", `{"stop":true}`)); rec.Code != http.StatusOK {
+		t.Fatalf("close: %d %s", rec.Code, rec.Body)
+	}
+	if got := lastDone(t, s); got != "stopped" {
+		t.Errorf("the agent's turn ended %q, not stopped", got)
+	}
+	r, _ := store.Load()
+	if r.Closed == "" || len(r.Threads) != 1 {
+		t.Errorf("not closed and kept to reopen: %+v", r)
+	}
+}
+
+func TestClosingAReviewWithNothingOpenLetsTheAgentFinish(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	doneWithOpenThread(t, s, store)
+	if rec := do(t, s, post("/api/review/submit", `{}`)); rec.Code != http.StatusAccepted {
+		t.Fatalf("submit: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := store.Do(review.Request{Op: "resolve", Thread: 1, Body: "fixed"}, review.Agent); err != nil {
+		t.Fatal(err)
+	}
+	if rec := do(t, s, post("/api/review/close", `{}`)); rec.Code != http.StatusOK {
+		t.Fatalf("close: %d %s", rec.Code, rec.Body)
+	}
+	if r, _ := store.Load(); r.Closed == "" {
+		t.Error("not closed")
+	}
+	if !s.convo.working() {
+		t.Error("the agent was stopped, with nothing left open for it")
+	}
+	close(f.release)
+	if got := lastDone(t, s); got != "" {
+		t.Errorf("the agent's turn ended %q", got)
+	}
+}
+
+func TestClosingAReviewLeavesATurnThatIsntItsAlone(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	doneWithOpenThread(t, s, store)
+	send(t, s, "/api/conversation/send", `{"prompt":"something else"}`)
+	if agentAtWork(t, s) {
+		t.Error("the tab is told the agent is at work on the review, answering something else")
+	}
+	if rec := do(t, s, post("/api/review/close", `{"stop":true}`)); rec.Code != http.StatusOK {
+		t.Fatalf("close: %d %s", rec.Code, rec.Body)
+	}
+	if r, _ := store.Load(); r.Closed == "" || len(r.Threads) != 1 {
+		t.Errorf("not closed and kept: %+v", r)
+	}
+	if !s.convo.working() {
+		t.Error("closing the review stopped a turn that wasn't the review's")
+	}
+	close(f.release)
+	if got := lastDone(t, s); got != "" {
+		t.Errorf("the other turn ended %q", got)
+	}
+}

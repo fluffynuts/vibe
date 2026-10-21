@@ -166,3 +166,41 @@ func TestTheProfilesPageKeepsItsOwnTokenAndPort(t *testing.T) {
 		t.Errorf("ManagePort = %d after saving 10007 (%v)", ManagePort(home), err)
 	}
 }
+
+func TestRemoveDeletesTheKeptNetworkRulesButNotAnotherSandboxs(t *testing.T) {
+	home := t.TempDir()
+	for _, name := range []string{"vibe", "other"} {
+		if err := Save(home, Instance{Name: name}); err != nil {
+			t.Fatal(err)
+		}
+		os.MkdirAll(filepath.Dir(RulesPath(home, name)), 0o700)
+		os.WriteFile(RulesPath(home, name), []byte(`{"rules": []}`), 0o600)
+	}
+	if err := Remove(home, "vibe"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(RulesPath(home, "vibe")); !os.IsNotExist(err) {
+		t.Errorf("the kept rules are still there: %v", err)
+	}
+	if _, err := os.Stat(RulesPath(home, "other")); err != nil {
+		t.Errorf("another sandbox's went too: %v", err)
+	}
+}
+
+func TestMoveTakesTheKeptNetworkRulesAlong(t *testing.T) {
+	home := t.TempDir()
+	if err := Save(home, Instance{Name: "old"}); err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Dir(RulesPath(home, "old")), 0o700)
+	os.WriteFile(RulesPath(home, "old"), []byte(`{"rules": []}`), 0o600)
+	if err := Move(home, "old", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(RulesPath(home, "new")); err != nil {
+		t.Errorf("not moved: %v", err)
+	}
+	if _, err := os.Stat(RulesPath(home, "old")); !os.IsNotExist(err) {
+		t.Errorf("still at the old name: %v", err)
+	}
+}

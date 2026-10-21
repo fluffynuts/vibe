@@ -99,6 +99,10 @@ function drop(request) {
     fail("the review folder isn't mounted in this sandbox (there's no " + inbox + "), so the Review tab would never see this — " +
       "rebuild the sandbox ('vibe -r' on the host) to mount it", 1);
   }
+  // The user can close the review while the agent is still at work on it.
+  if (request.op !== "start" && load().closed) {
+    fail("the user closed this review on the Review tab, so it takes nothing more: stop work on it, and start another only if they ask", 1);
+  }
   const name = String(Date.now()).padStart(15, "0") + "-" +
     process.hrtime.bigint().toString().padStart(20, "0") + "-" + process.pid;
   const tmp = path.join(inbox, name + ".tmp");

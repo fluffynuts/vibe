@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 )
 
@@ -95,11 +97,20 @@ func containsSame(paths []string, path string) bool {
 // nothing: sbx isn't on PATH, or another sbx is installed beside the one
 // that is.
 func (f Found) Describe() string {
+	return f.describe(runtime.GOOS)
+}
+
+// describe is Describe as it would be on goos: how to put a folder on PATH
+// is the shell's to say, and Windows' isn't bash.
+func (f Found) describe(goos string) string {
 	switch {
 	case f.Path == "":
 		return ""
+	case !f.OnPath && goos == "windows":
+		dir := f.Path[:max(strings.LastIndexAny(f.Path, `\/`), 0)]
+		return fmt.Sprintf("using sbx at %s, which isn't on your PATH — add %s to it (Windows Settings: \"Edit environment variables for your account\"), or, for this PowerShell session: $env:Path = \"%s;$env:Path\"", f.Path, dir, dir)
 	case !f.OnPath:
-		dir := filepath.Dir(f.Path)
+		dir := path.Dir(f.Path)
 		return fmt.Sprintf("using sbx at %s, which isn't on your PATH — add %s to it, e.g. export PATH=\"%s:$PATH\"", f.Path, dir, dir)
 	case len(f.Others) > 0:
 		return fmt.Sprintf("sbx is being used from %s, which is on your PATH, but sbx also exists at %s, a default installation location — check that the right sbx is on your PATH", f.Path, joinOr(f.Others))

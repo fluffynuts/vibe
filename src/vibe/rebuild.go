@@ -186,6 +186,9 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		// sbx forgets the sandbox's own network rules with it: the new one
+		// gets them back from what's kept.
+		noteKeptRules(vibeHome, name)
 		note("removing sandbox '%s'", name)
 		if err := sbxrun.Remove(ctx, name, true, actionOutput()); err != nil {
 			return err

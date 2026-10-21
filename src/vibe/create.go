@@ -312,6 +312,7 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 			note("WARNING: %s", err)
 		}
 	}
+	noteRestoredRules(vibeHome, name)
 
 	inst := state.Instance{
 		Name: name, Profile: profile, Target: target, Publish: publishRecords, MemoryStore: memoryStore, Timezone: zone, Agent: agent, Memory: memSize, CPUs: cpus, CreatedAt: time.Now(),

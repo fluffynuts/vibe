@@ -68,7 +68,7 @@ func (s *Server) reviewState(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	body := map[string]interface{}{"review": rv}
+	body := map[string]interface{}{"review": rv, "agentAtWork": s.agentAtWorkOnReview()}
 	if ask := s.answeringAsk(); ask != nil {
 		body["ask"] = ask
 	}
@@ -253,11 +253,13 @@ func (s *Server) reviewAsk(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("there's no comment #%d", req.Thread))
 		return
 	}
-	if !s.startTurn(askPrompt(*thread, question)) {
+	launch, _, ok := s.claimTurn(askPrompt(*thread, question))
+	if !ok {
 		writeError(w, http.StatusConflict, "the agent is still answering the last prompt — ask once it's done")
 		return
 	}
-	prompt, _ := s.convo.turn()
+	prompt := s.reviewBegan()
+	launch()
 	s.asked.mu.Lock()
 	s.asked.thread, s.asked.prompt = req.Thread, prompt
 	s.asked.mu.Unlock()
@@ -309,10 +311,13 @@ func (s *Server) reviewSubmit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "there's nothing new to send")
 		return
 	}
-	if !s.startTurn(submitPrompt(rv, refs)) {
+	launch, _, ok := s.claimTurn(submitPrompt(rv, refs))
+	if !ok {
 		writeError(w, http.StatusConflict, "the agent is still answering the last prompt — submit once it's done")
 		return
 	}
+	s.reviewBegan()
+	launch()
 	if err := s.cfg.ReviewTab.Store.MarkSent(refs); err != nil {
 		writeError(w, http.StatusInternalServerError, "sent, but they couldn't be marked as sent, so Submit would send them again: "+err.Error())
 		return
@@ -552,6 +557,7 @@ func (s *Server) reviewStart(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "the agent is still answering the last prompt — start the review once it's done, or show the diff for now")
 			return
 		}
+		s.reviewBegan()
 	}
 	rv, err := s.cfg.ReviewTab.Store.Do(start, review.User)
 	if err != nil {
@@ -599,4 +605,73 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		body["code"] = "review-unreadable"
 	}
 	writeJSON(w, http.StatusInternalServerError, body)
+}
+
+// reviewBegan notes the turn just claimed as the review's, and gives its
+// prompt.
+func (s *Server) reviewBegan() int {
+	prompt, _ := s.convo.turn()
+	s.reviewTurn.mu.Lock()
+	s.reviewTurn.prompt = prompt
+	s.reviewTurn.mu.Unlock()
+	return prompt
+}
+
+// agentAtWorkOnReview says the agent is at a turn the review began:
+// answering it, or still at work on what it left running.
+func (s *Server) agentAtWorkOnReview() bool {
+	s.reviewTurn.mu.Lock()
+	began := s.reviewTurn.prompt
+	s.reviewTurn.mu.Unlock()
+	prompt, _ := s.convo.turn()
+	return began != 0 && prompt == began && s.convo.working()
+}
+
+// reviewClose closes the review. The agent at work on it is stopped, when
+// the user has agreed to (stop), as the page warned them: while it's still
+// writing the review, which is then dropped (it would only be started
+// again), or while comments are still open (fixing them, say), the review
+// kept to reopen. With nothing left open, the agent is left to finish. A
+// turn the review didn't begin is never stopped.
+func (s *Server) reviewClose(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Stop bool `json:"stop"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, `expected {"stop": true or false}`)
+		return
+	}
+	store := s.cfg.ReviewTab.Store
+	rv, err := store.Load()
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writing := rv.State == review.InProgress
+	open := false
+	for _, t := range rv.Threads {
+		open = open || t.Status == review.Open
+	}
+	stopping := s.agentAtWorkOnReview() && (writing || open)
+	if stopping && !req.Stop {
+		writeError(w, http.StatusConflict, "the agent is at work on this review, and closing it now stops the agent: it was left open")
+		return
+	}
+	if stopping {
+		s.convo.stop()
+	}
+	if stopping && writing {
+		rv, err = store.Drop("You closed it while the agent was still writing it, so it was dropped: start another whenever you like.")
+	} else {
+		why := "You closed it."
+		if stopping {
+			why = "You closed it, stopping the agent's work on it."
+		}
+		rv, err = store.Do(review.Request{Op: "close", Body: why}, review.User)
+	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"review": rv})
 }

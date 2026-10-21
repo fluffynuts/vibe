@@ -993,15 +993,34 @@
     $('confirm-command-note').hidden = opts.commandNote === ''
     $('confirm-command').textContent = opts.command
     $('confirm-command').hidden = !opts.command
-    $('confirm-run').className = opts.danger ? 'danger' : ''
-    $('confirm-run').textContent = opts.runLabel || 'Run'
+    // safe: what it confirms is destructive, so Cancel is the obvious
+    // choice: on the right, focused, and the one that looks like the action.
+    const actions = dialog.querySelector('.actions')
+    const cancel = actions.querySelector('[value=cancel]')
+    const run = $('confirm-run')
+    actions.classList.toggle('safe', !!opts.safe)
+    if (opts.safe) actions.append(run, cancel)
+    else actions.append(cancel, run)
+    cancel.className = opts.safe ? '' : 'ghost'
+    cancel.autofocus = !!opts.safe
+    run.autofocus = !opts.safe
+    run.className = opts.danger || opts.safe ? 'danger' : ''
+    run.textContent = opts.runLabel || 'Run'
     dialog.returnValue = ''
     dialog.onclose = async () => {
-      if (dialog.returnValue !== 'run') return
+      if (dialog.returnValue !== 'run') {
+        if (opts.cancelled) opts.cancelled()
+        return
+      }
       try {
         const res = await opts.run()
         reached(true)
-        if (res.ok) {
+        // asked: run asked something else instead, which says what's what.
+        if (res.asked) return
+        // warning: done, but not all of it (see the server's changing).
+        if (res.ok && res.body.warning) {
+          toast(res.body.warning, true)
+        } else if (res.ok) {
           toast(opts.started ? opts.started : 'Done: ' + (res.body.command || opts.command), false,
             opts.progress ? { label: 'Show progress', run: opts.progress } : null)
         } else {
@@ -1202,6 +1221,9 @@
     // being edited ({ thread, at: when it was said, text }); ask, the
     // thread last asked about and whether the agent is still answering it.
     composer: null, editing: null, ask: null,
+    // agentAtWork is vibe saying the agent is at a turn the review began
+    // (its start, a Submit or an Ask): closing the review stops it.
+    agentAtWork: false,
     // options are the reviews that can be started, while none is open
     // (null until known), or why they couldn't be told.
     options: null, optionsError: '',
@@ -1988,6 +2010,7 @@
         const wasOn = reviewView.review && reviewIsOn(reviewView.review)
         reviewView.review = res.body.review
         reviewView.ask = res.body.ask || null
+        reviewView.agentAtWork = !!res.body.agentAtWork
         // What can be reviewed is asked when the start screen shows, not at
         // every poll: it's git, which polls keep clear of.
         if (!reviewIsOn(reviewView.review) && (wasOn || (!reviewView.options && !reviewView.optionsError))) loadOptions()
@@ -2053,7 +2076,8 @@
   function drawStart(rv) {
     $('review-closed').hidden = !rv.closed
     $('review-closed').textContent = rv.closed ? 'The last review was closed. ' + rv.closed : ''
-    $('review-reopen').hidden = !rv.closed
+    // A dropped review left nothing behind to reopen.
+    $('review-reopen').hidden = !rv.closed || (!rv.threads.length && (!rv.started || String(rv.started).startsWith('0001-')))
     const o = reviewView.options
     if (!o) {
       $('review-start-options').replaceChildren(el('p', { class: reviewView.optionsError ? 'bad-text' : 'muted',
@@ -2179,23 +2203,58 @@
     }
   }
 
-  // closeReview closes the review, asking first when comments on it are
-  // still open; it's kept, to reopen.
-  function closeReview() {
+  // closeReview closes the review, asking first when that stops the agent
+  // at work on it, or comments on it are still open: the review the agent is
+  // still writing is dropped (vibe would only be asked to write it again);
+  // any other is kept, to reopen. With nothing open, the agent is left to
+  // finish. Cancelled with comments open, the first of them is shown.
+  function closeReview(again = false) {
     const rv = reviewView.review
     const open = rv.threads.filter((t) => t.status === 'open').length
+    const writing = reviewView.agentAtWork && rv.state === 'in progress'
+    const stop = writing || (reviewView.agentAtWork && open > 0)
     const close = async () => {
-      const res = await doReview({ op: 'close', body: 'You closed it.' })
-      if (res.ok) { reviewView.key = null; drawReview(); loadOptions() }
+      const res = await post('/api/review/close', { stop })
+      if (res.status === 409 && !again) {
+        // The agent began work on the review since the page last looked:
+        // asked again, saying what closing now does.
+        await loadReview(false)
+        reviewView.agentAtWork = true
+        closeReview(true)
+        return { asked: true }
+      }
+      if (res.ok) { tookReview(res.body.review); reviewView.key = null; drawReview(); loadOptions() }
       return res
     }
-    if (!open) {
-      close().then((res) => { reached(true); if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true) },
+    if (!writing && !open) {
+      close().then((res) => { reached(true); if (!res.ok && !res.asked) toast((res.body && res.body.error) || 'That failed.', true) },
         () => { reached(false); toast('Could not reach vibe.', true) })
       return
     }
-    confirmThen({ title: 'Close this review?', text: (open === 1 ? '1 comment is' : open + ' comments are') + ' still open. The review is kept: you can reopen it.',
-      commandNote: '', command: '', runLabel: 'Close review', started: 'Closed.', run: close })
+    const opens = open === 1 ? '1 comment is' : open + ' comments are'
+    const text = writing
+      ? 'The agent is still writing this review. Closing it stops the agent, and the review is dropped: you can start another at any time.'
+      : 'This review is incomplete: ' + opens + ' still open. ' +
+        (stop ? "Closing it stops the agent's work on it: changes it has finished are kept, but one it's partway through may be left half-done. " : '') +
+        'The review is kept: you can reopen it at any time.'
+    confirmThen({ title: 'Close this review?', text: text + ' Are you sure you want to close it?', safe: true,
+      commandNote: '', command: '', runLabel: 'Close review', started: 'Closed.',
+      run: close,
+      cancelled: writing ? null : showFirstOpenComment })
+  }
+
+  // showFirstOpenComment opens the comments pane at the first comment still
+  // open, as high in it as it goes, focused: a filter that hid it is set to
+  // show the open ones.
+  function showFirstOpenComment() {
+    const firstOpen = () => paneThreads().find((t) => t.status === 'open')
+    if (!firstOpen()) reviewView.pane.filter = 'open'
+    openCommentsPane(true)
+    const t = firstOpen()
+    const card = t && $('review-comments-list').querySelector(`[data-thread="${t.id}"]`)
+    if (!card) return
+    card.scrollIntoView({ block: 'start' })
+    card.focus({ preventScroll: true })
   }
 
   async function reopenReview() {
@@ -3732,7 +3791,7 @@
       loadReview(true)
     })
     setUpReviewTree()
-    $('review-close').addEventListener('click', closeReview)
+    $('review-close').addEventListener('click', () => closeReview())
     setUpCommentsPane()
     setUpLineDrag()
     setUpOrderMenu()

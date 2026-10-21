@@ -80,19 +80,23 @@ func TestFindDoesntCountALinkToTheSbxOnPathAsAnotherSbx(t *testing.T) {
 	}
 }
 
+// Each case is described as it would be on goos, whatever the tests run on:
+// what to do about PATH is a shell's, and Windows' isn't bash.
 func TestDescribe(t *testing.T) {
 	cases := []struct {
 		name string
+		goos string
 		f    Found
 		want []string
 	}{
-		{"nothing found", Found{}, nil},
-		{"on PATH alone", Found{Path: "/a/sbx", OnPath: true}, nil},
-		{"not on PATH", Found{Path: "/a/bin/sbx"}, []string{"/a/bin/sbx", "isn't on your PATH", `export PATH="/a/bin:$PATH"`}},
-		{"on PATH with another", Found{Path: "/a/sbx", OnPath: true, Others: []string{"/b/sbx"}}, []string{"/a/sbx", "/b/sbx", "check that the right sbx"}},
+		{"nothing found", "linux", Found{}, nil},
+		{"on PATH alone", "linux", Found{Path: "/a/sbx", OnPath: true}, nil},
+		{"not on PATH", "linux", Found{Path: "/a/bin/sbx"}, []string{"/a/bin/sbx", "isn't on your PATH", `export PATH="/a/bin:$PATH"`}},
+		{"not on PATH, on Windows", "windows", Found{Path: `C:\a\bin\sbx.exe`}, []string{`C:\a\bin\sbx.exe`, "isn't on your PATH", `$env:Path = "C:\a\bin;$env:Path"`}},
+		{"on PATH with another", "linux", Found{Path: "/a/sbx", OnPath: true, Others: []string{"/b/sbx"}}, []string{"/a/sbx", "/b/sbx", "check that the right sbx"}},
 	}
 	for _, c := range cases {
-		got := c.f.Describe()
+		got := c.f.describe(c.goos)
 		if c.want == nil && got != "" {
 			t.Errorf("%s: got %q, want nothing", c.name, got)
 		}

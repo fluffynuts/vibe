@@ -3,6 +3,7 @@ package companion
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -781,5 +782,42 @@ func TestNoAPICallIsRegisteredOutsideTheTable(t *testing.T) {
 	}
 	if m := regexp.MustCompile(`mux\.Handle(Func)?\("[A-Z]* ?/api/`).Find(src); m != nil {
 		t.Errorf("an API call is registered outside apiRoutes: %s", m)
+	}
+}
+
+// Every change made on the page has the sandbox's own rules kept afresh, so
+// one removed here doesn't come back with a rebuild; one that can't be
+// kept is said to be, the change made all the same.
+func TestAChangeToTheRulesHasThemKept(t *testing.T) {
+	for _, path := range []string{"/api/allow", "/api/deny", "/api/remove"} {
+		s := newServer(&fakeSbx{})
+		kept := 0
+		s.cfg.RulesChanged = func() error { kept++; return nil }
+		body := `{"host":"a.example.com"}`
+		if path == "/api/remove" {
+			body = `{"id":"ea070143"}`
+		}
+		if w := do(t, s, post(path, body)); w.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", path, w.Code, w.Body)
+		}
+		if kept != 1 {
+			t.Errorf("%s: kept %d times", path, kept)
+		}
+	}
+	s := newServer(&fakeSbx{})
+	s.cfg.RulesChanged = func() error { return errors.New("sbx is not signed in") }
+	w := do(t, s, post("/api/allow", `{"host":"a.example.com"}`))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"warning"`) || !strings.Contains(w.Body.String(), "not signed in") {
+		t.Errorf("%d %s", w.Code, w.Body)
+	}
+}
+
+func TestAChangeSbxRefusedKeepsNothing(t *testing.T) {
+	s := newServer(&fakeSbx{err: errors.New("no")})
+	kept := 0
+	s.cfg.RulesChanged = func() error { kept++; return nil }
+	do(t, s, post("/api/allow", `{"host":"a.example.com"}`))
+	if kept != 0 {
+		t.Errorf("kept %d times", kept)
 	}
 }

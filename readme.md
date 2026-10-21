@@ -637,7 +637,15 @@ you're looking at:
   browser's first visit takes what's already blocked as seen, so a long history isn't news, and the
   dot is per browser. Hosts a rule now allows aren't counted.
 - **Network rules** — the rules that apply to the sandbox, a box to allow or block a host, and
-  **Remove** for the sandbox's own rules.
+  **Remove** for the sandbox's own rules. sbx forgets a sandbox's own rules (those scoped to it, made
+  here, by approving a request, or with `sbx policy ... --sandbox`) when the sandbox is removed, so vibe
+  keeps a copy in `~/.vibe/rules/<sandbox>.json`, taken afresh after every change made here, when a
+  session ends, and just before a rebuild removes the sandbox; each copy replaces the last, so a rule
+  you removed stays gone. A sandbox vibe makes again (rebuilt, re-composed, or removed with sbx and made
+  anew) gets them back, and the rebuild says which; one that won't go back (a pattern this page
+  refuses, say) is reported with the `sbx` command that would add it. The kit's rules come back with
+  the profile, and global ones never went. `--migrate` takes the copy along, and deleting the sandbox
+  deletes it.
 - **Filesystem rules** — the same, read-only (sbx doesn't log filesystem access yet).
 - **Admin** — what `vibe --info` shows of the sandbox, and what you'd otherwise go to a terminal for:
   start or stop it, rebuild it from its profile (`-r`), re-compose it with features added or taken away
