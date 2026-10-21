@@ -105,6 +105,9 @@ type conversation struct {
 	// so a page only fetches them when it hasn't the latest.
 	commands    []string
 	commandsSeq int
+	// model is the model the agent said it was running, the last time it
+	// started a turn: what ran, as against what was asked for.
+	model string
 	// file is where the conversation is kept between runs of vibe, so a
 	// page that outlives one carries on where it was; "" keeps it only in
 	// memory.
@@ -121,6 +124,8 @@ type saved struct {
 	// Commands and CommandsSeq are conversation.commands and commandsSeq.
 	Commands    []string `json:"commands,omitempty"`
 	CommandsSeq int      `json:"commandsSeq,omitempty"`
+	// Model is conversation.model.
+	Model string `json:"model,omitempty"`
 }
 
 // load picks up the conversation file holds, if any. A turn that was
@@ -144,6 +149,7 @@ func (c *conversation) load(file string) error {
 	}
 	c.events, c.seq, c.prompt = was.Events, was.Seq, was.Prompt
 	c.commands, c.commandsSeq = slashCommands(was.Commands), was.CommandsSeq
+	c.model = was.Model
 	if SessionID.MatchString(was.Session) {
 		c.session = was.Session
 	}
@@ -163,11 +169,25 @@ func (c *conversation) save() {
 		return
 	}
 	data, err := json.Marshal(saved{Seq: c.seq, Session: c.session, Prompt: c.prompt, Running: c.running, Events: c.events,
-		Commands: c.commands, CommandsSeq: c.commandsSeq})
+		Commands: c.commands, CommandsSeq: c.commandsSeq, Model: c.model})
 	if err != nil {
 		return
 	}
 	fscopy.WriteWhole(c.file, data)
+}
+
+// ranModel is the model the agent said it was running, "" before it has.
+func (c *conversation) ranModel() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.model
+}
+
+// hasSession says the conversation is one the agent would resume.
+func (c *conversation) hasSession() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.session != ""
 }
 
 // close saves the conversation as it is, for the next vibe to pick up.
@@ -257,6 +277,7 @@ func (c *conversation) line(raw []byte) string {
 		Subtype       string   `json:"subtype"`
 		SessionID     string   `json:"session_id"`
 		SlashCommands []string `json:"slash_commands"`
+		Model         string   `json:"model"`
 		Status        *string  `json:"status"`
 	}
 	json.Unmarshal(raw, &head)
@@ -264,6 +285,9 @@ func (c *conversation) line(raw []byte) string {
 	defer c.mu.Unlock()
 	if SessionID.MatchString(head.SessionID) {
 		c.session = head.SessionID
+	}
+	if head.Type == "system" && head.Subtype == "init" && head.Model != "" {
+		c.model = head.Model
 	}
 	if head.Type == "system" && head.Subtype == "init" && head.SlashCommands != nil {
 		if commands := slashCommands(head.SlashCommands); !slices.Equal(commands, c.commands) {
@@ -362,7 +386,7 @@ func (c *conversation) afresh(done string, failed []string) bool {
 	if c.running {
 		return false
 	}
-	c.events, c.session, c.prompt = nil, "", 0
+	c.events, c.session, c.prompt, c.model = nil, "", 0, ""
 	// Pages showing the old events are told to clear them.
 	c.add("reset", "", nil)
 	if done != "" {

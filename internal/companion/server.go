@@ -90,6 +90,10 @@ type Config struct {
 	// nil means the sandbox's agent can't be talked to this way, and the
 	// page has no such tab.
 	Converse Converser
+	// Choice lets the page choose the model and effort the conversation's
+	// agent is asked to use; nil means it can't, and the page has no
+	// drop-downs for them.
+	Choice *Choice
 	// Prepare readies the sandbox for a turn before it runs (starting it,
 	// if it's stopped), saying what it does through say, which the page
 	// shows; an error ends the turn with it, unrun. Nil means nothing is
@@ -169,8 +173,10 @@ type Server struct {
 	// for them to end.
 	loops sync.WaitGroup
 	convo conversation
-	admin admin
-	asked asked
+	// options are what the agent said it has, for the model and effort.
+	options choiceOptions
+	admin   admin
+	asked   asked
 	// reviewTurn is the prompt of the turn the review last began (its
 	// start, a Submit or an Ask): closing the review may stop that turn,
 	// and no other.
@@ -349,6 +355,9 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"POST /api/remove", s.authed(s.changing(s.remove))},
 		{"POST /api/clipboard/start", s.authed(s.changing(s.startClipboard))},
 		{"GET /api/conversation", s.authed(s.conversationEvents)},
+		{"GET /api/conversation/choice", s.serving(choiceFeature, s.choiceState)},
+		{"POST /api/conversation/choice", s.serving(choiceFeature, s.choiceSet)},
+		{"POST /api/conversation/choice/options", s.serving(choiceFeature, s.choiceFetchOptions)},
 		{"POST /api/conversation/send", s.serving(conversationFeature, s.conversationSend)},
 		{"POST /api/conversation/stop", s.serving(conversationFeature, s.conversationStop)},
 		{"POST /api/conversation/new", s.serving(conversationFeature, s.conversationNew)},
@@ -578,6 +587,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"clipboardTrouble":      s.clipboardTrouble(clipboard, ready),
 		"clipboardCanStart":     clipboard != "" && s.cfg.StartClipboard != nil,
 		"conversation":          s.cfg.Converse != nil,
+		"choice":                choiceFeature.present(s),
 		"admin":                 s.cfg.Admin != nil,
 		"manage":                s.cfg.Manage != nil,
 		"review":                s.cfg.ReviewTab != nil,
