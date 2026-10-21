@@ -1,7 +1,8 @@
 # Plan: choosing the model and effort from the Conversation tab
 
 Status: planned 2026-10-19; decisions of 2026-10-19 and 2026-10-21 below; the real-agent check for Claude was run
-on 2026-10-21 (findings below) and found no blocker. Not started.
+on 2026-10-21 (findings below) and found no blocker. **Built 2026-10-21** on `feat/model-and-effort`, committed as
+it went; see "As built" at the end. A real browser and a real sbx sandbox are still to try.
 
 ## The outcome
 
@@ -159,3 +160,28 @@ resets the model and effort to that agent's defaults.
 4. Stored with the profile, written back as the workspace's profile. Shared by every sandbox in that profile.
 5. Staged: Claude, then generic with OpenCode, then Codex by a friend, then leave the rest to user reports.
 6. Commit as the build goes, on `feat/model-and-effort`.
+
+## As built (2026-10-21)
+
+- `internal/modelchoice`: reads the agent's lists (`ParseModels` from a `/model` answer, `ParseEfforts` from
+  `--help`; real captured output is in `testdata/`) and checks a choice is safe to put on a command line.
+- The choice is `model:` / `effort:` in the profile's `settings.yaml` (`src/vibe/modelchoice.go`, `profileChoice`),
+  read for each turn, so a change is the next prompt's. `--re-compose` deletes and rebuilds a profile, so it
+  reads the choice first and writes it back (as it does the theme and the user's instructions).
+- The turn adds `--model X --effort Y` before `--resume`, only when set (`conversationCommand`); a stored value
+  that isn't safe is refused with where to fix it, before anything is sent.
+- The lists are asked of the sandbox's own claude over `sbx exec`: `claude --help` and `claude -p /model
+  --output-format json --no-session-persistence` (a local command: no model call). Asked when the page opens
+  **without waking** a sleeping sandbox; the page's **Retry** wakes it. Kept for the life of the page's vibe.
+- Routes: `GET /api/conversation/choice`, `POST /api/conversation/choice` (a model change resets the effort,
+  enforced on the host), `POST /api/conversation/choice/options` (`{"wake": bool}`). Both POSTs are in the guard
+  test's list of changing routes.
+- The page (`app.js`, "the model and effort"): two selects in the conversation bar, an in-page `<dialog>` for the
+  warning (asked only when the conversation has a session: nothing to re-read otherwise) and one for **Other…**.
+  Dialogs are modal with the usual tinted backdrop. `internal/companion/dialogs_test.go` fails if the page ever
+  uses the browser's own `alert`, `confirm` or `prompt`.
+- Decided while building: the warning is skipped when there is no session yet; **Default** is labelled with the
+  model the agent names as its default; "what ran" is judged loosely (an alias is part of the full name) and not
+  at all for `best` / `opusplan`, and not while a change is waiting for its first turn.
+- Not done: other agents (see `plan-conversation-other-agents.md`); a global default beyond what settings
+  already layer; the OpenCode-style per-model effort lists.

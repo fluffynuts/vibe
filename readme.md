@@ -613,6 +613,18 @@ you're looking at:
   while you're on another tab, until you open it. Once the agent has answered you can
   send the next prompt, even if it left something running that it is waiting on (a review page, say):
   sending ends that. Links to pages on `localhost` in what the agent says can be clicked.
+  The **Model** and **Effort** drop-downs in the bar choose what claude is asked to use (they're there for a
+  Claude sandbox). **Default** passes nothing, so claude's own settings decide, and says which model that is.
+  The lists are claude's own, read from it when the page opens (without waking a sandbox that's asleep: if it
+  can't be asked, the page says why and **Retry** wakes it): the plain model names are in the drop-down, and
+  **Other…** opens the rest the agent lists, or takes a model's full name. Efforts are the ones claude's
+  `--effort` takes. A change applies from the next prompt, even while the agent is answering. Changing the model
+  puts the effort back to **Default**, to be chosen again, as what an effort means differs between models; and
+  for a conversation already under way it asks first, because the next prompt re-reads the whole conversation,
+  which is slower and costs more (Cancel puts the drop-down back). The choice is kept as `model:` and `effort:`
+  in the profile's `settings.yaml`, so it outlives vibe, the page and a rebuild, and `--re-compose` carries it
+  across; what's in the global `settings.yaml` is the default under it. Beside the drop-downs the page says which
+  model claude reported running on its last turn, and says so plainly when that isn't what was asked for.
 - **Review** — the changes in the sandbox's folder, worked out on this machine, read with go-git by a helper process (vibe itself, held to a memory limit and stopped when its time is up), which runs nothing the repository's own config names, since the sandbox can write that; no git is needed on the host. It covers uncommitted changes (
   untracked files with them; or a branch's, or a commit's), with the agent's review comments under the
   lines they're about: side by side (or in one column), with the hidden lines between changes a click away,
@@ -1081,6 +1093,8 @@ agent: claude         # which coding agent to run
 nugetDir: ~/.nuget    # the host's NuGet folder: its packages are given to the sandbox, if it has them
 nuget: fallback       # fallback (default): packages read-only, nothing else; overlay: the same, overlaid at their own path (experimental); shared: all of nugetDir, read-write
 packages: ask         # ask (default): packages the agent asks for wait for you on the Admin tab; allow: fetched at once
+model: sonnet         # the model the Conversation tab asks claude for; the drop-down there writes it into the profile's settings.yaml. Unset: claude's own default
+effort: high          # the effort the Conversation tab asks claude for (low, medium, high, xhigh or max, as claude's --effort takes). Unset: claude's own default
 memoryRoot: ~/.vibe/memories   # where per-sandbox agent memories are backed up
 defaultFeatures:      # library features a guided profile starts with selected
   - dotnet
