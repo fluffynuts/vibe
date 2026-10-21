@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"vibe/internal/companion"
@@ -137,7 +138,44 @@ func agentOptions(ctx context.Context, ask askAgent, workspace string) (companio
 	if err != nil {
 		return companion.Options{}, err
 	}
-	return companion.Options{Models: models.Plain, OtherModels: models.Other, Efforts: efforts, Current: models.Current}, nil
+	opts := companion.Options{Models: models.Plain, OtherModels: models.Other, Efforts: efforts, Current: models.Current}
+	// The versions are what the page shows beside each, but the lists are
+	// good without them: so a failure to ask is said, not made the lists'.
+	if opts.Names, err = modelNames(ctx, ask, in, append(append([]string{}, models.Plain...), models.Other...)); err != nil {
+		note("couldn't ask claude what the models are called, so the lists show their aliases: %v", err)
+	}
+	return opts, nil
+}
+
+// modelNames asks claude, in one command in the sandbox, what each alias
+// stands for ("opus" is "Opus 5.5"): a /model prompt answers that itself, with
+// no model. What can't be read is left out of the answer.
+func modelNames(ctx context.Context, ask askAgent, in func(string) string, aliases []string) (map[string]string, error) {
+	quoted := make([]string, len(aliases))
+	for i, a := range aliases {
+		quoted[i] = shellQuote(a)
+	}
+	out, err := ask(ctx, in(`for m in `+strings.Join(quoted, " ")+`; do printf '=== %s\n' "$m"; claude -p "/model $m" --output-format json --no-session-persistence </dev/null; echo; done`))
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]string{}
+	for _, section := range strings.Split(out, "=== ")[1:] {
+		alias, body, _ := strings.Cut(section, "\n")
+		var said struct {
+			Result string `json:"result"`
+		}
+		if json.Unmarshal([]byte(strings.TrimSpace(body)), &said) != nil {
+			continue
+		}
+		if name, err := modelchoice.ParseModelName(said.Result); err == nil {
+			names[strings.TrimSpace(alias)] = name
+		}
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("none of its %d answers named a model", len(aliases))
+	}
+	return names, nil
 }
 
 // keptOptionsVersion is the layout of the file the agent's lists are kept in.

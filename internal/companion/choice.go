@@ -35,6 +35,10 @@ type Options struct {
 	Models      []string `json:"models"`
 	OtherModels []string `json:"otherModels"`
 	Efforts     []string `json:"efforts"`
+	// Names are what the agent calls each of those models ("Opus 5.5" for
+	// "opus"), for the page to show their versions. A model it couldn't
+	// say the name of isn't in it.
+	Names map[string]string `json:"names,omitempty"`
 	// Current names the model the agent uses with no choice made, as it
 	// says it.
 	Current string `json:"current,omitempty"`

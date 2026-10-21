@@ -229,3 +229,96 @@ func TestListsKeptInAnotherOrderComeBackBiggestFirst(t *testing.T) {
 		t.Errorf("got %+v, %v", got, ok)
 	}
 }
+
+// The real answers to /model <alias>, from claude 2.1.306.
+var realNames = map[string]string{
+	"fable": "Fable 5.1", "opus": "Opus 5.5", "sonnet": "Sonnet 5.5", "haiku": "Haiku 5.5",
+	"fable[1m]": "Fable 5.1", "opus[1m]": "Opus 5.5 (1M context)", "sonnet[1m]": "Sonnet 5.5",
+	"best": "Fable 5.1", "opusplan": "Opus in plan mode, else Sonnet",
+}
+
+// namesAnswer is what the one command that asks for each alias's name writes:
+// a line naming the alias, then claude's answer to it.
+func namesAnswer(aliases ...string) string {
+	var out strings.Builder
+	for _, a := range aliases {
+		out.WriteString("=== " + a + "\n")
+		out.WriteString(`{"is_error":false,"result":"Set model to ` + "`" + realNames[a] + "`" + ` for this session only"}` + "\n\n")
+	}
+	return out.String()
+}
+
+func askingWithNames(names string, namesErr error) askAgent {
+	return func(ctx context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, "--help"):
+			return realOutputNoT("claude-help-effort.txt"), nil
+		case strings.Contains(script, "==="):
+			return names, namesErr
+		}
+		return realOutputNoT("model-command.json"), nil
+	}
+}
+
+func realOutputNoT(name string) string {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "modelchoice", "testdata", name))
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}
+
+func TestEachListedModelIsAskedWhatItIsCalledInOneCommand(t *testing.T) {
+	var scripts []string
+	ask := func(ctx context.Context, script string) (string, error) {
+		scripts = append(scripts, script)
+		return askingWithNames(namesAnswer("fable", "opus", "sonnet", "haiku", "fable[1m]", "opus[1m]", "sonnet[1m]", "best", "opusplan"), nil)(ctx, script)
+	}
+	got, err := agentOptions(context.Background(), ask, "/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Names, realNames) {
+		t.Errorf("names = %v, want %v", got.Names, realNames)
+	}
+	if len(scripts) != 3 {
+		t.Errorf("%d commands run in the sandbox, want 3 (the help, the list, the names): %q", len(scripts), scripts)
+	}
+	names := scripts[len(scripts)-1]
+	if !strings.HasPrefix(names, "cd '/work' && ") || strings.Contains(names, "'default'") {
+		t.Errorf("names command = %s", names)
+	}
+	for _, alias := range []string{"'fable'", "'opus[1m]'", "'opusplan'"} {
+		if !strings.Contains(names, alias) {
+			t.Errorf("%s isn't asked for: %s", alias, names)
+		}
+	}
+}
+
+func TestWhenTheNamesCantBeHadTheListsStillComeAndItIsSaid(t *testing.T) {
+	var got companion.Options
+	var err error
+	said := notesOf(func() {
+		got, err = agentOptions(context.Background(), askingWithNames("", errors.New("exec: sandbox is stopped")), "/work")
+	})
+	if err != nil || len(got.Models) != 4 {
+		t.Fatalf("%v, %+v", err, got)
+	}
+	if len(got.Names) != 0 {
+		t.Errorf("names = %v", got.Names)
+	}
+	if len(said) != 1 || !strings.Contains(said[0], "sandbox is stopped") {
+		t.Errorf("said %q, want one note with why", said)
+	}
+}
+
+func TestANameThatCantBeReadLeavesOnlyThatOneOut(t *testing.T) {
+	answer := namesAnswer("fable", "opus") + "=== sonnet\nnot json\n\n" + namesAnswer("haiku")
+	got, err := agentOptions(context.Background(), askingWithNames(answer, nil), "/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]string{"fable": "Fable 5.1", "opus": "Opus 5.5", "haiku": "Haiku 5.5"}; !reflect.DeepEqual(got.Names, want) {
+		t.Errorf("names = %v, want %v", got.Names, want)
+	}
+}

@@ -5236,6 +5236,22 @@
     return { kind: 'news', text: 'A change to the model or effort applies to your next prompt.' + (choice.running ? ' The last turn ran on ' + choice.running + '.' : '') }
   }
 
+  // modelName is what the agent calls the model an alias stands for ("Opus
+  // 5.5" for "opus"), when it said.
+  function modelName(alias) {
+    const names = choice.options && choice.options.names
+    return (names && names[alias]) || ''
+  }
+
+  // modelLabel is how a model is shown: by that name alone where it's one of
+  // the plain ones, as the agent's own picker does; elsewhere with the alias it
+  // is chosen by first, since that is what it's kept as. An alias the agent
+  // gave no name for is shown as it is.
+  function modelLabel(alias, plain) {
+    const name = modelName(alias)
+    return !name ? alias : plain ? name : alias + ' — ' + name
+  }
+
   function fillSelect(select, items, value) {
     select.replaceChildren(...items.map((i) => el('option', { value: i.value, text: i.text })))
     select.value = value
@@ -5245,8 +5261,8 @@
     const o = choice.options
     const current = o && o.current ? o.current.replace(/\s*\(default\)\s*$/i, '') : ''
     const models = [{ value: '', text: current ? 'Default (' + current + ')' : 'Default' }]
-    for (const m of (o && o.models) || []) models.push({ value: m, text: m })
-    if (choice.model && !models.some((m) => m.value === choice.model)) models.push({ value: choice.model, text: choice.model })
+    for (const m of (o && o.models) || []) models.push({ value: m, text: modelLabel(m, true) })
+    if (choice.model && !models.some((m) => m.value === choice.model)) models.push({ value: choice.model, text: modelLabel(choice.model, false) })
     models.push({ value: OTHER_MODEL, text: 'Other…' })
     fillSelect($('choice-model'), models, choice.model)
     const efforts = [{ value: '', text: 'Default' }]
@@ -5403,7 +5419,7 @@
       ? 'The agent also lists these, besides the ones in the drop-down.'
       : "The agent lists no others, but it takes a model's full name."
     $('choice-other-list').replaceChildren(...others.map((m) => el('label', {},
-      el('input', { type: 'radio', name: 'choice-other', value: m }), ' ', m)))
+      el('input', { type: 'radio', name: 'choice-other', value: m }), ' ', modelLabel(m, false))))
     $('choice-other-name').value = ''
     if ((await dialogAnswer($('choice-other'))) !== 'go') return null
     const typed = $('choice-other-name').value.trim()
@@ -5415,7 +5431,7 @@
     if (model === choice.model) { drawChoice(); return }
     // Only a conversation under way has anything to re-read.
     if (choice.session) {
-      $('choice-warn-title').textContent = 'Change the model to ' + (model || 'the default') + '?'
+      $('choice-warn-title').textContent = 'Change the model to ' + (model ? modelName(model) || model : 'the default') + '?'
       if ((await dialogAnswer($('choice-warn'))) !== 'go') { drawChoice(); return }
     }
     await saveChoice(model, choice.effort)

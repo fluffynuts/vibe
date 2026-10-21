@@ -131,3 +131,25 @@ func TestOrderingDoesntChangeWhatItIsGiven(t *testing.T) {
 		t.Errorf("the list given was reordered in place: %v", in)
 	}
 }
+
+func TestTheNameAnAliasStandsForIsReadFromWhatTheAgentSaid(t *testing.T) {
+	for in, want := range map[string]string{
+		"Set model to `Fable 5.1` for this session only":                      "Fable 5.1",
+		"Set model to `Opus 5.5 (1M context)` for this session only":          "Opus 5.5 (1M context)",
+		"Set model to `Opus in plan mode, else Sonnet` for this session only": "Opus in plan mode, else Sonnet",
+		"Set model to `Opus 5.5 (default)` for this session only":             "Opus 5.5 (default)",
+	} {
+		got, err := ParseModelName(in)
+		if err != nil || got != want {
+			t.Errorf("%q: %q, %v; want %q", in, got, err, want)
+		}
+	}
+}
+
+func TestAnAnswerThatNamesNoModelIsAnError(t *testing.T) {
+	for _, in := range []string{"", "Unknown model: nope", "Set model to `` for this session only", "Set model to Opus"} {
+		if _, err := ParseModelName(in); err == nil {
+			t.Errorf("%q: no error", in)
+		}
+	}
+}

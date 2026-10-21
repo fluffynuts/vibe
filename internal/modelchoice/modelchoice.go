@@ -136,6 +136,17 @@ func ParseModels(answer string) (Models, error) {
 	return out, nil
 }
 
+var setModel = regexp.MustCompile("Set model to `([^`]+)`")
+
+// ParseModelName reads the name a "/model <alias>" prompt says the alias
+// stands for: "Set model to `Opus 5.5` for this session only" is "Opus 5.5".
+func ParseModelName(answer string) (string, error) {
+	if m := setModel.FindStringSubmatch(answer); m != nil {
+		return m[1], nil
+	}
+	return "", fmt.Errorf("the agent's answer doesn't name the model: %q", firstLine(answer))
+}
+
 // effortFlag finds the --effort flag in the agent's --help, with the list of
 // values it takes in the parentheses its description ends with.
 var effortFlag = regexp.MustCompile(`--effort\s+<[^>]+>[^(]*\(([a-z][a-z, ]*)\)`)

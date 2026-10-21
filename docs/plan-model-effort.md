@@ -264,3 +264,18 @@ at once and the agent is asked again in the background (stale while revalidate).
 - **Found in a real browser, not jsdom:** a drop-down sizes itself to its longest option, so the group got 70px
   wider when the lists arrived and everything moved. The two now have widths of their own (`14em`, `7em`), and a
   Firefox test checks that what they hold changes nothing.
+
+### Versions in the list (2026-10-21)
+
+- The agent's list gives only aliases (`opus`), which follow the latest model, so the version isn't in it. A
+  `/model <alias>` prompt answers locally, with no model call, "Set model to `Opus 5.5` for this session only": vibe
+  asks for every listed alias (but `default`) in **one** `sbx exec` loop and keeps the names with the lists
+  (`Options.Names`; `modelchoice.ParseModelName`). Real answers, claude 2.1.306: fable → Fable 5.1, opus → Opus 5.5,
+  sonnet → Sonnet 5.5, haiku → Haiku 5.5, `opus[1m]` → Opus 5.5 (1M context), `sonnet[1m]` → Sonnet 5.5 (no
+  mention of the 1M: the agent's own wording), `best` → Fable 5.1 (what it stands for now), `opusplan` → Opus in plan
+  mode, else Sonnet.
+- **Shown:** the plain models by that name alone ("Opus 5.5": what claude.ai's picker says); the rest, in
+  **Other…** and when one is chosen, as `alias — name`; an alias with no name as itself. The value kept in
+  `settings.yaml` stays the alias, so a choice still means "the latest opus".
+- A failure to ask for the names doesn't fail the lists: it's said in vibe's output (a note), the page shows aliases,
+  and the next refresh tries again. A name that can't be read leaves out only that one.

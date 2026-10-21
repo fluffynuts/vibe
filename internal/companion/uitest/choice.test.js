@@ -8,6 +8,7 @@ const { openPage } = require('./page.js')
 const OPTIONS = {
   models: ['sonnet', 'opus', 'haiku'], otherModels: ['best', 'opus[1m]'],
   efforts: ['low', 'medium', 'high'], current: 'Opus 5.5 (default)',
+  names: { sonnet: 'Sonnet 5.5', opus: 'Opus 5.5', haiku: 'Haiku 5.5', best: 'Fable 5.1', 'opus[1m]': 'Opus 5.5 (1M context)' },
 }
 
 // choicePage is a page for a sandbox whose agent can be asked for a model
@@ -652,5 +653,61 @@ test('the limit does nothing once the agent has answered', async () => {
     timers.fire()
     await turns()
     assert.ok(!open(p))
+  } finally { p.close() }
+})
+
+test('each model in the drop-down is shown with the name, and so the version, the agent gives it', async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    assert.deepEqual(texts(p.$('choice-model')), ['Default (Opus 5.5)', 'Sonnet 5.5', 'Opus 5.5', 'Haiku 5.5', 'Other…'])
+    assert.deepEqual(values(p.$('choice-model')), ['', 'sonnet', 'opus', 'haiku', '__other__'], 'what is kept is still the alias')
+  } finally { p.close() }
+})
+
+test('a model the agent gave no name for is shown as it is called', async () => {
+  const p = await choicePage({ model: 'opus', options: Object.assign({}, OPTIONS, { names: { opus: 'Opus 5.5' } }) })
+  try {
+    assert.deepEqual(texts(p.$('choice-model')).slice(1, 4), ['sonnet', 'Opus 5.5', 'haiku'])
+  } finally { p.close() }
+})
+
+test('a model chosen from beyond the drop-down is shown with its name beside the alias it is kept under', async () => {
+  const p = await choicePage({ model: 'opus[1m]' })
+  try {
+    assert.equal(p.$('choice-model').value, 'opus[1m]')
+    assert.ok(texts(p.$('choice-model')).includes('opus[1m] — Opus 5.5 (1M context)'))
+  } finally { p.close() }
+})
+
+test('Other… lists each model as the alias it is picked by and what the agent calls it', async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    await choose(p, 'choice-model', '__other__')
+    const labels = Array.from(p.$('choice-other-list').querySelectorAll('label')).map((l) => l.textContent.trim())
+    assert.deepEqual(labels, ['best — Fable 5.1', 'opus[1m] — Opus 5.5 (1M context)'])
+    p.$('choice-other').close('cancel')
+    await p.settle()
+  } finally { p.close() }
+})
+
+test('the question about changing the model names the one it is changing to as the drop-down does', async () => {
+  const p = await choicePage({ model: 'opus', session: true })
+  try {
+    await choose(p, 'choice-model', 'haiku')
+    assert.match(p.$('choice-warn-title').textContent, /Change the model to Haiku 5\.5\?/)
+    p.$('choice-warn').close('cancel')
+    await p.settle()
+  } finally { p.close() }
+})
+
+test('with no names kept (lists from before they were asked for), the aliases show until the agent is asked again', async () => {
+  let release
+  const p = await choicePage({ model: 'opus', cached: KEPT, hold: new Promise((resolve) => { release = resolve }) })
+  try {
+    await turns()
+    assert.deepEqual(texts(p.$('choice-model')).slice(1, 3), ['sonnet', 'opus'])
+    release()
+    await p.settle()
+    assert.deepEqual(texts(p.$('choice-model')).slice(1, 4), ['Sonnet 5.5', 'Opus 5.5', 'Haiku 5.5'])
   } finally { p.close() }
 })
