@@ -238,7 +238,7 @@ func checkSbxUpgrade() (*pendingUpgrade, string, error) {
 				if err := m.install("", "", false); err != nil {
 					return err
 				}
-				return reportSbx(m)
+				return finishSbxInstall(m)
 			}
 			return installSbxRelease(m, tag, false)
 		},

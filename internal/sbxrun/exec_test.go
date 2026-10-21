@@ -145,6 +145,9 @@ func TestWhatIsReadFromASandboxHasALimit(t *testing.T) {
 }
 
 func TestSbxIsAvailableWhenItIsOnPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("PATH", t.TempDir())
 	if Available() {
 		t.Error("sbx was available with no sbx on PATH")

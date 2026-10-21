@@ -60,7 +60,7 @@ func doInstallSbx(force bool) error {
 		if err := m.install("", "", force); err != nil {
 			return err
 		}
-		return reportSbx(m)
+		return finishSbxInstall(m)
 	}
 
 	tag, err := sbxinstall.LatestStableTag()
@@ -102,7 +102,7 @@ func installSbxRelease(m sbxMethod, tag string, reinstall bool) error {
 	if err := m.install(tag, file, reinstall); err != nil {
 		return err
 	}
-	return reportSbx(m)
+	return finishSbxInstall(m)
 }
 
 // installedSbxMethod finds which of methods sbx is installed by: the one
@@ -394,9 +394,22 @@ func stopSbxDaemon(path string) {
 	exec.Command(path, "daemon", "stop").Run()
 }
 
-// reportSbx checks the sbx just installed: that it's what PATH runs, and
-// which version it is.
-func reportSbx(m sbxMethod) error {
+// restartSbxDaemon restarts the daemon of the sbx at path, showing what it
+// says. A daemon left running from before an upgrade gives esoteric errors.
+// The install has worked either way, so a failure is a warning.
+func restartSbxDaemon(path string) {
+	note("Restarting Docker SBX daemon")
+	cmd := exec.Command(path, "daemon", "restart")
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		note("  WARNING: '%s daemon restart' failed (%v) — run it yourself, or sbx may give odd errors", path, err)
+	}
+}
+
+// finishSbxInstall restarts the daemon of the sbx just installed, and checks
+// it: that it's what PATH runs, and which version it is.
+func finishSbxInstall(m sbxMethod) error {
+	restartSbxDaemon(m.sbx)
 	warnIfNotOnPath(m.binDir, "sbx")
 	warnIfShadowed("sbx", m.sbx)
 	version, err := sbxinstall.Version(m.sbx)

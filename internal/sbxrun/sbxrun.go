@@ -19,20 +19,21 @@ import (
 	"time"
 
 	"golang.org/x/term"
+
+	"vibe/internal/sbxfind"
 )
 
-// Available reports whether sbx is on PATH. It's looked for, not run: every
-// vibe asks first thing, and one that's there but broken says why itself
-// at the first command.
+// Available reports whether there's an sbx to run: on PATH, or where it's
+// installed. It's looked for, not run: every vibe asks first thing, and one
+// that's there but broken says why itself at the first command.
 func Available() bool {
-	_, err := exec.LookPath("sbx")
-	return err == nil
+	return sbxfind.Available()
 }
 
 // Agents lists the agents sbx can run, read from the "Available agents:"
 // line of sbx run --help.
 func Agents() ([]string, error) {
-	out, err := exec.Command("sbx", "run", "--help").CombinedOutput()
+	out, err := exec.Command(sbxfind.Path(), "run", "--help").CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("sbx run --help: %w", err)
 	}
@@ -144,7 +145,7 @@ func runInherit(args ...string) (int, error) {
 // outright. Either way vibe gets to finish up (saving the agent's memories,
 // say) once sbx has gone.
 func runInheritUntil(stop <-chan struct{}, args ...string) (int, error) {
-	cmd := exec.Command("sbx", args...)
+	cmd := exec.Command(sbxfind.Path(), args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -384,7 +385,7 @@ func outputTo(cmd *exec.Cmd, out io.Writer) {
 // and a Ctrl-C would otherwise reach sbx before the caller could ask what
 // was meant. A ctx that never ends gives a plain command.
 func cancellable(ctx context.Context, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "sbx", args...)
+	cmd := exec.CommandContext(ctx, sbxfind.Path(), args...)
 	if ctx.Done() != nil {
 		ignoreTerminalInterrupt(cmd)
 		cmd.WaitDelay = time.Second
@@ -549,7 +550,7 @@ func ExecSilent(ctx context.Context, name string, args ...string) bool {
 // content gets there with no shell in the sandbox to put it there.
 func ExecInput(name, input string, args ...string) error {
 	full := append([]string{"exec", "-i", name, "--"}, args...)
-	cmd := exec.Command("sbx", full...)
+	cmd := exec.Command(sbxfind.Path(), full...)
 	cmd.Stdin = strings.NewReader(input)
 	var out capped
 	cmd.Stdout = &out
@@ -571,7 +572,7 @@ const maxStreamLine = 1 << 20
 // its stderr.
 func ExecStream(ctx context.Context, name, input string, delivered func(), onLine func(line []byte), args ...string) error {
 	full := append([]string{"exec", "-i", name, "--"}, args...)
-	cmd := exec.CommandContext(ctx, "sbx", full...)
+	cmd := exec.CommandContext(ctx, sbxfind.Path(), full...)
 	return stream(cmd, input, delivered, onLine)
 }
 
@@ -659,7 +660,7 @@ func SetGitHubSecret(name, token string) error {
 	// sbx only overwrites without asking when the token is given with -t,
 	// so the old one goes first; there being none to remove is fine.
 	RemoveGitHubSecret(name)
-	cmd := exec.Command("sbx", "secret", "set", "github", "--sandbox", name)
+	cmd := exec.Command(sbxfind.Path(), "secret", "set", "github", "--sandbox", name)
 	cmd.Stdin = strings.NewReader(token)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("sbx secret set github --sandbox %s: %w: %s", name, err, strings.TrimSpace(string(out)))
@@ -670,7 +671,7 @@ func SetGitHubSecret(name, token string) error {
 // RemoveGitHubSecret takes the sandbox's own GitHub secret away. It leaves
 // a global one alone.
 func RemoveGitHubSecret(name string) error {
-	if out, err := exec.Command("sbx", "secret", "rm", "github", "--sandbox", name, "-f").CombinedOutput(); err != nil {
+	if out, err := exec.Command(sbxfind.Path(), "secret", "rm", "github", "--sandbox", name, "-f").CombinedOutput(); err != nil {
 		return fmt.Errorf("sbx secret rm github --sandbox %s: %w: %s", name, err, strings.TrimSpace(string(out)))
 	}
 	return nil

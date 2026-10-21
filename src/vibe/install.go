@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"vibe/internal/instructions"
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
+	"vibe/internal/sbxfind"
 	"vibe/internal/sbxinstall"
 	"vibe/internal/upgrade"
 )
@@ -188,12 +188,9 @@ func decideRetiredFile(rel, mine string) (bool, error) {
 	return ok && picked == 1, nil
 }
 
-// sbxOnPath reports whether sbx is on PATH. A variable so tests can say
-// either way.
-var sbxOnPath = func() bool {
-	_, err := exec.LookPath("sbx")
-	return err == nil
-}
+// sbxOnPath reports whether there's an sbx to run, on PATH or where it's
+// installed. A variable so tests can say either way.
+var sbxOnPath = sbxfind.Available
 
 // offerSbxInstall, run after --install, offers to install Docker SBX when
 // sbx isn't on PATH, since vibe can't start a sandbox without it. With -f,

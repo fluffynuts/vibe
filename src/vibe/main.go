@@ -14,6 +14,7 @@ import (
 	"vibe/internal/pathresolve"
 	"vibe/internal/prompt"
 	"vibe/internal/review"
+	"vibe/internal/sbxfind"
 	"vibe/internal/sbxinstall"
 	"vibe/internal/sbxrun"
 	"vibe/internal/termtitle"
@@ -190,6 +191,7 @@ func main() {
 	review.ServeHelperIfAsked()
 	prompt.EnableVT(os.Stdout)
 	prompt.EnableVT(os.Stderr)
+	sbxfind.Warn = func(msg string) { note("%s", msg) }
 	err := run(os.Args[1:])
 	termtitle.Restore()
 	session.Release()
@@ -288,9 +290,10 @@ func run(argv []string) error {
 		if sbxinstall.Supported(runtime.GOOS, runtime.GOARCH) {
 			hint = "Install it with 'vibe --install-sbx', or from " + sbxinstall.Releases + ",\n"
 		}
-		return fmt.Errorf("'sbx' is not on PATH — vibe needs Docker Sandboxes.\n%s"+
+		return fmt.Errorf("sbx wasn't found on PATH, or where it's usually installed — vibe needs Docker Sandboxes.\n%s"+
 			"then make sure its bin directory is on PATH (e.g. ${HOME}/.docker/sbx/bin).", hint)
 	}
+	sbxfind.Look()
 
 	// Like cleanup, this is about sandboxes sbx holds, not a folder.
 	if args.StopAll {

@@ -19,6 +19,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"vibe/internal/sbxfind"
 )
 
 // Runner runs `sbx` with args and returns its stdout. Tests swap it for a
@@ -31,7 +33,7 @@ var ErrNotSignedIn = errors.New("sbx is not signed in to Docker — run 'sbx log
 
 // Exec is the Runner that runs the real sbx.
 func Exec(ctx context.Context, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "sbx", args...)
+	cmd := exec.CommandContext(ctx, sbxfind.Path(), args...)
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut
