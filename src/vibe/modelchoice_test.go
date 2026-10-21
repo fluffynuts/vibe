@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -97,5 +100,81 @@ func TestATurnRefusesAChoiceThatWasWrittenByHandAndIsntSafe(t *testing.T) {
 		} else if !strings.Contains(err.Error(), "settings.yaml") {
 			t.Errorf("%q: %v doesn't say where to fix it", settings, err)
 		}
+	}
+}
+
+func realOutput(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "modelchoice", "testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// askingAgent stands in for running a script in the sandbox: it answers each
+// of the two the page's lists are made from with what the real claude said.
+func askingAgent(help, model string, err error) func(ctx context.Context, script string) (string, error) {
+	return func(ctx context.Context, script string) (string, error) {
+		if err != nil {
+			return "", err
+		}
+		if strings.Contains(script, "--help") {
+			return help, nil
+		}
+		return model, nil
+	}
+}
+
+func TestTheAgentsListsAreMadeFromWhatTheRealClaudeSaid(t *testing.T) {
+	ask := askingAgent(realOutput(t, "claude-help-effort.txt"), realOutput(t, "model-command.json"), nil)
+	got, err := agentOptions(context.Background(), ask, "/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"sonnet", "opus", "haiku", "fable"}; !reflect.DeepEqual(got.Models, want) {
+		t.Errorf("models = %v", got.Models)
+	}
+	if len(got.OtherModels) != 5 || got.OtherModels[0] != "best" {
+		t.Errorf("other models = %v", got.OtherModels)
+	}
+	if want := []string{"low", "medium", "high", "xhigh", "max"}; !reflect.DeepEqual(got.Efforts, want) {
+		t.Errorf("efforts = %v", got.Efforts)
+	}
+	if got.Current != "Opus 5.5 (default)" {
+		t.Errorf("current = %q", got.Current)
+	}
+}
+
+func TestWhenTheAgentCantBeAskedTheErrorSaysSo(t *testing.T) {
+	_, err := agentOptions(context.Background(), askingAgent("", "", errors.New("exec: sandbox is stopped")), "/work")
+	if err == nil || !strings.Contains(err.Error(), "sandbox is stopped") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestAnAnswerThatIsntWhatWasExpectedIsAnErrorNotAnEmptyList(t *testing.T) {
+	good := realOutput(t, "claude-help-effort.txt")
+	for name, c := range map[string]struct{ help, model string }{
+		"model answer not json":      {good, "Welcome to claude"},
+		"model answer says an error": {good, `{"is_error":true,"result":"not logged in"}`},
+		"model list missing":         {good, `{"is_error":false,"result":"Current model: ` + "`x`" + `"}`},
+		"help has no effort flag":    {"  --model <model>   the model\n", realOutput(t, "model-command.json")},
+	} {
+		if _, err := agentOptions(context.Background(), askingAgent(c.help, c.model, nil), "/work"); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+}
+
+func TestTheAgentIsAskedInTheFolderTheSandboxWorksIn(t *testing.T) {
+	var scripts []string
+	ask := func(ctx context.Context, script string) (string, error) {
+		scripts = append(scripts, script)
+		return "", errors.New("stop here")
+	}
+	agentOptions(context.Background(), ask, "/home/me/my project")
+	if len(scripts) == 0 || !strings.HasPrefix(scripts[0], "cd '/home/me/my project' && ") {
+		t.Errorf("scripts = %q", scripts)
 	}
 }

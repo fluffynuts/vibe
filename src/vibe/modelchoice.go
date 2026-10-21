@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	"vibe/internal/companion"
 	"vibe/internal/layout"
 	"vibe/internal/modelchoice"
 	"vibe/internal/pathresolve"
+	"vibe/internal/sbxrun"
 	"vibe/internal/settings"
 )
 
@@ -87,4 +91,68 @@ func (p profileChoice) set(model, effort string) error {
 		}
 	}
 	return os.WriteFile(p.path(), data, 0o644)
+}
+
+// askAgent runs script, as the sandbox's agent user, and gives what it wrote.
+type askAgent func(ctx context.Context, script string) (string, error)
+
+// agentOptions asks the sandbox's claude which models and efforts it has: the
+// efforts from its --help, and the models from a /model prompt, which it
+// answers itself, without a model, so it costs nothing. They are asked in the
+// folder the sandbox works in, as the turns are, so a project's own settings
+// count. An answer that isn't what was expected is an error: a changed claude
+// is said, not read as having no models.
+func agentOptions(ctx context.Context, ask askAgent, workspace string) (companion.Options, error) {
+	in := func(command string) string {
+		if workspace == "" {
+			return command
+		}
+		return "cd " + shellQuote(workspace) + " && " + command
+	}
+	help, err := ask(ctx, in("claude --help"))
+	if err != nil {
+		return companion.Options{}, fmt.Errorf("asking claude for its --help: %w", err)
+	}
+	efforts, err := modelchoice.ParseEfforts(help)
+	if err != nil {
+		return companion.Options{}, err
+	}
+	answer, err := ask(ctx, in("claude -p /model --output-format json --no-session-persistence"))
+	if err != nil {
+		return companion.Options{}, fmt.Errorf("asking claude which models it has: %w", err)
+	}
+	var said struct {
+		Result  string `json:"result"`
+		IsError bool   `json:"is_error"`
+	}
+	if err := json.Unmarshal([]byte(answer), &said); err != nil {
+		return companion.Options{}, fmt.Errorf("claude's answer to /model wasn't what was expected (%v): %.120q", err, answer)
+	}
+	if said.IsError {
+		return companion.Options{}, fmt.Errorf("claude answered /model with an error: %.200s", said.Result)
+	}
+	models, err := modelchoice.ParseModels(said.Result)
+	if err != nil {
+		return companion.Options{}, err
+	}
+	return companion.Options{Models: models.Plain, OtherModels: models.Other, Efforts: efforts, Current: models.Current}, nil
+}
+
+// sandboxChoice is how the page chooses the model and effort for sandbox
+// name's claude, working in workspace: kept in the profile, and the lists
+// asked of the claude in the sandbox.
+func sandboxChoice(name, workspace string, kept profileChoice) *companion.Choice {
+	ask := func(ctx context.Context, script string) (string, error) {
+		return sbxrun.ExecStdout(ctx, name, asAgent(script)...)
+	}
+	return &companion.Choice{
+		Get: func() (string, string, error) {
+			c, err := kept.get()
+			return c.Model, c.Effort, err
+		},
+		Set: kept.set,
+		Options: func(ctx context.Context) (companion.Options, error) {
+			return agentOptions(ctx, ask, workspace)
+		},
+	}
 }

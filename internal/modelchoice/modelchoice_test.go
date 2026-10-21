@@ -94,3 +94,16 @@ func TestAnEffortMustBeOneTheAgentTakes(t *testing.T) {
 		t.Errorf("max: %v, want a refusal saying what is allowed", err)
 	}
 }
+
+func TestAStoredEffortMustBeAPlainName(t *testing.T) {
+	for _, ok := range []string{"", "high", "xhigh"} {
+		if err := CheckEffortName(ok); err != nil {
+			t.Errorf("%q refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"High", "a b", "-x", "a;b", "$(x)", "x1"} {
+		if err := CheckEffortName(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

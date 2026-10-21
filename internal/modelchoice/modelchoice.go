@@ -128,3 +128,15 @@ func firstLine(s string) string {
 	}
 	return line
 }
+
+var effortName = regexp.MustCompile(`^[a-z]+$`)
+
+// CheckEffortName says why effort can't be passed to the agent at all, or
+// nil: for a stored choice, which may have been written by hand, when the
+// agent's own list isn't to hand.
+func CheckEffortName(effort string) error {
+	if effort == "" || effortName.MatchString(effort) {
+		return nil
+	}
+	return fmt.Errorf("%q isn't an effort name: it can have lower-case letters only", effort)
+}
