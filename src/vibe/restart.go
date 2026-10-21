@@ -58,24 +58,25 @@ var confirmRestart = func() bool {
 // interrupts something — another terminal's session, or an agent part-way
 // through a turn — unless force; with no terminal to ask on, it's refused,
 // saying why. A folder held for a rebuild is refused.
-func restartFolder(vibeHome, name, target string, force bool) error {
+func restartFolder(vibeHome, name, target string, force bool) (runMode, error) {
 	return restart(vibeHome, name, target, running.Claims(vibeHome, target), force)
 }
 
 // canAsk says whether there's a terminal to ask on. A variable for tests.
 var canAsk = interactive
 
-// restart is restartFolder, for the claims other vibes have on target.
-func restart(vibeHome, name, target string, claims []running.Claim, force bool) error {
+// restart is restartFolder, for the claims other vibes have on target. It
+// says which mode the vibe it ended was in, for the new one to start in too.
+func restart(vibeHome, name, target string, claims []running.Claim, force bool) (runMode, error) {
 	if len(claims) == 0 {
 		note("no vibe was running for %s — starting one", target)
-		return nil
+		return modeNone, nil
 	}
 	var interrupts []string
 	for _, c := range claims {
 		switch {
 		case c.Work != "":
-			return fmt.Errorf("vibe (PID %d) is %s for %s — wait for that, or cancel it where it was started, then restart", c.PID, c.Work, target)
+			return modeNone, fmt.Errorf("vibe (PID %d) is %s for %s — wait for that, or cancel it where it was started, then restart", c.PID, c.Work, target)
 		case !c.Headless:
 			interrupts = append(interrupts, fmt.Sprintf("vibe (PID %d) has a terminal session in %s: ending it ends that session, and whatever its agent is doing", c.PID, target))
 		default:
@@ -88,14 +89,17 @@ func restart(vibeHome, name, target string, claims []running.Claim, force bool) 
 	}
 	if len(interrupts) > 0 && !force {
 		if !canAsk() {
-			return fmt.Errorf("not restarting: %s — run it again with -f to restart anyway", strings.Join(interrupts, "; "))
+			return modeNone, fmt.Errorf("not restarting: %s — run it again with -f to restart anyway", strings.Join(interrupts, "; "))
 		}
 		for _, line := range interrupts {
 			note("%s", line)
 		}
 		if !confirmRestart() {
-			return fmt.Errorf("aborted — nothing restarted")
+			return modeNone, fmt.Errorf("aborted — nothing restarted")
 		}
 	}
-	return endVibes(vibeHome, claims, "nothing was restarted")
+	if err := endVibes(vibeHome, claims, "nothing was restarted"); err != nil {
+		return modeNone, err
+	}
+	return modeOf(claims), nil
 }

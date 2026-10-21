@@ -310,7 +310,10 @@ vibe --headless --foreground
 vibe --restart [path]      # end the vibe already running for path, leaving its sandbox
                            #    running, and take over (asks first if that would
                            #    interrupt anything; -f: doesn't)
-vibe --headless --restart  # ...taking over headless
+vibe --restart --terminal  # ...taking over with a terminal, on a sandbox that was headless
+                           #    (--restart alone keeps the mode of the vibe it ended)
+vibe --terminal [path]     # start with a terminal attached: what plain vibe does, unless
+                           #    `mode: headless` is in ~/.vibe/settings.yaml
 vibe -r --headless         # rebuild the sandbox, then go headless (also with -R and -C):
                            #    what `vibe -r --no-start && vibe --headless` does
 vibe -M/--manage           # serve the Profiles page on its own, until Ctrl-C
@@ -748,9 +751,11 @@ out-of-date sandbox isn't rebuilt under it (`vibe --restart` does that). Rebuild
 `-r`, `-R`, `--delete`) still asks what to do about it first.
 
 **`--restart`** ends whatever vibe has the folder (in a terminal or headless, saving its agent's
-memories, and leaving the sandbox running) and takes over: `vibe --headless --restart` starts a fresh
-headless vibe, to pick up a new vibe after `--upgrade` say, and `vibe --restart` a terminal session,
-on a sandbox that was headless too. It asks first when that would interrupt something: another
+memories, and leaving the sandbox running) and takes over **in the mode the one it ended was in**: after a headless vibe,
+a fresh headless vibe, to pick up a new vibe after `--upgrade` say; after a terminal session, a terminal session. So
+`vibe --restart` is all that needs typing, whichever it was. `--terminal` or `--headless` with it says otherwise (`vibe --restart --terminal`
+gets a terminal on a headless sandbox), and says so by being used; where it only repeats the mode that would
+have been kept, vibe says it needn't have been typed. With nothing running, it starts as plain `vibe` does. It asks first when that would interrupt something: another
 terminal's session, or an agent part-way through a turn (it asks the other vibe's page). `-f` doesn't
 ask; with no terminal and no `-f`, it says what would be interrupted and doesn't. A folder held for a
 rebuild isn't restarted. `vibe --stop && vibe --headless` restarts the sandbox too. `vibe -r --headless` (or `-R`, `-C`) rebuilds the sandbox and then goes headless, as `vibe -r --no-start && vibe --headless` does: the rebuild's questions come first, at your terminal, as they would without `--headless`, and nothing is started if the rebuild fails. It doesn't go with the other actions (`--delete`, `--info`, `--stop` and so on). `--foreground` keeps it in the
@@ -1095,6 +1100,10 @@ into a real script or config file.
 **`settings.yaml`** merges these fields (all optional):
 
 ```yaml
+mode: headless       # how vibe starts: headless (serving the companion page, no terminal) or terminal (the
+                     #    default). Yours alone: read from ~/.vibe/settings.yaml, not a profile's. --terminal and
+                     #    --headless say otherwise for one start; a folder with no sandbox yet starts in a terminal,
+                     #    which makes it; --restart keeps the mode of the vibe it ends
 memory: 12g          # sandbox memory limit; a new sandbox asks, starting here, capped at
                      #    half the host's memory
 cpus: 8              # CPUs a sandbox gets; a new sandbox asks, from 1 to one less than the

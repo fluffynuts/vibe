@@ -45,11 +45,15 @@ type Args struct {
 	// Headless is --headless: start an existing sandbox and serve its
 	// companion page, with no terminal attached to it.
 	Headless bool
+	// Terminal is --terminal: start with a terminal attached, as headless's
+	// opposite. With --restart it takes over from a headless vibe.
+	Terminal bool
 	// Foreground is --foreground: with --headless, stay in the foreground
 	// (for tmux, nohup or a systemd unit) rather than go to the background.
 	Foreground bool
 	// Restart is --restart: end whatever vibe has the folder, leaving its
-	// sandbox be, and start afresh (headless, with --headless).
+	// sandbox be, and start afresh, in the mode the one ended was in
+	// (--headless or --terminal says otherwise).
 	Restart bool
 	// Migrate is --migrate: move the folder Path to MigrateTo, and its
 	// sandbox and everything vibe keeps for it with it.
@@ -79,6 +83,9 @@ func Parse(argv []string) (Args, error) {
 	a, paths, err := parse(argv)
 	if err != nil {
 		return a, err
+	}
+	if a.Terminal && a.Headless {
+		return a, fmt.Errorf("--terminal and --headless are opposites: one starts vibe with a terminal, the other without")
 	}
 	switch {
 	case a.Migrate && len(paths) != 2:
@@ -173,6 +180,9 @@ func parse(argv []string) (a Args, paths []string, err error) {
 			i++
 		case arg == "-H" || arg == "--headless":
 			a.Headless = true
+			i++
+		case arg == "--terminal":
+			a.Terminal = true
 			i++
 		case arg == "--foreground":
 			a.Foreground = true

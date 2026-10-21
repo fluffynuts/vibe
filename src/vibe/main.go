@@ -78,11 +78,16 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe --restart [path]      end the vibe already running for path (with a
                              terminal or headless, saving its agent's
                              memories), leaving its sandbox running, and take
-                             over: to pick up a new vibe, or get a terminal on
-                             a headless sandbox. Asks first when that would
+                             over, in the mode the one it ended was in: to
+                             pick up a new vibe. Asks first when that would
                              cut off an agent's turn or another terminal's
                              session (-f: doesn't)
-  vibe --headless --restart  ...taking over headless
+  vibe --restart --terminal  ...taking over with a terminal (to get one on a
+                             headless sandbox); --headless takes over
+                             headless the same way
+  vibe --terminal [path]     start with a terminal attached, which is what
+                             plain vibe does unless 'mode: headless' is in
+                             ~/.vibe/settings.yaml
   vibe -r/-R/-C --headless   rebuild (or re-create, or re-compose), then go
                              headless, instead of attaching a terminal
   vibe -M/--manage           serve the Profiles page on its own, until Ctrl-C:
@@ -228,6 +233,10 @@ func run(argv []string) error {
 	}
 	if args.ExclusiveActions() > 1 {
 		return fmt.Errorf("--migrate, --stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info, --setup, --git-token, --update-sandboxes, --manage and --headless are mutually exclusive (--headless goes with --re-init, --re-create and --re-compose alone: the rebuild, then headless)")
+	}
+
+	if args.Terminal && args.ExclusiveActions() > 0 && !args.Rebuilds() {
+		return fmt.Errorf("--terminal only goes with starting vibe: on its own, with --restart, or with a rebuild (--re-init, --re-create, --re-compose)")
 	}
 
 	if (args.GitTokenEnv != "" || args.NoGitToken || args.GitRules != "") && args.ExclusiveActions() > 0 && !args.GitToken {
@@ -385,13 +394,22 @@ func run(argv []string) error {
 		return doRestore(lay, args, name, target)
 	}
 
-	if args.Foreground && !args.Headless {
-		return fmt.Errorf("--foreground only goes with --headless")
-	}
+	ended := modeNone
 	if args.Restart && !detachedChild() {
-		if err := restartFolder(vibeHome, name, target, args.Force); err != nil {
+		var err error
+		if ended, err = restartFolder(vibeHome, name, target, args.Force); err != nil {
 			return err
 		}
+	}
+	if !detachedChild() {
+		headless, err := startMode(lay, args, name, ended)
+		if err != nil {
+			return err
+		}
+		args.Headless = headless
+	}
+	if args.Foreground && !args.Headless {
+		return fmt.Errorf("--foreground only goes with --headless (or with the mode setting in settings.yaml at headless)")
 	}
 	if args.Headless && !args.Foreground && !detachedChild() {
 		if args.Rebuilds() {
