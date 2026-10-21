@@ -249,3 +249,21 @@ test('the drop-downs are the same size whatever they hold, so the lists arriving
     assert.deepEqual(await box(page, '#convo-choice'), group)
   } finally { await page.close() }
 })
+
+test('the spinner coming and going moves nothing in the widget', async () => {
+  for (const width of [1500, 600]) {
+    const page = await conversationPage(width)
+    try {
+      const watched = ['#convo-choice', '#choice-model', '#choice-effort', '#choice-info', '#convo-send']
+      const read = () => Promise.all(watched.map((sel) => box(page, sel)))
+      await page.evaluate(() => { document.getElementById('choice-spinner').hidden = true })
+      const without = await read()
+      await page.evaluate(() => { document.getElementById('choice-spinner').hidden = false })
+      const spinning = await read()
+      assert.deepEqual(spinning, without, `at ${width}px wide, the spinner moved something`)
+      const spinner = await box(page, '#choice-spinner')
+      const model = await box(page, '#choice-model')
+      assert.ok(spinner.x + spinner.width <= model.x, `at ${width}px, the spinner isn't to the left of the model drop-down`)
+    } finally { await page.close() }
+  }
+})

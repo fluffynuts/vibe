@@ -513,10 +513,11 @@ html.themed .commands li[aria-selected="true"] {
 #choice-model { width: 14em; }
 #choice-effort { width: 7em; }
 .choice select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* a slot of its own, so what's said there (that the models are on their way, or that the agent ran another) coming and going moves nothing */
-.choice-slot { display: inline-flex; align-items: center; box-sizing: content-box; width: 21ch; overflow: hidden; }
-.choice-slot .spinner { flex: none; }
-.choice-ran { flex: 1; min-width: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* a slot of its own, so what's said there (that the models are loading, or that the agent ran another) coming and going moves nothing */
+.choice-ran { display: inline-block; box-sizing: content-box; width: 21ch; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the spinner has room of its own ahead of the drop-downs, there whether it shows or not */
+.choice-spin { display: inline-flex; align-items: center; justify-content: center; width: 14px; }
+.choice-spin .spinner { margin: 0; }
 /* nothing to choose from yet: looks as disabled as it is */
 .choice.loading { opacity: .6; }
 .choice.loading select { cursor: progress; }

@@ -282,3 +282,9 @@ at once and the agent is asked again in the background (stale while revalidate).
   `settings.yaml` stays the alias, so a choice still means "the latest opus".
 - A failure to ask for the names doesn't fail the lists: it's said in vibe's output (a note), the page shows aliases,
   and the next refresh tries again. A name that can't be read leaves out only that one.
+
+### The spinner's place (2026-10-21)
+
+The spinner sits to the left of the widget, ahead of the Model label, in a 14px slot that is there whether or not it
+shows, so it coming and going moves nothing (a Firefox test at two widths checks that). The words ("Loading
+models…", "ran …") stay in the slot on the right.

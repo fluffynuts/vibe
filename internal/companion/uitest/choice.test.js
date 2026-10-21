@@ -762,3 +762,15 @@ test('xhigh is called Extra High in the list, and is still kept and sent as xhig
     assert.deepEqual(p.posted('/api/conversation/choice'), [{ model: 'opus', effort: 'xhigh' }])
   } finally { p.close() }
 })
+
+test('the spinner is the first thing in the widget, before the Model label', async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    const group = p.$('convo-choice')
+    const first = Array.from(group.children).find((c) => !c.hidden || c.contains(p.$('choice-spinner')))
+    assert.ok(first.contains(p.$('choice-spinner')), 'first in the group')
+    const label = group.querySelector('label[for=choice-model]')
+    assert.ok(p.$('choice-spinner').compareDocumentPosition(label) & p.window.Node.DOCUMENT_POSITION_FOLLOWING, 'ahead of the label')
+    assert.ok(!p.$('choice-ran').contains(p.$('choice-spinner')), 'and not in the caption slot')
+  } finally { p.close() }
+})
