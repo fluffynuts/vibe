@@ -1,7 +1,7 @@
 # Plan: choosing the model and effort from the Conversation tab
 
-Status: planned 2026-10-19, decisions made the same day, not started ("down the road"). Nothing here has been run
-against a real agent.
+Status: planned 2026-10-19; decisions of 2026-10-19 and 2026-10-21 below; the real-agent check for Claude was run
+on 2026-10-21 (findings below) and found no blocker. Not started.
 
 ## The outcome
 
@@ -31,12 +31,20 @@ user changes either in one step: say, from Opus to Sonnet for a simple job, or t
   **Model** and **Effort**. Native, so keyboard, screen readers and phones work with nothing more to build.
 - Each starts on **Default**: no flag is passed, so the sandbox's own Claude settings (`~/.claude/settings.json`,
   the profile's `env`) decide, exactly as today. Nothing changes for anyone who never touches them.
-- Model: Default, then the aliases (opus, sonnet, haiku, and fable while the CLI offers it), then **Other…**
-  taking a full model name. Aliases follow the latest model, so the list needn't be updated for each release.
-- Effort: Default, low, medium, high, xhigh, max.
-- Kept per sandbox, in the conversation's saved state, so it outlives vibe and a page reload, and carries over
-  to a new conversation (a "new conversation" resets the session, not the preferences). Rebuilding the sandbox
-  keeps it, as it keeps the session.
+- Model: Default, then the plain-named models from a **live list** (see "Where the lists come from"), then
+  **Other…**, which opens an in-page dialog listing every other choice the agent reports (the ones not already in
+  the drop-down) and takes a full model name. Aliases follow the latest model, so nothing is hard-coded per release.
+- Effort: Default, then only the values the agent's flag accepts (for Claude: low, medium, high, xhigh, max).
+  Values the agent's own console shows but its flag rejects (`auto`, `ultracode`) are not offered: reliability
+  wins over completeness, and they can be added if a working route turns up.
+- **Changing the model resets effort to Default**, and the user picks again if they want to: which efforts mean
+  what differs by model and by agent, and nothing tells us which a model supports.
+- Kept with the **profile**, written back as if it were the workspace's correct profile (least surprise), so it
+  outlives vibe, a page reload and a rebuild, and carries over to a new conversation (a "new conversation" resets
+  the session, not the preferences). The user's own pattern is one profile per sandbox, but a profile can hold
+  several sandboxes, in which case they share the choice: accepted.
+- The confirmation before a costly change is an **in-page dialog**, never `confirm()`; it blocks (the user must
+  answer), with a tinted backdrop so nothing behind it can be clicked.
 
 ### What it says is true
 
@@ -61,20 +69,51 @@ user changes either in one step: say, from Opus to Sonnet for a simple job, or t
   `running` (what the agent reported).
 - `POST /api/conversation/settings` with `{model, effort}`; same-origin and token checks as the other POSTs.
 
-## Things to find out before building
+## Where the lists come from
 
-1. **Resuming with a different model.** Does `--resume` with a different `--model` just work, and what does the
-   user lose: the prompt cache for the session (so the next turn is slower and dearer), thinking blocks from
-   another model? If there is a real cost the page should say so when the model changes ("the next prompt
-   re-reads the whole conversation").
-2. **Which efforts each model takes.** Whether `--effort max` on a model that doesn't support it is an error, is
-   ignored, or is mapped. If it errors, the page should only offer what the chosen model supports, or show the
-   agent's error in the conversation where the user will see it (not hide it).
-3. **The `init` line's fields**, to show the running model (above).
-4. **`/model` and `/effort`** typed as a prompt in `-p` mode: do they exist, and do they change anything for the
-   next turn? If they do, the page and the agent can disagree, which is what the "reported" text is for.
-5. **Precedence.** `--model` over `ANTHROPIC_MODEL` over settings: confirm, so "Default" means what the page says.
-6. **Fallback models** (`--fallback-model`): out of scope, but note whether a fallback makes "reported" differ.
+- Claude: a `/model` prompt in `-p` mode answers without a model call (cost not measured) with the current model and
+  "Available: sonnet, opus, haiku, fable, best, sonnet[1m], opus[1m], fable[1m], opusplan, default, or a full
+  model ID". That is the live list. The plain names go in the drop-down; `best`, `opusplan`, `default` and the
+  `[1m]` variants go in the **Other…** dialog.
+- The `/effort` usage text lists `low|medium|high|xhigh|max|auto|ultracode`; only the first five are valid
+  `--effort` values.
+- Other agents: whatever their CLI reports; to be found when each is tried (see "Agents, in stages").
+
+## Findings of the real-agent check, Claude CLI 2.1.306, 2026-10-21
+
+Run with one-word prompts on haiku and sonnet; costs of a long session were not measured.
+
+1. **Resume with another model works** (same session id, answered by the new model). The prompt-cache cost could
+   not be shown on a tiny session, so the warning says the next prompt *may* re-read the whole conversation.
+2. **Effort:** an unknown value is ignored with a stderr warning ("Unknown --effort value … ignoring it");
+   `--effort max` on haiku is accepted silently, and whether it is honoured is not visible. There is no
+   per-model list of efforts.
+3. **The `init` line** has a `model` field (`claude-haiku-5-5`) and no effort field. So the "running" text covers
+   the model only. An unrecognised model name is echoed back as given.
+4. **A bad model** comes back as a result with `is_error: true` ("There's an issue with the selected model …"):
+   shown in the conversation like any error.
+5. **`/model` and `/effort` as prompts** work in `-p` mode but are "this session only": the next turn starts on
+   the default again. They change nothing lasting, so the flags are the mechanism.
+6. **Precedence:** `--model` beats `ANTHROPIC_MODEL`; the variable beats nothing when the flag is absent, so
+   "Default" means whatever the sandbox's settings/env say.
+7. **Not verified:** whether `--effort` beats the `CLAUDE_EFFORT` environment variable (effort isn't visible in
+   `init`); a measured cache cost; a fallback model's effect on what is reported (out of scope).
+
+## Agents, in stages
+
+Today only Claude is wired: `conversationFor` (`src/vibe/companion.go`) gives no conversation to any other agent,
+and the turn command and stream parsing are Claude's (`agentArgs`, `src/vibe/conversation.go`). The conversation
+tab working for other agents is its own piece of work; the drop-downs ride on it.
+
+1. **Claude** first, as the user and their team use it.
+2. **Generic:** keep the model/effort code free of Claude's specifics (the lists, the flags and the "what ran"
+   come from a per-agent description), then play-test with an open model through OpenCode (the user's choice, to
+   see it on a free model), and ask a Codex user to try it.
+3. **Untested agents** get the same options, and rely on user reports if they don't work. Some agents may not
+   be able to do this; that is accepted.
+
+Do not paint into a corner: no Claude flag names or list formats outside the Claude description. Switching agent
+resets the model and effort to that agent's defaults.
 
 ## Tests
 
@@ -85,11 +124,12 @@ user changes either in one step: say, from Opus to Sonnet for a simple job, or t
   shows the host's message; "Other…" takes a name; they're absent for a sandbox with no conversation.
 - Integration: the existing tests run a stand-in `claude`; extend it to record its arguments and assert a turn
   after a change carries the new flags, and one before it doesn't.
-- One manual check with a real agent (items 1–5 above), by the user or with their go-ahead (it costs tokens).
+- The real-agent check for Claude is done (findings above). Repeat a cut-down version for each new agent tried.
+- Sweep: no `alert()`/`confirm()`/`prompt()` in the page (none today, 2026-10-21); consider a test that fails if one appears.
 
 ## Not in scope
 
-- Other agents (their CLIs differ; nothing here assumes them).
+- Other agents in the first build (their CLIs differ; the structure leaves room: see "Agents, in stages").
 - Choosing a model per review comment, or per slash command.
 - Showing cost. The page already shows each turn's cost line from the agent.
 - `vibe --headless` and the terminal: the terminal Claude has `/model`; nothing to add.
@@ -109,3 +149,13 @@ user changes either in one step: say, from Opus to Sonnet for a simple job, or t
    once. What counts as costing something is for the real-agent check to settle; until it is, a model change
    warns and an effort change doesn't. The wording says what happens in the user's terms: "the next prompt
    re-reads the whole conversation, which is slower and costs more."
+
+## Decisions of 2026-10-21
+
+1. A model change resets effort to Default; an agent change resets both.
+2. The lists are live, from the agent. Plain names in the drop-down, the rest behind **Other…** in a dialog. Only
+   effort values the flag is known to accept are offered (reliability over completeness).
+3. In-page dialogs only. A blocking question gets a tinted backdrop that stops click-through.
+4. Stored with the profile, written back as the workspace's profile. Shared by every sandbox in that profile.
+5. Staged: Claude, then generic with OpenCode, then Codex by a friend, then leave the rest to user reports.
+6. Commit as the build goes, on `feat/model-and-effort`.
