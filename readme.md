@@ -623,8 +623,8 @@ you're looking at:
   `~/.vibe/companion/`), so the drop-downs are full the moment the page opens, and asks claude again in the
   background, without waking a sandbox that's asleep; the first time there's nothing kept, so it just asks. If asking again
   fails, the kept lists carry on, and the **i** button's bubble says how old they are and why (with **Retry**, which wakes
-  the sandbox to ask). The plain models are in the drop-down by the name the agent gives them, which carries the version ("Opus 5.5"; vibe asks claude what each alias stands for, in the same trip, and keeps it), biggest first where vibe knows the size (fable, opus, sonnet, haiku, as claude.ai lists them) and then any other by name, and **Other…** opens the rest the agent lists (each as the alias it's chosen by and what that is called now), or
-  takes a model's full name. Efforts are the ones claude's `--effort` takes. A change applies from the next
+  the sandbox to ask). The plain models are in the drop-down by the name the agent gives them, which carries the version ("Opus 5.5"; vibe asks claude what each alias stands for, in the same trip, and keeps it), biggest first where vibe knows the size (fable, opus, sonnet, haiku, as claude.ai lists them) and then any other by name, and **Other…** opens the rest the agent lists (each by what that is called now, then the alias it's kept as), or
+  takes a model's full name. Efforts are the ones claude's `--effort` takes. Everything in the drop-downs is in title case ("Low", "Opus 5.5"); what's kept in `settings.yaml` and given to claude is the name as it is (`low`, `opus`). A change applies from the next
   prompt, even while the agent is answering. Changing the model puts the effort back to **Default**, to be
   chosen again, as what an effort means differs between models; and for a conversation already under way it asks
   first, because the next prompt re-reads the whole conversation, which is slower and costs more (Cancel puts

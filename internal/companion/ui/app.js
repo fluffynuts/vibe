@@ -5243,13 +5243,22 @@
     return (names && names[alias]) || ''
   }
 
-  // modelLabel is how a model is shown: by that name alone where it's one of
-  // the plain ones, as the agent's own picker does; elsewhere with the alias it
-  // is chosen by first, since that is what it's kept as. An alias the agent
-  // gave no name for is shown as it is.
+  // titleCase puts a capital on each word of a short lower-case name the agent
+  // hands out ("opus" is "Opus", "opus[1m]" is "Opus[1M]"), for showing: what's
+  // kept and sent is the name as it was. A full model id ("claude-opus-4-1")
+  // is exact, so it's left as it is.
+  function titleCase(text) {
+    if (!/^[a-z]+(\[[a-z0-9]+\])?$/.test(text)) return text
+    return text.replace(/(^|[^A-Za-z])([a-z])/g, (all, before, letter) => before + letter.toUpperCase())
+  }
+
+  // modelLabel is how a model is shown: by the name the agent gives it where
+  // it's one of the plain ones ("Opus 5.5", as the agent's own picker has it);
+  // elsewhere with the alias it is kept as after the name, so what's chosen is
+  // plain. An alias the agent gave no name for is shown as itself, in title case.
   function modelLabel(alias, plain) {
     const name = modelName(alias)
-    return !name ? alias : plain ? name : alias + ' — ' + name
+    return !name ? titleCase(alias) : plain ? name : name + ' · ' + alias
   }
 
   function fillSelect(select, items, value) {
@@ -5266,8 +5275,8 @@
     models.push({ value: OTHER_MODEL, text: 'Other…' })
     fillSelect($('choice-model'), models, choice.model)
     const efforts = [{ value: '', text: 'Default' }]
-    for (const e of (o && o.efforts) || []) efforts.push({ value: e, text: e })
-    if (choice.effort && !efforts.some((e) => e.value === choice.effort)) efforts.push({ value: choice.effort, text: choice.effort })
+    for (const e of (o && o.efforts) || []) efforts.push({ value: e, text: titleCase(e) })
+    if (choice.effort && !efforts.some((e) => e.value === choice.effort)) efforts.push({ value: choice.effort, text: titleCase(choice.effort) })
     fillSelect($('choice-effort'), efforts, choice.effort)
 
     // Said beside the drop-downs only when it's news: that the models are on
@@ -5431,7 +5440,7 @@
     if (model === choice.model) { drawChoice(); return }
     // Only a conversation under way has anything to re-read.
     if (choice.session) {
-      $('choice-warn-title').textContent = 'Change the model to ' + (model ? modelName(model) || model : 'the default') + '?'
+      $('choice-warn-title').textContent = 'Change the model to ' + (model ? modelName(model) || titleCase(model) : 'the default') + '?'
       if ((await dialogAnswer($('choice-warn'))) !== 'go') { drawChoice(); return }
     }
     await saveChoice(model, choice.effort)

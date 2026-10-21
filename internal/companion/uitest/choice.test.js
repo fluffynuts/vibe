@@ -664,27 +664,27 @@ test('each model in the drop-down is shown with the name, and so the version, th
   } finally { p.close() }
 })
 
-test('a model the agent gave no name for is shown as it is called', async () => {
+test('a model the agent gave no name for is shown as its alias, in title case', async () => {
   const p = await choicePage({ model: 'opus', options: Object.assign({}, OPTIONS, { names: { opus: 'Opus 5.5' } }) })
   try {
-    assert.deepEqual(texts(p.$('choice-model')).slice(1, 4), ['sonnet', 'Opus 5.5', 'haiku'])
+    assert.deepEqual(texts(p.$('choice-model')).slice(1, 4), ['Sonnet', 'Opus 5.5', 'Haiku'])
   } finally { p.close() }
 })
 
-test('a model chosen from beyond the drop-down is shown with its name beside the alias it is kept under', async () => {
+test('a model chosen from beyond the drop-down is shown by its name, with the alias it is kept under after it', async () => {
   const p = await choicePage({ model: 'opus[1m]' })
   try {
     assert.equal(p.$('choice-model').value, 'opus[1m]')
-    assert.ok(texts(p.$('choice-model')).includes('opus[1m] — Opus 5.5 (1M context)'))
+    assert.ok(texts(p.$('choice-model')).includes('Opus 5.5 (1M context) · opus[1m]'))
   } finally { p.close() }
 })
 
-test('Other… lists each model as the alias it is picked by and what the agent calls it', async () => {
+test('Other… lists each model by what the agent calls it, with the alias it is kept under after', async () => {
   const p = await choicePage({ model: 'opus' })
   try {
     await choose(p, 'choice-model', '__other__')
     const labels = Array.from(p.$('choice-other-list').querySelectorAll('label')).map((l) => l.textContent.trim())
-    assert.deepEqual(labels, ['best — Fable 5.1', 'opus[1m] — Opus 5.5 (1M context)'])
+    assert.deepEqual(labels, ['Fable 5.1 · best', 'Opus 5.5 (1M context) · opus[1m]'])
     p.$('choice-other').close('cancel')
     await p.settle()
   } finally { p.close() }
@@ -705,9 +705,51 @@ test('with no names kept (lists from before they were asked for), the aliases sh
   const p = await choicePage({ model: 'opus', cached: KEPT, hold: new Promise((resolve) => { release = resolve }) })
   try {
     await turns()
-    assert.deepEqual(texts(p.$('choice-model')).slice(1, 3), ['sonnet', 'opus'])
+    assert.deepEqual(texts(p.$('choice-model')).slice(1, 3), ['Sonnet', 'Opus'])
     release()
     await p.settle()
     assert.deepEqual(texts(p.$('choice-model')).slice(1, 4), ['Sonnet 5.5', 'Opus 5.5', 'Haiku 5.5'])
+  } finally { p.close() }
+})
+
+test('the effort entries are in title case, and what is kept is still what the agent takes', async () => {
+  const p = await choicePage({ model: 'opus', effort: 'high' })
+  try {
+    assert.deepEqual(texts(p.$('choice-effort')), ['Default', 'Low', 'Medium', 'High'])
+    assert.deepEqual(values(p.$('choice-effort')), ['', 'low', 'medium', 'high'])
+    await choose(p, 'choice-effort', 'low')
+    assert.deepEqual(p.posted('/api/conversation/choice'), [{ model: 'opus', effort: 'low' }])
+  } finally { p.close() }
+})
+
+test('an effort chosen that the lists lack is shown in title case too', async () => {
+  const p = await choicePage({ model: 'opus', effort: 'xhigh' })
+  try {
+    assert.equal(p.$('choice-effort').value, 'xhigh')
+    assert.ok(texts(p.$('choice-effort')).includes('Xhigh'))
+  } finally { p.close() }
+})
+
+test('aliases with no name from the agent are in title case, wherever they show', async () => {
+  const p = await choicePage({ model: 'opus[1m]', session: true, options: Object.assign({}, OPTIONS, { names: {} }) })
+  try {
+    assert.ok(texts(p.$('choice-model')).includes('Opus[1M]'), 'the one chosen')
+    assert.deepEqual(texts(p.$('choice-model')).slice(1, 4), ['Sonnet', 'Opus', 'Haiku'])
+    await choose(p, 'choice-model', '__other__')
+    const labels = Array.from(p.$('choice-other-list').querySelectorAll('label')).map((l) => l.textContent.trim())
+    assert.deepEqual(labels, ['Best', 'Opus[1M]'])
+    p.$('choice-other').close('cancel')
+    await p.settle()
+    await choose(p, 'choice-model', 'haiku')
+    assert.match(p.$('choice-warn-title').textContent, /Change the model to Haiku\?/)
+    p.$('choice-warn').close('cancel')
+    await p.settle()
+  } finally { p.close() }
+})
+
+test('a full model id typed under Other… is shown exactly as typed, not title-cased', async () => {
+  const p = await choicePage({ model: 'claude-opus-4-1' })
+  try {
+    assert.ok(texts(p.$('choice-model')).includes('claude-opus-4-1'))
   } finally { p.close() }
 })
