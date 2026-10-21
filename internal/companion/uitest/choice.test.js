@@ -24,8 +24,8 @@ async function choicePage(over = {}, { choice = true } = {}, storage = {}) {
   const routes = {
     '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, choice, attention: {} },
     '/api/conversation': () => ({ events: [], last: 0, running: at.busy }),
-    '/api/conversation/choice': (call) => {
-      if (call.method === 'GET') return body()
+    '/api/conversation/choice': async (call) => {
+      if (call.method === 'GET') { if (at.holdRead) await at.holdRead; return body() }
       if (at.refuse) return { status: 400, body: { error: at.refuse } }
       // What vibe does: a changed model puts the effort back to Default.
       at.effort = call.body.model !== at.model ? '' : call.body.effort
@@ -40,7 +40,7 @@ async function choicePage(over = {}, { choice = true } = {}, storage = {}) {
     },
     '/api/log': { entries: [] },
   }
-  const p = await openPage({ routes, storage: Object.assign({ 'vibe-companion-tab': 'conversation' }, storage), settled: !at.hold })
+  const p = await openPage({ routes, storage: Object.assign({ 'vibe-companion-tab': 'conversation' }, storage), settled: !(at.hold || at.holdRead), before: at.before })
   return Object.assign(p, { at })
 }
 
@@ -245,11 +245,21 @@ test('while the agent is answering a change can still be made, and is said to ap
   } finally { p.close() }
 })
 
-test('what the agent said it ran is shown beside the drop-downs', async () => {
+test('when the agent ran what was asked for, nothing is said beside the drop-downs: the bubble has it if wanted', async () => {
   const p = await choicePage({ model: 'opus', running: 'claude-opus-5-5' })
   try {
-    assert.match(p.$('choice-ran').textContent, /claude-opus-5-5/)
+    assert.equal(p.$('choice-ran').textContent, '')
     assert.ok(!p.$('choice-ran').classList.contains('warn-text'))
+    await p.click('choice-info')
+    assert.match(p.$('choice-bubble-text').textContent, /The last turn ran on claude-opus-5-5/)
+  } finally { p.close() }
+})
+
+test('with the default chosen, whatever it ran is what was asked for', async () => {
+  const p = await choicePage({ model: '', running: 'claude-opus-5-5' })
+  try {
+    assert.equal(p.$('choice-ran').textContent, '')
+    assert.ok(!p.$('choice-info').classList.contains('warn'))
   } finally { p.close() }
 })
 
@@ -289,7 +299,9 @@ test("a turn's end asks again what the agent ran, and no longer says a change is
     await choose(p, 'choice-effort', 'low')
     assert.ok(open(p) && p.$('choice-info').classList.contains('news'))
     await endTurn(p, 'claude-haiku-5-5')
-    assert.match(p.$('choice-ran').textContent, /claude-haiku-5-5/)
+    await p.click('choice-info')
+    assert.match(p.$('choice-bubble-text').textContent, /The last turn ran on claude-haiku-5-5/)
+    await p.click('choice-info')
     assert.ok(!open(p), 'what it said is out of date now')
     assert.ok(!p.$('choice-info').classList.contains('news'))
   } finally { p.close() }
@@ -507,5 +519,138 @@ test('a change made while the bubble is open and told not to show still leaves t
     await choose(p, 'choice-effort', 'low')
     assert.ok(!open(p))
     assert.ok(dotted(p))
+  } finally { p.close() }
+})
+
+// What the widget shows while the agent's lists are on their way.
+const spinning = (p) => !p.$('choice-spinner').hidden
+const locked = (p) => p.$('choice-model').disabled && p.$('choice-effort').disabled
+
+test('with nothing known of the lists, the whole widget is disabled with a spinner, and says so to a screen reader', async () => {
+  let release
+  const p = await choicePage({ model: 'opus', effort: 'high', hold: new Promise((resolve) => { release = resolve }) })
+  try {
+    await turns()
+    assert.ok(locked(p), 'the drop-downs are disabled')
+    assert.ok(p.$('convo-choice').classList.contains('loading'), 'and look it')
+    assert.equal(p.$('convo-choice').getAttribute('aria-busy'), 'true')
+    assert.ok(spinning(p))
+    assert.match(p.$('choice-ran').textContent, /Loading models/)
+    assert.match(p.$('choice-busy').textContent, /Loading/)
+    assert.equal(p.$('choice-model').value, 'opus', 'what is chosen is still shown')
+    assert.equal(p.$('choice-effort').value, 'high')
+    release()
+    await p.settle()
+    assert.ok(!p.$('choice-model').disabled && !p.$('choice-effort').disabled)
+    assert.ok(!p.$('convo-choice').classList.contains('loading'))
+    assert.equal(p.$('convo-choice').getAttribute('aria-busy'), 'false')
+    assert.ok(!spinning(p))
+    assert.equal(p.$('choice-busy').textContent, '')
+    assert.equal(p.$('choice-ran').textContent, '')
+  } finally { p.close() }
+})
+
+test('before vibe has even said what is chosen, the widget is disabled with a spinner', async () => {
+  let release
+  const p = await choicePage({ model: 'opus', holdRead: new Promise((resolve) => { release = resolve }) })
+  try {
+    await turns()
+    assert.ok(locked(p) && spinning(p))
+    release()
+    await p.settle()
+    assert.ok(!locked(p) && !spinning(p))
+    assert.equal(p.$('choice-model').value, 'opus')
+  } finally { p.close() }
+})
+
+test('with lists kept, the drop-downs stay usable while they are asked for again: only the spinner shows', async () => {
+  let release
+  const p = await choicePage({ model: 'opus', cached: KEPT, hold: new Promise((resolve) => { release = resolve }) })
+  try {
+    await turns()
+    assert.ok(!p.$('choice-model').disabled && !p.$('choice-effort').disabled)
+    assert.ok(!p.$('convo-choice').classList.contains('loading'))
+    assert.equal(p.$('convo-choice').getAttribute('aria-busy'), 'false')
+    assert.ok(spinning(p))
+    assert.match(p.$('choice-busy').textContent, /Checking/)
+    assert.equal(p.$('choice-ran').textContent, '', 'no words beside it')
+    release()
+    await p.settle()
+    assert.ok(!spinning(p))
+    assert.equal(p.$('choice-busy').textContent, '')
+  } finally { p.close() }
+})
+
+test('the spinner stops when asking fails, and the drop-downs are usable', async () => {
+  const p = await choicePage({ model: 'opus', optionsError: 'sandbox is stopped' })
+  try {
+    assert.ok(!spinning(p) && !locked(p))
+    assert.equal(p.$('convo-choice').getAttribute('aria-busy'), 'false')
+    assert.match(p.$('choice-bubble-text').textContent, /sandbox is stopped/)
+  } finally { p.close() }
+})
+
+test('a Retry locks the widget again until the agent answers, when it has no lists', async () => {
+  const p = await choicePage({ model: 'opus', optionsError: 'sandbox is stopped' })
+  try {
+    let release
+    p.at.hold = new Promise((resolve) => { release = resolve })
+    p.$('choice-bubble-retry').click()
+    await turns()
+    assert.ok(locked(p) && spinning(p))
+    release()
+    await p.settle()
+    assert.ok(!locked(p) && !spinning(p))
+    assert.deepEqual(p.posted('/api/conversation/choice/options').at(-1), { wake: true })
+  } finally { p.close() }
+})
+
+// A page whose timers the test holds: the one that is set for ms is run when fire() is called.
+function heldTimers(ms) {
+  const held = []
+  return {
+    before(w) {
+      const real = w.setTimeout.bind(w)
+      w.setTimeout = (fn, delay, ...rest) => {
+        if (delay !== ms) return real(fn, delay, ...rest)
+        held.push(fn)
+        return held.length
+      }
+      w.clearTimeout = ((clear) => (id) => { if (typeof id === 'number' && id <= held.length && id > 0) held[id - 1] = null; else clear(id) })(w.clearTimeout.bind(w))
+    },
+    fire() { for (const fn of held.splice(0)) if (fn) fn() },
+  }
+}
+
+test('the lock has a limit: after it the drop-downs are usable, and the bubble says it is still asking', async () => {
+  const timers = heldTimers(30000)
+  let release
+  const p = await choicePage({ model: 'opus', hold: new Promise((resolve) => { release = resolve }), before: timers.before })
+  try {
+    await turns()
+    assert.ok(locked(p))
+    timers.fire()
+    await turns()
+    assert.ok(!locked(p), 'usable again')
+    assert.equal(p.$('convo-choice').getAttribute('aria-busy'), 'false')
+    assert.ok(spinning(p), 'but still asking, and says so')
+    assert.ok(open(p))
+    assert.match(p.$('choice-bubble-text').textContent, /still asking the agent/i)
+    assert.ok(dotted(p))
+    release()
+    await p.settle()
+    assert.ok(!spinning(p))
+    assert.ok(!open(p), 'it came, so there is nothing more to say')
+    assert.deepEqual(values(p.$('choice-model')), ['', 'sonnet', 'opus', 'haiku', '__other__'])
+  } finally { p.close() }
+})
+
+test('the limit does nothing once the agent has answered', async () => {
+  const timers = heldTimers(30000)
+  const p = await choicePage({ model: 'opus', before: timers.before })
+  try {
+    timers.fire()
+    await turns()
+    assert.ok(!open(p))
   } finally { p.close() }
 })

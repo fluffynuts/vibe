@@ -17,8 +17,8 @@ const TOKEN = 'a'.repeat(64)
 // as soon as the page's scripts have run, for a test of what the page shows
 // while answers are still on their way. With seeing true, the page gets an
 // IntersectionObserver (jsdom has none) whose elements come into and go out
-// of view when the test says (see seen).
-async function openPage({ routes = {}, storage = {}, settled = true, seeing = false } = {}) {
+// of view when the test says (see seen). before(window) runs ahead of the page's scripts.
+async function openPage({ routes = {}, storage = {}, settled = true, seeing = false, before = null } = {}) {
   const html = fs.readFileSync(path.join(UI, 'index.html'), 'utf8').replace(/<script src="\/[^"]+"><\/script>/g, '')
   const dom = new JSDOM(html, { url: 'http://localhost:1/#' + TOKEN, runScripts: 'outside-only', pretendToBeVisual: true })
   const w = dom.window
@@ -77,6 +77,8 @@ async function openPage({ routes = {}, storage = {}, settled = true, seeing = fa
     }
   }
   for (const [k, v] of Object.entries(storage)) w.localStorage.setItem(k, v)
+  // before gets the window ahead of the page's scripts, for a test to stand in for part of it (a timer, say).
+  if (before) before(w)
   for (const f of SCRIPTS) w.eval(fs.readFileSync(path.join(UI, f), 'utf8'))
 
   const $ = (id) => w.document.getElementById(id)

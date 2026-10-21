@@ -115,7 +115,11 @@
                 <label class="muted" for="choice-effort">Effort</label>
                 <select id="choice-effort" aria-describedby="choice-ran"></select>
                 <button type="button" id="choice-info" class="choice-info" aria-label="About the model and effort" aria-expanded="false" aria-controls="choice-bubble">i</button>
-                <span id="choice-ran" class="muted choice-ran" role="status"></span>
+                <span class="choice-slot">
+                  <span id="choice-spinner" class="spinner" aria-hidden="true" hidden></span>
+                  <span id="choice-ran" class="muted choice-ran"></span>
+                </span>
+                <span id="choice-busy" class="sr-only" role="status"></span>
                 <div id="choice-bubble" class="choice-bubble" role="status" hidden>
                   <button type="button" id="choice-bubble-close" class="choice-bubble-close ghost" aria-label="Close" title="Close (Escape)">&#10005;</button>
                   <p id="choice-bubble-text"></p>

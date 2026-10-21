@@ -5141,10 +5141,14 @@
   // answered.
   const OTHER_MODEL = '__other__'
   const CHOICE_QUIET = 'vibe-companion-choice-quiet'
+  // How long the drop-downs stay disabled for the agent's lists when none are
+  // known, before they're usable anyway (the lists carry on arriving).
+  const CHOICE_LOCK_MS = 30000
   // Names the agent accepts that pick by a rule, not one model: what ran
   // can't be held against them.
   const NOT_A_MODEL = new Set(['best', 'opusplan'])
-  const choice = { model: '', effort: '', running: '', session: false, options: null, optionsAt: 0, optionsError: '', problem: '', pending: false, bubble: false, unseen: false, started: false }
+  const choice = { model: '', effort: '', running: '', session: false, options: null, optionsAt: 0, optionsError: '', problem: '', pending: false, bubble: false, unseen: false, started: false,
+    loaded: false, asking: false, saving: false, lockExpired: false, slow: false, lockTimer: 0 }
 
   // dialogAnswer shows a modal dialog and gives what it was closed with, ''
   // when it was dismissed (Escape).
@@ -5170,6 +5174,42 @@
 
   function choiceQuiet() { return store.get(CHOICE_QUIET) === 'yes' }
 
+  // choiceWaiting says vibe's answer is awaited: what's chosen (not yet read)
+  // or the agent's lists (being asked for).
+  function choiceWaiting() { return !choice.loaded || choice.asking }
+
+  // choiceLocked says there's nothing to choose from yet, so the widget is
+  // disabled: not while kept lists are being asked for again, which are
+  // usable, and not past the limit.
+  function choiceLocked() {
+    return !choice.lockExpired && (!choice.loaded || (choice.asking && !choice.options))
+  }
+
+  function startChoiceLock() {
+    clearTimeout(choice.lockTimer)
+    choice.lockExpired = false
+    choice.slow = false
+    choice.lockTimer = setTimeout(choiceLockExpired, CHOICE_LOCK_MS)
+  }
+
+  function endChoiceLock() {
+    clearTimeout(choice.lockTimer)
+    const wasSlow = choice.slow
+    choice.lockExpired = false
+    choice.slow = false
+    if (wasSlow) choice.bubble = false
+  }
+
+  // choiceLockExpired lets the drop-downs be used though the lists haven't
+  // come, and says what's going on.
+  function choiceLockExpired() {
+    if (!choiceWaiting() || !choiceLocked()) return
+    choice.lockExpired = true
+    choice.slow = true
+    choice.unseen = true
+    setChoiceBubble(true)
+  }
+
   // choiceProblem is why there are no lists to choose from, or what was chosen
   // couldn't be read: "" when there's nothing wrong, or when the lists are
   // only out of date (see choiceStale).
@@ -5191,8 +5231,9 @@
   function choiceBubble() {
     const problem = choiceProblem()
     if (problem) return { kind: 'problem', text: problem }
+    if (choice.slow && choiceWaiting()) return { kind: 'slow', text: "Still asking the agent which models and efforts it has: it's taking longer than usual. You can carry on, and the lists fill in when they arrive." }
     if (choiceOdd()) return { kind: 'odd', text: 'You asked for ' + choice.model + ', but the agent says it ran ' + choice.running + '.' }
-    return { kind: 'news', text: 'A change to the model or effort applies to your next prompt.' }
+    return { kind: 'news', text: 'A change to the model or effort applies to your next prompt.' + (choice.running ? ' The last turn ran on ' + choice.running + '.' : '') }
   }
 
   function fillSelect(select, items, value) {
@@ -5213,11 +5254,21 @@
     if (choice.effort && !efforts.some((e) => e.value === choice.effort)) efforts.push({ value: choice.effort, text: choice.effort })
     fillSelect($('choice-effort'), efforts, choice.effort)
 
+    // Said beside the drop-downs only when it's news: that the models are on
+    // their way, or that the agent ran another than was asked for. That it ran
+    // what was asked is what's expected.
     const odd = choiceOdd()
+    const locked = choiceLocked()
+    const waiting = choiceWaiting()
     const ran = $('choice-ran')
-    ran.classList.toggle('warn-text', odd)
-    ran.textContent = !choice.running ? '' : (odd ? 'ran ' : 'running ') + choice.running
-    ran.title = choice.running ? ran.textContent : ''
+    ran.classList.toggle('warn-text', odd && !locked)
+    ran.textContent = locked ? 'Loading models…' : odd ? 'ran ' + choice.running : ''
+    ran.title = ran.textContent
+    $('choice-spinner').hidden = !waiting
+    $('choice-busy').textContent = !waiting ? '' : locked ? 'Loading the models and efforts…' : 'Checking for new models…'
+    $('convo-choice').classList.toggle('loading', locked)
+    $('convo-choice').setAttribute('aria-busy', String(locked))
+    $('choice-model').disabled = $('choice-effort').disabled = locked || choice.saving
 
     const said = choiceBubble()
     const problem = said.kind === 'problem'
@@ -5226,7 +5277,7 @@
     info.classList.toggle('warn', problem || odd)
     // The dot says there's something to know that hasn't been looked at:
     // closing the bubble, whichever way, is looking.
-    info.classList.toggle('news', choice.unseen && (choice.pending || !!stale || odd || problem))
+    info.classList.toggle('news', choice.unseen && (choice.pending || !!stale || odd || problem || choice.slow))
     info.setAttribute('aria-expanded', String(choice.bubble))
     $('choice-bubble').hidden = !choice.bubble
     $('choice-bubble-text').textContent = said.text
@@ -5276,6 +5327,8 @@
   // askChoiceOptions asks for the agent's lists. wake says the sandbox may be
   // woken to be asked: not when the page opens, only when the user retries.
   async function askChoiceOptions(wake) {
+    choice.asking = true
+    drawChoice()
     try {
       const res = await post('/api/conversation/choice/options', { wake }, { timeout: 3 * 60 * 1000 })
       reached(true)
@@ -5285,6 +5338,8 @@
       choice.optionsError = 'Could not reach vibe to ask the agent which models and efforts it has.'
     }
     if (choice.optionsError) choice.unseen = true
+    choice.asking = false
+    endChoiceLock()
     drawChoice()
   }
 
@@ -5293,12 +5348,16 @@
   async function initChoice() {
     if (choice.started) return
     choice.started = true
+    startChoiceLock()
+    drawChoice()
     await readChoice()
+    choice.loaded = true
     await askChoiceOptions(false)
     if (choiceProblem()) setChoiceBubble(true)
   }
 
   async function retryChoice() {
+    startChoiceLock()
     if (choice.problem) await readChoice()
     await askChoiceOptions(true)
     if (!choiceProblem() && !choice.optionsError) setChoiceBubble(false)
@@ -5317,7 +5376,8 @@
   // saveChoice asks vibe to keep model and effort, and shows what it kept: it
   // may have changed the effort, or refused.
   async function saveChoice(model, effort) {
-    $('choice-model').disabled = $('choice-effort').disabled = true
+    choice.saving = true
+    drawChoice()
     let failed = ''
     try {
       const res = await post('/api/conversation/choice', { model, effort })
@@ -5327,7 +5387,7 @@
       reached(false)
       failed = 'Could not reach vibe to keep that choice.'
     }
-    $('choice-model').disabled = $('choice-effort').disabled = false
+    choice.saving = false
     if (failed) { await choiceFailed(failed); return }
     // After the bubble is settled, for closing it counts as having looked.
     setChoiceBubble(!choiceQuiet())

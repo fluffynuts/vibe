@@ -636,8 +636,13 @@ you're looking at:
   carries a dot when there's something to know, which goes once the bubble has been looked at and closed, and opens the bubble when pressed); that the agent says it ran
   another model than was asked for, which is said at the end of every such turn, in amber, and can't be switched
   off; and, when there are no lists at all (nothing kept, and claude couldn't be asked), why (with **Retry**).
-  A choice that couldn't be kept is said in a dialog over the frosted page, to be answered. Beside the
-  drop-downs, in a slot of its own, the page says which model claude reported running on its last turn.
+  A choice that couldn't be kept is said in a dialog over the frosted page, to be answered. While the
+  agent's lists are on their way and none are kept (the first time in a sandbox), the whole widget is dimmed and
+  disabled with a spinner and "Loading models…", and is marked busy for screen readers; after 30 seconds it's
+  usable anyway, and the bubble says it's still asking. With lists kept, the drop-downs stay usable and only a
+  spinner shows while they're asked for again. Beside the drop-downs, in a slot of its own, the page says
+  something only when it's news: that the models are loading, or that the agent ran another model than was
+  asked for ("ran …", in amber). That it ran what was asked is what's expected, and the bubble has it if wanted.
 - **Review** — the changes in the sandbox's folder, worked out on this machine, read with go-git by a helper process (vibe itself, held to a memory limit and stopped when its time is up), which runs nothing the repository's own config names, since the sandbox can write that; no git is needed on the host. It covers uncommitted changes (
   untracked files with them; or a branch's, or a commit's), with the agent's review comments under the
   lines they're about: side by side (or in one column), with the hidden lines between changes a click away,

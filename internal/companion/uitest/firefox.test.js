@@ -231,3 +231,21 @@ test('the bubble over the info button moves nothing, and stays on the page', asy
     } finally { await page.close() }
   }
 })
+
+test('the drop-downs are the same size whatever they hold, so the lists arriving moves nothing', async () => {
+  const page = await conversationPage(1500)
+  try {
+    const sizes = () => Promise.all(['#choice-model', '#choice-effort', '#convo-choice'].map((sel) => box(page, sel)))
+    const full = await sizes()
+    await page.evaluate(() => {
+      for (const id of ['choice-model', 'choice-effort']) {
+        const select = document.getElementById(id)
+        select.replaceChildren(Object.assign(document.createElement('option'), { value: '', textContent: 'Default' }))
+      }
+    })
+    const bare = await sizes()
+    assert.deepEqual(bare.map((b) => b.width), full.map((b) => b.width), 'what they hold changed how wide they are')
+    const group = bare[2]
+    assert.deepEqual(await box(page, '#convo-choice'), group)
+  } finally { await page.close() }
+})

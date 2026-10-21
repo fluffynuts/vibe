@@ -248,3 +248,19 @@ at once and the agent is asked again in the background (stale while revalidate).
   (the X, the button, Escape, a click elsewhere), and comes back with the next change, the next turn that ran
   another model, or a new failure to refresh. The amber outline stays while the cause does (another model
   ran; no lists), since that is a state, not a notice.
+
+### While the lists load (2026-10-21)
+
+- **Nothing known** (first fetch in a sandbox, or before vibe has said what is chosen): the whole widget is dimmed
+  and disabled, a spinner and "Loading models…" in the slot beside it, `aria-busy`, and a visually hidden status
+  for screen readers. The stored choice is still shown. **Kept lists:** usable, only the spinner (the user's
+  reason: if the lists change while they have it open, nothing should surprise them).
+- **A limit on the lock:** 30 seconds (`CHOICE_LOCK_MS`, the same patience as the clipboard page's), then the
+  drop-downs are usable, the bubble says it is still asking, and the lists fill in when they arrive. A
+  Retry locks it again, the same way. The number is a guess; the user agreed to a limit, not to 30.
+- **The slot only speaks when it's news.** "Running <model>" is gone when it matches what was asked (or the default
+  is chosen): the user expects the drop-downs to work. The bubble says what the last turn ran. A mismatch is
+  still amber, still said at the end of every such turn.
+- **Found in a real browser, not jsdom:** a drop-down sizes itself to its longest option, so the group got 70px
+  wider when the lists arrived and everything moved. The two now have widths of their own (`14em`, `7em`), and a
+  Firefox test checks that what they hold changes nothing.
