@@ -235,3 +235,12 @@ func TestMergeModeOverridesWhenSet(t *testing.T) {
 		}
 	}
 }
+
+func TestMergeGitAuthorOverrideWins(t *testing.T) {
+	if got := Merge(Settings{GitAuthor: "import"}, Settings{GitAuthor: "leave"}); got.GitAuthor != "leave" {
+		t.Errorf("GitAuthor = %q", got.GitAuthor)
+	}
+	if got := Merge(Settings{GitAuthor: "import"}, Settings{}); got.GitAuthor != "import" {
+		t.Errorf("GitAuthor = %q, want the base's when the override sets none", got.GitAuthor)
+	}
+}

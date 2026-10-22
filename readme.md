@@ -892,6 +892,22 @@ to GitHub, so `git push` over HTTPS and `gh` both work in there. The agent's rul
 `~/.config/vibe/git-push.md` in the sandbox, and every sandbox's agent instructions point it there.
 If `origin` is an SSH URL, the agent is told to push over HTTPS, since the proxy only covers HTTPS.
 
+Git won't commit without an author name and email, and a sandbox can come without them (its `~/.gitconfig` is
+sbx's to make). So at every session start vibe looks at the agent's global git config, and if the author is
+missing, says the agent can't commit, and whether it can push (a local commit is yours to throw away; a pushed one
+isn't), and offers to give it the author from your own global git config (`git config --global user.name`
+and `user.email`), showing what it would use; it only fills in what's missing. With a terminal session it asks at the
+terminal (`-f` says yes). With `--headless` it asks on the companion page instead, in a dialog over the whole
+page that has to be answered: *Give it my author*, *No, leave it*, or *Later*. *Later* leaves a reminder above the
+conversation's prompt (with *Fix…* to answer after all, and *Dismiss*), and it asks again whenever the sandbox is next
+started. Your answer is kept in the profile, in a file of its own (`git-author`, holding `import` or `leave`; it carries
+across a re-compose or an automatic update, which regenerate the rest of the profile, but `--re-create` deletes the whole
+profile, so it is asked again). `import` gives a sandbox missing an author yours without asking; `leave` never asks and leaves
+it as it is. To decide yourself instead, write `gitAuthor: import` or `gitAuthor: leave` in a profile's `settings.yaml`, or in
+`~/.vibe/settings.yaml` for every profile at once: what you write there wins over a kept answer, and the profile's own value
+over the global one.
+Whenever an answer is kept (a real yes or no, or `-f` saying yes, or a click on the page) vibe says so, once, with how to undo it: which profile it applies to, the file to delete to be asked again, and the setting that decides the other way. A kept answer applies to every sandbox of that profile.
+
 vibe remembers when the token expires (GitHub says, when vibe checks it). From three days before, every
 session start says so; once it has expired, the session start asks whether to renew it there and then
 (with `-f`, or no terminal, it only says so). Renewing opens GitHub's list of your tokens: click the

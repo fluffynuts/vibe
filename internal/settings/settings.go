@@ -72,6 +72,11 @@ type Settings struct {
 	// The page writes them into the profile's settings.yaml.
 	Model  string `yaml:"model,omitempty"`
 	Effort string `yaml:"effort,omitempty"`
+	// GitAuthor is what vibe does when a sandbox's agent has no git author
+	// name and email, which git needs to commit: "import" gives it the
+	// user's own, "leave" leaves it without; unset asks (and keeps the answer
+	// here, in the profile).
+	GitAuthor string `yaml:"gitAuthor,omitempty"`
 }
 
 // Load reads a settings.yaml file. A missing file yields a zero Settings and
@@ -143,6 +148,9 @@ func Merge(base, override Settings) Settings {
 	}
 	if override.Effort != "" {
 		out.Effort = override.Effort
+	}
+	if override.GitAuthor != "" {
+		out.GitAuthor = override.GitAuthor
 	}
 
 	out.Publish = append(append([]PublishEntry{}, base.Publish...), override.Publish...)

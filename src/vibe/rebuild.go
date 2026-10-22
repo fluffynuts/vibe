@@ -391,6 +391,10 @@ func replaceProfile(lay layout.Layout, profile, backupName string, features []st
 	if err != nil {
 		return fmt.Errorf("could not read profile '%s's settings.yaml (nothing changed): %w", profile, err)
 	}
+	gitAuthor, err := os.ReadFile(filepath.Join(lay.ProfileDir(profile), profilegen.GitAuthorFile))
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("could not read profile '%s's %s (nothing changed): %w", profile, profilegen.GitAuthorFile, err)
+	}
 	dir := lay.HomePath("profiles", profile)
 	if info, err := os.Stat(dir); dir != "" && err == nil && info.IsDir() {
 		if zip, err := backup.Create(lay.HomePath("backup"), backupName, dir, time.Now()); err != nil {
@@ -418,6 +422,11 @@ func replaceProfile(lay layout.Layout, profile, backupName string, features []st
 	}
 	if err := choice.set(chosen.Model, chosen.Effort); err != nil {
 		return fmt.Errorf("could not carry profile '%s's model and effort across (the backup above has them): %w", profile, err)
+	}
+	if gitAuthor != nil {
+		if err := os.WriteFile(filepath.Join(created, profilegen.GitAuthorFile), gitAuthor, 0o644); err != nil {
+			return fmt.Errorf("could not carry profile '%s's %s across (the backup above has it): %w", profile, profilegen.GitAuthorFile, err)
+		}
 	}
 	note("re-composed profile '%s' (%s) in %s", profile, strings.Join(features, ", "), created)
 	return nil

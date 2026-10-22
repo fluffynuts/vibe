@@ -34,6 +34,10 @@ func loadSettings(lay layout.Layout, profile string) (settings.Settings, error) 
 		return settings.Settings{}, fmt.Errorf("settings: packages is %q; it must be %q (each request waits for you to approve it) or %q (requests are fetched at once)",
 			merged.Packages, packagereq.PolicyAsk, packagereq.PolicyAllow)
 	}
+	if merged.GitAuthor != "" && merged.GitAuthor != gitAuthorImport && merged.GitAuthor != gitAuthorLeave {
+		return settings.Settings{}, fmt.Errorf("settings: gitAuthor is %q; it must be %q (a sandbox with no git author is given yours) or %q (it's left without), or unset to be asked",
+			merged.GitAuthor, gitAuthorImport, gitAuthorLeave)
+	}
 	merged.NugetDir = pathresolve.ExpandHome(merged.NugetDir)
 	merged.MemoryRoot = pathresolve.ExpandHome(merged.MemoryRoot)
 	return merged, nil

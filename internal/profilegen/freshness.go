@@ -19,10 +19,15 @@ import (
 // wrote (see ContentHash): what it was before anyone could edit it.
 const HashFile = "composed-hash"
 
+// GitAuthorFile is where a profile keeps the user's answer to whether a
+// sandbox with no git author is given theirs: "import" or "leave".
+const GitAuthorFile = "git-author"
+
 // notComposed are the files in a profile's folder that composing doesn't
-// write, so they're left out of its hash: the user's own instructions and
-// theme, which carry across a re-compose, and the hash itself.
-var notComposed = map[string]bool{instructions.File: true, claudetheme.ProfileFile: true, HashFile: true}
+// write, so they're left out of its hash: the user's own instructions,
+// theme and git author answer, which carry across a re-compose, and the hash
+// itself.
+var notComposed = map[string]bool{instructions.File: true, claudetheme.ProfileFile: true, GitAuthorFile: true, HashFile: true}
 
 // ContentHash is a hash of what composing wrote into a profile's folder:
 // every file's path and content, the user's own files aside.
