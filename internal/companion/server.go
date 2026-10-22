@@ -115,6 +115,9 @@ type Config struct {
 	// Admin is what the page's Admin tab does to the sandbox; nil means the
 	// page has no such tab.
 	Admin Admin
+	// GitAuthor is the question of whether the agent is given the user's git
+	// author, which it can't commit without; nil means there is none to ask.
+	GitAuthor *GitAuthor
 	// Packages holds the sandbox's requests for packages for the user to
 	// approve, on the Admin tab; nil means the sandbox can't ask.
 	Packages PackageDesk
@@ -373,6 +376,7 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"POST /api/admin/instructions/optimise", s.serving(instructionsFeature, s.instructionsOptimise)},
 		{"POST /api/awake", s.authed(s.changing(s.keepAwake))},
 		{"GET /api/review", s.serving(reviewFeature, s.reviewState)},
+		{"POST /api/git-author", s.serving(gitAuthorFeature, s.gitAuthorAnswer)},
 		{"GET /api/review/file", s.serving(reviewFeature, s.reviewFile)},
 		{"POST /api/review/do", s.serving(reviewFeature, s.reviewDo)},
 		{"POST /api/review/ask", s.serving(reviewFeature, s.reviewAsk)},
@@ -581,6 +585,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"admin":                 s.cfg.Admin != nil,
 		"manage":                s.cfg.Manage != nil,
 		"review":                s.cfg.ReviewTab != nil,
+		"gitAuthor":             s.gitAuthorState(),
 		"usage":                 s.cfg.Usage != nil,
 		// A page for no sandbox has only the Profiles tab.
 		"sandboxTabs": s.cfg.Sandbox != "",

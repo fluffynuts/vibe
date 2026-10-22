@@ -10,7 +10,7 @@ import (
 var changingRoutes = []string{
 	"/api/conversation/send", "/api/conversation/stop", "/api/conversation/new",
 	"/api/conversation/new/options", "/api/conversation/new/fetch",
-	"/api/default-branch",
+	"/api/default-branch", "/api/git-author",
 	"/api/admin/do", "/api/admin/upgrades", "/api/admin/cancel",
 	"/api/admin/instructions", "/api/admin/instructions/optimise",
 	"/api/review/do", "/api/review/ask", "/api/review/submit", "/api/review/start", "/api/review/afresh",
@@ -32,6 +32,7 @@ func TestEveryChangeNeedsTheTokenAndASameOriginJSONRequest(t *testing.T) {
 	s.cfg.Converse = (&fakeAgent{}).converse
 	s.cfg.Admin = &fakeAdmin{}
 	s.cfg.Manage = &fakeManager{}
+	s.cfg.GitAuthor = (&fakeAuthor{}).config()
 	for _, path := range changingRoutes {
 		for _, c := range []struct {
 			why     string

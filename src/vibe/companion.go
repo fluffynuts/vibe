@@ -309,6 +309,11 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		return stop, false, cancel
 	}
 
+	var gitAuthor *companion.GitAuthor
+	if args.Headless && found {
+		gitAuthorDesk = newAuthorDesk(lay, name, inst)
+		gitAuthor = &companion.GitAuthor{State: gitAuthorDesk.State, Decide: gitAuthorDesk.Decide}
+	}
 	srv, err := companion.Start(companion.Config{
 		Sandbox:                name,
 		Agent:                  agent,
@@ -329,6 +334,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		History:                state.ConversationPath(vibeHome, name),
 		ReviewTab:              reviewTabFor(vibeHome, name, inst),
 		Admin:                  adminFor(lay, name, inst.Target),
+		GitAuthor:              gitAuthor,
 		Packages:               packageDesk(desk),
 		PackageConfig:          workspaceConfig,
 		PackageSync:            packageSyncOf(packageSync),
