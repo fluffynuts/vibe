@@ -671,12 +671,70 @@
         }
         if (ready) state.clipboardLoaded = url
       }
+      renderGitAuthor(res.body.gitAuthor)
       renderClipboard()
       if ($('tab-' + state.tab).hidden) select(state.tab)
     } catch (e) {
       reached(false)
     }
   }
+
+  // --- the agent's git author -------------------------------------------------
+
+  // Git won't commit without an author, and a sandbox can come without one. The host asks whether to give the
+  // agent the user's own: a dialog over the whole page, which can't be put away without choosing (that is why
+  // it's judicious: nothing else on the page is held up like this); "later" leaves a reminder in the
+  // conversation, which can be dismissed until the sandbox is started again.
+  const gitAuthor = { sending: false }
+
+  function renderGitAuthor(g) {
+    const phase = (g && g.phase) || ''
+    const dialog = $('git-author')
+    $('convo-git-author').hidden = phase !== 'reminder'
+    if (phase !== 'ask') {
+      if (dialog.open) dialog.close()
+      return
+    }
+    $('git-author-shown').textContent = g.shown || ''
+    $('git-author-push').textContent = g.push || ''
+    if (!dialog.open) dialog.showModal()
+  }
+
+  async function answerGitAuthor(answer) {
+    if (gitAuthor.sending) return
+    gitAuthor.sending = true
+    const buttons = ['give', 'leave', 'later'].map((a) => $('git-author-' + a))
+    buttons.forEach((b) => { b.disabled = true })
+    $('git-author-problem').hidden = true
+    try {
+      const res = await post('/api/git-author', { answer })
+      reached(true)
+      if (res.ok) {
+        renderGitAuthor(res.body.gitAuthor)
+        // What was kept, and how to undo it: long, so with a button, which keeps it up longer.
+        if (res.body.kept) toast(res.body.kept, false, { label: 'OK', run() {} })
+      }
+      else if (res.status === 409) {
+        toast(res.body.error || 'That is no longer being asked.', true)
+        await loadState()
+      } else {
+        $('git-author-problem').textContent = (res.body && res.body.error) || 'That could not be done.'
+        $('git-author-problem').hidden = false
+      }
+    } catch (e) {
+      reached(false)
+      $('git-author-problem').textContent = 'Could not reach vibe.'
+      $('git-author-problem').hidden = false
+    } finally {
+      gitAuthor.sending = false
+      buttons.forEach((b) => { b.disabled = false })
+    }
+  }
+
+  $('git-author').addEventListener('cancel', (ev) => ev.preventDefault())
+  for (const answer of ['give', 'leave', 'later']) $('git-author-' + answer).addEventListener('click', () => answerGitAuthor(answer))
+  $('convo-git-author-fix').addEventListener('click', () => answerGitAuthor('fix'))
+  $('convo-git-author-dismiss').addEventListener('click', () => answerGitAuthor('dismiss'))
 
   function renderClipboard() {
     // A pane already showing the page keeps it while its server is away.

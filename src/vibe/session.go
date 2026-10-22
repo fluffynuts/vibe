@@ -37,8 +37,9 @@ func finish(lay layout.Layout, args cliargs.Args, name string) error {
 		return headless(lay, args, name)
 	}
 	checkGitTokenExpiry(vibeHome, args, name)
+	checkSandboxGitAuthor(lay, args, name)
 	remindOfInstructions(lay, name)
-	stopCompanion, companionUp, cancelThePage := startCompanion(lay, args, name)
+	stopCompanion, companionUp, cancelThePage, _ := startCompanion(lay, args, name)
 	// 'vibe --cancel' from another terminal ends what the page has under way.
 	setPageCancel(cancelThePage)
 	defer setPageCancel(nil)

@@ -133,7 +133,7 @@ func companionFixture(t *testing.T, settingsYAML string) (layout.Layout, string)
 
 func TestStartCompanionServesAndRemembersItsPort(t *testing.T) {
 	lay, name := companionFixture(t, "companion: serve\n")
-	stop, _, _ := startCompanion(lay, cliargs.Args{}, name)
+	stop, _, _, _ := startCompanion(lay, cliargs.Args{}, name)
 
 	inst, _, err := state.Load(lay.Home, name)
 	if err != nil {
@@ -150,7 +150,7 @@ func TestStartCompanionServesAndRemembersItsPort(t *testing.T) {
 
 	// A second vibe for the same sandbox finds the first one's page and
 	// leaves it be.
-	second, _, _ := startCompanion(lay, cliargs.Args{}, name)
+	second, _, _, _ := startCompanion(lay, cliargs.Args{}, name)
 	second()
 	if !companion.Running(inst.CompanionPort, name) {
 		t.Error("the second vibe took the first one's page down")
@@ -162,7 +162,7 @@ func TestStartCompanionServesAndRemembersItsPort(t *testing.T) {
 	}
 
 	// And the next start has the same port.
-	again, _, _ := startCompanion(lay, cliargs.Args{}, name)
+	again, _, _, _ := startCompanion(lay, cliargs.Args{}, name)
 	defer again()
 	inst2, _, _ := state.Load(lay.Home, name)
 	if inst2.CompanionPort != inst.CompanionPort {
@@ -180,7 +180,7 @@ func TestStartCompanionDoesNothingWhenOff(t *testing.T) {
 		"typo":    {"companion: sometimes\n", cliargs.Args{}},
 	} {
 		lay, sandbox := companionFixture(t, c.yaml)
-		stop, _, _ := startCompanion(lay, c.args, sandbox)
+		stop, _, _, _ := startCompanion(lay, c.args, sandbox)
 		stop()
 		inst, _, _ := state.Load(lay.Home, sandbox)
 		if inst.CompanionPort != 0 {
