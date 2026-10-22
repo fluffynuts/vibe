@@ -852,6 +852,13 @@ to GitHub, so `git push` over HTTPS and `gh` both work in there. The agent's rul
 `~/.config/vibe/git-push.md` in the sandbox, and every sandbox's agent instructions point it there.
 If `origin` is an SSH URL, the agent is told to push over HTTPS, since the proxy only covers HTTPS.
 
+Git won't commit without an author name and email, and a sandbox can come without them (its `~/.gitconfig` is
+sbx's to make). So at every session start vibe looks at the agent's global git config, and if the author is
+missing, says the agent can't commit, and whether it can push (a local commit is yours to throw away; a pushed one
+isn't), and offers to give it the author from your own global git config (`git config --global user.name`
+and `user.email`), showing what it would use. It only fills in what's missing, and only if you agree (`-f` agrees);
+with no terminal it just says so. If you say no, it doesn't ask again for that sandbox (a rebuild keeps that).
+
 vibe remembers when the token expires (GitHub says, when vibe checks it). From three days before, every
 session start says so; once it has expired, the session start asks whether to renew it there and then
 (with `-f`, or no terminal, it only says so). Renewing opens GitHub's list of your tokens: click the

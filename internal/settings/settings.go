@@ -63,6 +63,11 @@ type Settings struct {
 	// repository's default branch when origin can't say which it is: the
 	// one last set there.
 	DefaultBranch string `yaml:"defaultBranch,omitempty"`
+	// GitAuthor is what vibe does when a sandbox's agent has no git author
+	// name and email, which git needs to commit: "import" gives it the
+	// user's own, "leave" leaves it without; unset asks (and keeps the answer
+	// here, in the profile).
+	GitAuthor string `yaml:"gitAuthor,omitempty"`
 }
 
 // Load reads a settings.yaml file. A missing file yields a zero Settings and
@@ -125,6 +130,9 @@ func Merge(base, override Settings) Settings {
 	}
 	if override.AutoUpdate != nil {
 		out.AutoUpdate = override.AutoUpdate
+	}
+	if override.GitAuthor != "" {
+		out.GitAuthor = override.GitAuthor
 	}
 
 	out.Publish = append(append([]PublishEntry{}, base.Publish...), override.Publish...)
