@@ -709,7 +709,11 @@
     try {
       const res = await post('/api/git-author', { answer })
       reached(true)
-      if (res.ok) renderGitAuthor(res.body.gitAuthor)
+      if (res.ok) {
+        renderGitAuthor(res.body.gitAuthor)
+        // What was kept, and how to undo it: long, so with a button, which keeps it up longer.
+        if (res.body.kept) toast(res.body.kept, false, { label: 'OK', run() {} })
+      }
       else if (res.status === 409) {
         toast(res.body.error || 'That is no longer being asked.', true)
         await loadState()

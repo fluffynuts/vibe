@@ -362,6 +362,8 @@ type terminalAuthor struct {
 	push  func() string
 	// keep records the user's answer (gitAuthorImport or gitAuthorLeave).
 	keep func(choice string) error
+	// kept says what was kept, once it has been, and how to undo it.
+	kept func(choice string) string
 	say  func(format string, a ...interface{})
 	// force is -f, which answers yes. canAsk says whether there is a terminal
 	// to ask on; confirm asks.
@@ -405,7 +407,27 @@ func (t terminalAuthor) run() {
 	}
 	if err := t.keep(choice); err != nil {
 		t.say("WARNING: couldn't keep your answer, so you'll be asked again: %s", err)
+		return
 	}
+	t.say("%s", t.kept(choice))
+}
+
+// keptGitAuthorNote says that choice has been kept for a profile, and how to
+// undo it: said whenever an answer is kept, so one made by -f, which the user
+// didn't see asked, isn't a surprise later.
+//
+// The wording follows where the choice lives. It says the profile's own
+// git-author file today; when the user's kept choices are consolidated into one
+// user-preferences.yaml (docs/plan-user-preferences.md), this, and the readme's
+// account of the file, must change with it: the path, and how to ask again.
+func keptGitAuthorNote(lay layout.Layout, profile, choice string) string {
+	file := filepath.Join(lay.HomePath("profiles", profile), profilegen.GitAuthorFile)
+	settingsFile := pathresolve.Tilde(filepath.Join(lay.HomePath("profiles", profile), "settings.yaml"))
+	again := fmt.Sprintf("To be asked again, delete %s.", pathresolve.Tilde(file))
+	if choice == gitAuthorImport {
+		return fmt.Sprintf("kept: every sandbox of profile '%s' that has no git author is given yours, without asking. %s To leave them without one, put `gitAuthor: leave` in %s (or in ~/.vibe/settings.yaml for every profile).", profile, again, settingsFile)
+	}
+	return fmt.Sprintf("kept: no sandbox of profile '%s' is given a git author, and you aren't asked again. %s To give it yours without asking, put `gitAuthor: import` in %s (or in ~/.vibe/settings.yaml for every profile).", profile, again, settingsFile)
 }
 
 // checkSandboxGitAuthor is run at a terminal session's start, before the
@@ -429,6 +451,7 @@ func checkSandboxGitAuthor(lay layout.Layout, args cliargs.Args, name string) {
 		},
 		push:    func() string { return pushStatement(inst) },
 		keep:    func(choice string) error { return keepGitAuthorChoice(lay, inst.Profile, choice) },
+		kept:    func(choice string) string { return keptGitAuthorNote(lay, inst.Profile, choice) },
 		say:     func(format string, a ...interface{}) { note(format, a...) },
 		force:   args.Force,
 		canAsk:  interactive,

@@ -21,10 +21,10 @@ type GitAuthorState struct {
 // GitAuthor is what the page asks of vibe about the agent's git author.
 type GitAuthor struct {
 	State func() GitAuthorState
-	// Decide takes the user's answer: give, leave, later, fix or dismiss.
-	// An answer that makes no sense now returns an error wrapping
-	// ErrAnswerNotNow.
-	Decide func(answer string) error
+	// Decide takes the user's answer: give, leave, later, fix or dismiss. It
+	// says what was kept by it, and how to undo that, when something was. An
+	// answer that makes no sense now returns an error wrapping ErrAnswerNotNow.
+	Decide func(answer string) (kept string, err error)
 }
 
 // ErrAnswerNotNow is an answer to a question that isn't being asked (or isn't
@@ -51,9 +51,10 @@ func (s *Server) gitAuthorAnswer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "expected {\"answer\": \"give\", \"leave\", \"later\", \"fix\" or \"dismiss\"}")
 		return
 	}
-	switch err := s.cfg.GitAuthor.Decide(req.Answer); {
+	kept, err := s.cfg.GitAuthor.Decide(req.Answer)
+	switch {
 	case err == nil:
-		writeJSON(w, http.StatusOK, map[string]interface{}{"gitAuthor": s.gitAuthorState()})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"gitAuthor": s.gitAuthorState(), "kept": kept})
 	case errors.Is(err, ErrAnswerNotNow):
 		writeError(w, http.StatusConflict, err.Error())
 	default:

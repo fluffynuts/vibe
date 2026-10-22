@@ -11,7 +11,7 @@ const ASKING = { phase: 'ask', shown: 'Davyd McColl <d@x.com>', push: "It has no
 // authorPage is a page whose host is asking about the git author as at.git says, and answers as at.reply says: by
 // default as the host does (give and leave end the question, later makes it a reminder, fix asks again, dismiss ends it).
 async function authorPage(git, { tab = 'review' } = {}) {
-  const at = { git, reply: null, hold: null }
+  const at = { git, reply: null, hold: null, kept: '' }
   const next = { give: () => ({}), leave: () => ({}), later: () => ({ ...ASKING, phase: 'reminder' }), fix: () => ({ ...ASKING }), dismiss: () => ({}) }
   const routes = {
     '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, conversation: true, review: true, attention: {}, ...(at.git === undefined ? {} : { gitAuthor: at.git }) }),
@@ -22,7 +22,8 @@ async function authorPage(git, { tab = 'review' } = {}) {
       if (at.hold) await at.hold
       if (at.reply) return at.reply
       at.git = next[call.body.answer]()
-      return { gitAuthor: at.git }
+      const kept = at.kept && (call.body.answer === 'give' || call.body.answer === 'leave') ? at.kept : ''
+      return { gitAuthor: at.git, kept }
     },
   }
   const p = await openPage({ routes, storage: { 'vibe-companion-tab': tab } })
@@ -179,5 +180,17 @@ test('an answer the host says no longer fits is said, and the page looks again a
     p.at.git = {}
     await choose(p, 'give')
     assert.equal(dialog(p).open, false, 'what the host now asks is nothing')
+  } finally { p.close() }
+})
+
+test('what the host kept is said in a toast, with how to undo it, and nothing is said when nothing was kept', async () => {
+  const p = await authorPage(ASKING)
+  try {
+    p.at.kept = "kept: every sandbox of profile 'p' is given your author; delete git-author to be asked again"
+    await choose(p, 'later')
+    assert.ok(!/kept:/.test(p.$('toast').textContent), 'a later keeps nothing')
+    await p.click('convo-git-author-fix')
+    await choose(p, 'give')
+    assert.match(p.$('toast').textContent, /kept: every sandbox of profile 'p'.*to be asked again/)
   } finally { p.close() }
 })

@@ -29,6 +29,8 @@ type authorDesk struct {
 	// or gitAuthorLeave) in the profile.
 	give func(name, email string) error
 	keep func(choice string) error
+	// kept says what was kept, once it has been, and how to undo it.
+	kept func(choice string) string
 	say  func(format string, a ...interface{})
 
 	mu       sync.Mutex
@@ -98,11 +100,11 @@ func (d *authorDesk) State() companion.GitAuthorState {
 // reminder, to be asked now) or dismiss (the reminder, until the sandbox is
 // started again). An answer that makes no sense now, or while another is
 // being carried out, is refused, and the page asks again of what is so.
-func (d *authorDesk) Decide(answer string) error {
+func (d *authorDesk) Decide(answer string) (kept string, err error) {
 	d.mu.Lock()
 	if d.deciding {
 		d.mu.Unlock()
-		return fmt.Errorf("%w: another answer is being carried out: look at the page again", companion.ErrAnswerNotNow)
+		return "", fmt.Errorf("%w: another answer is being carried out: look at the page again", companion.ErrAnswerNotNow)
 	}
 	phase, finding := d.phase, d.finding
 	allowed := map[string]bool{
@@ -111,7 +113,7 @@ func (d *authorDesk) Decide(answer string) error {
 	}
 	if !allowed[answer] {
 		d.mu.Unlock()
-		return fmt.Errorf("%w: there is nothing to answer %q to now (it may have been answered already): look at the page again", companion.ErrAnswerNotNow, answer)
+		return "", fmt.Errorf("%w: there is nothing to answer %q to now (it may have been answered already): look at the page again", companion.ErrAnswerNotNow, answer)
 	}
 	d.epoch++
 	switch answer {
@@ -126,19 +128,22 @@ func (d *authorDesk) Decide(answer string) error {
 	}
 	d.mu.Unlock()
 	if answer != "give" && answer != "leave" {
-		return nil
+		return "", nil
 	}
 
-	var err error
 	if answer == "give" {
 		err = d.give(finding.GiveName, finding.GiveEmail)
 		if err != nil {
 			err = fmt.Errorf("couldn't give the agent a git author: %w", err)
 		} else if keepErr := d.keep(gitAuthorImport); keepErr != nil {
 			d.say("WARNING: the agent has its git author, but your choice couldn't be kept, so you'll be asked again: %v", keepErr)
+		} else {
+			kept = d.kept(gitAuthorImport)
 		}
 	} else if err = d.keep(gitAuthorLeave); err != nil {
 		err = fmt.Errorf("couldn't keep your choice: %w", err)
+	} else {
+		kept = d.kept(gitAuthorLeave)
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -147,7 +152,7 @@ func (d *authorDesk) Decide(answer string) error {
 	if err == nil {
 		d.phase = ""
 	}
-	return err
+	return kept, err
 }
 
 // authorDeskFor is the desk a session's companion page asks through, and
@@ -178,6 +183,7 @@ func newAuthorDesk(lay layout.Layout, name string, inst state.Instance) *authorD
 		},
 		give: look.set,
 		keep: func(choice string) error { return keepGitAuthorChoice(lay, inst.Profile, choice) },
+		kept: func(choice string) string { return keptGitAuthorNote(lay, inst.Profile, choice) },
 		say:  func(format string, a ...interface{}) { note(format, a...) },
 	}
 }

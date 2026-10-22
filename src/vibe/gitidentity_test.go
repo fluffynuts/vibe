@@ -316,6 +316,7 @@ func (r *terminalRig) check() terminalAuthor {
 		},
 		push:    func() string { return aPushLine },
 		keep:    func(choice string) error { r.keptChoice = append(r.keptChoice, choice); return r.keepErr },
+		kept:    func(choice string) string { return "kept: " + choice },
 		say:     func(format string, a ...interface{}) { r.notes = append(r.notes, fmt.Sprintf(format, a...)) },
 		force:   r.force,
 		canAsk:  func() bool { return r.canAsk },
@@ -568,5 +569,60 @@ func TestAStartUpWithNoDeskForTheAuthorStillRunsTheRest(t *testing.T) {
 	<-work.run()
 	if nudged.Load() != 1 || loggedOut.Load() != 1 {
 		t.Errorf("nudged %d, checked login %d", nudged.Load(), loggedOut.Load())
+	}
+}
+
+func TestKeepingAnAnswerIsSaidWithHowToUndoItWhetherOrNotItWasForced(t *testing.T) {
+	for name, force := range map[string]bool{"asked": false, "forced": true} {
+		r := newTerminalRig()
+		r.force = force
+		r.check().run()
+		if !strings.Contains(strings.Join(r.notes, "\n"), "kept: import") {
+			t.Errorf("%s: it said %q", name, r.notes)
+		}
+	}
+	r := newTerminalRig()
+	r.answer = false
+	r.check().run()
+	if !strings.Contains(strings.Join(r.notes, "\n"), "kept: leave") {
+		t.Errorf("a no: it said %q", r.notes)
+	}
+}
+
+func TestNothingIsSaidOfKeepingWhenNothingWasKeptAtTheTerminal(t *testing.T) {
+	said := func(r *terminalRig) string { return strings.Join(r.notes, "\n") }
+	r := newTerminalRig()
+	r.pref = gitAuthorImport
+	r.check().run()
+	if strings.Contains(said(r), "kept:") {
+		t.Errorf("a choice made before: %q", r.notes)
+	}
+	r = newTerminalRig()
+	r.canAsk = false
+	r.check().run()
+	if strings.Contains(said(r), "kept:") {
+		t.Errorf("no answer: %q", r.notes)
+	}
+	r = newTerminalRig()
+	r.keepErr = errors.New("read-only")
+	r.check().run()
+	if strings.Contains(said(r), "kept:") {
+		t.Errorf("a choice that couldn't be kept: %q", r.notes)
+	}
+}
+
+func TestWhatIsSaidOfAKeptAnswerNamesTheProfileTheFileAndTheWaysBack(t *testing.T) {
+	lay := updateLayout(t)
+	imported := keptGitAuthorNote(lay, "p", gitAuthorImport)
+	for _, want := range []string{"profile 'p'", filepath.Join(lay.HomePath("profiles", "p"), profilegen.GitAuthorFile), "gitAuthor: leave", "settings.yaml"} {
+		if !strings.Contains(imported, want) {
+			t.Errorf("import: %q lacks %q", imported, want)
+		}
+	}
+	left := keptGitAuthorNote(lay, "p", gitAuthorLeave)
+	for _, want := range []string{"profile 'p'", "gitAuthor: import", profilegen.GitAuthorFile} {
+		if !strings.Contains(left, want) {
+			t.Errorf("leave: %q lacks %q", left, want)
+		}
 	}
 }

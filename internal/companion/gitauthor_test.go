@@ -14,12 +14,13 @@ type fakeAuthor struct {
 	state   GitAuthorState
 	answers []string
 	err     error
+	kept    string
 }
 
 func (f *fakeAuthor) config() *GitAuthor {
 	return &GitAuthor{
 		State:  func() GitAuthorState { return f.state },
-		Decide: func(answer string) error { f.answers = append(f.answers, answer); return f.err },
+		Decide: func(answer string) (string, error) { f.answers = append(f.answers, answer); return f.kept, f.err },
 	}
 }
 
@@ -97,5 +98,18 @@ func TestAnAnswerThatMakesNoSenseNowIsAConflictAndOneThatFailsIsAnError(t *testi
 func TestWithNoSuchQuestionThereIsNothingToAnswer(t *testing.T) {
 	if code, _ := answer(t, newServer(&fakeSbx{}), `{"answer":"give"}`); code != http.StatusNotFound {
 		t.Errorf("%d", code)
+	}
+}
+
+func TestWhatTheHostKeptIsSaidInTheAnswer(t *testing.T) {
+	f := &fakeAuthor{kept: "kept: delete the file to be asked again"}
+	rec := do(t, authorServer(f), post("/api/git-author", `{"answer":"give"}`))
+	var got struct{ Kept string }
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil || got.Kept != f.kept {
+		t.Errorf("%d %s", rec.Code, rec.Body)
+	}
+	rec = do(t, authorServer(&fakeAuthor{}), post("/api/git-author", `{"answer":"later"}`))
+	if strings.Contains(rec.Body.String(), "kept") && !strings.Contains(rec.Body.String(), `"kept":""`) {
+		t.Errorf("nothing was kept, yet: %s", rec.Body)
 	}
 }

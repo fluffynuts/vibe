@@ -866,6 +866,7 @@ profile, so it is asked again). `import` gives a sandbox missing an author yours
 it as it is. To decide yourself instead, write `gitAuthor: import` or `gitAuthor: leave` in a profile's `settings.yaml`, or in
 `~/.vibe/settings.yaml` for every profile at once: what you write there wins over a kept answer, and the profile's own value
 over the global one.
+Whenever an answer is kept (a real yes or no, or `-f` saying yes, or a click on the page) vibe says so, once, with how to undo it: which profile it applies to, the file to delete to be asked again, and the setting that decides the other way. A kept answer applies to every sandbox of that profile.
 
 vibe remembers when the token expires (GitHub says, when vibe checks it). From three days before, every
 session start says so; once it has expired, the session start asks whether to renew it there and then
