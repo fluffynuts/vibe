@@ -173,6 +173,32 @@ func TestPatchInstallerMatchesTheHandFixedScript(t *testing.T) {
 	}
 }
 
+func TestPatchInstallerMatchesTheHandFixedNewScript(t *testing.T) {
+	original, err := os.ReadFile(filepath.Join("testdata", "install-new.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixed, err := os.ReadFile(filepath.Join("testdata", "install-new-fixed.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := PatchInstaller(string(original))
+	if err != nil {
+		t.Fatalf("PatchInstaller: %v", err)
+	}
+	if got != string(fixed) {
+		t.Errorf("PatchInstaller's script differs from testdata/install-new-fixed.sh:\n%s", got)
+	}
+}
+
+func TestPatchInstallerLeavesAPatchedNewScriptAlone(t *testing.T) {
+	fixed, _ := os.ReadFile(filepath.Join("testdata", "install-new-fixed.sh"))
+	got, err := PatchInstaller(string(fixed))
+	if err != nil || got != string(fixed) {
+		t.Errorf("PatchInstaller of the fixed script: changed = %v, err = %v", got != string(fixed), err)
+	}
+}
+
 func TestPatchInstallerLeavesAPatchedScriptAlone(t *testing.T) {
 	fixed, _ := os.ReadFile(filepath.Join("testdata", "install-fixed.sh"))
 	got, err := PatchInstaller(string(fixed))

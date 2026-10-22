@@ -275,17 +275,24 @@ func MSIOutcome(code int) (ok, restart bool, why string) {
 // the AppArmor profile into /etc/apparmor.d, and loading it.
 var apparmorStep = regexp.MustCompile(`(?m)^([ \t]*)((?:install[ \t].*\$\{apparmor_dir\}|apparmor_parser[ \t]).*)$`)
 
+// writeGuard is the test newer installers make before their AppArmor steps:
+// they only go on when the user can already write to /etc/apparmor.d, which
+// an ordinary user can't, so the profile is skipped with a note.
+var writeGuard = regexp.MustCompile(`(if \[ -w "\$\{apparmor_dir\}" \])(; then)`)
+
 // PatchInstaller makes sbx's install.sh run its AppArmor steps with sudo.
 // Run as the user, the script can't write to /etc/apparmor.d; run whole
 // under sudo, it installs sbx into root's home instead of the user's. So
-// only those steps are elevated.
+// only those steps are elevated, and where the script skips them unless it
+// can already write there, that test also passes once sudo is available.
 //
 // A script that mentions AppArmor but has none of the lines this knows how
 // to patch has changed shape since this was written, and is refused rather
 // than run as-is.
 func PatchInstaller(script string) (string, error) {
 	if apparmorStep.MatchString(script) {
-		return apparmorStep.ReplaceAllString(script, "${1}sudo ${2}"), nil
+		script = apparmorStep.ReplaceAllString(script, "${1}sudo ${2}")
+		return writeGuard.ReplaceAllString(script, "${1} || sudo -v${2}"), nil
 	}
 	if strings.Contains(script, "apparmor") && !strings.Contains(script, "sudo apparmor_parser") {
 		return "", errors.New("sbx's " + Installer + " has changed: can't find its AppArmor steps to run them with sudo")
