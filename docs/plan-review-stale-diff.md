@@ -29,3 +29,29 @@ While the Review tab is in view, the page re-reads the review (comments and thei
 
 - Whether `reviewAt` alone is enough: the agent can commit a fix without touching the review; then only the manual Refresh (highlighted by nothing) catches it. If that bites, the page could ask the host for a cheap "has the tree changed" token (HEAD plus index/worktree stat) now and then, but only while the tab is in view.
 - Which branch: after the git-author fix merges, on master or the model/effort branch.
+
+# Going to the next *unresolved* comment (added 2026-10-22, same plan: both are about the Review tab's comment navigation)
+
+## What the user asked for
+
+Ctrl+Enter in a reply box sends the reply and goes on to the next comment, in the order the user chose; the user wants it to go to the next **unresolved** comment. In a one-shot full review it speeds things up, but once most threads are resolved they scroll through resolved ones, and Ctrl+Enter doesn't help when there's nothing to add.
+
+## What it does now (read, not run)
+
+- The ▲/▼ arrows and the go-on-after-reply (`goToComment`, `goToCommentAfter`, `arrowCards` in `app.js`) walk every thread card on the page, resolved or not, in the page's order or the agent's reading order. Only the comments **pane** has an open/all filter (`pane.filter`); the arrows ignore it.
+- Ctrl+Enter with an **empty** reply box does nothing (`send`: `if (op === 'reply' && !body) { box.focus(); return }`).
+
+## Proposed
+
+1. The arrows and the after-reply step go only to **unresolved** (open) threads; a resolved or dismissed one is skipped. At the end they wrap round among the unresolved; when there are none, say so ("No unresolved comments") instead of landing on a resolved one. The comments pane's list is still the way to look at the resolved ones.
+2. Ctrl+Enter in an **empty** reply box goes to the next unresolved comment without sending anything, so the same key does the job whether or not there is something to say. (It can't send an empty reply anyway; the box's hint says so: "Reply… (Ctrl+Enter replies, or goes on if empty)".)
+3. After a reply the thread just answered stays open until the agent resolves it, so "next" must go past it, as `goToCommentAfter` already does.
+
+## Tests
+
+jsdom (`uitest/review.test.js`): arrows skip resolved and dismissed threads, in both orders; wrap among the unresolved; none unresolved says so and doesn't move; after-reply goes to the next unresolved, not to the one just answered and not to a resolved one; Ctrl+Enter on an empty box goes on and sends nothing (no `/api/review/do` call), and with text still sends then goes on; the arrows' disabled state follows "are there unresolved ones".
+
+## Not decided
+
+- Whether some users want the arrows to include resolved comments (to re-read them). Not building a toggle until someone misses one; the pane covers it.
+- "Unresolved" is `status === 'open'`. A finer split exists on the page (an open thread whose last word is the agent's, awaiting the user, as `awaiting` in the comment cards); going only to those that need the user's answer would speed the review loop more, but it is a different promise ("next that needs me") and isn't asked for.
