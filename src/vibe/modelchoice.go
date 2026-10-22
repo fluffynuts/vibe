@@ -93,7 +93,14 @@ func (p profileChoice) set(model, effort string) error {
 			return fmt.Errorf("updating %s: %w", pathresolve.Tilde(p.path()), err)
 		}
 	}
-	return os.WriteFile(p.path(), data, 0o644)
+	// Whole or not at all: a turn reads this file as it starts, and a file
+	// being rewritten in place can be read empty, which would mean the default
+	// model, with no word of it. The mode it had stays; a new one is for others to read.
+	perm := os.FileMode(0o644)
+	if info, err := os.Stat(p.path()); err == nil {
+		perm = info.Mode().Perm()
+	}
+	return fscopy.WriteWholeMode(p.path(), data, perm)
 }
 
 // askAgent runs script, as the sandbox's agent user, and gives what it wrote.

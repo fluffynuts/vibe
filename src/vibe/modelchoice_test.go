@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -320,5 +321,81 @@ func TestANameThatCantBeReadLeavesOnlyThatOneOut(t *testing.T) {
 	}
 	if want := map[string]string{"fable": "Fable 5.1", "opus": "Opus 5.5", "haiku": "Haiku 5.5"}; !reflect.DeepEqual(got.Names, want) {
 		t.Errorf("names = %v, want %v", got.Names, want)
+	}
+}
+
+func TestAChoiceIsKeptInAFileWithTheModeItHadAndOneMadeNewIsReadableByOthers(t *testing.T) {
+	c, path := choiceHome(t, "memory: 8g\n")
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.set("opus", ""); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(path); runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Errorf("a file the user made private became %v", info.Mode().Perm())
+	}
+	fresh, freshPath := choiceHome(t, "")
+	if err := fresh.set("opus", ""); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(freshPath); runtime.GOOS != "windows" && info.Mode().Perm() != 0o644 {
+		t.Errorf("a new settings.yaml is %v, want 0644", info.Mode().Perm())
+	}
+}
+
+func TestChoosingLeavesNoTemporaryFileBeside(t *testing.T) {
+	c, path := choiceHome(t, "")
+	for i := 0; i < 5; i++ {
+		if err := c.set("opus", "high"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if want := []string{"config.yaml", "settings.yaml"}; !reflect.DeepEqual(names, want) {
+		t.Errorf("the profile holds %v, want %v", names, want)
+	}
+}
+
+// A turn reads the choice as the page may be changing it: it gets one choice
+// or the other whole, never an emptied file (which would mean the default
+// model, quietly) or half of one.
+func TestATurnStartingWhileTheChoiceIsBeingChangedGetsOneOfThemWhole(t *testing.T) {
+	c, _ := choiceHome(t, "")
+	one, other := turnChoice{Model: "opus", Effort: "high"}, turnChoice{Model: "sonnet[1m]", Effort: "low"}
+	if err := c.set(one.Model, one.Effort); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 300; i++ {
+			next := other
+			if i%2 == 0 {
+				next = one
+			}
+			if err := c.set(next.Model, next.Effort); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+	for reading := true; reading; {
+		select {
+		case <-done:
+			reading = false
+		default:
+		}
+		got, err := c.forTurn()
+		if err != nil {
+			t.Fatalf("a turn couldn't read the choice: %v", err)
+		}
+		if got != one && got != other {
+			t.Fatalf("a turn read %+v, which is neither choice", got)
+		}
 	}
 }

@@ -1,9 +1,11 @@
 package fscopy
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -178,5 +180,74 @@ func TestWriteWholeLeavesOnlyTheFileReadableByTheUserAlone(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
 		t.Errorf("left beside it: %v", entries)
+	}
+}
+
+func TestWriteWholeModeGivesTheFileThatModeAndLeavesNoTemporaryBehind(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.yaml")
+	if err := WriteWholeMode(path, []byte("a: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o644 {
+		t.Fatalf("mode = %v, %v; want 0644", info.Mode().Perm(), err)
+	}
+	if err := WriteWholeMode(path, []byte("a: 2\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ = os.Stat(path); info.Mode().Perm() != 0o640 {
+		t.Errorf("after a rewrite, mode = %v; want 0640", info.Mode().Perm())
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Errorf("the folder holds %d entries, want only the file: %v", len(entries), entries)
+	}
+}
+
+func TestWriteWholeStillMakesAFileForTheUserAlone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kept.json")
+	if err := WriteWhole(path, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestAReaderNeverSeesWhatWriteWholeModeIsPartWayThrough(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	long := []byte("model: " + strings.Repeat("x", 4096) + "\n")
+	short := []byte("model: y\n")
+	if err := WriteWholeMode(path, short, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 300; i++ {
+			data := long
+			if i%2 == 0 {
+				data = short
+			}
+			if err := WriteWholeMode(path, data, 0o644); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+	for reading := true; reading; {
+		select {
+		case <-done:
+			reading = false
+		default:
+		}
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, long) && !bytes.Equal(got, short) {
+			t.Fatalf("read %d bytes that are neither version of the file", len(got))
+		}
 	}
 }
