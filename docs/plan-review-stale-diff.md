@@ -78,4 +78,4 @@ jsdom: Submit disabled with the reason in its title while the conversation says 
 
 ## Not decided
 
-- Whether the button should *queue* the submit to go as soon as the agent is done ("Submit when ready"). Not asked for; more machinery (a pending send that must be cancellable, and what if the user adds more comments meanwhile). Leave until someone wants it.
+- **"Submit when ready"**: the button queueing the submit to go as soon as the agent is done. Left out for now, 2026-10-22; the user likes the idea and hasn't thought it through, and may change their mind when this is worked on. Things to think through then: a pending send that must be cancellable, what happens to comments added meanwhile (sent too, or only those present when it was asked?), what if the agent's answer changes the thread, and what the button says while it waits.
