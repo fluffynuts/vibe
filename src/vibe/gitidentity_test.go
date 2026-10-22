@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"vibe/internal/profilegen"
 	"vibe/internal/state"
 )
 
@@ -172,20 +173,44 @@ func TestLoadSettingsRefusesAnUnknownGitAuthorChoice(t *testing.T) {
 	}
 }
 
-func TestTheChoiceIsKeptInTheProfileAmongWhatItAlreadyHas(t *testing.T) {
+func TestTheChoiceIsKeptInItsOwnFileInTheProfileAndLeavesSettingsAlone(t *testing.T) {
 	lay := updateLayout(t)
-	writeFile(t, lay.HomePath("profiles", "p", "config.yaml"), "name: p\n")
 	writeFile(t, lay.HomePath("profiles", "p", "settings.yaml"), "# mine\nmemory: 8g\n")
 	if err := keepGitAuthorChoice(lay, "p", gitAuthorImport); err != nil {
 		t.Fatal(err)
 	}
-	data, _ := os.ReadFile(lay.HomePath("profiles", "p", "settings.yaml"))
-	if !strings.Contains(string(data), "gitAuthor: import") || !strings.Contains(string(data), "memory: 8g") || !strings.Contains(string(data), "# mine") {
-		t.Errorf("settings.yaml = %q", data)
+	if data, _ := os.ReadFile(lay.HomePath("profiles", "p", profilegen.GitAuthorFile)); strings.TrimSpace(string(data)) != gitAuthorImport {
+		t.Errorf("the file holds %q", data)
 	}
-	merged, err := loadSettings(lay, "p")
-	if err != nil || merged.GitAuthor != gitAuthorImport {
-		t.Errorf("read back %q, %v", merged.GitAuthor, err)
+	if data, _ := os.ReadFile(lay.HomePath("profiles", "p", "settings.yaml")); string(data) != "# mine\nmemory: 8g\n" {
+		t.Errorf("settings.yaml was touched: %q", data)
+	}
+	if got, err := gitAuthorPreference(lay, "p"); err != nil || got != gitAuthorImport {
+		t.Errorf("read back %q, %v", got, err)
+	}
+}
+
+func TestAChoiceWrittenInSettingsBeatsTheAnswerKept(t *testing.T) {
+	lay := updateLayout(t)
+	keepGitAuthorChoice(lay, "p", gitAuthorImport)
+	writeFile(t, lay.HomePath("settings.yaml"), "gitAuthor: leave\n")
+	if got, _ := gitAuthorPreference(lay, "p"); got != gitAuthorLeave {
+		t.Errorf("preference %q: what the user wrote should win over what they answered once", got)
+	}
+}
+
+func TestNoChoiceAnywhereIsToAsk(t *testing.T) {
+	lay := updateLayout(t)
+	if got, err := gitAuthorPreference(lay, "p"); err != nil || got != "" {
+		t.Errorf("preference %q, %v", got, err)
+	}
+}
+
+func TestAnAnswerFileThatIsNotAChoiceIsSaidNotAsked(t *testing.T) {
+	lay := updateLayout(t)
+	writeFile(t, lay.HomePath("profiles", "p", profilegen.GitAuthorFile), "maybe\n")
+	if _, err := gitAuthorPreference(lay, "p"); err == nil {
+		t.Error("an answer that isn't one was read as a choice")
 	}
 }
 
@@ -216,5 +241,39 @@ func TestAnImportChoiceLeavesASandboxThatHasAnAuthorAlone(t *testing.T) {
 	r := &identityRig{sandboxName: "A", sandboxEmail: "a@x", hostName: "H", hostEmail: "h@x"}
 	if got := checkAgentIdentity(r.deps(), gitAuthorImport, aPushLine); got != identityFine || len(r.set) != 0 {
 		t.Errorf("got %v, set %v", got, r.set)
+	}
+}
+
+func TestAnswerKeptInTheProfileDoesNotMakeItLookEditedByHand(t *testing.T) {
+	lay := updateLayout(t)
+	if err := keepGitAuthorChoice(lay, "p", gitAuthorImport); err != nil {
+		t.Fatal(err)
+	}
+	changeLibrary(t, lay)
+	if got := updated(t, lay); got.state != profileUpdated {
+		t.Errorf("outcome = %+v: the user's answer was taken for a hand edit, so the profile is no longer kept up to date", got)
+	}
+}
+
+func TestTheAnswerSurvivesAReComposeOfTheProfile(t *testing.T) {
+	lay := updateLayout(t)
+	keepGitAuthorChoice(lay, "p", gitAuthorLeave)
+	if err := replaceProfile(lay, "p", "box", []string{"mine"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := gitAuthorPreference(lay, "p"); err != nil || got != gitAuthorLeave {
+		t.Errorf("after re-composing, the choice is %q (%v)", got, err)
+	}
+}
+
+func TestTheAnswerSurvivesAnAutomaticUpdateOfTheProfile(t *testing.T) {
+	lay := updateLayout(t)
+	keepGitAuthorChoice(lay, "p", gitAuthorImport)
+	changeLibrary(t, lay)
+	if got := updated(t, lay); got.state != profileUpdated {
+		t.Fatalf("outcome = %+v", got)
+	}
+	if got, err := gitAuthorPreference(lay, "p"); err != nil || got != gitAuthorImport {
+		t.Errorf("after updating, the choice is %q (%v)", got, err)
 	}
 }

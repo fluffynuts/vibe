@@ -860,9 +860,12 @@ and `user.email`), showing what it would use; it only fills in what's missing. W
 terminal (`-f` says yes). With `--headless` it asks on the companion page instead, in a dialog over the whole
 page that has to be answered: *Give it my author*, *No, leave it*, or *Later*. *Later* leaves a reminder above the
 conversation's prompt (with *Fix…* to answer after all, and *Dismiss*), and it asks again whenever the sandbox is next
-started. Your answer is kept in the profile's `settings.yaml` as `gitAuthor: import` (a sandbox missing an author is given
-yours without asking) or `gitAuthor: leave` (never asked, and left as it is); unset means ask. Set it in
-`~/.vibe/settings.yaml` to decide for every profile at once; a profile's own value wins.
+started. Your answer is kept in the profile, in a file of its own (`git-author`, holding `import` or `leave`; it carries
+across a re-compose or an automatic update, which regenerate the rest of the profile, but `--re-create` deletes the whole
+profile, so it is asked again). `import` gives a sandbox missing an author yours without asking; `leave` never asks and leaves
+it as it is. To decide yourself instead, write `gitAuthor: import` or `gitAuthor: leave` in a profile's `settings.yaml`, or in
+`~/.vibe/settings.yaml` for every profile at once: what you write there wins over a kept answer, and the profile's own value
+over the global one.
 
 vibe remembers when the token expires (GitHub says, when vibe checks it). From three days before, every
 session start says so; once it has expired, the session start asks whether to renew it there and then

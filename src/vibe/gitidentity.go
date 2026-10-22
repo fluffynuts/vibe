@@ -12,8 +12,8 @@ import (
 	"vibe/internal/fscopy"
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
+	"vibe/internal/profilegen"
 	"vibe/internal/sbxrun"
-	"vibe/internal/settings"
 	"vibe/internal/state"
 )
 
@@ -213,23 +213,42 @@ func giveSandboxGitAuthor(ctx context.Context, sandbox, name, email string) erro
 }
 
 // keepGitAuthorChoice records choice (gitAuthorImport or gitAuthorLeave) in
-// the profile's settings.yaml, as if the user had written it there: so it
-// outlives vibe and a rebuild, and is asked once for the folder. It never makes
-// a profile: a directory for one that isn't there would hide the real one.
+// the profile, so it outlives vibe and is asked once for the folder. It has a
+// file of its own, as the Claude theme does, and not settings.yaml: that is
+// part of what composing the profile wrote, so a line vibe added there would
+// make the profile look edited by hand, and updating it would be left to the
+// user. It never makes a profile: a directory for one that isn't there would
+// hide the real one.
 func keepGitAuthorChoice(lay layout.Layout, profile, choice string) error {
 	if !lay.ProfileExists(profile) {
 		return fmt.Errorf("profile '%s' isn't there to keep the choice in", profile)
 	}
-	path := filepath.Join(lay.ProfileDir(profile), "settings.yaml")
-	data, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	data, err = settings.Set(data, "gitAuthor", choice)
+	return fscopy.WriteWhole(filepath.Join(lay.ProfileDir(profile), profilegen.GitAuthorFile), []byte(choice+"\n"))
+}
+
+// gitAuthorPreference is the choice that applies to profile: what the user
+// wrote as gitAuthor in a settings.yaml (the profile's over the global one),
+// else the answer kept in the profile; "" asks.
+func gitAuthorPreference(lay layout.Layout, profile string) (string, error) {
+	merged, err := loadSettings(lay, profile)
 	if err != nil {
-		return fmt.Errorf("updating %s: %w", pathresolve.Tilde(path), err)
+		return "", err
 	}
-	return fscopy.WriteWhole(path, data)
+	if merged.GitAuthor != "" {
+		return merged.GitAuthor, nil
+	}
+	path := filepath.Join(lay.ProfileDir(profile), profilegen.GitAuthorFile)
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if answer := strings.TrimSpace(string(data)); answer == gitAuthorImport || answer == gitAuthorLeave {
+		return answer, nil
+	}
+	return "", fmt.Errorf("%s holds %q; it must be %q or %q (delete it to be asked again)", pathresolve.Tilde(path), strings.TrimSpace(string(data)), gitAuthorImport, gitAuthorLeave)
 }
 
 // gitAuthorDeps are the real world's answers for sandbox name, whose agent
@@ -254,13 +273,13 @@ func checkSandboxGitAuthor(lay layout.Layout, args cliargs.Args, name string) {
 	if err != nil || !found {
 		return
 	}
-	merged, err := loadSettings(lay, inst.Profile)
+	preference, err := gitAuthorPreference(lay, inst.Profile)
 	if err != nil {
-		note("WARNING: couldn't read the settings, so can't tell whether the agent can commit: %s", err)
+		note("WARNING: couldn't read your git author choice, so can't tell whether the agent can commit: %s", err)
 		return
 	}
 	ctx := context.Background()
-	if merged.GitAuthor == gitAuthorLeave {
+	if preference == gitAuthorLeave {
 		return
 	}
 	if !sbxrun.Start(ctx, name) {
@@ -278,8 +297,8 @@ func checkSandboxGitAuthor(lay layout.Layout, args cliargs.Args, name string) {
 		return confirmDefault(args.Force, true, question)
 	}
 	say := func(format string, a ...interface{}) { note(format, a...) }
-	outcome := checkAgentIdentity(gitAuthorDeps(ctx, name, say, ask), merged.GitAuthor, pushStatement(inst))
-	if unanswered || merged.GitAuthor != "" {
+	outcome := checkAgentIdentity(gitAuthorDeps(ctx, name, say, ask), preference, pushStatement(inst))
+	if unanswered || preference != "" {
 		return
 	}
 	choice := map[identityOutcome]string{identityGiven: gitAuthorImport, identityDeclined: gitAuthorLeave}[outcome]

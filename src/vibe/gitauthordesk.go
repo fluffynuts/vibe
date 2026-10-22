@@ -148,8 +148,7 @@ func newAuthorDesk(lay layout.Layout, name string, inst state.Instance) *authorD
 			return assessAuthor(gitAuthorDeps(ctx, name, nothingSaid, func(string) bool { return false }), preference)
 		},
 		preference: func() (string, error) {
-			merged, err := loadSettings(lay, inst.Profile)
-			return merged.GitAuthor, err
+			return gitAuthorPreference(lay, inst.Profile)
 		},
 		push: func() string {
 			if fresh, found, err := state.Load(lay.Home, name); err == nil && found {
