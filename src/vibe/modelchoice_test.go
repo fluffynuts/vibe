@@ -14,6 +14,7 @@ import (
 
 	"vibe/internal/companion"
 	"vibe/internal/layout"
+	"vibe/internal/userprefs"
 )
 
 // choiceHome is a ~/.vibe with a profile "p" in it, and a bundle with none.
@@ -43,7 +44,7 @@ func TestNothingChosenIsTheAgentsOwnDefault(t *testing.T) {
 	}
 }
 
-func TestAChoiceIsKeptInTheProfilesSettingsWithTheRestOfThemLeftAlone(t *testing.T) {
+func TestAChoiceIsKeptInTheProfilesPreferencesAndItsSettingsAreLeftAlone(t *testing.T) {
 	c, path := choiceHome(t, "# mine\nmemory: 8g\n")
 	if err := c.set("opus", "high"); err != nil {
 		t.Fatal(err)
@@ -51,9 +52,57 @@ func TestAChoiceIsKeptInTheProfilesSettingsWithTheRestOfThemLeftAlone(t *testing
 	if got, _ := c.get(); got != (turnChoice{Model: "opus", Effort: "high"}) {
 		t.Errorf("got %+v", got)
 	}
-	data, _ := os.ReadFile(path)
-	if !strings.Contains(string(data), "# mine") || !strings.Contains(string(data), "memory: 8g") {
-		t.Errorf("the rest of the file was lost:\n%s", data)
+	if data, _ := os.ReadFile(path); string(data) != "# mine\nmemory: 8g\n" {
+		t.Errorf("settings.yaml was touched:\n%s", data)
+	}
+	prefs, _ := os.ReadFile(userprefs.Path(filepath.Dir(path)))
+	if !strings.Contains(string(prefs), "model: opus") || !strings.Contains(string(prefs), "effort: high") {
+		t.Errorf("the preferences hold:\n%s", prefs)
+	}
+}
+
+func TestAChoiceEarlierVibesKeptInSettingsIsMovedWhenOneIsMadeAndChoosingDefaultTakesItAway(t *testing.T) {
+	c, path := choiceHome(t, "memory: 8g\nmodel: haiku\n")
+	if err := c.set("opus", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.get(); got.Model != "opus" {
+		t.Errorf("after choosing: %+v", got)
+	}
+	if err := c.set("", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.get(); got != (turnChoice{}) {
+		t.Errorf("after choosing Default the old settings.yaml key came back: %+v", got)
+	}
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), "memory: 8g") || strings.Contains(string(data), "model") {
+		t.Errorf("settings.yaml:\n%s", data)
+	}
+}
+
+func TestChoosingDefaultTakesAKeyThatWasLeftInSettingsAwayToo(t *testing.T) {
+	c, path := choiceHome(t, "memory: 8g\n")
+	writeFile(t, filepath.Join(filepath.Dir(path), "composed-hash"), "x\n")
+	writeFile(t, path, "memory: 24g\nmodel: haiku\n")
+	if err := c.set("", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.get(); got != (turnChoice{}) {
+		t.Errorf("a key that migrating had to leave kept the choice alive: %+v", got)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "memory: 24g\n" {
+		t.Errorf("settings.yaml:\n%s", data)
+	}
+}
+
+func TestAPageChoiceDoesNotMakeAComposedProfileLookEditedByHand(t *testing.T) {
+	lay := updateLayout(t)
+	if err := (profileChoice{lay: lay, profile: "p"}).set("opus", "high"); err != nil {
+		t.Fatal(err)
+	}
+	changeLibrary(t, lay)
+	if got := updated(t, lay); got.state != profileUpdated {
+		t.Errorf("outcome = %+v", got)
 	}
 }
 
@@ -65,9 +114,8 @@ func TestChoosingTheDefaultTakesTheKeysOutRatherThanLeavingEmptyOnes(t *testing.
 	if err := c.set("", ""); err != nil {
 		t.Fatal(err)
 	}
-	data, _ := os.ReadFile(path)
-	if strings.Contains(string(data), "model") || strings.Contains(string(data), "effort") {
-		t.Errorf("keys left behind:\n%s", data)
+	if _, err := os.Stat(userprefs.Path(filepath.Dir(path))); err == nil {
+		t.Error("a preferences file with nothing in it was left")
 	}
 	if got, _ := c.get(); got != (turnChoice{}) {
 		t.Errorf("got %+v", got)
@@ -327,21 +375,23 @@ func TestANameThatCantBeReadLeavesOnlyThatOneOut(t *testing.T) {
 
 func TestAChoiceIsKeptInAFileWithTheModeItHadAndOneMadeNewIsReadableByOthers(t *testing.T) {
 	c, path := choiceHome(t, "memory: 8g\n")
-	if err := os.Chmod(path, 0o600); err != nil {
+	prefs := userprefs.Path(filepath.Dir(path))
+	writeFile(t, prefs, "theme: amber\n")
+	if err := os.Chmod(prefs, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.set("opus", ""); err != nil {
 		t.Fatal(err)
 	}
-	if info, _ := os.Stat(path); runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+	if info, _ := os.Stat(prefs); runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Errorf("a file the user made private became %v", info.Mode().Perm())
 	}
 	fresh, freshPath := choiceHome(t, "")
 	if err := fresh.set("opus", ""); err != nil {
 		t.Fatal(err)
 	}
-	if info, _ := os.Stat(freshPath); runtime.GOOS != "windows" && info.Mode().Perm() != 0o644 {
-		t.Errorf("a new settings.yaml is %v, want 0644", info.Mode().Perm())
+	if info, _ := os.Stat(userprefs.Path(filepath.Dir(freshPath))); runtime.GOOS != "windows" && info.Mode().Perm() != 0o644 {
+		t.Errorf("new preferences are %v, want 0644", info.Mode().Perm())
 	}
 }
 
@@ -357,7 +407,7 @@ func TestChoosingLeavesNoTemporaryFileBeside(t *testing.T) {
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}
-	if want := []string{"config.yaml", "settings.yaml"}; !reflect.DeepEqual(names, want) {
+	if want := []string{"config.yaml", "user-preferences.yaml"}; !reflect.DeepEqual(names, want) {
 		t.Errorf("the profile holds %v, want %v", names, want)
 	}
 }

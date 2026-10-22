@@ -138,7 +138,7 @@ func TestAnOutOfDateProfileIsReComposedKeepingTheUsersFiles(t *testing.T) {
 	lay := updateLayout(t)
 	dir := lay.HomePath("profiles", "p")
 	writeFile(t, filepath.Join(dir, "agent-instructions.md"), "be brief\n")
-	writeFile(t, filepath.Join(dir, "claude-theme"), "dark\n")
+	writeFile(t, filepath.Join(dir, "user-preferences.yaml"), "# mine\ntheme: dark\n")
 	changeLibrary(t, lay)
 
 	if got := updated(t, lay); got.state != profileUpdated {
@@ -147,7 +147,7 @@ func TestAnOutOfDateProfileIsReComposedKeepingTheUsersFiles(t *testing.T) {
 	if got := mineScript(t, lay); !strings.Contains(got, "v2") {
 		t.Errorf("the profile doesn't have the library's change: %q", got)
 	}
-	for file, want := range map[string]string{"agent-instructions.md": "be brief\n", "claude-theme": "dark\n"} {
+	for file, want := range map[string]string{"agent-instructions.md": "be brief\n", "user-preferences.yaml": "# mine\ntheme: dark\n"} {
 		if data, _ := os.ReadFile(filepath.Join(dir, file)); string(data) != want {
 			t.Errorf("%s = %q, want it carried across", file, data)
 		}

@@ -8,6 +8,7 @@ import (
 
 	"vibe/internal/cliargs"
 	"vibe/internal/layout"
+	"vibe/internal/userprefs"
 )
 
 // TestDoReCreateDeletesTheOverlayProfileThenRebuilds checks the part of
@@ -202,6 +203,44 @@ func TestReComposingKeepsTheModelAndEffortChosenOnThePage(t *testing.T) {
 	got, err := profileChoice{lay: lay, profile: "foo-browser"}.get()
 	if err != nil || got != (turnChoice{Model: "sonnet", Effort: "high"}) {
 		t.Errorf("after re-composing, the choice is %+v, %v; want sonnet, high", got, err)
+	}
+	// And it is where it is kept now, not in the settings composing wrote.
+	if text, _ := readFile(t, filepath.Join(dir, "settings.yaml")); strings.Contains(text, "model") || strings.Contains(text, "effort") {
+		t.Errorf("settings.yaml = %q", text)
+	}
+	if prefs, _ := userprefs.Load(dir); prefs.Model != "sonnet" || prefs.Effort != "high" {
+		t.Errorf("preferences = %+v", prefs)
+	}
+}
+
+func TestReComposingKeepsTheThemeAndTheGitAuthorAnswerWhereverEarlierVibesPutThem(t *testing.T) {
+	lay, dir := instructionsFixture(t)
+	args := cliargs.Args{Force: true, Profile: "foo-browser"}
+	writeFile(t, filepath.Join(dir, "claude-theme"), "amber\n")
+	writeFile(t, filepath.Join(dir, "git-author"), "import\n")
+	if err := recomposeProfile(lay, args, "foo-browser", t.TempDir(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	prefs, err := userprefs.Load(dir)
+	if err != nil || prefs.Theme != "amber" || prefs.GitAuthor != "import" {
+		t.Errorf("after re-composing: %+v, %v", prefs, err)
+	}
+	for _, old := range userprefs.LegacyFiles {
+		if _, err := os.Stat(filepath.Join(dir, old)); err == nil {
+			t.Errorf("%s was left beside the preferences", old)
+		}
+	}
+}
+
+func TestReComposingKeepsWhatWasKeptInThePreferences(t *testing.T) {
+	lay, dir := instructionsFixture(t)
+	args := cliargs.Args{Force: true, Profile: "foo-browser"}
+	writeFile(t, filepath.Join(dir, "user-preferences.yaml"), "# mine\ntheme: green\nfuture: thing\n")
+	if err := recomposeProfile(lay, args, "foo-browser", t.TempDir(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if text, _ := readFile(t, userprefs.Path(dir)); text != "# mine\ntheme: green\nfuture: thing\n" {
+		t.Errorf("the preferences are %q: carried across as they were, a key this vibe doesn't know included", text)
 	}
 }
 

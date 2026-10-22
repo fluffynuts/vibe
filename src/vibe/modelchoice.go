@@ -16,91 +16,165 @@ import (
 	"vibe/internal/pathresolve"
 	"vibe/internal/sbxrun"
 	"vibe/internal/settings"
+	"vibe/internal/userprefs"
 )
 
 // profileChoice is the model and effort the conversation tab asks the agent
-// for: kept as "model" and "effort" in the profile's own settings.yaml, as if
-// the user had written them there, so they outlive vibe, the page and a
-// rebuild, and the settings' usual layering gives a default for every profile
-// later (a profile's own choice wins over it).
+// for, as the user chose them on the page: kept in the profile's
+// user-preferences.yaml (see internal/userprefs), so they outlive vibe, the
+// page and a rebuild, and aren't part of what composing the profile wrote.
+// What applies is the profile's preferences, over the profile's settings.yaml,
+// over the global one: the page's own choice is the newest word, and a
+// settings.yaml is the default under it.
 type profileChoice struct {
 	lay     layout.Layout
 	profile string
 }
 
-func (p profileChoice) path() string {
-	return filepath.Join(p.lay.ProfileDir(p.profile), "settings.yaml")
+func (p profileChoice) dir() string { return p.lay.ProfileDir(p.profile) }
+
+func (p profileChoice) settingsPath() string { return filepath.Join(p.dir(), settingsFile) }
+
+// chosen is a choice, and where each part of it comes from.
+type chosen struct {
+	turnChoice
+	modelFrom, effortFrom string
 }
 
-// own is the choice the profile's own settings.yaml holds.
+// resolve works out the choice that applies, from the profile's preferences,
+// the profile's settings and the global ones.
+func (p profileChoice) resolve() (chosen, error) {
+	global, err := settings.Load(p.lay.File(settingsFile))
+	if err != nil {
+		return chosen{}, err
+	}
+	own, err := settings.Load(p.settingsPath())
+	if err != nil {
+		return chosen{}, err
+	}
+	prefs, err := userprefs.Load(p.dir())
+	if err != nil {
+		return chosen{}, err
+	}
+	pick := func(fromPrefs, fromProfile, fromGlobal string) (value, from string) {
+		switch {
+		case fromPrefs != "":
+			return fromPrefs, userprefs.Path(p.dir())
+		case fromProfile != "":
+			return fromProfile, p.settingsPath()
+		}
+		return fromGlobal, p.lay.File(settingsFile)
+	}
+	var out chosen
+	out.Model, out.modelFrom = pick(prefs.Model, own.Model, global.Model)
+	out.Effort, out.effortFrom = pick(prefs.Effort, own.Effort, global.Effort)
+	return out, nil
+}
+
+// own is the choice the profile itself holds, in its preferences or its
+// settings.yaml: what the global settings don't decide.
 func (p profileChoice) own() (turnChoice, error) {
-	own, err := settings.Load(p.path())
-	return turnChoice{Model: own.Model, Effort: own.Effort}, err
+	own, err := settings.Load(p.settingsPath())
+	if err != nil {
+		return turnChoice{}, err
+	}
+	prefs, err := userprefs.Load(p.dir())
+	if err != nil {
+		return turnChoice{}, err
+	}
+	return turnChoice{Model: firstNonEmpty(prefs.Model, own.Model), Effort: firstNonEmpty(prefs.Effort, own.Effort)}, nil
 }
 
-// get is the choice that applies: the profile's own over the global settings'.
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+// get is the choice that applies.
 func (p profileChoice) get() (turnChoice, error) {
-	global, err := settings.Load(p.lay.File("settings.yaml"))
-	if err != nil {
-		return turnChoice{}, err
-	}
-	own, err := settings.Load(p.path())
-	if err != nil {
-		return turnChoice{}, err
-	}
-	merged := settings.Merge(global, own)
-	return turnChoice{Model: merged.Model, Effort: merged.Effort}, nil
+	c, err := p.resolve()
+	return c.turnChoice, err
 }
 
 // forTurn is get, refused when what it holds isn't safe to put on a command
-// line: the file is the user's to edit, and a mistake there is said, with
-// where to fix it, rather than run.
+// line: the files are the user's to edit, and a mistake there is said, with
+// which file to fix it in, rather than run.
 func (p profileChoice) forTurn() (turnChoice, error) {
-	choice, err := p.get()
+	c, err := p.resolve()
 	if err != nil {
 		return turnChoice{}, err
 	}
-	if err := modelchoice.CheckModel(choice.Model); err != nil {
-		return turnChoice{}, fmt.Errorf("the model chosen in %s can't be used (nothing was sent): %w", pathresolve.Tilde(p.path()), err)
+	if err := modelchoice.CheckModel(c.Model); err != nil {
+		return turnChoice{}, fmt.Errorf("the model chosen in %s can't be used (nothing was sent): %w", pathresolve.Tilde(c.modelFrom), err)
 	}
-	if err := modelchoice.CheckEffortName(choice.Effort); err != nil {
-		return turnChoice{}, fmt.Errorf("the effort chosen in %s can't be used (nothing was sent): %w", pathresolve.Tilde(p.path()), err)
+	if err := modelchoice.CheckEffortName(c.Effort); err != nil {
+		return turnChoice{}, fmt.Errorf("the effort chosen in %s can't be used (nothing was sent): %w", pathresolve.Tilde(c.effortFrom), err)
 	}
-	return choice, nil
+	return c.turnChoice, nil
 }
 
-// set keeps model and effort in the profile's settings.yaml, taking a key out
-// when it is empty (the agent's default). It never makes a profile: a
-// directory for one that isn't there would hide the real one, wherever it is.
+// set keeps model and effort in the profile's user preferences, as it takes
+// what is there out when it is empty (the agent's default), and anything the
+// profile's settings.yaml says of it too, which would otherwise keep a choice
+// the user has just taken away. A choice earlier vibes kept in settings.yaml is
+// moved first. It never makes a profile: a directory for one that isn't there
+// would hide the real one, wherever it is.
 func (p profileChoice) set(model, effort string) error {
 	if !p.lay.ProfileExists(p.profile) {
 		return fmt.Errorf("profile '%s' isn't there to keep the choice in", p.profile)
 	}
-	data, err := os.ReadFile(p.path())
-	if err != nil && !os.IsNotExist(err) {
+	if dir := p.lay.HomePath("profiles", p.profile); dir == "" || !fileExists(dir) {
+		return fmt.Errorf("profile '%s' is vibe's own, which can't be written to: make a profile of your own (--profile) to keep the choice in", p.profile)
+	}
+	migratePreferences(p.lay, p.profile)
+	if err := userprefs.Update(p.dir(), func(u *userprefs.Prefs) { u.Model, u.Effort = model, effort }); err != nil {
 		return err
 	}
-	if os.IsNotExist(err) && model == "" && effort == "" {
+	return p.dropFromSettings(model == "", effort == "")
+}
+
+// dropFromSettings takes the keys out of the profile's settings.yaml that the
+// user has just chosen the default over, if they are there (migrating them
+// left them, as taking them out would have left the profile looking edited by
+// hand: but choosing the default is the user asking for them gone).
+func (p profileChoice) dropFromSettings(model, effort bool) error {
+	data, err := os.ReadFile(p.settingsPath())
+	if os.IsNotExist(err) {
 		return nil
 	}
-	for _, kv := range []struct{ key, value string }{{"model", model}, {"effort", effort}} {
-		if kv.value == "" {
-			data, err = settings.Unset(data, kv.key)
-		} else {
-			data, err = settings.Set(data, kv.key, kv.value)
-		}
-		if err != nil {
-			return fmt.Errorf("updating %s: %w", pathresolve.Tilde(p.path()), err)
-		}
+	if err != nil {
+		return err
 	}
-	// Whole or not at all: a turn reads this file as it starts, and a file
-	// being rewritten in place can be read empty, which would mean the default
-	// model, with no word of it. The mode it had stays; a new one is for others to read.
+	own, err := settings.Parse(data)
+	if err != nil {
+		return fmt.Errorf("can't read %s: %w", pathresolve.Tilde(p.settingsPath()), err)
+	}
+	changed := false
+	for _, kv := range []struct {
+		key  string
+		drop bool
+	}{{"model", model && own.Model != ""}, {"effort", effort && own.Effort != ""}} {
+		if !kv.drop {
+			continue
+		}
+		if data, err = settings.Unset(data, kv.key); err != nil {
+			return fmt.Errorf("updating %s: %w", pathresolve.Tilde(p.settingsPath()), err)
+		}
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	if text := strings.TrimSpace(string(data)); text == "{}" || text == "" {
+		return os.Remove(p.settingsPath())
+	}
 	perm := os.FileMode(0o644)
-	if info, err := os.Stat(p.path()); err == nil {
+	if info, err := os.Stat(p.settingsPath()); err == nil {
 		perm = info.Mode().Perm()
 	}
-	return fscopy.WriteWholeMode(p.path(), data, perm)
+	return fscopy.WriteWholeMode(p.settingsPath(), data, perm)
 }
 
 // askAgent runs script, as the sandbox's agent user, and gives what it wrote.

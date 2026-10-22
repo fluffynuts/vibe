@@ -12,6 +12,7 @@ import (
 	"vibe/internal/backup"
 	"vibe/internal/claudetheme"
 	"vibe/internal/cliargs"
+	"vibe/internal/fscopy"
 	"vibe/internal/instructions"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
@@ -20,6 +21,7 @@ import (
 	"vibe/internal/profilegen"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
+	"vibe/internal/userprefs"
 )
 
 // resolveReInitProfile returns the profile a re-init (or re-create) should
@@ -376,24 +378,22 @@ func recomposeProfile(lay layout.Layout, args cliargs.Args, name, target string,
 // replaceProfile backs profile up, under backupName (the sandbox it's for),
 // and composes it afresh from features.
 func replaceProfile(lay layout.Layout, profile, backupName string, features []string) error {
-	// The recorded theme isn't something the features produce, so it would
-	// go with the rest of the old profile; carry it across. So too the
-	// user's own instructions for the profile — read now, before anything
-	// is removed, so that failing to read them changes nothing.
-	theme, hadTheme := claudetheme.FromProfile(lay.ProfileDir(profile))
+	// What earlier vibes kept in files of their own, and the model and effort
+	// they kept in settings.yaml, move into the preferences first, so what is
+	// carried is all there is.
+	migratePreferences(lay, profile)
+	// The user's choices (the theme, the git author answer, the model and
+	// effort) aren't something the features produce, so they would go with the
+	// rest of the old profile; carry them across, as the user's own
+	// instructions for the profile are. Both are read now, before anything is
+	// removed, so that failing to read them changes nothing.
 	userInstructions, err := os.ReadFile(filepath.Join(lay.ProfileDir(profile), instructions.File))
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("could not read profile '%s's %s (nothing changed): %w", profile, instructions.File, err)
 	}
-	// So too what was chosen on the page for the model and effort.
-	choice := profileChoice{lay: lay, profile: profile}
-	chosen, err := choice.own()
-	if err != nil {
-		return fmt.Errorf("could not read profile '%s's settings.yaml (nothing changed): %w", profile, err)
-	}
-	gitAuthor, err := os.ReadFile(filepath.Join(lay.ProfileDir(profile), profilegen.GitAuthorFile))
+	preferences, err := os.ReadFile(userprefs.Path(lay.ProfileDir(profile)))
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("could not read profile '%s's %s (nothing changed): %w", profile, profilegen.GitAuthorFile, err)
+		return fmt.Errorf("could not read profile '%s's %s (nothing changed): %w", profile, userprefs.File, err)
 	}
 	dir := lay.HomePath("profiles", profile)
 	if info, err := os.Stat(dir); dir != "" && err == nil && info.IsDir() {
@@ -412,20 +412,12 @@ func replaceProfile(lay layout.Layout, profile, backupName string, features []st
 	if err != nil {
 		return err
 	}
-	if hadTheme {
-		if err := claudetheme.SaveToProfile(created, theme); err != nil {
-			note("  WARNING: could not carry the claude theme across: %s", err)
-		}
-	}
 	if err := os.WriteFile(filepath.Join(created, instructions.File), userInstructions, 0o644); err != nil {
 		return fmt.Errorf("could not carry profile '%s's %s across (the backup above has it): %w", profile, instructions.File, err)
 	}
-	if err := choice.set(chosen.Model, chosen.Effort); err != nil {
-		return fmt.Errorf("could not carry profile '%s's model and effort across (the backup above has them): %w", profile, err)
-	}
-	if gitAuthor != nil {
-		if err := os.WriteFile(filepath.Join(created, profilegen.GitAuthorFile), gitAuthor, 0o644); err != nil {
-			return fmt.Errorf("could not carry profile '%s's %s across (the backup above has it): %w", profile, profilegen.GitAuthorFile, err)
+	if preferences != nil {
+		if err := fscopy.WriteWholeMode(userprefs.Path(created), preferences, 0o644); err != nil {
+			return fmt.Errorf("could not carry profile '%s's %s across (the backup above has it): %w", profile, userprefs.File, err)
 		}
 	}
 	note("re-composed profile '%s' (%s) in %s", profile, strings.Join(features, ", "), created)

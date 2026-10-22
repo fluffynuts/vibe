@@ -135,6 +135,7 @@ func assessProfile(lay layout.Layout, profile string) (profileOutcome, []string,
 func updateProfile(lay layout.Layout, profile, backupName string) (profileOutcome, error) {
 	// What re-composing does first, so the profile is assessed as it will be.
 	if dir := lay.HomePath("profiles", profile); dir != "" && fileExists(dir) {
+		migratePreferences(lay, profile)
 		if err := prepareInstructions(lay, profile); err != nil {
 			return profileOutcome{}, err
 		}
