@@ -616,6 +616,7 @@ you're looking at:
   while you're on another tab, until you open it. Once the agent has answered you can
   send the next prompt, even if it left something running that it is waiting on (a review page, say):
   sending ends that. Links to pages on `localhost` in what the agent says can be clicked.
+  If the sandbox was stopped (sbx stops one left idle) when you send a prompt, vibe starts it and says so in the conversation while it does; that line goes as soon as the sandbox is up, and stays only if it couldn't be started, where it explains the error.
   The **Model** and **Effort** drop-downs, under the prompt and centred between **Stop** and **Send** (so they
   stay put while a turn runs; in a narrow column they take a row of their own), choose what claude is asked to
   use (they're there for a Claude sandbox). They have no labels: the entries say what they are ("Opus 5.5", "High effort"), and screen

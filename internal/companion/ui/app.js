@@ -4309,16 +4309,19 @@
     goToThread(id)
   }
 
-  function convoNote(cls, text, at) {
+  // seq, when given, marks the line as that event of the conversation, so vibe
+  // can take it back (see the retract event).
+  function convoNote(cls, text, at, seq) {
     const time = stamp(at)
     const words = cls === 'agent' ? markdown(text) : el('span', { text })
     // What the agent said can be copied whole, as the Markdown it wrote: its footer has the button.
     const copy = cls === 'agent'
       ? el('button', { type: 'button', class: 'copy-message small ghost', title: 'Copy this message', 'aria-label': 'Copy this message', onclick: () => copyText(text) }, copyIcon())
       : null
+    const mark = seq == null ? {} : { 'data-seq': String(seq) }
     $('convo-log').append(time || copy
-      ? el('div', { class: 'msg ' + cls }, words, el('span', { class: 'foot' }, time, copy))
-      : el('div', { class: 'msg ' + cls }, words))
+      ? el('div', Object.assign({ class: 'msg ' + cls }, mark), words, el('span', { class: 'foot' }, time, copy))
+      : el('div', Object.assign({ class: 'msg ' + cls }, mark), words))
   }
 
   // The ticks on what the user said, as on a chat message: one when vibe has
@@ -4443,7 +4446,9 @@
     if (ev.kind === 'reset') { $('convo-log').replaceChildren(); convo.ticks.clear() }
     else if (ev.kind === 'user') { convo.lastPrompt = ev.text || ''; userNote(ev) }
     else if (ev.kind === 'agent') showAgent(ev.agent, ev.at)
-    else if (ev.kind === 'note') convoNote('meta', ev.text || '')
+    else if (ev.kind === 'note') convoNote('meta', ev.text || '', undefined, ev.seq)
+    // What vibe said it was doing, no longer so (the sandbox is up): gone, not left to be read as current.
+    else if (ev.kind === 'retract') $('convo-log').querySelectorAll('[data-seq="' + Number(ev.of) + '"]').forEach((n) => n.remove())
     else if (ev.kind === 'error') convoNote('error', ev.text || 'That failed.', ev.at)
     else if (ev.kind === 'done' && ev.text === 'stopped') convoNote('meta', 'Stopped.')
   }

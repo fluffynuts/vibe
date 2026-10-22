@@ -62,7 +62,7 @@ var SessionID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,100}$`)
 // agent's output, how a turn ended, or that the conversation began anew.
 type event struct {
 	Seq   int             `json:"seq"`
-	Kind  string          `json:"kind"` // user, agent, note, error, done, reset, review
+	Kind  string          `json:"kind"` // user, agent, note, error, done, reset, review, retract
 	Text  string          `json:"text,omitempty"`
 	Agent json.RawMessage `json:"agent,omitempty"`
 	// Receipt is how far a user event got: see receiptSent.
@@ -70,6 +70,9 @@ type event struct {
 	// At is when it happened, in milliseconds since the epoch, for the page
 	// to show; 0 in conversations kept from before it was recorded.
 	At int64 `json:"at,omitempty"`
+	// Of is, for a retract, the Seq of the event it takes back: a page that
+	// has that event shows it no longer.
+	Of int `json:"of,omitempty"`
 }
 
 // conversation is the one conversation the page has with the agent. It
@@ -466,29 +469,59 @@ func (c *conversation) since(after int) (events []event, last int, running, back
 	defer c.mu.Unlock()
 	events = []event{}
 	for _, e := range c.events {
-		if e.Seq > after {
+		// Taking back what a page never had is no news to it.
+		if e.Seq > after && (e.Kind != "retract" || e.Of <= after) {
 			events = append(events, e)
 		}
 	}
 	return events, c.seq, c.running && !c.answered, c.running && c.answered
 }
 
-// note says something of vibe's own in the conversation: what it's doing
-// before the agent can answer.
-func (c *conversation) note(text string) {
+// noteSaid says something of vibe's own in the conversation: what it's doing
+// before the agent can answer. It gives the note's Seq.
+func (c *conversation) noteSaid(text string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.heard = c.clock()
 	c.add("note", text, nil)
+	return c.seq
+}
+
+// retract takes back the events with the Seqs given: they are no longer in the
+// conversation, as kept or as a new page gets it, and a page that has them is
+// told to drop them (a retract event for each).
+func (c *conversation) retract(seqs []int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, seq := range seqs {
+		c.events = slices.DeleteFunc(c.events, func(e event) bool { return e.Seq == seq })
+		c.add("retract", "", nil)
+		c.events[len(c.events)-1].Of = seq
+	}
 }
 
 // run is a turn, in the background: prepare first, when there's one to do.
 func (c *conversation) run(ctx context.Context, prepare func(context.Context, func(string)) error, converse Converser, prompt, session string) {
 	if prepare != nil {
-		if err := prepare(ctx, c.note); err != nil {
+		// What is said while the sandbox is made ready is true only until it is:
+		// once it is, it's taken back, so it doesn't sit in the conversation
+		// saying "starting the sandbox" over what then runs. Left, when it can't be
+		// made ready: it says what the error that follows is about.
+		var said []int
+		var mu sync.Mutex
+		err := prepare(ctx, func(text string) {
+			seq := c.noteSaid(text)
+			mu.Lock()
+			said = append(said, seq)
+			mu.Unlock()
+		})
+		if err != nil {
 			c.finish(err, ctx.Err() != nil)
 			return
 		}
+		mu.Lock()
+		c.retract(said)
+		mu.Unlock()
 	}
 	onLine := func(raw []byte) { c.line(raw) }
 	err := converse(ctx, prompt, session, func() { c.receipt(receiptDelivered) }, onLine)
