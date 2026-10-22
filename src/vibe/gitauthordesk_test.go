@@ -9,8 +9,12 @@ import (
 
 // deskRig is a authorDesk's world.
 type deskRig struct {
-	finding    authorFinding
-	preference string
+	finding authorFinding
+	// pref is what the settings say; assessedWith is what Check passed to assess.
+	pref         string
+	assessedWith []string
+	// assessHook, when set, is what assess answers with.
+	assessHook func() authorFinding
 	giveErr    error
 	keepErr    error
 	gate       chan struct{}
@@ -26,8 +30,14 @@ type deskRig struct {
 func newDeskRig(finding authorFinding) *deskRig {
 	r := &deskRig{finding: finding}
 	r.desk = &authorDesk{
-		assess:     func(preference string) authorFinding { r.preference = preference; return r.finding },
-		preference: func() (string, error) { return r.preference, nil },
+		assess: func(preference string) authorFinding {
+			r.assessedWith = append(r.assessedWith, preference)
+			if r.assessHook != nil {
+				return r.assessHook()
+			}
+			return r.finding
+		},
+		preference: func() (string, error) { return r.pref, nil },
 		push:       func() string { return aPushLine },
 		give: func(name, email string) error {
 			if r.gate != nil {
@@ -76,7 +86,7 @@ func TestASandboxThatIsFineOrLeftOrUnreadableAsksNothing(t *testing.T) {
 
 func TestAnImportPreferenceGivesTheAuthorAtOnceAndAsksNothing(t *testing.T) {
 	r := newDeskRig(anOffer)
-	r.preference = gitAuthorImport
+	r.pref = gitAuthorImport
 	r.desk.Check()
 	if got := r.desk.State(); got.Phase != "" {
 		t.Errorf("state = %+v", got)
@@ -215,5 +225,113 @@ func TestTwoAnswersAtOnceGiveOnce(t *testing.T) {
 	}
 	if len(r.gave) != 1 {
 		t.Errorf("gave %d times", len(r.gave))
+	}
+}
+
+func TestCheckPassesTheSettingToAssess(t *testing.T) {
+	r := newDeskRig(authorFinding{Kind: authorFine})
+	r.pref = gitAuthorImport
+	r.desk.Check()
+	if len(r.assessedWith) != 1 || r.assessedWith[0] != gitAuthorImport {
+		t.Errorf("assess was given %q", r.assessedWith)
+	}
+}
+
+// slowCheck runs desk.Check with assess held until the returned release is
+// called, and gives done, closed when the Check has ended. It returns once the
+// Check is inside assess.
+func slowCheck(r *deskRig, finding authorFinding) (release func(), done <-chan struct{}) {
+	entered, gate, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	first := true
+	var mu sync.Mutex
+	r.assessHook = func() authorFinding {
+		mu.Lock()
+		mine := first
+		first = false
+		mu.Unlock()
+		if mine {
+			close(entered)
+			<-gate
+			return finding
+		}
+		return r.finding
+	}
+	go func() { r.desk.Check(); close(finished) }()
+	<-entered
+	return func() { close(gate) }, finished
+}
+
+func TestACheckThatEndsAfterAnAnswerDoesNotAskAgain(t *testing.T) {
+	r := newDeskRig(anOffer)
+	r.desk.Check()
+	release, done := slowCheck(r, anOffer)
+	if err := r.desk.Decide("give"); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	<-done
+	if got := r.desk.State(); got.Phase != "" {
+		t.Errorf("state = %+v: a question already answered was asked again", got)
+	}
+}
+
+func TestACheckThatEndsAfterLaterDoesNotTurnTheReminderBackIntoTheQuestion(t *testing.T) {
+	r := newDeskRig(anOffer)
+	r.desk.Check()
+	release, done := slowCheck(r, anOffer)
+	r.desk.Decide("later")
+	release()
+	<-done
+	if got := r.desk.State(); got.Phase != "reminder" {
+		t.Errorf("state = %+v", got)
+	}
+}
+
+func TestAnOlderCheckThatEndsAfterANewerOneIsIgnored(t *testing.T) {
+	r := newDeskRig(anOffer)
+	release, done := slowCheck(r, anOffer)
+	// The newer one finds the author given in the meantime.
+	r.finding = authorFinding{Kind: authorFine}
+	r.desk.Check()
+	release()
+	<-done
+	if got := r.desk.State(); got.Phase != "" {
+		t.Errorf("state = %+v: what the older Check saw replaced what the newer did", got)
+	}
+}
+
+func TestACheckThatSawTheAuthorMissingWhileItWasBeingGivenDoesNotAskAfter(t *testing.T) {
+	r := newDeskRig(anOffer)
+	r.desk.Check()
+	r.gate, r.entered = make(chan struct{}), make(chan struct{}, 1)
+	answered := make(chan error, 1)
+	go func() { answered <- r.desk.Decide("give") }()
+	<-r.entered // inside give: the sandbox still has no author
+	release, done := slowCheck(r, anOffer)
+	close(r.gate)
+	if err := <-answered; err != nil {
+		t.Fatal(err)
+	}
+	release()
+	<-done
+	if got := r.desk.State(); got.Phase != "" {
+		t.Errorf("state = %+v", got)
+	}
+}
+
+func TestACheckThatEndsWhileAnAnswerIsBeingCarriedOutDoesNotDisturbIt(t *testing.T) {
+	r := newDeskRig(anOffer)
+	r.desk.Check()
+	r.gate, r.entered = make(chan struct{}), make(chan struct{}, 1)
+	answered := make(chan error, 1)
+	go func() { answered <- r.desk.Decide("give") }()
+	<-r.entered
+	r.desk.Check() // sees the author missing, as give hasn't finished
+	close(r.gate)
+	if err := <-answered; err != nil {
+		t.Fatal(err)
+	}
+	if got := r.desk.State(); got.Phase != "" {
+		t.Errorf("state = %+v", got)
 	}
 }

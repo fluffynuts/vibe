@@ -38,10 +38,21 @@ type authorDesk struct {
 	// deciding is an answer being carried out, which a second must wait out:
 	// two tabs answering together give the author once.
 	deciding bool
+	// checks counts the Checks begun, and epoch the answers taken (and
+	// carried out): a Check looks at the sandbox without the lock, so what it
+	// saw is old news if another began, or an answer was taken or finished,
+	// since it began.
+	checks, epoch int
 }
 
-// Check looks at the sandbox, as it starts.
+// Check looks at the sandbox, as it starts. What it finds is dropped if
+// another Check has begun since, or an answer has been taken or finished: the
+// user's later word, or a later look, is what is so now.
 func (d *authorDesk) Check() {
+	d.mu.Lock()
+	d.checks++
+	mine, since := d.checks, d.epoch
+	d.mu.Unlock()
 	preference, err := d.preference()
 	if err != nil {
 		d.say("WARNING: couldn't read the settings, so can't tell whether the agent can commit: %v", err)
@@ -63,6 +74,9 @@ func (d *authorDesk) Check() {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.checks != mine || d.epoch != since {
+		return
+	}
 	d.phase = ""
 	if found.Kind == authorOffer {
 		d.phase, d.finding, d.pushText = "ask", found, d.push()
@@ -99,6 +113,7 @@ func (d *authorDesk) Decide(answer string) error {
 		d.mu.Unlock()
 		return fmt.Errorf("%w: there is nothing to answer %q to now (it may have been answered already): look at the page again", companion.ErrAnswerNotNow, answer)
 	}
+	d.epoch++
 	switch answer {
 	case "later":
 		d.phase = "reminder"
@@ -128,6 +143,7 @@ func (d *authorDesk) Decide(answer string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.deciding = false
+	d.epoch++
 	if err == nil {
 		d.phase = ""
 	}
