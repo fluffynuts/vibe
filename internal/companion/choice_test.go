@@ -118,6 +118,7 @@ type choiceState struct {
 	Effort    string `json:"effort"`
 	Running   string `json:"running"`
 	Session   bool   `json:"session"`
+	Adopted   string `json:"adopted"`
 	Inherited struct {
 		Model  bool `json:"model"`
 		Effort bool `json:"effort"`
@@ -702,5 +703,126 @@ func TestAReaskThatFailsKeepsTheOldListsAndIsLoggedAndTriedAgainNextTime(t *test
 	c.mu.Unlock()
 	if rec := do(t, s, post("/api/conversation/choice/options", `{}`)); rec.Code != http.StatusOK || c.asked != 3 {
 		t.Errorf("the next try: %d, asked %d times", rec.Code, c.asked)
+	}
+}
+
+// The lists as claude gives them when Sonnet is the default.
+var sonnetDefault = Options{
+	Models: []string{"opus", "sonnet", "haiku"}, OtherModels: []string{"best"}, Efforts: []string{"low", "high"},
+	Names:   map[string]string{"opus": "Opus 5.5", "sonnet": "Sonnet 5.5", "haiku": "Haiku 5.5", "best": "Fable 5.1"},
+	Current: "Sonnet 5.5 (default)",
+}
+
+func adopt(t *testing.T, s *Server) (int, choiceState) {
+	t.Helper()
+	rec := do(t, s, post("/api/conversation/choice/adopt", `{}`))
+	var got choiceState
+	json.Unmarshal(rec.Body.Bytes(), &got)
+	return rec.Code, got
+}
+
+func TestTheListsSayWhichModelIsTheDefault(t *testing.T) {
+	got := readChoice(t, choiceServer(t, &choosing{cached: &sonnetDefault, cachedAt: time.Now()}))
+	if got.Options == nil || got.Options.DefaultAlias != "sonnet" {
+		t.Errorf("default alias = %+v", got.Options)
+	}
+}
+
+func TestTheModelInUseIsRecordedWhenNothingIsChosenSoALaterChangeOfDefaultCantMoveIt(t *testing.T) {
+	c := &choosing{cached: &sonnetDefault, cachedAt: time.Now()}
+	s := choiceServer(t, c)
+	code, got := adopt(t, s)
+	if code != http.StatusOK || got.Model != "sonnet" {
+		t.Fatalf("%d, %+v", code, got)
+	}
+	if len(c.setCalls) != 1 || c.setCalls[0] != [2]string{"sonnet", ""} {
+		t.Errorf("kept %v, want sonnet", c.setCalls)
+	}
+	if got.Adopted != "sonnet" {
+		t.Errorf("adopted = %q", got.Adopted)
+	}
+}
+
+func TestTheModelThatLastRanIsWhatIsRecordedNotTheDefaultWhenTheyDiffer(t *testing.T) {
+	c := &choosing{cached: &sonnetDefault, cachedAt: time.Now()}
+	s := choiceServer(t, c)
+	s.convo.line([]byte(`{"type":"system","subtype":"init","model":"claude-opus-5-5","session_id":"c403b0d5-2ae0-42d6-8d1f-8590da103c98"}`))
+	if _, got := adopt(t, s); got.Model != "opus" {
+		t.Errorf("recorded %q, want opus: what the last turn ran, and not what claude's default has since become", got.Model)
+	}
+}
+
+func TestAModelThatRanWhichNoListedOneIsFallsBackToTheDefault(t *testing.T) {
+	c := &choosing{cached: &sonnetDefault, cachedAt: time.Now()}
+	s := choiceServer(t, c)
+	s.convo.line([]byte(`{"type":"system","subtype":"init","model":"claude-mystery-1","session_id":"c403b0d5-2ae0-42d6-8d1f-8590da103c98"}`))
+	if _, got := adopt(t, s); got.Model != "sonnet" {
+		t.Errorf("recorded %q", got.Model)
+	}
+}
+
+func TestTheProfilesOwnEffortIsKeptWhenTheModelIsRecorded(t *testing.T) {
+	c := &choosing{cached: &sonnetDefault, cachedAt: time.Now(), effort: "high"}
+	adopt(t, choiceServer(t, c))
+	if len(c.setCalls) != 1 || c.setCalls[0] != [2]string{"sonnet", "high"} {
+		t.Errorf("kept %v", c.setCalls)
+	}
+}
+
+func TestNothingIsRecordedWhenAModelIsAlreadyChosenOrInherited(t *testing.T) {
+	for name, c := range map[string]*choosing{
+		"chosen":    {cached: &sonnetDefault, cachedAt: time.Now(), model: "opus"},
+		"inherited": {cached: &sonnetDefault, cachedAt: time.Now(), globalModel: "haiku"},
+	} {
+		s := choiceServer(t, c)
+		code, got := adopt(t, s)
+		if code != http.StatusOK || len(c.setCalls) != 0 || got.Adopted != "" {
+			t.Errorf("%s: %d, kept %v, adopted %q", name, code, c.setCalls, got.Adopted)
+		}
+	}
+}
+
+func TestNothingIsRecordedWhenItCantBeToldWhichModelItIs(t *testing.T) {
+	noNames := sonnetDefault
+	noNames.Names = nil
+	for name, c := range map[string]*choosing{
+		"no lists known":         {},
+		"no names for the lists": {cached: &noNames, cachedAt: time.Now()},
+	} {
+		code, got := adopt(t, choiceServer(t, c))
+		if code != http.StatusOK || len(c.setCalls) != 0 || got.Adopted != "" {
+			t.Errorf("%s: %d, kept %v, adopted %q", name, code, c.setCalls, got.Adopted)
+		}
+	}
+}
+
+func TestTheModelIsRecordedOnceNotAtEveryAsk(t *testing.T) {
+	c := &choosing{cached: &sonnetDefault, cachedAt: time.Now()}
+	s := choiceServer(t, c)
+	adopt(t, s)
+	adopt(t, s)
+	adopt(t, s)
+	if len(c.setCalls) != 1 {
+		t.Errorf("kept %d times, want once: %v", len(c.setCalls), c.setCalls)
+	}
+}
+
+func TestAFailureToRecordTheModelIsSaidAndLogged(t *testing.T) {
+	c := &choosing{cached: &sonnetDefault, cachedAt: time.Now(), setErr: errors.New("profile 'p' isn't there")}
+	s := choiceServer(t, c)
+	var said []string
+	s.cfg.Log = func(line string) { said = append(said, line) }
+	code, _ := adopt(t, s)
+	if code != http.StatusInternalServerError || len(said) != 1 || !strings.Contains(said[0], "profile 'p'") {
+		t.Errorf("%d, said %q", code, said)
+	}
+}
+
+func TestListsAskedForNowAreWhatTheModelIsRecordedFromToo(t *testing.T) {
+	c := &choosing{options: sonnetDefault}
+	s := choiceServer(t, c)
+	do(t, s, post("/api/conversation/choice/options", `{}`))
+	if _, got := adopt(t, s); got.Model != "sonnet" {
+		t.Errorf("recorded %q", got.Model)
 	}
 }

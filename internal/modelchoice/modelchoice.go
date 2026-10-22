@@ -72,6 +72,36 @@ const (
 // choice already means, and the others pick by a rule, not a model.
 var notAFamily = map[string]bool{"best": true, "opusplan": true}
 
+// DefaultAlias is which of the listed models is the default, from the name
+// claude gives its default ("Opus 5.5 (default)") and the names it gives the
+// aliases ("opus" is "Opus 5.5"): the plain ones are looked at first. It is ""
+// when no name matches, as when the names couldn't be had.
+func DefaultAlias(current string, models, other []string, names map[string]string) string {
+	want := strings.TrimSpace(strings.TrimSuffix(strings.ToLower(strings.TrimSpace(current)), "(default)"))
+	if want == "" {
+		return ""
+	}
+	for _, alias := range append(slices.Clone(models), other...) {
+		if name, ok := names[alias]; ok && strings.ToLower(strings.TrimSpace(name)) == want {
+			return alias
+		}
+	}
+	return ""
+}
+
+// AliasOfRan is which of the plain models a model that ran ("claude-sonnet-5-5")
+// is: the one whose name is a word of it. It is "" when none is, or when the
+// model ran under a rule ("opusplan") that picks between them.
+func AliasOfRan(ran string, models []string) string {
+	words := nonLetters.Split(strings.ToLower(ran), -1)
+	for _, alias := range models {
+		if slices.Contains(words, alias) {
+			return alias
+		}
+	}
+	return ""
+}
+
 // IsRule says name picks a model by a rule ("best", "opusplan") rather than
 // naming one.
 func IsRule(name string) bool { return notAFamily[name] }

@@ -286,3 +286,40 @@ func TestWhichListedNamesPickByARuleAndAreNotOneModel(t *testing.T) {
 		t.Errorf("RulesAmong(nil) = %v", got)
 	}
 }
+
+func TestWhichAliasIsTheDefaultIsWorkedOutFromTheNameClaudeGivesTheDefault(t *testing.T) {
+	names := map[string]string{"fable": "Fable 5.1", "opus": "Opus 5.5", "sonnet": "Sonnet 5.5", "haiku": "Haiku 5.5", "best": "Fable 5.1", "opus[1m]": "Opus 5.5 (1M context)"}
+	models, other := []string{"fable", "opus", "sonnet", "haiku"}, []string{"opus[1m]", "best"}
+	for name, tc := range map[string]struct{ current, want string }{
+		"as claude says it":                  {"Opus 5.5 (default)", "opus"},
+		"another default":                    {"Sonnet 5.5 (default)", "sonnet"},
+		"without the (default)":              {"Haiku 5.5", "haiku"},
+		"in other case":                      {"opus 5.5 (DEFAULT)", "opus"},
+		"two aliases of one name: the plain": {"Fable 5.1 (default)", "fable"},
+		"a name no alias has":                {"Mystery 9 (default)", ""},
+		"a name only the rest have":          {"Opus 5.5 (1M context)", "opus[1m]"},
+		"nothing said":                       {"", ""},
+	} {
+		if got := DefaultAlias(tc.current, models, other, names); got != tc.want {
+			t.Errorf("%s: %q, want %q", name, got, tc.want)
+		}
+	}
+	if got := DefaultAlias("Opus 5.5 (default)", models, other, nil); got != "" {
+		t.Errorf("with no names to go by: %q, want none", got)
+	}
+}
+
+func TestWhichAliasAModelThatRanIs(t *testing.T) {
+	models := []string{"fable", "opus", "sonnet", "haiku"}
+	for ran, want := range map[string]string{
+		"claude-sonnet-5-5": "sonnet", "claude-opus-5-5": "opus", "claude-haiku-5-5": "haiku", "claude-fable-5-1": "fable",
+		"CLAUDE-OPUS-5-5": "opus", "": "", "claude-mystery-1": "", "opusplan": "",
+	} {
+		if got := AliasOfRan(ran, models); got != want {
+			t.Errorf("AliasOfRan(%q) = %q, want %q", ran, got, want)
+		}
+	}
+	if got := AliasOfRan("claude-opus-5-5", nil); got != "" {
+		t.Errorf("with no models: %q", got)
+	}
+}

@@ -45,6 +45,10 @@ type Options struct {
 	// "opus"), for the page to show their versions. A model it couldn't
 	// say the name of isn't in it.
 	Names map[string]string `json:"names,omitempty"`
+	// DefaultAlias is which of the listed models is claude's default now (it is
+	// worked out here, from Current and Names, so the page needn't): ""
+	// when that can't be told.
+	DefaultAlias string `json:"defaultAlias,omitempty"`
 	// Rules are the listed names that pick a model by a rule ("best") and
 	// aren't one model: what ran can't be held against them.
 	Rules []string `json:"rules,omitempty"`
@@ -101,6 +105,7 @@ func (o *choiceOptions) get() (opts *Options, at time.Time, fresh bool) {
 }
 
 func (o *choiceOptions) put(opts Options, at time.Time, fresh bool) {
+	opts.DefaultAlias = modelchoice.DefaultAlias(opts.Current, opts.Models, opts.OtherModels, opts.Names)
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.have, o.at, o.fresh = &opts, at, fresh
@@ -273,4 +278,58 @@ func (s *Server) choiceFetchOptions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, s.optionsBody())
+}
+
+// modelInUse is the model the conversation is on while none is chosen: the one
+// that its last turn ran, if that is one of the listed, and else claude's
+// default, by what the lists say. "" when there's nothing to go by.
+func (s *Server) modelInUse() string {
+	opts, _, _ := s.keptOptions()
+	if opts == nil {
+		return ""
+	}
+	if alias := modelchoice.AliasOfRan(s.convo.ranModel(), opts.Models); alias != "" {
+		return alias
+	}
+	return opts.DefaultAlias
+}
+
+// choiceAdopt records the model the conversation is on, when none is chosen
+// or inherited. Not choosing is no choice of "whatever claude's default is":
+// the user is on a model, and a change of claude's default must not move them
+// to another, so the model they are on is kept as theirs, with nothing said as
+// nothing has changed (see docs/plan-model-effort.md). The profile's own effort
+// is kept as it is. It does nothing when there's nothing to go by.
+func (s *Server) choiceAdopt(w http.ResponseWriter, r *http.Request) {
+	model, effort, err := s.cfg.Choice.Get()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "couldn't read the model and effort chosen: "+err.Error())
+		return
+	}
+	adopted := ""
+	if model == "" {
+		if alias := s.modelInUse(); alias != "" {
+			if s.cfg.Choice.Own != nil {
+				if _, effort, err = s.cfg.Choice.Own(); err != nil {
+					writeError(w, http.StatusInternalServerError, "couldn't read the effort chosen: "+err.Error())
+					return
+				}
+			}
+			if err := s.cfg.Choice.Set(alias, effort); err != nil {
+				if s.cfg.Log != nil {
+					s.cfg.Log("couldn't keep the model the conversation is on: " + err.Error())
+				}
+				writeError(w, http.StatusInternalServerError, "the model in use couldn't be kept: "+err.Error())
+				return
+			}
+			adopted = alias
+		}
+	}
+	body, err := s.choiceBody()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "couldn't read the model and effort chosen: "+err.Error())
+		return
+	}
+	body["adopted"] = adopted
+	writeJSON(w, http.StatusOK, body)
 }

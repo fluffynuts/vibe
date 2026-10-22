@@ -10,7 +10,7 @@ import (
 var changingRoutes = []string{
 	"/api/conversation/send", "/api/conversation/stop", "/api/conversation/new",
 	"/api/conversation/new/options", "/api/conversation/new/fetch",
-	"/api/conversation/choice", "/api/conversation/choice/options",
+	"/api/conversation/choice", "/api/conversation/choice/options", "/api/conversation/choice/adopt",
 	"/api/default-branch",
 	"/api/admin/do", "/api/admin/upgrades", "/api/admin/cancel",
 	"/api/admin/instructions", "/api/admin/instructions/optimise",
