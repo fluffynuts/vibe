@@ -593,3 +593,114 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 	}
 	t.Fatalf("timed out waiting for %s", what)
 }
+
+// freshServer is choiceServer with a clock the test moves.
+func clockedChoiceServer(t *testing.T, c *choosing) (*Server, *time.Time) {
+	t.Helper()
+	s := choiceServer(t, c)
+	now := time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
+	s.clock = func() time.Time { return now }
+	return s, &now
+}
+
+func TestListsAreAskedForAgainOnceTheyAreTenMinutesOld(t *testing.T) {
+	c := &choosing{options: claudeOptions}
+	s, now := clockedChoiceServer(t, c)
+	ask := func() {
+		t.Helper()
+		if rec := do(t, s, post("/api/conversation/choice/options", `{}`)); rec.Code != http.StatusOK {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+	}
+	ask()
+	if c.asked != 1 {
+		t.Fatalf("asked %d times, want 1", c.asked)
+	}
+	for _, age := range []time.Duration{time.Second, 5 * time.Minute, 10*time.Minute - time.Second} {
+		*now = time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC).Add(age)
+		ask()
+		if c.asked != 1 {
+			t.Errorf("at %v old, the agent was asked again (%d)", age, c.asked)
+		}
+	}
+	*now = time.Date(2026, 10, 22, 9, 10, 0, 0, time.UTC)
+	ask()
+	if c.asked != 2 {
+		t.Errorf("at ten minutes old it wasn't asked again (%d)", c.asked)
+	}
+	ask()
+	if c.asked != 2 {
+		t.Errorf("asked a third time at once (%d)", c.asked)
+	}
+}
+
+func TestTheNewAnswerReplacesTheOldAndIsRememberedWhoseWhenIsNow(t *testing.T) {
+	c := &choosing{options: claudeOptions}
+	s, now := clockedChoiceServer(t, c)
+	do(t, s, post("/api/conversation/choice/options", `{}`))
+	*now = now.Add(11 * time.Minute)
+	newer := claudeOptions
+	newer.Current = "Sonnet 5.5 (default)"
+	newer.Models = append(append([]string{}, claudeOptions.Models...), "fable")
+	c.mu.Lock()
+	c.options = newer
+	c.mu.Unlock()
+	do(t, s, post("/api/conversation/choice/options", `{}`))
+	got := readChoice(t, s)
+	if got.Options == nil || got.Options.Current != "Sonnet 5.5 (default)" || len(got.Options.Models) != 4 {
+		t.Errorf("the page isn't given the new lists: %+v", got.Options)
+	}
+	if got.OptionsAt != now.UnixMilli() || !got.OptionsFresh {
+		t.Errorf("at %d (want %d), fresh %v", got.OptionsAt, now.UnixMilli(), got.OptionsFresh)
+	}
+	if len(c.remembered) != 2 {
+		t.Errorf("remembered %d times, want 2", len(c.remembered))
+	}
+}
+
+func TestListsOlderThanTenMinutesAreNotCalledFreshAndEffortsAreOnlyCheckedForShape(t *testing.T) {
+	c := &choosing{options: claudeOptions}
+	s, now := clockedChoiceServer(t, c)
+	do(t, s, post("/api/conversation/choice/options", `{}`))
+	if got := readChoice(t, s); !got.OptionsFresh {
+		t.Fatal("not fresh when just asked")
+	}
+	if rec := do(t, s, post("/api/conversation/choice", `{"effort":"xhigh"}`)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("a fresh list should hold the effort to it: %d", rec.Code)
+	}
+	*now = now.Add(10 * time.Minute)
+	if got := readChoice(t, s); got.OptionsFresh {
+		t.Error("still called fresh after ten minutes")
+	}
+	if rec := do(t, s, post("/api/conversation/choice", `{"effort":"xhigh"}`)); rec.Code != http.StatusOK {
+		t.Errorf("an old list holds an effort to its shape only: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestAReaskThatFailsKeepsTheOldListsAndIsLoggedAndTriedAgainNextTime(t *testing.T) {
+	c := &choosing{options: claudeOptions}
+	s, now := clockedChoiceServer(t, c)
+	var said []string
+	s.cfg.Log = func(line string) { said = append(said, line) }
+	do(t, s, post("/api/conversation/choice/options", `{}`))
+	*now = now.Add(11 * time.Minute)
+	c.mu.Lock()
+	c.optsErr = errors.New("sandbox is stopped")
+	c.mu.Unlock()
+	if rec := do(t, s, post("/api/conversation/choice/options", `{}`)); rec.Code != http.StatusBadGateway {
+		t.Fatalf("%d", rec.Code)
+	}
+	got := readChoice(t, s)
+	if got.Options == nil || len(got.Options.Models) != 3 {
+		t.Errorf("the old lists were lost: %+v", got.Options)
+	}
+	if len(said) != 1 || !strings.Contains(said[0], "sandbox is stopped") {
+		t.Errorf("said %q, want one line with why", said)
+	}
+	c.mu.Lock()
+	c.optsErr = nil
+	c.mu.Unlock()
+	if rec := do(t, s, post("/api/conversation/choice/options", `{}`)); rec.Code != http.StatusOK || c.asked != 3 {
+		t.Errorf("the next try: %d, asked %d times", rec.Code, c.asked)
+	}
+}

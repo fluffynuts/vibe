@@ -53,6 +53,13 @@ type Options struct {
 	Current string `json:"current,omitempty"`
 }
 
+// optionsFreshFor is how long the agent's answer is taken to be right: its
+// default model and its lists can change under a long-running vibe (claude
+// picks up server-side settings as it runs), so after this the next ask goes
+// to the agent again. Short enough to follow such a change within a session,
+// long enough that asking (about a dozen quick local commands) is a rare cost.
+const optionsFreshFor = 10 * time.Minute
+
 // optionsWithin bounds asking the agent for its lists, past the sandbox
 // being woken: three commands in the sandbox, the last of them one claude run
 // for each model listed (about a dozen), all quick, and local to claude.
@@ -112,10 +119,17 @@ func (s *Server) keptOptions() (*Options, time.Time, bool) {
 	return s.options.get()
 }
 
-// optionsBody is what the page is told of the lists: when they're from, and
-// whether the agent was asked for them in this run.
-func (s *Server) optionsBody() map[string]interface{} {
+// freshOptions is keptOptions, with fresh true only while the agent's answer
+// is young enough (optionsFreshFor): one that is older is asked for again.
+func (s *Server) freshOptions() (*Options, time.Time, bool) {
 	opts, at, fresh := s.keptOptions()
+	return opts, at, fresh && s.clock().Sub(at) < optionsFreshFor
+}
+
+// optionsBody is what the page is told of the lists: when they're from, and
+// whether the agent was asked for them lately.
+func (s *Server) optionsBody() map[string]interface{} {
+	opts, at, fresh := s.freshOptions()
 	body := map[string]interface{}{"options": opts, "optionsFresh": fresh}
 	if opts != nil {
 		body["optionsAt"] = at.UnixMilli()
@@ -181,7 +195,7 @@ func (s *Server) choiceSet(w http.ResponseWriter, r *http.Request) {
 	// Held to the agent's own list only once it has been asked in this run:
 	// one from an earlier run may be out of date, and refusing what the agent
 	// now takes would be wrong (an effort it doesn't take it ignores, saying so).
-	if have, _, fresh := s.keptOptions(); have != nil && fresh {
+	if have, _, fresh := s.freshOptions(); have != nil && fresh {
 		err = modelchoice.CheckEffort(req.Effort, have.Efforts)
 	} else {
 		err = modelchoice.CheckEffortName(req.Effort)
@@ -218,7 +232,7 @@ func (s *Server) choiceFetchOptions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, `expected {"wake": true or false}`)
 		return
 	}
-	if _, _, fresh := s.keptOptions(); fresh {
+	if _, _, fresh := s.freshOptions(); fresh {
 		writeJSON(w, http.StatusOK, s.optionsBody())
 		return
 	}
@@ -229,7 +243,7 @@ func (s *Server) choiceFetchOptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.options.doneAsking()
-	if _, _, fresh := s.keptOptions(); fresh {
+	if _, _, fresh := s.freshOptions(); fresh {
 		writeJSON(w, http.StatusOK, s.optionsBody())
 		return
 	}
@@ -243,6 +257,11 @@ func (s *Server) choiceFetchOptions(w http.ResponseWriter, r *http.Request) {
 	}
 	opts, err := s.cfg.Choice.Options(ctx)
 	if err != nil {
+		// The page may be asking quietly (see the page's refresh at a turn's end)
+		// and say nothing of this, so it is said here.
+		if s.cfg.Log != nil {
+			s.cfg.Log("couldn't ask the agent for its models and efforts: " + err.Error())
+		}
 		writeError(w, http.StatusBadGateway, "the agent couldn't say what it has: "+err.Error())
 		return
 	}
