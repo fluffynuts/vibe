@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"vibe/internal/cliargs"
@@ -75,12 +76,12 @@ func headless(lay layout.Layout, args cliargs.Args, name string) error {
 	hold.begin()
 	asked := false
 	for {
-		go nudgeOnStart(lay, name, func() {})
-		if authors != nil {
-			go authors.Check()
-		}
-		// Each time, as a rebuild can leave it logged out.
-		go warnIfAgentLoggedOut(name, recordedAgent(vibeHome, name, "claude"))
+		startUpWork{
+			nudge: func() { nudgeOnStart(lay, name, func() {}) },
+			// Each time, as a rebuild can leave it logged out.
+			loggedOut: func() { warnIfAgentLoggedOut(name, recordedAgent(vibeHome, name, "claude")) },
+			author:    authors,
+		}.run()
 		select {
 		case <-hold.waiting():
 			hold.begin()
@@ -117,4 +118,33 @@ func backUpAsHeadlessEnds(vibeHome, name string, asked bool) {
 	if !asked {
 		note("left sandbox '%s' running — 'vibe --stop' stops it", name)
 	}
+}
+
+// startUpWork is what a headless session does each time its sandbox comes up
+// (it is started again from the page, or rebuilt): each in its own goroutine,
+// as each waits on the sandbox.
+type startUpWork struct {
+	nudge, loggedOut func()
+	// author looks at whether the agent can commit; nil when there is no page
+	// to ask on.
+	author *authorDesk
+}
+
+// run starts the work, and gives a channel that closes when all of it is done.
+func (w startUpWork) run() <-chan struct{} {
+	tasks := []func(){w.nudge, w.loggedOut}
+	if w.author != nil {
+		tasks = append(tasks, w.author.Check)
+	}
+	var running sync.WaitGroup
+	for _, task := range tasks {
+		running.Add(1)
+		go func() {
+			defer running.Done()
+			task()
+		}()
+	}
+	done := make(chan struct{})
+	go func() { running.Wait(); close(done) }()
+	return done
 }

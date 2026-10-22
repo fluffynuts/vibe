@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"sync"
 
@@ -164,12 +163,10 @@ func authorDeskFor(args cliargs.Args, found bool, lay layout.Layout, name string
 
 // newAuthorDesk is the desk for sandbox name, as inst records it.
 func newAuthorDesk(lay layout.Layout, name string, inst state.Instance) *authorDesk {
-	ctx := context.Background()
 	nothingSaid := func(string, ...interface{}) {}
+	look := gitAuthorDeps(name, nothingSaid, func(string) bool { return false })
 	return &authorDesk{
-		assess: func(preference string) authorFinding {
-			return assessAuthor(gitAuthorDeps(ctx, name, nothingSaid, func(string) bool { return false }), preference)
-		},
+		assess: func(preference string) authorFinding { return assessAuthor(look, preference) },
 		preference: func() (string, error) {
 			return gitAuthorPreference(lay, inst.Profile)
 		},
@@ -179,7 +176,7 @@ func newAuthorDesk(lay layout.Layout, name string, inst state.Instance) *authorD
 			}
 			return pushStatement(inst)
 		},
-		give: func(n, e string) error { return giveSandboxGitAuthor(ctx, name, n, e) },
+		give: look.set,
 		keep: func(choice string) error { return keepGitAuthorChoice(lay, inst.Profile, choice) },
 		say:  func(format string, a ...interface{}) { note(format, a...) },
 	}

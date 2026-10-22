@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"vibe/internal/cliargs"
 	"vibe/internal/fscopy"
+	"vibe/internal/gittoken"
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
 	"vibe/internal/profilegen"
@@ -38,8 +41,9 @@ const (
 type identityDeps struct {
 	// sandbox is the author the agent's global git config has, "" for what it lacks.
 	sandbox func() (name, email string, err error)
-	// host is the author the user's own global git config has.
-	host func() (name, email string)
+	// host is the author the user's own global git config has: an error is
+	// git not answering, which is not the same as there being none.
+	host func() (name, email string, err error)
 	// set puts into the agent's global git config whichever of name and email isn't "".
 	set func(name, email string) error
 	ask func(question string) bool
@@ -52,6 +56,9 @@ type identityDeps struct {
 func pushStatement(inst state.Instance) string {
 	if inst.GitToken == "" {
 		return "It has no GitHub token, so it can't push: what it commits stays on this machine until you push it."
+	}
+	if gittoken.Expired(inst.GitTokenExpires, timeNow()) {
+		return "Its GitHub token has expired, so it can't push: what it commits stays on this machine until you push it (and until the token is renewed, with 'vibe --git-token')."
 	}
 	return "It has a GitHub token, so it can push" + rulesSuffix(inst.GitRules) + ": what it commits can reach GitHub without you."
 }
@@ -112,7 +119,10 @@ func assessAuthor(d identityDeps, preference string) authorFinding {
 	if name != "" && email != "" {
 		return authorFinding{Kind: authorFine}
 	}
-	hostName, hostEmail := d.host()
+	hostName, hostEmail, err := d.host()
+	if err != nil {
+		return authorFinding{Kind: authorUnknown, Why: fmt.Sprintf("couldn't read your own global git config, so can't offer your author: %v", err)}
+	}
 	if !aPlainLine(hostName) {
 		hostName = ""
 	}
@@ -170,29 +180,89 @@ func firstOf(a, b string) string {
 	return b
 }
 
-// hostGitAuthor is the author the user's own global git config has.
-func hostGitAuthor() (name, email string) {
-	get := func(key string) string {
-		out, err := exec.Command("git", "config", "--global", key).Output()
-		if err != nil {
-			return ""
+// gitConfigValue runs a command that prints a git config value, and gives
+// it trimmed. Git exits 1 for a key that isn't set, which is "", not a
+// failure; anything else (git not there, an unreadable config) is.
+func gitConfigValue(program string, args ...string) (string, error) {
+	out, err := exec.Command(program, args...).Output()
+	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 1 {
+			return "", nil
 		}
-		return strings.TrimSpace(string(out))
+		return "", err
 	}
-	return get("user.name"), get("user.email")
+	return strings.TrimSpace(string(out)), nil
+}
+
+// hostGitAuthorFrom is the author get reads from the user's own global git config.
+func hostGitAuthorFrom(get func(key string) (string, error)) (name, email string, err error) {
+	if name, err = get("user.name"); err != nil {
+		return "", "", err
+	}
+	if email, err = get("user.email"); err != nil {
+		return "", "", err
+	}
+	return strings.TrimSpace(name), strings.TrimSpace(email), nil
+}
+
+// hostGitAuthor is the author the user's own global git config has.
+func hostGitAuthor() (name, email string, err error) {
+	return hostGitAuthorFrom(func(key string) (string, error) {
+		return gitConfigValue("git", "config", "--global", key)
+	})
+}
+
+// sandboxGitAuthorScript prints the agent's author after markers, as its
+// login shell may say other things (a .bashrc that prints) which would
+// otherwise be taken for the name.
+const sandboxGitAuthorScript = `printf 'vibe-git-name=%s\nvibe-git-email=%s\n' "$(git config --global user.name)" "$(git config --global user.email)"`
+
+// parseSandboxGitAuthor reads what sandboxGitAuthorScript printed, wherever
+// among other output; an answer with no markers is an error, not "no author".
+func parseSandboxGitAuthor(out string) (name, email string, err error) {
+	var hasName, hasEmail bool
+	for _, line := range strings.Split(out, "\n") {
+		if v, ok := strings.CutPrefix(line, "vibe-git-name="); ok {
+			name, hasName = strings.TrimSpace(v), true
+		} else if v, ok := strings.CutPrefix(line, "vibe-git-email="); ok {
+			email, hasEmail = strings.TrimSpace(v), true
+		}
+	}
+	if !hasName || !hasEmail {
+		return "", "", fmt.Errorf("an answer without the author in it: %.80q", out)
+	}
+	return name, email, nil
+}
+
+// How long the sandbox is given for what the author check asks of it: a
+// session start waits on this, so it can't be left to wait for good.
+const (
+	authorCheckWithin = 30 * time.Second
+	authorStartWithin = 90 * time.Second
+	// authorSlowAfter is how long a look takes before the user is told what is
+	// being waited on.
+	authorSlowAfter = 3 * time.Second
+)
+
+func authorContext(within time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), within)
+}
+
+// reportIfSlow runs f, saying so (say) if it takes longer than after.
+func reportIfSlow(after time.Duration, say func(), f func()) {
+	timer := time.AfterFunc(after, say)
+	defer timer.Stop()
+	f()
 }
 
 // sandboxGitAuthor is the author the agent's global git config has.
 func sandboxGitAuthor(ctx context.Context, name string) (author, email string, err error) {
-	out, err := sbxrun.ExecStdout(ctx, name, asAgent(`printf '%s\n%s\n' "$(git config --global user.name)" "$(git config --global user.email)"`)...)
+	out, err := sbxrun.ExecStdout(ctx, name, asAgent(sandboxGitAuthorScript)...)
 	if err != nil {
 		return "", "", err
 	}
-	lines := strings.Split(out, "\n")
-	if len(lines) < 2 {
-		return "", "", fmt.Errorf("an answer that wasn't two lines: %.80q", out)
-	}
-	return strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1]), nil
+	return parseSandboxGitAuthor(out)
 }
 
 // giveSandboxGitAuthor puts whichever of name and email isn't "" into the
@@ -220,10 +290,17 @@ func giveSandboxGitAuthor(ctx context.Context, sandbox, name, email string) erro
 // user. It never makes a profile: a directory for one that isn't there would
 // hide the real one.
 func keepGitAuthorChoice(lay layout.Layout, profile, choice string) error {
+	dir := lay.HomePath("profiles", profile)
+	if dir == "" {
+		return fmt.Errorf("there is no vibe home to keep the choice in")
+	}
 	if !lay.ProfileExists(profile) {
 		return fmt.Errorf("profile '%s' isn't there to keep the choice in", profile)
 	}
-	return fscopy.WriteWhole(filepath.Join(lay.ProfileDir(profile), profilegen.GitAuthorFile), []byte(choice+"\n"))
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return fmt.Errorf("profile '%s' is vibe's own, which can't be written to: make a profile of your own (--profile) to keep the choice in", profile)
+	}
+	return fscopy.WriteWhole(filepath.Join(dir, profilegen.GitAuthorFile), []byte(choice+"\n"))
 }
 
 // gitAuthorPreference is the choice that applies to profile: what the user
@@ -251,15 +328,26 @@ func gitAuthorPreference(lay layout.Layout, profile string) (string, error) {
 	return "", fmt.Errorf("%s holds %q; it must be %q or %q (delete it to be asked again)", pathresolve.Tilde(path), strings.TrimSpace(string(data)), gitAuthorImport, gitAuthorLeave)
 }
 
-// gitAuthorDeps are the real world's answers for sandbox name, whose agent
-// works in ctx's reach.
-func gitAuthorDeps(ctx context.Context, name string, say func(string, ...interface{}), ask func(string) bool) identityDeps {
+// gitAuthorDeps are the real world's answers for sandbox name. Each call to
+// the sandbox is bounded, and says so when it is slow.
+func gitAuthorDeps(name string, say func(string, ...interface{}), ask func(string) bool) identityDeps {
+	slow := func() { say("  looking at the agent's git author, which is taking a while…") }
 	return identityDeps{
-		sandbox: func() (string, string, error) { return sandboxGitAuthor(ctx, name) },
-		host:    hostGitAuthor,
-		set:     func(n, e string) error { return giveSandboxGitAuthor(ctx, name, n, e) },
-		ask:     ask,
-		say:     say,
+		sandbox: func() (n, e string, err error) {
+			ctx, cancel := authorContext(authorCheckWithin)
+			defer cancel()
+			reportIfSlow(authorSlowAfter, slow, func() { n, e, err = sandboxGitAuthor(ctx, name) })
+			return n, e, err
+		},
+		host: hostGitAuthor,
+		set: func(n, e string) (err error) {
+			ctx, cancel := authorContext(authorCheckWithin)
+			defer cancel()
+			reportIfSlow(authorSlowAfter, slow, func() { err = giveSandboxGitAuthor(ctx, name, n, e) })
+			return err
+		},
+		ask: ask,
+		say: say,
 	}
 }
 
@@ -328,12 +416,16 @@ func checkSandboxGitAuthor(lay layout.Layout, args cliargs.Args, name string) {
 	if err != nil || !found {
 		return
 	}
-	ctx := context.Background()
 	terminalAuthor{
 		preference: func() (string, error) { return gitAuthorPreference(lay, inst.Profile) },
-		start:      func() bool { return sbxrun.Start(ctx, name) },
+		start: func() (started bool) {
+			ctx, cancel := authorContext(authorStartWithin)
+			defer cancel()
+			reportIfSlow(authorSlowAfter, func() { note("  starting '%s' to look at its git author…", name) }, func() { started = sbxrun.Start(ctx, name) })
+			return started
+		},
 		deps: func(say func(string, ...interface{}), ask func(string) bool) identityDeps {
-			return gitAuthorDeps(ctx, name, say, ask)
+			return gitAuthorDeps(name, say, ask)
 		},
 		push:    func() string { return pushStatement(inst) },
 		keep:    func(choice string) error { return keepGitAuthorChoice(lay, inst.Profile, choice) },

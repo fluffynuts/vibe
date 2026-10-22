@@ -4,10 +4,15 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"vibe/internal/cliargs"
+	"vibe/internal/layout"
 	"vibe/internal/profilegen"
 	"vibe/internal/state"
 )
@@ -18,6 +23,7 @@ type identityRig struct {
 	sandboxName, sandboxEmail string
 	sandboxErr                error
 	hostName, hostEmail       string
+	hostErr                   error
 	answer                    bool
 	setErr                    error
 
@@ -33,7 +39,7 @@ func (r *identityRig) deps() identityDeps {
 			r.sandboxAsked = true
 			return r.sandboxName, r.sandboxEmail, r.sandboxErr
 		},
-		host: func() (string, string) { return r.hostName, r.hostEmail },
+		host: func() (string, string, error) { return r.hostName, r.hostEmail, r.hostErr },
 		set: func(name, email string) error {
 			r.set = append(r.set, [2]string{name, email})
 			return r.setErr
@@ -404,5 +410,163 @@ func TestOnlyAHeadlessSessionGetsADeskForThePage(t *testing.T) {
 		if desk := authorDeskFor(c.args, c.found, lay, "box", inst); desk != nil {
 			t.Errorf("%s has a desk", name)
 		}
+	}
+}
+
+func TestTheChoiceIsNeverWrittenIntoTheBundledProfile(t *testing.T) {
+	root, _ := goldenBundle(t)
+	lay := layout.New(t.TempDir(), root)
+	err := keepGitAuthorChoice(lay, bundledProfile, gitAuthorImport)
+	if err == nil || !strings.Contains(err.Error(), "vibe's own") {
+		t.Errorf("err = %v, want it to say the profile is vibe's own and can't be written to", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "profiles", bundledProfile, profilegen.GitAuthorFile)); statErr == nil {
+		t.Error("the answer was written into the bundle")
+	}
+}
+
+func TestTheChoiceIsNotKeptWhereThereIsNoVibeHome(t *testing.T) {
+	lay := layout.New("", t.TempDir())
+	if err := keepGitAuthorChoice(lay, "p", gitAuthorImport); err == nil {
+		t.Error("an answer was kept with nowhere to keep it")
+	}
+}
+
+func TestAnExpiredTokenIsNotSaidToLetTheAgentPush(t *testing.T) {
+	was := timeNow
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	timeNow = func() time.Time { return now }
+	defer func() { timeNow = was }()
+	expired := pushStatement(state.Instance{GitToken: "own", GitTokenExpires: now.Add(-time.Hour)})
+	if !strings.Contains(expired, "expired") || !strings.Contains(expired, "can't push") {
+		t.Errorf("expired: %s", expired)
+	}
+	live := pushStatement(state.Instance{GitToken: "own", GitTokenExpires: now.Add(24 * time.Hour)})
+	if !strings.Contains(live, "can push") || strings.Contains(live, "can't push") {
+		t.Errorf("live: %s", live)
+	}
+	never := pushStatement(state.Instance{GitToken: "own"})
+	if !strings.Contains(never, "can push") {
+		t.Errorf("a token that doesn't expire: %s", never)
+	}
+}
+
+func TestTheHostsAuthorIsReadAndTrimmed(t *testing.T) {
+	get := func(key string) (string, error) {
+		return map[string]string{"user.name": " H \n", "user.email": "h@x\n"}[key], nil
+	}
+	name, email, err := hostGitAuthorFrom(get)
+	if err != nil || name != "H" || email != "h@x" {
+		t.Errorf("%q %q %v", name, email, err)
+	}
+}
+
+func TestAnAuthorTheHostDoesNotHaveIsNotAnError(t *testing.T) {
+	name, email, err := hostGitAuthorFrom(func(string) (string, error) { return "", nil })
+	if err != nil || name != "" || email != "" {
+		t.Errorf("%q %q %v", name, email, err)
+	}
+}
+
+func TestAFailureToAskGitIsReportedNotTakenForNoAuthor(t *testing.T) {
+	_, _, err := hostGitAuthorFrom(func(string) (string, error) { return "", errors.New("git isn't there") })
+	if err == nil || !strings.Contains(err.Error(), "git isn't there") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestGitSayingNothingIsSetIsNotAFailureButOtherExitsAre(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	for code, wantFailure := range map[string]bool{"1": false, "2": true} {
+		_, err := gitConfigValue("sh", "-c", "exit "+code)
+		if (err != nil) != wantFailure {
+			t.Errorf("exit %s: err = %v", code, err)
+		}
+	}
+	if out, err := gitConfigValue("sh", "-c", "echo H"); err != nil || out != "H" {
+		t.Errorf("a value: %q, %v", out, err)
+	}
+	if _, err := gitConfigValue("no-such-program-for-vibe-tests"); err == nil {
+		t.Error("a program that isn't there was taken for 'not set'")
+	}
+}
+
+func TestAHostThatCannotBeReadIsSaidNotTakenForHavingNoAuthor(t *testing.T) {
+	r := &identityRig{hostErr: errors.New("git isn't there"), answer: true}
+	got := assessAuthor(r.deps(), "")
+	if got.Kind != authorUnknown || !strings.Contains(got.Why, "git isn't there") {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestTheSandboxsAuthorIsFoundAmongWhatItsLoginShellSays(t *testing.T) {
+	out := "Welcome to the sandbox\nvibe-git-name=Mine\nvibe-git-email=a@x\nbye\n"
+	name, email, err := parseSandboxGitAuthor(out)
+	if err != nil || name != "Mine" || email != "a@x" {
+		t.Errorf("%q %q %v", name, email, err)
+	}
+	name, email, err = parseSandboxGitAuthor("vibe-git-name=\nvibe-git-email=\n")
+	if err != nil || name != "" || email != "" {
+		t.Errorf("an author that isn't set: %q %q %v", name, email, err)
+	}
+}
+
+func TestAnAnswerWithoutTheMarkersIsAnErrorNotNoAuthor(t *testing.T) {
+	if _, _, err := parseSandboxGitAuthor("Mine\na@x\n"); err == nil {
+		t.Error("lines with no markers were taken for an author")
+	}
+}
+
+func TestWhatTheAuthorCheckAsksOfTheSandboxIsBounded(t *testing.T) {
+	for what, within := range map[string]time.Duration{"a look or a change": authorCheckWithin, "a start": authorStartWithin} {
+		ctx, cancel := authorContext(within)
+		deadline, ok := ctx.Deadline()
+		cancel()
+		if !ok || time.Until(deadline) > within {
+			t.Errorf("%s has no limit of at most %s", what, within)
+		}
+	}
+	if authorCheckWithin > time.Minute {
+		t.Errorf("a look at the sandbox is allowed %s: a session start waits that long", authorCheckWithin)
+	}
+}
+
+func TestSlowWorkSaysSoAndQuickWorkDoesNot(t *testing.T) {
+	said := make(chan struct{}, 1)
+	say := func() { said <- struct{}{} }
+	reportIfSlow(time.Millisecond, say, func() { <-said; said <- struct{}{} })
+	<-said // it said so while the work was still going
+	quick := make(chan struct{}, 1)
+	reportIfSlow(time.Hour, func() { quick <- struct{}{} }, func() {})
+	select {
+	case <-quick:
+		t.Error("said something of work that was quick")
+	default:
+	}
+}
+
+func TestEachTimeTheSandboxStartsItsStartUpWorkRuns(t *testing.T) {
+	r := newDeskRig(authorFinding{Kind: authorFine})
+	var nudged, loggedOut atomic.Int32
+	work := startUpWork{
+		nudge:     func() { nudged.Add(1) },
+		loggedOut: func() { loggedOut.Add(1) },
+		author:    r.desk,
+	}
+	<-work.run()
+	<-work.run()
+	if nudged.Load() != 2 || loggedOut.Load() != 2 || len(r.assessedWith) != 2 {
+		t.Errorf("nudged %d, checked login %d, looked at the author %d times; want 2 each", nudged.Load(), loggedOut.Load(), len(r.assessedWith))
+	}
+}
+
+func TestAStartUpWithNoDeskForTheAuthorStillRunsTheRest(t *testing.T) {
+	var nudged, loggedOut atomic.Int32
+	work := startUpWork{nudge: func() { nudged.Add(1) }, loggedOut: func() { loggedOut.Add(1) }}
+	<-work.run()
+	if nudged.Load() != 1 || loggedOut.Load() != 1 {
+		t.Errorf("nudged %d, checked login %d", nudged.Load(), loggedOut.Load())
 	}
 }
