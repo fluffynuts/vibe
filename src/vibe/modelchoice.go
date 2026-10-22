@@ -106,6 +106,31 @@ func (p profileChoice) set(model, effort string) error {
 // askAgent runs script, as the sandbox's agent user, and gives what it wrote.
 type askAgent func(ctx context.Context, script string) (string, error)
 
+// What the sandbox's claude may answer with, at most: the agent in the
+// sandbox can put another program where claude is, and what it says is held
+// in memory, kept in a file and sent to the page. Real answers are a few KB
+// (the help 22, the list 1, the names about 15).
+const (
+	maxAnswer      = 64 << 10
+	maxHelp        = 256 << 10
+	maxNamesAnswer = 256 << 10
+	// maxName is the longest name of a model that's taken.
+	maxName = 100
+)
+
+// within asks script and refuses an answer larger than limit, as nothing real
+// is.
+func within(ctx context.Context, ask askAgent, script string, limit int, what string) (string, error) {
+	out, err := ask(ctx, script)
+	if err != nil {
+		return "", err
+	}
+	if len(out) > limit {
+		return "", fmt.Errorf("claude's answer for %s is larger (%d bytes) than any real one (at most %d): not used", what, len(out), limit)
+	}
+	return out, nil
+}
+
 // agentOptions asks the sandbox's claude which models and efforts it has: the
 // efforts from its --help, and the models from a /model prompt, which it
 // answers itself, without a model, so it costs nothing. They are asked in the
@@ -119,7 +144,7 @@ func agentOptions(ctx context.Context, ask askAgent, workspace string) (companio
 		}
 		return "cd " + shellQuote(workspace) + " && " + command
 	}
-	help, err := ask(ctx, in("claude --help"))
+	help, err := within(ctx, ask, in("claude --help"), maxHelp, "--help")
 	if err != nil {
 		return companion.Options{}, fmt.Errorf("asking claude for its --help: %w", err)
 	}
@@ -127,7 +152,7 @@ func agentOptions(ctx context.Context, ask askAgent, workspace string) (companio
 	if err != nil {
 		return companion.Options{}, err
 	}
-	answer, err := ask(ctx, in("claude -p /model --output-format json --no-session-persistence"))
+	answer, err := within(ctx, ask, in("claude -p /model --output-format json --no-session-persistence"), maxAnswer, "/model")
 	if err != nil {
 		return companion.Options{}, fmt.Errorf("asking claude which models it has: %w", err)
 	}
@@ -145,7 +170,10 @@ func agentOptions(ctx context.Context, ask askAgent, workspace string) (companio
 	if err != nil {
 		return companion.Options{}, err
 	}
-	opts := companion.Options{Models: models.Plain, OtherModels: models.Other, Efforts: efforts, Current: models.Current}
+	if models.Dropped > 0 {
+		note("claude lists more models than expected (or names far too long to be one): %d left out, the rest are offered", models.Dropped)
+	}
+	opts := companion.Options{Models: models.Plain, OtherModels: models.Other, Efforts: efforts, Current: models.Current, Rules: models.Rules}
 	// The versions are what the page shows beside each, but the lists are
 	// good without them: so a failure to ask is said, not made the lists'.
 	if opts.Names, err = modelNames(ctx, ask, in, append(append([]string{}, models.Plain...), models.Other...)); err != nil {
@@ -162,21 +190,28 @@ func modelNames(ctx context.Context, ask askAgent, in func(string) string, alias
 	for i, a := range aliases {
 		quoted[i] = shellQuote(a)
 	}
-	out, err := ask(ctx, in(`for m in `+strings.Join(quoted, " ")+`; do printf '=== %s\n' "$m"; claude -p "/model $m" --output-format json --no-session-persistence </dev/null; echo; done`))
+	out, err := within(ctx, ask, in(`for m in `+strings.Join(quoted, " ")+`; do printf '=== %s\n' "$m"; claude -p "/model $m" --output-format json --no-session-persistence </dev/null; echo; done`), maxNamesAnswer, "the names")
 	if err != nil {
 		return nil, err
+	}
+	asked := map[string]bool{}
+	for _, a := range aliases {
+		asked[a] = true
 	}
 	names := map[string]string{}
 	for _, section := range strings.Split(out, "=== ")[1:] {
 		alias, body, _ := strings.Cut(section, "\n")
+		alias = strings.TrimSpace(alias)
 		var said struct {
 			Result string `json:"result"`
 		}
-		if json.Unmarshal([]byte(strings.TrimSpace(body)), &said) != nil {
+		// Only what was asked, and a name that could be one: the answer is the
+		// agent's to write.
+		if !asked[alias] || json.Unmarshal([]byte(strings.TrimSpace(body)), &said) != nil {
 			continue
 		}
-		if name, err := modelchoice.ParseModelName(said.Result); err == nil {
-			names[strings.TrimSpace(alias)] = name
+		if name, err := modelchoice.ParseModelName(said.Result); err == nil && len(name) <= maxName {
+			names[alias] = name
 		}
 	}
 	if len(names) == 0 {
@@ -222,6 +257,8 @@ func keptOptions(file string, now func() time.Time) (cached func() (companion.Op
 		}
 		// Kept in whatever order it was in then.
 		kept.Options.Models, kept.Options.OtherModels = modelchoice.BySize(kept.Options.Models), modelchoice.BySize(kept.Options.OtherModels)
+		// Said by the list itself since lists kept earlier were made.
+		kept.Options.Rules = modelchoice.RulesAmong(kept.Options.OtherModels)
 		return kept.Options, kept.At, true
 	}
 	remember = func(opts companion.Options) error {
@@ -245,6 +282,10 @@ func sandboxChoice(name, workspace string, kept profileChoice, optionsFile strin
 	return &companion.Choice{
 		Get: func() (string, string, error) {
 			c, err := kept.get()
+			return c.Model, c.Effort, err
+		},
+		Own: func() (string, string, error) {
+			c, err := kept.own()
 			return c.Model, c.Effort, err
 		},
 		Set: kept.set,

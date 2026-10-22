@@ -52,11 +52,41 @@ type Models struct {
 	// Current is the agent's own name for the model it would use with no
 	// choice made, as it says it ("Opus 5.5 (default)"); empty if it didn't.
 	Current string
+	// Rules are the listed names that pick a model by a rule and aren't one
+	// model themselves ("best"): what ran can't be held against them.
+	Rules []string
+	// Dropped is how many listed names were left out: more than maxModels,
+	// or one far longer than any model's name.
+	Dropped int
 }
+
+const (
+	// maxModels is the most models taken from a list: the agent can list
+	// about a dozen.
+	maxModels = 50
+	// maxCurrent is the longest name of the default model that is kept.
+	maxCurrent = 200
+)
 
 // notAFamily are listed names that aren't one model's: "default" is what no
 // choice already means, and the others pick by a rule, not a model.
 var notAFamily = map[string]bool{"best": true, "opusplan": true}
+
+// IsRule says name picks a model by a rule ("best", "opusplan") rather than
+// naming one.
+func IsRule(name string) bool { return notAFamily[name] }
+
+// RulesAmong are the names of names that pick a model by a rule, in the order
+// they were given.
+func RulesAmong(names []string) []string {
+	var out []string
+	for _, name := range names {
+		if IsRule(name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
 
 // listedDefault is the name the agent gives to its default, which is what
 // no choice is, so it isn't offered as another.
@@ -108,6 +138,9 @@ func ParseModels(answer string) (Models, error) {
 	var out Models
 	if m := currentModel.FindStringSubmatch(answer); m != nil {
 		out.Current = m[1]
+		if runes := []rune(out.Current); len(runes) > maxCurrent {
+			out.Current = string(runes[:maxCurrent-1]) + "…"
+		}
 	}
 	found := availableRun.FindStringSubmatch(answer)
 	if found == nil {
@@ -120,6 +153,8 @@ func ParseModels(answer string) (Models, error) {
 		}
 		switch {
 		case name == "" || name == listedDefault:
+		case len(name) > maxModel:
+			out.Dropped++
 		case plainName.MatchString(name) && !notAFamily[name]:
 			out.Plain = append(out.Plain, name)
 		default:
@@ -130,6 +165,18 @@ func ParseModels(answer string) (Models, error) {
 		}
 	}
 	out.Plain, out.Other = BySize(out.Plain), BySize(out.Other)
+	// Biggest first, so what's left out is the least likely to be wanted.
+	if over := len(out.Plain) + len(out.Other) - maxModels; over > 0 {
+		out.Dropped += over
+		if over <= len(out.Other) {
+			out.Other = out.Other[:len(out.Other)-over]
+		} else {
+			over -= len(out.Other)
+			out.Other = nil
+			out.Plain = out.Plain[:len(out.Plain)-over]
+		}
+	}
+	out.Rules = RulesAmong(out.Other)
 	if len(out.Plain)+len(out.Other) == 0 {
 		return Models{}, fmt.Errorf("the agent's answer to /model lists no models: %q", firstLine(answer))
 	}

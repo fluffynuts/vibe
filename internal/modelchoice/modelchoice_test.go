@@ -212,3 +212,77 @@ func TestAnAbsurdlyLongListOfEffortsIsRefused(t *testing.T) {
 		t.Errorf("accepted %d efforts", len(got))
 	}
 }
+
+// names makes n distinct lower-case names (letters only, as plain ones are).
+func names(n int) []string {
+	var out []string
+	for i := 0; i < n; i++ {
+		out = append(out, strings.Repeat(string(rune('a'+i%26)), 1+i/26))
+	}
+	return out
+}
+
+func TestOnlyAReasonableNumberOfModelsIsTakenFromAList(t *testing.T) {
+	got, err := ParseModels("Current model: `X`\nUsage: /model <name>. Available: " + strings.Join(names(200), ", ") + ", or a full model ID.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(got.Plain) + len(got.Other); n != maxModels {
+		t.Errorf("%d models taken, want %d", n, maxModels)
+	}
+	if got.Dropped != 200-maxModels {
+		t.Errorf("dropped = %d, want %d", got.Dropped, 200-maxModels)
+	}
+}
+
+func TestAListWithinTheLimitDropsNothing(t *testing.T) {
+	got, err := ParseModels(modelCommandResult(t))
+	if err != nil || got.Dropped != 0 {
+		t.Errorf("dropped %d, %v", got.Dropped, err)
+	}
+}
+
+func TestAModelNameFarLongerThanAnyRealOneIsLeftOut(t *testing.T) {
+	long := strings.Repeat("a", maxModel+1)
+	got, err := ParseModels("Available: opus, " + long + ", sonnet[" + strings.Repeat("1", maxModel) + "], haiku, or a full model ID.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"opus", "haiku"}; !reflect.DeepEqual(got.Plain, want) {
+		t.Errorf("plain = %v, want %v", got.Plain, want)
+	}
+	if len(got.Other) != 0 || got.Dropped != 2 {
+		t.Errorf("other = %v, dropped %d; want none, and 2", got.Other, got.Dropped)
+	}
+}
+
+func TestTheNameOfTheDefaultModelIsKeptToALengthThatCanBeShown(t *testing.T) {
+	got, err := ParseModels("Current model: `" + strings.Repeat("x", 500) + "`\nAvailable: opus, or a full model ID.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len([]rune(got.Current)) > maxCurrent {
+		t.Errorf("current is %d characters", len([]rune(got.Current)))
+	}
+}
+
+func TestWhichListedNamesPickByARuleAndAreNotOneModel(t *testing.T) {
+	got, err := ParseModels(modelCommandResult(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"best", "opusplan"}; !reflect.DeepEqual(got.Rules, want) {
+		t.Errorf("rules = %v, want %v", got.Rules, want)
+	}
+	for name, want := range map[string]bool{"best": true, "opusplan": true, "opus": false, "opus[1m]": false, "fable[1m]": false, "default": false} {
+		if IsRule(name) != want {
+			t.Errorf("IsRule(%q) = %v, want %v", name, !want, want)
+		}
+	}
+	if got := RulesAmong([]string{"opus[1m]", "best", "x", "opusplan"}); !reflect.DeepEqual(got, []string{"best", "opusplan"}) {
+		t.Errorf("RulesAmong = %v", got)
+	}
+	if got := RulesAmong(nil); len(got) != 0 {
+		t.Errorf("RulesAmong(nil) = %v", got)
+	}
+}

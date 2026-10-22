@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -188,7 +189,7 @@ func TestTheListsTheAgentSaidAreKeptForNextTimeWithWhenTheyWereAsked(t *testing.
 	if _, _, ok := cached(); ok {
 		t.Fatal("something was kept before anything was remembered")
 	}
-	want := companion.Options{Models: []string{"opus", "sonnet"}, OtherModels: []string{"best"}, Efforts: []string{"low", "high"}, Current: "Opus 5.5 (default)"}
+	want := companion.Options{Models: []string{"opus", "sonnet"}, OtherModels: []string{"best"}, Rules: []string{"best"}, Efforts: []string{"low", "high"}, Current: "Opus 5.5 (default)"}
 	if err := remember(want); err != nil {
 		t.Fatal(err)
 	}
@@ -397,5 +398,151 @@ func TestATurnStartingWhileTheChoiceIsBeingChangedGetsOneOfThemWhole(t *testing.
 		if got != one && got != other {
 			t.Fatalf("a turn read %+v, which is neither choice", got)
 		}
+	}
+}
+
+// askWith answers the three commands the lists are made from with what's given.
+func askWith(help, model, names string) askAgent {
+	return func(ctx context.Context, script string) (string, error) {
+		switch {
+		case strings.Contains(script, "--help"):
+			return help, nil
+		case strings.Contains(script, "==="):
+			return names, nil
+		}
+		return model, nil
+	}
+}
+
+func jsonResult(text string) string {
+	data, _ := json.Marshal(map[string]interface{}{"is_error": false, "result": text})
+	return string(data)
+}
+
+func TestTheNamesThatPickByARuleAreSaidSoToThePage(t *testing.T) {
+	got, err := agentOptions(context.Background(), askingWithNames(namesAnswer("fable"), nil), "/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"best", "opusplan"}; !reflect.DeepEqual(got.Rules, want) {
+		t.Errorf("rules = %v, want %v", got.Rules, want)
+	}
+}
+
+func TestListsKeptBeforeRulesWereSaidGetThemWhenTheyAreRead(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "box.model-options.json")
+	os.WriteFile(file, []byte(`{"version": 1, "at": "2026-10-21T09:30:00Z", "options": {"models": ["opus"], "otherModels": ["best", "opus[1m]", "opusplan"], "efforts": ["low"]}}`), 0o600)
+	cached, _ := keptOptions(file, time.Now)
+	got, _, ok := cached()
+	if !ok || !reflect.DeepEqual(got.Rules, []string{"best", "opusplan"}) {
+		t.Errorf("got %+v, %v", got, ok)
+	}
+}
+
+func TestAnAnswerFarLargerThanAListShouldBeIsRefusedNotKept(t *testing.T) {
+	realHelp, realModel := realOutputNoT("claude-help-effort.txt"), realOutputNoT("model-command.json")
+	huge := strings.Repeat("x", maxAnswer+1)
+	for name, ask := range map[string]askAgent{
+		"the help":         askWith(strings.Repeat("x", maxHelp+1), realModel, ""),
+		"the models":       askWith(realHelp, jsonResult("Available: opus, "+huge), ""),
+		"the models' json": askWith(realHelp, huge, ""),
+	} {
+		if _, err := agentOptions(context.Background(), ask, "/work"); err == nil || !strings.Contains(err.Error(), "larger") {
+			t.Errorf("%s: err = %v, want a refusal saying it is too large", name, err)
+		}
+	}
+}
+
+func TestTooManyModelsAreCutAndSaid(t *testing.T) {
+	var many []string
+	for i := 0; i < 120; i++ {
+		many = append(many, strings.Repeat(string(rune('a'+i%26)), 1+i/26))
+	}
+	ask := askWith(realOutputNoT("claude-help-effort.txt"), jsonResult("Current model: `X`\nAvailable: "+strings.Join(many, ", ")+", or a full model ID."), "")
+	var got companion.Options
+	said := notesOf(func() { got, _ = agentOptions(context.Background(), ask, "/work") })
+	if n := len(got.Models) + len(got.OtherModels); n != 50 {
+		t.Errorf("%d models taken, want 50", n)
+	}
+	var mentioned bool
+	for _, line := range said {
+		if strings.Contains(line, "70") && strings.Contains(line, "left out") {
+			mentioned = true
+		}
+	}
+	if !mentioned {
+		t.Errorf("the 70 left out aren't said: %q", said)
+	}
+}
+
+func TestOnlyTheNamesAskedForAreTakenFromWhatTheAgentSaysTheyAre(t *testing.T) {
+	hostile := namesAnswer("fable", "opus") +
+		"=== nobody-asked\n" + jsonResult("Set model to `Smuggled` for this session only") + "\n\n" +
+		"=== sonnet\n" + jsonResult("Set model to `"+strings.Repeat("N", 101)+"` for this session only") + "\n\n"
+	got, err := agentOptions(context.Background(), askingWithNames(hostile, nil), "/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, there := got.Names["nobody-asked"]; there {
+		t.Error("a name for an alias nobody asked about was taken")
+	}
+	if _, there := got.Names["sonnet"]; there {
+		t.Errorf("a name of %d characters was taken", len(got.Names["sonnet"]))
+	}
+	if got.Names["fable"] != "Fable 5.1" || got.Names["opus"] != "Opus 5.5" {
+		t.Errorf("the real ones were lost: %v", got.Names)
+	}
+}
+
+func TestANamesAnswerFarLargerThanItShouldBeLeavesTheListsAloneAndIsSaid(t *testing.T) {
+	realHelp, realModel := realOutputNoT("claude-help-effort.txt"), realOutputNoT("model-command.json")
+	var got companion.Options
+	var err error
+	said := notesOf(func() {
+		got, err = agentOptions(context.Background(), askWith(realHelp, realModel, "=== fable\n"+strings.Repeat("x", maxNamesAnswer+1)), "/work")
+	})
+	if err != nil || len(got.Models) != 4 || len(got.Names) != 0 {
+		t.Fatalf("%v, models %v, names %v", err, got.Models, got.Names)
+	}
+	if len(said) != 1 || !strings.Contains(said[0], "larger") {
+		t.Errorf("said %q", said)
+	}
+}
+
+// Pinned: a profile's Default only removes the profile's own choice, so what
+// the global settings.yaml says stays in force. The page says so (see
+// companion's inherited), so this is a decision and not an accident.
+func TestChoosingDefaultInAProfileLeavesTheGlobalSettingsChoiceInForce(t *testing.T) {
+	c, _ := choiceHome(t, "")
+	if err := os.WriteFile(filepath.Join(c.lay.Home, "settings.yaml"), []byte("model: opus\neffort: low\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.set("sonnet", "high"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.get(); got != (turnChoice{Model: "sonnet", Effort: "high"}) {
+		t.Fatalf("the profile's own choice should win: %+v", got)
+	}
+	if err := c.set("", ""); err != nil {
+		t.Fatal(err)
+	}
+	own, _ := c.own()
+	if own != (turnChoice{}) {
+		t.Errorf("the profile still holds %+v", own)
+	}
+	if got, _ := c.get(); got != (turnChoice{Model: "opus", Effort: "low"}) {
+		t.Errorf("choosing Default gave %+v, want the global settings' opus and low", got)
+	}
+}
+
+func TestOwnIsWhatTheProfileHoldsAndNotWhatItInherits(t *testing.T) {
+	c, _ := choiceHome(t, "effort: high\n")
+	os.WriteFile(filepath.Join(c.lay.Home, "settings.yaml"), []byte("model: opus\n"), 0o644)
+	own, err := c.own()
+	if err != nil || own != (turnChoice{Effort: "high"}) {
+		t.Errorf("own = %+v, %v; want only the effort", own, err)
+	}
+	if got, _ := c.get(); got != (turnChoice{Model: "opus", Effort: "high"}) {
+		t.Errorf("get = %+v", got)
 	}
 }

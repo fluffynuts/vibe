@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -22,11 +24,14 @@ type choosing struct {
 	asked    int
 	woke     int
 	setCalls [][2]string
-	// what was kept of the lists from an earlier run, and what was kept since
-	cached      *Options
-	cachedAt    time.Time
-	remembered  []Options
-	rememberErr error
+	// model and effort are what the profile holds itself; the global settings
+	// under them give what it doesn't. gate holds Options until it's closed.
+	globalModel, globalEffort string
+	gate                      chan struct{}
+	cached                    *Options
+	cachedAt                  time.Time
+	remembered                []Options
+	rememberErr               error
 }
 
 func (c *choosing) config() *Choice {
@@ -34,7 +39,14 @@ func (c *choosing) config() *Choice {
 		Get: func() (string, string, error) {
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			return c.model, c.effort, nil
+			model, effort := c.model, c.effort
+			if model == "" {
+				model = c.globalModel
+			}
+			if effort == "" {
+				effort = c.globalEffort
+			}
+			return model, effort, nil
 		},
 		Set: func(model, effort string) error {
 			c.mu.Lock()
@@ -48,9 +60,22 @@ func (c *choosing) config() *Choice {
 		},
 		Options: func(ctx context.Context) (Options, error) {
 			c.mu.Lock()
-			defer c.mu.Unlock()
 			c.asked++
-			return c.options, c.optsErr
+			gate, opts, err := c.gate, c.options, c.optsErr
+			c.mu.Unlock()
+			if gate != nil {
+				select {
+				case <-gate:
+				case <-ctx.Done():
+					return Options{}, ctx.Err()
+				}
+			}
+			return opts, err
+		},
+		Own: func() (string, string, error) {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			return c.model, c.effort, nil
 		},
 		Cached: func() (Options, time.Time, bool) {
 			c.mu.Lock()
@@ -89,10 +114,14 @@ func choiceServer(t *testing.T, c *choosing) *Server {
 }
 
 type choiceState struct {
-	Model        string   `json:"model"`
-	Effort       string   `json:"effort"`
-	Running      string   `json:"running"`
-	Session      bool     `json:"session"`
+	Model     string `json:"model"`
+	Effort    string `json:"effort"`
+	Running   string `json:"running"`
+	Session   bool   `json:"session"`
+	Inherited struct {
+		Model  bool `json:"model"`
+		Effort bool `json:"effort"`
+	} `json:"inherited"`
 	Options      *Options `json:"options"`
 	OptionsAt    int64    `json:"optionsAt"`
 	OptionsFresh bool     `json:"optionsFresh"`
@@ -432,4 +461,135 @@ func TestWithNothingKeptAndNothingAskedThePageHasNoLists(t *testing.T) {
 	if got := readChoice(t, s); got.Options != nil || got.OptionsFresh {
 		t.Errorf("got %+v", got)
 	}
+}
+
+func TestThePageIsToldWhenWhatIsChosenComesFromTheGlobalSettingsNotTheProfile(t *testing.T) {
+	c := &choosing{globalModel: "opus", effort: "high"}
+	got := readChoice(t, choiceServer(t, c))
+	if !got.Inherited.Model || got.Inherited.Effort {
+		t.Errorf("inherited = %+v, want the model and not the effort", got.Inherited)
+	}
+}
+
+func TestNothingIsInheritedWhenTheProfileHoldsItAllItself(t *testing.T) {
+	got := readChoice(t, choiceServer(t, &choosing{model: "opus", effort: "high"}))
+	if got.Inherited.Model || got.Inherited.Effort {
+		t.Errorf("inherited = %+v", got.Inherited)
+	}
+}
+
+func TestNothingIsInheritedWhenNothingIsChosenAtAll(t *testing.T) {
+	c := &choosing{}
+	if got := readChoice(t, choiceServer(t, c)); got.Inherited.Model || got.Inherited.Effort {
+		t.Errorf("inherited = %+v", got.Inherited)
+	}
+}
+
+// Pinned, as it's easy to take for a bug: Default in the profile can't take away
+// what the global settings.yaml sets, so the value stays in force and the page is
+// told it comes from there.
+func TestChoosingDefaultDoesNotTakeAwayWhatTheGlobalSettingsSetAndSaysWhereItComesFrom(t *testing.T) {
+	c := &choosing{model: "sonnet", globalModel: "opus"}
+	s := choiceServer(t, c)
+	rec := do(t, s, post("/api/conversation/choice", `{"model":"","effort":""}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if len(c.setCalls) != 1 || c.setCalls[0] != [2]string{"", ""} {
+		t.Errorf("the profile was asked to keep %v, want Default", c.setCalls)
+	}
+	var got choiceState
+	json.Unmarshal(rec.Body.Bytes(), &got)
+	if got.Model != "opus" || !got.Inherited.Model {
+		t.Errorf("got %+v: the global's opus should still be in force, and said to be inherited", got)
+	}
+}
+
+func TestTwoPagesAskingAtOnceAskTheAgentOnce(t *testing.T) {
+	c := &choosing{options: claudeOptions, gate: make(chan struct{})}
+	s := choiceServer(t, c)
+	codes := make(chan int, 2)
+	for i := 0; i < 2; i++ {
+		go func() { codes <- do(t, s, post("/api/conversation/choice/options", `{}`)).Code }()
+	}
+	waitFor(t, "the agent to be asked", func() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.asked >= 1 })
+	time.Sleep(50 * time.Millisecond)
+	close(c.gate)
+	for i := 0; i < 2; i++ {
+		if code := <-codes; code != http.StatusOK {
+			t.Errorf("a page got %d", code)
+		}
+	}
+	if c.asked != 1 {
+		t.Errorf("the agent was asked %d times, want 1", c.asked)
+	}
+	if len(c.remembered) != 1 {
+		t.Errorf("remembered %d times, want 1", len(c.remembered))
+	}
+}
+
+func TestWhenTheFirstOfTwoAsksFailsTheSecondAsksForItself(t *testing.T) {
+	c := &choosing{options: claudeOptions, optsErr: errors.New("sandbox is stopped"), gate: make(chan struct{})}
+	s := choiceServer(t, c)
+	first := make(chan int, 1)
+	go func() { first <- do(t, s, post("/api/conversation/choice/options", `{}`)).Code }()
+	waitFor(t, "the first ask", func() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.asked == 1 })
+	second := make(chan int, 1)
+	go func() { second <- do(t, s, post("/api/conversation/choice/options", `{}`)).Code }()
+	time.Sleep(50 * time.Millisecond)
+	c.mu.Lock()
+	c.optsErr = nil
+	c.mu.Unlock()
+	close(c.gate)
+	if code := <-first; code != http.StatusBadGateway {
+		t.Errorf("the first got %d, want 502", code)
+	}
+	if code := <-second; code != http.StatusOK {
+		t.Errorf("the second got %d, want it to have asked for itself and been answered", code)
+	}
+	if c.asked != 2 {
+		t.Errorf("asked %d times, want 2", c.asked)
+	}
+}
+
+func TestAPageThatStopsWaitingIsNotWaitedFor(t *testing.T) {
+	c := &choosing{options: claudeOptions, gate: make(chan struct{})}
+	s := choiceServer(t, c)
+	go do(t, s, post("/api/conversation/choice/options", `{}`))
+	waitFor(t, "the first ask", func() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.asked == 1 })
+	ctx, cancel := context.WithCancel(context.Background())
+	r := post("/api/conversation/choice/options", `{}`)
+	done := make(chan int, 1)
+	go func() {
+		hr := httptest.NewRequest("POST", r.path, strings.NewReader(r.body)).WithContext(ctx)
+		hr.Host = "localhost:" + strconv.Itoa(testPort)
+		for k, v := range r.headers {
+			hr.Header.Set(k, v)
+		}
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, hr)
+		done <- w.Code
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case code := <-done:
+		if code < 400 {
+			t.Errorf("got %d, want an error for a page that gave up", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a second page that gave up is still being held by the first's ask")
+	}
+	close(c.gate)
+}
+
+func waitFor(t *testing.T, what string, ok func() bool) {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		if ok() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
 }
