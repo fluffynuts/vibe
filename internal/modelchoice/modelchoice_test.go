@@ -153,3 +153,62 @@ func TestAnAnswerThatNamesNoModelIsAnError(t *testing.T) {
 		}
 	}
 }
+
+// help shapes a --help with the flags given, one per line as claude prints them.
+func help(flags ...string) string { return "Options:\n" + strings.Join(flags, "\n") + "\n" }
+
+func TestTheEffortListIsOnlyReadFromTheEffortFlagsOwnDescription(t *testing.T) {
+	for name, tc := range map[string]struct {
+		help string
+		want []string
+	}{
+		"the list in parentheses, wrapped onto the next line": {
+			help("  --effort <level>     Effort level for the current session", "                       (low, high)", "  --other <x>          Another flag (a, b)"),
+			[]string{"low", "high"}},
+		"it is the last flag": {
+			help("  --model <m>          the model", "  --effort <level>     Effort (low, medium, high)"),
+			[]string{"low", "medium", "high"}},
+		"another note in parentheses beside the list": {
+			help("  --effort <level>     Effort (experimental) (low, high)", "  --x <y>              x"),
+			[]string{"low", "high"}},
+		"a later flag's list isn't taken for the effort's": {
+			help("  --effort <level>     Effort: low, medium or high", "  --pick <p>           which (one, two, three)"),
+			nil},
+		"a later flag's single word in parentheses isn't taken either": {
+			help("  --effort <level>     how hard to think", "  --environment <id>   where it runs (default)"),
+			nil},
+		"a lone word in parentheses isn't a list of efforts": {
+			help("  --effort <level>     how hard to think (max)"),
+			nil},
+		"two lists are ambiguous, not guessed at": {
+			help("  --effort <level>     Effort (low, high) or (fast, slow)"),
+			nil},
+		"upper case is not what the flag takes": {
+			help("  --effort <level>     Effort (Low, High)"),
+			nil},
+		"nothing in parentheses": {
+			help("  --effort <level>     how hard to think"),
+			nil},
+	} {
+		got, err := ParseEfforts(tc.help)
+		if tc.want == nil {
+			if err == nil {
+				t.Errorf("%s: no error, got %v", name, got)
+			}
+			continue
+		}
+		if err != nil || !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: %v, %v; want %v", name, got, err, tc.want)
+		}
+	}
+}
+
+func TestAnAbsurdlyLongListOfEffortsIsRefused(t *testing.T) {
+	var many []string
+	for i := 0; i < 40; i++ {
+		many = append(many, strings.Repeat("a", 1+i%5)+strings.Repeat("b", i/5))
+	}
+	if got, err := ParseEfforts(help("  --effort <level>     Effort (" + strings.Join(many, ", ") + ")")); err == nil {
+		t.Errorf("accepted %d efforts", len(got))
+	}
+}

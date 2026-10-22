@@ -147,21 +147,41 @@ func ParseModelName(answer string) (string, error) {
 	return "", fmt.Errorf("the agent's answer doesn't name the model: %q", firstLine(answer))
 }
 
-// effortFlag finds the --effort flag in the agent's --help, with the list of
-// values it takes in the parentheses its description ends with.
-var effortFlag = regexp.MustCompile(`--effort\s+<[^>]+>[^(]*\(([a-z][a-z, ]*)\)`)
+// effortFlag finds where the --effort flag's description starts in the
+// agent's --help; nextFlag, where the next flag's does.
+var (
+	effortFlag = regexp.MustCompile(`--effort\s+<[^>]+>`)
+	nextFlag   = regexp.MustCompile(`(?m)^\s+-`)
+	// effortList is a parenthesised list of at least two lower-case names.
+	effortList = regexp.MustCompile(`\(([a-z]+(?:\s*,\s*[a-z]+)+)\)`)
+)
 
-// ParseEfforts reads the values --effort takes from the agent's --help.
+// maxEfforts bounds how many efforts the agent may list: five are real.
+const maxEfforts = 20
+
+// ParseEfforts reads the values --effort takes from the agent's --help: the
+// parenthesised list in --effort's own description, up to the next flag's. It
+// is an error, and not a guess, when that description has no such list (or
+// two of them): another flag's parenthesis must never be read as the efforts.
 func ParseEfforts(help string) ([]string, error) {
-	m := effortFlag.FindStringSubmatch(help)
-	if m == nil {
+	at := effortFlag.FindStringIndex(help)
+	if at == nil {
 		return nil, fmt.Errorf("the agent's --help doesn't list the values --effort takes")
 	}
+	block := help[at[1]:]
+	if next := nextFlag.FindStringIndex(block); next != nil {
+		block = block[:next[0]]
+	}
+	lists := effortList.FindAllStringSubmatch(block, -1)
+	if len(lists) != 1 {
+		return nil, fmt.Errorf("the agent's --help doesn't say the values --effort takes in one list in parentheses (it has %d)", len(lists))
+	}
 	var out []string
-	for _, v := range strings.Split(m[1], ",") {
-		if v = strings.TrimSpace(v); v != "" {
-			out = append(out, v)
-		}
+	for _, v := range strings.Split(lists[0][1], ",") {
+		out = append(out, strings.TrimSpace(v))
+	}
+	if len(out) > maxEfforts {
+		return nil, fmt.Errorf("the agent's --help lists %d efforts, more than the %d expected", len(out), maxEfforts)
 	}
 	return out, nil
 }
