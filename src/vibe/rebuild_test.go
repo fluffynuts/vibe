@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -252,5 +253,156 @@ func TestReComposingAProfileWithNoChoiceMakesNone(t *testing.T) {
 	}
 	if got, _ := readFile(t, filepath.Join(dir, "settings.yaml")); strings.Contains(got, "model") || strings.Contains(got, "effort") {
 		t.Errorf("settings.yaml = %q", got)
+	}
+}
+
+// profileWith makes a profile "foo-browser" holding files, and gives its
+// layout and folder.
+func profileWith(t *testing.T, files map[string]string) (layout.Layout, string) {
+	t.Helper()
+	lay := layout.New(t.TempDir(), t.TempDir())
+	dir := lay.HomePath("profiles", "foo-browser")
+	writeFile(t, filepath.Join(dir, "config.yaml"), "name: foo-browser\n")
+	writeFile(t, filepath.Join(dir, "install-scripts", "01-mine"), "echo mine\n")
+	for name, text := range files {
+		writeFile(t, filepath.Join(dir, name), text)
+	}
+	return lay, dir
+}
+
+// answeringKeep stands in for the user: it answers each question with answer (nil:
+// none is expected), and gives what was asked.
+func answeringKeep(t *testing.T, answer func(question string) bool) (asked *[]string, restore func()) {
+	t.Helper()
+	asked = new([]string)
+	was := askKeepPreferences
+	askKeepPreferences = func(question string) bool {
+		*asked = append(*asked, question)
+		if answer == nil {
+			t.Errorf("asked %q when nothing was to be asked", question)
+			return false
+		}
+		return answer(question)
+	}
+	return asked, func() { askKeepPreferences = was }
+}
+
+const kept = "# mine\ntheme: green\nmodel: opus\nfuture: thing\n"
+
+func TestReCreateWithForceKeepsTheChoicesByteForByteAndLeavesTheRestToBeMadeAgain(t *testing.T) {
+	lay, dir := profileWith(t, map[string]string{"user-preferences.yaml": kept})
+	asked, restore := answeringKeep(t, nil)
+	defer restore()
+	doReCreate(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "foo-browser", t.TempDir())
+	if len(*asked) != 0 {
+		t.Errorf("asked %q", *asked)
+	}
+	if got, _ := readFile(t, filepath.Join(dir, "user-preferences.yaml")); got != kept {
+		t.Errorf("the new profile's preferences are %q, want them as they were", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "install-scripts", "01-mine")); err == nil {
+		t.Error("the rest of the old profile was kept too")
+	}
+}
+
+func TestReCreateSaysWhatItKeptAndHowToDropIt(t *testing.T) {
+	lay, _ := profileWith(t, map[string]string{"user-preferences.yaml": kept})
+	said := strings.Join(notesOf(func() { preferencesToKeep(lay, "foo-browser", true) }), "\n")
+	for _, want := range []string{"keeping your choices", "theme: green", "model: opus", "user-preferences.yaml", "to drop them"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("it said %q, lacking %q", said, want)
+		}
+	}
+}
+
+func TestReCreateAsksWhetherToKeepTheChoicesListingThemAndKeepsThemOnYes(t *testing.T) {
+	lay, _ := profileWith(t, map[string]string{"user-preferences.yaml": kept})
+	asked, restore := answeringKeep(t, func(string) bool { return true })
+	defer restore()
+	data, err := preferencesToKeep(lay, "foo-browser", false)
+	if err != nil || string(data) != kept {
+		t.Errorf("kept %q, %v", data, err)
+	}
+	if len(*asked) != 1 {
+		t.Fatalf("asked %q", *asked)
+	}
+	for _, want := range []string{"profile 'foo-browser'", "theme: green", "model: opus"} {
+		if !strings.Contains((*asked)[0], want) {
+			t.Errorf("the question lacks %q: %s", want, (*asked)[0])
+		}
+	}
+}
+
+func TestReCreateDropsTheChoicesOnNo(t *testing.T) {
+	lay, _ := profileWith(t, map[string]string{"user-preferences.yaml": kept})
+	_, restore := answeringKeep(t, func(string) bool { return false })
+	defer restore()
+	if data, err := preferencesToKeep(lay, "foo-browser", false); err != nil || data != nil {
+		t.Errorf("kept %q, %v after a no", data, err)
+	}
+}
+
+func TestReCreateAsksNothingWhenThereAreNoChoicesToKeep(t *testing.T) {
+	for name, files := range map[string]map[string]string{
+		"no file": nil, "an empty file": {"user-preferences.yaml": "  \n"}, "only comments": {"user-preferences.yaml": "# nothing\n"},
+	} {
+		lay, _ := profileWith(t, files)
+		_, restore := answeringKeep(t, nil)
+		data, err := preferencesToKeep(lay, "foo-browser", false)
+		restore()
+		if err != nil || data != nil {
+			t.Errorf("%s: kept %q, %v", name, data, err)
+		}
+	}
+}
+
+func TestReCreateKeepsAFileItCannotReadAsItIsAndSaysItCouldntRead(t *testing.T) {
+	broken := "model: [unclosed\n"
+	lay, _ := profileWith(t, map[string]string{"user-preferences.yaml": broken})
+	asked, restore := answeringKeep(t, func(string) bool { return true })
+	defer restore()
+	data, err := preferencesToKeep(lay, "foo-browser", false)
+	if err != nil || string(data) != broken {
+		t.Errorf("kept %q, %v: what the user may have been editing must be carried whole", data, err)
+	}
+	if len(*asked) != 1 || !strings.Contains((*asked)[0], "can't read") {
+		t.Errorf("asked %q", *asked)
+	}
+}
+
+func TestReCreateKeepsWhatEarlierVibesKeptInFilesOfTheirOwn(t *testing.T) {
+	lay, dir := profileWith(t, map[string]string{"claude-theme": "amber\n", "git-author": "import\n"})
+	asked, restore := answeringKeep(t, nil)
+	defer restore()
+	doReCreate(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "foo-browser", t.TempDir())
+	if len(*asked) != 0 {
+		t.Errorf("asked %q", *asked)
+	}
+	prefs, err := userprefs.Load(dir)
+	if err != nil || prefs.Theme != "amber" || prefs.GitAuthor != "import" {
+		t.Errorf("prefs %+v, %v", prefs, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "claude-theme")); err == nil {
+		t.Error("the old theme file came back")
+	}
+}
+
+func TestTheKeptChoicesAreBackOnceTheNewProfileIsMadeAndBeforeTheKitIsRead(t *testing.T) {
+	lay := layout.New(t.TempDir(), t.TempDir())
+	var madeFirst bool
+	var theme string
+	hook := func(l layout.Layout, profile string) error {
+		madeFirst = l.ProfileExists(profile)
+		if err := restorePreferences([]byte("theme: green\n"))(l, profile); err != nil {
+			return err
+		}
+		prefs, _ := userprefs.Load(l.HomePath("profiles", profile))
+		theme = prefs.Theme
+		return nil
+	}
+	// With no sbx here the rebuild fails further on; the hook has run by then.
+	rebuildSandbox(context.Background(), lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "box", t.TempDir(), true, false, hook)
+	if !madeFirst || theme != "green" {
+		t.Errorf("profile made first: %v; preferences' theme: %q", madeFirst, theme)
 	}
 }

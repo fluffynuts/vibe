@@ -18,6 +18,7 @@ import (
 	"vibe/internal/layout"
 	"vibe/internal/library"
 	agentmem "vibe/internal/memory"
+	"vibe/internal/pathresolve"
 	"vibe/internal/profilegen"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
@@ -50,8 +51,8 @@ func doReInit(lay layout.Layout, args cliargs.Args, name, target string) error {
 // the profile and the sandbox, so this must not ask about the sandbox a
 // second time. askZone asks which timezone the rebuilt sandbox should be
 // on, rather than keeping the one it had.
-func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool) error {
-	if err := rebuildSandbox(context.Background(), lay, args, name, target, skipSandboxConfirm, askZone); err != nil {
+func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool, after ...afterProfile) error {
+	if err := rebuildSandbox(context.Background(), lay, args, name, target, skipSandboxConfirm, askZone, after...); err != nil {
 		return err
 	}
 	return finish(lay, args, name)
@@ -67,9 +68,14 @@ var pickRebuildAgent = pickAgent
 // ctx ending (the companion page's Cancel) ends the sbx command under way,
 // and the rebuild stops before its next step: what is left is said by the
 // caller, which can ask sbx.
-func rebuildSandbox(ctx context.Context, lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool) error {
-	return rebuildSandboxTo(ctx, lay, args, name, target, skipSandboxConfirm, askZone, nil)
+func rebuildSandbox(ctx context.Context, lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool, after ...afterProfile) error {
+	return rebuildSandboxWith(ctx, lay, args, name, target, skipSandboxConfirm, askZone, nil, after)
 }
+
+// afterProfile is something done once a rebuild has made sure the profile is
+// there (made it, if --re-create had deleted it), and before anything is read
+// from it.
+type afterProfile func(lay layout.Layout, profile string) error
 
 // relocation moves a sandbox's folder, and what vibe keeps for it, once the
 // old sandbox is gone, and says its new name and folder.
@@ -79,6 +85,12 @@ type relocation func() (name, target string, err error)
 // between removing the old sandbox and creating the new one, which is made
 // with the name and for the folder relocate gives: --migrate.
 func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool, relocate relocation) error {
+	return rebuildSandboxWith(ctx, lay, args, name, target, skipSandboxConfirm, askZone, relocate, nil)
+}
+
+// rebuildSandboxWith is rebuildSandboxTo, with after done once the profile is
+// there.
+func rebuildSandboxWith(ctx context.Context, lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool, relocate relocation, after []afterProfile) error {
 	vibeHome := lay.Home
 	// Before anything is removed: a sandbox can't be built for a folder that
 	// isn't there, so removing it first would leave nothing at all.
@@ -108,6 +120,14 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 	}
 	if err := ensureProfile(lay, profile, args.Force, agent); err != nil {
 		return err
+	}
+	for _, f := range after {
+		if f == nil {
+			continue
+		}
+		if err := f(lay, profile); err != nil {
+			return err
+		}
 	}
 	doc, merged, err := loadKit(lay, profile)
 	if err != nil {
@@ -251,7 +271,9 @@ func folderGone(target string) string {
 // silently reusing the old one, and any existing sandbox is removed and
 // rebuilt from it. Both destructive steps share a single confirmation up
 // front rather than asking once per step; yes is its default, as -R asked
-// for this.
+// for this. What the user chose through vibe for the profile (see
+// userprefs) isn't part of what is made again: it is kept, with -f, and
+// otherwise unless they say no.
 func doReCreate(lay layout.Layout, args cliargs.Args, name, target string) error {
 	profile, err := resolveReInitProfile(lay.Home, args, name, target)
 	if err != nil {
@@ -263,6 +285,10 @@ func doReCreate(lay layout.Layout, args cliargs.Args, name, target string) error
 		return fmt.Errorf("aborted — nothing removed")
 	}
 
+	keep, err := preferencesToKeep(lay, profile, args.Force)
+	if err != nil {
+		return err
+	}
 	dir := lay.HomePath("profiles", profile)
 	if info, err := os.Stat(dir); dir != "" && err == nil && info.IsDir() {
 		if err := os.RemoveAll(dir); err != nil {
@@ -273,7 +299,83 @@ func doReCreate(lay layout.Layout, args cliargs.Args, name, target string) error
 		note("no overlay profile '%s' to delete", profile)
 	}
 
-	return reInit(lay, args, name, target, true, !args.Force)
+	return reInit(lay, args, name, target, true, !args.Force, restorePreferences(keep))
+}
+
+// askKeepPreferences asks whether to keep what the user chose for a profile
+// across --re-create, which keeps it unless they say no. Tests stand in for it.
+var askKeepPreferences = func(question string) bool { return confirmDefault(false, true, question) }
+
+// preferencesToKeep is the profile's user preferences as they are, to be put
+// back in the profile made afresh: all of them, byte for byte, so a comment or a
+// key a newer vibe wrote comes through. With -f they are kept; otherwise the user
+// is asked, with what is in the file shown, and says no to let them go. Nothing
+// to keep, nothing is asked. Read before anything is removed, so a file that
+// can't be read stops it with the profile still there.
+func preferencesToKeep(lay layout.Layout, profile string, force bool) ([]byte, error) {
+	dir := lay.HomePath("profiles", profile)
+	if dir == "" || !fileExists(dir) {
+		return nil, nil
+	}
+	// Earlier vibes' files, and the model and effort in settings.yaml, move in first.
+	migratePreferences(lay, profile)
+	data, err := os.ReadFile(userprefs.Path(dir))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("couldn't read %s, so can't tell what to keep (nothing was removed): %w", pathresolve.Tilde(userprefs.Path(dir)), err)
+	}
+	listing, any := describePreferences(dir)
+	if !any {
+		return nil, nil
+	}
+	if force {
+		note("keeping your choices from the old profile '%s' (%s): delete %s, or lines in it, to drop them", profile, listing, pathresolve.Tilde(userprefs.Path(dir)))
+		return data, nil
+	}
+	if !askKeepPreferences(fmt.Sprintf("Keep your choices for profile '%s' (%s)?", profile, listing)) {
+		return nil, nil
+	}
+	return data, nil
+}
+
+// describePreferences lists what the profile's user preferences hold ("theme:
+// amber, model: opus"), and whether there is anything: a file with only comments
+// holds nothing to keep, and one that can't be read is said so, and is kept.
+func describePreferences(dir string) (listing string, any bool) {
+	prefs, err := userprefs.Load(dir)
+	if err != nil {
+		return "a file vibe can't read: " + err.Error(), true
+	}
+	var parts []string
+	for _, kv := range []struct{ key, value string }{{"theme", prefs.Theme}, {"gitAuthor", prefs.GitAuthor}, {"model", prefs.Model}, {"effort", prefs.Effort}} {
+		if kv.value != "" {
+			parts = append(parts, kv.key+": "+kv.value)
+		}
+	}
+	if n := len(prefs.Others); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d other setting(s)", n))
+	}
+	return strings.Join(parts, ", "), len(parts) > 0
+}
+
+// restorePreferences puts the preferences kept (see preferencesToKeep) into
+// the profile made afresh; nil when there was nothing to keep.
+func restorePreferences(data []byte) afterProfile {
+	if data == nil {
+		return nil
+	}
+	return func(lay layout.Layout, profile string) error {
+		dir := lay.HomePath("profiles", profile)
+		if dir == "" {
+			return fmt.Errorf("there is no vibe home to put your choices back in")
+		}
+		if err := fscopy.WriteWholeMode(userprefs.Path(dir), data, 0o644); err != nil {
+			return fmt.Errorf("couldn't put your choices back in %s: %w", pathresolve.Tilde(userprefs.Path(dir)), err)
+		}
+		return nil
+	}
 }
 
 // doReCompose rebuilds a guided profile from the library features it records
