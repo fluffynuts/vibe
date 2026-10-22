@@ -543,7 +543,7 @@ vibe: select claude theme
   yellow
 ```
 
-The answer is recorded in the profile's folder as `claude-theme`. A rebuild (`-r`, `-R` or `-C`)
+The answer is recorded in the profile's `user-preferences.yaml` (`theme:`; see *Choices kept for a profile*). A rebuild (`-r`, `-R` or `-C`)
 doesn't ask again. It reads the theme the old sandbox's agent is actually set to, including any
 change made with `/theme` since, before removing it. If it can't, it uses what the profile
 recorded, and it asks only when neither is known. `-f`, or running without a terminal, takes that
@@ -621,7 +621,7 @@ you're looking at:
   stay put while a turn runs; in a narrow column they take a row of their own), choose what claude is asked to
   use (they're there for a Claude sandbox). They have no labels: the entries say what they are ("Opus 5.5", "High effort"), and screen
   readers and tooltips still have the names Model and Effort. The model drop-down has no **Default** entry: you are always on a model, and the one claude uses
-  by default is marked "(default)". The first time the page sees none chosen it writes that model into the profile's `settings.yaml`, so what
+  by default is marked "(default)". The first time the page sees none chosen it keeps that model in the profile's `user-preferences.yaml`, so what
   you use stays what you use when claude's default later changes (only the "(default)" mark moves); a model switch always needs your choice.
   The effort drop-down keeps **Default effort** (claude doesn't say what its default effort is). The lists are claude's own. vibe keeps the last ones it was given for each sandbox (in
   `~/.vibe/companion/`), so the drop-downs are full the moment the page opens, and asks claude again in the
@@ -631,13 +631,13 @@ you're looking at:
   (the bubble opens, amber), and a drop-down that is open waits until it's closed to change. If asking at the start
   fails, the kept lists carry on, and the **i** button's bubble says how old they are and why (with **Retry**, which wakes
   the sandbox to ask). The plain models are in the drop-down by the name the agent gives them, which carries the version ("Opus 5.5"; vibe asks claude what each alias stands for, in the same trip, and keeps it), biggest first where vibe knows the size (fable, opus, sonnet, haiku, as claude.ai lists them) and then any other by name, and **Other…** opens the rest the agent lists (each by what that is called now, then the alias it's kept as), or
-  takes a model's full name. Efforts are the ones claude's `--effort` takes. Everything in the drop-downs is in title case ("Low", "Opus 5.5"); what's kept in `settings.yaml` and given to claude is the name as it is (`low`, `opus`). A change applies from the next
+  takes a model's full name. Efforts are the ones claude's `--effort` takes. Everything in the drop-downs is in title case ("Low", "Opus 5.5"); what's kept and given to claude is the name as it is (`low`, `opus`). A change applies from the next
   prompt, even while the agent is answering. Changing the model puts the effort back to **Default**, to be
   chosen again, as what an effort means differs between models; and for a conversation already under way it asks
   first, because the next prompt re-reads the whole conversation, which is slower and costs more (Cancel puts
-  the drop-down back). The choice is kept as `model:` and `effort:` in the profile's `settings.yaml`, so it
-  outlives vibe, the page and a rebuild, and `--re-compose` carries it across; what's in the global
-  `settings.yaml` is the default under it (a model or effort from it is shown as in force, choosing one here overrides it for this profile, and for the effort **Default** can't take it away; the bubble says where such a
+  the drop-down back). The choice is kept as `model:` and `effort:` in the profile's `user-preferences.yaml`, so it
+  outlives vibe, the page and a rebuild, and `--re-compose` carries it across; what's in the profile's
+  `settings.yaml`, and then the global one, is the default under it (a model or effort from it is shown as in force, choosing one here overrides it for this profile, and for the effort **Default** can't take it away; the bubble says where such a
   value comes from). What's good to know is in a bubble over the **i** button beside them,
   which takes no room, so nothing in the page moves when it comes and goes: that a change applies from your next
   prompt (the bubble has **Don't show me this again**, remembered by that browser, after which the button still
@@ -900,13 +900,10 @@ and `user.email`), showing what it would use; it only fills in what's missing. W
 terminal (`-f` says yes). With `--headless` it asks on the companion page instead, in a dialog over the whole
 page that has to be answered: *Give it my author*, *No, leave it*, or *Later*. *Later* leaves a reminder above the
 conversation's prompt (with *Fix…* to answer after all, and *Dismiss*), and it asks again whenever the sandbox is next
-started. Your answer is kept in the profile, in a file of its own (`git-author`, holding `import` or `leave`; it carries
-across a re-compose or an automatic update, which regenerate the rest of the profile, but `--re-create` deletes the whole
-profile, so it is asked again). `import` gives a sandbox missing an author yours without asking; `leave` never asks and leaves
-it as it is. To decide yourself instead, write `gitAuthor: import` or `gitAuthor: leave` in a profile's `settings.yaml`, or in
-`~/.vibe/settings.yaml` for every profile at once: what you write there wins over a kept answer, and the profile's own value
-over the global one.
-Whenever an answer is kept (a real yes or no, or `-f` saying yes, or a click on the page) vibe says so, once, with how to undo it: which profile it applies to, the file to delete to be asked again, and the setting that decides the other way. A kept answer applies to every sandbox of that profile.
+started. Your answer is kept in the profile's `user-preferences.yaml` as `gitAuthor: import` or `gitAuthor: leave` (see *Choices kept for a profile*; `--re-create` deletes the whole profile, so it is asked again). `import` gives a sandbox missing an author yours without asking; `leave` never asks and leaves
+it as it is. To decide without being asked, write `gitAuthor: import` or `gitAuthor: leave` in a profile's `settings.yaml`, or in
+`~/.vibe/settings.yaml` for every profile at once; a choice kept in the profile's preferences wins over them, and the profile's `settings.yaml` over the global one.
+Whenever an answer is kept (a real yes or no, or `-f` saying yes, or a click on the page) vibe says so, once, with how to undo it: which profile it applies to, the line to delete in its `user-preferences.yaml` to be asked again, and what to change it to for the other answer. A kept answer applies to every sandbox of that profile.
 
 vibe remembers when the token expires (GitHub says, when vibe checks it). From three days before, every
 session start says so; once it has expired, the session start asks whether to renew it there and then
@@ -931,6 +928,21 @@ about to. A rebuild
 sandbox gets no token unless `--git-token-env VAR` names an environment variable holding one (never
 the token itself on the command line, where anyone on the machine can read it). That token is
 checked the same way, and turned down if GitHub won't let it push. `--git-rules` picks the rules.
+
+### Choices kept for a profile
+
+What you choose through vibe for a profile (the Claude theme, whether a sandbox with no git author is given yours, and the model and effort the Conversation tab asks for) is kept in `user-preferences.yaml` in the profile's folder:
+
+```yaml
+theme: amber
+gitAuthor: import
+model: opus
+effort: high
+```
+
+It's yours to edit (delete a line, or the file, to go back to being asked, or to the default), and vibe keeps what else you put in it, comments included, when it changes a line. It is not part of what composing a profile wrote, so choosing something never makes a profile look as if it had been edited by hand (which would leave it out of the automatic updates), and it carries across `-C/--re-compose` and an automatic update; `-R/--re-create` deletes it with the rest of the profile. What a choice is, when more than one place says: the profile's preferences, then the profile's `settings.yaml`, then `~/.vibe/settings.yaml`.
+
+Earlier vibes kept these in files of their own (`claude-theme`, `git-author`) and the model and effort in the profile's `settings.yaml`. They are moved into `user-preferences.yaml` the next time the profile is updated or re-composed, or a choice is made; a `model:` or `effort:` that can't be taken out of `settings.yaml` without leaving the profile looking edited by hand (you changed something else there too) is left, and said so; the preferences are read first.
 
 ### NuGet packages and private feeds
 
@@ -1142,7 +1154,7 @@ agent: claude         # which coding agent to run
 nugetDir: ~/.nuget    # the host's NuGet folder: its packages are given to the sandbox, if it has them
 nuget: fallback       # fallback (default): packages read-only, nothing else; overlay: the same, overlaid at their own path (experimental); shared: all of nugetDir, read-write
 packages: ask         # ask (default): packages the agent asks for wait for you on the Admin tab; allow: fetched at once
-model: sonnet         # the model the Conversation tab asks claude for; the drop-down there writes it into the profile's settings.yaml. Unset: claude's own default
+model: sonnet         # the model the Conversation tab asks claude for, as a default; what is chosen in the drop-down there is kept in the profile's user-preferences.yaml, and wins over this. Unset: claude's own default
 effort: high          # the effort the Conversation tab asks claude for (low, medium, high, xhigh or max, as claude's --effort takes). Unset: claude's own default
 memoryRoot: ~/.vibe/memories   # where per-sandbox agent memories are backed up
 defaultFeatures:      # library features a guided profile starts with selected

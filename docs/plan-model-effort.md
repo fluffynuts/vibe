@@ -355,3 +355,7 @@ never change what they use.
   overrides it for the profile.
 - No way back to "follow the default" except removing `model:` from `settings.yaml` (no use-case yet; revisit if one comes).
 - Not frozen: the effort default (claude doesn't expose it).
+
+### Where the choice is kept, after 2026-10-22 (supersedes the settings.yaml storage above)
+
+The model and effort chosen on the page are kept in the profile's `user-preferences.yaml`, not in its `settings.yaml`: that file is part of what composing wrote, so a key vibe added there made the profile look edited by hand and stopped its automatic updates. The profile's preferences win over its `settings.yaml`, which wins over the global one. See `docs/plan-user-preferences.md`.
