@@ -5144,10 +5144,7 @@
   // How long the drop-downs stay disabled for the agent's lists when none are
   // known, before they're usable anyway (the lists carry on arriving).
   const CHOICE_LOCK_MS = 30000
-  // Names the agent accepts that pick by a rule, not one model: what ran
-  // can't be held against them.
-  const NOT_A_MODEL = new Set(['best', 'opusplan'])
-  const choice = { model: '', effort: '', running: '', session: false, options: null, optionsAt: 0, optionsError: '', problem: '', pending: false, bubble: false, unseen: false, started: false,
+  const choice = { model: '', effort: '', running: '', session: false, options: null, optionsAt: 0, optionsError: '', problem: '', pending: false, bubble: false, unseen: false, started: false, pendingTurns: 0, inherited: { model: false, effort: false },
     loaded: false, asking: false, saving: false, lockExpired: false, slow: false, lockTimer: 0 }
 
   // dialogAnswer shows a modal dialog and gives what it was closed with, ''
@@ -5162,9 +5159,12 @@
   }
 
   // ranAsAsked says what the agent reported running fits what was asked for:
-  // an alias ("opus") is part of the full name it stands for.
+  // an alias ("opus") is part of the full name it stands for. A name the lists
+  // say picks by a rule ("best") is no one model, so what ran can't be held
+  // against it.
   function ranAsAsked(asked, ran) {
-    if (!asked || !ran || NOT_A_MODEL.has(asked)) return true
+    const rules = (choice.options && choice.options.rules) || []
+    if (!asked || !ran || rules.includes(asked)) return true
     return ran.toLowerCase().includes(asked.replace(/\[[^\]]*\]$/, '').toLowerCase())
   }
 
@@ -5233,7 +5233,9 @@
     if (problem) return { kind: 'problem', text: problem }
     if (choice.slow && choiceWaiting()) return { kind: 'slow', text: "Still asking the agent which models and efforts it has: it's taking longer than usual. You can carry on, and the lists fill in when they arrive." }
     if (choiceOdd()) return { kind: 'odd', text: 'You asked for ' + choice.model + ', but the agent says it ran ' + choice.running + '.' }
-    return { kind: 'news', text: 'A change to the model or effort applies to your next prompt.' + (choice.running ? ' The last turn ran on ' + choice.running + '.' : '') }
+    const inherited = ['model', 'effort'].filter((k) => choice.inherited[k])
+    return { kind: 'news', text: 'A change to the model or effort applies to your next prompt.' + (choice.running ? ' The last turn ran on ' + choice.running + '.' : '') +
+      (inherited.length ? ' The ' + inherited.join(' and ') + " comes from your global settings.yaml, so Default here can't take it away." : '') }
   }
 
   // modelName is what the agent calls the model an alias stands for ("Opus
@@ -5269,9 +5271,14 @@
     return !name ? titleCase(alias) : plain ? name : name + ' · ' + alias
   }
 
+  // fillSelect makes select hold items with value chosen. Its options are only
+  // rebuilt when they differ: a drop-down that is open is closed by a rebuild,
+  // and a redraw for some other reason (the spinner, a bubble) shouldn't do that.
   function fillSelect(select, items, value) {
-    select.replaceChildren(...items.map((i) => el('option', { value: i.value, text: i.text })))
-    select.value = value
+    const same = select.options.length === items.length &&
+      items.every((item, i) => select.options[i].value === item.value && select.options[i].textContent === item.text)
+    if (!same) select.replaceChildren(...items.map((i) => el('option', { value: i.value, text: i.text })))
+    if (select.value !== value) select.value = value
   }
 
   function drawChoice() {
@@ -5341,6 +5348,7 @@
     choice.effort = body.effort || ''
     choice.running = body.running || ''
     choice.session = !!body.session
+    choice.inherited = { model: !!(body.inherited && body.inherited.model), effort: !!(body.inherited && body.inherited.effort) }
     if (body.options) { choice.options = body.options; choice.optionsAt = body.optionsAt || 0 }
   }
 
@@ -5400,8 +5408,11 @@
   // been used, so what was said of it is out of date. Another model than
   // asked for is said at the end of every turn it happens.
   async function choiceTurnEnded() {
-    choice.pending = false
-    if (!choiceProblem() && !choice.optionsError) { choice.bubble = false; choice.unseen = false }
+    // A change made while this turn ran is for the next one, so this one
+    // ending is no word on it yet.
+    if (choice.pendingTurns > 0) choice.pendingTurns--
+    choice.pending = choice.pendingTurns > 0
+    if (!choice.pending && !choiceProblem() && !choice.optionsError) { choice.bubble = false; choice.unseen = false }
     await readChoice()
     if (choiceOdd()) { choice.unseen = true; setChoiceBubble(true) }
   }
@@ -5415,15 +5426,18 @@
     try {
       const res = await post('/api/conversation/choice', { model, effort })
       reached(true)
-      if (res.ok) { takeChoice(res.body); choice.problem = ''; choice.pending = true } else failed = res.body.error || "that choice couldn't be kept."
+      if (res.ok) { takeChoice(res.body); choice.problem = ''; choice.pending = true; choice.pendingTurns = convo.running ? 2 : 1 } else failed = res.body.error || "that choice couldn't be kept."
     } catch (e) {
       reached(false)
       failed = 'Could not reach vibe to keep that choice.'
     }
     choice.saving = false
     if (failed) { await choiceFailed(failed); return }
+    // Default asked for and not given, as the global settings choose: said whatever
+    // the tick says, as it would be a puzzle otherwise.
+    const refused = (model === '' && choice.inherited.model) || (effort === '' && choice.inherited.effort)
     // After the bubble is settled, for closing it counts as having looked.
-    setChoiceBubble(!choiceQuiet())
+    setChoiceBubble(refused || !choiceQuiet())
     choice.unseen = true
     drawChoice()
   }

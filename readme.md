@@ -313,7 +313,7 @@ vibe --restart [path]      # end the vibe already running for path, leaving its 
 vibe --restart --terminal  # ...taking over with a terminal, on a sandbox that was headless
                            #    (--restart alone keeps the mode of the vibe it ended)
 vibe --terminal [path]     # start with a terminal attached: what plain vibe does, unless
-                           #    `mode: headless` is in ~/.vibe/settings.yaml
+                           #    `mode: headless` is in settings.yaml (the profile's, or ~/.vibe's)
 vibe -r --headless         # rebuild the sandbox, then go headless (also with -R and -C):
                            #    what `vibe -r --no-start && vibe --headless` does
 vibe -M/--manage           # serve the Profiles page on its own, until Ctrl-C
@@ -631,7 +631,8 @@ you're looking at:
   first, because the next prompt re-reads the whole conversation, which is slower and costs more (Cancel puts
   the drop-down back). The choice is kept as `model:` and `effort:` in the profile's `settings.yaml`, so it
   outlives vibe, the page and a rebuild, and `--re-compose` carries it across; what's in the global
-  `settings.yaml` is the default under it. What's good to know is in a bubble over the **i** button beside them,
+  `settings.yaml` is the default under it (so **Default** in the drop-down can't take away what that file sets, and the bubble says where such a
+  value comes from). What's good to know is in a bubble over the **i** button beside them,
   which takes no room, so nothing in the page moves when it comes and goes: that a change applies from your next
   prompt (the bubble has **Don't show me this again**, remembered by that browser, after which the button still
   carries a dot when there's something to know, which goes once the bubble has been looked at and closed, and opens the bubble when pressed); that the agent says it ran
@@ -1107,9 +1108,10 @@ into a real script or config file.
 
 ```yaml
 mode: headless       # how vibe starts: headless (serving the companion page, no terminal) or terminal (the
-                     #    default). Yours alone: read from ~/.vibe/settings.yaml, not a profile's. --terminal and
-                     #    --headless say otherwise for one start; a folder with no sandbox yet starts in a terminal,
-                     #    which makes it; --restart keeps the mode of the vibe it ends
+                     #    default). Layered like the rest: a profile's settings.yaml overrides this one, so one
+                     #    profile can be headless and the others not. --terminal and --headless say otherwise
+                     #    for one start; a folder with no sandbox yet starts in a terminal, which makes it;
+                     #    --restart keeps the mode of the vibe it ends
 memory: 12g          # sandbox memory limit; a new sandbox asks, starting here, capped at
                      #    half the host's memory
 cpus: 8              # CPUs a sandbox gets; a new sandbox asks, from 1 to one less than the

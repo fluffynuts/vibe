@@ -8,6 +8,7 @@ import (
 
 	"vibe/internal/cliargs"
 	"vibe/internal/layout"
+	"vibe/internal/pathresolve"
 	"vibe/internal/running"
 )
 
@@ -104,7 +105,7 @@ func favouriteHome(t *testing.T, settings string) layout.Layout {
 
 func TestTheFavouriteModeIsReadFromTheUsersSettings(t *testing.T) {
 	for settings, want := range map[string]string{"": "", "mode: headless\n": "headless", "mode: terminal\n": "terminal", "memory: 8g\n": ""} {
-		got, err := favouriteMode(favouriteHome(t, settings))
+		got, err := favouriteMode(favouriteHome(t, settings), "p")
 		if err != nil || got != want {
 			t.Errorf("%q: %q, %v; want %q", settings, got, err, want)
 		}
@@ -112,7 +113,7 @@ func TestTheFavouriteModeIsReadFromTheUsersSettings(t *testing.T) {
 }
 
 func TestAFavouriteModeThatIsNeitherIsRefusedWhereToFixIt(t *testing.T) {
-	_, err := favouriteMode(favouriteHome(t, "mode: headles\n"))
+	_, err := favouriteMode(favouriteHome(t, "mode: headles\n"), "p")
 	if err == nil || !strings.Contains(err.Error(), "settings.yaml") || !strings.Contains(err.Error(), "headless") || !strings.Contains(err.Error(), "terminal") {
 		t.Errorf("err = %v", err)
 	}
@@ -121,14 +122,14 @@ func TestAFavouriteModeThatIsNeitherIsRefusedWhereToFixIt(t *testing.T) {
 func TestAMisspeltModeSettingOnlyStopsAStartThatNeededIt(t *testing.T) {
 	lay := favouriteHome(t, "mode: headles\n")
 	for name, args := range map[string]cliargs.Args{"--terminal": {Terminal: true}, "--headless": {Headless: true}, "--delete": {Delete: true}} {
-		if _, err := startMode(lay, args, "box", modeNone); err != nil {
+		if _, err := startMode(lay, args, "box", "/work", modeNone); err != nil {
 			t.Errorf("%s was stopped by a setting it doesn't use: %v", name, err)
 		}
 	}
-	if _, err := startMode(lay, cliargs.Args{Restart: true}, "box", modeHeadless); err != nil {
+	if _, err := startMode(lay, cliargs.Args{Restart: true}, "box", "/work", modeHeadless); err != nil {
 		t.Errorf("--restart that ended a headless vibe was stopped by a setting it doesn't use: %v", err)
 	}
-	if _, err := startMode(lay, cliargs.Args{}, "box", modeNone); err == nil {
+	if _, err := startMode(lay, cliargs.Args{}, "box", "/work", modeNone); err == nil {
 		t.Error("a start that goes by the setting wasn't told it's wrong")
 	}
 }
@@ -145,7 +146,7 @@ func TestTheFavouriteDecidesAStartNothingElseHas(t *testing.T) {
 		"--restart of a terminal keeps the terminal":     {cliargs.Args{Restart: true}, modeTerminal, false},
 		"--restart of a headless keeps it":               {cliargs.Args{Restart: true}, modeHeadless, true},
 	} {
-		got, err := startMode(lay, tc.args, "box", tc.ended)
+		got, err := startMode(lay, tc.args, "box", "/work", tc.ended)
 		if err != nil || got != tc.want {
 			t.Errorf("%s: %v, %v; want %v", name, got, err, tc.want)
 		}
@@ -155,9 +156,96 @@ func TestTheFavouriteDecidesAStartNothingElseHas(t *testing.T) {
 func TestTheNudgeIsPrintedForARestartThatNeededNoFlag(t *testing.T) {
 	var got bool
 	said := notesOf(func() {
-		got, _ = startMode(favouriteHome(t, ""), cliargs.Args{Restart: true, Headless: true}, "box", modeHeadless)
+		got, _ = startMode(favouriteHome(t, ""), cliargs.Args{Restart: true, Headless: true}, "box", "/work", modeHeadless)
 	})
 	if !got || len(said) != 1 || !strings.Contains(said[0], "vibe --restart") {
 		t.Errorf("headless %v, said %q", got, said)
+	}
+}
+
+// withProfile adds a profile "p" to home whose settings.yaml says settings.
+func withProfile(t *testing.T, lay layout.Layout, settings string) {
+	withProfileNamed(t, lay, "p", settings)
+}
+
+func withProfileNamed(t *testing.T, lay layout.Layout, name, settings string) {
+	t.Helper()
+	dir := filepath.Join(lay.Home, "profiles", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("name: p\n"), 0o644)
+	if settings != "" {
+		os.WriteFile(filepath.Join(dir, "settings.yaml"), []byte(settings), 0o644)
+	}
+}
+
+func TestAProfilesModeOverridesTheSettingsAsEveryOtherSettingDoes(t *testing.T) {
+	for name, tc := range map[string]struct{ global, profile, want string }{
+		"the profile over the global":                        {"mode: headless\n", "mode: terminal\n", "terminal"},
+		"the profile over nothing":                           {"", "mode: headless\n", "headless"},
+		"the global when the profile's is silent":            {"mode: headless\n", "memory: 8g\n", "headless"},
+		"the global when there's no settings in the profile": {"mode: headless\n", "", "headless"},
+		"neither": {"", "", ""},
+	} {
+		lay := favouriteHome(t, tc.global)
+		withProfile(t, lay, tc.profile)
+		got, err := favouriteMode(lay, "p")
+		if err != nil || got != tc.want {
+			t.Errorf("%s: %q, %v; want %q", name, got, err, tc.want)
+		}
+	}
+}
+
+func TestAProfileThatIsntThereLeavesTheGlobalSettingsMode(t *testing.T) {
+	got, err := favouriteMode(favouriteHome(t, "mode: headless\n"), "no-such-profile")
+	if err != nil || got != "headless" {
+		t.Errorf("%q, %v", got, err)
+	}
+}
+
+func TestAWrongModeIsRefusedNamingTheFileItIsIn(t *testing.T) {
+	lay := favouriteHome(t, "mode: headless\n")
+	withProfile(t, lay, "mode: terminl\n")
+	_, err := favouriteMode(lay, "p")
+	if err == nil || !strings.Contains(err.Error(), filepath.Join("profiles", "p", "settings.yaml")) && !strings.Contains(err.Error(), "p/settings.yaml") {
+		t.Errorf("a wrong mode in the profile: %v, want it to name the profile's settings.yaml", err)
+	}
+	lay = favouriteHome(t, "mode: headles\n")
+	withProfile(t, lay, "mode: terminal\n")
+	if got, err := favouriteMode(lay, "p"); err != nil || got != "terminal" {
+		t.Errorf("a wrong global mode the profile overrides: %q, %v", got, err)
+	}
+}
+
+func TestWithNoSettingsOfTheUsersTheBundlesAreTheGlobalOnes(t *testing.T) {
+	lay := favouriteHome(t, "")
+	os.WriteFile(filepath.Join(lay.Bundle, "settings.yaml"), []byte("mode: headless\n"), 0o644)
+	if got, err := favouriteMode(lay, "p"); err != nil || got != "headless" {
+		t.Errorf("%q, %v", got, err)
+	}
+}
+
+func TestTheProfileIsFoundTheWayARebuildFindsIt(t *testing.T) {
+	lay := favouriteHome(t, "mode: terminal\n")
+	withProfile(t, lay, "mode: headless\n")
+	// Named by --profile, with a rebuild asked for (which needs no sandbox looked up).
+	got, err := startMode(lay, cliargs.Args{ReInit: true, Profile: "p"}, "box", "/work", modeNone)
+	if err != nil || !got {
+		t.Errorf("headless %v, %v; want the profile's headless", got, err)
+	}
+	// Named by nothing but the folder: the profile's the one derived from it (names are at least two characters).
+	if derived := pathresolve.DeriveName("/code/widget"); derived != "widget" {
+		t.Fatalf("names are derived differently now: %q", derived)
+	}
+	withProfileNamed(t, lay, "widget", "mode: headless\n")
+	got, err = startMode(lay, cliargs.Args{ReInit: true}, "box", "/code/widget", modeNone)
+	if err != nil || !got {
+		t.Errorf("by the folder's name: headless %v, %v", got, err)
+	}
+	// Another profile: the global terminal.
+	got, err = startMode(lay, cliargs.Args{ReInit: true, Profile: "other"}, "box", "/work", modeNone)
+	if err != nil || got {
+		t.Errorf("another profile: headless %v, %v; want the global terminal", got, err)
 	}
 }

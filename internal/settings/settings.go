@@ -63,9 +63,9 @@ type Settings struct {
 	// repository's default branch when origin can't say which it is: the
 	// one last set there.
 	DefaultBranch string `yaml:"defaultBranch,omitempty"`
-	// Mode is how the user likes vibe to start: "headless", serving the
-	// companion page with no terminal, or "terminal". Unset means terminal.
-	// It's the user's own, read from ~/.vibe/settings.yaml only.
+	// Mode is how vibe starts: "headless", serving the companion page with
+	// no terminal, or "terminal". Unset means terminal. Layered as the rest
+	// are: a profile's settings.yaml over ~/.vibe/settings.yaml.
 	Mode string `yaml:"mode,omitempty"`
 	// Model and Effort are what the conversation tab asks the agent to use
 	// (see internal/modelchoice). Unset, the agent's own settings decide.
@@ -134,6 +134,9 @@ func Merge(base, override Settings) Settings {
 	}
 	if override.AutoUpdate != nil {
 		out.AutoUpdate = override.AutoUpdate
+	}
+	if override.Mode != "" {
+		out.Mode = override.Mode
 	}
 	if override.Model != "" {
 		out.Model = override.Model

@@ -297,3 +297,27 @@ effort, Max effort** (the user's pick of four options; "Default (Medium)" wasn't
 its default effort is). The labels stay for screen readers (`sr-only`, still tied to their drop-downs), and both drop-downs
 have a tooltip. The effort drop-down is 11em wide for "Extra High effort"; Firefox tests measure that the longest
 everyday entries fit, and that Send stays on one line at eleven widths from 520 to 1900px.
+
+### After the review of 2026-10-22
+
+Eleven threads, one P2; all taken up.
+
+- **A change made during a turn** is for the next one, so that turn ending on the old model is no word on it: `pendingTurns`
+  (2 when saved while the agent answers, else 1), counted down at each turn end. It used to raise a false, unswitchable-off
+  "ran another model" warning.
+- **A redraw leaves a drop-down's options alone** unless they differ (an open drop-down is closed by a rebuild).
+- **`--effort`'s list** is read only from its own description, up to the next flag, as exactly one parenthesised list of
+  two or more lower-case names (at most 20); anything else is an error, not a guess. Tested against help shaped like
+  each way it could go wrong.
+- **`settings.yaml` is written whole-and-rename** (`fscopy.WriteWholeMode`, keeping the file's mode), so a turn starting as
+  the choice changes reads one choice or the other, never an empty file (which meant the default model, quietly).
+  See the memory note on atomic writes.
+- **What the sandbox's `claude` may say is bounded** (it can be replaced by the agent): at most 50 models, names of at most
+  100 characters, the default's name at most 200, `--help` 256 KB, the list 64 KB, the names 256 KB; only the aliases
+  asked about are taken from the names. What's left out is said in vibe's output.
+- **One ask of the agent at a time** (a second page waits for the first's answer, and asks itself only if it failed; one
+  that gives up isn't waited for).
+- **What is inherited is said:** with `model:` in the global settings, **Default** in the profile can't take it away; the
+  page is told which of the two come from there and the bubble says so (and opens when Default was asked for and not given).
+- **`mode:` is layered like every other setting:** the profile's `settings.yaml` over the base one.
+- **Which names pick by a rule** (`best`, `opusplan`) is said by the host (`Options.Rules`), once, in Go; the page no longer has its own list.

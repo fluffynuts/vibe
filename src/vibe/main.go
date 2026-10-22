@@ -87,7 +87,7 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              headless the same way
   vibe --terminal [path]     start with a terminal attached, which is what
                              plain vibe does unless 'mode: headless' is in
-                             ~/.vibe/settings.yaml
+                             settings.yaml (a profile's, or ~/.vibe's)
   vibe -r/-R/-C --headless   rebuild (or re-create, or re-compose), then go
                              headless, instead of attaching a terminal
   vibe -M/--manage           serve the Profiles page on its own, until Ctrl-C:
@@ -402,7 +402,7 @@ func run(argv []string) error {
 		}
 	}
 	if !detachedChild() {
-		headless, err := startMode(lay, args, name, ended)
+		headless, err := startMode(lay, args, name, target, ended)
 		if err != nil {
 			return err
 		}

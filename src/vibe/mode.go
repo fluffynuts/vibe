@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"vibe/internal/cliargs"
 	"vibe/internal/layout"
@@ -48,20 +49,32 @@ func modeOf(claims []running.Claim) runMode {
 	return mode
 }
 
-// favouriteMode is the mode the user's settings.yaml says they like vibe to
-// start in ("headless" or "terminal"), or "" if it says none. It's the user's
-// own preference, so it's read from ~/.vibe/settings.yaml, not a profile's.
-func favouriteMode(lay layout.Layout) (string, error) {
-	path := lay.File("settings.yaml")
-	user, err := settings.Load(path)
+// favouriteMode is the mode vibe starts in when nothing decides it ("headless"
+// or "terminal"), or "" if the settings say none. It's layered as the rest of
+// the settings are: the profile's settings.yaml over ~/.vibe/settings.yaml (or
+// the bundle's, where there's no ~/.vibe one), so one profile can be
+// headless while the others aren't. A wrong value is refused, naming the file
+// it is in.
+func favouriteMode(lay layout.Layout, profile string) (string, error) {
+	basePath := lay.File("settings.yaml")
+	base, err := settings.Load(basePath)
 	if err != nil {
 		return "", err
 	}
-	switch user.Mode {
-	case "", "headless", "terminal":
-		return user.Mode, nil
+	profilePath := filepath.Join(lay.ProfileDir(profile), "settings.yaml")
+	own, err := settings.Load(profilePath)
+	if err != nil {
+		return "", err
 	}
-	return "", fmt.Errorf("mode in %s is %q: it must be %q (start without a terminal, serving the companion page) or %q", pathresolve.Tilde(path), user.Mode, "headless", "terminal")
+	mode, path := base.Mode, basePath
+	if own.Mode != "" {
+		mode, path = own.Mode, profilePath
+	}
+	switch mode {
+	case "", "headless", "terminal":
+		return mode, nil
+	}
+	return "", fmt.Errorf("mode in %s is %q: it must be %q (start without a terminal, serving the companion page) or %q", pathresolve.Tilde(path), mode, "headless", "terminal")
 }
 
 // modeWanted is what decides which mode vibe starts in.
@@ -114,12 +127,16 @@ func (w modeWanted) resolve() (headless bool, says string) {
 // modeWanted.resolve), saying so when there's something to tell. What isn't
 // needed to decide isn't looked at: the settings, and whether there's a
 // sandbox, only when nothing typed or restarted has decided.
-func startMode(lay layout.Layout, args cliargs.Args, name string, ended runMode) (bool, error) {
+func startMode(lay layout.Layout, args cliargs.Args, name, target string, ended runMode) (bool, error) {
 	want := modeWanted{Headless: args.Headless, Terminal: args.Terminal, Restart: args.Restart, Ended: ended,
 		Rebuilds: args.Rebuilds(), Deleting: args.Delete}
 	decided := args.Headless || args.Terminal || (args.Restart && ended != modeNone) || args.Delete
 	if !decided {
-		favourite, err := favouriteMode(lay)
+		profile, err := resolveReInitProfile(lay.Home, args, name, target)
+		if err != nil {
+			return false, err
+		}
+		favourite, err := favouriteMode(lay, profile)
 		if err != nil {
 			return false, err
 		}

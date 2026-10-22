@@ -9,6 +9,7 @@ const OPTIONS = {
   models: ['sonnet', 'opus', 'haiku'], otherModels: ['best', 'opus[1m]'],
   efforts: ['low', 'medium', 'high'], current: 'Opus 5.5 (default)',
   names: { sonnet: 'Sonnet 5.5', opus: 'Opus 5.5', haiku: 'Haiku 5.5', best: 'Fable 5.1', 'opus[1m]': 'Opus 5.5 (1M context)' },
+  rules: ['best', 'opusplan'],
 }
 
 // choicePage is a page for a sandbox whose agent can be asked for a model
@@ -21,7 +22,11 @@ async function choicePage(over = {}, { choice = true } = {}, storage = {}) {
   // what an earlier run kept (at.cached, from at.cachedAt), if anything.
   const listed = () => at.haveOptions ? { options: at.options, optionsAt: 1792000000000, optionsFresh: true }
     : at.cached ? { options: at.cached, optionsAt: at.cachedAt || 1791000000000, optionsFresh: false } : { options: null, optionsFresh: false }
-  const body = () => Object.assign({ model: at.model, effort: at.effort, running: at.running, session: at.session }, listed())
+  // What's in force: the profile's own choice, else the global settings' (at.globalModel).
+  const body = () => Object.assign({
+    model: at.model || at.globalModel || '', effort: at.effort, running: at.running, session: at.session,
+    inherited: { model: !at.model && !!at.globalModel, effort: false },
+  }, listed())
   const routes = {
     '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, choice, attention: {} },
     '/api/conversation': () => ({ events: [], last: 0, running: at.busy }),
@@ -607,17 +612,23 @@ test('a Retry locks the widget again until the agent answers, when it has no lis
 })
 
 // A page whose timers the test holds: the one that is set for ms is run when fire() is called.
+// A held timer's id is a negative number, which none of the page's own are, so clearing one never
+// touches another.
 function heldTimers(ms) {
   const held = []
   return {
     before(w) {
       const real = w.setTimeout.bind(w)
+      const realClear = w.clearTimeout.bind(w)
       w.setTimeout = (fn, delay, ...rest) => {
         if (delay !== ms) return real(fn, delay, ...rest)
         held.push(fn)
-        return held.length
+        return -held.length
       }
-      w.clearTimeout = ((clear) => (id) => { if (typeof id === 'number' && id <= held.length && id > 0) held[id - 1] = null; else clear(id) })(w.clearTimeout.bind(w))
+      w.clearTimeout = (id) => {
+        if (typeof id === 'number' && id < 0) held[-id - 1] = null
+        else realClear(id)
+      }
     },
     fire() { for (const fn of held.splice(0)) if (fn) fn() },
   }
@@ -784,5 +795,186 @@ test('the drop-downs have no visible labels: the entries say what they are, and 
       assert.ok(Array.from(select.labels).every((l) => l.classList.contains('sr-only')), 'the label is for screen readers only')
       assert.equal(select.title, name, id + ' has a tooltip')
     }
+  } finally { p.close() }
+})
+
+test("the held-timer helper leaves the page's own timers alone: a real timer cleared never fires, a held one cleared never does either", async () => {
+  const timers = heldTimers(30000)
+  const p = await choicePage({ model: 'opus', before: timers.before })
+  const w = p.window
+  try {
+    let realRan = false
+    const id = w.setTimeout(() => { realRan = true }, 5)
+    w.clearTimeout(id)
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    assert.ok(!realRan, 'a real timer cleared by its id')
+    let heldRan = false
+    const held = w.setTimeout(() => { heldRan = true }, 30000)
+    assert.ok(held < 0)
+    w.clearTimeout(held)
+    timers.fire()
+    assert.ok(!heldRan, 'a held timer cleared')
+  } finally { p.close() }
+})
+
+// What the page was told of the rules in the lists, not what it knows itself.
+test('names the lists say pick by a rule are not held against what ran, whatever they are', async () => {
+  const p = await choicePage({ model: 'newrule', running: 'claude-opus-5-5', options: Object.assign({}, OPTIONS, { rules: ['newrule'] }) })
+  try {
+    assert.ok(!p.$('choice-info').classList.contains('warn'))
+    assert.equal(p.$('choice-ran').textContent, '')
+  } finally { p.close() }
+})
+
+test('without the lists saying so, nothing is taken for a rule: best is judged like any other name', async () => {
+  const p = await choicePage({ model: 'best', running: 'claude-opus-5-5', options: Object.assign({}, OPTIONS, { rules: undefined }) })
+  try {
+    assert.ok(p.$('choice-info').classList.contains('warn'))
+  } finally { p.close() }
+})
+
+// A change made while the agent is answering is for the next prompt, not the
+// turn that is running: so that turn ending on the old model is not news.
+test("a change made during a turn is not reported, when that turn ends on the old model, as the agent ignoring it", async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    p.at.busy = true
+    await p.every('pollConversation')
+    await choose(p, 'choice-model', 'haiku')
+    p.at.running = 'claude-opus-5-5'
+    p.at.session = true
+    p.at.busy = false
+    await p.every('pollConversation')
+    assert.ok(!p.$('choice-info').classList.contains('warn'), 'no amber')
+    assert.equal(p.$('choice-ran').textContent, '')
+    assert.ok(!/asked for|ran another/i.test(p.$('choice-bubble-text').textContent))
+    assert.ok(dotted(p), 'the change still waits for its turn')
+    await p.click('choice-info')
+    assert.match(p.$('choice-bubble-text').textContent, /applies to your next prompt/)
+    await p.click('choice-bubble-close')
+    await endTurn(p, 'claude-haiku-5-5')
+    assert.ok(!dotted(p), 'used now')
+    assert.ok(!p.$('choice-info').classList.contains('warn'))
+    assert.ok(!open(p))
+  } finally { p.close() }
+})
+
+test('a change made during a turn that the next turn then ignores is still reported', async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    p.at.busy = true
+    await p.every('pollConversation')
+    await choose(p, 'choice-model', 'haiku')
+    p.at.running = 'claude-opus-5-5'
+    p.at.busy = false
+    await p.every('pollConversation')
+    await endTurn(p, 'claude-opus-5-5')
+    assert.ok(open(p))
+    assert.match(p.$('choice-bubble-text').textContent, /asked for haiku, but the agent says it ran claude-opus-5-5/)
+    assert.ok(p.$('choice-info').classList.contains('warn'))
+  } finally { p.close() }
+})
+
+test('a change made while idle is used by the very next turn', async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    await choose(p, 'choice-effort', 'low')
+    await endTurn(p, 'claude-opus-5-5')
+    assert.ok(!dotted(p))
+    assert.ok(!p.$('choice-info').classList.contains('warn'))
+  } finally { p.close() }
+})
+
+test('a change made during a turn, and another once it has ended, are both for the next turn', async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    p.at.busy = true
+    await p.every('pollConversation')
+    await choose(p, 'choice-model', 'haiku')
+    p.at.running = 'claude-opus-5-5'
+    p.at.busy = false
+    await p.every('pollConversation')
+    await choose(p, 'choice-effort', 'low')
+    await endTurn(p, 'claude-haiku-5-5')
+    assert.ok(!dotted(p), 'both used by that one turn')
+    assert.ok(!p.$('choice-info').classList.contains('warn'))
+  } finally { p.close() }
+})
+
+// A drop-down that is open must not be disturbed by a redraw that changes nothing in it.
+const optionNodes = (select) => Array.from(select.options)
+
+test("a redraw that changes nothing in a drop-down leaves its options in place, so an open one isn't closed under the user", async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    const model = optionNodes(p.$('choice-model'))
+    const effort = optionNodes(p.$('choice-effort'))
+    await p.click('choice-info')
+    await p.click('choice-info')
+    p.window.dispatchEvent(new p.window.Event('resize'))
+    assert.ok(optionNodes(p.$('choice-model')).every((o, i) => o === model[i]) && optionNodes(p.$('choice-model')).length === model.length, 'the model options')
+    assert.ok(optionNodes(p.$('choice-effort')).every((o, i) => o === effort[i]) && optionNodes(p.$('choice-effort')).length === effort.length, 'the effort options')
+  } finally { p.close() }
+})
+
+test('a change of what is chosen moves the selection without rebuilding the options', async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    const effort = optionNodes(p.$('choice-effort'))
+    await choose(p, 'choice-effort', 'low')
+    assert.equal(p.$('choice-effort').value, 'low')
+    assert.ok(optionNodes(p.$('choice-effort')).every((o, i) => o === effort[i]))
+  } finally { p.close() }
+})
+
+test('options that did change are rebuilt: new lists arriving show', async () => {
+  let release
+  const p = await choicePage({ model: 'opus', cached: KEPT, hold: new Promise((resolve) => { release = resolve }) })
+  try {
+    await turns()
+    const before = optionNodes(p.$('choice-model'))
+    release()
+    await p.settle()
+    assert.notDeepEqual(texts(p.$('choice-model')), before.map((o) => o.textContent))
+    assert.deepEqual(values(p.$('choice-model')), ['', 'sonnet', 'opus', 'haiku', '__other__'])
+  } finally { p.close() }
+})
+
+// What the global settings.yaml sets stays in force: Default in the profile can't take it away.
+test('a choice inherited from the global settings is shown, and the bubble says where it comes from', async () => {
+  const p = await choicePage({ model: '', globalModel: 'opus' })
+  try {
+    assert.equal(p.$('choice-model').value, 'opus', 'what is in force is what is shown')
+    await p.click('choice-info')
+    assert.match(p.$('choice-bubble-text').textContent, /model comes from your global settings\.yaml/i)
+    assert.match(p.$('choice-bubble-text').textContent, /Default here can't take it away/i)
+  } finally { p.close() }
+})
+
+test('choosing Default while the global settings choose a model says why it did not take, even when told not to show hints', async () => {
+  const p = await choicePage({ model: 'sonnet', globalModel: 'opus' }, {}, { 'vibe-companion-choice-quiet': 'yes' })
+  try {
+    await choose(p, 'choice-model', '')
+    assert.deepEqual(p.posted('/api/conversation/choice'), [{ model: '', effort: '' }])
+    assert.equal(p.$('choice-model').value, 'opus', 'it snaps back to what is in force')
+    assert.ok(open(p), 'and says why, as it would be a puzzle otherwise')
+    assert.match(p.$('choice-bubble-text').textContent, /global settings\.yaml/)
+    assert.ok(dotted(p))
+  } finally { p.close() }
+})
+
+test('nothing is said of the global settings when nothing is inherited', async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    await p.click('choice-info')
+    assert.ok(!/global settings/.test(p.$('choice-bubble-text').textContent))
+  } finally { p.close() }
+})
+
+test('picking a model of its own over an inherited one stops the bubble saying it is inherited', async () => {
+  const p = await choicePage({ model: '', globalModel: 'opus' })
+  try {
+    await choose(p, 'choice-model', 'haiku')
+    assert.ok(!/global settings/.test(p.$('choice-bubble-text').textContent))
   } finally { p.close() }
 })

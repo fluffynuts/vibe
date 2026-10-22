@@ -222,3 +222,16 @@ func TestUnsetOfTheOnlyKeyLeavesAnEmptyFile(t *testing.T) {
 		t.Errorf("what Unset gave can't be read: %v", err)
 	}
 }
+
+func TestMergeModeOverridesWhenSet(t *testing.T) {
+	for name, tc := range map[string]struct{ base, override, want string }{
+		"the profile's wins":            {"headless", "terminal", "terminal"},
+		"the base stands when it's not": {"headless", "", "headless"},
+		"the profile's alone":           {"", "headless", "headless"},
+		"neither":                       {"", "", ""},
+	} {
+		if got := Merge(Settings{Mode: tc.base}, Settings{Mode: tc.override}).Mode; got != tc.want {
+			t.Errorf("%s: %q, want %q", name, got, tc.want)
+		}
+	}
+}
