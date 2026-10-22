@@ -58,3 +58,24 @@ jsdom (`uitest/review.test.js`): arrows skip resolved and dismissed threads, in 
 ## Decided
 
 - **"Unresolved" is the whole of it** (`status === 'open'`), the user decided 2026-10-22. A narrower "next that needs me" (open threads whose last word is the agent's) was considered and rejected: when a fix is done the agent posts back and the thread is *resolved*, because the agreed state has been reached, so "the agent spoke last" doesn't mean "waiting on the user". Revisit only if the plain version proves not enough.
+
+# Submit says why it can't (added 2026-10-22, same plan: the Review tab's feedback)
+
+## What happened
+
+The user had replied on a review thread and, while the agent was still answering something else, could have pressed **Submit to agent**. Traced in the code (`reviewSubmit` in `internal/companion/review.go`, `supersede` in `conversation.go`; not run): the host refuses with a 409 ("the agent is still answering the last prompt — submit once it's done"), the page shows that as a red message and stays on the Review tab, and nothing is lost: the comments aren't marked sent until a turn has started, so Submit sends the same set later. But the button looked usable, and the user only learned why after clicking: "it would have communicated to me immediately" had it been disabled with a reason.
+
+## Proposed (the user asked for it, and the disabled state in particular)
+
+1. **Disable Submit while the agent is answering, with the reason on the button**: its label/tooltip says why ("The agent is answering: submit once it's done"), the same way it already says why it's disabled when the sandbox's agent can't be talked to (`review-submit` in `app.js`, near the `unsent`/`state.conversation` handling). It enables itself the moment the agent has finished, with no click or reload; the unsent count stays on it (`Submit 2 to agent`) so it's plain the comments are waiting.
+2. The signal already exists on the page: `convo.running` (the conversation is polled from every tab, `setConvoRunning`) and the review's own `agentAtWork`. Use the conversation's, as it is what the host's refusal is about.
+3. **Keep the host's refusal**: the button is only a courtesy; a second tab, or a click in the instant between, must still be refused (and say so, as now).
+4. The refusal message names the number waiting: "…the agent is still answering the last prompt; your 2 comments are kept, and Submit sends them once it's done".
+
+## Tests
+
+jsdom: Submit disabled with the reason in its title while the conversation says running, and its label still carries the count; enabled once running ends, without a click; disabled with the existing reason when the agent can't be talked to (that one wins); a click on the disabled button sends nothing. Go: the 409's message names the count. Keep the existing test that the host refuses while answering.
+
+## Not decided
+
+- Whether the button should *queue* the submit to go as soon as the agent is done ("Submit when ready"). Not asked for; more machinery (a pending send that must be cancellable, and what if the user adds more comments meanwhile). Leave until someone wants it.
