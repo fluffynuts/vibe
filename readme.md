@@ -856,8 +856,13 @@ Git won't commit without an author name and email, and a sandbox can come withou
 sbx's to make). So at every session start vibe looks at the agent's global git config, and if the author is
 missing, says the agent can't commit, and whether it can push (a local commit is yours to throw away; a pushed one
 isn't), and offers to give it the author from your own global git config (`git config --global user.name`
-and `user.email`), showing what it would use. It only fills in what's missing, and only if you agree (`-f` agrees);
-with no terminal it just says so. If you say no, it doesn't ask again for that sandbox (a rebuild keeps that).
+and `user.email`), showing what it would use; it only fills in what's missing. With a terminal session it asks at the
+terminal (`-f` says yes). With `--headless` it asks on the companion page instead, in a dialog over the whole
+page that has to be answered: *Give it my author*, *No, leave it*, or *Later*. *Later* leaves a reminder above the
+conversation's prompt (with *Fix…* to answer after all, and *Dismiss*), and it asks again whenever the sandbox is next
+started. Your answer is kept in the profile's `settings.yaml` as `gitAuthor: import` (a sandbox missing an author is given
+yours without asking) or `gitAuthor: leave` (never asked, and left as it is); unset means ask. Set it in
+`~/.vibe/settings.yaml` to decide for every profile at once; a profile's own value wins.
 
 vibe remembers when the token expires (GitHub says, when vibe checks it). From three days before, every
 session start says so; once it has expired, the session start asks whether to renew it there and then

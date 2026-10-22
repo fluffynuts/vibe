@@ -66,6 +66,11 @@
             <button type="button" id="convo-stale-ask">Ask the agent to tidy up</button>
             <button type="button" id="convo-stale-dismiss" class="ghost" title="Don't tell me again about these projects">Dismiss</button>
           </div>
+          <div id="convo-git-author" class="notice" role="status" hidden>
+            <span id="convo-git-author-text">The agent can't commit in this sandbox: its .gitconfig has no author name and email.</span>
+            <button type="button" id="convo-git-author-fix">Fix…</button>
+            <button type="button" id="convo-git-author-dismiss" class="ghost" title="Hide this until the sandbox is started again">Dismiss</button>
+          </div>
           <div id="convo-sync" class="notice" role="status" hidden>
             <span id="convo-sync-text"></span>
             <button type="button" id="convo-sync-review">Review them</button>
@@ -385,6 +390,19 @@
       <button type="button" id="offline-dismiss" class="ghost">Dismiss until it reconnects</button>
     </div>
   </div>
+
+  <dialog id="git-author" class="glass" aria-labelledby="git-author-title">
+    <h2 id="git-author-title">The agent can't commit in this sandbox</h2>
+    <p>Git won't commit without an author name and email, and this sandbox's .gitconfig has neither.</p>
+    <p id="git-author-push"></p>
+    <p>Give it your own, <strong id="git-author-shown"></strong>, from your global git config?</p>
+    <p id="git-author-problem" class="bad-text" role="alert" hidden></p>
+    <div class="actions">
+      <button type="button" id="git-author-later" class="ghost" title="Ask again when the sandbox is started again">Later</button>
+      <button type="button" id="git-author-leave" class="ghost" title="Leave the agent unable to commit, and don't ask again for this profile">No, leave it</button>
+      <button type="button" id="git-author-give">Give it my author</button>
+    </div>
+  </dialog>
 
   <dialog id="changed">
     <form method="dialog">
