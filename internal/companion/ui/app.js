@@ -5145,6 +5145,7 @@
   // known, before they're usable anyway (the lists carry on arriving).
   const CHOICE_LOCK_MS = 30000
   const choice = { model: '', effort: '', running: '', session: false, options: null, optionsAt: 0, optionsError: '', problem: '', pending: false, bubble: false, unseen: false, started: false, pendingTurns: 0, inherited: { model: false, effort: false },
+    goneModel: '', goneEffort: '', goneLabel: '', refreshing: false,
     loaded: false, asking: false, saving: false, lockExpired: false, slow: false, lockTimer: 0 }
 
   // dialogAnswer shows a modal dialog and gives what it was closed with, ''
@@ -5231,6 +5232,8 @@
   function choiceBubble() {
     const problem = choiceProblem()
     if (problem) return { kind: 'problem', text: problem }
+    const gone = choiceGone()
+    if (gone) return { kind: 'gone', text: gone }
     if (choice.slow && choiceWaiting()) return { kind: 'slow', text: "Still asking the agent which models and efforts it has: it's taking longer than usual. You can carry on, and the lists fill in when they arrive." }
     if (choiceOdd()) return { kind: 'odd', text: 'You asked for ' + choice.model + ', but the agent says it ran ' + choice.running + '.' }
     const inherited = ['model', 'effort'].filter((k) => choice.inherited[k])
@@ -5277,6 +5280,8 @@
   function fillSelect(select, items, value) {
     const same = select.options.length === items.length &&
       items.every((item, i) => select.options[i].value === item.value && select.options[i].textContent === item.text)
+    // A drop-down in use is left as it is: what changed is taken in once it is let go (blur).
+    if (!same && select === document.activeElement) return
     if (!same) select.replaceChildren(...items.map((i) => el('option', { value: i.value, text: i.text })))
     if (select.value !== value) select.value = value
   }
@@ -5314,10 +5319,11 @@
     const problem = said.kind === 'problem'
     const info = $('choice-info')
     const stale = choiceStale()
-    info.classList.toggle('warn', problem || odd)
+    const gone = said.kind === 'gone'
+    info.classList.toggle('warn', problem || odd || gone)
     // The dot says there's something to know that hasn't been looked at:
     // closing the bubble, whichever way, is looking.
-    info.classList.toggle('news', choice.unseen && (choice.pending || !!stale || odd || problem || choice.slow))
+    info.classList.toggle('news', choice.unseen && (choice.pending || !!stale || odd || problem || gone || choice.slow))
     info.setAttribute('aria-expanded', String(choice.bubble))
     $('choice-bubble').hidden = !choice.bubble
     $('choice-bubble-text').textContent = said.text
@@ -5349,7 +5355,45 @@
     choice.running = body.running || ''
     choice.session = !!body.session
     choice.inherited = { model: !!(body.inherited && body.inherited.model), effort: !!(body.inherited && body.inherited.effort) }
-    if (body.options) { choice.options = body.options; choice.optionsAt = body.optionsAt || 0 }
+    if (body.options) adoptOptions(body.options, body.optionsAt || 0)
+  }
+
+  // modelListed says the lists offer model, among the plain ones or the rest.
+  function modelListed(opts, model) {
+    return !!opts && ((opts.models || []).includes(model) || (opts.otherModels || []).includes(model))
+  }
+
+  // adoptOptions takes the lists the agent gave. A new default, or a model
+  // added, is simply taken in. What is in use that the lists offered and now
+  // don't is said, once (see choiceGone): something chosen from beyond the
+  // lists (a full name typed under Other…) was never offered, so isn't news.
+  function adoptOptions(next, at) {
+    const before = choice.options
+    choice.options = next
+    choice.optionsAt = at
+    if (!before) return
+    if (choice.model && modelListed(before, choice.model) && !modelListed(next, choice.model) && choice.goneModel !== choice.model) {
+      choice.goneModel = choice.model
+      choice.goneLabel = (before.names && before.names[choice.model]) || titleCase(choice.model)
+      choice.unseen = true
+      choice.bubble = true
+    }
+    if (choice.effort && (before.efforts || []).includes(choice.effort) && !(next.efforts || []).includes(choice.effort) && choice.goneEffort !== choice.effort) {
+      choice.goneEffort = choice.effort
+      choice.unseen = true
+      choice.bubble = true
+    }
+  }
+
+  // choiceGone is what to say when what is chosen isn't offered by the agent
+  // any more, or "" when it is (or never was, as a typed name wasn't).
+  function choiceGone() {
+    const gone = []
+    if (choice.goneModel && choice.goneModel === choice.model && !modelListed(choice.options, choice.model)) gone.push(choice.goneLabel)
+    if (choice.goneEffort && choice.goneEffort === choice.effort && !((choice.options && choice.options.efforts) || []).includes(choice.effort)) gone.push(effortLabel(choice.effort))
+    if (!gone.length) return ''
+    return gone.map((g) => '"' + g + '"').join(' and ') + " isn't offered by the agent any more, and is what's chosen: your next prompt will probably fail. Choose another" +
+      (gone.length > 1 ? ' model and effort.' : choice.goneModel === choice.model ? ' model.' : ' effort.')
   }
 
   async function readChoice() {
@@ -5373,7 +5417,7 @@
     try {
       const res = await post('/api/conversation/choice/options', { wake }, { timeout: 3 * 60 * 1000 })
       reached(true)
-      if (res.ok) { choice.options = res.body.options; choice.optionsAt = res.body.optionsAt || 0; choice.optionsError = '' } else choice.optionsError = res.body.error || "the agent couldn't say which models and efforts it has."
+      if (res.ok) { adoptOptions(res.body.options, res.body.optionsAt || 0); choice.optionsError = '' } else choice.optionsError = res.body.error || "the agent couldn't say which models and efforts it has."
     } catch (e) {
       reached(false)
       choice.optionsError = 'Could not reach vibe to ask the agent which models and efforts it has.'
@@ -5415,6 +5459,32 @@
     if (!choice.pending && !choiceProblem() && !choice.optionsError) { choice.bubble = false; choice.unseen = false }
     await readChoice()
     if (choiceOdd()) { choice.unseen = true; setChoiceBubble(true) }
+    refreshChoiceQuietly()
+  }
+
+  // refreshChoiceQuietly asks the host for the agent's lists again, as the
+  // session goes on: the host asks the agent only when its last answer is
+  // old (ten minutes), so this is cheap. Nothing of it shows (no spinner, no
+  // lock, no bubble): a new default or a new model is simply taken in, and a
+  // failure is the host's to say in its log. The one thing said is what is
+  // in use no longer being offered (see adoptOptions). Not while the first
+  // ask is under way, nor on top of another refresh.
+  async function refreshChoiceQuietly() {
+    if (!state.choice || !choice.loaded || choice.asking || choice.refreshing) return
+    choice.refreshing = true
+    try {
+      const res = await post('/api/conversation/choice/options', { wake: false }, { timeout: 3 * 60 * 1000 })
+      if (res.ok) {
+        reached(true)
+        adoptOptions(res.body.options, res.body.optionsAt || 0)
+        choice.optionsError = ''
+        drawChoice()
+      }
+    } catch (e) {
+      // The page's other polls say when vibe can't be reached.
+    } finally {
+      choice.refreshing = false
+    }
   }
 
   // saveChoice asks vibe to keep model and effort, and shows what it kept: it
@@ -5734,6 +5804,8 @@
     $('convo-new').addEventListener('click', openFresh)
     $('choice-model').addEventListener('change', modelPicked)
     $('choice-effort').addEventListener('change', () => saveChoice(choice.model, $('choice-effort').value))
+    $('choice-model').addEventListener('blur', drawChoice)
+    $('choice-effort').addEventListener('blur', drawChoice)
     $('choice-info').addEventListener('click', () => setChoiceBubble(!choice.bubble))
     $('choice-bubble-close').addEventListener('click', () => { setChoiceBubble(false); $('choice-info').focus() })
     $('choice-bubble-retry').addEventListener('click', retryChoice)

@@ -978,3 +978,180 @@ test('picking a model of its own over an inherited one stops the bubble saying i
     assert.ok(!/global settings/.test(p.$('choice-bubble-text').textContent))
   } finally { p.close() }
 })
+
+// ---- the lists asked for again, in the background, as a session goes on ----
+
+// A newer answer from the agent: Sonnet is now the default, and fable is offered.
+const NEWER = Object.assign({}, OPTIONS, {
+  models: ['fable', 'sonnet', 'opus', 'haiku'], current: 'Sonnet 5.5 (default)',
+  names: Object.assign({}, OPTIONS.names, { fable: 'Fable 5.1' }),
+})
+const quiet = (p) => !spinning(p) && !locked(p) && !open(p) && !dotted(p) &&
+  !p.$('choice-info').classList.contains('warn') && p.$('convo-choice').getAttribute('aria-busy') === 'false'
+const refreshes = (p) => p.posted('/api/conversation/choice/options').length - 1 // the first is the page opening
+
+test("at a turn's end the lists are asked for again, and nothing shows of it while it's under way or after", async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    p.at.busy = true
+    await p.every('pollConversation')
+    let release
+    p.at.hold = new Promise((resolve) => { release = resolve })
+    p.at.busy = false
+    await p.kick('pollConversation')
+    await turns()
+    assert.equal(refreshes(p), 1, 'asked again')
+    assert.deepEqual(p.posted('/api/conversation/choice/options').at(-1), { wake: false }, 'without waking the sandbox')
+    assert.ok(quiet(p), 'nothing shows while it is under way')
+    release()
+    await p.settle()
+    assert.ok(quiet(p), 'nor after')
+  } finally { p.close() }
+})
+
+test('a new default and a new model are taken in silently', async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    assert.equal(texts(p.$('choice-model'))[0], 'Default (Opus 5.5)')
+    p.at.options = NEWER
+    await endTurn(p, 'claude-opus-5-5')
+    assert.equal(texts(p.$('choice-model'))[0], 'Default (Sonnet 5.5)')
+    assert.deepEqual(texts(p.$('choice-model')).slice(1, 5), ['Fable 5.1', 'Sonnet 5.5', 'Opus 5.5', 'Haiku 5.5'])
+    assert.ok(quiet(p), 'and says nothing of it')
+  } finally { p.close() }
+})
+
+test("a refresh that fails says nothing, and the lists stay as they were", async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    p.at.optionsError = 'sandbox is stopped'
+    await endTurn(p, 'claude-opus-5-5')
+    assert.equal(refreshes(p), 1)
+    assert.ok(quiet(p))
+    assert.deepEqual(values(p.$('choice-model')), ['', 'sonnet', 'opus', 'haiku', '__other__'])
+    await p.click('choice-info')
+    assert.ok(!/sandbox is stopped|couldn't be refreshed/.test(p.$('choice-bubble-text').textContent + p.$('choice-bubble-stale').textContent), 'no error is held up to the user')
+  } finally { p.close() }
+})
+
+test('only one refresh is under way at a time', async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    p.at.hold = new Promise(() => {})
+    p.at.busy = true
+    await p.every('pollConversation')
+    p.at.busy = false
+    await p.kick('pollConversation')
+    await turns()
+    p.at.busy = true
+    await p.kick('pollConversation')
+    p.at.busy = false
+    await p.kick('pollConversation')
+    await turns()
+    assert.equal(refreshes(p), 1)
+  } finally { p.close() }
+})
+
+test('nothing is refreshed while the first fetch is still under way', async () => {
+  let release
+  const p = await choicePage({ model: 'opus', hold: new Promise((resolve) => { release = resolve }) })
+  try {
+    await turns()
+    p.at.busy = true
+    await p.kick('pollConversation')
+    p.at.busy = false
+    await p.kick('pollConversation')
+    await turns()
+    assert.equal(p.posted('/api/conversation/choice/options').length, 1, 'only the first')
+    release()
+    await p.settle()
+  } finally { p.close() }
+})
+
+// What is in use disappearing is the one thing said, and said once.
+test('the model in use no longer being offered is said, in the bubble, and stays said until it is dealt with', async () => {
+  const p = await choicePage({ model: 'haiku' })
+  try {
+    p.at.options = Object.assign({}, OPTIONS, { models: ['sonnet', 'opus'] })
+    await endTurn(p, 'claude-haiku-5-5')
+    assert.ok(open(p) && dotted(p) && p.$('choice-info').classList.contains('warn'))
+    assert.match(p.$('choice-bubble-text').textContent, /Haiku 5\.5.*isn't offered by the agent any more/)
+    assert.match(p.$('choice-bubble-text').textContent, /Choose another model/)
+    await p.click('choice-bubble-close')
+    assert.ok(!dotted(p))
+    assert.ok(p.$('choice-info').classList.contains('warn'), 'still so, so still amber')
+    await endTurn(p, 'claude-haiku-5-5')
+    assert.ok(!open(p), 'said once, not at every refresh')
+    await choose(p, 'choice-model', 'opus')
+    p.$('choice-warn').close('go')
+    await p.settle()
+    assert.ok(!p.$('choice-info').classList.contains('warn'), 'dealt with by choosing another')
+  } finally { p.close() }
+})
+
+test('the effort in use no longer being offered is said too', async () => {
+  const p = await choicePage({ model: 'opus', effort: 'high' })
+  try {
+    p.at.options = Object.assign({}, OPTIONS, { efforts: ['low', 'medium'] })
+    await endTurn(p, 'claude-opus-5-5')
+    assert.ok(open(p) && p.$('choice-info').classList.contains('warn'))
+    assert.match(p.$('choice-bubble-text').textContent, /High effort.*isn't offered by the agent any more/)
+  } finally { p.close() }
+})
+
+test('a model that is back in the lists is no longer said to be gone', async () => {
+  const p = await choicePage({ model: 'haiku' })
+  try {
+    p.at.options = Object.assign({}, OPTIONS, { models: ['sonnet', 'opus'] })
+    await endTurn(p, 'claude-haiku-5-5')
+    assert.ok(p.$('choice-info').classList.contains('warn'))
+    p.at.options = OPTIONS
+    await endTurn(p, 'claude-haiku-5-5')
+    assert.ok(!p.$('choice-info').classList.contains('warn'))
+  } finally { p.close() }
+})
+
+test("a model typed under Other… was never in the lists, so its not being there is no news", async () => {
+  const p = await choicePage({ model: 'claude-opus-4-1' })
+  try {
+    p.at.options = NEWER
+    await endTurn(p, 'claude-opus-4-1')
+    assert.ok(quiet(p))
+    assert.ok(texts(p.$('choice-model')).includes('claude-opus-4-1'))
+  } finally { p.close() }
+})
+
+test("a model only in the lists' other half going is said as well", async () => {
+  const p = await choicePage({ model: 'opus[1m]' })
+  try {
+    p.at.options = Object.assign({}, OPTIONS, { otherModels: ['best'] })
+    await endTurn(p, 'claude-opus-5-5')
+    assert.ok(open(p) && p.$('choice-info').classList.contains('warn'))
+    assert.match(p.$('choice-bubble-text').textContent, /Opus 5\.5 \(1M context\)/)
+  } finally { p.close() }
+})
+
+test('the model in use disappearing since the page was last open is said when it opens', async () => {
+  const p = await choicePage({ model: 'haiku', cached: OPTIONS, options: Object.assign({}, OPTIONS, { models: ['sonnet', 'opus'] }) })
+  try {
+    assert.ok(open(p) && p.$('choice-info').classList.contains('warn'))
+    assert.match(p.$('choice-bubble-text').textContent, /isn't offered by the agent any more/)
+  } finally { p.close() }
+})
+
+// A drop-down being used is never rebuilt under the hand: what changed waits until it's let go.
+test('lists that change while a drop-down is open wait for it to be closed', async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    const select = p.$('choice-model')
+    select.focus()
+    const before = optionNodes(select)
+    p.at.options = NEWER
+    await endTurn(p, 'claude-opus-5-5')
+    assert.ok(optionNodes(select).every((o, i) => o === before[i]) && optionNodes(select).length === before.length, 'untouched while open')
+    select.blur()
+    await p.settle()
+    assert.ok(texts(select).includes('Fable 5.1'), 'taken in once let go')
+    assert.equal(texts(select)[0], 'Default (Sonnet 5.5)')
+  } finally { p.close() }
+})

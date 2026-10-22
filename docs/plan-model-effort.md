@@ -321,3 +321,21 @@ Eleven threads, one P2; all taken up.
   page is told which of the two come from there and the bubble says so (and opens when Default was asked for and not given).
 - **`mode:` is layered like every other setting:** the profile's `settings.yaml` over the base one.
 - **Which names pick by a rule** (`best`, `opusplan`) is said by the host (`Options.Rules`), once, in Go; the page no longer has its own list.
+
+### Asked for again as a session goes on (2026-10-22)
+
+Why: a box's `claude` first said its default was Sonnet and later Opus (it re-fetches server-side settings on every run, and
+its `~/.claude.json` caches them), while vibe went on showing the first answer, because the lists were "fresh" for the life of
+the vibe process.
+
+- The host's answer is **fresh for ten minutes** (`optionsFreshFor`, from the clock the server already has); an older one is
+  asked for again by the next `POST …/choice/options`, and efforts are checked against the list only while it is fresh. A failed
+  ask keeps the old lists and writes a line in vibe's log (the page may not say anything).
+- The page asks at the end of every turn (after reading what ran), without waking the sandbox, **silently**: no spinner, no lock,
+  no bubble, no dot, also when it fails. Not while the first ask is under way, and not on top of another refresh. A new default,
+  a new model, new names are taken in.
+- **What is said:** the model or effort in use that the previous lists offered and the new ones don't (`adoptOptions`,
+  `choiceGone`): the bubble opens, once, amber, with the dot, and stays amber until another is chosen or it's offered again.
+  It applies to the page's start as well (kept lists against the fresh ones). A name typed under **Other…** was never offered,
+  so its absence is no news.
+- A drop-down that has focus is left as it is while the lists change; it takes them in on blur.

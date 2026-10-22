@@ -622,7 +622,10 @@ you're looking at:
   readers and tooltips still have the names Model and Effort. **Default** passes nothing, so claude's own settings decide, and says
   which model that is. The lists are claude's own. vibe keeps the last ones it was given for each sandbox (in
   `~/.vibe/companion/`), so the drop-downs are full the moment the page opens, and asks claude again in the
-  background, without waking a sandbox that's asleep; the first time there's nothing kept, so it just asks. If asking again
+  background, without waking a sandbox that's asleep; the first time there's nothing kept, so it just asks. Then, as a session goes on, they're asked for again at the end of a turn once the last answer is ten minutes old
+  (claude's default and models can change under a vibe left running), silently: no spinner, nothing locked, nothing said; a new default or a new model is
+  just taken in, and a failure goes to vibe's log. The one thing said is when the model or effort you're using was offered and isn't any more
+  (the bubble opens, amber), and a drop-down that is open waits until it's closed to change. If asking at the start
   fails, the kept lists carry on, and the **i** button's bubble says how old they are and why (with **Retry**, which wakes
   the sandbox to ask). The plain models are in the drop-down by the name the agent gives them, which carries the version ("Opus 5.5"; vibe asks claude what each alias stands for, in the same trip, and keeps it), biggest first where vibe knows the size (fable, opus, sonnet, haiku, as claude.ai lists them) and then any other by name, and **Other…** opens the rest the agent lists (each by what that is called now, then the alias it's kept as), or
   takes a model's full name. Efforts are the ones claude's `--effort` takes. Everything in the drop-downs is in title case ("Low", "Opus 5.5"); what's kept in `settings.yaml` and given to claude is the name as it is (`low`, `opus`). A change applies from the next
