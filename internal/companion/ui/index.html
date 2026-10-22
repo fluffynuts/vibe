@@ -433,6 +433,15 @@
     </form>
   </dialog>
 
+  <dialog id="file-view" class="file-view" aria-labelledby="file-view-path">
+    <header>
+      <h2 id="file-view-path"></h2>
+      <button type="button" id="file-view-copy" class="ghost small" title="Copy the file" aria-label="Copy the file" hidden></button>
+      <button type="button" id="file-view-close" class="ghost">Close</button>
+    </header>
+    <div id="file-view-body"></div>
+  </dialog>
+
   <dialog id="choice-warn">
     <form method="dialog">
       <h2 id="choice-warn-title">Change the model?</h2>

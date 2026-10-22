@@ -384,6 +384,8 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"POST /api/awake", s.authed(s.changing(s.keepAwake))},
 		{"GET /api/review", s.serving(reviewFeature, s.reviewState)},
 		{"GET /api/review/file", s.serving(reviewFeature, s.reviewFile)},
+		{"GET /api/workspace-file", s.serving(fileFeature, s.workspaceFileHandler)},
+		{"GET /api/workspace-files", s.serving(fileFeature, s.workspaceFilesHandler)},
 		{"POST /api/review/do", s.serving(reviewFeature, s.reviewDo)},
 		{"POST /api/review/ask", s.serving(reviewFeature, s.reviewAsk)},
 		{"POST /api/review/submit", s.serving(reviewFeature, s.reviewSubmit)},
@@ -592,6 +594,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"admin":                 s.cfg.Admin != nil,
 		"manage":                s.cfg.Manage != nil,
 		"review":                s.cfg.ReviewTab != nil,
+		"viewFiles":             fileFeature.present(s),
 		"usage":                 s.cfg.Usage != nil,
 		// A page for no sandbox has only the Profiles tab.
 		"sandboxTabs": s.cfg.Sandbox != "",

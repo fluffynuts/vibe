@@ -630,6 +630,7 @@
       state.clipboardCanStart = !!res.body.clipboardCanStart
       state.conversation = !!res.body.conversation
       $('tab-conversation').hidden = !state.conversation
+      state.viewFiles = !!res.body.viewFiles
       state.choice = state.conversation && !!res.body.choice
       $('convo-choice').hidden = !state.choice
       if (state.choice) initChoice()
@@ -4111,7 +4112,7 @@
 
   // news: the agent has said something since the Conversation tab was last
   // open (its dot); loaded: the conversation so far has been fetched once.
-  const convo = { last: 0, running: false, polling: false, behind: false, news: false, loaded: false, lastPrompt: '', ticks: new Map(), typing: null }
+  const convo = { last: 0, running: false, polling: false, behind: false, news: false, loaded: false, lastPrompt: '', ticks: new Map(), typing: null, group: null }
 
   // showTyping keeps the "typing" bubble below the agent's latest message
   // for as long as it is answering, and takes it away once it has. Its
@@ -4174,7 +4175,7 @@
     const inline = (nodes, inLink) => nodes.flatMap((n) => {
       switch (n.type) {
         case 'text': return inLink ? document.createTextNode(visible(n.text)) : withThreadRefs(visible(n.text))
-        case 'code': return el('code', { text: visible(n.text) })
+        case 'code': return !inLink && state.viewFiles && looksLikeFile(n.text) ? fileCandidate(n.text) : el('code', { text: visible(n.text) })
         case 'br': return el('br')
         case 'strong': return el('strong', {}, ...inline(n.children, inLink))
         case 'em': return el('em', {}, ...inline(n.children, inLink))
@@ -4208,6 +4209,84 @@
     })
     return el('div', { class: 'md' }, ...blocks(window.vibeMarkdown.parse(text)))
   }
+
+  // looksLikeFile is whether code the agent wrote reads as a path to a file: no spaces, a name with an
+  // extension at its end. Nothing is known of it until the host is asked, so this only decides what is
+  // offered; a version (1.2.3) or an address with no folder in it (a@b.com) isn't.
+  function looksLikeFile(text) {
+    if (text.length > 200 || !/^[\w@+~.\/-]+$/.test(text) || !/\.[A-Za-z0-9]{1,10}$/.test(text)) return false
+    if (/^[\d.]+$/.test(text) || (!text.includes('/') && text.includes('@'))) return false
+    return !text.endsWith('/')
+  }
+
+  // Code that reads like a path is only code until the host says it is a file it can show: one ask, for
+  // everything drawn at that moment, and then each one that is becomes a button. What isn't stays as it was
+  // (and is not asked about again): not everything that reads like a path is one (safe.directory).
+  const FILES_PER_ASK = 25
+  let fileCheckQueued = false
+
+  function fileCandidate(path) {
+    if (!fileCheckQueued) { fileCheckQueued = true; queueMicrotask(checkFileCandidates) }
+    return el('code', { class: 'file-candidate', text: path })
+  }
+
+  async function checkFileCandidates() {
+    fileCheckQueued = false
+    const nodes = Array.from(document.querySelectorAll('code.file-candidate'))
+    nodes.forEach((n) => n.classList.remove('file-candidate'))
+    const paths = Array.from(new Set(nodes.map((n) => n.textContent)))
+    const files = new Set()
+    for (let i = 0; i < paths.length; i += FILES_PER_ASK) {
+      try {
+        const res = await api('/api/workspace-files?' + paths.slice(i, i + FILES_PER_ASK).map((p) => 'path=' + encodeURIComponent(p)).join('&'))
+        if (res.ok && Array.isArray(res.body.files)) res.body.files.forEach((f) => files.add(f))
+        else console.warn("vibe couldn't tell which paths are files it can show:", res.body && res.body.error)
+      } catch (err) {
+        console.warn("vibe couldn't tell which paths are files it can show:", err.message)
+      }
+    }
+    for (const n of nodes) if (n.isConnected && files.has(n.textContent)) n.replaceWith(fileRef(n.textContent))
+  }
+
+  // fileRef is a path the agent named, as a button showing that file over the conversation. It is never a
+  // link: the agent chooses the path, so what comes of clicking is only the host reading it, if it is in the
+  // workspace, and the page showing it as text.
+  function fileRef(path) {
+    return el('button', { type: 'button', class: 'file-ref', title: 'Show this file', onclick: () => viewFile(path) }, el('code', { text: path }))
+  }
+
+  // viewFile shows path over the conversation, read-only: as Markdown if it is, else as it is. The host says
+  // why when it won't (outside the workspace, not there, too big, not text), and that is shown in its place.
+  async function viewFile(path) {
+    const dialog = $('file-view')
+    $('file-view-path').textContent = path
+    dialog.classList.remove('outside')
+    $('file-view-copy').hidden = true
+    $('file-view-body').replaceChildren(el('p', { class: 'muted', text: 'Loading…' }))
+    if (!dialog.open) dialog.showModal()
+    let res
+    try {
+      res = await api('/api/workspace-file?path=' + encodeURIComponent(path))
+    } catch (err) {
+      res = { ok: false, body: { error: "Couldn't ask vibe for it: " + err.message } }
+    }
+    if ($('file-view-path').textContent !== path) return
+    if (!res.ok) {
+      dialog.classList.toggle('outside', res.body.code === 'outside')
+      $('file-view-body').replaceChildren(el('p', { text: res.body.error || 'That file could not be shown.' }))
+      return
+    }
+    const text = res.body.text
+    $('file-view-copy').hidden = false
+    $('file-view-copy').onclick = () => copyText(text)
+    $('file-view-body').replaceChildren(/\.(md|markdown)$/i.test(path)
+      ? markdown(text)
+      : el('pre', {}, el('code', { text: visible(text) })))
+    $('file-view-body').scrollTop = 0
+  }
+
+  $('file-view-copy').append(copyIcon())
+  $('file-view-close').onclick = () => $('file-view').close()
 
   // HIDDEN_CONTROL is what a terminal acts on but a page doesn't show: the
   // control characters bar tab and newline. In code the agent wrote, one can
@@ -4312,6 +4391,7 @@
   // seq, when given, marks the line as that event of the conversation, so vibe
   // can take it back (see the retract event).
   function convoNote(cls, text, at, seq) {
+    endToolGroup()
     const time = stamp(at)
     const words = cls === 'agent' ? markdown(text) : el('span', { text })
     // What the agent said can be copied whole, as the Markdown it wrote: its footer has the button.
@@ -4364,6 +4444,7 @@
   }
 
   function userNote(ev) {
+    endToolGroup()
     const ticks = el('span', { class: 'ticks' })
     convo.ticks.set(ev.seq, ticks)
     const text = ev.text || ''
@@ -4402,12 +4483,63 @@
     return ''
   }
 
+  // The tools the agent uses between what it says are gathered in one group, open while the agent is
+  // working, so what it does is seen as it happens, and collapsed once it speaks (or the turn ends), so
+  // what it said is not lost among them. Each tool's line and result are inside, as they always were.
+  const GROUP_NAMES_SHOWN = 5
+
+  function toolGroup() {
+    if (convo.group) return convo.group
+    const summary = el('summary')
+    const body = el('div', { class: 'tool-group-body' })
+    const group = el('details', { class: 'tool-group' }, summary, body)
+    group.open = true
+    group.body = body
+    group.tally = { uses: 0, failed: 0, names: new Map() }
+    // A group the user has opened or closed is as they left it.
+    summary.addEventListener('click', () => { group.touched = true })
+    $('convo-log').append(group)
+    convo.group = group
+    drawToolGroup(group)
+    return group
+  }
+
+  function drawToolGroup(group) {
+    const { uses, failed, names } = group.tally
+    const ranked = Array.from(names).sort((a, b) => b[1] - a[1])
+    const shown = ranked.slice(0, GROUP_NAMES_SHOWN).map(([name, n]) => name + ' ×' + n)
+    const more = ranked.length - shown.length
+    group.querySelector('summary').textContent = '⚙ ' + (uses ? plural(uses, 'tool use') : 'tool results') +
+      (shown.length ? ' · ' + shown.join(', ') + (more > 0 ? ', and ' + more + ' more' : '') : '') +
+      (failed ? ' · ' + failed + ' failed' : '')
+    group.classList.toggle('bad', failed > 0)
+  }
+
+  // endToolGroup is the agent having said something, or the turn having ended: the tools it used so far
+  // are put away.
+  function endToolGroup() {
+    const group = convo.group
+    convo.group = null
+    if (group && !group.touched) group.open = false
+  }
+
+  function toolUsed(block) {
+    const group = toolGroup()
+    const name = block.name || 'tool'
+    group.tally.uses++
+    group.tally.names.set(name, (group.tally.names.get(name) || 0) + 1)
+    drawToolGroup(group)
+    group.body.append(el('div', { class: 'msg tool' }, el('span', { text: '⚙ ' + name + '  ' + summarise(block.input) })))
+  }
+
   function showResult(block) {
     let text = resultText(block.content)
+    if (!text && !block.is_error) return
+    const group = toolGroup()
+    if (block.is_error) { group.tally.failed++; drawToolGroup(group) }
     if (!text) return
     if (text.length > RESULT_SHOWN) text = text.slice(0, RESULT_SHOWN) + '\n… (' + (text.length - RESULT_SHOWN) + ' more characters)'
-    const log = $('convo-log')
-    log.append(el('details', { class: 'tool-result' + (block.is_error ? ' bad' : '') },
+    group.body.append(el('details', { class: 'tool-result' + (block.is_error ? ' bad' : '') },
       el('summary', { text: block.is_error ? 'tool error' : 'tool result' }),
       el('pre', { text })))
   }
@@ -4418,7 +4550,7 @@
     if (line.type === 'assistant') {
       for (const block of content) {
         if (block.type === 'text' && block.text) convoNote('agent', block.text, at)
-        else if (block.type === 'tool_use') convoNote('tool', '⚙ ' + (block.name || 'tool') + '  ' + summarise(block.input))
+        else if (block.type === 'tool_use') toolUsed(block)
       }
       // The agent says to run /login, which needs its terminal: this page
       // can't show the agent's own screens.
@@ -4428,6 +4560,7 @@
     } else if (line.type === 'user') {
       for (const block of content) if (block.type === 'tool_result') showResult(block)
     } else if (line.type === 'result') {
+      endToolGroup()
       if (line.is_error) {
         convoNote('error', typeof line.result === 'string' && line.result ? line.result : 'The agent reported an error.', at)
       }
@@ -4443,7 +4576,7 @@
   }
 
   function showEvent(ev) {
-    if (ev.kind === 'reset') { $('convo-log').replaceChildren(); convo.ticks.clear() }
+    if (ev.kind === 'reset') { $('convo-log').replaceChildren(); convo.ticks.clear(); convo.group = null }
     else if (ev.kind === 'user') { convo.lastPrompt = ev.text || ''; userNote(ev) }
     else if (ev.kind === 'agent') showAgent(ev.agent, ev.at)
     else if (ev.kind === 'note') convoNote('meta', ev.text || '', undefined, ev.seq)
@@ -4516,7 +4649,7 @@
       banner('conversation', '')
       const log = $('convo-log')
       const stick = nearBottom(log)
-      if (res.body.reset) { log.replaceChildren(); convo.ticks.clear() }
+      if (res.body.reset) { log.replaceChildren(); convo.ticks.clear(); convo.group = null }
       if (Array.isArray(res.body.commands)) {
         slash.commands = res.body.commands.filter((c) => typeof c === 'string')
         slash.seq = res.body.commandsSeq || 0
@@ -4525,6 +4658,8 @@
       for (const ev of res.body.events || []) showEvent(ev)
       if (res.body.receipt) showReceipt(res.body.receipt.seq, res.body.receipt.state)
       convo.last = res.body.last || 0
+      // A turn that isn't running has no tools still being used, whatever the last thing said was.
+      if (!res.body.running) endToolGroup()
       setConvoRunning(!!res.body.running, !!res.body.background, res.body.quietMinutes || 0, !!res.body.compacting)
       if ((res.body.events || []).length) {
         if ($('panel-conversation').hidden) {
@@ -4738,10 +4873,11 @@
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const parent = node.parentElement
       if (!parent || parent.closest('[hidden]')) continue
-      const result = parent.closest('details.tool-result')
-      if (result && !withTools && !parent.closest('summary')) continue
+      // What the agent did, in its groups, is out of sight until a group is opened: the box says whether to look.
+      const inGroup = parent.closest('.tool-group-body')
+      if (inGroup && !withTools) continue
       let message = node
-      while (message.parentNode && message.parentNode !== log) message = message.parentNode
+      while (message.parentNode && message.parentNode !== log && !message.parentNode.classList.contains('tool-group-body')) message = message.parentNode
       if (lastMessage && message !== lastMessage) text += '\n'
       lastMessage = message
       parts.push({ node, start: text.length })

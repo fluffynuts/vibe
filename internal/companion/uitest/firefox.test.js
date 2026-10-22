@@ -304,3 +304,40 @@ test('Send stays on one line at every width, wherever the widget is on the row o
     } finally { await page.close() }
   }
 })
+
+// toolsPage opens the Conversation tab on a conversation that is whatever events() says it is, asked again
+// every time the page polls.
+async function toolsPage(events, running) {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 700 } })
+  const at = { events, running }
+  await page.route(/\/api\/conversation\?/, (route) => {
+    const after = Number(new (require('node:url').URL)(route.request().url()).searchParams.get('after')) || 0
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify({ events: at.events.filter((e) => e.seq > after), last: at.events.reduce((m, e) => Math.max(m, e.seq), 0), running: at.running }) })
+  })
+  await page.goto(URL)
+  await page.click('#tab-conversation')
+  await page.waitForSelector('#convo-log .msg.agent')
+  return Object.assign(page, { at })
+}
+
+const sayEv = (seq, text) => ({ seq, kind: 'agent', agent: { type: 'assistant', message: { content: [{ type: 'text', text }] } } })
+const useEv = (seq) => ({ seq, kind: 'agent', agent: { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'echo ' + seq } }] } } })
+const outEv = (seq) => ({ seq, kind: 'agent', agent: { type: 'user', message: { content: [{ type: 'tool_result', content: 'out ' + seq }] } } })
+
+test('a conversation of many tools is the words of the agent with a line for each group, and the tools open from it', async () => {
+  const events = []
+  let seq = 1
+  for (let i = 1; i <= 12; i++) {
+    for (let t = 0; t < 8; t++) { events.push(useEv(seq++), outEv(seq++)) }
+    events.push(sayEv(seq++, 'comment number ' + i))
+  }
+  const page = await toolsPage(events, false)
+  try {
+    const group = await page.locator('details.tool-group').first().boundingBox()
+    assert.ok(group.height < 30, `a group of 8 tools takes ${group.height}px: it should be one line`)
+    assert.equal(await page.locator('details.tool-group[open]').count(), 0)
+    await page.locator('details.tool-group > summary').first().click()
+    assert.equal(await page.locator('details.tool-group[open] .msg.tool').count(), 8)
+    assert.equal(await page.locator('details.tool-group > summary').first().textContent(), '⚙ 8 tool uses · Bash ×8')
+  } finally { await page.close() }
+})
