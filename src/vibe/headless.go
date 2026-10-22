@@ -32,7 +32,7 @@ func headless(lay layout.Layout, args cliargs.Args, name string) error {
 		return fmt.Errorf("--headless is the companion page with no terminal: it can't go with -N/--no-companion")
 	}
 	checkGitTokenExpiry(vibeHome, args, name)
-	stopCompanion, serving, cancelThePage := startCompanion(lay, args, name)
+	stopCompanion, serving, cancelThePage, authors := startCompanion(lay, args, name)
 	if !serving {
 		stopCompanion()
 		return fmt.Errorf("--headless is the companion page with no terminal, and the page isn't being served: " +
@@ -76,8 +76,8 @@ func headless(lay layout.Layout, args cliargs.Args, name string) error {
 	asked := false
 	for {
 		go nudgeOnStart(lay, name, func() {})
-		if gitAuthorDesk != nil {
-			go gitAuthorDesk.Check()
+		if authors != nil {
+			go authors.Check()
 		}
 		// Each time, as a rebuild can leave it logged out.
 		go warnIfAgentLoggedOut(name, recordedAgent(vibeHome, name, "claude"))

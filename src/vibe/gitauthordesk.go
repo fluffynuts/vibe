@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"vibe/internal/cliargs"
 	"vibe/internal/companion"
 	"vibe/internal/layout"
 	"vibe/internal/state"
@@ -150,10 +151,16 @@ func (d *authorDesk) Decide(answer string) error {
 	return err
 }
 
-// gitAuthorDesk is the headless session's desk, which its companion page
-// asks through and its start-up checks: nil in a session with a terminal, which
-// asks there (see checkSandboxGitAuthor).
-var gitAuthorDesk *authorDesk
+// authorDeskFor is the desk a session's companion page asks through, and
+// its start-up checks: only a headless session has one, as a session with a
+// terminal asks there (see checkSandboxGitAuthor); and there's none for a
+// sandbox vibe has no record of.
+func authorDeskFor(args cliargs.Args, found bool, lay layout.Layout, name string, inst state.Instance) *authorDesk {
+	if !args.Headless || !found {
+		return nil
+	}
+	return newAuthorDesk(lay, name, inst)
+}
 
 // newAuthorDesk is the desk for sandbox name, as inst records it.
 func newAuthorDesk(lay layout.Layout, name string, inst state.Instance) *authorDesk {

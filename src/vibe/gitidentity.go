@@ -263,41 +263,51 @@ func gitAuthorDeps(ctx context.Context, name string, say func(string, ...interfa
 	}
 }
 
-// checkSandboxGitAuthor is run at a terminal session's start, before the
-// agent is attached: it settles whether the agent can commit (see
-// checkAgentIdentity), asking on the terminal, and keeps the answer in the
-// profile. It never stops the session starting. A headless session asks on
-// the page instead.
-func checkSandboxGitAuthor(lay layout.Layout, args cliargs.Args, name string) {
-	inst, found, err := state.Load(lay.Home, name)
-	if err != nil || !found {
-		return
-	}
-	preference, err := gitAuthorPreference(lay, inst.Profile)
+// terminalAuthor is what a terminal session's check needs of the world, so
+// the check can be run with the world stood in for.
+type terminalAuthor struct {
+	// preference is the gitAuthor setting, or the answer kept (see gitAuthorPreference).
+	preference func() (string, error)
+	// start starts the sandbox, which can't be looked at while it's stopped.
+	start func() bool
+	deps  func(say func(string, ...interface{}), ask func(string) bool) identityDeps
+	push  func() string
+	// keep records the user's answer (gitAuthorImport or gitAuthorLeave).
+	keep func(choice string) error
+	say  func(format string, a ...interface{})
+	// force is -f, which answers yes. canAsk says whether there is a terminal
+	// to ask on; confirm asks.
+	force   bool
+	canAsk  func() bool
+	confirm func(question string) bool
+}
+
+// run settles whether the agent can commit (see checkAgentIdentity), asking
+// on the terminal, and keeps the answer. It never stops the session starting.
+func (t terminalAuthor) run() {
+	preference, err := t.preference()
 	if err != nil {
-		note("WARNING: couldn't read your git author choice, so can't tell whether the agent can commit: %s", err)
+		t.say("WARNING: couldn't read your git author choice, so can't tell whether the agent can commit: %s", err)
 		return
 	}
-	ctx := context.Background()
 	if preference == gitAuthorLeave {
 		return
 	}
-	if !sbxrun.Start(ctx, name) {
-		note("couldn't start '%s' to look at its git author, so can't tell whether the agent can commit", name)
+	if !t.start() {
+		t.say("couldn't start the sandbox to look at its git author, so can't tell whether the agent can commit")
 		return
 	}
 	// A question nobody could answer isn't a refusal, and isn't kept as one.
 	unanswered := false
 	ask := func(question string) bool {
-		if !args.Force && !interactive() {
+		if !t.force && !t.canAsk() {
 			unanswered = true
-			note("  with a terminal, vibe would ask: %s", question)
+			t.say("  with a terminal, vibe would ask: %s", question)
 			return false
 		}
-		return confirmDefault(args.Force, true, question)
+		return t.confirm(question)
 	}
-	say := func(format string, a ...interface{}) { note(format, a...) }
-	outcome := checkAgentIdentity(gitAuthorDeps(ctx, name, say, ask), preference, pushStatement(inst))
+	outcome := checkAgentIdentity(t.deps(t.say, ask), preference, t.push())
 	if unanswered || preference != "" {
 		return
 	}
@@ -305,7 +315,31 @@ func checkSandboxGitAuthor(lay layout.Layout, args cliargs.Args, name string) {
 	if choice == "" {
 		return
 	}
-	if err := keepGitAuthorChoice(lay, inst.Profile, choice); err != nil {
-		note("WARNING: couldn't keep your answer, so you'll be asked again: %s", err)
+	if err := t.keep(choice); err != nil {
+		t.say("WARNING: couldn't keep your answer, so you'll be asked again: %s", err)
 	}
+}
+
+// checkSandboxGitAuthor is run at a terminal session's start, before the
+// agent is attached (see terminalAuthor.run). A headless session asks on the
+// page instead (see authorDesk).
+func checkSandboxGitAuthor(lay layout.Layout, args cliargs.Args, name string) {
+	inst, found, err := state.Load(lay.Home, name)
+	if err != nil || !found {
+		return
+	}
+	ctx := context.Background()
+	terminalAuthor{
+		preference: func() (string, error) { return gitAuthorPreference(lay, inst.Profile) },
+		start:      func() bool { return sbxrun.Start(ctx, name) },
+		deps: func(say func(string, ...interface{}), ask func(string) bool) identityDeps {
+			return gitAuthorDeps(ctx, name, say, ask)
+		},
+		push:    func() string { return pushStatement(inst) },
+		keep:    func(choice string) error { return keepGitAuthorChoice(lay, inst.Profile, choice) },
+		say:     func(format string, a ...interface{}) { note(format, a...) },
+		force:   args.Force,
+		canAsk:  interactive,
+		confirm: func(question string) bool { return confirmDefault(args.Force, true, question) },
+	}.run()
 }

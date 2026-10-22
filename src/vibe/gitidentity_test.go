@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"vibe/internal/cliargs"
 	"vibe/internal/profilegen"
 	"vibe/internal/state"
 )
@@ -275,5 +276,133 @@ func TestTheAnswerSurvivesAnAutomaticUpdateOfTheProfile(t *testing.T) {
 	}
 	if got, err := gitAuthorPreference(lay, "p"); err != nil || got != gitAuthorImport {
 		t.Errorf("after updating, the choice is %q (%v)", got, err)
+	}
+}
+
+// terminalRig is the world a terminal session's check runs in.
+type terminalRig struct {
+	identityRig
+	pref       string
+	prefErr    error
+	startable  bool
+	started    bool
+	canAsk     bool
+	force      bool
+	keptChoice []string
+	keepErr    error
+	notes      []string
+}
+
+func newTerminalRig() *terminalRig {
+	r := &terminalRig{startable: true, canAsk: true}
+	r.hostName, r.hostEmail, r.answer = "H", "h@x", true
+	return r
+}
+
+func (r *terminalRig) check() terminalAuthor {
+	return terminalAuthor{
+		preference: func() (string, error) { return r.pref, r.prefErr },
+		start:      func() bool { r.started = true; return r.startable },
+		deps: func(say func(string, ...interface{}), ask func(string) bool) identityDeps {
+			d := r.deps()
+			d.say, d.ask = say, ask
+			return d
+		},
+		push:    func() string { return aPushLine },
+		keep:    func(choice string) error { r.keptChoice = append(r.keptChoice, choice); return r.keepErr },
+		say:     func(format string, a ...interface{}) { r.notes = append(r.notes, fmt.Sprintf(format, a...)) },
+		force:   r.force,
+		canAsk:  func() bool { return r.canAsk },
+		confirm: func(q string) bool { r.asked = append(r.asked, q); return r.answer },
+	}
+}
+
+func TestAtATerminalYesGivesTheAuthorAndKeepsImport(t *testing.T) {
+	r := newTerminalRig()
+	r.check().run()
+	if len(r.set) != 1 || strings.Join(r.keptChoice, ",") != gitAuthorImport {
+		t.Errorf("set %v, kept %v", r.set, r.keptChoice)
+	}
+}
+
+func TestAtATerminalNoLeavesItAndKeepsLeave(t *testing.T) {
+	r := newTerminalRig()
+	r.answer = false
+	r.check().run()
+	if len(r.set) != 0 || strings.Join(r.keptChoice, ",") != gitAuthorLeave {
+		t.Errorf("set %v, kept %v", r.set, r.keptChoice)
+	}
+}
+
+func TestWithNoTerminalToAskOnNothingIsDoneOrKept(t *testing.T) {
+	r := newTerminalRig()
+	r.canAsk = false
+	r.check().run()
+	if len(r.asked)+len(r.set)+len(r.keptChoice) != 0 {
+		t.Errorf("asked %q, set %v, kept %v", r.asked, r.set, r.keptChoice)
+	}
+	if !strings.Contains(strings.Join(r.notes, "\n"), "would ask") {
+		t.Errorf("it said %q", r.notes)
+	}
+}
+
+func TestAChoiceAlreadyMadeIsNotKeptAgain(t *testing.T) {
+	r := newTerminalRig()
+	r.pref = gitAuthorImport
+	r.check().run()
+	if len(r.set) != 1 || len(r.asked) != 0 || len(r.keptChoice) != 0 {
+		t.Errorf("set %v, asked %q, kept %v", r.set, r.asked, r.keptChoice)
+	}
+}
+
+func TestALeaveChoiceDoesNotEvenStartTheSandbox(t *testing.T) {
+	r := newTerminalRig()
+	r.pref = gitAuthorLeave
+	r.check().run()
+	if r.started || r.sandboxAsked {
+		t.Errorf("started %v, sandbox asked %v", r.started, r.sandboxAsked)
+	}
+}
+
+func TestASandboxThatWillNotStartIsSaidAndNothingElseIsDone(t *testing.T) {
+	r := newTerminalRig()
+	r.startable = false
+	r.check().run()
+	if r.sandboxAsked || len(r.asked)+len(r.keptChoice) != 0 || len(r.notes) == 0 {
+		t.Errorf("sandbox asked %v, asked %q, kept %v, said %q", r.sandboxAsked, r.asked, r.keptChoice, r.notes)
+	}
+}
+
+func TestAChoiceThatCannotBeReadIsSaidAndNothingElseIsDone(t *testing.T) {
+	r := newTerminalRig()
+	r.prefErr = errors.New("unreadable")
+	r.check().run()
+	if r.started || len(r.notes) != 1 || !strings.Contains(r.notes[0], "unreadable") {
+		t.Errorf("started %v, said %q", r.started, r.notes)
+	}
+}
+
+func TestAnAnswerThatCannotBeKeptIsSaid(t *testing.T) {
+	r := newTerminalRig()
+	r.keepErr = errors.New("read-only")
+	r.check().run()
+	if !strings.Contains(strings.Join(r.notes, "\n"), "read-only") {
+		t.Errorf("said %q", r.notes)
+	}
+}
+
+func TestOnlyAHeadlessSessionGetsADeskForThePage(t *testing.T) {
+	lay := updateLayout(t)
+	inst := state.Instance{Name: "box", Profile: "p"}
+	if desk := authorDeskFor(cliargs.Args{Headless: true}, true, lay, "box", inst); desk == nil {
+		t.Error("a headless session has no desk")
+	}
+	for name, c := range map[string]struct {
+		args  cliargs.Args
+		found bool
+	}{"a terminal session": {cliargs.Args{}, true}, "a headless one with no record of the sandbox": {cliargs.Args{Headless: true}, false}} {
+		if desk := authorDeskFor(c.args, c.found, lay, "box", inst); desk != nil {
+			t.Errorf("%s has a desk", name)
+		}
 	}
 }

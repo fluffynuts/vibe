@@ -238,14 +238,14 @@ func conversationFor(vibeHome, name string, inst state.Instance) companion.Conve
 //
 // cancel ends what the page has under way (see companion.Server.Cancel), for
 // 'vibe --cancel'; with no page served by this vibe, it ends nothing.
-func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop func(), serving bool, cancel func() []string) {
+func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop func(), serving bool, cancel func() []string, authors *authorDesk) {
 	stop = func() {}
 	cancel = func() []string { return nil }
 	vibeHome := lay.Home
 	inst, found, err := state.Load(vibeHome, name)
 	if err != nil {
 		note("companion: %v", err)
-		return stop, false, cancel
+		return stop, false, cancel, nil
 	}
 	setting := ""
 	agent := inst.Agent
@@ -271,21 +271,21 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 	mode, err := companionMode(args.NoCompanion, setting)
 	if err != nil {
 		note("%v — not serving the companion page", err)
-		return stop, false, cancel
+		return stop, false, cancel, nil
 	}
 	if mode == companionOff {
-		return stop, false, cancel
+		return stop, false, cancel, nil
 	}
 
 	token, err := state.CompanionToken(vibeHome, name)
 	if err != nil {
 		note("companion: %v", err)
-		return stop, false, cancel
+		return stop, false, cancel, nil
 	}
 	instances, err := state.List(vibeHome)
 	if err != nil {
 		note("companion: %v", err)
-		return stop, false, cancel
+		return stop, false, cancel, nil
 	}
 	// The Profiles page served on its own keeps its port, even while it
 	// isn't being served.
@@ -295,7 +295,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		func(p int) bool { return companion.Running(p, name) })
 	if err != nil {
 		note("companion: %v", err)
-		return stop, false, cancel
+		return stop, false, cancel, nil
 	}
 	if found && inst.CompanionPort != port {
 		inst.CompanionPort = port
@@ -306,13 +306,13 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 	url := fmt.Sprintf("http://localhost:%d/#%s", port, token)
 	if served {
 		note("companion page: %s (already being served by another vibe for this sandbox)", url)
-		return stop, false, cancel
+		return stop, false, cancel, nil
 	}
 
+	authors = authorDeskFor(args, found, lay, name, inst)
 	var gitAuthor *companion.GitAuthor
-	if args.Headless && found {
-		gitAuthorDesk = newAuthorDesk(lay, name, inst)
-		gitAuthor = &companion.GitAuthor{State: gitAuthorDesk.State, Decide: gitAuthorDesk.Decide}
+	if authors != nil {
+		gitAuthor = &companion.GitAuthor{State: authors.State, Decide: authors.Decide}
 	}
 	srv, err := companion.Start(companion.Config{
 		Sandbox:                name,
@@ -347,13 +347,13 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 	})
 	if err != nil {
 		note("companion: could not serve the page on port %d: %v", port, err)
-		return stop, false, cancel
+		return stop, false, cancel, nil
 	}
 	note("companion page: %s", srv.URL())
 	if mode == companionOpen && !browser.Open(srv.URL()) {
 		note("companion: no browser to open it in from here — open the URL above yourself")
 	}
-	return func() { srv.Close() }, true, srv.Cancel
+	return func() { srv.Close() }, true, srv.Cancel, authors
 }
 
 // reviewTabFor is what the page's Review tab works on: the sandbox's folder,
