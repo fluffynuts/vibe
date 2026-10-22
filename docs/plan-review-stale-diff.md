@@ -54,4 +54,6 @@ jsdom (`uitest/review.test.js`): arrows skip resolved and dismissed threads, in 
 ## Not decided
 
 - Whether some users want the arrows to include resolved comments (to re-read them). Not building a toggle until someone misses one; the pane covers it.
-- "Unresolved" is `status === 'open'`. A finer split exists on the page (an open thread whose last word is the agent's, awaiting the user, as `awaiting` in the comment cards); going only to those that need the user's answer would speed the review loop more, but it is a different promise ("next that needs me") and isn't asked for.
+## Decided
+
+- **"Unresolved" is the whole of it** (`status === 'open'`), the user decided 2026-10-22. A narrower "next that needs me" (open threads whose last word is the agent's) was considered and rejected: when a fix is done the agent posts back and the thread is *resolved*, because the agreed state has been reached, so "the agent spoke last" doesn't mean "waiting on the user". Revisit only if the plain version proves not enough.
