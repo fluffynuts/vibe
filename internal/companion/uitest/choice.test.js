@@ -9,7 +9,7 @@ const OPTIONS = {
   models: ['sonnet', 'opus', 'haiku'], otherModels: ['best', 'opus[1m]'],
   efforts: ['low', 'medium', 'high'], current: 'Opus 5.5 (default)',
   names: { sonnet: 'Sonnet 5.5', opus: 'Opus 5.5', haiku: 'Haiku 5.5', best: 'Fable 5.1', 'opus[1m]': 'Opus 5.5 (1M context)' },
-  rules: ['best', 'opusplan'],
+  rules: ['best', 'opusplan'], defaultAlias: 'opus',
 }
 
 // choicePage is a page for a sandbox whose agent can be asked for a model
@@ -24,8 +24,8 @@ async function choicePage(over = {}, { choice = true } = {}, storage = {}) {
     : at.cached ? { options: at.cached, optionsAt: at.cachedAt || 1791000000000, optionsFresh: false } : { options: null, optionsFresh: false }
   // What's in force: the profile's own choice, else the global settings' (at.globalModel).
   const body = () => Object.assign({
-    model: at.model || at.globalModel || '', effort: at.effort, running: at.running, session: at.session,
-    inherited: { model: !at.model && !!at.globalModel, effort: false },
+    model: at.model || at.globalModel || '', effort: at.effort || at.globalEffort || '', running: at.running, session: at.session,
+    inherited: { model: !at.model && !!at.globalModel, effort: !at.effort && !!at.globalEffort },
   }, listed())
   const routes = {
     '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, choice, attention: {} },
@@ -36,6 +36,15 @@ async function choicePage(over = {}, { choice = true } = {}, storage = {}) {
       // What vibe does: a changed model puts the effort back to Default.
       at.effort = call.body.model !== at.model ? '' : call.body.effort
       at.model = call.body.model
+      return body()
+    },
+    // The host records the model the conversation is on, when none is chosen or inherited: the last that ran, else the default.
+    '/api/conversation/choice/adopt': () => {
+      at.adoptCalls = (at.adoptCalls || 0) + 1
+      if (at.adoptFails) return { status: 500, body: { error: 'the model in use could not be kept' } }
+      const lists = listed().options
+      const alias = at.adoptAlias || (lists && lists.defaultAlias)
+      if (!at.model && !at.globalModel && alias) at.model = alias
       return body()
     },
     '/api/conversation/choice/options': async (call) => {
@@ -77,18 +86,18 @@ test('the drop-downs show what is chosen, from the lists the agent gave', async 
   const p = await choicePage({ model: 'opus', effort: 'high' })
   try {
     assert.ok(shown(p, 'choice-model') && shown(p, 'choice-effort'))
-    assert.deepEqual(values(p.$('choice-model')), ['', 'sonnet', 'opus', 'haiku', '__other__'])
+    assert.deepEqual(values(p.$('choice-model')), ['sonnet', 'opus', 'haiku', '__other__'])
     assert.equal(p.$('choice-model').value, 'opus')
     assert.deepEqual(values(p.$('choice-effort')), ['', 'low', 'medium', 'high'])
     assert.equal(p.$('choice-effort').value, 'high')
   } finally { p.close() }
 })
 
-test('Default says which model the agent uses then, as it names it', async () => {
+test('with no model chosen, the one the agent uses is the one shown, marked as the default as the agent names it', async () => {
   const p = await choicePage()
   try {
-    assert.equal(texts(p.$('choice-model'))[0], 'Default (Opus 5.5)')
-    assert.equal(p.$('choice-model').value, '')
+    assert.ok(texts(p.$('choice-model')).includes('Opus 5.5 (default)'))
+    assert.equal(p.$('choice-model').value, 'opus')
     assert.equal(p.$('choice-effort').value, '')
   } finally { p.close() }
 })
@@ -118,7 +127,7 @@ test('when the agent cannot be asked for its lists, the bubble says why without 
     assert.equal(p.$('choice-model').value, 'opus', 'what is chosen is still shown')
     await p.click(p.button('Retry', p.$('choice-bubble')))
     assert.deepEqual(p.posted('/api/conversation/choice/options'), [{ wake: false }, { wake: true }])
-    assert.deepEqual(values(p.$('choice-model')), ['', 'sonnet', 'opus', 'haiku', '__other__'])
+    assert.deepEqual(values(p.$('choice-model')), ['sonnet', 'opus', 'haiku', '__other__'])
     assert.ok(!open(p), 'it was about the lists, and they came')
     assert.ok(!p.$('choice-info').classList.contains('warn'))
   } finally { p.close() }
@@ -404,21 +413,21 @@ test("what was said not to show again is remembered by the browser, for the next
 // call held back.
 const turns = async () => { for (let i = 0; i < 30; i++) await new Promise((resolve) => setImmediate(resolve)) }
 
-const KEPT = { models: ['sonnet', 'opus'], otherModels: [], efforts: ['low', 'high'], current: 'Sonnet 4.5 (default)' }
+const KEPT = { models: ['sonnet', 'opus'], otherModels: [], efforts: ['low', 'high'], current: 'Sonnet 4.5 (default)', defaultAlias: 'sonnet' }
 
 test('lists kept from an earlier run fill the drop-downs before the agent has answered, and the fresh ones replace them', async () => {
   let release
   const p = await choicePage({ model: 'opus', cached: KEPT, hold: new Promise((resolve) => { release = resolve }) })
   try {
     await turns()
-    assert.deepEqual(values(p.$('choice-model')), ['', 'sonnet', 'opus', '__other__'], 'the kept lists, at once')
-    assert.equal(texts(p.$('choice-model'))[0], 'Default (Sonnet 4.5)')
+    assert.deepEqual(values(p.$('choice-model')), ['sonnet', 'opus', '__other__'], 'the kept lists, at once')
+    assert.equal(texts(p.$('choice-model'))[0], 'Sonnet (default)')
     assert.deepEqual(values(p.$('choice-effort')), ['', 'low', 'high'])
     assert.ok(!open(p), 'nothing to say about them')
     release()
     await p.settle()
-    assert.deepEqual(values(p.$('choice-model')), ['', 'sonnet', 'opus', 'haiku', '__other__'], 'the agent has now said')
-    assert.equal(texts(p.$('choice-model'))[0], 'Default (Opus 5.5)')
+    assert.deepEqual(values(p.$('choice-model')), ['sonnet', 'opus', 'haiku', '__other__'], 'the agent has now said')
+    assert.deepEqual(texts(p.$('choice-model')).slice(0, 3), ['Sonnet 5.5', 'Opus 5.5 (default)', 'Haiku 5.5'])
     assert.ok(!p.$('choice-info').classList.contains('news'))
   } finally { p.close() }
 })
@@ -426,7 +435,7 @@ test('lists kept from an earlier run fill the drop-downs before the agent has an
 test('when the agent cannot be asked again, the kept lists stay, quietly: the bubble, when asked, says how old they are and why', async () => {
   const p = await choicePage({ model: 'opus', cached: KEPT, optionsError: 'sandbox is stopped' })
   try {
-    assert.deepEqual(values(p.$('choice-model')), ['', 'sonnet', 'opus', '__other__'])
+    assert.deepEqual(values(p.$('choice-model')), ['sonnet', 'opus', '__other__'])
     assert.ok(!p.$('choice-error').open)
     assert.ok(!open(p), 'not opened by itself: there is something to use')
     assert.ok(!p.$('choice-info').classList.contains('warn'))
@@ -436,7 +445,7 @@ test('when the agent cannot be asked again, the kept lists stay, quietly: the bu
     assert.ok(!p.$('choice-bubble-stale').hidden)
     await p.click('choice-bubble-retry')
     assert.deepEqual(p.posted('/api/conversation/choice/options'), [{ wake: false }, { wake: true }])
-    assert.deepEqual(values(p.$('choice-model')), ['', 'sonnet', 'opus', 'haiku', '__other__'])
+    assert.deepEqual(values(p.$('choice-model')), ['sonnet', 'opus', 'haiku', '__other__'])
     assert.ok(!open(p), 'it came, so there is nothing more to say')
     assert.ok(!p.$('choice-info').classList.contains('news'))
   } finally { p.close() }
@@ -653,7 +662,7 @@ test('the lock has a limit: after it the drop-downs are usable, and the bubble s
     await p.settle()
     assert.ok(!spinning(p))
     assert.ok(!open(p), 'it came, so there is nothing more to say')
-    assert.deepEqual(values(p.$('choice-model')), ['', 'sonnet', 'opus', 'haiku', '__other__'])
+    assert.deepEqual(values(p.$('choice-model')), ['sonnet', 'opus', 'haiku', '__other__'])
   } finally { p.close() }
 })
 
@@ -670,15 +679,15 @@ test('the limit does nothing once the agent has answered', async () => {
 test('each model in the drop-down is shown with the name, and so the version, the agent gives it', async () => {
   const p = await choicePage({ model: 'opus' })
   try {
-    assert.deepEqual(texts(p.$('choice-model')), ['Default (Opus 5.5)', 'Sonnet 5.5', 'Opus 5.5', 'Haiku 5.5', 'Other…'])
-    assert.deepEqual(values(p.$('choice-model')), ['', 'sonnet', 'opus', 'haiku', '__other__'], 'what is kept is still the alias')
+    assert.deepEqual(texts(p.$('choice-model')), ['Sonnet 5.5', 'Opus 5.5 (default)', 'Haiku 5.5', 'Other…'])
+    assert.deepEqual(values(p.$('choice-model')), ['sonnet', 'opus', 'haiku', '__other__'], 'what is kept is still the alias')
   } finally { p.close() }
 })
 
 test('a model the agent gave no name for is shown as its alias, in title case', async () => {
   const p = await choicePage({ model: 'opus', options: Object.assign({}, OPTIONS, { names: { opus: 'Opus 5.5' } }) })
   try {
-    assert.deepEqual(texts(p.$('choice-model')).slice(1, 4), ['Sonnet', 'Opus 5.5', 'Haiku'])
+    assert.deepEqual(texts(p.$('choice-model')).slice(0, 3), ['Sonnet', 'Opus 5.5 (default)', 'Haiku'])
   } finally { p.close() }
 })
 
@@ -716,10 +725,10 @@ test('with no names kept (lists from before they were asked for), the aliases sh
   const p = await choicePage({ model: 'opus', cached: KEPT, hold: new Promise((resolve) => { release = resolve }) })
   try {
     await turns()
-    assert.deepEqual(texts(p.$('choice-model')).slice(1, 3), ['Sonnet', 'Opus'])
+    assert.deepEqual(texts(p.$('choice-model')).slice(0, 2), ['Sonnet (default)', 'Opus'])
     release()
     await p.settle()
-    assert.deepEqual(texts(p.$('choice-model')).slice(1, 4), ['Sonnet 5.5', 'Opus 5.5', 'Haiku 5.5'])
+    assert.deepEqual(texts(p.$('choice-model')).slice(0, 3), ['Sonnet 5.5', 'Opus 5.5 (default)', 'Haiku 5.5'])
   } finally { p.close() }
 })
 
@@ -745,7 +754,7 @@ test('aliases with no name from the agent are in title case, wherever they show'
   const p = await choicePage({ model: 'opus[1m]', session: true, options: Object.assign({}, OPTIONS, { names: {} }) })
   try {
     assert.ok(texts(p.$('choice-model')).includes('Opus[1M]'), 'the one chosen')
-    assert.deepEqual(texts(p.$('choice-model')).slice(1, 4), ['Sonnet', 'Opus', 'Haiku'])
+    assert.deepEqual(texts(p.$('choice-model')).slice(0, 3), ['Sonnet', 'Opus (default)', 'Haiku'])
     await choose(p, 'choice-model', '__other__')
     const labels = Array.from(p.$('choice-other-list').querySelectorAll('label')).map((l) => l.textContent.trim())
     assert.deepEqual(labels, ['Best', 'Opus[1M]'])
@@ -936,7 +945,7 @@ test('options that did change are rebuilt: new lists arriving show', async () =>
     release()
     await p.settle()
     assert.notDeepEqual(texts(p.$('choice-model')), before.map((o) => o.textContent))
-    assert.deepEqual(values(p.$('choice-model')), ['', 'sonnet', 'opus', 'haiku', '__other__'])
+    assert.deepEqual(values(p.$('choice-model')), ['sonnet', 'opus', 'haiku', '__other__'])
   } finally { p.close() }
 })
 
@@ -947,7 +956,7 @@ test('a choice inherited from the global settings is shown, and the bubble says 
     assert.equal(p.$('choice-model').value, 'opus', 'what is in force is what is shown')
     await p.click('choice-info')
     assert.match(p.$('choice-bubble-text').textContent, /model comes from your global settings\.yaml/i)
-    assert.match(p.$('choice-bubble-text').textContent, /Default here can't take it away/i)
+    assert.match(p.$('choice-bubble-text').textContent, /choosing one here overrides it for this profile/i)
   } finally { p.close() }
 })
 
@@ -983,7 +992,7 @@ test('picking a model of its own over an inherited one stops the bubble saying i
 
 // A newer answer from the agent: Sonnet is now the default, and fable is offered.
 const NEWER = Object.assign({}, OPTIONS, {
-  models: ['fable', 'sonnet', 'opus', 'haiku'], current: 'Sonnet 5.5 (default)',
+  models: ['fable', 'sonnet', 'opus', 'haiku'], current: 'Sonnet 5.5 (default)', defaultAlias: 'sonnet',
   names: Object.assign({}, OPTIONS.names, { fable: 'Fable 5.1' }),
 })
 const quiet = (p) => !spinning(p) && !locked(p) && !open(p) && !dotted(p) &&
@@ -1012,11 +1021,11 @@ test("at a turn's end the lists are asked for again, and nothing shows of it whi
 test('a new default and a new model are taken in silently', async () => {
   const p = await choicePage({ model: 'opus' })
   try {
-    assert.equal(texts(p.$('choice-model'))[0], 'Default (Opus 5.5)')
+    assert.ok(texts(p.$('choice-model')).includes('Opus 5.5 (default)'))
     p.at.options = NEWER
     await endTurn(p, 'claude-opus-5-5')
-    assert.equal(texts(p.$('choice-model'))[0], 'Default (Sonnet 5.5)')
-    assert.deepEqual(texts(p.$('choice-model')).slice(1, 5), ['Fable 5.1', 'Sonnet 5.5', 'Opus 5.5', 'Haiku 5.5'])
+    assert.deepEqual(texts(p.$('choice-model')).slice(0, 4), ['Fable 5.1', 'Sonnet 5.5 (default)', 'Opus 5.5', 'Haiku 5.5'])
+    assert.equal(p.$('choice-model').value, 'opus', 'still on the model they were on')
     assert.ok(quiet(p), 'and says nothing of it')
   } finally { p.close() }
 })
@@ -1028,7 +1037,7 @@ test("a refresh that fails says nothing, and the lists stay as they were", async
     await endTurn(p, 'claude-opus-5-5')
     assert.equal(refreshes(p), 1)
     assert.ok(quiet(p))
-    assert.deepEqual(values(p.$('choice-model')), ['', 'sonnet', 'opus', 'haiku', '__other__'])
+    assert.deepEqual(values(p.$('choice-model')), ['sonnet', 'opus', 'haiku', '__other__'])
     await p.click('choice-info')
     assert.ok(!/sandbox is stopped|couldn't be refreshed/.test(p.$('choice-bubble-text').textContent + p.$('choice-bubble-stale').textContent), 'no error is held up to the user')
   } finally { p.close() }
@@ -1152,6 +1161,155 @@ test('lists that change while a drop-down is open wait for it to be closed', asy
     select.blur()
     await p.settle()
     assert.ok(texts(select).includes('Fable 5.1'), 'taken in once let go')
-    assert.equal(texts(select)[0], 'Default (Sonnet 5.5)')
+    assert.ok(texts(select).includes('Sonnet 5.5 (default)'))
+  } finally { p.close() }
+})
+
+
+// ---- the user is on a model: "Default" is no choice, only a word on the one claude defaults to ----
+
+const adoptions = (p) => p.posted('/api/conversation/choice/adopt').length
+const flagged = (p) => texts(p.$('choice-model')).filter((t) => /\(default\)/.test(t))
+
+test('with no model chosen, the model that is claude\'s default is taken as the one in use, and the list marks it as the default', async () => {
+  const p = await choicePage({ model: '', options: Object.assign({}, OPTIONS, { current: 'Sonnet 5.5 (default)', defaultAlias: 'sonnet' }) })
+  try {
+    assert.equal(adoptions(p), 1)
+    assert.equal(p.$('choice-model').value, 'sonnet', 'that model is selected')
+    assert.deepEqual(values(p.$('choice-model')), ['sonnet', 'opus', 'haiku', '__other__'], 'there is no Default entry')
+    assert.deepEqual(texts(p.$('choice-model')), ['Sonnet 5.5 (default)', 'Opus 5.5', 'Haiku 5.5', 'Other…'])
+    assert.ok(quiet(p), 'and nothing is said of it: nothing changed')
+    assert.deepEqual(p.posted('/api/conversation/choice'), [], 'the user chose nothing')
+  } finally { p.close() }
+})
+
+test("scenario 1: the default changing under a user who accepted it only moves the word, not the model", async () => {
+  const p = await choicePage({ model: '', options: Object.assign({}, OPTIONS, { current: 'Sonnet 5.5 (default)', defaultAlias: 'sonnet' }) })
+  try {
+    assert.equal(p.$('choice-model').value, 'sonnet')
+    p.at.options = Object.assign({}, OPTIONS, { current: 'Opus 5.5 (default)', defaultAlias: 'opus' })
+    await endTurn(p, 'claude-sonnet-5-5')
+    assert.equal(p.$('choice-model').value, 'sonnet', 'still on Sonnet')
+    assert.deepEqual(texts(p.$('choice-model')), ['Sonnet 5.5', 'Opus 5.5 (default)', 'Haiku 5.5', 'Other…'])
+    assert.equal(p.at.model, 'sonnet')
+    assert.deepEqual(p.posted('/api/conversation/choice'), [], 'no change was asked of vibe')
+    assert.ok(!p.$('choice-warn').open && !p.$('choice-error').open)
+    assert.ok(quiet(p), 'and nothing is said')
+    assert.ok(!p.$('choice-info').classList.contains('warn'))
+  } finally { p.close() }
+})
+
+test('scenario 2: a model in use that becomes the default only gains the word', async () => {
+  const p = await choicePage({ model: 'sonnet', options: Object.assign({}, OPTIONS, { current: 'Opus 5.5 (default)', defaultAlias: 'opus' }) })
+  try {
+    assert.deepEqual(flagged(p), ['Opus 5.5 (default)'])
+    p.at.options = Object.assign({}, OPTIONS, { current: 'Sonnet 5.5 (default)', defaultAlias: 'sonnet' })
+    await endTurn(p, 'claude-sonnet-5-5')
+    assert.equal(p.$('choice-model').value, 'sonnet')
+    assert.deepEqual(flagged(p), ['Sonnet 5.5 (default)'])
+    assert.equal(adoptions(p), 0, 'a model was chosen, so none is taken')
+    assert.ok(quiet(p))
+  } finally { p.close() }
+})
+
+test('scenario 3: a model the user chose that becomes the default only gains the word, and they stay on it', async () => {
+  const p = await choicePage({ model: '', options: Object.assign({}, OPTIONS, { current: 'Sonnet 5.5 (default)', defaultAlias: 'sonnet' }) })
+  try {
+    await choose(p, 'choice-model', 'opus')
+    assert.equal(p.$('choice-model').value, 'opus')
+    p.at.options = Object.assign({}, OPTIONS, { current: 'Opus 5.5 (default)', defaultAlias: 'opus' })
+    await endTurn(p, 'claude-opus-5-5')
+    assert.equal(p.$('choice-model').value, 'opus')
+    assert.deepEqual(texts(p.$('choice-model')), ['Sonnet 5.5', 'Opus 5.5 (default)', 'Haiku 5.5', 'Other…'])
+    assert.deepEqual(p.posted('/api/conversation/choice'), [{ model: 'opus', effort: '' }], 'only the one change, which was the user\'s')
+    assert.ok(!p.$('choice-warn').open)
+  } finally { p.close() }
+})
+
+test('switching from the model that is the default to another still asks, as that is a real change', async () => {
+  const p = await choicePage({ model: '', session: true, options: Object.assign({}, OPTIONS, { current: 'Sonnet 5.5 (default)', defaultAlias: 'sonnet' }) })
+  try {
+    await choose(p, 'choice-model', 'haiku')
+    assert.ok(p.$('choice-warn').open)
+    p.$('choice-warn').close('cancel')
+    await p.settle()
+    assert.equal(p.$('choice-model').value, 'sonnet')
+  } finally { p.close() }
+})
+
+test('there is no entry for the same model twice, and no warning for it', async () => {
+  const p = await choicePage({ model: '', session: true, options: Object.assign({}, OPTIONS, { current: 'Opus 5.5 (default)', defaultAlias: 'opus' }) })
+  try {
+    assert.equal(values(p.$('choice-model')).filter((v) => v === 'opus' || v === '').length, 1)
+    assert.ok(!p.$('choice-warn').open)
+  } finally { p.close() }
+})
+
+test("a model is only taken when the page can say which it is: with none to go by, there's a Default entry as before", async () => {
+  const p = await choicePage({ model: '', options: Object.assign({}, OPTIONS, { defaultAlias: undefined }), adoptAlias: '' })
+  try {
+    assert.equal(p.$('choice-model').value, '')
+    assert.equal(texts(p.$('choice-model'))[0], 'Default (Opus 5.5)')
+    assert.equal(adoptions(p), 1, 'asked once, and not again with nothing new to go on')
+    await p.every('pollConversation')
+    assert.equal(adoptions(p), 1)
+  } finally { p.close() }
+})
+
+test('no model is taken when one comes from the global settings', async () => {
+  const p = await choicePage({ model: '', globalModel: 'haiku' })
+  try {
+    assert.equal(adoptions(p), 0)
+    assert.equal(p.$('choice-model').value, 'haiku')
+  } finally { p.close() }
+})
+
+test('a model is taken from the lists kept from before, without waiting for the agent to be asked again', async () => {
+  const p = await choicePage({ model: '', cached: KEPT, hold: new Promise(() => {}) })
+  try {
+    await turns()
+    assert.equal(adoptions(p), 1)
+    assert.equal(p.$('choice-model').value, 'sonnet')
+    assert.equal(p.$('choice-model').disabled, false, 'usable meanwhile')
+  } finally { p.close() }
+})
+
+test('a failure to keep the model in use is said by nothing on the page, and is tried again with the next lists', async () => {
+  const p = await choicePage({ model: '', adoptFails: true })
+  try {
+    assert.ok(quiet(p))
+    assert.equal(p.$('choice-model').value, '')
+    p.at.adoptFails = false
+    p.at.options = Object.assign({}, OPTIONS, { current: 'Opus 5.5 (default)' })
+    await endTurn(p, 'claude-opus-5-5')
+    assert.equal(p.$('choice-model').value, 'opus')
+  } finally { p.close() }
+})
+
+test('the effort still has a Default: claude does not say what its default effort is', async () => {
+  const p = await choicePage({ model: '' })
+  try {
+    assert.equal(texts(p.$('choice-effort'))[0], 'Default effort')
+  } finally { p.close() }
+})
+
+test('a model that comes from the global settings says so in the bubble, and that choosing one here overrides it', async () => {
+  const p = await choicePage({ model: '', globalModel: 'opus' })
+  try {
+    await p.click('choice-info')
+    assert.match(p.$('choice-bubble-text').textContent, /model comes from your global settings\.yaml/i)
+    assert.match(p.$('choice-bubble-text').textContent, /overrides it/i)
+    assert.ok(!/Default here can't take it away/.test(p.$('choice-bubble-text').textContent), 'there is no Default for a model')
+  } finally { p.close() }
+})
+
+test('choosing Default for an effort the global settings set says why it did not take, even when told not to show hints', async () => {
+  const p = await choicePage({ model: 'opus', globalEffort: 'low' }, {}, { 'vibe-companion-choice-quiet': 'yes' })
+  try {
+    assert.equal(p.$('choice-effort').value, 'low', 'what is in force is what is shown')
+    await choose(p, 'choice-effort', '')
+    assert.equal(p.$('choice-effort').value, 'low', 'it snaps back to what is in force')
+    assert.ok(open(p) && dotted(p))
+    assert.match(p.$('choice-bubble-text').textContent, /effort comes from your global settings\.yaml, so Default here can't take it away/)
   } finally { p.close() }
 })

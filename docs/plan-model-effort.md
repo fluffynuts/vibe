@@ -339,3 +339,19 @@ the vibe process.
   It applies to the page's start as well (kept lists against the fresh ones). A name typed under **Other…** was never offered,
   so its absence is no news.
 - A drop-down that has focus is left as it is while the lists change; it takes them in on blur.
+
+### You are on a model; "default" is only a word (2026-10-22)
+
+Supersedes "Default = no flag" for **models** (effort keeps it). The user is the authority on which model runs; the page tells them
+what claude's default is and sticks to their choice. A default that moves under them (claude re-fetches server-side settings) must
+never change what they use.
+
+- The model list holds models only. Once one is in use there is no Default entry; the claude default is marked "(default)"
+  (`Options.DefaultAlias`, from `/model`'s "Current model" matched to the names; empty when the names couldn't be had).
+- A refresh that moves the default moves only the mark.
+- When no model is chosen or inherited, the page asks the host to adopt (`POST /api/conversation/choice/adopt`): it records the
+  model that ran (`AliasOfRan`) or else the default alias in the profile's `settings.yaml`. Silent; a failure is logged and retried
+  when the lists next change. Nothing is adopted when the global settings choose one: it shows as in force, and choosing another
+  overrides it for the profile.
+- No way back to "follow the default" except removing `model:` from `settings.yaml` (no use-case yet; revisit if one comes).
+- Not frozen: the effort default (claude doesn't expose it).

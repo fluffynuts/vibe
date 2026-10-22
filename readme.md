@@ -620,8 +620,10 @@ you're looking at:
   The **Model** and **Effort** drop-downs, under the prompt and centred between **Stop** and **Send** (so they
   stay put while a turn runs; in a narrow column they take a row of their own), choose what claude is asked to
   use (they're there for a Claude sandbox). They have no labels: the entries say what they are ("Opus 5.5", "High effort"), and screen
-  readers and tooltips still have the names Model and Effort. **Default** passes nothing, so claude's own settings decide, and says
-  which model that is. The lists are claude's own. vibe keeps the last ones it was given for each sandbox (in
+  readers and tooltips still have the names Model and Effort. The model drop-down has no **Default** entry: you are always on a model, and the one claude uses
+  by default is marked "(default)". The first time the page sees none chosen it writes that model into the profile's `settings.yaml`, so what
+  you use stays what you use when claude's default later changes (only the "(default)" mark moves); a model switch always needs your choice.
+  The effort drop-down keeps **Default effort** (claude doesn't say what its default effort is). The lists are claude's own. vibe keeps the last ones it was given for each sandbox (in
   `~/.vibe/companion/`), so the drop-downs are full the moment the page opens, and asks claude again in the
   background, without waking a sandbox that's asleep; the first time there's nothing kept, so it just asks. Then, as a session goes on, they're asked for again at the end of a turn once the last answer is ten minutes old
   (claude's default and models can change under a vibe left running), silently: no spinner, nothing locked, nothing said; a new default or a new model is
@@ -635,7 +637,7 @@ you're looking at:
   first, because the next prompt re-reads the whole conversation, which is slower and costs more (Cancel puts
   the drop-down back). The choice is kept as `model:` and `effort:` in the profile's `settings.yaml`, so it
   outlives vibe, the page and a rebuild, and `--re-compose` carries it across; what's in the global
-  `settings.yaml` is the default under it (so **Default** in the drop-down can't take away what that file sets, and the bubble says where such a
+  `settings.yaml` is the default under it (a model or effort from it is shown as in force, choosing one here overrides it for this profile, and for the effort **Default** can't take it away; the bubble says where such a
   value comes from). What's good to know is in a bubble over the **i** button beside them,
   which takes no room, so nothing in the page moves when it comes and goes: that a change applies from your next
   prompt (the bubble has **Don't show me this again**, remembered by that browser, after which the button still

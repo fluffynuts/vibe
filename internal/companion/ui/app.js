@@ -5150,7 +5150,7 @@
   // known, before they're usable anyway (the lists carry on arriving).
   const CHOICE_LOCK_MS = 30000
   const choice = { model: '', effort: '', running: '', session: false, options: null, optionsAt: 0, optionsError: '', problem: '', pending: false, bubble: false, unseen: false, started: false, pendingTurns: 0, inherited: { model: false, effort: false },
-    goneModel: '', goneEffort: '', goneLabel: '', refreshing: false,
+    goneModel: '', goneEffort: '', goneLabel: '', refreshing: false, adopting: false, adoptWait: false,
     loaded: false, asking: false, saving: false, lockExpired: false, slow: false, lockTimer: 0 }
 
   // dialogAnswer shows a modal dialog and gives what it was closed with, ''
@@ -5241,9 +5241,12 @@
     if (gone) return { kind: 'gone', text: gone }
     if (choice.slow && choiceWaiting()) return { kind: 'slow', text: "Still asking the agent which models and efforts it has: it's taking longer than usual. You can carry on, and the lists fill in when they arrive." }
     if (choiceOdd()) return { kind: 'odd', text: 'You asked for ' + choice.model + ', but the agent says it ran ' + choice.running + '.' }
-    const inherited = ['model', 'effort'].filter((k) => choice.inherited[k])
-    return { kind: 'news', text: 'A change to the model or effort applies to your next prompt.' + (choice.running ? ' The last turn ran on ' + choice.running + '.' : '') +
-      (inherited.length ? ' The ' + inherited.join(' and ') + " comes from your global settings.yaml, so Default here can't take it away." : '') }
+    // What comes from the global settings: a model can be overridden by choosing another here; an
+    // effort has a Default that can't take it away.
+    const from = []
+    if (choice.inherited.model) from.push(' The model comes from your global settings.yaml; choosing one here overrides it for this profile.')
+    if (choice.inherited.effort) from.push(" The effort comes from your global settings.yaml, so Default here can't take it away.")
+    return { kind: 'news', text: 'A change to the model or effort applies to your next prompt.' + (choice.running ? ' The last turn ran on ' + choice.running + '.' : '') + from.join('') }
   }
 
   // modelName is what the agent calls the model an alias stands for ("Opus
@@ -5294,9 +5297,14 @@
   function drawChoice() {
     const o = choice.options
     const current = o && o.current ? o.current.replace(/\s*\(default\)\s*$/i, '') : ''
-    const models = [{ value: '', text: current ? 'Default (' + current + ')' : 'Default' }]
-    for (const m of (o && o.models) || []) models.push({ value: m, text: modelLabel(m, true) })
-    if (choice.model && !models.some((m) => m.value === choice.model)) models.push({ value: choice.model, text: modelLabel(choice.model, false) })
+    // The user is on a model, and "Default" is no choice (a change of claude's default must
+    // not move them): so the list is the models, with the word "(default)" on the one claude
+    // defaults to. Only while none is in use (nothing to say which it is yet) there's a Default entry.
+    const def = (o && o.defaultAlias) || ''
+    const defaultMark = (m) => (m === def ? ' (default)' : '')
+    const models = choice.model ? [] : [{ value: '', text: current ? 'Default (' + current + ')' : 'Default' }]
+    for (const m of (o && o.models) || []) models.push({ value: m, text: modelLabel(m, true) + defaultMark(m) })
+    if (choice.model && !models.some((m) => m.value === choice.model)) models.push({ value: choice.model, text: modelLabel(choice.model, false) + defaultMark(choice.model) })
     models.push({ value: OTHER_MODEL, text: 'Other…' })
     fillSelect($('choice-model'), models, choice.model)
     const efforts = [{ value: '', text: 'Default effort' }]
@@ -5363,6 +5371,29 @@
     if (body.options) adoptOptions(body.options, body.optionsAt || 0)
   }
 
+  // maybeAdopt asks the host to record the model the conversation is on, when
+  // none is chosen or inherited and the lists are known (the kept ones will do):
+  // the user is on a model, and a change of claude's default must not move them
+  // to another. Silent, as nothing has changed; the host says when there is
+  // nothing to go by, and then it isn't asked again until there are new lists.
+  async function maybeAdopt() {
+    if (!state.choice || choice.model || choice.inherited.model || !choice.options || choice.adopting || choice.adoptWait) return
+    choice.adopting = true
+    try {
+      const res = await post('/api/conversation/choice/adopt', {})
+      if (res.ok) {
+        reached(true)
+        takeChoice(res.body)
+        if (!res.body.adopted) choice.adoptWait = true
+        drawChoice()
+      }
+    } catch (e) {
+      // The host logs why; it is asked again with the next lists.
+    } finally {
+      choice.adopting = false
+    }
+  }
+
   // modelListed says the lists offer model, among the plain ones or the rest.
   function modelListed(opts, model) {
     return !!opts && ((opts.models || []).includes(model) || (opts.otherModels || []).includes(model))
@@ -5374,6 +5405,7 @@
   // lists (a full name typed under Other…) was never offered, so isn't news.
   function adoptOptions(next, at) {
     const before = choice.options
+    if (before !== next && JSON.stringify(before) !== JSON.stringify(next)) choice.adoptWait = false
     choice.options = next
     choice.optionsAt = at
     if (!before) return
@@ -5412,6 +5444,7 @@
     }
     if (choice.problem) choice.unseen = true
     drawChoice()
+    maybeAdopt()
   }
 
   // askChoiceOptions asks for the agent's lists. wake says the sandbox may be
@@ -5431,6 +5464,7 @@
     choice.asking = false
     endChoiceLock()
     drawChoice()
+    maybeAdopt()
   }
 
   // Nothing the user did has failed when the page opens, so a problem then is
@@ -5484,6 +5518,7 @@
         adoptOptions(res.body.options, res.body.optionsAt || 0)
         choice.optionsError = ''
         drawChoice()
+        maybeAdopt()
       }
     } catch (e) {
       // The page's other polls say when vibe can't be reached.
@@ -5525,7 +5560,7 @@
       ? 'The agent also lists these, besides the ones in the drop-down.'
       : "The agent lists no others, but it takes a model's full name."
     $('choice-other-list').replaceChildren(...others.map((m) => el('label', {},
-      el('input', { type: 'radio', name: 'choice-other', value: m }), ' ', modelLabel(m, false))))
+      el('input', { type: 'radio', name: 'choice-other', value: m }), ' ', modelLabel(m, false) + (choice.options && m === choice.options.defaultAlias ? ' (default)' : ''))))
     $('choice-other-name').value = ''
     if ((await dialogAnswer($('choice-other'))) !== 'go') return null
     const typed = $('choice-other-name').value.trim()
