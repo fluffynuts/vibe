@@ -26,7 +26,7 @@ func busyFor(t *testing.T) (waits *[]time.Duration) {
 func TestAnOperationThatSucceedsIsNotWaitedFor(t *testing.T) {
 	waits := busyFor(t)
 	calls := 0
-	if err := retryInUse(func() error { calls++; return nil }); err != nil || calls != 1 || len(*waits) != 0 {
+	if err := retryInUse("f", func() error { calls++; return nil }); err != nil || calls != 1 || len(*waits) != 0 {
 		t.Errorf("err %v, calls %d, waits %v", err, calls, *waits)
 	}
 }
@@ -34,7 +34,7 @@ func TestAnOperationThatSucceedsIsNotWaitedFor(t *testing.T) {
 func TestAnOperationThatFindsTheFileInUseIsTriedAgainAfterAWait(t *testing.T) {
 	waits := busyFor(t)
 	calls := 0
-	err := retryInUse(func() error {
+	err := retryInUse("f", func() error {
 		calls++
 		if calls <= 2 {
 			return errBusy
@@ -52,7 +52,7 @@ func TestAnOperationThatFindsTheFileInUseIsTriedAgainAfterAWait(t *testing.T) {
 func TestAFileThatStaysInUseIsGivenUpOnAfterAShortWhileWithTheErrorItGave(t *testing.T) {
 	waits := busyFor(t)
 	calls := 0
-	err := retryInUse(func() error { calls++; return errBusy })
+	err := retryInUse("f", func() error { calls++; return errBusy })
 	if !errors.Is(err, errBusy) {
 		t.Errorf("err = %v, want the error it kept giving", err)
 	}
@@ -63,8 +63,8 @@ func TestAFileThatStaysInUseIsGivenUpOnAfterAShortWhileWithTheErrorItGave(t *tes
 	for _, w := range *waits {
 		total += w
 	}
-	if total > time.Second {
-		t.Errorf("it would wait %s before giving up: a page action shouldn't hang on a file", total)
+	if total < time.Second || total > 2*time.Second {
+		t.Errorf("it would wait %s before giving up: long enough for a slow virus scanner (a second or more), short enough that a page action doesn't hang on a file (under two)", total)
 	}
 }
 
@@ -72,7 +72,7 @@ func TestAnyOtherErrorIsNotRetried(t *testing.T) {
 	waits := busyFor(t)
 	calls := 0
 	other := errors.New("no such file")
-	if err := retryInUse(func() error { calls++; return other }); !errors.Is(err, other) || calls != 1 || len(*waits) != 0 {
+	if err := retryInUse("f", func() error { calls++; return other }); !errors.Is(err, other) || calls != 1 || len(*waits) != 0 {
 		t.Errorf("err %v, calls %d, waits %v", err, calls, *waits)
 	}
 }
@@ -179,5 +179,50 @@ func TestAFileAReaderHasOpenIsReplacedOnceTheReaderLetsGo(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
 		t.Errorf("left beside it: %v", entries)
+	}
+}
+
+func TestAFileInUseForLongerThanHalfASecondIsSaidOnceAndAShortWaitIsNot(t *testing.T) {
+	busyFor(t)
+	var said []string
+	was := OnLongWait
+	OnLongWait = func(path string) { said = append(said, path) }
+	defer func() { OnLongWait = was }()
+
+	calls := 0
+	retryInUse("quick.yaml", func() error {
+		calls++
+		if calls <= 4 {
+			return errBusy
+		}
+		return nil
+	})
+	if len(said) != 0 {
+		t.Errorf("a wait of 37ms was said: %v", said)
+	}
+
+	retryInUse("slow.yaml", func() error { return errBusy })
+	if len(said) != 1 || said[0] != "slow.yaml" {
+		t.Errorf("said %v, want slow.yaml once", said)
+	}
+
+	calls = 0
+	retryInUse("freed.yaml", func() error {
+		calls++
+		if calls <= 8 {
+			return errBusy
+		}
+		return nil
+	})
+	if len(said) != 2 || said[1] != "freed.yaml" {
+		t.Errorf("a file freed after more than half a second wasn't said: %v", said)
+	}
+}
+
+func TestTheWaitsRoughlyDoubleSoTheLastIsTheLongest(t *testing.T) {
+	for i := 1; i < len(inUseWaits); i++ {
+		if inUseWaits[i] <= inUseWaits[i-1] || inUseWaits[i] > 3*inUseWaits[i-1] {
+			t.Errorf("wait %d (%s) after %s: not a back-off that roughly doubles", i, inUseWaits[i], inUseWaits[i-1])
+		}
 	}
 }

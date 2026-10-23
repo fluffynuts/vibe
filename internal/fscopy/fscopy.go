@@ -188,7 +188,7 @@ func WriteWholeMode(path string, data []byte, perm os.FileMode) error {
 		os.Remove(tmp.Name())
 		return err
 	}
-	if err := retryInUse(func() error { return rename(tmp.Name(), path) }); err != nil {
+	if err := retryInUse(path, func() error { return rename(tmp.Name(), path) }); err != nil {
 		os.Remove(tmp.Name())
 		return err
 	}

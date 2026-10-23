@@ -10,6 +10,7 @@ import (
 
 	"vibe"
 	"vibe/internal/cliargs"
+	"vibe/internal/fscopy"
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
 	"vibe/internal/prompt"
@@ -197,6 +198,9 @@ func main() {
 	prompt.EnableVT(os.Stdout)
 	prompt.EnableVT(os.Stderr)
 	sbxfind.Warn = func(msg string) { note("%s", msg) }
+	fscopy.OnLongWait = func(path string) {
+		note("waiting for %s: another program (a virus scanner, say) has it open", pathresolve.Tilde(path))
+	}
 	err := run(os.Args[1:])
 	termtitle.Restore()
 	session.Release()

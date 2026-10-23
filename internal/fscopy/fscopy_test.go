@@ -250,6 +250,13 @@ func TestAReaderNeverSeesWhatWriteWholeModeIsPartWayThrough(t *testing.T) {
 		if !bytes.Equal(got, long) && !bytes.Equal(got, short) {
 			t.Fatalf("read %d bytes that are neither version of the file", len(got))
 		}
+		// A reader that opens the file again the instant it has closed it leaves a
+		// Windows rename no moment in which nobody has it open, so the writer's
+		// bounded wait (see retryInUse) can run out: that is a reader no real one
+		// is (a page polling, a turn starting), and not what this test is about,
+		// which is that what is read is always one whole version or the other.
+		// Reading about once a millisecond still races every write.
+		time.Sleep(time.Millisecond)
 	}
 }
 
