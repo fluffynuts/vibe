@@ -185,3 +185,19 @@ test('opening another file after one replaces what is shown', async () => {
     assert.equal(p.$('file-view-body').textContent.trim(), 'second')
   } finally { p.close() }
 })
+
+test('a path written ./ or ../ in a file being viewed is from that file, and is shown as written', async () => {
+  const p = await filePage('See `docs/plans/a.md`.', { files: {
+    'docs/plans/a.md': 'Next: `./b.md`, up: `../c.md`, from the root: `src/x.go`, out: `../../../z.md`.',
+    'docs/plans/b.md': 'the sibling', 'docs/c.md': 'one up', 'src/x.go': 'x', 'b.md': 'the one at the root, not what was meant',
+  } })
+  try {
+    await p.click(p.$('convo-log').querySelector('button.file-ref'))
+    const buttons = () => Array.from(p.$('file-view-body').querySelectorAll('button.file-ref'))
+    assert.deepEqual(buttons().map((b) => b.textContent), ['./b.md', '../c.md', 'src/x.go'], 'shown as written')
+    assert.deepEqual(checks(p).pop(), ['docs/plans/b.md', 'docs/c.md', 'src/x.go', '../z.md'], 'but asked about from the file')
+    await p.click(buttons()[0])
+    assert.equal(p.$('file-view-path').textContent, 'docs/plans/b.md')
+    assert.equal(p.$('file-view-body').textContent.trim(), 'the sibling')
+  } finally { p.close() }
+})

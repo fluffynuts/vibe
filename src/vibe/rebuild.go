@@ -327,7 +327,7 @@ func preferencesToKeep(lay layout.Layout, profile string, force bool) ([]byte, e
 	}
 	// Earlier vibes' files, and the model and effort in settings.yaml, move in first.
 	migratePreferences(lay, profile)
-	data, err := os.ReadFile(userprefs.Path(dir))
+	data, err := fscopy.ReadFile(userprefs.Path(dir))
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -497,11 +497,11 @@ func replaceProfile(lay layout.Layout, profile, backupName string, features []st
 	// rest of the old profile; carry them across, as the user's own
 	// instructions for the profile are. Both are read now, before anything is
 	// removed, so that failing to read them changes nothing.
-	userInstructions, err := os.ReadFile(filepath.Join(lay.ProfileDir(profile), instructions.File))
+	userInstructions, err := fscopy.ReadFile(filepath.Join(lay.ProfileDir(profile), instructions.File))
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("could not read profile '%s's %s (nothing changed): %w", profile, instructions.File, err)
 	}
-	preferences, err := os.ReadFile(userprefs.Path(lay.ProfileDir(profile)))
+	preferences, err := fscopy.ReadFile(userprefs.Path(lay.ProfileDir(profile)))
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("could not read profile '%s's %s (nothing changed): %w", profile, userprefs.File, err)
 	}
@@ -522,7 +522,7 @@ func replaceProfile(lay layout.Layout, profile, backupName string, features []st
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(created, instructions.File), userInstructions, 0o644); err != nil {
+	if err := fscopy.WriteWholeMode(filepath.Join(created, instructions.File), userInstructions, 0o644); err != nil {
 		return fmt.Errorf("could not carry profile '%s's %s across (the backup above has it): %w", profile, instructions.File, err)
 	}
 	if preferences != nil {

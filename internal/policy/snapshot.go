@@ -59,7 +59,7 @@ func (c *Client) SnapshotTo(file string, now time.Time) (Snapshot, error) {
 
 // LoadSnapshot is the snapshot kept in file, and whether there is one.
 func LoadSnapshot(file string) (Snapshot, bool, error) {
-	data, err := os.ReadFile(file)
+	data, err := fscopy.ReadFile(file)
 	if os.IsNotExist(err) {
 		return Snapshot{}, false, nil
 	}

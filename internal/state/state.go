@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"vibe/internal/fscopy"
 )
 
 // PublishRecord remembers one published port so its URL stays stable across
@@ -90,7 +92,7 @@ func Save(vibeHome string, inst Instance) error {
 	if err != nil {
 		return fmt.Errorf("encoding instance record: %w", err)
 	}
-	if err := os.WriteFile(path(vibeHome, inst.Name), data, 0o644); err != nil {
+	if err := fscopy.WriteWholeMode(path(vibeHome, inst.Name), data, 0o644); err != nil {
 		return fmt.Errorf("writing instance record: %w", err)
 	}
 	return nil
@@ -99,7 +101,7 @@ func Save(vibeHome string, inst Instance) error {
 // Load reads a sandbox's instance record. It returns (Instance{}, false, nil)
 // when no record exists.
 func Load(vibeHome, name string) (Instance, bool, error) {
-	data, err := os.ReadFile(path(vibeHome, name))
+	data, err := fscopy.ReadFile(path(vibeHome, name))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Instance{}, false, nil
@@ -307,7 +309,7 @@ func ManageToken(vibeHome string) (string, error) {
 // ManagePort is the port the Profiles page was last served on on its own,
 // or 0 when it never has been.
 func ManagePort(vibeHome string) int {
-	data, err := os.ReadFile(managePath(vibeHome, "port"))
+	data, err := fscopy.ReadFile(managePath(vibeHome, "port"))
 	if err != nil {
 		return 0
 	}
@@ -322,12 +324,12 @@ func SaveManagePort(vibeHome string, port int) error {
 	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(file, []byte(strconv.Itoa(port)+"\n"), 0o600)
+	return fscopy.WriteWholeMode(file, []byte(strconv.Itoa(port)+"\n"), 0o600)
 }
 
 // secretIn returns the secret kept in file, making one the first time.
 func secretIn(file string) (string, error) {
-	if data, err := os.ReadFile(file); err == nil {
+	if data, err := fscopy.ReadFile(file); err == nil {
 		if token := strings.TrimSpace(string(data)); len(token) >= 32 {
 			return token, nil
 		}
@@ -342,7 +344,7 @@ func secretIn(file string) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
 		return "", fmt.Errorf("creating companion dir: %w", err)
 	}
-	if err := os.WriteFile(file, []byte(token+"\n"), 0o600); err != nil {
+	if err := fscopy.WriteWholeMode(file, []byte(token+"\n"), 0o600); err != nil {
 		return "", fmt.Errorf("writing companion token: %w", err)
 	}
 	return token, nil

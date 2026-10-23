@@ -596,3 +596,17 @@ func TestOwnIsWhatTheProfileHoldsAndNotWhatItInherits(t *testing.T) {
 		t.Errorf("get = %+v", got)
 	}
 }
+
+func TestAChoiceIsNotHalfMadeWhenSettingsYamlCantBeChanged(t *testing.T) {
+	c, path := choiceHome(t, "")
+	if err := userprefs.Update(c.dir(), func(u *userprefs.Prefs) { u.Model = "opus" }); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, path, "memory: [unclosed\n")
+	if err := c.set("", ""); err == nil {
+		t.Fatal("choosing Default said it was kept, though settings.yaml couldn't be read to take the old key out")
+	}
+	if got, _ := userprefs.Load(c.dir()); got.Model != "opus" {
+		t.Errorf("the choice was changed (%+v) though it was said not to be kept", got)
+	}
+}

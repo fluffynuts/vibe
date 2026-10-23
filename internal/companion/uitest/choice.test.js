@@ -33,19 +33,23 @@ async function choicePage(over = {}, { choice = true } = {}, storage = {}) {
     '/api/conversation/choice': async (call) => {
       if (call.method === 'GET') { if (at.holdRead) await at.holdRead; return body() }
       if (at.refuse) return { status: 400, body: { error: at.refuse } }
+      if (at.holdSave) await at.holdSave
       // What vibe does: a changed model puts the effort back to Default.
       at.effort = call.body.model !== at.model ? '' : call.body.effort
       at.model = call.body.model
       return body()
     },
     // The host records the model the conversation is on, when none is chosen or inherited: the last that ran, else the default.
-    '/api/conversation/choice/adopt': () => {
+    '/api/conversation/choice/adopt': async () => {
       at.adoptCalls = (at.adoptCalls || 0) + 1
       if (at.adoptFails) return { status: 500, body: { error: 'the model in use could not be kept' } }
       const lists = listed().options
       const alias = at.adoptAlias || (lists && lists.defaultAlias)
       if (!at.model && !at.globalModel && alias) at.model = alias
-      return body()
+      // As the host answers: what was true when it decided, whenever it arrives.
+      const answer = body()
+      if (at.holdAdopt) await at.holdAdopt
+      return answer
     },
     '/api/conversation/choice/options': async (call) => {
       if (at.hold) await at.hold
@@ -55,7 +59,7 @@ async function choicePage(over = {}, { choice = true } = {}, storage = {}) {
     },
     '/api/log': { entries: [] },
   }
-  const p = await openPage({ routes, storage: Object.assign({ 'vibe-companion-tab': 'conversation' }, storage), settled: !(at.hold || at.holdRead), before: at.before })
+  const p = await openPage({ routes, storage: Object.assign({ 'vibe-companion-tab': 'conversation' }, storage), settled: !(at.hold || at.holdRead || at.holdAdopt), before: at.before })
   return Object.assign(p, { at })
 }
 
@@ -1311,5 +1315,66 @@ test('choosing Default for an effort the global settings set says why it did not
     assert.equal(p.$('choice-effort').value, 'low', 'it snaps back to what is in force')
     assert.ok(open(p) && dotted(p))
     assert.match(p.$('choice-bubble-text').textContent, /effort comes from your global settings\.yaml, so Default here can't take it away/)
+  } finally { p.close() }
+})
+
+// ---- adopting never lands over what the user is choosing ----
+
+test('the model in use is not recorded while the user\'s own choice is being saved, and is looked at again once it is', async () => {
+  let release
+  const p = await choicePage({ model: '', options: Object.assign({}, OPTIONS, { defaultAlias: undefined }), adoptAlias: '' })
+  try {
+    assert.equal(adoptions(p), 1, 'asked once, and nothing to go by')
+    p.at.holdSave = new Promise((resolve) => { release = resolve })
+    p.$('choice-effort').value = 'high'
+    p.$('choice-effort').dispatchEvent(new p.window.Event('change', { bubbles: true }))
+    await turns()
+    p.at.options = Object.assign({}, OPTIONS, { defaultAlias: 'opus' })
+    p.at.adoptAlias = 'opus'
+    p.at.session = true
+    await p.kick('pollConversation')
+    p.at.busy = true
+    await p.kick('pollConversation')
+    p.at.busy = false
+    await p.kick('pollConversation')
+    assert.equal(adoptions(p), 1, 'not while the choice is being kept')
+    p.at.holdSave = null
+    release()
+    await p.settle()
+    assert.equal(adoptions(p), 2, 'and once it is kept')
+  } finally { p.close() }
+})
+
+test('the model in use is not recorded while the user is deciding on a model in a dialog', async () => {
+  const p = await choicePage({ model: '', session: true, options: Object.assign({}, OPTIONS, { defaultAlias: undefined }), adoptAlias: '' })
+  try {
+    await choose(p, 'choice-model', 'haiku')
+    assert.ok(p.$('choice-warn').open)
+    p.at.options = Object.assign({}, OPTIONS, { defaultAlias: 'opus' })
+    p.at.adoptAlias = 'opus'
+    await endTurn(p, 'claude-opus-5-5')
+    assert.equal(adoptions(p), 1, 'not while they are deciding')
+    p.$('choice-warn').close('go')
+    await p.settle()
+    assert.equal(p.at.model, 'haiku')
+    assert.equal(p.$('choice-model').value, 'haiku')
+    assert.equal(adoptions(p), 1, 'and nothing to take once they have chosen')
+  } finally { p.close() }
+})
+
+test('an answer to adopting that comes after the user chose is not shown over their choice', async () => {
+  let release
+  const p = await choicePage({ model: '', holdAdopt: new Promise((resolve) => { release = resolve }) , cached: KEPT, hold: new Promise(() => {}) })
+  try {
+    await turns()
+    assert.equal(adoptions(p), 1)
+    p.$('choice-model').value = 'opus'
+    p.$('choice-model').dispatchEvent(new p.window.Event('change', { bubbles: true }))
+    await turns()
+    assert.equal(p.$('choice-model').value, 'opus')
+    release()
+    await turns()
+    assert.equal(p.$('choice-model').value, 'opus', 'still the user\'s choice')
+    assert.equal(p.at.model, 'opus')
   } finally { p.close() }
 })

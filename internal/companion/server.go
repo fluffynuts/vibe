@@ -170,6 +170,10 @@ type Server struct {
 	// awake is held while a KeepAwake runs: pages asking meanwhile needn't
 	// ask again.
 	awake sync.Mutex
+	// choosing is held across reading the model and effort chosen and keeping
+	// the next: the page adopts the model in use by itself, which must not
+	// land over what the user chose in between.
+	choosing sync.Mutex
 	// done is closed by Close, ending what Start began alongside serving.
 	done chan struct{}
 	// loops are what Start began that writes (see takeInbox): Close waits

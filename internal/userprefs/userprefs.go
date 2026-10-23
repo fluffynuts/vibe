@@ -10,10 +10,12 @@
 package userprefs
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 
@@ -77,6 +79,10 @@ func loadNew(dir string) (Prefs, error) {
 	if err != nil {
 		return Prefs{}, err
 	}
+	return parse(dir, data)
+}
+
+func parse(dir string, data []byte) (Prefs, error) {
 	var p Prefs
 	if err := yaml.Unmarshal(data, &p); err != nil {
 		return Prefs{}, fmt.Errorf("can't read %s: %w", Path(dir), err)
@@ -91,6 +97,11 @@ func loadWithLegacy(dir string) (Prefs, error) {
 	if err != nil {
 		return Prefs{}, err
 	}
+	fillFromLegacy(dir, &p)
+	return p, nil
+}
+
+func fillFromLegacy(dir string, p *Prefs) {
 	for _, f := range []struct {
 		file string
 		into *string
@@ -98,12 +109,17 @@ func loadWithLegacy(dir string) (Prefs, error) {
 		if *f.into != "" {
 			continue
 		}
-		if data, err := os.ReadFile(filepath.Join(dir, f.file)); err == nil {
+		if data, err := fscopy.ReadFile(filepath.Join(dir, f.file)); err == nil {
 			*f.into = strings.TrimSpace(string(data))
 		}
 	}
-	return p, nil
 }
+
+// updating holds a lock for each folder being updated: several parts of vibe
+// (the page's model choice, the git author question, the migration) change the
+// same file from their own goroutines, and an update made from what was read
+// before another landed would lose that one.
+var updating sync.Map
 
 // Update changes the preferences in profile folder dir with change, and keeps
 // them whole or not at all (a turn reads this as it starts). Only the
@@ -117,19 +133,21 @@ func Update(dir string, change func(*Prefs)) error {
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return fmt.Errorf("there is no folder %s to keep the preferences in", dir)
 	}
-	current, err := loadNew(dir)
-	if err != nil {
-		return err
-	}
-	want, err := loadWithLegacy(dir)
-	if err != nil {
-		return err
-	}
-	change(&want)
+	lock, _ := updating.LoadOrStore(filepath.Clean(dir), &sync.Mutex{})
+	lock.(*sync.Mutex).Lock()
+	defer lock.(*sync.Mutex).Unlock()
 	data, err := fscopy.ReadFile(Path(dir))
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	current, err := parse(dir, data)
+	if err != nil {
+		return err
+	}
+	want := current
+	fillFromLegacy(dir, &want)
+	change(&want)
+	original := data
 	created := len(data) == 0
 	for _, k := range []struct {
 		key        string
@@ -165,7 +183,7 @@ func Update(dir string, change func(*Prefs)) error {
 		if err := fscopy.WriteWholeMode(Path(dir), append([]byte(header), data...), 0o644); err != nil {
 			return err
 		}
-	default:
+	case !bytes.Equal(data, original):
 		if err := fscopy.WriteWholeMode(Path(dir), data, modeOf(Path(dir))); err != nil {
 			return err
 		}

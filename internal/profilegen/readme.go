@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+
+	"vibe/internal/fscopy"
 )
 
 // ReadmeFile is the note a generated profile's folder holds, saying so.
@@ -47,5 +49,5 @@ func AddReadme(dir string) (bool, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return false, err
 	}
-	return true, os.WriteFile(path, []byte(readmeText), 0o644)
+	return true, fscopy.WriteWholeMode(path, []byte(readmeText), 0o644)
 }

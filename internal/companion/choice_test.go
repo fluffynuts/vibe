@@ -32,19 +32,34 @@ type choosing struct {
 	cachedAt                  time.Time
 	remembered                []Options
 	rememberErr               error
+	// holdFirstGet, if set, parks the first Get after telling getReached, until
+	// it is closed.
+	holdFirstGet chan struct{}
+	getReached   chan struct{}
+	getHeld      bool
 }
 
 func (c *choosing) config() *Choice {
 	return &Choice{
 		Get: func() (string, string, error) {
 			c.mu.Lock()
-			defer c.mu.Unlock()
 			model, effort := c.model, c.effort
 			if model == "" {
 				model = c.globalModel
 			}
 			if effort == "" {
 				effort = c.globalEffort
+			}
+			hold := c.holdFirstGet
+			if hold != nil && !c.getHeld {
+				c.getHeld = true
+			} else {
+				hold = nil
+			}
+			c.mu.Unlock()
+			if hold != nil {
+				close(c.getReached)
+				<-hold
 			}
 			return model, effort, nil
 		},
@@ -824,5 +839,32 @@ func TestListsAskedForNowAreWhatTheModelIsRecordedFromToo(t *testing.T) {
 	do(t, s, post("/api/conversation/choice/options", `{}`))
 	if _, got := adopt(t, s); got.Model != "sonnet" {
 		t.Errorf("recorded %q", got.Model)
+	}
+}
+
+func TestWhatTheUserChoosesWhileTheModelInUseIsBeingRecordedIsNotWrittenOver(t *testing.T) {
+	c := &choosing{cached: &sonnetDefault, cachedAt: time.Now(), holdFirstGet: make(chan struct{}), getReached: make(chan struct{})}
+	s := choiceServer(t, c)
+	adopted := make(chan struct{})
+	go func() { defer close(adopted); adopt(t, s) }()
+	<-c.getReached
+	var code int
+	chose := make(chan struct{})
+	go func() {
+		defer close(chose)
+		code = do(t, s, post("/api/conversation/choice", `{"model":"opus","effort":""}`)).Code
+	}()
+	select {
+	case <-chose:
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(c.holdFirstGet)
+	<-adopted
+	<-chose
+	if code != http.StatusOK {
+		t.Fatalf("choosing: %d", code)
+	}
+	if got := readChoice(t, s); got.Model != "opus" {
+		t.Errorf("the model kept is %q: the user's choice of opus was written over by the one recorded for the conversation", got.Model)
 	}
 }

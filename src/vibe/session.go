@@ -12,6 +12,7 @@ import (
 
 	"vibe/internal/cliargs"
 	"vibe/internal/clockskew"
+	"vibe/internal/fscopy"
 	"vibe/internal/instructions"
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
@@ -208,7 +209,7 @@ func remindOfInstructions(lay layout.Layout, name string) {
 		if f.path == "" {
 			continue
 		}
-		if data, err := os.ReadFile(f.path); err == nil && strings.TrimSpace(string(data)) != "" {
+		if data, err := fscopy.ReadFile(f.path); err == nil && strings.TrimSpace(string(data)) != "" {
 			used = append(used, pathresolve.Tilde(f.path))
 			continue
 		}

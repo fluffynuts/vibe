@@ -115,7 +115,7 @@ func firstScriptDescription(dir string) directive.Set {
 	if err != nil || len(entries) == 0 {
 		return nil
 	}
-	content, err := os.ReadFile(filepath.Join(dir, entries[0].Name()))
+	content, err := fscopy.ReadFile(filepath.Join(dir, entries[0].Name()))
 	if err != nil {
 		return nil
 	}
@@ -145,7 +145,7 @@ func firstAgentFileDescription(dir string) directive.Set {
 		return nil
 	}
 	sort.Strings(rels)
-	content, err := os.ReadFile(filepath.Join(dir, rels[0]))
+	content, err := fscopy.ReadFile(filepath.Join(dir, rels[0]))
 	if err != nil {
 		return nil
 	}
@@ -285,7 +285,7 @@ func Compose(features []string, dirFor DirFor, profileDir string) error {
 			*frag.into = kitspec.MergeDocs(*frag.into, doc)
 		}
 
-		text, err := os.ReadFile(filepath.Join(featureDir, "agent-instructions.md"))
+		text, err := fscopy.ReadFile(filepath.Join(featureDir, "agent-instructions.md"))
 		if err != nil && !os.IsNotExist(err) {
 			return err
 		}
@@ -329,7 +329,7 @@ func Compose(features []string, dirFor DirFor, profileDir string) error {
 			// script unless it says otherwise: a helper meant for the agent
 			// or the user to run on demand marks itself
 			// "# vibe: startup: false" and stays out of on-start.
-			content, err := os.ReadFile(filepath.Join(binDir, be.Name()))
+			content, err := fscopy.ReadFile(filepath.Join(binDir, be.Name()))
 			if err != nil {
 				return err
 			}
@@ -388,7 +388,7 @@ var commentHeaderRE = regexp.MustCompile(`\A(?:[ \t]*(?:#[^\n]*)?\n)*`)
 // the fragment) are lost to the YAML round-trip, which is why the library's
 // copy stays the readable one.
 func mergeUnderProfile(path string, fragment kitspec.Doc) error {
-	data, err := os.ReadFile(path)
+	data, err := fscopy.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("reading %s: %w", path, err)
 	}
@@ -401,13 +401,13 @@ func mergeUnderProfile(path string, fragment kitspec.Doc) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append([]byte(header), merged...), 0o644)
+	return fscopy.WriteWholeMode(path, append([]byte(header), merged...), 0o644)
 }
 
 // appendInstructions adds each feature's agent-instructions.md to the
 // profile's kit instructions, after anything already there.
 func appendInstructions(path string, instructions []string) error {
-	existing, err := os.ReadFile(path)
+	existing, err := fscopy.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("reading %s: %w", path, err)
 	}
@@ -415,7 +415,7 @@ func appendInstructions(path string, instructions []string) error {
 	if s := strings.TrimSpace(string(existing)); s != "" {
 		blocks = append([]string{s}, instructions...)
 	}
-	return os.WriteFile(path, []byte(strings.Join(blocks, "\n\n")+"\n"), 0o644)
+	return fscopy.WriteWholeMode(path, []byte(strings.Join(blocks, "\n\n")+"\n"), 0o644)
 }
 
 // writeInstallScripts writes the planned scripts into profileDir's
@@ -439,14 +439,14 @@ func writeInstallScripts(profileDir string, scripts []plannedScript, highest int
 			return err
 		}
 		sidecar := s.src + ".vibe"
-		data, err := os.ReadFile(sidecar)
+		data, err := fscopy.ReadFile(sidecar)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
 			return fmt.Errorf("reading %s: %w", sidecar, err)
 		}
-		if err := os.WriteFile(dest+".vibe", data, 0o644); err != nil {
+		if err := fscopy.WriteWholeMode(dest+".vibe", data, 0o644); err != nil {
 			return err
 		}
 	}
@@ -484,7 +484,7 @@ func writeOnStart(profileDir string, scripts []string) error {
 	b.WriteString("  /home/agent/.local/bin/$s || echo \"WARN: $s exited $?\"\n")
 	b.WriteString("done\n")
 	b.WriteString("echo \"=== done at $(date -Is) ===\"\n")
-	return os.WriteFile(dest, []byte(b.String()), 0o644)
+	return fscopy.WriteWholeMode(dest, []byte(b.String()), 0o644)
 }
 
 // Retired are the features vibe once had and has no longer, by name, with

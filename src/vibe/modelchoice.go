@@ -129,10 +129,12 @@ func (p profileChoice) set(model, effort string) error {
 		return fmt.Errorf("profile '%s' is vibe's own, which can't be written to: make a profile of your own (--profile) to keep the choice in", p.profile)
 	}
 	migratePreferences(p.lay, p.profile)
-	if err := userprefs.Update(p.dir(), func(u *userprefs.Prefs) { u.Model, u.Effort = model, effort }); err != nil {
+	// First, so that a settings.yaml that can't be changed leaves the choice as
+	// it was, as the failure says, and not half made.
+	if err := p.dropFromSettings(model == "", effort == ""); err != nil {
 		return err
 	}
-	return p.dropFromSettings(model == "", effort == "")
+	return userprefs.Update(p.dir(), func(u *userprefs.Prefs) { u.Model, u.Effort = model, effort })
 }
 
 // dropFromSettings takes the keys out of the profile's settings.yaml that the
@@ -140,7 +142,7 @@ func (p profileChoice) set(model, effort string) error {
 // left them, as taking them out would have left the profile looking edited by
 // hand: but choosing the default is the user asking for them gone).
 func (p profileChoice) dropFromSettings(model, effort bool) error {
-	data, err := os.ReadFile(p.settingsPath())
+	data, err := fscopy.ReadFile(p.settingsPath())
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -311,7 +313,7 @@ type keptOptionsFile struct {
 // nothing were kept.
 func keptOptions(file string, now func() time.Time) (cached func() (companion.Options, time.Time, bool), remember func(companion.Options) error) {
 	cached = func() (companion.Options, time.Time, bool) {
-		data, err := os.ReadFile(file)
+		data, err := fscopy.ReadFile(file)
 		if os.IsNotExist(err) {
 			return companion.Options{}, time.Time{}, false
 		}

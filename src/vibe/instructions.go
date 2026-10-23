@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"vibe/internal/companion"
+	"vibe/internal/fscopy"
 	"vibe/internal/instructions"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
@@ -41,7 +42,7 @@ func instructionsFor(lay layout.Layout, name string) (merged, agent string, err 
 		}
 	}
 	read := func(path string) string {
-		data, _ := os.ReadFile(path)
+		data, _ := fscopy.ReadFile(path)
 		return string(data)
 	}
 	universal := ""
@@ -153,7 +154,7 @@ func textVersion(text string) string {
 }
 
 func readText(path string) string {
-	data, _ := os.ReadFile(path)
+	data, _ := fscopy.ReadFile(path)
 	return string(data)
 }
 
@@ -195,7 +196,7 @@ func (a *companionAdmin) SaveInstructions(save companion.AdminSave) (companion.A
 	if err := os.MkdirAll(filepath.Dir(file.Path), 0o755); err != nil {
 		return companion.AdminSaved{}, err
 	}
-	if err := os.WriteFile(file.Path, []byte(text), 0o644); err != nil {
+	if err := fscopy.WriteWholeMode(file.Path, []byte(text), 0o644); err != nil {
 		return companion.AdminSaved{}, err
 	}
 	saved := companion.AdminSaved{Saved: true, Text: text, Version: textVersion(text)}

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"vibe/internal/layout"
+	"vibe/internal/userprefs"
 )
 
 // TestEnsureProfileExisting leaves a profile that is already there alone.
@@ -189,5 +190,18 @@ func TestTheAgentOfferedFirstIsTheProfilesThenTheUsers(t *testing.T) {
 		if err != nil || got != want {
 			t.Errorf("defaultAgentFor(%s) = %q, %v; want %q", profile, got, err, want)
 		}
+	}
+}
+
+func TestACopyIsToldWhichChoicesItCarries(t *testing.T) {
+	dir := t.TempDir()
+	if got := choicesCarried(dir); got != "" {
+		t.Errorf("a profile with none says %q", got)
+	}
+	if err := userprefs.Update(dir, func(p *userprefs.Prefs) { p.Model, p.Effort, p.GitAuthor, p.Theme = "opus", "high", "leave", "amber" }); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := choicesCarried(dir), "theme amber, git author answer leave, model opus, effort high"; got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }

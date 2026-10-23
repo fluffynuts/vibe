@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"vibe/internal/fscopy"
 	"vibe/internal/instructions"
 	"vibe/internal/layout"
 	"vibe/internal/userprefs"
@@ -73,7 +74,7 @@ func ContentHashWith(dir string, changed map[string][]byte) (string, error) {
 		data, ok := changed[rel]
 		if !ok {
 			var err error
-			if data, err = os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel))); err != nil {
+			if data, err = fscopy.ReadFile(filepath.Join(dir, filepath.FromSlash(rel))); err != nil {
 				return "", err
 			}
 		}
@@ -96,13 +97,13 @@ func RecordHash(dir string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, HashFile), []byte(sum+"\n"), 0o644)
+	return fscopy.WriteWholeMode(filepath.Join(dir, HashFile), []byte(sum+"\n"), 0o644)
 }
 
 // RecordedHash is the hash RecordHash recorded in dir, or "" when there's
 // none: a profile composed before vibe recorded it.
 func RecordedHash(dir string) string {
-	data, err := os.ReadFile(filepath.Join(dir, HashFile))
+	data, err := fscopy.ReadFile(filepath.Join(dir, HashFile))
 	if err != nil {
 		return ""
 	}
@@ -138,7 +139,7 @@ func ComposedFile(l layout.Layout, profile string, features []string, rel string
 	if err := composeInto(l, fresh, profile, features); err != nil {
 		return nil, false, fmt.Errorf("composing profile '%s' afresh: %w", profile, err)
 	}
-	data, err = os.ReadFile(filepath.Join(fresh, filepath.FromSlash(rel)))
+	data, err = fscopy.ReadFile(filepath.Join(fresh, filepath.FromSlash(rel)))
 	if os.IsNotExist(err) {
 		return nil, false, nil
 	}

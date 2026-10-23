@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"vibe/internal/cliargs"
+	"vibe/internal/fscopy"
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
 	"vibe/internal/running"
@@ -240,7 +241,7 @@ func awaitHeadlessReady(r io.Reader, within time.Duration) (string, error) {
 
 // lastLines is the last n lines of the file at path.
 func lastLines(path string, n int) []string {
-	data, err := os.ReadFile(path)
+	data, err := fscopy.ReadFile(path)
 	if err != nil {
 		return []string{"(couldn't read it: " + err.Error() + ")"}
 	}

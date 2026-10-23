@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -203,7 +202,7 @@ func keepingTranscript(converse companion.Converser, t transcripts, file string)
 			if !known {
 				check, cancel := context.WithTimeout(ctx, transcriptTimeout)
 				if !t.has(check, session) {
-					if tgz, err := os.ReadFile(file); err == nil {
+					if tgz, err := fscopy.ReadFile(file); err == nil {
 						t.put(check, tgz)
 					}
 				}

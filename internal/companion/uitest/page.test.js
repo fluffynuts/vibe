@@ -3240,3 +3240,54 @@ test("a rule change vibe couldn't keep for the next rebuild says so", async () =
     assert.match(p.$('toast').textContent, /a rebuild won't keep it: sbx is not signed in/)
   } finally { p.close() }
 })
+
+// --- the agent reviewing: loud, and said once ------------------------------------
+
+const writing = { ...unsent, started: '2026-10-16T10:00:00Z', state: 'in progress' }
+
+test('a review the agent is still writing is a loud badge, and a toast says to wait', async () => {
+  const p = await reviewPage({ review: writing, storage: { 'vibe-companion-tab': 'review' } })
+  try {
+    assert.ok(p.$('review-state').classList.contains('reviewing'))
+    assert.match(p.$('review-state').textContent, /still reviewing: wait for it to finish/)
+    assert.equal(p.$('toast').hidden, false)
+    assert.match(p.$('toast').textContent, /The agent is reviewing your changes\. Wait for it to finish/)
+  } finally { p.close() }
+})
+
+test('the toast to wait is said once for a review, however often it is drawn again', async () => {
+  const p = await reviewPage({ review: writing, storage: { 'vibe-companion-tab': 'review' } })
+  try {
+    p.$('toast').hidden = true
+    p.at.review = { ...writing, threads: [...writing.threads, { id: 2, status: 'open', comments: [{ author: 'agent', body: 'P2: more', at: '2026-10-16T10:01:00Z' }] }], lastId: 2 }
+    await p.poll()
+    assert.equal(p.$('toast').hidden, true, 'not said again')
+  } finally { p.close() }
+})
+
+test('when the agent finishes, a toast says so and the badge goes quiet', async () => {
+  const p = await reviewPage({ review: writing, storage: { 'vibe-companion-tab': 'review' } })
+  try {
+    p.$('toast').hidden = true
+    p.at.review = { ...writing, state: 'done' }
+    await p.poll()
+    assert.match(p.$('toast').textContent, /finished reviewing/)
+    assert.ok(!p.$('review-state').classList.contains('reviewing'))
+    assert.equal(p.$('review-state').textContent, 'done')
+  } finally { p.close() }
+})
+
+test('a review that was already finished when the page opened says nothing', async () => {
+  const p = await reviewPage({ review: { ...writing, state: 'done' }, storage: { 'vibe-companion-tab': 'review' } })
+  try {
+    assert.equal(p.$('toast').hidden, true)
+  } finally { p.close() }
+})
+
+test('Submit to agent waits while the agent is still writing the review, and says why', async () => {
+  const p = await startPage({ review: writing, agentAtWork: true })
+  try {
+    assert.equal(p.$('review-submit').disabled, true)
+    assert.match(p.$('review-submit').title, /still writing this review/)
+  } finally { p.close() }
+})

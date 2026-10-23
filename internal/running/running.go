@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"vibe/internal/fscopy"
 )
 
 // Dir returns the directory the per-process lock files live in.
@@ -209,9 +211,7 @@ func (s *Session) Report(step string) {
 		return
 	}
 	text := strconv.FormatInt(s.steps.Add(1), 10) + "\n" + step
-	if os.WriteFile(s.stepFile+".new", []byte(text), 0o644) == nil {
-		os.Rename(s.stepFile+".new", s.stepFile)
-	}
+	fscopy.WriteWholeMode(s.stepFile, []byte(text), 0o644)
 }
 
 // CancelRequested delivers each request another vibe makes (AskToCancel)
@@ -229,11 +229,7 @@ func (s *Session) CancelRequested() <-chan struct{} {
 // as soon as it exists, and would otherwise catch it empty, between being
 // created and being written.
 func (s *Session) AnswerCancel(answer string) error {
-	tmp := s.answerFile + ".new"
-	if err := os.WriteFile(tmp, []byte(answer), 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.answerFile)
+	return fscopy.WriteWholeMode(s.answerFile, []byte(answer), 0o644)
 }
 
 // AskToCancel asks the vibe with pid to cancel what its companion page has
@@ -246,11 +242,11 @@ func AskToCancel(vibeHome string, pid int, within time.Duration) (string, error)
 	}
 	answer := answerPath(vibeHome, pid)
 	os.Remove(answer)
-	if err := os.WriteFile(cancelPath(vibeHome, pid), nil, 0o644); err != nil {
+	if err := fscopy.WriteWholeMode(cancelPath(vibeHome, pid), nil, 0o644); err != nil {
 		return "", fmt.Errorf("asking vibe (PID %d) to cancel: %w", pid, err)
 	}
 	for deadline := time.Now().Add(within); ; {
-		if data, err := os.ReadFile(answer); err == nil {
+		if data, err := fscopy.ReadFile(answer); err == nil {
 			os.Remove(answer)
 			return string(data), nil
 		}
@@ -336,7 +332,7 @@ func Claims(vibeHome, target string) []Claim {
 			continue
 		}
 		path := filepath.Join(Dir(vibeHome), e.Name())
-		data, err := os.ReadFile(path)
+		data, err := fscopy.ReadFile(path)
 		if err != nil {
 			continue
 		}
@@ -376,7 +372,7 @@ func Stop(vibeHome string, pid int, quiet time.Duration, progress func(step stri
 	if !held(path) {
 		return false, nil
 	}
-	if err := os.WriteFile(stopPath(vibeHome, pid), nil, 0o644); err != nil {
+	if err := fscopy.WriteWholeMode(stopPath(vibeHome, pid), nil, 0o644); err != nil {
 		return false, fmt.Errorf("asking PID %d to stop: %w", pid, err)
 	}
 	if waitGone(path, quiet, stepPath(vibeHome, pid), progress) {
@@ -397,7 +393,7 @@ func waitGone(path string, quiet time.Duration, stepFile string, progress func(s
 	last := ""
 	for deadline := time.Now().Add(quiet); ; {
 		if stepFile != "" {
-			if b, err := os.ReadFile(stepFile); err == nil && string(b) != last {
+			if b, err := fscopy.ReadFile(stepFile); err == nil && string(b) != last {
 				last = string(b)
 				deadline = time.Now().Add(quiet)
 				if _, step, ok := strings.Cut(last, "\n"); ok && progress != nil {

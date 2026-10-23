@@ -16,6 +16,7 @@ import (
 	"vibe/internal/profilegen"
 	"vibe/internal/settings"
 	"vibe/internal/upgrade"
+	"vibe/internal/userprefs"
 )
 
 // initHome seeds the user's ~/.vibe overlay on first run: it is where the
@@ -166,10 +167,31 @@ func createProfileIfMissing(lay layout.Layout, profile string, force bool, agent
 	}
 	if source != "" {
 		note("created profile '%s' as a copy of '%s' in %s", profile, source, dir)
+		if carried := choicesCarried(dir); carried != "" {
+			note("it carries the choices made for '%s' (%s), which are kept with a profile: change them on the page, or edit or delete %s to be asked or to go back to the defaults", source, carried, filepath.Join(dir, userprefs.File))
+		}
 	} else {
 		note("created blank profile '%s' in %s", profile, dir)
 	}
 	return nil
+}
+
+// choicesCarried says which of the choices kept with a profile (see
+// userprefs) the profile in dir holds, "" for none or if they can't be read.
+func choicesCarried(dir string) string {
+	prefs, err := userprefs.Load(dir)
+	if err != nil {
+		return ""
+	}
+	var carried []string
+	for _, c := range []struct{ what, value string }{
+		{"theme", prefs.Theme}, {"git author answer", prefs.GitAuthor}, {"model", prefs.Model}, {"effort", prefs.Effort},
+	} {
+		if c.value != "" {
+			carried = append(carried, c.what+" "+c.value)
+		}
+	}
+	return strings.Join(carried, ", ")
 }
 
 // ensureGuidedProfile walks the user through picking which library

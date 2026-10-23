@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 
+	"vibe/internal/fscopy"
 	"vibe/internal/kitspec"
 	"vibe/internal/sbxrun"
 	"vibe/internal/userprefs"
@@ -284,7 +285,7 @@ func Accent(defaultsDir, choice string) (color string, ok bool) {
 	if choice == "" || choice == Default || builtIn[choice] || !validName.MatchString(choice) {
 		return "", false
 	}
-	data, err := os.ReadFile(filepath.Join(defaultsDir, "agent-files", ".claude", "themes", choice+".json"))
+	data, err := fscopy.ReadFile(filepath.Join(defaultsDir, "agent-files", ".claude", "themes", choice+".json"))
 	if err != nil {
 		return "", false
 	}

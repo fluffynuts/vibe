@@ -72,7 +72,7 @@ func writeBlank(dir, profile string) error {
 		}
 	}
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte(fmt.Sprintf(blankConfig, profile)), 0o644); err != nil {
+	if err := fscopy.WriteWholeMode(path, []byte(fmt.Sprintf(blankConfig, profile)), 0o644); err != nil {
 		return err
 	}
 	_, err := instructions.EnsureFile(filepath.Join(dir, instructions.File))
@@ -148,7 +148,7 @@ func headerEnd(data []byte) int {
 // a profile composed from the base features alone says it was composed.
 func recordComposedFrom(dir string, features []string) error {
 	path := filepath.Join(dir, "config.yaml")
-	data, err := os.ReadFile(path)
+	data, err := fscopy.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -164,14 +164,14 @@ func recordComposedFrom(dir string, features []string) error {
 	out := append([]byte{}, data[:at]...)
 	out = append(out, []byte(line)...)
 	out = append(out, data[at:]...)
-	return os.WriteFile(path, out, 0o644)
+	return fscopy.WriteWholeMode(path, out, 0o644)
 }
 
 // ComposedFrom returns the library features a profile was composed from, in
 // the order they were composed in, or nil for a profile that records none —
 // one written by hand, copied, or created blank.
 func ComposedFrom(profileDir string) []string {
-	data, err := os.ReadFile(filepath.Join(profileDir, "config.yaml"))
+	data, err := fscopy.ReadFile(filepath.Join(profileDir, "config.yaml"))
 	if err != nil {
 		return nil
 	}
@@ -187,7 +187,7 @@ func ComposedFrom(profileDir string) []string {
 // IsGuided reports whether a profile records which features it was composed
 // from, even if that is none beyond the base ones.
 func IsGuided(profileDir string) bool {
-	data, err := os.ReadFile(filepath.Join(profileDir, "config.yaml"))
+	data, err := fscopy.ReadFile(filepath.Join(profileDir, "config.yaml"))
 	if err != nil {
 		return false
 	}
@@ -291,7 +291,7 @@ var nameLineRE = regexp.MustCompile(`(?m)^name:[^\n]*$`)
 // rewriteName replaces the first top-level "name:" line in a copied
 // config.yaml, leaving every comment and other field as they were.
 func rewriteName(path, profile string) error {
-	data, err := os.ReadFile(path)
+	data, err := fscopy.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -309,7 +309,7 @@ func rewriteName(path, profile string) error {
 	if !replaced {
 		out = append([]byte("name: "+profile+"\n"), out...)
 	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
+	if err := fscopy.WriteWholeMode(path, out, 0o644); err != nil {
 		return fmt.Errorf("writing %s: %w", path, err)
 	}
 	return nil

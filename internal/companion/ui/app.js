@@ -1286,6 +1286,8 @@
     // agentAtWork is vibe saying the agent is at a turn the review began
     // (its start, a Submit or an Ask): closing the review stops it.
     agentAtWork: false,
+    // announced is the review's start and state as last announced by toast (see announceReview).
+    announced: null,
     // options are the reviews that can be started, while none is open
     // (null until known), or why they couldn't be told.
     options: null, optionsError: '',
@@ -1352,6 +1354,20 @@
 
   // tookReview takes rv, the review vibe gave back for something done on
   // the page, as the review.
+  // announceReview says, once each, that the agent has begun reviewing (so the user waits for it) and that it
+  // has finished, by a toast: the badge says it too, but only to someone looking at it. What was last drawn is
+  // remembered, so a redraw says nothing more; a review already finished when the page opens is nothing new.
+  function announceReview(rv) {
+    const was = reviewView.announced
+    const now = { started: String(rv.started || ''), state: rv.state || '' }
+    reviewView.announced = now
+    if (now.state === 'in progress' && !(was && was.started === now.started && was.state === 'in progress')) {
+      toast('The agent is reviewing your changes. Wait for it to finish, then add your comments.', false, { label: 'OK', run() {} })
+    } else if (now.state === 'done' && was && was.started === now.started && was.state === 'in progress') {
+      toast('The agent has finished reviewing: it is yours to read now.')
+    }
+  }
+
   function tookReview(rv) {
     reviewView.review = rv
     reviewView.changed++
@@ -2351,12 +2367,16 @@
     if (!on) drawStart(rv)
     $('review-title').textContent = on && rv.note ? 'Review: ' + rv.note : 'Review'
     $('review-state').hidden = !on || !rv.state
-    $('review-state').textContent = rv.state === 'in progress' ? 'the agent is still reviewing' : rv.state || ''
+    $('review-state').textContent = rv.state === 'in progress' ? 'the agent is still reviewing: wait for it to finish' : rv.state || ''
+    $('review-state').classList.toggle('reviewing', on && rv.state === 'in progress')
+    if (on) announceReview(rv)
     $('review-of').textContent = !on ? '' : rv.commit ? 'of commit ' + rv.commit : rv.unpushed ? 'of the commits not pushed to ' + rv.ref : rv.ref ? 'against ' + rv.ref : 'of the uncommitted changes'
     const unsent = unsentCount(rv)
-    $('review-submit').disabled = !unsent || !state.conversation
+    const stillWriting = rv.state === 'in progress' && reviewView.agentAtWork
+    $('review-submit').disabled = !unsent || !state.conversation || stillWriting
     $('review-submit').textContent = unsent ? 'Submit ' + unsent + ' to agent' : 'Submit to agent'
     $('review-submit').title = !state.conversation ? "This sandbox's agent can't be talked to from the page"
+      : stillWriting ? 'The agent is still writing this review: submit your comments once it has finished'
       : unsent ? 'Send the agent your ' + plural(unsent, 'comment') + " it hasn't seen: it changes code only where you ask it to"
         : "Nothing new to send: comment on a line, or reply, first"
     $('review-error').hidden = !reviewView.diffError
@@ -4283,16 +4303,33 @@
   const FILES_PER_ASK = 25
   let fileCheckQueued = false
 
+  // The folder of the file the viewer is showing while its text is drawn, from the workspace ('' for its
+  // root or when it isn't showing one): a path in it that starts with ./ or ../ is from that file.
+  let viewedFolder = ''
+
+  // pathFrom is path as the host knows it: from the workspace. One written ./x or ../x in a file in
+  // folder (the viewer's) is from that file, so is worked out from folder; any other is already from the
+  // workspace, as the agent writes them. A path that climbs out of the workspace keeps its ..s, for the host to refuse.
+  function pathFrom(folder, path) {
+    if (!folder || !/^\.\.?\//.test(path)) return path
+    const parts = folder.split('/')
+    for (const part of path.split('/')) {
+      if (part === '.') continue
+      if (part === '..') { if (parts.length && parts[parts.length - 1] !== '..') parts.pop(); else parts.push('..') } else parts.push(part)
+    }
+    return parts.join('/')
+  }
+
   function fileCandidate(path) {
     if (!fileCheckQueued) { fileCheckQueued = true; queueMicrotask(checkFileCandidates) }
-    return el('code', { class: 'file-candidate', text: path })
+    return el('code', { class: 'file-candidate', text: path, 'data-path': pathFrom(viewedFolder, path) })
   }
 
   async function checkFileCandidates() {
     fileCheckQueued = false
     const nodes = Array.from(document.querySelectorAll('code.file-candidate'))
     nodes.forEach((n) => n.classList.remove('file-candidate'))
-    const paths = Array.from(new Set(nodes.map((n) => n.textContent)))
+    const paths = Array.from(new Set(nodes.map((n) => n.dataset.path)))
     const files = new Set()
     for (let i = 0; i < paths.length; i += FILES_PER_ASK) {
       try {
@@ -4303,14 +4340,14 @@
         console.warn("vibe couldn't tell which paths are files it can show:", err.message)
       }
     }
-    for (const n of nodes) if (n.isConnected && files.has(n.textContent)) n.replaceWith(fileRef(n.textContent))
+    for (const n of nodes) if (n.isConnected && files.has(n.dataset.path)) n.replaceWith(fileRef(n.dataset.path, n.textContent))
   }
 
   // fileRef is a path the agent named, as a button showing that file over the conversation. It is never a
   // link: the agent chooses the path, so what comes of clicking is only the host reading it, if it is in the
   // workspace, and the page showing it as text.
-  function fileRef(path) {
-    return el('button', { type: 'button', class: 'file-ref', title: 'Show this file', onclick: () => viewFile(path) }, el('code', { text: path }))
+  function fileRef(path, shown = path) {
+    return el('button', { type: 'button', class: 'file-ref', title: shown === path ? 'Show this file' : 'Show ' + path, onclick: () => viewFile(path) }, el('code', { text: shown }))
   }
 
   // viewFile shows path over the conversation, read-only: as Markdown if it is, else as it is. The host says
@@ -4337,9 +4374,14 @@
     const text = res.body.text
     $('file-view-copy').hidden = false
     $('file-view-copy').onclick = () => copyText(text)
-    $('file-view-body').replaceChildren(/\.(md|markdown)$/i.test(path)
-      ? markdown(text)
-      : el('pre', {}, el('code', { text: visible(text) })))
+    viewedFolder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+    try {
+      $('file-view-body').replaceChildren(/\.(md|markdown)$/i.test(path)
+        ? markdown(text)
+        : el('pre', {}, el('code', { text: visible(text) })))
+    } finally {
+      viewedFolder = ''
+    }
     $('file-view-body').scrollTop = 0
   }
 
@@ -5345,7 +5387,7 @@
   const CHOICE_LOCK_MS = 30000
   const choice = { model: '', effort: '', running: '', session: false, options: null, optionsAt: 0, optionsError: '', problem: '', pending: false, bubble: false, unseen: false, started: false, pendingTurns: 0, inherited: { model: false, effort: false },
     goneModel: '', goneEffort: '', goneLabel: '', refreshing: false, adopting: false, adoptWait: false,
-    loaded: false, asking: false, saving: false, lockExpired: false, slow: false, lockTimer: 0 }
+    loaded: false, asking: false, saving: false, choosing: false, changes: 0, adoptSkipped: false, lockExpired: false, slow: false, lockTimer: 0 }
 
   // dialogAnswer shows a modal dialog and gives what it was closed with, ''
   // when it was dismissed (Escape).
@@ -5572,11 +5614,17 @@
   // nothing to go by, and then it isn't asked again until there are new lists.
   async function maybeAdopt() {
     if (!state.choice || choice.model || choice.inherited.model || !choice.options || choice.adopting || choice.adoptWait) return
+    // Not over a choice the user is making or saving: it is tried again once
+    // they are done (see settleChoice).
+    if (choice.saving || choice.choosing) { choice.adoptSkipped = true; return }
     choice.adopting = true
+    const changes = choice.changes
     try {
       const res = await post('/api/conversation/choice/adopt', {})
       if (res.ok) {
         reached(true)
+        // What the host says was true before a choice the user made meanwhile.
+        if (changes !== choice.changes) return
         takeChoice(res.body)
         if (!res.body.adopted) choice.adoptWait = true
         drawChoice()
@@ -5586,6 +5634,14 @@
     } finally {
       choice.adopting = false
     }
+  }
+
+  // settleChoice is where a choice the user was making ends, so that a model
+  // to adopt that was held off meanwhile is looked at again.
+  function settleChoice() {
+    if (choice.saving || choice.choosing || !choice.adoptSkipped) return
+    choice.adoptSkipped = false
+    maybeAdopt()
   }
 
   // modelListed says the lists offer model, among the plain ones or the rest.
@@ -5725,6 +5781,7 @@
   // may have changed the effort, or refused.
   async function saveChoice(model, effort) {
     choice.saving = true
+    choice.changes++
     drawChoice()
     let failed = ''
     try {
@@ -5736,7 +5793,8 @@
       failed = 'Could not reach vibe to keep that choice.'
     }
     choice.saving = false
-    if (failed) { await choiceFailed(failed); return }
+    choice.changes++
+    if (failed) { await choiceFailed(failed); settleChoice(); return }
     // Default asked for and not given, as the global settings choose: said whatever
     // the tick says, as it would be a puzzle otherwise.
     const refused = (model === '' && choice.inherited.model) || (effort === '' && choice.inherited.effort)
@@ -5744,6 +5802,7 @@
     setChoiceBubble(refused || !choiceQuiet())
     choice.unseen = true
     drawChoice()
+    settleChoice()
   }
 
   // pickOtherModel asks which of the models the agent lists beyond the
@@ -5773,11 +5832,17 @@
   }
 
   async function modelPicked() {
-    const value = $('choice-model').value
-    if (value !== OTHER_MODEL) { await changeModel(value); return }
-    const other = await pickOtherModel()
-    if (other == null) { drawChoice(); return }
-    await changeModel(other)
+    choice.choosing = true
+    try {
+      const value = $('choice-model').value
+      if (value !== OTHER_MODEL) { await changeModel(value); return }
+      const other = await pickOtherModel()
+      if (other == null) { drawChoice(); return }
+      await changeModel(other)
+    } finally {
+      choice.choosing = false
+      settleChoice()
+    }
   }
 
   // --- "New conversation" -----------------------------------------------

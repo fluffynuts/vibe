@@ -139,7 +139,7 @@ func (c *conversation) load(file string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.file = file
-	data, err := os.ReadFile(file)
+	data, err := fscopy.ReadFile(file)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil

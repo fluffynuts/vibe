@@ -191,7 +191,7 @@ func migrateRecords(vibeHome, oldName, newName, from, to string) error {
 // the agent's ~/.claude) so what was under projects/<from> is under
 // projects/<to>. There may be none.
 func refileTranscript(file, from, to string) error {
-	data, err := os.ReadFile(file)
+	data, err := fscopy.ReadFile(file)
 	if os.IsNotExist(err) {
 		return nil
 	}

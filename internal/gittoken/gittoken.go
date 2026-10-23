@@ -593,7 +593,7 @@ func ValidRules(rules []string) ([]string, error) {
 
 // Load reads a token stored by Save. ok is false when there is none.
 func Load(path string) (token string, ok bool, err error) {
-	data, err := os.ReadFile(path)
+	data, err := fscopy.ReadFile(path)
 	if os.IsNotExist(err) {
 		return "", false, nil
 	}
@@ -636,7 +636,7 @@ func SaveExpiry(tokenPath string, expires time.Time) error {
 		}
 		return nil
 	}
-	if err := os.WriteFile(expiryPath(tokenPath), []byte(expires.UTC().Format(time.RFC3339)+"\n"), 0o600); err != nil {
+	if err := fscopy.WriteWholeMode(expiryPath(tokenPath), []byte(expires.UTC().Format(time.RFC3339)+"\n"), 0o600); err != nil {
 		return fmt.Errorf("writing git token expiry: %w", err)
 	}
 	return nil
@@ -645,7 +645,7 @@ func SaveExpiry(tokenPath string, expires time.Time) error {
 // LoadExpiry is what SaveExpiry kept beside the token at tokenPath: zero
 // when nothing was, or it can't be read.
 func LoadExpiry(tokenPath string) time.Time {
-	data, err := os.ReadFile(expiryPath(tokenPath))
+	data, err := fscopy.ReadFile(expiryPath(tokenPath))
 	if err != nil {
 		return time.Time{}
 	}

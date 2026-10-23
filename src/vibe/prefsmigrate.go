@@ -67,7 +67,7 @@ func migrateChoiceKeys(lay layout.Layout, profile string) (left bool, err error)
 		return false, nil
 	}
 	path := filepath.Join(dir, settingsFile)
-	data, err := os.ReadFile(path)
+	data, err := fscopy.ReadFile(path)
 	if os.IsNotExist(err) {
 		return false, nil
 	}

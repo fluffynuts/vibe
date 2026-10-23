@@ -581,6 +581,10 @@ dialog.glass::backdrop { background: rgba(250, 250, 250, .55); backdrop-filter: 
 .md th { background: var(--row-hover); }
 .md .align-right { text-align: right; } .md .align-center { text-align: center; }
 .pill.warn { color: var(--amber); border-color: var(--amber); }
+/* The review the agent is still writing: not yet the user's to comment on, so it is loud. */
+.pill.reviewing { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 10px; color: var(--amber); border-color: var(--amber); background: color-mix(in srgb, var(--amber) 16%, transparent); }
+.pill.reviewing::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); animation: tab-dot-pulse 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .pill.reviewing::before { animation: none; } }
 .warn-text { color: var(--amber); }
 
 /* The Profiles tab: a group per profile, its sandboxes under it. */

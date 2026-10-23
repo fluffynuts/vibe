@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 
+	"vibe/internal/fscopy"
 	"vibe/internal/layout"
 	"vibe/internal/winfeatures"
 )
@@ -64,7 +65,7 @@ func ensureWindowsFeatures(lay layout.Layout, force bool) {
 		note("")
 	default:
 		note("the Windows features %s are enabled", features)
-		os.WriteFile(marker, nil, 0o644)
+		fscopy.WriteWholeMode(marker, nil, 0o644)
 	}
 }
 

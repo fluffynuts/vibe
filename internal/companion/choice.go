@@ -209,19 +209,30 @@ func (s *Server) choiceSet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	was, _, err := s.cfg.Choice.Get()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "couldn't read the model and effort chosen: "+err.Error())
-		return
-	}
-	if req.Model != was {
-		req.Effort = ""
-	}
-	if err := s.cfg.Choice.Set(req.Model, req.Effort); err != nil {
-		writeError(w, http.StatusInternalServerError, "the choice couldn't be kept: "+err.Error())
+	if !s.keepChoice(w, req.Model, req.Effort) {
 		return
 	}
 	s.choiceState(w, r)
+}
+
+// keepChoice keeps model and effort as the choice, saying why and returning
+// false if it can't.
+func (s *Server) keepChoice(w http.ResponseWriter, model, effort string) bool {
+	s.choosing.Lock()
+	defer s.choosing.Unlock()
+	was, _, err := s.cfg.Choice.Get()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "couldn't read the model and effort chosen: "+err.Error())
+		return false
+	}
+	if model != was {
+		effort = ""
+	}
+	if err := s.cfg.Choice.Set(model, effort); err != nil {
+		writeError(w, http.StatusInternalServerError, "the choice couldn't be kept: "+err.Error())
+		return false
+	}
+	return true
 }
 
 // choiceFetchOptions asks the agent what it has, and keeps the answer, in
@@ -301,6 +312,8 @@ func (s *Server) modelInUse() string {
 // nothing has changed (see docs/plan-model-effort.md). The profile's own effort
 // is kept as it is. It does nothing when there's nothing to go by.
 func (s *Server) choiceAdopt(w http.ResponseWriter, r *http.Request) {
+	s.choosing.Lock()
+	defer s.choosing.Unlock()
 	model, effort, err := s.cfg.Choice.Get()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "couldn't read the model and effort chosen: "+err.Error())

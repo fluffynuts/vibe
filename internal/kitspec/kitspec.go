@@ -17,6 +17,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"vibe/internal/directive"
+	"vibe/internal/fscopy"
 )
 
 // AgentHome is where every profile's agent-files tree is rooted inside the
@@ -31,7 +32,7 @@ type Doc map[string]interface{}
 
 // LoadDoc reads a config.yaml fragment. A missing file yields an empty Doc.
 func LoadDoc(path string) (Doc, error) {
-	data, err := os.ReadFile(path)
+	data, err := fscopy.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Doc{}, nil
@@ -152,7 +153,7 @@ func IsIgnored(name string) bool {
 // its own content, overlaid with any found in a "<name>.vibe" sidecar.
 func directivesFor(path string, content []byte) (directive.Set, error) {
 	d := directive.Parse(content)
-	sidecar, err := os.ReadFile(path + ".vibe")
+	sidecar, err := fscopy.ReadFile(path + ".vibe")
 	if err != nil {
 		if os.IsNotExist(err) {
 			return d, nil
@@ -174,7 +175,7 @@ func InstallSteps(dirs ...string) ([]interface{}, error) {
 		}
 		for _, e := range entries {
 			path := filepath.Join(dir, e.Name())
-			content, err := os.ReadFile(path)
+			content, err := fscopy.ReadFile(path)
 			if err != nil {
 				return nil, fmt.Errorf("reading install script %s: %w", path, err)
 			}
@@ -228,7 +229,7 @@ func FileEntries(dirs ...string) ([]interface{}, error) {
 				return err
 			}
 			rel = filepath.ToSlash(rel)
-			content, err := os.ReadFile(path)
+			content, err := fscopy.ReadFile(path)
 			if err != nil {
 				return fmt.Errorf("reading agent file %s: %w", path, err)
 			}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestAProfileWithNoPreferencesHasNone(t *testing.T) {
@@ -250,5 +251,53 @@ func TestMigratingWithNothingOldToMoveLeavesTheFileExactlyAsItIs(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(Path(dir)); string(data) != text {
 		t.Errorf("the file was rewritten: %q", data)
+	}
+}
+
+func TestUpdatesMadeAtOnceAreAllKept(t *testing.T) {
+	changes := []func(*Prefs){
+		func(p *Prefs) { p.Theme = "amber" },
+		func(p *Prefs) { p.GitAuthor = "import" },
+		func(p *Prefs) { p.Model = "opus" },
+		func(p *Prefs) { p.Effort = "high" },
+	}
+	for round := 0; round < 200; round++ {
+		dir := t.TempDir()
+		start := make(chan struct{})
+		var done sync.WaitGroup
+		for _, change := range changes {
+			done.Add(1)
+			go func(change func(*Prefs)) {
+				defer done.Done()
+				<-start
+				if err := Update(dir, change); err != nil {
+					t.Error(err)
+				}
+			}(change)
+		}
+		close(start)
+		done.Wait()
+		got, err := Load(dir)
+		if err != nil || got.Theme != "amber" || got.GitAuthor != "import" || got.Model != "opus" || got.Effort != "high" {
+			t.Fatalf("round %d: got %+v, %v: an update was lost to another made at the same time", round, got, err)
+		}
+	}
+}
+
+func TestAnUpdateThatChangesNothingDoesNotWriteTheFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := Update(dir, func(p *Prefs) { p.Model = "opus" }); err != nil {
+		t.Fatal(err)
+	}
+	then := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(Path(dir), then, then); err != nil {
+		t.Fatal(err)
+	}
+	if err := Update(dir, func(p *Prefs) { p.Model = "opus" }); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(Path(dir))
+	if err != nil || !info.ModTime().Equal(then) {
+		t.Errorf("modified %v, want it left at %v: %v", info.ModTime(), then, err)
 	}
 }
