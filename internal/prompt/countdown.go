@@ -8,13 +8,14 @@ const (
 	CountdownGo CountdownAnswer = iota
 	// CountdownSkip: the user pressed s, to skip what was counted down to.
 	CountdownSkip
-	// CountdownQuit: the user pressed Ctrl-C or q.
+	// CountdownQuit: the user pressed q (or Ctrl-C, on a Terminal with no handler for
+	// it: see Terminal.onInterrupt, which ends vibe).
 	CountdownQuit
 )
 
 // Countdown shows line(left) on rw, once a second for seconds seconds, until
-// the time runs out or the user answers: Enter goes now, s skips, Ctrl-C or
-// q quits. ok is false when the terminal couldn't be put into raw mode, so
+// the time runs out or the user answers: Enter goes now, s skips, q
+// quits (Ctrl-C ends vibe, on a Terminal from Open). ok is false when the terminal couldn't be put into raw mode, so
 // nothing was shown and nobody could answer.
 func Countdown(rw *Terminal, line func(left int) string, seconds int) (answer CountdownAnswer, ok bool) {
 	f, err := openFrame(rw)

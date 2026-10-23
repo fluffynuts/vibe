@@ -12,7 +12,7 @@ const filterRows = 10
 // Filter is Select for a list too long to show whole: typing narrows the
 // list to the labels containing what's typed (ignoring case), backspace
 // widens it again, Up/Down move through what matches, enter picks the
-// highlighted one, and Esc/Ctrl-C cancel (ok=false). Letters are typed
+// highlighted one, Esc cancels (ok=false), and Ctrl-C ends vibe (see Terminal.onInterrupt). Letters are typed
 // rather than taken as commands, so j, k and q are not keys here. def is
 // the index highlighted first.
 func Filter(rw *Terminal, labels []string, def int) (choice int, ok bool) {
@@ -42,7 +42,7 @@ func Filter(rw *Terminal, labels []string, def int) (choice int, ok bool) {
 		}
 		refilter := false
 		switch {
-		case key == 3: // Ctrl-C
+		case key == 3: // Ctrl-C, on a Terminal with no onInterrupt
 			f.clear()
 			return 0, false
 		case key == '\r' || key == '\n':

@@ -676,3 +676,30 @@ func TestAnInstallSaysWhenItCouldntCheckTheSandboxes(t *testing.T) {
 		t.Errorf("said:\n%s\nwant it to say it couldn't check, and how to", got)
 	}
 }
+
+func TestAStartGivesAGeneratedProfileItsReadmeEvenWithUpdatingOff(t *testing.T) {
+	lay := updateLayout(t)
+	inst := sandboxFor(t, lay, false)
+	readme := lay.HomePath("profiles", "p", profilegen.ReadmeFile)
+	if err := os.Remove(readme); err != nil {
+		t.Fatalf("the generated profile had no readme to begin with: %v", err)
+	}
+	if err := autoUpdate(lay, cliargs.Args{NoAutoUpdate: true}, "box", inst.Target); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(readme); err != nil {
+		t.Errorf("no readme after a start with updating off: %v", err)
+	}
+}
+
+func TestNoAutoUpdateStartsEvenWhenTheSandboxRecordCantBeRead(t *testing.T) {
+	lay := updateLayout(t)
+	sandboxFor(t, lay, false)
+	writeFile(t, filepath.Join(state.Dir(lay.Home), "box.yaml"), "name: [unclosed\n")
+	if err := autoUpdate(lay, cliargs.Args{}, "box", t.TempDir()); err == nil {
+		t.Fatal("a damaged record wasn't reported to an update that needed it")
+	}
+	if err := autoUpdate(lay, cliargs.Args{NoAutoUpdate: true}, "box", t.TempDir()); err != nil {
+		t.Errorf("--no-auto-update, the way out, failed on a damaged record: %v", err)
+	}
+}

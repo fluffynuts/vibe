@@ -412,6 +412,27 @@ func reCompose(lay layout.Layout, args cliargs.Args, name, target string, warn b
 	return reInit(lay, args, name, target, true, !args.Force)
 }
 
+// checkReComposable says why profile can't be re-composed, or nil: there must
+// be one, and it must record the library features it was composed from, or have
+// been created blank (see recomposeProfile); one that was written by hand or
+// copied has no features to say, and is told how to adopt some.
+func checkReComposable(lay layout.Layout, profile string) error {
+	if !lay.ProfileExists(profile) {
+		return fmt.Errorf("no profile '%s' to re-compose — run vibe -R to create one", profile)
+	}
+	dir := lay.ProfileDir(profile)
+	switch {
+	case profilegen.IsGuided(dir):
+		return nil
+	case profilegen.IsBlank(dir):
+		return nil
+	}
+	return fmt.Errorf("profile '%s' does not record which features it was composed from.\n"+
+		"Only profiles from guided creation do — add a '# vibe: features: a, b' line to\n"+
+		"%s to adopt one, or use vibe -R to build a fresh profile from the library.",
+		profile, filepath.Join(dir, "config.yaml"))
+}
+
 // recomposeProfile is reCompose up to the rebuild: the profile is backed up
 // and composed afresh. chosen is the features to compose it from, already
 // picked (as the companion page does); nil asks, unless args.Force keeps
@@ -421,13 +442,28 @@ func recomposeProfile(lay layout.Layout, args cliargs.Args, name, target string,
 	if err != nil {
 		return err
 	}
-	if !lay.ProfileExists(profile) {
-		return fmt.Errorf("no profile '%s' to re-compose — run vibe -R to create one", profile)
+	if err := checkReComposable(lay, profile); err != nil {
+		return err
 	}
 	// Before anything else: a profile from before the kits' instructions
 	// had a file of their own has them moved out of the user's way.
 	if err := prepareInstructions(lay, profile); err != nil {
 		return err
+	}
+	if blank := profilegen.IsBlank(lay.ProfileDir(profile)) && !profilegen.IsGuided(lay.ProfileDir(profile)); blank && chosen == nil {
+		// Nothing was composed into it, so there is nothing to compose again:
+		// what a re-compose is for is the sandbox, which is made afresh from the
+		// profile as it is.
+		if warn && !args.Force {
+			fmt.Fprintf(os.Stderr, "\x1b[1;93mvibe: WARNING: this destroys sandbox '%s' and makes it again from profile '%s'.\x1b[0m\n", name, profile)
+			fmt.Fprintf(os.Stderr, "\x1b[1;93m  The profile was created blank, so it is left as it is\x1b[0m\n")
+			fmt.Fprintf(os.Stderr, "\x1b[1;93m  The existing sandbox will be destroyed and cannot be restored\x1b[0m\n")
+		}
+		if warn && !confirmDefault(args.Force, true, "Continue?") {
+			return fmt.Errorf("aborted — nothing changed")
+		}
+		note("profile '%s' was created blank, so there is nothing to compose again: it is left as it is", profile)
+		return nil
 	}
 	features := settleFeatures(lay, profile)
 	defaultAgent, err := defaultAgentFor(lay, profile)
@@ -435,12 +471,6 @@ func recomposeProfile(lay layout.Layout, args cliargs.Args, name, target string,
 		return err
 	}
 	agent := recordedAgent(lay.Home, name, defaultAgent)
-	if !profilegen.IsGuided(lay.ProfileDir(profile)) {
-		return fmt.Errorf("profile '%s' does not record which features it was composed from.\n"+
-			"Only profiles from guided creation do — add a '# vibe: features: a, b' line to\n"+
-			"%s to adopt one, or use vibe -R to build a fresh profile from the library.",
-			profile, filepath.Join(lay.ProfileDir(profile), "config.yaml"))
-	}
 	available := lay.Features()
 	present, missing := splitMissingFeatures(features, available)
 	if len(missing) > 0 && args.Force && chosen == nil {
@@ -535,19 +565,22 @@ func replaceProfile(lay layout.Layout, profile, backupName string, features []st
 }
 
 // doRestore is --restore: roll the profile back to one of its backups, then
-// offer to re-compose from it.
-func doRestore(lay layout.Layout, args cliargs.Args, name, target string) error {
+// offer to re-compose from it. It says whether the user wants that: the
+// re-compose is then done as `vibe --restart --re-compose` would, so a vibe
+// already running here is ended first (asking, as --restart does), and the
+// new one starts in the mode it was in.
+func doRestore(lay layout.Layout, args cliargs.Args, name, target string) (reCompose bool, err error) {
 	profile, err := resolveReInitProfile(lay.Home, args, name, target)
 	if err != nil {
-		return err
+		return false, err
 	}
 	backups, err := backup.List(lay.HomePath("backup"), name)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if len(backups) == 0 {
 		note("There are no backups to restore")
-		return nil
+		return false, nil
 	}
 	chosen := backups[0]
 	if !args.Force {
@@ -557,16 +590,16 @@ func doRestore(lay layout.Layout, args cliargs.Args, name, target string) error 
 		}
 		idx, ok := chooseFrom(fmt.Sprintf("Backups of profile '%s' (newest first):", profile), labels, 0)
 		if !ok {
-			return fmt.Errorf("nothing chosen — nothing changed")
+			return false, fmt.Errorf("nothing chosen — nothing changed")
 		}
 		chosen = backups[idx]
 	}
 	if !confirmDefault(args.Force, true, "Are you sure you want to roll back to this backup? This action cannot be undone") {
-		return fmt.Errorf("aborted — nothing changed")
+		return false, fmt.Errorf("aborted — nothing changed")
 	}
 	dir := lay.NewProfileDir(profile)
 	if err := backup.Restore(chosen.Path, dir); err != nil {
-		return err
+		return false, err
 	}
 	note("restored profile '%s' from the backup of %s", profile, chosen.Label())
 	// A profile that was blank, copied or written by hand (which is what a
@@ -574,12 +607,9 @@ func doRestore(lay layout.Layout, args cliargs.Args, name, target string) error 
 	// as it was, and there is nothing to re-compose it from.
 	if !profilegen.IsGuided(dir) {
 		note("it wasn't composed from the library, so there is nothing to re-compose: it is as it was in the backup")
-		return nil
+		return false, nil
 	}
-	if !confirmDefault(args.Force, true, "Re-compose now?") {
-		return nil
-	}
-	return reCompose(lay, args, name, target, false)
+	return confirmDefault(args.Force, true, "Re-compose now?"), nil
 }
 
 // settleFeatures makes a profile's record of its features agree with what

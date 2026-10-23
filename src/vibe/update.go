@@ -213,13 +213,19 @@ var rebuild = func(ctx context.Context, lay layout.Layout, name, target string) 
 // What it can't update is warned about and the session goes on; it fails
 // only when the user quits, or a rebuild it started fails.
 func autoUpdate(lay layout.Layout, args cliargs.Args, name, target string) error {
+	inst, found, err := state.Load(lay.Home, name)
 	if args.NoAutoUpdate {
+		// The way out of updating must not depend on the sandbox's record being
+		// readable: the profile's README is looked to if it can be, and that is all.
+		if err == nil && found && lay.ProfileExists(inst.Profile) {
+			ensureReadme(lay, inst.Profile)
+		}
 		return nil
 	}
-	inst, found, err := state.Load(lay.Home, name)
 	if err != nil || !found || !lay.ProfileExists(inst.Profile) {
 		return err
 	}
+	ensureReadme(lay, inst.Profile)
 	merged, err := loadSettings(lay, inst.Profile)
 	if err != nil {
 		return err

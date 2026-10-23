@@ -23,6 +23,16 @@ its files, but a re-compose (` + "`vibe -C`" + `) or an automatic update replace
 them, and edits are lost. The profile is backed up first (` + "`vibe --restore`" + `
 lists the backups), so you can get something back.
 
+Two files describe the profile, for two different readers:
+
+- config.yaml describes the sandbox itself: what is installed in it, its
+  permissions and environment. It is read by the sandbox tooling (sbx) when the
+  sandbox is made.
+- settings.yaml is settings for vibe's own behaviour with this profile, such as
+  the sandbox's memory limit, which agent it runs, or the ports it publishes.
+  It is vibe's own: settings in ~/.vibe/settings.yaml apply to every profile,
+  and this file overrides them for this one.
+
 Two things in this folder are yours, and are carried across:
 
 - user-preferences.yaml: the choices you make through vibe (theme, git author,

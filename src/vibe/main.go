@@ -391,7 +391,25 @@ func run(argv []string) error {
 	case args.GitToken:
 		return doGitToken(vibeHome, args, name, target)
 	case args.Restore:
-		return doRestore(lay, args, name, target)
+		again, err := doRestore(lay, args, name, target)
+		if err != nil || !again {
+			return err
+		}
+		// On from here as `--restart --re-compose`: what is running here is
+		// ended first, and what starts after takes its mode.
+		args.ReCompose, args.Restart = true, true
+	}
+
+	// Before anything is ended or asked: a re-compose that can't be done says
+	// so first, and doesn't stop a vibe or a sandbox on the way to saying it.
+	if args.ReCompose {
+		profile, err := resolveReInitProfile(lay.Home, args, name, target)
+		if err != nil {
+			return err
+		}
+		if err := checkReComposable(lay, profile); err != nil {
+			return err
+		}
 	}
 
 	ended := modeNone

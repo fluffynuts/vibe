@@ -39,6 +39,9 @@ type Prefs struct {
 	// the agent's own settings decide.
 	Model  string `yaml:"model,omitempty"`
 	Effort string `yaml:"effort,omitempty"`
+	// Mode is how vibe starts for this profile when nothing typed decides it:
+	// "headless" or "terminal"; unset, the settings' say.
+	Mode string `yaml:"mode,omitempty"`
 
 	Others map[string]interface{} `yaml:",inline"`
 }
@@ -157,6 +160,7 @@ func Update(dir string, change func(*Prefs)) error {
 		{"gitAuthor", current.GitAuthor, want.GitAuthor},
 		{"model", current.Model, want.Model},
 		{"effort", current.Effort, want.Effort},
+		{"mode", current.Mode, want.Mode},
 	} {
 		if k.have == k.want {
 			continue

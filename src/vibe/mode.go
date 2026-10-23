@@ -10,6 +10,7 @@ import (
 	"vibe/internal/running"
 	"vibe/internal/sbxrun"
 	"vibe/internal/settings"
+	"vibe/internal/userprefs"
 )
 
 // runMode is how a vibe has its sandbox: with a terminal attached, or
@@ -50,9 +51,10 @@ func modeOf(claims []running.Claim) runMode {
 }
 
 // favouriteMode is the mode vibe starts in when nothing decides it ("headless"
-// or "terminal"), or "" if the settings say none. It's layered as the rest of
-// the settings are: the profile's settings.yaml over ~/.vibe/settings.yaml (or
-// the bundle's, where there's no ~/.vibe one), so one profile can be
+// or "terminal"), or "" if none is chosen. The profile's own choice
+// (user-preferences.yaml, which isn't part of what makes a profile look edited
+// by hand) wins, then the profile's settings.yaml over ~/.vibe/settings.yaml
+// (or the bundle's, where there's no ~/.vibe one), so one profile can be
 // headless while the others aren't. A wrong value is refused, naming the file
 // it is in.
 func favouriteMode(lay layout.Layout, profile string) (string, error) {
@@ -66,9 +68,16 @@ func favouriteMode(lay layout.Layout, profile string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	prefs, err := userprefs.Load(lay.ProfileDir(profile))
+	if err != nil {
+		return "", err
+	}
 	mode, path := base.Mode, basePath
 	if own.Mode != "" {
 		mode, path = own.Mode, profilePath
+	}
+	if prefs.Mode != "" {
+		mode, path = prefs.Mode, userprefs.Path(lay.ProfileDir(profile))
 	}
 	switch mode {
 	case "", "headless", "terminal":

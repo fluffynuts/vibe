@@ -26,7 +26,8 @@ var fallbackAgents = []string{"claude", "codex", "copilot", "cursor", "devin", "
 
 // setUpSettings writes ~/.vibe/settings.yaml for this machine, from the
 // copy just put there (the package's). With ask and a terminal, it asks how
-// much memory and how many CPUs sandboxes get, which agent they run, and which features a
+// much memory and how many CPUs sandboxes get, which agent they run, how vibe
+// starts (with a terminal, or headless), and which features a
 // guided profile starts with ticked, starting on the package's choices;
 // otherwise it keeps those, with the memory lowered to what this machine
 // can give. Everything else in the file is left as it is.
@@ -55,6 +56,12 @@ func setUpSettings(lay layout.Layout, ask bool) error {
 	}{
 		{"memory", pickMemory(current.Memory, ask, "how much memory should each sandbox get? (you're asked again for each new sandbox)")},
 		{"agent", pickAgent(current.Agent, ask, "which agent should sandboxes run by default?")},
+	}
+	if ask {
+		values = append(values, struct {
+			key   string
+			value interface{}
+		}{"mode", pickMode(current.Mode, "how should vibe start by default? (a profile can choose its own; --terminal and --headless decide for one start)")})
 	}
 	// Unset, cpus is half the machine's, whichever machine that is: it's
 	// written only for a choice made, or one to keep within what this
@@ -220,6 +227,32 @@ func pickAgent(current string, ask bool, question string) string {
 		return current
 	}
 	return agents[i]
+}
+
+// chooseMode asks which mode to start in; a variable for tests.
+var chooseMode = chooseFrom
+
+// modeChoices are what the user is offered for the default mode, in the order
+// of modeValues.
+var (
+	modeChoices = []string{"terminal: a session in this terminal, with the page beside it", "headless: no terminal, only the companion page"}
+	modeValues  = []string{"terminal", "headless"}
+)
+
+// pickMode asks how vibe starts by default, starting on current (terminal when
+// unset or not one of the two, which is what vibe does with nothing said). Quitting
+// the question keeps current, or terminal.
+func pickMode(current, question string) string {
+	idx := slices.Index(modeValues, current)
+	if idx < 0 {
+		idx = 0
+	}
+	i, ok := chooseMode(question, modeChoices, idx)
+	if !ok {
+		note("  keeping mode: %s", modeValues[idx])
+		return modeValues[idx]
+	}
+	return modeValues[i]
 }
 
 // pickTimezone asks which timezone a sandbox should keep its time in, from

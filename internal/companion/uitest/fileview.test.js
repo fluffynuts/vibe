@@ -201,3 +201,24 @@ test('a path written ./ or ../ in a file being viewed is from that file, and is 
     assert.equal(p.$('file-view-body').textContent.trim(), 'the sibling')
   } finally { p.close() }
 })
+
+test('a Markdown link to a file is a button showing it, in the conversation and in a viewed file, and is otherwise the words and its address', async () => {
+  const p = await filePage('See [the plan](docs/plans/a.md), [site](https://example.com/x.md), [gone](nowhere.md) and [part](docs/c.md#top).', { files: {
+    'docs/plans/a.md': 'Next: [the sibling](./b.md), [up](../c.md).',
+    'docs/plans/b.md': 'the sibling', 'docs/c.md': 'one up',
+  } })
+  try {
+    assert.deepEqual(refs(p), ['the plan', 'part'], 'the words of the link, not its address')
+    assert.deepEqual(checks(p), [['docs/plans/a.md', 'nowhere.md', 'docs/c.md']], 'a web address is not asked about')
+    const text = p.$('convo-log').textContent
+    assert.match(text, /site \(https:\/\/example\.com\/x\.md\)/, 'a web link stays words and its address')
+    assert.match(text, /gone \(nowhere\.md\)/, 'so does a link to what is not there')
+    await p.click(p.$('convo-log').querySelector('button.file-ref'))
+    assert.equal(p.$('file-view-path').textContent, 'docs/plans/a.md')
+    const buttons = () => Array.from(p.$('file-view-body').querySelectorAll('button.file-ref'))
+    assert.deepEqual(buttons().map((b) => b.textContent), ['the sibling', 'up'])
+    await p.click(buttons()[0])
+    assert.equal(p.$('file-view-path').textContent, 'docs/plans/b.md', 'from the viewed file, not the root')
+    assert.equal(p.$('file-view-body').textContent.trim(), 'the sibling')
+  } finally { p.close() }
+})

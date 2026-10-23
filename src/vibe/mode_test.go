@@ -9,7 +9,9 @@ import (
 	"vibe/internal/cliargs"
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
+	"vibe/internal/profilegen"
 	"vibe/internal/running"
+	"vibe/internal/userprefs"
 )
 
 func TestWhatARestartEndedIsTheModeItWasIn(t *testing.T) {
@@ -247,5 +249,48 @@ func TestTheProfileIsFoundTheWayARebuildFindsIt(t *testing.T) {
 	got, err = startMode(lay, cliargs.Args{ReInit: true, Profile: "other"}, "box", "/work", modeNone)
 	if err != nil || got {
 		t.Errorf("another profile: headless %v, %v; want the global terminal", got, err)
+	}
+}
+
+func TestAProfilesPreferenceForTheModeWinsOverItsSettingsAndTheGlobalOnes(t *testing.T) {
+	lay := favouriteHome(t, "mode: terminal\n")
+	withProfile(t, lay, "mode: terminal\n")
+	if err := userprefs.Update(lay.ProfileDir("p"), func(p *userprefs.Prefs) { p.Mode = "headless" }); err != nil {
+		t.Fatal(err)
+	}
+	got, err := favouriteMode(lay, "p")
+	if err != nil || got != "headless" {
+		t.Errorf("%q, %v; want the preference's headless", got, err)
+	}
+}
+
+func TestAWrongModeInThePreferencesIsRefusedNamingThatFile(t *testing.T) {
+	lay := favouriteHome(t, "")
+	withProfile(t, lay, "")
+	if err := userprefs.Update(lay.ProfileDir("p"), func(p *userprefs.Prefs) { p.Mode = "headles" }); err != nil {
+		t.Fatal(err)
+	}
+	_, err := favouriteMode(lay, "p")
+	if err == nil || !strings.Contains(err.Error(), "user-preferences.yaml") {
+		t.Errorf("err = %v, want it to name user-preferences.yaml", err)
+	}
+}
+
+func TestAModeInThePreferencesDoesNotMakeAComposedProfileLookEditedByHand(t *testing.T) {
+	lay := favouriteHome(t, "")
+	withProfile(t, lay, "")
+	dir := lay.ProfileDir("p")
+	if err := profilegen.RecordHash(dir); err != nil {
+		t.Fatal(err)
+	}
+	before, err := profilegen.ContentHash(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := userprefs.Update(dir, func(p *userprefs.Prefs) { p.Mode = "headless" }); err != nil {
+		t.Fatal(err)
+	}
+	if after, err := profilegen.ContentHash(dir); err != nil || after != before {
+		t.Errorf("the profile's hash changed (%v): a choice made it look edited by hand", err)
 	}
 }

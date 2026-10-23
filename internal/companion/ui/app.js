@@ -4262,7 +4262,9 @@
           const link = localLink(n.href)
           if (link) { link.replaceChildren(...inline(n.children, true)); return link }
           const label = n.children.map((c) => c.text || '').join('')
-          return document.createTextNode(visible(label === n.href ? n.href : label + ' (' + n.href + ')'))
+          const shown = visible(label === n.href ? n.href : label + ' (' + n.href + ')')
+          const file = state.viewFiles && !inLink ? fileLinkPath(n.href) : null
+          return file ? fileCandidate(file, shown, visible(label)) : document.createTextNode(shown)
         }
       }
       return document.createTextNode('')
@@ -4321,14 +4323,27 @@
     return parts.join('/')
   }
 
-  function fileCandidate(path) {
+  // fileLinkPath is the file a Markdown link's address names, when it is a reference to one on this machine
+  // ("./other.md", "docs/a.md#top"): no scheme, not a network address, no query; null for anything else.
+  function fileLinkPath(href) {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('//') || href.startsWith('#')) return null
+    let path = href.replace(/[#?].*$/, '')
+    try { path = decodeURIComponent(path) } catch (e) { return null }
+    return looksLikeFile(path) ? path : null
+  }
+
+  // fileCandidate is a path the host has yet to say is a file: code showing it, or (for a Markdown link to
+  // it) its words, with label for what the button says once it is one.
+  function fileCandidate(path, text = path, label = '') {
     if (!fileCheckQueued) { fileCheckQueued = true; queueMicrotask(checkFileCandidates) }
-    return el('code', { class: 'file-candidate', text: path, 'data-path': pathFrom(viewedFolder, path) })
+    const props = { class: 'file-candidate', text, 'data-path': pathFrom(viewedFolder, path) }
+    if (label) props['data-label'] = label
+    return el(label ? 'span' : 'code', props)
   }
 
   async function checkFileCandidates() {
     fileCheckQueued = false
-    const nodes = Array.from(document.querySelectorAll('code.file-candidate'))
+    const nodes = Array.from(document.querySelectorAll('.file-candidate'))
     nodes.forEach((n) => n.classList.remove('file-candidate'))
     const paths = Array.from(new Set(nodes.map((n) => n.dataset.path)))
     const files = new Set()
@@ -4341,14 +4356,15 @@
         console.warn("vibe couldn't tell which paths are files it can show:", err.message)
       }
     }
-    for (const n of nodes) if (n.isConnected && files.has(n.dataset.path)) n.replaceWith(fileRef(n.dataset.path, n.textContent))
+    for (const n of nodes) if (n.isConnected && files.has(n.dataset.path)) n.replaceWith(fileRef(n.dataset.path, n.dataset.label || n.textContent, !n.dataset.label))
   }
 
   // fileRef is a path the agent named, as a button showing that file over the conversation. It is never a
   // link: the agent chooses the path, so what comes of clicking is only the host reading it, if it is in the
   // workspace, and the page showing it as text.
-  function fileRef(path, shown = path) {
-    return el('button', { type: 'button', class: 'file-ref', title: shown === path ? 'Show this file' : 'Show ' + path, onclick: () => viewFile(path) }, el('code', { text: shown }))
+  function fileRef(path, shown = path, asCode = true) {
+    const words = asCode ? el('code', { text: shown }) : el('span', { text: shown })
+    return el('button', { type: 'button', class: 'file-ref', title: shown === path ? 'Show this file' : 'Show ' + path, onclick: () => viewFile(path) }, words)
   }
 
   // viewFile shows path over the conversation, read-only: as Markdown if it is, else as it is. The host says

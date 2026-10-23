@@ -126,7 +126,7 @@ The first `vibe --install` (and vibe's first run, if you skip `--install`) also 
 `~/.vibe/settings.yaml` for your machine. It asks how much memory each sandbox gets, in 4g steps
 up to half your machine's memory, and how many CPUs, any number from 1 to one less than your machine
 has, starting on half of them (see [CPUs](#cpus-a-sandbox-gets)). It asks which agent sandboxes run by default, from the agents `sbx run
---help` lists, and which library features a guided profile starts with selected. Each question
+--help` lists, how vibe starts by default (with a terminal, or headless: the `mode` setting, which a profile or `--terminal`/`--headless` can override), and which library features a guided profile starts with selected. Each question
 starts on the package's choice. Creating a new sandbox asks again which agent it should run,
 starting on that default (or on the profile's own `agent`, when the profile exists already). It asks
 this first, before any profile is made, because a guided profile only offers the features that work
@@ -135,7 +135,7 @@ lowers the memory, if it's more than your machine can give (and a `cpus` already
 than your machine can spare). Every later `--install` makes the same checks on your `settings.yaml`,
 and changes nothing else in it.
 
-`vibe --setup` asks those questions again (default memory, CPUs, default agent, and the features a guided
+`vibe --setup` asks those questions again (default memory, CPUs, default agent, how vibe starts by default (with a terminal, or headless: the `mode` setting), and the features a guided
 profile starts with selected), starting on your current choices, and saves the answers in
 `~/.vibe/settings.yaml`. It then offers to store a default GitHub token for new sandboxes to push with
 (see [Letting the agent push](#letting-the-agent-push)). It needs a terminal, and
@@ -313,7 +313,7 @@ vibe --restart [path]      # end the vibe already running for path, leaving its 
 vibe --restart --terminal  # ...taking over with a terminal, on a sandbox that was headless
                            #    (--restart alone keeps the mode of the vibe it ended)
 vibe --terminal [path]     # start with a terminal attached: what plain vibe does, unless
-                           #    `mode: headless` is in settings.yaml (the profile's, or ~/.vibe's)
+                           #    `mode: headless` is in the profile's user-preferences.yaml or settings.yaml, or ~/.vibe's
 vibe -r --headless         # rebuild the sandbox, then go headless (also with -R and -C):
                            #    what `vibe -r --no-start && vibe --headless` does
 vibe -M/--manage           # serve the Profiles page on its own, until Ctrl-C
@@ -503,7 +503,7 @@ vibe: create it how?
 Copying clones the chosen profile's whole directory — config, settings, install scripts and agent
 files — and renames it, which is the quickest way to start from something close to what you need.
 A blank profile is just a `config.yaml` naming it, plus empty `install-scripts/` and
-`agent-files/` directories to grow into; the sandbox it builds is the base kit and nothing more.
+`agent-files/` directories to grow into; the sandbox it builds is the base kit and nothing more. It records that it was created blank (a `# vibe: blank: yes` line in its `config.yaml`), so a later `--re-compose` knows there is nothing to compose again: it leaves the profile as it is (no backup, nothing asked about features) and makes the sandbox afresh from it, as `-r` does.
 
 Either way the new profile is written to `~/.vibe/profiles/<name>/`, and copying reads the source
 profile from wherever it currently wins — your overlay if you have a copy of it, the bundle
@@ -593,7 +593,7 @@ you're looking at:
 - **Conversation** — talk to the agent from the page, with the sandbox's clipboard page (see
   `clipboard-bridge` below) embedded beside it: paste images and files anywhere on the tab and they go
   to the clipboard. The prompt box grows as you type, up to half the column. The agent's replies, and your prompts, are shown as Markdown — headings, lists, tables, code — built
-  as text, so nothing in them can become markup on the page; links open only to this machine's own pages. A block of code has a copy button (two pages) at its top right. A review comment named by its number (#24) is a link to it on the Review tab. The tools the agent uses between what it says are gathered into one line (`⚙ 8 tool uses · Bash ×6, Read ×2`, with `· 2 failed` and red when some failed), open while it is working so you see them as they happen, and put away once it speaks or the turn ends; click the line to see each tool and its result. A group you opened or closed yourself stays as you left it. The conversation search looks inside the groups only when its tools box is ticked, and going to a match opens the group. A file the agent names in code (`doc/plans/a.md`) is a button, never a link, once vibe has checked that it is a text file in the sandbox's folder (so `safe.directory`, `~/.gitconfig` and a file that isn't there stay plain code): it shows the file over the conversation, read-only, as Markdown if it is Markdown, with a button to copy it (open it in your own editor from there). Only text files up to 1 MB inside the sandbox's folder are shown (a path that leaves it, by `..` or a link, is never offered), and vibe never runs anything for it.
+  as text, so nothing in them can become markup on the page; links open only to this machine's own pages. A block of code has a copy button (two pages) at its top right. A review comment named by its number (#24) is a link to it on the Review tab. The tools the agent uses between what it says are gathered into one line (`⚙ 8 tool uses · Bash ×6, Read ×2`, with `· 2 failed` and red when some failed), open while it is working so you see them as they happen, and put away once it speaks or the turn ends; click the line to see each tool and its result. A group you opened or closed yourself stays as you left it. The conversation search looks inside the groups only when its tools box is ticked, and going to a match opens the group. A file the agent names in code (`doc/plans/a.md`) is a button, never a link, once vibe has checked that it is a text file in the sandbox's folder (so `safe.directory`, `~/.gitconfig` and a file that isn't there stay plain code): it shows the file over the conversation, read-only, as Markdown if it is Markdown, with a button to copy it (open it in your own editor from there). So is a Markdown link to such a file (`[the plan](docs/plans/a.md)`, `[next](./b.md)`), showing the link's words; inside a file being shown, a path written `./` or `../` is from that file. A link to anywhere else stays its words and address. Only text files up to 1 MB inside the sandbox's folder are shown (a path that leaves it, by `..` or a link, is never offered), and vibe never runs anything for it.
   Your prompt is sent exactly as you typed it; only how it's shown changes, so fence pasted console output
   in ``` (and put globs like `*.go` in backticks) to keep it as it is. **My prompts as Markdown**, above the
   conversation, turns that off for your prompts, in that browser, if you'd rather see them as you typed them.
@@ -1145,7 +1145,9 @@ into a real script or config file.
 ```yaml
 mode: headless       # how vibe starts: headless (serving the companion page, no terminal) or terminal (the
                      #    default). Layered like the rest: a profile's settings.yaml overrides this one, so one
-                     #    profile can be headless and the others not. --terminal and --headless say otherwise
+                     #    profile can be headless and the others not; a profile's user-preferences.yaml (where a
+                     #    `mode:` is safe to put: it never makes a generated profile look edited by hand) overrides
+                     #    both. --terminal and --headless say otherwise
                      #    for one start; a folder with no sandbox yet starts in a terminal, which makes it;
                      #    --restart keeps the mode of the vibe it ends
 memory: 12g          # sandbox memory limit; a new sandbox asks, starting here, capped at
@@ -1267,11 +1269,11 @@ they are *now* and re-inits the sandbox, so a feature that has since gained an e
 published port or an instruction reaches the profiles built from it. The profile is regenerated
 rather than merged into — re-running the composition over the existing files would append every
 fragment a second time, duplicating permissions and published ports — so hand-edits to it are
-lost, and it warns of that up front, in yellow, before anything else (enter accepts; `-f` skips the question). The profile is zipped into `~/.vibe/backup/<sandbox>-<date>_<time>.zip` first (the last three per sandbox are kept), (`-R/--re-create` zips the profile the same way before it deletes it), and `vibe --restore [path]` lists them, rolls the profile back to the one you pick (after confirming) and, for a profile that was composed from the library, offers to re-compose from it (a blank, copied or hand-written one is just put back as it was); `-f` restores the newest without asking. Before rebuilding it shows the same feature
+lost, and it warns of that up front, in yellow, before anything else (enter accepts; `-f` skips the question). The profile is zipped into `~/.vibe/backup/<sandbox>-<date>_<time>.zip` first (the last three per sandbox are kept), (`-R/--re-create` zips the profile the same way before it deletes it), and `vibe --restore [path]` lists them, rolls the profile back to the one you pick (after confirming) and, for a profile that was composed from the library, offers to re-compose from it, which goes on as `vibe --restart --re-compose` does: a vibe running for the folder is ended first (asking, if that would interrupt anything), and the new one starts in the mode it was in (a blank, copied or hand-written profile is just put back as it was); `-f` restores the newest without asking. Before rebuilding it shows the same feature
 checklist as guided creation, with the profile's current features selected, so you can add a feature or
-drop one you no longer use (and reorder them); with `-f` the recorded features are kept as they are. Profiles written by hand, copied or
-created blank record nothing and are refused rather than guessed at; add the comment line above
-to adopt one.
+drop one you no longer use (and reorder them); with `-f` the recorded features are kept as they are. Profiles written by hand or copied
+record nothing and are refused rather than guessed at; add the comment line above
+to adopt one. The refusal comes first, before any running vibe is stopped or anything asked. A profile created blank is not refused: nothing was composed into it, so a re-compose leaves it and rebuilds the sandbox from it. One made blank before vibe recorded that has no such line, so it is refused as a hand-written one is; add `# vibe: blank: yes` to its `config.yaml` to have it treated as blank.
 
 Overriding one bundled feature (a base one too, as `~/.vibe/library/base/<feature>/`) means dropping your own `~/.vibe/library/<feature>/` next to it —
 unlike `defaults/`, that replaces only the feature you copied, so features the bundle adds later

@@ -161,3 +161,61 @@ func TestEveryEntryOfALongMenuCanBeReachedAndHighlighted(t *testing.T) {
 		}
 	}
 }
+
+func TestCtrlCIsReportedAsItIsReadAndOtherKeysAreNot(t *testing.T) {
+	interrupted := 0
+	term := &Terminal{buf: []byte("a\x03b"), in: emptyFile(t), onInterrupt: func() { interrupted++ }}
+	var got []byte
+	for i := 0; i < 3; i++ {
+		b, ok := term.readByte()
+		if !ok {
+			t.Fatal("ran out of keys")
+		}
+		got = append(got, b)
+	}
+	if string(got) != "a\x03b" || interrupted != 1 {
+		t.Errorf("read %q, interrupted %d times; want the keys as typed and one interrupt", got, interrupted)
+	}
+}
+
+func TestTheMaskedLineAndTheCountdownReportCtrlCThroughReadByte(t *testing.T) {
+	// This runs the masked line and the countdown's key read. Select, MultiSelect,
+	// Reorder and Filter need a real terminal (raw mode) and aren't run here; they
+	// read their keys with the same readByte, which is why one handler there ends
+	// the process for all of them.
+	interrupted := 0
+	term := &Terminal{buf: []byte("ab\x03"), in: emptyFile(t), onInterrupt: func() { interrupted++ }}
+	var echo strings.Builder
+	if line, ok := readMasked(term, &echo); line != "" || ok || interrupted != 1 {
+		t.Errorf("the masked line: %q, %v, interrupted %d times", line, ok, interrupted)
+	}
+	term = &Terminal{buf: []byte("\x03"), in: emptyFile(t), onInterrupt: func() { interrupted++ }}
+	if b, ok := term.waitByte(1); !ok || b != 3 || interrupted != 2 {
+		t.Errorf("waitByte: %d, %v, interrupted %d times", b, ok, interrupted)
+	}
+}
+
+func TestInterruptingWipesTheTerminalRestoresItAndExitsWithTheInterruptStatus(t *testing.T) {
+	out, err := os.CreateTemp(t.TempDir(), "out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	restored, exited := 0, -1
+	was := exit
+	exit = func(code int) { exited = code }
+	defer func() { exit = was }()
+	term := &Terminal{out: out, restoreRaw: func() { restored++ }}
+	term.exitOnInterrupt()
+	data, _ := os.ReadFile(out.Name())
+	if restored != 1 || exited != 130 || string(data) != "\r\n" {
+		t.Errorf("restored %d times, exit status %d, wrote %q", restored, exited, data)
+	}
+}
+
+func TestATerminalMadeTheWayOpenMakesOneEndsTheProcessOnCtrlC(t *testing.T) {
+	term := newTerminal(emptyFile(t), emptyFile(t), func() {})
+	if term.onInterrupt == nil {
+		t.Fatal("Ctrl-C would only cancel the question on a Terminal from Open")
+	}
+}

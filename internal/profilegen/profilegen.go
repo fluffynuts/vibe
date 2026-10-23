@@ -45,6 +45,10 @@ const blankConfig = `# vibe profile "%[1]s".
 #                          in every session (after ~/.vibe's universal ones)
 #   kit-instructions.md    the kits' instructions, when composed from the
 #                          library: re-composing rewrites it
+#
+# This profile was created blank: nothing was composed into it, so a
+# re-compose (vibe -C) leaves it as it is and only makes the sandbox afresh.
+# vibe: blank: yes
 name: %[1]s
 displayName: %[1]s sandbox
 description: Sandbox for the %[1]s workspace
@@ -182,6 +186,23 @@ func ComposedFrom(profileDir string) []string {
 		}
 	}
 	return features
+}
+
+// blankKey is the directive a profile created blank records itself under in its
+// config.yaml: that it was chosen to be blank, which tells it from a profile
+// that was written by hand or copied.
+const blankKey = "blank"
+
+// IsBlank reports whether a profile was created blank, as opposed to written
+// by hand, copied, or composed from the library: there is no composing to
+// redo for it, and that is how it was meant to be.
+func IsBlank(profileDir string) bool {
+	data, err := fscopy.ReadFile(filepath.Join(profileDir, "config.yaml"))
+	if err != nil {
+		return false
+	}
+	_, found := directive.Parse(data)[blankKey]
+	return found
 }
 
 // IsGuided reports whether a profile records which features it was composed

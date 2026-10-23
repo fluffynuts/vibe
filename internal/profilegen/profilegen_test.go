@@ -383,3 +383,28 @@ func TestACopyCarriesTheChoicesMadeForItsSource(t *testing.T) {
 		t.Errorf("the copy holds %+v, %v", got, err)
 	}
 }
+
+func TestABlankProfileRecordsThatItWasCreatedBlankAndStillLoadsAsAKit(t *testing.T) {
+	l := testLayout(t)
+	dir, err := CreateBlank(l, "plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !IsBlank(dir) || IsGuided(dir) {
+		t.Errorf("blank = %v, guided = %v", IsBlank(dir), IsGuided(dir))
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "config.yaml")); !strings.Contains(string(data), "name: plain") {
+		t.Errorf("the config lost its name:\n%s", data)
+	}
+}
+
+func TestTheNoteInABlankProfileSaysWhatAReComposeDoesAndNotToRecreateIt(t *testing.T) {
+	dir, err := CreateBlank(testLayout(t), "plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	if !strings.Contains(string(data), "re-compose") || strings.Contains(string(data), "vibe -R") {
+		t.Errorf("the note a blank profile carries is out of step with what a re-compose does:\n%s", data)
+	}
+}

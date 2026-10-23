@@ -223,6 +223,14 @@ func TestAReadmeIsAddedToAGuidedProfileThatLacksOneAndNeverOverwritten(t *testin
 	}
 }
 
+func TestTheReadmeSaysWhatEachFileOfTheProfileIsFor(t *testing.T) {
+	for _, file := range []string{"config.yaml", "settings.yaml", "user-preferences.yaml", "agent-instructions.md"} {
+		if !strings.Contains(readmeText, file) {
+			t.Errorf("the readme doesn't mention %s", file)
+		}
+	}
+}
+
 func TestAProfileThatWasNotGeneratedGetsNoReadme(t *testing.T) {
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, "config.yaml"), "name: mine\n", 0o644)

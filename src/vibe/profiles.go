@@ -74,7 +74,23 @@ func ensureProfile(lay layout.Layout, profile string, force bool, agent string) 
 	if err := createProfileIfMissing(lay, profile, force, agent); err != nil {
 		return err
 	}
+	ensureReadme(lay, profile)
 	return prepareInstructions(lay, profile)
+}
+
+// ensureReadme gives a profile vibe generated its README.md when it has none
+// (see profilegen.AddReadme), whenever a session starts or a sandbox is made
+// from it, whether or not it is being updated: it is for whoever wonders what
+// the profile's files are. Only a profile in the user's own vibe home is
+// touched, and a failure is said, not fatal.
+func ensureReadme(lay layout.Layout, profile string) {
+	dir := lay.HomePath("profiles", profile)
+	if dir == "" || !fileExists(dir) {
+		return
+	}
+	if _, err := profilegen.AddReadme(dir); err != nil {
+		note("WARNING: couldn't add %s to profile '%s': %s", profilegen.ReadmeFile, profile, err)
+	}
 }
 
 // prepareInstructions brings the user's instructions files up to date

@@ -11,6 +11,7 @@ import (
 	"vibe/internal/backup"
 	"vibe/internal/cliargs"
 	"vibe/internal/layout"
+	"vibe/internal/profilegen"
 	"vibe/internal/userprefs"
 )
 
@@ -156,8 +157,15 @@ func TestRestoringABackupFromBeforeTheMoveStillSortsTheFilesOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(dir, "agent-instructions.md"), "mine\n")
-	if err := doRestore(lay, args, "foo-browser", t.TempDir()); err == nil {
-		t.Log("restore went on to rebuild the sandbox")
+	again, err := doRestore(lay, args, "foo-browser", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again {
+		// What main goes on to do, as --restart --re-compose, up to the rebuild.
+		if err := recomposeProfile(lay, args, "foo-browser", t.TempDir(), false, nil); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// The oldest backup is the old-style profile: restored, then
 	// re-composed, its kit text must not land in the user's file.
@@ -476,16 +484,85 @@ func TestRestoringABackupOfAProfileThatWasNotComposedDoesNotOfferToReComposeIt(t
 	}
 	writeFile(t, filepath.Join(dir, "install-scripts", "01-mine"), "echo changed\n")
 	var err error
+	var again bool
 	said := strings.Join(notesOf(func() {
-		err = doRestore(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "box", t.TempDir())
+		again, err = doRestore(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "box", t.TempDir())
 	}), "\n")
-	if err != nil {
-		t.Fatalf("err = %v: there is nothing to re-compose, so nothing should have been attempted", err)
+	if err != nil || again {
+		t.Fatalf("err = %v, re-compose = %v: there is nothing to re-compose, so nothing should have been attempted", err, again)
 	}
 	if got, _ := readFile(t, filepath.Join(dir, "install-scripts", "01-mine")); got != "echo mine\n" {
 		t.Errorf("the profile wasn't rolled back: %q", got)
 	}
 	if !strings.Contains(said, "restored profile 'foo-browser'") || !strings.Contains(said, "nothing to re-compose") {
 		t.Errorf("it said %q", said)
+	}
+}
+
+// restoreFrom makes a backup of the profile as it is, changes it, and restores with -f.
+func restoreFrom(t *testing.T, config string) (reCompose bool, err error) {
+	t.Helper()
+	lay, dir := profileWith(t, map[string]string{"config.yaml": config})
+	if _, err := backup.Create(lay.HomePath("backup"), "box", dir, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "config.yaml"), "name: foo-browser\n# changed since\n")
+	return doRestore(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "box", t.TempDir())
+}
+
+func TestRestoringAComposedProfileSaysToReComposeItTheWayRestartDoes(t *testing.T) {
+	again, err := restoreFrom(t, "# vibe: features: dashboard\nname: foo-browser\n")
+	if err != nil || !again {
+		t.Errorf("re-compose = %v, %v: the restored profile is composed from the library, and -f says yes", again, err)
+	}
+}
+
+func TestReComposingAProfileCreatedBlankLeavesItAsItIsAndGoesOnToTheSandbox(t *testing.T) {
+	lay := layout.New(t.TempDir(), t.TempDir())
+	dir, err := profilegen.CreateBlank(lay, "foo-browser")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "install-scripts", "01-mine"), "echo mine\n")
+	before, _ := readFile(t, filepath.Join(dir, "config.yaml"))
+	var err2 error
+	said := strings.Join(notesOf(func() {
+		err2 = recomposeProfile(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "foo-browser", t.TempDir(), true, nil)
+	}), "\n")
+	if err2 != nil {
+		t.Fatalf("a re-compose of a profile created blank was refused: %v", err2)
+	}
+	if after, _ := readFile(t, filepath.Join(dir, "config.yaml")); after != before {
+		t.Errorf("the profile was changed:\n%s", after)
+	}
+	if got, _ := readFile(t, filepath.Join(dir, "install-scripts", "01-mine")); got != "echo mine\n" {
+		t.Errorf("a script of the user's was lost: %q", got)
+	}
+	if profilegen.IsGuided(dir) || !profilegen.IsBlank(dir) {
+		t.Error("it stopped being a blank profile")
+	}
+	if backups, _ := backup.List(lay.HomePath("backup"), "foo-browser"); len(backups) != 0 {
+		t.Errorf("a backup was made of a profile that wasn't touched: %v", backups)
+	}
+	if !strings.Contains(said, "created blank") || strings.Contains(said, "was composed from") {
+		t.Errorf("it said %q", said)
+	}
+}
+
+func TestAProfileWithNeitherFeaturesNorTheBlankMarkIsStillRefused(t *testing.T) {
+	lay, _ := profileWith(t, nil)
+	err := checkReComposable(lay, "foo-browser")
+	if err == nil || !strings.Contains(err.Error(), "does not record which features") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestAProfileWrittenByHandOrCopiedIsNotTakenForBlank(t *testing.T) {
+	lay, dir := profileWith(t, nil)
+	if profilegen.IsBlank(dir) {
+		t.Error("a hand-written profile counts as created blank")
+	}
+	if copied, err := profilegen.CopyFrom(lay, "foo-browser", "copy"); err != nil || profilegen.IsBlank(copied) {
+		t.Errorf("a copy of a hand-written profile: blank = %v, %v", profilegen.IsBlank(copied), err)
 	}
 }
