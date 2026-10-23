@@ -45,7 +45,10 @@ const header = `# Choices made through vibe for this profile. Safe to edit: dele
 # the whole file, to go back to being asked (or to the default).
 `
 
-// LegacyFiles are where earlier vibes kept a choice of their own, one line
+// Dead code to remove, with everything that names these files, two releases
+// after the one that moved the choices here: see "Dead code to remove" in
+// docs/plan-user-preferences.md for the list. LegacyFiles are where earlier
+// vibes kept a choice of their own, one line
 // each: the theme and the git author answer. They are still read, for what
 // the new file doesn't say, and moved into it the first time it is changed.
 var LegacyFiles = []string{legacyTheme, legacyGitAuthor}
