@@ -190,13 +190,14 @@ func TestWriteWholeModeGivesTheFileThatModeAndLeavesNoTemporaryBehind(t *testing
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0o644 {
+	// Windows has no modes beyond read-only: every file it makes reads as 0666.
+	if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o644) {
 		t.Fatalf("mode = %v, %v; want 0644", info.Mode().Perm(), err)
 	}
 	if err := WriteWholeMode(path, []byte("a: 2\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	if info, _ = os.Stat(path); info.Mode().Perm() != 0o640 {
+	if info, _ = os.Stat(path); runtime.GOOS != "windows" && info.Mode().Perm() != 0o640 {
 		t.Errorf("after a rewrite, mode = %v; want 0640", info.Mode().Perm())
 	}
 	entries, _ := os.ReadDir(dir)
@@ -210,7 +211,7 @@ func TestWriteWholeStillMakesAFileForTheUserAlone(t *testing.T) {
 	if err := WriteWhole(path, []byte("{}")); err != nil {
 		t.Fatal(err)
 	}
-	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+	if info, _ := os.Stat(path); runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Errorf("mode = %v, want 0600", info.Mode().Perm())
 	}
 }
@@ -230,7 +231,9 @@ func TestAReaderNeverSeesWhatWriteWholeModeIsPartWayThrough(t *testing.T) {
 			if i%2 == 0 {
 				data = short
 			}
-			if err := WriteWholeMode(path, data, 0o644); err != nil {
+			// Windows won't replace a file a reader has open at that moment:
+			// that write didn't happen, and the next one will.
+			if err := WriteWholeMode(path, data, 0o644); err != nil && !InUse(err) {
 				t.Error(err)
 				return
 			}
@@ -243,11 +246,21 @@ func TestAReaderNeverSeesWhatWriteWholeModeIsPartWayThrough(t *testing.T) {
 		default:
 		}
 		got, err := os.ReadFile(path)
+		if InUse(err) {
+			continue // Windows, for the moment the file is being replaced: never half a file, but no file
+		}
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !bytes.Equal(got, long) && !bytes.Equal(got, short) {
 			t.Fatalf("read %d bytes that are neither version of the file", len(got))
 		}
+	}
+}
+
+func TestAnErrorThatIsNotAFileInUseIsNotOne(t *testing.T) {
+	_, err := os.ReadFile(filepath.Join(t.TempDir(), "nope"))
+	if InUse(err) || InUse(nil) {
+		t.Errorf("a missing file, or no error, was taken for a file in use")
 	}
 }

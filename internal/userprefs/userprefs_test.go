@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"vibe/internal/fscopy"
 )
 
 func TestAProfileWithNoPreferencesHasNone(t *testing.T) {
@@ -121,7 +123,8 @@ func TestTheFileCanBeReadByOthersAndIsNeverSeenHalfWritten(t *testing.T) {
 			default:
 			}
 			model := []string{"opus", "sonnet"}[i%2]
-			if err := Update(dir, func(p *Prefs) { p.Model = model }); err != nil {
+			// Windows won't replace a file a reader has open at that moment.
+			if err := Update(dir, func(p *Prefs) { p.Model = model }); err != nil && !fscopy.InUse(err) {
 				t.Error(err)
 				return
 			}
@@ -129,6 +132,9 @@ func TestTheFileCanBeReadByOthersAndIsNeverSeenHalfWritten(t *testing.T) {
 	}()
 	for i := 0; i < 300; i++ {
 		got, err := Load(dir)
+		if fscopy.InUse(err) {
+			continue // Windows, for the moment the file is being replaced: never half a file, but no file
+		}
 		if err != nil || got.Model == "" || got.Theme != "amber" {
 			t.Fatalf("a read saw %+v, %v", got, err)
 		}

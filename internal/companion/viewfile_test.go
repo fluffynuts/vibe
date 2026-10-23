@@ -110,7 +110,12 @@ func TestAWorkspaceThatIsItselfALinkIsStillTheWorkspace(t *testing.T) {
 	ws, _ := workspaceWith(t, map[string]string{"a.md": "x"})
 	link := filepath.Join(t.TempDir(), "link")
 	os.Symlink(ws, link)
-	if got, err := readWorkspaceFile(link, filepath.Join(ws, "a.md")); err != nil || got.Path != "a.md" {
+	// Its real path: the folder a temp dir is in may itself be a link (macOS's /var).
+	real, err := filepath.EvalSymlinks(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readWorkspaceFile(link, filepath.Join(real, "a.md")); err != nil || got.Path != "a.md" {
 		t.Errorf("by its real path: %+v, %v", got, err)
 	}
 	if got, err := readWorkspaceFile(link, filepath.Join(link, "a.md")); err != nil || got.Path != "a.md" {
