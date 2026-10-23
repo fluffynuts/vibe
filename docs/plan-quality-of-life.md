@@ -44,6 +44,8 @@ The power button replaces the "connected" indicator at the top right (`#link` in
 - **Contrast:** the green and the dull red each meet 3:1 against the bar in both themes (a UI component's minimum), the dark and light ones and the agent's `themeColor` tint.
 - **Tests:** the button has the `up`, `down` and `connecting` states through `reached(true)`, two failures, and the start; its `title` and `aria-label` say each state's text and the live region is told; the Stop and Restart items are disabled with a reason when down and the links aren't; the existing tests that take the indicator for the connection (none read `link-text` today: checked) move to the button; a Firefox layout test that the button doesn't move the bar when its state changes, and that the glow differs from the flat state in brightness (a computed-style check, not a screenshot).
 
+The power menu is also where an **Appearance…** item would go, for the accessibility options: their own plan, `docs/plan-accessibility.md`, on a branch after this one. What this branch must do for it is only: no hard-coded colour or fixed `px` font size, every control labelled, the power button's states in CSS variables.
+
 ### Reporting an issue
 
 - Menu items open a new GitHub issue in a new tab (`rel="noopener noreferrer"`): `https://github.com/fluffynuts/vibe/issues/new?template=bug_report.yml`, `…feature_request.yml`, `…other.yml`. They are vibe's own links, built by the page from constants, never from anything the agent said (the page deliberately never makes agent text clickable).
