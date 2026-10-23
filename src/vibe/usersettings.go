@@ -267,7 +267,8 @@ func pickTimezone(current string, ask bool, question string) string {
 		return current
 	}
 	defer closeFn()
-	note("%s (this machine's is %s)", question, timezone.Host())
+	asked := fmt.Sprintf("%s (this machine's is %s)", question, timezone.Host())
+	noteAs(asked, askText(asked))
 	i, ok := prompt.Filter(tty, zones, slices.Index(zones, current))
 	if !ok {
 		note("  keeping timezone: %s", current)

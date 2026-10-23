@@ -4,15 +4,17 @@ Raised 2026-10-23 (parallel updating added 2026-10-24). Small things, bundled: t
 
 ## 1. A question asked on the command line stands out
 
+**Built 2026-10-24 on `feat/bold-questions`.** Decided with the user: the whole of a question is in colour, as one call passes it (a long one runs on, all of it). It was plain bold (SGR 1) first, and didn't stand out enough in play-testing, so it is the terminal's bright yellow (SGR 93), the shade the WARNINGs use (they are bold too). `askText` (`src/vibe/gittoken.go`) is what says it; `noteAs` shows the styled line on the terminal while the page's log and held notes get the plain words. Callers: `confirmDefault`, the pickers (`asking`), `pickTimezone`, `waitForEnter`, the token paste prompt, the exit-during-backup question. Guard: `TestEverythingThatAsksOnTheTerminalSaysItsQuestionWithAskText` (`src/vibe/asktext_test.go`) fails for any function that uses `ttyReader`, `ttyRW` or `ReadMasked` and doesn't call `askText`; it found `pickTimezone`, which had been missed. Not bold: the countdown line (it is not a question) and the confirmation line the checklist draws inside `prompt` (the prompt package has no styling of its own).
+
 **Now:** a question is plain text among vibe's other lines. `confirmDefault` prints `vibe: <question> [Y/n] ` (`src/vibe/prompts.go`), `asking` prints it with `note("%s", question)` before a picker (`chooseFrom`, `filterFrom`, the checkbox prompts), `waitForEnter` and the token prompts in `gittoken.go`, and the exit confirmation in `memories.go` print their own. Something vibe asks scrolls past among the notes around it.
 
-**Proposed:** the question itself, and nothing else of the prompt, is bright and bold: not the `vibe: ` prefix, not the `[Y/n]` hint, not the list a picker draws (`prompt.Select`, `prompt.Filter`, the checkboxes), not the answer typed.
+**Proposed (first as bold; built as bright yellow, see above):** the question itself, and nothing else of the prompt, is drawn so it stands out: not the `vibe: ` prefix, not the `[Y/n]` hint, not the list a picker draws (`prompt.Select`, `prompt.Filter`, the checkboxes), not the answer typed.
 
-- One function says it: `askText(question)` (or the question's `paint("1", …)`), built on the existing `paint` in `gittoken.go` (`ESC[…m`, off when `NO_COLOR` is set or stderr isn't a terminal); `prompt.EnableVT` already turns escapes on for Windows. Every place that prints a question goes through it.
-- Bold plus the terminal's own bright is enough: no colour is chosen, so a theme's palette decides how it looks, and it survives colour-blindness and light and dark backgrounds.
-- **Mechanical, so it stays so:** a test that reads the Go source and fails for any `Fprint*(os.Stderr, "vibe: …` that is a prompt and doesn't go through `askText`, as `guard_test.go` does for routes. A new prompt that forgets is caught in CI, not by someone squinting at a terminal.
-- **Tests:** with a terminal and colour, the question is wrapped in the bold escape and its reset, and the hint and the options aren't; with `NO_COLOR`, or output that isn't a terminal (a pipe, a log file: the headless vibe's log), no escape appears at all; the text is the same either way (so a log reads as before); each of the callers above is covered once.
-- **Not decided:** whether the headline of a multi-line question ("Remove sandbox 'x' (workspace …)?") is all bold, or its first line. The user's wording: "just the question itself".
+- One function says it: `askText(question)` (the question's `paint`, in `colorQuestion`), built on the existing `paint` in `gittoken.go` (`ESC[…m`, off when `NO_COLOR` is set or stderr isn't a terminal); `prompt.EnableVT` already turns escapes on for Windows. Every place that prints a question goes through it.
+- Bold alone (what was first built) did not stand out enough once played with, so the question is in the terminal's bright yellow (SGR 93): a colour chosen, though the terminal's palette still decides the exact shade. It is the shade the WARNINGs use, which are bold as well; a theme or a colour-blind reader that can't tell yellow from the background is the case to watch (play-testing, not a test, will say).
+- **Mechanical, so it stays so:** a test that reads the Go source and fails for any function that opens the terminal to ask (through `ttyReader`, `ttyRW`, `ReadMasked`, or `openTerminal`/`prompt.Open` directly) and doesn't say its question with `askText`. A new prompt that forgets is caught in CI, not by someone squinting at a terminal. (Built as that, and not as a search for `Fprint*(os.Stderr, "vibe: …`, which a picker's question doesn't match.)
+- **Tests:** with a terminal and colour, the question is wrapped in the colour escape (SGR 93) and its reset, and the hint and the options aren't; with `NO_COLOR`, or output that isn't a terminal (a pipe, a log file: the headless vibe's log), no escape appears at all; the text is the same either way (so a log reads as before); each of the callers above is covered once.
+- **Decided with the user (2026-10-24):** a multi-line or long question is all of it in colour, as one call passes it.
 
 ## 2. A power menu on the page: stop, restart, and a way to report an issue
 
@@ -73,6 +75,6 @@ The power menu is also where an **Appearance…** item would go, for the accessi
 
 ## Order
 
-1 (bold questions) first, alone: it is small and everything after benefits. 2's issue links and templates next (no host work). The restart half of the power menu last, and it is the one that wants discovery: do it as its own piece of work, with the real run, and a written finding before the code (as `docs/plan-model-effort.md` did).
+1 (bold questions, built) first, alone: it is small and everything after benefits. 2's issue links and templates next (no host work). The restart half of the power menu last, and it is the one that wants discovery: do it as its own piece of work, with the real run, and a written finding before the code (as `docs/plan-model-effort.md` did).
 
 `--update-sandboxes` in parallel (3) is independent of the rest: do it whenever its measurement is cheap to take, since the real run is the point.

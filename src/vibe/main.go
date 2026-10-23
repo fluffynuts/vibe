@@ -212,11 +212,18 @@ func main() {
 
 func note(format string, a ...interface{}) {
 	line := fmt.Sprintf(format, a...)
+	noteAs(line, line)
+}
+
+// noteAs is note for a line that is shown differently from what is passed on
+// (to the page's log, or held until the session ends): line is the plain text,
+// shown is what the terminal gets, with its styling (see askText).
+func noteAs(line, shown string) {
 	teeNote(line)
 	if holdNote(line) {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "vibe: %s\n", line)
+	fmt.Fprintf(os.Stderr, "vibe: %s\n", shown)
 }
 
 func run(argv []string) error {

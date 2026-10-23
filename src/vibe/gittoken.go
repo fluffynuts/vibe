@@ -331,13 +331,31 @@ const (
 	colorGrey   = "90"
 )
 
+// colourWanted says whether vibe's output (on stderr) is styled; a variable for
+// tests, which don't have a terminal.
+var colourWanted = func() bool {
+	return os.Getenv("NO_COLOR") == "" && prompt.IsTerminal(os.Stderr)
+}
+
 // paint colours s for vibe's output, which goes to stderr — when that's a
 // terminal, and NO_COLOR (https://no-color.org) isn't set.
 func paint(color, s string) string {
-	if os.Getenv("NO_COLOR") != "" || !prompt.IsTerminal(os.Stderr) {
+	if !colourWanted() {
 		return s
 	}
 	return "\x1b[" + color + "m" + s + "\x1b[0m"
+}
+
+// colorQuestion is what a question is drawn in: the terminal's bright yellow,
+// whatever shade a theme makes of it. (The WARNINGs are the same yellow, and bold.)
+const colorQuestion = "93"
+
+// askText is a question as the terminal shows it: in colour, so it stands out
+// from the notes around it, and only the question: not the "vibe: " before it,
+// the hint after it, or the list a picker draws. Plain where paint is (NO_COLOR,
+// or output that isn't a terminal, such as the headless vibe's log).
+func askText(question string) string {
+	return paint(colorQuestion, question)
 }
 
 // waitForEnter shows question and waits for enter, on the terminal; with no
@@ -348,7 +366,7 @@ func waitForEnter(question string) {
 		return
 	}
 	defer closeFn()
-	fmt.Fprintf(os.Stderr, "vibe: %s ", question)
+	fmt.Fprintf(os.Stderr, "vibe: %s ", askText(question))
 	reader.ReadString('\n')
 }
 
@@ -376,7 +394,7 @@ func enterGitToken(repo *gittoken.Repo, skip string) (token string, expires time
 		if !opened {
 			return "", time.Time{}, false
 		}
-		fmt.Fprint(os.Stderr, "vibe: paste the token (just enter to give up): ")
+		fmt.Fprintf(os.Stderr, "vibe: %s ", askText("paste the token (just enter to give up):"))
 		token, read := tty.ReadMasked()
 		closeFn()
 		token = strings.TrimSpace(token)

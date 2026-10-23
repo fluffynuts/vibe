@@ -53,7 +53,7 @@ func confirmDefault(force, def bool, question string) bool {
 	if def {
 		hint = "Y/n"
 	}
-	fmt.Fprintf(os.Stderr, "vibe: %s [%s] ", question, hint)
+	fmt.Fprintf(os.Stderr, "vibe: %s [%s] ", askText(question), hint)
 	line, _ := reader.ReadString('\n')
 	line = strings.ToLower(strings.TrimSpace(line))
 	switch line {
@@ -116,7 +116,7 @@ func asking[T any](question string, ask func(tty *prompt.Terminal) (T, bool)) (a
 		return answer, false
 	}
 	defer closeFn()
-	note("%s", question)
+	noteAs(question, askText(question))
 	return ask(tty)
 }
 

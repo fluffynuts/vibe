@@ -132,7 +132,7 @@ func confirmQuitDuringBackup(interrupts <-chan os.Signal) bool {
 	}
 	defer closeFn()
 	ask := func() {
-		fmt.Fprint(os.Stderr, "vibe: vibe is currently exporting memories from the sandbox - are you sure you want to quit? [y/N] ")
+		fmt.Fprintf(os.Stderr, "vibe: %s [y/N] ", askText("vibe is currently exporting memories from the sandbox - are you sure you want to quit?"))
 	}
 	type answer struct {
 		line string
