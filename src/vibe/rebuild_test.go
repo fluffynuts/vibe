@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"vibe/internal/backup"
 	"vibe/internal/cliargs"
@@ -465,5 +466,26 @@ func TestReCreateBacksUpTheChoicesToo(t *testing.T) {
 	backup.Restore(backups[0].Path, dir)
 	if prefs, err := userprefs.Load(dir); err != nil || prefs.Theme != "amber" {
 		t.Errorf("the backup's preferences %+v, %v: what is backed up should be what the user had, with earlier vibes' files moved in", prefs, err)
+	}
+}
+
+func TestRestoringABackupOfAProfileThatWasNotComposedDoesNotOfferToReComposeIt(t *testing.T) {
+	lay, dir := profileWith(t, map[string]string{"user-preferences.yaml": kept})
+	if _, err := backup.Create(lay.HomePath("backup"), "box", dir, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "install-scripts", "01-mine"), "echo changed\n")
+	var err error
+	said := strings.Join(notesOf(func() {
+		err = doRestore(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "box", t.TempDir())
+	}), "\n")
+	if err != nil {
+		t.Fatalf("err = %v: there is nothing to re-compose, so nothing should have been attempted", err)
+	}
+	if got, _ := readFile(t, filepath.Join(dir, "install-scripts", "01-mine")); got != "echo mine\n" {
+		t.Errorf("the profile wasn't rolled back: %q", got)
+	}
+	if !strings.Contains(said, "restored profile 'foo-browser'") || !strings.Contains(said, "nothing to re-compose") {
+		t.Errorf("it said %q", said)
 	}
 }

@@ -569,6 +569,13 @@ func doRestore(lay layout.Layout, args cliargs.Args, name, target string) error 
 		return err
 	}
 	note("restored profile '%s' from the backup of %s", profile, chosen.Label())
+	// A profile that was blank, copied or written by hand (which is what a
+	// backup made by --re-create can hold) isn't made from the library: it is
+	// as it was, and there is nothing to re-compose it from.
+	if !profilegen.IsGuided(dir) {
+		note("it wasn't composed from the library, so there is nothing to re-compose: it is as it was in the backup")
+		return nil
+	}
 	if !confirmDefault(args.Force, true, "Re-compose now?") {
 		return nil
 	}
