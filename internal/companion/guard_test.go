@@ -10,6 +10,7 @@ import (
 var changingRoutes = []string{
 	"/api/conversation/send", "/api/conversation/stop", "/api/conversation/new",
 	"/api/conversation/new/options", "/api/conversation/new/fetch",
+	"/api/conversation/choice", "/api/conversation/choice/options", "/api/conversation/choice/adopt",
 	"/api/default-branch", "/api/git-author",
 	"/api/admin/do", "/api/admin/upgrades", "/api/admin/cancel",
 	"/api/admin/instructions", "/api/admin/instructions/optimise",
@@ -30,6 +31,7 @@ func TestEveryChangeNeedsItsFeature(t *testing.T) {
 func TestEveryChangeNeedsTheTokenAndASameOriginJSONRequest(t *testing.T) {
 	s, _ := reviewTabServer(t)
 	s.cfg.Converse = (&fakeAgent{}).converse
+	s.cfg.Choice = (&choosing{}).config()
 	s.cfg.Admin = &fakeAdmin{}
 	s.cfg.Manage = &fakeManager{}
 	s.cfg.GitAuthor = (&fakeAuthor{}).config()

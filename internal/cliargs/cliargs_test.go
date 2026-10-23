@@ -440,3 +440,28 @@ func TestHeadlessStillConflictsWithWhatItCantFollow(t *testing.T) {
 		}
 	}
 }
+
+func TestParseTerminal(t *testing.T) {
+	a, err := Parse([]string{"--terminal", "~/code/x"})
+	if err != nil || !a.Terminal || a.Path != "~/code/x" {
+		t.Fatalf("got %+v, %v", a, err)
+	}
+	if a.ExclusiveActions() != 0 {
+		t.Errorf("--terminal counts as %d actions: it's how to start, not something to do", a.ExclusiveActions())
+	}
+	if a, _ = Parse([]string{"--restart", "--terminal"}); !a.Restart || !a.Terminal || a.ExclusiveActions() != 0 {
+		t.Errorf("--restart --terminal: %+v", a)
+	}
+	if a, _ = Parse([]string{"-r", "--terminal"}); !a.Terminal || a.ExclusiveActions() != 1 {
+		t.Errorf("-r --terminal: %+v, %d actions", a, a.ExclusiveActions())
+	}
+}
+
+func TestTerminalAndHeadlessAreOpposites(t *testing.T) {
+	for _, argv := range [][]string{{"--terminal", "--headless"}, {"-H", "--terminal"}, {"--restart", "--headless", "--terminal"}} {
+		_, err := Parse(argv)
+		if err == nil || !strings.Contains(err.Error(), "--terminal") || !strings.Contains(err.Error(), "--headless") {
+			t.Errorf("Parse(%v) = %v, want a refusal naming both", argv, err)
+		}
+	}
+}

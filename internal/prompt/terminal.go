@@ -14,6 +14,32 @@ type Terminal struct {
 	in, out *os.File
 	closeFn func()
 	buf     []byte
+	// restoreRaw puts the terminal back out of raw mode while it is in it.
+	restoreRaw func()
+	// onInterrupt, when set, is called as Ctrl-C is read. In raw mode Ctrl-C is
+	// a key, not a signal, so without it a prompt could only take Ctrl-C for
+	// "skip this question", like q or Esc, and the process would go on to the
+	// next. A Terminal made by Open ends the process; one without (a test's)
+	// leaves Ctrl-C a cancel.
+	onInterrupt func()
+}
+
+// exit ends the process; a variable for tests.
+var exit = os.Exit
+
+// exitCodeInterrupted is the status a process ended by Ctrl-C gives, by the
+// shells' convention (128 and SIGINT's 2).
+const exitCodeInterrupted = 130
+
+// exitOnInterrupt is what Ctrl-C does at a prompt of a Terminal made by Open:
+// wipe the prompt and put the terminal back out of raw mode, as for a process
+// ending anyway (see Abort), then end, as Ctrl-C does anywhere else.
+func (t *Terminal) exitOnInterrupt() {
+	if !Abort() && t.restoreRaw != nil {
+		t.restoreRaw()
+	}
+	io.WriteString(t.out, "\r\n")
+	exit(exitCodeInterrupted)
 }
 
 // Open opens the terminal this process can ask a question on — never a
@@ -25,7 +51,15 @@ func Open() (t *Terminal, ok bool) {
 		return nil, false
 	}
 	enableVT(out)
-	return &Terminal{in: in, out: out, closeFn: closeFn}, true
+	return newTerminal(in, out, closeFn), true
+}
+
+// newTerminal is a Terminal on in and out as Open makes one: Ctrl-C ends the
+// process (see onInterrupt).
+func newTerminal(in, out *os.File, closeFn func()) *Terminal {
+	t := &Terminal{in: in, out: out, closeFn: closeFn}
+	t.onInterrupt = t.exitOnInterrupt
+	return t
 }
 
 // OpenInput opens the same terminal as Open, for reading only — for a
@@ -53,8 +87,8 @@ var _ io.Writer = (*Terminal)(nil)
 // each character rather than the character itself — for a token, which
 // shouldn't be left on the screen or in its scrollback, but whose length
 // is worth seeing: a paste that came out short, or twice over, shows.
-// Backspace takes the last character back, Ctrl-U all of them; Ctrl-C or
-// Esc gives up (ok=false). The caller prints the question first.
+// Backspace takes the last character back, Ctrl-U all of them; Esc
+// gives up (ok=false), and Ctrl-C ends vibe (see onInterrupt). The caller prints the question first.
 func (t *Terminal) ReadMasked() (line string, ok bool) {
 	restore, err := t.makeRaw()
 	if err != nil {
@@ -72,7 +106,12 @@ func (t *Terminal) makeRaw() (restore func(), err error) {
 	if err != nil {
 		return nil, err
 	}
-	return func() { term.Restore(fd, state) }, nil
+	restore = func() {
+		term.Restore(fd, state)
+		t.restoreRaw = nil
+	}
+	t.restoreRaw = restore
+	return restore, nil
 }
 
 // fill reads whatever is waiting on the terminal into t.buf. readChunk is 1
@@ -95,6 +134,9 @@ func (t *Terminal) readByte() (b byte, ok bool) {
 		return 0, false
 	}
 	b, t.buf = t.buf[0], t.buf[1:]
+	if b == 3 && t.onInterrupt != nil {
+		t.onInterrupt()
+	}
 	return b, true
 }
 

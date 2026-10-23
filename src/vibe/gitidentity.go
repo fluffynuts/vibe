@@ -4,20 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"vibe/internal/cliargs"
-	"vibe/internal/fscopy"
 	"vibe/internal/gittoken"
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
-	"vibe/internal/profilegen"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
+	"vibe/internal/userprefs"
 )
 
 // identityOutcome is how checking a sandbox's git author ended.
@@ -283,12 +280,12 @@ func giveSandboxGitAuthor(ctx context.Context, sandbox, name, email string) erro
 }
 
 // keepGitAuthorChoice records choice (gitAuthorImport or gitAuthorLeave) in
-// the profile, so it outlives vibe and is asked once for the folder. It has a
-// file of its own, as the Claude theme does, and not settings.yaml: that is
-// part of what composing the profile wrote, so a line vibe added there would
-// make the profile look edited by hand, and updating it would be left to the
-// user. It never makes a profile: a directory for one that isn't there would
-// hide the real one.
+// the profile's user preferences, so it outlives vibe and is asked once for
+// the folder. The preferences are a file of their own, not settings.yaml: that
+// is part of what composing the profile wrote, so a line vibe added there
+// would make the profile look edited by hand, and updating it would be left to
+// the user. It never makes a profile: a directory for one that isn't there
+// would hide the real one.
 func keepGitAuthorChoice(lay layout.Layout, profile, choice string) error {
 	dir := lay.HomePath("profiles", profile)
 	if dir == "" {
@@ -297,35 +294,34 @@ func keepGitAuthorChoice(lay layout.Layout, profile, choice string) error {
 	if !lay.ProfileExists(profile) {
 		return fmt.Errorf("profile '%s' isn't there to keep the choice in", profile)
 	}
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+	if !fileExists(dir) {
 		return fmt.Errorf("profile '%s' is vibe's own, which can't be written to: make a profile of your own (--profile) to keep the choice in", profile)
 	}
-	return fscopy.WriteWhole(filepath.Join(dir, profilegen.GitAuthorFile), []byte(choice+"\n"))
+	migratePreferences(lay, profile)
+	return userprefs.Update(dir, func(p *userprefs.Prefs) { p.GitAuthor = choice })
 }
 
-// gitAuthorPreference is the choice that applies to profile: what the user
-// wrote as gitAuthor in a settings.yaml (the profile's over the global one),
-// else the answer kept in the profile; "" asks.
+// gitAuthorPreference is the choice that applies to profile: the answer kept
+// in its user preferences, else what the user wrote as gitAuthor in a
+// settings.yaml (the profile's over the global one); "" asks. What was kept
+// through vibe is the newer word than a setting written long ago, and the
+// more specific than a global one.
 func gitAuthorPreference(lay layout.Layout, profile string) (string, error) {
+	prefs, err := userprefs.Load(lay.ProfileDir(profile))
+	if err != nil {
+		return "", err
+	}
+	if prefs.GitAuthor != "" {
+		if prefs.GitAuthor != gitAuthorImport && prefs.GitAuthor != gitAuthorLeave {
+			return "", fmt.Errorf("%s holds gitAuthor: %s; it must be %q or %q (delete the line to be asked again)", pathresolve.Tilde(userprefs.Path(lay.ProfileDir(profile))), prefs.GitAuthor, gitAuthorImport, gitAuthorLeave)
+		}
+		return prefs.GitAuthor, nil
+	}
 	merged, err := loadSettings(lay, profile)
 	if err != nil {
 		return "", err
 	}
-	if merged.GitAuthor != "" {
-		return merged.GitAuthor, nil
-	}
-	path := filepath.Join(lay.ProfileDir(profile), profilegen.GitAuthorFile)
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	if answer := strings.TrimSpace(string(data)); answer == gitAuthorImport || answer == gitAuthorLeave {
-		return answer, nil
-	}
-	return "", fmt.Errorf("%s holds %q; it must be %q or %q (delete it to be asked again)", pathresolve.Tilde(path), strings.TrimSpace(string(data)), gitAuthorImport, gitAuthorLeave)
+	return merged.GitAuthor, nil
 }
 
 // gitAuthorDeps are the real world's answers for sandbox name. Each call to
@@ -414,20 +410,16 @@ func (t terminalAuthor) run() {
 
 // keptGitAuthorNote says that choice has been kept for a profile, and how to
 // undo it: said whenever an answer is kept, so one made by -f, which the user
-// didn't see asked, isn't a surprise later.
-//
-// The wording follows where the choice lives. It says the profile's own
-// git-author file today; when the user's kept choices are consolidated into one
-// user-preferences.yaml (docs/plan-user-preferences.md), this, and the readme's
-// account of the file, must change with it: the path, and how to ask again.
+// didn't see asked, isn't a surprise later. Every preference kept through vibe
+// lives in the profile's user-preferences.yaml; the wording is the same shape
+// for the others (the file, the line to delete).
 func keptGitAuthorNote(lay layout.Layout, profile, choice string) string {
-	file := filepath.Join(lay.HomePath("profiles", profile), profilegen.GitAuthorFile)
-	settingsFile := pathresolve.Tilde(filepath.Join(lay.HomePath("profiles", profile), "settings.yaml"))
-	again := fmt.Sprintf("To be asked again, delete %s.", pathresolve.Tilde(file))
+	file := pathresolve.Tilde(userprefs.Path(lay.HomePath("profiles", profile)))
+	again := fmt.Sprintf("To be asked again, delete the `gitAuthor:` line in %s.", file)
 	if choice == gitAuthorImport {
-		return fmt.Sprintf("kept: every sandbox of profile '%s' that has no git author is given yours, without asking. %s To leave them without one, put `gitAuthor: leave` in %s (or in ~/.vibe/settings.yaml for every profile).", profile, again, settingsFile)
+		return fmt.Sprintf("kept: every sandbox of profile '%s' that has no git author is given yours, without asking. %s To leave them without one, change it to `gitAuthor: leave`.", profile, again)
 	}
-	return fmt.Sprintf("kept: no sandbox of profile '%s' is given a git author, and you aren't asked again. %s To give it yours without asking, put `gitAuthor: import` in %s (or in ~/.vibe/settings.yaml for every profile).", profile, again, settingsFile)
+	return fmt.Sprintf("kept: no sandbox of profile '%s' is given a git author, and you aren't asked again. %s To give it yours without asking, change it to `gitAuthor: import`.", profile, again)
 }
 
 // checkSandboxGitAuthor is run at a terminal session's start, before the

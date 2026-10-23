@@ -2,13 +2,12 @@ package main
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
+	"vibe/internal/userprefs"
 )
 
 func themedKit(themes ...string) kitspec.Doc {
@@ -60,7 +59,7 @@ func TestSetClaudeThemePrefersTheSandboxThenTheProfile(t *testing.T) {
 			profileDir := lay.HomePath("profiles", "demo")
 			writeFile(t, filepath.Join(profileDir, "config.yaml"), "name: demo\n")
 			if tc.recorded != "" {
-				writeFile(t, filepath.Join(profileDir, "claude-theme"), tc.recorded+"\n")
+				writeFile(t, filepath.Join(profileDir, "user-preferences.yaml"), "theme: "+tc.recorded+"\n")
 			}
 
 			doc, err := setClaudeTheme(lay, "demo", themedKit("amber", "cyan", "green", "red"), tc.fromSandbox, true, false)
@@ -70,9 +69,9 @@ func TestSetClaudeThemePrefersTheSandboxThenTheProfile(t *testing.T) {
 			if got := themeIn(t, doc); got != tc.setting {
 				t.Errorf("settings.json theme = %q, want %q", got, tc.setting)
 			}
-			data, err := os.ReadFile(filepath.Join(profileDir, "claude-theme"))
-			if err != nil || strings.TrimSpace(string(data)) != tc.want {
-				t.Errorf("profile records %q (%v), want %q", data, err, tc.want)
+			prefs, err := userprefs.Load(profileDir)
+			if err != nil || prefs.Theme != tc.want {
+				t.Errorf("profile records %q (%v), want %q", prefs.Theme, err, tc.want)
 			}
 		})
 	}

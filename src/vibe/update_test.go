@@ -138,7 +138,7 @@ func TestAnOutOfDateProfileIsReComposedKeepingTheUsersFiles(t *testing.T) {
 	lay := updateLayout(t)
 	dir := lay.HomePath("profiles", "p")
 	writeFile(t, filepath.Join(dir, "agent-instructions.md"), "be brief\n")
-	writeFile(t, filepath.Join(dir, "claude-theme"), "dark\n")
+	writeFile(t, filepath.Join(dir, "user-preferences.yaml"), "# mine\ntheme: dark\n")
 	changeLibrary(t, lay)
 
 	if got := updated(t, lay); got.state != profileUpdated {
@@ -147,7 +147,7 @@ func TestAnOutOfDateProfileIsReComposedKeepingTheUsersFiles(t *testing.T) {
 	if got := mineScript(t, lay); !strings.Contains(got, "v2") {
 		t.Errorf("the profile doesn't have the library's change: %q", got)
 	}
-	for file, want := range map[string]string{"agent-instructions.md": "be brief\n", "claude-theme": "dark\n"} {
+	for file, want := range map[string]string{"agent-instructions.md": "be brief\n", "user-preferences.yaml": "# mine\ntheme: dark\n"} {
 		if data, _ := os.ReadFile(filepath.Join(dir, file)); string(data) != want {
 			t.Errorf("%s = %q, want it carried across", file, data)
 		}
@@ -674,5 +674,32 @@ func TestAnInstallSaysWhenItCouldntCheckTheSandboxes(t *testing.T) {
 	got := strings.Join(notesOf(func() { reportOutOfDate(lay) }), "\n")
 	if !strings.Contains(got, "couldn't check") || !strings.Contains(got, "vibe --update-sandboxes") {
 		t.Errorf("said:\n%s\nwant it to say it couldn't check, and how to", got)
+	}
+}
+
+func TestAStartGivesAGeneratedProfileItsReadmeEvenWithUpdatingOff(t *testing.T) {
+	lay := updateLayout(t)
+	inst := sandboxFor(t, lay, false)
+	readme := lay.HomePath("profiles", "p", profilegen.ReadmeFile)
+	if err := os.Remove(readme); err != nil {
+		t.Fatalf("the generated profile had no readme to begin with: %v", err)
+	}
+	if err := autoUpdate(lay, cliargs.Args{NoAutoUpdate: true}, "box", inst.Target); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(readme); err != nil {
+		t.Errorf("no readme after a start with updating off: %v", err)
+	}
+}
+
+func TestNoAutoUpdateStartsEvenWhenTheSandboxRecordCantBeRead(t *testing.T) {
+	lay := updateLayout(t)
+	sandboxFor(t, lay, false)
+	writeFile(t, filepath.Join(state.Dir(lay.Home), "box.yaml"), "name: [unclosed\n")
+	if err := autoUpdate(lay, cliargs.Args{}, "box", t.TempDir()); err == nil {
+		t.Fatal("a damaged record wasn't reported to an update that needed it")
+	}
+	if err := autoUpdate(lay, cliargs.Args{NoAutoUpdate: true}, "box", t.TempDir()); err != nil {
+		t.Errorf("--no-auto-update, the way out, failed on a damaged record: %v", err)
 	}
 }

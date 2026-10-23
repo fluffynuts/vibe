@@ -1,7 +1,8 @@
 # Plan: choosing the model and effort from the Conversation tab
 
-Status: planned 2026-10-19, decisions made the same day, not started ("down the road"). Nothing here has been run
-against a real agent.
+Status: planned 2026-10-19; decisions of 2026-10-19 and 2026-10-21 below; the real-agent check for Claude was run
+on 2026-10-21 (findings below) and found no blocker. **Built 2026-10-21** on `feat/model-and-effort`, committed as
+it went; see "As built" at the end. A real browser and a real sbx sandbox are still to try.
 
 ## The outcome
 
@@ -31,12 +32,20 @@ user changes either in one step: say, from Opus to Sonnet for a simple job, or t
   **Model** and **Effort**. Native, so keyboard, screen readers and phones work with nothing more to build.
 - Each starts on **Default**: no flag is passed, so the sandbox's own Claude settings (`~/.claude/settings.json`,
   the profile's `env`) decide, exactly as today. Nothing changes for anyone who never touches them.
-- Model: Default, then the aliases (opus, sonnet, haiku, and fable while the CLI offers it), then **Other…**
-  taking a full model name. Aliases follow the latest model, so the list needn't be updated for each release.
-- Effort: Default, low, medium, high, xhigh, max.
-- Kept per sandbox, in the conversation's saved state, so it outlives vibe and a page reload, and carries over
-  to a new conversation (a "new conversation" resets the session, not the preferences). Rebuilding the sandbox
-  keeps it, as it keeps the session.
+- Model: Default, then the plain-named models from a **live list** (see "Where the lists come from"), then
+  **Other…**, which opens an in-page dialog listing every other choice the agent reports (the ones not already in
+  the drop-down) and takes a full model name. Aliases follow the latest model, so nothing is hard-coded per release.
+- Effort: Default, then only the values the agent's flag accepts (for Claude: low, medium, high, xhigh, max).
+  Values the agent's own console shows but its flag rejects (`auto`, `ultracode`) are not offered: reliability
+  wins over completeness, and they can be added if a working route turns up.
+- **Changing the model resets effort to Default**, and the user picks again if they want to: which efforts mean
+  what differs by model and by agent, and nothing tells us which a model supports.
+- Kept with the **profile**, written back as if it were the workspace's correct profile (least surprise), so it
+  outlives vibe, a page reload and a rebuild, and carries over to a new conversation (a "new conversation" resets
+  the session, not the preferences). The user's own pattern is one profile per sandbox, but a profile can hold
+  several sandboxes, in which case they share the choice: accepted.
+- The confirmation before a costly change is an **in-page dialog**, never `confirm()`; it blocks (the user must
+  answer), with a tinted backdrop so nothing behind it can be clicked.
 
 ### What it says is true
 
@@ -61,20 +70,51 @@ user changes either in one step: say, from Opus to Sonnet for a simple job, or t
   `running` (what the agent reported).
 - `POST /api/conversation/settings` with `{model, effort}`; same-origin and token checks as the other POSTs.
 
-## Things to find out before building
+## Where the lists come from
 
-1. **Resuming with a different model.** Does `--resume` with a different `--model` just work, and what does the
-   user lose: the prompt cache for the session (so the next turn is slower and dearer), thinking blocks from
-   another model? If there is a real cost the page should say so when the model changes ("the next prompt
-   re-reads the whole conversation").
-2. **Which efforts each model takes.** Whether `--effort max` on a model that doesn't support it is an error, is
-   ignored, or is mapped. If it errors, the page should only offer what the chosen model supports, or show the
-   agent's error in the conversation where the user will see it (not hide it).
-3. **The `init` line's fields**, to show the running model (above).
-4. **`/model` and `/effort`** typed as a prompt in `-p` mode: do they exist, and do they change anything for the
-   next turn? If they do, the page and the agent can disagree, which is what the "reported" text is for.
-5. **Precedence.** `--model` over `ANTHROPIC_MODEL` over settings: confirm, so "Default" means what the page says.
-6. **Fallback models** (`--fallback-model`): out of scope, but note whether a fallback makes "reported" differ.
+- Claude: a `/model` prompt in `-p` mode answers without a model call (cost not measured) with the current model and
+  "Available: sonnet, opus, haiku, fable, best, sonnet[1m], opus[1m], fable[1m], opusplan, default, or a full
+  model ID". That is the live list. The plain names go in the drop-down; `best`, `opusplan`, `default` and the
+  `[1m]` variants go in the **Other…** dialog.
+- The `/effort` usage text lists `low|medium|high|xhigh|max|auto|ultracode`; only the first five are valid
+  `--effort` values.
+- Other agents: whatever their CLI reports; to be found when each is tried (see "Agents, in stages").
+
+## Findings of the real-agent check, Claude CLI 2.1.306, 2026-10-21
+
+Run with one-word prompts on haiku and sonnet; costs of a long session were not measured.
+
+1. **Resume with another model works** (same session id, answered by the new model). The prompt-cache cost could
+   not be shown on a tiny session, so the warning says the next prompt *may* re-read the whole conversation.
+2. **Effort:** an unknown value is ignored with a stderr warning ("Unknown --effort value … ignoring it");
+   `--effort max` on haiku is accepted silently, and whether it is honoured is not visible. There is no
+   per-model list of efforts.
+3. **The `init` line** has a `model` field (`claude-haiku-5-5`) and no effort field. So the "running" text covers
+   the model only. An unrecognised model name is echoed back as given.
+4. **A bad model** comes back as a result with `is_error: true` ("There's an issue with the selected model …"):
+   shown in the conversation like any error.
+5. **`/model` and `/effort` as prompts** work in `-p` mode but are "this session only": the next turn starts on
+   the default again. They change nothing lasting, so the flags are the mechanism.
+6. **Precedence:** `--model` beats `ANTHROPIC_MODEL`; the variable beats nothing when the flag is absent, so
+   "Default" means whatever the sandbox's settings/env say.
+7. **Not verified:** whether `--effort` beats the `CLAUDE_EFFORT` environment variable (effort isn't visible in
+   `init`); a measured cache cost; a fallback model's effect on what is reported (out of scope).
+
+## Agents, in stages
+
+Today only Claude is wired: `conversationFor` (`src/vibe/companion.go`) gives no conversation to any other agent,
+and the turn command and stream parsing are Claude's (`agentArgs`, `src/vibe/conversation.go`). The conversation
+tab working for other agents is its own piece of work; the drop-downs ride on it.
+
+1. **Claude** first, as the user and their team use it.
+2. **Generic:** keep the model/effort code free of Claude's specifics (the lists, the flags and the "what ran"
+   come from a per-agent description), then play-test with an open model through OpenCode (the user's choice, to
+   see it on a free model), and ask a Codex user to try it.
+3. **Untested agents** get the same options, and rely on user reports if they don't work. Some agents may not
+   be able to do this; that is accepted.
+
+Do not paint into a corner: no Claude flag names or list formats outside the Claude description. Switching agent
+resets the model and effort to that agent's defaults.
 
 ## Tests
 
@@ -85,11 +125,12 @@ user changes either in one step: say, from Opus to Sonnet for a simple job, or t
   shows the host's message; "Other…" takes a name; they're absent for a sandbox with no conversation.
 - Integration: the existing tests run a stand-in `claude`; extend it to record its arguments and assert a turn
   after a change carries the new flags, and one before it doesn't.
-- One manual check with a real agent (items 1–5 above), by the user or with their go-ahead (it costs tokens).
+- The real-agent check for Claude is done (findings above). Repeat a cut-down version for each new agent tried.
+- Sweep: no `alert()`/`confirm()`/`prompt()` in the page (none today, 2026-10-21); consider a test that fails if one appears.
 
 ## Not in scope
 
-- Other agents (their CLIs differ; nothing here assumes them).
+- Other agents in the first build (their CLIs differ; the structure leaves room: see "Agents, in stages").
 - Choosing a model per review comment, or per slash command.
 - Showing cost. The page already shows each turn's cost line from the agent.
 - `vibe --headless` and the terminal: the terminal Claude has `/model`; nothing to add.
@@ -109,3 +150,212 @@ user changes either in one step: say, from Opus to Sonnet for a simple job, or t
    once. What counts as costing something is for the real-agent check to settle; until it is, a model change
    warns and an effort change doesn't. The wording says what happens in the user's terms: "the next prompt
    re-reads the whole conversation, which is slower and costs more."
+
+## Decisions of 2026-10-21
+
+1. A model change resets effort to Default; an agent change resets both.
+2. The lists are live, from the agent. Plain names in the drop-down, the rest behind **Other…** in a dialog. Only
+   effort values the flag is known to accept are offered (reliability over completeness).
+3. In-page dialogs only. A blocking question gets a tinted backdrop that stops click-through.
+4. Stored with the profile, written back as the workspace's profile. Shared by every sandbox in that profile.
+5. Staged: Claude, then generic with OpenCode, then Codex by a friend, then leave the rest to user reports.
+6. Commit as the build goes, on `feat/model-and-effort`.
+
+## As built (2026-10-21)
+
+- `internal/modelchoice`: reads the agent's lists (`ParseModels` from a `/model` answer, `ParseEfforts` from
+  `--help`; real captured output is in `testdata/`) and checks a choice is safe to put on a command line.
+- The choice is `model:` / `effort:` in the profile's `settings.yaml` (`src/vibe/modelchoice.go`, `profileChoice`),
+  read for each turn, so a change is the next prompt's. `--re-compose` deletes and rebuilds a profile, so it
+  reads the choice first and writes it back (as it does the theme and the user's instructions).
+- The turn adds `--model X --effort Y` before `--resume`, only when set (`conversationCommand`); a stored value
+  that isn't safe is refused with where to fix it, before anything is sent.
+- The lists are asked of the sandbox's own claude over `sbx exec`: `claude --help` and `claude -p /model
+  --output-format json --no-session-persistence` (a local command: no model call). Asked when the page opens
+  **without waking** a sleeping sandbox; the page's **Retry** wakes it. Kept for the life of the page's vibe.
+- Routes: `GET /api/conversation/choice`, `POST /api/conversation/choice` (a model change resets the effort,
+  enforced on the host), `POST /api/conversation/choice/options` (`{"wake": bool}`). Both POSTs are in the guard
+  test's list of changing routes.
+- The page (`app.js`, "the model and effort"): two selects in the conversation bar, an in-page `<dialog>` for the
+  warning (asked only when the conversation has a session: nothing to re-read otherwise) and one for **Other…**.
+  Dialogs are modal with the usual tinted backdrop. `internal/companion/dialogs_test.go` fails if the page ever
+  uses the browser's own `alert`, `confirm` or `prompt`.
+- Decided while building: the warning is skipped when there is no session yet; **Default** is labelled with the
+  model the agent names as its default; "what ran" is judged loosely (an alias is part of the full name) and not
+  at all for `best` / `opusplan`, and not while a change is waiting for its first turn.
+- Not done: other agents (see `plan-conversation-other-agents.md`); a global default beyond what settings
+  already layer; the OpenCode-style per-model effort lists.
+
+### Layout, after the first real try (2026-10-21)
+
+The user tried it on another sandbox: it worked (the warning on a conversation under way, a new conversation on
+Haiku answered and the reported model matched, effort switched). Then asked for:
+
+- **Centred.** The bar under the prompt is a grid, `1fr auto 1fr`: Stop on the left, the drop-downs in the middle,
+  Send on the right, so Stop appearing doesn't move the middle. In a column under 920px (raised from 820 when the drop-downs got wider and Send began to wrap; a container query on
+  the form: the column, not the window, is what counts) the drop-downs take a row of their own above Stop and
+  Send. What the agent ran has a slot of its own (fixed width, an ellipsis, the full text on hover).
+- **An "i" button with a bubble**, over the button, taking no room. It says that a change applies from the next
+  prompt, with **Don't show me this again** (kept in the browser, `vibe-companion-choice-quiet`: each sandbox's
+  page is its own origin, so once per sandbox for now; vibe-wide later if it annoys); after it, the button
+  still carries a dot and opens the bubble when pressed. The agent having run another model than asked for is
+  said in the same bubble, in amber, at the end of **every** turn it happens, with no tick to hide it. It isn't
+  said on a page just opened (the caption and the button show it, though). Closed by its button, by Escape
+  inside it (Escape in the prompt box stays the agent's Stop), and by a click elsewhere.
+- **Failures.** What the user asked for that couldn't be kept is a modal dialog over a frosted page (the
+  `.offline` glass, on `dialog.glass::backdrop`). A failure to get the lists when the page opens is not
+  something the user did, so it is in the bubble, opened, with **Retry**, not in the way: **this departs from
+  "errors in a dialog"** for that one case, and is easy to change.
+- The conversation-under-way warning is unchanged: asked every time, no tick.
+- Tests: the jsdom file (25), and three in real Firefox for the layout (the group doesn't move as Stop comes and
+  goes at three widths, is centred, the bubble moves nothing and stays on the page); the Firefox page is now
+  served with a fake agent and choice for that.
+
+### The agent's lists are kept (2026-10-21)
+
+Asked for by the user: the first time, a plain fetch with nothing known; after that, the last lists are shown
+at once and the agent is asked again in the background (stale while revalidate).
+
+- **Per sandbox** (the user's decision, after weighing per agent): `companion/<name>.model-options.json` under
+  vibe's home (`state.ModelOptionsPath`), removed with the sandbox by `Remove` and moved by `Move`. The lists
+  depend on the `claude` in that sandbox, the account and a project's settings, so another sandbox's would
+  not be the truth. Written whole (`fscopy.WriteWhole`) with a version and when it was asked.
+- A file that can't be read, is another version, or lists no models is **said** (one note naming it) and not
+  used: it's a cache, so the agent is asked as if nothing were kept.
+- The host serves what's kept at once (`GET /api/conversation/choice` carries `options`, `optionsAt`,
+  `optionsFresh`) and the page then asks (`POST .../choice/options`, no waking). A fresh answer replaces the kept
+  one in memory and on disk; a failure to write it is logged, and doesn't fail the request.
+- **Not held to a stale list:** an effort is checked against the agent's list only once it has been asked in
+  this run; before that, by shape. A list from an earlier run may lack what the agent now takes, and an unknown
+  effort is only ignored (with a warning) by claude anyway.
+- **A failed refresh with something kept is quiet:** the kept lists stay, the bubble doesn't open itself, the
+  button carries its dot, and the bubble, when asked, says "The lists are from <time>; they couldn't be
+  refreshed: <reason>" with **Retry** (which wakes the sandbox). With nothing kept, the failure is as before
+  (the bubble opens, amber, with Retry).
+- A known small untruth: "Default (Opus 5.5)" is part of what's kept, so it can be briefly out of date, until
+  the refresh.
+
+### Order, and when the dot goes (2026-10-21)
+
+- **Models are listed biggest first** where the size is known: fable, opus, sonnet, haiku (`modelchoice.BySize`,
+  matching the family as a whole word in the name: `opus[1m]` and `claude-opus-5-5` are opus, `opusplan`
+  isn't). Any name that isn't one of those (`best`, `opusplan`) comes after them, alphabetically: no size is
+  claimed for it. Applied when the lists are read from the agent and again when read from the kept file, so
+  lists kept before this show in the new order. Fable's place at the top is from the user's screenshot of
+  claude.ai's own picker (Fable 5.1 "for your toughest challenges", then Opus, Sonnet, Haiku), not from
+  anything the agent reports; it's one entry in `sizeOrder`.
+- **The dot on the "i" says something hasn't been looked at.** It goes when the bubble is closed, whichever way
+  (the X, the button, Escape, a click elsewhere), and comes back with the next change, the next turn that ran
+  another model, or a new failure to refresh. The amber outline stays while the cause does (another model
+  ran; no lists), since that is a state, not a notice.
+
+### While the lists load (2026-10-21)
+
+- **Nothing known** (first fetch in a sandbox, or before vibe has said what is chosen): the whole widget is dimmed
+  and disabled, a spinner and "Loading models…" in the slot beside it, `aria-busy`, and a visually hidden status
+  for screen readers. The stored choice is still shown. **Kept lists:** usable, only the spinner (the user's
+  reason: if the lists change while they have it open, nothing should surprise them).
+- **A limit on the lock:** 30 seconds (`CHOICE_LOCK_MS`, the same patience as the clipboard page's), then the
+  drop-downs are usable, the bubble says it is still asking, and the lists fill in when they arrive. A
+  Retry locks it again, the same way. The number is a guess; the user agreed to a limit, not to 30.
+- **The slot only speaks when it's news.** "Running <model>" is gone when it matches what was asked (or the default
+  is chosen): the user expects the drop-downs to work. The bubble says what the last turn ran. A mismatch is
+  still amber, still said at the end of every such turn.
+- **Found in a real browser, not jsdom:** a drop-down sizes itself to its longest option, so the group got 70px
+  wider when the lists arrived and everything moved. The two now have widths of their own (`14em`, `7em`), and a
+  Firefox test checks that what they hold changes nothing.
+
+### Versions in the list (2026-10-21)
+
+- The agent's list gives only aliases (`opus`), which follow the latest model, so the version isn't in it. A
+  `/model <alias>` prompt answers locally, with no model call, "Set model to `Opus 5.5` for this session only": vibe
+  asks for every listed alias (but `default`) in **one** `sbx exec` loop and keeps the names with the lists
+  (`Options.Names`; `modelchoice.ParseModelName`). Real answers, claude 2.1.306: fable → Fable 5.1, opus → Opus 5.5,
+  sonnet → Sonnet 5.5, haiku → Haiku 5.5, `opus[1m]` → Opus 5.5 (1M context), `sonnet[1m]` → Sonnet 5.5 (no
+  mention of the 1M: the agent's own wording), `best` → Fable 5.1 (what it stands for now), `opusplan` → Opus in plan
+  mode, else Sonnet.
+- **Shown:** the plain models by that name alone ("Opus 5.5": what claude.ai's picker says); the rest, in
+  **Other…** and when one is chosen, as `Name · alias` (changed from `alias — name` on 2026-10-21, to lead with a
+  title-case name); an alias with no name as itself, **in title case** ("Opus[1M]"), as are the efforts ("Low",
+  "High"), `xhigh` being "Extra High" (the one special case, the user's choice over "Xhigh"). Title case is only for the short names the agent hands out: a full model id typed under **Other…**
+  is exact, and is shown as typed. What is kept and sent is never changed. The value kept in
+  `settings.yaml` stays the alias, so a choice still means "the latest opus".
+- A failure to ask for the names doesn't fail the lists: it's said in vibe's output (a note), the page shows aliases,
+  and the next refresh tries again. A name that can't be read leaves out only that one.
+
+### The spinner's place (2026-10-21)
+
+The spinner sits to the left of the widget, ahead of the Model label, in a 14px slot that is there whether or not it
+shows, so it coming and going moves nothing (a Firefox test at two widths checks that). The words ("Loading
+models…", "ran …") stay in the slot on the right.
+
+### No visible labels (2026-10-21)
+
+The user's idea, after the names carried the versions: "Model" says nothing the entries don't ("Opus 5.5"). Dropped, and
+the effort entries now say what they are instead: **Default effort, Low effort, Medium effort, High effort, Extra High
+effort, Max effort** (the user's pick of four options; "Default (Medium)" wasn't possible, as claude can't be asked what
+its default effort is). The labels stay for screen readers (`sr-only`, still tied to their drop-downs), and both drop-downs
+have a tooltip. The effort drop-down is 11em wide for "Extra High effort"; Firefox tests measure that the longest
+everyday entries fit, and that Send stays on one line at eleven widths from 520 to 1900px.
+
+### After the review of 2026-10-22
+
+Eleven threads, one P2; all taken up.
+
+- **A change made during a turn** is for the next one, so that turn ending on the old model is no word on it: `pendingTurns`
+  (2 when saved while the agent answers, else 1), counted down at each turn end. It used to raise a false, unswitchable-off
+  "ran another model" warning.
+- **A redraw leaves a drop-down's options alone** unless they differ (an open drop-down is closed by a rebuild).
+- **`--effort`'s list** is read only from its own description, up to the next flag, as exactly one parenthesised list of
+  two or more lower-case names (at most 20); anything else is an error, not a guess. Tested against help shaped like
+  each way it could go wrong.
+- **`settings.yaml` is written whole-and-rename** (`fscopy.WriteWholeMode`, keeping the file's mode), so a turn starting as
+  the choice changes reads one choice or the other, never an empty file (which meant the default model, quietly).
+  See the memory note on atomic writes.
+- **What the sandbox's `claude` may say is bounded** (it can be replaced by the agent): at most 50 models, names of at most
+  100 characters, the default's name at most 200, `--help` 256 KB, the list 64 KB, the names 256 KB; only the aliases
+  asked about are taken from the names. What's left out is said in vibe's output.
+- **One ask of the agent at a time** (a second page waits for the first's answer, and asks itself only if it failed; one
+  that gives up isn't waited for).
+- **What is inherited is said:** with `model:` in the global settings, **Default** in the profile can't take it away; the
+  page is told which of the two come from there and the bubble says so (and opens when Default was asked for and not given).
+- **`mode:` is layered like every other setting:** the profile's `settings.yaml` over the base one.
+- **Which names pick by a rule** (`best`, `opusplan`) is said by the host (`Options.Rules`), once, in Go; the page no longer has its own list.
+
+### Asked for again as a session goes on (2026-10-22)
+
+Why: a box's `claude` first said its default was Sonnet and later Opus (it re-fetches server-side settings on every run, and
+its `~/.claude.json` caches them), while vibe went on showing the first answer, because the lists were "fresh" for the life of
+the vibe process.
+
+- The host's answer is **fresh for ten minutes** (`optionsFreshFor`, from the clock the server already has); an older one is
+  asked for again by the next `POST …/choice/options`, and efforts are checked against the list only while it is fresh. A failed
+  ask keeps the old lists and writes a line in vibe's log (the page may not say anything).
+- The page asks at the end of every turn (after reading what ran), without waking the sandbox, **silently**: no spinner, no lock,
+  no bubble, no dot, also when it fails. Not while the first ask is under way, and not on top of another refresh. A new default,
+  a new model, new names are taken in.
+- **What is said:** the model or effort in use that the previous lists offered and the new ones don't (`adoptOptions`,
+  `choiceGone`): the bubble opens, once, amber, with the dot, and stays amber until another is chosen or it's offered again.
+  It applies to the page's start as well (kept lists against the fresh ones). A name typed under **Other…** was never offered,
+  so its absence is no news.
+- A drop-down that has focus is left as it is while the lists change; it takes them in on blur.
+
+### You are on a model; "default" is only a word (2026-10-22)
+
+Supersedes "Default = no flag" for **models** (effort keeps it). The user is the authority on which model runs; the page tells them
+what claude's default is and sticks to their choice. A default that moves under them (claude re-fetches server-side settings) must
+never change what they use.
+
+- The model list holds models only. Once one is in use there is no Default entry; the claude default is marked "(default)"
+  (`Options.DefaultAlias`, from `/model`'s "Current model" matched to the names; empty when the names couldn't be had).
+- A refresh that moves the default moves only the mark.
+- When no model is chosen or inherited, the page asks the host to adopt (`POST /api/conversation/choice/adopt`): it records the
+  model that ran (`AliasOfRan`) or else the default alias in the profile's `settings.yaml`. Silent; a failure is logged and retried
+  when the lists next change. Nothing is adopted when the global settings choose one: it shows as in force, and choosing another
+  overrides it for the profile.
+- No way back to "follow the default" except removing `model:` from `settings.yaml` (no use-case yet; revisit if one comes).
+- Not frozen: the effort default (claude doesn't expose it).
+
+### Where the choice is kept, after 2026-10-22 (supersedes the settings.yaml storage above)
+
+The model and effort chosen on the page are kept in the profile's `user-preferences.yaml`, not in its `settings.yaml`: that file is part of what composing wrote, so a key vibe added there made the profile look edited by hand and stopped its automatic updates. The profile's preferences win over its `settings.yaml`, which wins over the global one. See `docs/plan-user-preferences.md`.

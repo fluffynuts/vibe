@@ -24,7 +24,7 @@ func restartStandIns(t *testing.T, answering, known, terminal, yes bool) (ended 
 
 func TestRestartingAnIdleHeadlessVibeDoesntAsk(t *testing.T) {
 	ended, asked := restartStandIns(t, false, true, true, false)
-	if err := restart(t.TempDir(), "box", "/work", []running.Claim{{PID: 7, Headless: true}}, false); err != nil {
+	if _, err := restart(t.TempDir(), "box", "/work", []running.Claim{{PID: 7, Headless: true}}, false); err != nil {
 		t.Fatal(err)
 	}
 	if *asked || len(*ended) != 1 || (*ended)[0] != 7 {
@@ -45,12 +45,12 @@ func TestRestartingAsksBeforeInterruptingAnything(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ended, asked := restartStandIns(t, tc.busy, true, true, false)
-			err := restart(t.TempDir(), "box", "/work", tc.claims, false)
+			_, err := restart(t.TempDir(), "box", "/work", tc.claims, false)
 			if !*asked || len(*ended) != 0 || err == nil || !strings.Contains(err.Error(), "nothing restarted") {
 				t.Errorf("asked %v, ended %v, err %v; want asked, and nothing ended on a no", *asked, *ended, err)
 			}
 			ended, _ = restartStandIns(t, tc.busy, true, true, true)
-			if err := restart(t.TempDir(), "box", "/work", tc.claims, false); err != nil || len(*ended) != 1 {
+			if _, err := restart(t.TempDir(), "box", "/work", tc.claims, false); err != nil || len(*ended) != 1 {
 				t.Errorf("on a yes: ended %v, err %v", *ended, err)
 			}
 		})
@@ -59,7 +59,7 @@ func TestRestartingAsksBeforeInterruptingAnything(t *testing.T) {
 
 func TestForceRestartsWithoutAsking(t *testing.T) {
 	ended, asked := restartStandIns(t, true, true, false, false)
-	if err := restart(t.TempDir(), "box", "/work", []running.Claim{{PID: 8}, {PID: 9, Headless: true}}, true); err != nil {
+	if _, err := restart(t.TempDir(), "box", "/work", []running.Claim{{PID: 8}, {PID: 9, Headless: true}}, true); err != nil {
 		t.Fatal(err)
 	}
 	if *asked || len(*ended) != 2 {
@@ -70,7 +70,7 @@ func TestForceRestartsWithoutAsking(t *testing.T) {
 // With nobody to ask, what would be interrupted is said, and nothing is.
 func TestRestartingWithNoTerminalRefusesToInterrupt(t *testing.T) {
 	ended, _ := restartStandIns(t, false, false, false, true)
-	err := restart(t.TempDir(), "box", "/work", []running.Claim{{PID: 7, Headless: true}}, false)
+	_, err := restart(t.TempDir(), "box", "/work", []running.Claim{{PID: 7, Headless: true}}, false)
 	if err == nil || !strings.Contains(err.Error(), "couldn't be asked") || !strings.Contains(err.Error(), "-f") || len(*ended) != 0 {
 		t.Errorf("err %v, ended %v", err, *ended)
 	}
@@ -78,7 +78,7 @@ func TestRestartingWithNoTerminalRefusesToInterrupt(t *testing.T) {
 
 func TestAFolderBeingRebuiltIsntRestarted(t *testing.T) {
 	ended, _ := restartStandIns(t, false, true, true, true)
-	err := restart(t.TempDir(), "box", "/work", []running.Claim{{PID: 7, Work: "rebuilding sandbox 'box'"}}, true)
+	_, err := restart(t.TempDir(), "box", "/work", []running.Claim{{PID: 7, Work: "rebuilding sandbox 'box'"}}, true)
 	if err == nil || !strings.Contains(err.Error(), "rebuilding sandbox 'box'") || len(*ended) != 0 {
 		t.Errorf("err %v, ended %v", err, *ended)
 	}
@@ -87,7 +87,7 @@ func TestAFolderBeingRebuiltIsntRestarted(t *testing.T) {
 func TestAVibeThatWontEndRestartsNothingAndSaysSo(t *testing.T) {
 	restartStandIns(t, false, true, true, true)
 	stopVibe = func(string, int) (bool, error) { return false, errors.New("no such process") }
-	err := restart(t.TempDir(), "box", "/work", []running.Claim{{PID: 7, Headless: true}}, true)
+	_, err := restart(t.TempDir(), "box", "/work", []running.Claim{{PID: 7, Headless: true}}, true)
 	if err == nil || !strings.Contains(err.Error(), "PID 7") || !strings.Contains(err.Error(), "nothing was restarted") {
 		t.Errorf("err = %v, want which vibe, and that nothing was restarted", err)
 	}

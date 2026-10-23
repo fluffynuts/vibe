@@ -630,6 +630,10 @@
       state.clipboardCanStart = !!res.body.clipboardCanStart
       state.conversation = !!res.body.conversation
       $('tab-conversation').hidden = !state.conversation
+      state.viewFiles = !!res.body.viewFiles
+      state.choice = state.conversation && !!res.body.choice
+      $('convo-choice').hidden = !state.choice
+      if (state.choice) initChoice()
       state.admin = !!res.body.admin
       state.usage = !!res.body.usage
       $('usage').hidden = !state.usage
@@ -1282,6 +1286,8 @@
     // agentAtWork is vibe saying the agent is at a turn the review began
     // (its start, a Submit or an Ask): closing the review stops it.
     agentAtWork: false,
+    // announced is the review's start and state as last announced by toast (see announceReview).
+    announced: null,
     // options are the reviews that can be started, while none is open
     // (null until known), or why they couldn't be told.
     options: null, optionsError: '',
@@ -1348,6 +1354,20 @@
 
   // tookReview takes rv, the review vibe gave back for something done on
   // the page, as the review.
+  // announceReview says, once each, that the agent has begun reviewing (so the user waits for it) and that it
+  // has finished, by a toast: the badge says it too, but only to someone looking at it. What was last drawn is
+  // remembered, so a redraw says nothing more; a review already finished when the page opens is nothing new.
+  function announceReview(rv) {
+    const was = reviewView.announced
+    const now = { started: String(rv.started || ''), state: rv.state || '' }
+    reviewView.announced = now
+    if (now.state === 'in progress' && !(was && was.started === now.started && was.state === 'in progress')) {
+      toast('The agent is reviewing your changes. Wait for it to finish, then add your comments.', false, { label: 'OK', run() {} })
+    } else if (now.state === 'done' && was && was.started === now.started && was.state === 'in progress') {
+      toast('The agent has finished reviewing: it is yours to read now.')
+    }
+  }
+
   function tookReview(rv) {
     reviewView.review = rv
     reviewView.changed++
@@ -2347,12 +2367,16 @@
     if (!on) drawStart(rv)
     $('review-title').textContent = on && rv.note ? 'Review: ' + rv.note : 'Review'
     $('review-state').hidden = !on || !rv.state
-    $('review-state').textContent = rv.state === 'in progress' ? 'the agent is still reviewing' : rv.state || ''
+    $('review-state').textContent = rv.state === 'in progress' ? 'the agent is still reviewing: wait for it to finish' : rv.state || ''
+    $('review-state').classList.toggle('reviewing', on && rv.state === 'in progress')
+    if (on) announceReview(rv)
     $('review-of').textContent = !on ? '' : rv.commit ? 'of commit ' + rv.commit : rv.unpushed ? 'of the commits not pushed to ' + rv.ref : rv.ref ? 'against ' + rv.ref : 'of the uncommitted changes'
     const unsent = unsentCount(rv)
-    $('review-submit').disabled = !unsent || !state.conversation
+    const stillWriting = rv.state === 'in progress' && reviewView.agentAtWork
+    $('review-submit').disabled = !unsent || !state.conversation || stillWriting
     $('review-submit').textContent = unsent ? 'Submit ' + unsent + ' to agent' : 'Submit to agent'
     $('review-submit').title = !state.conversation ? "This sandbox's agent can't be talked to from the page"
+      : stillWriting ? 'The agent is still writing this review: submit your comments once it has finished'
       : unsent ? 'Send the agent your ' + plural(unsent, 'comment') + " it hasn't seen: it changes code only where you ask it to"
         : "Nothing new to send: comment on a line, or reply, first"
     $('review-error').hidden = !reviewView.diffError
@@ -4166,7 +4190,7 @@
 
   // news: the agent has said something since the Conversation tab was last
   // open (its dot); loaded: the conversation so far has been fetched once.
-  const convo = { last: 0, running: false, polling: false, behind: false, news: false, loaded: false, lastPrompt: '', ticks: new Map(), typing: null }
+  const convo = { last: 0, running: false, polling: false, behind: false, news: false, loaded: false, lastPrompt: '', ticks: new Map(), typing: null, group: null }
 
   // showTyping keeps the "typing" bubble below the agent's latest message
   // for as long as it is answering, and takes it away once it has. Its
@@ -4229,7 +4253,7 @@
     const inline = (nodes, inLink) => nodes.flatMap((n) => {
       switch (n.type) {
         case 'text': return inLink ? document.createTextNode(visible(n.text)) : withThreadRefs(visible(n.text))
-        case 'code': return el('code', { text: visible(n.text) })
+        case 'code': return !inLink && state.viewFiles && looksLikeFile(n.text) ? fileCandidate(n.text) : el('code', { text: visible(n.text) })
         case 'br': return el('br')
         case 'strong': return el('strong', {}, ...inline(n.children, inLink))
         case 'em': return el('em', {}, ...inline(n.children, inLink))
@@ -4238,7 +4262,9 @@
           const link = localLink(n.href)
           if (link) { link.replaceChildren(...inline(n.children, true)); return link }
           const label = n.children.map((c) => c.text || '').join('')
-          return document.createTextNode(visible(label === n.href ? n.href : label + ' (' + n.href + ')'))
+          const shown = visible(label === n.href ? n.href : label + ' (' + n.href + ')')
+          const file = state.viewFiles && !inLink ? fileLinkPath(n.href) : null
+          return file ? fileCandidate(file, shown, visible(label)) : document.createTextNode(shown)
         }
       }
       return document.createTextNode('')
@@ -4249,7 +4275,8 @@
         case 'heading': return el('h' + Math.min(6, Math.max(1, b.level)), {}, ...inline(b.inline))
         case 'code': return codeBlock(b.text)
         case 'hr': return el('hr')
-        case 'quote': return el('blockquote', {}, ...blocks(b.blocks))
+        case 'quote': return el('div', { class: 'quote-block' }, el('blockquote', {}, ...blocks(b.blocks)),
+          el('button', { type: 'button', class: 'copy-code small', title: 'Copy the quote as Markdown', 'aria-label': 'Copy the quote as Markdown', onclick: () => copyText(b.source) }, copyIcon()))
         case 'list': return el(b.ordered ? 'ol' : 'ul', b.ordered && b.start !== 1 ? { start: String(b.start) } : {},
           ...b.items.map((item) => el('li', {}, ...blocks(item))))
         case 'table': {
@@ -4263,6 +4290,120 @@
     })
     return el('div', { class: 'md' }, ...blocks(window.vibeMarkdown.parse(text)))
   }
+
+  // looksLikeFile is whether code the agent wrote reads as a path to a file: no spaces, a name with an
+  // extension at its end. Nothing is known of it until the host is asked, so this only decides what is
+  // offered; a version (1.2.3) or an address with no folder in it (a@b.com) isn't.
+  function looksLikeFile(text) {
+    if (text.length > 200 || !/^[\w@+~.\/-]+$/.test(text) || !/\.[A-Za-z0-9]{1,10}$/.test(text)) return false
+    if (/^[\d.]+$/.test(text) || (!text.includes('/') && text.includes('@'))) return false
+    return !text.endsWith('/')
+  }
+
+  // Code that reads like a path is only code until the host says it is a file it can show: one ask, for
+  // everything drawn at that moment, and then each one that is becomes a button. What isn't stays as it was
+  // (and is not asked about again): not everything that reads like a path is one (safe.directory).
+  const FILES_PER_ASK = 25
+  let fileCheckQueued = false
+
+  // The folder of the file the viewer is showing while its text is drawn, from the workspace ('' for its
+  // root or when it isn't showing one): a path in it that starts with ./ or ../ is from that file.
+  let viewedFolder = ''
+
+  // pathFrom is path as the host knows it: from the workspace. One written ./x or ../x in a file in
+  // folder (the viewer's) is from that file, so is worked out from folder; any other is already from the
+  // workspace, as the agent writes them. A path that climbs out of the workspace keeps its ..s, for the host to refuse.
+  function pathFrom(folder, path) {
+    if (!folder || !/^\.\.?\//.test(path)) return path
+    const parts = folder.split('/')
+    for (const part of path.split('/')) {
+      if (part === '.') continue
+      if (part === '..') { if (parts.length && parts[parts.length - 1] !== '..') parts.pop(); else parts.push('..') } else parts.push(part)
+    }
+    return parts.join('/')
+  }
+
+  // fileLinkPath is the file a Markdown link's address names, when it is a reference to one on this machine
+  // ("./other.md", "docs/a.md#top"): no scheme, not a network address, no query; null for anything else.
+  function fileLinkPath(href) {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('//') || href.startsWith('#')) return null
+    let path = href.replace(/[#?].*$/, '')
+    try { path = decodeURIComponent(path) } catch (e) { return null }
+    return looksLikeFile(path) ? path : null
+  }
+
+  // fileCandidate is a path the host has yet to say is a file: code showing it, or (for a Markdown link to
+  // it) its words, with label for what the button says once it is one.
+  function fileCandidate(path, text = path, label = '') {
+    if (!fileCheckQueued) { fileCheckQueued = true; queueMicrotask(checkFileCandidates) }
+    const props = { class: 'file-candidate', text, 'data-path': pathFrom(viewedFolder, path) }
+    if (label) props['data-label'] = label
+    return el(label ? 'span' : 'code', props)
+  }
+
+  async function checkFileCandidates() {
+    fileCheckQueued = false
+    const nodes = Array.from(document.querySelectorAll('.file-candidate'))
+    nodes.forEach((n) => n.classList.remove('file-candidate'))
+    const paths = Array.from(new Set(nodes.map((n) => n.dataset.path)))
+    const files = new Set()
+    for (let i = 0; i < paths.length; i += FILES_PER_ASK) {
+      try {
+        const res = await api('/api/workspace-files?' + paths.slice(i, i + FILES_PER_ASK).map((p) => 'path=' + encodeURIComponent(p)).join('&'))
+        if (res.ok && Array.isArray(res.body.files)) res.body.files.forEach((f) => files.add(f))
+        else console.warn("vibe couldn't tell which paths are files it can show:", res.body && res.body.error)
+      } catch (err) {
+        console.warn("vibe couldn't tell which paths are files it can show:", err.message)
+      }
+    }
+    for (const n of nodes) if (n.isConnected && files.has(n.dataset.path)) n.replaceWith(fileRef(n.dataset.path, n.dataset.label || n.textContent, !n.dataset.label))
+  }
+
+  // fileRef is a path the agent named, as a button showing that file over the conversation. It is never a
+  // link: the agent chooses the path, so what comes of clicking is only the host reading it, if it is in the
+  // workspace, and the page showing it as text.
+  function fileRef(path, shown = path, asCode = true) {
+    const words = asCode ? el('code', { text: shown }) : el('span', { text: shown })
+    return el('button', { type: 'button', class: 'file-ref', title: shown === path ? 'Show this file' : 'Show ' + path, onclick: () => viewFile(path) }, words)
+  }
+
+  // viewFile shows path over the conversation, read-only: as Markdown if it is, else as it is. The host says
+  // why when it won't (outside the workspace, not there, too big, not text), and that is shown in its place.
+  async function viewFile(path) {
+    const dialog = $('file-view')
+    $('file-view-path').textContent = path
+    dialog.classList.remove('outside')
+    $('file-view-copy').hidden = true
+    $('file-view-body').replaceChildren(el('p', { class: 'muted', text: 'Loading…' }))
+    if (!dialog.open) dialog.showModal()
+    let res
+    try {
+      res = await api('/api/workspace-file?path=' + encodeURIComponent(path))
+    } catch (err) {
+      res = { ok: false, body: { error: "Couldn't ask vibe for it: " + err.message } }
+    }
+    if ($('file-view-path').textContent !== path) return
+    if (!res.ok) {
+      dialog.classList.toggle('outside', res.body.code === 'outside')
+      $('file-view-body').replaceChildren(el('p', { text: res.body.error || 'That file could not be shown.' }))
+      return
+    }
+    const text = res.body.text
+    $('file-view-copy').hidden = false
+    $('file-view-copy').onclick = () => copyText(text)
+    viewedFolder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+    try {
+      $('file-view-body').replaceChildren(/\.(md|markdown)$/i.test(path)
+        ? markdown(text)
+        : el('pre', {}, el('code', { text: visible(text) })))
+    } finally {
+      viewedFolder = ''
+    }
+    $('file-view-body').scrollTop = 0
+  }
+
+  $('file-view-copy').append(copyIcon())
+  $('file-view-close').onclick = () => $('file-view').close()
 
   // HIDDEN_CONTROL is what a terminal acts on but a page doesn't show: the
   // control characters bar tab and newline. In code the agent wrote, one can
@@ -4364,16 +4505,20 @@
     goToThread(id)
   }
 
-  function convoNote(cls, text, at) {
+  // seq, when given, marks the line as that event of the conversation, so vibe
+  // can take it back (see the retract event).
+  function convoNote(cls, text, at, seq) {
+    endToolGroup()
     const time = stamp(at)
     const words = cls === 'agent' ? markdown(text) : el('span', { text })
     // What the agent said can be copied whole, as the Markdown it wrote: its footer has the button.
     const copy = cls === 'agent'
       ? el('button', { type: 'button', class: 'copy-message small ghost', title: 'Copy this message', 'aria-label': 'Copy this message', onclick: () => copyText(text) }, copyIcon())
       : null
+    const mark = seq == null ? {} : { 'data-seq': String(seq) }
     $('convo-log').append(time || copy
-      ? el('div', { class: 'msg ' + cls }, words, el('span', { class: 'foot' }, time, copy))
-      : el('div', { class: 'msg ' + cls }, words))
+      ? el('div', Object.assign({ class: 'msg ' + cls }, mark), words, el('span', { class: 'foot' }, time, copy))
+      : el('div', Object.assign({ class: 'msg ' + cls }, mark), words))
   }
 
   // The ticks on what the user said, as on a chat message: one when vibe has
@@ -4416,6 +4561,7 @@
   }
 
   function userNote(ev) {
+    endToolGroup()
     const ticks = el('span', { class: 'ticks' })
     convo.ticks.set(ev.seq, ticks)
     const text = ev.text || ''
@@ -4454,12 +4600,63 @@
     return ''
   }
 
+  // The tools the agent uses between what it says are gathered in one group, open while the agent is
+  // working, so what it does is seen as it happens, and collapsed once it speaks (or the turn ends), so
+  // what it said is not lost among them. Each tool's line and result are inside, as they always were.
+  const GROUP_NAMES_SHOWN = 5
+
+  function toolGroup() {
+    if (convo.group) return convo.group
+    const summary = el('summary')
+    const body = el('div', { class: 'tool-group-body' })
+    const group = el('details', { class: 'tool-group' }, summary, body)
+    group.open = true
+    group.body = body
+    group.tally = { uses: 0, failed: 0, names: new Map() }
+    // A group the user has opened or closed is as they left it.
+    summary.addEventListener('click', () => { group.touched = true })
+    $('convo-log').append(group)
+    convo.group = group
+    drawToolGroup(group)
+    return group
+  }
+
+  function drawToolGroup(group) {
+    const { uses, failed, names } = group.tally
+    const ranked = Array.from(names).sort((a, b) => b[1] - a[1])
+    const shown = ranked.slice(0, GROUP_NAMES_SHOWN).map(([name, n]) => name + ' ×' + n)
+    const more = ranked.length - shown.length
+    group.querySelector('summary').textContent = '⚙ ' + (uses ? plural(uses, 'tool use') : 'tool results') +
+      (shown.length ? ' · ' + shown.join(', ') + (more > 0 ? ', and ' + more + ' more' : '') : '') +
+      (failed ? ' · ' + failed + ' failed' : '')
+    group.classList.toggle('bad', failed > 0)
+  }
+
+  // endToolGroup is the agent having said something, or the turn having ended: the tools it used so far
+  // are put away.
+  function endToolGroup() {
+    const group = convo.group
+    convo.group = null
+    if (group && !group.touched) group.open = false
+  }
+
+  function toolUsed(block) {
+    const group = toolGroup()
+    const name = block.name || 'tool'
+    group.tally.uses++
+    group.tally.names.set(name, (group.tally.names.get(name) || 0) + 1)
+    drawToolGroup(group)
+    group.body.append(el('div', { class: 'msg tool' }, el('span', { text: '⚙ ' + name + '  ' + summarise(block.input) })))
+  }
+
   function showResult(block) {
     let text = resultText(block.content)
+    if (!text && !block.is_error) return
+    const group = toolGroup()
+    if (block.is_error) { group.tally.failed++; drawToolGroup(group) }
     if (!text) return
     if (text.length > RESULT_SHOWN) text = text.slice(0, RESULT_SHOWN) + '\n… (' + (text.length - RESULT_SHOWN) + ' more characters)'
-    const log = $('convo-log')
-    log.append(el('details', { class: 'tool-result' + (block.is_error ? ' bad' : '') },
+    group.body.append(el('details', { class: 'tool-result' + (block.is_error ? ' bad' : '') },
       el('summary', { text: block.is_error ? 'tool error' : 'tool result' }),
       el('pre', { text })))
   }
@@ -4470,7 +4667,7 @@
     if (line.type === 'assistant') {
       for (const block of content) {
         if (block.type === 'text' && block.text) convoNote('agent', block.text, at)
-        else if (block.type === 'tool_use') convoNote('tool', '⚙ ' + (block.name || 'tool') + '  ' + summarise(block.input))
+        else if (block.type === 'tool_use') toolUsed(block)
       }
       // The agent says to run /login, which needs its terminal: this page
       // can't show the agent's own screens.
@@ -4480,6 +4677,7 @@
     } else if (line.type === 'user') {
       for (const block of content) if (block.type === 'tool_result') showResult(block)
     } else if (line.type === 'result') {
+      endToolGroup()
       if (line.is_error) {
         convoNote('error', typeof line.result === 'string' && line.result ? line.result : 'The agent reported an error.', at)
       }
@@ -4495,10 +4693,12 @@
   }
 
   function showEvent(ev) {
-    if (ev.kind === 'reset') { $('convo-log').replaceChildren(); convo.ticks.clear() }
+    if (ev.kind === 'reset') { $('convo-log').replaceChildren(); convo.ticks.clear(); convo.group = null }
     else if (ev.kind === 'user') { convo.lastPrompt = ev.text || ''; userNote(ev) }
     else if (ev.kind === 'agent') showAgent(ev.agent, ev.at)
-    else if (ev.kind === 'note') convoNote('meta', ev.text || '')
+    else if (ev.kind === 'note') convoNote('meta', ev.text || '', undefined, ev.seq)
+    // What vibe said it was doing, no longer so (the sandbox is up): gone, not left to be read as current.
+    else if (ev.kind === 'retract') $('convo-log').querySelectorAll('[data-seq="' + Number(ev.of) + '"]').forEach((n) => n.remove())
     else if (ev.kind === 'error') convoNote('error', ev.text || 'That failed.', ev.at)
     else if (ev.kind === 'done' && ev.text === 'stopped') convoNote('meta', 'Stopped.')
   }
@@ -4532,10 +4732,13 @@
   }
 
   function setConvoRunning(running, background, quietMinutes, compacting) {
+    const ended = convo.running && !running
     drawAgentLight(running, background, quietMinutes, compacting)
     if (running) setFaviconDot('working')
     else if (convo.running) setFaviconDot(document.visibilityState === 'visible' && document.hasFocus() ? '' : 'done')
     convo.running = running
+    // What the agent ran is known now, and what was chosen has been used.
+    if (ended && state.choice) choiceTurnEnded()
     $('convo-send').disabled = running
     // Only while it answers: what it has left running ends with the next
     // prompt anyway.
@@ -4563,7 +4766,7 @@
       banner('conversation', '')
       const log = $('convo-log')
       const stick = nearBottom(log)
-      if (res.body.reset) { log.replaceChildren(); convo.ticks.clear() }
+      if (res.body.reset) { log.replaceChildren(); convo.ticks.clear(); convo.group = null }
       if (Array.isArray(res.body.commands)) {
         slash.commands = res.body.commands.filter((c) => typeof c === 'string')
         slash.seq = res.body.commandsSeq || 0
@@ -4572,6 +4775,8 @@
       for (const ev of res.body.events || []) showEvent(ev)
       if (res.body.receipt) showReceipt(res.body.receipt.seq, res.body.receipt.state)
       convo.last = res.body.last || 0
+      // A turn that isn't running has no tools still being used, whatever the last thing said was.
+      if (!res.body.running) endToolGroup()
       setConvoRunning(!!res.body.running, !!res.body.background, res.body.quietMinutes || 0, !!res.body.compacting)
       if ((res.body.events || []).length) {
         if ($('panel-conversation').hidden) {
@@ -4785,10 +4990,11 @@
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const parent = node.parentElement
       if (!parent || parent.closest('[hidden]')) continue
-      const result = parent.closest('details.tool-result')
-      if (result && !withTools && !parent.closest('summary')) continue
+      // What the agent did, in its groups, is out of sight until a group is opened: the box says whether to look.
+      const inGroup = parent.closest('.tool-group-body')
+      if (inGroup && !withTools) continue
       let message = node
-      while (message.parentNode && message.parentNode !== log) message = message.parentNode
+      while (message.parentNode && message.parentNode !== log && !message.parentNode.classList.contains('tool-group-body')) message = message.parentNode
       if (lastMessage && message !== lastMessage) text += '\n'
       lastMessage = message
       parts.push({ node, start: text.length })
@@ -5177,6 +5383,485 @@
     }
   }
 
+  // --- the model and effort ----------------------------------------------
+
+  // The drop-downs beside Send choose the model and effort the agent is asked
+  // to use (see docs/plan-model-effort.md). What they show is what vibe keeps,
+  // which the agent is asked for on each turn; the lists are the agent's own.
+  // A change applies from the next prompt.
+  //
+  // What is good to know goes in a bubble over the "i" button, which takes no
+  // room in the page so nothing moves when it comes and goes: that a change
+  // waits for the next prompt (which can be asked not to show again, in this
+  // browser, the button still telling there's something to know), that the
+  // agent ran another model than was asked for (always shown), and why the
+  // lists couldn't be had. What failed to be kept is a dialog that must be
+  // answered.
+  const OTHER_MODEL = '__other__'
+  const CHOICE_QUIET = 'vibe-companion-choice-quiet'
+  // How long the drop-downs stay disabled for the agent's lists when none are
+  // known, before they're usable anyway (the lists carry on arriving).
+  const CHOICE_LOCK_MS = 30000
+  const choice = { model: '', effort: '', running: '', session: false, options: null, optionsAt: 0, optionsError: '', problem: '', pending: false, bubble: false, unseen: false, started: false, pendingTurns: 0, inherited: { model: false, effort: false },
+    goneModel: '', goneEffort: '', goneLabel: '', refreshing: false, adopting: false, adoptWait: false,
+    loaded: false, asking: false, saving: false, choosing: false, changes: 0, adoptSkipped: false, lockExpired: false, slow: false, lockTimer: 0 }
+
+  // dialogAnswer shows a modal dialog and gives what it was closed with, ''
+  // when it was dismissed (Escape).
+  function dialogAnswer(dialog) {
+    return new Promise((resolve) => {
+      dialog.returnValue = ''
+      dialog.addEventListener('close', () => resolve(dialog.returnValue), { once: true })
+      dialog.showModal()
+      raiseToast()
+    })
+  }
+
+  // ranAsAsked says what the agent reported running fits what was asked for:
+  // an alias ("opus") is part of the full name it stands for. A name the lists
+  // say picks by a rule ("best") is no one model, so what ran can't be held
+  // against it.
+  function ranAsAsked(asked, ran) {
+    const rules = (choice.options && choice.options.rules) || []
+    if (!asked || !ran || rules.includes(asked)) return true
+    return ran.toLowerCase().includes(asked.replace(/\[[^\]]*\]$/, '').toLowerCase())
+  }
+
+  // choiceOdd says the agent ran another model than was asked for. Not while
+  // a change waits for its first turn: what ran then is what was asked before.
+  function choiceOdd() { return !choice.pending && !ranAsAsked(choice.model, choice.running) }
+
+  function choiceQuiet() { return store.get(CHOICE_QUIET) === 'yes' }
+
+  // choiceWaiting says vibe's answer is awaited: what's chosen (not yet read)
+  // or the agent's lists (being asked for).
+  function choiceWaiting() { return !choice.loaded || choice.asking }
+
+  // choiceLocked says there's nothing to choose from yet, so the widget is
+  // disabled: not while kept lists are being asked for again, which are
+  // usable, and not past the limit.
+  function choiceLocked() {
+    return !choice.lockExpired && (!choice.loaded || (choice.asking && !choice.options))
+  }
+
+  function startChoiceLock() {
+    clearTimeout(choice.lockTimer)
+    choice.lockExpired = false
+    choice.slow = false
+    choice.lockTimer = setTimeout(choiceLockExpired, CHOICE_LOCK_MS)
+  }
+
+  function endChoiceLock() {
+    clearTimeout(choice.lockTimer)
+    const wasSlow = choice.slow
+    choice.lockExpired = false
+    choice.slow = false
+    if (wasSlow) choice.bubble = false
+  }
+
+  // choiceLockExpired lets the drop-downs be used though the lists haven't
+  // come, and says what's going on.
+  function choiceLockExpired() {
+    if (!choiceWaiting() || !choiceLocked()) return
+    choice.lockExpired = true
+    choice.slow = true
+    choice.unseen = true
+    setChoiceBubble(true)
+  }
+
+  // choiceProblem is why there are no lists to choose from, or what was chosen
+  // couldn't be read: "" when there's nothing wrong, or when the lists are
+  // only out of date (see choiceStale).
+  function choiceProblem() {
+    return choice.problem || (choice.options ? '' : choice.optionsError)
+  }
+
+  // choiceStale says the lists are from an earlier run, and asking the agent
+  // again failed: they're used, and the bubble says how old they are.
+  function choiceStale() {
+    return choice.options && choice.optionsError
+      ? 'The lists are from ' + new Date(choice.optionsAt).toLocaleString() + "; they couldn't be refreshed: " + choice.optionsError
+      : ''
+  }
+
+  // choiceBubble is what the bubble says now, and of what kind: "problem"
+  // (the lists, or what was chosen, couldn't be had), "odd" (ran something
+  // else), or news that a change waits.
+  function choiceBubble() {
+    const problem = choiceProblem()
+    if (problem) return { kind: 'problem', text: problem }
+    const gone = choiceGone()
+    if (gone) return { kind: 'gone', text: gone }
+    if (choice.slow && choiceWaiting()) return { kind: 'slow', text: "Still asking the agent which models and efforts it has: it's taking longer than usual. You can carry on, and the lists fill in when they arrive." }
+    if (choiceOdd()) return { kind: 'odd', text: 'You asked for ' + choice.model + ', but the agent says it ran ' + choice.running + '.' }
+    // What comes from the global settings: a model can be overridden by choosing another here; an
+    // effort has a Default that can't take it away.
+    const from = []
+    if (choice.inherited.model) from.push(' The model comes from your global settings.yaml; choosing one here overrides it for this profile.')
+    if (choice.inherited.effort) from.push(" The effort comes from your global settings.yaml, so Default here can't take it away.")
+    return { kind: 'news', text: 'A change to the model or effort applies to your next prompt.' + (choice.running ? ' The last turn ran on ' + choice.running + '.' : '') + from.join('') }
+  }
+
+  // modelName is what the agent calls the model an alias stands for ("Opus
+  // 5.5" for "opus"), when it said.
+  function modelName(alias) {
+    const names = choice.options && choice.options.names
+    return (names && names[alias]) || ''
+  }
+
+  // titleCase puts a capital on each word of a short lower-case name the agent
+  // hands out ("opus" is "Opus", "opus[1m]" is "Opus[1M]"), for showing: what's
+  // kept and sent is the name as it was. A full model id ("claude-opus-4-1")
+  // is exact, so it's left as it is.
+  function titleCase(text) {
+    if (!/^[a-z]+(\[[a-z0-9]+\])?$/.test(text)) return text
+    return text.replace(/(^|[^A-Za-z])([a-z])/g, (all, before, letter) => before + letter.toUpperCase())
+  }
+
+  // effortLabel is how an effort is shown: in title case, and with the word
+  // "effort", since the drop-down has no label of its own and "High" alone
+  // wouldn't say what it is. "xhigh" runs two words together, so it's the one
+  // that's spelt out.
+  function effortLabel(effort) {
+    return (effort === 'xhigh' ? 'Extra High' : titleCase(effort)) + ' effort'
+  }
+
+  // modelLabel is how a model is shown: by the name the agent gives it where
+  // it's one of the plain ones ("Opus 5.5", as the agent's own picker has it);
+  // elsewhere with the alias it is kept as after the name, so what's chosen is
+  // plain. An alias the agent gave no name for is shown as itself, in title case.
+  function modelLabel(alias, plain) {
+    const name = modelName(alias)
+    return !name ? titleCase(alias) : plain ? name : name + ' · ' + alias
+  }
+
+  // fillSelect makes select hold items with value chosen. Its options are only
+  // rebuilt when they differ: a drop-down that is open is closed by a rebuild,
+  // and a redraw for some other reason (the spinner, a bubble) shouldn't do that.
+  function fillSelect(select, items, value) {
+    const same = select.options.length === items.length &&
+      items.every((item, i) => select.options[i].value === item.value && select.options[i].textContent === item.text)
+    // A drop-down in use is left as it is: what changed is taken in once it is let go (blur).
+    if (!same && select === document.activeElement) return
+    if (!same) select.replaceChildren(...items.map((i) => el('option', { value: i.value, text: i.text })))
+    if (select.value !== value) select.value = value
+  }
+
+  function drawChoice() {
+    const o = choice.options
+    const current = o && o.current ? o.current.replace(/\s*\(default\)\s*$/i, '') : ''
+    // The user is on a model, and "Default" is no choice (a change of claude's default must
+    // not move them): so the list is the models, with the word "(default)" on the one claude
+    // defaults to. Only while none is in use (nothing to say which it is yet) there's a Default entry.
+    const def = (o && o.defaultAlias) || ''
+    const defaultMark = (m) => (m === def ? ' (default)' : '')
+    const models = choice.model ? [] : [{ value: '', text: current ? 'Default (' + current + ')' : 'Default' }]
+    for (const m of (o && o.models) || []) models.push({ value: m, text: modelLabel(m, true) + defaultMark(m) })
+    if (choice.model && !models.some((m) => m.value === choice.model)) models.push({ value: choice.model, text: modelLabel(choice.model, false) + defaultMark(choice.model) })
+    models.push({ value: OTHER_MODEL, text: 'Other…' })
+    fillSelect($('choice-model'), models, choice.model)
+    const efforts = [{ value: '', text: 'Default effort' }]
+    for (const e of (o && o.efforts) || []) efforts.push({ value: e, text: effortLabel(e) })
+    if (choice.effort && !efforts.some((e) => e.value === choice.effort)) efforts.push({ value: choice.effort, text: effortLabel(choice.effort) })
+    fillSelect($('choice-effort'), efforts, choice.effort)
+
+    // Said beside the drop-downs only when it's news: that the models are on
+    // their way, or that the agent ran another than was asked for. That it ran
+    // what was asked is what's expected.
+    const odd = choiceOdd()
+    const locked = choiceLocked()
+    const waiting = choiceWaiting()
+    const ran = $('choice-ran')
+    ran.classList.toggle('warn-text', odd && !locked)
+    ran.textContent = locked ? 'Loading models…' : odd ? 'ran ' + choice.running : ''
+    ran.title = ran.textContent
+    $('choice-spinner').hidden = !waiting
+    $('choice-busy').textContent = !waiting ? '' : locked ? 'Loading the models and efforts…' : 'Checking for new models…'
+    $('convo-choice').classList.toggle('loading', locked)
+    $('convo-choice').setAttribute('aria-busy', String(locked))
+    $('choice-model').disabled = $('choice-effort').disabled = locked || choice.saving
+
+    const said = choiceBubble()
+    const problem = said.kind === 'problem'
+    const info = $('choice-info')
+    const stale = choiceStale()
+    const gone = said.kind === 'gone'
+    info.classList.toggle('warn', problem || odd || gone)
+    // The dot says there's something to know that hasn't been looked at:
+    // closing the bubble, whichever way, is looking.
+    info.classList.toggle('news', choice.unseen && (choice.pending || !!stale || odd || problem || gone || choice.slow))
+    info.setAttribute('aria-expanded', String(choice.bubble))
+    $('choice-bubble').hidden = !choice.bubble
+    $('choice-bubble-text').textContent = said.text
+    $('choice-bubble-stale').textContent = stale
+    $('choice-bubble-stale').hidden = !stale
+    $('choice-bubble-retry').hidden = !problem && !stale
+    // Only what can be told to stop is: not that the agent ran another model.
+    $('choice-quiet-row').hidden = said.kind !== 'news'
+    $('choice-quiet').checked = choiceQuiet()
+  }
+
+  function setChoiceBubble(on) {
+    if (!on && choice.bubble) choice.unseen = false
+    choice.bubble = on
+    drawChoice()
+  }
+
+  // choiceFailed tells the user what couldn't be kept, in a dialog that has
+  // to be answered: the drop-downs go back to what vibe has behind it.
+  async function choiceFailed(text) {
+    drawChoice()
+    $('choice-error-text').textContent = text
+    await dialogAnswer($('choice-error'))
+  }
+
+  function takeChoice(body) {
+    choice.model = body.model || ''
+    choice.effort = body.effort || ''
+    choice.running = body.running || ''
+    choice.session = !!body.session
+    choice.inherited = { model: !!(body.inherited && body.inherited.model), effort: !!(body.inherited && body.inherited.effort) }
+    if (body.options) adoptOptions(body.options, body.optionsAt || 0)
+  }
+
+  // maybeAdopt asks the host to record the model the conversation is on, when
+  // none is chosen or inherited and the lists are known (the kept ones will do):
+  // the user is on a model, and a change of claude's default must not move them
+  // to another. Silent, as nothing has changed; the host says when there is
+  // nothing to go by, and then it isn't asked again until there are new lists.
+  async function maybeAdopt() {
+    if (!state.choice || choice.model || choice.inherited.model || !choice.options || choice.adopting || choice.adoptWait) return
+    // Not over a choice the user is making or saving: it is tried again once
+    // they are done (see settleChoice).
+    if (choice.saving || choice.choosing) { choice.adoptSkipped = true; return }
+    choice.adopting = true
+    const changes = choice.changes
+    try {
+      const res = await post('/api/conversation/choice/adopt', {})
+      if (res.ok) {
+        reached(true)
+        // What the host says was true before a choice the user made meanwhile.
+        if (changes !== choice.changes) return
+        takeChoice(res.body)
+        if (!res.body.adopted) choice.adoptWait = true
+        drawChoice()
+      }
+    } catch (e) {
+      // The host logs why; it is asked again with the next lists.
+    } finally {
+      choice.adopting = false
+    }
+  }
+
+  // settleChoice is where a choice the user was making ends, so that a model
+  // to adopt that was held off meanwhile is looked at again.
+  function settleChoice() {
+    if (choice.saving || choice.choosing || !choice.adoptSkipped) return
+    choice.adoptSkipped = false
+    maybeAdopt()
+  }
+
+  // modelListed says the lists offer model, among the plain ones or the rest.
+  function modelListed(opts, model) {
+    return !!opts && ((opts.models || []).includes(model) || (opts.otherModels || []).includes(model))
+  }
+
+  // adoptOptions takes the lists the agent gave. A new default, or a model
+  // added, is simply taken in. What is in use that the lists offered and now
+  // don't is said, once (see choiceGone): something chosen from beyond the
+  // lists (a full name typed under Other…) was never offered, so isn't news.
+  function adoptOptions(next, at) {
+    const before = choice.options
+    if (before !== next && JSON.stringify(before) !== JSON.stringify(next)) choice.adoptWait = false
+    choice.options = next
+    choice.optionsAt = at
+    if (!before) return
+    if (choice.model && modelListed(before, choice.model) && !modelListed(next, choice.model) && choice.goneModel !== choice.model) {
+      choice.goneModel = choice.model
+      choice.goneLabel = (before.names && before.names[choice.model]) || titleCase(choice.model)
+      choice.unseen = true
+      choice.bubble = true
+    }
+    if (choice.effort && (before.efforts || []).includes(choice.effort) && !(next.efforts || []).includes(choice.effort) && choice.goneEffort !== choice.effort) {
+      choice.goneEffort = choice.effort
+      choice.unseen = true
+      choice.bubble = true
+    }
+  }
+
+  // choiceGone is what to say when what is chosen isn't offered by the agent
+  // any more, or "" when it is (or never was, as a typed name wasn't).
+  function choiceGone() {
+    const gone = []
+    if (choice.goneModel && choice.goneModel === choice.model && !modelListed(choice.options, choice.model)) gone.push(choice.goneLabel)
+    if (choice.goneEffort && choice.goneEffort === choice.effort && !((choice.options && choice.options.efforts) || []).includes(choice.effort)) gone.push(effortLabel(choice.effort))
+    if (!gone.length) return ''
+    return gone.map((g) => '"' + g + '"').join(' and ') + " isn't offered by the agent any more, and is what's chosen: your next prompt will probably fail. Choose another" +
+      (gone.length > 1 ? ' model and effort.' : choice.goneModel === choice.model ? ' model.' : ' effort.')
+  }
+
+  async function readChoice() {
+    try {
+      const res = await api('/api/conversation/choice')
+      reached(true)
+      if (res.ok) { takeChoice(res.body); choice.problem = '' } else choice.problem = res.body.error || "vibe couldn't say what model and effort are chosen."
+    } catch (e) {
+      reached(false)
+      choice.problem = 'Could not reach vibe to ask what model and effort are chosen.'
+    }
+    if (choice.problem) choice.unseen = true
+    drawChoice()
+    maybeAdopt()
+  }
+
+  // askChoiceOptions asks for the agent's lists. wake says the sandbox may be
+  // woken to be asked: not when the page opens, only when the user retries.
+  async function askChoiceOptions(wake) {
+    choice.asking = true
+    drawChoice()
+    try {
+      const res = await post('/api/conversation/choice/options', { wake }, { timeout: 3 * 60 * 1000 })
+      reached(true)
+      if (res.ok) { adoptOptions(res.body.options, res.body.optionsAt || 0); choice.optionsError = '' } else choice.optionsError = res.body.error || "the agent couldn't say which models and efforts it has."
+    } catch (e) {
+      reached(false)
+      choice.optionsError = 'Could not reach vibe to ask the agent which models and efforts it has.'
+    }
+    if (choice.optionsError) choice.unseen = true
+    choice.asking = false
+    endChoiceLock()
+    drawChoice()
+    maybeAdopt()
+  }
+
+  // Nothing the user did has failed when the page opens, so a problem then is
+  // said in the bubble, opened, and not in a dialog in the way.
+  async function initChoice() {
+    if (choice.started) return
+    choice.started = true
+    startChoiceLock()
+    drawChoice()
+    await readChoice()
+    choice.loaded = true
+    await askChoiceOptions(false)
+    if (choiceProblem()) setChoiceBubble(true)
+  }
+
+  async function retryChoice() {
+    startChoiceLock()
+    if (choice.problem) await readChoice()
+    await askChoiceOptions(true)
+    if (!choiceProblem() && !choice.optionsError) setChoiceBubble(false)
+  }
+
+  // choiceTurnEnded: what the agent ran is known now, and what was chosen has
+  // been used, so what was said of it is out of date. Another model than
+  // asked for is said at the end of every turn it happens.
+  async function choiceTurnEnded() {
+    // A change made while this turn ran is for the next one, so this one
+    // ending is no word on it yet.
+    if (choice.pendingTurns > 0) choice.pendingTurns--
+    choice.pending = choice.pendingTurns > 0
+    if (!choice.pending && !choiceProblem() && !choice.optionsError) { choice.bubble = false; choice.unseen = false }
+    await readChoice()
+    if (choiceOdd()) { choice.unseen = true; setChoiceBubble(true) }
+    refreshChoiceQuietly()
+  }
+
+  // refreshChoiceQuietly asks the host for the agent's lists again, as the
+  // session goes on: the host asks the agent only when its last answer is
+  // old (ten minutes), so this is cheap. Nothing of it shows (no spinner, no
+  // lock, no bubble): a new default or a new model is simply taken in, and a
+  // failure is the host's to say in its log. The one thing said is what is
+  // in use no longer being offered (see adoptOptions). Not while the first
+  // ask is under way, nor on top of another refresh.
+  async function refreshChoiceQuietly() {
+    if (!state.choice || !choice.loaded || choice.asking || choice.refreshing) return
+    choice.refreshing = true
+    try {
+      const res = await post('/api/conversation/choice/options', { wake: false }, { timeout: 3 * 60 * 1000 })
+      if (res.ok) {
+        reached(true)
+        adoptOptions(res.body.options, res.body.optionsAt || 0)
+        choice.optionsError = ''
+        drawChoice()
+        maybeAdopt()
+      }
+    } catch (e) {
+      // The page's other polls say when vibe can't be reached.
+    } finally {
+      choice.refreshing = false
+    }
+  }
+
+  // saveChoice asks vibe to keep model and effort, and shows what it kept: it
+  // may have changed the effort, or refused.
+  async function saveChoice(model, effort) {
+    choice.saving = true
+    choice.changes++
+    drawChoice()
+    let failed = ''
+    try {
+      const res = await post('/api/conversation/choice', { model, effort })
+      reached(true)
+      if (res.ok) { takeChoice(res.body); choice.problem = ''; choice.pending = true; choice.pendingTurns = convo.running ? 2 : 1 } else failed = res.body.error || "that choice couldn't be kept."
+    } catch (e) {
+      reached(false)
+      failed = 'Could not reach vibe to keep that choice.'
+    }
+    choice.saving = false
+    choice.changes++
+    if (failed) { await choiceFailed(failed); settleChoice(); return }
+    // Default asked for and not given, as the global settings choose: said whatever
+    // the tick says, as it would be a puzzle otherwise.
+    const refused = (model === '' && choice.inherited.model) || (effort === '' && choice.inherited.effort)
+    // After the bubble is settled, for closing it counts as having looked.
+    setChoiceBubble(refused || !choiceQuiet())
+    choice.unseen = true
+    drawChoice()
+    settleChoice()
+  }
+
+  // pickOtherModel asks which of the models the agent lists beyond the
+  // plain names, or which full name, and gives it; null for none.
+  async function pickOtherModel() {
+    const others = (choice.options && choice.options.otherModels) || []
+    $('choice-other-intro').textContent = others.length
+      ? 'The agent also lists these, besides the ones in the drop-down.'
+      : "The agent lists no others, but it takes a model's full name."
+    $('choice-other-list').replaceChildren(...others.map((m) => el('label', {},
+      el('input', { type: 'radio', name: 'choice-other', value: m }), ' ', modelLabel(m, false) + (choice.options && m === choice.options.defaultAlias ? ' (default)' : ''))))
+    $('choice-other-name').value = ''
+    if ((await dialogAnswer($('choice-other'))) !== 'go') return null
+    const typed = $('choice-other-name').value.trim()
+    const picked = $('choice-other-list').querySelector('input:checked')
+    return typed || (picked ? picked.value : null)
+  }
+
+  async function changeModel(model) {
+    if (model === choice.model) { drawChoice(); return }
+    // Only a conversation under way has anything to re-read.
+    if (choice.session) {
+      $('choice-warn-title').textContent = 'Change the model to ' + (model ? modelName(model) || titleCase(model) : 'the default') + '?'
+      if ((await dialogAnswer($('choice-warn'))) !== 'go') { drawChoice(); return }
+    }
+    await saveChoice(model, choice.effort)
+  }
+
+  async function modelPicked() {
+    choice.choosing = true
+    try {
+      const value = $('choice-model').value
+      if (value !== OTHER_MODEL) { await changeModel(value); return }
+      const other = await pickOtherModel()
+      if (other == null) { drawChoice(); return }
+      await changeModel(other)
+    } finally {
+      choice.choosing = false
+      settleChoice()
+    }
+  }
+
   // --- "New conversation" -----------------------------------------------
 
   // The dialog offers only what applies (see docs/plan-new-conversation.md).
@@ -5433,6 +6118,22 @@
 
   function setUpFresh() {
     $('convo-new').addEventListener('click', openFresh)
+    $('choice-model').addEventListener('change', modelPicked)
+    $('choice-effort').addEventListener('change', () => saveChoice(choice.model, $('choice-effort').value))
+    $('choice-model').addEventListener('blur', drawChoice)
+    $('choice-effort').addEventListener('blur', drawChoice)
+    $('choice-info').addEventListener('click', () => setChoiceBubble(!choice.bubble))
+    $('choice-bubble-close').addEventListener('click', () => { setChoiceBubble(false); $('choice-info').focus() })
+    $('choice-bubble-retry').addEventListener('click', retryChoice)
+    $('choice-quiet').addEventListener('change', () => { store.set(CHOICE_QUIET, $('choice-quiet').checked ? 'yes' : ''); drawChoice() })
+    // Escape is the agent's Stop in the prompt box, so it only closes the
+    // bubble from inside the choice.
+    $('convo-choice').addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && choice.bubble) { e.stopPropagation(); setChoiceBubble(false); $('choice-info').focus() }
+    })
+    document.addEventListener('click', (e) => {
+      if (choice.bubble && !$('convo-choice').contains(e.target)) setChoiceBubble(false)
+    })
     $('fresh-form').addEventListener('submit', (ev) => {
       ev.preventDefault()
       if (ev.submitter && ev.submitter.value === 'cancel') $('fresh').close('cancel')

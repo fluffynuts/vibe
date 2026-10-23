@@ -169,7 +169,7 @@ func (w WorkspaceConfig) Approve(hash string) error {
 }
 
 func (w WorkspaceConfig) approvedList() []string {
-	data, err := os.ReadFile(w.Approvals)
+	data, err := fscopy.ReadFile(w.Approvals)
 	if err != nil {
 		return nil
 	}

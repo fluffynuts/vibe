@@ -114,7 +114,23 @@
             </div>
             <div class="bar">
               <button type="button" id="convo-stop" class="danger" title="Escape, in the prompt box" hidden>Stop (Escape)</button>
-              <span class="spacer"></span>
+              <div id="convo-choice" class="choice" hidden>
+                <span class="choice-spin"><span id="choice-spinner" class="spinner" aria-hidden="true" hidden></span></span>
+                <label class="sr-only" for="choice-model">Model</label>
+                <select id="choice-model" title="Model" aria-describedby="choice-ran"></select>
+                <label class="sr-only" for="choice-effort">Effort</label>
+                <select id="choice-effort" title="Effort" aria-describedby="choice-ran"></select>
+                <button type="button" id="choice-info" class="choice-info" aria-label="About the model and effort" aria-expanded="false" aria-controls="choice-bubble">i</button>
+                <span id="choice-ran" class="muted choice-ran"></span>
+                <span id="choice-busy" class="sr-only" role="status"></span>
+                <div id="choice-bubble" class="choice-bubble" role="status" hidden>
+                  <button type="button" id="choice-bubble-close" class="choice-bubble-close ghost" aria-label="Close" title="Close (Escape)">&#10005;</button>
+                  <p id="choice-bubble-text"></p>
+                  <p id="choice-bubble-stale" class="muted" hidden></p>
+                  <button type="button" id="choice-bubble-retry" hidden>Retry</button>
+                  <label id="choice-quiet-row" class="choice-quiet"><input type="checkbox" id="choice-quiet"> Don't show me this again</label>
+                </div>
+              </div>
               <button type="submit" id="convo-send" title="Ctrl+Enter">Send (Ctrl+Enter)</button>
             </div>
           </form>
@@ -431,6 +447,49 @@
       <div class="actions">
         <button value="cancel" class="ghost">Cancel</button>
         <button value="run" id="confirm-run" autofocus>Run</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="file-view" class="file-view" aria-labelledby="file-view-path">
+    <header>
+      <h2 id="file-view-path"></h2>
+      <button type="button" id="file-view-copy" class="ghost small" title="Copy the file" aria-label="Copy the file" hidden></button>
+      <button type="button" id="file-view-close" class="ghost">Close</button>
+    </header>
+    <div id="file-view-body"></div>
+  </dialog>
+
+  <dialog id="choice-warn">
+    <form method="dialog">
+      <h2 id="choice-warn-title">Change the model?</h2>
+      <p>The next prompt re-reads the whole conversation, which is slower and costs more. The effort goes back to Default, for you to choose again.</p>
+      <div class="actions">
+        <button value="cancel" class="ghost" formnovalidate>Cancel</button>
+        <button value="go" id="choice-warn-go">Change the model</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="choice-error" class="glass" aria-labelledby="choice-error-title">
+    <form method="dialog">
+      <h2 id="choice-error-title">That wasn't kept</h2>
+      <p id="choice-error-text"></p>
+      <div class="actions">
+        <button value="ok" autofocus>OK</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="choice-other">
+    <form method="dialog">
+      <h2>Other models</h2>
+      <p id="choice-other-intro" class="muted"></p>
+      <div id="choice-other-list" class="choices" role="radiogroup" aria-label="Other models the agent lists"></div>
+      <label class="choice-name">Or a full model name <input type="text" id="choice-other-name" spellcheck="false" autocomplete="off"></label>
+      <div class="actions">
+        <button value="cancel" class="ghost" formnovalidate>Cancel</button>
+        <button value="go" id="choice-other-go">Use this model</button>
       </div>
     </form>
   </dialog>

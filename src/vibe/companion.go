@@ -222,13 +222,28 @@ func themeColorFor(lay layout.Layout, name string, inst state.Instance, agent st
 	}
 }
 
+// hasConversation says the sandbox's agent can be driven by the page: only
+// claude can so far (see docs/plan-conversation-other-agents.md).
+func hasConversation(inst state.Instance) bool {
+	return inst.Agent == "" || inst.Agent == "claude"
+}
+
 // conversationFor is the companion page's way of talking to the sandbox's
 // agent, or nil when it has none: only claude can be driven this way so far.
-func conversationFor(vibeHome, name string, inst state.Instance) companion.Converser {
-	if agent := inst.Agent; agent != "" && agent != "claude" {
+func conversationFor(vibeHome, name string, inst state.Instance, choice profileChoice) companion.Converser {
+	if !hasConversation(inst) {
 		return nil
 	}
-	return keepingTranscript(converse(name, inst.Target), sandboxTranscripts(name), state.TranscriptPath(vibeHome, name))
+	return keepingTranscript(converse(name, inst.Target, choice.forTurn), sandboxTranscripts(name), state.TranscriptPath(vibeHome, name))
+}
+
+// choiceFor is the page's way of choosing the model and effort of sandbox
+// name's agent, or nil when it has none to choose (see conversationFor).
+func choiceFor(vibeHome, name string, inst state.Instance, kept profileChoice) *companion.Choice {
+	if !hasConversation(inst) {
+		return nil
+	}
+	return sandboxChoice(name, inst.Target, kept, state.ModelOptionsPath(vibeHome, name))
 }
 
 // startCompanion serves the companion page for the sandbox, as the user's
@@ -325,7 +340,8 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		StartClipboard:         func() ([]string, error) { return startClipboard(name) },
 		ClipboardTrouble:       func() string { return clipboardTrouble(name) },
 		Workspace:              inst.Target,
-		Converse:               conversationFor(vibeHome, name, inst),
+		Converse:               conversationFor(vibeHome, name, inst, profileChoice{lay: lay, profile: inst.Profile}),
+		Choice:                 choiceFor(vibeHome, name, inst, profileChoice{lay: lay, profile: inst.Profile}),
 		Prepare:                readyForTurn(name),
 		SandboxGit:             sandboxGitFor(name, inst.Target),
 		PreferredDefaultBranch: preferredDefaultBranch(lay.HomePath("settings.yaml")),

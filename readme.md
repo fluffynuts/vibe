@@ -126,7 +126,7 @@ The first `vibe --install` (and vibe's first run, if you skip `--install`) also 
 `~/.vibe/settings.yaml` for your machine. It asks how much memory each sandbox gets, in 4g steps
 up to half your machine's memory, and how many CPUs, any number from 1 to one less than your machine
 has, starting on half of them (see [CPUs](#cpus-a-sandbox-gets)). It asks which agent sandboxes run by default, from the agents `sbx run
---help` lists, and which library features a guided profile starts with selected. Each question
+--help` lists, how vibe starts by default (with a terminal, or headless: the `mode` setting, which a profile or `--terminal`/`--headless` can override), and which library features a guided profile starts with selected. Each question
 starts on the package's choice. Creating a new sandbox asks again which agent it should run,
 starting on that default (or on the profile's own `agent`, when the profile exists already). It asks
 this first, before any profile is made, because a guided profile only offers the features that work
@@ -135,7 +135,7 @@ lowers the memory, if it's more than your machine can give (and a `cpus` already
 than your machine can spare). Every later `--install` makes the same checks on your `settings.yaml`,
 and changes nothing else in it.
 
-`vibe --setup` asks those questions again (default memory, CPUs, default agent, and the features a guided
+`vibe --setup` asks those questions again (default memory, CPUs, default agent, how vibe starts by default (with a terminal, or headless: the `mode` setting), and the features a guided
 profile starts with selected), starting on your current choices, and saves the answers in
 `~/.vibe/settings.yaml`. It then offers to store a default GitHub token for new sandboxes to push with
 (see [Letting the agent push](#letting-the-agent-push)). It needs a terminal, and
@@ -285,8 +285,8 @@ vibe -r/--re-init [path]   # remove and recreate the sandbox from its profile
 vibe -r -f/--force         # ...without prompting
 vibe -f                    # ...and, for an unknown profile, create a blank one
                            #    instead of asking
-vibe -R/--re-create [path] # delete the profile too, then re-init — the profile
-                           #    is gone, so this always re-prompts
+vibe -R/--re-create [path] # delete the profile too (backed up first, and your choices in
+                           #    it kept: see below), then re-init: it re-prompts for a new one
 vibe -N/--no-companion     # ...without serving the companion page this run
 vibe --no-start            # ...doing the setup (create, -r, -R, -C) but not starting the sandbox or companion;
                            # prints "type vibe to get started" unless -f is given (handy for cron)
@@ -310,7 +310,10 @@ vibe --headless --foreground
 vibe --restart [path]      # end the vibe already running for path, leaving its sandbox
                            #    running, and take over (asks first if that would
                            #    interrupt anything; -f: doesn't)
-vibe --headless --restart  # ...taking over headless
+vibe --restart --terminal  # ...taking over with a terminal, on a sandbox that was headless
+                           #    (--restart alone keeps the mode of the vibe it ended)
+vibe --terminal [path]     # start with a terminal attached: what plain vibe does, unless
+                           #    `mode: headless` is in the profile's user-preferences.yaml or settings.yaml, or ~/.vibe's
 vibe -r --headless         # rebuild the sandbox, then go headless (also with -R and -C):
                            #    what `vibe -r --no-start && vibe --headless` does
 vibe -M/--manage           # serve the Profiles page on its own, until Ctrl-C
@@ -500,7 +503,7 @@ vibe: create it how?
 Copying clones the chosen profile's whole directory — config, settings, install scripts and agent
 files — and renames it, which is the quickest way to start from something close to what you need.
 A blank profile is just a `config.yaml` naming it, plus empty `install-scripts/` and
-`agent-files/` directories to grow into; the sandbox it builds is the base kit and nothing more.
+`agent-files/` directories to grow into; the sandbox it builds is the base kit and nothing more. It records that it was created blank (a `# vibe: blank: yes` line in its `config.yaml`), so a later `--re-compose` knows there is nothing to compose again: it leaves the profile as it is (no backup, nothing asked about features) and makes the sandbox afresh from it, as `-r` does.
 
 Either way the new profile is written to `~/.vibe/profiles/<name>/`, and copying reads the source
 profile from wherever it currently wins — your overlay if you have a copy of it, the bundle
@@ -540,7 +543,7 @@ vibe: select claude theme
   yellow
 ```
 
-The answer is recorded in the profile's folder as `claude-theme`. A rebuild (`-r`, `-R` or `-C`)
+The answer is recorded in the profile's `user-preferences.yaml` (`theme:`; see *Choices kept for a profile*). A rebuild (`-r`, `-R` or `-C`)
 doesn't ask again. It reads the theme the old sandbox's agent is actually set to, including any
 change made with `/theme` since, before removing it. If it can't, it uses what the profile
 recorded, and it asks only when neither is known. `-f`, or running without a terminal, takes that
@@ -590,7 +593,7 @@ you're looking at:
 - **Conversation** — talk to the agent from the page, with the sandbox's clipboard page (see
   `clipboard-bridge` below) embedded beside it: paste images and files anywhere on the tab and they go
   to the clipboard. The prompt box grows as you type, up to half the column. The agent's replies, and your prompts, are shown as Markdown — headings, lists, tables, code — built
-  as text, so nothing in them can become markup on the page; links open only to this machine's own pages. A block of code has a copy button (two pages) at its top right. A review comment named by its number (#24) is a link to it on the Review tab.
+  as text, so nothing in them can become markup on the page; links open only to this machine's own pages. A block of code has a copy button (two pages) at its top right. A review comment named by its number (#24) is a link to it on the Review tab. The tools the agent uses between what it says are gathered into one line (`⚙ 8 tool uses · Bash ×6, Read ×2`, with `· 2 failed` and red when some failed), open while it is working so you see them as they happen, and put away once it speaks or the turn ends; click the line to see each tool and its result. A group you opened or closed yourself stays as you left it. The conversation search looks inside the groups only when its tools box is ticked, and going to a match opens the group. A file the agent names in code (`doc/plans/a.md`) is a button, never a link, once vibe has checked that it is a text file in the sandbox's folder (so `safe.directory`, `~/.gitconfig` and a file that isn't there stay plain code): it shows the file over the conversation, read-only, as Markdown if it is Markdown, with a button to copy it (open it in your own editor from there). So is a Markdown link to such a file (`[the plan](docs/plans/a.md)`, `[next](./b.md)`), showing the link's words; inside a file being shown, a path written `./` or `../` is from that file. A link to anywhere else stays its words and address. Only text files up to 1 MB inside the sandbox's folder are shown (a path that leaves it, by `..` or a link, is never offered), and vibe never runs anything for it.
   Your prompt is sent exactly as you typed it; only how it's shown changes, so fence pasted console output
   in ``` (and put globs like `*.go` in backticks) to keep it as it is. **My prompts as Markdown**, above the
   conversation, turns that off for your prompts, in that browser, if you'd rather see them as you typed them.
@@ -613,6 +616,41 @@ you're looking at:
   while you're on another tab, until you open it. Once the agent has answered you can
   send the next prompt, even if it left something running that it is waiting on (a review page, say):
   sending ends that. Links to pages on `localhost` in what the agent says can be clicked.
+  If the sandbox was stopped (sbx stops one left idle) when you send a prompt, vibe starts it and says so in the conversation while it does; that line goes as soon as the sandbox is up, and stays only if it couldn't be started, where it explains the error.
+  The **Model** and **Effort** drop-downs, under the prompt and centred between **Stop** and **Send** (so they
+  stay put while a turn runs; in a narrow column they take a row of their own), choose what claude is asked to
+  use (they're there for a Claude sandbox). They have no labels: the entries say what they are ("Opus 5.5", "High effort"), and screen
+  readers and tooltips still have the names Model and Effort. The model drop-down has no **Default** entry: you are always on a model, and the one claude uses
+  by default is marked "(default)". The first time the page sees none chosen it keeps that model in the profile's `user-preferences.yaml`, so what
+  you use stays what you use when claude's default later changes (only the "(default)" mark moves); a model switch always needs your choice.
+  The effort drop-down keeps **Default effort** (claude doesn't say what its default effort is). The lists are claude's own. vibe keeps the last ones it was given for each sandbox (in
+  `~/.vibe/companion/`), so the drop-downs are full the moment the page opens, and asks claude again in the
+  background, without waking a sandbox that's asleep; the first time there's nothing kept, so it just asks. Then, as a session goes on, they're asked for again at the end of a turn once the last answer is ten minutes old
+  (claude's default and models can change under a vibe left running), silently: no spinner, nothing locked, nothing said; a new default or a new model is
+  just taken in, and a failure goes to vibe's log. The one thing said is when the model or effort you're using was offered and isn't any more
+  (the bubble opens, amber), and a drop-down that is open waits until it's closed to change. If asking at the start
+  fails, the kept lists carry on, and the **i** button's bubble says how old they are and why (with **Retry**, which wakes
+  the sandbox to ask). The plain models are in the drop-down by the name the agent gives them, which carries the version ("Opus 5.5"; vibe asks claude what each alias stands for, in the same trip, and keeps it), biggest first where vibe knows the size (fable, opus, sonnet, haiku, as claude.ai lists them) and then any other by name, and **Other…** opens the rest the agent lists (each by what that is called now, then the alias it's kept as), or
+  takes a model's full name. Efforts are the ones claude's `--effort` takes. Everything in the drop-downs is in title case ("Low", "Opus 5.5"); what's kept and given to claude is the name as it is (`low`, `opus`). A change applies from the next
+  prompt, even while the agent is answering. Changing the model puts the effort back to **Default**, to be
+  chosen again, as what an effort means differs between models; and for a conversation already under way it asks
+  first, because the next prompt re-reads the whole conversation, which is slower and costs more (Cancel puts
+  the drop-down back). The choice is kept as `model:` and `effort:` in the profile's `user-preferences.yaml`, so it
+  outlives vibe, the page and a rebuild, and `--re-compose` carries it across; what's in the profile's
+  `settings.yaml`, and then the global one, is the default under it (a model or effort from it is shown as in force, choosing one here overrides it for this profile, and for the effort **Default** can't take it away; the bubble says where such a
+  value comes from). What's good to know is in a bubble over the **i** button beside them,
+  which takes no room, so nothing in the page moves when it comes and goes: that a change applies from your next
+  prompt (the bubble has **Don't show me this again**, remembered by that browser, after which the button still
+  carries a dot when there's something to know, which goes once the bubble has been looked at and closed, and opens the bubble when pressed); that the agent says it ran
+  another model than was asked for, which is said at the end of every such turn, in amber, and can't be switched
+  off; and, when there are no lists at all (nothing kept, and claude couldn't be asked), why (with **Retry**).
+  A choice that couldn't be kept is said in a dialog over the frosted page, to be answered. While the
+  agent's lists are on their way and none are kept (the first time in a sandbox), the whole widget is dimmed and
+  disabled with a spinner and "Loading models…", and is marked busy for screen readers; after 30 seconds it's
+  usable anyway, and the bubble says it's still asking. With lists kept, the drop-downs stay usable and only a
+  spinner shows while they're asked for again. Beside the drop-downs, in a slot of its own, the page says
+  something only when it's news: that the models are loading, or that the agent ran another model than was
+  asked for ("ran …", in amber). That it ran what was asked is what's expected, and the bubble has it if wanted.
 - **Review** — the changes in the sandbox's folder, worked out on this machine, read with go-git by a helper process (vibe itself, held to a memory limit and stopped when its time is up), which runs nothing the repository's own config names, since the sandbox can write that; no git is needed on the host. It covers uncommitted changes (
   untracked files with them; or a branch's, or a commit's), with the agent's review comments under the
   lines they're about: side by side (or in one column), with the hidden lines between changes a click away,
@@ -726,9 +764,11 @@ out-of-date sandbox isn't rebuilt under it (`vibe --restart` does that). Rebuild
 `-r`, `-R`, `--delete`) still asks what to do about it first.
 
 **`--restart`** ends whatever vibe has the folder (in a terminal or headless, saving its agent's
-memories, and leaving the sandbox running) and takes over: `vibe --headless --restart` starts a fresh
-headless vibe, to pick up a new vibe after `--upgrade` say, and `vibe --restart` a terminal session,
-on a sandbox that was headless too. It asks first when that would interrupt something: another
+memories, and leaving the sandbox running) and takes over **in the mode the one it ended was in**: after a headless vibe,
+a fresh headless vibe, to pick up a new vibe after `--upgrade` say; after a terminal session, a terminal session. So
+`vibe --restart` is all that needs typing, whichever it was. `--terminal` or `--headless` with it says otherwise (`vibe --restart --terminal`
+gets a terminal on a headless sandbox), and says so by being used; where it only repeats the mode that would
+have been kept, vibe says it needn't have been typed. With nothing running, it starts as plain `vibe` does. It asks first when that would interrupt something: another
 terminal's session, or an agent part-way through a turn (it asks the other vibe's page). `-f` doesn't
 ask; with no terminal and no `-f`, it says what would be interrupted and doesn't. A folder held for a
 rebuild isn't restarted. `vibe --stop && vibe --headless` restarts the sandbox too. `vibe -r --headless` (or `-R`, `-C`) rebuilds the sandbox and then goes headless, as `vibe -r --no-start && vibe --headless` does: the rebuild's questions come first, at your terminal, as they would without `--headless`, and nothing is started if the rebuild fails. It doesn't go with the other actions (`--delete`, `--info`, `--stop` and so on). `--foreground` keeps it in the
@@ -860,13 +900,10 @@ and `user.email`), showing what it would use; it only fills in what's missing. W
 terminal (`-f` says yes). With `--headless` it asks on the companion page instead, in a dialog over the whole
 page that has to be answered: *Give it my author*, *No, leave it*, or *Later*. *Later* leaves a reminder above the
 conversation's prompt (with *Fix…* to answer after all, and *Dismiss*), and it asks again whenever the sandbox is next
-started. Your answer is kept in the profile, in a file of its own (`git-author`, holding `import` or `leave`; it carries
-across a re-compose or an automatic update, which regenerate the rest of the profile, but `--re-create` deletes the whole
-profile, so it is asked again). `import` gives a sandbox missing an author yours without asking; `leave` never asks and leaves
-it as it is. To decide yourself instead, write `gitAuthor: import` or `gitAuthor: leave` in a profile's `settings.yaml`, or in
-`~/.vibe/settings.yaml` for every profile at once: what you write there wins over a kept answer, and the profile's own value
-over the global one.
-Whenever an answer is kept (a real yes or no, or `-f` saying yes, or a click on the page) vibe says so, once, with how to undo it: which profile it applies to, the file to delete to be asked again, and the setting that decides the other way. A kept answer applies to every sandbox of that profile.
+started. Your answer is kept in the profile's `user-preferences.yaml` as `gitAuthor: import` or `gitAuthor: leave` (see *Choices kept for a profile*; `--re-create` keeps it unless you say no). `import` gives a sandbox missing an author yours without asking; `leave` never asks and leaves
+it as it is. To decide without being asked, write `gitAuthor: import` or `gitAuthor: leave` in a profile's `settings.yaml`, or in
+`~/.vibe/settings.yaml` for every profile at once; a choice kept in the profile's preferences wins over them, and the profile's `settings.yaml` over the global one.
+Whenever an answer is kept (a real yes or no, or `-f` saying yes, or a click on the page) vibe says so, once, with how to undo it: which profile it applies to, the line to delete in its `user-preferences.yaml` to be asked again, and what to change it to for the other answer. A kept answer applies to every sandbox of that profile.
 
 vibe remembers when the token expires (GitHub says, when vibe checks it). From three days before, every
 session start says so; once it has expired, the session start asks whether to renew it there and then
@@ -891,6 +928,23 @@ about to. A rebuild
 sandbox gets no token unless `--git-token-env VAR` names an environment variable holding one (never
 the token itself on the command line, where anyone on the machine can read it). That token is
 checked the same way, and turned down if GitHub won't let it push. `--git-rules` picks the rules.
+
+### Choices kept for a profile
+
+What you choose through vibe for a profile (the Claude theme, whether a sandbox with no git author is given yours, and the model and effort the Conversation tab asks for) is kept in `user-preferences.yaml` in the profile's folder:
+
+```yaml
+theme: amber
+gitAuthor: import
+model: opus
+effort: high
+```
+
+It's yours to edit (delete a line, or the file, to go back to being asked, or to the default), and vibe keeps what else you put in it, comments included, when it changes a line. It is not part of what composing a profile wrote, so choosing something never makes a profile look as if it had been edited by hand (which would leave it out of the automatic updates), and it carries across `-C/--re-compose` and an automatic update; `-R/--re-create` makes the profile afresh but keeps this file: with `-f` it is kept without asking, and otherwise vibe lists what is in it and asks whether to keep it (Enter keeps it). Answering no deletes it with the rest of the old profile. What a choice is, when more than one place says: the profile's preferences, then the profile's `settings.yaml`, then `~/.vibe/settings.yaml`.
+
+A profile vibe generated (guided) has a `README.md` in its folder saying so: its files may be edited, but a re-compose or an automatic update replaces them (after backing the profile up; `vibe --restore` lists the backups), while `user-preferences.yaml` and `agent-instructions.md` are yours and carried across. It's not part of what makes a profile out of date or edited, so rewrite or delete it freely; vibe adds it again only when there isn't one, and never to a profile you made by hand.
+
+Earlier vibes kept these in files of their own (`claude-theme`, `git-author`) and the model and effort in the profile's `settings.yaml`. They are moved into `user-preferences.yaml` the next time the profile is updated or re-composed, or a choice is made; a `model:` or `effort:` that can't be taken out of `settings.yaml` without leaving the profile looking edited by hand (you changed something else there too) is left, and said so; the preferences are read first.
 
 ### NuGet packages and private feeds
 
@@ -1089,6 +1143,13 @@ into a real script or config file.
 **`settings.yaml`** merges these fields (all optional):
 
 ```yaml
+mode: headless       # how vibe starts: headless (serving the companion page, no terminal) or terminal (the
+                     #    default). Layered like the rest: a profile's settings.yaml overrides this one, so one
+                     #    profile can be headless and the others not; a profile's user-preferences.yaml (where a
+                     #    `mode:` is safe to put: it never makes a generated profile look edited by hand) overrides
+                     #    both. --terminal and --headless say otherwise
+                     #    for one start; a folder with no sandbox yet starts in a terminal, which makes it;
+                     #    --restart keeps the mode of the vibe it ends
 memory: 12g          # sandbox memory limit; a new sandbox asks, starting here, capped at
                      #    half the host's memory
 cpus: 8              # CPUs a sandbox gets; a new sandbox asks, from 1 to one less than the
@@ -1097,6 +1158,8 @@ agent: claude         # which coding agent to run
 nugetDir: ~/.nuget    # the host's NuGet folder: its packages are given to the sandbox, if it has them
 nuget: fallback       # fallback (default): packages read-only, nothing else; overlay: the same, overlaid at their own path (experimental); shared: all of nugetDir, read-write
 packages: ask         # ask (default): packages the agent asks for wait for you on the Admin tab; allow: fetched at once
+model: sonnet         # the model the Conversation tab asks claude for, as a default; what is chosen in the drop-down there is kept in the profile's user-preferences.yaml, and wins over this. Unset: claude's own default
+effort: high          # the effort the Conversation tab asks claude for (low, medium, high, xhigh or max, as claude's --effort takes). Unset: claude's own default
 memoryRoot: ~/.vibe/memories   # where per-sandbox agent memories are backed up
 defaultFeatures:      # library features a guided profile starts with selected
   - dotnet
@@ -1206,11 +1269,11 @@ they are *now* and re-inits the sandbox, so a feature that has since gained an e
 published port or an instruction reaches the profiles built from it. The profile is regenerated
 rather than merged into — re-running the composition over the existing files would append every
 fragment a second time, duplicating permissions and published ports — so hand-edits to it are
-lost, and it warns of that up front, in yellow, before anything else (enter accepts; `-f` skips the question). The profile is zipped into `~/.vibe/backup/<sandbox>-<date>_<time>.zip` first (the last three per sandbox are kept), and `vibe --restore [path]` lists them, rolls the profile back to the one you pick (after confirming) and offers to re-compose from it; `-f` restores the newest without asking. Before rebuilding it shows the same feature
+lost, and it warns of that up front, in yellow, before anything else (enter accepts; `-f` skips the question). The profile is zipped into `~/.vibe/backup/<sandbox>-<date>_<time>.zip` first (the last three per sandbox are kept), (`-R/--re-create` zips the profile the same way before it deletes it), and `vibe --restore [path]` lists them, rolls the profile back to the one you pick (after confirming) and, for a profile that was composed from the library, offers to re-compose from it, which goes on as `vibe --restart --re-compose` does: a vibe running for the folder is ended first (asking, if that would interrupt anything), and the new one starts in the mode it was in (a blank, copied or hand-written profile is just put back as it was); `-f` restores the newest without asking. Before rebuilding it shows the same feature
 checklist as guided creation, with the profile's current features selected, so you can add a feature or
-drop one you no longer use (and reorder them); with `-f` the recorded features are kept as they are. Profiles written by hand, copied or
-created blank record nothing and are refused rather than guessed at; add the comment line above
-to adopt one.
+drop one you no longer use (and reorder them); with `-f` the recorded features are kept as they are. Profiles written by hand or copied
+record nothing and are refused rather than guessed at; add the comment line above
+to adopt one. The refusal comes first, before any running vibe is stopped or anything asked. A profile created blank is not refused: nothing was composed into it, so a re-compose leaves it and rebuilds the sandbox from it. One made blank before vibe recorded that has no such line, so it is refused as a hand-written one is; add `# vibe: blank: yes` to its `config.yaml` to have it treated as blank.
 
 Overriding one bundled feature (a base one too, as `~/.vibe/library/base/<feature>/`) means dropping your own `~/.vibe/library/<feature>/` next to it —
 unlike `defaults/`, that replaces only the feature you copied, so features the bundle adds later

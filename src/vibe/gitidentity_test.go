@@ -13,8 +13,8 @@ import (
 
 	"vibe/internal/cliargs"
 	"vibe/internal/layout"
-	"vibe/internal/profilegen"
 	"vibe/internal/state"
+	"vibe/internal/userprefs"
 )
 
 // identityRig is the world checkAgentIdentity asks: the sandbox's git
@@ -180,14 +180,14 @@ func TestLoadSettingsRefusesAnUnknownGitAuthorChoice(t *testing.T) {
 	}
 }
 
-func TestTheChoiceIsKeptInItsOwnFileInTheProfileAndLeavesSettingsAlone(t *testing.T) {
+func TestTheChoiceIsKeptInTheProfilesPreferencesAndLeavesSettingsAlone(t *testing.T) {
 	lay := updateLayout(t)
 	writeFile(t, lay.HomePath("profiles", "p", "settings.yaml"), "# mine\nmemory: 8g\n")
 	if err := keepGitAuthorChoice(lay, "p", gitAuthorImport); err != nil {
 		t.Fatal(err)
 	}
-	if data, _ := os.ReadFile(lay.HomePath("profiles", "p", profilegen.GitAuthorFile)); strings.TrimSpace(string(data)) != gitAuthorImport {
-		t.Errorf("the file holds %q", data)
+	if data, _ := os.ReadFile(userprefs.Path(lay.HomePath("profiles", "p"))); !strings.Contains(string(data), "gitAuthor: import") {
+		t.Errorf("the preferences hold %q", data)
 	}
 	if data, _ := os.ReadFile(lay.HomePath("profiles", "p", "settings.yaml")); string(data) != "# mine\nmemory: 8g\n" {
 		t.Errorf("settings.yaml was touched: %q", data)
@@ -197,12 +197,39 @@ func TestTheChoiceIsKeptInItsOwnFileInTheProfileAndLeavesSettingsAlone(t *testin
 	}
 }
 
-func TestAChoiceWrittenInSettingsBeatsTheAnswerKept(t *testing.T) {
+// The one rule for every preference: what was kept through vibe for the
+// profile, then the profile's settings.yaml, then the global one.
+func TestTheAnswerKeptBeatsWhatSettingsSayAndTheProfilesSettingsBeatTheGlobalOnes(t *testing.T) {
 	lay := updateLayout(t)
-	keepGitAuthorChoice(lay, "p", gitAuthorImport)
 	writeFile(t, lay.HomePath("settings.yaml"), "gitAuthor: leave\n")
 	if got, _ := gitAuthorPreference(lay, "p"); got != gitAuthorLeave {
-		t.Errorf("preference %q: what the user wrote should win over what they answered once", got)
+		t.Errorf("the global setting alone: %q", got)
+	}
+	writeFile(t, lay.HomePath("profiles", "p", "settings.yaml"), "gitAuthor: import\n")
+	if got, _ := gitAuthorPreference(lay, "p"); got != gitAuthorImport {
+		t.Errorf("the profile's over the global: %q", got)
+	}
+	keepGitAuthorChoice(lay, "p", gitAuthorLeave)
+	if got, _ := gitAuthorPreference(lay, "p"); got != gitAuthorLeave {
+		t.Errorf("an answer kept over the settings: %q", got)
+	}
+}
+
+func TestAnAnswerAnEarlierVibeKeptInItsOwnFileIsStillReadAndMovedWhenChanged(t *testing.T) {
+	lay := updateLayout(t)
+	old := lay.HomePath("profiles", "p", "git-author")
+	writeFile(t, old, "import\n")
+	if got, err := gitAuthorPreference(lay, "p"); err != nil || got != gitAuthorImport {
+		t.Errorf("read %q, %v", got, err)
+	}
+	if err := keepGitAuthorChoice(lay, "p", gitAuthorLeave); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); err == nil {
+		t.Error("the old file was left to be read again")
+	}
+	if got, _ := gitAuthorPreference(lay, "p"); got != gitAuthorLeave {
+		t.Errorf("after: %q", got)
 	}
 }
 
@@ -213,11 +240,12 @@ func TestNoChoiceAnywhereIsToAsk(t *testing.T) {
 	}
 }
 
-func TestAnAnswerFileThatIsNotAChoiceIsSaidNotAsked(t *testing.T) {
+func TestAnAnswerThatIsNotAChoiceIsSaidNotAsked(t *testing.T) {
 	lay := updateLayout(t)
-	writeFile(t, lay.HomePath("profiles", "p", profilegen.GitAuthorFile), "maybe\n")
-	if _, err := gitAuthorPreference(lay, "p"); err == nil {
-		t.Error("an answer that isn't one was read as a choice")
+	writeFile(t, userprefs.Path(lay.HomePath("profiles", "p")), "gitAuthor: maybe\n")
+	_, err := gitAuthorPreference(lay, "p")
+	if err == nil || !strings.Contains(err.Error(), userprefs.File) {
+		t.Errorf("err = %v, want it to say which file holds it", err)
 	}
 }
 
@@ -421,7 +449,7 @@ func TestTheChoiceIsNeverWrittenIntoTheBundledProfile(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "vibe's own") {
 		t.Errorf("err = %v, want it to say the profile is vibe's own and can't be written to", err)
 	}
-	if _, statErr := os.Stat(filepath.Join(root, "profiles", bundledProfile, profilegen.GitAuthorFile)); statErr == nil {
+	if _, statErr := os.Stat(filepath.Join(root, "profiles", bundledProfile, userprefs.File)); statErr == nil {
 		t.Error("the answer was written into the bundle")
 	}
 }
@@ -614,13 +642,13 @@ func TestNothingIsSaidOfKeepingWhenNothingWasKeptAtTheTerminal(t *testing.T) {
 func TestWhatIsSaidOfAKeptAnswerNamesTheProfileTheFileAndTheWaysBack(t *testing.T) {
 	lay := updateLayout(t)
 	imported := keptGitAuthorNote(lay, "p", gitAuthorImport)
-	for _, want := range []string{"profile 'p'", filepath.Join(lay.HomePath("profiles", "p"), profilegen.GitAuthorFile), "gitAuthor: leave", "settings.yaml"} {
+	for _, want := range []string{"profile 'p'", userprefs.File, "delete the `gitAuthor:` line", "gitAuthor: leave"} {
 		if !strings.Contains(imported, want) {
 			t.Errorf("import: %q lacks %q", imported, want)
 		}
 	}
 	left := keptGitAuthorNote(lay, "p", gitAuthorLeave)
-	for _, want := range []string{"profile 'p'", "gitAuthor: import", profilegen.GitAuthorFile} {
+	for _, want := range []string{"profile 'p'", "gitAuthor: import", userprefs.File} {
 		if !strings.Contains(left, want) {
 			t.Errorf("leave: %q lacks %q", left, want)
 		}

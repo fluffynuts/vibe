@@ -12,14 +12,17 @@ import (
 	"vibe/internal/backup"
 	"vibe/internal/claudetheme"
 	"vibe/internal/cliargs"
+	"vibe/internal/fscopy"
 	"vibe/internal/instructions"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
 	"vibe/internal/library"
 	agentmem "vibe/internal/memory"
+	"vibe/internal/pathresolve"
 	"vibe/internal/profilegen"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
+	"vibe/internal/userprefs"
 )
 
 // resolveReInitProfile returns the profile a re-init (or re-create) should
@@ -48,8 +51,8 @@ func doReInit(lay layout.Layout, args cliargs.Args, name, target string) error {
 // the profile and the sandbox, so this must not ask about the sandbox a
 // second time. askZone asks which timezone the rebuilt sandbox should be
 // on, rather than keeping the one it had.
-func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool) error {
-	if err := rebuildSandbox(context.Background(), lay, args, name, target, skipSandboxConfirm, askZone); err != nil {
+func reInit(lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool, after ...afterProfile) error {
+	if err := rebuildSandbox(context.Background(), lay, args, name, target, skipSandboxConfirm, askZone, after...); err != nil {
 		return err
 	}
 	return finish(lay, args, name)
@@ -65,9 +68,14 @@ var pickRebuildAgent = pickAgent
 // ctx ending (the companion page's Cancel) ends the sbx command under way,
 // and the rebuild stops before its next step: what is left is said by the
 // caller, which can ask sbx.
-func rebuildSandbox(ctx context.Context, lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool) error {
-	return rebuildSandboxTo(ctx, lay, args, name, target, skipSandboxConfirm, askZone, nil)
+func rebuildSandbox(ctx context.Context, lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool, after ...afterProfile) error {
+	return rebuildSandboxWith(ctx, lay, args, name, target, skipSandboxConfirm, askZone, nil, after)
 }
+
+// afterProfile is something done once a rebuild has made sure the profile is
+// there (made it, if --re-create had deleted it), and before anything is read
+// from it.
+type afterProfile func(lay layout.Layout, profile string) error
 
 // relocation moves a sandbox's folder, and what vibe keeps for it, once the
 // old sandbox is gone, and says its new name and folder.
@@ -77,6 +85,12 @@ type relocation func() (name, target string, err error)
 // between removing the old sandbox and creating the new one, which is made
 // with the name and for the folder relocate gives: --migrate.
 func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool, relocate relocation) error {
+	return rebuildSandboxWith(ctx, lay, args, name, target, skipSandboxConfirm, askZone, relocate, nil)
+}
+
+// rebuildSandboxWith is rebuildSandboxTo, with after done once the profile is
+// there.
+func rebuildSandboxWith(ctx context.Context, lay layout.Layout, args cliargs.Args, name, target string, skipSandboxConfirm, askZone bool, relocate relocation, after []afterProfile) error {
 	vibeHome := lay.Home
 	// Before anything is removed: a sandbox can't be built for a folder that
 	// isn't there, so removing it first would leave nothing at all.
@@ -106,6 +120,14 @@ func rebuildSandboxTo(ctx context.Context, lay layout.Layout, args cliargs.Args,
 	}
 	if err := ensureProfile(lay, profile, args.Force, agent); err != nil {
 		return err
+	}
+	for _, f := range after {
+		if f == nil {
+			continue
+		}
+		if err := f(lay, profile); err != nil {
+			return err
+		}
 	}
 	doc, merged, err := loadKit(lay, profile)
 	if err != nil {
@@ -249,7 +271,10 @@ func folderGone(target string) string {
 // silently reusing the old one, and any existing sandbox is removed and
 // rebuilt from it. Both destructive steps share a single confirmation up
 // front rather than asking once per step; yes is its default, as -R asked
-// for this.
+// for this. The profile is backed up first (the sandbox's last three backups
+// are kept, as for a re-compose; 'vibe --restore' lists them). What the user
+// chose through vibe for the profile (see userprefs) isn't part of what is
+// made again: it is kept, with -f, and otherwise unless they say no.
 func doReCreate(lay layout.Layout, args cliargs.Args, name, target string) error {
 	profile, err := resolveReInitProfile(lay.Home, args, name, target)
 	if err != nil {
@@ -257,12 +282,23 @@ func doReCreate(lay layout.Layout, args cliargs.Args, name, target string) error
 	}
 
 	if !confirmDefault(args.Force, true,
-		"This action will destroy any existing profile or sandbox for the current project. Continue?") {
+		"This action will destroy any existing sandbox for the current project, and make its profile afresh (the old one is backed up first). Continue?") {
 		return fmt.Errorf("aborted — nothing removed")
 	}
 
+	keep, err := preferencesToKeep(lay, profile, args.Force)
+	if err != nil {
+		return err
+	}
 	dir := lay.HomePath("profiles", profile)
 	if info, err := os.Stat(dir); dir != "" && err == nil && info.IsDir() {
+		// As a re-compose does: what is about to go can be had back, and if it
+		// can't be kept, nothing goes.
+		zip, err := backup.Create(lay.HomePath("backup"), name, dir, time.Now())
+		if err != nil {
+			return fmt.Errorf("could not back up profile '%s' first (nothing was removed): %w", profile, err)
+		}
+		note("backed up profile '%s' to %s ('vibe --restore' rolls it back)", profile, zip)
 		if err := os.RemoveAll(dir); err != nil {
 			return err
 		}
@@ -271,7 +307,83 @@ func doReCreate(lay layout.Layout, args cliargs.Args, name, target string) error
 		note("no overlay profile '%s' to delete", profile)
 	}
 
-	return reInit(lay, args, name, target, true, !args.Force)
+	return reInit(lay, args, name, target, true, !args.Force, restorePreferences(keep))
+}
+
+// askKeepPreferences asks whether to keep what the user chose for a profile
+// across --re-create, which keeps it unless they say no. Tests stand in for it.
+var askKeepPreferences = func(question string) bool { return confirmDefault(false, true, question) }
+
+// preferencesToKeep is the profile's user preferences as they are, to be put
+// back in the profile made afresh: all of them, byte for byte, so a comment or a
+// key a newer vibe wrote comes through. With -f they are kept; otherwise the user
+// is asked, with what is in the file shown, and says no to let them go. Nothing
+// to keep, nothing is asked. Read before anything is removed, so a file that
+// can't be read stops it with the profile still there.
+func preferencesToKeep(lay layout.Layout, profile string, force bool) ([]byte, error) {
+	dir := lay.HomePath("profiles", profile)
+	if dir == "" || !fileExists(dir) {
+		return nil, nil
+	}
+	// Earlier vibes' files, and the model and effort in settings.yaml, move in first.
+	migratePreferences(lay, profile)
+	data, err := fscopy.ReadFile(userprefs.Path(dir))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("couldn't read %s, so can't tell what to keep (nothing was removed): %w", pathresolve.Tilde(userprefs.Path(dir)), err)
+	}
+	listing, any := describePreferences(dir)
+	if !any {
+		return nil, nil
+	}
+	if force {
+		note("keeping your choices from the old profile '%s' (%s): delete %s, or lines in it, to drop them", profile, listing, pathresolve.Tilde(userprefs.Path(dir)))
+		return data, nil
+	}
+	if !askKeepPreferences(fmt.Sprintf("Keep your choices for profile '%s' (%s)?", profile, listing)) {
+		return nil, nil
+	}
+	return data, nil
+}
+
+// describePreferences lists what the profile's user preferences hold ("theme:
+// amber, model: opus"), and whether there is anything: a file with only comments
+// holds nothing to keep, and one that can't be read is said so, and is kept.
+func describePreferences(dir string) (listing string, any bool) {
+	prefs, err := userprefs.Load(dir)
+	if err != nil {
+		return "a file vibe can't read: " + err.Error(), true
+	}
+	var parts []string
+	for _, kv := range []struct{ key, value string }{{"theme", prefs.Theme}, {"gitAuthor", prefs.GitAuthor}, {"model", prefs.Model}, {"effort", prefs.Effort}} {
+		if kv.value != "" {
+			parts = append(parts, kv.key+": "+kv.value)
+		}
+	}
+	if n := len(prefs.Others); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d other setting(s)", n))
+	}
+	return strings.Join(parts, ", "), len(parts) > 0
+}
+
+// restorePreferences puts the preferences kept (see preferencesToKeep) into
+// the profile made afresh; nil when there was nothing to keep.
+func restorePreferences(data []byte) afterProfile {
+	if data == nil {
+		return nil
+	}
+	return func(lay layout.Layout, profile string) error {
+		dir := lay.HomePath("profiles", profile)
+		if dir == "" {
+			return fmt.Errorf("there is no vibe home to put your choices back in")
+		}
+		if err := fscopy.WriteWholeMode(userprefs.Path(dir), data, 0o644); err != nil {
+			return fmt.Errorf("couldn't put your choices back in %s: %w", pathresolve.Tilde(userprefs.Path(dir)), err)
+		}
+		return nil
+	}
 }
 
 // doReCompose rebuilds a guided profile from the library features it records
@@ -300,6 +412,27 @@ func reCompose(lay layout.Layout, args cliargs.Args, name, target string, warn b
 	return reInit(lay, args, name, target, true, !args.Force)
 }
 
+// checkReComposable says why profile can't be re-composed, or nil: there must
+// be one, and it must record the library features it was composed from, or have
+// been created blank (see recomposeProfile); one that was written by hand or
+// copied has no features to say, and is told how to adopt some.
+func checkReComposable(lay layout.Layout, profile string) error {
+	if !lay.ProfileExists(profile) {
+		return fmt.Errorf("no profile '%s' to re-compose — run vibe -R to create one", profile)
+	}
+	dir := lay.ProfileDir(profile)
+	switch {
+	case profilegen.IsGuided(dir):
+		return nil
+	case profilegen.IsBlank(dir):
+		return nil
+	}
+	return fmt.Errorf("profile '%s' does not record which features it was composed from.\n"+
+		"Only profiles from guided creation do — add a '# vibe: features: a, b' line to\n"+
+		"%s to adopt one, or use vibe -R to build a fresh profile from the library.",
+		profile, filepath.Join(dir, "config.yaml"))
+}
+
 // recomposeProfile is reCompose up to the rebuild: the profile is backed up
 // and composed afresh. chosen is the features to compose it from, already
 // picked (as the companion page does); nil asks, unless args.Force keeps
@@ -309,13 +442,28 @@ func recomposeProfile(lay layout.Layout, args cliargs.Args, name, target string,
 	if err != nil {
 		return err
 	}
-	if !lay.ProfileExists(profile) {
-		return fmt.Errorf("no profile '%s' to re-compose — run vibe -R to create one", profile)
+	if err := checkReComposable(lay, profile); err != nil {
+		return err
 	}
 	// Before anything else: a profile from before the kits' instructions
 	// had a file of their own has them moved out of the user's way.
 	if err := prepareInstructions(lay, profile); err != nil {
 		return err
+	}
+	if blank := profilegen.IsBlank(lay.ProfileDir(profile)) && !profilegen.IsGuided(lay.ProfileDir(profile)); blank && chosen == nil {
+		// Nothing was composed into it, so there is nothing to compose again:
+		// what a re-compose is for is the sandbox, which is made afresh from the
+		// profile as it is.
+		if warn && !args.Force {
+			fmt.Fprintf(os.Stderr, "\x1b[1;93mvibe: WARNING: this destroys sandbox '%s' and makes it again from profile '%s'.\x1b[0m\n", name, profile)
+			fmt.Fprintf(os.Stderr, "\x1b[1;93m  The profile was created blank, so it is left as it is\x1b[0m\n")
+			fmt.Fprintf(os.Stderr, "\x1b[1;93m  The existing sandbox will be destroyed and cannot be restored\x1b[0m\n")
+		}
+		if warn && !confirmDefault(args.Force, true, "Continue?") {
+			return fmt.Errorf("aborted — nothing changed")
+		}
+		note("profile '%s' was created blank, so there is nothing to compose again: it is left as it is", profile)
+		return nil
 	}
 	features := settleFeatures(lay, profile)
 	defaultAgent, err := defaultAgentFor(lay, profile)
@@ -323,12 +471,6 @@ func recomposeProfile(lay layout.Layout, args cliargs.Args, name, target string,
 		return err
 	}
 	agent := recordedAgent(lay.Home, name, defaultAgent)
-	if !profilegen.IsGuided(lay.ProfileDir(profile)) {
-		return fmt.Errorf("profile '%s' does not record which features it was composed from.\n"+
-			"Only profiles from guided creation do — add a '# vibe: features: a, b' line to\n"+
-			"%s to adopt one, or use vibe -R to build a fresh profile from the library.",
-			profile, filepath.Join(lay.ProfileDir(profile), "config.yaml"))
-	}
 	available := lay.Features()
 	present, missing := splitMissingFeatures(features, available)
 	if len(missing) > 0 && args.Force && chosen == nil {
@@ -376,18 +518,22 @@ func recomposeProfile(lay layout.Layout, args cliargs.Args, name, target string,
 // replaceProfile backs profile up, under backupName (the sandbox it's for),
 // and composes it afresh from features.
 func replaceProfile(lay layout.Layout, profile, backupName string, features []string) error {
-	// The recorded theme isn't something the features produce, so it would
-	// go with the rest of the old profile; carry it across. So too the
-	// user's own instructions for the profile — read now, before anything
-	// is removed, so that failing to read them changes nothing.
-	theme, hadTheme := claudetheme.FromProfile(lay.ProfileDir(profile))
-	userInstructions, err := os.ReadFile(filepath.Join(lay.ProfileDir(profile), instructions.File))
+	// What earlier vibes kept in files of their own, and the model and effort
+	// they kept in settings.yaml, move into the preferences first, so what is
+	// carried is all there is.
+	migratePreferences(lay, profile)
+	// The user's choices (the theme, the git author answer, the model and
+	// effort) aren't something the features produce, so they would go with the
+	// rest of the old profile; carry them across, as the user's own
+	// instructions for the profile are. Both are read now, before anything is
+	// removed, so that failing to read them changes nothing.
+	userInstructions, err := fscopy.ReadFile(filepath.Join(lay.ProfileDir(profile), instructions.File))
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("could not read profile '%s's %s (nothing changed): %w", profile, instructions.File, err)
 	}
-	gitAuthor, err := os.ReadFile(filepath.Join(lay.ProfileDir(profile), profilegen.GitAuthorFile))
+	preferences, err := fscopy.ReadFile(userprefs.Path(lay.ProfileDir(profile)))
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("could not read profile '%s's %s (nothing changed): %w", profile, profilegen.GitAuthorFile, err)
+		return fmt.Errorf("could not read profile '%s's %s (nothing changed): %w", profile, userprefs.File, err)
 	}
 	dir := lay.HomePath("profiles", profile)
 	if info, err := os.Stat(dir); dir != "" && err == nil && info.IsDir() {
@@ -406,17 +552,12 @@ func replaceProfile(lay layout.Layout, profile, backupName string, features []st
 	if err != nil {
 		return err
 	}
-	if hadTheme {
-		if err := claudetheme.SaveToProfile(created, theme); err != nil {
-			note("  WARNING: could not carry the claude theme across: %s", err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(created, instructions.File), userInstructions, 0o644); err != nil {
+	if err := fscopy.WriteWholeMode(filepath.Join(created, instructions.File), userInstructions, 0o644); err != nil {
 		return fmt.Errorf("could not carry profile '%s's %s across (the backup above has it): %w", profile, instructions.File, err)
 	}
-	if gitAuthor != nil {
-		if err := os.WriteFile(filepath.Join(created, profilegen.GitAuthorFile), gitAuthor, 0o644); err != nil {
-			return fmt.Errorf("could not carry profile '%s's %s across (the backup above has it): %w", profile, profilegen.GitAuthorFile, err)
+	if preferences != nil {
+		if err := fscopy.WriteWholeMode(userprefs.Path(created), preferences, 0o644); err != nil {
+			return fmt.Errorf("could not carry profile '%s's %s across (the backup above has it): %w", profile, userprefs.File, err)
 		}
 	}
 	note("re-composed profile '%s' (%s) in %s", profile, strings.Join(features, ", "), created)
@@ -424,19 +565,22 @@ func replaceProfile(lay layout.Layout, profile, backupName string, features []st
 }
 
 // doRestore is --restore: roll the profile back to one of its backups, then
-// offer to re-compose from it.
-func doRestore(lay layout.Layout, args cliargs.Args, name, target string) error {
+// offer to re-compose from it. It says whether the user wants that: the
+// re-compose is then done as `vibe --restart --re-compose` would, so a vibe
+// already running here is ended first (asking, as --restart does), and the
+// new one starts in the mode it was in.
+func doRestore(lay layout.Layout, args cliargs.Args, name, target string) (reCompose bool, err error) {
 	profile, err := resolveReInitProfile(lay.Home, args, name, target)
 	if err != nil {
-		return err
+		return false, err
 	}
 	backups, err := backup.List(lay.HomePath("backup"), name)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if len(backups) == 0 {
 		note("There are no backups to restore")
-		return nil
+		return false, nil
 	}
 	chosen := backups[0]
 	if !args.Force {
@@ -446,22 +590,26 @@ func doRestore(lay layout.Layout, args cliargs.Args, name, target string) error 
 		}
 		idx, ok := chooseFrom(fmt.Sprintf("Backups of profile '%s' (newest first):", profile), labels, 0)
 		if !ok {
-			return fmt.Errorf("nothing chosen — nothing changed")
+			return false, fmt.Errorf("nothing chosen — nothing changed")
 		}
 		chosen = backups[idx]
 	}
 	if !confirmDefault(args.Force, true, "Are you sure you want to roll back to this backup? This action cannot be undone") {
-		return fmt.Errorf("aborted — nothing changed")
+		return false, fmt.Errorf("aborted — nothing changed")
 	}
 	dir := lay.NewProfileDir(profile)
 	if err := backup.Restore(chosen.Path, dir); err != nil {
-		return err
+		return false, err
 	}
 	note("restored profile '%s' from the backup of %s", profile, chosen.Label())
-	if !confirmDefault(args.Force, true, "Re-compose now?") {
-		return nil
+	// A profile that was blank, copied or written by hand (which is what a
+	// backup made by --re-create can hold) isn't made from the library: it is
+	// as it was, and there is nothing to re-compose it from.
+	if !profilegen.IsGuided(dir) {
+		note("it wasn't composed from the library, so there is nothing to re-compose: it is as it was in the backup")
+		return false, nil
 	}
-	return reCompose(lay, args, name, target, false)
+	return confirmDefault(args.Force, true, "Re-compose now?"), nil
 }
 
 // settleFeatures makes a profile's record of its features agree with what

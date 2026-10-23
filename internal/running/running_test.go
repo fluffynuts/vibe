@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"vibe/internal/fscopy"
 )
 
 // TestMain doubles as a stand-in for another vibe: re-run with
@@ -220,9 +222,27 @@ func TestAVibeThatNeverAnswersIsSaidToBeStuck(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "may be stuck") {
 		t.Errorf("err = %v", err)
 	}
-	if _, err := os.Stat(cancelPath(home, os.Getpid())); !os.IsNotExist(err) {
-		t.Errorf("the unanswered request was left behind: %v", err)
+	requireGone(t, cancelPath(home, os.Getpid()), "the unanswered request was left behind")
+}
+
+// requireGone fails unless path is gone. A file that Windows has been told to
+// delete while something (a virus scanner, say) still has it open stays, for a
+// moment, as a name that can't be opened: access denied, not "not found". That
+// is a file on its way out, so it is waited for, boundedly; a file that is there
+// is not.
+func requireGone(t *testing.T, path, why string) {
+	t.Helper()
+	var err error
+	for waited := time.Duration(0); waited <= 2*time.Second; waited += 20 * time.Millisecond {
+		if _, err = os.Stat(path); os.IsNotExist(err) {
+			return
+		}
+		if err == nil || !fscopy.InUse(err) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
+	t.Errorf("%s: %v", why, err)
 }
 
 // A process that has a session can claim other folders too (the Profiles

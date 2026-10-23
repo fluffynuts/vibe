@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"vibe/internal/layout"
+	"vibe/internal/userprefs"
 )
 
 // testLayout builds a throwaway overlay + bundle, the bundle holding one
@@ -359,5 +360,51 @@ func TestDropFromRecordRewritesTheProfile(t *testing.T) {
 	}
 	if !IsGuided(dir) || len(ComposedFrom(dir)) != 0 {
 		t.Errorf("want a guided profile recording nothing, got guided=%v recorded=%v", IsGuided(dir), ComposedFrom(dir))
+	}
+}
+
+// A copy keeps the choices made for the profile it was copied from (on purpose:
+// it is the same kind of profile, and vibe says so when it makes one).
+func TestACopyCarriesTheChoicesMadeForItsSource(t *testing.T) {
+	l := testLayout(t)
+	source, err := CopyFrom(l, "widget", "widget-two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := userprefs.Update(source, func(p *userprefs.Prefs) { p.Model, p.GitAuthor = "opus", "leave" }); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := CopyFrom(l, "widget-two", "widget-three")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := userprefs.Load(dir)
+	if err != nil || got.Model != "opus" || got.GitAuthor != "leave" {
+		t.Errorf("the copy holds %+v, %v", got, err)
+	}
+}
+
+func TestABlankProfileRecordsThatItWasCreatedBlankAndStillLoadsAsAKit(t *testing.T) {
+	l := testLayout(t)
+	dir, err := CreateBlank(l, "plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !IsBlank(dir) || IsGuided(dir) {
+		t.Errorf("blank = %v, guided = %v", IsBlank(dir), IsGuided(dir))
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "config.yaml")); !strings.Contains(string(data), "name: plain") {
+		t.Errorf("the config lost its name:\n%s", data)
+	}
+}
+
+func TestTheNoteInABlankProfileSaysWhatAReComposeDoesAndNotToRecreateIt(t *testing.T) {
+	dir, err := CreateBlank(testLayout(t), "plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	if !strings.Contains(string(data), "re-compose") || strings.Contains(string(data), "vibe -R") {
+		t.Errorf("the note a blank profile carries is out of step with what a re-compose does:\n%s", data)
 	}
 }

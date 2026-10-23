@@ -7,7 +7,7 @@
 // parse(text) gives a list of blocks:
 //   { type: 'para', inline }            { type: 'heading', level, inline }
 //   { type: 'code', lang, text }        { type: 'hr' }
-//   { type: 'quote', blocks }
+//   { type: 'quote', blocks, source }   (source: the quote's own Markdown, with the > marks taken off)
 //   { type: 'list', ordered, start, items: [blocks, ...] }
 //   { type: 'table', align: ['left'|'center'|'right'|null, ...], head: [inline, ...], rows: [[inline, ...], ...] }
 // where inline is a list of:
@@ -101,7 +101,7 @@
           body.push(q ? q[1] : lines[i])
           i++
         }
-        blocks.push({ type: 'quote', blocks: parseLines(body) })
+        blocks.push({ type: 'quote', blocks: parseLines(body), source: body.join('\n') })
         continue
       }
 

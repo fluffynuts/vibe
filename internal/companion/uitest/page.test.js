@@ -877,6 +877,20 @@ test('a code block the agent wrote has a button copying just its code', async ()
   } finally { p.close() }
 })
 
+test('a quote the agent wrote has a button copying its Markdown, without the > marks', async () => {
+  const quote = '### Heading\nSome **bold** words\n\n- one\n- two'
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, 'Here:\n\n' + quote.split('\n').map((l) => '> ' + l).join('\n') + '\n\nand more')], running: false })
+  try {
+    const written = clipboardOf(p)
+    const copy = p.$('convo-log').querySelector('.msg.agent .quote-block button.copy-code')
+    assert.ok(copy, 'the quote has a copy button')
+    assert.equal(p.$('convo-log').querySelectorAll('.msg.agent blockquote').length, 1)
+    await p.click(copy)
+    assert.deepEqual(written, [quote])
+    assert.equal(p.$('toast').textContent, 'Copied')
+  } finally { p.close() }
+})
+
 // What the agent writes can hide control characters in code (an escape that
 // ends a terminal's bracketed paste, so what follows runs): a code block
 // shows them, and its copy leaves them out, saying so. Newlines are kept
@@ -3238,5 +3252,56 @@ test("a rule change vibe couldn't keep for the next rebuild says so", async () =
     await p.confirm(true)
     assert.deepEqual(p.posted('/api/allow'), [{ host: 'a.example' }])
     assert.match(p.$('toast').textContent, /a rebuild won't keep it: sbx is not signed in/)
+  } finally { p.close() }
+})
+
+// --- the agent reviewing: loud, and said once ------------------------------------
+
+const writing = { ...unsent, started: '2026-10-16T10:00:00Z', state: 'in progress' }
+
+test('a review the agent is still writing is a loud badge, and a toast says to wait', async () => {
+  const p = await reviewPage({ review: writing, storage: { 'vibe-companion-tab': 'review' } })
+  try {
+    assert.ok(p.$('review-state').classList.contains('reviewing'))
+    assert.match(p.$('review-state').textContent, /still reviewing: wait for it to finish/)
+    assert.equal(p.$('toast').hidden, false)
+    assert.match(p.$('toast').textContent, /The agent is reviewing your changes\. Wait for it to finish/)
+  } finally { p.close() }
+})
+
+test('the toast to wait is said once for a review, however often it is drawn again', async () => {
+  const p = await reviewPage({ review: writing, storage: { 'vibe-companion-tab': 'review' } })
+  try {
+    p.$('toast').hidden = true
+    p.at.review = { ...writing, threads: [...writing.threads, { id: 2, status: 'open', comments: [{ author: 'agent', body: 'P2: more', at: '2026-10-16T10:01:00Z' }] }], lastId: 2 }
+    await p.poll()
+    assert.equal(p.$('toast').hidden, true, 'not said again')
+  } finally { p.close() }
+})
+
+test('when the agent finishes, a toast says so and the badge goes quiet', async () => {
+  const p = await reviewPage({ review: writing, storage: { 'vibe-companion-tab': 'review' } })
+  try {
+    p.$('toast').hidden = true
+    p.at.review = { ...writing, state: 'done' }
+    await p.poll()
+    assert.match(p.$('toast').textContent, /finished reviewing/)
+    assert.ok(!p.$('review-state').classList.contains('reviewing'))
+    assert.equal(p.$('review-state').textContent, 'done')
+  } finally { p.close() }
+})
+
+test('a review that was already finished when the page opened says nothing', async () => {
+  const p = await reviewPage({ review: { ...writing, state: 'done' }, storage: { 'vibe-companion-tab': 'review' } })
+  try {
+    assert.equal(p.$('toast').hidden, true)
+  } finally { p.close() }
+})
+
+test('Submit to agent waits while the agent is still writing the review, and says why', async () => {
+  const p = await startPage({ review: writing, agentAtWork: true })
+  try {
+    assert.equal(p.$('review-submit').disabled, true)
+    assert.match(p.$('review-submit').title, /still writing this review/)
   } finally { p.close() }
 })

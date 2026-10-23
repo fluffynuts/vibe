@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 
+	"vibe/internal/fscopy"
 	"vibe/internal/hostcpu"
 	"vibe/internal/hostmem"
 	"vibe/internal/layout"
@@ -25,13 +26,14 @@ var fallbackAgents = []string{"claude", "codex", "copilot", "cursor", "devin", "
 
 // setUpSettings writes ~/.vibe/settings.yaml for this machine, from the
 // copy just put there (the package's). With ask and a terminal, it asks how
-// much memory and how many CPUs sandboxes get, which agent they run, and which features a
+// much memory and how many CPUs sandboxes get, which agent they run, how vibe
+// starts (with a terminal, or headless), and which features a
 // guided profile starts with ticked, starting on the package's choices;
 // otherwise it keeps those, with the memory lowered to what this machine
 // can give. Everything else in the file is left as it is.
 func setUpSettings(lay layout.Layout, ask bool) error {
 	path := lay.HomePath("settings.yaml")
-	data, err := os.ReadFile(path)
+	data, err := fscopy.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil // the package ships none, so there's nothing to set up
 	}
@@ -54,6 +56,12 @@ func setUpSettings(lay layout.Layout, ask bool) error {
 	}{
 		{"memory", pickMemory(current.Memory, ask, "how much memory should each sandbox get? (you're asked again for each new sandbox)")},
 		{"agent", pickAgent(current.Agent, ask, "which agent should sandboxes run by default?")},
+	}
+	if ask {
+		values = append(values, struct {
+			key   string
+			value interface{}
+		}{"mode", pickMode(current.Mode, "how should vibe start by default? (a profile can choose its own; --terminal and --headless decide for one start)")})
 	}
 	// Unset, cpus is half the machine's, whichever machine that is: it's
 	// written only for a choice made, or one to keep within what this
@@ -84,7 +92,7 @@ func setUpSettings(lay layout.Layout, ask bool) error {
 	if bytes.Equal(changed, data) {
 		return nil
 	}
-	if err := os.WriteFile(path, changed, 0o644); err != nil {
+	if err := fscopy.WriteWholeMode(path, changed, 0o644); err != nil {
 		return err
 	}
 	note("  saved your choices in %s", pathresolve.Tilde(path))
@@ -116,7 +124,7 @@ func doSetup(vibeHome string, force bool) error {
 // lowerMemorySetting lowers the memory setting in the settings.yaml at path
 // to what this machine can give a sandbox, when it's more than that.
 func lowerMemorySetting(path string) error {
-	data, err := os.ReadFile(path)
+	data, err := fscopy.ReadFile(path)
 	if err != nil {
 		return err
 	}
@@ -131,7 +139,7 @@ func lowerMemorySetting(path string) error {
 	if data, err = settings.Set(data, "memory", memory); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := fscopy.WriteWholeMode(path, data, 0o644); err != nil {
 		return err
 	}
 	note("  saved memory: %s in %s", memory, pathresolve.Tilde(path))
@@ -221,6 +229,32 @@ func pickAgent(current string, ask bool, question string) string {
 	return agents[i]
 }
 
+// chooseMode asks which mode to start in; a variable for tests.
+var chooseMode = chooseFrom
+
+// modeChoices are what the user is offered for the default mode, in the order
+// of modeValues.
+var (
+	modeChoices = []string{"terminal: a session in this terminal, with the page beside it", "headless: no terminal, only the companion page"}
+	modeValues  = []string{"terminal", "headless"}
+)
+
+// pickMode asks how vibe starts by default, starting on current (terminal when
+// unset or not one of the two, which is what vibe does with nothing said). Quitting
+// the question keeps current, or terminal.
+func pickMode(current, question string) string {
+	idx := slices.Index(modeValues, current)
+	if idx < 0 {
+		idx = 0
+	}
+	i, ok := chooseMode(question, modeChoices, idx)
+	if !ok {
+		note("  keeping mode: %s", modeValues[idx])
+		return modeValues[idx]
+	}
+	return modeValues[i]
+}
+
 // pickTimezone asks which timezone a sandbox should keep its time in, from
 // tzdata's list, starting on current. Without ask, current is kept.
 func pickTimezone(current string, ask bool, question string) string {
@@ -280,13 +314,13 @@ func preferredDefaultBranch(path string) func() string {
 // rest of the file as it was.
 func rememberDefaultBranch(path string) func(name string) error {
 	return func(name string) error {
-		data, err := os.ReadFile(path)
+		data, err := fscopy.ReadFile(path)
 		if err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		if data, err = settings.Set(data, "defaultBranch", name); err != nil {
 			return fmt.Errorf("updating %s: %w", pathresolve.Tilde(path), err)
 		}
-		return os.WriteFile(path, data, 0o644)
+		return fscopy.WriteWholeMode(path, data, 0o644)
 	}
 }

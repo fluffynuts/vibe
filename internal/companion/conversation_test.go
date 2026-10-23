@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -680,21 +681,119 @@ func TestATurnThatEndsWhileCompactingIsntStillCompacting(t *testing.T) {
 }
 
 // Before a turn, the sandbox is made ready for it (started, if sbx stopped
-// it while idle), saying so on the page; the turn runs once it is.
-func TestATurnWaitsForTheSandboxToBeReadyAndSaysSo(t *testing.T) {
+// it while idle), saying so on the page while it waits; the turn runs once it
+// is, and the saying is taken back, as it's no longer so.
+func TestATurnWaitsForTheSandboxToBeReadyAndSaysSoUntilItIs(t *testing.T) {
+	f := &fakeAgent{}
+	gate := make(chan struct{})
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: f.converse,
+		Prepare: func(ctx context.Context, say func(string)) error {
+			say("starting the sandbox")
+			<-gate
+			return nil
+		}})
+	send(t, s, "/api/conversation/send", `{"prompt":"hello"}`)
+	waitFor(t, "the note", func() bool { return strings.Contains(kinds(poll(t, s, 0)), "note") })
+	seen := poll(t, s, 0)
+	if got := kinds(seen); got != "user,note" {
+		t.Fatalf("while waiting, events = %s", got)
+	}
+	if seen.Events[1].Text != "starting the sandbox" {
+		t.Errorf("the note = %+v", seen.Events[1])
+	}
+	noteSeq := seen.Events[1].Seq
+	close(gate)
+	idle(t, s)
+
+	// A page that had the note is told to take it back.
+	later := poll(t, s, seen.Last)
+	var retracted []int
+	for _, e := range later.Events {
+		if e.Kind == "retract" {
+			retracted = append(retracted, e.Of)
+		}
+	}
+	if !reflect.DeepEqual(retracted, []int{noteSeq}) {
+		t.Errorf("a page that had seen the note is told to retract %v, want [%d]: %s", retracted, noteSeq, kinds(later))
+	}
+	// A page opened now never has it: nothing to show, nothing to take back.
+	if got := kinds(poll(t, s, 0)); got != "user,agent,agent,done" {
+		t.Errorf("a page opened after sees %s", got)
+	}
+}
+
+func TestEveryThingSaidWhileWaitingIsTakenBackOnceTheSandboxIsReady(t *testing.T) {
 	f := &fakeAgent{}
 	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: f.converse,
 		Prepare: func(ctx context.Context, say func(string)) error {
 			say("starting the sandbox")
+			say("still starting")
 			return nil
 		}})
 	send(t, s, "/api/conversation/send", `{"prompt":"hello"}`)
+	idle(t, s)
+	for _, e := range poll(t, s, 0).Events {
+		if e.Kind == "note" {
+			t.Errorf("a note is left: %+v", e)
+		}
+	}
+}
+
+func TestWhatIsSaidWhileWaitingStaysWhenTheSandboxCantBeReadied(t *testing.T) {
+	f := &fakeAgent{}
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: f.converse,
+		Prepare: func(ctx context.Context, say func(string)) error {
+			say("starting the sandbox")
+			return errors.New("sandbox 'box' didn't start")
+		}})
+	send(t, s, "/api/conversation/send", `{"prompt":"hello"}`)
 	p := idle(t, s)
-	if got := kinds(p); got != "user,note,agent,agent,done" {
+	if got := kinds(p); got != "user,note,error" {
+		t.Errorf("events = %s: what it was waiting for explains the error", got)
+	}
+}
+
+func TestNothingIsRetractedForATurnThatSaidNothing(t *testing.T) {
+	f := &fakeAgent{}
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: f.converse,
+		Prepare: func(context.Context, func(string)) error { return nil }})
+	send(t, s, "/api/conversation/send", `{"prompt":"hello"}`)
+	if got := kinds(idle(t, s)); got != "user,agent,agent,done" {
 		t.Errorf("events = %s", got)
 	}
-	if p.Events[1].Text != "starting the sandbox" {
-		t.Errorf("the note = %+v", p.Events[1])
+}
+
+func TestATakenBackNoteIsNotKeptForTheNextRunOfVibe(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "c.json")
+	f := &fakeAgent{}
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: f.converse, History: file,
+		Prepare: func(ctx context.Context, say func(string)) error { say("starting the sandbox"); return nil }})
+	send(t, s, "/api/conversation/send", `{"prompt":"hello"}`)
+	idle(t, s)
+	s.Close()
+	again := &conversation{}
+	if err := again.load(file); err != nil {
+		t.Fatal(err)
+	}
+	events, _, _, _ := again.since(0)
+	for _, e := range events {
+		if e.Kind == "note" || e.Kind == "retract" {
+			t.Errorf("the kept conversation has %+v", e)
+		}
+	}
+}
+
+func TestAPageDoesNotGetATakingBackOfWhatItNeverHad(t *testing.T) {
+	c := &conversation{}
+	seq := c.noteSaid("starting the sandbox")
+	c.retract([]int{seq})
+	events, _, _, _ := c.since(0)
+	if len(events) != 0 {
+		t.Errorf("events = %+v, want none", events)
+	}
+	events, _, _, _ = c.since(seq)
+	if len(events) != 1 || events[0].Kind != "retract" || events[0].Of != seq {
+		t.Errorf("a page that had it is told to take it back: %+v", events)
 	}
 }
 

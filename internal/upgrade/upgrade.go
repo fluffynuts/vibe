@@ -210,12 +210,12 @@ func (o Options) retire(rels []string, res *Result) error {
 	}
 	sort.Strings(gone)
 	for _, rel := range gone {
-		baseText, err := os.ReadFile(filepath.Join(base, rel))
+		baseText, err := fscopy.ReadFile(filepath.Join(base, rel))
 		if err != nil {
 			return err
 		}
 		mine := filepath.Join(o.Home, rel)
-		mineText, err := os.ReadFile(mine)
+		mineText, err := fscopy.ReadFile(mine)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
@@ -279,11 +279,11 @@ func SeedBase(pkg, home string) error {
 		return err
 	}
 	for _, rel := range rels {
-		theirs, err := os.ReadFile(filepath.Join(pkg, rel))
+		theirs, err := fscopy.ReadFile(filepath.Join(pkg, rel))
 		if err != nil {
 			return err
 		}
-		mine, err := os.ReadFile(filepath.Join(home, rel))
+		mine, err := fscopy.ReadFile(filepath.Join(home, rel))
 		if err != nil || !bytes.Equal(mine, theirs) {
 			continue
 		}
@@ -333,14 +333,14 @@ func (o Options) install(rel string, res *Result) error {
 	base := filepath.Join(o.Home, BaseDir, rel)
 	advance := func() error { return fscopy.File(theirs, base) }
 
-	theirsText, err := os.ReadFile(theirs)
+	theirsText, err := fscopy.ReadFile(theirs)
 	if err != nil {
 		return err
 	}
-	baseText, baseErr := os.ReadFile(base)
+	baseText, baseErr := fscopy.ReadFile(base)
 	hasBase := baseErr == nil
 
-	mineText, err := os.ReadFile(mine)
+	mineText, err := fscopy.ReadFile(mine)
 	if errors.Is(err, fs.ErrNotExist) {
 		if hasBase {
 			res.LeftDeleted = append(res.LeftDeleted, rel)
@@ -418,7 +418,7 @@ func (o Options) take(c Conflict, choice Choice, res *Result, advance func() err
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(c.Mine, c.Merged, info.Mode().Perm()); err != nil {
+		if err := fscopy.WriteWholeMode(c.Mine, c.Merged, info.Mode().Perm()); err != nil {
 			return err
 		}
 		res.Merged = append(res.Merged, c.Rel)
@@ -500,7 +500,7 @@ func MergeText(base, mine, theirs []byte) (merged []byte, ok bool, why string) {
 	defer os.RemoveAll(dir)
 	paths := map[string][]byte{"mine": mine, "base": base, "theirs": theirs}
 	for name, text := range paths {
-		if err := os.WriteFile(filepath.Join(dir, name), text, 0o600); err != nil {
+		if err := fscopy.WriteWholeMode(filepath.Join(dir, name), text, 0o600); err != nil {
 			return nil, false, err.Error()
 		}
 	}

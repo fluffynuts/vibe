@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"vibe/internal/fscopy"
 	"vibe/internal/instructions"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
@@ -68,7 +69,7 @@ func loadKit(lay layout.Layout, profile string) (kitspec.Doc, settings.Settings,
 	// reading for when a kit is relevant. The user's own (instructions.File)
 	// are loaded in every session, another way.
 	var agentInstructions string
-	if data, err := os.ReadFile(filepath.Join(profileDir, instructions.KitFile)); err == nil {
+	if data, err := fscopy.ReadFile(filepath.Join(profileDir, instructions.KitFile)); err == nil {
 		agentInstructions = string(data)
 	} else if !os.IsNotExist(err) {
 		return nil, settings.Settings{}, err
@@ -90,7 +91,7 @@ func writeKit(doc kitspec.Doc, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "spec.yaml"), data, 0o644); err != nil {
+	if err := fscopy.WriteWholeMode(filepath.Join(dir, "spec.yaml"), data, 0o644); err != nil {
 		return "", err
 	}
 	return dir, nil

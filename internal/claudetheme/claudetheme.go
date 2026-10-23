@@ -18,16 +18,14 @@ import (
 	"sort"
 	"strings"
 
+	"vibe/internal/fscopy"
 	"vibe/internal/kitspec"
 	"vibe/internal/sbxrun"
+	"vibe/internal/userprefs"
 )
 
 // Default is the choice that leaves the theme unset, so Claude uses its own.
 const Default = "default"
-
-// ProfileFile is where, in a profile's directory, the theme last chosen for
-// its sandbox is kept: one line, "default" or a theme name.
-const ProfileFile = "claude-theme"
 
 const (
 	settingsPath = kitspec.AgentHome + "/.claude/settings.json"
@@ -149,20 +147,20 @@ func themeIn(ctx context.Context, name, file string) (value string, found, ok bo
 	return value, found, true
 }
 
-// FromProfile reads the choice recorded in a profile's directory.
+// FromProfile reads the theme recorded in a profile's directory (in its
+// user preferences: see internal/userprefs).
 func FromProfile(profileDir string) (choice string, ok bool) {
-	data, err := os.ReadFile(filepath.Join(profileDir, ProfileFile))
+	prefs, err := userprefs.Load(profileDir)
 	if err != nil {
 		return "", false
 	}
-	choice = strings.TrimSpace(string(data))
-	return choice, choice != ""
+	return prefs.Theme, prefs.Theme != ""
 }
 
 // SaveToProfile records a choice in a profile's directory, for the next
 // re-init to fall back on when the sandbox itself can't be asked.
 func SaveToProfile(profileDir, choice string) error {
-	return os.WriteFile(filepath.Join(profileDir, ProfileFile), []byte(choice+"\n"), 0o644)
+	return userprefs.Update(profileDir, func(p *userprefs.Prefs) { p.Theme = choice })
 }
 
 // Apply sets the theme the agent starts with, in the kit, two ways — because
@@ -287,7 +285,7 @@ func Accent(defaultsDir, choice string) (color string, ok bool) {
 	if choice == "" || choice == Default || builtIn[choice] || !validName.MatchString(choice) {
 		return "", false
 	}
-	data, err := os.ReadFile(filepath.Join(defaultsDir, "agent-files", ".claude", "themes", choice+".json"))
+	data, err := fscopy.ReadFile(filepath.Join(defaultsDir, "agent-files", ".claude", "themes", choice+".json"))
 	if err != nil {
 		return "", false
 	}

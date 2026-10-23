@@ -63,8 +63,8 @@ test('every occurrence is highlighted whatever its case, and counted', async () 
   try {
     await open(p)
     await find(p, 'test')
-    assert.deepEqual(matches(p), ['test', 'Test', 'test', 'TEST', 'test'])
-    assert.equal(count(p), '1 of 5')
+    assert.deepEqual(matches(p), ['test', 'Test', 'test', 'TEST'])
+    assert.equal(count(p), '1 of 4')
     assert.deepEqual(current(p), ['test'])
   } finally { p.close() }
 })
@@ -164,7 +164,7 @@ test('the close button closes it too, and opening it again finds the last search
     assert.equal(boxShown(p), false)
     await open(p)
     assert.equal(p.$('convo-find-input').value, 'test')
-    assert.equal(matches(p).length, 5)
+    assert.equal(matches(p).length, 4)
   } finally { p.close() }
 })
 
@@ -186,11 +186,15 @@ test('a phrase is not found across two messages', async () => {
   } finally { p.close() }
 })
 
-test('the commands the agent ran are searched, since they are in view', async () => {
+test('the commands the agent ran, in a collapsed group of tools, are searched only with the box ticked', async () => {
   const p = await searchPage(sample())
   try {
     await open(p)
     await find(p, './...')
+    assert.equal(matches(p).length, 0)
+    p.$('convo-find-tools').checked = true
+    p.$('convo-find-tools').dispatchEvent(new p.window.Event('change', { bubbles: true }))
+    await p.settle()
     assert.equal(matches(p).length, 1)
   } finally { p.close() }
 })

@@ -1,13 +1,18 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"vibe/internal/backup"
 	"vibe/internal/cliargs"
 	"vibe/internal/layout"
+	"vibe/internal/profilegen"
+	"vibe/internal/userprefs"
 )
 
 // TestDoReCreateDeletesTheOverlayProfileThenRebuilds checks the part of
@@ -152,8 +157,15 @@ func TestRestoringABackupFromBeforeTheMoveStillSortsTheFilesOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(dir, "agent-instructions.md"), "mine\n")
-	if err := doRestore(lay, args, "foo-browser", t.TempDir()); err == nil {
-		t.Log("restore went on to rebuild the sandbox")
+	again, err := doRestore(lay, args, "foo-browser", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again {
+		// What main goes on to do, as --restart --re-compose, up to the rebuild.
+		if err := recomposeProfile(lay, args, "foo-browser", t.TempDir(), false, nil); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// The oldest backup is the old-style profile: restored, then
 	// re-composed, its kit text must not land in the user's file.
@@ -189,5 +201,368 @@ func TestAProfileMissingABaseFeatureIsToldWhich(t *testing.T) {
 	notes := strings.Join(notesOf(func() { noteMissingBase(lay, "p") }), "\n")
 	if !strings.Contains(notes, "review") || strings.Contains(notes, "clipboard") {
 		t.Errorf("notes: %q", notes)
+	}
+}
+
+func TestReComposingKeepsTheModelAndEffortChosenOnThePage(t *testing.T) {
+	lay, dir := instructionsFixture(t)
+	args := cliargs.Args{Force: true, Profile: "foo-browser"}
+	writeFile(t, filepath.Join(dir, "settings.yaml"), "memory: 8g\nmodel: sonnet\neffort: high\n")
+	if err := recomposeProfile(lay, args, "foo-browser", t.TempDir(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := profileChoice{lay: lay, profile: "foo-browser"}.get()
+	if err != nil || got != (turnChoice{Model: "sonnet", Effort: "high"}) {
+		t.Errorf("after re-composing, the choice is %+v, %v; want sonnet, high", got, err)
+	}
+	// And it is where it is kept now, not in the settings composing wrote.
+	if text, _ := readFile(t, filepath.Join(dir, "settings.yaml")); strings.Contains(text, "model") || strings.Contains(text, "effort") {
+		t.Errorf("settings.yaml = %q", text)
+	}
+	if prefs, _ := userprefs.Load(dir); prefs.Model != "sonnet" || prefs.Effort != "high" {
+		t.Errorf("preferences = %+v", prefs)
+	}
+}
+
+func TestReComposingKeepsTheThemeAndTheGitAuthorAnswerWhereverEarlierVibesPutThem(t *testing.T) {
+	lay, dir := instructionsFixture(t)
+	args := cliargs.Args{Force: true, Profile: "foo-browser"}
+	writeFile(t, filepath.Join(dir, "claude-theme"), "amber\n")
+	writeFile(t, filepath.Join(dir, "git-author"), "import\n")
+	if err := recomposeProfile(lay, args, "foo-browser", t.TempDir(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	prefs, err := userprefs.Load(dir)
+	if err != nil || prefs.Theme != "amber" || prefs.GitAuthor != "import" {
+		t.Errorf("after re-composing: %+v, %v", prefs, err)
+	}
+	for _, old := range userprefs.LegacyFiles {
+		if _, err := os.Stat(filepath.Join(dir, old)); err == nil {
+			t.Errorf("%s was left beside the preferences", old)
+		}
+	}
+}
+
+func TestReComposingKeepsWhatWasKeptInThePreferences(t *testing.T) {
+	lay, dir := instructionsFixture(t)
+	args := cliargs.Args{Force: true, Profile: "foo-browser"}
+	writeFile(t, filepath.Join(dir, "user-preferences.yaml"), "# mine\ntheme: green\nfuture: thing\n")
+	if err := recomposeProfile(lay, args, "foo-browser", t.TempDir(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if text, _ := readFile(t, userprefs.Path(dir)); text != "# mine\ntheme: green\nfuture: thing\n" {
+		t.Errorf("the preferences are %q: carried across as they were, a key this vibe doesn't know included", text)
+	}
+}
+
+func TestReComposingAProfileWithNoChoiceMakesNone(t *testing.T) {
+	lay, dir := instructionsFixture(t)
+	args := cliargs.Args{Force: true, Profile: "foo-browser"}
+	if err := recomposeProfile(lay, args, "foo-browser", t.TempDir(), false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := readFile(t, filepath.Join(dir, "settings.yaml")); strings.Contains(got, "model") || strings.Contains(got, "effort") {
+		t.Errorf("settings.yaml = %q", got)
+	}
+}
+
+// profileWith makes a profile "foo-browser" holding files, and gives its
+// layout and folder.
+func profileWith(t *testing.T, files map[string]string) (layout.Layout, string) {
+	t.Helper()
+	lay := layout.New(t.TempDir(), t.TempDir())
+	dir := lay.HomePath("profiles", "foo-browser")
+	writeFile(t, filepath.Join(dir, "config.yaml"), "name: foo-browser\n")
+	writeFile(t, filepath.Join(dir, "install-scripts", "01-mine"), "echo mine\n")
+	for name, text := range files {
+		writeFile(t, filepath.Join(dir, name), text)
+	}
+	return lay, dir
+}
+
+// answeringKeep stands in for the user: it answers each question with answer (nil:
+// none is expected), and gives what was asked.
+func answeringKeep(t *testing.T, answer func(question string) bool) (asked *[]string, restore func()) {
+	t.Helper()
+	asked = new([]string)
+	was := askKeepPreferences
+	askKeepPreferences = func(question string) bool {
+		*asked = append(*asked, question)
+		if answer == nil {
+			t.Errorf("asked %q when nothing was to be asked", question)
+			return false
+		}
+		return answer(question)
+	}
+	return asked, func() { askKeepPreferences = was }
+}
+
+const kept = "# mine\ntheme: green\nmodel: opus\nfuture: thing\n"
+
+func TestReCreateWithForceKeepsTheChoicesByteForByteAndLeavesTheRestToBeMadeAgain(t *testing.T) {
+	lay, dir := profileWith(t, map[string]string{"user-preferences.yaml": kept})
+	asked, restore := answeringKeep(t, nil)
+	defer restore()
+	doReCreate(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "foo-browser", t.TempDir())
+	if len(*asked) != 0 {
+		t.Errorf("asked %q", *asked)
+	}
+	if got, _ := readFile(t, filepath.Join(dir, "user-preferences.yaml")); got != kept {
+		t.Errorf("the new profile's preferences are %q, want them as they were", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "install-scripts", "01-mine")); err == nil {
+		t.Error("the rest of the old profile was kept too")
+	}
+}
+
+func TestReCreateSaysWhatItKeptAndHowToDropIt(t *testing.T) {
+	lay, _ := profileWith(t, map[string]string{"user-preferences.yaml": kept})
+	said := strings.Join(notesOf(func() { preferencesToKeep(lay, "foo-browser", true) }), "\n")
+	for _, want := range []string{"keeping your choices", "theme: green", "model: opus", "user-preferences.yaml", "to drop them"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("it said %q, lacking %q", said, want)
+		}
+	}
+}
+
+func TestReCreateAsksWhetherToKeepTheChoicesListingThemAndKeepsThemOnYes(t *testing.T) {
+	lay, _ := profileWith(t, map[string]string{"user-preferences.yaml": kept})
+	asked, restore := answeringKeep(t, func(string) bool { return true })
+	defer restore()
+	data, err := preferencesToKeep(lay, "foo-browser", false)
+	if err != nil || string(data) != kept {
+		t.Errorf("kept %q, %v", data, err)
+	}
+	if len(*asked) != 1 {
+		t.Fatalf("asked %q", *asked)
+	}
+	for _, want := range []string{"profile 'foo-browser'", "theme: green", "model: opus"} {
+		if !strings.Contains((*asked)[0], want) {
+			t.Errorf("the question lacks %q: %s", want, (*asked)[0])
+		}
+	}
+}
+
+func TestReCreateDropsTheChoicesOnNo(t *testing.T) {
+	lay, _ := profileWith(t, map[string]string{"user-preferences.yaml": kept})
+	_, restore := answeringKeep(t, func(string) bool { return false })
+	defer restore()
+	if data, err := preferencesToKeep(lay, "foo-browser", false); err != nil || data != nil {
+		t.Errorf("kept %q, %v after a no", data, err)
+	}
+}
+
+func TestReCreateAsksNothingWhenThereAreNoChoicesToKeep(t *testing.T) {
+	for name, files := range map[string]map[string]string{
+		"no file": nil, "an empty file": {"user-preferences.yaml": "  \n"}, "only comments": {"user-preferences.yaml": "# nothing\n"},
+	} {
+		lay, _ := profileWith(t, files)
+		_, restore := answeringKeep(t, nil)
+		data, err := preferencesToKeep(lay, "foo-browser", false)
+		restore()
+		if err != nil || data != nil {
+			t.Errorf("%s: kept %q, %v", name, data, err)
+		}
+	}
+}
+
+func TestReCreateKeepsAFileItCannotReadAsItIsAndSaysItCouldntRead(t *testing.T) {
+	broken := "model: [unclosed\n"
+	lay, _ := profileWith(t, map[string]string{"user-preferences.yaml": broken})
+	asked, restore := answeringKeep(t, func(string) bool { return true })
+	defer restore()
+	data, err := preferencesToKeep(lay, "foo-browser", false)
+	if err != nil || string(data) != broken {
+		t.Errorf("kept %q, %v: what the user may have been editing must be carried whole", data, err)
+	}
+	if len(*asked) != 1 || !strings.Contains((*asked)[0], "can't read") {
+		t.Errorf("asked %q", *asked)
+	}
+}
+
+func TestReCreateKeepsWhatEarlierVibesKeptInFilesOfTheirOwn(t *testing.T) {
+	lay, dir := profileWith(t, map[string]string{"claude-theme": "amber\n", "git-author": "import\n"})
+	asked, restore := answeringKeep(t, nil)
+	defer restore()
+	doReCreate(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "foo-browser", t.TempDir())
+	if len(*asked) != 0 {
+		t.Errorf("asked %q", *asked)
+	}
+	prefs, err := userprefs.Load(dir)
+	if err != nil || prefs.Theme != "amber" || prefs.GitAuthor != "import" {
+		t.Errorf("prefs %+v, %v", prefs, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "claude-theme")); err == nil {
+		t.Error("the old theme file came back")
+	}
+}
+
+func TestTheKeptChoicesAreBackOnceTheNewProfileIsMadeAndBeforeTheKitIsRead(t *testing.T) {
+	lay := layout.New(t.TempDir(), t.TempDir())
+	var madeFirst bool
+	var theme string
+	hook := func(l layout.Layout, profile string) error {
+		madeFirst = l.ProfileExists(profile)
+		if err := restorePreferences([]byte("theme: green\n"))(l, profile); err != nil {
+			return err
+		}
+		prefs, _ := userprefs.Load(l.HomePath("profiles", profile))
+		theme = prefs.Theme
+		return nil
+	}
+	// With no sbx here the rebuild fails further on; the hook has run by then.
+	rebuildSandbox(context.Background(), lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "box", t.TempDir(), true, false, hook)
+	if !madeFirst || theme != "green" {
+		t.Errorf("profile made first: %v; preferences' theme: %q", madeFirst, theme)
+	}
+}
+
+func TestReCreateBacksTheProfileUpFirstEvenWithForceAndSaysHowToGetItBack(t *testing.T) {
+	lay, _ := profileWith(t, map[string]string{"user-preferences.yaml": kept})
+	said := notesOf(func() {
+		doReCreate(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "box", t.TempDir())
+	})
+	backups, err := backup.List(lay.HomePath("backup"), "box")
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("backups = %v, %v; want one, under the sandbox's name", backups, err)
+	}
+	dir := t.TempDir()
+	if err := backup.Restore(backups[0].Path, dir); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"install-scripts/01-mine": "echo mine\n", "user-preferences.yaml": kept, "config.yaml": "name: foo-browser\n"} {
+		if got, _ := readFile(t, filepath.Join(dir, filepath.FromSlash(name))); got != want {
+			t.Errorf("the backup's %s = %q, want %q", name, got, want)
+		}
+	}
+	text := strings.Join(said, "\n")
+	if !strings.Contains(text, "backed up profile 'foo-browser'") || !strings.Contains(text, "vibe --restore") {
+		t.Errorf("it said %q: where the backup is, and how to roll back to it, should be in it", text)
+	}
+}
+
+func TestReCreateRemovesNothingIfTheProfileCannotBeBackedUp(t *testing.T) {
+	lay, dir := profileWith(t, map[string]string{"user-preferences.yaml": kept})
+	writeFile(t, lay.HomePath("backup"), "a file where the backups' folder should be")
+	err := doReCreate(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "box", t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "back up") || !strings.Contains(err.Error(), "nothing was removed") {
+		t.Errorf("err = %v, want it to say it couldn't back up, and that nothing was removed", err)
+	}
+	for _, f := range []string{"install-scripts/01-mine", "user-preferences.yaml"} {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(f))); err != nil {
+			t.Errorf("%s is gone: %v", f, err)
+		}
+	}
+}
+
+func TestReCreateOfAProfileThatIsNotThereMakesNoBackup(t *testing.T) {
+	lay := layout.New(t.TempDir(), t.TempDir())
+	doReCreate(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "box", t.TempDir())
+	if backups, _ := backup.List(lay.HomePath("backup"), "box"); len(backups) != 0 {
+		t.Errorf("backups = %v", backups)
+	}
+}
+
+func TestReCreateBacksUpTheChoicesToo(t *testing.T) {
+	lay, _ := profileWith(t, map[string]string{"claude-theme": "amber\n"})
+	doReCreate(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "box", t.TempDir())
+	backups, _ := backup.List(lay.HomePath("backup"), "box")
+	if len(backups) != 1 {
+		t.Fatalf("backups = %v", backups)
+	}
+	dir := t.TempDir()
+	backup.Restore(backups[0].Path, dir)
+	if prefs, err := userprefs.Load(dir); err != nil || prefs.Theme != "amber" {
+		t.Errorf("the backup's preferences %+v, %v: what is backed up should be what the user had, with earlier vibes' files moved in", prefs, err)
+	}
+}
+
+func TestRestoringABackupOfAProfileThatWasNotComposedDoesNotOfferToReComposeIt(t *testing.T) {
+	lay, dir := profileWith(t, map[string]string{"user-preferences.yaml": kept})
+	if _, err := backup.Create(lay.HomePath("backup"), "box", dir, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "install-scripts", "01-mine"), "echo changed\n")
+	var err error
+	var again bool
+	said := strings.Join(notesOf(func() {
+		again, err = doRestore(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "box", t.TempDir())
+	}), "\n")
+	if err != nil || again {
+		t.Fatalf("err = %v, re-compose = %v: there is nothing to re-compose, so nothing should have been attempted", err, again)
+	}
+	if got, _ := readFile(t, filepath.Join(dir, "install-scripts", "01-mine")); got != "echo mine\n" {
+		t.Errorf("the profile wasn't rolled back: %q", got)
+	}
+	if !strings.Contains(said, "restored profile 'foo-browser'") || !strings.Contains(said, "nothing to re-compose") {
+		t.Errorf("it said %q", said)
+	}
+}
+
+// restoreFrom makes a backup of the profile as it is, changes it, and restores with -f.
+func restoreFrom(t *testing.T, config string) (reCompose bool, err error) {
+	t.Helper()
+	lay, dir := profileWith(t, map[string]string{"config.yaml": config})
+	if _, err := backup.Create(lay.HomePath("backup"), "box", dir, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "config.yaml"), "name: foo-browser\n# changed since\n")
+	return doRestore(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "box", t.TempDir())
+}
+
+func TestRestoringAComposedProfileSaysToReComposeItTheWayRestartDoes(t *testing.T) {
+	again, err := restoreFrom(t, "# vibe: features: dashboard\nname: foo-browser\n")
+	if err != nil || !again {
+		t.Errorf("re-compose = %v, %v: the restored profile is composed from the library, and -f says yes", again, err)
+	}
+}
+
+func TestReComposingAProfileCreatedBlankLeavesItAsItIsAndGoesOnToTheSandbox(t *testing.T) {
+	lay := layout.New(t.TempDir(), t.TempDir())
+	dir, err := profilegen.CreateBlank(lay, "foo-browser")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "install-scripts", "01-mine"), "echo mine\n")
+	before, _ := readFile(t, filepath.Join(dir, "config.yaml"))
+	var err2 error
+	said := strings.Join(notesOf(func() {
+		err2 = recomposeProfile(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "foo-browser", t.TempDir(), true, nil)
+	}), "\n")
+	if err2 != nil {
+		t.Fatalf("a re-compose of a profile created blank was refused: %v", err2)
+	}
+	if after, _ := readFile(t, filepath.Join(dir, "config.yaml")); after != before {
+		t.Errorf("the profile was changed:\n%s", after)
+	}
+	if got, _ := readFile(t, filepath.Join(dir, "install-scripts", "01-mine")); got != "echo mine\n" {
+		t.Errorf("a script of the user's was lost: %q", got)
+	}
+	if profilegen.IsGuided(dir) || !profilegen.IsBlank(dir) {
+		t.Error("it stopped being a blank profile")
+	}
+	if backups, _ := backup.List(lay.HomePath("backup"), "foo-browser"); len(backups) != 0 {
+		t.Errorf("a backup was made of a profile that wasn't touched: %v", backups)
+	}
+	if !strings.Contains(said, "created blank") || strings.Contains(said, "was composed from") {
+		t.Errorf("it said %q", said)
+	}
+}
+
+func TestAProfileWithNeitherFeaturesNorTheBlankMarkIsStillRefused(t *testing.T) {
+	lay, _ := profileWith(t, nil)
+	err := checkReComposable(lay, "foo-browser")
+	if err == nil || !strings.Contains(err.Error(), "does not record which features") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestAProfileWrittenByHandOrCopiedIsNotTakenForBlank(t *testing.T) {
+	lay, dir := profileWith(t, nil)
+	if profilegen.IsBlank(dir) {
+		t.Error("a hand-written profile counts as created blank")
+	}
+	if copied, err := profilegen.CopyFrom(lay, "foo-browser", "copy"); err != nil || profilegen.IsBlank(copied) {
+		t.Errorf("a copy of a hand-written profile: blank = %v, %v", profilegen.IsBlank(copied), err)
 	}
 }

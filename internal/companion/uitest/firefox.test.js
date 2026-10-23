@@ -166,3 +166,178 @@ test('a toast shows over the comments pane', async () => {
     assert.deepEqual(where, [16, 16], 'in its place, bottom right')
   } finally { await page.close() }
 })
+
+// conversationPage opens the page on its Conversation tab, the model and
+// effort drop-downs drawn, at width pixels wide.
+async function conversationPage(width) {
+  const page = await browser.newPage({ viewport: { width, height: 900 } })
+  await page.goto(URL)
+  await page.click('#tab-conversation')
+  await page.waitForSelector('#choice-model option:nth-child(3)', { state: 'attached' })
+  return page
+}
+
+const box = (page, sel) => page.locator(sel).boundingBox()
+
+test('the model and effort stay where they are while Stop comes and goes, wide and narrow', async () => {
+  for (const width of [1500, 1000, 600]) {
+    const page = await conversationPage(width)
+    try {
+      const before = await box(page, '#convo-choice')
+      await page.evaluate(() => { document.getElementById('convo-stop').hidden = false })
+      const during = await box(page, '#convo-choice')
+      assert.deepEqual(during, before, `at ${width}px wide, Stop appearing moved them`)
+      const send = await box(page, '#convo-send')
+      const stop = await box(page, '#convo-stop')
+      assert.ok(stop.x + stop.width <= during.x || stop.y >= during.y + during.height, `at ${width}px, Stop overlaps them`)
+      assert.ok(send.x + send.width <= page.viewportSize().width, `at ${width}px, Send is off the page`)
+    } finally { await page.close() }
+  }
+})
+
+test('the model and effort are centred under the prompt when there is room, and on a row of their own when there is not', async () => {
+  const wide = await conversationPage(1500)
+  try {
+    const form = await box(wide, '#convo-form')
+    const group = await box(wide, '#convo-choice')
+    assert.ok(Math.abs((group.x + group.width / 2) - (form.x + form.width / 2)) <= 2, 'centred in the form')
+    const send = await box(wide, '#convo-send')
+    assert.ok(Math.abs(group.y + group.height / 2 - (send.y + send.height / 2)) <= 12, 'on the same row as Send')
+  } finally { await wide.close() }
+  const narrow = await conversationPage(600)
+  try {
+    const form = await box(narrow, '#convo-form')
+    const group = await box(narrow, '#convo-choice')
+    const send = await box(narrow, '#convo-send')
+    assert.ok(group.y + group.height <= send.y, 'above Send')
+    assert.ok(Math.abs((group.x + group.width / 2) - (form.x + form.width / 2)) <= 2, 'centred in the form')
+    assert.ok(group.x >= 0 && group.x + group.width <= 600, 'on the page')
+  } finally { await narrow.close() }
+})
+
+test('the bubble over the info button moves nothing, and stays on the page', async () => {
+  for (const width of [1500, 600]) {
+    const page = await conversationPage(width)
+    try {
+      const watched = ['#convo-input', '#convo-send', '#choice-model', '#choice-ran', '#convo-log']
+      const before = await Promise.all(watched.map((sel) => box(page, sel)))
+      await page.click('#choice-info')
+      await page.waitForSelector('#choice-bubble:not([hidden])')
+      const after = await Promise.all(watched.map((sel) => box(page, sel)))
+      assert.deepEqual(after, before, `at ${width}px wide, opening the bubble moved something`)
+      const bubble = await box(page, '#choice-bubble')
+      assert.ok(bubble.x >= 0 && bubble.x + bubble.width <= width, `at ${width}px, the bubble runs off the page: ${JSON.stringify(bubble)}`)
+      assert.ok(bubble.y >= 0, `at ${width}px, the bubble runs off the top`)
+    } finally { await page.close() }
+  }
+})
+
+test('the drop-downs are the same size whatever they hold, so the lists arriving moves nothing', async () => {
+  const page = await conversationPage(1500)
+  try {
+    const sizes = () => Promise.all(['#choice-model', '#choice-effort', '#convo-choice'].map((sel) => box(page, sel)))
+    const full = await sizes()
+    await page.evaluate(() => {
+      for (const id of ['choice-model', 'choice-effort']) {
+        const select = document.getElementById(id)
+        select.replaceChildren(Object.assign(document.createElement('option'), { value: '', textContent: 'Default' }))
+      }
+    })
+    const bare = await sizes()
+    assert.deepEqual(bare.map((b) => b.width), full.map((b) => b.width), 'what they hold changed how wide they are')
+    const group = bare[2]
+    assert.deepEqual(await box(page, '#convo-choice'), group)
+  } finally { await page.close() }
+})
+
+test('the spinner coming and going moves nothing in the widget', async () => {
+  for (const width of [1500, 600]) {
+    const page = await conversationPage(width)
+    try {
+      const watched = ['#convo-choice', '#choice-model', '#choice-effort', '#choice-info', '#convo-send']
+      const read = () => Promise.all(watched.map((sel) => box(page, sel)))
+      await page.evaluate(() => { document.getElementById('choice-spinner').hidden = true })
+      const without = await read()
+      await page.evaluate(() => { document.getElementById('choice-spinner').hidden = false })
+      const spinning = await read()
+      assert.deepEqual(spinning, without, `at ${width}px wide, the spinner moved something`)
+      const spinner = await box(page, '#choice-spinner')
+      const model = await box(page, '#choice-model')
+      assert.ok(spinner.x + spinner.width <= model.x, `at ${width}px, the spinner isn't to the left of the model drop-down`)
+    } finally { await page.close() }
+  }
+})
+
+test('the longest everyday entries fit their drop-downs without being cut off', async () => {
+  const page = await conversationPage(1500)
+  try {
+    const fits = await page.evaluate(() => {
+      const measure = document.createElement('canvas').getContext('2d')
+      const out = {}
+      for (const [id, texts] of [['choice-model', ['Default (Opus 5.5)', 'Sonnet 5.5', 'Fable 5.1', 'Haiku 5.5']], ['choice-effort', ['Default effort', 'Medium effort', 'Extra High effort']]]) {
+        const select = document.getElementById(id)
+        const style = getComputedStyle(select)
+        measure.font = style.font
+        // room for the text: the box, less its padding and the arrow the browser draws
+        const room = select.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - 26
+        out[id] = texts.map((t) => ({ t, width: Math.round(measure.measureText(t).width), room: Math.round(room) }))
+      }
+      return out
+    })
+    for (const rows of Object.values(fits)) for (const r of rows) assert.ok(r.width <= r.room, `"${r.t}" is ${r.width}px wide, and has ${r.room}px`)
+  } finally { await page.close() }
+})
+
+test('Send stays on one line at every width, wherever the widget is on the row or above it', async () => {
+  for (const width of [520, 700, 900, 1000, 1100, 1200, 1300, 1400, 1500, 1700, 1900]) {
+    const page = await conversationPage(width)
+    try {
+      const send = await box(page, '#convo-send')
+      const oneLine = await page.evaluate(() => {
+        const b = document.getElementById('convo-send')
+        return b.getBoundingClientRect().height <= parseFloat(getComputedStyle(b).lineHeight || 20) + parseFloat(getComputedStyle(b).paddingTop) * 2 + 8
+      })
+      assert.ok(oneLine, `at ${width}px wide, Send wraps (it is ${Math.round(send.width)}x${Math.round(send.height)}; the widget is ${Math.round((await box(page, '#convo-choice')).width)}px, the form ${Math.round((await box(page, '#convo-form')).width)}px)`)
+      const group = await box(page, '#convo-choice')
+      const form = await box(page, '#convo-form')
+      assert.ok(group.x >= form.x - 1 && group.x + group.width <= form.x + form.width + 1, `at ${width}px wide, the widget runs out of the form: ${JSON.stringify(group)} in ${JSON.stringify(form)}`)
+    } finally { await page.close() }
+  }
+})
+
+// toolsPage opens the Conversation tab on a conversation that is whatever events() says it is, asked again
+// every time the page polls.
+async function toolsPage(events, running) {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 700 } })
+  const at = { events, running }
+  await page.route(/\/api\/conversation\?/, (route) => {
+    const after = Number(new (require('node:url').URL)(route.request().url()).searchParams.get('after')) || 0
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify({ events: at.events.filter((e) => e.seq > after), last: at.events.reduce((m, e) => Math.max(m, e.seq), 0), running: at.running }) })
+  })
+  await page.goto(URL)
+  await page.click('#tab-conversation')
+  await page.waitForSelector('#convo-log .msg.agent')
+  return Object.assign(page, { at })
+}
+
+const sayEv = (seq, text) => ({ seq, kind: 'agent', agent: { type: 'assistant', message: { content: [{ type: 'text', text }] } } })
+const useEv = (seq) => ({ seq, kind: 'agent', agent: { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'echo ' + seq } }] } } })
+const outEv = (seq) => ({ seq, kind: 'agent', agent: { type: 'user', message: { content: [{ type: 'tool_result', content: 'out ' + seq }] } } })
+
+test('a conversation of many tools is the words of the agent with a line for each group, and the tools open from it', async () => {
+  const events = []
+  let seq = 1
+  for (let i = 1; i <= 12; i++) {
+    for (let t = 0; t < 8; t++) { events.push(useEv(seq++), outEv(seq++)) }
+    events.push(sayEv(seq++, 'comment number ' + i))
+  }
+  const page = await toolsPage(events, false)
+  try {
+    const group = await page.locator('details.tool-group').first().boundingBox()
+    assert.ok(group.height < 30, `a group of 8 tools takes ${group.height}px: it should be one line`)
+    assert.equal(await page.locator('details.tool-group[open]').count(), 0)
+    await page.locator('details.tool-group > summary').first().click()
+    assert.equal(await page.locator('details.tool-group[open] .msg.tool').count(), 8)
+    assert.equal(await page.locator('details.tool-group > summary').first().textContent(), '⚙ 8 tool uses · Bash ×8')
+  } finally { await page.close() }
+})

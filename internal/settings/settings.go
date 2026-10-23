@@ -8,6 +8,8 @@ import (
 	"os"
 
 	"gopkg.in/yaml.v3"
+
+	"vibe/internal/fscopy"
 )
 
 // PublishEntry names a service and the container ports it exposes. When
@@ -63,6 +65,15 @@ type Settings struct {
 	// repository's default branch when origin can't say which it is: the
 	// one last set there.
 	DefaultBranch string `yaml:"defaultBranch,omitempty"`
+	// Mode is how vibe starts: "headless", serving the companion page with
+	// no terminal, or "terminal". Unset means terminal. Layered as the rest
+	// are: a profile's settings.yaml over ~/.vibe/settings.yaml.
+	Mode string `yaml:"mode,omitempty"`
+	// Model and Effort are what the conversation tab asks the agent to use
+	// (see internal/modelchoice). Unset, the agent's own settings decide.
+	// The page writes them into the profile's settings.yaml.
+	Model  string `yaml:"model,omitempty"`
+	Effort string `yaml:"effort,omitempty"`
 	// GitAuthor is what vibe does when a sandbox's agent has no git author
 	// name and email, which git needs to commit: "import" gives it the
 	// user's own, "leave" leaves it without; unset asks (and keeps the answer
@@ -74,7 +85,7 @@ type Settings struct {
 // no error, since only the bundle root's settings.yaml is required.
 func Load(path string) (Settings, error) {
 	var s Settings
-	data, err := os.ReadFile(path)
+	data, err := fscopy.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return s, nil
@@ -130,6 +141,15 @@ func Merge(base, override Settings) Settings {
 	}
 	if override.AutoUpdate != nil {
 		out.AutoUpdate = override.AutoUpdate
+	}
+	if override.Mode != "" {
+		out.Mode = override.Mode
+	}
+	if override.Model != "" {
+		out.Model = override.Model
+	}
+	if override.Effort != "" {
+		out.Effort = override.Effort
 	}
 	if override.GitAuthor != "" {
 		out.GitAuthor = override.GitAuthor
@@ -201,4 +221,37 @@ func Set(data []byte, key string, value interface{}) ([]byte, error) {
 		return nil, err
 	}
 	return out.Bytes(), nil
+}
+
+// Unset returns the settings.yaml in data without key, keeping everything
+// else in the file as it was. A file without the key is returned as it is.
+func Unset(data []byte, key string) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	if doc.Kind == 0 {
+		return data, nil
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("not a settings file: expected a mapping of settings")
+	}
+	m := doc.Content[0]
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value != key {
+			continue
+		}
+		m.Content = append(m.Content[:i], m.Content[i+2:]...)
+		var out bytes.Buffer
+		enc := yaml.NewEncoder(&out)
+		enc.SetIndent(2)
+		if err := enc.Encode(&doc); err != nil {
+			return nil, err
+		}
+		if err := enc.Close(); err != nil {
+			return nil, err
+		}
+		return out.Bytes(), nil
+	}
+	return data, nil
 }

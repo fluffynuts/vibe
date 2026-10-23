@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 
+	"vibe/internal/fscopy"
 	"vibe/internal/pathresolve"
 	"vibe/internal/sbxinstall"
 )
@@ -219,7 +220,7 @@ func installSbxLinux(tarball, prefix string) error {
 		return err
 	}
 	script := filepath.Join(bundle, sbxinstall.Installer)
-	original, err := os.ReadFile(script)
+	original, err := fscopy.ReadFile(script)
 	if err != nil {
 		return fmt.Errorf("the sbx release has no %s: %w", sbxinstall.Installer, err)
 	}
@@ -227,7 +228,7 @@ func installSbxLinux(tarball, prefix string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(script, []byte(patched), 0o755); err != nil {
+	if err := fscopy.WriteWholeMode(script, []byte(patched), 0o755); err != nil {
 		return err
 	}
 

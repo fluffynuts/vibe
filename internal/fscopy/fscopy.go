@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 	"vibe/internal/pathresolve"
 )
@@ -158,6 +159,14 @@ func copyInRoots(from, to *os.Root, path string, mode os.FileMode) error {
 // renamed over it: a reader never sees it half-written, and it never sits
 // in a file someone else could read, even briefly.
 func WriteWhole(path string, data []byte) error {
+	return WriteWholeMode(path, data, 0o600)
+}
+
+// WriteWholeMode is WriteWhole for a file that others may read (a settings
+// file the user edits, say): it ends up with mode perm, not the temporary
+// file's 0600, and never half-written, as os.WriteFile leaves it to a reader
+// that comes between its truncating the file and finishing writing it.
+func WriteWholeMode(path string, data []byte, perm os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -170,11 +179,16 @@ func WriteWhole(path string, data []byte) error {
 		os.Remove(tmp.Name())
 		return err
 	}
+	if err := tmp.Chmod(perm); err != nil && runtime.GOOS != "windows" {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmp.Name())
 		return err
 	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	if err := retryInUse(path, func() error { return rename(tmp.Name(), path) }); err != nil {
 		os.Remove(tmp.Name())
 		return err
 	}

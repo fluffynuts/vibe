@@ -13,7 +13,7 @@ import (
 // both readable and writable and refer to a real terminal, since it is put
 // into raw mode for the duration of the call — and returns the chosen
 // index. def is the index highlighted first. Up/Down (and k/j) move the
-// selection, enter confirms, q/Esc/Ctrl-C cancel (ok=false).
+// selection, enter confirms, q/Esc cancel (ok=false), and Ctrl-C ends vibe (see Terminal.onInterrupt).
 //
 // The caller is expected to have already printed the question above the
 // list; Select only draws the options and collapses them to the chosen
@@ -41,7 +41,7 @@ func Select(rw *Terminal, labels []string, def int) (choice int, ok bool) {
 			return 0, false
 		}
 		switch key {
-		case 3, 'q', 'Q': // Ctrl-C, q
+		case 3, 'q', 'Q': // q; Ctrl-C too on a Terminal with no onInterrupt
 			f.clear()
 			return 0, false
 		case '\r', '\n':
@@ -83,7 +83,7 @@ func Select(rw *Terminal, labels []string, def int) (choice int, ok bool) {
 // (same terminal requirements as Select). checked is the initial checked
 // state, matched index-for-index with labels (a shorter or nil slice is
 // treated as all-unchecked). Up/Down (and k/j) move the cursor, Space
-// toggles the item under it, q/Esc/Ctrl-C cancel (ok=false).
+// toggles the item under it, q/Esc cancel (ok=false), and Ctrl-C ends vibe (see Terminal.onInterrupt).
 //
 // Enter does not answer straight away: it shows what is checked, one item
 // per line, and asks whether to go ahead. Enter again (the default) returns
@@ -127,7 +127,7 @@ func multiSelect(rw *Terminal, labels []string, checked []bool, confirm bool) (s
 			return nil, false
 		}
 		switch key {
-		case 3, 'q', 'Q': // Ctrl-C, q
+		case 3, 'q', 'Q': // q; Ctrl-C too on a Terminal with no onInterrupt
 			f.clear()
 			return nil, false
 		case '\r', '\n':
@@ -231,8 +231,8 @@ const typedAnswerLimit = 16
 // default.
 //
 // Enter alone takes the default, yes; "n" goes back to the list with
-// everything still checked; Esc and Ctrl-C abandon the prompt (ok=false
-// from MultiSelect). Anything else is asked again rather than guessed at.
+// everything still checked; Esc abandons the prompt (ok=false
+// from MultiSelect), and Ctrl-C ends vibe (see Terminal.onInterrupt). Anything else is asked again rather than guessed at.
 // It wipes what it drew before returning.
 func confirmSelection(f *frame, rw *Terminal, picked []string) confirmAnswer {
 	var typed []byte
@@ -246,7 +246,7 @@ func confirmSelection(f *frame, rw *Terminal, picked []string) confirmAnswer {
 		}
 		c := key
 		switch {
-		case c == 3: // Ctrl-C
+		case c == 3: // Ctrl-C, on a Terminal with no onInterrupt
 			return confirmCancel
 		case c == 0x1b:
 			// An arrow key here is a stray keypress: only a bare Escape
@@ -297,7 +297,7 @@ func writeSelectionRecord(w io.Writer, picked []string) {
 // changing the order; Shift+Up/Shift+Down (and J/K, for a terminal that
 // doesn't pass the shift modifier through) move the selected item,
 // swapping it with its neighbor and following it. Enter confirms the final
-// order, q/Esc/Ctrl-C cancel (ok=false).
+// order, q/Esc cancel (ok=false), and Ctrl-C ends vibe (see Terminal.onInterrupt).
 func Reorder(rw *Terminal, labels []string) (ordered []string, ok bool) {
 	if len(labels) == 0 {
 		return nil, false
@@ -343,7 +343,7 @@ func Reorder(rw *Terminal, labels []string) (ordered []string, ok bool) {
 			return nil, false
 		}
 		switch key {
-		case 3, 'q', 'Q': // Ctrl-C, q
+		case 3, 'q', 'Q': // q; Ctrl-C too on a Terminal with no onInterrupt
 			f.clear()
 			return nil, false
 		case '\r', '\n':
@@ -520,7 +520,7 @@ func readMasked(rw *Terminal, echo io.Writer) (string, bool) {
 		case b == '\r' || b == '\n':
 			io.WriteString(echo, "\r\n")
 			return string(line), true
-		case b == 3: // Ctrl-C
+		case b == 3: // Ctrl-C, on a Terminal with no onInterrupt
 			io.WriteString(echo, "\r\n")
 			return "", false
 		case b == 0x1b:

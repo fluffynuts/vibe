@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"vibe/internal/fscopy"
 )
 
 // Options say where a fetch happens. Nothing here comes from the agent.
@@ -73,11 +75,11 @@ func restore(ctx context.Context, projectXML string, opts Options) (string, erro
 	defer os.RemoveAll(dir)
 
 	project := filepath.Join(dir, "fetch.csproj")
-	if err := os.WriteFile(project, []byte(projectXML), 0o644); err != nil {
+	if err := fscopy.WriteWholeMode(project, []byte(projectXML), 0o644); err != nil {
 		return "", err
 	}
 	if opts.ApprovedConfig != nil {
-		if err := os.WriteFile(filepath.Join(dir, "nuget.config"), opts.ApprovedConfig, 0o644); err != nil {
+		if err := fscopy.WriteWholeMode(filepath.Join(dir, "nuget.config"), opts.ApprovedConfig, 0o644); err != nil {
 			return "", err
 		}
 	}

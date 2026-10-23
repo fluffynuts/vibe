@@ -173,6 +173,69 @@ func TestCPUsAreReadFromTheSettingsFile(t *testing.T) {
 	}
 }
 
+func TestModelAndEffortAreReadFromTheSettingsFile(t *testing.T) {
+	s, err := Parse([]byte("model: sonnet\neffort: high\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Model != "sonnet" || s.Effort != "high" {
+		t.Errorf("got model %q, effort %q", s.Model, s.Effort)
+	}
+}
+
+func TestMergeModelAndEffortOverrideWhenSet(t *testing.T) {
+	merged := Merge(Settings{Model: "opus", Effort: "max"}, Settings{Model: "haiku"})
+	if merged.Model != "haiku" || merged.Effort != "max" {
+		t.Errorf("got model %q, effort %q; want haiku, max", merged.Model, merged.Effort)
+	}
+}
+
+func TestUnsetRemovesAKeyKeepingTheRest(t *testing.T) {
+	data, err := Unset([]byte(shipped+"model: opus\n"), "model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != shipped {
+		t.Errorf("Unset gave:\n%s\nwant:\n%s", data, shipped)
+	}
+}
+
+func TestUnsetOfAMissingKeyChangesNothing(t *testing.T) {
+	data, err := Unset([]byte(shipped), "model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != shipped {
+		t.Errorf("Unset gave:\n%s", data)
+	}
+}
+
+func TestUnsetOfTheOnlyKeyLeavesAnEmptyFile(t *testing.T) {
+	data, err := Unset([]byte("model: opus\n"), "model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(data)) != "{}" && strings.TrimSpace(string(data)) != "" {
+		t.Errorf("Unset gave %q", data)
+	}
+	if _, err := Parse(data); err != nil {
+		t.Errorf("what Unset gave can't be read: %v", err)
+	}
+}
+
+func TestMergeModeOverridesWhenSet(t *testing.T) {
+	for name, tc := range map[string]struct{ base, override, want string }{
+		"the profile's wins":            {"headless", "terminal", "terminal"},
+		"the base stands when it's not": {"headless", "", "headless"},
+		"the profile's alone":           {"", "headless", "headless"},
+		"neither":                       {"", "", ""},
+	} {
+		if got := Merge(Settings{Mode: tc.base}, Settings{Mode: tc.override}).Mode; got != tc.want {
+			t.Errorf("%s: %q, want %q", name, got, tc.want)
+		}
+	}
+}
+
 func TestMergeGitAuthorOverrideWins(t *testing.T) {
 	if got := Merge(Settings{GitAuthor: "import"}, Settings{GitAuthor: "leave"}); got.GitAuthor != "leave" {
 		t.Errorf("GitAuthor = %q", got.GitAuthor)

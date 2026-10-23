@@ -10,6 +10,7 @@ import (
 
 	"vibe"
 	"vibe/internal/cliargs"
+	"vibe/internal/fscopy"
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
 	"vibe/internal/prompt"
@@ -78,11 +79,16 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe --restart [path]      end the vibe already running for path (with a
                              terminal or headless, saving its agent's
                              memories), leaving its sandbox running, and take
-                             over: to pick up a new vibe, or get a terminal on
-                             a headless sandbox. Asks first when that would
+                             over, in the mode the one it ended was in: to
+                             pick up a new vibe. Asks first when that would
                              cut off an agent's turn or another terminal's
                              session (-f: doesn't)
-  vibe --headless --restart  ...taking over headless
+  vibe --restart --terminal  ...taking over with a terminal (to get one on a
+                             headless sandbox); --headless takes over
+                             headless the same way
+  vibe --terminal [path]     start with a terminal attached, which is what
+                             plain vibe does unless 'mode: headless' is in
+                             settings.yaml (a profile's, or ~/.vibe's)
   vibe -r/-R/-C --headless   rebuild (or re-create, or re-compose), then go
                              headless, instead of attaching a terminal
   vibe -M/--manage           serve the Profiles page on its own, until Ctrl-C:
@@ -192,6 +198,9 @@ func main() {
 	prompt.EnableVT(os.Stdout)
 	prompt.EnableVT(os.Stderr)
 	sbxfind.Warn = func(msg string) { note("%s", msg) }
+	fscopy.OnLongWait = func(path string) {
+		note("waiting for %s: another program (a virus scanner, say) has it open", pathresolve.Tilde(path))
+	}
 	err := run(os.Args[1:])
 	termtitle.Restore()
 	session.Release()
@@ -228,6 +237,10 @@ func run(argv []string) error {
 	}
 	if args.ExclusiveActions() > 1 {
 		return fmt.Errorf("--migrate, --stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info, --setup, --git-token, --update-sandboxes, --manage and --headless are mutually exclusive (--headless goes with --re-init, --re-create and --re-compose alone: the rebuild, then headless)")
+	}
+
+	if args.Terminal && args.ExclusiveActions() > 0 && !args.Rebuilds() {
+		return fmt.Errorf("--terminal only goes with starting vibe: on its own, with --restart, or with a rebuild (--re-init, --re-create, --re-compose)")
 	}
 
 	if (args.GitTokenEnv != "" || args.NoGitToken || args.GitRules != "") && args.ExclusiveActions() > 0 && !args.GitToken {
@@ -382,16 +395,43 @@ func run(argv []string) error {
 	case args.GitToken:
 		return doGitToken(vibeHome, args, name, target)
 	case args.Restore:
-		return doRestore(lay, args, name, target)
-	}
-
-	if args.Foreground && !args.Headless {
-		return fmt.Errorf("--foreground only goes with --headless")
-	}
-	if args.Restart && !detachedChild() {
-		if err := restartFolder(vibeHome, name, target, args.Force); err != nil {
+		again, err := doRestore(lay, args, name, target)
+		if err != nil || !again {
 			return err
 		}
+		// On from here as `--restart --re-compose`: what is running here is
+		// ended first, and what starts after takes its mode.
+		args.ReCompose, args.Restart = true, true
+	}
+
+	// Before anything is ended or asked: a re-compose that can't be done says
+	// so first, and doesn't stop a vibe or a sandbox on the way to saying it.
+	if args.ReCompose {
+		profile, err := resolveReInitProfile(lay.Home, args, name, target)
+		if err != nil {
+			return err
+		}
+		if err := checkReComposable(lay, profile); err != nil {
+			return err
+		}
+	}
+
+	ended := modeNone
+	if args.Restart && !detachedChild() {
+		var err error
+		if ended, err = restartFolder(vibeHome, name, target, args.Force); err != nil {
+			return err
+		}
+	}
+	if !detachedChild() {
+		headless, err := startMode(lay, args, name, target, ended)
+		if err != nil {
+			return err
+		}
+		args.Headless = headless
+	}
+	if args.Foreground && !args.Headless {
+		return fmt.Errorf("--foreground only goes with --headless (or with the mode setting in settings.yaml at headless)")
 	}
 	if args.Headless && !args.Foreground && !detachedChild() {
 		if args.Rebuilds() {

@@ -26,7 +26,7 @@ func TestShellQuote(t *testing.T) {
 }
 
 func TestConversationCommandRunsClaudeInTheWorkspace(t *testing.T) {
-	cmd := conversationCommand("/home/me/my project", "", "/tmp/t.pid")
+	cmd := conversationCommand("/home/me/my project", "", "/tmp/t.pid", turnChoice{})
 	if cmd[0] != "sh" || cmd[1] != "-c" || cmd[2] != asAgentScript || cmd[3] != "converse" || len(cmd) != 5 {
 		t.Fatalf("command = %q", cmd)
 	}
@@ -46,25 +46,49 @@ func TestConversationCommandRunsClaudeInTheWorkspace(t *testing.T) {
 }
 
 func TestConversationCommandResumesASessionButNeverAnythingElse(t *testing.T) {
-	if inner := conversationCommand("/w", "abc-123", "/tmp/t.pid")[4]; !strings.HasSuffix(inner, "--resume 'abc-123'") {
+	if inner := conversationCommand("/w", "abc-123", "/tmp/t.pid", turnChoice{})[4]; !strings.HasSuffix(inner, "--resume 'abc-123'") {
 		t.Errorf("inner = %s", inner)
 	}
 	for _, bad := range []string{"x; rm -rf /", "a b", "--dangerously-skip-permissions x", strings.Repeat("a", 101)} {
-		if inner := conversationCommand("/w", bad, "/tmp/t.pid")[4]; strings.Contains(inner, "--resume") {
+		if inner := conversationCommand("/w", bad, "/tmp/t.pid", turnChoice{})[4]; strings.Contains(inner, "--resume") {
 			t.Errorf("resumed %q: %s", bad, inner)
 		}
 	}
 }
 
 func TestConversationCommandQuotesAWorkspaceThatTriesToBeShell(t *testing.T) {
-	inner := conversationCommand("/x'; touch /pwned; '", "", "/tmp/t.pid")[4]
+	inner := conversationCommand("/x'; touch /pwned; '", "", "/tmp/t.pid", turnChoice{})[4]
 	if !strings.HasPrefix(inner, wrapTurn("", "/tmp/t.pid")+`cd '/x'\''; touch /pwned; '\''' && `) {
 		t.Errorf("inner = %s", inner)
 	}
 }
 
 func TestConversationCommandWithoutAWorkspaceStaysWhereItIs(t *testing.T) {
-	if inner := conversationCommand("", "", "/tmp/t.pid")[4]; strings.Contains(inner, "cd ") {
+	if inner := conversationCommand("", "", "/tmp/t.pid", turnChoice{})[4]; strings.Contains(inner, "cd ") {
+		t.Errorf("inner = %s", inner)
+	}
+}
+
+func TestConversationCommandAsksForAModelAndEffortOnlyWhenChosen(t *testing.T) {
+	inner := conversationCommand("/w", "", "/tmp/t.pid", turnChoice{})[4]
+	for _, flag := range []string{"--model", "--effort"} {
+		if strings.Contains(inner, flag) {
+			t.Errorf("no choice, yet %s: %s", flag, inner)
+		}
+	}
+	inner = conversationCommand("/w", "abc-123", "/tmp/t.pid", turnChoice{Model: "opus", Effort: "high"})[4]
+	if !strings.HasSuffix(inner, "'bypassPermissions' --model 'opus' --effort 'high' --resume 'abc-123'") {
+		t.Errorf("inner = %s", inner)
+	}
+	inner = conversationCommand("/w", "", "/tmp/t.pid", turnChoice{Model: "sonnet[1m]"})[4]
+	if !strings.HasSuffix(inner, "--model 'sonnet[1m]'") || strings.Contains(inner, "--effort") {
+		t.Errorf("a model alone: %s", inner)
+	}
+}
+
+func TestConversationCommandQuotesAModelThatTriesToBeShell(t *testing.T) {
+	inner := conversationCommand("/w", "", "/tmp/t.pid", turnChoice{Model: "x'; touch /pwned; '"})[4]
+	if !strings.HasSuffix(inner, `--model 'x'\''; touch /pwned; '\'''`) {
 		t.Errorf("inner = %s", inner)
 	}
 }
