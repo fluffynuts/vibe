@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -142,5 +143,41 @@ func TestAFileThatIsNotThereIsNotWaitedFor(t *testing.T) {
 	waits := busyFor(t)
 	if _, err := ReadFile(filepath.Join(t.TempDir(), "nope")); !os.IsNotExist(err) || len(*waits) != 0 {
 		t.Errorf("err %v, waits %v", err, *waits)
+	}
+}
+
+// On Windows a file a reader has open can't be replaced: the first try fails,
+// the write waits (the wait is the signal that it did), and goes through once
+// the reader lets go. Where files are replaced under their readers it goes
+// through at once and never waits. No race and no sleeping: the reader lets go
+// when the writer says it is waiting.
+func TestAFileAReaderHasOpenIsReplacedOnceTheReaderLetsGo(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	waited := false
+	wasPause := pause
+	pause = func(time.Duration) {
+		waited = true
+		reader.Close()
+	}
+	defer func() { pause = wasPause }()
+	if err := WriteWholeMode(path, []byte("new"), 0o644); err != nil {
+		t.Fatalf("the write failed with the reader still there: %v", err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "new" {
+		t.Errorf("the file holds %q", data)
+	}
+	if runtime.GOOS == "windows" && !waited {
+		t.Error("Windows replaced a file a reader had open without a wait: this test is not seeing the behaviour it is for")
+	}
+	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+		t.Errorf("left beside it: %v", entries)
 	}
 }

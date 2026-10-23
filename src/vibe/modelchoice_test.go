@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"vibe/internal/companion"
-	"vibe/internal/fscopy"
 	"vibe/internal/layout"
 	"vibe/internal/userprefs"
 )
@@ -430,8 +429,7 @@ func TestATurnStartingWhileTheChoiceIsBeingChangedGetsOneOfThemWhole(t *testing.
 			if i%2 == 0 {
 				next = one
 			}
-			// Windows won't replace a file a reader has open at that moment.
-			if err := c.set(next.Model, next.Effort); err != nil && !fscopy.InUse(err) {
+			if err := c.set(next.Model, next.Effort); err != nil {
 				t.Error(err)
 				return
 			}
@@ -444,9 +442,6 @@ func TestATurnStartingWhileTheChoiceIsBeingChangedGetsOneOfThemWhole(t *testing.
 		default:
 		}
 		got, err := c.forTurn()
-		if fscopy.InUse(err) {
-			continue // Windows, for the moment the file is being replaced: never half a file, but no file
-		}
 		if err != nil {
 			t.Fatalf("a turn couldn't read the choice: %v", err)
 		}

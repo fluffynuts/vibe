@@ -231,9 +231,7 @@ func TestAReaderNeverSeesWhatWriteWholeModeIsPartWayThrough(t *testing.T) {
 			if i%2 == 0 {
 				data = short
 			}
-			// Windows won't replace a file a reader has open at that moment:
-			// that write didn't happen, and the next one will.
-			if err := WriteWholeMode(path, data, 0o644); err != nil && !InUse(err) {
+			if err := WriteWholeMode(path, data, 0o644); err != nil {
 				t.Error(err)
 				return
 			}
@@ -245,10 +243,7 @@ func TestAReaderNeverSeesWhatWriteWholeModeIsPartWayThrough(t *testing.T) {
 			reading = false
 		default:
 		}
-		got, err := os.ReadFile(path)
-		if InUse(err) {
-			continue // Windows, for the moment the file is being replaced: never half a file, but no file
-		}
+		got, err := ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
