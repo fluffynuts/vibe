@@ -877,6 +877,20 @@ test('a code block the agent wrote has a button copying just its code', async ()
   } finally { p.close() }
 })
 
+test('a quote the agent wrote has a button copying its Markdown, without the > marks', async () => {
+  const quote = '### Heading\nSome **bold** words\n\n- one\n- two'
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, 'Here:\n\n' + quote.split('\n').map((l) => '> ' + l).join('\n') + '\n\nand more')], running: false })
+  try {
+    const written = clipboardOf(p)
+    const copy = p.$('convo-log').querySelector('.msg.agent .quote-block button.copy-code')
+    assert.ok(copy, 'the quote has a copy button')
+    assert.equal(p.$('convo-log').querySelectorAll('.msg.agent blockquote').length, 1)
+    await p.click(copy)
+    assert.deepEqual(written, [quote])
+    assert.equal(p.$('toast').textContent, 'Copied')
+  } finally { p.close() }
+})
+
 // What the agent writes can hide control characters in code (an escape that
 // ends a terminal's bracketed paste, so what follows runs): a code block
 // shows them, and its copy leaves them out, saying so. Newlines are kept

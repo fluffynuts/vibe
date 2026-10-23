@@ -79,6 +79,7 @@ test('an ordered list remembers where it starts', () => {
 test('a quote, and a rule', () => {
   const blocks = parse('> quoted **bold**\n> more\n\n---')
   assert.equal(blocks[0].type, 'quote')
+  assert.equal(blocks[0].source, 'quoted **bold**\nmore')
   assert.equal(plain(blocks[0].blocks[0].inline), 'quoted **bold**\nmore')
   assert.equal(blocks[1].type, 'hr')
 })

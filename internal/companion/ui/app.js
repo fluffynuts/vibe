@@ -4273,7 +4273,8 @@
         case 'heading': return el('h' + Math.min(6, Math.max(1, b.level)), {}, ...inline(b.inline))
         case 'code': return codeBlock(b.text)
         case 'hr': return el('hr')
-        case 'quote': return el('blockquote', {}, ...blocks(b.blocks))
+        case 'quote': return el('div', { class: 'quote-block' }, el('blockquote', {}, ...blocks(b.blocks)),
+          el('button', { type: 'button', class: 'copy-code small', title: 'Copy the quote as Markdown', 'aria-label': 'Copy the quote as Markdown', onclick: () => copyText(b.source) }, copyIcon()))
         case 'list': return el(b.ordered ? 'ol' : 'ul', b.ordered && b.start !== 1 ? { start: String(b.start) } : {},
           ...b.items.map((item) => el('li', {}, ...blocks(item))))
         case 'table': {
