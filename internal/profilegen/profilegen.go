@@ -103,6 +103,9 @@ func CreateGuided(l layout.Layout, profile string, features []string) (string, e
 	if err := RecordHash(dir); err != nil {
 		return "", createErr(dir, err)
 	}
+	if _, err := AddReadme(dir); err != nil {
+		return "", createErr(dir, err)
+	}
 	return dir, nil
 }
 

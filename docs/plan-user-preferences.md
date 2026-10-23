@@ -73,7 +73,7 @@ The migration (above) is for profiles made before it: once none are left, the co
 
 A comment on `userprefs.LegacyFiles` says so, so a search for it finds this.
 
-## A README in each generated profile (the user likes it; not built yet)
+## A README in each generated profile (built 2026-10-23, `profilegen.AddReadme`)
 
 Why: files composing wrote can be edited, but an edit is lost to a re-compose or an automatic update (which back the profile up first, as `--re-create` does), and `settings.yaml`, `config.yaml` and the install scripts can't all carry a header comment without it showing up where it shouldn't (the agent reads `agent-instructions.md` as instructions; JSON takes no comments), and a header in the composed bytes would change every profile's hash, so every sandbox would be rebuilt once on upgrade.
 

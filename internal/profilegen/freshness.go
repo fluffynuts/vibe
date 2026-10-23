@@ -23,12 +23,13 @@ const HashFile = "composed-hash"
 // notComposed are the files in a profile's folder that composing doesn't
 // write, so they're left out of its hash: the user's own instructions and
 // preferences, which carry across a re-compose (and the files earlier vibes
-// kept single preferences in, until they are moved into the preferences), and
-// the hash itself.
+// kept single preferences in, until they are moved into the preferences), the
+// note saying the profile is generated (which may be rewritten or deleted),
+// and the hash itself.
 var notComposed = notComposedFiles()
 
 func notComposedFiles() map[string]bool {
-	files := map[string]bool{instructions.File: true, userprefs.File: true, HashFile: true}
+	files := map[string]bool{instructions.File: true, userprefs.File: true, ReadmeFile: true, HashFile: true}
 	for _, old := range userprefs.LegacyFiles {
 		files[old] = true
 	}

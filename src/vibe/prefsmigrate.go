@@ -40,6 +40,9 @@ func migratePreferences(lay layout.Layout, profile string) {
 	if err := userprefs.Migrate(dir); err != nil && !said {
 		note("WARNING: couldn't move profile '%s's theme and git author answer into %s: %s", profile, userprefs.File, err)
 	}
+	if _, err := profilegen.AddReadme(dir); err != nil && !said {
+		note("WARNING: couldn't add %s to profile '%s': %s", profilegen.ReadmeFile, profile, err)
+	}
 	left, err := migrateChoiceKeys(lay, profile)
 	switch {
 	case err != nil && !said:
