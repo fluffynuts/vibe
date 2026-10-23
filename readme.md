@@ -285,8 +285,8 @@ vibe -r/--re-init [path]   # remove and recreate the sandbox from its profile
 vibe -r -f/--force         # ...without prompting
 vibe -f                    # ...and, for an unknown profile, create a blank one
                            #    instead of asking
-vibe -R/--re-create [path] # delete the profile too, then re-init — the profile
-                           #    is gone, so this always re-prompts
+vibe -R/--re-create [path] # delete the profile too (backed up first, and your choices in
+                           #    it kept: see below), then re-init: it re-prompts for a new one
 vibe -N/--no-companion     # ...without serving the companion page this run
 vibe --no-start            # ...doing the setup (create, -r, -R, -C) but not starting the sandbox or companion;
                            # prints "type vibe to get started" unless -f is given (handy for cron)
@@ -1265,7 +1265,7 @@ they are *now* and re-inits the sandbox, so a feature that has since gained an e
 published port or an instruction reaches the profiles built from it. The profile is regenerated
 rather than merged into — re-running the composition over the existing files would append every
 fragment a second time, duplicating permissions and published ports — so hand-edits to it are
-lost, and it warns of that up front, in yellow, before anything else (enter accepts; `-f` skips the question). The profile is zipped into `~/.vibe/backup/<sandbox>-<date>_<time>.zip` first (the last three per sandbox are kept), and `vibe --restore [path]` lists them, rolls the profile back to the one you pick (after confirming) and offers to re-compose from it; `-f` restores the newest without asking. Before rebuilding it shows the same feature
+lost, and it warns of that up front, in yellow, before anything else (enter accepts; `-f` skips the question). The profile is zipped into `~/.vibe/backup/<sandbox>-<date>_<time>.zip` first (the last three per sandbox are kept), (`-R/--re-create` zips the profile the same way before it deletes it), and `vibe --restore [path]` lists them, rolls the profile back to the one you pick (after confirming) and offers to re-compose from it; `-f` restores the newest without asking. Before rebuilding it shows the same feature
 checklist as guided creation, with the profile's current features selected, so you can add a feature or
 drop one you no longer use (and reorder them); with `-f` the recorded features are kept as they are. Profiles written by hand, copied or
 created blank record nothing and are refused rather than guessed at; add the comment line above

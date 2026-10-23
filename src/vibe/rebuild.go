@@ -271,9 +271,10 @@ func folderGone(target string) string {
 // silently reusing the old one, and any existing sandbox is removed and
 // rebuilt from it. Both destructive steps share a single confirmation up
 // front rather than asking once per step; yes is its default, as -R asked
-// for this. What the user chose through vibe for the profile (see
-// userprefs) isn't part of what is made again: it is kept, with -f, and
-// otherwise unless they say no.
+// for this. The profile is backed up first (the sandbox's last three backups
+// are kept, as for a re-compose; 'vibe --restore' lists them). What the user
+// chose through vibe for the profile (see userprefs) isn't part of what is
+// made again: it is kept, with -f, and otherwise unless they say no.
 func doReCreate(lay layout.Layout, args cliargs.Args, name, target string) error {
 	profile, err := resolveReInitProfile(lay.Home, args, name, target)
 	if err != nil {
@@ -281,7 +282,7 @@ func doReCreate(lay layout.Layout, args cliargs.Args, name, target string) error
 	}
 
 	if !confirmDefault(args.Force, true,
-		"This action will destroy any existing profile or sandbox for the current project. Continue?") {
+		"This action will destroy any existing sandbox for the current project, and make its profile afresh (the old one is backed up first). Continue?") {
 		return fmt.Errorf("aborted — nothing removed")
 	}
 
@@ -291,6 +292,13 @@ func doReCreate(lay layout.Layout, args cliargs.Args, name, target string) error
 	}
 	dir := lay.HomePath("profiles", profile)
 	if info, err := os.Stat(dir); dir != "" && err == nil && info.IsDir() {
+		// As a re-compose does: what is about to go can be had back, and if it
+		// can't be kept, nothing goes.
+		zip, err := backup.Create(lay.HomePath("backup"), name, dir, time.Now())
+		if err != nil {
+			return fmt.Errorf("could not back up profile '%s' first (nothing was removed): %w", profile, err)
+		}
+		note("backed up profile '%s' to %s ('vibe --restore' rolls it back)", profile, zip)
 		if err := os.RemoveAll(dir); err != nil {
 			return err
 		}

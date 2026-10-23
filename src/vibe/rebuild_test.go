@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"vibe/internal/backup"
 	"vibe/internal/cliargs"
 	"vibe/internal/layout"
 	"vibe/internal/userprefs"
@@ -404,5 +405,65 @@ func TestTheKeptChoicesAreBackOnceTheNewProfileIsMadeAndBeforeTheKitIsRead(t *te
 	rebuildSandbox(context.Background(), lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "box", t.TempDir(), true, false, hook)
 	if !madeFirst || theme != "green" {
 		t.Errorf("profile made first: %v; preferences' theme: %q", madeFirst, theme)
+	}
+}
+
+func TestReCreateBacksTheProfileUpFirstEvenWithForceAndSaysHowToGetItBack(t *testing.T) {
+	lay, _ := profileWith(t, map[string]string{"user-preferences.yaml": kept})
+	said := notesOf(func() {
+		doReCreate(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "box", t.TempDir())
+	})
+	backups, err := backup.List(lay.HomePath("backup"), "box")
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("backups = %v, %v; want one, under the sandbox's name", backups, err)
+	}
+	dir := t.TempDir()
+	if err := backup.Restore(backups[0].Path, dir); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"install-scripts/01-mine": "echo mine\n", "user-preferences.yaml": kept, "config.yaml": "name: foo-browser\n"} {
+		if got, _ := readFile(t, filepath.Join(dir, filepath.FromSlash(name))); got != want {
+			t.Errorf("the backup's %s = %q, want %q", name, got, want)
+		}
+	}
+	text := strings.Join(said, "\n")
+	if !strings.Contains(text, "backed up profile 'foo-browser'") || !strings.Contains(text, "vibe --restore") {
+		t.Errorf("it said %q: where the backup is, and how to roll back to it, should be in it", text)
+	}
+}
+
+func TestReCreateRemovesNothingIfTheProfileCannotBeBackedUp(t *testing.T) {
+	lay, dir := profileWith(t, map[string]string{"user-preferences.yaml": kept})
+	writeFile(t, lay.HomePath("backup"), "a file where the backups' folder should be")
+	err := doReCreate(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "box", t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "back up") || !strings.Contains(err.Error(), "nothing was removed") {
+		t.Errorf("err = %v, want it to say it couldn't back up, and that nothing was removed", err)
+	}
+	for _, f := range []string{"install-scripts/01-mine", "user-preferences.yaml"} {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(f))); err != nil {
+			t.Errorf("%s is gone: %v", f, err)
+		}
+	}
+}
+
+func TestReCreateOfAProfileThatIsNotThereMakesNoBackup(t *testing.T) {
+	lay := layout.New(t.TempDir(), t.TempDir())
+	doReCreate(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "box", t.TempDir())
+	if backups, _ := backup.List(lay.HomePath("backup"), "box"); len(backups) != 0 {
+		t.Errorf("backups = %v", backups)
+	}
+}
+
+func TestReCreateBacksUpTheChoicesToo(t *testing.T) {
+	lay, _ := profileWith(t, map[string]string{"claude-theme": "amber\n"})
+	doReCreate(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "box", t.TempDir())
+	backups, _ := backup.List(lay.HomePath("backup"), "box")
+	if len(backups) != 1 {
+		t.Fatalf("backups = %v", backups)
+	}
+	dir := t.TempDir()
+	backup.Restore(backups[0].Path, dir)
+	if prefs, err := userprefs.Load(dir); err != nil || prefs.Theme != "amber" {
+		t.Errorf("the backup's preferences %+v, %v: what is backed up should be what the user had, with earlier vibes' files moved in", prefs, err)
 	}
 }
