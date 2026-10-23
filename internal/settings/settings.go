@@ -8,6 +8,8 @@ import (
 	"os"
 
 	"gopkg.in/yaml.v3"
+
+	"vibe/internal/fscopy"
 )
 
 // PublishEntry names a service and the container ports it exposes. When
@@ -83,7 +85,7 @@ type Settings struct {
 // no error, since only the bundle root's settings.yaml is required.
 func Load(path string) (Settings, error) {
 	var s Settings
-	data, err := os.ReadFile(path)
+	data, err := fscopy.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return s, nil

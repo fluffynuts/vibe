@@ -67,7 +67,7 @@ func Load(dir string) (Prefs, error) {
 
 // loadNew reads the new file alone.
 func loadNew(dir string) (Prefs, error) {
-	data, err := os.ReadFile(Path(dir))
+	data, err := fscopy.ReadFile(Path(dir))
 	if os.IsNotExist(err) {
 		return Prefs{}, nil
 	}
@@ -123,7 +123,7 @@ func Update(dir string, change func(*Prefs)) error {
 		return err
 	}
 	change(&want)
-	data, err := os.ReadFile(Path(dir))
+	data, err := fscopy.ReadFile(Path(dir))
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}

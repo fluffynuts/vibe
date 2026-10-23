@@ -1,0 +1,146 @@
+package fscopy
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+var errBusy = errors.New("being used by another process")
+
+// busyFor makes errBusy the in-use error, and keeps the waits instead of
+// waiting; restore puts them back.
+func busyFor(t *testing.T) (waits *[]time.Duration) {
+	t.Helper()
+	waits = new([]time.Duration)
+	wasInUse, wasPause := inUse, pause
+	inUse = func(err error) bool { return errors.Is(err, errBusy) }
+	pause = func(d time.Duration) { *waits = append(*waits, d) }
+	t.Cleanup(func() { inUse, pause = wasInUse, wasPause })
+	return waits
+}
+
+func TestAnOperationThatSucceedsIsNotWaitedFor(t *testing.T) {
+	waits := busyFor(t)
+	calls := 0
+	if err := retryInUse(func() error { calls++; return nil }); err != nil || calls != 1 || len(*waits) != 0 {
+		t.Errorf("err %v, calls %d, waits %v", err, calls, *waits)
+	}
+}
+
+func TestAnOperationThatFindsTheFileInUseIsTriedAgainAfterAWait(t *testing.T) {
+	waits := busyFor(t)
+	calls := 0
+	err := retryInUse(func() error {
+		calls++
+		if calls <= 2 {
+			return errBusy
+		}
+		return nil
+	})
+	if err != nil || calls != 3 {
+		t.Fatalf("err %v after %d calls", err, calls)
+	}
+	if len(*waits) != 2 || (*waits)[1] <= (*waits)[0] {
+		t.Errorf("waited %v: two waits, the second longer", *waits)
+	}
+}
+
+func TestAFileThatStaysInUseIsGivenUpOnAfterAShortWhileWithTheErrorItGave(t *testing.T) {
+	waits := busyFor(t)
+	calls := 0
+	err := retryInUse(func() error { calls++; return errBusy })
+	if !errors.Is(err, errBusy) {
+		t.Errorf("err = %v, want the error it kept giving", err)
+	}
+	if calls != len(inUseWaits)+1 || len(*waits) != len(inUseWaits) {
+		t.Errorf("%d calls and %d waits for %d allowed", calls, len(*waits), len(inUseWaits))
+	}
+	var total time.Duration
+	for _, w := range *waits {
+		total += w
+	}
+	if total > time.Second {
+		t.Errorf("it would wait %s before giving up: a page action shouldn't hang on a file", total)
+	}
+}
+
+func TestAnyOtherErrorIsNotRetried(t *testing.T) {
+	waits := busyFor(t)
+	calls := 0
+	other := errors.New("no such file")
+	if err := retryInUse(func() error { calls++; return other }); !errors.Is(err, other) || calls != 1 || len(*waits) != 0 {
+		t.Errorf("err %v, calls %d, waits %v", err, calls, *waits)
+	}
+}
+
+func TestAFileWrittenWholeIsTriedAgainWhenTheReplacingFindsItInUse(t *testing.T) {
+	busyFor(t)
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	os.WriteFile(path, []byte("old"), 0o644)
+	failures := 2
+	was := rename
+	rename = func(from, to string) error {
+		if failures > 0 {
+			failures--
+			return errBusy
+		}
+		return was(from, to)
+	}
+	defer func() { rename = was }()
+	if err := WriteWholeMode(path, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "new" {
+		t.Errorf("the file holds %q", data)
+	}
+	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+		t.Errorf("left beside it: %v", entries)
+	}
+}
+
+func TestAFileThatCannotBeReplacedStaysAsItWasWithNothingLeftBeside(t *testing.T) {
+	busyFor(t)
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	os.WriteFile(path, []byte("old"), 0o644)
+	was := rename
+	rename = func(string, string) error { return errBusy }
+	defer func() { rename = was }()
+	if err := WriteWholeMode(path, []byte("new"), 0o644); !errors.Is(err, errBusy) {
+		t.Errorf("err = %v, want the error to be said", err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "old" {
+		t.Errorf("the file holds %q", data)
+	}
+	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+		t.Errorf("left beside it: %v", entries)
+	}
+}
+
+func TestAFileReadIsTriedAgainWhenItIsInUse(t *testing.T) {
+	busyFor(t)
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	os.WriteFile(path, []byte("held"), 0o644)
+	failures := 2
+	was := readFile
+	readFile = func(p string) ([]byte, error) {
+		if failures > 0 {
+			failures--
+			return nil, errBusy
+		}
+		return was(p)
+	}
+	defer func() { readFile = was }()
+	if data, err := ReadFile(path); err != nil || string(data) != "held" {
+		t.Errorf("%q, %v", data, err)
+	}
+}
+
+func TestAFileThatIsNotThereIsNotWaitedFor(t *testing.T) {
+	waits := busyFor(t)
+	if _, err := ReadFile(filepath.Join(t.TempDir(), "nope")); !os.IsNotExist(err) || len(*waits) != 0 {
+		t.Errorf("err %v, waits %v", err, *waits)
+	}
+}
