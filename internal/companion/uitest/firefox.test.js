@@ -416,6 +416,8 @@ test('Reload keeps the place in the file, and Back goes to where it was left in 
     assert.ok(was > 300, `the file isn't long enough to scroll: ${was}`)
     await page.click('#file-view-reload')
     await eventually(page, 'the file reloaded, at its place', async () => Math.abs((await place()) - was) < 6)
+    // A link is a button once the host has said its file is there: that comes a moment after the file is drawn.
+    await eventually(page, 'the link to the next file is a button', () => page.evaluate(() => !!document.querySelector('#file-view-body button.file-ref')))
     // Not page.click, which scrolls the link into view first: it is the place at the click that is remembered.
     await page.evaluate(() => document.querySelector('#file-view-body button.file-ref').click())
     await eventually(page, 'the next file shown', async () => (await title()) === 'B')
