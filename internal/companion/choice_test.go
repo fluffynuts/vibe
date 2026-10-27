@@ -37,10 +37,16 @@ type choosing struct {
 	holdFirstGet chan struct{}
 	getReached   chan struct{}
 	getHeld      bool
+	// limits are what the plan can't run, if anything; unlocks counts the
+	// user saying it has changed (which takes the limits away).
+	limits    *Limits
+	unlockErr error
+	unlocks   int
+	noUnlock  bool
 }
 
 func (c *choosing) config() *Choice {
-	return &Choice{
+	choice := &Choice{
 		Get: func() (string, string, error) {
 			c.mu.Lock()
 			model, effort := c.model, c.effort
@@ -107,6 +113,24 @@ func (c *choosing) config() *Choice {
 			return c.rememberErr
 		},
 	}
+	if !c.noUnlock {
+		choice.Limits = func() *Limits {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			return c.limits
+		}
+		choice.Unlock = func() error {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.unlocks++
+			if c.unlockErr != nil {
+				return c.unlockErr
+			}
+			c.limits = nil
+			return nil
+		}
+	}
+	return choice
 }
 
 var claudeOptions = Options{
@@ -915,5 +939,86 @@ func TestWhatTheUserChoosesWhileTheModelInUseIsBeingRecordedIsNotWrittenOver(t *
 	}
 	if got := readChoice(t, s); got.Model != "opus" {
 		t.Errorf("the model kept is %q: the user's choice of opus was written over by the one recorded for the conversation", got.Model)
+	}
+}
+
+var freePlanLimits = &Limits{Unavailable: []string{"codex", "composer"}, Why: "A free plan can only use Auto.", Since: 1793000000000}
+
+func TestThePageIsToldWhichModelsThePlanCantRunAndWhy(t *testing.T) {
+	c := &choosing{options: cursorOptions, limits: freePlanLimits}
+	s := choiceServer(t, c)
+	rec := do(t, s, req{path: "/api/conversation/choice", headers: authed(nil)})
+	var got struct{ Limits *Limits }
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Limits == nil || len(got.Limits.Unavailable) != 2 || got.Limits.Unavailable[0] != "codex" || got.Limits.Why != "A free plan can only use Auto." || got.Limits.Since != 1793000000000 {
+		t.Errorf("limits = %+v", got.Limits)
+	}
+}
+
+func TestWithNoLimitsTheBodyHasNone(t *testing.T) {
+	c := &choosing{options: cursorOptions}
+	s := choiceServer(t, c)
+	rec := do(t, s, req{path: "/api/conversation/choice", headers: authed(nil)})
+	if strings.Contains(rec.Body.String(), `"limits"`) {
+		t.Errorf("body: %s", rec.Body)
+	}
+}
+
+func TestAModelThePlanCantRunIsNotKeptEvenIfAskedFor(t *testing.T) {
+	// A second page open on the conversation may not have been told.
+	c := &choosing{options: cursorOptions, limits: freePlanLimits}
+	s := choiceServer(t, c)
+	do(t, s, post("/api/conversation/choice/options", `{}`))
+	rec := do(t, s, post("/api/conversation/choice", `{"model":"codex","effort":"high"}`))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "A free plan can only use Auto.") {
+		t.Errorf("%d %s", rec.Code, rec.Body)
+	}
+	if len(c.setCalls) != 0 {
+		t.Errorf("kept %v", c.setCalls)
+	}
+	if rec := do(t, s, post("/api/conversation/choice", `{"model":"auto","effort":""}`)); rec.Code != http.StatusOK {
+		t.Errorf("Auto, which any plan runs: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestSayingThePlanHasChangedTakesTheLimitsAway(t *testing.T) {
+	c := &choosing{options: cursorOptions, limits: freePlanLimits}
+	s := choiceServer(t, c)
+	rec := do(t, s, post("/api/conversation/choice/unlock", `{}`))
+	if rec.Code != http.StatusOK || c.unlocks != 1 || strings.Contains(rec.Body.String(), `"limits"`) {
+		t.Errorf("%d, %d unlocks: %s", rec.Code, c.unlocks, rec.Body)
+	}
+	if rec := do(t, s, post("/api/conversation/choice", `{"model":"codex","effort":"high"}`)); rec.Code != http.StatusOK {
+		t.Errorf("a model that was refused, now: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestWhenTheLimitsCantBeTakenAwayThePageIsToldWhy(t *testing.T) {
+	c := &choosing{options: cursorOptions, limits: freePlanLimits, unlockErr: errors.New("the file is read-only")}
+	s := choiceServer(t, c)
+	rec := do(t, s, post("/api/conversation/choice/unlock", `{}`))
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "the file is read-only") {
+		t.Errorf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestAnAgentWithNothingToUnlockSaysSo(t *testing.T) {
+	c := &choosing{options: claudeOptions, noUnlock: true}
+	s := choiceServer(t, c)
+	if rec := do(t, s, post("/api/conversation/choice/unlock", `{}`)); rec.Code != http.StatusNotFound {
+		t.Errorf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestUnlockingNeedsTheToken(t *testing.T) {
+	c := &choosing{options: cursorOptions, limits: freePlanLimits}
+	s := choiceServer(t, c)
+	if rec := do(t, s, req{method: "POST", path: "/api/conversation/choice/unlock", body: `{}`}); rec.Code == http.StatusOK {
+		t.Errorf("unlocked without a token: %d", rec.Code)
+	}
+	if c.unlocks != 0 {
+		t.Error("unlocked")
 	}
 }

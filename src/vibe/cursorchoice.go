@@ -15,7 +15,7 @@ import (
 
 // cursorChoiceNote is what the page says of choosing: a model asked for with
 // --model is kept by Cursor as its own.
-const cursorChoiceNote = "A model chosen here is also the one Cursor uses in its own terminal from then on. A free plan can only use Auto."
+const cursorChoiceNote = "A model chosen here is also the one Cursor uses in its own terminal from then on."
 
 // maxCursorList is the most Cursor's list may be: it is a few hundred lines.
 const maxCursorList = 512 << 10
@@ -27,7 +27,7 @@ const maxCursorList = 512 << 10
 //
 // What the profile holds can be put there by another agent, or by hand, so a
 // model that isn't in Cursor's list is neither shown as chosen nor run.
-func cursorChoice(ask askAgent, workspace string, kept profileChoice, optionsFile, listFile string) *companion.Choice {
+func cursorChoice(ask askAgent, workspace string, kept profileChoice, optionsFile, listFile string, plan *cursorPlan) *companion.Choice {
 	cached, remember := keptOptionsTidied(optionsFile, time.Now, func(*companion.Options) {})
 	// shown is a stored model as the page has it: its family and effort.
 	shown := func(c turnChoice) (string, string) {
@@ -69,7 +69,34 @@ func cursorChoice(ask askAgent, workspace string, kept profileChoice, optionsFil
 		},
 		Cached:   cached,
 		Remember: remember,
+		Limits:   func() *companion.Limits { return cursorLimits(plan, listFile) },
+		Unlock:   plan.forget,
 	}
+}
+
+// cursorOnlyAutoWhy is what the page says of the models out of reach.
+const cursorOnlyAutoWhy = "Your Cursor plan can only use Auto: a prompt on another model was refused."
+
+// cursorLimits are the models out of reach, as learned: every one but Auto
+// while the plan is believed to run only that (see cursorPlan), named from
+// the list kept. None when nothing is believed, or the list isn't known (the
+// page has no models to mark then either).
+func cursorLimits(plan *cursorPlan, listFile string) *companion.Limits {
+	since, only := plan.onlyAuto()
+	if !only {
+		return nil
+	}
+	cat, ok := loadCursorList(listFile)
+	if !ok {
+		return nil
+	}
+	limits := &companion.Limits{Unavailable: []string{}, Why: cursorOnlyAutoWhy, Since: since.UnixMilli()}
+	for _, f := range cat.Families {
+		if f.Key != cursorAuto {
+			limits.Unavailable = append(limits.Unavailable, f.Key)
+		}
+	}
+	return limits
 }
 
 // loadCursorList is what Cursor's list of models, as kept in file, makes: not

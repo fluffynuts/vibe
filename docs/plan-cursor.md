@@ -202,3 +202,22 @@ tar, `base64 -w0`).
 
 `vibe --turn-log` keeps needing sbx: the user's call is that sbx is a bedrock dependency of vibe, so that is not a
 loose end.
+
+## Slice 2: the models the plan can't run (2026-10-27, built, awaiting the user's test)
+
+Behaviour (the user's decisions): every model is listed; those the plan can't run are red and say "— not on your plan";
+choosing one is refused with the reason in the bubble and the drop-down goes back; a "Check again" button takes the
+limit away; what is learned expires after an hour; a model other than Auto that runs also takes it away.
+
+- Learned from the refusal only (under an API key the plan isn't readable): `cursorPlan` (`src/vibe/cursorplan.go`),
+  a per-sandbox file `companion/<name>.cursor-plan.json` with when; believed for `cursorPlanFreshFor` (1 h).
+  `converseCursor` learns it on the "Named models unavailable" refusal and forgets it when a model other than Auto
+  runs (Auto running says nothing: every plan runs it).
+- `companion.Choice` gained optional `Limits` (models out of reach + why + since, in the choice body as `limits`) and
+  `Unlock` (`POST /api/conversation/choice/unlock`). The host also refuses (409, with the reason) to keep a model that
+  is out of reach, for a second page that wasn't told.
+- Page: out-of-reach options are `option.unavailable` (red, with the words, which also serves colour-blind users);
+  `Check again` is in the info bubble while limits are in force.
+- Deliberately not built: a background probe to re-check the plan. A probe costs ~7 s and rewrites Cursor's
+  remembered model (so it would have to end by resetting it to Auto, spending a prompt of the free quota), so it isn't
+  free. After the hour, or "Check again", models are offered again and the next real attempt finds out.

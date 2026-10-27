@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -35,14 +36,19 @@ type cursorFiles struct {
 	kept    profileChoice
 	options string
 	list    string
+	plan    *cursorPlan
+	now     *time.Time
 }
 
 func newCursorChoice(t *testing.T, ask askAgent) (*companion.Choice, cursorFiles) {
 	t.Helper()
 	kept, settings := choiceHome(t, "")
 	dir := filepath.Dir(settings)
-	files := cursorFiles{kept: kept, options: filepath.Join(dir, "options.json"), list: filepath.Join(dir, "models.txt")}
-	return cursorChoice(ask, "/work/box", kept, files.options, files.list), files
+	now := time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC)
+	plan := newCursorPlan(filepath.Join(dir, "plan.json"))
+	plan.now = func() time.Time { return now }
+	files := cursorFiles{kept: kept, options: filepath.Join(dir, "options.json"), list: filepath.Join(dir, "models.txt"), plan: plan, now: &now}
+	return cursorChoice(ask, "/work/box", kept, files.options, files.list, plan), files
 }
 
 func askedFor(t *testing.T, c *companion.Choice) companion.Options {
@@ -229,8 +235,6 @@ func TestAFailureToAskCursorForItsListIsPassedOn(t *testing.T) {
 	}
 }
 
-var _ = time.Second
-
 func TestSettingTheChoiceBackToAutoIsWhatTheSelectorShowsAndTheNextTurnAsksFor(t *testing.T) {
 	ask, _ := cursorSays(t, "")
 	c, files := newCursorChoice(t, ask)
@@ -247,5 +251,70 @@ func TestSettingTheChoiceBackToAutoIsWhatTheSelectorShowsAndTheNextTurnAsksFor(t
 	}
 	if id, err := cursorTurnModel(files.kept, files.list)(); id != "auto" || err != nil {
 		t.Errorf("the next turn asks for %q, %v", id, err)
+	}
+}
+
+func TestNothingIsOutOfReachUntilThePlanHasRefusedAModel(t *testing.T) {
+	ask, _ := cursorSays(t, "")
+	c, _ := newCursorChoice(t, ask)
+	askedFor(t, c)
+	if limits := c.Limits(); limits != nil {
+		t.Errorf("limits = %+v", limits)
+	}
+}
+
+func TestOncePlanHasRefusedAModelEveryModelButAutoIsOutOfReachAndWhy(t *testing.T) {
+	ask, _ := cursorSays(t, "")
+	c, files := newCursorChoice(t, ask)
+	opts := askedFor(t, c)
+	files.plan.learnedOnlyAuto()
+	limits := c.Limits()
+	if limits == nil || limits.Why == "" || limits.Since != files.now.UnixMilli() {
+		t.Fatalf("limits = %+v", limits)
+	}
+	if len(limits.Unavailable) != len(opts.Models)-1 {
+		t.Errorf("%d out of reach, of %d models", len(limits.Unavailable), len(opts.Models))
+	}
+	for _, m := range limits.Unavailable {
+		if m == "auto" {
+			t.Error("Auto, which every plan runs, was put out of reach")
+		}
+	}
+	if !slices.Contains(limits.Unavailable, "gpt-5.3-codex") {
+		t.Error("a model that a free plan can't run isn't out of reach")
+	}
+}
+
+func TestWhatWasLearnedOfThePlanExpiresAndThenEverythingIsOfferedAgain(t *testing.T) {
+	ask, _ := cursorSays(t, "")
+	c, files := newCursorChoice(t, ask)
+	askedFor(t, c)
+	files.plan.learnedOnlyAuto()
+	*files.now = files.now.Add(cursorPlanFreshFor + time.Minute)
+	if limits := c.Limits(); limits != nil {
+		t.Errorf("limits an hour old: %+v", limits)
+	}
+}
+
+func TestSayingThePlanHasChangedTakesTheLimitsAwayAndKeepsNothingOfThem(t *testing.T) {
+	ask, _ := cursorSays(t, "")
+	c, files := newCursorChoice(t, ask)
+	askedFor(t, c)
+	files.plan.learnedOnlyAuto()
+	if err := c.Unlock(); err != nil {
+		t.Fatal(err)
+	}
+	if limits := c.Limits(); limits != nil {
+		t.Errorf("limits = %+v", limits)
+	}
+}
+
+func TestWithoutCursorsListNothingCanBeNamedAsOutOfReach(t *testing.T) {
+	// The page has no models then either.
+	_, files := newCursorChoice(t, nil)
+	c := cursorChoice(nil, "/w", files.kept, files.options, files.list, files.plan)
+	files.plan.learnedOnlyAuto()
+	if limits := c.Limits(); limits != nil {
+		t.Errorf("limits = %+v", limits)
 	}
 }

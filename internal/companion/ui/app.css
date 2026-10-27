@@ -709,3 +709,6 @@ dialog.file-view header button svg { width: 14px; height: 14px; fill: none; stro
 #file-view-body pre code, #file-view-body .code-block code { display: block; font: 13px var(--mono); white-space: pre; word-break: normal; }
 dialog.file-view.outside { border-color: var(--warn-line); border-width: 2px; }
 dialog.file-view.outside .file-view-url::before { content: "⚠"; flex: none; margin-right: 6px; }
+
+/* A model the plan can't run: listed, to show what there is, but in red. */
+#choice-model option.unavailable { color: var(--bad); }

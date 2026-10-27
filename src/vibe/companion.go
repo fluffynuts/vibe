@@ -237,7 +237,8 @@ func conversationFor(vibeHome, name string, inst state.Instance, choice profileC
 		return keepingTranscript(
 			converseCursor(name, inst.Target, newTurnLog(state.TurnLogPath(vibeHome, name)),
 				cursorTurnModel(choice, state.CursorModelsPath(vibeHome, name)),
-				func() error { return choice.set(cursorAuto, "") }),
+				func() error { return choice.set(cursorAuto, "") },
+				newCursorPlan(state.CursorPlanPath(vibeHome, name))),
 			sandboxCursorSessions(name), state.TranscriptPath(vibeHome, name))
 	case hasConversation(inst):
 		return keepingTranscript(converse(name, inst.Target, choice.forTurn), sandboxTranscripts(name), state.TranscriptPath(vibeHome, name))
@@ -251,7 +252,8 @@ func conversationFor(vibeHome, name string, inst state.Instance, choice profileC
 func choiceFor(vibeHome, name string, inst state.Instance, kept profileChoice) *companion.Choice {
 	switch inst.Agent {
 	case "cursor":
-		return cursorChoice(cursorAsk(name), inst.Target, kept, state.CursorOptionsPath(vibeHome, name), state.CursorModelsPath(vibeHome, name))
+		return cursorChoice(cursorAsk(name), inst.Target, kept, state.CursorOptionsPath(vibeHome, name), state.CursorModelsPath(vibeHome, name),
+			newCursorPlan(state.CursorPlanPath(vibeHome, name)))
 	case "", "claude":
 		return sandboxChoice(name, inst.Target, kept, state.ModelOptionsPath(vibeHome, name))
 	}

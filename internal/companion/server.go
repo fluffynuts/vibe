@@ -366,6 +366,7 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"POST /api/conversation/choice", s.serving(choiceFeature, s.choiceSet)},
 		{"POST /api/conversation/choice/options", s.serving(choiceFeature, s.choiceFetchOptions)},
 		{"POST /api/conversation/choice/adopt", s.serving(choiceFeature, s.choiceAdopt)},
+		{"POST /api/conversation/choice/unlock", s.serving(choiceFeature, s.choiceUnlock)},
 		{"POST /api/conversation/send", s.serving(conversationFeature, s.conversationSend)},
 		{"POST /api/conversation/stop", s.serving(conversationFeature, s.conversationStop)},
 		{"POST /api/conversation/new", s.serving(conversationFeature, s.conversationNew)},

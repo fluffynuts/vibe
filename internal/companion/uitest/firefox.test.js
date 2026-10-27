@@ -423,6 +423,31 @@ test("the file viewer's path is drawn left to right, so a leading dot stays wher
   } finally { await page.close() }
 })
 
+// A model the plan can't run is red in the list, as the page's own warning colour is: browsers differ in what they
+// let an option's colour be.
+test('a model the plan cannot run is red in the model list, and the one it can is not', async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 900 } })
+  const json = (route, body) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) })
+  await page.route(/\/api\/conversation\/choice$/, async (route) => json(route, Object.assign(await (await route.fetch()).json(), { limits: { unavailable: ['sonnet', 'haiku'], why: 'Your plan can only use Opus.', since: 1793000000000 } })))
+  try {
+    await page.goto(URL)
+    await page.click('#tab-conversation')
+    await page.waitForSelector('#choice-model option.unavailable', { state: 'attached' })
+    const colours = await page.evaluate(() => {
+      const probe = document.createElement('span')
+      probe.style.color = 'var(--bad)'
+      document.body.append(probe)
+      const bad = getComputedStyle(probe).color
+      probe.remove()
+      const colour = (v) => getComputedStyle(document.querySelector('#choice-model option[value="' + v + '"]')).color
+      return { bad, sonnet: colour('sonnet'), haiku: colour('haiku'), opus: colour('opus') }
+    })
+    assert.equal(colours.sonnet, colours.bad)
+    assert.equal(colours.haiku, colours.bad)
+    assert.notEqual(colours.opus, colours.bad, 'the model the plan can run is not red')
+  } finally { await page.close() }
+})
+
 // eventually waits for check to say yes: polled, as the page's policy doesn't allow waitForFunction.
 async function eventually(page, what, check) {
   for (let i = 0; i < 80; i++) {

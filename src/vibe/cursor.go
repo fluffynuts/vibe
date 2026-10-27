@@ -80,8 +80,10 @@ const (
 // said to have failed so, and run again, once, on Auto: the plan can't be read
 // beforehand when Cursor is given an API key, as a sandbox's is. Nothing
 // else is run again. setAuto makes Auto the choice then, for the next turn
-// and for the page's selector.
-func converseCursor(name, workspace string, log *turnLog, choose func() (string, error), setAuto func() error) companion.Converser {
+// and for the page's selector; plan learns that the plan only runs Auto (the
+// page shows the other models as not available), and forgets it when a model
+// other than Auto runs.
+func converseCursor(name, workspace string, log *turnLog, choose func() (string, error), setAuto func() error, plan *cursorPlan) companion.Converser {
 	return func(ctx context.Context, prompt, session string, delivered func(), onLine func([]byte)) error {
 		model, err := choose()
 		if err != nil {
@@ -104,7 +106,16 @@ func converseCursor(name, workspace string, log *turnLog, choose func() (string,
 			return err
 		}
 		err = run(model)
+		if err == nil && model != "" && model != cursorAuto {
+			// A model other than Auto ran: the plan runs more than Auto.
+			if forgotten := plan.forget(); forgotten != nil {
+				note("couldn't take away the memory that Cursor's plan only runs Auto: %v", forgotten)
+			}
+		}
 		if err != nil && model != cursorAuto && ctx.Err() == nil && strings.Contains(err.Error(), unavailableModel) {
+			if learned := plan.learnedOnlyAuto(); learned != nil {
+				note("couldn't remember that Cursor's plan only runs Auto: %v", learned)
+			}
 			if kept := setAuto(); kept != nil {
 				onLine(vibeNote(fmt.Sprintf(cursorFellBackKept, kept)))
 			} else {

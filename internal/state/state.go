@@ -282,6 +282,12 @@ func CursorOptionsPath(vibeHome, name string) string {
 	return filepath.Join(vibeHome, "companion", name+".cursor-options.json")
 }
 
+// CursorPlanPath is where what vibe has learned of what a sandbox's Cursor
+// plan can run is kept: that it refused a named model, and when.
+func CursorPlanPath(vibeHome, name string) string {
+	return filepath.Join(vibeHome, "companion", name+".cursor-plan.json")
+}
+
 // CursorModelsPath is where what Cursor's --list-models said is kept, as it
 // said it: the choice of a model and effort is turned into the id of one
 // from it.

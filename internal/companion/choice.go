@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -32,6 +33,26 @@ type Choice struct {
 	Cached func() (opts Options, at time.Time, ok bool)
 	// Remember keeps the agent's lists for the next run.
 	Remember func(Options) error
+	// Limits is what the agent's plan can't run, as far as is known now: nil
+	// when nothing is known to be out of reach, and for an agent that has no
+	// such thing. Asked for each time the choice is read, since it is learned
+	// as the agent is used and forgotten as time goes by.
+	Limits func() *Limits
+	// Unlock is the user saying the plan has changed (an upgrade, say): what
+	// was learned of its limits is taken away, and learned again if it was
+	// wrong. Nil for an agent that has no limits to speak of.
+	Unlock func() error
+}
+
+// Limits are the models the agent's plan can't run, which the page shows as
+// they are but won't let be chosen.
+type Limits struct {
+	// Unavailable are the listed models that can't be chosen.
+	Unavailable []string `json:"unavailable"`
+	// Why is said to the user of them.
+	Why string `json:"why"`
+	// Since is when it was learned, in milliseconds since the epoch.
+	Since int64 `json:"since,omitempty"`
 }
 
 // Options are the agent's own lists, as the page offers them.
@@ -182,6 +203,11 @@ func (s *Server) choiceBody() (map[string]interface{}, error) {
 		inherited["model"], inherited["effort"] = ownModel == "" && model != "", ownEffort == "" && effort != ""
 	}
 	body["inherited"] = inherited
+	if s.cfg.Choice.Limits != nil {
+		if limits := s.cfg.Choice.Limits(); limits != nil {
+			body["limits"] = limits
+		}
+	}
 	body["running"] = s.convo.ranModel()
 	body["session"] = s.convo.hasSession()
 	return body, nil
@@ -229,7 +255,29 @@ func (s *Server) choiceSet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// The page doesn't offer what the plan can't run, but another page may not
+	// have been told.
+	if s.cfg.Choice.Limits != nil {
+		if limits := s.cfg.Choice.Limits(); limits != nil && slices.Contains(limits.Unavailable, req.Model) {
+			writeError(w, http.StatusConflict, limits.Why)
+			return
+		}
+	}
 	if !s.keepChoice(w, req.Model, req.Effort) {
+		return
+	}
+	s.choiceState(w, r)
+}
+
+// choiceUnlock is the user saying the plan has changed: what was learned of
+// its limits is taken away.
+func (s *Server) choiceUnlock(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Choice.Unlock == nil {
+		writeError(w, http.StatusNotFound, "this agent's plan has no limits to take away")
+		return
+	}
+	if err := s.cfg.Choice.Unlock(); err != nil {
+		writeError(w, http.StatusInternalServerError, "the limits couldn't be taken away: "+err.Error())
 		return
 	}
 	s.choiceState(w, r)

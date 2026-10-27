@@ -197,7 +197,13 @@ func cursorTurnOn(t *testing.T, model string) (lines []string, err error) {
 
 func cursorTurnSetting(t *testing.T, model string, back *setBack) (lines []string, err error) {
 	t.Helper()
-	box := converseCursor("box", "/w", newTurnLog(filepath.Join(t.TempDir(), "box.turns.log")), func() (string, error) { return model, nil }, back.set)
+	return cursorTurnKnowing(t, model, back, newCursorPlan(filepath.Join(t.TempDir(), "plan.json")))
+}
+
+// cursorTurnKnowing is a turn that learns of the plan into plan.
+func cursorTurnKnowing(t *testing.T, model string, back *setBack, plan *cursorPlan) (lines []string, err error) {
+	t.Helper()
+	box := converseCursor("box", "/w", newTurnLog(filepath.Join(t.TempDir(), "box.turns.log")), func() (string, error) { return model, nil }, back.set, plan)
 	err = box(context.Background(), "hi", "sess-1", func() {}, func(l []byte) { lines = append(lines, string(l)) })
 	return lines, err
 }
@@ -256,7 +262,7 @@ func TestATurnStoppedOnThePageIsNotRunAgain(t *testing.T) {
 	t.Cleanup(func() { stopTurn = stopTurnWas })
 	ctx, stop := context.WithCancel(context.Background())
 	stop()
-	box := converseCursor("box", "/w", newTurnLog(filepath.Join(t.TempDir(), "box.turns.log")), func() (string, error) { return "", nil }, func() error { return nil })
+	box := converseCursor("box", "/w", newTurnLog(filepath.Join(t.TempDir(), "box.turns.log")), func() (string, error) { return "", nil }, func() error { return nil }, newCursorPlan(filepath.Join(t.TempDir(), "plan.json")))
 	box(ctx, "hi", "", func() {}, func([]byte) {})
 	if len(*commands) != 1 {
 		t.Errorf("%d runs after a stop", len(*commands))
@@ -295,7 +301,7 @@ func TestATurnOnAutoThatFailsAnyWayIsNotRunAgainOnAuto(t *testing.T) {
 
 func TestAChoiceThatCantBeReadIsAFailedTurnNothingWasRunFor(t *testing.T) {
 	commands := turnsOf(t)
-	box := converseCursor("box", "/w", newTurnLog(filepath.Join(t.TempDir(), "box.turns.log")), func() (string, error) { return "", errors.New("bad choice") }, func() error { return nil })
+	box := converseCursor("box", "/w", newTurnLog(filepath.Join(t.TempDir(), "box.turns.log")), func() (string, error) { return "", errors.New("bad choice") }, func() error { return nil }, newCursorPlan(filepath.Join(t.TempDir(), "plan.json")))
 	if err := box(context.Background(), "hi", "", func() {}, func([]byte) {}); err == nil || !strings.Contains(err.Error(), "bad choice") {
 		t.Errorf("err = %v", err)
 	}
@@ -388,5 +394,76 @@ func TestASandboxWithoutCursorsAgentSaysSoAndWhatToCheck(t *testing.T) {
 	}
 	if strings.Contains(string(out), "command not found") {
 		t.Errorf("the shell's own complaint is what's said: %s", out)
+	}
+}
+
+func freshPlan(t *testing.T) *cursorPlan {
+	t.Helper()
+	return newCursorPlan(filepath.Join(t.TempDir(), "plan.json"))
+}
+
+func TestAModelRefusedTeachesVibeThatThePlanOnlyRunsAuto(t *testing.T) {
+	// Cursor says so only in the refusal, and with an API key the plan can't be read.
+	turnsOf(t, errors.New(namedModelFailure), nil)
+	plan := freshPlan(t)
+	if _, err := cursorTurnKnowing(t, "gpt-5.2-fast", &setBack{}, plan); err != nil {
+		t.Fatal(err)
+	}
+	if _, only := plan.onlyAuto(); !only {
+		t.Error("the refusal wasn't learned from")
+	}
+}
+
+func TestARefusalOfWhateverCursorWasSetToIsLearnedFromToo(t *testing.T) {
+	// No model chosen: it is Cursor's own, that the user's terminal set.
+	turnsOf(t, errors.New(namedModelFailure), nil)
+	plan := freshPlan(t)
+	cursorTurnKnowing(t, "", &setBack{}, plan)
+	if _, only := plan.onlyAuto(); !only {
+		t.Error("not learned from")
+	}
+}
+
+func TestAnotherFailureTeachesNothingOfThePlan(t *testing.T) {
+	turnsOf(t, errors.New("exit status 1: the network is down"))
+	plan := freshPlan(t)
+	cursorTurnKnowing(t, "gpt-5.2-fast", &setBack{}, plan)
+	if _, only := plan.onlyAuto(); only {
+		t.Error("learned the plan from a failure that isn't about it")
+	}
+}
+
+func TestAModelOtherThanAutoThatRunsShowsThePlanRunsMoreThanAuto(t *testing.T) {
+	turnsOf(t, nil)
+	plan := freshPlan(t)
+	plan.learnedOnlyAuto()
+	if _, err := cursorTurnKnowing(t, "gpt-5.2-fast", &setBack{}, plan); err != nil {
+		t.Fatal(err)
+	}
+	if _, only := plan.onlyAuto(); only {
+		t.Error("the limit was kept though a model other than Auto ran")
+	}
+}
+
+func TestAutoRunningSaysNothingOfThePlanEitherWay(t *testing.T) {
+	for name, model := range map[string]string{"auto chosen": "auto", "nothing chosen": ""} {
+		turnsOf(t, nil)
+		plan := freshPlan(t)
+		plan.learnedOnlyAuto()
+		cursorTurnKnowing(t, model, &setBack{}, plan)
+		if _, only := plan.onlyAuto(); !only {
+			t.Errorf("%s: the limit was forgotten because Auto ran, which every plan does", name)
+		}
+	}
+}
+
+func TestAPlanThatCantBeRememberedDoesNotStopTheTurn(t *testing.T) {
+	turnsOf(t, errors.New(namedModelFailure), nil)
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "not-a-folder")
+	os.WriteFile(blocker, []byte("x"), 0o600)
+	plan := newCursorPlan(filepath.Join(blocker, "plan.json"))
+	if _, err := cursorTurnKnowing(t, "gpt-5.2-fast", &setBack{}, plan); err != nil {
+		t.Errorf("the turn failed because the plan couldn't be kept: %v", err)
 	}
 }
