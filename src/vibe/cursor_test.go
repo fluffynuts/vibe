@@ -578,3 +578,66 @@ func TestTheClaimScriptRunsTheHooksTextModeAndSaysNothingWithoutOne(t *testing.T
 		t.Errorf("with a hook it gave %q", got)
 	}
 }
+
+func TestTheUserIsToldWhatWasSentWithThePromptAndThatItWas(t *testing.T) {
+	// The clipboard page marks an item "sent" too, but the conversation is where the user is looking.
+	turnsOf(t, nil)
+	pasting(t, "The user sent these to you through the vibe clipboard page:\n- image at /x/1.png (image/png, 1 KB) — look at it\n- text (/x/2.txt):\n```\nhello\n```", nil)
+	lines, err := cursorTurn(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	said := strings.Join(lines, "\n")
+	if !strings.Contains(said, `"vibe_note"`) || !strings.Contains(said, "2 items from the clipboard page") {
+		t.Errorf("the user wasn't told: %q", lines)
+	}
+}
+
+func TestOneItemIsSaidToBeOneItem(t *testing.T) {
+	turnsOf(t, nil)
+	pasting(t, "The user sent this to you through the vibe clipboard page:\n- image at /x/1.png (image/png, 1 KB) — look at it", nil)
+	lines, _ := cursorTurn(t)
+	if said := strings.Join(lines, "\n"); !strings.Contains(said, "1 item from the clipboard page") {
+		t.Errorf("said %q", lines)
+	}
+}
+
+func TestNothingIsSaidOfTheClipboardWhenNothingWasPasted(t *testing.T) {
+	turnsOf(t, nil)
+	pasting(t, "", nil)
+	lines, _ := cursorTurn(t)
+	if strings.Contains(strings.Join(lines, "\n"), "clipboard") {
+		t.Errorf("said %q", lines)
+	}
+}
+
+func TestWhatWasClaimedOrWhyNotIsInTheTurnLogForWhenSomethingGoesWrong(t *testing.T) {
+	for name, tc := range map[string]struct {
+		text string
+		err  error
+		want string
+	}{
+		"items":   {"The user sent this to you:\n- image at /x/1.png", nil, "clipboard: 1 item"},
+		"none":    {"", nil, "clipboard: nothing pasted"},
+		"failure": {"", errors.New("the sandbox said no"), "clipboard: couldn't be asked (the sandbox said no)"},
+	} {
+		turnsOf(t, nil)
+		pasting(t, tc.text, tc.err)
+		file := filepath.Join(t.TempDir(), "box.turns.log")
+		box := converseCursor("box", "/w", newTurnLog(file), func() (string, error) { return "", nil }, func() error { return nil }, newCursorPlan(filepath.Join(t.TempDir(), "plan.json")))
+		box(context.Background(), "hi", "", func() {}, func([]byte) {})
+		if got := loggedTurns(t, file); !strings.Contains(got, tc.want) {
+			t.Errorf("%s: the log lacks %q:\n%s", name, tc.want, got)
+		}
+	}
+}
+
+func TestOnlyTheItemsTheHookListsAreCountedNotLinesOfTheTextPastedInThem(t *testing.T) {
+	text := "The user sent these to you through the vibe clipboard page:\n" +
+		"- image at /x/1.png (image/png, 1 KB) — look at it\n" +
+		"- text (/x/2.txt):\n````\n- image at /not/an/item\n```\n- file at /not/either\n````\n" +
+		"- file at /x/3.pdf (application/pdf, 2 KB) — read it"
+	if got := itemsIn(text); got != 3 {
+		t.Errorf("counted %d, want 3", got)
+	}
+}

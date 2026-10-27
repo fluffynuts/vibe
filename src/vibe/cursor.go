@@ -102,6 +102,34 @@ func pastedIn(out string) string {
 	return strings.Trim(rest[:end], "\r\n")
 }
 
+// itemsIn is how many items the clipboard hook's text lists: its lines that begin "- image", "- file" or
+// "- text", outside the code fences that quote a pasted text (which may have such lines of its own).
+func itemsIn(text string) int {
+	n, fence := 0, ""
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimRight(line, "\r")
+		switch {
+		case fence != "":
+			if line == fence {
+				fence = ""
+			}
+		case strings.HasPrefix(line, "```") && strings.Trim(line, "`") == "":
+			fence = line
+		case strings.HasPrefix(line, "- image ") || strings.HasPrefix(line, "- file ") || strings.HasPrefix(line, "- text "):
+			n++
+		}
+	}
+	return n
+}
+
+// items is n as "1 item" or "2 items".
+func items(n int) string {
+	if n == 1 {
+		return "1 item"
+	}
+	return fmt.Sprintf("%d items", n)
+}
+
 // pastedFor is what the user pasted on the clipboard page for sandbox name's agent since its last
 // turn, as text to put in front of the prompt, claimed as it is given. A variable for tests.
 var pastedFor = func(ctx context.Context, name string) (string, error) {
@@ -137,15 +165,20 @@ func converseCursor(name, workspace string, log *turnLog, choose func() (string,
 		}
 		// Not stopping the turn if it can't be asked: what was pasted waits, unclaimed, for the next.
 		pasted, err := pastedFor(ctx, name)
-		if err != nil {
+		clipboard := "nothing pasted"
+		switch {
+		case err != nil:
 			note("couldn't ask sandbox '%s' what was pasted on its clipboard page, so it is not sent with this prompt: %v", name, err)
-		}
-		if pasted != "" {
+			clipboard = fmt.Sprintf("couldn't be asked (%v)", err)
+		case pasted != "":
 			prompt = pasted + "\n\n" + prompt
+			clipboard = items(itemsIn(pasted))
+			// The page marks them sent as well, but the conversation is where the user is looking.
+			onLine(vibeNote("Sent with this prompt: " + items(itemsIn(pasted)) + " from the clipboard page."))
 		}
 		run := func(model string) error {
 			pidFile := "/tmp/vibe-turn-" + turnID() + ".pid"
-			log.begin("sandbox " + name + ", folder " + workspace + ", resuming '" + session + "', model '" + model + "'")
+			log.begin("sandbox " + name + ", folder " + workspace + ", resuming '" + session + "', model '" + model + "', clipboard: " + clipboard)
 			err := streamTurn(ctx, name, prompt, delivered, func(raw []byte) {
 				log.line(raw)
 				for _, line := range cursorstream.Translate(raw) {
