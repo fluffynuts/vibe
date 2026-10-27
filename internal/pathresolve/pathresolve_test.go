@@ -42,10 +42,10 @@ func TestWithin(t *testing.T) {
 func TestTilde(t *testing.T) {
 	home := filepath.Join(string(filepath.Separator), "home", "me")
 	cases := map[string]string{
-		home:                                "~",
-		filepath.Join(home, "code", "vibe"): filepath.Join("~", "code", "vibe"),
-		filepath.Join(home, "..cache"):      filepath.Join("~", "..cache"),
-		filepath.Join(home+"x", "code"):     filepath.Join(home+"x", "code"),
+		home:                                             "~",
+		filepath.Join(home, "code", "vibe"):              filepath.Join("~", "code", "vibe"),
+		filepath.Join(home, "..cache"):                   filepath.Join("~", "..cache"),
+		filepath.Join(home+"x", "code"):                  filepath.Join(home+"x", "code"),
 		filepath.Join(string(filepath.Separator), "srv"): filepath.Join(string(filepath.Separator), "srv"),
 	}
 	for in, want := range cases {
