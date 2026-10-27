@@ -1,0 +1,71 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/tmp/cursor-scratch/work","session_id":"ca40648a-41e7-4784-9948-c038f7261e58","model":"Auto","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"In three short sentences, explain what a hash map is."}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58"}
+{"type":"thinking","subtype":"delta","text":"A","session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313584}
+{"type":"thinking","subtype":"delta","text":" hash map is a data ","session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313624}
+{"type":"thinking","subtype":"delta","text":"structure","session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313624}
+{"type":"thinking","subtype":"delta","text":" that stores key-value","session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313657}
+{"type":"thinking","subtype":"delta","text":" pairs. It uses a hash","session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313688}
+{"type":"thinking","subtype":"delta","text":" function to compute","session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313741}
+{"type":"thinking","subtype":"delta","text":" an index into an array","session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313758}
+{"type":"thinking","subtype":"delta","text":" of buckets. This allows","session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313772}
+{"type":"thinking","subtype":"delta","text":" fast retrieval of values","session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313811}
+{"type":"thinking","subtype":"delta","text":" by their keys.","session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313820}
+{"type":"thinking","subtype":"completed","session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313820}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"A"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313821}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" hash"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313821}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" map"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313821}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" stores"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313821}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" key"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313821}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"–"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313821}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"value"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313821}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" pairs"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313821}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" so"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313821}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" you"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313821}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" can"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313821}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" look"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313821}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" up"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313821}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" a"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313821}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" value"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313833}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" by"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313833}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" its"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313833}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" key"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313864}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313865}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" It"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313865}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" uses"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313917}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" a"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313917}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" hash"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313917}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" function"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313917}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" to"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313949}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" turn"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313949}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" each"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019313991}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" key"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314043}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" into"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314043}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" an"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314043}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" index"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314043}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" in"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314080}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" an"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314122}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" underlying"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314174}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" array"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314208}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" of"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314209}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" buckets"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314252}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314296}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" That"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314296}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" design"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314296}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" makes"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314344}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" average"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314389}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" insert"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314437}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":","}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314438}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" lookup"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314478}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":","}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314519}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" and"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314519}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" delete"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314519}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" operations"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314582}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" very"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314603}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" fast"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314650}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"—"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314650}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"typically"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314650}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" constant"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314690}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" time"}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314737}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58","timestamp_ms":1793019314737}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"A hash map stores key–value pairs so you can look up a value by its key. It uses a hash function to turn each key into an index in an underlying array of buckets. That design makes average insert, lookup, and delete operations very fast—typically constant time."}]},"session_id":"ca40648a-41e7-4784-9948-c038f7261e58"}
+{"type":"result","subtype":"success","duration_ms":4378,"duration_api_ms":4378,"is_error":false,"result":"A hash map stores key–value pairs so you can look up a value by its key. It uses a hash function to turn each key into an index in an underlying array of buckets. That design makes average insert, lookup, and delete operations very fast—typically constant time.","session_id":"ca40648a-41e7-4784-9948-c038f7261e58","request_id":"6b8d99e6-8da6-4209-b599-71ed8898c2d5","usage":{"inputTokens":7044,"outputTokens":85,"cacheReadTokens":3968,"cacheWriteTokens":0}}

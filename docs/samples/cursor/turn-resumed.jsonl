@@ -1,0 +1,10 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/tmp/cursor-scratch/work","session_id":"1c7260c2-1886-4bc2-b283-e8eddde26351","model":"Auto","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"what file did you create earlier?"}]},"session_id":"1c7260c2-1886-4bc2-b283-e8eddde26351"}
+{"type":"thinking","subtype":"delta","text":"The","session_id":"1c7260c2-1886-4bc2-b283-e8eddde26351","timestamp_ms":1793014004549}
+{"type":"thinking","subtype":"delta","text":" user is asking about","session_id":"1c7260c2-1886-4bc2-b283-e8eddde26351","timestamp_ms":1793014004589}
+{"type":"thinking","subtype":"delta","text":" a file created earlier","session_id":"1c7260c2-1886-4bc2-b283-e8eddde26351","timestamp_ms":1793014004591}
+{"type":"thinking","subtype":"delta","text":" in this conversation","session_id":"1c7260c2-1886-4bc2-b283-e8eddde26351","timestamp_ms":1793014004607}
+{"type":"thinking","subtype":"delta","text":".","session_id":"1c7260c2-1886-4bc2-b283-e8eddde26351","timestamp_ms":1793014004635}
+{"type":"thinking","subtype":"completed","session_id":"1c7260c2-1886-4bc2-b283-e8eddde26351","timestamp_ms":1793014004635}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"`notes.txt`"}]},"session_id":"1c7260c2-1886-4bc2-b283-e8eddde26351"}
+{"type":"result","subtype":"success","duration_ms":2795,"duration_api_ms":2795,"is_error":false,"result":"`notes.txt`","session_id":"1c7260c2-1886-4bc2-b283-e8eddde26351","request_id":"c004031d-f161-4854-93ce-4f4a3dee63d0","usage":{"inputTokens":103,"outputTokens":27,"cacheReadTokens":11264,"cacheWriteTokens":0}}

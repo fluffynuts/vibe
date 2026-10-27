@@ -1,0 +1,8 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/tmp/cursor-scratch/work","session_id":"76ad67d0-e85d-48be-918c-088d09bc09ba","model":"Auto","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"say only: stdin-ok"}]},"session_id":"76ad67d0-e85d-48be-918c-088d09bc09ba"}
+{"type":"thinking","subtype":"delta","text":"The","session_id":"76ad67d0-e85d-48be-918c-088d09bc09ba","timestamp_ms":1793020831741}
+{"type":"thinking","subtype":"delta","text":" user wants me to output","session_id":"76ad67d0-e85d-48be-918c-088d09bc09ba","timestamp_ms":1793020831742}
+{"type":"thinking","subtype":"delta","text":" only \"stdin-ok\".","session_id":"76ad67d0-e85d-48be-918c-088d09bc09ba","timestamp_ms":1793020831789}
+{"type":"thinking","subtype":"completed","session_id":"76ad67d0-e85d-48be-918c-088d09bc09ba","timestamp_ms":1793020831789}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"stdin-ok"}]},"session_id":"76ad67d0-e85d-48be-918c-088d09bc09ba"}
+{"type":"result","subtype":"success","duration_ms":3015,"duration_api_ms":3015,"is_error":false,"result":"stdin-ok","session_id":"76ad67d0-e85d-48be-918c-088d09bc09ba","request_id":"5ec84ba0-5a45-4699-8a29-76a202b06815","usage":{"inputTokens":7039,"outputTokens":29,"cacheReadTokens":3968,"cacheWriteTokens":0}}

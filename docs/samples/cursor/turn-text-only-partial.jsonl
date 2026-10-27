@@ -1,0 +1,9 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/tmp/cursor-scratch/work","session_id":"035588cd-da90-4c1f-a987-1c0c525a52f5","model":"Auto","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"say only the word pong"}]},"session_id":"035588cd-da90-4c1f-a987-1c0c525a52f5"}
+{"type":"thinking","subtype":"delta","text":"The","session_id":"035588cd-da90-4c1f-a987-1c0c525a52f5","timestamp_ms":1793013975932}
+{"type":"thinking","subtype":"delta","text":" user wants only the","session_id":"035588cd-da90-4c1f-a987-1c0c525a52f5","timestamp_ms":1793013975973}
+{"type":"thinking","subtype":"delta","text":" word \"pong\".","session_id":"035588cd-da90-4c1f-a987-1c0c525a52f5","timestamp_ms":1793013975997}
+{"type":"thinking","subtype":"completed","session_id":"035588cd-da90-4c1f-a987-1c0c525a52f5","timestamp_ms":1793013975998}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"pong"}]},"session_id":"035588cd-da90-4c1f-a987-1c0c525a52f5","timestamp_ms":1793013975998}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"pong"}]},"session_id":"035588cd-da90-4c1f-a987-1c0c525a52f5"}
+{"type":"result","subtype":"success","duration_ms":3086,"duration_api_ms":3086,"is_error":false,"result":"pong","session_id":"035588cd-da90-4c1f-a987-1c0c525a52f5","request_id":"41ba7ebf-73eb-42a4-9654-9648390f206a","usage":{"inputTokens":7033,"outputTokens":28,"cacheReadTokens":3968,"cacheWriteTokens":0}}

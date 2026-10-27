@@ -1,0 +1,9 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/tmp/cursor-scratch/work","session_id":"00000000-0000-0000-0000-000000000000","model":"Auto","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hi"}]},"session_id":"00000000-0000-0000-0000-000000000000"}
+{"type":"thinking","subtype":"delta","text":"The","session_id":"00000000-0000-0000-0000-000000000000","timestamp_ms":1793019498492}
+{"type":"thinking","subtype":"delta","text":" user sent a simple ","session_id":"00000000-0000-0000-0000-000000000000","timestamp_ms":1793019498643}
+{"type":"thinking","subtype":"delta","text":"greeting","session_id":"00000000-0000-0000-0000-000000000000","timestamp_ms":1793019498643}
+{"type":"thinking","subtype":"delta","text":".","session_id":"00000000-0000-0000-0000-000000000000","timestamp_ms":1793019498665}
+{"type":"thinking","subtype":"completed","session_id":"00000000-0000-0000-0000-000000000000","timestamp_ms":1793019498665}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hi — what would you like to work on?"}]},"session_id":"00000000-0000-0000-0000-000000000000"}
+{"type":"result","subtype":"success","duration_ms":3988,"duration_api_ms":3988,"is_error":false,"result":"Hi — what would you like to work on?","session_id":"00000000-0000-0000-0000-000000000000","request_id":"201ea13d-9699-41a4-8e72-167aca07872f","usage":{"inputTokens":122,"outputTokens":36,"cacheReadTokens":10880,"cacheWriteTokens":0}}

@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/tmp/cursor-scratch/work","session_id":"6a074b43-c279-41cc-8320-3e15aee252f2","model":"Claude Opus 5 300K High","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"test"}]},"session_id":"6a074b43-c279-41cc-8320-3e15aee252f2"}

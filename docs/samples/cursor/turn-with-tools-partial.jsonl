@@ -1,0 +1,41 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/tmp/cursor-scratch/work","session_id":"746617ed-5326-4d53-901b-bc413f3db143","model":"Auto","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Read README.md, then say in one sentence what it says."}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143"}
+{"type":"thinking","subtype":"delta","text":"Reading","session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019334966}
+{"type":"thinking","subtype":"delta","text":" README.md to provide","session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019335006}
+{"type":"thinking","subtype":"delta","text":" a one-sentence summary","session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019335006}
+{"type":"thinking","subtype":"delta","text":".","session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019335035}
+{"type":"thinking","subtype":"completed","session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019335035}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'll"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019335035}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" read"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019335035}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" `"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019335035}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"README"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019335036}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":".md"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019335036}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"`"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019335036}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" and"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019335036}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" summarize"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019335036}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" it"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019335036}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" in"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019335036}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" one"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019335036}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" sentence"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019335036}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019335036}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'll read `README.md` and summarize it in one sentence."}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","model_call_id":"b4b77785-d0d9-4ead-8e84-4523a6381c8d-0-xu0y","timestamp_ms":1793019335036}
+{"type":"tool_call","subtype":"started","call_id":"call-2474619f-ad9e-466c-a847-4255c62ac7f7-0\nfc_a2038354-4f44-9938-98cb-763f42f16d9b_0","tool_call":{"readToolCall":{"args":{"path":"/tmp/cursor-scratch/work/README.md"}},"hookAdditionalContexts":[],"toolCallId":"call-2474619f-ad9e-466c-a847-4255c62ac7f7-0\nfc_a2038354-4f44-9938-98cb-763f42f16d9b_0","startedAtMs":"1793019334966"},"model_call_id":"b4b77785-d0d9-4ead-8e84-4523a6381c8d-0-xu0y","session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019335036}
+{"type":"tool_call","subtype":"completed","call_id":"call-2474619f-ad9e-466c-a847-4255c62ac7f7-0\nfc_a2038354-4f44-9938-98cb-763f42f16d9b_0","tool_call":{"readToolCall":{"args":{"path":"/tmp/cursor-scratch/work/README.md"},"result":{"success":{"content":"# hello\nA tiny project.\n","isEmpty":false,"exceededLimit":false,"totalLines":3,"fileSize":24,"path":"/tmp/cursor-scratch/work/README.md","readRange":{"startLine":1,"endLine":3},"relatedCursorRulePaths":[],"relatedCursorRules":[]}}},"hookAdditionalContexts":[],"toolCallId":"call-2474619f-ad9e-466c-a847-4255c62ac7f7-0\nfc_a2038354-4f44-9938-98cb-763f42f16d9b_0","startedAtMs":"1793019334966","completedAtMs":"1793019335327"},"model_call_id":"b4b77785-d0d9-4ead-8e84-4523a6381c8d-0-xu0y","session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019335393}
+{"type":"thinking","subtype":"delta","text":"The","session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019337251}
+{"type":"thinking","subtype":"delta","text":" README contains only","session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019337266}
+{"type":"thinking","subtype":"delta","text":" a header and a brief","session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019337293}
+{"type":"thinking","subtype":"delta","text":" description of a tiny","session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019337310}
+{"type":"thinking","subtype":"delta","text":" project.","session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019337340}
+{"type":"thinking","subtype":"completed","session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019337340}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"It"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019337340}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" says"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019337340}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" this"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019337340}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" is"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019337340}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" a"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019337340}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" tiny"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019337340}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" project"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019337340}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" called"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019337340}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" hello"}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019337340}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143","timestamp_ms":1793019337340}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"It says this is a tiny project called hello."}]},"session_id":"746617ed-5326-4d53-901b-bc413f3db143"}
+{"type":"result","subtype":"success","duration_ms":5416,"duration_api_ms":5416,"is_error":false,"result":"I'll read `README.md` and summarize it in one sentence.It says this is a tiny project called hello.","session_id":"746617ed-5326-4d53-901b-bc413f3db143","request_id":"b4b77785-d0d9-4ead-8e84-4523a6381c8d","usage":{"inputTokens":203,"outputTokens":75,"cacheReadTokens":21888,"cacheWriteTokens":0}}
