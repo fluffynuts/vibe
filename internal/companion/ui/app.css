@@ -700,7 +700,9 @@ dialog.file-view header { display: flex; align-items: center; gap: 4px; margin-b
 dialog.file-view header button { line-height: 0; padding: 4px 6px; flex: none; }
 dialog.file-view header button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; stroke-linecap: round; }
 .file-view-url { flex: 1; min-width: 0; display: flex; align-items: center; margin: 0 4px; }
-#file-view-path { flex: 1; min-width: 0; width: 100%; box-sizing: border-box; padding: 4px 8px; font: 600 13px var(--mono); text-overflow: ellipsis; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+#file-view-path { flex: 1; min-width: 0; width: 100%; box-sizing: border-box; padding: 4px 8px; font: 600 13px var(--mono); color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+/* A path too long for the bar is scrolled to its end, where the file's name is, and fades out at the start it has lost. */
+#file-view-path.cut { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px); mask-image: linear-gradient(to right, transparent 0, #000 28px); }
 #file-view-body { overflow: auto; min-height: 0; }
 #file-view-body pre { margin: 0; }
 #file-view-body code { display: inline; padding: 0; background: none; border: 0; }

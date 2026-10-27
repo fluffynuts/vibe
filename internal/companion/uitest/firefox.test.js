@@ -397,6 +397,32 @@ test('the file viewer fills the space between its buttons with the path, however
   } finally { await page.close() }
 })
 
+// A path too long for the bar shows its end, the file's name, and cuts the start: two paths that differ only
+// in the part cut look the same.
+test("a path too long for the file viewer's bar is cut at its start, so the file's name shows", async () => {
+  // Longer than the bar shows, so none of what differs is in view.
+  const shared = '/shared-folder/and-another/and-a-third-one/and-then-a-fourth-one/the-file-with-a-name.md'
+  const bars = []
+  for (const start of ['a', 'b']) {
+    const page = await viewerPage({ ['docs/' + start.repeat(40) + shared]: '# Long' }, 600)
+    try {
+      assert.ok(await page.evaluate(() => { const i = document.getElementById('file-view-path'); return i.scrollWidth > i.clientWidth }), 'the path fits the bar: the test shows nothing')
+      assert.ok(await page.evaluate(() => { const i = document.getElementById('file-view-path'); return i.scrollLeft + i.clientWidth >= i.scrollWidth - 1 }), 'the bar is at the end of the path as soon as the file is shown')
+      bars.push(await page.locator('#file-view-path').screenshot())
+    } finally { await page.close() }
+  }
+  assert.ok(bars[0].equals(bars[1]), 'the bar shows the start of the path, which differs, and not its end')
+})
+
+// A bar drawn right to left would put a path's leading dot or underscore at the other end of it: .github/ci.md as github/ci.md.
+test("the file viewer's path is drawn left to right, so a leading dot stays where it is", async () => {
+  const page = await viewerPage({ '.github/workflows/ci.md': '# CI' }, 600)
+  try {
+    assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('file-view-path')).direction), 'ltr')
+    assert.equal(await page.inputValue('#file-view-path'), '.github/workflows/ci.md')
+  } finally { await page.close() }
+})
+
 // eventually waits for check to say yes: polled, as the page's policy doesn't allow waitForFunction.
 async function eventually(page, what, check) {
   for (let i = 0; i < 80; i++) {

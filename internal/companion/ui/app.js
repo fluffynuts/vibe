@@ -4414,11 +4414,13 @@
     const mine = ++viewer.loading
     $('file-view-path').value = path
     $('file-view-path').title = path
+    endOfPath()
     drawViewerButtons()
     dialog.classList.remove('outside')
     $('file-view-copy').hidden = true
     $('file-view-body').replaceChildren(el('p', { class: 'muted', text: 'Loading…' }))
     if (!dialog.open) dialog.showModal()
+    endOfPath()
     let res
     try {
       res = await api('/api/workspace-file?path=' + encodeURIComponent(path))
@@ -4435,6 +4437,8 @@
     }
     const text = res.body.text
     $('file-view-copy').hidden = false
+    // It narrows the path bar.
+    endOfPath()
     $('file-view-copy').onclick = () => copyText(text)
     viewedFolder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
     try {
@@ -4460,6 +4464,16 @@
     })
     return [...note, el('pre', {}, el('code', {}, ...parts))]
   }
+
+  // endOfPath scrolls the path bar to the end of the path, where the file's name is, when it is too long for the
+  // bar, and says so (the start fades out). Left to right as it is, not by turning the text round, which would
+  // move a leading dot (.github/...) to the other end. Done again when the bar changes size.
+  function endOfPath() {
+    const bar = $('file-view-path')
+    bar.scrollLeft = bar.scrollWidth
+    bar.classList.toggle('cut', bar.scrollWidth > bar.clientWidth)
+  }
+  if (window.ResizeObserver) new ResizeObserver(endOfPath).observe($('file-view-path'))
 
   // viewerIcon is a small drawing for the viewer's buttons, as copyIcon is for copying.
   function viewerIcon(d) {
