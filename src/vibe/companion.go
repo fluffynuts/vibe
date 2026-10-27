@@ -222,28 +222,40 @@ func themeColorFor(lay layout.Layout, name string, inst state.Instance, agent st
 	}
 }
 
-// hasConversation says the sandbox's agent can be driven by the page: only
-// claude can so far (see docs/plan-conversation-other-agents.md).
+// hasConversation says the sandbox's agent can be driven by the page: claude
+// and cursor can so far (see docs/plan-conversation-other-agents.md and
+// docs/plan-cursor.md).
 func hasConversation(inst state.Instance) bool {
-	return inst.Agent == "" || inst.Agent == "claude"
+	return inst.Agent == "" || inst.Agent == "claude" || inst.Agent == "cursor"
 }
 
 // conversationFor is the companion page's way of talking to the sandbox's
-// agent, or nil when it has none: only claude can be driven this way so far.
+// agent, or nil when it has none (see hasConversation).
 func conversationFor(vibeHome, name string, inst state.Instance, choice profileChoice) companion.Converser {
-	if !hasConversation(inst) {
-		return nil
+	switch {
+	case inst.Agent == "cursor":
+		return keepingTranscript(
+			converseCursor(name, inst.Target, newTurnLog(state.TurnLogPath(vibeHome, name)),
+				cursorTurnModel(choice, state.CursorModelsPath(vibeHome, name)),
+				func() error { return choice.set(cursorAuto, "") }),
+			sandboxCursorSessions(name), state.TranscriptPath(vibeHome, name))
+	case hasConversation(inst):
+		return keepingTranscript(converse(name, inst.Target, choice.forTurn), sandboxTranscripts(name), state.TranscriptPath(vibeHome, name))
 	}
-	return keepingTranscript(converse(name, inst.Target, choice.forTurn), sandboxTranscripts(name), state.TranscriptPath(vibeHome, name))
+	return nil
 }
 
 // choiceFor is the page's way of choosing the model and effort of sandbox
-// name's agent, or nil when it has none to choose (see conversationFor).
+// name's agent, or nil when it has none to choose: only claude's and cursor's
+// lists are known yet.
 func choiceFor(vibeHome, name string, inst state.Instance, kept profileChoice) *companion.Choice {
-	if !hasConversation(inst) {
-		return nil
+	switch inst.Agent {
+	case "cursor":
+		return cursorChoice(cursorAsk(name), inst.Target, kept, state.CursorOptionsPath(vibeHome, name), state.CursorModelsPath(vibeHome, name))
+	case "", "claude":
+		return sandboxChoice(name, inst.Target, kept, state.ModelOptionsPath(vibeHome, name))
 	}
-	return sandboxChoice(name, inst.Target, kept, state.ModelOptionsPath(vibeHome, name))
+	return nil
 }
 
 // startCompanion serves the companion page for the sandbox, as the user's

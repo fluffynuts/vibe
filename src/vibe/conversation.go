@@ -157,6 +157,10 @@ type transcripts struct {
 	fetch func(ctx context.Context, session string) ([]byte, error)
 	// put unpacks what fetch gave into the agent's ~/.claude.
 	put func(ctx context.Context, tgz []byte) error
+	// lost, when not empty, is what the page is told when the sandbox still
+	// hasn't the session after the kept copy was put back: for an agent
+	// that, asked for a session it hasn't, starts another without a word.
+	lost string
 }
 
 // transcriptTimeout bounds each trip to the sandbox for a transcript.
@@ -204,6 +208,9 @@ func keepingTranscript(converse companion.Converser, t transcripts, file string)
 				if !t.has(check, session) {
 					if tgz, err := fscopy.ReadFile(file); err == nil {
 						t.put(check, tgz)
+					}
+					if t.lost != "" && !t.has(check, session) {
+						onLine(vibeNote(t.lost))
 					}
 				}
 				cancel()

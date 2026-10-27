@@ -41,6 +41,22 @@ type Options struct {
 	Models      []string `json:"models"`
 	OtherModels []string `json:"otherModels"`
 	Efforts     []string `json:"efforts"`
+	// OnlyListed says the agent takes only the models listed, so the page
+	// offers no Other… to name one that isn't (as claude takes any full
+	// model name).
+	OnlyListed bool `json:"onlyListed,omitempty"`
+	// Note is something the agent's choice needs the user to know, said in
+	// the bubble beside the drop-downs.
+	Note string `json:"note,omitempty"`
+	// EffortsByModel, for an agent whose efforts differ from one model to the
+	// next, are the efforts each model takes (none, for one that takes none:
+	// an empty list, not a missing one); Efforts is then all of them, for what
+	// can't be told by model. Nil for an agent whose efforts are the same for
+	// every model.
+	EffortsByModel map[string][]string `json:"effortsByModel,omitempty"`
+	// EffortNames are what the page calls an effort ("High effort") where
+	// that isn't just its name in title case.
+	EffortNames map[string]string `json:"effortNames,omitempty"`
 	// Names are what the agent calls each of those models ("Opus 5.5" for
 	// "opus"), for the page to show their versions. A model it couldn't
 	// say the name of isn't in it.
@@ -201,7 +217,11 @@ func (s *Server) choiceSet(w http.ResponseWriter, r *http.Request) {
 	// one from an earlier run may be out of date, and refusing what the agent
 	// now takes would be wrong (an effort it doesn't take it ignores, saying so).
 	if have, _, fresh := s.freshOptions(); have != nil && fresh {
-		err = modelchoice.CheckEffort(req.Effort, have.Efforts)
+		allowed := have.Efforts
+		if own, ok := have.EffortsByModel[req.Model]; ok {
+			allowed = own
+		}
+		err = modelchoice.CheckEffort(req.Effort, allowed)
 	} else {
 		err = modelchoice.CheckEffortName(req.Effort)
 	}

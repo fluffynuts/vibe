@@ -301,7 +301,10 @@ func (c *conversation) line(raw []byte) string {
 	if head.Type == "system" && head.Subtype == "status" {
 		c.compacting = head.Status != nil && *head.Status == "compacting"
 	}
-	c.advance(receiptSeen)
+	// vibe's own note is not the agent starting to answer.
+	if head.Type != "vibe_note" {
+		c.advance(receiptSeen)
+	}
 	c.heard = c.clock()
 	c.add("agent", "", append(json.RawMessage(nil), raw...))
 	switch head.Type {

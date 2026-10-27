@@ -168,3 +168,14 @@ test('a group is collapsed when the agent is not working, even if nothing came a
     assert.equal(groups(p)[0].open, false)
   } finally { p.close() }
 })
+
+test("a note of vibe's own is drawn as a note, and ends the group the tools were in", async () => {
+  const p = await groupPage([
+    used(1, 'Bash'), gave(2, 'a'),
+    { seq: 3, kind: 'agent', agent: { type: 'vibe_note', text: 'Cursor has no record of the earlier turns' } },
+    said(4, 'done'),
+  ])
+  try {
+    assert.deepEqual(log(p).map((l) => l.replace(/[^\w\s[\]]+$/, '')), ['[group]', 'Cursor has no record of the earlier turns', 'done'])
+  } finally { p.close() }
+})

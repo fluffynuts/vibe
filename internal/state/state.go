@@ -275,10 +275,30 @@ func ModelOptionsPath(vibeHome, name string) string {
 	return filepath.Join(vibeHome, "companion", name+".model-options.json")
 }
 
+// CursorOptionsPath is where the models and efforts a sandbox's Cursor said it
+// has are kept, as the page offers them: apart from ModelOptionsPath's, which
+// are claude's, as a sandbox's agent can be switched.
+func CursorOptionsPath(vibeHome, name string) string {
+	return filepath.Join(vibeHome, "companion", name+".cursor-options.json")
+}
+
+// CursorModelsPath is where what Cursor's --list-models said is kept, as it
+// said it: the choice of a model and effort is turned into the id of one
+// from it.
+func CursorModelsPath(vibeHome, name string) string {
+	return filepath.Join(vibeHome, "companion", name+".cursor-models.txt")
+}
+
 // TranscriptPath is where the agent's own record of that conversation is
 // kept on the host, so a rebuilt sandbox's agent can be handed it back.
 func TranscriptPath(vibeHome, name string) string {
 	return filepath.Join(vibeHome, "companion", name+".transcript.tgz")
+}
+
+// TurnLogPath is where what the agent's last turns said (and how they ended)
+// is kept on the host, for 'vibe --turn-log' to show.
+func TurnLogPath(vibeHome, name string) string {
+	return filepath.Join(vibeHome, "companion", name+".turns.log")
 }
 
 func tokenPath(vibeHome, name string) string {

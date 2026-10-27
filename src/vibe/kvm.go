@@ -36,7 +36,7 @@ var vmCheck = func() error { return kvmcheck.Err(kvmcheck.Probe()) }
 // creating, attaching, rebuilding, or reaching into one (which starts a
 // stopped one).
 func startsAVM(args cliargs.Args) bool {
-	return !args.Stop && !args.Cancel && !args.Info && !args.Delete
+	return !args.Stop && !args.Cancel && !args.Info && !args.TurnLog && !args.Delete
 }
 
 // pageActionStartsAVM says whether one of the page's actions, of kind, can

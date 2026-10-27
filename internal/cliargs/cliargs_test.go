@@ -166,6 +166,25 @@ func TestParseDelete(t *testing.T) {
 	}
 }
 
+func TestParseTurnLog(t *testing.T) {
+	for _, argv := range [][]string{{"--turn-log"}, {"--turn-log", "some/path"}} {
+		got, err := Parse(argv)
+		if err != nil {
+			t.Fatalf("Parse(%v): %v", argv, err)
+		}
+		if !got.TurnLog || got.ExclusiveActions() != 1 {
+			t.Errorf("Parse(%v) = %+v; want TurnLog, as the one action", argv, got)
+		}
+	}
+	both, err := Parse([]string{"--turn-log", "--info"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if both.ExclusiveActions() != 2 {
+		t.Errorf("--turn-log with --info should count as two actions, got %d", both.ExclusiveActions())
+	}
+}
+
 func TestParseInfo(t *testing.T) {
 	for _, argv := range [][]string{{"-a"}, {"--info"}, {"--info", "some/path"}} {
 		got, err := Parse(argv)

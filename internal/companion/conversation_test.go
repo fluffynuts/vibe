@@ -389,6 +389,19 @@ func TestAPromptsReceiptAdvancesFromSentToDeliveredToSeen(t *testing.T) {
 	}
 }
 
+func TestANoteOfVibesOwnIsNotTheAgentStartingToAnswer(t *testing.T) {
+	var c conversation
+	c.begin("hello")
+	c.receipt(receiptDelivered)
+	c.line([]byte(`{"type":"vibe_note","text":"carrying on without the earlier turns"}`))
+	if got := c.latestReceipt()["state"]; got != receiptDelivered {
+		t.Errorf("a note of vibe's own ticked the prompt as %v", got)
+	}
+	if events, _, _, _ := c.since(0); len(events) != 2 || events[1].Kind != "agent" {
+		t.Errorf("the note is not in the conversation: %v", events)
+	}
+}
+
 func TestTheReceiptIsInThePollAndOnTheUserEvent(t *testing.T) {
 	s := converseServer(&fakeAgent{})
 	send(t, s, "/api/conversation/send", `{"prompt":"hello"}`)

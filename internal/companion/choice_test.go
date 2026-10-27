@@ -261,6 +261,55 @@ func TestAnEffortTheAgentDoesNotTakeIsRefusedWithWhatItDoesTake(t *testing.T) {
 	}
 }
 
+// cursorOptions are lists whose efforts differ from one model to the next.
+var cursorOptions = Options{
+	Models:         []string{"auto", "codex", "composer"},
+	Efforts:        []string{"fast", "low", "high"},
+	EffortsByModel: map[string][]string{"auto": {}, "codex": {"low", "high"}, "composer": {"fast"}},
+	EffortNames:    map[string]string{"fast": "Fast", "low": "Low effort", "high": "High effort"},
+}
+
+func TestWhereEffortsDifferByModelAnEffortIsHeldToTheOnesOfTheModelChosen(t *testing.T) {
+	c := &choosing{options: cursorOptions}
+	s := choiceServer(t, c)
+	if rec := do(t, s, post("/api/conversation/choice/options", `{}`)); rec.Code != http.StatusOK {
+		t.Fatalf("options: %d %s", rec.Code, rec.Body)
+	}
+	for _, tc := range []struct {
+		model, effort string
+		ok            bool
+	}{
+		{"codex", "high", true}, {"codex", "fast", false}, {"composer", "fast", true}, {"composer", "high", false},
+		{"auto", "low", false}, {"auto", "", true}, {"codex", "", true}, {"", "", true},
+	} {
+		rec := do(t, s, post("/api/conversation/choice", `{"model":"`+tc.model+`","effort":"`+tc.effort+`"}`))
+		if ok := rec.Code == http.StatusOK; ok != tc.ok {
+			t.Errorf("%q with %q: %d %s", tc.model, tc.effort, rec.Code, rec.Body)
+		}
+	}
+	rec := do(t, s, post("/api/conversation/choice", `{"model":"auto","effort":"low"}`))
+	if !strings.Contains(rec.Body.String(), "takes none") {
+		t.Errorf("a model with no efforts isn't said to have none: %s", rec.Body)
+	}
+	rec = do(t, s, post("/api/conversation/choice", `{"model":"codex","effort":"fast"}`))
+	if !strings.Contains(rec.Body.String(), "low, high") {
+		t.Errorf("the model's own efforts aren't said: %s", rec.Body)
+	}
+}
+
+func TestThePageIsGivenEachModelsEffortsAndWhatToCallThem(t *testing.T) {
+	c := &choosing{options: cursorOptions}
+	s := choiceServer(t, c)
+	do(t, s, post("/api/conversation/choice/options", `{}`))
+	got := readChoice(t, s).Options
+	if got == nil || len(got.EffortsByModel["codex"]) != 2 || got.EffortNames["high"] != "High effort" {
+		t.Errorf("options = %+v", got)
+	}
+	if got.EffortsByModel["auto"] == nil {
+		t.Error("a model with no efforts is given none, which is not the same as not saying")
+	}
+}
+
 func TestAnEffortIsStillCheckedForShapeBeforeTheAgentsListIsKnown(t *testing.T) {
 	c := &choosing{}
 	s := choiceServer(t, c)

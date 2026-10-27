@@ -29,7 +29,11 @@ async function choicePage(over = {}, { choice = true } = {}, storage = {}) {
   }, listed())
   const routes = {
     '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, choice, attention: {} },
-    '/api/conversation': () => ({ events: [], last: 0, running: at.busy }),
+    '/api/conversation': (call) => {
+      const after = Number(new URLSearchParams(call.query).get('after')) || 0
+      const events = (at.events || []).filter((e) => e.seq > after)
+      return { events, last: (at.events || []).reduce((m, e) => Math.max(m, e.seq), 0), running: at.busy }
+    },
     '/api/conversation/choice': async (call) => {
       if (call.method === 'GET') { if (at.holdRead) await at.holdRead; return body() }
       if (at.refuse) return { status: 400, body: { error: at.refuse } }
@@ -1376,5 +1380,121 @@ test('an answer to adopting that comes after the user chose is not shown over th
     await turns()
     assert.equal(p.$('choice-model').value, 'opus', 'still the user\'s choice')
     assert.equal(p.at.model, 'opus')
+  } finally { p.close() }
+})
+
+// An agent whose efforts differ from one model to the next (Cursor's).
+const PER_MODEL = {
+  models: ['auto', 'codex', 'composer'], otherModels: [], onlyListed: true,
+  efforts: ['fast', 'low', 'high'], effortsByModel: { auto: [], codex: ['low', 'high'], composer: ['fast'] },
+  effortNames: { fast: 'Fast', low: 'Low effort', high: 'High effort' },
+  names: { auto: 'Auto', codex: 'Codex 5.3', composer: 'Composer 2.5' }, defaultAlias: '',
+}
+
+test('where efforts differ by model, the effort drop-down offers those of the model chosen, by the names the agent gave', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'codex' })
+  try {
+    assert.deepEqual(values(p.$('choice-effort')), ['', 'low', 'high'])
+    assert.deepEqual(texts(p.$('choice-effort')), ['Default effort', 'Low effort', 'High effort'])
+    await choose(p, 'choice-model', 'composer')
+    assert.deepEqual(texts(p.$('choice-effort')), ['Default effort', 'Fast'])
+  } finally { p.close() }
+})
+
+test('a model that takes no effort has the one entry, Default effort, not an empty list', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'auto' })
+  try {
+    assert.deepEqual(texts(p.$('choice-effort')), ['Default effort'])
+  } finally { p.close() }
+})
+
+test('with no model chosen yet, where efforts differ by model, only Default effort is offered', async () => {
+  const p = await choicePage({ options: PER_MODEL })
+  try {
+    assert.deepEqual(texts(p.$('choice-effort')), ['Default effort'])
+  } finally { p.close() }
+})
+
+test('an agent that takes only the models it lists has no Other…', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'codex' })
+  try {
+    assert.deepEqual(values(p.$('choice-model')), ['auto', 'codex', 'composer'])
+  } finally { p.close() }
+})
+
+test('an agent whose efforts are the same for every model is as it was', async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    assert.deepEqual(values(p.$('choice-effort')), ['', 'low', 'medium', 'high'])
+    assert.ok(values(p.$('choice-model')).includes('__other__'))
+  } finally { p.close() }
+})
+
+test("what the agent's options say of choosing is in the bubble, with the rest", async () => {
+  const p = await choicePage({ options: Object.assign({}, PER_MODEL, { note: "A model chosen here is also the one Cursor uses in its own terminal." }), model: 'codex' })
+  try {
+    await choose(p, 'choice-effort', 'low')
+    assert.match(p.$('choice-bubble-text').textContent, /applies to your next prompt\. .*also the one Cursor uses in its own terminal\./)
+  } finally { p.close() }
+})
+
+test('a model the host set back to Auto during a turn is what the drop-down shows when the turn ends, with only Default effort to go with it', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'codex', effort: 'high' })
+  try {
+    assert.equal(p.$('choice-model').value, 'codex')
+    p.at.busy = true
+    await p.every('pollConversation')
+    // What vibe does when the plan can't run the model chosen: the choice goes back to Auto.
+    p.at.model = 'auto'
+    p.at.effort = ''
+    p.at.running = 'Auto'
+    p.at.busy = false
+    await p.every('pollConversation')
+    assert.equal(p.$('choice-model').value, 'auto')
+    assert.deepEqual(texts(p.$('choice-effort')), ['Default effort'])
+  } finally { p.close() }
+})
+
+const choiceNote = (seq) => ({ seq, kind: 'agent', agent: { type: 'vibe_note', text: 'the model is now set to Auto', refresh: 'choice' } })
+
+test('a note saying the choice was changed has the drop-down show it at once, not when the turn ends', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'codex', effort: 'high', events: [] })
+  try {
+    p.at.busy = true
+    await p.every('pollConversation')
+    assert.equal(p.$('choice-model').value, 'codex')
+    // What vibe does when the plan can't run the model chosen, before it says so.
+    p.at.model = 'auto'
+    p.at.effort = ''
+    p.at.events = [choiceNote(1)]
+    await p.every('pollConversation')
+    await p.settle()
+    assert.equal(p.$('choice-model').value, 'auto', 'while the turn is still running')
+    assert.deepEqual(texts(p.$('choice-effort')), ['Default effort'])
+  } finally { p.close() }
+})
+
+test('such a note among what was said before the page was opened is not a reason to read the choice again', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'auto', events: [choiceNote(1)] })
+  try {
+    await p.settle()
+    const reads = p.calls.filter((c) => c.method === 'GET' && c.path === '/api/conversation/choice').length
+    assert.equal(reads, 1, 'the one when the page opened')
+  } finally { p.close() }
+})
+
+test('a choice the user is deciding on, in a dialog, is not read over by such a note', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'codex', session: true, events: [] })
+  try {
+    // The first poll is what was said before the page was opened.
+    await p.every('pollConversation')
+    await choose(p, 'choice-model', 'composer')
+    assert.ok(p.$('choice-warn').open, 'the user is being asked')
+    // vibe changed the choice meanwhile, and says so.
+    p.at.model = 'auto'
+    p.at.events = [choiceNote(1)]
+    await p.every('pollConversation')
+    assert.ok(p.$('choice-warn').open, 'the question is still there')
+    assert.equal(p.$('choice-model').value, 'composer', 'and the drop-down still shows what the user picked, not what vibe set')
   } finally { p.close() }
 })

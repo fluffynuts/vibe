@@ -64,6 +64,12 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              reach it from another machine, and, while it
                              runs, its uptime and how much memory and disk
                              it is using
+  vibe --turn-log [path]     show what the sandbox's agent said in its last
+                             few turns on the companion page, and how they
+                             ended (for Cursor's agent: what it printed, and
+                             what it said if it failed): to send when
+                             something goes wrong. It holds your prompts and
+                             what the agent read, so look before you share
   vibe -H/--headless [path]  start the sandbox for path (one that exists:
                              run vibe there once first) and serve its
                              companion page, with no terminal attached, from
@@ -243,7 +249,7 @@ func run(argv []string) error {
 		return fmt.Errorf("--update-strategy only applies to --install and --upgrade")
 	}
 	if args.ExclusiveActions() > 1 {
-		return fmt.Errorf("--migrate, --stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info, --setup, --git-token, --update-sandboxes, --manage and --headless are mutually exclusive (--headless goes with --re-init, --re-create and --re-compose alone: the rebuild, then headless)")
+		return fmt.Errorf("--migrate, --stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info, --turn-log, --setup, --git-token, --update-sandboxes, --manage and --headless are mutually exclusive (--headless goes with --re-init, --re-create and --re-compose alone: the rebuild, then headless)")
 	}
 
 	if args.Terminal && args.ExclusiveActions() > 0 && !args.Rebuilds() {
@@ -399,6 +405,8 @@ func run(argv []string) error {
 		return doSsh(name, target)
 	case args.Info:
 		return doInfo(lay, args, name, target)
+	case args.TurnLog:
+		return doTurnLog(os.Stdout, vibeHome, name)
 	case args.GitToken:
 		return doGitToken(vibeHome, args, name, target)
 	case args.Restore:

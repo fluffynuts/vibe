@@ -39,6 +39,9 @@ func CheckEffort(effort string, allowed []string) error {
 	if effort == "" || slices.Contains(allowed, effort) {
 		return nil
 	}
+	if len(allowed) == 0 {
+		return fmt.Errorf("%q isn't an effort the agent takes: this model takes none", effort)
+	}
 	return fmt.Errorf("%q isn't an effort the agent takes: %s", effort, strings.Join(allowed, ", "))
 }
 

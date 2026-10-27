@@ -4687,6 +4687,10 @@
       if (bits.length) convoNote('meta', bits.join(' · '))
     } else if (line.type === 'system' && line.subtype === 'compact_boundary') {
       convoNote('meta', 'The agent compacted its context: it now works from a summary of the conversation so far.')
+    } else if (line.type === 'vibe_note' && typeof line.text === 'string') {
+      convoNote('meta', line.text, at)
+      // What it says changed (the model chosen) is shown as it is said, not at the turn's end.
+      if (line.refresh === 'choice') convo.choiceChanged = true
     } else if (line.type === 'truncated') {
       convoNote('meta', '(that was too long to show)')
     }
@@ -4773,6 +4777,7 @@
         if (slash.open) updateCommands(false)
       }
       for (const ev of res.body.events || []) showEvent(ev)
+      if (convo.choiceChanged) { convo.choiceChanged = false; rereadChoice() }
       if (res.body.receipt) showReceipt(res.body.receipt.seq, res.body.receipt.state)
       convo.last = res.body.last || 0
       // A turn that isn't running has no tools still being used, whatever the last thing said was.
@@ -5499,7 +5504,8 @@
     const from = []
     if (choice.inherited.model) from.push(' The model comes from your global settings.yaml; choosing one here overrides it for this profile.')
     if (choice.inherited.effort) from.push(" The effort comes from your global settings.yaml, so Default here can't take it away.")
-    return { kind: 'news', text: 'A change to the model or effort applies to your next prompt.' + (choice.running ? ' The last turn ran on ' + choice.running + '.' : '') + from.join('') }
+    const note = choice.options && choice.options.note ? ' ' + choice.options.note : ''
+    return { kind: 'news', text: 'A change to the model or effort applies to your next prompt.' + (choice.running ? ' The last turn ran on ' + choice.running + '.' : '') + from.join('') + note }
   }
 
   // modelName is what the agent calls the model an alias stands for ("Opus
@@ -5524,6 +5530,21 @@
   // that's spelt out.
   function effortLabel(effort) {
     return (effort === 'xhigh' ? 'Extra High' : titleCase(effort)) + ' effort'
+  }
+
+  // effortName is how an effort is shown: as the agent says it is called, where it said.
+  function effortName(effort) {
+    const o = choice.options
+    return (o && o.effortNames && o.effortNames[effort]) || effortLabel(effort)
+  }
+
+  // effortsOffered are the efforts the drop-down offers (besides Default): those of the model
+  // chosen where they differ by model (none, for a model that takes none, or while none is
+  // chosen), else the same for all.
+  function effortsOffered(o) {
+    if (!o) return []
+    if (o.effortsByModel) return o.effortsByModel[choice.model] || []
+    return o.efforts || []
   }
 
   // modelLabel is how a model is shown: by the name the agent gives it where
@@ -5558,11 +5579,12 @@
     const models = choice.model ? [] : [{ value: '', text: current ? 'Default (' + current + ')' : 'Default' }]
     for (const m of (o && o.models) || []) models.push({ value: m, text: modelLabel(m, true) + defaultMark(m) })
     if (choice.model && !models.some((m) => m.value === choice.model)) models.push({ value: choice.model, text: modelLabel(choice.model, false) + defaultMark(choice.model) })
-    models.push({ value: OTHER_MODEL, text: 'Other…' })
+    // Other… is for what isn't listed (and a full name typed): not for an agent that takes only the listed.
+    if (!o || !o.onlyListed) models.push({ value: OTHER_MODEL, text: 'Other…' })
     fillSelect($('choice-model'), models, choice.model)
     const efforts = [{ value: '', text: 'Default effort' }]
-    for (const e of (o && o.efforts) || []) efforts.push({ value: e, text: effortLabel(e) })
-    if (choice.effort && !efforts.some((e) => e.value === choice.effort)) efforts.push({ value: choice.effort, text: effortLabel(choice.effort) })
+    for (const e of effortsOffered(o)) efforts.push({ value: e, text: effortName(e) })
+    if (choice.effort && !efforts.some((e) => e.value === choice.effort)) efforts.push({ value: choice.effort, text: effortName(choice.effort) })
     fillSelect($('choice-effort'), efforts, choice.effort)
 
     // Said beside the drop-downs only when it's news: that the models are on
@@ -5694,7 +5716,7 @@
   function choiceGone() {
     const gone = []
     if (choice.goneModel && choice.goneModel === choice.model && !modelListed(choice.options, choice.model)) gone.push(choice.goneLabel)
-    if (choice.goneEffort && choice.goneEffort === choice.effort && !((choice.options && choice.options.efforts) || []).includes(choice.effort)) gone.push(effortLabel(choice.effort))
+    if (choice.goneEffort && choice.goneEffort === choice.effort && !((choice.options && choice.options.efforts) || []).includes(choice.effort)) gone.push(effortName(choice.effort))
     if (!gone.length) return ''
     return gone.map((g) => '"' + g + '"').join(' and ') + " isn't offered by the agent any more, and is what's chosen: your next prompt will probably fail. Choose another" +
       (gone.length > 1 ? ' model and effort.' : choice.goneModel === choice.model ? ' model.' : ' effort.')
@@ -5712,6 +5734,14 @@
     if (choice.problem) choice.unseen = true
     drawChoice()
     maybeAdopt()
+  }
+
+  // rereadChoice shows the choice as vibe has it now, for a change vibe made itself. Not before the first read
+  // (what was said before the page was opened is in it), and not over one the user is making or saving: the
+  // end of the turn reads it again, and theirs is the newest word.
+  async function rereadChoice() {
+    if (!state.choice || !choice.loaded || choice.saving || choice.choosing) return
+    await readChoice()
   }
 
   // askChoiceOptions asks for the agent's lists. wake says the sandbox may be

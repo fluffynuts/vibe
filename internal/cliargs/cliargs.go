@@ -28,6 +28,7 @@ type Args struct {
 	Cleanup    bool
 	Delete     bool
 	Info       bool
+	TurnLog    bool
 	Setup      bool
 	// NoCompanion is -N: don't serve the companion page this run.
 	NoCompanion bool
@@ -160,6 +161,9 @@ func parse(argv []string) (a Args, paths []string, err error) {
 		case arg == "-a" || arg == "--info":
 			a.Info = true
 			i++
+		case arg == "--turn-log":
+			a.TurnLog = true
+			i++
 		case arg == "--setup":
 			a.Setup = true
 			i++
@@ -288,7 +292,7 @@ func valueArg(argv []string, i int) (string, int, error) {
 // a terminal, as 'vibe -r --no-start && vibe --headless' does.
 func (a Args) ExclusiveActions() int {
 	n := 0
-	for _, b := range []bool{a.Migrate, a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info, a.Setup, a.GitToken, a.UpdateSandboxes, a.Manage, a.Headless && !a.Rebuilds()} {
+	for _, b := range []bool{a.Migrate, a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info, a.TurnLog, a.Setup, a.GitToken, a.UpdateSandboxes, a.Manage, a.Headless && !a.Rebuilds()} {
 		if b {
 			n++
 		}
