@@ -5656,11 +5656,28 @@
   // rebuilt when they differ: a drop-down that is open is closed by a rebuild,
   // and a redraw for some other reason (the spinner, a bubble) shouldn't do that.
   function fillSelect(select, items, value) {
-    const same = select.options.length === items.length &&
-      items.every((item, i) => select.options[i].value === item.value && select.options[i].textContent === item.text && select.options[i].classList.contains('unavailable') === !!item.bad)
+    // What it holds is told by what it was made of, so nothing else need be compared.
+    const made = JSON.stringify(items)
+    const same = select.dataset.items === made
     // A drop-down in use is left as it is: what changed is taken in once it is let go (blur).
     if (!same && select === document.activeElement) return
-    if (!same) select.replaceChildren(...items.map((i) => el('option', { value: i.value, text: i.text, class: i.bad ? 'unavailable' : '' })))
+    if (!same) {
+      const kids = []
+      for (const item of items) {
+        const option = el('option', { value: item.value, text: item.text, class: item.bad ? 'unavailable' : '' })
+        if (!item.group) { kids.push(option); continue }
+        // Consecutive items of one group are under one heading.
+        let group = kids[kids.length - 1]
+        if (!group || group.tagName !== 'OPTGROUP' || group.label !== item.group) {
+          group = el('optgroup', {})
+          group.label = item.group
+          kids.push(group)
+        }
+        group.append(option)
+      }
+      select.replaceChildren(...kids)
+      select.dataset.items = made
+    }
     if (select.value !== value) select.value = value
   }
 
@@ -5673,8 +5690,12 @@
     const def = (o && o.defaultAlias) || ''
     const defaultMark = (m) => (m === def ? ' (default)' : '')
     const models = choice.model ? [] : [{ value: '', text: current ? 'Default (' + current + ')' : 'Default' }]
+    // What the plan can't run is listed, to show what there is, but after what it can, under a heading that says so:
+    // an option's own colour isn't painted by every browser's drop-down.
     const outOfReach = (m) => !!(choice.limits && choice.limits.unavailable.includes(m))
-    for (const m of (o && o.models) || []) models.push({ value: m, text: modelLabel(m, true) + defaultMark(m) + (outOfReach(m) ? ' — not on your plan' : ''), bad: outOfReach(m) })
+    const listed = (o && o.models) || []
+    for (const m of listed.filter((m) => !outOfReach(m))) models.push({ value: m, text: modelLabel(m, true) + defaultMark(m) })
+    for (const m of listed.filter(outOfReach)) models.push({ value: m, text: modelLabel(m, true) + defaultMark(m), bad: true, group: 'Not on your plan' })
     if (choice.model && !models.some((m) => m.value === choice.model)) models.push({ value: choice.model, text: modelLabel(choice.model, false) + defaultMark(choice.model) })
     // Other… is for what isn't listed (and a full name typed): not for an agent that takes only the listed.
     if (!o || !o.onlyListed) models.push({ value: OTHER_MODEL, text: 'Other…' })

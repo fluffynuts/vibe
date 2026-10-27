@@ -423,28 +423,21 @@ test("the file viewer's path is drawn left to right, so a leading dot stays wher
   } finally { await page.close() }
 })
 
-// A model the plan can't run is red in the list, as the page's own warning colour is: browsers differ in what they
-// let an option's colour be.
-test('a model the plan cannot run is red in the model list, and the one it can is not', async () => {
+// A model the plan can't run is listed under a heading that says so. (Colour on an option is not painted by
+// Firefox's dropdown, however it is asked for, so it can't be what says it.)
+test('the models a plan cannot run are listed under "Not on your plan", after the ones it can', async () => {
   const page = await browser.newPage({ viewport: { width: 1100, height: 900 } })
   const json = (route, body) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) })
   await page.route(/\/api\/conversation\/choice$/, async (route) => json(route, Object.assign(await (await route.fetch()).json(), { limits: { unavailable: ['sonnet', 'haiku'], why: 'Your plan can only use Opus.', since: 1793000000000 } })))
   try {
     await page.goto(URL)
     await page.click('#tab-conversation')
-    await page.waitForSelector('#choice-model option.unavailable', { state: 'attached' })
-    const colours = await page.evaluate(() => {
-      const probe = document.createElement('span')
-      probe.style.color = 'var(--bad)'
-      document.body.append(probe)
-      const bad = getComputedStyle(probe).color
-      probe.remove()
-      const colour = (v) => getComputedStyle(document.querySelector('#choice-model option[value="' + v + '"]')).color
-      return { bad, sonnet: colour('sonnet'), haiku: colour('haiku'), opus: colour('opus') }
-    })
-    assert.equal(colours.sonnet, colours.bad)
-    assert.equal(colours.haiku, colours.bad)
-    assert.notEqual(colours.opus, colours.bad, 'the model the plan can run is not red')
+    await page.waitForSelector('#choice-model optgroup', { state: 'attached' })
+    const shown = await page.evaluate(() => Array.from(document.getElementById('choice-model').children).map((c) => c.tagName === 'OPTGROUP' ? [c.label, Array.from(c.children).map((o) => o.value)] : c.value))
+    const group = shown.find((c) => Array.isArray(c))
+    assert.equal(group[0], 'Not on your plan')
+    assert.deepEqual(group[1], ['sonnet', 'haiku'])
+    assert.ok(shown.indexOf(group) > shown.indexOf('opus'), 'after the model it can run')
   } finally { await page.close() }
 })
 

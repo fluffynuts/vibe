@@ -205,7 +205,7 @@ loose end.
 
 ## Slice 2: the models the plan can't run (2026-10-27, built, awaiting the user's test)
 
-Behaviour (the user's decisions): every model is listed; those the plan can't run are red and say "— not on your plan";
+Behaviour (the user's decisions): every model is listed; those the plan can't run are under a "Not on your plan" heading in the drop-down (red as well, where a browser paints option colour);
 choosing one is refused with the reason in the bubble and the drop-down goes back; a "Check again" button takes the
 limit away; what is learned expires after an hour; a model other than Auto that runs also takes it away.
 
@@ -216,8 +216,12 @@ limit away; what is learned expires after an hour; a model other than Auto that 
 - `companion.Choice` gained optional `Limits` (models out of reach + why + since, in the choice body as `limits`) and
   `Unlock` (`POST /api/conversation/choice/unlock`). The host also refuses (409, with the reason) to keep a model that
   is out of reach, for a second page that wasn't told.
-- Page: out-of-reach options are `option.unavailable` (red, with the words, which also serves colour-blind users);
-  `Check again` is in the info bubble while limits are in force.
+- Page: out-of-reach options are in an `<optgroup label="Not on your plan">` after the ones the plan can run, still
+  selectable (choosing one is what says why not), and carry `option.unavailable` (red). Found by the user's real test:
+  **Firefox's drop-down paints no per-option colour at all**, however it is asked (checked with `!important`, a matching
+  background, `appearance: none` and an unstyled select, in a headed Firefox under Xvfb with the popup open and
+  `scrot`), so colour can't be what says it; the heading is native and shows everywhere. `Check again` is in the info
+  bubble while limits are in force.
 - Deliberately not built: a background probe to re-check the plan. A probe costs ~7 s and rewrites Cursor's
   remembered model (so it would have to end by resetting it to Auto, spending a prompt of the free quota), so it isn't
   free. After the hour, or "Check again", models are offered again and the next real attempt finds out.

@@ -1511,14 +1511,25 @@ test('a choice the user is deciding on, in a dialog, is not read over by such a 
 const FREE = { unavailable: ['codex', 'composer'], why: 'Your Cursor plan can only use Auto: a prompt on another model was refused.', since: 1793000000000 }
 const optionFor = (p, value) => Array.from(p.$('choice-model').options).find((o) => o.value === value)
 
-test('the models the plan cannot run are listed all the same, in red and in words, and the one it can run is not', async () => {
+test('the models the plan cannot run are listed all the same, under a heading that says so, and the one it can run is not', async () => {
   const p = await choicePage({ options: PER_MODEL, model: 'auto', limits: FREE })
   try {
     assert.deepEqual(values(p.$('choice-model')), ['auto', 'codex', 'composer'], 'all of them are listed')
-    assert.ok(optionFor(p, 'codex').classList.contains('unavailable') && optionFor(p, 'composer').classList.contains('unavailable'))
-    assert.ok(!optionFor(p, 'auto').classList.contains('unavailable'))
-    assert.equal(optionFor(p, 'codex').textContent, 'Codex 5.3 — not on your plan')
-    assert.equal(optionFor(p, 'auto').textContent, 'Auto')
+    const group = p.$('choice-model').querySelector('optgroup')
+    assert.equal(group.label, 'Not on your plan')
+    assert.deepEqual(Array.from(group.querySelectorAll('option')).map((o) => o.value), ['codex', 'composer'])
+    assert.equal(optionFor(p, 'codex').textContent, 'Codex 5.3')
+    assert.ok(optionFor(p, 'codex').classList.contains('unavailable'), 'and red, where a browser paints that')
+    assert.ok(!optionFor(p, 'auto').classList.contains('unavailable') && !optionFor(p, 'auto').closest('optgroup'))
+    assert.ok(!optionFor(p, 'codex').disabled, 'they can be picked: that is what says why they cannot')
+  } finally { p.close() }
+})
+
+test('the models the plan can run come first, whatever order the host listed them in', async () => {
+  const options = Object.assign({}, PER_MODEL, { models: ['codex', 'auto', 'composer'] })
+  const p = await choicePage({ options, model: 'auto', limits: FREE })
+  try {
+    assert.deepEqual(values(p.$('choice-model')), ['auto', 'codex', 'composer'])
   } finally { p.close() }
 })
 
@@ -1526,6 +1537,7 @@ test('with no limits, no model is marked', async () => {
   const p = await choicePage({ options: PER_MODEL, model: 'auto' })
   try {
     assert.equal(p.$('choice-model').querySelectorAll('option.unavailable').length, 0)
+    assert.equal(p.$('choice-model').querySelector('optgroup'), null)
     assert.equal(optionFor(p, 'codex').textContent, 'Codex 5.3')
   } finally { p.close() }
 })
@@ -1560,6 +1572,7 @@ test('Check again takes the limits away at once: every model can be chosen, and 
     await p.click('choice-bubble-unlock')
     assert.equal(p.at.unlocks, 1)
     assert.equal(p.$('choice-model').querySelectorAll('option.unavailable').length, 0)
+    assert.equal(p.$('choice-model').querySelector('optgroup'), null, 'no heading either')
     assert.equal(optionFor(p, 'codex').textContent, 'Codex 5.3')
     await choose(p, 'choice-model', 'codex')
     assert.deepEqual(p.posted('/api/conversation/choice'), [{ model: 'codex', effort: '' }])

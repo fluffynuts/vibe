@@ -710,5 +710,6 @@ dialog.file-view header button svg { width: 14px; height: 14px; fill: none; stro
 dialog.file-view.outside { border-color: var(--warn-line); border-width: 2px; }
 dialog.file-view.outside .file-view-url::before { content: "⚠"; flex: none; margin-right: 6px; }
 
-/* A model the plan can't run: listed, to show what there is, but in red. */
+/* A model the plan can't run is under a heading that says so (see drawChoice), and red where a browser paints that:
+   Firefox's drop-down doesn't, however it is asked. */
 #choice-model option.unavailable { color: var(--bad); }
