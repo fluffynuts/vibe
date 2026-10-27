@@ -77,6 +77,24 @@ func (l Layout) FeatureDir(feature string) string {
 	return l.BundlePath("library", feature)
 }
 
+// Override says feature is read from the user's own copy of it in the overlay,
+// while the bundle ships one too: it gives the user's copy and the shipped one.
+// A feature only the user has, or one the user hasn't copied, is not an
+// override, and neither is an old copy of what is a base feature now (which
+// FeatureDir reads past).
+func (l Layout) Override(feature string) (mine, shipped string, ok bool) {
+	used := l.FeatureDir(feature)
+	for _, pair := range [][2]string{
+		{l.HomePath("library", BaseDir, feature), l.BundlePath("library", BaseDir, feature)},
+		{l.HomePath("library", feature), l.BundlePath("library", feature)},
+	} {
+		if pair[0] != "" && used == pair[0] && isDir(pair[1]) {
+			return pair[0], pair[1], true
+		}
+	}
+	return "", "", false
+}
+
 // BaseDir is the folder under library/ holding the base features: the ones
 // every profile is composed with, which are never offered as a choice.
 const BaseDir = "base"

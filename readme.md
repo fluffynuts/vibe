@@ -1274,7 +1274,7 @@ drop one you no longer use (and reorder them); with `-f` the recorded features a
 record nothing and are refused rather than guessed at; add the comment line above
 to adopt one. The refusal comes first, before any running vibe is stopped or anything asked. A profile an earlier vibe created blank is not refused: one nobody has added to is composed from the base features alone, as a blank profile is now; one with scripts or files of yours in it is left as it is, and the sandbox is rebuilt from it. One made blank before vibe recorded that has no such line, so it is refused as a hand-written one is; add `# vibe: blank: yes` to its `config.yaml` to have it treated as blank.
 
-Overriding one bundled feature (a base one too, as `~/.vibe/library/base/<feature>/`) means dropping your own `~/.vibe/library/<feature>/` next to it —
+Overriding one bundled feature (a base one too, as `~/.vibe/library/base/<feature>/`) means dropping your own `~/.vibe/library/<feature>/` next to it — Your copy beats the shipped one whole, so what vibe changes in the feature afterwards never reaches a profile composed from it: whenever a profile is composed, vibe says which of the features being composed are read from a copy of yours that differs from the shipped one (naming the files, and a `diff -r` to see them), and is silent about one that is the same.
 unlike `defaults/`, that replaces only the feature you copied, so features the bundle adds later
 still show up.
 

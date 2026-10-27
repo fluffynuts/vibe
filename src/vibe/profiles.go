@@ -176,6 +176,7 @@ func createProfileIfMissing(lay layout.Layout, profile string, force bool, agent
 	if source != "" {
 		dir, err = profilegen.CopyFrom(lay, source, profile)
 	} else {
+		noteShadowedFeatures(lay, nil)
 		dir, err = profilegen.CreateBlank(lay, profile)
 	}
 	if err != nil {
@@ -260,6 +261,7 @@ func ensureGuidedProfile(lay layout.Layout, profile, agent string) error {
 		chosen = ordered
 	}
 
+	noteShadowedFeatures(lay, chosen)
 	dir, err := profilegen.CreateGuided(lay, profile, chosen)
 	if err != nil {
 		return err
