@@ -439,3 +439,51 @@ func TestARetiredFeatureIsTakenOutOfAList(t *testing.T) {
 		t.Errorf("none retired: %q %q", kept, retired)
 	}
 }
+
+func TestTwoFoldersThatAreTheSameDifferInNothing(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	for _, root := range []string{a, b} {
+		write(t, filepath.Join(root, "agent-files", ".local", "bin", "x"), "x\n")
+		write(t, filepath.Join(root, "install-scripts", "01-a"), "echo\n")
+	}
+	if got := Differences(a, b); len(got) != 0 {
+		t.Errorf("differences: %v", got)
+	}
+}
+
+func TestADifferenceIsNamedByWhereItIsEvenWhenItIsAMissingOrAnExtraFile(t *testing.T) {
+	mine, shipped := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(mine, "same"), "same\n")
+	write(t, filepath.Join(shipped, "same"), "same\n")
+	write(t, filepath.Join(mine, "agent-files", "changed"), "old\n")
+	write(t, filepath.Join(shipped, "agent-files", "changed"), "new\n")
+	write(t, filepath.Join(mine, "only-mine"), "x\n")
+	write(t, filepath.Join(shipped, "only-shipped"), "x\n")
+	got := Differences(mine, shipped)
+	want := []string{filepath.Join("agent-files", "changed"), "only-mine", "only-shipped"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("differences: %v, want %v", got, want)
+	}
+}
+
+func TestADifferenceInAFolderThatIsOnlyEmptyIsNotOne(t *testing.T) {
+	mine, shipped := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(mine, "a"), "a\n")
+	write(t, filepath.Join(shipped, "a"), "a\n")
+	if err := os.MkdirAll(filepath.Join(mine, "empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := Differences(mine, shipped); len(got) != 0 {
+		t.Errorf("differences: %v", got)
+	}
+}
+
+func TestLineEndingsAloneAreNotADifference(t *testing.T) {
+	// A copy made on Windows, from a checkout that has CRLF.
+	mine, shipped := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(mine, "script"), "one\r\ntwo\r\n")
+	write(t, filepath.Join(shipped, "script"), "one\ntwo\n")
+	if got := Differences(mine, shipped); len(got) != 0 {
+		t.Errorf("differences: %v", got)
+	}
+}

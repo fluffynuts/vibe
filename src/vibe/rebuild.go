@@ -576,6 +576,7 @@ func replaceProfile(lay layout.Layout, profile, backupName string, features []st
 			return err
 		}
 	}
+	noteShadowedFeatures(lay, features)
 	created, err := profilegen.CreateGuided(lay, profile, features)
 	if err != nil {
 		return err
