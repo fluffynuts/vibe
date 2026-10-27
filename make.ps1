@@ -1,18 +1,19 @@
 #!/usr/bin/env pwsh
 # vibe — build, test and tidy the CLI, for machines without make.
-# Mirrors the Makefile: ./make.ps1 [build|test|vet|check|clean|help]... (default: build)
+# Mirrors the Makefile: ./make.ps1 [build|test|vet|fmt-check|check|clean|help]... (default: build)
 # (dist isn't here: it needs make.sh, as the Makefile's dist does.)
 #
 # The binary resolves its bundle (defaults/, profiles/, config.yaml,
 # settings.yaml) relative to its own location, so it is built into the repo
 # root and must stay there. Put it on $PATH with a symlink, never a copy.
 #
-# GO and BINARY can be overridden from the environment, as with make.
+# GO, GOFMT and BINARY can be overridden from the environment, as with make.
 
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
 $Go = if ($env:GO) { $env:GO } else { 'go' }
+$Gofmt = if ($env:GOFMT) { $env:GOFMT } else { 'gofmt' }
 $Binary = if ($env:BINARY) { $env:BINARY } elseif ($IsWindows -or $env:OS -eq 'Windows_NT') { 'vibe.exe' } else { 'vibe' }
 $Pkg = './src/vibe'
 
@@ -43,7 +44,23 @@ function Invoke-Test { Invoke-Step $Go @('test', './...') }
 
 function Invoke-Vet { Invoke-Step $Go @('vet', './...') }
 
+# Changes nothing: it lists the files gofmt would change, and fails if there are any.
+function Invoke-FmtCheck {
+    Write-Host "$Gofmt -l ."
+    $files = Get-ChildItem -Recurse -File -Filter '*.go' |
+        Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' } |
+        ForEach-Object { $_.FullName }
+    $unformatted = & $Gofmt -l @files
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    if ($unformatted) {
+        [Console]::Error.WriteLine('gofmt would change these files (gofmt -w <file> formats one):')
+        $unformatted | ForEach-Object { [Console]::Error.WriteLine($_) }
+        exit 1
+    }
+}
+
 function Invoke-Check {
+    Invoke-FmtCheck
     Invoke-Vet
     Invoke-Test
 }
@@ -61,7 +78,8 @@ $Targets = [ordered]@{
     'build' = @('build the vibe binary', { Invoke-Build })
     'test'  = @('run tests', { Invoke-Test })
     'vet'   = @('run go vet', { Invoke-Vet })
-    'check' = @('run vet and tests', { Invoke-Check })
+    'fmt-check' = @('check formatting (gofmt), changing nothing: fails if a file would change', { Invoke-FmtCheck })
+    'check' = @('run the formatting check, vet and tests', { Invoke-Check })
     'clean' = @('remove vibe binary and dist/ folder', { Invoke-Clean })
     'help'  = @('this help', { Invoke-Help })
 }
