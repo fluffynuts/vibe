@@ -4438,13 +4438,27 @@
     $('file-view-copy').onclick = () => copyText(text)
     viewedFolder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
     try {
-      $('file-view-body').replaceChildren(/\.(md|markdown)$/i.test(path)
-        ? markdown(text)
-        : el('pre', {}, el('code', { text: visible(text) })))
+      $('file-view-body').replaceChildren(...(/\.(md|markdown)$/i.test(path) ? [markdown(text)] : codeView(text, res.body.colour)))
     } finally {
       viewedFolder = ''
     }
     $('file-view-body').scrollTop = step.place
+  }
+
+  // codeView is a file that isn't Markdown, as text: coloured where the host gave its colours (a line at a
+  // time, by what each run of it is: a line they no longer spell is plain), saying why where it didn't colour it.
+  function codeView(text, colour) {
+    const note = colour && colour.skipped ? [el('p', { class: 'muted', text: 'Not coloured: ' + colour.skipped })] : []
+    if (!colour || !Array.isArray(colour.lines)) return [...note, el('pre', {}, el('code', { text: visible(text) }))]
+    const lines = text.replace(/\r\n/g, '\n').split('\n')
+    const parts = []
+    lines.forEach((line, i) => {
+      const runs = R.lineRuns(colour.lines[i], line)
+      if (runs) for (const r of runs) parts.push(r.kind ? el('span', { class: 'hl-' + r.kind, text: visible(r.text) }) : visible(r.text))
+      else parts.push(visible(line))
+      if (i < lines.length - 1) parts.push('\n')
+    })
+    return [...note, el('pre', {}, el('code', {}, ...parts))]
   }
 
   // viewerIcon is a small drawing for the viewer's buttons, as copyIcon is for copying.

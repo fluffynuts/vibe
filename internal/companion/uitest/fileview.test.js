@@ -385,3 +385,86 @@ test('a refused file keeps its warning only while it is the one shown', async ()
     assert.ok(!p.$('file-view').classList.contains('outside'), 'back at a file that is fine')
   } finally { p.close() }
 })
+
+// --- code, coloured ---
+
+// colour is what the host gives for source text: each line as runs of Chroma's classes.
+const colour = (...lines) => ({ language: 'Go', lines: lines.map((runs) => runs.map(([c, t]) => (c ? { c, t } : { t }))) })
+const view = async (path, file) => {
+  const p = await filePage('See `' + path + '`.', { files: { [path]: file } })
+  await p.click(p.$('convo-log').querySelector('button.file-ref'))
+  return p
+}
+
+test('a code file is shown with its keywords, strings, comments and the rest coloured, and says nothing else of it', async () => {
+  const text = 'package main // hi\nvar s = "x"\n'
+  const p = await view('x.go', { path: 'x.go', text, colour: colour([['kn', 'package'], ['', ' '], ['nx', 'main'], ['', ' '], ['c1', '// hi']], [['kd', 'var'], ['', ' s = '], ['s', '"x"']]) })
+  try {
+    const code = p.$('file-view-body').querySelector('pre code')
+    assert.equal(code.textContent, text, 'the text is the file, exactly')
+    const kinds = Array.from(code.querySelectorAll('span')).map((s) => [s.className, s.textContent])
+    assert.deepEqual(kinds, [['hl-kw', 'package'], ['hl-comment', '// hi'], ['hl-kw', 'var'], ['hl-str', '"x"']])
+  } finally { p.close() }
+})
+
+test('what the colours cannot tell is left as plain text, in the text', async () => {
+  const p = await view('x.go', { path: 'x.go', text: 'a b\n', colour: colour([['nx', 'a'], ['', ' b']]) })
+  try {
+    const code = p.$('file-view-body').querySelector('pre code')
+    assert.equal(code.querySelectorAll('span').length, 0)
+    assert.equal(code.textContent, 'a b\n')
+  } finally { p.close() }
+})
+
+test('a file with no colours is shown as plain text as it always was', async () => {
+  const p = await view('notes.txt', 'just words\n')
+  try {
+    assert.equal(p.$('file-view-body').querySelector('pre code').textContent, 'just words\n')
+    assert.equal(p.$('file-view-body').querySelectorAll('span').length, 0)
+  } finally { p.close() }
+})
+
+test('a line whose colours do not spell it (the file changed since) is plain, and the others still coloured', async () => {
+  const p = await view('x.go', { path: 'x.go', text: 'package main\nfunc f() {}\n', colour: colour([['kn', 'package'], ['', ' main']], [['kd', 'func'], ['', ' g() {}']]) })
+  try {
+    const code = p.$('file-view-body').querySelector('pre code')
+    assert.equal(code.textContent, 'package main\nfunc f() {}\n')
+    assert.deepEqual(Array.from(code.querySelectorAll('span')).map((s) => s.textContent), ['package'])
+  } finally { p.close() }
+})
+
+test('a hidden control character in a coloured line is shown as a symbol, as in plain text', async () => {
+  const text = 'var s = "a\u001b[31mb"\n'
+  const p = await view('x.go', { path: 'x.go', text, colour: colour([['kd', 'var'], ['', ' s = '], ['s', '"a\u001b[31mb"']]) })
+  try {
+    const code = p.$('file-view-body').querySelector('pre code')
+    assert.ok(!code.textContent.includes('\u001b'), 'the escape is not in the page')
+    assert.ok(code.textContent.includes('\u241b'), 'but its symbol is')
+    assert.ok(code.querySelector('.hl-str'))
+  } finally { p.close() }
+})
+
+test('a file CRLF-ended is shown as it was, in lines, coloured', async () => {
+  const p = await view('x.go', { path: 'x.go', text: 'package main\r\nvar x int\r\n', colour: colour([['kn', 'package'], ['', ' main']], [['kd', 'var'], ['', ' x int']]) })
+  try {
+    const code = p.$('file-view-body').querySelector('pre code')
+    assert.equal(code.textContent, 'package main\nvar x int\n')
+    assert.equal(code.querySelectorAll('.hl-kw').length, 2)
+  } finally { p.close() }
+})
+
+test('a file too long to colour says so above the text, which is shown plain', async () => {
+  const p = await view('big.go', { path: 'big.go', text: 'a\nb\n', colour: { skipped: 'too long to colour (12000 lines)' } })
+  try {
+    assert.match(p.$('file-view-body').textContent, /Not coloured: too long to colour \(12000 lines\)/)
+    assert.equal(p.$('file-view-body').querySelector('pre code').textContent, 'a\nb\n')
+  } finally { p.close() }
+})
+
+test('Markdown is shown as Markdown, whatever colours come with it', async () => {
+  const p = await view('a.md', { path: 'a.md', text: '# Plan\n', colour: colour([['gh', '# Plan']]) })
+  try {
+    assert.equal(p.$('file-view-body').querySelector('h1').textContent, 'Plan')
+    assert.equal(p.$('file-view-body').querySelector('pre'), null)
+  } finally { p.close() }
+})

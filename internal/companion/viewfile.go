@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"unicode/utf8"
+
+	"vibe/internal/review"
 )
 
 // maxViewedFile is the most of a file the page is given to show.
@@ -39,6 +41,24 @@ type workspaceFile struct {
 	// Path is where it is, from the workspace, with forward slashes.
 	Path string `json:"path"`
 	Text string `json:"text"`
+	// Colour is the text of a code file as coloured runs, a line at a time, as
+	// the Review tab has them, or why it isn't (too long); nil for Markdown,
+	// which the page draws as Markdown, and for text whose language isn't
+	// known.
+	Colour *review.Highlighted `json:"colour,omitempty"`
+}
+
+// coloured is file with its text coloured as its language says, where it
+// has one. The page shows text with CRLF line ends as LF and checks each of
+// its lines against the colours of it, so what is coloured is that text.
+func coloured(file workspaceFile) workspaceFile {
+	if ext := strings.ToLower(filepath.Ext(file.Path)); ext == ".md" || ext == ".markdown" {
+		return file
+	}
+	if got := review.Highlight(file.Path, strings.ReplaceAll(file.Text, "\r\n", "\n")); len(got.Lines) > 0 || got.Skipped != "" {
+		file.Colour = &got
+	}
+	return file
 }
 
 // openWorkspaceFile opens asked, a path as the agent wrote it (from the
@@ -172,7 +192,7 @@ func (s *Server) workspaceFileHandler(w http.ResponseWriter, r *http.Request) {
 	var refused fileRefused
 	switch {
 	case err == nil:
-		writeJSON(w, http.StatusOK, file)
+		writeJSON(w, http.StatusOK, coloured(file))
 	case errors.As(err, &refused):
 		writeJSON(w, refusalStatus[refused.Kind], map[string]string{"error": refused.Message, "code": refused.Kind})
 	default:

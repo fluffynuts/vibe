@@ -627,19 +627,19 @@ dialog.glass::backdrop { background: rgba(250, 250, 250, .55); backdrop-filter: 
 }
 
 /* syntax colours on a diff's code: kinds from review.js's tokenKind */
-.review-lines .hl-kw { color: var(--hl-kw); }
-.review-lines .hl-str { color: var(--hl-str); }
-.review-lines .hl-comment { color: var(--hl-comment); font-style: italic; }
-.review-lines .hl-num { color: var(--hl-num); }
-.review-lines .hl-fn { color: var(--hl-fn); }
-.review-lines .hl-type { color: var(--hl-type); }
-.review-lines .hl-builtin { color: var(--hl-builtin); }
-.review-lines .hl-tag { color: var(--hl-tag); }
-.review-lines .hl-attr { color: var(--hl-attr); }
-.review-lines .hl-var { color: var(--hl-var); }
-.review-lines .hl-meta { color: var(--hl-meta); }
-.review-lines .hl-const { color: var(--hl-const); }
-.review-lines .hl-op { color: var(--hl-op); }
+.review-lines .hl-kw, #file-view-body .hl-kw { color: var(--hl-kw); }
+.review-lines .hl-str, #file-view-body .hl-str { color: var(--hl-str); }
+.review-lines .hl-comment, #file-view-body .hl-comment { color: var(--hl-comment); font-style: italic; }
+.review-lines .hl-num, #file-view-body .hl-num { color: var(--hl-num); }
+.review-lines .hl-fn, #file-view-body .hl-fn { color: var(--hl-fn); }
+.review-lines .hl-type, #file-view-body .hl-type { color: var(--hl-type); }
+.review-lines .hl-builtin, #file-view-body .hl-builtin { color: var(--hl-builtin); }
+.review-lines .hl-tag, #file-view-body .hl-tag { color: var(--hl-tag); }
+.review-lines .hl-attr, #file-view-body .hl-attr { color: var(--hl-attr); }
+.review-lines .hl-var, #file-view-body .hl-var { color: var(--hl-var); }
+.review-lines .hl-meta, #file-view-body .hl-meta { color: var(--hl-meta); }
+.review-lines .hl-const, #file-view-body .hl-const { color: var(--hl-const); }
+.review-lines .hl-op, #file-view-body .hl-op { color: var(--hl-op); }
 .review-uncoloured { font-size: 12px; }
 
 #admin-nugetconfig { margin-top: 12px; border-top: 1px solid var(--line, #8883); padding-top: 8px; }
