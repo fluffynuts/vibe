@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -362,6 +363,9 @@ func TestTheChoiceIsLeftAloneWhenThereWasNoFallback(t *testing.T) {
 func TestASandboxWithoutCursorsAgentSaysSoAndWhatToCheck(t *testing.T) {
 	// "agent: command not found" says nothing of there having been two names
 	// to look for, nor what to do.
+	if runtime.GOOS == "windows" {
+		t.Skip("the turn's command is for a Linux sandbox's shell, and symbolic links need privileges on Windows")
+	}
 	bin := t.TempDir()
 	rm, err := exec.LookPath("rm")
 	if err != nil {

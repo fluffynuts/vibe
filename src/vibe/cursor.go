@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"vibe/internal/companion"
@@ -127,23 +128,46 @@ const cursorAuto = "auto"
 // session, which vibe doesn't restore.
 const cursorSessionLost = "Cursor has no saved session for this conversation in this sandbox (it may have been rebuilt), so it starts afresh. It may still find parts of the conversation by searching its own earlier chat transcripts, if they are still there."
 
+// maxCursorTranscriptsKB is how much of Cursor's transcripts are kept with a
+// session: past it they are left out (the session is kept all the same) rather
+// than make every turn copy more than a sandbox ought to hold.
+const maxCursorTranscriptsKB = 10 * 1024
+
+// cursorFetchScript writes, as one line of base64, a gzipped tar of what Cursor
+// keeps of session, relative to ~/.cursor: the session itself, which --resume
+// loads, and the transcripts of every chat (projects/<folder>/agent-transcripts)
+// unless they come to more than maxKB. The agent searches those for what it
+// can't tell from the conversation (after it was summarised, say), and for
+// earlier chats, so all of them are worth having after a rebuild. It writes
+// nothing for a session the sandbox doesn't have. A session id is only ever
+// one that companion.SessionID passes, so it is safe in a script; it is quoted
+// all the same.
+func cursorFetchScript(session string, maxKB int) string {
+	return `cd "$HOME/.cursor" && ls -d chats/*/` + shellQuote(session) + ` >/dev/null 2>&1 && { ` +
+		`find chats -mindepth 2 -maxdepth 2 -name ` + shellQuote(session) + ` -print0; ` +
+		`kb=$(du -sk projects/*/agent-transcripts 2>/dev/null | awk '{s+=$1} END {print s+0}'); ` +
+		`[ "$kb" -le ` + strconv.Itoa(maxKB) + ` ] && find projects -mindepth 2 -maxdepth 2 -name agent-transcripts -print0; ` +
+		`} | tar --null -czf - -T - 2>/dev/null | base64 -w0`
+}
+
+// cursorPutScript unpacks what cursorFetchScript wrote (on its stdin) into
+// ~/.cursor, leaving alone what is there already: a chat had in the sandbox's
+// own terminal since it was rebuilt is newer than the kept copy.
+func cursorPutScript() string {
+	return `mkdir -p "$HOME/.cursor" && cd "$HOME/.cursor" && base64 -d | tar --skip-old-files -xzf -`
+}
+
 // sandboxCursorSessions reaches into sandbox name's ~/.cursor for sessions,
-// which Cursor keeps under chats/<a hash of the folder>/<session>/. A session
-// id is only ever one that companion.SessionID passes, so it is safe in a
-// script; it is quoted all the same.
+// which Cursor keeps under chats/<a hash of the folder>/<session>/.
 func sandboxCursorSessions(name string) transcripts {
-	pattern := func(session string) string { return shellQuote(session) }
 	return transcripts{
 		lost: cursorSessionLost,
 		has: func(ctx context.Context, session string) bool {
 			return sbxrun.ExecSilent(ctx, name, asAgent(
-				`cd "$HOME/.cursor" 2>/dev/null && ls -d chats/*/`+pattern(session)+` >/dev/null 2>&1`)...)
+				`cd "$HOME/.cursor" 2>/dev/null && ls -d chats/*/`+shellQuote(session)+` >/dev/null 2>&1`)...)
 		},
 		fetch: func(ctx context.Context, session string) ([]byte, error) {
-			out, err := sbxrun.ExecStdout(ctx, name, asAgent(
-				`cd "$HOME/.cursor" && ls -d chats/*/`+pattern(session)+` >/dev/null 2>&1 && `+
-					`find chats -mindepth 2 -maxdepth 2 -name `+pattern(session)+` -print0 | `+
-					`tar --null -czf - -T - 2>/dev/null | base64 -w0`)...)
+			out, err := sbxrun.ExecStdout(ctx, name, asAgent(cursorFetchScript(session, maxCursorTranscriptsKB))...)
 			if err != nil {
 				return nil, err
 			}
@@ -151,8 +175,7 @@ func sandboxCursorSessions(name string) transcripts {
 			return base64.StdEncoding.DecodeString(strings.TrimSpace(lines[len(lines)-1]))
 		},
 		put: func(ctx context.Context, tgz []byte) error {
-			return sbxrun.ExecInput(name, base64.StdEncoding.EncodeToString(tgz), asAgent(
-				`mkdir -p "$HOME/.cursor" && cd "$HOME/.cursor" && base64 -d | tar -xzf -`)...)
+			return sbxrun.ExecInput(name, base64.StdEncoding.EncodeToString(tgz), asAgent(cursorPutScript())...)
 		},
 	}
 }

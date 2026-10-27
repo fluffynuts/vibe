@@ -190,3 +190,15 @@ Measured from that log: a refused named-model prompt cost 6.7–9.1 s before the
 ### Everything tested for real so far
 Tools and answers; pickers; the Opus fallback (note, Auto, selector set back at once); Stop; session resume;
 `--re-compose` restore; the lost-session note; `--turn-log` after a failure. Not tested: paid plans, slice 2.
+
+### Transcripts are kept with the session (2026-10-27, user's decision)
+
+The user's view: the session is the L1 cache and the transcripts the L2; the agent leans on them for what it can't
+tell from the conversation (after compaction, say). So the kept copy now holds the session and the transcripts of
+every chat of the sandbox (`projects/*/agent-transcripts`), up to 10 MB of them (past that the session is still
+kept, the transcripts aren't), and a restore never writes over a file the rebuilt sandbox already has (a chat had in
+its own terminal since is newer). `cursorFetchScript` and `cursorPutScript` are run for real in tests (Linux only: GNU
+tar, `base64 -w0`).
+
+`vibe --turn-log` keeps needing sbx: the user's call is that sbx is a bedrock dependency of vibe, so that is not a
+loose end.
