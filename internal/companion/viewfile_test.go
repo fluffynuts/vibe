@@ -244,3 +244,83 @@ func TestTheCheckCallNeedsTheTokenAndAWorkspaceAndAnswersForTheAskedPaths(t *tes
 		t.Errorf("%d %s", rec.Code, rec.Body)
 	}
 }
+
+// colouring is a file's coloured lines, as the file call gives them.
+type colouring struct {
+	Language string
+	Lines    [][]struct{ C, T string }
+	Skipped  string
+}
+
+// colourOf is what the file call gives for path of the workspace: its coloured
+// runs, if any.
+func colourOf(t *testing.T, files map[string]string, path string) *colouring {
+	t.Helper()
+	ws, _ := workspaceWith(t, files)
+	rec := do(t, viewServer(t, ws), req{path: "/api/workspace-file?path=" + path, headers: authed(nil)})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	var got struct {
+		Text   string
+		Colour *colouring `json:"colour"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	return got.Colour
+}
+
+func TestACodeFileIsGivenWithItsLinesColouredByItsLanguage(t *testing.T) {
+	got := colourOf(t, map[string]string{"src/x.go": "package main\n\nfunc f() int {\n\treturn 1 // one\n}\n"}, "src/x.go")
+	if got == nil || got.Language != "Go" || len(got.Lines) != 5 {
+		t.Fatalf("got %+v", got)
+	}
+	first := got.Lines[0]
+	if len(first) == 0 || first[0].T != "package" || !strings.HasPrefix(first[0].C, "k") {
+		t.Errorf("the first line's first run: %+v", first)
+	}
+	var comment bool
+	for _, run := range got.Lines[3] {
+		comment = comment || (strings.HasPrefix(run.C, "c") && strings.Contains(run.T, "one"))
+	}
+	if !comment {
+		t.Errorf("the comment isn't one: %+v", got.Lines[3])
+	}
+}
+
+func TestColoursSpellTheLinesTheViewerShowsWhateverTheLineEndings(t *testing.T) {
+	// The page shows text with CRLF as LF, and checks each line against its colours.
+	got := colourOf(t, map[string]string{"x.go": "package main\r\n\r\nfunc f() {}\r\n"}, "x.go")
+	if got == nil {
+		t.Fatal("no colours")
+	}
+	want := []string{"package main", "", "func f() {}"}
+	if len(got.Lines) != len(want) {
+		t.Fatalf("%d lines: %+v", len(got.Lines), got.Lines)
+	}
+	for i, runs := range got.Lines {
+		var line string
+		for _, r := range runs {
+			line += r.T
+		}
+		if line != want[i] {
+			t.Errorf("line %d is %q, want %q", i, line, want[i])
+		}
+	}
+}
+
+func TestMarkdownAndPlainTextAreGivenWithNoColours(t *testing.T) {
+	for _, name := range []string{"a.md", "b.markdown", "notes.txt", "LICENSE"} {
+		if got := colourOf(t, map[string]string{name: "# Plan\n\nSome words, nothing more.\n"}, name); got != nil {
+			t.Errorf("%s was coloured: %+v", name, got)
+		}
+	}
+}
+
+func TestACodeFileTooLongToColourSaysWhy(t *testing.T) {
+	got := colourOf(t, map[string]string{"big.go": strings.Repeat("var x = 1\n", 10001)}, "big.go")
+	if got == nil || len(got.Lines) != 0 || !strings.Contains(got.Skipped, "too long") {
+		t.Errorf("got %+v", got)
+	}
+}

@@ -341,3 +341,115 @@ test('a conversation of many tools is the words of the agent with a line for eac
     assert.equal(await page.locator('details.tool-group > summary').first().textContent(), '⚙ 8 tool uses · Bash ×8')
   } finally { await page.close() }
 })
+
+// viewerPage opens the Conversation tab on a conversation that mentions the first of files (path -> text), and
+// the file viewer open on it, width pixels wide. The host is stubbed: it has a folder to show files from.
+async function viewerPage(files, width) {
+  const page = await browser.newPage({ viewport: { width, height: 900 } })
+  const first = Object.keys(files)[0]
+  const events = [{ seq: 1, kind: 'user', text: 'hi' }, sayEv(2, 'See `' + first + '`.')]
+  const json = (route, body) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) })
+  const query = (route) => new (require('node:url').URL)(route.request().url()).searchParams
+  await page.route(/\/api\/state$/, async (route) => json(route, Object.assign(await (await route.fetch()).json(), { viewFiles: true })))
+  await page.route(/\/api\/conversation\?/, (route) => json(route, { events: events.filter((e) => e.seq > (Number(query(route).get('after')) || 0)), last: 2, running: false }))
+  await page.route(/\/api\/workspace-files\?/, (route) => json(route, { files: query(route).getAll('path').filter((p) => p in files) }))
+  await page.route(/\/api\/workspace-file\?/, (route) => json(route, { path: query(route).get('path'), text: files[query(route).get('path')] }))
+  await page.goto(URL)
+  await page.click('#tab-conversation')
+  await page.waitForSelector('#convo-log button.file-ref')
+  await page.click('#convo-log button.file-ref')
+  await page.waitForSelector('#file-view-body h1')
+  return page
+}
+
+const longFile = (title) => '# ' + title + '\n\n' + Array.from({ length: 150 }, (_, i) => 'Paragraph ' + i + ' of ' + title + '.').join('\n\n') + '\n\nOn to [the other](./b.md).'
+
+test("the file viewer's bar is one line from wide to narrow: buttons, then the path between them and the close button", async () => {
+  for (const width of [1100, 700, 420]) {
+    const page = await viewerPage({ 'docs/a.md': longFile('A'), 'docs/b.md': '# B' }, width)
+    try {
+      const ids = ['file-view-back', 'file-view-forward', 'file-view-reload', 'file-view-path', 'file-view-copy', 'file-view-close']
+      const b = {}
+      for (const id of ids) b[id] = await box(page, '#' + id)
+      const tops = ids.map((id) => b[id].y + b[id].height / 2)
+      assert.ok(Math.max(...tops) - Math.min(...tops) < 8, `at ${width}px the bar is on more than one line: ${tops}`)
+      for (let i = 1; i < ids.length; i++) {
+        assert.ok(b[ids[i]].x >= b[ids[i - 1]].x + b[ids[i - 1]].width - 1, `at ${width}px ${ids[i]} is not after ${ids[i - 1]}`)
+      }
+      assert.ok(b['file-view-path'].width > 80, `at ${width}px the path bar is ${b['file-view-path'].width}px`)
+      const close = b['file-view-close']
+      assert.ok(close.x + close.width <= width, `at ${width}px the close button is off the page`)
+      assert.ok(close.width < 40, 'the close button is an icon, not a word')
+    } finally { await page.close() }
+  }
+})
+
+test('the file viewer fills the space between its buttons with the path, however long the path is', async () => {
+  const path = 'docs/' + 'a-long-folder-name/'.repeat(5) + 'a.md'
+  const page = await viewerPage({ [path]: '# Long' }, 700)
+  try {
+    const dialog = await box(page, '#file-view')
+    const close = await box(page, '#file-view-close')
+    const url = await box(page, '#file-view-path')
+    assert.ok(close.x + close.width <= dialog.x + dialog.width, 'the close button stays inside the dialog')
+    assert.ok(url.x + url.width <= close.x, 'the path stops short of the close button')
+    assert.equal(await page.inputValue('#file-view-path'), path, 'and is the whole path, to read by scrolling it')
+  } finally { await page.close() }
+})
+
+// A path too long for the bar shows its end, the file's name, and cuts the start: two paths that differ only
+// in the part cut look the same.
+test("a path too long for the file viewer's bar is cut at its start, so the file's name shows", async () => {
+  // Longer than the bar shows, so none of what differs is in view.
+  const shared = '/shared-folder/and-another/and-a-third-one/and-then-a-fourth-one/the-file-with-a-name.md'
+  const bars = []
+  for (const start of ['a', 'b']) {
+    const page = await viewerPage({ ['docs/' + start.repeat(40) + shared]: '# Long' }, 600)
+    try {
+      assert.ok(await page.evaluate(() => { const i = document.getElementById('file-view-path'); return i.scrollWidth > i.clientWidth }), 'the path fits the bar: the test shows nothing')
+      assert.ok(await page.evaluate(() => { const i = document.getElementById('file-view-path'); return i.scrollLeft + i.clientWidth >= i.scrollWidth - 1 }), 'the bar is at the end of the path as soon as the file is shown')
+      bars.push(await page.locator('#file-view-path').screenshot())
+    } finally { await page.close() }
+  }
+  assert.ok(bars[0].equals(bars[1]), 'the bar shows the start of the path, which differs, and not its end')
+})
+
+// A bar drawn right to left would put a path's leading dot or underscore at the other end of it: .github/ci.md as github/ci.md.
+test("the file viewer's path is drawn left to right, so a leading dot stays where it is", async () => {
+  const page = await viewerPage({ '.github/workflows/ci.md': '# CI' }, 600)
+  try {
+    assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('file-view-path')).direction), 'ltr')
+    assert.equal(await page.inputValue('#file-view-path'), '.github/workflows/ci.md')
+  } finally { await page.close() }
+})
+
+// eventually waits for check to say yes: polled, as the page's policy doesn't allow waitForFunction.
+async function eventually(page, what, check) {
+  for (let i = 0; i < 80; i++) {
+    if (await check()) return
+    await page.waitForTimeout(50)
+  }
+  assert.fail('never: ' + what)
+}
+
+test('Reload keeps the place in the file, and Back goes to where it was left in the one before', async () => {
+  const page = await viewerPage({ 'docs/a.md': longFile('A'), 'docs/b.md': longFile('B') }, 1100)
+  try {
+    const place = () => page.evaluate(() => document.getElementById('file-view-body').scrollTop)
+    const title = () => page.evaluate(() => (document.querySelector('#file-view-body h1') || {}).textContent)
+    await page.evaluate(() => { document.getElementById('file-view-body').scrollTop = 600 })
+    const was = await place()
+    assert.ok(was > 300, `the file isn't long enough to scroll: ${was}`)
+    await page.click('#file-view-reload')
+    await eventually(page, 'the file reloaded, at its place', async () => Math.abs((await place()) - was) < 6)
+    // A link is a button once the host has said its file is there: that comes a moment after the file is drawn.
+    await eventually(page, 'the link to the next file is a button', () => page.evaluate(() => !!document.querySelector('#file-view-body button.file-ref')))
+    // Not page.click, which scrolls the link into view first: it is the place at the click that is remembered.
+    await page.evaluate(() => document.querySelector('#file-view-body button.file-ref').click())
+    await eventually(page, 'the next file shown', async () => (await title()) === 'B')
+    assert.equal(await place(), 0, 'a file arrived at is at its top')
+    await page.click('#file-view-back')
+    await eventually(page, 'the first file shown again', async () => (await title()) === 'A')
+    await eventually(page, 'back at its place', async () => Math.abs((await place()) - was) < 6)
+  } finally { await page.close() }
+})

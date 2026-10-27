@@ -4367,42 +4367,134 @@
     return el('button', { type: 'button', class: 'file-ref', title: shown === path ? 'Show this file' : 'Show ' + path, onclick: () => viewFile(path) }, words)
   }
 
-  // viewFile shows path over the conversation, read-only: as Markdown if it is, else as it is. The host says
-  // why when it won't (outside the workspace, not there, too big, not text), and that is shown in its place.
-  async function viewFile(path) {
+  // The viewer keeps a history as a browser does: each file followed from a link in it is a step on from the
+  // last, Back and Forward move along the steps, and following a link from a step back along drops those that
+  // were ahead. Each step keeps how far down it was read, to go back to. Closing the viewer ends it: the next file
+  // opened is the first of a new one.
+  const viewer = { steps: [], at: -1, loading: 0 }
+
+  // viewFile shows path over the conversation: from a button in it, the first step of a new history; from a
+  // link in a file already shown, the next step of that one.
+  function viewFile(path) {
     const dialog = $('file-view')
-    $('file-view-path').textContent = path
+    if (dialog.open) {
+      rememberPlace()
+      viewer.steps.length = viewer.at + 1
+      viewer.steps.push({ path, place: 0 })
+      viewer.at++
+    } else {
+      viewer.steps = [{ path, place: 0 }]
+      viewer.at = 0
+    }
+    return showStep()
+  }
+
+  function rememberPlace() {
+    if (viewer.steps[viewer.at]) viewer.steps[viewer.at].place = $('file-view-body').scrollTop
+  }
+
+  async function goViewer(to) {
+    if (to < 0 || to >= viewer.steps.length) return
+    rememberPlace()
+    viewer.at = to
+    await showStep()
+  }
+
+  function drawViewerButtons() {
+    $('file-view-back').disabled = viewer.at <= 0
+    $('file-view-forward').disabled = viewer.at >= viewer.steps.length - 1
+  }
+
+  // showStep shows the step the history is at, read-only: as Markdown if it is, else as it is. The host says
+  // why when it won't (outside the workspace, not there, too big, not text), and that is shown in its place.
+  async function showStep() {
+    const dialog = $('file-view')
+    const step = viewer.steps[viewer.at]
+    const path = step.path
+    const mine = ++viewer.loading
+    $('file-view-path').value = path
+    $('file-view-path').title = path
+    endOfPath()
+    drawViewerButtons()
     dialog.classList.remove('outside')
     $('file-view-copy').hidden = true
     $('file-view-body').replaceChildren(el('p', { class: 'muted', text: 'Loading…' }))
     if (!dialog.open) dialog.showModal()
+    endOfPath()
     let res
     try {
       res = await api('/api/workspace-file?path=' + encodeURIComponent(path))
     } catch (err) {
       res = { ok: false, body: { error: "Couldn't ask vibe for it: " + err.message } }
     }
-    if ($('file-view-path').textContent !== path) return
+    // Another step was asked for meanwhile.
+    if (mine !== viewer.loading) return
     if (!res.ok) {
       dialog.classList.toggle('outside', res.body.code === 'outside')
       $('file-view-body').replaceChildren(el('p', { text: res.body.error || 'That file could not be shown.' }))
+      $('file-view-body').scrollTop = step.place
       return
     }
     const text = res.body.text
     $('file-view-copy').hidden = false
+    // It narrows the path bar.
+    endOfPath()
     $('file-view-copy').onclick = () => copyText(text)
     viewedFolder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
     try {
-      $('file-view-body').replaceChildren(/\.(md|markdown)$/i.test(path)
-        ? markdown(text)
-        : el('pre', {}, el('code', { text: visible(text) })))
+      $('file-view-body').replaceChildren(...(/\.(md|markdown)$/i.test(path) ? [markdown(text)] : codeView(text, res.body.colour)))
     } finally {
       viewedFolder = ''
     }
-    $('file-view-body').scrollTop = 0
+    $('file-view-body').scrollTop = step.place
+  }
+
+  // codeView is a file that isn't Markdown, as text: coloured where the host gave its colours (a line at a
+  // time, by what each run of it is: a line they no longer spell is plain), saying why where it didn't colour it.
+  function codeView(text, colour) {
+    const note = colour && colour.skipped ? [el('p', { class: 'muted', text: 'Not coloured: ' + colour.skipped })] : []
+    if (!colour || !Array.isArray(colour.lines)) return [...note, el('pre', {}, el('code', { text: visible(text) }))]
+    const lines = text.replace(/\r\n/g, '\n').split('\n')
+    const parts = []
+    lines.forEach((line, i) => {
+      const runs = R.lineRuns(colour.lines[i], line)
+      if (runs) for (const r of runs) parts.push(r.kind ? el('span', { class: 'hl-' + r.kind, text: visible(r.text) }) : visible(r.text))
+      else parts.push(visible(line))
+      if (i < lines.length - 1) parts.push('\n')
+    })
+    return [...note, el('pre', {}, el('code', {}, ...parts))]
+  }
+
+  // endOfPath scrolls the path bar to the end of the path, where the file's name is, when it is too long for the
+  // bar, and says so (the start fades out). Left to right as it is, not by turning the text round, which would
+  // move a leading dot (.github/...) to the other end. Done again when the bar changes size.
+  function endOfPath() {
+    const bar = $('file-view-path')
+    bar.scrollLeft = bar.scrollWidth
+    bar.classList.toggle('cut', bar.scrollWidth > bar.clientWidth)
+  }
+  if (window.ResizeObserver) new ResizeObserver(endOfPath).observe($('file-view-path'))
+
+  // viewerIcon is a small drawing for the viewer's buttons, as copyIcon is for copying.
+  function viewerIcon(d) {
+    const ns = 'http://www.w3.org/2000/svg'
+    const svg = document.createElementNS(ns, 'svg')
+    svg.setAttribute('viewBox', '0 0 16 16')
+    svg.setAttribute('aria-hidden', 'true')
+    const path = document.createElementNS(ns, 'path')
+    path.setAttribute('d', d)
+    svg.append(path)
+    return svg
   }
 
   $('file-view-copy').append(copyIcon())
+  $('file-view-back').append(viewerIcon('M10 3 L5 8 L10 13'))
+  $('file-view-forward').append(viewerIcon('M6 3 L11 8 L6 13'))
+  $('file-view-reload').append(viewerIcon('M13 8a5 5 0 1 1-1.6-3.7 M13 2.5v3h-3'))
+  $('file-view-close').append(viewerIcon('M4 4l8 8 M12 4l-8 8'))
+  $('file-view-back').onclick = () => goViewer(viewer.at - 1)
+  $('file-view-forward').onclick = () => goViewer(viewer.at + 1)
+  $('file-view-reload').onclick = () => { rememberPlace(); return showStep() }
   $('file-view-close').onclick = () => $('file-view').close()
 
   // HIDDEN_CONTROL is what a terminal acts on but a page doesn't show: the
