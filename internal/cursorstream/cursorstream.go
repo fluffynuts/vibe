@@ -8,6 +8,7 @@ package cursorstream
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -134,6 +135,13 @@ func resultText(result map[string]any) (text string, failed bool) {
 	}
 	if len(fields) == 0 {
 		return "", failed
+	}
+	// A file that is an image is given to the model as data, and Cursor says only how big it was and
+	// where (a blob's id, not the picture), which isn't worth showing as it is.
+	if _, isImage := fields["dataBlobId"]; isImage {
+		size, _ := fields["fileSize"].(float64)
+		path, _ := fields["path"].(string)
+		return fmt.Sprintf("image, %d bytes (%s)", int64(size), path), failed
 	}
 	return clip(string(marshal(fields))), failed
 }

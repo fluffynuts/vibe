@@ -1240,7 +1240,7 @@ via `clipboard-url`, or open `$VIBE_CLIPBOARD_URL`). Paste on it, drop files on 
 and each item reaches the agent with your next message (not part-way through a turn, so there's time to
 give it a title): a Claude Code hook (`UserPromptSubmit`, in
 `/etc/claude-code/managed-settings.d/`) hands over anything not yet delivered, with short text
-inline and images as paths for the agent to read. Every item on the page shows whether it has
+inline and images as paths for the agent to read. Cursor's agent has no such hook, so for it the Conversation tab does the same itself: just before each prompt it sends, it asks the sandbox's `clipboard-hook --text` for what was pasted since the last one, and puts that in front of the prompt (once, so a prompt re-run on Auto keeps it). Pasting while talking to Cursor in its own terminal isn't delivered. Every item on the page shows whether it has
 been sent yet, and has **Copy** (to put it back on your own clipboard) and **Delete** buttons; **Clear all** empties the
 history at once (asking first).
 The item you pasted or copied last is also what Ctrl-V in the agent's terminal attaches: at every

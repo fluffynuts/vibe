@@ -3,7 +3,8 @@
 // Claude Code hook (UserPromptSubmit), run through
 // ~/.local/bin/clipboard-hook and registered for every session in
 // /etc/claude-code/managed-settings.d by the clipboard feature's install
-// step.
+// step. With --text it is not a hook: it prints what to put in front of a
+// prompt (see main).
 //
 // What the user pastes on the clipboard page goes with their next prompt:
 // the hook claims everything not yet delivered from the clipboard server
@@ -75,6 +76,14 @@ function context(items) {
 }
 
 function main() {
+  // For an agent that has no hook for this, vibe runs it with --text before a prompt of the page's, and puts what
+  // it prints in front of the prompt. Its stdin is then the prompt, which is not for it.
+  if (process.argv.indexOf("--text") >= 0) {
+    claim(function (items) {
+      if (items.length) process.stdout.write(context(items));
+    });
+    return;
+  }
   let input;
   try {
     input = JSON.parse(fs.readFileSync(0, "utf8"));

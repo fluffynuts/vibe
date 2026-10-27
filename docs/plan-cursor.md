@@ -225,3 +225,21 @@ limit away; what is learned expires after an hour; a model other than Auto that 
 - Deliberately not built: a background probe to re-check the plan. A probe costs ~7 s and rewrites Cursor's
   remembered model (so it would have to end by resetting it to Auto, spending a prompt of the free quota), so it isn't
   free. After the hour, or "Check again", models are offered again and the next real attempt finds out.
+
+## The clipboard page for Cursor (2026-10-27)
+
+Found by the user: their Cursor sandbox's clipboard pane said "This sandbox has no clipboard page". Two separate causes.
+
+1. **The profile.** It had been created *blank*, and a blank profile was composed from nothing, not even the base features,
+   so no `clipboard` port was published. A blank profile is now what guided creation makes when no optional feature is
+   picked (`profilegen.CreateBlank` is `CreateGuided` with none). An earlier vibe's blank profile is fixed by
+   `--re-compose` when nobody has added to it (`IsUntouchedBlank`: empty install scripts and agent files, no settings, a
+   config with only its name): backed up, composed from the base features, the user's instructions and choices carried
+   across. One with scripts or files of the user's in it is left as it is, saying what it lacks.
+2. **Delivery.** The kit hands pasted items to the agent with a Claude Code hook (`UserPromptSubmit`), which never runs for
+   Cursor. Cursor's agent can read an image from a path (tested with a generated red square: its read tool gets the image
+   data, and it described it). So vibe does what the hook does, for Conversation-tab turns only: before the first run of
+   a turn it runs the sandbox's `clipboard-hook --text` (a new plain-text mode in the kit's hook) once and puts the text in
+   front of the prompt (claimed once, so the run on Auto after a refusal keeps it). A failure to ask never stops a turn.
+   Not covered: pasting while using Cursor in its own terminal. Cursor's hook system wasn't tried (its `hookAdditionalContexts`
+   field exists in the stream, but whether a hook can add context isn't known).

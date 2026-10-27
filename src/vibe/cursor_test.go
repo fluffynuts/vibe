@@ -160,7 +160,13 @@ func turnsOf(t *testing.T, outcomes ...error) (commands *[][]string) {
 	commands = &[][]string{}
 	was := streamTurn
 	t.Cleanup(func() { streamTurn = was })
-	streamTurn = func(_ context.Context, _, _ string, _ func(), onLine func([]byte), args ...string) error {
+	turnPrompts = nil
+	// Nothing was pasted, unless a test says so (see pasting, which goes after this).
+	wasPasted := pastedFor
+	t.Cleanup(func() { pastedFor = wasPasted })
+	pastedFor = func(context.Context, string) (string, error) { return "", nil }
+	streamTurn = func(_ context.Context, _, input string, _ func(), onLine func([]byte), args ...string) error {
+		turnPrompts = append(turnPrompts, input)
 		*commands = append(*commands, args)
 		onLine([]byte(`{"type":"system","subtype":"init","session_id":"new-1","model":"x"}`))
 		if len(*commands) > len(outcomes) {
@@ -170,6 +176,9 @@ func turnsOf(t *testing.T, outcomes ...error) (commands *[][]string) {
 	}
 	return commands
 }
+
+// turnPrompts are what each run of the last turnsOf was given on its stdin.
+var turnPrompts []string
 
 const namedModelFailure = "exit status 1: ActionRequiredError: Named models unavailable Free plans can only use Auto. Switch to Auto or upgrade plans to continue."
 
@@ -465,5 +474,107 @@ func TestAPlanThatCantBeRememberedDoesNotStopTheTurn(t *testing.T) {
 	plan := newCursorPlan(filepath.Join(blocker, "plan.json"))
 	if _, err := cursorTurnKnowing(t, "gpt-5.2-fast", &setBack{}, plan); err != nil {
 		t.Errorf("the turn failed because the plan couldn't be kept: %v", err)
+	}
+}
+
+// pasting stands in for the clipboard page: each turn is told text was pasted (or err), and it is
+// counted how often that was asked.
+func pasting(t *testing.T, text string, err error) (asked *int) {
+	t.Helper()
+	asked = new(int)
+	was := pastedFor
+	t.Cleanup(func() { pastedFor = was })
+	pastedFor = func(context.Context, string) (string, error) {
+		*asked++
+		return text, err
+	}
+	return asked
+}
+
+func TestWhatWasPastedOnTheClipboardPageGoesInFrontOfThePrompt(t *testing.T) {
+	// Cursor has no hook to hand it over, as claude has.
+	turnsOf(t, nil)
+	pasting(t, "The user sent this to you through the vibe clipboard page:\n- image at /x/1.png", nil)
+	if _, err := cursorTurn(t); err != nil {
+		t.Fatal(err)
+	}
+	want := "The user sent this to you through the vibe clipboard page:\n- image at /x/1.png\n\nhi"
+	if len(turnPrompts) != 1 || turnPrompts[0] != want {
+		t.Errorf("the prompt was %q", turnPrompts)
+	}
+}
+
+func TestAPromptWithNothingPastedIsSentAsItWas(t *testing.T) {
+	turnsOf(t, nil)
+	pasting(t, "", nil)
+	cursorTurn(t)
+	if len(turnPrompts) != 1 || turnPrompts[0] != "hi" {
+		t.Errorf("the prompt was %q", turnPrompts)
+	}
+}
+
+func TestTheRunOnAutoIsGivenTheSamePasteWithoutClaimingAgain(t *testing.T) {
+	// Claimed once handed over: a second claim would find nothing, and the run on Auto would lose them.
+	turnsOf(t, errors.New(namedModelFailure), nil)
+	asked := pasting(t, "PASTED", nil)
+	if _, err := cursorTurn(t); err != nil {
+		t.Fatal(err)
+	}
+	if *asked != 1 {
+		t.Errorf("the clipboard was claimed %d times", *asked)
+	}
+	if len(turnPrompts) != 2 || turnPrompts[0] != turnPrompts[1] || !strings.HasPrefix(turnPrompts[1], "PASTED") {
+		t.Errorf("the prompts were %q", turnPrompts)
+	}
+}
+
+func TestAClipboardThatCantBeAskedForDoesNotStopTheTurn(t *testing.T) {
+	turnsOf(t, nil)
+	pasting(t, "", errors.New("the sandbox said no"))
+	lines, err := cursorTurn(t)
+	if err != nil {
+		t.Fatalf("the turn failed: %v", err)
+	}
+	if len(turnPrompts) != 1 || turnPrompts[0] != "hi" {
+		t.Errorf("the prompt was %q", turnPrompts)
+	}
+	_ = lines
+}
+
+func TestOnlyWhatTheHookPrintedBetweenTheMarkersIsWhatWasPasted(t *testing.T) {
+	// A login shell may say something first.
+	out := "Welcome to the sandbox\n" + pastedStart + "\nline one\nline two\n\n" + pastedEnd + "\n$ "
+	if got := pastedIn(out); got != "line one\nline two" {
+		t.Errorf("got %q", got)
+	}
+	for _, none := range []string{"", "no markers at all", pastedStart + "\n\n" + pastedEnd + "\n", pastedStart + "\nnever ends"} {
+		if got := pastedIn(none); got != "" {
+			t.Errorf("%q gave %q", none, got)
+		}
+	}
+}
+
+func TestTheClaimScriptRunsTheHooksTextModeAndSaysNothingWithoutOne(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the script is for a Linux sandbox's shell")
+	}
+	home := t.TempDir()
+	run := func() string {
+		cmd := exec.Command("sh", "-c", claimPastedScript)
+		cmd.Env = append(os.Environ(), "HOME="+home)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		return pastedIn(string(out))
+	}
+	if got := run(); got != "" {
+		t.Errorf("without a hook it gave %q", got)
+	}
+	bin := filepath.Join(home, ".local", "bin")
+	os.MkdirAll(bin, 0o755)
+	os.WriteFile(filepath.Join(bin, "clipboard-hook"), []byte("#!/bin/sh\n[ \"$1\" = --text ] && printf 'pasted: %s' \"$1\"\n"), 0o755)
+	if got := run(); got != "pasted: --text" {
+		t.Errorf("with a hook it gave %q", got)
 	}
 }

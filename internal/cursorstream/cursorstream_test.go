@@ -141,3 +141,18 @@ func TestAToolResultOfAShapeNotSeenYetIsAnErrorWithItsFields(t *testing.T) {
 		t.Fatalf("%v", b)
 	}
 }
+
+func TestReadingAnImageIsShownAsAnImageNotAsItsBookkeeping(t *testing.T) {
+	var result map[string]any
+	for _, o := range translated(t, "turn-reads-image.jsonl") {
+		if o["type"] == "user" {
+			result = blocks(o)[0]
+		}
+	}
+	if result == nil {
+		t.Fatal("no tool result")
+	}
+	if result["is_error"] != false || result["content"] != "image, 168 bytes (/tmp/imgtest/red.png)" {
+		t.Errorf("result: %v", result)
+	}
+}

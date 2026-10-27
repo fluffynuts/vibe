@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"vibe/internal/companion"
 	"vibe/internal/cursorstream"
@@ -68,6 +69,51 @@ const (
 	cursorFellBackKept   = "Cursor can't run the model it was set to on this plan (a free plan can only use Auto), so this turn ran on Auto. The model couldn't be set to Auto (%v), so prompts will go on being tried on the other first."
 )
 
+// What the clipboard page holds for the agent is handed over, for Claude, by a hook that Claude Code
+// runs before each prompt. Cursor has none that vibe knows to add context, so vibe does it: before a
+// turn it asks the sandbox's clipboard hook for the text it would have given, once, and puts it in
+// front of the prompt (it is claimed as it's handed over, so a second asking would find nothing).
+const (
+	pastedStart = "@@vibe-pasted@@"
+	pastedEnd   = "@@vibe-pasted-end@@"
+	// claimPastedWithin bounds asking for it: a turn waits on that.
+	claimPastedWithin = 10 * time.Second
+)
+
+// claimPastedScript runs the clipboard hook in its plain-text mode between markers, as a login shell
+// may say something of its own first. A sandbox with no hook (a profile without the clipboard kit)
+// says nothing, and that is no error.
+const claimPastedScript = `printf '%s\n' '` + pastedStart + `'; ` +
+	`if [ -x "$HOME/.local/bin/clipboard-hook" ]; then "$HOME/.local/bin/clipboard-hook" --text; fi; ` +
+	`printf '\n%s\n' '` + pastedEnd + `'`
+
+// pastedIn is what claimPastedScript printed between its markers, trimmed of the newlines around it:
+// "" when nothing was.
+func pastedIn(out string) string {
+	start := strings.Index(out, pastedStart)
+	if start < 0 {
+		return ""
+	}
+	rest := out[start+len(pastedStart):]
+	end := strings.Index(rest, pastedEnd)
+	if end < 0 {
+		return ""
+	}
+	return strings.Trim(rest[:end], "\r\n")
+}
+
+// pastedFor is what the user pasted on the clipboard page for sandbox name's agent since its last
+// turn, as text to put in front of the prompt, claimed as it is given. A variable for tests.
+var pastedFor = func(ctx context.Context, name string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, claimPastedWithin)
+	defer cancel()
+	out, err := sbxrun.ExecStdout(ctx, name, asAgent(claimPastedScript)...)
+	if err != nil {
+		return "", err
+	}
+	return pastedIn(out), nil
+}
+
 // converseCursor is the companion page's conversation with the Cursor agent
 // of sandbox name, which works in workspace. Like converse (which it stops
 // a turn the way of), except that what Cursor says is first made into what
@@ -88,6 +134,14 @@ func converseCursor(name, workspace string, log *turnLog, choose func() (string,
 		model, err := choose()
 		if err != nil {
 			return err
+		}
+		// Not stopping the turn if it can't be asked: what was pasted waits, unclaimed, for the next.
+		pasted, err := pastedFor(ctx, name)
+		if err != nil {
+			note("couldn't ask sandbox '%s' what was pasted on its clipboard page, so it is not sent with this prompt: %v", name, err)
+		}
+		if pasted != "" {
+			prompt = pasted + "\n\n" + prompt
 		}
 		run := func(model string) error {
 			pidFile := "/tmp/vibe-turn-" + turnID() + ".pid"

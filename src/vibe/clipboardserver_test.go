@@ -139,6 +139,82 @@ func TestAPasteWaitsForTheUsersNextMessage(t *testing.T) {
 	}
 }
 
+// runClipboardHookText runs the hook in its plain-text mode, as vibe does for an agent that has no
+// hook of its own, against the server at base, and gives what it printed. What it is given on its
+// stdin is a prompt, which it must leave alone.
+func runClipboardHookText(t *testing.T, base string) string {
+	t.Helper()
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node isn't installed: the clipboard hook's tests need it")
+	}
+	script := filepath.Join("..", "..", "library", "base", "clipboard-bridge", "agent-files", ".local", "share", "vibe", "clipboard-hook.js")
+	cmd := exec.Command(node, script, "--text")
+	cmd.Env = append(os.Environ(), "VIBE_CLIPBOARD_SERVER="+base)
+	cmd.Stdin = strings.NewReader("a prompt that is not for the hook")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("the hook failed: %v", err)
+	}
+	return string(out)
+}
+
+func pasteText(t *testing.T, base, text string) {
+	t.Helper()
+	res, err := http.Post(base+"/api/items", "text/plain", strings.NewReader(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+}
+
+func TestTheHooksTextModeGivesWhatWasPastedAsPlainTextForAPrompt(t *testing.T) {
+	base, _ := clipboardServer(t)
+	pasteText(t, base, "the pasted words")
+	out := runClipboardHookText(t, base)
+	if !strings.Contains(out, "the pasted words") || !strings.Contains(out, "vibe clipboard page") {
+		t.Errorf("printed %q", out)
+	}
+	if strings.Contains(out, "hookSpecificOutput") || strings.HasPrefix(strings.TrimSpace(out), "{") {
+		t.Errorf("it printed the hook's JSON, which a prompt can't use: %q", out)
+	}
+}
+
+func TestTheHooksTextModeHandsOverEachPasteOnce(t *testing.T) {
+	base, _ := clipboardServer(t)
+	pasteText(t, base, "once only")
+	if out := runClipboardHookText(t, base); !strings.Contains(out, "once only") {
+		t.Fatalf("not handed over: %q", out)
+	}
+	if out := runClipboardHookText(t, base); out != "" {
+		t.Errorf("handed over again: %q", out)
+	}
+}
+
+func TestTheHooksTextModeSaysNothingWhenNothingWasPasted(t *testing.T) {
+	base, _ := clipboardServer(t)
+	if out := runClipboardHookText(t, base); out != "" {
+		t.Errorf("printed %q", out)
+	}
+}
+
+func TestTheHooksTextModeSaysNothingAndDoesNotFailWhenThereIsNoServer(t *testing.T) {
+	if out := runClipboardHookText(t, "http://127.0.0.1:1"); out != "" {
+		t.Errorf("printed %q", out)
+	}
+}
+
+func TestTheHookScriptPassesItsArgumentsOn(t *testing.T) {
+	// So that vibe can ask it for text: it is the one that finds node when the agent's environment hasn't it.
+	script, err := os.ReadFile(filepath.Join("..", "..", "library", "base", "clipboard-bridge", "agent-files", ".local", "bin", "clipboard-hook"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(script), `node "$script" "$@"`) {
+		t.Errorf("the script is:\n%s", script)
+	}
+}
+
 func TestTheClipboardHookIsRegisteredForPromptsAlone(t *testing.T) {
 	script, err := os.ReadFile(filepath.Join("..", "..", "library", "base", "clipboard-bridge", "install-scripts", "01-add-clipboard-hooks"))
 	if err != nil {
