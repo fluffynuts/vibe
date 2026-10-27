@@ -696,13 +696,14 @@ button.file-ref:hover code, button.file-ref:focus-visible code, button.file-ref:
 button.file-ref:focus-visible { outline: 2px solid var(--theme); outline-offset: 2px; border-radius: 3px; }
 dialog.file-view { max-width: min(900px, calc(100% - 32px)); max-height: calc(100% - 48px); display: none; flex-direction: column; }
 dialog.file-view[open] { display: flex; }
-dialog.file-view header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-dialog.file-view h2 { flex: 1; min-width: 0; margin: 0; font: 600 14px var(--mono); overflow-wrap: anywhere; }
-#file-view-copy { line-height: 0; padding: 4px 6px; }
-#file-view-copy svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; }
+dialog.file-view header { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
+dialog.file-view header button { line-height: 0; padding: 4px 6px; flex: none; }
+dialog.file-view header button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; stroke-linecap: round; }
+.file-view-url { flex: 1; min-width: 0; display: flex; align-items: center; margin: 0 4px; }
+#file-view-path { flex: 1; min-width: 0; width: 100%; box-sizing: border-box; padding: 4px 8px; font: 600 13px var(--mono); text-overflow: ellipsis; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
 #file-view-body { overflow: auto; min-height: 0; }
 #file-view-body pre { margin: 0; }
 #file-view-body code { display: inline; padding: 0; background: none; border: 0; }
 #file-view-body pre code, #file-view-body .code-block code { display: block; font: 13px var(--mono); white-space: pre; word-break: normal; }
 dialog.file-view.outside { border-color: var(--warn-line); border-width: 2px; }
-dialog.file-view.outside h2::before { content: "⚠ "; }
+dialog.file-view.outside .file-view-url::before { content: "⚠"; flex: none; margin-right: 6px; }

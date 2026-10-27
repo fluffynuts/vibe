@@ -93,7 +93,7 @@ test('opening a path asks the host for that file, and shows it over the conversa
     await p.click(p.$('convo-log').querySelector('button.file-ref'))
     assert.deepEqual(asked(p), ['doc/a.md'])
     assert.ok(p.$('file-view').open)
-    assert.equal(p.$('file-view-path').textContent, 'doc/a.md')
+    assert.equal(p.$('file-view-path').value, 'doc/a.md')
     assert.equal(p.$('file-view-body').querySelector('h1').textContent, 'The plan')
     assert.equal(p.$('file-view-body').querySelectorAll('li').length, 2)
     assert.equal(p.$('file-view-body').querySelector('script'), null, 'what the file holds is never markup')
@@ -171,7 +171,7 @@ test('a file that is not there, or not text, says so in the same place', async (
     assert.ok(!p.$('file-view').classList.contains('outside'))
     await p.click(big)
     assert.match(p.$('file-view-body').textContent, /doesn't look like a text file/)
-    assert.equal(p.$('file-view-path').textContent, 'big.bin')
+    assert.equal(p.$('file-view-path').value, 'big.bin')
   } finally { p.close() }
 })
 
@@ -197,7 +197,7 @@ test('a path written ./ or ../ in a file being viewed is from that file, and is 
     assert.deepEqual(buttons().map((b) => b.textContent), ['./b.md', '../c.md', 'src/x.go'], 'shown as written')
     assert.deepEqual(checks(p).pop(), ['docs/plans/b.md', 'docs/c.md', 'src/x.go', '../z.md'], 'but asked about from the file')
     await p.click(buttons()[0])
-    assert.equal(p.$('file-view-path').textContent, 'docs/plans/b.md')
+    assert.equal(p.$('file-view-path').value, 'docs/plans/b.md')
     assert.equal(p.$('file-view-body').textContent.trim(), 'the sibling')
   } finally { p.close() }
 })
@@ -214,11 +214,174 @@ test('a Markdown link to a file is a button showing it, in the conversation and 
     assert.match(text, /site \(https:\/\/example\.com\/x\.md\)/, 'a web link stays words and its address')
     assert.match(text, /gone \(nowhere\.md\)/, 'so does a link to what is not there')
     await p.click(p.$('convo-log').querySelector('button.file-ref'))
-    assert.equal(p.$('file-view-path').textContent, 'docs/plans/a.md')
+    assert.equal(p.$('file-view-path').value, 'docs/plans/a.md')
     const buttons = () => Array.from(p.$('file-view-body').querySelectorAll('button.file-ref'))
     assert.deepEqual(buttons().map((b) => b.textContent), ['the sibling', 'up'])
     await p.click(buttons()[0])
-    assert.equal(p.$('file-view-path').textContent, 'docs/plans/b.md', 'from the viewed file, not the root')
+    assert.equal(p.$('file-view-path').value, 'docs/plans/b.md', 'from the viewed file, not the root')
     assert.equal(p.$('file-view-body').textContent.trim(), 'the sibling')
+  } finally { p.close() }
+})
+
+// --- moving about in the viewer, as in a browser ---
+
+// viewing is a page with a file docs/a.md that links to b.md and c.md beside it, b.md to c.md, and the viewer open on docs/a.md.
+async function viewing(extra = {}) {
+  const files = Object.assign({
+    'docs/a.md': '# A\n\nTo [bee](./b.md) and [sea](./c.md).',
+    'docs/b.md': '# B\n\nOn to [sea](./c.md).',
+    'docs/c.md': '# C\n\nThe end.',
+  }, extra)
+  const p = await filePage('See `docs/a.md`.', { files })
+  await p.click(p.$('convo-log').querySelector('button.file-ref'))
+  Object.assign(p, { files })
+  return p
+}
+const nav = (p) => ({ back: p.$('file-view-back'), forward: p.$('file-view-forward'), reload: p.$('file-view-reload'), url: p.$('file-view-path') })
+const follow = (p, words) => p.click(Array.from(p.$('file-view-body').querySelectorAll('button.file-ref')).find((b) => b.textContent === words))
+const heading = (p) => p.$('file-view-body').querySelector('h1').textContent
+
+test('the viewer has back, forward and reload, a path bar that can be read and not changed, and a close button that is an icon', async () => {
+  const p = await viewing()
+  try {
+    const n = nav(p)
+    assert.ok(n.back && n.forward && n.reload, 'the three buttons are there')
+    assert.equal(n.url.tagName, 'INPUT')
+    assert.ok(n.url.readOnly, 'the path can be selected, not edited')
+    assert.equal(n.url.value, 'docs/a.md')
+    assert.equal(n.back.getAttribute('aria-label'), 'Back')
+    assert.equal(n.forward.getAttribute('aria-label'), 'Forward')
+    assert.equal(n.reload.getAttribute('aria-label'), 'Reload')
+    const close = p.$('file-view-close')
+    assert.equal(close.getAttribute('aria-label'), 'Close')
+    assert.ok(close.querySelector('svg') && close.textContent.trim() === '', 'an icon, not the word')
+    const header = p.$('file-view').querySelector('header')
+    const order = Array.from(header.children).map((c) => c.id || c.className)
+    assert.deepEqual(order.slice(0, 3), ['file-view-back', 'file-view-forward', 'file-view-reload'], 'the buttons first')
+    assert.equal(order[order.length - 1], 'file-view-close', 'and the close button last')
+    assert.ok(order.indexOf('file-view-url') > 2 && order.indexOf('file-view-url') < order.length - 1, 'the path bar between them')
+    assert.ok(header.querySelector('.file-view-url #file-view-path'))
+  } finally { p.close() }
+})
+
+test('with nowhere to go back or forward to, those buttons are off', async () => {
+  const p = await viewing()
+  try {
+    assert.ok(nav(p).back.disabled && nav(p).forward.disabled)
+  } finally { p.close() }
+})
+
+test('following a link in the viewer can be undone with Back, and redone with Forward', async () => {
+  const p = await viewing()
+  try {
+    await follow(p, 'bee')
+    assert.equal(nav(p).url.value, 'docs/b.md')
+    assert.equal(heading(p), 'B')
+    assert.ok(!nav(p).back.disabled && nav(p).forward.disabled)
+    await p.click(nav(p).back)
+    assert.equal(nav(p).url.value, 'docs/a.md')
+    assert.equal(heading(p), 'A')
+    assert.ok(nav(p).back.disabled && !nav(p).forward.disabled, 'at the start, with the way on to B still there')
+    await p.click(nav(p).forward)
+    assert.equal(heading(p), 'B')
+    assert.ok(nav(p).forward.disabled)
+  } finally { p.close() }
+})
+
+test('two links away from a file is two Backs from it', async () => {
+  const p = await viewing()
+  try {
+    await follow(p, 'bee')
+    await follow(p, 'sea')
+    assert.equal(heading(p), 'C')
+    await p.click(nav(p).back)
+    assert.equal(heading(p), 'B')
+    await p.click(nav(p).back)
+    assert.equal(heading(p), 'A')
+    assert.ok(nav(p).back.disabled)
+  } finally { p.close() }
+})
+
+test('following a link after going back takes the way forward away, as a browser does', async () => {
+  const p = await viewing()
+  try {
+    await follow(p, 'bee')
+    await p.click(nav(p).back)
+    await follow(p, 'sea')
+    assert.equal(heading(p), 'C')
+    assert.ok(nav(p).forward.disabled, 'B is no longer ahead')
+    await p.click(nav(p).back)
+    assert.equal(heading(p), 'A', 'back from C is A, which it was followed from')
+  } finally { p.close() }
+})
+
+test('Reload asks the host for the file again, and shows what it holds now', async () => {
+  const p = await viewing()
+  try {
+    p.files['docs/a.md'] = '# A, changed\n\nNo links now.'
+    await p.click(nav(p).reload)
+    assert.deepEqual(asked(p), ['docs/a.md', 'docs/a.md'])
+    assert.equal(heading(p), 'A, changed')
+    assert.ok(nav(p).back.disabled, 'reloading goes nowhere')
+  } finally { p.close() }
+})
+
+test('going back to a file shows it where it was read to', async () => {
+  const p = await viewing()
+  try {
+    const body = p.$('file-view-body')
+    body.scrollTop = 120
+    await follow(p, 'bee')
+    assert.equal(body.scrollTop, 0, 'a file arrived at is at its top')
+    await p.click(nav(p).back)
+    assert.equal(body.scrollTop, 120)
+  } finally { p.close() }
+})
+
+test('reloading keeps the place in the file', async () => {
+  const p = await viewing()
+  try {
+    p.$('file-view-body').scrollTop = 80
+    await p.click(nav(p).reload)
+    assert.equal(p.$('file-view-body').scrollTop, 80)
+  } finally { p.close() }
+})
+
+test('closing the viewer ends what was followed: the next file opened is the first of a new run', async () => {
+  const p = await viewing()
+  try {
+    await follow(p, 'bee')
+    assert.ok(!nav(p).back.disabled)
+    await p.click('file-view-close')
+    await p.click(p.$('convo-log').querySelector('button.file-ref'))
+    assert.equal(nav(p).url.value, 'docs/a.md')
+    assert.ok(nav(p).back.disabled && nav(p).forward.disabled)
+  } finally { p.close() }
+})
+
+test('a file that cannot be shown is a place in the history too, and Back leaves it', async () => {
+  const p = await filePage('See `docs/a.md`.', { files: { 'docs/a.md': 'To [gone](./gone.md).' }, alsoListed: ['docs/gone.md'] })
+  try {
+    await p.click(p.$('convo-log').querySelector('button.file-ref'))
+    await follow(p, 'gone')
+    assert.equal(nav(p).url.value, 'docs/gone.md')
+    assert.match(p.$('file-view-body').textContent, /there is no file docs\/gone\.md/)
+    await p.click(nav(p).back)
+    assert.equal(nav(p).url.value, 'docs/a.md')
+    assert.match(p.$('file-view-body').textContent, /To gone/)
+  } finally { p.close() }
+})
+
+test('a refused file keeps its warning only while it is the one shown', async () => {
+  const p = await filePage('See `docs/a.md`.', { files: {
+    'docs/a.md': 'To [out](./out.md).',
+    'docs/out.md': { status: 403, body: { error: 'that is outside the folder this sandbox works in', code: 'outside' } },
+  }, alsoListed: ['docs/out.md'] })
+  try {
+    await p.click(p.$('convo-log').querySelector('button.file-ref'))
+    await follow(p, 'out')
+    assert.ok(p.$('file-view').classList.contains('outside'))
+    await p.click(nav(p).back)
+    assert.ok(!p.$('file-view').classList.contains('outside'), 'back at a file that is fine')
   } finally { p.close() }
 })
