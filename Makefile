@@ -5,6 +5,7 @@
 # root and must stay there. Put it on $PATH with a symlink, never a copy.
 
 GO     ?= go
+GOFMT  ?= gofmt
 BINARY ?= vibe
 PKG    := ./src/vibe
 
@@ -29,8 +30,18 @@ test: ## run tests
 vet: ## run go vet
 	$(GO) vet ./...
 
+# Changes nothing: it lists the files gofmt would change, and fails if there are any.
+.PHONY: fmt-check
+fmt-check: ## check formatting (gofmt), changing nothing: fails if a file would change
+	@unformatted=$$($(GOFMT) -l $(SOURCES)) || exit 1; \
+	if [ -n "$$unformatted" ]; then \
+	  echo "gofmt would change these files (gofmt -w <file> formats one):" >&2; \
+	  echo "$$unformatted" >&2; \
+	  exit 1; \
+	fi
+
 .PHONY: check
-check: vet test ## run vet and tests
+check: fmt-check vet test ## run the formatting check, vet and tests
 
 # A release zip for GOOS/GOARCH (default: this machine) in dist/ — see
 # make.sh, which does the packaging for both.

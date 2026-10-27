@@ -247,7 +247,7 @@ says it couldn't check.
 
 ## Building
 
-`make` builds `vibe` into the repo root (and `make test`, `make vet`, `make check`, `make clean`
+`make` builds `vibe` into the repo root (and `make test`, `make vet`, `make fmt-check`, `make check`, `make clean`
 do what they say). Without make, `./make.sh` (bash) and `./make.ps1` (PowerShell) take the same
 targets. The binary finds its bundle relative to its own location, so leave it where it is built
 and put it on `PATH` with a symlink — or use `vibe --install`.

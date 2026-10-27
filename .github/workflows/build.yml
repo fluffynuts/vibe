@@ -39,6 +39,10 @@ jobs:
       - if: runner.os == 'Linux'
         working-directory: internal/companion/uitest
         run: npx playwright install --with-deps firefox
+      # Formatting doesn't depend on the OS (every file is checked out with LF: see
+      # .gitattributes), so once is enough. Changes nothing: it fails if a file would change.
+      - if: runner.os == 'Linux'
+        run: ./make.sh fmt-check
       - run: go vet ./...
       - run: go test ./...
 
