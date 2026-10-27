@@ -384,27 +384,140 @@ func TestACopyCarriesTheChoicesMadeForItsSource(t *testing.T) {
 	}
 }
 
-func TestABlankProfileRecordsThatItWasCreatedBlankAndStillLoadsAsAKit(t *testing.T) {
-	l := testLayout(t)
+// oldBlankConfig is the config.yaml vibe wrote for a blank profile before blank profiles had the
+// base features: nothing composed, and marked as blank.
+const oldBlankConfig = `# vibe profile "plain".
+# This profile was created blank: nothing was composed into it, so a
+# re-compose (vibe -C) leaves it as it is and only makes the sandbox afresh.
+# vibe: blank: yes
+name: plain
+displayName: plain sandbox
+description: Sandbox for the plain workspace
+`
+
+// oldBlank is a blank profile as an earlier vibe made it, in the overlay of l.
+func oldBlank(t *testing.T, l layout.Layout) string {
+	t.Helper()
+	dir := l.NewProfileDir("plain")
+	mkdir(t, filepath.Join(dir, "install-scripts"))
+	mkdir(t, filepath.Join(dir, "agent-files"))
+	write(t, filepath.Join(dir, "config.yaml"), oldBlankConfig, 0o644)
+	write(t, filepath.Join(dir, "agent-instructions.md"), "", 0o644)
+	return dir
+}
+
+func TestABlankProfileIsAGuidedOneWithNoOptionalFeaturesPicked(t *testing.T) {
+	// Or it has no clipboard page, and a vibe app with a missing part.
+	l := baseLayout(t)
 	dir, err := CreateBlank(l, "plain")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !IsBlank(dir) || IsGuided(dir) {
-		t.Errorf("blank = %v, guided = %v", IsBlank(dir), IsGuided(dir))
+	if _, err := os.Stat(filepath.Join(dir, "agent-files", "clip.txt")); err != nil {
+		t.Errorf("the base feature's files are not in a blank profile: %v", err)
 	}
-	if data, _ := os.ReadFile(filepath.Join(dir, "config.yaml")); !strings.Contains(string(data), "name: plain") {
-		t.Errorf("the config lost its name:\n%s", data)
+	if !IsGuided(dir) {
+		t.Error("a blank profile doesn't say it was composed, so a re-compose would treat it as hand-made")
+	}
+	if got := ComposedFrom(dir); got != nil {
+		t.Errorf("optional features recorded for a blank profile: %v", got)
 	}
 }
 
-func TestTheNoteInABlankProfileSaysWhatAReComposeDoesAndNotToRecreateIt(t *testing.T) {
-	dir, err := CreateBlank(testLayout(t), "plain")
+func TestABlankProfileHasTheSameFilesAsAGuidedOneWithNothingPicked(t *testing.T) {
+	l := baseLayout(t)
+	blank, err := CreateBlank(l, "blank")
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, _ := os.ReadFile(filepath.Join(dir, "config.yaml"))
-	if !strings.Contains(string(data), "re-compose") || strings.Contains(string(data), "vibe -R") {
-		t.Errorf("the note a blank profile carries is out of step with what a re-compose does:\n%s", data)
+	guided, err := CreateGuided(l, "guided", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := func(dir string) []string {
+		var out []string
+		filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err == nil && !d.IsDir() {
+				rel, _ := filepath.Rel(dir, path)
+				out = append(out, rel)
+			}
+			return nil
+		})
+		return out
+	}
+	if a, b := files(blank), files(guided); !reflect.DeepEqual(a, b) {
+		t.Errorf("a blank profile has %v, a guided one with nothing picked %v", a, b)
+	}
+}
+
+func TestANewProfilesConfigDoesNotSayNothingWasComposedIntoIt(t *testing.T) {
+	for name, make := range map[string]func(layout.Layout) (string, error){
+		"blank":  func(l layout.Layout) (string, error) { return CreateBlank(l, "p") },
+		"guided": func(l layout.Layout) (string, error) { return CreateGuided(l, "p", nil) },
+	} {
+		dir, err := make(baseLayout(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(filepath.Join(dir, "config.yaml"))
+		if strings.Contains(string(data), "created blank") || strings.Contains(string(data), "vibe: blank") {
+			t.Errorf("%s: the config says it was left uncomposed, which it wasn't:\n%s", name, data)
+		}
+	}
+}
+
+func TestAnEarlierVibesBlankProfileIsStillRecognisedAsOne(t *testing.T) {
+	dir := oldBlank(t, testLayout(t))
+	if !IsBlank(dir) || IsGuided(dir) {
+		t.Errorf("blank = %v, guided = %v", IsBlank(dir), IsGuided(dir))
+	}
+}
+
+func TestABlankProfileNobodyHasGrownIsSaidToBeUntouched(t *testing.T) {
+	dir := oldBlank(t, testLayout(t))
+	if !IsUntouchedBlank(dir) {
+		t.Error("a blank profile as it was made isn't untouched")
+	}
+	// The user's own instructions and choices are carried across a rebuild, so are not growth.
+	write(t, filepath.Join(dir, "agent-instructions.md"), "be kind\n", 0o644)
+	write(t, filepath.Join(dir, "user-preferences.yaml"), "model: opus\n", 0o644)
+	if !IsUntouchedBlank(dir) {
+		t.Error("the user's instructions and preferences count as growing it")
+	}
+}
+
+func TestABlankProfileTheUserHasGrownIsNotUntouched(t *testing.T) {
+	grown := map[string]func(dir string){
+		"an install script": func(dir string) { write(t, filepath.Join(dir, "install-scripts", "01-mine"), "echo\n", 0o755) },
+		"an agent file": func(dir string) {
+			write(t, filepath.Join(mkdir(t, filepath.Join(dir, "agent-files", ".local")), "x"), "x\n", 0o644)
+		},
+		"a settings.yaml":      func(dir string) { write(t, filepath.Join(dir, "settings.yaml"), "memory: 8g\n", 0o644) },
+		"a kit's instructions": func(dir string) { write(t, filepath.Join(dir, "kit-instructions.md"), "x\n", 0o644) },
+		"something added to the config": func(dir string) {
+			f, _ := os.OpenFile(filepath.Join(dir, "config.yaml"), os.O_APPEND|os.O_WRONLY, 0o644)
+			f.WriteString("ports:\n  - container: 8080\n")
+			f.Close()
+		},
+	}
+	for what, grow := range grown {
+		dir := oldBlank(t, testLayout(t))
+		grow(dir)
+		if IsUntouchedBlank(dir) {
+			t.Errorf("a blank profile with %s is called untouched", what)
+		}
+	}
+}
+
+func TestOnlyABlankProfileCanBeUntouchedBlank(t *testing.T) {
+	l := baseLayout(t)
+	if dir, _ := CreateGuided(l, "g", nil); IsUntouchedBlank(dir) {
+		t.Error("a guided profile is called an untouched blank one")
+	}
+	if IsUntouchedBlank(l.BundlePath("profiles", "widget")) {
+		t.Error("a hand-written profile is called an untouched blank one")
+	}
+	if IsUntouchedBlank(filepath.Join(t.TempDir(), "nope")) {
+		t.Error("a profile that isn't there is called an untouched blank one")
 	}
 }
