@@ -496,14 +496,13 @@ vibe: no profile 'foo-browser' yet in /home/me/.vibe/profiles
 vibe: create it how?
 ❯ guided profile creation
   copy an existing profile
-  create a new blank profile
+  create a new blank profile (no optional features)
 (↑/↓ to move, enter to select, q to quit)
 ```
 
 Copying clones the chosen profile's whole directory — config, settings, install scripts and agent
 files — and renames it, which is the quickest way to start from something close to what you need.
-A blank profile is just a `config.yaml` naming it, plus empty `install-scripts/` and
-`agent-files/` directories to grow into; the sandbox it builds is the base kit and nothing more. It records that it was created blank (a `# vibe: blank: yes` line in its `config.yaml`), so a later `--re-compose` knows there is nothing to compose again: it leaves the profile as it is (no backup, nothing asked about features) and makes the sandbox afresh from it, as `-r` does.
+A blank profile is what guided creation makes when no feature is picked: a `config.yaml` naming it, and the base features every profile has (the clipboard page, the review tab's tooling), so the vibe app is whole. Add your own `install-scripts/` and `agent-files/` as you like. A blank profile an earlier vibe made had nothing in it, not even those, so its sandbox had no clipboard page: `--re-compose` adds the base features to one nobody has added to (backing it up first, and carrying your instructions and choices across), and leaves one with scripts or files of yours in it as it is, saying what it lacks; `vibe -R` builds a fresh profile for your own files to be moved into.
 
 Either way the new profile is written to `~/.vibe/profiles/<name>/`, and copying reads the source
 profile from wherever it currently wins — your overlay if you have a copy of it, the bundle
@@ -1273,7 +1272,7 @@ lost, and it warns of that up front, in yellow, before anything else (enter acce
 checklist as guided creation, with the profile's current features selected, so you can add a feature or
 drop one you no longer use (and reorder them); with `-f` the recorded features are kept as they are. Profiles written by hand or copied
 record nothing and are refused rather than guessed at; add the comment line above
-to adopt one. The refusal comes first, before any running vibe is stopped or anything asked. A profile created blank is not refused: nothing was composed into it, so a re-compose leaves it and rebuilds the sandbox from it. One made blank before vibe recorded that has no such line, so it is refused as a hand-written one is; add `# vibe: blank: yes` to its `config.yaml` to have it treated as blank.
+to adopt one. The refusal comes first, before any running vibe is stopped or anything asked. A profile an earlier vibe created blank is not refused: one nobody has added to is composed from the base features alone, as a blank profile is now; one with scripts or files of yours in it is left as it is, and the sandbox is rebuilt from it. One made blank before vibe recorded that has no such line, so it is refused as a hand-written one is; add `# vibe: blank: yes` to its `config.yaml` to have it treated as blank.
 
 Overriding one bundled feature (a base one too, as `~/.vibe/library/base/<feature>/`) means dropping your own `~/.vibe/library/<feature>/` next to it —
 unlike `defaults/`, that replaces only the feature you copied, so features the bundle adds later

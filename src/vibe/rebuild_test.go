@@ -517,12 +517,107 @@ func TestRestoringAComposedProfileSaysToReComposeItTheWayRestartDoes(t *testing.
 	}
 }
 
-func TestReComposingAProfileCreatedBlankLeavesItAsItIsAndGoesOnToTheSandbox(t *testing.T) {
-	lay := layout.New(t.TempDir(), t.TempDir())
-	dir, err := profilegen.CreateBlank(lay, "foo-browser")
-	if err != nil {
+// oldBlankProfile makes a profile as an earlier vibe made a blank one, which had none of the base
+// features, in the overlay of lay.
+func oldBlankProfile(t *testing.T, lay layout.Layout, name string) string {
+	t.Helper()
+	dir := lay.HomePath("profiles", name)
+	if err := os.MkdirAll(filepath.Join(dir, "install-scripts"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(dir, "agent-files"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "config.yaml"), "# vibe profile \""+name+"\".\n# This profile was created blank: nothing was composed into it, so a\n# re-compose (vibe -C) leaves it as it is and only makes the sandbox afresh.\n# vibe: blank: yes\nname: "+name+"\ndisplayName: "+name+" sandbox\ndescription: Sandbox for the "+name+" workspace\n")
+	writeFile(t, filepath.Join(dir, "agent-instructions.md"), "")
+	return dir
+}
+
+func TestReComposingABlankProfileNobodyGrewGivesItTheBaseFeaturesAndKeepsWhatIsTheUsers(t *testing.T) {
+	// Or the vibe app of its sandbox has no clipboard page.
+	root, _ := goldenBundle(t)
+	lay := layout.New(t.TempDir(), root)
+	dir := oldBlankProfile(t, lay, "foo-browser")
+	writeFile(t, filepath.Join(dir, "agent-instructions.md"), "be kind\n")
+	writeFile(t, filepath.Join(dir, "user-preferences.yaml"), "model: opus\n")
+	if missing := missingBaseFeatures(lay, dir, lay.BaseFeatures()); len(missing) == 0 {
+		t.Fatal("the test profile isn't missing anything")
+	}
+	var err error
+	said := strings.Join(notesOf(func() {
+		err = recomposeProfile(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "foo-browser", t.TempDir(), true, nil)
+	}), "\n")
+	if err != nil {
+		t.Fatalf("the re-compose failed: %v", err)
+	}
+	if missing := missingBaseFeatures(lay, dir, lay.BaseFeatures()); len(missing) != 0 {
+		t.Errorf("the profile still lacks %v", missing)
+	}
+	if !profilegen.IsGuided(dir) {
+		t.Error("it isn't a guided profile now, so a later re-compose would treat it as hand-made")
+	}
+	if got := profilegen.ComposedFrom(dir); got != nil {
+		t.Errorf("optional features were recorded for a profile that was blank: %v", got)
+	}
+	if got, _ := readFile(t, filepath.Join(dir, "agent-instructions.md")); got != "be kind\n" {
+		t.Errorf("the user's instructions were lost: %q", got)
+	}
+	if got, _ := readFile(t, filepath.Join(dir, "user-preferences.yaml")); got != "model: opus\n" {
+		t.Errorf("the user's preferences were lost: %q", got)
+	}
+	if backups, _ := backup.List(lay.HomePath("backup"), "foo-browser"); len(backups) != 1 {
+		t.Errorf("%d backups of the profile it replaced", len(backups))
+	}
+	if !strings.Contains(said, "base features") {
+		t.Errorf("it said %q", said)
+	}
+}
+
+func TestAGrownBlankProfileIsLeftAsItIsAndSaysWhatItLacksAndHowToGetIt(t *testing.T) {
+	root, _ := goldenBundle(t)
+	lay := layout.New(t.TempDir(), root)
+	dir := oldBlankProfile(t, lay, "foo-browser")
+	writeFile(t, filepath.Join(dir, "install-scripts", "01-mine"), "echo mine\n")
+	said := strings.Join(notesOf(func() {
+		recomposeProfile(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "foo-browser", t.TempDir(), true, nil)
+	}), "\n")
+	if profilegen.IsGuided(dir) {
+		t.Error("a profile the user grew was rebuilt")
+	}
+	if got, _ := readFile(t, filepath.Join(dir, "install-scripts", "01-mine")); got != "echo mine\n" {
+		t.Errorf("a script of the user's was lost: %q", got)
+	}
+	for _, want := range []string{"clipboard", "added to", "vibe -R"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("it didn't say %q: %q", want, said)
+		}
+	}
+}
+
+func TestTheNoteAtCreationSaysAnUntouchedBlankProfileCanBeReComposed(t *testing.T) {
+	root, _ := goldenBundle(t)
+	lay := layout.New(t.TempDir(), root)
+	oldBlankProfile(t, lay, "foo-browser")
+	said := strings.Join(notesOf(func() { noteMissingBase(lay, "foo-browser") }), "\n")
+	if !strings.Contains(said, "vibe --re-compose") || strings.Contains(said, "vibe -R") {
+		t.Errorf("it said %q", said)
+	}
+}
+
+func TestTheNoteAtCreationSaysAGrownBlankProfileNeedsAFreshOne(t *testing.T) {
+	root, _ := goldenBundle(t)
+	lay := layout.New(t.TempDir(), root)
+	dir := oldBlankProfile(t, lay, "foo-browser")
+	writeFile(t, filepath.Join(dir, "install-scripts", "01-mine"), "echo mine\n")
+	said := strings.Join(notesOf(func() { noteMissingBase(lay, "foo-browser") }), "\n")
+	if !strings.Contains(said, "vibe -R") || strings.Contains(said, "vibe --re-compose") {
+		t.Errorf("it said %q", said)
+	}
+}
+
+func TestReComposingABlankProfileTheUserGrewLeavesItAsItIsAndGoesOnToTheSandbox(t *testing.T) {
+	lay := layout.New(t.TempDir(), t.TempDir())
+	dir := oldBlankProfile(t, lay, "foo-browser")
 	writeFile(t, filepath.Join(dir, "install-scripts", "01-mine"), "echo mine\n")
 	before, _ := readFile(t, filepath.Join(dir, "config.yaml"))
 	var err2 error
