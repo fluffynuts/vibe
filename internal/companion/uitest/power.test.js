@@ -385,3 +385,61 @@ test('every entry of the power menu has an icon: a square for Stop, circular arr
     assert.notEqual(links[0], shape(items(p).stop))
   } finally { p.close() }
 })
+
+const reloaded = (p) => p.unimplemented.filter((m) => /navigation/.test(m)).length
+
+test("closing the progress of this page's own restart reloads the page, and the button says it will", async () => {
+  const routes = powerRoutes({ log: { text: 'restarting\n', next: 11, running: true } })
+  const p = await openPage({ routes })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).restart)
+    assert.match(p.$('confirm-text').textContent, /close the progress box to reload this page/i)
+    await p.confirm(true)
+    assert.equal(p.$('power-close').textContent, 'Close and reload')
+    assert.equal(reloaded(p), 0, 'reloaded before the button was pressed')
+    await p.click('power-close')
+    assert.equal(p.$('power-progress').open, false)
+    assert.equal(reloaded(p), 1, 'the page was not reloaded')
+  } finally { p.close() }
+})
+
+test("closing the progress of a stop, or of another sandbox's action, only closes it", async () => {
+  const stop = await openPage({ routes: powerRoutes() })
+  try {
+    await stop.click('link')
+    await stop.settle()
+    await stop.click(items(stop).stop)
+    await stop.confirm(true)
+    assert.equal(stop.$('power-close').textContent, 'Close')
+    await stop.click('power-close')
+    assert.equal(reloaded(stop), 0)
+  } finally { stop.close() }
+  const other = await profilesPage(['startvibe'])
+  try {
+    await other.click(rowButton(other, 'Start vibe…'))
+    await other.settle()
+    await other.confirm(true)
+    assert.equal(other.$('power-close').textContent, 'Close')
+    await other.click('power-close')
+    assert.equal(reloaded(other), 0)
+  } finally { other.close() }
+})
+
+test('the next progress box starts with Close again, whatever the last said', async () => {
+  const p = await openPage({ routes: powerRoutes() })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).restart)
+    await p.confirm(true)
+    assert.equal(p.$('power-close').textContent, 'Close and reload')
+    p.$('power-progress').close()
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).stop)
+    await p.confirm(true)
+    assert.equal(p.$('power-close').textContent, 'Close')
+  } finally { p.close() }
+})

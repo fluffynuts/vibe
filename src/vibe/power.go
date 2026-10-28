@@ -197,6 +197,9 @@ func (d *powerDesk) Do(name, action string) error {
 	defer logFile.Close()
 	fmt.Fprintf(logFile, "=== vibe %s, started %s ===\n", strings.Join(args, " "), time.Now().Format("2006-01-02 15:04:05"))
 	cmd := exec.Command(exe, args...)
+	// A headless vibe is the background copy of one (see detachedChild), which skips what --restart and
+	// --headless do: the action is the command as a terminal would run it.
+	cmd.Env = environWithout(os.Environ(), headlessChildEnv)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	detach(cmd)
 	if err := cmd.Start(); err != nil {
@@ -252,4 +255,15 @@ func (d *powerDesk) actionRunning(name string) bool {
 		return false
 	}
 	return processAlive(pid)
+}
+
+// environWithout is env without the variable name.
+func environWithout(env []string, name string) []string {
+	var kept []string
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, name+"=") {
+			kept = append(kept, kv)
+		}
+	}
+	return kept
 }

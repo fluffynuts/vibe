@@ -354,3 +354,22 @@ func TestADeskSeesTheVibeItIsRunningInAsOneOfThoseHoldingTheFolder(t *testing.T)
 		t.Errorf("a vibe is running here, and start is offered: %+v", start)
 	}
 }
+
+func TestTheActionDoesNotInheritBeingTheBackgroundCopyAHeadlessVibeIs(t *testing.T) {
+	// A headless vibe is started with this set, which tells vibe it is that copy: to skip --restart's ending of the vibe
+	// that has the folder and the choice of mode. An action it runs is the command from a terminal, not that copy.
+	t.Setenv(headlessChildEnv, "1")
+	d, _, _ := powerStandIns(t, []running.Claim{{PID: 7, Headless: true}}, false, true)
+	seen := filepath.Join(t.TempDir(), "seen")
+	fakeVibe(t, `echo "[${`+headlessChildEnv+`-unset}]" > `+seen+`.tmp && mv `+seen+`.tmp `+seen)
+	if err := d.Do("box", companion.PowerRestart); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { _, err := os.Stat(seen); return err == nil })
+	if data, _ := os.ReadFile(seen); strings.TrimSpace(string(data)) != "[unset]" {
+		t.Errorf("the action ran with %s = %s", headlessChildEnv, data)
+	}
+	if os.Getenv(headlessChildEnv) != "1" {
+		t.Error("this process's own environment was changed")
+	}
+}

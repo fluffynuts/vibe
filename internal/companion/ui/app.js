@@ -340,7 +340,7 @@
       stop: { title: 'Stop sandbox ', ing: 'Stopping', label: 'Stop',
         text: 'This ends vibe for ' + folder + ' and stops the sandbox.' + (sandbox === state.sandbox ? ' This page disconnects; vibe in that folder starts it again.' : '') },
       restart: { title: 'Restart vibe for sandbox ', ing: 'Restarting', label: 'Restart',
-        text: 'This ends vibe for ' + folder + ' and starts it again, headless, on the same port.' + (sandbox === state.sandbox ? ' This page reconnects when it is back.' : '') },
+        text: 'This ends vibe for ' + folder + ' and starts it again, headless, on the same port.' + (sandbox === state.sandbox ? ' When it is done, close the progress box to reload this page.' : '') },
       start: { title: 'Start vibe for sandbox ', ing: 'Starting vibe for', label: 'Start',
         text: 'This starts a headless vibe for ' + folder + ', which can be talked to from its page. A terminal session is not something to start from here: run vibe in the folder for one.' },
     }[action]
@@ -435,8 +435,12 @@
         asking = false
       }
     }, 700)
+    // This page's own vibe restarted is a new vibe, perhaps a new build: closing the box reloads the page to meet it.
+    const reload = own && action === 'restart'
+    $('power-close').textContent = reload ? 'Close and reload' : 'Close'
     $('power-close').onclick = () => dialog.close()
-    dialog.onclose = () => { clearInterval(power.timer) }
+    // However it is closed (Escape too), so the label is true.
+    dialog.onclose = () => { clearInterval(power.timer); if (reload) location.reload() }
     dialog.showModal()
   }
 
