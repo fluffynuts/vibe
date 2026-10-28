@@ -242,6 +242,22 @@ func TestAModelAFreePlanCantRunIsSaidSoAndTheTurnRunAgainOnAuto(t *testing.T) {
 	}
 }
 
+func TestEitherWordingOfTheRefusalIsRunAgainOnAuto(t *testing.T) {
+	// Cursor reworded it (seen 2026-10-28): the plan now says which models it includes.
+	for _, failure := range []string{
+		namedModelFailure,
+		"exit status 1: ActionRequiredError: Model unavailable on Free Free includes Grok 4.7, Grok 4.6, and Auto with fixed settings. Switch to an included model to continue.",
+	} {
+		commands := turnsOf(t, errors.New(failure), nil)
+		if _, err := cursorTurnOn(t, "gpt-5.5-high"); err != nil {
+			t.Errorf("%q: the turn failed: %v", failure, err)
+		}
+		if len(*commands) != 2 {
+			t.Errorf("%q: %d runs, want 2", failure, len(*commands))
+		}
+	}
+}
+
 func TestOnlyThatFailureIsRunAgainAndOnlyOnce(t *testing.T) {
 	other := errors.New("exit status 1: something else is wrong")
 	for name, tc := range map[string]struct {

@@ -56,10 +56,20 @@ func cursorCommand(workspace, session, pidFile, model string) []string {
 // streamTurn runs a turn in the sandbox. A variable for tests.
 var streamTurn = sbxrun.ExecStream
 
-// unavailableModel is what Cursor says on stderr when the model it is set
-// to isn't one the plan can run (a free plan runs only Auto): the only place
-// it says so.
-const unavailableModel = "Named models unavailable"
+// unavailableModels are the ways Cursor has said on stderr that the model it
+// is set to isn't one the plan can run: the only place it says so. The
+// second is how it said so from 2026-10-28, when it began naming the models
+// a plan includes (docs/samples/cursor/error-model-unavailable-free-plan.stderr.txt).
+var unavailableModels = []string{"Named models unavailable", "Model unavailable on"}
+
+func isUnavailableModel(err error) bool {
+	for _, said := range unavailableModels {
+		if strings.Contains(err.Error(), said) {
+			return true
+		}
+	}
+	return false
+}
 
 // What the page says when a turn is run again on Auto: that the choice is
 // set to Auto too, since the plan can't run another and the selector would
@@ -199,7 +209,7 @@ func converseCursor(name, workspace string, log *turnLog, choose func() (string,
 				note("couldn't take away the memory that Cursor's plan only runs Auto: %v", forgotten)
 			}
 		}
-		if err != nil && model != cursorAuto && ctx.Err() == nil && strings.Contains(err.Error(), unavailableModel) {
+		if err != nil && model != cursorAuto && ctx.Err() == nil && isUnavailableModel(err) {
 			if learned := plan.learnedOnlyAuto(); learned != nil {
 				note("couldn't remember that Cursor's plan only runs Auto: %v", learned)
 			}
