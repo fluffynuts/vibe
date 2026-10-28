@@ -340,7 +340,7 @@
       stop: { title: 'Stop sandbox ', ing: 'Stopping', label: 'Stop',
         text: 'This ends vibe for ' + folder + ' and stops the sandbox.' + (sandbox === state.sandbox ? ' This page disconnects; vibe in that folder starts it again.' : '') },
       restart: { title: 'Restart vibe for sandbox ', ing: 'Restarting', label: 'Restart',
-        text: 'This ends vibe for ' + folder + ' and starts it again, headless, on the same port.' + (sandbox === state.sandbox ? ' When it is done, close the progress box to reload this page.' : '') },
+        text: 'This ends vibe for ' + folder + ' and starts it again, headless, on the same port.' + (sandbox === state.sandbox ? ' This page refreshes by itself when it is back.' : '') },
       start: { title: 'Start vibe for sandbox ', ing: 'Starting vibe for', label: 'Start',
         text: 'This starts a headless vibe for ' + folder + ', which can be talked to from its page. A terminal session is not something to start from here: run vibe in the folder for one.' },
     }[action]
@@ -393,7 +393,6 @@
     const ing = { stop: 'Stopping ', restart: 'Restarting ', start: 'Starting vibe for ' }[action]
     $('power-progress-title').textContent = ing + "'" + sandbox + "'"
     $('power-log').textContent = ''
-    $('power-end').textContent = ''
     // Only this page's own vibe is ended by its own sandbox's stop or restart,
     // so only then does the page gone, or come back under a new boot, say how it ended.
     const own = sandbox === state.sandbox && action !== 'start'
@@ -401,31 +400,34 @@
     // log answered under another boot, which the page's regular poll of the
     // state may not have seen yet.
     const boot = state.boot
+    // This page's own vibe restarted is a new vibe, perhaps a new build: the page refreshes itself to meet it, once
+    // it is up. Nothing is there to be pressed until then (a reload before would find nothing to load), so the box
+    // says so, and has no way to close it: Escape included.
+    const refreshes = own && action === 'restart'
+    const closeButton = $('power-close')
+    const reloadButton = $('power-reload')
+    let closable = !refreshes
+    const buttons = (close, reload) => { closeButton.hidden = !close; reloadButton.hidden = !reload; closable = close }
+    buttons(!refreshes, false)
+    $('power-end').textContent = refreshes ? 'This page will refresh by itself when vibe has restarted.' : ''
+    dialog.oncancel = (ev) => { if (!closable) ev.preventDefault() }
     let next = 0
     let away = 0
     let ended = false
     let asking = false
-    // This page's own vibe restarted is a new vibe, perhaps a new build: closing the box reloads the page to meet it.
-    // Reloading while it restarts would land on a page with nothing behind it, so that waits for the end.
-    const reload = own && action === 'restart'
-    const close = $('power-close')
-    close.textContent = reload ? 'Close and reload' : 'Close'
-    close.disabled = reload
-    // Escape too, which would close it, and reload.
-    dialog.oncancel = (ev) => { if (close.disabled) ev.preventDefault() }
-    const end = (text) => { ended = true; $('power-end').textContent = text; close.disabled = false; if (state.manage) loadManage() }
     let polls = 0
     let reloadTimer = null
+    const end = (text) => { ended = true; $('power-end').textContent = text; if (state.manage) loadManage() }
     clearInterval(power.timer)
     power.timer = setInterval(async function pollPower() {
       // One question at a time: a slow answer is not asked for again, which would add its text twice.
       if (ended || asking) return
       asking = true
-      // A backstop, not an end: past it the box can be closed, and the restart carries on.
+      // A backstop, not an end: past it the person is told what to do if the page hasn't refreshed, and the restart carries on.
       polls += 1
-      if (close.disabled && polls >= POWER_SLOW_POLLS) {
-        close.disabled = false
-        $('power-end').textContent = 'This is taking longer than expected. You can close and reload: it carries on.'
+      if (refreshes && !closable && polls >= POWER_SLOW_POLLS) {
+        buttons(true, true)
+        $('power-end').textContent = "This is taking longer than expected. If this page doesn't refresh by itself, reload it. The restart carries on."
       }
       try {
         const res = await api('/api/power/log?sandbox=' + encodeURIComponent(sandbox) + '&from=' + next)
@@ -441,9 +443,10 @@
           // Serving under a new boot isn't up: what started it (a restart) is done when the vibe has said its page is up
           // and its sandbox started, which is when the helper ends.
           if (action === 'restart' && !res.body.running) {
-            end('Restarted: the new vibe is up and serving. Reloading this page…')
-            // Not at once, so that it can be read. Closing the box is what reloads the page.
-            reloadTimer = setInterval(function reloadSoon() { clearInterval(reloadTimer); if (dialog.open) dialog.close() }, POWER_RELOAD_AFTER_MS)
+            end('Restarted: the new vibe is up and serving. Refreshing this page…')
+            buttons(false, false)
+            // Not at once, so that it can be read.
+            reloadTimer = setInterval(function reloadSoon() { clearInterval(reloadTimer); location.reload() }, POWER_RELOAD_AFTER_MS)
           }
         } else if (!res.body.running && next > 0) {
           // Answered, by the same vibe, after what ran has finished: a stop that worked leaves nothing to answer.
@@ -452,19 +455,19 @@
             : own
               ? "That ended and didn't take effect: vibe is as it was. What it said is above."
               : 'That has ended. What it said is above; the Profiles tab shows how the sandbox is now.')
+          buttons(true, false)
         }
       } catch (e) {
         reached(false)
         away += 1
-        if (own && action === 'stop' && away >= 2) end('vibe has ended. What it said is above; the sandbox is stopped when it says so.')
+        if (own && action === 'stop' && away >= 2) { end('vibe has ended. What it said is above; the sandbox is stopped when it says so.'); buttons(true, false) }
       } finally {
         asking = false
       }
     }, 700)
-    $('power-close').onclick = () => dialog.close()
-    // However it is closed (Escape too), so the label is true.
-    // Only once it has ended (or gone on too long): a page reloaded earlier would find nothing there.
-    dialog.onclose = () => { clearInterval(power.timer); clearInterval(reloadTimer); if (reload && !close.disabled) location.reload() }
+    closeButton.onclick = () => dialog.close()
+    reloadButton.onclick = () => location.reload()
+    dialog.onclose = () => { clearInterval(power.timer); clearInterval(reloadTimer) }
     dialog.showModal()
   }
 

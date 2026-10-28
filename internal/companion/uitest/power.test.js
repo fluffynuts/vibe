@@ -233,13 +233,13 @@ test('a restart ends when the log is answered under a new boot, which needs no p
     await p.click(items(p).restart)
     await p.confirm(true)
     await p.every('pollPower')
-    assert.equal(p.$('power-end').textContent, '')
+    assert.match(p.$('power-end').textContent, /will refresh by itself/)
     // The new vibe answers (under the new boot, before the page's regular poll has seen it) but is still starting its sandbox.
     routes.boot = 'b2'
     routes.log = { text: 'starting the sandbox\n', next: 31, running: true }
     await p.every('pollPower')
-    assert.equal(p.$('power-end').textContent, '', 'ended with the new vibe still starting')
-    assert.equal(p.$('power-close').disabled, true)
+    assert.match(p.$('power-end').textContent, /will refresh by itself/, 'ended with the new vibe still starting')
+    assert.equal(p.$('power-close').hidden, true)
     // What started it has finished: it said the vibe is up.
     routes.log = { text: 'it is up\n', next: 40, running: false }
     await p.every('pollPower')
@@ -393,30 +393,6 @@ test('every entry of the power menu has an icon: a square for Stop, circular arr
 
 const reloaded = (p) => p.unimplemented.filter((m) => /navigation/.test(m)).length
 
-test("closing the progress of this page's own restart reloads the page, and the button says it will", async () => {
-  const routes = powerRoutes({ log: { text: 'restarting\n', next: 11, running: true } })
-  const p = await openPage({ routes })
-  try {
-    await p.click('link')
-    await p.settle()
-    await p.click(items(p).restart)
-    assert.match(p.$('confirm-text').textContent, /close the progress box to reload this page/i)
-    await p.confirm(true)
-    assert.equal(p.$('power-close').textContent, 'Close and reload')
-    assert.equal(reloaded(p), 0, 'reloaded before the button was pressed')
-    // It is disabled while the restart runs: pressing it does nothing.
-    await p.click('power-close')
-    assert.equal(p.$('power-progress').open, true)
-    assert.equal(reloaded(p), 0)
-    routes.boot = 'b2'
-    routes.log = { text: 'up\n', next: 15, running: false }
-    await p.every('pollPower')
-    await p.click('power-close')
-    assert.equal(p.$('power-progress').open, false)
-    assert.equal(reloaded(p), 1, 'the page was not reloaded')
-  } finally { p.close() }
-})
-
 test("closing the progress of a stop, or of another sandbox's action, only closes it", async () => {
   const stop = await openPage({ routes: powerRoutes() })
   try {
@@ -439,90 +415,6 @@ test("closing the progress of a stop, or of another sandbox's action, only close
   } finally { other.close() }
 })
 
-test('the next progress box starts with Close again, whatever the last said', async () => {
-  const p = await openPage({ routes: powerRoutes() })
-  try {
-    await p.click('link')
-    await p.settle()
-    await p.click(items(p).restart)
-    await p.confirm(true)
-    assert.equal(p.$('power-close').textContent, 'Close and reload')
-    p.$('power-progress').close()
-    await p.click('link')
-    await p.settle()
-    await p.click(items(p).stop)
-    await p.confirm(true)
-    assert.equal(p.$('power-close').textContent, 'Close')
-  } finally { p.close() }
-})
-
-test('Close and reload is disabled while the restart is running, Escape included, and enabled when it ends, however it ends', async () => {
-  const routes = powerRoutes({ log: { text: 'restarting\n', next: 11, running: true } })
-  const p = await openPage({ routes })
-  try {
-    await p.click('link')
-    await p.settle()
-    await p.click(items(p).restart)
-    await p.confirm(true)
-    assert.equal(p.$('power-close').disabled, true, 'right after accepting')
-    const escape = new p.window.Event('cancel', { cancelable: true })
-    p.$('power-progress').dispatchEvent(escape)
-    assert.equal(escape.defaultPrevented, true, 'Escape was let close it')
-    await p.every('pollPower')
-    assert.equal(p.$('power-close').disabled, true, 'while it is running')
-    routes.boot = 'b2'
-    routes.log = { text: 'up\n', next: 15, running: false }
-    await p.every('pollPower')
-    assert.match(p.$('power-end').textContent, /Restarted/)
-    assert.equal(p.$('power-close').disabled, false, 'when it has restarted')
-    const after = new p.window.Event('cancel', { cancelable: true })
-    p.$('power-progress').dispatchEvent(after)
-    assert.equal(after.defaultPrevented, false, 'Escape is refused after it ended')
-  } finally { p.close() }
-})
-
-test('Close and reload is enabled when the restart ended and changed nothing', async () => {
-  const routes = powerRoutes({ log: { text: 'not restarting\n', next: 15, running: false } })
-  const p = await openPage({ routes })
-  try {
-    await p.click('link')
-    await p.settle()
-    await p.click(items(p).restart)
-    await p.confirm(true)
-    assert.equal(p.$('power-close').disabled, true)
-    await p.every('pollPower')
-    assert.match(p.$('power-end').textContent, /didn't take effect/)
-    assert.equal(p.$('power-close').disabled, false)
-  } finally { p.close() }
-})
-
-test('a restart that goes on and on can be closed and reloaded after a while, and says so', async () => {
-  const routes = powerRoutes({ log: { text: 'starting\n', next: 9, running: true } })
-  const p = await openPage({ routes })
-  try {
-    await p.click('link')
-    await p.settle()
-    await p.click(items(p).restart)
-    await p.confirm(true)
-    for (let i = 0; i < 169; i++) await p.every('pollPower')
-    assert.equal(p.$('power-close').disabled, true, 'too soon')
-    await p.every('pollPower')
-    assert.equal(p.$('power-close').disabled, false)
-    assert.match(p.$('power-end').textContent, /longer than expected.*carries on/s)
-  } finally { p.close() }
-})
-
-test('Close is never disabled for a stop, or for another sandbox', async () => {
-  const p = await openPage({ routes: powerRoutes() })
-  try {
-    await p.click('link')
-    await p.settle()
-    await p.click(items(p).stop)
-    await p.confirm(true)
-    assert.equal(p.$('power-close').disabled, false)
-  } finally { p.close() }
-})
-
 test('with nothing pressed, the page reloads itself once the new vibe is up, and not before', async () => {
   const routes = powerRoutes({ log: { text: 'restarting\n', next: 11, running: true } })
   const p = await openPage({ routes })
@@ -540,7 +432,6 @@ test('with nothing pressed, the page reloads itself once the new vibe is up, and
     assert.equal(reloaded(p), 0, 'reloaded at once, before it could be read')
     assert.equal(p.$('power-progress').open, true)
     await p.every('reloadSoon')
-    assert.equal(p.$('power-progress').open, false)
     assert.equal(reloaded(p), 1)
   } finally { p.close() }
 })
@@ -579,7 +470,7 @@ test('the progress box stays open when vibe goes away, as it does in a restart, 
     assert.equal(p.$('offline').hidden, false, 'the page does not say it is disconnected')
     assert.equal(p.$('power-progress').open, true, 'the disconnection closed the progress box')
     assert.equal(reloaded(p), 0, 'the page was reloaded with nothing there to load')
-    assert.equal(p.$('power-close').disabled, true)
+    assert.equal(p.$('power-close').hidden, true)
     // The new vibe is up.
     routes['/api/state'] = answers.state
     routes['/api/log'] = { entries: [] }
@@ -625,5 +516,141 @@ test('other dialogs are still closed when vibe goes away', async () => {
     await p.poll()
     await p.poll()
     assert.equal(p.$('confirm').open, false, 'a question nothing could now act on is left up')
+  } finally { p.close() }
+})
+
+const shown = (p) => ({ close: !p.$('power-close').hidden, reload: !p.$('power-reload').hidden })
+
+test("the progress of this page's own restart says the page refreshes by itself, offers nothing to press, and refreshes it", async () => {
+  const routes = powerRoutes({ log: { text: 'restarting\n', next: 11, running: true } })
+  const p = await openPage({ routes })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).restart)
+    assert.match(p.$('confirm-text').textContent, /this page refreshes by itself/i)
+    await p.confirm(true)
+    assert.match(p.$('power-end').textContent, /This page will refresh by itself when vibe has restarted/)
+    assert.deepEqual(shown(p), { close: false, reload: false }, 'a call to action where there is nothing to do')
+    assert.equal(reloaded(p), 0)
+    routes.boot = 'b2'
+    routes.log = { text: 'up\n', next: 15, running: false }
+    await p.every('pollPower')
+    assert.match(p.$('power-end').textContent, /Restarted: the new vibe is up and serving. Refreshing this page/)
+    assert.deepEqual(shown(p), { close: false, reload: false })
+    await p.every('reloadSoon')
+    assert.equal(reloaded(p), 1)
+  } finally { p.close() }
+})
+
+test("the box can't be closed with Escape while the page is to refresh by itself", async () => {
+  const p = await openPage({ routes: powerRoutes() })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).restart)
+    await p.confirm(true)
+    const escape = new p.window.Event('cancel', { cancelable: true })
+    p.$('power-progress').dispatchEvent(escape)
+    assert.equal(escape.defaultPrevented, true)
+  } finally { p.close() }
+})
+
+test('a restart that ended and changed nothing can be closed, and does not refresh the page', async () => {
+  const routes = powerRoutes({ log: { text: 'not restarting\n', next: 15, running: false } })
+  const p = await openPage({ routes })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).restart)
+    await p.confirm(true)
+    await p.every('pollPower')
+    assert.match(p.$('power-end').textContent, /didn't take effect/)
+    assert.deepEqual(shown(p), { close: true, reload: false })
+    const escape = new p.window.Event('cancel', { cancelable: true })
+    p.$('power-progress').dispatchEvent(escape)
+    assert.equal(escape.defaultPrevented, false)
+    await p.click('power-close')
+    assert.equal(p.$('power-progress').open, false)
+    assert.equal(reloaded(p), 0)
+  } finally { p.close() }
+})
+
+test("a restart that goes on and on, after a while, says to reload if the page hasn't refreshed, and offers it and Close", async () => {
+  const routes = powerRoutes({ log: { text: 'starting\n', next: 9, running: true } })
+  const p = await openPage({ routes })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).restart)
+    await p.confirm(true)
+    for (let i = 0; i < 169; i++) await p.every('pollPower')
+    assert.deepEqual(shown(p), { close: false, reload: false }, 'too soon')
+    await p.every('pollPower')
+    assert.match(p.$('power-end').textContent, /longer than expected.*doesn't refresh by itself.*carries on/s)
+    assert.deepEqual(shown(p), { close: true, reload: true })
+    await p.click('power-reload')
+    assert.equal(reloaded(p), 1)
+  } finally { p.close() }
+})
+
+test('after the wait, a restart that does come up still refreshes the page by itself, with the buttons gone again', async () => {
+  const routes = powerRoutes({ log: { text: 'starting\n', next: 9, running: true } })
+  const p = await openPage({ routes })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).restart)
+    await p.confirm(true)
+    for (let i = 0; i < 170; i++) await p.every('pollPower')
+    assert.deepEqual(shown(p), { close: true, reload: true })
+    routes.boot = 'b2'
+    routes.log = { text: 'up\n', next: 15, running: false }
+    await p.every('pollPower')
+    assert.deepEqual(shown(p), { close: false, reload: false })
+    await p.every('reloadSoon')
+    assert.equal(reloaded(p), 1)
+  } finally { p.close() }
+})
+
+test('a stop, or another sandbox\'s action, has Close to press, and it only closes', async () => {
+  const stop = await openPage({ routes: powerRoutes() })
+  try {
+    await stop.click('link')
+    await stop.settle()
+    await stop.click(items(stop).stop)
+    await stop.confirm(true)
+    assert.deepEqual(shown(stop), { close: true, reload: false })
+    await stop.click('power-close')
+    assert.equal(stop.$('power-progress').open, false)
+    assert.equal(reloaded(stop), 0)
+  } finally { stop.close() }
+  const other = await profilesPage(['startvibe'])
+  try {
+    await other.click(rowButton(other, 'Start vibe…'))
+    await other.settle()
+    await other.confirm(true)
+    assert.deepEqual(shown(other), { close: true, reload: false })
+    await other.click('power-close')
+    assert.equal(reloaded(other), 0)
+  } finally { other.close() }
+})
+
+test('the next progress box shows Close again, whatever the last one hid', async () => {
+  const p = await openPage({ routes: powerRoutes() })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).restart)
+    await p.confirm(true)
+    assert.deepEqual(shown(p), { close: false, reload: false })
+    p.$('power-progress').dispatchEvent(new p.window.Event('close'))
+    p.$('power-progress').close()
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).stop)
+    await p.confirm(true)
+    assert.deepEqual(shown(p), { close: true, reload: false })
+    assert.equal(p.$('power-end').textContent, '')
   } finally { p.close() }
 })
