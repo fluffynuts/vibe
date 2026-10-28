@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -222,8 +223,25 @@ func converseCursor(name, workspace string, log *turnLog, choose func() (string,
 			}
 			err = run(cursorAuto)
 		}
+		return saidAsUsageLimit(err)
+	}
+}
+
+// saidAsUsageLimit is err, or when it is Cursor saying the usage limit is
+// reached, what Cursor said of it without the plumbing in front: the page
+// shows the error, and "exit status 1: ActionRequiredError:" is no help to
+// whoever reads it. It isn't a refusal of a model: nothing is run again, and
+// the choice is left alone.
+func saidAsUsageLimit(err error) error {
+	if err == nil {
+		return nil
+	}
+	said := err.Error()
+	_, after, found := strings.Cut(said, "ActionRequiredError:")
+	if !found || !strings.Contains(strings.ToLower(after), "usage limit") {
 		return err
 	}
+	return errors.New("Cursor says your usage limit is reached: " + strings.TrimSpace(after))
 }
 
 // cursorAuto is the model every plan can run.

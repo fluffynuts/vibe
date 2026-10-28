@@ -682,3 +682,32 @@ func TestOnlyTheItemsTheHookListsAreCountedNotLinesOfTheTextPastedInThem(t *test
 		t.Errorf("counted %d, want 3", got)
 	}
 }
+
+const usageLimitFailure = "exit status 1: ActionRequiredError: You've hit your usage limit Get Cursor Pro for more Agent usage, unlimited Tab, and more. Your limit resets Nov 25."
+
+func TestAUsageLimitIsSaidAsSuchWithWhatCursorSaidOfItAndNothingIsRunAgain(t *testing.T) {
+	commands := turnsOf(t, errors.New(usageLimitFailure))
+	_, err := cursorTurnOn(t, "grok-4.7-medium")
+	if err == nil {
+		t.Fatal("no error")
+	}
+	for _, want := range []string{"usage limit", "Get Cursor Pro for more Agent usage", "resets Nov 25"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error leaves out %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "exit status 1") || strings.Contains(err.Error(), "ActionRequiredError") {
+		t.Errorf("the error is still Cursor's plumbing: %v", err)
+	}
+	if len(*commands) != 1 {
+		t.Errorf("%d runs, want 1", len(*commands))
+	}
+}
+
+func TestAFailureThatIsNotAUsageLimitIsLeftAsItWas(t *testing.T) {
+	turnsOf(t, errors.New("exit status 1: ActionRequiredError: please log in"))
+	_, err := cursorTurn(t)
+	if err == nil || err.Error() != "exit status 1: ActionRequiredError: please log in" {
+		t.Errorf("%v", err)
+	}
+}
