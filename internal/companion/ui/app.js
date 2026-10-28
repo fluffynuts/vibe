@@ -381,6 +381,8 @@
   const power = { timer: null }
   // How many polls of the log (every 700ms) a restart gets before its box can be closed regardless: about two minutes.
   const POWER_SLOW_POLLS = 170
+  // How long "Restarted" is shown before the page reloads by itself, to be read.
+  const POWER_RELOAD_AFTER_MS = 2000
 
   // showPowerProgress shows what the action says as it runs, from the log
   // vibe keeps. It ends in one of three ways, told in words: vibe has gone
@@ -413,6 +415,7 @@
     dialog.oncancel = (ev) => { if (close.disabled) ev.preventDefault() }
     const end = (text) => { ended = true; $('power-end').textContent = text; close.disabled = false; if (state.manage) loadManage() }
     let polls = 0
+    let reloadTimer = null
     clearInterval(power.timer)
     power.timer = setInterval(async function pollPower() {
       // One question at a time: a slow answer is not asked for again, which would add its text twice.
@@ -435,7 +438,13 @@
         }
         next = res.body.next
         if (own && boot && res.body.boot && res.body.boot !== boot) {
-          end(action === 'restart' ? 'Restarted: this page is back.' : 'vibe is running again.')
+          // Serving under a new boot isn't up: what started it (a restart) is done when the vibe has said its page is up
+          // and its sandbox started, which is when the helper ends.
+          if (action === 'restart' && !res.body.running) {
+            end('Restarted: the new vibe is up and serving. Reloading this page…')
+            // Not at once, so that it can be read. Closing the box is what reloads the page.
+            reloadTimer = setInterval(function reloadSoon() { clearInterval(reloadTimer); if (dialog.open) dialog.close() }, POWER_RELOAD_AFTER_MS)
+          }
         } else if (!res.body.running && next > 0) {
           // Answered, by the same vibe, after what ran has finished: a stop that worked leaves nothing to answer.
           end(own && action === 'stop'
@@ -454,7 +463,7 @@
     }, 700)
     $('power-close').onclick = () => dialog.close()
     // However it is closed (Escape too), so the label is true.
-    dialog.onclose = () => { clearInterval(power.timer); if (reload) location.reload() }
+    dialog.onclose = () => { clearInterval(power.timer); clearInterval(reloadTimer); if (reload) location.reload() }
     dialog.showModal()
   }
 

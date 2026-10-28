@@ -373,3 +373,34 @@ func TestTheActionDoesNotInheritBeingTheBackgroundCopyAHeadlessVibeIs(t *testing
 		t.Error("this process's own environment was changed")
 	}
 }
+
+func TestOnlyARestartOfThePagesOwnSandboxIsToldNotToOpenTheBrowserAgain(t *testing.T) {
+	// The page that asked is open: a new tab for the new vibe would make the old one reload under its progress box
+	// and leave a tab saying it is already open. Another sandbox's page, or a start, is not open to be reloaded.
+	d, _, _ := powerStandIns(t, []running.Claim{{PID: 7, Headless: true}}, false, true)
+	d.own = "box"
+	seen := filepath.Join(t.TempDir(), "seen")
+	fakeVibe(t, `echo "[${`+companionNoOpenEnv+`-unset}]" > `+seen+`.tmp && mv `+seen+`.tmp `+seen)
+	read := func(action string) string {
+		os.Remove(seen)
+		if err := d.Do("box", action); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, func() bool { _, err := os.Stat(seen); return err == nil })
+		waitFor(t, func() bool { return !d.actionRunning("box") })
+		data, _ := os.ReadFile(seen)
+		return strings.TrimSpace(string(data))
+	}
+	if got := read(companion.PowerRestart); got != "[1]" {
+		t.Errorf("a restart of the page's own sandbox: %s", got)
+	}
+	d.own = "somebody-else"
+	if got := read(companion.PowerRestart); got != "[unset]" {
+		t.Errorf("a restart of another sandbox: %s", got)
+	}
+	d.own = "box"
+	d.claims = func(string, string) []running.Claim { return nil }
+	if got := read(companion.PowerStart); got != "[unset]" {
+		t.Errorf("a start: %s", got)
+	}
+}

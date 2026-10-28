@@ -234,11 +234,16 @@ test('a restart ends when the log is answered under a new boot, which needs no p
     await p.confirm(true)
     await p.every('pollPower')
     assert.equal(p.$('power-end').textContent, '')
-    // The log answers under the new boot before the page's regular poll has seen it.
+    // The new vibe answers (under the new boot, before the page's regular poll has seen it) but is still starting its sandbox.
     routes.boot = 'b2'
-    routes.log = { text: 'it is up\n', next: 20, running: false }
+    routes.log = { text: 'starting the sandbox\n', next: 31, running: true }
     await p.every('pollPower')
-    assert.match(p.$('power-end').textContent, /Restarted/)
+    assert.equal(p.$('power-end').textContent, '', 'ended with the new vibe still starting')
+    assert.equal(p.$('power-close').disabled, true)
+    // What started it has finished: it said the vibe is up.
+    routes.log = { text: 'it is up\n', next: 40, running: false }
+    await p.every('pollPower')
+    assert.match(p.$('power-end').textContent, /Restarted: the new vibe is up/)
   } finally { p.close() }
 })
 
@@ -404,6 +409,7 @@ test("closing the progress of this page's own restart reloads the page, and the 
     assert.equal(p.$('power-progress').open, true)
     assert.equal(reloaded(p), 0)
     routes.boot = 'b2'
+    routes.log = { text: 'up\n', next: 15, running: false }
     await p.every('pollPower')
     await p.click('power-close')
     assert.equal(p.$('power-progress').open, false)
@@ -465,6 +471,7 @@ test('Close and reload is disabled while the restart is running, Escape included
     await p.every('pollPower')
     assert.equal(p.$('power-close').disabled, true, 'while it is running')
     routes.boot = 'b2'
+    routes.log = { text: 'up\n', next: 15, running: false }
     await p.every('pollPower')
     assert.match(p.$('power-end').textContent, /Restarted/)
     assert.equal(p.$('power-close').disabled, false, 'when it has restarted')
@@ -513,5 +520,42 @@ test('Close is never disabled for a stop, or for another sandbox', async () => {
     await p.click(items(p).stop)
     await p.confirm(true)
     assert.equal(p.$('power-close').disabled, false)
+  } finally { p.close() }
+})
+
+test('with nothing pressed, the page reloads itself once the new vibe is up, and not before', async () => {
+  const routes = powerRoutes({ log: { text: 'restarting\n', next: 11, running: true } })
+  const p = await openPage({ routes })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).restart)
+    await p.confirm(true)
+    await p.every('pollPower')
+    assert.equal(reloaded(p), 0)
+    routes.boot = 'b2'
+    routes.log = { text: 'up\n', next: 15, running: false }
+    await p.every('pollPower')
+    assert.match(p.$('power-end').textContent, /Restarted: the new vibe is up/)
+    assert.equal(reloaded(p), 0, 'reloaded at once, before it could be read')
+    assert.equal(p.$('power-progress').open, true)
+    await p.every('reloadSoon')
+    assert.equal(p.$('power-progress').open, false)
+    assert.equal(reloaded(p), 1)
+  } finally { p.close() }
+})
+
+test('a restart that changed nothing does not reload the page by itself', async () => {
+  const routes = powerRoutes({ log: { text: 'not restarting\n', next: 15, running: false } })
+  const p = await openPage({ routes })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).restart)
+    await p.confirm(true)
+    await p.every('pollPower')
+    assert.match(p.$('power-end').textContent, /didn't take effect/)
+    assert.equal(reloaded(p), 0)
+    assert.equal(p.$('power-progress').open, true)
   } finally { p.close() }
 })

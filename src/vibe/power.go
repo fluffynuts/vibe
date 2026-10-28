@@ -36,6 +36,8 @@ type powerDesk struct {
 	outOfDate func(inst state.Instance) string
 	// now is the clock: time.Now when nil.
 	now func() time.Time
+	// own is the sandbox the page asking is for, "" for a page for none.
+	own string
 }
 
 func (d *powerDesk) clock() time.Time {
@@ -200,6 +202,10 @@ func (d *powerDesk) Do(name, action string) error {
 	// A headless vibe is the background copy of one (see detachedChild), which skips what --restart and
 	// --headless do: the action is the command as a terminal would run it.
 	cmd.Env = environWithout(os.Environ(), headlessChildEnv)
+	if action == companion.PowerRestart && name == d.own {
+		// The page that asked is open already: the new vibe doesn't open another tab for it.
+		cmd.Env = append(cmd.Env, companionNoOpenEnv+"=1")
+	}
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	detach(cmd)
 	if err := cmd.Start(); err != nil {
