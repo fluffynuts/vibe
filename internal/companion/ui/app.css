@@ -83,13 +83,15 @@ body {
 .power-menu[hidden] { display: none; }
 .power-menu hr { width: 100%; margin: 4px 0; border: 0; border-top: 1px solid var(--line); }
 .power-status { padding: 4px 8px; color: var(--muted); font-size: 12px; }
-.power-item { display: flex; flex-direction: column; align-items: flex-start; padding: 4px 8px; border: 0; border-radius: 4px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.power-item { display: flex; align-items: flex-start; gap: 8px; padding: 4px 8px; border: 0; border-radius: 4px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .power-item:hover:not(:disabled), .power-item:focus-visible { background: var(--row-hover); }
 .power-item:disabled { color: var(--muted); cursor: default; }
+.power-text { display: flex; flex-direction: column; align-items: flex-start; }
+.power-icon { flex: none; width: 14px; height: 14px; margin-top: 3px; fill: currentColor; }
 .power-why { color: var(--muted); font-size: 12px; white-space: normal; max-width: 320px; }
 .power-log { max-height: 50vh; min-width: min(560px, 80vw); overflow: auto; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font: 12px/1.4 var(--mono); white-space: pre-wrap; }
 #power-end { min-height: 1.4em; }
-.power-menu a { padding: 4px 8px; border-radius: 4px; color: var(--text); text-decoration: none; white-space: nowrap; }
+.power-menu a { display: flex; align-items: flex-start; gap: 8px; padding: 4px 8px; border-radius: 4px; color: var(--text); text-decoration: none; white-space: nowrap; }
 .power-menu a:hover, .power-menu a:focus-visible { background: var(--row-hover); }
 
 .tabbar { display: flex; align-items: stretch; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--panel); overflow-x: auto; }

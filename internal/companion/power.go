@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -63,29 +65,54 @@ func newBoot() string {
 	return hex.EncodeToString(b)
 }
 
-// powerSandbox is the sandbox a request is for: the one named, or this page's.
-func (s *Server) powerSandbox(name string) string {
+// sandboxNamePattern is what a sandbox's name may be: one that ends up in
+// the names of files (its record, its log), so it can't name another place.
+var sandboxNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// ValidSandboxName says name could be a sandbox's: letters, digits, dots,
+// dashes and underscores, starting with a letter or digit, and no "..".
+func ValidSandboxName(name string) bool {
+	return sandboxNamePattern.MatchString(name) && !strings.Contains(name, "..")
+}
+
+// powerSandbox is the sandbox a request is for: the one named, or this
+// page's. It answers 400 itself, and says not ok, for a name that isn't one.
+func (s *Server) powerSandbox(w http.ResponseWriter, name string) (string, bool) {
 	if name == "" {
-		return s.cfg.Sandbox
+		name = s.cfg.Sandbox
 	}
-	return name
+	if !ValidSandboxName(name) {
+		writeError(w, http.StatusBadRequest, "that is not the name of a sandbox")
+		return "", false
+	}
+	return name, true
 }
 
 func (s *Server) powerState(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.cfg.Power.Check(s.powerSandbox(r.URL.Query().Get("sandbox"))))
+	name, ok := s.powerSandbox(w, r.URL.Query().Get("sandbox"))
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.cfg.Power.Check(name))
 }
 
 func (s *Server) powerDo(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Sandbox   string `json:"sandbox"`
-		Action    string `json:"action"`
-		Confirmed bool   `json:"confirmed"`
+		Sandbox string `json:"sandbox"`
+		Action  string `json:"action"`
+		// Confirmed says the user was asked, and Warns what they were
+		// shown: what is found now must be covered by it.
+		Confirmed bool     `json:"confirmed"`
+		Warns     []string `json:"warns"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || !powerActions[body.Action] {
 		writeError(w, http.StatusBadRequest, `expected {"action": "stop", "restart" or "start"}`)
 		return
 	}
-	name := s.powerSandbox(body.Sandbox)
+	name, ok := s.powerSandbox(w, body.Sandbox)
+	if !ok {
+		return
+	}
 	check := s.cfg.Power.Check(name)
 	if check.Error != "" {
 		writeError(w, http.StatusNotFound, check.Error)
@@ -99,8 +126,8 @@ func (s *Server) powerDo(w http.ResponseWriter, r *http.Request) {
 	case !action.OK:
 		writeError(w, http.StatusConflict, action.Why)
 		return
-	case len(action.Warns) > 0 && !body.Confirmed:
-		writeError(w, http.StatusConflict, "this needs confirming first: "+strings.Join(action.Warns, "; "))
+	case len(action.Warns) > 0 && !(body.Confirmed && covers(body.Warns, action.Warns)):
+		writeError(w, http.StatusConflict, "this needs confirming first, as it would now interrupt: "+strings.Join(action.Warns, "; "))
 		return
 	}
 	if err := s.cfg.Power.Do(name, body.Action); err != nil {
@@ -110,8 +137,25 @@ func (s *Server) powerDo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
 }
 
+// covers says every one of needed is among shown.
+func covers(shown, needed []string) bool {
+	for _, n := range needed {
+		if !slices.Contains(shown, n) {
+			return false
+		}
+	}
+	return true
+}
+
+// powerLog says what the last action said, and which run of this server says
+// so: a restart is a log answered under another boot, which the page sees
+// without waiting for its next poll of the state.
 func (s *Server) powerLog(w http.ResponseWriter, r *http.Request) {
+	name, ok := s.powerSandbox(w, r.URL.Query().Get("sandbox"))
+	if !ok {
+		return
+	}
 	from, _ := strconv.ParseInt(r.URL.Query().Get("from"), 10, 64)
-	text, next, running := s.cfg.Power.Log(s.powerSandbox(r.URL.Query().Get("sandbox")), from)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"text": text, "next": next, "running": running})
+	text, next, running := s.cfg.Power.Log(name, from)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"text": text, "next": next, "running": running, "boot": s.boot})
 }

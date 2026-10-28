@@ -463,7 +463,7 @@ test('the power menu stays on the page at every width, with a long reason beside
         document.getElementById('power-actions').hidden = false
         const item = document.getElementById('power-restart')
         item.disabled = true
-        item.lastElementChild.textContent = ' (a vibe here has a terminal session, which a restart from the page cannot give back: run vibe --restart in a terminal)'
+        item.querySelector('.power-why').textContent = ' (a vibe here has a terminal session, which a restart from the page cannot give back: run vibe --restart in a terminal)'
       })
       const box = await page.evaluate(() => {
         const r = document.getElementById('power-menu').getBoundingClientRect()

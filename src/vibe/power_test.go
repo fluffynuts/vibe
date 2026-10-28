@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -144,7 +145,8 @@ func fakeVibe(t *testing.T, body string) string {
 func TestEachActionIsTheCLICommandItStandsForRunForTheSandboxAndForced(t *testing.T) {
 	d, _, target := powerStandIns(t, nil, false, true)
 	args := filepath.Join(t.TempDir(), "args")
-	fakeVibe(t, `printf '%s\n' "$@" > `+args)
+	// Written whole and moved into place, so that the file being there means it is all there.
+	fakeVibe(t, `printf '%s\n' "$@" > `+args+`.tmp && mv `+args+`.tmp `+args)
 	for action, want := range map[string][]string{
 		companion.PowerStop:    {"--stop", "--force", "--name", "box", "--", target},
 		companion.PowerRestart: {"--restart", "--force", "--no-auto-update", "--name", "box", "--", target},
@@ -159,7 +161,6 @@ func TestEachActionIsTheCLICommandItStandsForRunForTheSandboxAndForced(t *testin
 			t.Fatalf("%s: %v", action, err)
 		}
 		waitFor(t, func() bool { _, err := os.Stat(args); return err == nil })
-		time.Sleep(50 * time.Millisecond)
 		data, _ := os.ReadFile(args)
 		if got := strings.Fields(string(data)); !slices.Equal(got, want) {
 			t.Errorf("%s ran vibe %v, want %v", action, got, want)
@@ -247,5 +248,81 @@ func TestEachCommandTheDeskRunsIsOneTheCLIParsesAsWhatItStandsFor(t *testing.T) 
 		if !check(parsed) || parsed.Name != "box" || parsed.Path != "/work/box" {
 			t.Errorf("%s: %v parses as %+v", action, argv, parsed)
 		}
+	}
+}
+
+func TestADeskNeverTakesANameForAPlaceAndRunsNothingForOne(t *testing.T) {
+	d, lay, _ := powerStandIns(t, nil, false, true)
+	// A record planted where a name with .. would find it: one for a folder of someone else's.
+	planted := filepath.Join(filepath.Dir(lay.Home), "evil")
+	if err := os.WriteFile(planted+".yaml", []byte("name: evil\ntarget: /somewhere/else\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planted+".power.log", []byte("a log that isn't vibe's\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ran := filepath.Join(t.TempDir(), "ran")
+	fakeVibe(t, "touch "+ran)
+	rel, _ := filepath.Rel(filepath.Join(lay.Home, "logs"), planted)
+	for _, name := range []string{"../evil", "../../evil", rel, "a/b", ".."} {
+		if got := d.Check(name); got.Error == "" || len(got.Actions) != 0 {
+			t.Errorf("Check(%q) = %+v", name, got)
+		}
+		if err := d.Do(name, companion.PowerStop); err == nil {
+			t.Errorf("Do(%q) was done", name)
+		}
+		if text, _, _ := d.Log(name, 0); text != "" {
+			t.Errorf("Log(%q) read %q", name, text)
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
+	if _, err := os.Stat(ran); err == nil {
+		t.Error("vibe was run for a name that isn't a sandbox's")
+	}
+}
+
+func TestWhileAnActionIsUnderWayNoOtherIsStartedAndEachActionSaysWhy(t *testing.T) {
+	d, _, _ := powerStandIns(t, nil, false, true)
+	fakeVibe(t, "sleep 0.5")
+	if err := d.Do("box", companion.PowerStop); err != nil {
+		t.Fatal(err)
+	}
+	check := d.Check("box")
+	for _, a := range []string{companion.PowerStop, companion.PowerRestart, companion.PowerStart} {
+		if got := check.Actions[a]; got.OK || !strings.Contains(got.Why, "already being done") {
+			t.Errorf("%s: %+v", a, got)
+		}
+	}
+	if err := d.Do("box", companion.PowerStop); err == nil {
+		t.Error("a second stop was started alongside the first")
+	}
+	waitFor(t, func() bool { return d.Check("box").Actions[companion.PowerStop].OK })
+}
+
+func TestAnActionWhosePIDHasBeenReusedByAnotherProcessIsNotTakenForRunning(t *testing.T) {
+	d, lay, _ := powerStandIns(t, nil, false, true)
+	now := time.Now()
+	d.now = func() time.Time { return now }
+	// A live process (this one) whose number was noted long ago: the action it was has long since ended.
+	note := fmt.Sprintf("%d %d", os.Getpid(), now.Add(-2*powerActionLongest).Unix())
+	if err := os.MkdirAll(filepath.Join(lay.Home, "logs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(powerPidPath(lay.Home, "box"), []byte(note), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(powerLogPath(lay.Home, "box"), []byte("=== started ===\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, running := d.Log("box", 0); running {
+		t.Error("a PID noted long ago, and now another process's, is taken for the action")
+	}
+	if !d.Check("box").Actions[companion.PowerStop].OK {
+		t.Error("stop is refused for an action that ended long ago")
+	}
+	fresh := fmt.Sprintf("%d %d", os.Getpid(), now.Unix())
+	os.WriteFile(powerPidPath(lay.Home, "box"), []byte(fresh), 0o644)
+	if _, _, running := d.Log("box", 0); !running {
+		t.Error("a live action just started isn't taken for running")
 	}
 }

@@ -270,7 +270,7 @@
     link.title = text
     link.setAttribute('aria-label', 'Power menu: ' + text)
     $('link-text').textContent = text
-    $('power-status').textContent = how === 'up' ? 'Connected' : how === 'down' ? 'Not connected: ' + text : text
+    $('power-status').textContent = 'Status: ' + (how === 'up' ? 'connected' : how === 'down' ? 'not connected — ' + text : text)
   }
 
   // setUpPowerMenu makes the power button open its menu, and nothing more: it
@@ -308,7 +308,7 @@
     const set = (action, ok, why) => {
       const item = $('power-' + action)
       item.disabled = !ok
-      item.lastElementChild.textContent = ok ? '' : ' (' + why + ')'
+      item.querySelector('.power-why').textContent = ok ? '' : ' (' + why + ')'
     }
     if (offline.down) {
       set('stop', false, offlineText())
@@ -353,7 +353,8 @@
       runLabel: words.label,
       started: words.ing + " '" + sandbox + "'",
       run: async () => {
-        const res = await post('/api/power', { sandbox, action, confirmed: true })
+        // What the user was shown is sent too: if more would be interrupted now, vibe asks again.
+        const res = await post('/api/power', { sandbox, action, confirmed: true, warns: can.warns || [] })
         if (res.ok) showPowerProgress(action, sandbox)
         return res
       },
@@ -392,14 +393,20 @@
     // Only this page's own vibe is ended by its own sandbox's stop or restart,
     // so only then does the page gone, or come back under a new boot, say how it ended.
     const own = sandbox === state.sandbox && action !== 'start'
+    // Which run of vibe is asked, from the log's own answer: a restart is the
+    // log answered under another boot, which the page's regular poll of the
+    // state may not have seen yet.
     const boot = state.boot
     let next = 0
     let away = 0
     let ended = false
+    let asking = false
     const end = (text) => { ended = true; $('power-end').textContent = text; if (state.manage) loadManage() }
     clearInterval(power.timer)
     power.timer = setInterval(async function pollPower() {
-      if (ended) return
+      // One question at a time: a slow answer is not asked for again, which would add its text twice.
+      if (ended || asking) return
+      asking = true
       try {
         const res = await api('/api/power/log?sandbox=' + encodeURIComponent(sandbox) + '&from=' + next)
         if (!res.ok) throw new Error('not ok')
@@ -410,17 +417,22 @@
           $('power-log').scrollTop = $('power-log').scrollHeight
         }
         next = res.body.next
-        if (own && state.boot && boot && state.boot !== boot) {
+        if (own && boot && res.body.boot && res.body.boot !== boot) {
           end(action === 'restart' ? 'Restarted: this page is back.' : 'vibe is running again.')
-        } else if (!res.body.running && next > 0 && !(own && action === 'stop')) {
-          end(own
-            ? "That ended and didn't take effect: vibe is as it was. What it said is above."
-            : 'That has ended. What it said is above; the Profiles tab shows how the sandbox is now.')
+        } else if (!res.body.running && next > 0) {
+          // Answered, by the same vibe, after what ran has finished: a stop that worked leaves nothing to answer.
+          end(own && action === 'stop'
+            ? "The stop didn't take effect: vibe is still running. What it said is above."
+            : own
+              ? "That ended and didn't take effect: vibe is as it was. What it said is above."
+              : 'That has ended. What it said is above; the Profiles tab shows how the sandbox is now.')
         }
       } catch (e) {
         reached(false)
         away += 1
         if (own && action === 'stop' && away >= 2) end('vibe has ended. What it said is above; the sandbox is stopped when it says so.')
+      } finally {
+        asking = false
       }
     }, 700)
     $('power-close').onclick = () => dialog.close()

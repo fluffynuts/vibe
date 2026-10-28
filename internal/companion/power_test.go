@@ -3,6 +3,8 @@ package companion
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +16,7 @@ type fakePower struct {
 	mu      sync.Mutex
 	checks  map[string]PowerCheck
 	started []string
+	asked   []string
 	err     error
 	log     string
 	running bool
@@ -22,6 +25,7 @@ type fakePower struct {
 func (f *fakePower) Check(name string) PowerCheck {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.asked = append(f.asked, name)
 	if c, ok := f.checks[name]; ok {
 		return c
 	}
@@ -38,6 +42,7 @@ func (f *fakePower) Do(name, action string) error {
 func (f *fakePower) Log(name string, from int64) (string, int64, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.asked = append(f.asked, name)
 	if from > int64(len(f.log)) {
 		from = 0
 	}
@@ -124,7 +129,7 @@ func TestAnActionThatInterruptsSomethingNeedsToBeConfirmed(t *testing.T) {
 	if len(f.started) != 0 {
 		t.Fatalf("started unconfirmed: %v", f.started)
 	}
-	if rec := do(t, s, post("/api/power", `{"sandbox":"busy","action":"stop","confirmed":true}`)); rec.Code != http.StatusAccepted {
+	if rec := do(t, s, post("/api/power", `{"sandbox":"busy","action":"stop","confirmed":true,"warns":["the agent is part-way through a turn"]}`)); rec.Code != http.StatusAccepted {
 		t.Errorf("confirmed: %d %s", rec.Code, rec.Body)
 	}
 	if len(f.started) != 1 {
@@ -187,5 +192,59 @@ func TestEveryRunOfTheServerHasItsOwnBootSoAPageCanTellItWasRestarted(t *testing
 	a, b := boot(), boot()
 	if a == "" || a == b {
 		t.Errorf("boots %q and %q", a, b)
+	}
+}
+
+func TestAConfirmationOnlyCoversWhatTheUserWasShown(t *testing.T) {
+	// The page asked when the agent was idle; by the time of the click it is part-way through a turn.
+	f := idlePower()
+	s := powerServer(f)
+	for name, body := range map[string]string{
+		"nothing shown":            `{"sandbox":"busy","action":"stop","confirmed":true}`,
+		"something else":           `{"sandbox":"busy","action":"stop","confirmed":true,"warns":["some other thing"]}`,
+		"shown, but not confirmed": `{"sandbox":"busy","action":"stop","warns":["the agent is part-way through a turn"]}`,
+	} {
+		rec := do(t, s, post("/api/power", body))
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "part-way through a turn") {
+			t.Errorf("%s: %d %s", name, rec.Code, rec.Body)
+		}
+	}
+	if len(f.started) != 0 {
+		t.Errorf("started %v", f.started)
+	}
+}
+
+func TestASandboxNameThatIsNotAFileNameIsRefusedAndNeverReachesThePowerDesk(t *testing.T) {
+	f := idlePower()
+	s := powerServer(f)
+	for _, name := range []string{"../x", "../../etc/passwd", "a/b", `a\b`, "..", ".hidden", "a b", "x\x00y"} {
+		q := url.QueryEscape(name)
+		for _, r := range []req{
+			{path: "/api/power?sandbox=" + q, headers: authed(nil)},
+			{path: "/api/power/log?sandbox=" + q, headers: authed(nil)},
+			post("/api/power", `{"sandbox":`+strconv.Quote(name)+`,"action":"stop"}`),
+		} {
+			if code := do(t, s, r).Code; code != http.StatusBadRequest {
+				t.Errorf("%q: %s %s answered %d, want 400", name, r.method, r.path, code)
+			}
+		}
+	}
+	if len(f.asked) != 0 || len(f.started) != 0 {
+		t.Errorf("the desk was asked %v and told to %v", f.asked, f.started)
+	}
+}
+
+func TestTheLogSaysWhichRunOfTheServerAnswersItSoAPageCanTellARestartFromAFailure(t *testing.T) {
+	s := powerServer(idlePower())
+	var st struct {
+		Boot string `json:"boot"`
+	}
+	json.Unmarshal(do(t, s, req{path: "/api/state", headers: authed(nil)}).Body.Bytes(), &st)
+	var lg struct {
+		Boot string `json:"boot"`
+	}
+	json.Unmarshal(do(t, s, req{path: "/api/power/log", headers: authed(nil)}).Body.Bytes(), &lg)
+	if st.Boot == "" || lg.Boot != st.Boot {
+		t.Errorf("state boot %q, log boot %q", st.Boot, lg.Boot)
 	}
 }

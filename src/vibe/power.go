@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -34,7 +33,21 @@ type powerDesk struct {
 	// outOfDate says why a sandbox is out of date, "" when it isn't:
 	// sandboxOutOfDate when nil.
 	outOfDate func(inst state.Instance) string
+	// now is the clock: time.Now when nil.
+	now func() time.Time
 }
+
+func (d *powerDesk) clock() time.Time {
+	if d.now != nil {
+		return d.now()
+	}
+	return time.Now()
+}
+
+// powerActionLongest is longer than any action takes (a restart waits for a
+// sandbox to start, a few minutes at most): an action noted longer ago than
+// this is over, whatever now has its process number, as numbers are reused.
+const powerActionLongest = 30 * time.Minute
 
 func (d *powerDesk) outOfDateWhy(inst state.Instance) string {
 	if d.outOfDate != nil {
@@ -75,6 +88,10 @@ func powerPidPath(vibeHome, name string) string {
 
 func (d *powerDesk) Check(name string) companion.PowerCheck {
 	check := companion.PowerCheck{Sandbox: name}
+	if !companion.ValidSandboxName(name) {
+		check.Error = fmt.Sprintf("'%s' is not the name of a sandbox", name)
+		return check
+	}
 	inst, found, err := state.Load(d.lay.Home, name)
 	switch {
 	case err != nil:
@@ -89,6 +106,12 @@ func (d *powerDesk) Check(name string) companion.PowerCheck {
 	claims := d.claimsOf(target)
 	interrupts, busy := interruptionsOf(d.lay.Home, name, target, claims)
 	check.Actions = map[string]companion.PowerAction{}
+	if d.actionRunning(name) {
+		for _, a := range []string{companion.PowerStop, companion.PowerRestart, companion.PowerStart} {
+			check.Actions[a] = companion.PowerAction{Why: "something is already being done to this sandbox: wait for it to finish"}
+		}
+		return check
+	}
 	if busy != nil {
 		for _, a := range []string{companion.PowerStop, companion.PowerRestart, companion.PowerStart} {
 			check.Actions[a] = companion.PowerAction{Why: busy.Error()}
@@ -182,13 +205,16 @@ func (d *powerDesk) Do(name, action string) error {
 	// It carries on without this vibe, which it may be ending. Waited for here
 	// while this vibe lives, so it isn't left a zombie that still looks to be running.
 	go cmd.Wait()
-	if err := fscopy.WriteWhole(powerPidPath(d.lay.Home, name), []byte(strconv.Itoa(pid))); err != nil {
+	if err := fscopy.WriteWhole(powerPidPath(d.lay.Home, name), []byte(fmt.Sprintf("%d %d", pid, d.clock().Unix()))); err != nil {
 		note("couldn't note the PID of the action (%d): the page can't tell when it ends: %v", pid, err)
 	}
 	return nil
 }
 
 func (d *powerDesk) Log(name string, from int64) (string, int64, bool) {
+	if !companion.ValidSandboxName(name) {
+		return "", 0, false
+	}
 	file, err := os.Open(powerLogPath(d.lay.Home, name))
 	if err != nil {
 		return "", 0, false
@@ -209,11 +235,20 @@ func (d *powerDesk) Log(name string, from int64) (string, int64, bool) {
 	return string(buf), size, d.actionRunning(name)
 }
 
+// actionRunning says the last action on sandbox name is still going: its
+// process is alive, and was noted recently enough to be the same one.
 func (d *powerDesk) actionRunning(name string) bool {
 	data, err := fscopy.ReadFile(powerPidPath(d.lay.Home, name))
 	if err != nil {
 		return false
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	return err == nil && processAlive(pid)
+	var pid int
+	var at int64
+	if n, _ := fmt.Sscanf(strings.TrimSpace(string(data)), "%d %d", &pid, &at); n != 2 {
+		return false
+	}
+	if d.clock().Sub(time.Unix(at, 0)) > powerActionLongest {
+		return false
+	}
+	return processAlive(pid)
 }

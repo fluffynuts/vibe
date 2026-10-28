@@ -29,7 +29,8 @@ test('with vibe reached, the button is up, and says so to a tooltip, a screen re
     assert.match(p.$('link').getAttribute('aria-label'), /connected/)
     assert.equal(p.$('link-text').textContent, 'connected')
     assert.equal(p.$('link-text').getAttribute('role'), 'status')
-    assert.match(p.$('power-status').textContent, /^Connected/)
+    assert.equal(p.$('power-status').textContent, 'Status: connected')
+    assert.equal(p.$('power-status').getAttribute('role'), 'presentation')
   } finally { p.close() }
 })
 
@@ -98,7 +99,7 @@ function powerRoutes({ check, log = { text: '', next: 0, running: false }, boot 
     '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, conversation: true, attention: {}, power: true, boot: routes.boot, folder: '~/work/box' }),
     '/api/log': { entries: [] },
     '/api/power': (call) => call.method === 'POST' ? { status: 202, body: { ok: true } } : (routes.check || { sandbox: 'box', folder: '~/work/box', actions: { stop: ok, restart: ok } }),
-    '/api/power/log': () => routes.log,
+    '/api/power/log': () => Object.assign({ boot: routes.boot }, routes.log),
     boot, check, log,
   }
   return routes
@@ -181,7 +182,7 @@ test('confirming Stop sends it, confirmed, for this sandbox, and shows what vibe
     await p.settle()
     await p.click(items(p).stop)
     await p.confirm(true)
-    assert.deepEqual(p.posted('/api/power'), [{ sandbox: 'box', action: 'stop', confirmed: true }])
+    assert.deepEqual(p.posted('/api/power'), [{ sandbox: 'box', action: 'stop', confirmed: true, warns: [] }])
     assert.equal(p.$('power-progress').open, true)
     await p.every('pollPower')
     assert.match(p.$('power-log').textContent, /stopping sandbox box/)
@@ -190,6 +191,20 @@ test('confirming Stop sends it, confirmed, for this sandbox, and shows what vibe
     assert.match(p.$('power-log').textContent, /stopping sandbox box\n[\s\S]*sandbox stopped/)
     const asked = p.calls.filter((c) => c.path === '/api/power/log').map((c) => c.query)
     assert.ok(asked[asked.length - 1].includes('from=40'), 'asked again from where it had got to: ' + asked)
+  } finally { p.close() }
+})
+
+test('a stop whose log is answered by a vibe that has finished, and is still there, says it did not take effect', async () => {
+  const routes = powerRoutes({ log: { text: 'couldn\'t end vibe (PID 7)\n', next: 27, running: false } })
+  const p = await openPage({ routes })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).stop)
+    await p.confirm(true)
+    await p.every('pollPower')
+    assert.match(p.$('power-end').textContent, /stop didn't take effect: vibe is still running/)
+    assert.match(p.$('power-log').textContent, /couldn't end vibe/)
   } finally { p.close() }
 })
 
@@ -209,7 +224,7 @@ test('a stop ends with vibe gone, and says so', async () => {
   } finally { p.close() }
 })
 
-test('a restart ends when vibe is back under a new boot, and says the page is back', async () => {
+test('a restart ends when the log is answered under a new boot, which needs no poll of the state first, and says the page is back', async () => {
   const routes = powerRoutes({ log: { text: 'restarting\n', next: 11, running: true } })
   const p = await openPage({ routes })
   try {
@@ -219,9 +234,9 @@ test('a restart ends when vibe is back under a new boot, and says the page is ba
     await p.confirm(true)
     await p.every('pollPower')
     assert.equal(p.$('power-end').textContent, '')
+    // The log answers under the new boot before the page's regular poll has seen it.
     routes.boot = 'b2'
     routes.log = { text: 'it is up\n', next: 20, running: false }
-    await p.poll()
     await p.every('pollPower')
     assert.match(p.$('power-end').textContent, /Restarted/)
   } finally { p.close() }
@@ -285,7 +300,7 @@ test('a sandbox row offers to start a vibe for it, asking first and naming the s
     assert.ok(asked.includes("'other'") && asked.includes('~/work/other'), asked)
     assert.equal(p.posted('/api/power').length, 0)
     await p.confirm(true)
-    assert.deepEqual(p.posted('/api/power'), [{ sandbox: 'other', action: 'start', confirmed: true }])
+    assert.deepEqual(p.posted('/api/power'), [{ sandbox: 'other', action: 'start', confirmed: true, warns: [] }])
     assert.equal(p.$('power-progress').open, true)
   } finally { p.close() }
 })
@@ -300,7 +315,7 @@ test("restarting another sandbox's vibe shows what it would interrupt, and posts
     await p.settle()
     assert.match(p.$('confirm-list').textContent, /part-way through a turn/)
     await p.confirm(true)
-    assert.deepEqual(p.posted('/api/power'), [{ sandbox: 'other', action: 'restart', confirmed: true }])
+    assert.deepEqual(p.posted('/api/power'), [{ sandbox: 'other', action: 'restart', confirmed: true, warns: routes.warns }])
   } finally { p.close() }
 })
 
@@ -329,5 +344,44 @@ test('a Profiles page with no sandbox of its own has no stop or restart for itse
   try {
     await p.click('link')
     assert.equal(p.$('power-actions').hidden, true)
+  } finally { p.close() }
+})
+
+test('a poll of the log is not started while the last is still out, so nothing is appended twice', async () => {
+  const routes = powerRoutes({ log: { text: 'one line\n', next: 9, running: true } })
+  const p = await openPage({ routes })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).stop)
+    await p.confirm(true)
+    let release
+    const held = new Promise((resolve) => { release = resolve })
+    const answer = routes['/api/power/log']
+    routes['/api/power/log'] = () => held.then(() => answer())
+    const before = p.calls.filter((c) => c.path === '/api/power/log').length
+    await p.kick('pollPower')
+    await p.kick('pollPower')
+    await p.kick('pollPower')
+    assert.equal(p.calls.filter((c) => c.path === '/api/power/log').length - before, 1, 'polls while one was out')
+    release()
+    await p.settle()
+    assert.equal(p.$('power-log').textContent, 'one line\n')
+  } finally { p.close() }
+})
+
+test('every entry of the power menu has an icon: a square for Stop, circular arrows for Restart, the GitHub mark for each link', async () => {
+  const p = await openPage({ routes: powerRoutes() })
+  try {
+    const icon = (node) => node.querySelector('svg.power-icon')
+    for (const [name, node] of [['Stop', items(p).stop], ['Restart', items(p).restart], ...[...p.$('power-menu').querySelectorAll('a')].map((a) => [a.textContent, a])]) {
+      assert.ok(icon(node), name + ' has no icon')
+      assert.equal(icon(node).getAttribute('aria-hidden'), 'true', name + "'s icon is read out")
+    }
+    const shape = (node) => icon(node).innerHTML
+    assert.notEqual(shape(items(p).stop), shape(items(p).restart))
+    const links = [...p.$('power-menu').querySelectorAll('a')].map(shape)
+    assert.equal(new Set(links).size, 1, 'the GitHub links have different icons')
+    assert.notEqual(links[0], shape(items(p).stop))
   } finally { p.close() }
 })
