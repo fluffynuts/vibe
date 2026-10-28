@@ -357,6 +357,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		PackageSyncAuto:        packageSyncAuto(lay, inst.Profile),
 		Usage:                  usageFor(vibeHome, name),
 		Manage:                 &companionManager{lay: lay, own: name},
+		Power:                  &powerDesk{lay: lay},
 		ThemeColor:             themeColorFor(lay, name, inst, agent),
 		KeepAwake:              keepAwakeFor(name),
 		Log:                    func(line string) { note("%s", line) },

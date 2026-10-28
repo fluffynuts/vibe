@@ -286,10 +286,118 @@
       button.setAttribute('aria-expanded', 'true')
       const first = menu.querySelector('a, button:not(:disabled)')
       if (first) first.focus()
+      showPowerActions()
     })
+    for (const action of ['stop', 'restart']) {
+      $('power-' + action).addEventListener('click', () => { close(); askPower(action, state.sandbox, powerChecked) })
+    }
     menu.addEventListener('click', (ev) => { if (ev.target.closest('a')) close() })
     menu.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); close(); button.focus() } })
     document.addEventListener('pointerdown', (ev) => { if (!menu.hidden && !ev.target.closest('.power-wrap')) close() })
+  }
+
+  // What the power menu can do to this sandbox, as vibe last said.
+  let powerChecked = null
+
+  // showPowerActions fills the menu's Stop and Restart from what vibe says
+  // can be done: each is disabled, with the reason beside it, when it can't,
+  // as it can't when vibe isn't there.
+  async function showPowerActions() {
+    $('power-actions').hidden = !state.power
+    if (!state.power) return
+    const set = (action, ok, why) => {
+      const item = $('power-' + action)
+      item.disabled = !ok
+      item.lastElementChild.textContent = ok ? '' : ' (' + why + ')'
+    }
+    if (offline.down) {
+      set('stop', false, offlineText())
+      set('restart', false, offlineText())
+      return
+    }
+    try {
+      const res = await api('/api/power')
+      if (!res.ok || res.body.error) throw new Error((res.body && res.body.error) || 'vibe could not say')
+      powerChecked = res.body
+      for (const action of ['stop', 'restart']) {
+        const can = (res.body.actions || {})[action] || { ok: false, why: 'vibe did not say' }
+        set(action, can.ok, can.why || '')
+      }
+    } catch (e) {
+      powerChecked = null
+      set('stop', false, 'vibe could not be asked: ' + e.message)
+      set('restart', false, 'vibe could not be asked: ' + e.message)
+    }
+  }
+
+  // askPower asks before stopping or restarting a sandbox's vibe, naming
+  // the sandbox and its folder, and what it would interrupt, then asks vibe
+  // to and shows what it says as it goes. check is what vibe said of it.
+  function askPower(action, sandbox, check) {
+    const can = ((check || {}).actions || {})[action] || {}
+    const folder = (check || {}).folder || ''
+    const stop = action === 'stop'
+    confirmThen({
+      title: (stop ? 'Stop sandbox ' : 'Restart vibe for sandbox ') + "'" + sandbox + "'?",
+      text: stop
+        ? 'This ends vibe for ' + folder + ' and stops the sandbox. This page disconnects; vibe in that folder starts it again.'
+        : 'This ends vibe for ' + folder + ' and starts it again, headless, on the same port. This page reconnects when it is back.',
+      list: can.warns || [],
+      commandNote: '',
+      danger: true,
+      runLabel: stop ? 'Stop' : 'Restart',
+      started: (stop ? 'Stopping' : 'Restarting') + " '" + sandbox + "'",
+      run: async () => {
+        const res = await post('/api/power', { sandbox, action, confirmed: true })
+        if (res.ok) showPowerProgress(action, sandbox)
+        return res
+      },
+    })
+  }
+
+  const power = { timer: null }
+
+  // showPowerProgress shows what the action says as it runs, from the log
+  // vibe keeps. It ends in one of three ways, told in words: vibe has gone
+  // (a stop), vibe is back under a new boot (a restart), or the action ended
+  // and vibe is as it was (it didn't take effect).
+  function showPowerProgress(action, sandbox) {
+    const dialog = $('power-progress')
+    $('power-progress-title').textContent = (action === 'stop' ? 'Stopping ' : 'Restarting ') + "'" + sandbox + "'"
+    $('power-log').textContent = ''
+    $('power-end').textContent = ''
+    const boot = state.boot
+    let next = 0
+    let away = 0
+    let ended = false
+    const end = (text) => { ended = true; $('power-end').textContent = text }
+    clearInterval(power.timer)
+    power.timer = setInterval(async function pollPower() {
+      if (ended) return
+      try {
+        const res = await api('/api/power/log?sandbox=' + encodeURIComponent(sandbox) + '&from=' + next)
+        if (!res.ok) throw new Error('not ok')
+        reached(true)
+        away = 0
+        if (res.body.text) {
+          $('power-log').append(res.body.text)
+          $('power-log').scrollTop = $('power-log').scrollHeight
+        }
+        next = res.body.next
+        if (state.boot && boot && state.boot !== boot) {
+          end(action === 'restart' ? 'Restarted: this page is back.' : 'vibe is running again.')
+        } else if (!res.body.running && next > 0 && !(action === 'stop')) {
+          end("That ended and didn't take effect: vibe is as it was. What it said is above.")
+        }
+      } catch (e) {
+        reached(false)
+        away += 1
+        if (action === 'stop' && away >= 2) end('vibe has ended. What it said is above; the sandbox is stopped when it says so.')
+      }
+    }, 700)
+    $('power-close').onclick = () => dialog.close()
+    dialog.onclose = () => { clearInterval(power.timer) }
+    dialog.showModal()
   }
 
   // The banner says what went wrong, each problem kept under what it came
@@ -660,6 +768,8 @@
       $('convo-choice').hidden = !state.choice
       if (state.choice) initChoice()
       state.admin = !!res.body.admin
+      state.power = !!res.body.power
+      state.boot = res.body.boot || ''
       state.usage = !!res.body.usage
       $('usage').hidden = !state.usage
       $('tab-admin').hidden = !state.admin

@@ -72,20 +72,9 @@ func restart(vibeHome, name, target string, claims []running.Claim, force bool) 
 		note("no vibe was running for %s — starting one", target)
 		return modeNone, nil
 	}
-	var interrupts []string
-	for _, c := range claims {
-		switch {
-		case c.Work != "":
-			return modeNone, fmt.Errorf("vibe (PID %d) is %s for %s — wait for that, or cancel it where it was started, then restart", c.PID, c.Work, target)
-		case !c.Headless:
-			interrupts = append(interrupts, fmt.Sprintf("vibe (PID %d) has a terminal session in %s: ending it ends that session, and whatever its agent is doing", c.PID, target))
-		default:
-			if answering, known := agentAnswering(vibeHome, name); answering {
-				interrupts = append(interrupts, fmt.Sprintf("the agent of the headless vibe (PID %d) is part-way through a turn: ending it cuts the turn off", c.PID))
-			} else if !known {
-				interrupts = append(interrupts, fmt.Sprintf("the headless vibe (PID %d) couldn't be asked whether its agent is part-way through a turn", c.PID))
-			}
-		}
+	interrupts, busy := interruptionsOf(vibeHome, name, target, claims)
+	if busy != nil {
+		return modeNone, busy
 	}
 	if len(interrupts) > 0 && !force {
 		if !canAsk() {
@@ -102,4 +91,26 @@ func restart(vibeHome, name, target string, claims []running.Claim, force bool) 
 		return modeNone, err
 	}
 	return modeOf(claims), nil
+}
+
+// interruptionsOf is what ending the vibes among claims, for target's sandbox
+// name, would interrupt: another terminal's session, an agent part-way
+// through a turn, or one that couldn't be asked. A folder held for a rebuild
+// can't have its vibes ended: that is busy, saying what to do.
+func interruptionsOf(vibeHome, name, target string, claims []running.Claim) (interrupts []string, busy error) {
+	for _, c := range claims {
+		switch {
+		case c.Work != "":
+			return nil, fmt.Errorf("vibe (PID %d) is %s for %s — wait for that, or cancel it where it was started, then restart", c.PID, c.Work, target)
+		case !c.Headless:
+			interrupts = append(interrupts, fmt.Sprintf("vibe (PID %d) has a terminal session in %s: ending it ends that session, and whatever its agent is doing", c.PID, target))
+		default:
+			if answering, known := agentAnswering(vibeHome, name); answering {
+				interrupts = append(interrupts, fmt.Sprintf("the agent of the headless vibe (PID %d) is part-way through a turn: ending it cuts the turn off", c.PID))
+			} else if !known {
+				interrupts = append(interrupts, fmt.Sprintf("the headless vibe (PID %d) couldn't be asked whether its agent is part-way through a turn", c.PID))
+			}
+		}
+	}
+	return interrupts, nil
 }

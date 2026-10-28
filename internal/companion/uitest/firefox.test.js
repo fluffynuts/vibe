@@ -450,6 +450,31 @@ test('the power button changes state without moving the bar, and the states diff
   } finally { await page.close() }
 })
 
+// The menu opens from the button at the top right, whose room is the page's width: it has to stay on the page, long
+// reasons and all, however narrow the page is.
+test('the power menu stays on the page at every width, with a long reason beside a disabled item', async () => {
+  for (const width of [1000, 600, 360]) {
+    const page = await browser.newPage({ viewport: { width, height: 700 } })
+    try {
+      await page.goto(URL)
+      await page.click('#link')
+      // After the click, which sets them from what vibe says (nothing, for this page).
+      await page.evaluate(() => {
+        document.getElementById('power-actions').hidden = false
+        const item = document.getElementById('power-restart')
+        item.disabled = true
+        item.lastElementChild.textContent = ' (a vibe here has a terminal session, which a restart from the page cannot give back: run vibe --restart in a terminal)'
+      })
+      const box = await page.evaluate(() => {
+        const r = document.getElementById('power-menu').getBoundingClientRect()
+        return { left: r.left, right: r.right, bottom: r.bottom, width: innerWidth, height: innerHeight }
+      })
+      assert.ok(box.left >= 0 && box.right <= box.width, `at ${width}px the menu is across ${box.left}..${box.right}`)
+      assert.ok(box.bottom <= box.height, `at ${width}px the menu runs off the bottom: ${box.bottom}`)
+    } finally { await page.close() }
+  }
+})
+
 // eventually waits for check to say yes: polled, as the page's policy doesn't allow waitForFunction.
 async function eventually(page, what, check) {
   for (let i = 0; i < 80; i++) {

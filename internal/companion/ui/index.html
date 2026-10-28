@@ -22,6 +22,11 @@
       <div id="power-menu" class="power-menu" role="menu" aria-label="Power menu" hidden>
         <div id="power-status" class="power-status">connecting…</div>
         <hr>
+        <div id="power-actions" hidden>
+          <button type="button" role="menuitem" id="power-stop" class="power-item"><span>Stop this session</span><span class="power-why"></span></button>
+          <button type="button" role="menuitem" id="power-restart" class="power-item"><span>Restart</span><span class="power-why"></span></button>
+          <hr>
+        </div>
         <a role="menuitem" href="https://github.com/fluffynuts/vibe/issues/new?template=bug_report.yml" target="_blank" rel="noopener noreferrer">Report a bug</a>
         <a role="menuitem" href="https://github.com/fluffynuts/vibe/issues/new?template=feature_request.yml" target="_blank" rel="noopener noreferrer">Request a feature</a>
         <a role="menuitem" href="https://github.com/fluffynuts/vibe/issues/new?template=other.yml" target="_blank" rel="noopener noreferrer">Something else</a>
@@ -459,6 +464,13 @@
         <button value="run" id="confirm-run" autofocus>Run</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="power-progress" aria-labelledby="power-progress-title">
+    <h2 id="power-progress-title"></h2>
+    <pre id="power-log" class="power-log"></pre>
+    <p id="power-end" role="status"></p>
+    <div class="actions"><button type="button" id="power-close">Close</button></div>
   </dialog>
 
   <dialog id="file-view" class="file-view" aria-label="File viewer">
