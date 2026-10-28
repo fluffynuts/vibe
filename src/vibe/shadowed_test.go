@@ -120,3 +120,46 @@ func TestCreatingABlankProfileSaysWhenACopyOfAFeatureBeatsTheShippedOne(t *testi
 		t.Errorf("it said %q", said)
 	}
 }
+
+// A warning that goes by between questions is missed, so it is drawn as vibe's other warnings are.
+const warningStyle = "\x1b[1;93m"
+
+func TestTheWarningOfACopyBeatingTheShippedOneIsBoldBrightYellowOnATerminal(t *testing.T) {
+	lay, mine := shadowLayout(t)
+	writeFile(t, filepath.Join(mine, "agent-files", ".local", "bin", "start-clipboard"), "# an old one\n")
+	styled(t, true)
+	got := stderrOf(t, func() { noteShadowedFeatures(lay, nil) })
+	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("%d lines: %q", len(lines), got)
+	}
+	for i, line := range lines {
+		if !strings.HasPrefix(line, "vibe: "+warningStyle) || !strings.HasSuffix(line, "\x1b[0m") {
+			t.Errorf("line %d isn't drawn as a warning: %q", i+1, line)
+		}
+	}
+	if !strings.Contains(lines[0], "WARNING: ") {
+		t.Errorf("the first line doesn't say it is a warning: %q", lines[0])
+	}
+}
+
+func TestTheWarningIsPlainWhereThereIsNoTerminalOrNoColourIsWanted(t *testing.T) {
+	lay, mine := shadowLayout(t)
+	writeFile(t, filepath.Join(mine, "agent-files", ".local", "bin", "start-clipboard"), "# an old one\n")
+	styled(t, false)
+	got := stderrOf(t, func() { noteShadowedFeatures(lay, nil) })
+	if strings.Contains(got, "\x1b") || !strings.Contains(got, "vibe: WARNING: ") {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestTheWarningIsPassedOnToTheLogWithoutItsStyling(t *testing.T) {
+	lay, mine := shadowLayout(t)
+	writeFile(t, filepath.Join(mine, "agent-files", ".local", "bin", "start-clipboard"), "# an old one\n")
+	styled(t, true)
+	var lines []string
+	stderrOf(t, func() { lines = notesOf(func() { noteShadowedFeatures(lay, nil) }) })
+	if len(lines) != 3 || !strings.HasPrefix(lines[0], "WARNING: ") || strings.Contains(strings.Join(lines, ""), "\x1b") {
+		t.Errorf("lines: %q", lines)
+	}
+}

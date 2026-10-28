@@ -17,7 +17,8 @@ const shadowedNamed = 3
 // them will be read from a copy of the user's own in ~/.vibe/library that differs from the one vibe ships.
 // Such a copy is the user's to keep, and vibe won't touch it, but it beats the shipped one whole: what vibe
 // changes in the feature afterwards never reaches the profile, and nothing says so. A copy that is the
-// same as the shipped one is not spoken of.
+// same as the shipped one is not spoken of. It is a WARNING, drawn as one: it is said in the middle of
+// questions, where a plain note was missed.
 func noteShadowedFeatures(lay layout.Layout, features []string) {
 	var seen []string
 	for _, name := range append(lay.BaseFeatures(), features...) {
@@ -41,8 +42,8 @@ func noteShadowedFeatures(lay layout.Layout, features []string) {
 		if len(differences) > len(named) {
 			more = fmt.Sprintf(" and %d more", len(differences)-len(named))
 		}
-		note("%s is your own copy of feature '%s', and profiles are composed from it, not from the one vibe ships", pathresolve.Tilde(mine), name)
-		note("  it differs from the shipped one in %s%s, so what vibe changes in '%s' doesn't reach the profile", strings.Join(named, ", "), more, name)
-		note("  delete your copy to use the shipped one, or keep it if the difference is yours: diff -r %s %s", pathresolve.Tilde(mine), shipped)
+		noteWarning("WARNING: %s is your own copy of feature '%s', and profiles are composed from it, not from the one vibe ships", pathresolve.Tilde(mine), name)
+		noteWarning("  it differs from the shipped one in %s%s, so what vibe changes in '%s' doesn't reach the profile", strings.Join(named, ", "), more, name)
+		noteWarning("  delete your copy to use the shipped one, or keep it if the difference is yours: diff -r %s %s", pathresolve.Tilde(mine), shipped)
 	}
 }
