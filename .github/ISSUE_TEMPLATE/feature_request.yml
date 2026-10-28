@@ -1,0 +1,26 @@
+name: Request a feature
+description: Something vibe could do that it doesn't.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is the problem?
+      description: What you are trying to do, and what gets in the way.
+    validations:
+      required: true
+  - type: textarea
+    id: help
+    attributes:
+      label: What would help?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What do you do instead?
+  - type: input
+    id: who
+    attributes:
+      label: Who is it for?
+      description: You, a team, everyone who uses a certain agent.

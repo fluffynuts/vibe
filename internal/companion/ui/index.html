@@ -16,7 +16,17 @@
       <span id="folder-part" hidden><span class="sep">│</span><span id="folder" class="folder"></span></span>
       <span id="git-part" hidden><span class="sep">│</span><span id="git" class="git"></span></span>
     </div>
-    <div id="link" class="link" role="status"><span class="dot"></span><span id="link-text">connecting…</span></div>
+    <div class="power-wrap">
+      <button type="button" id="link" class="link connecting" aria-haspopup="menu" aria-expanded="false" aria-controls="power-menu" title="connecting…" aria-label="Power menu: connecting…"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v6M4.6 3.9a5.5 5.5 0 1 0 6.8 0"/></svg></button>
+      <span id="link-text" class="sr-only" role="status">connecting…</span>
+      <div id="power-menu" class="power-menu" role="menu" aria-label="Power menu" hidden>
+        <div id="power-status" class="power-status">connecting…</div>
+        <hr>
+        <a role="menuitem" href="https://github.com/fluffynuts/vibe/issues/new?template=bug_report.yml" target="_blank" rel="noopener noreferrer">Report a bug</a>
+        <a role="menuitem" href="https://github.com/fluffynuts/vibe/issues/new?template=feature_request.yml" target="_blank" rel="noopener noreferrer">Request a feature</a>
+        <a role="menuitem" href="https://github.com/fluffynuts/vibe/issues/new?template=other.yml" target="_blank" rel="noopener noreferrer">Something else</a>
+      </div>
+    </div>
   </header>
 
   <div class="tabbar" id="tabbar">

@@ -1,0 +1,43 @@
+name: Report a bug
+description: Something didn't work, or worked wrongly.
+labels: [bug]
+body:
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened?
+      description: What you did, and what vibe or the agent did.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to repeat it
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: vibe, your OS, sbx and the agent (`vibe --info` shows them).
+  - type: dropdown
+    id: mode
+    attributes:
+      label: How was vibe running?
+      options: [Terminal session, Headless]
+  - type: textarea
+    id: info
+    attributes:
+      label: Output of `vibe --info`
+      description: Read it first and remove anything private (paths, names, tokens).
+      render: text
+  - type: textarea
+    id: log
+    attributes:
+      label: The last lines of the log
+      description: Read it first and remove anything private.
+      render: text

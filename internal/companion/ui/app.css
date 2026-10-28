@@ -71,10 +71,20 @@ body {
 .git .conflicted { color: var(--project); }
 .git .ahead, .git .behind { color: var(--amber); }
 .git span + span { margin-left: 6px; }
-.link { margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-.link.up .dot { background: var(--ok); }
-.link.down .dot { background: var(--bad); }
+.power-wrap { position: relative; margin-left: auto; }
+/* Lit and glowing when vibe is reached, flat and dim when it isn't, dim and pulsing while the first answer is awaited: the states differ in brightness and glow, not in colour alone. */
+.link { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: var(--panel); color: var(--muted); cursor: pointer; }
+.link svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.link.up { color: var(--ok); border-color: var(--ok); box-shadow: 0 0 6px 1px var(--ok); }
+.link.down { color: var(--bad); border-color: var(--bad); opacity: .7; box-shadow: none; }
+.link.connecting { animation: tab-dot-pulse 2.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .link.connecting { animation: none; opacity: .6; } }
+.power-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; display: flex; flex-direction: column; width: max-content; max-width: min(360px, 90vw); padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); box-shadow: 0 4px 12px rgba(0, 0, 0, .25); }
+.power-menu[hidden] { display: none; }
+.power-menu hr { width: 100%; margin: 4px 0; border: 0; border-top: 1px solid var(--line); }
+.power-status { padding: 4px 8px; color: var(--muted); font-size: 12px; }
+.power-menu a { padding: 4px 8px; border-radius: 4px; color: var(--text); text-decoration: none; white-space: nowrap; }
+.power-menu a:hover, .power-menu a:focus-visible { background: var(--row-hover); }
 
 .tabbar { display: flex; align-items: stretch; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--panel); overflow-x: auto; }
 .tabs { display: flex; gap: 2px; flex: none; }

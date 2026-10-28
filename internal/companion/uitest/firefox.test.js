@@ -423,6 +423,33 @@ test("the file viewer's path is drawn left to right, so a leading dot stays wher
   } finally { await page.close() }
 })
 
+// The power button is the one thing at the top right that says whether vibe is reached, so the states are told
+// apart by brightness and glow as well as by hue (red and green look alike to many), and changing state moves nothing.
+test('the power button changes state without moving the bar, and the states differ in glow and brightness, not only in colour', async () => {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 700 } })
+  try {
+    await page.goto(URL)
+    const look = (state) => page.evaluate((s) => {
+      const link = document.getElementById('link')
+      for (const c of ['up', 'down', 'connecting']) link.classList.toggle(c, c === s)
+      link.style.animation = 'none'
+      const style = getComputedStyle(link)
+      const box = link.getBoundingClientRect()
+      const bar = document.querySelector('.top').getBoundingClientRect()
+      return { glow: style.boxShadow, opacity: style.opacity, box: [box.x, box.y, box.width, box.height], bar: [bar.width, bar.height] }
+    }, state)
+    const up = await look('up')
+    const down = await look('down')
+    const connecting = await look('connecting')
+    assert.deepEqual(down.box, up.box, 'the button moved between up and down')
+    assert.deepEqual(connecting.box, up.box, 'the button moved between up and connecting')
+    assert.deepEqual(down.bar, up.bar, 'the bar changed size between up and down')
+    assert.notEqual(up.glow, 'none', 'up has no glow')
+    assert.equal(down.glow, 'none', 'down glows')
+    assert.ok(Number(down.opacity) < Number(up.opacity), `down (${down.opacity}) is not dimmer than up (${up.opacity})`)
+  } finally { await page.close() }
+})
+
 // eventually waits for check to say yes: polled, as the page's policy doesn't allow waitForFunction.
 async function eventually(page, what, check) {
   for (let i = 0; i < 80; i++) {

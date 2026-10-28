@@ -260,11 +260,36 @@
 
   // --- the link to vibe -------------------------------------------------
 
-  function setLink(up, text) {
+  // setLink shows whether vibe is reached ('up', 'down' or 'connecting') on
+  // the power button, and says it, in words, to everything that can't see
+  // its colour: its tooltip and label, the screen reader's live region, and
+  // the first line of its menu.
+  function setLink(how, text) {
     const link = $('link')
-    link.classList.toggle('up', up)
-    link.classList.toggle('down', !up)
+    for (const s of ['up', 'down', 'connecting']) link.classList.toggle(s, s === how)
+    link.title = text
+    link.setAttribute('aria-label', 'Power menu: ' + text)
     $('link-text').textContent = text
+    $('power-status').textContent = how === 'up' ? 'Connected' : how === 'down' ? 'Not connected: ' + text : text
+  }
+
+  // setUpPowerMenu makes the power button open its menu, and nothing more: it
+  // never acts on a click. The menu is the same wherever vibe is reached or
+  // not, as what it holds works without vibe.
+  function setUpPowerMenu() {
+    const button = $('link')
+    const menu = $('power-menu')
+    const close = () => { menu.hidden = true; button.setAttribute('aria-expanded', 'false') }
+    button.addEventListener('click', () => {
+      if (!menu.hidden) { close(); return }
+      menu.hidden = false
+      button.setAttribute('aria-expanded', 'true')
+      const first = menu.querySelector('a, button:not(:disabled)')
+      if (first) first.focus()
+    })
+    menu.addEventListener('click', (ev) => { if (ev.target.closest('a')) close() })
+    menu.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); close(); button.focus() } })
+    document.addEventListener('pointerdown', (ev) => { if (!menu.hidden && !ev.target.closest('.power-wrap')) close() })
   }
 
   // The banner says what went wrong, each problem kept under what it came
@@ -481,13 +506,13 @@
   function reached(ok) {
     if (ok) {
       state.failures = 0
-      setLink(true, 'connected')
+      setLink('up', 'connected')
       disconnected(false)
       return
     }
     state.failures += 1
     if (state.failures >= 2) {
-      setLink(false, offlineText())
+      setLink('down', offlineText())
       disconnected(true)
     }
   }
@@ -6332,7 +6357,8 @@
   $('offline-dismiss').addEventListener('click', () => { offline.dismissed = true; showGlass() })
   $('page-reload').addEventListener('click', () => location.reload())
 
-  setLink(false, 'connecting…')
+  setLink('connecting', 'connecting…')
+  setUpPowerMenu()
   loadState().then(() => select(state.tab))
 }
 
