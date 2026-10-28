@@ -463,7 +463,8 @@
     }, 700)
     $('power-close').onclick = () => dialog.close()
     // However it is closed (Escape too), so the label is true.
-    dialog.onclose = () => { clearInterval(power.timer); clearInterval(reloadTimer); if (reload) location.reload() }
+    // Only once it has ended (or gone on too long): a page reloaded earlier would find nothing there.
+    dialog.onclose = () => { clearInterval(power.timer); clearInterval(reloadTimer); if (reload && !close.disabled) location.reload() }
     dialog.showModal()
   }
 
@@ -713,7 +714,8 @@
     drawFavicon()
     if (down) {
       $('offline-text').textContent = offlineText()
-      for (const d of document.querySelectorAll('dialog[open]')) d.close('cancel')
+      // Not the progress of a stop or restart, which is what is watched while vibe is away.
+      for (const d of document.querySelectorAll('dialog[open]')) if (d.id !== 'power-progress') d.close('cancel')
     }
     showGlass()
   }

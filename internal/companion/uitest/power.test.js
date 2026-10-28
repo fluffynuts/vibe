@@ -559,3 +559,71 @@ test('a restart that changed nothing does not reload the page by itself', async 
     assert.equal(p.$('power-progress').open, true)
   } finally { p.close() }
 })
+
+test('the progress box stays open when vibe goes away, as it does in a restart, and the page is not reloaded under it', async () => {
+  const routes = powerRoutes({ log: { text: 'restarting\n', next: 11, running: true } })
+  const p = await openPage({ routes })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).restart)
+    await p.confirm(true)
+    await p.every('pollPower')
+    // The old vibe is gone: nothing answers until the new one is up.
+    const answers = { state: routes['/api/state'], log: routes['/api/power/log'], power: routes['/api/power'] }
+    for (const path of ['/api/state', '/api/log', '/api/power', '/api/power/log']) routes[path] = () => { throw new Error('refused') }
+    await p.poll()
+    await p.poll()
+    await p.every('pollPower')
+    await p.every('pollPower')
+    assert.equal(p.$('offline').hidden, false, 'the page does not say it is disconnected')
+    assert.equal(p.$('power-progress').open, true, 'the disconnection closed the progress box')
+    assert.equal(reloaded(p), 0, 'the page was reloaded with nothing there to load')
+    assert.equal(p.$('power-close').disabled, true)
+    // The new vibe is up.
+    routes['/api/state'] = answers.state
+    routes['/api/log'] = { entries: [] }
+    routes['/api/power'] = answers.power
+    routes.boot = 'b2'
+    routes.log = { text: 'up\n', next: 20, running: false }
+    routes['/api/power/log'] = answers.log
+    await p.every('pollPower')
+    assert.match(p.$('power-end').textContent, /Restarted: the new vibe is up/)
+    assert.equal(reloaded(p), 0)
+    await p.every('reloadSoon')
+    assert.equal(reloaded(p), 1)
+  } finally { p.close() }
+})
+
+test('the progress box of a stop stays open when vibe has gone, to say so', async () => {
+  const routes = powerRoutes({ log: { text: 'stopping\n', next: 9, running: true } })
+  const p = await openPage({ routes })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).stop)
+    await p.confirm(true)
+    for (const path of ['/api/state', '/api/log', '/api/power/log']) routes[path] = () => { throw new Error('refused') }
+    await p.poll()
+    await p.poll()
+    await p.every('pollPower')
+    await p.every('pollPower')
+    assert.equal(p.$('power-progress').open, true)
+    assert.match(p.$('power-end').textContent, /vibe has ended/)
+  } finally { p.close() }
+})
+
+test('other dialogs are still closed when vibe goes away', async () => {
+  const routes = powerRoutes()
+  const p = await openPage({ routes })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).stop)
+    assert.equal(p.$('confirm').open, true)
+    for (const path of ['/api/state', '/api/log', '/api/power']) routes[path] = () => { throw new Error('refused') }
+    await p.poll()
+    await p.poll()
+    assert.equal(p.$('confirm').open, false, 'a question nothing could now act on is left up')
+  } finally { p.close() }
+})
