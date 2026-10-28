@@ -74,7 +74,7 @@ func restart(vibeHome, name, target string, claims []running.Claim, force bool) 
 	}
 	interrupts, busy := interruptionsOf(vibeHome, name, target, claims)
 	if busy != nil {
-		return modeNone, busy
+		return modeNone, fmt.Errorf("%w, then restart", busy)
 	}
 	if len(interrupts) > 0 && !force {
 		if !canAsk() {
@@ -96,12 +96,13 @@ func restart(vibeHome, name, target string, claims []running.Claim, force bool) 
 // interruptionsOf is what ending the vibes among claims, for target's sandbox
 // name, would interrupt: another terminal's session, an agent part-way
 // through a turn, or one that couldn't be asked. A folder held for a rebuild
-// can't have its vibes ended: that is busy, saying what to do.
+// can't have its vibes ended: that is busy, saying what to do (not what to do
+// after, which is for what asked: a restart, or a stop).
 func interruptionsOf(vibeHome, name, target string, claims []running.Claim) (interrupts []string, busy error) {
 	for _, c := range claims {
 		switch {
 		case c.Work != "":
-			return nil, fmt.Errorf("vibe (PID %d) is %s for %s — wait for that, or cancel it where it was started, then restart", c.PID, c.Work, target)
+			return nil, fmt.Errorf("vibe (PID %d) is %s for %s — wait for that, or cancel it where it was started", c.PID, c.Work, target)
 		case !c.Headless:
 			interrupts = append(interrupts, fmt.Sprintf("vibe (PID %d) has a terminal session in %s: ending it ends that session, and whatever its agent is doing", c.PID, target))
 		default:

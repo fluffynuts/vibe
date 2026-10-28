@@ -96,6 +96,9 @@ func TestAFolderHeldForARebuildCanNeitherBeStoppedNorRestartedAndSaysWhatIsGoing
 		if got.OK || !strings.Contains(got.Why, "rebuilding sandbox 'box'") {
 			t.Errorf("%s: %+v", a, got)
 		}
+		if a != companion.PowerRestart && strings.Contains(got.Why, "restart") {
+			t.Errorf("%s is told to restart: %q", a, got.Why)
+		}
 	}
 }
 
@@ -210,16 +213,34 @@ func TestWhatTheActionSaysIsKeptInALogThePageReadsFromWhereItGotToWhileItRuns(t 
 	}
 }
 
+// vibeAsked counts how often the desk asked which vibe to run. It asks as it is about to run one and for no other
+// reason, so a desk that refused hasn't: said by the count, which needs no waiting to see that nothing started.
+func vibeAsked(t *testing.T) *int {
+	t.Helper()
+	asked := 0
+	inner := powerExe
+	t.Cleanup(func() { powerExe = inner })
+	powerExe = func() (string, error) { asked++; return inner() }
+	return &asked
+}
+
 func TestAnActionThatCantBeDoneIsNotRunAtAll(t *testing.T) {
 	d, _, _ := powerStandIns(t, []running.Claim{{PID: 7, Headless: true}}, false, true)
-	ran := filepath.Join(t.TempDir(), "ran")
-	fakeVibe(t, "touch "+ran)
+	fakeVibe(t, "true")
+	asked := vibeAsked(t)
 	if err := d.Do("box", companion.PowerStart); err == nil {
 		t.Error("a vibe is running, and one was started")
 	}
-	time.Sleep(100 * time.Millisecond)
-	if _, err := os.Stat(ran); err == nil {
-		t.Error("vibe was run")
+	if *asked != 0 {
+		t.Errorf("vibe was asked for %d times to be run", *asked)
+	}
+	// The same count sees one that is run, so that a count of none says something.
+	d.claims = func(string, string) []running.Claim { return nil }
+	if err := d.Do("box", companion.PowerStart); err != nil {
+		t.Fatal(err)
+	}
+	if *asked != 1 {
+		t.Errorf("a start that was done asked for vibe %d times, not once", *asked)
 	}
 }
 
@@ -261,8 +282,8 @@ func TestADeskNeverTakesANameForAPlaceAndRunsNothingForOne(t *testing.T) {
 	if err := os.WriteFile(planted+".power.log", []byte("a log that isn't vibe's\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ran := filepath.Join(t.TempDir(), "ran")
-	fakeVibe(t, "touch "+ran)
+	fakeVibe(t, "true")
+	asked := vibeAsked(t)
 	rel, _ := filepath.Rel(filepath.Join(lay.Home, "logs"), planted)
 	for _, name := range []string{"../evil", "../../evil", rel, "a/b", ".."} {
 		if got := d.Check(name); got.Error == "" || len(got.Actions) != 0 {
@@ -275,9 +296,8 @@ func TestADeskNeverTakesANameForAPlaceAndRunsNothingForOne(t *testing.T) {
 			t.Errorf("Log(%q) read %q", name, text)
 		}
 	}
-	time.Sleep(100 * time.Millisecond)
-	if _, err := os.Stat(ran); err == nil {
-		t.Error("vibe was run for a name that isn't a sandbox's")
+	if *asked != 0 {
+		t.Errorf("vibe was run %d times for a name that isn't a sandbox's", *asked)
 	}
 }
 
@@ -377,6 +397,8 @@ func TestTheActionDoesNotInheritBeingTheBackgroundCopyAHeadlessVibeIs(t *testing
 func TestOnlyARestartOfThePagesOwnSandboxIsToldNotToOpenTheBrowserAgain(t *testing.T) {
 	// The page that asked is open: a new tab for the new vibe would make the old one reload under its progress box
 	// and leave a tab saying it is already open. Another sandbox's page, or a start, is not open to be reloaded.
+	// A vibe that was itself started that way has it in its environment for good, and what it runs is not for its page.
+	t.Setenv(companionNoOpenEnv, "1")
 	d, _, _ := powerStandIns(t, []running.Claim{{PID: 7, Headless: true}}, false, true)
 	d.own = "box"
 	seen := filepath.Join(t.TempDir(), "seen")

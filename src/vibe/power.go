@@ -200,8 +200,9 @@ func (d *powerDesk) Do(name, action string) error {
 	fmt.Fprintf(logFile, "=== vibe %s, started %s ===\n", strings.Join(args, " "), time.Now().Format("2006-01-02 15:04:05"))
 	cmd := exec.Command(exe, args...)
 	// A headless vibe is the background copy of one (see detachedChild), which skips what --restart and
-	// --headless do: the action is the command as a terminal would run it.
-	cmd.Env = environWithout(os.Environ(), headlessChildEnv)
+	// --headless do: the action is the command as a terminal would run it. And a vibe that was itself started
+	// without opening a page has that in its environment for good: it isn't for the page this one starts.
+	cmd.Env = environWithout(os.Environ(), headlessChildEnv, companionNoOpenEnv)
 	if action == companion.PowerRestart && name == d.own {
 		// The page that asked is open already: the new vibe doesn't open another tab for it.
 		cmd.Env = append(cmd.Env, companionNoOpenEnv+"=1")
@@ -263,13 +264,17 @@ func (d *powerDesk) actionRunning(name string) bool {
 	return processAlive(pid)
 }
 
-// environWithout is env without the variable name.
-func environWithout(env []string, name string) []string {
+// environWithout is env without the variables names.
+func environWithout(env []string, names ...string) []string {
 	var kept []string
+next:
 	for _, kv := range env {
-		if !strings.HasPrefix(kv, name+"=") {
-			kept = append(kept, kv)
+		for _, name := range names {
+			if strings.HasPrefix(kv, name+"=") {
+				continue next
+			}
 		}
+		kept = append(kept, kv)
 	}
 	return kept
 }

@@ -121,7 +121,7 @@ func (s *Server) powerDo(w http.ResponseWriter, r *http.Request) {
 	action, known := check.Actions[body.Action]
 	switch {
 	case !known:
-		writeError(w, http.StatusConflict, "a sandbox can't be "+body.Action+"ed from here")
+		writeError(w, http.StatusConflict, "can't "+body.Action+" a sandbox from here")
 		return
 	case !action.OK:
 		writeError(w, http.StatusConflict, action.Why)

@@ -44,21 +44,36 @@ install_pwsh() {
     rm -rf "$work"
     return
   fi
-  # Unpacked beside where it goes, and moved into place whole, so a failure part-way
-  # doesn't leave half an install (or take away one that works).
+  # Unpacked beside where it goes, and the one that is there set aside, not deleted: it is
+  # put back if the new one can't be moved in, linked, or run, and deleted only once it can.
   stage="$PREFIX.staging"
-  rm -rf "$stage"
-  if mkdir -p "$stage" && tar -xzf "$tarball" -C "$stage" && chmod +x "$stage/pwsh" \
-    && rm -rf "$PREFIX" && mv "$stage" "$PREFIX" \
-    && mkdir -p "$(dirname "$LINK")" && ln -sf "$PREFIX/pwsh" "$LINK"; then
-    if said=$("$LINK" -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' 2>>"$LOG"); then
-      echo "installed PowerShell $said" >>"$LOG"
-    else
-      echo "WARN: PowerShell is installed in $PREFIX but won't run" >>"$LOG"
-    fi
+  old="$PREFIX.old"
+  rm -rf "$stage" "$old"
+  if ! { mkdir -p "$stage" && tar -xzf "$tarball" -C "$stage" && chmod +x "$stage/pwsh"; }; then
+    echo "WARN: PowerShell couldn't be unpacked: not installed" >>"$LOG"
+    rm -rf "$stage" "$work"
+    return
+  fi
+  if [ -e "$PREFIX" ] && ! mv "$PREFIX" "$old"; then
+    echo "WARN: the PowerShell in $PREFIX couldn't be set aside: left as it is" >>"$LOG"
+    rm -rf "$stage" "$work"
+    return
+  fi
+  if mv "$stage" "$PREFIX" && mkdir -p "$(dirname "$LINK")" && ln -sf "$PREFIX/pwsh" "$LINK" \
+    && said=$("$LINK" -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' 2>>"$LOG"); then
+    echo "installed PowerShell $said" >>"$LOG"
+    rm -rf "$old"
   else
-    echo "WARN: PowerShell couldn't be unpacked into $PREFIX" >>"$LOG"
-    rm -rf "$stage"
+    echo "WARN: PowerShell couldn't be moved into $PREFIX, linked, or run: it won't run" >>"$LOG"
+    rm -rf "$PREFIX" "$stage"
+    if [ -e "$old" ]; then
+      mv "$old" "$PREFIX" && ln -sf "$PREFIX/pwsh" "$LINK" \
+        && echo "the PowerShell that was there is back" >>"$LOG" \
+        || echo "WARN: the PowerShell that was there couldn't be put back; it is in $old" >>"$LOG"
+    else
+      # Nothing to go back to: no pwsh at all, which is what the agent is told to expect of a failed install.
+      [ "$(readlink "$LINK" 2>/dev/null)" = "$PREFIX/pwsh" ] && rm -f "$LINK"
+    fi
   fi
   rm -rf "$work"
 }

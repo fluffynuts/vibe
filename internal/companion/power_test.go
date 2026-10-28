@@ -248,3 +248,17 @@ func TestTheLogSaysWhichRunOfTheServerAnswersItSoAPageCanTellARestartFromAFailur
 		t.Errorf("state boot %q, log boot %q", st.Boot, lg.Boot)
 	}
 }
+
+func TestAnActionTheSandboxDoesNotOfferIsRefusedInPlainWords(t *testing.T) {
+	f := idlePower()
+	f.checks["bare"] = PowerCheck{Sandbox: "bare", Folder: "~/work/bare"}
+	for action, want := range map[string]string{"stop": "can't stop a sandbox from here", "restart": "can't restart a sandbox from here", "start": "can't start a sandbox from here"} {
+		rec := do(t, powerServer(f), post("/api/power", `{"sandbox":"bare","action":"`+action+`"}`))
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("%s: %d %s, want %q", action, rec.Code, rec.Body, want)
+		}
+	}
+	if len(f.started) != 0 {
+		t.Errorf("started %v", f.started)
+	}
+}
