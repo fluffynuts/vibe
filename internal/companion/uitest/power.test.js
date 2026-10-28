@@ -399,6 +399,12 @@ test("closing the progress of this page's own restart reloads the page, and the 
     await p.confirm(true)
     assert.equal(p.$('power-close').textContent, 'Close and reload')
     assert.equal(reloaded(p), 0, 'reloaded before the button was pressed')
+    // It is disabled while the restart runs: pressing it does nothing.
+    await p.click('power-close')
+    assert.equal(p.$('power-progress').open, true)
+    assert.equal(reloaded(p), 0)
+    routes.boot = 'b2'
+    await p.every('pollPower')
     await p.click('power-close')
     assert.equal(p.$('power-progress').open, false)
     assert.equal(reloaded(p), 1, 'the page was not reloaded')
@@ -441,5 +447,71 @@ test('the next progress box starts with Close again, whatever the last said', as
     await p.click(items(p).stop)
     await p.confirm(true)
     assert.equal(p.$('power-close').textContent, 'Close')
+  } finally { p.close() }
+})
+
+test('Close and reload is disabled while the restart is running, Escape included, and enabled when it ends, however it ends', async () => {
+  const routes = powerRoutes({ log: { text: 'restarting\n', next: 11, running: true } })
+  const p = await openPage({ routes })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).restart)
+    await p.confirm(true)
+    assert.equal(p.$('power-close').disabled, true, 'right after accepting')
+    const escape = new p.window.Event('cancel', { cancelable: true })
+    p.$('power-progress').dispatchEvent(escape)
+    assert.equal(escape.defaultPrevented, true, 'Escape was let close it')
+    await p.every('pollPower')
+    assert.equal(p.$('power-close').disabled, true, 'while it is running')
+    routes.boot = 'b2'
+    await p.every('pollPower')
+    assert.match(p.$('power-end').textContent, /Restarted/)
+    assert.equal(p.$('power-close').disabled, false, 'when it has restarted')
+    const after = new p.window.Event('cancel', { cancelable: true })
+    p.$('power-progress').dispatchEvent(after)
+    assert.equal(after.defaultPrevented, false, 'Escape is refused after it ended')
+  } finally { p.close() }
+})
+
+test('Close and reload is enabled when the restart ended and changed nothing', async () => {
+  const routes = powerRoutes({ log: { text: 'not restarting\n', next: 15, running: false } })
+  const p = await openPage({ routes })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).restart)
+    await p.confirm(true)
+    assert.equal(p.$('power-close').disabled, true)
+    await p.every('pollPower')
+    assert.match(p.$('power-end').textContent, /didn't take effect/)
+    assert.equal(p.$('power-close').disabled, false)
+  } finally { p.close() }
+})
+
+test('a restart that goes on and on can be closed and reloaded after a while, and says so', async () => {
+  const routes = powerRoutes({ log: { text: 'starting\n', next: 9, running: true } })
+  const p = await openPage({ routes })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).restart)
+    await p.confirm(true)
+    for (let i = 0; i < 169; i++) await p.every('pollPower')
+    assert.equal(p.$('power-close').disabled, true, 'too soon')
+    await p.every('pollPower')
+    assert.equal(p.$('power-close').disabled, false)
+    assert.match(p.$('power-end').textContent, /longer than expected.*carries on/s)
+  } finally { p.close() }
+})
+
+test('Close is never disabled for a stop, or for another sandbox', async () => {
+  const p = await openPage({ routes: powerRoutes() })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).stop)
+    await p.confirm(true)
+    assert.equal(p.$('power-close').disabled, false)
   } finally { p.close() }
 })

@@ -379,6 +379,8 @@
   }
 
   const power = { timer: null }
+  // How many polls of the log (every 700ms) a restart gets before its box can be closed regardless: about two minutes.
+  const POWER_SLOW_POLLS = 170
 
   // showPowerProgress shows what the action says as it runs, from the log
   // vibe keeps. It ends in one of three ways, told in words: vibe has gone
@@ -401,12 +403,27 @@
     let away = 0
     let ended = false
     let asking = false
-    const end = (text) => { ended = true; $('power-end').textContent = text; if (state.manage) loadManage() }
+    // This page's own vibe restarted is a new vibe, perhaps a new build: closing the box reloads the page to meet it.
+    // Reloading while it restarts would land on a page with nothing behind it, so that waits for the end.
+    const reload = own && action === 'restart'
+    const close = $('power-close')
+    close.textContent = reload ? 'Close and reload' : 'Close'
+    close.disabled = reload
+    // Escape too, which would close it, and reload.
+    dialog.oncancel = (ev) => { if (close.disabled) ev.preventDefault() }
+    const end = (text) => { ended = true; $('power-end').textContent = text; close.disabled = false; if (state.manage) loadManage() }
+    let polls = 0
     clearInterval(power.timer)
     power.timer = setInterval(async function pollPower() {
       // One question at a time: a slow answer is not asked for again, which would add its text twice.
       if (ended || asking) return
       asking = true
+      // A backstop, not an end: past it the box can be closed, and the restart carries on.
+      polls += 1
+      if (close.disabled && polls >= POWER_SLOW_POLLS) {
+        close.disabled = false
+        $('power-end').textContent = 'This is taking longer than expected. You can close and reload: it carries on.'
+      }
       try {
         const res = await api('/api/power/log?sandbox=' + encodeURIComponent(sandbox) + '&from=' + next)
         if (!res.ok) throw new Error('not ok')
@@ -435,9 +452,6 @@
         asking = false
       }
     }, 700)
-    // This page's own vibe restarted is a new vibe, perhaps a new build: closing the box reloads the page to meet it.
-    const reload = own && action === 'restart'
-    $('power-close').textContent = reload ? 'Close and reload' : 'Close'
     $('power-close').onclick = () => dialog.close()
     // However it is closed (Escape too), so the label is true.
     dialog.onclose = () => { clearInterval(power.timer); if (reload) location.reload() }
