@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -56,20 +57,21 @@ func cursorCommand(workspace, session, pidFile, model string) []string {
 // streamTurn runs a turn in the sandbox. A variable for tests.
 var streamTurn = sbxrun.ExecStream
 
-// unavailableModels are the ways Cursor has said on stderr that the model it
-// is set to isn't one the plan can run: the only place it says so. The
-// second is how it said so from 2026-10-28, when it began naming the models
-// a plan includes (docs/samples/cursor/error-model-unavailable-free-plan.stderr.txt).
-var unavailableModels = []string{"Named models unavailable", "Model unavailable on"}
-
+// isUnavailableModel says err is Cursor's refusal of the model it is set to,
+// which isn't one the plan can run: said on stderr alone. It is recognised by
+// what stays when the wording changes (it has, on 2026-10-28; see
+// docs/samples/cursor/): an ActionRequiredError saying a model is unavailable
+// and pointing at Auto, whatever the plan is called. Run again on Auto on a
+// false positive, a turn could be repeated, so it takes all three.
 func isUnavailableModel(err error) bool {
-	for _, said := range unavailableModels {
-		if strings.Contains(err.Error(), said) {
-			return true
-		}
-	}
-	return false
+	said := strings.ToLower(err.Error())
+	return strings.Contains(said, "actionrequirederror") &&
+		strings.Contains(said, "unavailable") &&
+		autoWord.MatchString(said)
 }
+
+// autoWord is Auto as a word, not the start of "automatically".
+var autoWord = regexp.MustCompile(`\bauto\b`)
 
 // What the page says when a turn is run again on Auto: that the choice is
 // set to Auto too, since the plan can't run another and the selector would

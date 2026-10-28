@@ -242,19 +242,31 @@ func TestAModelAFreePlanCantRunIsSaidSoAndTheTurnRunAgainOnAuto(t *testing.T) {
 	}
 }
 
-func TestEitherWordingOfTheRefusalIsRunAgainOnAuto(t *testing.T) {
-	// Cursor reworded it (seen 2026-10-28): the plan now says which models it includes.
-	for _, failure := range []string{
-		namedModelFailure,
-		"exit status 1: ActionRequiredError: Model unavailable on Free Free includes Grok 4.7, Grok 4.6, and Auto with fixed settings. Switch to an included model to continue.",
+func TestTheRefusalOfAModelIsRecognisedWhateverItsWording(t *testing.T) {
+	for name, tc := range map[string]struct {
+		failure string
+		refused bool
+	}{
+		"the first wording":           {namedModelFailure, true},
+		"the wording from 2026-10-28": {"exit status 1: ActionRequiredError: Model unavailable on Free Free includes Grok 4.7, Grok 4.6, and Auto with fixed settings. Switch to an included model to continue.", true},
+		"a reworded one":              {"exit status 1: ActionRequiredError: this model is UNAVAILABLE on your plan; use Auto instead", true},
+		"a service outage":            {"exit status 1: service unavailable, retrying automatically", false},
+		"another action":              {"exit status 1: ActionRequiredError: please log in; the model is not the problem", false},
+		"an auto-only error":          {"exit status 1: ActionRequiredError: auto-update required", false},
 	} {
-		commands := turnsOf(t, errors.New(failure), nil)
-		if _, err := cursorTurnOn(t, "gpt-5.5-high"); err != nil {
-			t.Errorf("%q: the turn failed: %v", failure, err)
+		if got := isUnavailableModel(errors.New(tc.failure)); got != tc.refused {
+			t.Errorf("%s: recognised as a refusal: %v, want %v", name, got, tc.refused)
 		}
-		if len(*commands) != 2 {
-			t.Errorf("%q: %d runs, want 2", failure, len(*commands))
-		}
+	}
+}
+
+func TestAReworkedRefusalIsRunAgainOnAuto(t *testing.T) {
+	commands := turnsOf(t, errors.New("exit status 1: ActionRequiredError: Model unavailable on Free Free includes Grok 4.7, Grok 4.6, and Auto with fixed settings. Switch to an included model to continue."), nil)
+	if _, err := cursorTurnOn(t, "gpt-5.5-high"); err != nil {
+		t.Errorf("the turn failed: %v", err)
+	}
+	if len(*commands) != 2 {
+		t.Errorf("%d runs, want 2", len(*commands))
 	}
 }
 
