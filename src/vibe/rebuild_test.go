@@ -661,3 +661,22 @@ func TestAProfileWrittenByHandOrCopiedIsNotTakenForBlank(t *testing.T) {
 		t.Errorf("a copy of a hand-written profile: blank = %v, %v", profilegen.IsBlank(copied), err)
 	}
 }
+
+func TestReComposingSaysWhatTheProfileWasComposedFromAndNotEmptyBrackets(t *testing.T) {
+	root, _ := goldenBundle(t)
+	lay := layout.New(t.TempDir(), root)
+	say := func(features []string) string {
+		var err error
+		said := strings.Join(notesOf(func() { err = replaceProfile(lay, "p", "p", features) }), "\n")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return said
+	}
+	if said := say(nil); !strings.Contains(said, "re-composed profile 'p' (no features)") || strings.Contains(said, "()") {
+		t.Errorf("with no features it said %q", said)
+	}
+	if said := say([]string{"mysql", "redis"}); !strings.Contains(said, "re-composed profile 'p' (mysql, redis)") {
+		t.Errorf("with two it said %q", said)
+	}
+}
