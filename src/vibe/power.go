@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"vibe/internal/companion"
+	"vibe/internal/fscopy"
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
 	"vibe/internal/running"
@@ -153,7 +154,7 @@ func (d *powerDesk) Do(name, action string) error {
 	// It carries on without this vibe, which it may be ending. Waited for here
 	// while this vibe lives, so it isn't left a zombie that still looks to be running.
 	go cmd.Wait()
-	if err := os.WriteFile(powerPidPath(d.lay.Home, name), []byte(strconv.Itoa(pid)), 0o644); err != nil {
+	if err := fscopy.WriteWhole(powerPidPath(d.lay.Home, name), []byte(strconv.Itoa(pid))); err != nil {
 		note("couldn't note the PID of the action (%d): the page can't tell when it ends: %v", pid, err)
 	}
 	return nil
@@ -181,7 +182,7 @@ func (d *powerDesk) Log(name string, from int64) (string, int64, bool) {
 }
 
 func (d *powerDesk) actionRunning(name string) bool {
-	data, err := os.ReadFile(powerPidPath(d.lay.Home, name))
+	data, err := fscopy.ReadFile(powerPidPath(d.lay.Home, name))
 	if err != nil {
 		return false
 	}
