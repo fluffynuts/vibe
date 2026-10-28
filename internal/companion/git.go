@@ -18,6 +18,11 @@ type GitInfo struct {
 	Ahead      int    `json:"ahead"`
 	Behind     int    `json:"behind"`
 	Stashed    int    `json:"stashed"`
+	// Detached: HEAD is a commit, not a branch. NoUpstream: the branch follows none. Operation: what git
+	// is part-way through ("merge", "rebase 2/5", …), "" when nothing is.
+	Detached   bool   `json:"detached,omitempty"`
+	NoUpstream bool   `json:"noUpstream,omitempty"`
+	Operation  string `json:"operation,omitempty"`
 }
 
 // readGit is the workspace's git status, or nil when dir isn't in a

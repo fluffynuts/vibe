@@ -260,11 +260,215 @@
 
   // --- the link to vibe -------------------------------------------------
 
-  function setLink(up, text) {
+  // setLink shows whether vibe is reached ('up', 'down' or 'connecting') on
+  // the power button, and says it, in words, to everything that can't see
+  // its colour: its tooltip and label, the screen reader's live region, and
+  // the first line of its menu.
+  function setLink(how, text) {
     const link = $('link')
-    link.classList.toggle('up', up)
-    link.classList.toggle('down', !up)
+    for (const s of ['up', 'down', 'connecting']) link.classList.toggle(s, s === how)
+    link.title = text
+    link.setAttribute('aria-label', 'Power menu: ' + text)
     $('link-text').textContent = text
+    $('power-status').textContent = 'Status: ' + (how === 'up' ? 'connected' : how === 'down' ? 'not connected — ' + text : text)
+  }
+
+  // setUpPowerMenu makes the power button open its menu, and nothing more: it
+  // never acts on a click. The menu is the same wherever vibe is reached or
+  // not, as what it holds works without vibe.
+  function setUpPowerMenu() {
+    const button = $('link')
+    const menu = $('power-menu')
+    const close = () => { menu.hidden = true; button.setAttribute('aria-expanded', 'false') }
+    button.addEventListener('click', () => {
+      if (!menu.hidden) { close(); return }
+      menu.hidden = false
+      button.setAttribute('aria-expanded', 'true')
+      const first = menu.querySelector('a, button:not(:disabled)')
+      if (first) first.focus()
+      showPowerActions()
+    })
+    for (const action of ['stop', 'restart']) {
+      $('power-' + action).addEventListener('click', () => { close(); askPower(action, state.sandbox, powerChecked) })
+    }
+    menu.addEventListener('click', (ev) => { if (ev.target.closest('a')) close() })
+    menu.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); close(); button.focus() } })
+    document.addEventListener('pointerdown', (ev) => { if (!menu.hidden && !ev.target.closest('.power-wrap')) close() })
+  }
+
+  // What the power menu can do to this sandbox, as vibe last said.
+  let powerChecked = null
+
+  // showPowerActions fills the menu's Stop and Restart from what vibe says
+  // can be done: each is disabled, with the reason beside it, when it can't,
+  // as it can't when vibe isn't there.
+  async function showPowerActions() {
+    $('power-actions').hidden = !state.power || !state.sandbox
+    if (!state.power || !state.sandbox) return
+    const set = (action, ok, why) => {
+      const item = $('power-' + action)
+      item.disabled = !ok
+      item.querySelector('.power-why').textContent = ok ? '' : ' (' + why + ')'
+    }
+    if (offline.down) {
+      set('stop', false, offlineText())
+      set('restart', false, offlineText())
+      return
+    }
+    try {
+      const res = await api('/api/power')
+      if (!res.ok || res.body.error) throw new Error((res.body && res.body.error) || 'vibe could not say')
+      powerChecked = res.body
+      for (const action of ['stop', 'restart']) {
+        const can = (res.body.actions || {})[action] || { ok: false, why: 'vibe did not say' }
+        set(action, can.ok, can.why || '')
+      }
+    } catch (e) {
+      powerChecked = null
+      set('stop', false, 'vibe could not be asked: ' + e.message)
+      set('restart', false, 'vibe could not be asked: ' + e.message)
+    }
+  }
+
+  // askPower asks before stopping or restarting a sandbox's vibe, naming
+  // the sandbox and its folder, and what it would interrupt, then asks vibe
+  // to and shows what it says as it goes. check is what vibe said of it.
+  function askPower(action, sandbox, check) {
+    const can = ((check || {}).actions || {})[action] || {}
+    const folder = (check || {}).folder || ''
+    const words = {
+      stop: { title: 'Stop sandbox ', ing: 'Stopping', label: 'Stop',
+        text: 'This ends vibe for ' + folder + ' and stops the sandbox.' + (sandbox === state.sandbox ? ' This page disconnects; vibe in that folder starts it again.' : '') },
+      restart: { title: 'Restart vibe for sandbox ', ing: 'Restarting', label: 'Restart',
+        text: 'This ends vibe for ' + folder + ' and starts it again, headless, on the same port.' + (sandbox === state.sandbox ? ' This page refreshes by itself when it is back.' : '') },
+      start: { title: 'Start vibe for sandbox ', ing: 'Starting vibe for', label: 'Start',
+        text: 'This starts a headless vibe for ' + folder + ', which can be talked to from its page. A terminal session is not something to start from here: run vibe in the folder for one.' },
+    }[action]
+    confirmThen({
+      title: words.title + "'" + sandbox + "'?",
+      text: words.text,
+      list: can.warns || [],
+      commandNote: '',
+      danger: action !== 'start',
+      runLabel: words.label,
+      started: words.ing + " '" + sandbox + "'",
+      run: async () => {
+        // What the user was shown is sent too: if more would be interrupted now, vibe asks again.
+        const res = await post('/api/power', { sandbox, action, confirmed: true, warns: can.warns || [] })
+        if (res.ok) showPowerProgress(action, sandbox)
+        return res
+      },
+    })
+  }
+
+  // askPowerForRow asks vibe what the action would interrupt for the sandbox
+  // of a row of the Profiles tab, then asks the user.
+  async function askPowerForRow(action, row) {
+    let check = { folder: row.folder }
+    try {
+      const res = await api('/api/power?sandbox=' + encodeURIComponent(row.name))
+      reached(true)
+      if (!res.ok) { toast((res.body && res.body.error) || 'vibe could not say what that would interrupt.', true); return }
+      check = res.body
+    } catch (e) {
+      reached(false)
+      toast('Could not reach vibe.', true)
+      return
+    }
+    askPower(action, row.name, check)
+  }
+
+  const power = { timer: null }
+  // How many polls of the log (every 700ms) a restart gets before its box can be closed regardless: about two minutes.
+  const POWER_SLOW_POLLS = 170
+  // How long "Restarted" is shown before the page reloads by itself, to be read.
+  const POWER_RELOAD_AFTER_MS = 2000
+
+  // showPowerProgress shows what the action says as it runs, from the log
+  // vibe keeps. It ends in one of three ways, told in words: vibe has gone
+  // (a stop), vibe is back under a new boot (a restart), or the action ended
+  // and vibe is as it was (it didn't take effect).
+  function showPowerProgress(action, sandbox) {
+    const dialog = $('power-progress')
+    const ing = { stop: 'Stopping ', restart: 'Restarting ', start: 'Starting vibe for ' }[action]
+    $('power-progress-title').textContent = ing + "'" + sandbox + "'"
+    $('power-log').textContent = ''
+    // Only this page's own vibe is ended by its own sandbox's stop or restart,
+    // so only then does the page gone, or come back under a new boot, say how it ended.
+    const own = sandbox === state.sandbox && action !== 'start'
+    // Which run of vibe is asked, from the log's own answer: a restart is the
+    // log answered under another boot, which the page's regular poll of the
+    // state may not have seen yet.
+    const boot = state.boot
+    // This page's own vibe restarted is a new vibe, perhaps a new build: the page refreshes itself to meet it, once
+    // it is up. Nothing is there to be pressed until then (a reload before would find nothing to load), so the box
+    // says so, and has no way to close it: Escape included.
+    const refreshes = own && action === 'restart'
+    const closeButton = $('power-close')
+    const reloadButton = $('power-reload')
+    let closable = !refreshes
+    const buttons = (close, reload) => { closeButton.hidden = !close; reloadButton.hidden = !reload; closable = close }
+    buttons(!refreshes, false)
+    $('power-end').textContent = refreshes ? 'This page will refresh by itself when vibe has restarted.' : ''
+    dialog.oncancel = (ev) => { if (!closable) ev.preventDefault() }
+    let next = 0
+    let away = 0
+    let ended = false
+    let asking = false
+    let polls = 0
+    let reloadTimer = null
+    const end = (text) => { ended = true; $('power-end').textContent = text; if (state.manage) loadManage() }
+    clearInterval(power.timer)
+    power.timer = setInterval(async function pollPower() {
+      // One question at a time: a slow answer is not asked for again, which would add its text twice.
+      if (ended || asking) return
+      asking = true
+      // A backstop, not an end: past it the person is told what to do if the page hasn't refreshed, and the restart carries on.
+      polls += 1
+      if (refreshes && !closable && polls >= POWER_SLOW_POLLS) {
+        buttons(true, true)
+        $('power-end').textContent = "This is taking longer than expected. If this page doesn't refresh by itself, reload it. The restart carries on."
+      }
+      try {
+        const res = await api('/api/power/log?sandbox=' + encodeURIComponent(sandbox) + '&from=' + next)
+        if (!res.ok) throw new Error('not ok')
+        reached(true)
+        away = 0
+        if (res.body.text) {
+          $('power-log').append(res.body.text)
+          $('power-log').scrollTop = $('power-log').scrollHeight
+        }
+        next = res.body.next
+        if (own && boot && res.body.boot && res.body.boot !== boot) {
+          // Serving under a new boot isn't up: what started it (a restart) is done when the vibe has said its page is up
+          // and its sandbox started, which is when the helper ends.
+          if (action === 'restart' && !res.body.running) {
+            end('Restarted: the new vibe is up and serving. Refreshing this page…')
+            buttons(false, false)
+            // Not at once, so that it can be read.
+            reloadTimer = setInterval(function reloadSoon() { clearInterval(reloadTimer); location.reload() }, POWER_RELOAD_AFTER_MS)
+          }
+        } else if (!res.body.running && next > 0) {
+          // Answered, by the same vibe, after what ran has finished: a stop that worked leaves nothing to answer.
+          end(own && action === 'stop'
+            ? "The stop didn't take effect: vibe is still running. What it said is above."
+            : own
+              ? "That ended and didn't take effect: vibe is as it was. What it said is above."
+              : 'That has ended. What it said is above; the Profiles tab shows how the sandbox is now.')
+          buttons(true, false)
+        }
+      } catch (e) {
+        reached(false)
+        away += 1
+        if (own && action === 'stop' && away >= 2) { end('vibe has ended. What it said is above; the sandbox is stopped when it says so.'); buttons(true, false) }
+      } finally {
+        asking = false
+      }
+    }, 700)
+    closeButton.onclick = () => dialog.close()
+    reloadButton.onclick = () => location.reload()
+    dialog.onclose = () => { clearInterval(power.timer); clearInterval(reloadTimer) }
+    dialog.showModal()
   }
 
   // The banner says what went wrong, each problem kept under what it came
@@ -481,13 +685,13 @@
   function reached(ok) {
     if (ok) {
       state.failures = 0
-      setLink(true, 'connected')
+      setLink('up', 'connected')
       disconnected(false)
       return
     }
     state.failures += 1
     if (state.failures >= 2) {
-      setLink(false, offlineText())
+      setLink('down', offlineText())
       disconnected(true)
     }
   }
@@ -513,7 +717,8 @@
     drawFavicon()
     if (down) {
       $('offline-text').textContent = offlineText()
-      for (const d of document.querySelectorAll('dialog[open]')) d.close('cancel')
+      // Not the progress of a stop or restart, which is what is watched while vibe is away.
+      for (const d of document.querySelectorAll('dialog[open]')) if (d.id !== 'power-progress') d.close('cancel')
     }
     showGlass()
   }
@@ -594,20 +799,26 @@
     box.replaceChildren()
     $('git-part').hidden = !git
     if (!git) return
-    const part = (cls, text) => {
+    const part = (cls, text, title) => {
       const span = document.createElement('span')
       span.className = cls
       span.textContent = text
+      span.title = title
       box.append(span)
     }
-    part('branch', git.branch)
-    if (git.staged) part('staged', '+' + git.staged)
-    if (git.modified) part('modified', '~' + git.modified)
-    if (git.untracked) part('untracked', '?' + git.untracked)
-    if (git.conflicted) part('conflicted', '✘' + git.conflicted)
-    if (git.ahead) part('ahead', '↑' + git.ahead)
-    if (git.behind) part('behind', '↓' + git.behind)
-    if (git.stashed) part('stashed', '#' + git.stashed)
+    const files = (n, what) => n + ' ' + what + ' file' + (n === 1 ? '' : 's')
+    // The glyphs and the order are the command-line prompt's (powerline's), so that what is read here is read as there.
+    if (git.detached) part('branch detached', git.branch, 'detached HEAD at ' + git.branch.replace(/^@/, '') + ': not on a branch')
+    else part('branch', git.branch, 'branch ' + git.branch)
+    if (git.operation) part('operation', git.operation, git.operation + ' under way')
+    if (git.staged) part('staged', '+' + git.staged, files(git.staged, 'staged'))
+    if (git.modified) part('modified', '!' + git.modified, files(git.modified, 'modified or deleted, not staged'))
+    if (git.untracked) part('untracked', '?' + git.untracked, files(git.untracked, 'untracked'))
+    if (git.conflicted) part('conflicted', '✘' + git.conflicted, files(git.conflicted, 'conflicted'))
+    if (git.ahead) part('ahead', '⇡' + git.ahead, git.ahead + ' commit' + (git.ahead === 1 ? '' : 's') + ' not pushed')
+    if (git.behind) part('behind', '⇣' + git.behind, git.behind + ' commit' + (git.behind === 1 ? '' : 's') + ' fetched but not merged')
+    if (git.stashed) part('stashed', '#' + git.stashed, git.stashed + ' stash' + (git.stashed === 1 ? '' : 'es'))
+    if (git.noUpstream) part('noupstream', 'no upstream', 'this branch follows no branch, so there is nothing for it to be ahead of or behind')
   }
 
   async function loadState() {
@@ -635,6 +846,9 @@
       $('convo-choice').hidden = !state.choice
       if (state.choice) initChoice()
       state.admin = !!res.body.admin
+      state.power = !!res.body.power
+      state.manage = !!res.body.manage
+      state.boot = res.body.boot || ''
       state.usage = !!res.body.usage
       $('usage').hidden = !state.usage
       $('tab-admin').hidden = !state.admin
@@ -3739,6 +3953,8 @@
       title: 'Rebuild sandbox ' + name + '?',
       text: "It's destroyed and made again from its profile, which takes a few minutes, and left running or stopped as it was. The agent's memories are kept; anything installed by hand, or kept outside its folder, goes.",
       command: 'vibe -r <its folder>' }) },
+    startvibe: { label: 'Start vibe…', power: 'start' },
+    restartvibe: { label: 'Restart vibe…', power: 'restart' },
     update: { label: 'Update…', ask: (name, isProfile) => ({
       title: 'Bring ' + (isProfile ? 'profile ' + name + ' and its sandboxes' : 'sandbox ' + name) + ' up to date?',
       text: "A profile the library has moved on from is composed afresh (backed up first, and not if it was edited by hand), and each sandbox built from what has since changed is rebuilt, left running or stopped as it was. The agent's memories are kept.",
@@ -3761,6 +3977,7 @@
   async function manageAction(kind, row, isProfile) {
     const run = () => post('/api/manage/do', { kind, id: row.id })
     const a = MANAGE_ACTIONS[kind]
+    if (a.power) { askPowerForRow(a.power, row); return }
     if (!a.ask) {
       try {
         const res = await run()
@@ -6332,7 +6549,8 @@
   $('offline-dismiss').addEventListener('click', () => { offline.dismissed = true; showGlass() })
   $('page-reload').addEventListener('click', () => location.reload())
 
-  setLink(false, 'connecting…')
+  setLink('connecting', 'connecting…')
+  setUpPowerMenu()
   loadState().then(() => select(state.tab))
 }
 

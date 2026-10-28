@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -32,6 +33,13 @@ const (
 	companionOff   = "off"
 )
 
+// companionNoOpenEnv, set to 1, has the page served but not opened in a
+// browser, whatever the setting says: for the vibe a restart from the page
+// starts, whose page is already open (and would be reloaded under what the
+// user is reading, with another tab saying it is already open). It is set by
+// vibe itself, not by a person, so it isn't a flag.
+const companionNoOpenEnv = "VIBE_COMPANION_NO_OPEN"
+
 // companionBasePort is where the search for a companion port starts: well
 // clear of the service ports (5390, 5391 and the ones a profile counts up
 // through from them). Once a sandbox has one, it keeps it, so the page's
@@ -51,6 +59,9 @@ func companionMode(noCompanion bool, setting string) (string, error) {
 	}
 	switch strings.ToLower(strings.TrimSpace(setting)) {
 	case "", companionOpen:
+		if os.Getenv(companionNoOpenEnv) == "1" {
+			return companionServe, nil
+		}
 		return companionOpen, nil
 	case companionServe:
 		return companionServe, nil
@@ -357,6 +368,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		PackageSyncAuto:        packageSyncAuto(lay, inst.Profile),
 		Usage:                  usageFor(vibeHome, name),
 		Manage:                 &companionManager{lay: lay, own: name},
+		Power:                  &powerDesk{lay: lay, own: name},
 		ThemeColor:             themeColorFor(lay, name, inst, agent),
 		KeepAwake:              keepAwakeFor(name),
 		Log:                    func(line string) { note("%s", line) },

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"vibe/internal/filekind"
 	"vibe/internal/pathresolve"
@@ -526,6 +527,14 @@ type FolderStatus struct {
 	Ahead      int
 	Behind     int
 	Stashed    int
+	// Detached says HEAD is a commit, not a branch (Branch then names it).
+	Detached bool
+	// NoUpstream says the branch follows no other, so that Ahead and Behind
+	// are none for want of one to be ahead of, not for being level with it.
+	NoUpstream bool
+	// Operation is what git is part-way through, as git status says it: "merge",
+	// "rebase 2/5", "cherry-pick", "revert" or "bisect"; "" when nothing is.
+	Operation string
 }
 
 // statusOf is the git status of the folder dir; an error when it's in no
@@ -550,6 +559,7 @@ func statusOf(ctx context.Context, dir string) (*FolderStatus, error) {
 	}
 	s := &FolderStatus{Branch: r.branch(), Staged: sc.staged, Modified: sc.changed, Untracked: len(sc.untracked), Conflicted: sc.conflicted}
 	if s.Branch == "" {
+		s.Detached = true
 		s.Branch = "detached"
 		if head != nil {
 			s.Branch = "@" + head.Hash.String()[:7]
@@ -558,8 +568,62 @@ func statusOf(ctx context.Context, dir string) (*FolderStatus, error) {
 	if up, _ := r.upstream(r.branch()); up != nil {
 		s.Ahead, s.Behind = aheadBehind(head, up)
 	}
+	s.NoUpstream = !s.Detached && !r.tracks(r.branch())
+	s.Operation = r.operation()
 	s.Stashed = r.stashes()
 	return s, nil
+}
+
+// tracks says branch is set to follow another: whether or not what it follows
+// can be found (a remote's branch deleted, say, which is not the same as
+// following none).
+func (r *repository) tracks(branch string) bool {
+	cfg, err := r.git.Config()
+	if err != nil {
+		return true
+	}
+	b, ok := cfg.Branches[branch]
+	return ok && b.Merge != ""
+}
+
+// operation is what git is part-way through in the repository, told as git
+// status tells it by what it leaves in the git directory: "" when nothing is.
+func (r *repository) operation() string {
+	exists := func(name string) bool {
+		_, err := r.gitDir.Stat(name)
+		return err == nil
+	}
+	number := func(name string) (int, bool) {
+		data, err := readIn(r.gitDir, name, 32)
+		if err != nil {
+			return 0, false
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(string(data)))
+		return n, err == nil
+	}
+	rebase := func(done, total string) string {
+		d, okDone := number(done)
+		t, okTotal := number(total)
+		if !okDone || !okTotal {
+			return "rebase"
+		}
+		return fmt.Sprintf("rebase %d/%d", d, t)
+	}
+	switch {
+	case exists("rebase-merge"):
+		return rebase("rebase-merge/msgnum", "rebase-merge/end")
+	case exists("rebase-apply"):
+		return rebase("rebase-apply/next", "rebase-apply/last")
+	case exists("MERGE_HEAD"):
+		return "merge"
+	case exists("CHERRY_PICK_HEAD"):
+		return "cherry-pick"
+	case exists("REVERT_HEAD"):
+		return "revert"
+	case exists("BISECT_LOG"):
+		return "bisect"
+	}
+	return ""
 }
 
 // stashes is how many stashes there are: the lines of the stash's log.

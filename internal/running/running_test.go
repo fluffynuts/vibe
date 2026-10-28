@@ -329,3 +329,25 @@ func TestAHeadlessSessionSaysSo(t *testing.T) {
 		t.Errorf("after: Claims = %+v", got)
 	}
 }
+
+func TestAllClaimsIncludesThisProcessWhereClaimsLeavesItOut(t *testing.T) {
+	home, target := t.TempDir(), "/work/box"
+	s, err := Register(home, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Release()
+	if err := s.MarkHeadless(target); err != nil {
+		t.Fatal(err)
+	}
+	if got := Claims(home, target); len(got) != 0 {
+		t.Errorf("Claims = %v: it is for other processes'", got)
+	}
+	got := AllClaims(home, target)
+	if len(got) != 1 || got[0].PID != os.Getpid() || !got[0].Headless {
+		t.Errorf("AllClaims = %+v, want this process's headless claim", got)
+	}
+	if other := AllClaims(home, "/work/other"); len(other) != 0 {
+		t.Errorf("AllClaims for another folder = %v", other)
+	}
+}

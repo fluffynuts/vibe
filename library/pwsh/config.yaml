@@ -1,0 +1,15 @@
+# Kit fragment for the pwsh feature, merged into the config.yaml of any
+# profile composed with it.
+permissions:
+  network:
+    allow:
+      # the release's download, which redirects to the hosts that serve the files
+      - github.com
+      - objects.githubusercontent.com
+      - release-assets.githubusercontent.com
+environment:
+  variables:
+    # No reports home, and no looking for a newer release at every start: the
+    # sandbox's network is limited, and a version is what this feature installs.
+    POWERSHELL_TELEMETRY_OPTOUT: "1"
+    POWERSHELL_UPDATECHECK: "Off"

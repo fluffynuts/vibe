@@ -5,7 +5,7 @@
 'use strict'
 const fs = require('node:fs')
 const path = require('node:path')
-const { JSDOM } = require('jsdom')
+const { JSDOM, VirtualConsole } = require('jsdom')
 
 const UI = path.join(__dirname, '..', 'ui')
 const SCRIPTS = ['markdown.js', 'manage.js', 'review.js', 'app.js']
@@ -20,7 +20,21 @@ const TOKEN = 'a'.repeat(64)
 // of view when the test says (see seen). before(window) runs ahead of the page's scripts.
 async function openPage({ routes = {}, storage = {}, settled = true, seeing = false, before = null } = {}) {
   const html = fs.readFileSync(path.join(UI, 'index.html'), 'utf8').replace(/<script src="\/[^"]+"><\/script>/g, '')
-  const dom = new JSDOM(html, { url: 'http://localhost:1/#' + TOKEN, runScripts: 'outside-only', pretendToBeVisual: true })
+  // What jsdom can't do (leave the page, say) is kept for a test to look at, and not printed. Anything else it
+  // reports (a page script that threw, say) is kept too, and printed: it is never quiet.
+  const unimplemented = []
+  const errors = []
+  const virtualConsole = new VirtualConsole()
+  virtualConsole.sendTo(console, { omitJSDOMErrors: true })
+  virtualConsole.on('jsdomError', (e) => {
+    if (/Not implemented/.test(e.message)) {
+      unimplemented.push(e.message)
+      return
+    }
+    errors.push(e.message)
+    console.error(e)
+  })
+  const dom = new JSDOM(html, { url: 'http://localhost:1/#' + TOKEN, runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole })
   const w = dom.window
   const calls = []
   let inFlight = 0
@@ -96,6 +110,8 @@ async function openPage({ routes = {}, storage = {}, settled = true, seeing = fa
   if (settled) await settle()
   return {
     window: w,
+    unimplemented,
+    errors,
     $,
     calls,
     settle,

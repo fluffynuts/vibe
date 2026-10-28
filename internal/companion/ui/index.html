@@ -16,7 +16,22 @@
       <span id="folder-part" hidden><span class="sep">│</span><span id="folder" class="folder"></span></span>
       <span id="git-part" hidden><span class="sep">│</span><span id="git" class="git"></span></span>
     </div>
-    <div id="link" class="link" role="status"><span class="dot"></span><span id="link-text">connecting…</span></div>
+    <div class="power-wrap">
+      <button type="button" id="link" class="link connecting" aria-haspopup="menu" aria-expanded="false" aria-controls="power-menu" title="connecting…" aria-label="Power menu: connecting…"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v6M4.6 3.9a5.5 5.5 0 1 0 6.8 0"/></svg></button>
+      <span id="link-text" class="sr-only" role="status">connecting…</span>
+      <div id="power-menu" class="power-menu" role="menu" aria-label="Power menu" hidden>
+        <div id="power-status" class="power-status" role="presentation">Status: connecting…</div>
+        <hr>
+        <div id="power-actions" hidden>
+          <button type="button" role="menuitem" id="power-stop" class="power-item"><svg class="power-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3.5h9v9h-9z"/></svg><span class="power-text"><span>Stop this session</span><span class="power-why"></span></span></button>
+          <button type="button" role="menuitem" id="power-restart" class="power-item"><svg class="power-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z"/></svg><span class="power-text"><span>Restart</span><span class="power-why"></span></span></button>
+          <hr>
+        </div>
+        <a role="menuitem" href="https://github.com/fluffynuts/vibe/issues/new?template=bug_report.yml" target="_blank" rel="noopener noreferrer"><svg class="power-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>Report a bug</a>
+        <a role="menuitem" href="https://github.com/fluffynuts/vibe/issues/new?template=feature_request.yml" target="_blank" rel="noopener noreferrer"><svg class="power-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>Request a feature</a>
+        <a role="menuitem" href="https://github.com/fluffynuts/vibe/issues/new?template=other.yml" target="_blank" rel="noopener noreferrer"><svg class="power-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>Something else</a>
+      </div>
+    </div>
   </header>
 
   <div class="tabbar" id="tabbar">
@@ -449,6 +464,13 @@
         <button value="run" id="confirm-run" autofocus>Run</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="power-progress" aria-labelledby="power-progress-title">
+    <h2 id="power-progress-title"></h2>
+    <pre id="power-log" class="power-log"></pre>
+    <p id="power-end" role="status"></p>
+    <div class="actions"><button type="button" id="power-reload" class="ghost" hidden>Reload page</button><button type="button" id="power-close">Close</button></div>
   </dialog>
 
   <dialog id="file-view" class="file-view" aria-label="File viewer">

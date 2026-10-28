@@ -1,0 +1,82 @@
+#!/bin/sh
+# vibe: description: Install PowerShell 7 (pwsh) from its GitHub release, checked against a pinned checksum (non-fatal)
+# vibe: user: 0
+#
+# The release tarball has no folder of its own: it unpacks into whatever it is
+# given. So it goes into a folder of its own, pwsh is made executable (a tarball
+# can leave it without the bit), and it is linked from /usr/local/bin, which every
+# shell has on its PATH (an agent's included, login shell or not). PowerShell's
+# own instructions link it the same way.
+#
+# To move to another version: change VERSION and both checksums, which each
+# release publishes as hashes.sha256 (https://github.com/PowerShell/PowerShell/releases).
+VERSION=7.6.9
+SHA256_X64=1da6d6d6035d651f20e70ddee7c4c15ac6ab8b9fb40ee92240d91263f28a884b
+SHA256_ARM64=02eb9991af447c7e7fe881acde195961afd397c40b8eb1c2b3856b84ec2d85f2
+
+# Where from, and where to: set only to try this script (or to use a mirror).
+BASE="${PWSH_BASE:-https://github.com/PowerShell/PowerShell/releases/download}"
+PREFIX="${PWSH_PREFIX:-/opt/pwsh}"
+LINK="${PWSH_LINK:-/usr/local/bin/pwsh}"
+LOG="${PWSH_LOG:-/tmp/sbx-setup.log}"
+
+echo "--- installing PowerShell $VERSION $(date -Is)" >>"$LOG"
+
+install_pwsh() {
+  case "$(uname -m)" in
+    x86_64 | amd64) arch=x64; want=$SHA256_X64 ;;
+    aarch64 | arm64) arch=arm64; want=$SHA256_ARM64 ;;
+    *)
+      echo "WARN: there is no PowerShell build for $(uname -m): not installed" >>"$LOG"
+      return
+      ;;
+  esac
+  work=$(mktemp -d) || { echo "WARN: couldn't make a folder to download PowerShell into" >>"$LOG"; return; }
+  tarball="$work/pwsh.tar.gz"
+  if ! curl -fsSL --retry 3 --connect-timeout 20 -o "$tarball" "$BASE/v$VERSION/powershell-$VERSION-linux-$arch.tar.gz" >>"$LOG" 2>&1; then
+    echo "WARN: the PowerShell download failed" >>"$LOG"
+    rm -rf "$work"
+    return
+  fi
+  got=$(sha256sum "$tarball" | cut -d' ' -f1)
+  if [ "$got" != "$want" ]; then
+    echo "WARN: the PowerShell download's checksum is $got, not the expected $want: not installed" >>"$LOG"
+    rm -rf "$work"
+    return
+  fi
+  # Unpacked beside where it goes, and the one that is there set aside, not deleted: it is
+  # put back if the new one can't be moved in, linked, or run, and deleted only once it can.
+  stage="$PREFIX.staging"
+  old="$PREFIX.old"
+  rm -rf "$stage" "$old"
+  if ! { mkdir -p "$stage" && tar -xzf "$tarball" -C "$stage" && chmod +x "$stage/pwsh"; }; then
+    echo "WARN: PowerShell couldn't be unpacked: not installed" >>"$LOG"
+    rm -rf "$stage" "$work"
+    return
+  fi
+  if [ -e "$PREFIX" ] && ! mv "$PREFIX" "$old"; then
+    echo "WARN: the PowerShell in $PREFIX couldn't be set aside: left as it is" >>"$LOG"
+    rm -rf "$stage" "$work"
+    return
+  fi
+  if mv "$stage" "$PREFIX" && mkdir -p "$(dirname "$LINK")" && ln -sf "$PREFIX/pwsh" "$LINK" \
+    && said=$("$LINK" -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' 2>>"$LOG"); then
+    echo "installed PowerShell $said" >>"$LOG"
+    rm -rf "$old"
+  else
+    echo "WARN: PowerShell couldn't be moved into $PREFIX, linked, or run: it won't run" >>"$LOG"
+    rm -rf "$PREFIX" "$stage"
+    if [ -e "$old" ]; then
+      mv "$old" "$PREFIX" && ln -sf "$PREFIX/pwsh" "$LINK" \
+        && echo "the PowerShell that was there is back" >>"$LOG" \
+        || echo "WARN: the PowerShell that was there couldn't be put back; it is in $old" >>"$LOG"
+    else
+      # Nothing to go back to: no pwsh at all, which is what the agent is told to expect of a failed install.
+      [ "$(readlink "$LINK" 2>/dev/null)" = "$PREFIX/pwsh" ] && rm -f "$LINK"
+    fi
+  fi
+  rm -rf "$work"
+}
+
+install_pwsh
+true

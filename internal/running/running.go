@@ -318,17 +318,27 @@ func (s *Session) MarkHeadless(target string) error {
 // Claims returns every other live vibe process's claims on target, by PID,
 // a process's session before any work it holds the folder for.
 func Claims(vibeHome, target string) []Claim {
+	return claims(vibeHome, target, false)
+}
+
+// AllClaims is Claims with this process's own as well: for a vibe asking what
+// holds its own folder, itself included.
+func AllClaims(vibeHome, target string) []Claim {
+	return claims(vibeHome, target, true)
+}
+
+func claims(vibeHome, target string, withSelf bool) []Claim {
 	entries, err := os.ReadDir(Dir(vibeHome))
 	if err != nil {
 		return nil
 	}
 	self := os.Getpid()
-	var claims []Claim
+	var found []Claim
 	for _, e := range entries {
 		// A session's claim is <pid>.lock; a hold's, <pid>-<n>.lock.
 		owner, _, _ := strings.Cut(strings.TrimSuffix(e.Name(), ".lock"), "-")
 		pid, err := strconv.Atoi(owner)
-		if err != nil || pid == self || !strings.HasSuffix(e.Name(), ".lock") {
+		if err != nil || (pid == self && !withSelf) || !strings.HasSuffix(e.Name(), ".lock") {
 			continue
 		}
 		path := filepath.Join(Dir(vibeHome), e.Name())
@@ -345,16 +355,16 @@ func Claims(vibeHome, target string) []Claim {
 			if c.Work == headlessMark {
 				c.Work, c.Headless = "", true
 			}
-			claims = append(claims, c)
+			found = append(found, c)
 		}
 	}
-	sort.Slice(claims, func(i, j int) bool {
-		if claims[i].PID != claims[j].PID {
-			return claims[i].PID < claims[j].PID
+	sort.Slice(found, func(i, j int) bool {
+		if found[i].PID != found[j].PID {
+			return found[i].PID < found[j].PID
 		}
-		return claims[i].Work < claims[j].Work
+		return found[i].Work < found[j].Work
 	})
-	return claims
+	return found
 }
 
 // killWait is how long Stop gives a killed process to be gone.

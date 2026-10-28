@@ -423,6 +423,93 @@ test("the file viewer's path is drawn left to right, so a leading dot stays wher
   } finally { await page.close() }
 })
 
+// The power button is the one thing at the top right that says whether vibe is reached, so the states are told
+// apart by brightness and glow as well as by hue (red and green look alike to many), and changing state moves nothing.
+test('the power button changes state without moving the bar, and the states differ in glow and brightness, not only in colour', async () => {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 700 } })
+  try {
+    await page.goto(URL)
+    const look = (state) => page.evaluate((s) => {
+      const link = document.getElementById('link')
+      for (const c of ['up', 'down', 'connecting']) link.classList.toggle(c, c === s)
+      link.style.animation = 'none'
+      const style = getComputedStyle(link)
+      const box = link.getBoundingClientRect()
+      const bar = document.querySelector('.top').getBoundingClientRect()
+      return { glow: style.boxShadow, opacity: style.opacity, box: [box.x, box.y, box.width, box.height], bar: [bar.width, bar.height] }
+    }, state)
+    const up = await look('up')
+    const down = await look('down')
+    const connecting = await look('connecting')
+    assert.deepEqual(down.box, up.box, 'the button moved between up and down')
+    assert.deepEqual(connecting.box, up.box, 'the button moved between up and connecting')
+    assert.deepEqual(down.bar, up.bar, 'the bar changed size between up and down')
+    assert.notEqual(up.glow, 'none', 'up has no glow')
+    assert.equal(down.glow, 'none', 'down glows')
+    assert.ok(Number(down.opacity) < Number(up.opacity), `down (${down.opacity}) is not dimmer than up (${up.opacity})`)
+  } finally { await page.close() }
+})
+
+// The menu opens from the button at the top right, whose room is the page's width: it has to stay on the page, long
+// reasons and all, however narrow the page is.
+test('the power menu stays on the page at every width, with a long reason beside a disabled item', async () => {
+  for (const width of [1000, 600, 360]) {
+    const page = await browser.newPage({ viewport: { width, height: 700 } })
+    try {
+      await page.goto(URL)
+      await page.click('#link')
+      // After the click, which sets them from what vibe says (nothing, for this page).
+      await page.evaluate(() => {
+        document.getElementById('power-actions').hidden = false
+        const item = document.getElementById('power-restart')
+        item.disabled = true
+        item.querySelector('.power-why').textContent = ' (a vibe here has a terminal session, which a restart from the page cannot give back: run vibe --restart in a terminal)'
+      })
+      const box = await page.evaluate(() => {
+        const r = document.getElementById('power-menu').getBoundingClientRect()
+        return { left: r.left, right: r.right, bottom: r.bottom, width: innerWidth, height: innerHeight }
+      })
+      assert.ok(box.left >= 0 && box.right <= box.width, `at ${width}px the menu is across ${box.left}..${box.right}`)
+      assert.ok(box.bottom <= box.height, `at ${width}px the menu runs off the bottom: ${box.bottom}`)
+    } finally { await page.close() }
+  }
+})
+
+// The status of the folder's git at the top of the page is read as the command-line prompt's is (powerline's):
+// what is dirty, in yellow; what is pushed or kept, in green; what is new, in light blue; what is wrong, in red.
+test("the git status's parts have the prompt's colours, in the light and the dark theme", async () => {
+  const expected = {
+    branch: '--ok', operation: '--bad', staged: '--amber', modified: '--amber', untracked: '--git-untracked',
+    conflicted: '--bad', ahead: '--ok', behind: '--ok', stashed: '--ok', noupstream: '--muted',
+  }
+  for (const scheme of ['light', 'dark']) {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 }, colorScheme: scheme })
+    try {
+      await page.goto(URL)
+      const seen = await page.evaluate((classes) => {
+        const box = document.getElementById('git')
+        box.replaceChildren(...Object.keys(classes).map((cls) => Object.assign(document.createElement('span'), { className: cls, textContent: cls })))
+        const colourOf = (node) => getComputedStyle(node).color
+        const probe = document.createElement('span')
+        document.body.append(probe)
+        const out = {}
+        for (const [cls, variable] of Object.entries(classes)) {
+          probe.style.color = 'var(' + variable + ')'
+          out[cls] = { got: colourOf(box.querySelector('.' + cls)), want: colourOf(probe) }
+        }
+        probe.remove()
+        return out
+      }, expected)
+      for (const [cls, colours] of Object.entries(seen)) {
+        assert.equal(colours.got, colours.want, `${scheme}: .${cls} is ${colours.got}, not ${expected[cls]} (${colours.want})`)
+      }
+      // The ones the prompt makes the same are the same, and the ones it makes different are not.
+      assert.notEqual(seen.untracked.got, seen.staged.got)
+      assert.notEqual(seen.ahead.got, seen.modified.got, 'an unpushed commit reads as an uncommitted file')
+    } finally { await page.close() }
+  }
+})
+
 // eventually waits for check to say yes: polled, as the page's policy doesn't allow waitForFunction.
 async function eventually(page, what, check) {
   for (let i = 0; i < 80; i++) {

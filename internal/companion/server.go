@@ -152,6 +152,9 @@ type Config struct {
 	// itself out with ("" for none: the page's own); nil means none. It may
 	// be slow (it can ask the sandbox), so it is asked for seldom.
 	ThemeColor func() string
+	// Power is what the page's power menu and Profiles tab stop, restart and
+	// start vibes with; nil means the page has no such items.
+	Power Power
 	// History is the file the conversation is kept in between runs, so it
 	// survives vibe being started again; "" keeps it only in memory.
 	History string
@@ -204,6 +207,9 @@ type Server struct {
 	// page left open across a rebuild of vibe can tell it's out of date.
 	pageVersion string
 	colours     *colourer
+	// boot is this run of the server: a page that has seen it change knows
+	// vibe was restarted.
+	boot string
 }
 
 // asked is the thread of the review the user last asked the agent about,
@@ -219,7 +225,7 @@ type asked struct {
 func New(cfg Config) *Server {
 	ui, _ := fs.Sub(uiFiles, "ui")
 	life, cancel := context.WithCancel(context.Background())
-	return &Server{cfg: cfg, ui: ui, clock: time.Now, lifeCtx: life, lifeCancel: cancel, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer(colourAtOnce)}
+	return &Server{cfg: cfg, ui: ui, clock: time.Now, lifeCtx: life, lifeCancel: cancel, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer(colourAtOnce), boot: newBoot()}
 }
 
 // Start listens on 127.0.0.1 at cfg.Port and serves in the background.
@@ -374,6 +380,9 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"GET /api/default-branch", s.serving(defaultBranchFeature, s.defaultBranchState)},
 		{"POST /api/default-branch", s.serving(defaultBranchFeature, s.defaultBranchSet)},
 		{"GET /api/usage", s.serving(usageFeature, s.usageHandler)},
+		{"GET /api/power", s.serving(powerFeature, s.powerState)},
+		{"POST /api/power", s.serving(powerFeature, s.powerDo)},
+		{"GET /api/power/log", s.serving(powerFeature, s.powerLog)},
 		{"GET /api/admin", s.authed(s.adminState)},
 		{"POST /api/admin/do", s.serving(adminFeature, s.adminDo)},
 		{"POST /api/admin/upgrades", s.serving(adminFeature, s.adminCheckUpgrades)},
@@ -588,6 +597,8 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"blockedHosts":          blockedHosts,
 		"reviewAt":              reviewAt,
 		"pageVersion":           s.pageVersion,
+		"boot":                  s.boot,
+		"power":                 s.cfg.Power != nil,
 		"themeColor":            theme,
 		"sandbox":               s.cfg.Sandbox,
 		"agent":                 s.cfg.Agent,
