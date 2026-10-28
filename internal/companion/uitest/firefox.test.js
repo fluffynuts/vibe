@@ -475,6 +475,41 @@ test('the power menu stays on the page at every width, with a long reason beside
   }
 })
 
+// The status of the folder's git at the top of the page is read as the command-line prompt's is (powerline's):
+// what is dirty, in yellow; what is pushed or kept, in green; what is new, in light blue; what is wrong, in red.
+test("the git status's parts have the prompt's colours, in the light and the dark theme", async () => {
+  const expected = {
+    branch: '--ok', operation: '--bad', staged: '--amber', modified: '--amber', untracked: '--git-untracked',
+    conflicted: '--bad', ahead: '--ok', behind: '--ok', stashed: '--ok', noupstream: '--muted',
+  }
+  for (const scheme of ['light', 'dark']) {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 }, colorScheme: scheme })
+    try {
+      await page.goto(URL)
+      const seen = await page.evaluate((classes) => {
+        const box = document.getElementById('git')
+        box.replaceChildren(...Object.keys(classes).map((cls) => Object.assign(document.createElement('span'), { className: cls, textContent: cls })))
+        const colourOf = (node) => getComputedStyle(node).color
+        const probe = document.createElement('span')
+        document.body.append(probe)
+        const out = {}
+        for (const [cls, variable] of Object.entries(classes)) {
+          probe.style.color = 'var(' + variable + ')'
+          out[cls] = { got: colourOf(box.querySelector('.' + cls)), want: colourOf(probe) }
+        }
+        probe.remove()
+        return out
+      }, expected)
+      for (const [cls, colours] of Object.entries(seen)) {
+        assert.equal(colours.got, colours.want, `${scheme}: .${cls} is ${colours.got}, not ${expected[cls]} (${colours.want})`)
+      }
+      // The ones the prompt makes the same are the same, and the ones it makes different are not.
+      assert.notEqual(seen.untracked.got, seen.staged.got)
+      assert.notEqual(seen.ahead.got, seen.modified.got, 'an unpushed commit reads as an uncommitted file')
+    } finally { await page.close() }
+  }
+})
+
 // eventually waits for check to say yes: polled, as the page's policy doesn't allow waitForFunction.
 async function eventually(page, what, check) {
   for (let i = 0; i < 80; i++) {

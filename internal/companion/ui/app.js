@@ -799,20 +799,26 @@
     box.replaceChildren()
     $('git-part').hidden = !git
     if (!git) return
-    const part = (cls, text) => {
+    const part = (cls, text, title) => {
       const span = document.createElement('span')
       span.className = cls
       span.textContent = text
+      span.title = title
       box.append(span)
     }
-    part('branch', git.branch)
-    if (git.staged) part('staged', '+' + git.staged)
-    if (git.modified) part('modified', '~' + git.modified)
-    if (git.untracked) part('untracked', '?' + git.untracked)
-    if (git.conflicted) part('conflicted', '✘' + git.conflicted)
-    if (git.ahead) part('ahead', '↑' + git.ahead)
-    if (git.behind) part('behind', '↓' + git.behind)
-    if (git.stashed) part('stashed', '#' + git.stashed)
+    const files = (n, what) => n + ' ' + what + ' file' + (n === 1 ? '' : 's')
+    // The glyphs and the order are the command-line prompt's (powerline's), so that what is read here is read as there.
+    if (git.detached) part('branch detached', git.branch, 'detached HEAD at ' + git.branch.replace(/^@/, '') + ': not on a branch')
+    else part('branch', git.branch, 'branch ' + git.branch)
+    if (git.operation) part('operation', git.operation, git.operation + ' under way')
+    if (git.staged) part('staged', '+' + git.staged, files(git.staged, 'staged'))
+    if (git.modified) part('modified', '!' + git.modified, files(git.modified, 'modified or deleted, not staged'))
+    if (git.untracked) part('untracked', '?' + git.untracked, files(git.untracked, 'untracked'))
+    if (git.conflicted) part('conflicted', '✘' + git.conflicted, files(git.conflicted, 'conflicted'))
+    if (git.ahead) part('ahead', '⇡' + git.ahead, git.ahead + ' commit' + (git.ahead === 1 ? '' : 's') + ' not pushed')
+    if (git.behind) part('behind', '⇣' + git.behind, git.behind + ' commit' + (git.behind === 1 ? '' : 's') + ' fetched but not merged')
+    if (git.stashed) part('stashed', '#' + git.stashed, git.stashed + ' stash' + (git.stashed === 1 ? '' : 'es'))
+    if (git.noUpstream) part('noupstream', 'no upstream', 'this branch follows no branch, so there is nothing for it to be ahead of or behind')
   }
 
   async function loadState() {

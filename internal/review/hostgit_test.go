@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -706,5 +707,102 @@ func TestTheAgentsThreadsOnFilesOutsideTheFolderDontMove(t *testing.T) {
 		if got, err := InFolder(context.Background(), folder, file); err != nil || got != want {
 			t.Errorf("InFolder(%q) = %v, %v; want %v", file, got, err, want)
 		}
+	}
+}
+
+// gitFailing runs git where it is expected to stop (a merge with conflicts, say), and says what it said.
+func gitFailing(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "core.editor=true"}, args...)...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("git %v was to stop, and didn't:\n%s", args, out)
+	}
+	return string(out)
+}
+
+// conflicting is a repository with a branch "other" that changes a.txt another way than main does.
+func conflicting(t *testing.T) string {
+	t.Helper()
+	dir := repo(t, map[string]string{"a.txt": "base\n"})
+	git(t, dir, "checkout", "-q", "-b", "other")
+	write(t, dir, "a.txt", "other\n")
+	git(t, dir, "commit", "-q", "-am", "other")
+	git(t, dir, "checkout", "-q", "main")
+	write(t, dir, "a.txt", "main\n")
+	git(t, dir, "commit", "-q", "-am", "main")
+	return dir
+}
+
+func statusOfDir(t *testing.T, dir string) FolderStatus {
+	t.Helper()
+	s, err := StatusOf(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return *s
+}
+
+func TestAMergeThatStoppedIsSaidAndItsConflictsCounted(t *testing.T) {
+	dir := conflicting(t)
+	gitFailing(t, dir, "merge", "other")
+	if s := statusOfDir(t, dir); s.Operation != "merge" || s.Conflicted != 1 {
+		t.Errorf("status = %+v", s)
+	}
+}
+
+func TestARebaseThatStoppedIsSaidWithHowFarItGot(t *testing.T) {
+	dir := conflicting(t)
+	git(t, dir, "checkout", "-q", "other")
+	gitFailing(t, dir, "rebase", "main")
+	if s := statusOfDir(t, dir); s.Operation != "rebase 1/1" || s.Conflicted != 1 {
+		t.Errorf("status = %+v", s)
+	}
+}
+
+func TestACherryPickARevertAndABisectThatAreUnderWayAreSaid(t *testing.T) {
+	dir := conflicting(t)
+	gitFailing(t, dir, "cherry-pick", "other")
+	if s := statusOfDir(t, dir); s.Operation != "cherry-pick" {
+		t.Errorf("cherry-pick: %+v", s)
+	}
+	git(t, dir, "cherry-pick", "--abort")
+	// Reverting the commit before the last conflicts with the last's change to the same line.
+	gitFailing(t, dir, "revert", "HEAD~1")
+	if s := statusOfDir(t, dir); s.Operation != "revert" {
+		t.Errorf("revert: %+v", s)
+	}
+	git(t, dir, "revert", "--abort")
+	git(t, dir, "bisect", "start")
+	if s := statusOfDir(t, dir); s.Operation != "bisect" {
+		t.Errorf("bisect: %+v", s)
+	}
+}
+
+func TestWhenNothingIsUnderWayThereIsNoOperation(t *testing.T) {
+	dir := repo(t, map[string]string{"a.txt": "a\n"})
+	if s := statusOfDir(t, dir); s.Operation != "" {
+		t.Errorf("operation = %q", s.Operation)
+	}
+}
+
+func TestABranchWithNoUpstreamIsSaidAndOneWithAnUpstreamIsNot(t *testing.T) {
+	dir := repo(t, map[string]string{"a.txt": "a\n"})
+	if s := statusOfDir(t, dir); !s.NoUpstream || s.Detached {
+		t.Errorf("a branch tracking nothing: %+v", s)
+	}
+	git(t, dir, "branch", "up")
+	git(t, dir, "branch", "-q", "-u", "up")
+	if s := statusOfDir(t, dir); s.NoUpstream {
+		t.Errorf("a branch tracking one: %+v", s)
+	}
+}
+
+func TestADetachedHeadIsSaidAndIsNotAnUpstreamlessBranch(t *testing.T) {
+	dir := repo(t, map[string]string{"a.txt": "a\n"})
+	git(t, dir, "checkout", "-q", "--detach")
+	if s := statusOfDir(t, dir); !s.Detached || s.NoUpstream {
+		t.Errorf("status = %+v", s)
 	}
 }

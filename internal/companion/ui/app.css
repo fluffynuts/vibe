@@ -15,6 +15,7 @@
   --ok: #1a7f37;
   --bad: #cf222e;
   --amber: #9a6700;
+  --git-untracked: #0b7bb5;
   --warn-bg: #fff4d6;
   --warn-line: #e0b84a;
   --row-hover: #f3f5f8;
@@ -40,6 +41,7 @@
     --ok: #7ad06f;
     --bad: #f47067;
     --amber: #e3b341;
+    --git-untracked: #79c0ff;
     --warn-bg: #3a3012;
     --warn-line: #7a6420;
     --row-hover: #20242b;
@@ -64,12 +66,13 @@ body {
 .brand .project { font-weight: 700; color: var(--project); }
 .brand .sep { color: var(--muted); margin-right: 8px; }
 .brand .folder { color: var(--folder); word-break: break-all; }
+/* The command-line prompt's colours (powerline's): what is dirty, yellow; what is pushed or kept, green; what is new, light blue; what is wrong, red. */
 .git .branch { color: var(--ok); }
-.git .staged, .git .stashed { color: var(--ok); }
-.git .modified { color: var(--bad); }
-.git .untracked { color: var(--accent); }
-.git .conflicted { color: var(--project); }
-.git .ahead, .git .behind { color: var(--amber); }
+.git .operation, .git .conflicted { color: var(--bad); }
+.git .staged, .git .modified { color: var(--amber); }
+.git .untracked { color: var(--git-untracked); }
+.git .ahead, .git .behind, .git .stashed { color: var(--ok); }
+.git .noupstream { color: var(--muted); }
 .git span + span { margin-left: 6px; }
 .power-wrap { position: relative; margin-left: auto; }
 /* Lit and glowing when vibe is reached, flat and dim when it isn't, dim and pulsing while the first answer is awaited: the states differ in brightness and glow, not in colour alone. */
