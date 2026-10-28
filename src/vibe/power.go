@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,29 @@ type powerDesk struct {
 	lay layout.Layout
 	// claims are the vibes holding a folder: running.Claims when nil.
 	claims func(vibeHome, target string) []running.Claim
+	// outOfDate says why a sandbox is out of date, "" when it isn't:
+	// sandboxOutOfDate when nil.
+	outOfDate func(inst state.Instance) string
+}
+
+func (d *powerDesk) outOfDateWhy(inst state.Instance) string {
+	if d.outOfDate != nil {
+		return d.outOfDate(inst)
+	}
+	why, err := sandboxOutOfDate(d.lay, inst)
+	if err != nil {
+		note("couldn't tell whether sandbox '%s' is out of date: %v", inst.Name, err)
+		return ""
+	}
+	return why
+}
+
+// notUpdated is what starting a vibe from the page leaves as it was: it has
+// no terminal to count down on, so it is started without updating (a
+// rebuild nobody saw coming, with no way to skip it, is worse than an old
+// sandbox), and says so first.
+func notUpdated(why, folder string) string {
+	return "the sandbox is out of date (" + why + "), and this doesn't update it: run 'vibe " + folder + "' in a terminal to bring it up to date"
 }
 
 func (d *powerDesk) claimsOf(target string) []running.Claim {
@@ -77,13 +101,17 @@ func (d *powerDesk) Check(name string) companion.PowerCheck {
 		terminal = terminal || !c.Headless
 	}
 	check.Actions[companion.PowerStop] = companion.PowerAction{OK: true, Warns: interrupts}
+	var stale []string
+	if why := d.outOfDateWhy(inst); why != "" {
+		stale = []string{notUpdated(why, check.Folder)}
+	}
 	switch {
 	case !attached:
 		check.Actions[companion.PowerRestart] = companion.PowerAction{Why: "no vibe is running for " + check.Folder + ": Start one"}
 	case terminal:
 		check.Actions[companion.PowerRestart] = companion.PowerAction{Why: "a vibe here has a terminal session, which a restart from the page can't give back: run 'vibe --restart " + check.Folder + "' in a terminal"}
 	default:
-		check.Actions[companion.PowerRestart] = companion.PowerAction{OK: true, Warns: interrupts}
+		check.Actions[companion.PowerRestart] = companion.PowerAction{OK: true, Warns: append(slices.Clone(interrupts), stale...)}
 	}
 	switch {
 	case attached:
@@ -91,7 +119,7 @@ func (d *powerDesk) Check(name string) companion.PowerCheck {
 	case !fileExists(target):
 		check.Actions[companion.PowerStart] = companion.PowerAction{Why: folderGone(target)}
 	default:
-		check.Actions[companion.PowerStart] = companion.PowerAction{OK: true}
+		check.Actions[companion.PowerStart] = companion.PowerAction{OK: true, Warns: stale}
 	}
 	return check
 }
@@ -105,9 +133,9 @@ func powerCommand(action, name, target string) ([]string, error) {
 	case companion.PowerStop:
 		args = []string{"--stop", "--force"}
 	case companion.PowerRestart:
-		args = []string{"--restart", "--force"}
+		args = []string{"--restart", "--force", "--no-auto-update"}
 	case companion.PowerStart:
-		args = []string{"--headless"}
+		args = []string{"--headless", "--no-auto-update"}
 	default:
 		return nil, fmt.Errorf("there is no %q to do to a sandbox from here", action)
 	}

@@ -9,9 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"vibe/internal/cliargs"
 	"vibe/internal/companion"
 	"vibe/internal/layout"
 	"vibe/internal/running"
+	"vibe/internal/state"
 )
 
 // powerStandIns makes the desk's view of the folder's vibes claims, and what the agent is doing answering.
@@ -22,7 +24,7 @@ func powerStandIns(t *testing.T, claims []running.Claim, answering, known bool) 
 	old := agentAnswering
 	t.Cleanup(func() { agentAnswering = old })
 	agentAnswering = func(string, string) (bool, bool) { return answering, known }
-	return &powerDesk{lay: lay, claims: func(string, string) []running.Claim { return claims }}, lay, rec.inst.Target
+	return &powerDesk{lay: lay, claims: func(string, string) []running.Claim { return claims }, outOfDate: func(state.Instance) string { return "" }}, lay, rec.inst.Target
 }
 
 func TestAnIdleHeadlessVibeCanBeStoppedOrRestartedUnasked(t *testing.T) {
@@ -66,6 +68,23 @@ func TestATerminalSessionCanBeStoppedWithAWarningButNotRestartedFromThePage(t *t
 	}
 	if got := check.Actions[companion.PowerRestart]; got.OK || !strings.Contains(got.Why, "terminal") {
 		t.Errorf("restart: %+v", got)
+	}
+}
+
+func TestStartingOrRestartingAnOutOfDateSandboxFromThePageSaysItWontBeUpdated(t *testing.T) {
+	d, _, _ := powerStandIns(t, []running.Claim{{PID: 7, Headless: true}}, false, true)
+	d.outOfDate = func(state.Instance) string { return "what it's built from has changed" }
+	check := d.Check("box")
+	if got := check.Actions[companion.PowerStop]; len(got.Warns) != 0 {
+		t.Errorf("stop: %+v", got)
+	}
+	got := check.Actions[companion.PowerRestart]
+	if !got.OK || len(got.Warns) != 1 || !strings.Contains(got.Warns[0], "out of date") || !strings.Contains(got.Warns[0], "terminal") {
+		t.Errorf("restart: %+v", got)
+	}
+	d.claims = func(string, string) []running.Claim { return nil }
+	if got := d.Check("box").Actions[companion.PowerStart]; !got.OK || len(got.Warns) != 1 || !strings.Contains(got.Warns[0], "out of date") {
+		t.Errorf("start: %+v", got)
 	}
 }
 
@@ -128,8 +147,8 @@ func TestEachActionIsTheCLICommandItStandsForRunForTheSandboxAndForced(t *testin
 	fakeVibe(t, `printf '%s\n' "$@" > `+args)
 	for action, want := range map[string][]string{
 		companion.PowerStop:    {"--stop", "--force", "--name", "box", "--", target},
-		companion.PowerRestart: {"--restart", "--force", "--name", "box", "--", target},
-		companion.PowerStart:   {"--headless", "--name", "box", "--", target},
+		companion.PowerRestart: {"--restart", "--force", "--no-auto-update", "--name", "box", "--", target},
+		companion.PowerStart:   {"--headless", "--no-auto-update", "--name", "box", "--", target},
 	} {
 		os.Remove(args)
 		d.claims = func(string, string) []running.Claim { return nil }
@@ -207,5 +226,26 @@ func TestALogOfASandboxThatNeverHadAnActionIsEmptyAndNotRunning(t *testing.T) {
 	d, _, _ := powerStandIns(t, nil, false, true)
 	if text, next, running := d.Log("box", 0); text != "" || next != 0 || running {
 		t.Errorf("%q %d %v", text, next, running)
+	}
+}
+
+func TestEachCommandTheDeskRunsIsOneTheCLIParsesAsWhatItStandsFor(t *testing.T) {
+	for action, check := range map[string]func(cliargs.Args) bool{
+		companion.PowerStop:    func(a cliargs.Args) bool { return a.Stop && a.Force },
+		companion.PowerRestart: func(a cliargs.Args) bool { return a.Restart && a.Force && a.NoAutoUpdate },
+		companion.PowerStart:   func(a cliargs.Args) bool { return a.Headless && a.NoAutoUpdate },
+	} {
+		argv, err := powerCommand(action, "box", "/work/box")
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := cliargs.Parse(argv)
+		if err != nil {
+			t.Errorf("%s: %v does not parse: %v", action, argv, err)
+			continue
+		}
+		if !check(parsed) || parsed.Name != "box" || parsed.Path != "/work/box" {
+			t.Errorf("%s: %v parses as %+v", action, argv, parsed)
+		}
 	}
 }
