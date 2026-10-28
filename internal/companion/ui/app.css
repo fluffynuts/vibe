@@ -327,7 +327,11 @@ ul.plain li .spacer { flex: 1; }
 .review-lines td.num.add { background-color: color-mix(in srgb, var(--ok) 30%, transparent); color: var(--text); }
 .review-lines td.code.del, .review-lines td.sign.del { background-color: color-mix(in srgb, var(--bad) 14%, transparent); }
 .review-lines td.num.del { background-color: color-mix(in srgb, var(--bad) 30%, transparent); color: var(--text); }
-.review-lines td.blank { background: repeating-linear-gradient(-45deg, var(--row-hover) 0 6px, transparent 6px 12px); }
+.review-lines td.blank { background-image: linear-gradient(135deg, var(--row-hover) 25%, transparent 25%, transparent 50%, var(--row-hover) 50%, var(--row-hover) 75%, transparent 75%, transparent); background-size: 20px 20px; }
+/* Each cell of a blank half-row paints its own tile: offset by the width of the cells before it, so the three read as one hatch. */
+.review-lines td.num.blank { background-position: 0 0; }
+.review-lines td.sign.blank { background-position: -4.5em 0; }
+.review-lines td.code.blank { background-position: -6em 0; }
 .review-lines.split td.start { border-left: 1px solid var(--line); }
 .review-lines tr.hunk td { color: var(--muted); background: color-mix(in srgb, var(--accent) 10%, transparent); padding: 4px 10px; }
 /* A gap's buttons, stacked in the line-number column, as GitHub has them. */

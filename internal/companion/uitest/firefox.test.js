@@ -532,6 +532,67 @@ test('the admin tab puts profile backups, settings and the GitHub token on one r
   } finally { await page.close() }
 })
 
+// A side with no line for the other's is hatched. Each of its cells (the number, the sign, the code) paints its own
+// copy, so the stripes only join where every copy starts from the same place, and the rows are all the height of the
+// pattern: seen as one hatched block, not a band for each row.
+test('the hatching of a side with no line is one continuous pattern, from row to row and across the cells of a row', async () => {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 700 } })
+  try {
+    await page.goto(URL)
+    await page.evaluate(() => {
+      const table = document.createElement('table')
+      table.className = 'review-lines'
+      table.id = 'hatch-test'
+      table.style.cssText = 'position: fixed; z-index: 99999; top: 20px; left: 20px; width: 600px; table-layout: fixed; background: #fff;'
+      table.innerHTML = '<colgroup><col class="num"><col class="sign"><col></colgroup><tbody>' +
+        '<tr><td class="num blank"></td><td class="sign blank"></td><td class="code blank"></td></tr>'.repeat(4) + '</tbody>'
+      for (const td of table.querySelectorAll('td')) td.style.height = '20px'
+      document.body.prepend(table)
+      // The same pattern on one box as wide as a row, for the rows to be compared with.
+      const block = document.createElement('div')
+      block.id = 'hatch-reference'
+      const first = getComputedStyle(table.querySelector('td.num'))
+      block.style.cssText = 'position: fixed; z-index: 99999; top: 200px; left: 20px; width: 600px; height: 20px; background: #fff; background-image: ' + first.backgroundImage + '; background-size: ' + first.backgroundSize + ';'
+      document.body.prepend(block)
+    })
+    const rows = []
+    for (let i = 1; i <= 4; i++) rows.push(await page.locator(`#hatch-test tr:nth-child(${i})`).screenshot())
+    for (let i = 1; i < rows.length; i++) {
+      assert.ok((await pixelsApart(page, rows[i], rows[0])) < seamPixels, `row ${i + 1}'s hatching doesn't continue row 1's: the stripes break at the row boundary`)
+    }
+    const reference = await page.locator('#hatch-reference').screenshot()
+    assert.ok((await pixelsApart(page, rows[0], reference)) < seamPixels, "a row's three cells don't hatch as one: the stripes break between the cells")
+  } finally { await page.close() }
+})
+
+// seamPixels is how many a seam between cells may move: a few of the 12,000 in a row, where a stripe's edge is anti-aliased.
+const seamPixels = 20
+
+// pixelsApart is how many pixels of two same-sized screenshots differ by more than the anti-aliasing of an edge would:
+// the same stripes drawn from a different origin come out a few bytes apart, never equal.
+async function pixelsApart(page, a, b) {
+  return page.evaluate(async ([x, y]) => {
+    const draw = async (base64) => {
+      const img = new Image()
+      img.src = 'data:image/png;base64,' + base64
+      await img.decode()
+      const canvas = document.createElement('canvas')
+      canvas.width = img.width
+      canvas.height = img.height
+      const c = canvas.getContext('2d')
+      c.drawImage(img, 0, 0)
+      return c.getImageData(0, 0, img.width, img.height).data
+    }
+    const [p, q] = [await draw(x), await draw(y)]
+    if (p.length !== q.length) return -1
+    let apart = 0
+    for (let i = 0; i < p.length; i += 4) {
+      if (Math.max(Math.abs(p[i] - q[i]), Math.abs(p[i + 1] - q[i + 1]), Math.abs(p[i + 2] - q[i + 2])) > 6) apart++
+    }
+    return apart
+  }, [a.toString('base64'), b.toString('base64')])
+}
+
 // eventually waits for check to say yes: polled, as the page's policy doesn't allow waitForFunction.
 async function eventually(page, what, check) {
   for (let i = 0; i < 80; i++) {
