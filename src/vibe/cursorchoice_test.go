@@ -318,3 +318,48 @@ func TestWithoutCursorsListNothingCanBeNamedAsOutOfReach(t *testing.T) {
 		t.Errorf("limits = %+v", limits)
 	}
 }
+
+const reworkedRefusal = "exit status 1: ActionRequiredError: Model unavailable on Free Free includes Grok 4.7, Grok 4.6, and Auto with fixed settings. Switch to an included model to continue."
+
+func TestTheModelsARefusalSaysThePlanIncludesAreNotOutOfReach(t *testing.T) {
+	ask, _ := cursorSays(t, "")
+	c, files := newCursorChoice(t, ask)
+	askedFor(t, c)
+	files.plan.learned(reworkedRefusal, "gpt-5.5-high")
+	limits := c.Limits()
+	if limits == nil {
+		t.Fatal("no limits")
+	}
+	for _, included := range []string{"grok-4.7", "cursor-grok-4.6", "auto"} {
+		if slices.Contains(limits.Unavailable, included) {
+			t.Errorf("%s, which the plan includes, is out of reach", included)
+		}
+	}
+	for _, refused := range []string{"gpt-5.5", "gpt-5.3-codex"} {
+		if !slices.Contains(limits.Unavailable, refused) {
+			t.Errorf("%s is not out of reach", refused)
+		}
+	}
+}
+
+func TestAModelTheRefusalNamesIsStillOutOfReachWhenItWasTheOneRefused(t *testing.T) {
+	// However Cursor words it ("you can't use X on Free. Free includes A, B and Auto"), the model it refused is not included.
+	ask, _ := cursorSays(t, "")
+	c, files := newCursorChoice(t, ask)
+	askedFor(t, c)
+	files.plan.learned("ActionRequiredError: you can't use Grok 4.7 on Free. Free includes Grok 4.6 and Auto. Unavailable.", "grok-4.7-high")
+	limits := c.Limits()
+	if limits == nil || !slices.Contains(limits.Unavailable, "grok-4.7") || slices.Contains(limits.Unavailable, "cursor-grok-4.6") {
+		t.Errorf("limits = %+v", limits)
+	}
+}
+
+func TestARefusalNamingNoModelLeavesOnlyAuto(t *testing.T) {
+	ask, _ := cursorSays(t, "")
+	c, files := newCursorChoice(t, ask)
+	opts := askedFor(t, c)
+	files.plan.learned(namedModelFailure, "gpt-5.5-high")
+	if limits := c.Limits(); limits == nil || len(limits.Unavailable) != len(opts.Models)-1 {
+		t.Errorf("limits = %+v", limits)
+	}
+}

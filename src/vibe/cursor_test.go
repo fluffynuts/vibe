@@ -270,6 +270,18 @@ func TestAReworkedRefusalIsRunAgainOnAuto(t *testing.T) {
 	}
 }
 
+func TestTheRefusalAndTheModelRefusedAreKeptWithWhatWasLearned(t *testing.T) {
+	turnsOf(t, errors.New(reworkedRefusal), nil)
+	plan := newCursorPlan(filepath.Join(t.TempDir(), "plan.json"))
+	if _, err := cursorTurnKnowing(t, "gpt-5.5-high", &setBack{}, plan); err != nil {
+		t.Fatal(err)
+	}
+	learned, only := plan.limit()
+	if !only || learned.Refused != "gpt-5.5-high" || !strings.Contains(learned.Said, "Grok 4.7") {
+		t.Errorf("learned %+v", learned)
+	}
+}
+
 func TestOnlyThatFailureIsRunAgainAndOnlyOnce(t *testing.T) {
 	other := errors.New("exit status 1: something else is wrong")
 	for name, tc := range map[string]struct {

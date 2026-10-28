@@ -36,7 +36,14 @@ func newCursorPlan(file string) *cursorPlan {
 type cursorPlanFile struct {
 	OnlyAuto bool      `json:"onlyAuto"`
 	At       time.Time `json:"at"`
+	// Said is what Cursor said in refusing (it may name the models the plan
+	// includes), and Refused the model that was refused.
+	Said    string `json:"said,omitempty"`
+	Refused string `json:"refused,omitempty"`
 }
+
+// maxSaid bounds what is kept of what Cursor said.
+const maxSaid = 1000
 
 func (p *cursorPlan) clock() time.Time {
 	if p.now != nil {
@@ -47,9 +54,18 @@ func (p *cursorPlan) clock() time.Time {
 
 // learnedOnlyAuto records that a model other than Auto was just refused.
 func (p *cursorPlan) learnedOnlyAuto() error {
+	return p.learned("", "")
+}
+
+// learned records that refused, a model other than Auto, was just refused,
+// with what Cursor said of it.
+func (p *cursorPlan) learned(said, refused string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	data, err := json.Marshal(cursorPlanFile{OnlyAuto: true, At: p.clock()})
+	if len(said) > maxSaid {
+		said = said[:maxSaid]
+	}
+	data, err := json.Marshal(cursorPlanFile{OnlyAuto: true, At: p.clock(), Said: said, Refused: refused})
 	if err != nil {
 		return err
 	}
@@ -66,14 +82,20 @@ func (p *cursorPlan) forget() error {
 	return nil
 }
 
-// onlyAuto says the plan is believed to run only Auto, and since when. A
-// file that can't be read is said (it is only a memory) and is not a limit.
+// onlyAuto says the plan is believed to be limited, and since when. A file
+// that can't be read is said (it is only a memory) and is not a limit.
 func (p *cursorPlan) onlyAuto() (since time.Time, only bool) {
+	kept, only := p.limit()
+	return kept.At, only
+}
+
+// limit is what was learned, when it is believed.
+func (p *cursorPlan) limit() (cursorPlanFile, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	data, err := fscopy.ReadFile(p.file)
 	if errors.Is(err, os.ErrNotExist) {
-		return time.Time{}, false
+		return cursorPlanFile{}, false
 	}
 	var kept cursorPlanFile
 	if err == nil {
@@ -81,10 +103,10 @@ func (p *cursorPlan) onlyAuto() (since time.Time, only bool) {
 	}
 	if err != nil {
 		note("what was learned of Cursor's plan can't be read from %s (%v): taken as not known", p.file, err)
-		return time.Time{}, false
+		return cursorPlanFile{}, false
 	}
 	if !kept.OnlyAuto || p.clock().Sub(kept.At) >= cursorPlanFreshFor {
-		return time.Time{}, false
+		return cursorPlanFile{}, false
 	}
-	return kept.At, true
+	return kept, true
 }

@@ -176,3 +176,34 @@ func TestEffortValuesAreOnlyLowerCaseLettersAsTheStoredChoiceRequires(t *testing
 		}
 	}
 }
+
+func TestTheModelsNamedInATextAreFoundByTheirWholeNames(t *testing.T) {
+	c := realList(t)
+	for name, tc := range map[string]struct {
+		text string
+		want []string
+	}{
+		"a list":              {"Free includes Grok 4.7, Grok 4.6, and Auto with fixed settings.", []string{"grok-4.7", "cursor-grok-4.6", "auto"}},
+		"a name at the end":   {"you can use Grok 4.7.", []string{"grok-4.7"}},
+		"any case":            {"free includes GROK 4.7 and auto", []string{"grok-4.7", "auto"}},
+		"a prefix is no name": {"Free includes Grok 4 and Grok 4.", nil},
+		"no model":            {"Free plans can only use Auto. Switch to Auto or upgrade plans to continue.", []string{"auto"}},
+	} {
+		got := c.NamedIn(tc.text)
+		slices.Sort(got)
+		slices.Sort(tc.want)
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("%s: %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+func TestAModelWhoseNameEndsAnothersIsNotTakenForIt(t *testing.T) {
+	c := Build([]Entry{{ID: "gpt-5", Name: "GPT-5"}, {ID: "gpt-5-codex", Name: "GPT-5 Codex"}})
+	if got := c.NamedIn("includes GPT-5 Codex only"); !slices.Equal(got, []string{"gpt-5-codex"}) {
+		t.Errorf("%v", got)
+	}
+	if got := c.NamedIn("includes GPT-5 Codex and GPT-5"); len(got) != 2 {
+		t.Errorf("%v", got)
+	}
+}

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"vibe/internal/companion"
@@ -74,15 +75,20 @@ func cursorChoice(ask askAgent, workspace string, kept profileChoice, optionsFil
 	}
 }
 
-// cursorOnlyAutoWhy is what the page says of the models out of reach.
-const cursorOnlyAutoWhy = "Your Cursor plan can only use Auto: a prompt on another model was refused."
+// What the page says of the models out of reach: that the plan runs Auto
+// only, or Auto and what Cursor named in refusing a prompt.
+const (
+	cursorOnlyAutoWhy  = "Your Cursor plan can only use Auto: a prompt on another model was refused."
+	cursorOnlyNamedWhy = "Your Cursor plan doesn't include this model: a prompt on one it doesn't include was refused."
+)
 
-// cursorLimits are the models out of reach, as learned: every one but Auto
-// while the plan is believed to run only that (see cursorPlan), named from
-// the list kept. None when nothing is believed, or the list isn't known (the
+// cursorLimits are the models out of reach, as learned: every one but Auto,
+// and but those Cursor named as included when it refused one (the one
+// refused never), while the plan is believed limited (see cursorPlan), named
+// from the list kept. None when nothing is believed, or the list isn't known (the
 // page has no models to mark then either).
 func cursorLimits(plan *cursorPlan, listFile string) *companion.Limits {
-	since, only := plan.onlyAuto()
+	learned, only := plan.limit()
 	if !only {
 		return nil
 	}
@@ -90,12 +96,21 @@ func cursorLimits(plan *cursorPlan, listFile string) *companion.Limits {
 	if !ok {
 		return nil
 	}
-	limits := &companion.Limits{Unavailable: []string{}, Why: cursorOnlyAutoWhy, Since: since.UnixMilli()}
+	refused, _ := cursormodels.Split(learned.Refused)
+	named := cat.NamedIn(learned.Said)
+	why := cursorOnlyAutoWhy
+	limits := &companion.Limits{Unavailable: []string{}, Since: learned.At.UnixMilli()}
 	for _, f := range cat.Families {
-		if f.Key != cursorAuto {
-			limits.Unavailable = append(limits.Unavailable, f.Key)
+		if f.Key == cursorAuto {
+			continue
 		}
+		if f.Key != refused && slices.Contains(named, f.Key) {
+			why = cursorOnlyNamedWhy
+			continue
+		}
+		limits.Unavailable = append(limits.Unavailable, f.Key)
 	}
+	limits.Why = why
 	return limits
 }
 

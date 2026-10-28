@@ -77,8 +77,8 @@ var autoWord = regexp.MustCompile(`\bauto\b`)
 // set to Auto too, since the plan can't run another and the selector would
 // otherwise go on showing one, each prompt first refused; or why it isn't.
 const (
-	cursorFellBackToAuto = "Cursor can't run the model it was set to on this plan (a free plan can only use Auto), so this turn ran on Auto, and the model is now set to Auto."
-	cursorFellBackKept   = "Cursor can't run the model it was set to on this plan (a free plan can only use Auto), so this turn ran on Auto. The model couldn't be set to Auto (%v), so prompts will go on being tried on the other first."
+	cursorFellBackToAuto = "Cursor can't run the model it was set to on this plan, so this turn ran on Auto, and the model is now set to Auto."
+	cursorFellBackKept   = "Cursor can't run the model it was set to on this plan, so this turn ran on Auto. The model couldn't be set to Auto (%v), so prompts will go on being tried on the other first."
 )
 
 // What the clipboard page holds for the agent is handed over, for Claude, by a hook that Claude Code
@@ -212,7 +212,7 @@ func converseCursor(name, workspace string, log *turnLog, choose func() (string,
 			}
 		}
 		if err != nil && model != cursorAuto && ctx.Err() == nil && isUnavailableModel(err) {
-			if learned := plan.learnedOnlyAuto(); learned != nil {
+			if learned := plan.learned(err.Error(), model); learned != nil {
 				note("couldn't remember that Cursor's plan only runs Auto: %v", learned)
 			}
 			if kept := setAuto(); kept != nil {

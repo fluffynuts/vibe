@@ -9,6 +9,7 @@ package cursormodels
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -304,4 +305,60 @@ func (c Catalogue) AllEfforts() []string {
 		out = append([]string{"fast"}, out...)
 	}
 	return out
+}
+
+// NamedIn is the keys of the families whose whole names (as the list shows
+// them: "Grok 4.7") are in text, however it is worded: a prefix of a name
+// ("Grok 4" of "Grok 4.7") is not one, and nor is a name that is the start of a
+// longer one that is named ("GPT-5" of "GPT-5 Codex").
+func (c Catalogue) NamedIn(text string) []string {
+	families := slices.Clone(c.Families)
+	slices.SortStableFunc(families, func(a, b Family) int { return len(b.Name) - len(a.Name) })
+	rest := strings.ToLower(text)
+	var keys []string
+	for _, f := range families {
+		if f.Name == "" {
+			continue
+		}
+		name := strings.ToLower(f.Name)
+		found := false
+		for from := 0; ; {
+			i := strings.Index(rest[from:], name)
+			if i < 0 {
+				break
+			}
+			start, end := from+i, from+i+len(name)
+			from = end
+			if !startsAWord(rest, start) || !endsAWord(rest, end) {
+				continue
+			}
+			found = true
+			// Blanked, so a shorter name inside it is not found again.
+			rest = rest[:start] + strings.Repeat("\x00", len(name)) + rest[end:]
+		}
+		if found {
+			keys = append(keys, f.Key)
+		}
+	}
+	return keys
+}
+
+func startsAWord(s string, i int) bool {
+	return i == 0 || !isNameChar(s[i-1])
+}
+
+// endsAWord is true at the end of s, and before anything that doesn't go on a
+// name: a full stop ends a sentence, but is part of a name when a digit follows.
+func endsAWord(s string, i int) bool {
+	if i >= len(s) {
+		return true
+	}
+	if s[i] == '.' {
+		return i+1 >= len(s) || !isNameChar(s[i+1])
+	}
+	return !isNameChar(s[i])
+}
+
+func isNameChar(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= '0' && b <= '9'
 }
