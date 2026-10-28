@@ -589,7 +589,7 @@ func replaceProfile(lay layout.Layout, profile, backupName string, features []st
 			return fmt.Errorf("could not carry profile '%s's %s across (the backup above has it): %w", profile, userprefs.File, err)
 		}
 	}
-	note("re-composed profile '%s' (%s) in %s", profile, strings.Join(features, ", "), created)
+	note("re-composed profile '%s' (%s) in %s", profile, describeFeatures(features), created)
 	return nil
 }
 
