@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -277,7 +278,7 @@ func TestTheRefusalAndTheModelRefusedAreKeptWithWhatWasLearned(t *testing.T) {
 		t.Fatal(err)
 	}
 	learned, only := plan.limit()
-	if !only || learned.Refused != "gpt-5.5-high" || !strings.Contains(learned.Said, "Grok 4.7") {
+	if !only || !slices.Equal(learned.Refused, []string{"gpt-5.5-high"}) || !strings.Contains(learned.Said, "Grok 4.7") {
 		t.Errorf("learned %+v", learned)
 	}
 }

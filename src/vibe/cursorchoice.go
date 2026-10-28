@@ -83,10 +83,11 @@ const (
 )
 
 // cursorLimits are the models out of reach, as learned: every one but Auto,
-// and but those Cursor named as included when it refused one (the one
-// refused never), while the plan is believed limited (see cursorPlan), named
-// from the list kept. None when nothing is believed, or the list isn't known (the
-// page has no models to mark then either).
+// and but those Cursor named as included when it refused one (it has refused
+// models it named, so every one refused is out of reach whatever it said),
+// while the plan is believed limited (see cursorPlan), named from the list
+// kept. None when nothing is believed, or the list isn't known (the page has
+// no models to mark then either).
 func cursorLimits(plan *cursorPlan, listFile string) *companion.Limits {
 	learned, only := plan.limit()
 	if !only {
@@ -96,7 +97,11 @@ func cursorLimits(plan *cursorPlan, listFile string) *companion.Limits {
 	if !ok {
 		return nil
 	}
-	refused, _ := cursormodels.Split(learned.Refused)
+	var refused []string
+	for _, id := range learned.Refused {
+		family, _ := cursormodels.Split(id)
+		refused = append(refused, family)
+	}
 	named := cat.NamedIn(learned.Said)
 	why := cursorOnlyAutoWhy
 	limits := &companion.Limits{Unavailable: []string{}, Since: learned.At.UnixMilli()}
@@ -104,7 +109,7 @@ func cursorLimits(plan *cursorPlan, listFile string) *companion.Limits {
 		if f.Key == cursorAuto {
 			continue
 		}
-		if f.Key != refused && slices.Contains(named, f.Key) {
+		if !slices.Contains(refused, f.Key) && slices.Contains(named, f.Key) {
 			why = cursorOnlyNamedWhy
 			continue
 		}

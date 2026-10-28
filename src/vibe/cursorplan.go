@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -36,10 +37,11 @@ func newCursorPlan(file string) *cursorPlan {
 type cursorPlanFile struct {
 	OnlyAuto bool      `json:"onlyAuto"`
 	At       time.Time `json:"at"`
-	// Said is what Cursor said in refusing (it may name the models the plan
-	// includes), and Refused the model that was refused.
-	Said    string `json:"said,omitempty"`
-	Refused string `json:"refused,omitempty"`
+	// Said is what Cursor said in the last refusal (it may name models the
+	// plan includes, and then refuse them), and Refused every model refused
+	// since the plan was last forgotten or expired.
+	Said    string   `json:"said,omitempty"`
+	Refused []string `json:"refusedModels,omitempty"`
 }
 
 // maxSaid bounds what is kept of what Cursor said.
@@ -65,7 +67,14 @@ func (p *cursorPlan) learned(said, refused string) error {
 	if len(said) > maxSaid {
 		said = said[:maxSaid]
 	}
-	data, err := json.Marshal(cursorPlanFile{OnlyAuto: true, At: p.clock(), Said: said, Refused: refused})
+	var refusedAll []string
+	if kept, believed := p.believed(); believed {
+		refusedAll = kept.Refused
+	}
+	if refused != "" && !slices.Contains(refusedAll, refused) {
+		refusedAll = append(refusedAll, refused)
+	}
+	data, err := json.Marshal(cursorPlanFile{OnlyAuto: true, At: p.clock(), Said: said, Refused: refusedAll})
 	if err != nil {
 		return err
 	}
@@ -93,6 +102,11 @@ func (p *cursorPlan) onlyAuto() (since time.Time, only bool) {
 func (p *cursorPlan) limit() (cursorPlanFile, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.believed()
+}
+
+// believed is limit, for a caller that holds the lock.
+func (p *cursorPlan) believed() (cursorPlanFile, bool) {
 	data, err := fscopy.ReadFile(p.file)
 	if errors.Is(err, os.ErrNotExist) {
 		return cursorPlanFile{}, false

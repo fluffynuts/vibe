@@ -363,3 +363,38 @@ func TestARefusalNamingNoModelLeavesOnlyAuto(t *testing.T) {
 		t.Errorf("limits = %+v", limits)
 	}
 }
+
+func TestEveryModelRefusedIsOutOfReachNotOnlyTheLastWhateverTheRefusalNames(t *testing.T) {
+	// Cursor says the plan includes Grok, and then refuses it (seen 2026-10-28), so what it names is only a hope.
+	ask, _ := cursorSays(t, "")
+	c, files := newCursorChoice(t, ask)
+	askedFor(t, c)
+	files.plan.learned(reworkedRefusal, "gpt-5.5-high")
+	files.plan.learned(reworkedRefusal, "cursor-grok-4.6-high")
+	files.plan.learned(reworkedRefusal, "grok-4.7-medium-fast")
+	limits := c.Limits()
+	if limits == nil {
+		t.Fatal("no limits")
+	}
+	for _, refused := range []string{"gpt-5.5", "cursor-grok-4.6", "grok-4.7"} {
+		if !slices.Contains(limits.Unavailable, refused) {
+			t.Errorf("%s, which was refused, is not out of reach", refused)
+		}
+	}
+	if slices.Contains(limits.Unavailable, "auto") {
+		t.Error("Auto is out of reach")
+	}
+}
+
+func TestWhatWasRefusedBeforeTheMemoryExpiredIsForgottenWithIt(t *testing.T) {
+	ask, _ := cursorSays(t, "")
+	c, files := newCursorChoice(t, ask)
+	askedFor(t, c)
+	files.plan.learned(reworkedRefusal, "cursor-grok-4.6-high")
+	*files.now = files.now.Add(cursorPlanFreshFor + time.Minute)
+	files.plan.learned(reworkedRefusal, "grok-4.7-high")
+	limits := c.Limits()
+	if limits == nil || slices.Contains(limits.Unavailable, "cursor-grok-4.6") || !slices.Contains(limits.Unavailable, "grok-4.7") {
+		t.Errorf("limits = %+v", limits)
+	}
+}
