@@ -48,6 +48,16 @@ The power button replaces the "connected" indicator at the top right (`#link` in
 
 The power menu is also where an **Appearance…** item would go, for the accessibility options: their own plan, `docs/plan-accessibility.md`, on a branch after this one. What this branch must do for it is only: no hard-coded colour or fixed `px` font size, every control labelled, the power button's states in CSS variables.
 
+### Start, stop and restart from the Profiles tab (raised and agreed 2026-10-28)
+
+The power menu acts on the vibe whose page it is. The Profiles tab already lists every sandbox with its status, whether a vibe is attached and its folder, so it gets the same actions for *any* listed sandbox: **Start**, **Stop**, **Restart**. With one page open, the everyday actions for every workspace are then within reach of the page, and the console is only needed when no page is open at all.
+
+- **Start is headless.** A button can't give a terminal session. It starts a headless vibe for the sandbox (`detachHeadless`'s way) and shows its page link; the button says so. Only for a sandbox whose folder exists.
+- **One backend, keyed by sandbox name.** The top-bar menu's Stop and Restart are that backend with this vibe's own name; the Profiles tab calls it with any other. Built once, with buttons in both places.
+- **The page acted on is not the one looked at, so the confirmation says what it acts on:** the sandbox's name and its workspace folder, every time, and says when an agent is mid-turn. A rebuild under way is refused, with the reason.
+- **The questions the new vibe asks** (out-of-date profile: accept or bypass; "restart anyway?"; the git author) are dialogs on the new vibe's page, in its "starting" state: Restart and Start need the same ones.
+- **Order:** (1) the power button, states and menu, with the issue links and templates; (2) Stop and Restart by sandbox name, with the top-bar items; (3) the Profiles tab's buttons; (4) the "starting" questions as dialogs.
+
 ### Reporting an issue
 
 - Menu items open a new GitHub issue in a new tab (`rel="noopener noreferrer"`): `https://github.com/fluffynuts/vibe/issues/new?template=bug_report.yml`, `…feature_request.yml`, `…other.yml`. They are vibe's own links, built by the page from constants, never from anything the agent said (the page deliberately never makes agent text clickable).
