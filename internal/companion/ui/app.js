@@ -303,8 +303,8 @@
   // can be done: each is disabled, with the reason beside it, when it can't,
   // as it can't when vibe isn't there.
   async function showPowerActions() {
-    $('power-actions').hidden = !state.power
-    if (!state.power) return
+    $('power-actions').hidden = !state.power || !state.sandbox
+    if (!state.power || !state.sandbox) return
     const set = (action, ok, why) => {
       const item = $('power-' + action)
       item.disabled = !ok
@@ -336,23 +336,45 @@
   function askPower(action, sandbox, check) {
     const can = ((check || {}).actions || {})[action] || {}
     const folder = (check || {}).folder || ''
-    const stop = action === 'stop'
+    const words = {
+      stop: { title: 'Stop sandbox ', ing: 'Stopping', label: 'Stop',
+        text: 'This ends vibe for ' + folder + ' and stops the sandbox.' + (sandbox === state.sandbox ? ' This page disconnects; vibe in that folder starts it again.' : '') },
+      restart: { title: 'Restart vibe for sandbox ', ing: 'Restarting', label: 'Restart',
+        text: 'This ends vibe for ' + folder + ' and starts it again, headless, on the same port.' + (sandbox === state.sandbox ? ' This page reconnects when it is back.' : '') },
+      start: { title: 'Start vibe for sandbox ', ing: 'Starting vibe for', label: 'Start',
+        text: 'This starts a headless vibe for ' + folder + ', which can be talked to from its page. A terminal session is not something to start from here: run vibe in the folder for one.' },
+    }[action]
     confirmThen({
-      title: (stop ? 'Stop sandbox ' : 'Restart vibe for sandbox ') + "'" + sandbox + "'?",
-      text: stop
-        ? 'This ends vibe for ' + folder + ' and stops the sandbox. This page disconnects; vibe in that folder starts it again.'
-        : 'This ends vibe for ' + folder + ' and starts it again, headless, on the same port. This page reconnects when it is back.',
+      title: words.title + "'" + sandbox + "'?",
+      text: words.text,
       list: can.warns || [],
       commandNote: '',
-      danger: true,
-      runLabel: stop ? 'Stop' : 'Restart',
-      started: (stop ? 'Stopping' : 'Restarting') + " '" + sandbox + "'",
+      danger: action !== 'start',
+      runLabel: words.label,
+      started: words.ing + " '" + sandbox + "'",
       run: async () => {
         const res = await post('/api/power', { sandbox, action, confirmed: true })
         if (res.ok) showPowerProgress(action, sandbox)
         return res
       },
     })
+  }
+
+  // askPowerForRow asks vibe what the action would interrupt for the sandbox
+  // of a row of the Profiles tab, then asks the user.
+  async function askPowerForRow(action, row) {
+    let check = { folder: row.folder }
+    try {
+      const res = await api('/api/power?sandbox=' + encodeURIComponent(row.name))
+      reached(true)
+      if (!res.ok) { toast((res.body && res.body.error) || 'vibe could not say what that would interrupt.', true); return }
+      check = res.body
+    } catch (e) {
+      reached(false)
+      toast('Could not reach vibe.', true)
+      return
+    }
+    askPower(action, row.name, check)
   }
 
   const power = { timer: null }
@@ -363,14 +385,18 @@
   // and vibe is as it was (it didn't take effect).
   function showPowerProgress(action, sandbox) {
     const dialog = $('power-progress')
-    $('power-progress-title').textContent = (action === 'stop' ? 'Stopping ' : 'Restarting ') + "'" + sandbox + "'"
+    const ing = { stop: 'Stopping ', restart: 'Restarting ', start: 'Starting vibe for ' }[action]
+    $('power-progress-title').textContent = ing + "'" + sandbox + "'"
     $('power-log').textContent = ''
     $('power-end').textContent = ''
+    // Only this page's own vibe is ended by its own sandbox's stop or restart,
+    // so only then does the page gone, or come back under a new boot, say how it ended.
+    const own = sandbox === state.sandbox && action !== 'start'
     const boot = state.boot
     let next = 0
     let away = 0
     let ended = false
-    const end = (text) => { ended = true; $('power-end').textContent = text }
+    const end = (text) => { ended = true; $('power-end').textContent = text; if (state.manage) loadManage() }
     clearInterval(power.timer)
     power.timer = setInterval(async function pollPower() {
       if (ended) return
@@ -384,15 +410,17 @@
           $('power-log').scrollTop = $('power-log').scrollHeight
         }
         next = res.body.next
-        if (state.boot && boot && state.boot !== boot) {
+        if (own && state.boot && boot && state.boot !== boot) {
           end(action === 'restart' ? 'Restarted: this page is back.' : 'vibe is running again.')
-        } else if (!res.body.running && next > 0 && !(action === 'stop')) {
-          end("That ended and didn't take effect: vibe is as it was. What it said is above.")
+        } else if (!res.body.running && next > 0 && !(own && action === 'stop')) {
+          end(own
+            ? "That ended and didn't take effect: vibe is as it was. What it said is above."
+            : 'That has ended. What it said is above; the Profiles tab shows how the sandbox is now.')
         }
       } catch (e) {
         reached(false)
         away += 1
-        if (action === 'stop' && away >= 2) end('vibe has ended. What it said is above; the sandbox is stopped when it says so.')
+        if (own && action === 'stop' && away >= 2) end('vibe has ended. What it said is above; the sandbox is stopped when it says so.')
       }
     }, 700)
     $('power-close').onclick = () => dialog.close()
@@ -769,6 +797,7 @@
       if (state.choice) initChoice()
       state.admin = !!res.body.admin
       state.power = !!res.body.power
+      state.manage = !!res.body.manage
       state.boot = res.body.boot || ''
       state.usage = !!res.body.usage
       $('usage').hidden = !state.usage
@@ -3874,6 +3903,8 @@
       title: 'Rebuild sandbox ' + name + '?',
       text: "It's destroyed and made again from its profile, which takes a few minutes, and left running or stopped as it was. The agent's memories are kept; anything installed by hand, or kept outside its folder, goes.",
       command: 'vibe -r <its folder>' }) },
+    startvibe: { label: 'Start vibe…', power: 'start' },
+    restartvibe: { label: 'Restart vibe…', power: 'restart' },
     update: { label: 'Update…', ask: (name, isProfile) => ({
       title: 'Bring ' + (isProfile ? 'profile ' + name + ' and its sandboxes' : 'sandbox ' + name) + ' up to date?',
       text: "A profile the library has moved on from is composed afresh (backed up first, and not if it was edited by hand), and each sandbox built from what has since changed is rebuilt, left running or stopped as it was. The agent's memories are kept.",
@@ -3896,6 +3927,7 @@
   async function manageAction(kind, row, isProfile) {
     const run = () => post('/api/manage/do', { kind, id: row.id })
     const a = MANAGE_ACTIONS[kind]
+    if (a.power) { askPowerForRow(a.power, row); return }
     if (!a.ask) {
       try {
         const res = await run()

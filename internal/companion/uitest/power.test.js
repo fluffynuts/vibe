@@ -256,3 +256,78 @@ test('a refused action says why, and starts no progress', async () => {
     assert.match(p.$('toast').textContent, /a rebuild is under way/)
   } finally { p.close() }
 })
+
+// profilesPage is the Profiles tab with sandboxes whose rows offer actions, and a vibe that can start and restart them.
+function profilesPage(actionsOf, routes = powerRoutes()) {
+  const row = (name, actions, attached) => ({ id: 'sandbox:' + name, name, folder: '~/work/' + name, flags: [], actions, attached })
+  const state = routes['/api/state']
+  routes['/api/state'] = () => Object.assign(state(), { manage: true })
+  routes['/api/manage'] = {
+    inventory: { profiles: [{ id: 'profile:p', name: 'p', features: [], flags: [], actions: [], sandboxes: [row('other', actionsOf, !!routes.attached)] }], unknown: [] },
+    job: null,
+  }
+  routes['/api/power'] = (call) => {
+    if (call.method === 'POST') return { status: 202, body: { ok: true } }
+    return { sandbox: 'other', folder: '~/work/other', actions: { start: { ok: true }, restart: { ok: true, warns: routes.warns || [] } } }
+  }
+  return openPage({ routes, storage: { 'vibe-companion-tab': 'manage' } })
+}
+
+const rowButton = (p, text) => [...p.window.document.querySelectorAll('#manage-list button')].find((b) => b.textContent === text)
+
+test('a sandbox row offers to start a vibe for it, asking first and naming the sandbox and its folder', async () => {
+  const p = await profilesPage(['startvibe'])
+  try {
+    await p.click(rowButton(p, 'Start vibe…'))
+    await p.settle()
+    assert.equal(p.$('confirm').open, true)
+    const asked = p.$('confirm-title').textContent + ' ' + p.$('confirm-text').textContent
+    assert.ok(asked.includes("'other'") && asked.includes('~/work/other'), asked)
+    assert.equal(p.posted('/api/power').length, 0)
+    await p.confirm(true)
+    assert.deepEqual(p.posted('/api/power'), [{ sandbox: 'other', action: 'start', confirmed: true }])
+    assert.equal(p.$('power-progress').open, true)
+  } finally { p.close() }
+})
+
+test("restarting another sandbox's vibe shows what it would interrupt, and posts for that sandbox", async () => {
+  const routes = powerRoutes()
+  routes.attached = true
+  routes.warns = ['the agent of the headless vibe (PID 7) is part-way through a turn: ending it cuts the turn off']
+  const p = await profilesPage(['stop', 'restartvibe'], routes)
+  try {
+    await p.click(rowButton(p, 'Restart vibe…'))
+    await p.settle()
+    assert.match(p.$('confirm-list').textContent, /part-way through a turn/)
+    await p.confirm(true)
+    assert.deepEqual(p.posted('/api/power'), [{ sandbox: 'other', action: 'restart', confirmed: true }])
+  } finally { p.close() }
+})
+
+test("another sandbox's action ends when what runs it has, and says to read what it said: no boot to wait for", async () => {
+  const routes = powerRoutes({ log: { text: 'starting vibe\n', next: 14, running: true } })
+  const p = await profilesPage(['startvibe'], routes)
+  try {
+    await p.click(rowButton(p, 'Start vibe…'))
+    await p.settle()
+    await p.confirm(true)
+    await p.every('pollPower')
+    assert.equal(p.$('power-end').textContent, '')
+    routes.log = { text: 'the vibe is up\n', next: 28, running: false }
+    await p.every('pollPower')
+    assert.match(p.$('power-end').textContent, /has ended/)
+    assert.doesNotMatch(p.$('power-end').textContent, /take effect/)
+    assert.ok(p.calls.some((c) => c.path === '/api/power/log' && c.query.includes('sandbox=other')))
+  } finally { p.close() }
+})
+
+test('a Profiles page with no sandbox of its own has no stop or restart for itself in the menu', async () => {
+  const routes = powerRoutes()
+  const state = routes['/api/state']
+  routes['/api/state'] = () => Object.assign(state(), { sandbox: '', sandboxTabs: false, manage: true })
+  const p = await openPage({ routes })
+  try {
+    await p.click('link')
+    assert.equal(p.$('power-actions').hidden, true)
+  } finally { p.close() }
+})
