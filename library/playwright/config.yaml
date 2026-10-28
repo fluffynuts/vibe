@@ -1,0 +1,18 @@
+# Kit fragment for the playwright feature, merged into the config.yaml of any
+# profile composed with it.
+permissions:
+  network:
+    allow:
+      # Playwright itself
+      - registry.npmjs.org
+      # the browsers, from the CDN Playwright names first, and the mirror it falls back to
+      - cdn.playwright.dev
+      - playwright.download.prss.microsoft.com
+      # the libraries the browsers need (arm64 machines use ports)
+      - archive.ubuntu.com
+      - security.ubuntu.com
+      - ports.ubuntu.com
+environment:
+  variables:
+    # Where the browsers are, for Playwright of any version in any project.
+    PLAYWRIGHT_BROWSERS_PATH: /opt/ms-playwright
