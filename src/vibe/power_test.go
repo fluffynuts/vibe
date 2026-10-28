@@ -326,3 +326,31 @@ func TestAnActionWhosePIDHasBeenReusedByAnotherProcessIsNotTakenForRunning(t *te
 		t.Error("a live action just started isn't taken for running")
 	}
 }
+
+func TestADeskSeesTheVibeItIsRunningInAsOneOfThoseHoldingTheFolder(t *testing.T) {
+	// The page's own sandbox: the vibe serving the page is the one to stop or restart, and Claims leaves it out as it is not "other".
+	d, lay, target := powerStandIns(t, nil, true, true)
+	d.claims = nil
+	s, err := running.Register(lay.Home, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Release()
+	if err := s.MarkHeadless(target); err != nil {
+		t.Fatal(err)
+	}
+	check := d.Check("box")
+	restart := check.Actions[companion.PowerRestart]
+	if !restart.OK {
+		t.Errorf("a vibe is running here, headless, and restart is refused: %+v", restart)
+	}
+	if len(restart.Warns) != 1 || !strings.Contains(restart.Warns[0], "part-way through a turn") {
+		t.Errorf("restart doesn't warn of the turn its own agent is part-way through: %+v", restart)
+	}
+	if stop := check.Actions[companion.PowerStop]; len(stop.Warns) != 1 {
+		t.Errorf("stop: %+v", stop)
+	}
+	if start := check.Actions[companion.PowerStart]; start.OK {
+		t.Errorf("a vibe is running here, and start is offered: %+v", start)
+	}
+}

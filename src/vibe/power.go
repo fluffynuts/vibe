@@ -28,7 +28,8 @@ var powerExe = os.Executable
 // there is one way to do each, and the page only saves going to a terminal.
 type powerDesk struct {
 	lay layout.Layout
-	// claims are the vibes holding a folder: running.Claims when nil.
+	// claims are the vibes holding a folder: running.AllClaims when nil, which
+	// includes this one, as it may be the one for the page's own sandbox.
 	claims func(vibeHome, target string) []running.Claim
 	// outOfDate says why a sandbox is out of date, "" when it isn't:
 	// sandboxOutOfDate when nil.
@@ -73,7 +74,7 @@ func (d *powerDesk) claimsOf(target string) []running.Claim {
 	if d.claims != nil {
 		return d.claims(d.lay.Home, target)
 	}
-	return running.Claims(d.lay.Home, target)
+	return running.AllClaims(d.lay.Home, target)
 }
 
 // powerLogPath is where the last action on sandbox name wrote what it said:
