@@ -510,6 +510,28 @@ test("the git status's parts have the prompt's colours, in the light and the dar
   }
 })
 
+// The Admin tab's small cards after the wide one (the agent's instructions) share a row, when there is room for three:
+// what they say is in settings.test.js, where they are is here.
+test('the admin tab puts profile backups, settings and the GitHub token on one row, below the instructions', async () => {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
+  try {
+    await page.goto(URL)
+    const rects = await page.evaluate(() => {
+      document.getElementById('panel-admin').hidden = false
+      const rect = (heading) => {
+        const h2 = [...document.querySelectorAll('#panel-admin .admin-grid > section.card > h2')].find((h) => h.textContent.trim().startsWith(heading))
+        const r = h2.parentElement.getBoundingClientRect()
+        return { top: r.top, left: r.left, bottom: r.bottom }
+      }
+      return { instructions: rect('Agent instructions'), backups: rect('Profile backups'), settings: rect('Settings'), git: rect('GitHub token') }
+    })
+    assert.ok(Math.abs(rects.backups.top - rects.settings.top) < 1 && Math.abs(rects.settings.top - rects.git.top) < 1,
+      `the three aren't on one row: tops ${rects.backups.top}, ${rects.settings.top}, ${rects.git.top}`)
+    assert.ok(rects.backups.left < rects.settings.left && rects.settings.left < rects.git.left, 'they are not in that order, left to right')
+    assert.ok(rects.instructions.bottom <= rects.backups.top, 'the instructions are not above them')
+  } finally { await page.close() }
+})
+
 // eventually waits for check to say yes: polled, as the page's policy doesn't allow waitForFunction.
 async function eventually(page, what, check) {
   for (let i = 0; i < 80; i++) {

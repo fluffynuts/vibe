@@ -69,3 +69,14 @@ test('changing the setting shows the prompts already on the page the new way, an
     assert.equal(p.$('convo-log').querySelector('.msg.user').prompt, PROMPT, 'what was sent is what was typed, either way')
   } finally { p.close() }
 })
+
+test('the Admin tab ends with its small cards in a row after the wide one: profile backups, settings, the GitHub token', async () => {
+  const p = await pageWith()
+  try {
+    const cards = [...p.$('panel-admin').querySelectorAll('.admin-grid > section.card')]
+    const names = cards.map((c) => (c.querySelector('h2') || {}).textContent || '')
+    const last = names.slice(names.findIndex((n) => /^Agent instructions/.test(n)) + 1)
+    assert.deepEqual(last, ['Profile backups', 'Settings', 'GitHub token'], 'the cards after the instructions: ' + JSON.stringify(names))
+    for (const name of last) assert.ok(!cards[names.indexOf(name)].classList.contains('card-wide'), name + ' takes a whole row')
+  } finally { p.close() }
+})
