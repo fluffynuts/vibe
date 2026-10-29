@@ -451,19 +451,7 @@ func recomposeProfile(lay layout.Layout, args cliargs.Args, name, target string,
 		return err
 	}
 	if blank := profilegen.IsBlank(lay.ProfileDir(profile)) && !profilegen.IsGuided(lay.ProfileDir(profile)); blank && chosen == nil {
-		// Nothing was composed into it, so there is nothing to compose again:
-		// what a re-compose is for is the sandbox, which is made afresh from the
-		// profile as it is.
-		if warn && !args.Force {
-			fmt.Fprintf(os.Stderr, "\x1b[1;93mvibe: WARNING: this destroys sandbox '%s' and makes it again from profile '%s'.\x1b[0m\n", name, profile)
-			fmt.Fprintf(os.Stderr, "\x1b[1;93m  The profile was created blank, so it is left as it is\x1b[0m\n")
-			fmt.Fprintf(os.Stderr, "\x1b[1;93m  The existing sandbox will be destroyed and cannot be restored\x1b[0m\n")
-		}
-		if warn && !confirmDefault(args.Force, true, "Continue?") {
-			return fmt.Errorf("aborted — nothing changed")
-		}
-		note("profile '%s' was created blank, so there is nothing to compose again: it is left as it is", profile)
-		return nil
+		return recomposeBlank(lay, args, name, profile, warn)
 	}
 	features := settleFeatures(lay, profile)
 	defaultAgent, err := defaultAgentFor(lay, profile)
@@ -515,6 +503,46 @@ func recomposeProfile(lay layout.Layout, args cliargs.Args, name, target string,
 	return replaceProfile(lay, profile, name, features)
 }
 
+// recomposeBlank is recomposeProfile for a profile an earlier vibe created blank,
+// which has none of the base features (so no clipboard page: the vibe app of its
+// sandbox is missing a part). One nobody has added to is composed afresh as a
+// blank profile is now, from the base features alone: what is the user's (their
+// instructions, their choices) is carried across, and the profile is backed up
+// first. One that has been added to (a script, a file) is left as it is, as a
+// rebuild would lose that, and it is said what it lacks and how to get it.
+func recomposeBlank(lay layout.Layout, args cliargs.Args, name, profile string, warn bool) error {
+	dir := lay.ProfileDir(profile)
+	missing := missingBaseFeatures(lay, dir, lay.BaseFeatures())
+	if profilegen.IsUntouchedBlank(dir) {
+		if warn && !args.Force {
+			fmt.Fprintf(os.Stderr, "\x1b[1;93mvibe: WARNING: this rebuilds profile '%s' and destroys its sandbox '%s'.\x1b[0m\n", profile, name)
+			fmt.Fprintf(os.Stderr, "\x1b[1;93m  The profile was created blank: it gets the base features every profile has now (%s)\x1b[0m\n", describeFeatures(missing))
+			fmt.Fprintf(os.Stderr, "\x1b[1;93m  Your existing profile will be backed up (restore with --restore)\x1b[0m\n")
+			fmt.Fprintf(os.Stderr, "\x1b[1;93m  The existing sandbox will be destroyed and cannot be restored\x1b[0m\n")
+		}
+		if warn && !confirmDefault(args.Force, true, "Continue?") {
+			return fmt.Errorf("aborted — nothing changed")
+		}
+		note("profile '%s' was created blank, before blank profiles had the base features (%s): they are added now, and nothing else changes", profile, describeFeatures(missing))
+		return replaceProfile(lay, profile, name, nil)
+	}
+	// Added to since, so a rebuild would lose that: what a re-compose is for is
+	// the sandbox, which is made afresh from the profile as it is.
+	if warn && !args.Force {
+		fmt.Fprintf(os.Stderr, "\x1b[1;93mvibe: WARNING: this destroys sandbox '%s' and makes it again from profile '%s'.\x1b[0m\n", name, profile)
+		fmt.Fprintf(os.Stderr, "\x1b[1;93m  The profile was created blank and added to, so it is left as it is\x1b[0m\n")
+		fmt.Fprintf(os.Stderr, "\x1b[1;93m  The existing sandbox will be destroyed and cannot be restored\x1b[0m\n")
+	}
+	if warn && !confirmDefault(args.Force, true, "Continue?") {
+		return fmt.Errorf("aborted — nothing changed")
+	}
+	note("profile '%s' was created blank and has been added to since, so there is nothing to compose again: it is left as it is", profile)
+	if len(missing) > 0 {
+		note("  it lacks the base features (%s) every profile has now, the clipboard page among them: 'vibe -R' builds a fresh profile that has them, for your own files to be moved into", describeFeatures(missing))
+	}
+	return nil
+}
+
 // replaceProfile backs profile up, under backupName (the sandbox it's for),
 // and composes it afresh from features.
 func replaceProfile(lay layout.Layout, profile, backupName string, features []string) error {
@@ -548,6 +576,7 @@ func replaceProfile(lay layout.Layout, profile, backupName string, features []st
 			return err
 		}
 	}
+	noteShadowedFeatures(lay, features)
 	created, err := profilegen.CreateGuided(lay, profile, features)
 	if err != nil {
 		return err
@@ -560,7 +589,7 @@ func replaceProfile(lay layout.Layout, profile, backupName string, features []st
 			return fmt.Errorf("could not carry profile '%s's %s across (the backup above has it): %w", profile, userprefs.File, err)
 		}
 	}
-	note("re-composed profile '%s' (%s) in %s", profile, strings.Join(features, ", "), created)
+	note("re-composed profile '%s' (%s) in %s", profile, describeFeatures(features), created)
 	return nil
 }
 
@@ -646,7 +675,7 @@ func noteMissingBase(lay layout.Layout, profile string) {
 		them = "them"
 	}
 	note("every sandbox now has %s, which profile '%s' was built without", describeFeatures(missing), profile)
-	if profilegen.IsGuided(dir) {
+	if profilegen.IsGuided(dir) || profilegen.IsUntouchedBlank(dir) {
 		note("  run 'vibe --re-compose' to rebuild the profile with %s", them)
 		note("  (that recreates the sandbox, so anything that isn't in your workspace is lost)")
 	} else {

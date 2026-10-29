@@ -6,7 +6,9 @@
 package library
 
 import (
+	"bytes"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -505,4 +507,56 @@ func WithoutRetired(features []string) (kept, retired []string) {
 		}
 	}
 	return kept, retired
+}
+
+// Differences are the files that two copies of a feature differ in, by their
+// path from the feature's folder, sorted: one that has a different content
+// (line endings aside), or is in only one of them. Folders with nothing in them
+// don't count.
+func Differences(a, b string) []string {
+	inA, inB := filesUnder(a), filesUnder(b)
+	var out []string
+	for rel, pa := range inA {
+		if pb, ok := inB[rel]; !ok || !sameText(pa, pb) {
+			out = append(out, rel)
+		}
+	}
+	for rel := range inB {
+		if _, ok := inA[rel]; !ok {
+			out = append(out, rel)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// filesUnder maps the path from root of each file under it to where it is. A
+// root that is a symlink is walked as the folder it points to, which WalkDir
+// won't do of itself (it would find nothing, and the copy would seem to differ
+// in every file).
+func filesUnder(root string) map[string]string {
+	files := map[string]string{}
+	if real, err := filepath.EvalSymlinks(root); err == nil {
+		root = real
+	}
+	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if rel, err := filepath.Rel(root, path); err == nil {
+			files[rel] = path
+		}
+		return nil
+	})
+	return files
+}
+
+// sameText says two files hold the same, whatever their line endings.
+func sameText(a, b string) bool {
+	da, errA := fscopy.ReadFile(a)
+	db, errB := fscopy.ReadFile(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return bytes.Equal(bytes.ReplaceAll(da, []byte("\r\n"), []byte("\n")), bytes.ReplaceAll(db, []byte("\r\n"), []byte("\n")))
 }

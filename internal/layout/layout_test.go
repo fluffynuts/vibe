@@ -177,3 +177,38 @@ func TestBaseFeaturesAreNotSelectableButResolve(t *testing.T) {
 		t.Errorf("FeatureDir(extra) = %s, want %s", got, want)
 	}
 }
+
+func TestAFeatureOverriddenInTheOverlayNamesBothCopies(t *testing.T) {
+	l := New(t.TempDir(), t.TempDir())
+	write(t, l.BundlePath("library", "mysql", "install-scripts", "01-a"), "echo a\n")
+	write(t, l.BundlePath("library", "base", "clip", "agent-files", "x"), "x\n")
+	if _, _, ok := l.Override("mysql"); ok {
+		t.Error("a feature nobody overrode is said to be overridden")
+	}
+	write(t, l.HomePath("library", "mysql", "install-scripts", "01-a"), "echo mine\n")
+	write(t, l.HomePath("library", "base", "clip", "agent-files", "x"), "old\n")
+	if mine, shipped, ok := l.Override("mysql"); !ok || mine != l.HomePath("library", "mysql") || shipped != l.BundlePath("library", "mysql") {
+		t.Errorf("mysql: %s, %s, %v", mine, shipped, ok)
+	}
+	if mine, shipped, ok := l.Override("clip"); !ok || mine != l.HomePath("library", "base", "clip") || shipped != l.BundlePath("library", "base", "clip") {
+		t.Errorf("a base feature: %s, %s, %v", mine, shipped, ok)
+	}
+}
+
+func TestAFeatureOnlyTheUserHasIsNotAnOverrideOfAnything(t *testing.T) {
+	l := New(t.TempDir(), t.TempDir())
+	write(t, l.HomePath("library", "mine", "install-scripts", "01-a"), "echo mine\n")
+	if _, _, ok := l.Override("mine"); ok {
+		t.Error("a feature vibe doesn't ship is said to override one")
+	}
+}
+
+func TestAnOldCopyOfWhatIsABaseFeatureNowIsNotAnOverrideBecauseItIsNeverUsed(t *testing.T) {
+	// FeatureDir looks past it: see retireShadowedFeatures.
+	l := New(t.TempDir(), t.TempDir())
+	write(t, l.BundlePath("library", "base", "clip", "agent-files", "x"), "x\n")
+	write(t, l.HomePath("library", "clip", "agent-files", "x"), "old\n")
+	if _, _, ok := l.Override("clip"); ok {
+		t.Error("a copy that nothing reads is said to be in use")
+	}
+}

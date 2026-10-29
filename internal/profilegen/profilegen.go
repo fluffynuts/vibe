@@ -15,6 +15,7 @@ import (
 	"vibe/internal/instructions"
 	"vibe/internal/layout"
 	"vibe/internal/library"
+	"vibe/internal/userprefs"
 )
 
 // validName is what a profile directory may be called: the same shape
@@ -45,30 +46,21 @@ const blankConfig = `# vibe profile "%[1]s".
 #                          in every session (after ~/.vibe's universal ones)
 #   kit-instructions.md    the kits' instructions, when composed from the
 #                          library: re-composing rewrites it
-#
-# This profile was created blank: nothing was composed into it, so a
-# re-compose (vibe -C) leaves it as it is and only makes the sandbox afresh.
-# vibe: blank: yes
 name: %[1]s
 displayName: %[1]s sandbox
 description: Sandbox for the %[1]s workspace
 `
 
-// CreateBlank writes the most basic usable profile: a config.yaml naming it,
-// plus the empty install-scripts and agent-files directories a profile grows
-// into. It returns the created profile directory.
+// CreateBlank writes a profile with no optional features: what a guided
+// profile is when none is picked. It has the base features all the same
+// (the clipboard page, the review tab's tooling), which a vibe app is lacking a
+// part without. It returns the created profile directory.
 func CreateBlank(l layout.Layout, profile string) (string, error) {
-	if err := Validate(profile); err != nil {
-		return "", err
-	}
-	dir := l.NewProfileDir(profile)
-	if err := writeBlank(dir, profile); err != nil {
-		return "", createErr(dir, err)
-	}
-	return dir, nil
+	return CreateGuided(l, profile, nil)
 }
 
-// writeBlank writes a blank profile named profile into dir.
+// writeBlank writes the skeleton of a profile named profile into dir: what
+// there is before any feature is composed into it.
 func writeBlank(dir, profile string) error {
 	for _, sub := range []string{"install-scripts", "agent-files"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
@@ -193,9 +185,10 @@ func ComposedFrom(profileDir string) []string {
 // that was written by hand or copied.
 const blankKey = "blank"
 
-// IsBlank reports whether a profile was created blank, as opposed to written
-// by hand, copied, or composed from the library: there is no composing to
-// redo for it, and that is how it was meant to be.
+// IsBlank reports whether a profile was created blank by an earlier vibe, which
+// composed nothing into it (not even the base features), as opposed to written
+// by hand, copied, or composed from the library. This vibe's blank profiles
+// are composed from the base features, and so are guided ones.
 func IsBlank(profileDir string) bool {
 	data, err := fscopy.ReadFile(filepath.Join(profileDir, "config.yaml"))
 	if err != nil {
@@ -334,4 +327,58 @@ func rewriteName(path, profile string) error {
 		return fmt.Errorf("writing %s: %w", path, err)
 	}
 	return nil
+}
+
+// IsUntouchedBlank reports whether a profile is a blank one of an earlier vibe
+// that nobody has grown: its install scripts and agent files are empty, there
+// is no settings.yaml and no kit's instructions, and its config.yaml says no more
+// than its name. The user's own instructions and preferences don't count, as
+// they are carried across when it is composed afresh. Such a profile can
+// become what a blank profile is now (composed from the base features) with
+// nothing of the user's lost; one that has been grown can't, and is left as it is.
+func IsUntouchedBlank(profileDir string) bool {
+	if !IsBlank(profileDir) || IsGuided(profileDir) {
+		return false
+	}
+	entries, err := os.ReadDir(profileDir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		switch name := e.Name(); {
+		case name == "config.yaml" || name == instructions.File || name == userprefs.File:
+		case name == "install-scripts" || name == "agent-files":
+			if !emptyOfFiles(filepath.Join(profileDir, name)) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	data, err := fscopy.ReadFile(filepath.Join(profileDir, "config.yaml"))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !strings.HasPrefix(line, "name:") && !strings.HasPrefix(line, "displayName:") && !strings.HasPrefix(line, "description:") {
+			return false
+		}
+	}
+	return true
+}
+
+// emptyOfFiles says dir holds no file, however deep.
+func emptyOfFiles(dir string) bool {
+	empty := true
+	filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			empty = false
+		}
+		return nil
+	})
+	return empty
 }

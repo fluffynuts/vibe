@@ -155,7 +155,7 @@ func createProfileIfMissing(lay layout.Layout, profile string, force bool, agent
 			blank
 		)
 		choice, ok := chooseFrom("create it how?",
-			[]string{"guided profile creation", "copy an existing profile", "create a new blank profile"}, guided)
+			[]string{"guided profile creation", "copy an existing profile", "create a new blank profile (no optional features)"}, guided)
 		if !ok {
 			return fmt.Errorf("aborted — no profile '%s' created", profile)
 		}
@@ -176,6 +176,7 @@ func createProfileIfMissing(lay layout.Layout, profile string, force bool, agent
 	if source != "" {
 		dir, err = profilegen.CopyFrom(lay, source, profile)
 	} else {
+		noteShadowedFeatures(lay, nil)
 		dir, err = profilegen.CreateBlank(lay, profile)
 	}
 	if err != nil {
@@ -187,7 +188,7 @@ func createProfileIfMissing(lay layout.Layout, profile string, force bool, agent
 			note("it carries the choices made for '%s' (%s), which are kept with a profile: change them on the page, or edit or delete %s to be asked or to go back to the defaults", source, carried, filepath.Join(dir, userprefs.File))
 		}
 	} else {
-		note("created blank profile '%s' in %s", profile, dir)
+		note("created blank profile '%s' in %s: no optional features, and the base features every profile has", profile, dir)
 	}
 	return nil
 }
@@ -260,6 +261,7 @@ func ensureGuidedProfile(lay layout.Layout, profile, agent string) error {
 		chosen = ordered
 	}
 
+	noteShadowedFeatures(lay, chosen)
 	dir, err := profilegen.CreateGuided(lay, profile, chosen)
 	if err != nil {
 		return err

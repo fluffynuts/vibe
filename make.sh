@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # vibe — build, test and tidy the CLI, for machines without make.
-# Mirrors the Makefile: ./make.sh [build|test|vet|check|clean|dist|help]... (default: build)
+# Mirrors the Makefile: ./make.sh [build|test|vet|fmt-check|check|clean|dist|help]... (default: build)
 #
 # The binary resolves its bundle (defaults/, profiles/, config.yaml,
 # settings.yaml) relative to its own location, so it is built into the repo
 # root and must stay there. Put it on $PATH with a symlink, never a copy.
 #
-# GO and BINARY can be overridden from the environment, as with make.
+# GO, GOFMT and BINARY can be overridden from the environment, as with make.
 #
 # dist packages a release zip in dist/: the binary plus the bundle it needs
 # beside it, under one top-level folder. It builds for GOOS/GOARCH when those
@@ -21,6 +21,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 GO="${GO:-go}"
+GOFMT="${GOFMT:-gofmt}"
 BINARY="${BINARY:-vibe}"
 PKG="./src/vibe"
 
@@ -48,7 +49,21 @@ target_vet() {
   "$GO" vet ./...
 }
 
+# Changes nothing: it lists the files gofmt would change, and fails if there are any. It covers the Go
+# files CI would see: tmp/ is git-ignored scratch.
+target_fmt_check() {
+  echo "$GOFMT -l ."
+  local unformatted
+  unformatted="$(find . -name '*.go' -not -path './.git/*' -not -path './tmp/*' -print0 | xargs -0 "$GOFMT" -l)"
+  if [[ -n "$unformatted" ]]; then
+    echo "gofmt would change these files (gofmt -w <file> formats one):" >&2
+    echo "$unformatted" >&2
+    return 1
+  fi
+}
+
 target_check() {
+  target_fmt_check
   target_vet
   target_test
 }
@@ -93,7 +108,8 @@ TARGETS=(
   "build:build the vibe binary"
   "test:run tests"
   "vet:run go vet"
-  "check:run vet and tests"
+  "fmt-check:check formatting (gofmt), changing nothing: fails if a file would change"
+  "check:run the formatting check, vet and tests"
   "dist:build a release zip file in dist/"
   "clean:remove vibe binary and dist/ folder"
   "help:this help"
@@ -121,5 +137,5 @@ for target in "$@"; do
     echo "make.sh: no such target '$target' ($names)" >&2
     exit 2
   fi
-  "target_$target"
+  "target_${target//-/_}"
 done

@@ -148,8 +148,9 @@ func fakeVibe(t *testing.T, body string) string {
 func TestEachActionIsTheCLICommandItStandsForRunForTheSandboxAndForced(t *testing.T) {
 	d, _, target := powerStandIns(t, nil, false, true)
 	args := filepath.Join(t.TempDir(), "args")
-	// Written whole and moved into place, so that the file being there means it is all there.
-	fakeVibe(t, `printf '%s\n' "$@" > `+args+`.tmp && mv `+args+`.tmp `+args)
+	// Written whole and moved into place, so that the file being there means it is all there. And it lingers
+	// after, as a slow machine's exiting process does: an action isn't over when it has said what it was asked.
+	fakeVibe(t, `printf '%s\n' "$@" > `+args+`.tmp && mv `+args+`.tmp `+args+`; sleep 0.3`)
 	for action, want := range map[string][]string{
 		companion.PowerStop:    {"--stop", "--force", "--name", "box", "--", target},
 		companion.PowerRestart: {"--restart", "--force", "--no-auto-update", "--name", "box", "--", target},
@@ -168,6 +169,8 @@ func TestEachActionIsTheCLICommandItStandsForRunForTheSandboxAndForced(t *testin
 		if got := strings.Fields(string(data)); !slices.Equal(got, want) {
 			t.Errorf("%s ran vibe %v, want %v", action, got, want)
 		}
+		// The next action waits for this one to end, as the desk makes it.
+		waitFor(t, func() bool { return !d.actionRunning("box") })
 	}
 }
 

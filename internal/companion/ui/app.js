@@ -65,6 +65,18 @@
 
   const $ = (id) => document.getElementById(id)
 
+  // The clipboard page is told it is framed here, which says where it is
+  // already, so it leaves out its title.
+  function framedClipboardUrl(url) {
+    try {
+      const framed = new URL(url)
+      framed.searchParams.set('framed', '1')
+      return framed.href
+    } catch (e) {
+      return url
+    }
+  }
+
   const store = {
     get(key) { try { return localStorage.getItem(key) } catch (e) { return null } },
     set(key, value) { try { localStorage.setItem(key, value) } catch (e) { /* private window: carry on */ } },
@@ -884,7 +896,7 @@
           // it has the page, it keeps it while the address stays the same:
           // the page carries on by itself when its server comes back (the
           // sandbox restarted, say), where loading it again would flash.
-          if (ready && state.clipboardLoaded !== url) $(view.frame).src = url
+          if (ready && state.clipboardLoaded !== url) $(view.frame).src = framedClipboardUrl(url)
           else if (!url || (moved && !ready)) $(view.frame).removeAttribute('src')
         }
         if (ready) state.clipboardLoaded = url
@@ -6494,8 +6506,8 @@
     requestAnimationFrame(fitPrompt)
     $('convo-stop').addEventListener('click', () => conversationCall('/api/conversation/stop'))
     setUpFresh()
-    $('convo-md').checked = promptsAsMarkdown.on
-    $('convo-md').addEventListener('change', () => setPromptsAsMarkdown($('convo-md').checked))
+    $('settings-prompts-markdown').checked = promptsAsMarkdown.on
+    $('settings-prompts-markdown').addEventListener('change', () => setPromptsAsMarkdown($('settings-prompts-markdown').checked))
     document.addEventListener('paste', onPaste)
     setInterval(pollConversation, CONVO_POLL_MS)
   }

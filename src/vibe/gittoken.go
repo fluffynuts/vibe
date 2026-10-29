@@ -350,6 +350,16 @@ func paint(color, s string) string {
 // whatever shade a theme makes of it. (The WARNINGs are the same yellow, and bold.)
 const colorQuestion = "93"
 
+// colorWarning is what a warning is drawn in: a question's yellow, and bold.
+const colorWarning = "1;93"
+
+// noteWarning is note for a line that is a WARNING: drawn so as to stand out from the notes around it,
+// on a terminal. What is passed on to the page's log is the plain text.
+func noteWarning(format string, a ...interface{}) {
+	line := fmt.Sprintf(format, a...)
+	noteAs(line, paint(colorWarning, line))
+}
+
 // askText is a question as the terminal shows it: in colour, so it stands out
 // from the notes around it, and only the question: not the "vibe: " before it,
 // the hint after it, or the list a picker draws. Plain where paint is (NO_COLOR,

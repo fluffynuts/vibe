@@ -439,3 +439,88 @@ func TestARetiredFeatureIsTakenOutOfAList(t *testing.T) {
 		t.Errorf("none retired: %q %q", kept, retired)
 	}
 }
+
+func TestTwoFoldersThatAreTheSameDifferInNothing(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir()
+	for _, root := range []string{a, b} {
+		write(t, filepath.Join(root, "agent-files", ".local", "bin", "x"), "x\n")
+		write(t, filepath.Join(root, "install-scripts", "01-a"), "echo\n")
+	}
+	if got := Differences(a, b); len(got) != 0 {
+		t.Errorf("differences: %v", got)
+	}
+}
+
+func TestADifferenceIsNamedByWhereItIsEvenWhenItIsAMissingOrAnExtraFile(t *testing.T) {
+	mine, shipped := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(mine, "same"), "same\n")
+	write(t, filepath.Join(shipped, "same"), "same\n")
+	write(t, filepath.Join(mine, "agent-files", "changed"), "old\n")
+	write(t, filepath.Join(shipped, "agent-files", "changed"), "new\n")
+	write(t, filepath.Join(mine, "only-mine"), "x\n")
+	write(t, filepath.Join(shipped, "only-shipped"), "x\n")
+	got := Differences(mine, shipped)
+	want := []string{filepath.Join("agent-files", "changed"), "only-mine", "only-shipped"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("differences: %v, want %v", got, want)
+	}
+}
+
+func TestADifferenceInAFolderThatIsOnlyEmptyIsNotOne(t *testing.T) {
+	mine, shipped := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(mine, "a"), "a\n")
+	write(t, filepath.Join(shipped, "a"), "a\n")
+	if err := os.MkdirAll(filepath.Join(mine, "empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := Differences(mine, shipped); len(got) != 0 {
+		t.Errorf("differences: %v", got)
+	}
+}
+
+func TestLineEndingsAloneAreNotADifference(t *testing.T) {
+	// A copy made on Windows, from a checkout that has CRLF.
+	mine, shipped := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(mine, "script"), "one\r\ntwo\r\n")
+	write(t, filepath.Join(shipped, "script"), "one\ntwo\n")
+	if got := Differences(mine, shipped); len(got) != 0 {
+		t.Errorf("differences: %v", got)
+	}
+}
+
+// A feature kept as a link into a checkout is a normal way to work on one: it is the same files as the folder it
+// points to, and is compared as them (WalkDir doesn't follow a link it is given as its root).
+func linkOrSkip(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("can't make a symlink here: %v", err)
+	}
+}
+
+func TestACopyReachedThroughASymlinkIsComparedAsTheFilesItIs(t *testing.T) {
+	dir := t.TempDir()
+	shipped, checkout, mine := filepath.Join(dir, "shipped"), filepath.Join(dir, "checkout"), filepath.Join(dir, "mine")
+	for _, root := range []string{shipped, checkout} {
+		write(t, filepath.Join(root, "config.yaml"), "a: 1\n")
+		write(t, filepath.Join(root, "install-scripts", "01-x"), "x\n")
+	}
+	linkOrSkip(t, checkout, mine)
+	if got := Differences(mine, shipped); len(got) != 0 {
+		t.Errorf("an identical copy behind a symlink differs in %v", got)
+	}
+	if got := Differences(shipped, mine); len(got) != 0 {
+		t.Errorf("the shipped copy behind a symlink differs in %v", got)
+	}
+}
+
+func TestACopyReachedThroughASymlinkThatDiffersIsStillSaidToDiffer(t *testing.T) {
+	dir := t.TempDir()
+	shipped, checkout, mine := filepath.Join(dir, "shipped"), filepath.Join(dir, "checkout"), filepath.Join(dir, "mine")
+	write(t, filepath.Join(shipped, "config.yaml"), "a: 1\n")
+	write(t, filepath.Join(checkout, "config.yaml"), "a: 2\n")
+	write(t, filepath.Join(checkout, "extra"), "e\n")
+	linkOrSkip(t, checkout, mine)
+	if got := Differences(mine, shipped); !reflect.DeepEqual(got, []string{"config.yaml", "extra"}) {
+		t.Errorf("differences = %v", got)
+	}
+}

@@ -130,6 +130,8 @@
     .item { grid-template-columns: 1fr; }
     .preview { width: 100%; height: 180px; }
   }
+  /* Framed by the companion page, which already says where it is: its title and the sandbox's name are clutter there. */
+  html.framed header { display: none; }
   /* Split layout: the paste instructions take the left third, full height,
      and only the items scroll, in the right two thirds. It is for a phone, and for
      the companion page's conversation tab when it stacks this page under the
@@ -500,8 +502,7 @@ function uploadAll(entries) {
     var already = added.filter(function (a) { return a.duplicate; }).length;
     var fresh = added.length - already;
     if (!fresh) setStatus((already === 1 ? "Already pasted: it's waiting to go with your next message." : "Already pasted, all " + already + ".") + extra, notKept > 0);
-    else setStatus((fresh === 1 ? "Added — it'll reach the agent with your next message." : "Added " + fresh + " items.") +
-      (already ? " (" + already + " already pasted.)" : "") + extra, notKept > 0);
+    else setStatus(((already ? already + " already pasted." : "") + extra).trim(), notKept > 0);
     return refresh();
   }).catch(function (err) {
     setStatus("Couldn't add that: " + err.message, true);
@@ -541,6 +542,7 @@ document.addEventListener("paste", function (e) {
 // page that framed this one and nobody else.
 var phone = window.matchMedia("(max-width: 560px) and (pointer: coarse)");
 var framedSplit = false;
+if (new URLSearchParams(location.search).has("framed")) document.documentElement.classList.add("framed");
 function applyLayout() {
   document.documentElement.classList.toggle("split", phone.matches || framedSplit);
 }
