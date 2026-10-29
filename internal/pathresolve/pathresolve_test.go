@@ -41,14 +41,17 @@ func TestWithin(t *testing.T) {
 
 func TestTilde(t *testing.T) {
 	home := filepath.Join(string(filepath.Separator), "home", "me")
-	cases := map[string]string{
-		home:                                             "~",
-		filepath.Join(home, "code", "vibe"):              filepath.Join("~", "code", "vibe"),
-		filepath.Join(home, "..cache"):                   filepath.Join("~", "..cache"),
-		filepath.Join(home+"x", "code"):                  filepath.Join(home+"x", "code"),
-		filepath.Join(string(filepath.Separator), "srv"): filepath.Join(string(filepath.Separator), "srv"),
+	// Pairs, not a map keyed by paths of such different lengths: gofmt aligns the values of a map's entries, and where
+	// it breaks that alignment has changed between versions of Go, so a map here is formatted differently by each.
+	cases := [][2]string{
+		{home, "~"},
+		{filepath.Join(home, "code", "vibe"), filepath.Join("~", "code", "vibe")},
+		{filepath.Join(home, "..cache"), filepath.Join("~", "..cache")},
+		{filepath.Join(home+"x", "code"), filepath.Join(home+"x", "code")},
+		{filepath.Join(string(filepath.Separator), "srv"), filepath.Join(string(filepath.Separator), "srv")},
 	}
-	for in, want := range cases {
+	for _, c := range cases {
+		in, want := c[0], c[1]
 		if got := tilde(in, home); got != want {
 			t.Errorf("tilde(%q) = %q, want %q", in, got, want)
 		}
