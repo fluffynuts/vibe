@@ -12,10 +12,10 @@ const PAGE = path.join(__dirname, '..', '..', '..', 'library', 'base', 'clipboar
 
 // openClipboardPage loads the page with a fake server that says a paste is
 // already waiting when its file name is in waiting.
-function openClipboardPage(waiting) {
+function openClipboardPage(waiting, search = '') {
   const html = fs.readFileSync(PAGE, 'utf8')
   const script = html.match(/<script>([\s\S]*)<\/script>/)[1]
-  const dom = new JSDOM(html.replace(/<script>[\s\S]*<\/script>/, ''), { url: 'http://localhost:5390/', runScripts: 'outside-only', pretendToBeVisual: true })
+  const dom = new JSDOM(html.replace(/<script>[\s\S]*<\/script>/, ''), { url: 'http://localhost:5390/' + search, runScripts: 'outside-only', pretendToBeVisual: true })
   const w = dom.window
   let inFlight = 0
   let poll = () => {}
@@ -79,6 +79,21 @@ function openClipboardPage(waiting) {
     close() { w.close() },
   }
 }
+
+test('the title is shown on the page by itself, and left to the app when the app frames it', async () => {
+  const shown = (p) => p.window.getComputedStyle(p.window.document.querySelector('h1')).display !== 'none'
+  const alone = openClipboardPage([])
+  const framed = openClipboardPage([], '?framed=1')
+  try {
+    await alone.settle()
+    await framed.settle()
+    assert.equal(shown(alone), true)
+    assert.equal(shown(framed), false)
+  } finally {
+    alone.close()
+    framed.close()
+  }
+})
 
 test('a paste is added, to go with the next message', async () => {
   const p = openClipboardPage([])
