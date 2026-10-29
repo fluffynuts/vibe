@@ -312,7 +312,8 @@ func TestThePlaywrightFeatureIsOfferedSaysItTakesTimeAndComposesWithWhatItNeeds(
 		t.Errorf("install scripts for playwright: %v", scripts)
 	}
 	kit, _ := os.ReadFile(filepath.Join(dir, "kit-instructions.md"))
-	for _, want := range []string{"Playwright", "firefox", "headless", "/tmp/sbx-setup.log"} {
+	// The full Chromium is a large download an agent would otherwise fetch for a headed run that a headless one does as well.
+	for _, want := range []string{"Playwright", "firefox", "headless", "/tmp/sbx-setup.log", "about 190 MB", "Prefer the installed"} {
 		if !strings.Contains(string(kit), want) {
 			t.Errorf("the agent isn't told %q:\n%s", want, kit)
 		}

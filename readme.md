@@ -1279,6 +1279,53 @@ Overriding one bundled feature (a base one too, as `~/.vibe/library/base/<featur
 unlike `defaults/`, that replaces only the feature you copied, so features the bundle adds later
 still show up.
 
+### The `pwsh` feature
+
+PowerShell 7, as `pwsh`, for a sandbox whose agent (or project) runs scripts in it. The install script
+downloads the release for the machine (x64 or arm64) from GitHub, checks it against the release's published checksum,
+unpacks it into `/opt/pwsh` and links it from `/usr/local/bin/pwsh`, so any shell finds it, an agent's
+included. PowerShell's telemetry and its check for a newer release at every start are turned off, and the agent is told
+that `pwsh` is there and how to run it (`pwsh -NoProfile -Command '...'`, `pwsh -NoProfile -File script.ps1`).
+
+- **The version is pinned,** in the script, with a checksum for each architecture: a build gets the same PowerShell
+  every time. To move to another, change `VERSION` and both checksums (each release publishes them as `hashes.sha256`);
+  to do it for yourself without waiting for a release of vibe, copy the feature to `~/.vibe/library/pwsh/` and change it
+  there (see above).
+- **The sandbox may reach** `github.com`, `objects.githubusercontent.com` and `release-assets.githubusercontent.com`:
+  what the download redirects to.
+- **A step that fails is a warning, not a failed sandbox:** it is written to `/tmp/sbx-setup.log` in the sandbox, which
+  the agent's instructions point to if `pwsh` isn't there. A new install is moved into place only once it has unpacked,
+  and the one that was there is put back if the new one can't be linked or won't run, so an install that fails leaves
+  a working PowerShell as it was.
+
+### The `playwright` feature
+
+[Playwright](https://playwright.dev) with the browsers an agent reaches for, already in the sandbox, so that a visual
+check of a site built in it, or an agent driving another site, isn't stopped by "I don't have a browser, and can't
+download one". It **adds time to building the sandbox**: a few minutes, the system libraries taking longest.
+
+- **What is installed:** the latest Playwright, globally (`playwright`, `npx playwright ...`); **headless Chromium**
+  (Playwright's headless shell, which is what a headless launch runs) and **Firefox**, in `/opt/ms-playwright`; and the
+  system libraries they need, from apt. About 233 MB is downloaded and 588 MB used. The libraries are fetched while the
+  browsers are. `PLAYWRIGHT_BROWSERS_PATH` is set to the folder for every Playwright in the sandbox, whichever version a
+  project uses, and the folder belongs to the agent's user.
+- **What isn't:** WebKit, and the full Chromium that a headed run (or `channel: 'chromium'`) wants, which is a larger
+  download (about 190 MB more): `npx playwright install chromium` (or `webkit`) adds them. There is no display in a
+  sandbox, so tests run headless, as Playwright does by default.
+- **A project that pins another version** of Playwright downloads its own revision of a browser into the same folder
+  (`npx playwright install firefox`), which the sandbox's network allows. At the latest version, the installed browsers
+  are used as they are. The version installed is the latest *at the time the sandbox is built*, so a rebuild may pick a
+  newer one, and the log says which.
+- **The sandbox may reach** `registry.npmjs.org`, `cdn.playwright.dev` (where the current Chromium is offered from, and
+  only from) and `playwright.download.prss.microsoft.com` (Firefox's fallback), and Ubuntu's apt hosts
+  (`archive.ubuntu.com`, `security.ubuntu.com`, and `ports.ubuntu.com` for arm64).
+- **A step that fails is a warning, not a failed sandbox,** in `/tmp/sbx-setup.log`. The last step launches both browsers
+  headless, as the agent's user, and logs their versions (`installed Playwright 1.64.1: launched headless: chromium
+  156.0.8078.4, firefox 157.0`); if one won't launch, the log has the first lines of what the browser said, which name
+  why.
+- **Tried on x86_64.** It is written for arm64 too (Playwright picks its own builds), but that hasn't been run yet: if
+  you try it there, the line above in `/tmp/sbx-setup.log` is the thing to look at.
+
 ## State
 
 Alongside the configuration, `~/.vibe` (override with `$VIBE_HOME`) is where `vibe` keeps its own
