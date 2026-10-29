@@ -755,3 +755,78 @@ func TestALookIsMadeWhenNoneHasBeen(t *testing.T) {
 		t.Errorf("%d missing", got)
 	}
 }
+
+// The sync trusts a file it has read until its size or time changes. A file read a moment after it was written can't be
+// told from one written again within the same tick of the file system's clock (a tick is milliseconds on some, two
+// seconds on FAT): so what was read within a couple of seconds of its time is read again, as git does of "racy"
+// entries. What was left alone for longer is still trusted, which is what keeps looks at a big workspace cheap.
+func rewriteAsGarbageOfTheSameSizeAndTime(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), int(info.Size())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAnAssetsFileReadAMomentAfterItWasWrittenIsReadAgainEvenIfItsSizeAndTimeAreTheSame(t *testing.T) {
+	rig := newSyncRig(t)
+	path := writeAssets(t, filepath.Join(rig.dir, "A"), assetsJSON(map[string][]string{"net8.0": {"Lack.One/1.0.0"}}))
+	now := time.Now()
+	os.Chtimes(path, now, now)
+	rig.s.Check()
+	if rig.s.State().Count != 1 {
+		t.Fatal("the first look missed it")
+	}
+	rewriteAsGarbageOfTheSameSizeAndTime(t, path)
+	rig.s.Check()
+	if len(rig.s.State().Problems) != 1 {
+		t.Errorf("the rewritten file was taken for the one that was read: problems %v", rig.s.State().Problems)
+	}
+}
+
+func TestAnAssetsFileLeftAloneForAWhileIsNotReadAgain(t *testing.T) {
+	rig := newSyncRig(t)
+	path := writeAssets(t, filepath.Join(rig.dir, "A"), assetsJSON(map[string][]string{"net8.0": {"Lack.One/1.0.0"}}))
+	old := time.Now().Add(-time.Hour)
+	os.Chtimes(path, old, old)
+	rig.s.Check()
+	if rig.s.State().Count != 1 {
+		t.Fatal("the first look missed it")
+	}
+	rewriteAsGarbageOfTheSameSizeAndTime(t, path)
+	rig.s.Check()
+	if st := rig.s.State(); len(st.Problems) != 0 || st.Count != 1 {
+		t.Errorf("a file whose size and time hadn't changed in an hour was read again: count %d, problems %v", st.Count, st.Problems)
+	}
+}
+
+func TestAProjectCacheFileRewrittenAtTheSameSizeInTheSameTickIsReadAgain(t *testing.T) {
+	// What the Windows runners did to TestOnceTheProjectIsRestoredItIsNoLongerListed: two writes within a tick.
+	rig := newSyncRig(t)
+	sandbox := t.TempDir()
+	p := Package{"In.Mine", "1.0.0"}
+	put(t, rig.cache, p)
+	rig.project(t, "Orphan", map[string][]string{"net8.0": {"In.Mine/1.0.0"}})
+	rig.namesFiles(t, "Orphan", sha512In(sandbox, p))
+	rig.s.Check()
+	if len(rig.s.State().StaleProjects) != 1 {
+		t.Fatal("not listed to begin with")
+	}
+	file := filepath.Join(rig.dir, "Orphan", "obj", "project.nuget.cache")
+	before, _ := os.Stat(file)
+	rig.namesFiles(t, "Orphan", sha512In(rig.cache, p))
+	os.Chtimes(file, before.ModTime(), before.ModTime())
+	if after, _ := os.Stat(file); after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
+		t.Fatalf("the rewrite wasn't of the same size and time: %d, %v and %d, %v", before.Size(), before.ModTime(), after.Size(), after.ModTime())
+	}
+	rig.s.Check()
+	if st := rig.s.State(); len(st.StaleProjects) != 0 {
+		t.Errorf("still listed: %v", st.StaleProjects)
+	}
+}

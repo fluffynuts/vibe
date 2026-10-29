@@ -130,14 +130,31 @@ type Sync struct {
 type parsedAssets struct {
 	modified time.Time
 	size     int64
-	assets   Assets
+	// read is when it was read (see unchanged).
+	read   time.Time
+	assets Assets
 }
 
 // namedFiles is the packages a project.nuget.cache names outside the cache, kept until it changes.
 type namedFiles struct {
 	modified  time.Time
 	size      int64
+	read      time.Time
 	elsewhere []Package
+}
+
+// racyWindow is how soon after a file's time a look at it can't be trusted to tell it was written again. A file
+// system's clock ticks (milliseconds on some, two seconds on FAT), and a file written twice within a tick has the same
+// time both times, and the same size if what was written is as long: so what was read within a window of its time is
+// read again, as git does of "racy" entries. What was left alone for longer is trusted, which is what keeps the look
+// at a big workspace cheap.
+const racyWindow = 2 * time.Second
+
+// unchanged says a file read at read, when it was modified and of size, is what is there now, from info: its size and
+// time are the same, and it had been left alone long enough for a write after the read to have changed them. A time
+// ahead of the clock (a skewed one) is never old enough.
+func unchanged(modified time.Time, size int64, read time.Time, info os.FileInfo) bool {
+	return modified.Equal(info.ModTime()) && size == info.Size() && read.Sub(modified) >= racyWindow
 }
 
 // Check looks at the workspace's assets files, and works out what's missing.
@@ -189,14 +206,15 @@ func (s *Sync) checkLocked() {
 			continue
 		}
 		kept, ok := s.parsed[path]
-		if !ok || !kept.modified.Equal(info.ModTime()) || kept.size != info.Size() {
+		if !ok || !unchanged(kept.modified, kept.size, kept.read, info) {
+			read := s.clock()
 			assets, err := ReadAssets(path)
 			if err != nil {
 				delete(s.parsed, path)
 				problems = append(problems, strings.TrimPrefix(err.Error(), s.Workspace+string(os.PathSeparator)))
 				continue
 			}
-			kept = parsedAssets{info.ModTime(), info.Size(), assets}
+			kept = parsedAssets{info.ModTime(), info.Size(), read, assets}
 			s.parsed[path] = kept
 		}
 		skipped += kept.assets.Skipped
@@ -305,9 +323,10 @@ func (s *Sync) namedElsewhere(path string) []Package {
 		delete(s.named, path)
 		return nil
 	}
-	if kept, ok := s.named[path]; ok && kept.modified.Equal(info.ModTime()) && kept.size == info.Size() {
+	if kept, ok := s.named[path]; ok && unchanged(kept.modified, kept.size, kept.read, info) {
 		return kept.elsewhere
 	}
+	read := s.clock()
 	roots := []string{s.Cache}
 	if real, err := filepath.EvalSymlinks(s.Cache); err == nil {
 		roots = append(roots, real)
@@ -316,7 +335,7 @@ func (s *Sync) namedElsewhere(path string) []Package {
 	if err != nil {
 		pkgs = nil
 	}
-	s.named[path] = namedFiles{info.ModTime(), info.Size(), pkgs}
+	s.named[path] = namedFiles{info.ModTime(), info.Size(), read, pkgs}
 	return pkgs
 }
 
