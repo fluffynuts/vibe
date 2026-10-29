@@ -58,10 +58,12 @@ install_playwright() {
     echo "WARN: the browsers couldn't be downloaded: Playwright $version is installed without them" >>"$LOG"
   fi
 
-  # The agent adds to this folder (another project's revision of a browser), and every user reads it.
+  # The agent adds to this folder (another project's revision of a browser), and every user reads it. Without an
+  # agent to give it to, it is the folders that anyone may add to, not a browser's own files: what the agent then
+  # runs is not for any process to replace.
   owner=$(id -un 1000 2>/dev/null)
   if [ -z "$owner" ] || ! chown -R "$owner:" "$FOLDER" 2>/dev/null; then
-    chmod -R a+rwX "$FOLDER"
+    find "$FOLDER" -type d -exec chmod a+rwx {} +
   fi
   chmod -R a+rX "$FOLDER"
 

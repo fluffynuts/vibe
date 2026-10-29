@@ -1,12 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -37,22 +35,28 @@ if [ "$1" = install ]; then
 fi
 `
 
-// fakePlaywright records each call with where it was told to put browsers, and spans (when each began and ended, in
-// nanoseconds) for the two that take a while, so that a test can see whether they overlapped.
+// fakePlaywright records each call with where it was told to put browsers. install-deps and install, which are what
+// take a while, each say they have started and wait (a bounded while) for the other to have started, then say whether
+// they met: so that whether they ran together is told by the two meeting, not by how fast the machine is.
 const fakePlaywright = `#!/bin/sh
 echo "playwright $* [browsers: $PLAYWRIGHT_BROWSERS_PATH] [skip-validate: $PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS]" >> "$FAKE_CALLS"
-now() { date +%s%N; }
+meet() {
+  mkdir -p "$FAKE_MARKS"
+  : > "$FAKE_MARKS/started-$1"
+  i=0
+  while [ ! -e "$FAKE_MARKS/started-$2" ] && [ "$i" -lt 60 ]; do sleep 0.05; i=$((i + 1)); done
+  if [ -e "$FAKE_MARKS/started-$2" ]; then echo "met: $1 and $2" >> "$FAKE_CALLS"; else echo "timed out: $1 never met $2" >> "$FAKE_CALLS"; fi
+}
 case "$1" in
   --version) echo "Version 9.9.9"; exit 0 ;;
   install-deps)
-    start=$(now); sleep 0.4; echo "deps $start $(now)" >> "$FAKE_SPANS"
+    meet deps install
     if [ -n "$FAKE_DEPS_FAIL" ]; then echo "E: apt said no" >&2; exit 1; fi
     ;;
   install)
-    start=$(now); sleep 0.4
+    meet install deps
     shift
-    for b in "$@"; do mkdir -p "$PLAYWRIGHT_BROWSERS_PATH/$b-1"; done
-    echo "install $start $(now)" >> "$FAKE_SPANS"
+    for b in "$@"; do mkdir -p "$PLAYWRIGHT_BROWSERS_PATH/$b-1"; echo "binary" > "$PLAYWRIGHT_BROWSERS_PATH/$b-1/browser"; chmod 755 "$PLAYWRIGHT_BROWSERS_PATH/$b-1/browser"; done
     if [ -n "$FAKE_INSTALL_FAIL" ]; then echo "Error: download failed" >&2; exit 1; fi
     ;;
 esac
@@ -74,6 +78,7 @@ exec REAL_ID "$@"
 `
 
 const fakeChown = `#!/bin/sh
+if [ -n "$FAKE_CHOWN_FAILS" ]; then exit 1; fi
 if [ -n "$FAKE_ROOT" ]; then echo "chown $*" >> "$FAKE_CALLS"; exit 0; fi
 exec REAL_CHOWN "$@"
 `
@@ -96,7 +101,6 @@ echo "chromium 1.2.3, firefox 4.5.6"
 // playwrightRun is one run of the install script.
 type playwrightRun struct {
 	log, calls, browsers, prefix string
-	spans                        map[string][2]int64
 	exit                         error
 }
 
@@ -126,7 +130,7 @@ func runPlaywrightInstall(t *testing.T, noNpm bool, env ...string) playwrightRun
 		}
 	}
 	// Only the tools the script and the stand-ins use, so that a real npm, node or playwright is never found.
-	for _, tool := range []string{"sh", "date", "chmod", "mkdir", "mktemp", "cat", "sed", "head", "rm", "sleep", "cp", "dirname"} {
+	for _, tool := range []string{"sh", "date", "chmod", "find", "mkdir", "mktemp", "cat", "sed", "head", "rm", "sleep", "cp", "dirname"} {
 		path, err := exec.LookPath(tool)
 		if err != nil {
 			t.Skipf("%s isn't installed: the script needs it", tool)
@@ -135,12 +139,11 @@ func runPlaywrightInstall(t *testing.T, noNpm bool, env ...string) playwrightRun
 	}
 	run := playwrightRun{browsers: filepath.Join(dir, "opt", "ms-playwright"), prefix: filepath.Join(dir, "npm-global")}
 	run.calls = filepath.Join(dir, "calls")
-	spans := filepath.Join(dir, "spans")
 	logFile := filepath.Join(dir, "setup.log")
 	cmd := exec.Command("sh", playwrightScriptPath(t))
 	cmd.Env = append(os.Environ(),
 		"PATH="+bin,
-		"FAKE_CALLS="+run.calls, "FAKE_SPANS="+spans, "FAKE_PREFIX="+run.prefix, "FAKE_PLAYWRIGHT="+filepath.Join(bin, "playwright-source"),
+		"FAKE_CALLS="+run.calls, "FAKE_MARKS="+filepath.Join(dir, "marks"), "FAKE_PREFIX="+run.prefix, "FAKE_PLAYWRIGHT="+filepath.Join(bin, "playwright-source"),
 		"PW_BROWSERS_PATH="+run.browsers, "PW_LOG="+logFile)
 	cmd.Env = append(cmd.Env, env...)
 	run.exit = cmd.Run()
@@ -148,16 +151,6 @@ func runPlaywrightInstall(t *testing.T, noNpm bool, env ...string) playwrightRun
 	run.calls = string(calls)
 	log, _ := os.ReadFile(logFile)
 	run.log = string(log)
-	run.spans = map[string][2]int64{}
-	if data, err := os.ReadFile(spans); err == nil {
-		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-			var name string
-			var a, b int64
-			if _, err := fmt.Sscanf(line, "%s %d %d", &name, &a, &b); err == nil {
-				run.spans[name] = [2]int64{a, b}
-			}
-		}
-	}
 	return run
 }
 
@@ -185,14 +178,11 @@ func TestPlaywrightIsInstalledGloballyLatestWithBothBrowsersAndTheirLibraries(t 
 }
 
 func TestTheLibrariesAreFetchedWhileTheBrowsersAre(t *testing.T) {
-	// apt is by far the slowest part (some 90 s of the 2 minutes), and shares nothing with the downloads.
+	// apt is by far the slowest part (some 90 s of the 2 minutes), and shares nothing with the downloads. Run together,
+	// each finds the other has started, however slow the machine; run one after the other, the first never does.
 	run := runPlaywrightInstall(t, false)
-	deps, install := run.spans["deps"], run.spans["install"]
-	if deps == [2]int64{} || install == [2]int64{} {
-		t.Fatalf("spans: %v", run.spans)
-	}
-	if !(deps[0] < install[1] && install[0] < deps[1]) {
-		t.Errorf("libraries %v and browsers %v didn't overlap: they were fetched one after the other", deps, install)
+	if !run.called("met: deps and install") || !run.called("met: install and deps") || run.called("timed out") {
+		t.Errorf("the libraries and the browsers weren't fetched together:\n%s", run.calls)
 	}
 }
 
@@ -228,7 +218,7 @@ func TestABrowserDownloadFailureIsSaidAndTheLibrariesAreStillGot(t *testing.T) {
 	if run.exit != nil {
 		t.Errorf("a sandbox's setup is not to fail because of it: %v", run.exit)
 	}
-	if _, ok := run.spans["deps"]; !ok {
+	if !run.called("playwright install-deps") {
 		t.Errorf("the libraries weren't got for want of browsers:\n%s", run.calls)
 	}
 	if !strings.Contains(run.log, "WARN:") || !strings.Contains(run.log, "browsers") || !strings.Contains(run.log, "download failed") {
@@ -302,7 +292,9 @@ func TestThePlaywrightFeatureIsOfferedSaysItTakesTimeAndComposesWithWhatItNeeds(
 		t.Fatal(err)
 	}
 	config, _ := os.ReadFile(filepath.Join(dir, "config.yaml"))
-	for _, want := range []string{"cdn.playwright.dev", "playwright.download.prss.microsoft.com", "registry.npmjs.org", "archive.ubuntu.com", "PLAYWRIGHT_BROWSERS_PATH: /opt/ms-playwright"} {
+	// The instructions say a project pinning another version can download its own browser: the hosts such a version
+	// downloads from (the ones current versions use, and the azureedge ones older versions do) are allowed.
+	for _, want := range []string{"cdn.playwright.dev", "playwright.download.prss.microsoft.com", "playwright.azureedge.net", "playwright-akamai.azureedge.net", "playwright-verizon.azureedge.net", "registry.npmjs.org", "archive.ubuntu.com", "PLAYWRIGHT_BROWSERS_PATH: /opt/ms-playwright"} {
 		if !strings.Contains(string(config), want) {
 			t.Errorf("config.yaml lacks %s:\n%s", want, config)
 		}
@@ -320,17 +312,12 @@ func TestThePlaywrightFeatureIsOfferedSaysItTakesTimeAndComposesWithWhatItNeeds(
 	}
 }
 
-func TestTheScriptNamesTheHostsItIsGivenInTheConfig(t *testing.T) {
-	// What the script downloads from and what the sandbox may reach are two files, which would drift.
+func TestTheFolderTheScriptInstallsIntoIsTheOneTheEnvironmentPointsTo(t *testing.T) {
+	// Two files that would drift: where the script puts the browsers, and where every Playwright is told to look.
 	config, _ := os.ReadFile(filepath.Join(repoRoot(t), "library", "playwright", "config.yaml"))
 	script, _ := os.ReadFile(playwrightScriptPath(t))
-	for _, host := range []string{"cdn.playwright.dev"} {
-		if !strings.Contains(string(config), host) {
-			t.Errorf("%s isn't in config.yaml", host)
-		}
-	}
 	if !strings.Contains(string(script), "PW_BROWSERS_PATH:-/opt/ms-playwright") || !strings.Contains(string(config), "PLAYWRIGHT_BROWSERS_PATH: /opt/ms-playwright") {
-		t.Errorf("the folder the script puts browsers in and the one the environment points to differ (%s)", strconv.Quote("/opt/ms-playwright"))
+		t.Error("the folder the script puts browsers in and the one the environment points to differ")
 	}
 }
 
@@ -370,5 +357,32 @@ func TestTheBrowserDownloadDoesNotCheckForLibrariesThatAreBeingInstalledAtTheSam
 	run := runPlaywrightInstall(t, false)
 	if !run.called("playwright install chromium-headless-shell firefox [browsers: " + run.browsers + "] [skip-validate: 1]") {
 		t.Errorf("the download validated the host:\n%s", run.calls)
+	}
+}
+
+func TestWhenTheFolderCantBeGivenToTheAgentOnlyItsFoldersAreWritableByAll(t *testing.T) {
+	// The agent adds revisions, which are folders. A browser's own files stay as Playwright made them: any process in
+	// the sandbox being able to replace what the agent then runs would be more than that needs.
+	run := runPlaywrightInstall(t, false, "FAKE_CHOWN_FAILS=1")
+	if run.exit != nil {
+		t.Fatalf("the script failed: %v\n%s", run.exit, run.log)
+	}
+	folder, err := os.Stat(run.browsers)
+	if err != nil || folder.Mode().Perm()&0o022 != 0o022 {
+		t.Errorf("the browsers folder is %v, %v: the agent couldn't add to it", folder, err)
+	}
+	revision, err := os.Stat(filepath.Join(run.browsers, "firefox-1"))
+	if err != nil || revision.Mode().Perm()&0o002 == 0 {
+		t.Errorf("a revision's folder is %v, %v: a revision's files couldn't be added to", revision, err)
+	}
+	binary, err := os.Stat(filepath.Join(run.browsers, "firefox-1", "browser"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binary.Mode().Perm()&0o022 != 0 {
+		t.Errorf("a browser's own file is %v: writable by anyone", binary.Mode())
+	}
+	if binary.Mode().Perm()&0o005 != 0o005 {
+		t.Errorf("a browser's own file is %v: not readable and runnable by all", binary.Mode())
 	}
 }

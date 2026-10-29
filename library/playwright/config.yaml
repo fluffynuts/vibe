@@ -5,9 +5,13 @@ permissions:
     allow:
       # Playwright itself
       - registry.npmjs.org
-      # the browsers, from the CDN Playwright names first, and the mirror it falls back to
+      # the browsers, from the CDN current versions name first, and the mirror they fall back to
       - cdn.playwright.dev
       - playwright.download.prss.microsoft.com
+      # and from where older versions get them (a project may pin one: its own revision downloads into the same folder)
+      - playwright.azureedge.net
+      - playwright-akamai.azureedge.net
+      - playwright-verizon.azureedge.net
       # the libraries the browsers need (arm64 machines use ports)
       - archive.ubuntu.com
       - security.ubuntu.com

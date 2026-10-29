@@ -1317,7 +1317,8 @@ download one". It **adds time to building the sandbox**: a few minutes, the syst
   are used as they are. The version installed is the latest *at the time the sandbox is built*, so a rebuild may pick a
   newer one, and the log says which.
 - **The sandbox may reach** `registry.npmjs.org`, `cdn.playwright.dev` (where the current Chromium is offered from, and
-  only from) and `playwright.download.prss.microsoft.com` (Firefox's fallback), and Ubuntu's apt hosts
+  only from) and `playwright.download.prss.microsoft.com` (Firefox's fallback), the `azureedge.net` hosts older versions
+  of Playwright download from (`playwright`, `playwright-akamai` and `playwright-verizon`), and Ubuntu's apt hosts
   (`archive.ubuntu.com`, `security.ubuntu.com`, and `ports.ubuntu.com` for arm64).
 - **A step that fails is a warning, not a failed sandbox,** in `/tmp/sbx-setup.log`. The last step launches both browsers
   headless, as the agent's user, and logs their versions (`installed Playwright 1.64.1: launched headless: chromium
