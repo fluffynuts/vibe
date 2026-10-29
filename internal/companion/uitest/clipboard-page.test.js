@@ -95,11 +95,11 @@ test('the title and the sandbox name are shown on the page by itself, and left o
   }
 })
 
-test('a paste is added, to go with the next message', async () => {
+test('a paste added says nothing: the item shows where it is', async () => {
   const p = openClipboardPage([])
   try {
     await p.paste('a.png')
-    assert.equal(p.status(), "Added — it'll reach the agent with your next message.")
+    assert.equal(p.status(), '')
   } finally { p.close() }
 })
 
@@ -111,11 +111,11 @@ test('a paste already waiting to go says so, and isn’t added again', async () 
   } finally { p.close() }
 })
 
-test('of several pasted at once, those already waiting are counted apart', async () => {
+test('of several pasted at once, those already waiting are said apart', async () => {
   const p = openClipboardPage(['a.png'])
   try {
     await p.paste('a.png', 'b.png', 'c.png')
-    assert.equal(p.status(), 'Added 2 items. (1 already pasted.)')
+    assert.equal(p.status(), '1 already pasted.')
   } finally { p.close() }
   const all = openClipboardPage(['a.png', 'b.png'])
   try {
@@ -208,7 +208,7 @@ test('what is held is added once the server answers again', async () => {
     await p.poll()
     assert.deepEqual(p.server.uploads.sort(), ['a.png', 'b.png'])
     assert.deepEqual(p.held(), [])
-    assert.match(p.status(), /Added 2 items/)
+    assert.equal(p.status(), '')
   } finally { p.close() }
 })
 

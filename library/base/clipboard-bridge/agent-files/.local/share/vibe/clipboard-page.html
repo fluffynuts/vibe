@@ -502,8 +502,7 @@ function uploadAll(entries) {
     var already = added.filter(function (a) { return a.duplicate; }).length;
     var fresh = added.length - already;
     if (!fresh) setStatus((already === 1 ? "Already pasted: it's waiting to go with your next message." : "Already pasted, all " + already + ".") + extra, notKept > 0);
-    else setStatus((fresh === 1 ? "Added — it'll reach the agent with your next message." : "Added " + fresh + " items.") +
-      (already ? " (" + already + " already pasted.)" : "") + extra, notKept > 0);
+    else setStatus(((already ? already + " already pasted." : "") + extra).trim(), notKept > 0);
     return refresh();
   }).catch(function (err) {
     setStatus("Couldn't add that: " + err.message, true);
