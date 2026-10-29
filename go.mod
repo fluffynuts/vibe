@@ -1,6 +1,6 @@
 module vibe
 
-go 1.26.0
+go 1.27.3
 
 require (
 	golang.org/x/term v0.45.0
