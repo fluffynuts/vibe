@@ -6494,8 +6494,8 @@
     requestAnimationFrame(fitPrompt)
     $('convo-stop').addEventListener('click', () => conversationCall('/api/conversation/stop'))
     setUpFresh()
-    $('convo-md').checked = promptsAsMarkdown.on
-    $('convo-md').addEventListener('change', () => setPromptsAsMarkdown($('convo-md').checked))
+    $('settings-prompts-markdown').checked = promptsAsMarkdown.on
+    $('settings-prompts-markdown').addEventListener('change', () => setPromptsAsMarkdown($('settings-prompts-markdown').checked))
     document.addEventListener('paste', onPaste)
     setInterval(pollConversation, CONVO_POLL_MS)
   }
