@@ -43,7 +43,7 @@ stopping, an agent that forgets `done`, a turn that errors.
 
 ## Not checked yet
 
-- Whether Escape in the prompt box stops through `/api/conversation/stop` (the memory notes say Escape really stops).
+- Whether Escape in the prompt box stops through `/api/conversation/stop`: to be read in `app.js`, where the conversation's Stop is wired.
 - Whether the Admin tab's actions, and the power menu's Stop and Restart, can end a review's turn: they would need the
   same warning, or to be told the review ends with them.
 - `vibe --cancel`, and a new prompt sent while the agent is busy, for the same reason.

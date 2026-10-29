@@ -47,10 +47,13 @@ function Invoke-Vet { Invoke-Step $Go @('vet', './...') }
 # Changes nothing: it lists the files gofmt would change, and fails if there are any.
 function Invoke-FmtCheck {
     Write-Host "$Gofmt -l ."
-    $files = Get-ChildItem -Recurse -File -Filter '*.go' |
-        Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' } |
-        ForEach-Object { $_.FullName }
-    $unformatted = & $Gofmt -l @files
+    # gofmt walks the folders itself, so that the command line doesn't grow with the files (Windows allows 32,767
+    # characters, and a long list of paths has been near that). It is given what is at the top, but for .git
+    # and tmp/ (git-ignored scratch): the Go files CI would see, as the Makefile and make.sh check.
+    $roots = Get-ChildItem -Force |
+        Where-Object { $_.Name -notin '.git', 'tmp' -and ($_.PSIsContainer -or $_.Extension -eq '.go') } |
+        ForEach-Object { $_.Name }
+    $unformatted = & $Gofmt -l @roots
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     if ($unformatted) {
         [Console]::Error.WriteLine('gofmt would change these files (gofmt -w <file> formats one):')

@@ -530,9 +530,15 @@ func Differences(a, b string) []string {
 	return out
 }
 
-// filesUnder maps the path from root of each file under it to where it is.
+// filesUnder maps the path from root of each file under it to where it is. A
+// root that is a symlink is walked as the folder it points to, which WalkDir
+// won't do of itself (it would find nothing, and the copy would seem to differ
+// in every file).
 func filesUnder(root string) map[string]string {
 	files := map[string]string{}
+	if real, err := filepath.EvalSymlinks(root); err == nil {
+		root = real
+	}
 	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
