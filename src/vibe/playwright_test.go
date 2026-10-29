@@ -61,7 +61,11 @@ exit 0
 
 const fakeNode = `#!/bin/sh
 echo "node $* [NODE_PATH: $NODE_PATH] [browsers: $PLAYWRIGHT_BROWSERS_PATH]" >> "$FAKE_CALLS"
-if [ -n "$FAKE_LAUNCH_FAILS" ]; then echo "browserType.launch: Executable doesn't exist" >&2; exit 1; fi
+if [ -n "$FAKE_LAUNCH_FAILS" ]; then
+  echo "browserType.launch: Failed to launch the browser process!" >&2
+  i=1; while [ "$i" -le 20 ]; do echo "  - line $i of what the browser said" >&2; i=$((i + 1)); done
+  exit 1
+fi
 echo "chromium 1.2.3, firefox 4.5.6"
 `
 
@@ -94,7 +98,7 @@ func runPlaywrightInstall(t *testing.T, noNpm bool, env ...string) playwrightRun
 		}
 	}
 	// Only the tools the script and the stand-ins use, so that a real npm, node or playwright is never found.
-	for _, tool := range []string{"date", "id", "chown", "chmod", "mkdir", "mktemp", "cat", "sed", "rm", "sleep", "cp", "dirname"} {
+	for _, tool := range []string{"date", "id", "chown", "chmod", "mkdir", "mktemp", "cat", "sed", "head", "rm", "sleep", "cp", "dirname"} {
 		path, err := exec.LookPath(tool)
 		if err != nil {
 			t.Skipf("%s isn't installed: the script needs it", tool)
@@ -209,8 +213,15 @@ func TestAnInstallThatDoesntLaunchIsSaid(t *testing.T) {
 	if run.exit != nil {
 		t.Errorf("the script failed: %v", run.exit)
 	}
-	if !strings.Contains(run.log, "WARN:") || !strings.Contains(run.log, "won't launch") || !strings.Contains(run.log, "Executable doesn't exist") {
+	if !strings.Contains(run.log, "WARN:") || !strings.Contains(run.log, "won't launch") || !strings.Contains(run.log, "Failed to launch the browser process!") {
 		t.Errorf("the log doesn't say that, and why:\n%s", run.log)
+	}
+	// The cause is not in the first line: what the browser itself said follows it.
+	if !strings.Contains(run.log, "line 14 of what the browser said") {
+		t.Errorf("the log has only the start of what the browser said:\n%s", run.log)
+	}
+	if strings.Contains(run.log, "line 20 of what the browser said") {
+		t.Errorf("the log has all of a long error, which it is not to:\n%s", run.log)
 	}
 	if strings.Contains(run.log, "installed Playwright") {
 		t.Errorf("it said it was installed:\n%s", run.log)
