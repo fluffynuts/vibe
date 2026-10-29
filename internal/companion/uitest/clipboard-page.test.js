@@ -80,8 +80,8 @@ function openClipboardPage(waiting, search = '') {
   }
 }
 
-test('the title is shown on the page by itself, and left to the app when the app frames it', async () => {
-  const shown = (p) => p.window.getComputedStyle(p.window.document.querySelector('h1')).display !== 'none'
+test('the title and the sandbox name are shown on the page by itself, and left out when the app frames it', async () => {
+  const shown = (p) => p.window.getComputedStyle(p.window.document.querySelector('header')).display !== 'none'
   const alone = openClipboardPage([])
   const framed = openClipboardPage([], '?framed=1')
   try {

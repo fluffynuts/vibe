@@ -135,8 +135,8 @@
      the companion page's conversation tab when it stacks this page under the
      conversation (it says so by message). Left off in the companion's
      clipboard column on a desktop, which is narrow but tall. */
-  /* Framed by the companion page, which already says where it is: the title is clutter there. */
-  html.framed h1 { display: none; }
+  /* Framed by the companion page, which already says where it is: its title and the sandbox's name are clutter there. */
+  html.framed header { display: none; }
   html.split main { display: grid; grid-template-columns: 1fr 2fr; grid-template-rows: minmax(0, 1fr); gap: 12px; padding: 0 10px; }
   html.split #top {
     grid-column: 1; min-height: 0; overflow-y: auto;
