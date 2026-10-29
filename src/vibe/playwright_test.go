@@ -40,7 +40,7 @@ fi
 // fakePlaywright records each call with where it was told to put browsers, and spans (when each began and ended, in
 // nanoseconds) for the two that take a while, so that a test can see whether they overlapped.
 const fakePlaywright = `#!/bin/sh
-echo "playwright $* [browsers: $PLAYWRIGHT_BROWSERS_PATH]" >> "$FAKE_CALLS"
+echo "playwright $* [browsers: $PLAYWRIGHT_BROWSERS_PATH] [skip-validate: $PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS]" >> "$FAKE_CALLS"
 now() { date +%s%N; }
 case "$1" in
   --version) echo "Version 9.9.9"; exit 0 ;;
@@ -59,8 +59,32 @@ esac
 exit 0
 `
 
+// With FAKE_ROOT set, the script is root, and the agent is a user called agent: id says so, chown does nothing, and su
+// runs what it is given with FAKE_AS saying as whom. Otherwise they are the real ones.
+const fakeID = `#!/bin/sh
+if [ -n "$FAKE_ROOT" ]; then
+  case "$*" in
+    "-u") echo 0 ;;
+    "-un 1000") echo agent ;;
+    *) exec REAL_ID "$@" ;;
+  esac
+  exit 0
+fi
+exec REAL_ID "$@"
+`
+
+const fakeChown = `#!/bin/sh
+if [ -n "$FAKE_ROOT" ]; then echo "chown $*" >> "$FAKE_CALLS"; exit 0; fi
+exec REAL_CHOWN "$@"
+`
+
+const fakeSu = `#!/bin/sh
+echo "su $1 $2 [command: $3]" >> "$FAKE_CALLS"
+FAKE_AS="$1" exec sh -c "$3"
+`
+
 const fakeNode = `#!/bin/sh
-echo "node $* [NODE_PATH: $NODE_PATH] [browsers: $PLAYWRIGHT_BROWSERS_PATH]" >> "$FAKE_CALLS"
+echo "node $* [NODE_PATH: $NODE_PATH] [browsers: $PLAYWRIGHT_BROWSERS_PATH] [as: $FAKE_AS]" >> "$FAKE_CALLS"
 if [ -n "$FAKE_LAUNCH_FAILS" ]; then
   echo "browserType.launch: Failed to launch the browser process!" >&2
   i=1; while [ "$i" -le 20 ]; do echo "  - line $i of what the browser said" >&2; i=$((i + 1)); done
@@ -88,7 +112,11 @@ func runPlaywrightInstall(t *testing.T, noNpm bool, env ...string) playwrightRun
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "fakebin")
 	os.MkdirAll(bin, 0o755)
-	stand := map[string]string{"playwright-source": fakePlaywright, "node": fakeNode}
+	realID, _ := exec.LookPath("id")
+	realChown, _ := exec.LookPath("chown")
+	stand := map[string]string{"playwright-source": fakePlaywright, "node": fakeNode, "su": fakeSu,
+		"id":    strings.ReplaceAll(fakeID, "REAL_ID", realID),
+		"chown": strings.ReplaceAll(fakeChown, "REAL_CHOWN", realChown)}
 	if !noNpm {
 		stand["npm"] = fakeNpm
 	}
@@ -98,7 +126,7 @@ func runPlaywrightInstall(t *testing.T, noNpm bool, env ...string) playwrightRun
 		}
 	}
 	// Only the tools the script and the stand-ins use, so that a real npm, node or playwright is never found.
-	for _, tool := range []string{"date", "id", "chown", "chmod", "mkdir", "mktemp", "cat", "sed", "head", "rm", "sleep", "cp", "dirname"} {
+	for _, tool := range []string{"sh", "date", "chmod", "mkdir", "mktemp", "cat", "sed", "head", "rm", "sleep", "cp", "dirname"} {
 		path, err := exec.LookPath(tool)
 		if err != nil {
 			t.Skipf("%s isn't installed: the script needs it", tool)
@@ -302,5 +330,44 @@ func TestTheScriptNamesTheHostsItIsGivenInTheConfig(t *testing.T) {
 	}
 	if !strings.Contains(string(script), "PW_BROWSERS_PATH:-/opt/ms-playwright") || !strings.Contains(string(config), "PLAYWRIGHT_BROWSERS_PATH: /opt/ms-playwright") {
 		t.Errorf("the folder the script puts browsers in and the one the environment points to differ (%s)", strconv.Quote("/opt/ms-playwright"))
+	}
+}
+
+func TestTheLaunchCheckRunsAsTheAgentWhenTheScriptIsRootBecauseFirefoxWontRunAsRootInAnotherUsersSession(t *testing.T) {
+	// A sandbox's build runs the script as root, with the agent's HOME and XDG_RUNTIME_DIR: Firefox refuses to start
+	// so ("Running Nightly as root in a regular user's session is not supported"), though it starts for the agent.
+	run := runPlaywrightInstall(t, false, "FAKE_ROOT=1")
+	if run.exit != nil {
+		t.Fatalf("the script failed: %v\n%s", run.exit, run.log)
+	}
+	if !run.called("su agent -c") {
+		t.Fatalf("the check wasn't run as the agent:\n%s", run.calls)
+	}
+	if !run.called("[as: agent]") {
+		t.Errorf("node wasn't run through su:\n%s", run.calls)
+	}
+	if !strings.Contains(run.log, "launched headless") {
+		t.Errorf("the log doesn't say it launched:\n%s", run.log)
+	}
+	if !run.called("chown -R agent:") {
+		t.Errorf("the browsers folder wasn't given to the agent:\n%s", run.calls)
+	}
+}
+
+func TestTheLaunchCheckIsRunDirectlyWhenTheScriptIsNotRoot(t *testing.T) {
+	run := runPlaywrightInstall(t, false)
+	if run.called("su ") {
+		t.Errorf("su was used by a script that isn't root, which would ask for a password:\n%s", run.calls)
+	}
+	if !run.called("[as: ]") {
+		t.Errorf("node wasn't run directly:\n%s", run.calls)
+	}
+}
+
+func TestTheBrowserDownloadDoesNotCheckForLibrariesThatAreBeingInstalledAtTheSameTime(t *testing.T) {
+	// It would warn, at the end of every build, that the host is missing what apt is still fetching.
+	run := runPlaywrightInstall(t, false)
+	if !run.called("playwright install chromium-headless-shell firefox [browsers: " + run.browsers + "] [skip-validate: 1]") {
+		t.Errorf("the download validated the host:\n%s", run.calls)
 	}
 }

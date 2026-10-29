@@ -44,7 +44,9 @@ install_playwright() {
   # Not quoted: the two names are two arguments.
   "$playwright" install-deps $BROWSERS >"$work/libraries.log" 2>&1 &
   libraries=$!
-  "$playwright" install $BROWSERS >"$work/browsers.log" 2>&1
+  # Not checking for the libraries Playwright's install would look for at its end: they are being fetched at
+  # this moment, and it would warn in every build log that the host is missing them.
+  PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1 "$playwright" install $BROWSERS >"$work/browsers.log" 2>&1
   browsers_status=$?
   wait "$libraries"
   libraries_status=$?
@@ -64,8 +66,9 @@ install_playwright() {
   chmod -R a+rX "$FOLDER"
 
   if [ "$libraries_status" -eq 0 ] && [ "$browsers_status" -eq 0 ]; then
-    check='const { chromium, firefox } = require("playwright");
-(async () => {
+    cat >"$work/check.js" <<'CHECK'
+const { chromium, firefox } = require("playwright")
+;(async () => {
   const said = []
   for (const [name, type] of [["chromium", chromium], ["firefox", firefox]]) {
     const browser = await type.launch()
@@ -73,8 +76,19 @@ install_playwright() {
     await browser.close()
   }
   console.log(said.join(", "))
-})().catch((e) => { console.error(e.message); process.exit(1) })'
-    if said=$(NODE_PATH="$(npm root -g)" node -e "$check" 2>"$work/launch.log"); then
+})().catch((e) => { console.error(e.message); process.exit(1) })
+CHECK
+    chmod 755 "$work"
+    chmod 644 "$work/check.js"
+    command="PLAYWRIGHT_BROWSERS_PATH='$FOLDER' NODE_PATH='$(npm root -g)' '$(command -v node)' '$work/check.js'"
+    # As the agent, who is who the browsers are for: Firefox won't start as root in another user's session,
+    # which is what a build gives root (the agent's HOME and XDG_RUNTIME_DIR), though it starts for the agent.
+    if [ "$(id -u)" = 0 ] && [ -n "$owner" ] && [ "$owner" != root ]; then
+      said=$(su "$owner" -c "$command" 2>"$work/launch.log")
+    else
+      said=$(sh -c "$command" 2>"$work/launch.log")
+    fi
+    if [ $? -eq 0 ]; then
       echo "installed Playwright $version: launched headless: $said" >>"$LOG"
     else
       # The first line only says that it failed: what the browser itself said, which names why, follows it.
