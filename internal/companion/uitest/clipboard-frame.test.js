@@ -20,3 +20,20 @@ test('the clipboard beside the conversation is framed with a note that it is fra
     p.close()
   }
 })
+
+test('a clipboard address that is not a full URL is framed as it is, and the rest of the refresh still happens', async () => {
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, clipboardUrl: '/not-absolute', clipboardReady: true, attention: {} },
+      '/api/conversation': { events: [], last: 0, running: false },
+      '/api/log': { entries: [] },
+    },
+  })
+  try {
+    await p.poll()
+    assert.equal(p.$('convo-clipboard-frame').getAttribute('src'), '/not-absolute')
+    assert.equal(p.$('tab-conversation').hidden, false)
+  } finally {
+    p.close()
+  }
+})

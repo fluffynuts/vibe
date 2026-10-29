@@ -68,9 +68,13 @@
   // The clipboard page is told it is framed here, which says where it is
   // already, so it leaves out its title.
   function framedClipboardUrl(url) {
-    const framed = new URL(url)
-    framed.searchParams.set('framed', '1')
-    return framed.href
+    try {
+      const framed = new URL(url)
+      framed.searchParams.set('framed', '1')
+      return framed.href
+    } catch (e) {
+      return url
+    }
   }
 
   const store = {
