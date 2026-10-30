@@ -219,3 +219,14 @@ folders (`Workspaces` of `sbx ls --json`, a trailing :ro/:rw dropped) are gone f
 with the folders named, and on a terminal the user is asked whether to remove it (`sbx rm -f`) and make it afresh (default
 no; its own disk goes, the project folder is untouched). With -f or no terminal it is never removed: the command is given.
 A listing that fails is left for sbx's own error.
+
+## The policy question at install, again (2026-10-30, a VM with no sbx and no vibe)
+
+Setup installed sbx and signed Docker in, but the policy question came at the first run, not at install: once signed in,
+`sbx policy ls` doesn't put the menu, so "the menu was printed" wasn't a sign to go by. What shows that none is chosen is
+that the listing has no `local-policy` row (the global one `sbx policy init` makes: seen on every machine that had
+chosen). `policyWanted` takes either: the menu, or a clean listing without that row. Because a version of sbx might
+name the row differently, vibe also notes in `~/.vibe/sbx-policy-chosen` when it has given a policy, or when sbx refused one
+as "already initialized" (which isn't a failure: it says so and changes nothing); with that noted, a listing without the row
+no longer has the question asked. The menu itself is always answered. Unverified on a real sbx: what exactly `sbx policy ls`
+prints after sign-in and before a policy is chosen.

@@ -2,8 +2,12 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
+	"vibe/internal/fscopy"
 	"vibe/internal/sbxrun"
 	"vibe/internal/signin"
 )
@@ -21,6 +25,19 @@ type sbxReadySteps struct {
 	// it did what was needed (declining, or failing, is not).
 	policy func(ctx context.Context) bool
 	signIn func(ctx context.Context) bool
+	// chosenBefore says vibe has had a policy chosen on this machine before (given, or sbx refused another as already chosen).
+	chosenBefore func() bool
+}
+
+// policyWanted says, from what `sbx policy ls` printed (and its error), whether sbx has no network policy yet. It says so
+// when sbx puts its question: or, once signed in, when it lists no global policy (the local-policy row that `sbx policy
+// init` makes), which is how it answers then. A listing that lacks the row when a policy was chosen before isn't taken
+// for none (a version of sbx may name it differently); the question itself always is.
+func policyWanted(out string, err error, chosenBefore bool) bool {
+	if signin.Docker(out, err, false).State == signin.NeedsPolicy {
+		return true
+	}
+	return err == nil && !chosenBefore && !strings.Contains(out, "local-policy")
 }
 
 // maxSbxReadyRounds is how many things sbx may ask for, one after another: its policy, and its sign-in, and the policy again,
@@ -41,7 +58,8 @@ func (s sbxReadySteps) run(ctx context.Context) {
 		case signin.SignedIn:
 			// Signed in; sbx may still be waiting to be told its policy, which it asks of `policy ls`.
 			out, err = s.policyProbe(ctx)
-			if signin.Docker(out, err, ctx.Err() != nil).State != signin.NeedsPolicy {
+			chosen := s.chosenBefore != nil && s.chosenBefore()
+			if !policyWanted(out, err, chosen) {
 				return
 			}
 			done = s.policy(ctx)
@@ -80,4 +98,19 @@ func probeWithin(ctx context.Context, args ...string) (string, error) {
 		err = ctx.Err()
 	}
 	return out, err
+}
+
+// policyChosenFile is where vibe notes that a network policy has been chosen on this machine, so that a listing it can't
+// read as having one doesn't have the question asked at every start.
+func policyChosenFile() string { return filepath.Join(vibeHomeDir(), "sbx-policy-chosen") }
+
+func policyChosenBefore() bool {
+	_, err := os.Stat(policyChosenFile())
+	return err == nil
+}
+
+func rememberPolicyChosen() {
+	if err := os.MkdirAll(filepath.Dir(policyChosenFile()), 0o755); err == nil {
+		fscopy.WriteWholeMode(policyChosenFile(), []byte("a network policy has been chosen for sbx on this machine\n"), 0o644)
+	}
 }

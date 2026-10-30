@@ -11,7 +11,9 @@ import (
 type networkPolicySteps struct {
 	choose     func(question string, labels []string, def int) (int, bool)
 	initPolicy func(ctx context.Context, choice string) (string, error)
-	say        func(line string)
+	// remember notes that a policy is chosen; nil does nothing.
+	remember func()
+	say      func(line string)
 }
 
 // networkPolicyChoices are sbx's three network policies, in the order they are offered: the argument sbx policy init
@@ -31,7 +33,8 @@ func realNetworkPolicySteps() networkPolicySteps {
 			defer cancel()
 			return sbxrun.Probe(ctx, "policy", "init", choice)
 		},
-		say: func(line string) { note("%s", line) },
+		remember: rememberPolicyChosen,
+		say:      func(line string) { note("%s", line) },
 	}
 }
 
@@ -49,9 +52,16 @@ func askNetworkPolicy(ctx context.Context, s networkPolicySteps) bool {
 	}
 	choice := networkPolicyChoices[idx].arg
 	if out, err := s.initPolicy(ctx, choice); err != nil {
+		if strings.Contains(strings.ToLower(out), "already initialized") {
+			// Chosen before, however vibe came to ask: not a failure, and not to be asked about again.
+			s.noteChosen()
+			s.say("  sbx already has a network policy, so none was changed (sbx policy ls shows it; sbx policy reset starts over)")
+			return false
+		}
 		s.say("  WARNING: sbx policy init " + choice + " failed: " + firstLineOf(out, err))
 		return false
 	}
+	s.noteChosen()
 	s.say("  network policy: " + choice + " (sbx policy init " + choice + ")")
 	return true
 }
@@ -64,4 +74,10 @@ func firstLineOf(out string, err error) string {
 		}
 	}
 	return err.Error()
+}
+
+func (s networkPolicySteps) noteChosen() {
+	if s.remember != nil {
+		s.remember()
+	}
 }
