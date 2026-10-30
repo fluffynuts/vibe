@@ -301,6 +301,9 @@ func run(argv []string) error {
 		if err := offerSbxInstall(args.Force); err != nil {
 			return err
 		}
+		if !args.Force {
+			ensureSbxReady()
+		}
 		reportOutOfDate(lay)
 		return nil
 	}
@@ -314,6 +317,11 @@ func run(argv []string) error {
 			"then make sure its bin directory is on PATH (e.g. ${HOME}/.docker/sbx/bin).", hint)
 	}
 	sbxfind.Look()
+	// What sbx wants before it answers (a network policy, a sign-in to Docker) is asked here, on the terminal, and given,
+	// rather than the first command failing with sbx's own words. Nobody is asked with -f, or with no terminal.
+	if !args.Force {
+		ensureSbxReady()
+	}
 
 	// Like cleanup, this is about sandboxes sbx holds, not a folder.
 	if args.StopAll {

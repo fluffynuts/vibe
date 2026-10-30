@@ -188,3 +188,12 @@ terminal, because creating a sandbox asks questions (agent, features, git token,
 `startMode` says `createFirst`: the sandbox is made on the terminal (`createBeforeHeadless`: `doCreateOrAttach` with
 --no-start), then the headless start follows, so the agent's terminal never appears. `--headless` typed still refuses with
 what to do when there's no sandbox (scripts run it with nobody to ask). Untested against a real sbx.
+
+## Getting sbx ready at every start (2026-10-30, from the first real run)
+
+The first `vibe` on the fresh VM stopped with sbx's own error (`sbx ls --json: exit status 1: error: not signed in to
+Docker / try: sbx login`) because setup had been skipped or the sign-in not done. Now every start that can ask (a terminal,
+no -f) first looks at sbx once (`sbx ls`) and, when it is waiting for a network policy or a sign-in to Docker, asks and gives
+it, then looks again (at most three rounds, since sbx may want either before the other). When sbx is ready that is one
+`sbx ls` and nothing said. `--install` and `--setup` do the same. Scripts (-f) and the detached headless child have no one
+to ask, and get sbx's own error as before.
