@@ -139,3 +139,19 @@ Original list:
 - Subscription flow wanted, API key supported too.
 - This goes before `docs/plan-stop-ends-review.md`: sign-in is user friction, an interrupted review can be closed and
   reopened.
+
+## Built 2026-10-30 (on `feat/sign-in`, unpushed)
+
+1. **Stage 1, read-only**: `internal/signin` reads sbx's and Claude's answers (`sbx ls`: answers = signed in, "not signed
+   in" = signed out, the policy menu / "operation cancelled by user" = needs a policy, a timeout = unknown with the
+   wallet hint; `claude auth status` + `SBX_CRED_ANTHROPIC_MODE`). `GET /api/signin` (asked afresh each time, 20 s
+   limit) and a Sign-in card on the Admin tab with a pill per thing, who the agent is signed in as, "Do it yourself"
+   steps (including the API-key command), and Check now. Other agents show "Not checked".
+2. **The network policy question in `--install` (first install, not with -f) and `--setup`**: when `sbx ls` shows the
+   menu, ask Balanced (default) / Open / Locked down and run `sbx policy init <choice>`; says nothing when a policy
+   exists; unanswered, it says how to do it by hand.
+3. Not built: the sign-in buttons (stage 3), the API-key field, the keyring workaround.
+
+**Not tried against real sbx** (none here): the card's real output, `sbx ls` on a pristine machine from vibe (stdin is
+the null device, which should give "operation cancelled by user" at once), `sbx policy init` from vibe. To try on the
+user's restore-pointed VM / laptop.

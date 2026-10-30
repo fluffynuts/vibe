@@ -85,6 +85,9 @@ func doInstall(lay layout.Layout, force bool, strategyValue string) error {
 	// later one only makes sure its memory is still something this
 	// machine can give a sandbox.
 	if firstInstall {
+		if !force {
+			setUpNetworkPolicy()
+		}
 		if err := setUpSettings(lay, !force); err != nil {
 			return err
 		}

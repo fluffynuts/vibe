@@ -114,6 +114,7 @@ func doSetup(vibeHome string, force bool) error {
 	if _, err := os.Stat(lay.HomePath("settings.yaml")); os.IsNotExist(err) {
 		return fmt.Errorf("%s doesn't exist yet — run 'vibe --install' first", pathresolve.Tilde(lay.HomePath("settings.yaml")))
 	}
+	setUpNetworkPolicy()
 	if err := setUpSettings(lay, true); err != nil {
 		return err
 	}
