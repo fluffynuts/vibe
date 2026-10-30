@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,15 +30,19 @@ type sbxReadySteps struct {
 	chosenBefore func() bool
 }
 
-// policyWanted says, from what `sbx policy ls` printed (and its error), whether sbx has no network policy yet. It says so
-// when sbx puts its question: or, once signed in, when it lists no global policy (the local-policy row that `sbx policy
-// init` makes), which is how it answers then. A listing that lacks the row when a policy was chosen before isn't taken
-// for none (a version of sbx may name it differently); the question itself always is.
+// policyWanted says, from what `sbx policy ls` printed (and its error), whether sbx has no network policy yet. sbx puts its
+// question to it, and what it prints for that with nothing to read an answer from isn't known (on a real machine it was not
+// what a terminal gets): so a listing that works but lacks the local-policy row (the global one `sbx policy init` makes) is
+// none, and so is a failure other than a timeout, unless vibe has had one chosen here before. Asking when unsure is safe,
+// since sbx refuses a second policy.
 func policyWanted(out string, err error, chosenBefore bool) bool {
 	if signin.Docker(out, err, false).State == signin.NeedsPolicy {
 		return true
 	}
-	return err == nil && !chosenBefore && !strings.Contains(out, "local-policy")
+	if chosenBefore || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	return err != nil || !strings.Contains(out, "local-policy")
 }
 
 // maxSbxReadyRounds is how many things sbx may ask for, one after another: its policy, and its sign-in, and the policy again,
@@ -94,8 +99,8 @@ func probeWithin(ctx context.Context, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, sbxReadyWithin)
 	defer cancel()
 	out, err := sbxrun.Probe(ctx, args...)
-	if ctx.Err() != nil && err == nil {
-		err = ctx.Err()
+	if ctx.Err() != nil {
+		err = ctx.Err() // what killed it was the wait, not sbx
 	}
 	return out, err
 }
