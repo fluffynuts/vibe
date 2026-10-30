@@ -58,7 +58,8 @@ func Docker(out string, err error, timedOut bool) Part {
 		part.Detail = "sbx didn't answer in time. Its waiting is often for the system wallet (keyring) to be unlocked: unlock it, and check again."
 	case strings.Contains(lower, "not signed in"):
 		part.State = SignedOut
-	case strings.Contains(lower, "choose the network policy") || strings.Contains(lower, "operation cancelled by user"):
+	case strings.Contains(lower, "choose the network policy") || strings.Contains(lower, "operation cancelled by user") ||
+		strings.Contains(lower, "network policy has not been initialized"):
 		part.State = NeedsPolicy
 		part.Detail = "sbx hasn't been told which network policy to use."
 		part.Manual = policyManual

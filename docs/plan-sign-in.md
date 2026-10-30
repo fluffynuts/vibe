@@ -230,3 +230,10 @@ name the row differently, vibe also notes in `~/.vibe/sbx-policy-chosen` when it
 as "already initialized" (which isn't a failure: it says so and changes nothing); with that noted, a listing without the row
 no longer has the question asked. The menu itself is always answered. Unverified on a real sbx: what exactly `sbx policy ls`
 prints after sign-in and before a policy is chosen.
+
+**The real text (2026-10-30, `sbx policy ls </dev/null 2>&1 | cat` on a signed-in VM with no policy):**
+`error: global network policy has not been initialized` / `  try: sbx policy init <allow-all|balanced|deny-all>`, exit 1. With
+no terminal sbx doesn't show its menu, which is why recognising the menu (and then a listing with no row, and then any failure)
+all missed it. `signin.Docker` now reads "network policy has not been initialized" as NeedsPolicy, as it does the menu and "operation
+cancelled by user"; `policyWanted` is that, or a clean listing without the local-policy row (unless one was chosen here before),
+and any other failure is left alone.

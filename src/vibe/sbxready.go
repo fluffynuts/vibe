@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,19 +29,16 @@ type sbxReadySteps struct {
 	chosenBefore func() bool
 }
 
-// policyWanted says, from what `sbx policy ls` printed (and its error), whether sbx has no network policy yet. sbx puts its
-// question to it, and what it prints for that with nothing to read an answer from isn't known (on a real machine it was not
-// what a terminal gets): so a listing that works but lacks the local-policy row (the global one `sbx policy init` makes) is
-// none, and so is a failure other than a timeout, unless vibe has had one chosen here before. Asking when unsure is safe,
-// since sbx refuses a second policy.
+// policyWanted says, from what `sbx policy ls` printed (and its error), whether sbx has no network policy yet. With no
+// terminal to ask on, sbx says "global network policy has not been initialized" (exit 1); with one it shows its menu; and a
+// listing that works but lacks the local-policy row (the global one `sbx policy init` makes) is taken for none, unless vibe
+// has had one chosen here before, in case a version of sbx names the row differently. Any other failure is left alone: it is
+// not known to be this one.
 func policyWanted(out string, err error, chosenBefore bool) bool {
 	if signin.Docker(out, err, false).State == signin.NeedsPolicy {
 		return true
 	}
-	if chosenBefore || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		return false
-	}
-	return err != nil || !strings.Contains(out, "local-policy")
+	return err == nil && !chosenBefore && !strings.Contains(out, "local-policy")
 }
 
 // maxSbxReadyRounds is how many things sbx may ask for, one after another: its policy, and its sign-in, and the policy again,

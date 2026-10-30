@@ -113,10 +113,10 @@ func TestAnSbxThatSaysSomethingElseIsLeftAlone(t *testing.T) {
 	if r.done() != "" {
 		t.Errorf("did %q", r.done())
 	}
-	r = &readiness{looks: []string{"[]"}, policyLooks: []string{"error: the daemon fell over"}, policy: false, signIn: true}
+	r = &readiness{looks: []string{"[]"}, policyLooks: []string{"error: the daemon fell over"}, policy: true, signIn: true}
 	r.run()
-	if r.done() != "policy" {
-		t.Errorf("a policy listing that failed otherwise is asked about once, and given up on if declined: did %q", r.done())
+	if r.done() != "" {
+		t.Errorf("a policy listing that failed otherwise: did %q", r.done())
 	}
 }
 
@@ -150,12 +150,12 @@ func TestWhetherAPolicyIsWanted(t *testing.T) {
 		"a list with none":                       {policyListedEmpty, nil, false, true},
 		"a list with only a sandbox's own rules": {"  POLICY SOURCE APPLIES TO\n  1c  kit  sandbox:box  network: 3 allow\n", nil, false, true},
 		"a list with none, but chosen before":    {policyListedEmpty, nil, true, false},
-		// With nothing to read an answer from, what sbx prints for its question isn't known (the menu, an error, nothing): a
-		// failure that isn't a timeout is taken as the question being there, since asking is safe (sbx refuses a second policy).
-		"a failure whose words are not known": {"error: cannot ask without a terminal", errors.New("exit 1"), false, true},
-		"a failure with no words":             {"", errors.New("exit 1"), false, true},
-		"that failure, but chosen before":     {"error: cannot ask without a terminal", errors.New("exit 1"), true, false},
-		"sbx not answering in time":           {"", context.DeadlineExceeded, false, false},
+		// What a real sbx says with no terminal to ask on (stdin from /dev/null, output piped): exit 1.
+		"what sbx says with no terminal": {"error: global network policy has not been initialized\n  try: sbx policy init <allow-all|balanced|deny-all>", errors.New("exit 1"), false, true},
+		"that, even when chosen before":  {"error: global network policy has not been initialized", errors.New("exit 1"), true, true},
+		"a failure not known to be it":   {"error: the daemon fell over", errors.New("exit 1"), false, false},
+		"a failure with no words":        {"", errors.New("exit 1"), false, false},
+		"sbx not answering in time":      {"", context.DeadlineExceeded, false, false},
 	} {
 		if got := policyWanted(tc.out, tc.err, tc.chosen); got != tc.want {
 			t.Errorf("%s: wanted = %v, want %v", name, got, tc.want)
@@ -210,5 +210,14 @@ func TestAPolicyChosenIsRemembered(t *testing.T) {
 	})
 	if remembered != 1 {
 		t.Errorf("remembered %d times", remembered)
+	}
+}
+
+func TestASignedInSbxThatSaysItsPolicyHasNotBeenInitializedIsAskedForOne(t *testing.T) {
+	said := "error: global network policy has not been initialized\n  try: sbx policy init <allow-all|balanced|deny-all>"
+	r := &readiness{looks: []string{"[]"}, policyLooks: []string{said, policyListed}, policy: true}
+	r.run()
+	if r.done() != "policy" {
+		t.Errorf("did %q", r.done())
 	}
 }

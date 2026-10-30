@@ -38,6 +38,15 @@ func TestDockerNeedsAPolicyWhenSbxAsksForOne(t *testing.T) {
 	}
 }
 
+// With no terminal sbx doesn't show its menu: it says the policy has not been initialized, and how to (from a real machine).
+func TestDockerNeedsAPolicyWhenSbxSaysItHasNotBeenInitialized(t *testing.T) {
+	out := "error: global network policy has not been initialized\n  try: sbx policy init <allow-all|balanced|deny-all>\n"
+	got := Docker(out, failed, false)
+	if got.State != NeedsPolicy {
+		t.Errorf("state = %q", got.State)
+	}
+}
+
 func TestDockerIsUnknownWhenSbxDoesNotAnswerAndSaysWhyItMayNot(t *testing.T) {
 	got := Docker("", failed, true)
 	if got.State != Unknown {
