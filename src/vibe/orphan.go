@@ -39,7 +39,8 @@ func missingWorkspaces(workspaces []string, exists func(path string) bool) []str
 
 // clearOrphanedSandbox deals with a sandbox sbx still has whose folders on the host are gone, which can't start: what is
 // left when ~/.vibe is deleted, or a setup half done. It says so, and offers on the terminal to remove it, so that the
-// start goes on to make it afresh. With no terminal, or -f, it is never removed unasked: the command to run is given.
+// start goes on to make it afresh (yes is the default: nothing in it can be got at). With no terminal, or -f, it is
+// never removed unasked: the command to run is given.
 func clearOrphanedSandbox(args cliargs.Args, name string) error {
 	return clearOrphanedSandboxWith(context.Background(), name, args, orphanSteps{
 		list: func(ctx context.Context) ([]sbxrun.Status, error) {
@@ -47,9 +48,11 @@ func clearOrphanedSandbox(args cliargs.Args, name string) error {
 			defer cancel()
 			return sbxrun.List(ctx)
 		},
-		exists:  func(path string) bool { _, err := os.Stat(path); return err == nil },
-		canAsk:  interactive(),
-		confirm: func(question string) bool { return confirm(false, question) },
+		exists: func(path string) bool { _, err := os.Stat(path); return err == nil },
+		canAsk: interactive(),
+		// Yes is the default: a sandbox whose folders are gone can't be started, by sbx either, so there is nothing in it to
+		// get back.
+		confirm: func(question string) bool { return confirmDefault(false, true, question) },
 		remove: func(ctx context.Context, name string) error {
 			return sbxrun.Remove(ctx, name, true, nil)
 		},
@@ -80,7 +83,7 @@ func clearOrphanedSandboxWith(ctx context.Context, name string, args cliargs.Arg
 	if args.Force || !s.canAsk {
 		return byHand
 	}
-	if !s.confirm(fmt.Sprintf("Remove sandbox '%s' and make it afresh? Its own disk goes with it; your project folder is untouched.", name)) {
+	if !s.confirm(fmt.Sprintf("Remove sandbox '%s' and make it afresh? Its own disk goes with it, but it can't be started anyway; your project folder is untouched.", name)) {
 		return byHand
 	}
 	if err := s.remove(ctx, name); err != nil {

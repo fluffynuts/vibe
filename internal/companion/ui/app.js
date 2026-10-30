@@ -3204,7 +3204,9 @@
 
   // What the Sign-in card shows: whether sbx, and the agent, can be used, read by the host when the Admin tab is
   // opened and when Check now is pressed (each asks sbx, which can be slow, so it isn't polled).
-  const signInShown = { asked: false, checking: false, watching: false, lastJob: '', agent: 'the agent' }
+  const signInShown = { asked: false, checking: false, watching: false, lastJob: '', agent: 'the agent', job: null, codeSent: false, sentPolls: 0 }
+  // How many looks (1.5 s apart) at a code being checked before it can be entered again: a code that wasn't taken leaves the command waiting.
+  const CODE_PATIENCE_POLLS = 15
   const SIGNIN_WORDS = { 'signed-in': ['Signed in', 'ok'], 'signed-out': ['Signed out', 'bad'], 'needs-policy': ['Needs a network policy', 'bad'], unknown: ['Unknown', ''], unsupported: ['Not checked', ''] }
 
   function renderSignInPart(id, name, part, kind) {
@@ -3279,6 +3281,8 @@
       }
       signInShown.watching = true
       signInShown.lastJob = ''
+      signInShown.codeSent = false
+      signInShown.sentPolls = 0
       showSignInJob(res.body)
       if (signInShown.parts) {
         renderSignInPart('signin-docker', 'Docker (sbx)', signInShown.parts.docker || { state: 'unknown' }, 'docker')
@@ -3297,6 +3301,7 @@
     const job = res.body
     if (!job.kind || (!signInShown.watching && !(adopt && job.running))) return
     signInShown.watching = !!job.running || signInShown.watching
+    if (job.running && signInShown.codeSent) signInShown.sentPolls += 1
     showSignInJob(job)
     if (job.done) {
       signInShown.watching = false
@@ -3314,6 +3319,10 @@
     const code = field ? field.value.trim() : ''
     if (!code) return
     field.value = ''
+    // The field is gone at once, so what is shown has to say it is being checked.
+    signInShown.codeSent = true
+    signInShown.sentPolls = 0
+    if (signInShown.job) showSignInJob(signInShown.job)
     try {
       const res = await api('/api/signin/code', { method: 'POST', body: JSON.stringify({ code }) })
       if (!res.ok) signInProblem("Couldn't give it the code: " + (res.body.error || 'HTTP ' + res.status))
@@ -3337,28 +3346,40 @@
   // for the one to paste, and what is happening. It is redrawn only when the job has changed, keeping what is being typed.
   function showSignInJob(job) {
     const box = $('signin-job')
-    const key = JSON.stringify(job)
+    signInShown.job = job
+    const late = signInShown.codeSent && signInShown.sentPolls >= CODE_PATIENCE_POLLS
+    const key = JSON.stringify([job, signInShown.codeSent, late])
     if (key === signInShown.lastJob && !box.hidden) return
     signInShown.lastJob = key
     const typed = box.querySelector('input') ? box.querySelector('input').value : ''
     const who = job.kind === 'docker' ? 'Docker (sbx)' : signInShown.agent
     const parts = [el('strong', { text: (job.running ? 'Signing in to ' : 'Sign-in to ') + who })]
-    if (job.running) {
+    const waiting = (text) => el('p', { class: 'note' }, el('span', { class: 'spinner', 'aria-hidden': 'true' }), text)
+    const cancel = el('div', { class: 'bar' }, el('button', { type: 'button', class: 'signin-cancel ghost', text: 'Cancel', onclick: cancelSignIn }))
+    if (job.running && !job.url) {
+      // Nothing is said of an address the user can't see yet.
+      parts.push(waiting('Starting the sign-in…'), cancel)
+    } else if (job.running && job.kind === 'agent' && signInShown.codeSent) {
+      parts.push(waiting('Checking the code…'))
+      if (late) {
+        parts.push(el('p', { class: 'note muted', text: "It's taking a while. If the code was wrong or didn't go through, you can enter it again." }),
+          el('div', { class: 'bar' }, el('button', { type: 'button', class: 'signin-again', text: 'Enter the code again', onclick: () => { signInShown.codeSent = false; showSignInJob(job) } })))
+      }
+      parts.push(cancel)
+    } else if (job.running) {
       parts.push(el('p', { class: 'note', text: job.kind === 'docker'
         ? 'Open the address, check the code matches, and sign in. This page notices when you have.'
         : 'Open the address and sign in; it then shows a code. Paste that code here.' }))
-      if (job.url) {
-        parts.push(/^https:\/\//.test(job.url)
-          ? el('p', {}, el('a', { href: job.url, target: '_blank', rel: 'noopener noreferrer', text: job.url }))
-          : el('p', { class: 'note', text: job.url }))
-      }
+      parts.push(/^https:\/\//.test(job.url)
+        ? el('p', {}, el('a', { href: job.url, target: '_blank', rel: 'noopener noreferrer', text: job.url }))
+        : el('p', { class: 'note', text: job.url }))
       if (job.code) parts.push(el('p', {}, 'Code: ', el('code', { text: job.code })))
       if (job.kind === 'agent') {
         parts.push(el('div', { class: 'bar' },
           el('input', { type: 'password', autocomplete: 'off', placeholder: 'the code it showed', 'aria-label': 'The code the sign-in showed', onkeydown: (ev) => { if (ev.key === 'Enter') sendSignInCode() } }),
           el('button', { type: 'button', class: 'signin-send', text: 'Send code', onclick: sendSignInCode })))
       }
-      parts.push(el('div', { class: 'bar' }, el('button', { type: 'button', class: 'signin-cancel ghost', text: 'Cancel', onclick: cancelSignIn })))
+      parts.push(cancel)
     } else if (job.ok) {
       parts.push(el('p', { class: 'note', text: 'Signed in.' }), el('div', { class: 'bar' }, el('button', { type: 'button', class: 'ghost', text: 'Close', onclick: closeSignInJob })))
     } else {

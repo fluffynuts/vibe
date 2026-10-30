@@ -104,7 +104,7 @@ test('nothing is sent for an empty field', async () => {
   const p = await pageWith({ docker: IN, agent: OUT })
   try {
     await p.click(p.$('admin-signin').querySelector('button.signin-go'))
-    p.host.job = { kind: 'agent', running: true, lines: [] }
+    p.host.job = { kind: 'agent', running: true, lines: [], url: 'https://claude.ai/oauth/authorize?x=1' }
     await p.every('pollSignInJob')
     await p.click(panel(p).querySelector('button.signin-send'))
     assert.equal(calls(p, '/api/signin/code').length, 0)
@@ -163,5 +163,73 @@ test('a sign-in already running when the page opens is shown', async () => {
   try {
     assert.equal(panel(p).hidden, false)
     assert.match(panel(p).textContent, /ZZ-YY/)
+  } finally { p.close() }
+})
+
+// Nothing is said about an address the user can't see yet: a spinner stands in until it is known.
+test('until the address is known the panel shows only that it is starting, with a spinner, and no instructions', async () => {
+  const p = await pageWith({ docker: OUT, agent: IN })
+  try {
+    await p.click(p.$('admin-signin').querySelector('button.signin-go'))
+    assert.ok(panel(p).querySelector('.spinner'), 'there is no spinner')
+    assert.match(panel(p).textContent, /starting/i)
+    assert.doesNotMatch(panel(p).textContent, /open the address/i, 'it tells of an address nobody can see')
+    assert.equal(panel(p).querySelector('a'), null)
+    assert.ok(panel(p).querySelector('button.signin-cancel'), 'it can be cancelled while starting')
+    p.host.job = { kind: 'docker', running: true, lines: [], url: 'https://login.docker.com/activate?user_code=AB-CD', code: 'AB-CD' }
+    await p.every('pollSignInJob')
+    assert.equal(panel(p).querySelector('.spinner'), null)
+    assert.match(panel(p).textContent, /open the address/i)
+    assert.ok(panel(p).querySelector('a'))
+  } finally { p.close() }
+})
+
+test("the agent's panel waits the same way for its address before offering the field for the code", async () => {
+  const p = await pageWith({ docker: IN, agent: OUT })
+  try {
+    await p.click(p.$('admin-signin').querySelector('button.signin-go'))
+    assert.ok(panel(p).querySelector('.spinner'))
+    assert.equal(panel(p).querySelector('input'), null, 'a field for a code nobody has been given yet')
+    p.host.job = { kind: 'agent', running: true, lines: [], url: 'https://claude.ai/oauth/authorize?x=1' }
+    await p.every('pollSignInJob')
+    assert.ok(panel(p).querySelector('input'))
+  } finally { p.close() }
+})
+
+// The field is cleared when the code is sent, so the card must say what is going on, or it looks as if nothing happened.
+test('once the code is sent the panel shows that it is being checked, with a spinner, and no field', async () => {
+  const p = await pageWith({ docker: IN, agent: OUT })
+  try {
+    await p.click(p.$('admin-signin').querySelector('button.signin-go'))
+    p.host.job = { kind: 'agent', running: true, lines: [], url: 'https://claude.ai/oauth/authorize?x=1' }
+    await p.every('pollSignInJob')
+    await p.type(panel(p).querySelector('input'), 'the-code')
+    await p.click(panel(p).querySelector('button.signin-send'))
+    assert.ok(panel(p).querySelector('.spinner'), 'no sign that it is busy')
+    assert.match(panel(p).textContent, /checking|signing you in/i)
+    assert.equal(panel(p).querySelector('input'), null)
+    assert.equal(panel(p).querySelector('a'), null, 'the address is still offered')
+    assert.ok(panel(p).querySelector('button.signin-cancel'))
+    p.host.job = { kind: 'agent', running: false, done: true, ok: true, lines: [] }
+    await p.every('pollSignInJob')
+    assert.equal(panel(p).querySelector('.spinner'), null)
+    assert.match(panel(p).textContent, /signed in/i)
+  } finally { p.close() }
+})
+
+test('a code that is not taken is not waited on for good: after a while it can be entered again', async () => {
+  const p = await pageWith({ docker: IN, agent: OUT })
+  try {
+    await p.click(p.$('admin-signin').querySelector('button.signin-go'))
+    p.host.job = { kind: 'agent', running: true, lines: [], url: 'https://claude.ai/oauth/authorize?x=1' }
+    await p.every('pollSignInJob')
+    await p.type(panel(p).querySelector('input'), 'the-code')
+    await p.click(panel(p).querySelector('button.signin-send'))
+    assert.equal(panel(p).querySelector('button.signin-again'), null, 'offered at once')
+    for (let i = 0; i < 20; i++) await p.every('pollSignInJob')
+    const again = panel(p).querySelector('button.signin-again')
+    assert.ok(again, 'there is no way back to the field')
+    await p.click(again)
+    assert.ok(panel(p).querySelector('input'))
   } finally { p.close() }
 })
