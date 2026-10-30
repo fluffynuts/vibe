@@ -13,7 +13,8 @@ async function pageWith({ start = true, docker = OUT, agent = OUT, job = {}, sta
   const host = { job: Object.assign({ kind: '', running: false, done: false, ok: false, lines: [] }, job), docker, agent }
   const p = await openPage({
     routes: {
-      '/api/state': { sandbox: 'box', sandboxTabs: true, admin: true, signin: true, signinStart: start, attention: {} },
+      '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, admin: true, signin: true, signinStart: start, attention: {} },
+      '/api/conversation': { events: [], last: 0, running: false },
       '/api/admin': { state: 'running', info: '' },
       '/api/signin': () => ({ agent: 'claude', docker: host.docker, agentSignIn: host.agent }),
       '/api/signin/start': (call) => {
@@ -231,5 +232,42 @@ test('a code that is not taken is not waited on for good: after a while it can b
     assert.ok(again, 'there is no way back to the field')
     await p.click(again)
     assert.ok(panel(p).querySelector('input'))
+  } finally { p.close() }
+})
+
+// The next thing after signing the agent in is to prompt it, which isn't obvious to someone new: the page goes there.
+test('when the agent is signed in the page goes to the conversation, and says so', async () => {
+  const p = await pageWith({ docker: IN, agent: OUT })
+  try {
+    await p.click(p.$('admin-signin').querySelector('button.signin-go'))
+    p.host.agent = IN
+    p.host.job = { kind: 'agent', running: false, done: true, ok: true, lines: [] }
+    await p.every('pollSignInJob')
+    assert.equal(p.$('panel-conversation').hidden, false)
+    assert.equal(p.$('panel-admin').hidden, true)
+    assert.match(p.$('toast').textContent, /signed in/i)
+  } finally { p.close() }
+})
+
+test("signing sbx in to Docker doesn't move the page: the agent still needs signing in", async () => {
+  const p = await pageWith({ docker: OUT, agent: OUT })
+  try {
+    await p.click(p.$('admin-signin').querySelector('button.signin-go[data-kind=docker]'))
+    p.host.docker = IN
+    p.host.job = { kind: 'docker', running: false, done: true, ok: true, lines: [] }
+    await p.every('pollSignInJob')
+    assert.equal(p.$('panel-admin').hidden, false)
+  } finally { p.close() }
+})
+
+test("a user who has gone to another tab while it signed in isn't moved", async () => {
+  const p = await pageWith({ docker: IN, agent: OUT })
+  try {
+    await p.click(p.$('admin-signin').querySelector('button.signin-go'))
+    await p.click('tab-log')
+    p.host.agent = IN
+    p.host.job = { kind: 'agent', running: false, done: true, ok: true, lines: [] }
+    await p.every('pollSignInJob')
+    assert.equal(p.$('panel-log').hidden, false)
   } finally { p.close() }
 })

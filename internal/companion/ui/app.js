@@ -106,7 +106,7 @@
     clipboardWaitingSince: 0,
     clipboardStarting: false,
     conversation: false,
-    tab: store.get('vibe-companion-tab') || 'log',
+    tab: store.get('vibe-companion-tab') || 'conversation',
     filter: 'all',
     search: '',
     log: null,
@@ -930,7 +930,7 @@
       }
       renderGitAuthor(res.body.gitAuthor)
       renderClipboard()
-      if ($('tab-' + state.tab).hidden) select(state.tab)
+      if ($('tab-' + state.tab).hidden) select(state.tab, false)
     } catch (e) {
       reached(false)
     }
@@ -1091,10 +1091,13 @@
   // --- tabs -------------------------------------------------------------
 
   // select shows tab, or the first tab the page has when it hasn't that one.
-  function select(tab) {
+  function select(tab, remember = true) {
+    const wanted = tab
     if (!TABS.includes(tab) || $('tab-' + tab).hidden) tab = TABS.find((t) => !$('tab-' + t).hidden) || 'log'
     state.tab = tab
-    store.set('vibe-companion-tab', tab)
+    // Only a tab that was asked for is a choice to keep: where it wasn't there to go to (no conversation yet, on a first
+    // open), the one stood in for isn't, or it would stay the choice once the conversation is.
+    if (remember && tab === wanted) store.set('vibe-companion-tab', tab)
     showBanner()
     for (const t of TABS) {
       $('panel-' + t).hidden = t !== tab
@@ -3305,7 +3308,14 @@
     showSignInJob(job)
     if (job.done) {
       signInShown.watching = false
-      if (job.ok) loadSignIn()
+      if (job.ok) {
+        loadSignIn()
+        // Signed in, the next thing is to prompt the agent, which isn't obvious to someone new: go there, if still here.
+        if (job.kind === 'agent' && state.tab === 'admin' && state.conversation) {
+          toast('Signed in. You can prompt the agent now.')
+          select('conversation')
+        }
+      }
     }
   }
 
@@ -6797,7 +6807,7 @@
 
   setLink('connecting', 'connecting…')
   setUpPowerMenu()
-  loadState().then(() => select(state.tab))
+  loadState().then(() => select(state.tab, false))
 }
 
   start()
