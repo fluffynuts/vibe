@@ -293,6 +293,8 @@ func run(argv []string) error {
 			return err
 		}
 		lay := layout.New(vibeHome, bundleRoot)
+		_, statErr := os.Stat(lay.HomePath("settings.yaml"))
+		firstInstall := os.IsNotExist(statErr)
 		if err := doInstall(lay, args.Force, args.UpdateStrategy); err != nil {
 			return err
 		}
@@ -305,6 +307,7 @@ func run(argv []string) error {
 			ensureSbxReady()
 		}
 		reportOutOfDate(lay)
+		sayFirstSteps(firstInstall)
 		return nil
 	}
 
