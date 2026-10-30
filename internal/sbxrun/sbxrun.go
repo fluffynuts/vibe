@@ -272,6 +272,8 @@ type Status struct {
 	// State is what sbx says of it, lowercased: "running", "stopped", or
 	// whatever else sbx reports; "" when sbx's output didn't say.
 	State string
+	// Workspaces are the host folders it has mounted, as sbx lists them: a path may end in :ro, for a read-only mount.
+	Workspaces []string
 }
 
 // List returns every sandbox sbx knows about and whether it is running.
@@ -303,8 +305,9 @@ func parseList(out string) ([]Status, error) {
 		return nil, nil
 	}
 	var sandboxes []struct {
-		Name   string `json:"name"`
-		Status string `json:"status"`
+		Name       string   `json:"name"`
+		Status     string   `json:"status"`
+		Workspaces []string `json:"workspaces"`
 	}
 	if err := json.Unmarshal([]byte(out), &sandboxes); err != nil {
 		return nil, fmt.Errorf("couldn't read what sbx ls --json printed (%v) — vibe may need updating for this sbx:\n%s", err, out)
@@ -312,7 +315,7 @@ func parseList(out string) ([]Status, error) {
 	statuses := make([]Status, 0, len(sandboxes))
 	for _, sb := range sandboxes {
 		state := strings.ToLower(sb.Status)
-		statuses = append(statuses, Status{Name: sb.Name, Running: state == "running", State: state})
+		statuses = append(statuses, Status{Name: sb.Name, Running: state == "running", State: state, Workspaces: sb.Workspaces})
 	}
 	return statuses, nil
 }
@@ -486,19 +489,36 @@ func WaitReachable(ctx context.Context, name string, limit int) bool {
 // can say what they could not do instead of assuming an answer.
 // sbx (and the wait) is ended when ctx ends.
 func Start(ctx context.Context, name string) bool {
+	started, _ := StartExplained(ctx, name)
+	return started
+}
+
+// StartExplained is Start, saying why when the sandbox didn't start: what sbx said of the start, which is the only
+// place the reason is, or that it took the start and the sandbox never answered.
+func StartExplained(ctx context.Context, name string) (started bool, why string) {
 	if Reachable(ctx, name) {
-		return true
+		return true, ""
 	}
-	if err := cancellable(ctx, "start", name).Run(); err != nil {
-		return ctx.Err() == nil && Reachable(ctx, name)
+	said, err := captureOutContext(ctx, "start", name)
+	if err != nil {
+		if ctx.Err() == nil && Reachable(ctx, name) {
+			return true, ""
+		}
+		if said = strings.TrimSpace(said); said != "" {
+			return false, said
+		}
+		return false, err.Error()
 	}
-	return WaitReachable(ctx, name, startTimeout)
+	if WaitReachable(ctx, name, startTimeout) {
+		return true, ""
+	}
+	return false, fmt.Sprintf("sbx started it, but it didn't accept a command in %d seconds", startTimeout)
 }
 
 // startTimeout is how long Start waits for a booting sandbox to accept an
 // exec, in seconds — generous, since it is only ever reached when the user
 // has already committed to the operation the start is for.
-const startTimeout = 60
+var startTimeout = 60
 
 // Remove deletes a sandbox, ending sbx when ctx ends. force maps to
 // `sbx rm -f`. What sbx prints goes to out, or the terminal when out is nil
@@ -673,6 +693,25 @@ func SetGitHubSecret(name, token string) error {
 func RemoveGitHubSecret(name string) error {
 	if out, err := exec.Command(sbxfind.Path(), "secret", "rm", "github", "--sandbox", name, "-f").CombinedOutput(); err != nil {
 		return fmt.Errorf("sbx secret rm github --sandbox %s: %w: %s", name, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// Probe runs sbx with args and returns what it printed, stdout and stderr together, for reading one answer from it. It
+// is given no input, so a question sbx asks fails rather than waits; it is ended when ctx ends.
+func Probe(ctx context.Context, args ...string) (string, error) {
+	return captureOutContext(ctx, args...)
+}
+
+// Login runs `sbx login` on the user's terminal, which shows an address and a code and waits until they have been used in a
+// browser. An error says it didn't end well.
+func Login() error {
+	code, err := runInherit("login")
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return fmt.Errorf("sbx login ended with exit code %d", code)
 	}
 	return nil
 }

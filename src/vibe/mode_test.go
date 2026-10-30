@@ -11,6 +11,7 @@ import (
 	"vibe/internal/pathresolve"
 	"vibe/internal/profilegen"
 	"vibe/internal/running"
+	"vibe/internal/sbxtest"
 	"vibe/internal/userprefs"
 )
 
@@ -70,9 +71,9 @@ func TestWhichModeToStartIn(t *testing.T) {
 		"--restart --headless after headless: no need to say it": {modeWanted{Restart: true, Headless: true, Ended: modeHeadless}, true, "isn't needed"},
 		"--restart --terminal after a terminal: no need either":  {modeWanted{Restart: true, Terminal: true, Ended: modeTerminal}, false, "isn't needed"},
 
-		"a favourite headless, but no sandbox yet: a terminal to make it": {modeWanted{Favourite: "headless"}, false, "no sandbox"},
-		"a favourite headless with a rebuild: the rebuild makes it":       {modeWanted{Favourite: "headless", Rebuilds: true}, true, ""},
-		"a favourite headless, deleting: not a start at all":              {modeWanted{Favourite: "headless", Deleting: true}, false, ""},
+		"a favourite headless, but no sandbox yet: made first, then headless": {modeWanted{Favourite: "headless"}, true, "making it here"},
+		"a favourite headless with a rebuild: the rebuild makes it":           {modeWanted{Favourite: "headless", Rebuilds: true}, true, ""},
+		"a favourite headless, deleting: not a start at all":                  {modeWanted{Favourite: "headless", Deleting: true}, false, ""},
 	} {
 		headless, says := tc.want.resolve()
 		if headless != tc.headless {
@@ -124,14 +125,14 @@ func TestAFavouriteModeThatIsNeitherIsRefusedWhereToFixIt(t *testing.T) {
 func TestAMisspeltModeSettingOnlyStopsAStartThatNeededIt(t *testing.T) {
 	lay := favouriteHome(t, "mode: headles\n")
 	for name, args := range map[string]cliargs.Args{"--terminal": {Terminal: true}, "--headless": {Headless: true}, "--delete": {Delete: true}} {
-		if _, err := startMode(lay, args, "box", "/work", modeNone); err != nil {
+		if _, _, err := startMode(lay, args, "box", "/work", modeNone); err != nil {
 			t.Errorf("%s was stopped by a setting it doesn't use: %v", name, err)
 		}
 	}
-	if _, err := startMode(lay, cliargs.Args{Restart: true}, "box", "/work", modeHeadless); err != nil {
+	if _, _, err := startMode(lay, cliargs.Args{Restart: true}, "box", "/work", modeHeadless); err != nil {
 		t.Errorf("--restart that ended a headless vibe was stopped by a setting it doesn't use: %v", err)
 	}
-	if _, err := startMode(lay, cliargs.Args{}, "box", "/work", modeNone); err == nil {
+	if _, _, err := startMode(lay, cliargs.Args{}, "box", "/work", modeNone); err == nil {
 		t.Error("a start that goes by the setting wasn't told it's wrong")
 	}
 }
@@ -148,7 +149,7 @@ func TestTheFavouriteDecidesAStartNothingElseHas(t *testing.T) {
 		"--restart of a terminal keeps the terminal":     {cliargs.Args{Restart: true}, modeTerminal, false},
 		"--restart of a headless keeps it":               {cliargs.Args{Restart: true}, modeHeadless, true},
 	} {
-		got, err := startMode(lay, tc.args, "box", "/work", tc.ended)
+		got, _, err := startMode(lay, tc.args, "box", "/work", tc.ended)
 		if err != nil || got != tc.want {
 			t.Errorf("%s: %v, %v; want %v", name, got, err, tc.want)
 		}
@@ -158,7 +159,7 @@ func TestTheFavouriteDecidesAStartNothingElseHas(t *testing.T) {
 func TestTheNudgeIsPrintedForARestartThatNeededNoFlag(t *testing.T) {
 	var got bool
 	said := notesOf(func() {
-		got, _ = startMode(favouriteHome(t, ""), cliargs.Args{Restart: true, Headless: true}, "box", "/work", modeHeadless)
+		got, _, _ = startMode(favouriteHome(t, ""), cliargs.Args{Restart: true, Headless: true}, "box", "/work", modeHeadless)
 	})
 	if !got || len(said) != 1 || !strings.Contains(said[0], "vibe --restart") {
 		t.Errorf("headless %v, said %q", got, said)
@@ -232,7 +233,7 @@ func TestTheProfileIsFoundTheWayARebuildFindsIt(t *testing.T) {
 	lay := favouriteHome(t, "mode: terminal\n")
 	withProfile(t, lay, "mode: headless\n")
 	// Named by --profile, with a rebuild asked for (which needs no sandbox looked up).
-	got, err := startMode(lay, cliargs.Args{ReInit: true, Profile: "p"}, "box", "/work", modeNone)
+	got, _, err := startMode(lay, cliargs.Args{ReInit: true, Profile: "p"}, "box", "/work", modeNone)
 	if err != nil || !got {
 		t.Errorf("headless %v, %v; want the profile's headless", got, err)
 	}
@@ -241,12 +242,12 @@ func TestTheProfileIsFoundTheWayARebuildFindsIt(t *testing.T) {
 		t.Fatalf("names are derived differently now: %q", derived)
 	}
 	withProfileNamed(t, lay, "widget", "mode: headless\n")
-	got, err = startMode(lay, cliargs.Args{ReInit: true}, "box", "/code/widget", modeNone)
+	got, _, err = startMode(lay, cliargs.Args{ReInit: true}, "box", "/code/widget", modeNone)
 	if err != nil || !got {
 		t.Errorf("by the folder's name: headless %v, %v", got, err)
 	}
 	// Another profile: the global terminal.
-	got, err = startMode(lay, cliargs.Args{ReInit: true, Profile: "other"}, "box", "/work", modeNone)
+	got, _, err = startMode(lay, cliargs.Args{ReInit: true, Profile: "other"}, "box", "/work", modeNone)
 	if err != nil || got {
 		t.Errorf("another profile: headless %v, %v; want the global terminal", got, err)
 	}
@@ -292,5 +293,82 @@ func TestAModeInThePreferencesDoesNotMakeAComposedProfileLookEditedByHand(t *tes
 	}
 	if after, err := profilegen.ContentHash(dir); err != nil || after != before {
 		t.Errorf("the profile's hash changed (%v): a choice made it look edited by hand", err)
+	}
+}
+
+func TestOnlyAFavouriteHeadlessStartWithNoSandboxMakesItFirst(t *testing.T) {
+	for name, tc := range map[string]struct {
+		want modeWanted
+		make bool
+	}{
+		"the favourite, no sandbox":              {modeWanted{Favourite: "headless"}, true},
+		"the favourite, a sandbox":               {modeWanted{Favourite: "headless", SandboxExists: true}, false},
+		"--headless typed, no sandbox: refused":  {modeWanted{Headless: true, Favourite: "headless"}, false},
+		"--terminal typed":                       {modeWanted{Terminal: true, Favourite: "headless"}, false},
+		"a favourite terminal":                   {modeWanted{Favourite: "terminal"}, false},
+		"a rebuild makes it itself":              {modeWanted{Favourite: "headless", Rebuilds: true}, false},
+		"--restart of a vibe keeps its own mode": {modeWanted{Favourite: "headless", Restart: true, Ended: modeHeadless}, false},
+		"deleting":                               {modeWanted{Favourite: "headless", Deleting: true}, false},
+	} {
+		if got := tc.want.createsFirst(); got != tc.make {
+			t.Errorf("%s: createsFirst = %v, want %v", name, got, tc.make)
+		}
+	}
+}
+
+func TestAFavouriteHeadlessStartInAFolderWithNoSandboxSaysItMakesOneFirst(t *testing.T) {
+	sbxtest.OnPath(t, "echo '[]'\n")
+	lay := favouriteHome(t, "mode: headless\n")
+	var headless, createFirst bool
+	said := notesOf(func() {
+		var err error
+		if headless, createFirst, err = startMode(lay, cliargs.Args{}, "box", "/work", modeNone); err != nil {
+			t.Error(err)
+		}
+	})
+	if !headless || !createFirst || len(said) != 1 || !strings.Contains(said[0], "making it here") {
+		t.Errorf("headless %v, createFirst %v, said %q", headless, createFirst, said)
+	}
+}
+
+// A mode nobody chose isn't switched for the user, but they are nudged to choose: a warning, never a question, so a
+// scripted start isn't held up.
+func TestAStartWithNoModeChosenWarnsAndGoesOnWithATerminal(t *testing.T) {
+	var headless bool
+	said := notesOf(func() {
+		var err error
+		if headless, _, err = startMode(favouriteHome(t, ""), cliargs.Args{}, "box", "/work", modeNone); err != nil {
+			t.Error(err)
+		}
+	})
+	if headless {
+		t.Error("an unset mode was started headless")
+	}
+	all := strings.Join(said, "\n")
+	for _, want := range []string{"mode", "vibe --setup", "headless", "terminal"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("the warning lacks %q: %q", want, all)
+		}
+	}
+}
+
+func TestAStartWithAModeChosenOrTypedSaysNothingOfIt(t *testing.T) {
+	for name, tc := range map[string]struct {
+		settings string
+		args     cliargs.Args
+	}{
+		"a favourite terminal": {"mode: terminal\n", cliargs.Args{}},
+		"--terminal typed":     {"", cliargs.Args{Terminal: true}},
+		"--headless typed":     {"", cliargs.Args{Headless: true}},
+		"deleting":             {"", cliargs.Args{Delete: true}},
+	} {
+		said := notesOf(func() {
+			if _, _, err := startMode(favouriteHome(t, tc.settings), tc.args, "box", "/work", modeNone); err != nil {
+				t.Error(err)
+			}
+		})
+		if len(said) != 0 {
+			t.Errorf("%s: said %q", name, said)
+		}
 	}
 }

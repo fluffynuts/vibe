@@ -293,6 +293,8 @@ func run(argv []string) error {
 			return err
 		}
 		lay := layout.New(vibeHome, bundleRoot)
+		_, statErr := os.Stat(lay.HomePath("settings.yaml"))
+		firstInstall := os.IsNotExist(statErr)
 		if err := doInstall(lay, args.Force, args.UpdateStrategy); err != nil {
 			return err
 		}
@@ -301,7 +303,11 @@ func run(argv []string) error {
 		if err := offerSbxInstall(args.Force); err != nil {
 			return err
 		}
+		if !args.Force {
+			ensureSbxReady()
+		}
 		reportOutOfDate(lay)
+		sayFirstSteps(firstInstall)
 		return nil
 	}
 
@@ -314,6 +320,12 @@ func run(argv []string) error {
 			"then make sure its bin directory is on PATH (e.g. ${HOME}/.docker/sbx/bin).", hint)
 	}
 	sbxfind.Look()
+	// What sbx wants before it answers (a network policy, a sign-in to Docker) is asked here, on the terminal, and given,
+	// rather than the first command failing with sbx's own words. Only for what starts or makes a sandbox, and nobody is
+	// asked with -f, or with no terminal.
+	if !args.Force && getsSbxReadyFirst(args) {
+		ensureSbxReady()
+	}
 
 	// Like cleanup, this is about sandboxes sbx holds, not a folder.
 	if args.StopAll {
@@ -423,6 +435,14 @@ func run(argv []string) error {
 		}
 	}
 
+	// A sandbox left with its folders gone (a deleted ~/.vibe) can't start: say so, and offer to make it afresh. A rebuild
+	// replaces the sandbox anyway.
+	if !args.Rebuilds() && !args.Delete && !detachedChild() {
+		if err := clearOrphanedSandbox(args, name, vibeHome); err != nil {
+			return err
+		}
+	}
+
 	ended := modeNone
 	if args.Restart && !detachedChild() {
 		var err error
@@ -431,11 +451,16 @@ func run(argv []string) error {
 		}
 	}
 	if !detachedChild() {
-		headless, err := startMode(lay, args, name, target, ended)
+		headless, createFirst, err := startMode(lay, args, name, target, ended)
 		if err != nil {
 			return err
 		}
 		args.Headless = headless
+		if createFirst {
+			if err := createBeforeHeadless(lay, args, name, target); err != nil {
+				return err
+			}
+		}
 	}
 	if args.Foreground && !args.Headless {
 		return fmt.Errorf("--foreground only goes with --headless (or with the mode setting in settings.yaml at headless)")

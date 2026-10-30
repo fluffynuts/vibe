@@ -86,7 +86,7 @@ body {
 .power-menu[hidden] { display: none; }
 .power-menu hr { width: 100%; margin: 4px 0; border: 0; border-top: 1px solid var(--line); }
 .power-status { padding: 4px 8px; color: var(--muted); font-size: 12px; }
-.power-item { display: flex; align-items: flex-start; gap: 8px; padding: 4px 8px; border: 0; border-radius: 4px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.power-item { box-sizing: border-box; width: 100%; display: flex; align-items: flex-start; gap: 8px; padding: 4px 8px; border: 0; border-radius: 4px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .power-item:hover:not(:disabled), .power-item:focus-visible { background: var(--row-hover); }
 .power-item:disabled { color: var(--muted); cursor: default; }
 .power-text { display: flex; flex-direction: column; align-items: flex-start; }
@@ -734,3 +734,15 @@ dialog.file-view header button svg { width: 14px; height: 14px; fill: none; stro
 #file-view-body pre code, #file-view-body .code-block code { display: block; font: 13px var(--mono); white-space: pre; word-break: normal; }
 dialog.file-view.outside { border-color: var(--warn-line); border-width: 2px; }
 dialog.file-view.outside .file-view-url::before { content: "⚠"; flex: none; margin-right: 6px; }
+
+/* The Sign-in card: one row per thing signed in to, its pill beside its name, and the by-hand steps folded under it. */
+ul.signins { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.signin-head { display: flex; align-items: center; gap: 8px; }
+ul.signins .note { margin: 4px 0 0; }
+ul.signins details { margin-top: 4px; font-size: 13px; }
+ul.signins summary { cursor: pointer; color: var(--muted); }
+.signin-head .signin-go { margin-left: auto; padding: 2px 10px; font-size: 12px; }
+.signin-job { margin: 12px 0 0; padding: 10px; border: 1px solid var(--line); border-radius: 6px; display: flex; flex-direction: column; gap: 6px; }
+.signin-job p { margin: 0; overflow-wrap: anywhere; }
+.signin-job input { flex: 1; min-width: 0; }
+.signin-job code { user-select: all; }

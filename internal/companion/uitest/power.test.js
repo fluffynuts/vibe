@@ -654,3 +654,79 @@ test('the next progress box shows Close again, whatever the last one hid', async
     assert.equal(p.$('power-end').textContent, '')
   } finally { p.close() }
 })
+
+// A stop from the power menu is the user ending vibe on purpose, so its Close closes the tab. A browser lets a page close
+// only a tab a script opened, which this one is not; when the tab stays, it says so, so Close is never a button that does
+// nothing.
+function closeCounter(w) {
+  w.closeCalls = 0
+  w.close = () => { w.closeCalls += 1 }
+}
+
+async function stoppedFromHere(routes, after) {
+  const p = await openPage({ routes, before: closeCounter })
+  await p.click('link')
+  await p.settle()
+  await p.click(items(p).stop)
+  await p.confirm(true)
+  for (const path of ['/api/state', '/api/log', '/api/power/log', '/api/ping']) routes[path] = () => { throw new Error('refused') }
+  await p.poll()
+  await p.poll()
+  await p.every('pollPower')
+  await p.every('pollPower')
+  return p
+}
+
+test('once a stop from the menu has ended vibe, the box says Close this tab, and it tries to close it', async () => {
+  const routes = powerRoutes({ log: { text: 'stopping\n', next: 9, running: true } })
+  const p = await stoppedFromHere(routes)
+  try {
+    assert.equal(p.$('power-close').textContent, 'Close this tab')
+    await p.click('power-close')
+    assert.equal(p.window.closeCalls, 1)
+    assert.match(p.$('power-end').textContent, /close (the|this) tab yourself/i, 'a tab the browser would not close was not said to be')
+  } finally { p.close() }
+})
+
+test('while a stop is still going, the box says Close and only closes the box', async () => {
+  const p = await openPage({ routes: powerRoutes(), before: closeCounter })
+  try {
+    await p.click('link')
+    await p.settle()
+    await p.click(items(p).stop)
+    await p.confirm(true)
+    assert.equal(p.$('power-close').textContent, 'Close')
+    await p.click('power-close')
+    assert.equal(p.window.closeCalls, 0)
+  } finally { p.close() }
+})
+
+test('after a stop from the menu the disconnected glass says vibe was stopped here, and its button closes the tab', async () => {
+  const routes = powerRoutes({ log: { text: 'stopping\n', next: 9, running: true } })
+  const p = await stoppedFromHere(routes)
+  try {
+    await p.click('power-close')
+    p.window.closeCalls = 0
+    assert.equal(p.$('offline').hidden, false)
+    assert.match(p.$('offline-text').textContent, /stopped/i)
+    assert.equal(p.$('offline-dismiss').textContent, 'Close this tab')
+    await p.click('offline-dismiss')
+    assert.equal(p.window.closeCalls, 1)
+    assert.match(p.$('offline-text').textContent, /close (the|this) tab yourself/i)
+  } finally { p.close() }
+})
+
+test('a vibe that goes away without a stop from here still offers only to dismiss the glass', async () => {
+  const routes = powerRoutes()
+  const p = await openPage({ routes, before: closeCounter })
+  try {
+    for (const path of ['/api/state', '/api/log', '/api/ping']) routes[path] = () => { throw new Error('refused') }
+    await p.poll()
+    await p.poll()
+    assert.equal(p.$('offline').hidden, false)
+    assert.match(p.$('offline-dismiss').textContent, /Dismiss until it reconnects/)
+    await p.click('offline-dismiss')
+    assert.equal(p.window.closeCalls, 0)
+    assert.equal(p.$('offline').hidden, true)
+  } finally { p.close() }
+})

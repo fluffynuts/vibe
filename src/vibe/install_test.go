@@ -437,3 +437,120 @@ func TestDoInstallLeavesCPUsUnsetButLowersOneThisMachineCantSpare(t *testing.T) 
 		}
 	}
 }
+
+// What an installed vibe says of itself, for the tests of replacing it.
+func installedSays(t *testing.T, says string) {
+	t.Helper()
+	was := installedVersion
+	installedVersion = func(string) string { return says }
+	t.Cleanup(func() { installedVersion = was })
+}
+
+// A development build replacing a development build loses nothing, and not replacing it is what had a tester (and the
+// author) running last week's binary after unpacking this week's: the installed copy is only worth keeping when it is a release.
+func TestADevelopmentBuildReplacesAnInstalledDevelopmentBuild(t *testing.T) {
+	asBuild(t, "")
+	installedSays(t, "vibe 0.1 (584c5b3f2a10, built 2026-10-30T15:00:00Z)")
+	dest := installedBinaryOf(t, "an older development build\n")
+
+	var err error
+	notes := strings.Join(notesOf(func() { err = installBinary() }), "\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(dest); string(data) == "an older development build\n" {
+		t.Errorf("the installed development build was left in place")
+	}
+	if !strings.Contains(notes, "replaced the vibe binary") {
+		t.Errorf("notes: %s", notes)
+	}
+}
+
+func TestADevelopmentBuildLeavesAnInstalledReleaseAloneWhateverItSaysAfterTheNumber(t *testing.T) {
+	asBuild(t, "")
+	installedSays(t, "vibe 0.1.57 (a1b2c3d4e5f6, built 2026-10-30T15:00:00Z)")
+	dest := installedBinaryOf(t, "the release\n")
+	if err := installBinary(); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(dest); string(data) != "the release\n" {
+		t.Errorf("a release was replaced by a development build")
+	}
+}
+
+func TestOnlyAnInstalledVibeThatSaysItIsADevelopmentBuildIsReplacedByOne(t *testing.T) {
+	for says, development := range map[string]bool{
+		"vibe 0.1":                            true,
+		"vibe 0.1 (abc-dirty)":                true,
+		"vibe 0.1 (abc, built 2026-01-01)":    true,
+		"vibe 0.1.57":                         false,
+		"vibe 12.3.4 (abc, built 2026-01-01)": false,
+		"":                                    false,
+		"sh: vibe: not found":                 false,
+	} {
+		if got := isDevelopmentVersion(says); got != development {
+			t.Errorf("%q: development = %v, want %v", says, got, development)
+		}
+	}
+}
+
+// The real installedVersion, with stand-in scripts for the installed binary: what decides whether an installed vibe is replaced
+// by a build from source, so a mistake either loses a release or leaves an old build running.
+func standInVibe(t *testing.T, script string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in is a shell script")
+	}
+	path := filepath.Join(t.TempDir(), "vibe")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestTheInstalledVibeIsAskedItsVersion(t *testing.T) {
+	path := standInVibe(t, `[ "$1" = --version ] && echo "vibe 0.1 (abc123)"`+"\n")
+	if got := installedVersion(path); got != "vibe 0.1 (abc123)" {
+		t.Errorf("installedVersion = %q", got)
+	}
+}
+
+func TestAnInstalledVibeThatCannotBeRunSaysNothing(t *testing.T) {
+	if got := installedVersion(standInVibe(t, "exit 1\n")); got != "" {
+		t.Errorf("a failing vibe said %q", got)
+	}
+	if got := installedVersion(filepath.Join(t.TempDir(), "no-such-vibe")); got != "" {
+		t.Errorf("a missing vibe said %q", got)
+	}
+}
+
+// Through installBinary, with nothing stood in for the version: a development build replaces what says it is one, and not a
+// release, nor what can't be asked.
+func TestWhatInstallBinaryDoesWithWhatIsInstalled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in is a shell script")
+	}
+	for name, tc := range map[string]struct {
+		script   string
+		replaced bool
+	}{
+		"a development build": {"echo 'vibe 0.1 (abc123)'\n", true},
+		"a release":           {"echo 'vibe 0.1.57 (abc123, built 2026-10-30T00:00:00Z)'\n", false},
+		"one that fails":      {"exit 1\n", false},
+		"one that says other": {"echo 'something else'\n", false},
+	} {
+		asBuild(t, "")
+		script := "#!/bin/sh\n" + tc.script
+		dest := installedBinaryOf(t, script)
+		if err := os.Chmod(dest, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := installBinary(); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(dest)
+		if replaced := string(data) != script; replaced != tc.replaced {
+			t.Errorf("%s: replaced = %v, want %v", name, replaced, tc.replaced)
+		}
+	}
+}

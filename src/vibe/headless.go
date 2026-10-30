@@ -17,8 +17,8 @@ import (
 
 // startHeadless starts sandbox name, when it isn't running. A variable for
 // tests.
-var startHeadless = func(ctx context.Context, name string) bool {
-	return sbxrun.Start(ctx, name)
+var startHeadless = func(ctx context.Context, name string) (bool, string) {
+	return sbxrun.StartExplained(ctx, name)
 }
 
 // headless is --headless's session: the sandbox started, its start-up run
@@ -57,7 +57,10 @@ func headless(lay layout.Layout, args cliargs.Args, name string) error {
 	defer setPageCancel(nil)
 
 	note("starting sandbox '%s'", name)
-	if !startHeadless(context.Background(), name) {
+	if started, why := startHeadless(context.Background(), name); !started {
+		if why != "" {
+			note("  sbx said: %s", why)
+		}
 		return fmt.Errorf("sandbox '%s' didn't start — 'sbx ls' says what state it is in", name)
 	}
 	interrupts := make(chan os.Signal, 1)

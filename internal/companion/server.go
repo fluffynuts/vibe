@@ -46,6 +46,7 @@ import (
 
 	"vibe/internal/pathresolve"
 	"vibe/internal/policy"
+	"vibe/internal/signin"
 )
 
 //go:embed ui
@@ -119,6 +120,13 @@ type Config struct {
 	// Admin is what the page's Admin tab does to the sandbox; nil means the
 	// page has no such tab.
 	Admin Admin
+	// SignIn reads whether sbx, and the sandbox's agent, are signed in, for the
+	// Admin tab's Sign-in card; it reads and changes nothing. Nil means the
+	// page has no such card.
+	SignIn func(ctx context.Context) signin.Status
+	// SignInStart starts the sign-in of kind ("docker" for sbx, "agent" for the sandbox's agent) for the card's buttons, and
+	// gives its running command; an error says why it can't. Nil means the card only shows how to sign in by hand.
+	SignInStart func(kind string) (LoginProcess, error)
 	// GitAuthor is the question of whether the agent is given the user's git
 	// author, which it can't commit without; nil means there is none to ask.
 	GitAuthor *GitAuthor
@@ -196,9 +204,11 @@ type Server struct {
 	}
 	// usage is the last reading of the sandbox's load, and clock the
 	// clock it's aged by.
-	usage   usageCache
-	blocked blockedCache
-	clock   func() time.Time
+	usage usageCache
+	// signInJob is the sign-in the card started, or the last that was.
+	signInJob signInJob
+	blocked   blockedCache
+	clock     func() time.Time
 	// lifeCtx ends with the server: what it starts for the page (a fetch)
 	// ends with it.
 	lifeCtx    context.Context
@@ -380,6 +390,11 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"GET /api/default-branch", s.serving(defaultBranchFeature, s.defaultBranchState)},
 		{"POST /api/default-branch", s.serving(defaultBranchFeature, s.defaultBranchSet)},
 		{"GET /api/usage", s.serving(usageFeature, s.usageHandler)},
+		{"GET /api/signin", s.serving(signInFeature, s.signInState)},
+		{"POST /api/signin/start", s.serving(signInFeature, s.signInStart)},
+		{"GET /api/signin/job", s.serving(signInFeature, s.signInJobState)},
+		{"POST /api/signin/code", s.serving(signInFeature, s.signInCode)},
+		{"POST /api/signin/cancel", s.serving(signInFeature, s.signInCancel)},
 		{"GET /api/power", s.serving(powerFeature, s.powerState)},
 		{"POST /api/power", s.serving(powerFeature, s.powerDo)},
 		{"GET /api/power/log", s.serving(powerFeature, s.powerLog)},
@@ -616,6 +631,8 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"viewFiles":             fileFeature.present(s),
 		"gitAuthor":             s.gitAuthorState(),
 		"usage":                 s.cfg.Usage != nil,
+		"signin":                s.cfg.SignIn != nil,
+		"signinStart":           s.cfg.SignIn != nil && s.cfg.SignInStart != nil,
 		// A page for no sandbox has only the Profiles tab.
 		"sandboxTabs": s.cfg.Sandbox != "",
 	})

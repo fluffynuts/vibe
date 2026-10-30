@@ -209,8 +209,27 @@ func TestListReadsSbxsJSON(t *testing.T) {
 		{Name: "convert-type-imports", State: "stopped"},
 		{Name: "vibe", Running: true, State: "running"},
 	}
+	for i := range got {
+		got[i].Workspaces = nil // read apart, below
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("List = %+v\nwant %+v", got, want)
+	}
+}
+
+func TestListKeepsWhatEachSandboxHasMounted(t *testing.T) {
+	fakeSbx(t, realListing, "", 0)
+	got, err := List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"/home/user/code/opensource/convert-type-imports",
+		"/home/user/.vibe/memories/convert-type-imports",
+		"/home/user/.vibe/clipboard/convert-type-imports",
+	}
+	if len(got) == 0 || !reflect.DeepEqual(got[0].Workspaces, want) {
+		t.Errorf("workspaces = %+v, want %v", got, want)
 	}
 }
 

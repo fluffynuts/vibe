@@ -101,6 +101,13 @@ type modeWanted struct {
 	SandboxExists bool
 }
 
+// createsFirst says a headless start by the favourite finds no sandbox, and so makes it first. What was typed
+// (--headless) never does: it is refused with what to do, since it is the one a script runs with nobody to ask.
+func (w modeWanted) createsFirst() bool {
+	return w.Favourite == "headless" && !w.Headless && !w.Terminal && !(w.Restart && w.Ended != modeNone) &&
+		!w.SandboxExists && !w.Rebuilds && !w.Deleting
+}
+
 // resolve says whether to start headless, and what the user is to be told,
 // if anything. In order: what was typed; for --restart, the mode of the vibe
 // it ended (so it doesn't have to be typed again); the favourite in the
@@ -124,7 +131,7 @@ func (w modeWanted) resolve() (headless bool, says string) {
 		return w.Ended == modeHeadless, ""
 	case w.Favourite == "headless":
 		if !w.SandboxExists && !w.Rebuilds {
-			return false, `there's no sandbox here yet, and a headless vibe only starts one that exists: starting with a terminal, to make it (the mode setting in settings.yaml applies from the next start)`
+			return true, "there's no sandbox here yet: making it here, then serving the companion page with no terminal"
 		}
 		return true, ""
 	}
@@ -135,24 +142,29 @@ func (w modeWanted) resolve() (headless bool, says string) {
 // --restart ended, or the user's favourite, in that order (see
 // modeWanted.resolve), saying so when there's something to tell. What isn't
 // needed to decide isn't looked at: the settings, and whether there's a
-// sandbox, only when nothing typed or restarted has decided.
-func startMode(lay layout.Layout, args cliargs.Args, name, target string, ended runMode) (bool, error) {
+// sandbox, only when nothing typed or restarted has decided. createFirst
+// says the sandbox isn't there yet, and is to be made on this terminal
+// (which is where its questions are asked) before the headless start.
+func startMode(lay layout.Layout, args cliargs.Args, name, target string, ended runMode) (headless, createFirst bool, err error) {
 	want := modeWanted{Headless: args.Headless, Terminal: args.Terminal, Restart: args.Restart, Ended: ended,
 		Rebuilds: args.Rebuilds(), Deleting: args.Delete}
 	decided := args.Headless || args.Terminal || (args.Restart && ended != modeNone) || args.Delete
 	if !decided {
 		profile, err := resolveReInitProfile(lay.Home, args, name, target)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 		favourite, err := favouriteMode(lay, profile)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 		want.Favourite = favourite
+		if favourite == "" {
+			note("%s", "WARNING: no start mode is chosen, so vibe starts with a terminal. Run 'vibe --setup' to choose headless (only the companion page, no terminal) or terminal.")
+		}
 		if favourite == "headless" && !args.Rebuilds() {
 			if want.SandboxExists, err = sbxrun.Exists(name); err != nil {
-				return false, err
+				return false, false, err
 			}
 		}
 	}
@@ -160,5 +172,5 @@ func startMode(lay layout.Layout, args cliargs.Args, name, target string, ended 
 	if says != "" {
 		note("%s", says)
 	}
-	return headless, nil
+	return headless, headless && want.createsFirst(), nil
 }

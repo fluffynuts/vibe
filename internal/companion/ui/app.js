@@ -106,7 +106,7 @@
     clipboardWaitingSince: 0,
     clipboardStarting: false,
     conversation: false,
-    tab: store.get('vibe-companion-tab') || 'log',
+    tab: store.get('vibe-companion-tab') || 'conversation',
     filter: 'all',
     search: '',
     log: null,
@@ -396,6 +396,13 @@
   // How long "Restarted" is shown before the page reloads by itself, to be read.
   const POWER_RELOAD_AFTER_MS = 2000
 
+  // closeThisTab closes the tab, which a browser allows only for one a script opened: when this one stays (the next line
+  // runs), it says so in into, rather than being a button that did nothing.
+  function closeThisTab(into) {
+    window.close()
+    into.textContent = "Your browser won't let a page close its own tab: close this tab yourself."
+  }
+
   // showPowerProgress shows what the action says as it runs, from the log
   // vibe keeps. It ends in one of three ways, told in words: vibe has gone
   // (a stop), vibe is back under a new boot (a restart), or the action ended
@@ -421,6 +428,7 @@
     let closable = !refreshes
     const buttons = (close, reload) => { closeButton.hidden = !close; reloadButton.hidden = !reload; closable = close }
     buttons(!refreshes, false)
+    closeButton.textContent = 'Close'
     $('power-end').textContent = refreshes ? 'This page will refresh by itself when vibe has restarted.' : ''
     dialog.oncancel = (ev) => { if (!closable) ev.preventDefault() }
     let next = 0
@@ -472,7 +480,15 @@
       } catch (e) {
         reached(false)
         away += 1
-        if (own && action === 'stop' && away >= 2) { end('vibe has ended. What it said is above; the sandbox is stopped when it says so.'); buttons(true, false) }
+        if (own && action === 'stop' && away >= 2) {
+          end('vibe has ended. What it said is above; the sandbox is stopped when it says so.')
+          buttons(true, false)
+          // Stopped on purpose, from here: Close closes the tab, as far as the browser lets it.
+          offline.stoppedHere = true
+          showGlass()
+          closeButton.textContent = 'Close this tab'
+          closeButton.onclick = () => closeThisTab($('power-end'))
+        }
       } finally {
         asking = false
       }
@@ -717,7 +733,7 @@
   // What the page shows while vibe isn't there: a cross on its icon, and
   // frosted glass over everything, as nothing on it can work. The glass can
   // be dismissed until vibe is back; the cross and the status stay.
-  const offline = { down: false, dismissed: false }
+  const offline = { down: false, dismissed: false, stoppedHere: false }
   const BEHIND_GLASS = ['.top', '#tabs', '#banner', 'main']
 
   function disconnected(down) {
@@ -727,8 +743,8 @@
     offline.dismissed = false
     favicon.down = down
     drawFavicon()
+    if (!down) offline.stoppedHere = false
     if (down) {
-      $('offline-text').textContent = offlineText()
       // Not the progress of a stop or restart, which is what is watched while vibe is away.
       for (const d of document.querySelectorAll('dialog[open]')) if (d.id !== 'power-progress') d.close('cancel')
     }
@@ -749,6 +765,13 @@
   function showGlass() {
     const shown = offline.down && !offline.dismissed
     $('offline').hidden = !shown
+    // What it says depends on whether the user stopped vibe from here, which may be known only after it went.
+    $('offline-dismiss').textContent = offline.stoppedHere ? 'Close this tab' : 'Dismiss until it reconnects'
+    if (offline.down) {
+      $('offline-text').textContent = offline.stoppedHere
+        ? 'You stopped vibe from this page. You can close this tab; run vibe again to come back.'
+        : offlineText()
+    }
     for (const sel of BEHIND_GLASS) {
       const node = document.querySelector(sel)
       if (node) node.inert = shown
@@ -862,6 +885,10 @@
       state.manage = !!res.body.manage
       state.boot = res.body.boot || ''
       state.usage = !!res.body.usage
+      state.signin = !!res.body.signin
+      state.signinStart = !!res.body.signinStart
+      $('admin-signin').hidden = !state.signin
+      if (state.signin && !signInShown.asked) loadSignIn()
       $('usage').hidden = !state.usage
       $('tab-admin').hidden = !state.admin
       $('tab-manage').hidden = !res.body.manage
@@ -903,7 +930,7 @@
       }
       renderGitAuthor(res.body.gitAuthor)
       renderClipboard()
-      if ($('tab-' + state.tab).hidden) select(state.tab)
+      if ($('tab-' + state.tab).hidden) select(state.tab, false)
     } catch (e) {
       reached(false)
     }
@@ -1064,10 +1091,13 @@
   // --- tabs -------------------------------------------------------------
 
   // select shows tab, or the first tab the page has when it hasn't that one.
-  function select(tab) {
+  function select(tab, remember = true) {
+    const wanted = tab
     if (!TABS.includes(tab) || $('tab-' + tab).hidden) tab = TABS.find((t) => !$('tab-' + t).hidden) || 'log'
     state.tab = tab
-    store.set('vibe-companion-tab', tab)
+    // Only a tab that was asked for is a choice to keep: where it wasn't there to go to (no conversation yet, on a first
+    // open), the one stood in for isn't, or it would stay the choice once the conversation is.
+    if (remember && tab === wanted) store.set('vibe-companion-tab', tab)
     showBanner()
     for (const t of TABS) {
       $('panel-' + t).hidden = t !== tab
@@ -1076,6 +1106,7 @@
       button.tabIndex = t === tab ? 0 : -1
     }
     if (tab === 'log') blockedSeen()
+    if (tab === 'admin' && state.signin) loadSignIn()
     if (tab === 'review') reviewSeen()
     // A comment asked for, not yet gone to, isn't gone to once you're elsewhere.
     else reviewView.goTo = null
@@ -3172,6 +3203,215 @@
   // profile has them (to tell what the user has ticked since).
   const adminView = { data: null, features: '', jobLines: -1 }
 
+  // --- signing in -------------------------------------------------------------
+
+  // What the Sign-in card shows: whether sbx, and the agent, can be used, read by the host when the Admin tab is
+  // opened and when Check now is pressed (each asks sbx, which can be slow, so it isn't polled).
+  const signInShown = { asked: false, checking: false, watching: false, lastJob: '', agent: 'the agent', job: null, codeSent: false, sentPolls: 0, lastCheck: 0 }
+  // How many looks (1.5 s apart) at a code being checked before it can be entered again: a code that wasn't taken leaves the command waiting.
+  const CODE_PATIENCE_POLLS = 15
+  // How soon after a look at the sign-ins a failed prompt asks for another.
+  const SIGNIN_RECHECK_MS = 10000
+  const SIGNIN_WORDS = { 'signed-in': ['Signed in', 'ok'], 'signed-out': ['Signed out', 'bad'], 'needs-policy': ['Needs a network policy', 'bad'], unknown: ['Unknown', ''], unsupported: ['Not checked', ''] }
+
+  function renderSignInPart(id, name, part, kind) {
+    const [word, cls] = SIGNIN_WORDS[part.state] || SIGNIN_WORDS.unknown
+    const box = $(id)
+    const steps = (part.manual || []).map((line) => el('li', { text: line }))
+    const go = state.signinStart && part.state === 'signed-out'
+      ? el('button', { type: 'button', class: 'signin-go', 'data-kind': kind, text: 'Sign in', disabled: signInShown.watching, onclick: () => startSignIn(kind) })
+      : null
+    box.replaceChildren(...[
+      el('div', { class: 'signin-head' }, el('strong', { text: name }), el('span', { class: 'pill ' + cls, text: word }), go),
+      part.detail ? el('p', { class: 'note muted', text: part.detail }) : null,
+      steps.length ? el('details', {}, el('summary', { text: 'Do it yourself' }), el('ol', { class: 'steps' }, ...steps)) : null,
+    ].filter(Boolean))
+  }
+
+  function signInProblem(text) {
+    const status = $('signin-status')
+    status.textContent = text
+    status.hidden = !text
+  }
+
+  // The conversation says when sign-in is needed, as it is there that a prompt would fail: sbx's own first (nothing starts
+  // without it), then the agent's. What could not be told is not said: only what is known to be signed out.
+  function renderSignInNotice(parts) {
+    const docker = (parts.docker || {}).state === 'signed-out'
+    const agent = (parts.agentSignIn || {}).state === 'signed-out'
+    const name = parts.agent || 'The agent'
+    $('convo-signin').hidden = !(docker || agent)
+    $('convo-signin-text').textContent = docker
+      ? 'sbx is not signed in to Docker, so nothing can start. Sign in from the Admin tab.'
+      : name + ' is not signed in, so it cannot answer yet. Sign in from the Admin tab.'
+  }
+
+  async function loadSignIn() {
+    if (signInShown.checking) return
+    signInShown.checking = true
+    signInShown.asked = true
+    signInShown.lastCheck = Date.now()
+    $('signin-check').disabled = true
+    try {
+      const res = await api('/api/signin', { timeout: 30000 })
+      reached(true)
+      if (!res.ok) {
+        signInProblem("Couldn't check: " + (res.body.error || 'HTTP ' + res.status))
+        return
+      }
+      signInProblem('')
+      signInShown.agent = res.body.agent || 'the agent'
+      signInShown.parts = res.body
+      renderSignInPart('signin-docker', 'Docker (sbx)', res.body.docker || { state: 'unknown' }, 'docker')
+      renderSignInPart('signin-agent', signInShown.agent, res.body.agentSignIn || { state: 'unknown' }, 'agent')
+      renderSignInNotice(res.body)
+    } catch (e) {
+      signInProblem("Couldn't check: " + (e && e.message ? e.message : 'the host did not answer'))
+    } finally {
+      signInShown.checking = false
+      $('signin-check').disabled = false
+    }
+    // A sign-in begun before this page was opened (or reloaded) is picked up, not lost.
+    if (state.signinStart && !signInShown.watching) await followSignIn(true)
+  }
+  $('signin-check').addEventListener('click', loadSignIn)
+  $('convo-signin-open').addEventListener('click', () => select('admin'))
+
+  async function startSignIn(kind) {
+    signInProblem('')
+    try {
+      const res = await api('/api/signin/start', { method: 'POST', body: JSON.stringify({ kind }) })
+      if (!res.ok) {
+        signInProblem("Couldn't start signing in: " + (res.body.error || 'HTTP ' + res.status))
+        return
+      }
+      signInShown.watching = true
+      signInShown.lastJob = ''
+      signInShown.codeSent = false
+      signInShown.sentPolls = 0
+      showSignInJob(res.body)
+      if (signInShown.parts) {
+        renderSignInPart('signin-docker', 'Docker (sbx)', signInShown.parts.docker || { state: 'unknown' }, 'docker')
+        renderSignInPart('signin-agent', signInShown.agent, signInShown.parts.agentSignIn || { state: 'unknown' }, 'agent')
+      }
+    } catch (e) {
+      signInProblem("Couldn't start signing in: " + (e && e.message ? e.message : 'the host did not answer'))
+    }
+  }
+
+  // followSignIn reads the sign-in under way and shows it; with adopt, one that is running is taken up and followed.
+  async function followSignIn(adopt) {
+    let res
+    try { res = await api('/api/signin/job') } catch (e) { return }
+    if (!res.ok) return
+    const job = res.body
+    if (!job.kind || (!signInShown.watching && !(adopt && job.running))) return
+    signInShown.watching = !!job.running || signInShown.watching
+    if (job.running && signInShown.codeSent) signInShown.sentPolls += 1
+    showSignInJob(job)
+    if (job.done) {
+      signInShown.watching = false
+      if (job.ok) {
+        loadSignIn()
+        // Signed in, the next thing is to prompt the agent, which isn't obvious to someone new: go there, if still here.
+        if (job.kind === 'agent' && state.tab === 'admin' && state.conversation) {
+          toast('Signed in. You can prompt the agent now.')
+          select('conversation')
+        }
+      }
+    }
+  }
+
+  function pollSignInJob() {
+    if (signInShown.watching) followSignIn(false)
+  }
+  setInterval(pollSignInJob, 1500)
+
+  async function sendSignInCode() {
+    const field = $('signin-job').querySelector('input')
+    const code = field ? field.value.trim() : ''
+    if (!code) return
+    field.value = ''
+    // The field is gone at once, so what is shown has to say it is being checked.
+    signInShown.codeSent = true
+    signInShown.sentPolls = 0
+    if (signInShown.job) showSignInJob(signInShown.job)
+    try {
+      const res = await api('/api/signin/code', { method: 'POST', body: JSON.stringify({ code }) })
+      if (!res.ok) signInProblem("Couldn't give it the code: " + (res.body.error || 'HTTP ' + res.status))
+    } catch (e) {
+      signInProblem("Couldn't give it the code: " + (e && e.message ? e.message : 'the host did not answer'))
+    }
+  }
+
+  async function cancelSignIn() {
+    try { await api('/api/signin/cancel', { method: 'POST', body: '{}' }) } catch (e) { /* the next poll says how it ended */ }
+    followSignIn(false)
+  }
+
+  function closeSignInJob() {
+    signInShown.lastJob = ''
+    $('signin-job').hidden = true
+    $('signin-job').replaceChildren()
+  }
+
+  // showSignInJob draws the sign-in under way in its place on the card: the address to open, the code to confirm or a field
+  // for the one to paste, and what is happening. It is redrawn only when the job has changed, keeping what is being typed.
+  function showSignInJob(job) {
+    const box = $('signin-job')
+    signInShown.job = job
+    const late = signInShown.codeSent && signInShown.sentPolls >= CODE_PATIENCE_POLLS
+    const key = JSON.stringify([job, signInShown.codeSent, late])
+    if (key === signInShown.lastJob && !box.hidden) return
+    signInShown.lastJob = key
+    const typed = box.querySelector('input') ? box.querySelector('input').value : ''
+    const who = job.kind === 'docker' ? 'Docker (sbx)' : signInShown.agent
+    const parts = [el('strong', { text: (job.running ? 'Signing in to ' : 'Sign-in to ') + who })]
+    const waiting = (text) => el('p', { class: 'note' }, el('span', { class: 'spinner', 'aria-hidden': 'true' }), text)
+    const cancel = el('div', { class: 'bar' }, el('button', { type: 'button', class: 'signin-cancel ghost', text: 'Cancel', onclick: cancelSignIn }))
+    if (job.running && !job.url) {
+      // Nothing is said of an address the user can't see yet.
+      parts.push(waiting('Starting the sign-in…'), cancel)
+    } else if (job.running && job.kind === 'agent' && signInShown.codeSent) {
+      parts.push(waiting('Checking the code…'))
+      if (late) {
+        parts.push(el('p', { class: 'note muted', text: "It's taking a while. If the code was wrong or didn't go through, you can enter it again." }),
+          el('div', { class: 'bar' }, el('button', { type: 'button', class: 'signin-again', text: 'Enter the code again', onclick: () => { signInShown.codeSent = false; showSignInJob(job) } })))
+      }
+      parts.push(cancel)
+    } else if (job.running) {
+      parts.push(el('p', { class: 'note', text: job.kind === 'docker'
+        ? 'Open the address, check the code matches, and sign in. This page notices when you have.'
+        : 'Open the address and sign in; it then shows a code. Paste that code here.' }))
+      // A link only where the host knows the address to be on a host this sign-in uses: the agent's command runs in the sandbox.
+      if (job.urlKnown && /^https:\/\//.test(job.url)) {
+        parts.push(el('p', {}, el('a', { href: job.url, target: '_blank', rel: 'noopener noreferrer', text: job.url })))
+      } else {
+        parts.push(el('p', { class: 'note', text: job.url }),
+          el('p', { class: 'note bad-text', text: "This isn't an address vibe recognises: check it before you sign in at it." }))
+      }
+      if (job.code) parts.push(el('p', {}, 'Code: ', el('code', { text: job.code })))
+      if (job.kind === 'agent') {
+        parts.push(el('div', { class: 'bar' },
+          el('input', { type: 'password', autocomplete: 'off', placeholder: 'the code it showed', 'aria-label': 'The code the sign-in showed', onkeydown: (ev) => { if (ev.key === 'Enter') sendSignInCode() } }),
+          el('button', { type: 'button', class: 'signin-send', text: 'Send code', onclick: sendSignInCode })))
+      }
+      parts.push(cancel)
+    } else if (job.ok) {
+      parts.push(el('p', { class: 'note', text: 'Signed in.' }), el('div', { class: 'bar' }, el('button', { type: 'button', class: 'ghost', text: 'Close', onclick: closeSignInJob })))
+    } else {
+      parts.push(el('p', { class: 'note bad-text', text: "Didn't sign in: " + (job.error || 'it ended without signing in') }),
+        el('div', { class: 'bar' }, el('button', { type: 'button', class: 'ghost', text: 'Close', onclick: closeSignInJob })))
+    }
+    if ((job.lines || []).length) {
+      parts.push(el('details', {}, el('summary', { text: 'What it printed' }), el('pre', { class: 'info', text: job.lines.join('\n') })))
+    }
+    box.replaceChildren(...parts)
+    box.hidden = false
+    const field = box.querySelector('input')
+    if (field && typed) { field.value = typed; field.focus() }
+  }
+
   async function loadAdmin() {
     try {
       const res = await api('/api/admin')
@@ -4990,10 +5230,18 @@
         if (block.type === 'text' && block.text) convoNote('agent', block.text, at)
         else if (block.type === 'tool_use') toolUsed(block)
       }
-      // The agent says to run /login, which needs its terminal: this page
-      // can't show the agent's own screens.
+      // The agent says to run /login, which needs its terminal, which this page can't show: the Sign-in card on the Admin
+      // tab does the same without one (where the host offers it).
       if (line.error === 'authentication_failed') {
-        convoNote('error', "The agent isn't logged in, and can't be from this page. In a terminal, run vibe in the sandbox's folder and log in there with /login, then send your prompt again.", at)
+        if (state.signinStart) {
+          convoNote('error', "The agent isn't signed in. Sign in from the Admin tab, then send your prompt again.", at)
+          $('convo-log').lastElementChild.append(el('button', { type: 'button', class: 'small ghost', text: 'Open Sign-in', onclick: () => select('admin') }))
+          // A sign-in that has expired since the page was opened: the card and the notice find out, if they haven't looked lately
+          // (old failures are drawn with the conversation, each one a look at the host).
+          if (Date.now() - signInShown.lastCheck > SIGNIN_RECHECK_MS) loadSignIn()
+        } else {
+          convoNote('error', "The agent isn't signed in, and can't be from this page. In a terminal, run vibe in the sandbox's folder and sign in there with /login, then send your prompt again.", at)
+        }
       }
     } else if (line.type === 'user') {
       for (const block of content) if (block.type === 'tool_result') showResult(block)
@@ -6558,12 +6806,16 @@
   document.addEventListener('visibilitychange', tick)
   state.timer = setInterval(tick, POLL_MS)
   setInterval(ping, PING_MS)
-  $('offline-dismiss').addEventListener('click', () => { offline.dismissed = true; showGlass() })
+  $('offline-dismiss').addEventListener('click', () => {
+    if (offline.stoppedHere) return closeThisTab($('offline-text'))
+    offline.dismissed = true
+    showGlass()
+  })
   $('page-reload').addEventListener('click', () => location.reload())
 
   setLink('connecting', 'connecting…')
   setUpPowerMenu()
-  loadState().then(() => select(state.tab))
+  loadState().then(() => select(state.tab, false))
 }
 
   start()
