@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"vibe"
 	"vibe/internal/cliargs"
 	"vibe/internal/fscopy"
 	"vibe/internal/layout"
@@ -176,7 +177,7 @@ func detachHeadless(lay layout.Layout, args cliargs.Args, name, target string) e
 		return fmt.Errorf("couldn't start a log for the background vibe: %w", err)
 	}
 	defer logFile.Close()
-	fmt.Fprintf(logFile, "=== vibe --headless for %s, started %s ===\n", target, time.Now().Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(logFile, "=== vibe --headless for %s, started %s, by %s ===\n", target, time.Now().Format("2006-01-02 15:04:05"), vibe.String())
 
 	exe, err := os.Executable()
 	if err != nil {
