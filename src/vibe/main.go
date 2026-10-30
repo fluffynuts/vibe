@@ -431,11 +431,16 @@ func run(argv []string) error {
 		}
 	}
 	if !detachedChild() {
-		headless, err := startMode(lay, args, name, target, ended)
+		headless, createFirst, err := startMode(lay, args, name, target, ended)
 		if err != nil {
 			return err
 		}
 		args.Headless = headless
+		if createFirst {
+			if err := createBeforeHeadless(lay, args, name, target); err != nil {
+				return err
+			}
+		}
 	}
 	if args.Foreground && !args.Headless {
 		return fmt.Errorf("--foreground only goes with --headless (or with the mode setting in settings.yaml at headless)")

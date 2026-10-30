@@ -179,3 +179,12 @@ agent's sign-in should be part of setup too.
 - **The agent's sign-in can't be at setup**: `claude auth login` runs inside a sandbox, and none exists then. Its
   credential is global once made (sbx's `anthropic` secret), so it is needed once per machine: options in the
   conversation (offer it right after the first sandbox is created, on the terminal; or an API key at setup).
+
+## Headless from the start (2026-10-30)
+
+The user wants headless honoured on the very first run too ("the aim is to make the terminal as optional as the companion
+app, and to default to the companion app"). A favourite of `mode: headless` met a folder with no sandbox and fell back to a
+terminal, because creating a sandbox asks questions (agent, features, git token, memory) that need a terminal. Now
+`startMode` says `createFirst`: the sandbox is made on the terminal (`createBeforeHeadless`: `doCreateOrAttach` with
+--no-start), then the headless start follows, so the agent's terminal never appears. `--headless` typed still refuses with
+what to do when there's no sandbox (scripts run it with nobody to ask). Untested against a real sbx.

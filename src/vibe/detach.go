@@ -93,6 +93,24 @@ func rebuildAction(args cliargs.Args) func(layout.Layout, cliargs.Args, string, 
 	return nil
 }
 
+// createBeforeHeadless makes the sandbox a headless start finds missing, on this terminal, where the questions that
+// creating one asks (the agent, the profile's features, a git token, memory) can be answered, and stops short of starting
+// it: the headless start follows, with no terminal session after. Without it, the first run of a user who chose headless
+// would have had to start with an agent terminal. A creation that fails starts nothing.
+func createBeforeHeadless(lay layout.Layout, args cliargs.Args, name, target string) error {
+	if err := guardFolder(lay.Home, target, args.Force, true, false); err != nil {
+		return err
+	}
+	created := args
+	created.NoStart = true
+	err := doCreateOrAttach(lay, created, name, target)
+	if session != nil {
+		session.Release()
+		session = nil
+	}
+	return err
+}
+
 // rebuildThenHeadless is a rebuild with --headless: the rebuild, as it would
 // be without it but with no terminal session after, then the background vibe
 // once this one has let go of the folder (it takes the folder itself), as
