@@ -49,6 +49,20 @@ the same structure so the next agent can generalise (see the `cursor-support` no
   `Set network policy Balanced`, and `try: sbx policy reset` / `allow network HOST` / `deny network HOST` / `rm network
   HOST`. Idea: ask during `--setup`. The non-interactive way to choose is not yet known.
 
+## Found 2026-10-30, second round
+
+- **Confirmed: after `claude auth login` in a sandbox, sbx holds the credential.** `sbx secret ls` then shows
+  `SCOPE (global)  TYPE service  NAME anthropic  SECRET (oauth configured)`. Global, so every sandbox shares it, which is
+  why it survives rebuilds. (sbx took the OAuth tokens from the sandbox's login; the proxy injects them.)
+- Inside that sandbox: `SBX_CRED_ANTHROPIC_MODE=none`, and `claude auth status` prints JSON with `loggedIn: true`,
+  `authMethod: "claude.ai"`, `email`, `orgName`, `subscriptionType: "team"`. So `login.go`'s check (mode none, then
+  `loggedIn`) is right for a subscription login, and the status can show who is signed in.
+- **Signed out of Docker: `sbx ls` says `error: not signed in to Docker` / `try: sbx login`, at once**, and without the
+  wallet prompt. That is the read-only sign-in check (match the text, tolerantly; exit code not recorded).
+- `sbx policy` has `allow approval check deny init inspect log ls profile refresh reset rm`. **`init` ("Initialize the
+  global network policy") is probably what asks Open / Balanced / Locked Down**; its flags are not known. `sbx policy
+  reset --help` stalled and may have acted: don't run it to look.
+
 ## Shape (to confirm once the questions are answered)
 
 - A **Sign-in card** (Admin tab, probably) showing the sbx sign-in and the agent's sign-in, each with its status.
@@ -68,10 +82,8 @@ Answered 2026-10-30: 2 (above), and 4 (`claude auth login` works). Still open: 1
 secret ls` list `anthropic`, or is the credential kept in the sandbox's own `~/.claude`?), 3 (a read-only sbx command
 that says "not signed in"; mind the keyring stall), and new ones:
 
-- Network policy: `sbx policy --help`, `sbx policy reset --help`, and anything that sets a default (`set-default`?) or
-  takes the answer as a flag/env var, so `--setup` can ask once and apply it without the prompt.
-- Inside the signed-in sandbox: `printenv | grep SBX_CRED` and `claude auth status`, to see the mode and what a
-  subscription login shows.
+- Network policy: `sbx policy init --help` (and `sbx policy ls`, `sbx policy profile --help`): does `init` take the
+  choice as a flag, so `--setup` can ask once and apply it without sbx's prompt?
 - Whether `sbx` honours the keyring workaround above (the user's own test), and what it prints.
 
 Original list:
