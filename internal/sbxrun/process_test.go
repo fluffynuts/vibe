@@ -1,6 +1,7 @@
 package sbxrun
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -108,5 +109,38 @@ func TestAProcessIsEndedWhenStopped(t *testing.T) {
 	p.Stop()
 	if _, err := collect(t, p); err == nil {
 		t.Error("a stopped process ended as if it had finished")
+	}
+}
+
+// A sandbox that did not start says why: what sbx said, which is the only place the reason is.
+func TestAFailedStartSaysWhatSbxSaid(t *testing.T) {
+	sbxtest.OnPath(t, "case \"$1\" in\n"+
+		"  start) echo 'error: the daemon is not running' >&2; exit 1 ;;\n"+
+		"  exec) exit 1 ;;\n"+
+		"esac\n")
+	started, why := StartExplained(context.Background(), "box")
+	if started {
+		t.Fatal("it started")
+	}
+	if !strings.Contains(why, "the daemon is not running") {
+		t.Errorf("why = %q", why)
+	}
+}
+
+func TestAStartThatSbxAcceptedButTheSandboxNeverAnsweredSaysSo(t *testing.T) {
+	old := startTimeout
+	startTimeout = 1
+	defer func() { startTimeout = old }()
+	sbxtest.OnPath(t, "case \"$1\" in\n  start) exit 0 ;;\n  exec) exit 1 ;;\nesac\n")
+	started, why := StartExplained(context.Background(), "box")
+	if started || !strings.Contains(why, "didn't accept a command") {
+		t.Errorf("started %v, why = %q", started, why)
+	}
+}
+
+func TestAStartThatWorksNeedsNoReason(t *testing.T) {
+	sbxtest.OnPath(t, "exit 0\n")
+	if started, why := StartExplained(context.Background(), "box"); !started || why != "" {
+		t.Errorf("started %v, why %q", started, why)
 	}
 }

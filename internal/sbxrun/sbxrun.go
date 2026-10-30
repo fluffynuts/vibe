@@ -486,19 +486,36 @@ func WaitReachable(ctx context.Context, name string, limit int) bool {
 // can say what they could not do instead of assuming an answer.
 // sbx (and the wait) is ended when ctx ends.
 func Start(ctx context.Context, name string) bool {
+	started, _ := StartExplained(ctx, name)
+	return started
+}
+
+// StartExplained is Start, saying why when the sandbox didn't start: what sbx said of the start, which is the only
+// place the reason is, or that it took the start and the sandbox never answered.
+func StartExplained(ctx context.Context, name string) (started bool, why string) {
 	if Reachable(ctx, name) {
-		return true
+		return true, ""
 	}
-	if err := cancellable(ctx, "start", name).Run(); err != nil {
-		return ctx.Err() == nil && Reachable(ctx, name)
+	said, err := captureOutContext(ctx, "start", name)
+	if err != nil {
+		if ctx.Err() == nil && Reachable(ctx, name) {
+			return true, ""
+		}
+		if said = strings.TrimSpace(said); said != "" {
+			return false, said
+		}
+		return false, err.Error()
 	}
-	return WaitReachable(ctx, name, startTimeout)
+	if WaitReachable(ctx, name, startTimeout) {
+		return true, ""
+	}
+	return false, fmt.Sprintf("sbx started it, but it didn't accept a command in %d seconds", startTimeout)
 }
 
 // startTimeout is how long Start waits for a booting sandbox to accept an
 // exec, in seconds — generous, since it is only ever reached when the user
 // has already committed to the operation the start is for.
-const startTimeout = 60
+var startTimeout = 60
 
 // Remove deletes a sandbox, ending sbx when ctx ends. force maps to
 // `sbx rm -f`. What sbx prints goes to out, or the terminal when out is nil
