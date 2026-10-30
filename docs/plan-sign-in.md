@@ -63,6 +63,19 @@ the same structure so the next agent can generalise (see the `cursor-support` no
   global network policy") is probably what asks Open / Balanced / Locked Down**; its flags are not known. `sbx policy
   reset --help` stalled and may have acted: don't run it to look.
 
+## Found 2026-10-30, the network policy
+
+- `sbx policy init allow-all|balanced|deny-all`: "Initialize the global network policy before starting a sandbox or adding
+  custom rules. Per-sandbox rules apply on top." The prompt's Open / Balanced / Locked Down are those three. Balanced is
+  "typical development traffic, including AI services and package registries" and is documented as recommended.
+  "Initialization is a one-time setup"; `sbx policy reset` clears all policies and starts over. No other flags locally
+  (`--sandbox` is cloud only).
+- So `--setup` can ask once and run `sbx policy init <choice>` before the first sandbox, with the manual command shown.
+- Not known: how to tell whether it has been initialised (`sbx policy ls` empty? a field?), and what `init` does when
+  run again. Needed so setup asks only on a machine that hasn't been asked, and never overrides a choice.
+- vibe's own allow lists (kits, `allow network`) are per-sandbox rules on top, so they work with any of the three; under
+  `deny-all` they are what lets a sandbox reach anything.
+
 ## Shape (to confirm once the questions are answered)
 
 - A **Sign-in card** (Admin tab, probably) showing the sbx sign-in and the agent's sign-in, each with its status.
@@ -82,8 +95,8 @@ Answered 2026-10-30: 2 (above), and 4 (`claude auth login` works). Still open: 1
 secret ls` list `anthropic`, or is the credential kept in the sandbox's own `~/.claude`?), 3 (a read-only sbx command
 that says "not signed in"; mind the keyring stall), and new ones:
 
-- Network policy: `sbx policy init --help` (and `sbx policy ls`, `sbx policy profile --help`): does `init` take the
-  choice as a flag, so `--setup` can ask once and apply it without sbx's prompt?
+- Network policy: answered (`sbx policy init <choice>`). Still open: how to tell it has been initialised
+  (`sbx policy ls` on a machine that hasn't, and on one that has), and what a second `init` does.
 - Whether `sbx` honours the keyring workaround above (the user's own test), and what it prints.
 
 Original list:
