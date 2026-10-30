@@ -71,8 +71,15 @@ the same structure so the next agent can generalise (see the `cursor-support` no
   "Initialization is a one-time setup"; `sbx policy reset` clears all policies and starts over. No other flags locally
   (`--sandbox` is cloud only).
 - So `--setup` can ask once and run `sbx policy init <choice>` before the first sandbox, with the manual command shown.
-- Not known: how to tell whether it has been initialised (`sbx policy ls` empty? a field?), and what `init` does when
-  run again. Needed so setup asks only on a machine that hasn't been asked, and never overrides a choice.
+- **A second `init` is refused, harmlessly**: `error: global network policy is already initialized; reset it first to
+  change it` / `try: sbx policy reset`. So it can never override a choice; vibe shows sbx's message and doesn't treat it
+  as a failure.
+- Which was chosen isn't shown anywhere. `sbx policy ls` on an initialised machine has a `local-policy` row (SOURCE
+  local, APPLIES TO `all`; on the user's Balanced machine "network: 194 allow; filesystem read: 1 allow; filesystem
+  write: 1 allow"), then per-sandbox `kit` and `local` rows. Presumably that row is what `init` creates, and the user can
+  edit it afterwards, so it says "initialised", not "which". **Not verified on a machine that has never been asked**
+  (what `ls` shows then): needed so setup asks only where nobody has been asked. Until then: ask in `--setup` only when
+  `ls` has no row applying to `all`, and let `init`'s refusal be the backstop.
 - vibe's own allow lists (kits, `allow network`) are per-sandbox rules on top, so they work with any of the three; under
   `deny-all` they are what lets a sandbox reach anything.
 
@@ -95,8 +102,8 @@ Answered 2026-10-30: 2 (above), and 4 (`claude auth login` works). Still open: 1
 secret ls` list `anthropic`, or is the credential kept in the sandbox's own `~/.claude`?), 3 (a read-only sbx command
 that says "not signed in"; mind the keyring stall), and new ones:
 
-- Network policy: answered (`sbx policy init <choice>`). Still open: how to tell it has been initialised
-  (`sbx policy ls` on a machine that hasn't, and on one that has), and what a second `init` does.
+- Network policy: answered (`sbx policy init <choice>`; a second one is refused). Still open: `sbx policy ls` on a
+  machine that has never been asked (a fresh install, before the first sandbox), to see that there is no `all` row.
 - Whether `sbx` honours the keyring workaround above (the user's own test), and what it prints.
 
 Original list:
