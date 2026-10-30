@@ -86,7 +86,7 @@ func doInstall(lay layout.Layout, force bool, strategyValue string) error {
 	// machine can give a sandbox.
 	if firstInstall {
 		if !force {
-			setUpNetworkPolicy()
+			setUpSbx()
 		}
 		if err := setUpSettings(lay, !force); err != nil {
 			return err

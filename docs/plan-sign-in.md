@@ -163,3 +163,19 @@ Original list:
 login` prints without a terminal is not known: the address is found by pattern, and the whole output is shown): the card's real output, `sbx ls` on a pristine machine from vibe (stdin is
 the null device, which should give "operation cancelled by user" at once), `sbx policy init` from vibe. To try on the
 user's restore-pointed VM / laptop.
+
+## First real run, 2026-10-30 (a fresh VM, from the `make dist` zip)
+
+`vibe --install` ran through; `vibe` in a folder said sbx needed a Docker sign-in and exited (sbx's own message); after
+`sbx login` by hand, vibe started (the agent's terminal, not headless: the first run needs one); the Admin tab showed
+Claude as not signed in; the Sign in button gave the address, the browser gave a token, pasting it signed Claude in, and a
+prompt got an answer. So stage 3 works on real sbx and real `claude auth login` (no terminal needed).
+
+Asked for: `--setup` (and the first `--install`) should offer the Docker sign-in, not leave it to the first run; and the
+agent's sign-in should be part of setup too.
+
+- **Done**: `setUpSbx` (policy, Docker sign-in, policy again): when `sbx ls` says signed out, offers to run `sbx login` on the
+  terminal, checks with sbx afterwards that it took, and otherwise says the command to run by hand.
+- **The agent's sign-in can't be at setup**: `claude auth login` runs inside a sandbox, and none exists then. Its
+  credential is global once made (sbx's `anthropic` secret), so it is needed once per machine: options in the
+  conversation (offer it right after the first sandbox is created, on the terminal; or an API key at setup).

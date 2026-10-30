@@ -682,3 +682,16 @@ func RemoveGitHubSecret(name string) error {
 func Probe(ctx context.Context, args ...string) (string, error) {
 	return captureOutContext(ctx, args...)
 }
+
+// Login runs `sbx login` on the user's terminal, which shows an address and a code and waits until they have been used in a
+// browser. An error says it didn't end well.
+func Login() error {
+	code, err := runInherit("login")
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return fmt.Errorf("sbx login ended with exit code %d", code)
+	}
+	return nil
+}
