@@ -3187,10 +3187,11 @@
     const [word, cls] = SIGNIN_WORDS[part.state] || SIGNIN_WORDS.unknown
     const box = $(id)
     const steps = (part.manual || []).map((line) => el('li', { text: line }))
-    box.replaceChildren(
+    box.replaceChildren(...[
       el('div', { class: 'signin-head' }, el('strong', { text: name }), el('span', { class: 'pill ' + cls, text: word })),
       part.detail ? el('p', { class: 'note muted', text: part.detail }) : null,
-      steps.length ? el('details', {}, el('summary', { text: 'Do it yourself' }), el('ol', { class: 'steps' }, ...steps)) : null)
+      steps.length ? el('details', {}, el('summary', { text: 'Do it yourself' }), el('ol', { class: 'steps' }, ...steps)) : null,
+    ].filter(Boolean))
   }
 
   async function loadSignIn() {

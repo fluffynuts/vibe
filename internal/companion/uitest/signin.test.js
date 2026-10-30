@@ -101,3 +101,13 @@ test('a check that fails says so, and keeps what was shown', async () => {
     assert.match(row(p, 'docker').querySelector('.pill').textContent, /signed in/i)
   } finally { p.close() }
 })
+
+test('a row with nothing to say beyond its pill says nothing more: not "null"', async () => {
+  const p = await adminPage({ answer: { agent: 'claude', docker: { state: 'signed-in', manual: [] }, agentSignIn: { state: 'signed-in', manual: [] } } })
+  try {
+    for (const which of ['docker', 'agent']) {
+      assert.doesNotMatch(row(p, which).textContent, /null|undefined/, which)
+      assert.equal(row(p, which).querySelector('details'), null, which + ' has steps to show')
+    }
+  } finally { p.close() }
+})
