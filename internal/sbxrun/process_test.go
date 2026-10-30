@@ -3,6 +3,7 @@ package sbxrun
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,8 +29,18 @@ const within = 10 * time.Second
 func collect(t *testing.T, p *Process) ([]string, error) {
 	t.Helper()
 	var lines []string
-	for l := range p.Lines() {
-		lines = append(lines, l)
+	// Bounded: a process whose output never ends fails here, in seconds, and is not left to hang the whole run.
+	for open := true; open; {
+		select {
+		case l, ok := <-p.Lines():
+			if !ok {
+				open = false
+				break
+			}
+			lines = append(lines, l)
+		case <-time.After(within):
+			t.Fatal("what the process printed never ended")
+		}
 	}
 	select {
 	case err := <-p.Done():
@@ -214,5 +225,56 @@ func TestAKeySbxRefusesIsAnErrorThatDoesNotCarryTheKey(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "sk-ant-secret-value") || !strings.Contains(err.Error(), "invalid key") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// A descendant that has left the process group (a daemon sbx starts, say) goes on holding the output open after the process
+// is stopped: the process must still be reported ended, in about a second, or a sign-in is "running" for good.
+func TestAStoppedProcessIsEndedEvenWhenSomethingItStartedHoldsItsOutputOpen(t *testing.T) {
+	if _, err := exec.LookPath("setsid"); err != nil {
+		t.Skip("no setsid to leave the process group with")
+	}
+	// The descendant says "ready" once it has left the group, so the stop comes after that and not in a race with it.
+	sbxtest.OnPath(t, "setsid sh -c 'echo ready; exec sleep 20' &\nwait\n")
+	p, err := StartLogin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case line := <-p.Lines():
+		if line != "ready" {
+			t.Fatalf("first line %q", line)
+		}
+	case <-time.After(within):
+		t.Fatal("the descendant never said it was ready")
+	}
+	p.Stop()
+	started := time.Now()
+	if _, err := collect(t, p); err == nil {
+		t.Error("a stopped process ended as if it had finished")
+	}
+	if took := time.Since(started); took > 5*time.Second {
+		t.Errorf("it took %v to be reported ended", took)
+	}
+}
+
+// A command that succeeds, having started something that goes on holding its output (the daemon a first `sbx login` may
+// start), has succeeded: waiting for that to end is not its failing.
+func TestACommandThatSucceedsIsNotFailedByAnythingItLeftHoldingItsOutput(t *testing.T) {
+	sbxtest.OnPath(t, "(exec sleep 20) &\necho signed in\nexit 0\n")
+	p, err := StartLogin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	lines, err := collect(t, p)
+	if err != nil {
+		t.Errorf("a command that exited 0 was reported failed: %v", err)
+	}
+	if len(lines) == 0 || lines[0] != "signed in" {
+		t.Errorf("lines = %q", lines)
+	}
+	if took := time.Since(started); took > 5*time.Second {
+		t.Errorf("it took %v to be reported ended", took)
 	}
 }

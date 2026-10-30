@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -41,7 +42,8 @@ func notesFor(t *testing.T, message string) string {
 	if err != nil {
 		t.Fatalf("jq: %v: %s", err, out)
 	}
-	return string(out)
+	// jq on Windows ends its lines with \r\n; the release job runs it on Linux, where they are \n. The text is what is tested.
+	return strings.ReplaceAll(string(out), "\r\n", "\n")
 }
 
 func TestTheNotesOfAPushWithNoPullRequestAreTheLastCommitsMessage(t *testing.T) {
@@ -71,5 +73,28 @@ func TestAMessageNeverBecomesPartOfAScript(t *testing.T) {
 	got := notesFor(t, "a $(touch /tmp/pwned) `id` \"quoted\" change\n\n'single' and $HOME\n")
 	if !strings.Contains(got, "$(touch /tmp/pwned) `id` \"quoted\"") || !strings.Contains(got, "$HOME") {
 		t.Errorf("the message was changed on the way:\n%s", got)
+	}
+}
+
+// On Windows jq ends its lines with \r\n, which is what failed there: stood in for here, with a jq that does the same, so
+// the notes are checked as text on every platform.
+func TestTheNotesAreReadAsTextWhateverLineEndingsJqUses(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in is a shell script; Windows' own jq is the real case")
+	}
+	real, err := exec.LookPath("jq")
+	if err != nil {
+		t.Skip("no jq")
+	}
+	dir := t.TempDir()
+	// Quoted: a jq under a path with a space is still the jq.
+	script := "#!/bin/sh\n'" + real + "' \"$@\" | sed 's/$/\\r/'\n"
+	if err := os.WriteFile(filepath.Join(dir, "jq"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	got := notesFor(t, "a subject\n\nthe body\n")
+	if strings.Contains(got, "\r") || !strings.HasPrefix(got, "## a subject\n\nthe body\n") {
+		t.Errorf("notes:\n%q", got)
 	}
 }

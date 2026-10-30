@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os/exec"
+	"time"
 
 	"vibe/internal/sbxfind"
 )
@@ -40,6 +41,9 @@ func start(withInput bool, args ...string) (*Process, error) {
 	// it started.
 	cmd := exec.CommandContext(ctx, sbxfind.Path(), args...)
 	ignoreTerminalInterrupt(cmd)
+	// Once it is stopped, a descendant that has left its process group (a daemon it started) must not hold what is read from it open:
+	// that would leave Done unsent, and a sign-in "running" for good. After a second the pipes are closed, and it is ended.
+	cmd.WaitDelay = time.Second
 	p := &Process{lines: make(chan string), done: make(chan error, 1), cancel: cancel}
 	if withInput {
 		in, err := cmd.StdinPipe()
@@ -82,6 +86,10 @@ func start(withInput bool, args ...string) (*Process, error) {
 	}()
 	go func() {
 		err := cmd.Wait()
+		// It exited well, but something it started held its output past WaitDelay: that is not the command failing.
+		if errors.Is(err, exec.ErrWaitDelay) {
+			err = nil
+		}
 		pw.Close()
 		<-scanned
 		cancel()

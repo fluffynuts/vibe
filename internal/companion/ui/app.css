@@ -746,3 +746,6 @@ ul.signins summary { cursor: pointer; color: var(--muted); }
 .signin-job p { margin: 0; overflow-wrap: anywhere; }
 .signin-job input { flex: 1; min-width: 0; }
 .signin-job code { user-select: all; }
+.commands.emoji { bottom: auto; }
+.commands.emoji li .glyph { display: inline-block; min-width: 1.6em; margin-right: 4px; text-align: center; }
+.commands.emoji li .alias { color: var(--muted); margin-left: 6px; font-size: 12px; }

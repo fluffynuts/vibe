@@ -8,7 +8,7 @@ const path = require('node:path')
 const { JSDOM, VirtualConsole } = require('jsdom')
 
 const UI = path.join(__dirname, '..', 'ui')
-const SCRIPTS = ['markdown.js', 'manage.js', 'review.js', 'app.js']
+const SCRIPTS = ['markdown.js', 'manage.js', 'review.js', 'emoji.js', 'app.js']
 const TOKEN = 'a'.repeat(64)
 
 // openPage loads the page with routes: { '/api/state': body or (call) =>
