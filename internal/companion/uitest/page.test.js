@@ -8,11 +8,11 @@ const { openPage } = require('./page.js')
 // reviewPage is a page for a sandbox with a Review tab: vibe says the agent
 // last updated the review at at.reviewAt, which a test can move on; the
 // review is review. conversation says the agent can be talked to.
-function reviewPage({ reviewAt = '', review = { threads: [], lastId: 0 }, storage = {}, diff = [], conversation = true } = {}) {
+function reviewPage({ reviewAt = '', review = { threads: [], lastId: 0 }, storage = {}, diff = [], conversation = true, agentAtWork = false } = {}) {
   const at = { reviewAt }
   const routes = {
     '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, review: true, conversation, reviewAt: at.reviewAt, attention: {} }),
-    '/api/review': () => ({ review: at.review || review, diff }),
+    '/api/review': () => ({ review: at.review || review, diff, agentAtWork }),
     '/api/review/do': () => ({ review: at.review || review }),
     '/api/log': { entries: [] },
   }
@@ -545,10 +545,12 @@ const allOptions = { uncommitted: true, defaultBranch: 'master', upstream: 'orig
 // closes and reopens it.
 // agentAtWork is whether vibe says the agent is at work on the review; close
 // answers a close (else it's closed, as asked).
-async function startPage({ review = none, options = allOptions, conversation = true, defaultBranch = { why: '' }, agentAtWork = false, close = null, diff = [] } = {}) {
+async function startPage({ review = none, options = allOptions, conversation = true, defaultBranch = { why: '' }, agentAtWork = false, close = null, diff = [], extra = {} } = {}) {
   let current = review
+  const setCurrent = (r) => { current = r }
   return openPage({
     routes: {
+      ...(typeof extra === 'function' ? extra(setCurrent) : extra),
       '/api/default-branch': (call) => (typeof defaultBranch === 'function' ? defaultBranch(call) : defaultBranch),
       '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation, reviewAt: '', attention: {} },
       '/api/review': () => ({ review: current, diff, agentAtWork: typeof agentAtWork === 'function' ? agentAtWork() : agentAtWork }),
@@ -3260,7 +3262,7 @@ test("a rule change vibe couldn't keep for the next rebuild says so", async () =
 const writing = { ...unsent, started: '2026-10-16T10:00:00Z', state: 'in progress' }
 
 test('a review the agent is still writing is a loud badge, and a toast says to wait', async () => {
-  const p = await reviewPage({ review: writing, storage: { 'vibe-companion-tab': 'review' } })
+  const p = await reviewPage({ review: writing, agentAtWork: true, storage: { 'vibe-companion-tab': 'review' } })
   try {
     assert.ok(p.$('review-state').classList.contains('reviewing'))
     assert.match(p.$('review-state').textContent, /still reviewing: wait for it to finish/)
@@ -3270,7 +3272,7 @@ test('a review the agent is still writing is a loud badge, and a toast says to w
 })
 
 test('the toast to wait is said once for a review, however often it is drawn again', async () => {
-  const p = await reviewPage({ review: writing, storage: { 'vibe-companion-tab': 'review' } })
+  const p = await reviewPage({ review: writing, agentAtWork: true, storage: { 'vibe-companion-tab': 'review' } })
   try {
     p.$('toast').hidden = true
     p.at.review = { ...writing, threads: [...writing.threads, { id: 2, status: 'open', comments: [{ author: 'agent', body: 'P2: more', at: '2026-10-16T10:01:00Z' }] }], lastId: 2 }
@@ -3280,7 +3282,7 @@ test('the toast to wait is said once for a review, however often it is drawn aga
 })
 
 test('when the agent finishes, a toast says so and the badge goes quiet', async () => {
-  const p = await reviewPage({ review: writing, storage: { 'vibe-companion-tab': 'review' } })
+  const p = await reviewPage({ review: writing, agentAtWork: true, storage: { 'vibe-companion-tab': 'review' } })
   try {
     p.$('toast').hidden = true
     p.at.review = { ...writing, state: 'done' }
@@ -3303,5 +3305,100 @@ test('Submit to agent waits while the agent is still writing the review, and say
   try {
     assert.equal(p.$('review-submit').disabled, true)
     assert.match(p.$('review-submit').title, /still writing this review/)
+  } finally { p.close() }
+})
+
+
+// --- stopping the agent while it writes a review (docs/plan-stop-ends-review.md) ------------
+
+const writingReview = { ...none, started: '2026-10-16T10:00:00Z', state: 'in progress', threads: [], lastId: 0 }
+
+// stopRoutes answer a stop: the first with "the agent is writing a review" while confirmed isn't there, else with the review dropped.
+const stopRoutes = (running) => (setCurrent) => ({
+  '/api/conversation': { events: [], last: 0, running },
+  '/api/conversation/stop': (call) => (call.body && call.body.confirmed
+    ? { stopped: true, review: (() => { const r = { ...none, closed: 'You stopped the agent while it was still writing this review, so it was dropped: start another whenever you like.' }; setCurrent(r); return r })() }
+    : { status: 409, body: { error: 'the agent is writing a review', code: 'review-in-progress' } }),
+})
+
+test('stopping the agent while it writes a review asks first, in the review closing\'s words', async () => {
+  const p = await startPage({ review: writingReview, agentAtWork: true, extra: stopRoutes(true) })
+  try {
+    await p.poll()
+    await p.click('convo-stop')
+    assert.ok(p.$('confirm').open)
+    const text = p.$('confirm-text').textContent
+    assert.match(text, /still writing a review/)
+    assert.match(text, /stops the agent/)
+    assert.match(text, /dropped/)
+    assert.match(text, /start another at any time/)
+    assert.deepEqual(confirmButtons(p), ['Stop the agent (danger)', 'Cancel (focused)'])
+  } finally { p.close() }
+})
+
+test('cancelling that leaves the agent running and the review as it was', async () => {
+  const p = await startPage({ review: writingReview, agentAtWork: true, extra: stopRoutes(true) })
+  try {
+    await p.poll()
+    await p.click('convo-stop')
+    await p.confirm(false)
+    assert.deepEqual(p.posted('/api/conversation/stop'), [{}], 'a second stop was sent after Cancel')
+    assert.equal(p.$('review-start').hidden, true, 'the review was reset')
+  } finally { p.close() }
+})
+
+test('confirming sends the stop again, confirmed, and the Review tab goes back to its start options', async () => {
+  const p = await startPage({ review: writingReview, agentAtWork: true, extra: stopRoutes(true) })
+  try {
+    await p.poll()
+    await p.click('convo-stop')
+    await p.confirm(true)
+    assert.deepEqual(p.posted('/api/conversation/stop'), [{}, { confirmed: true }])
+    await p.poll()
+    assert.equal(p.$('review-start').hidden, false, 'back to starting one')
+    assert.match(p.$('review-closed').textContent, /dropped/)
+  } finally { p.close() }
+})
+
+test('Escape in the prompt asks the same, since it stops the same way', async () => {
+  const p = await startPage({ review: writingReview, agentAtWork: true, extra: stopRoutes(true) })
+  try {
+    await p.every('pollConversation')
+    p.$('convo-input').dispatchEvent(new p.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await p.settle()
+    assert.ok(p.$('confirm').open, 'Escape stopped the agent without asking')
+    assert.match(p.$('confirm-text').textContent, /still writing a review/)
+  } finally { p.close() }
+})
+
+test('a stop with no review being written is not asked about', async () => {
+  const p = await startPage({ extra: (setCurrent) => ({ '/api/conversation': { events: [], last: 0, running: true }, '/api/conversation/stop': { stopped: true } }) })
+  try {
+    await p.poll()
+    await p.click('convo-stop')
+    assert.equal(p.$('confirm').open, false)
+    assert.deepEqual(p.posted('/api/conversation/stop'), [{}])
+  } finally { p.close() }
+})
+
+// A review "in progress" with no agent at work on it (the agent crashed, the sandbox stopped, it forgot `done`) says so
+// and offers to discard it, instead of saying the agent is still reviewing.
+test('a review in progress with nothing at work on it says the agent stopped, and offers to discard it', async () => {
+  const p = await startPage({ review: writingReview, agentAtWork: false })
+  try {
+    assert.match(p.$('review-state').textContent, /agent stopped before finishing this review/)
+    assert.doesNotMatch(p.$('review-state').textContent, /still reviewing/)
+    assert.equal(p.$('review-discard').hidden, false)
+    await p.click('review-discard')
+    assert.deepEqual(p.posted('/api/review/close'), [{ stop: false }])
+    assert.equal(p.$('review-start').hidden, false, 'the tab is back to starting one')
+  } finally { p.close() }
+})
+
+test('with the agent at work on it, a review in progress says so and has nothing to discard', async () => {
+  const p = await startPage({ review: writingReview, agentAtWork: true })
+  try {
+    assert.match(p.$('review-state').textContent, /still reviewing/)
+    assert.equal(p.$('review-discard').hidden, true)
   } finally { p.close() }
 })

@@ -2593,6 +2593,21 @@
     card.focus({ preventScroll: true })
   }
 
+  // discardReview drops a review nothing is writing: vibe drops it (a stale review in progress is dropped by being closed), and the tab
+  // goes back to its start options.
+  async function discardReview() {
+    try {
+      const res = await post('/api/review/close', { stop: false })
+      reached(true)
+      if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
+      tookReview(res.body.review); reviewView.key = null; drawReview(); loadOptions()
+    } catch (e) {
+      reached(false)
+      toast('Could not reach vibe.', true)
+    }
+  }
+  $('review-discard').addEventListener('click', discardReview)
+
   async function reopenReview() {
     try {
       const res = await doReview({ op: 'reopen-review' })
@@ -2625,7 +2640,13 @@
     if (!on) drawStart(rv)
     $('review-title').textContent = on && rv.note ? 'Review: ' + rv.note : 'Review'
     $('review-state').hidden = !on || !rv.state
-    $('review-state').textContent = rv.state === 'in progress' ? 'the agent is still reviewing: wait for it to finish' : rv.state || ''
+    // In progress with nothing at work on it (the agent crashed, the sandbox stopped, it forgot to say it was done): said as it is,
+    // with a way to drop it, not "still reviewing" for ever.
+    const abandoned = on && rv.state === 'in progress' && !reviewView.agentAtWork
+    $('review-state').textContent = rv.state === 'in progress'
+      ? (abandoned ? 'the agent stopped before finishing this review' : 'the agent is still reviewing: wait for it to finish')
+      : rv.state || ''
+    $('review-discard').hidden = !abandoned
     $('review-state').classList.toggle('reviewing', on && rv.state === 'in progress')
     if (on) announceReview(rv)
     $('review-of').textContent = !on ? '' : rv.commit ? 'of commit ' + rv.commit : rv.unpushed ? 'of the commits not pushed to ' + rv.ref : rv.ref ? 'against ' + rv.ref : 'of the uncommitted changes'
@@ -5557,6 +5578,36 @@
     renderGate(b)
   }
 
+  // stopAgent stops the agent's turn. While the agent is writing a review, that ends the review: vibe says so (409,
+  // review-in-progress) and it is asked first, in the words closing the review uses; confirmed, the stop is sent again, saying so,
+  // and the Review tab goes back to its start options. The Stop button and Escape both come here.
+  async function stopAgent() {
+    try {
+      const res = await post('/api/conversation/stop', {})
+      reached(true)
+      if (res.status === 409 && res.body && res.body.code === 'review-in-progress') { askToStopWriting(); return }
+      if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true)
+      pollConversation()
+    } catch (e) {
+      reached(false)
+      toast('Could not reach vibe.', true)
+    }
+  }
+
+  function askToStopWriting() {
+    confirmThen({
+      title: 'Stop the agent?',
+      text: 'The agent is still writing a review. Stopping it stops the agent, and the review is dropped: you can start another at any time. Are you sure you want to stop it?',
+      safe: true, commandNote: '', command: '', runLabel: 'Stop the agent', started: 'Stopped.',
+      run: async () => {
+        const res = await post('/api/conversation/stop', { confirmed: true })
+        if (res.ok && res.body.review) { tookReview(res.body.review); reviewView.key = null; drawReview(); loadOptions() }
+        pollConversation()
+        return res
+      },
+    })
+  }
+
   async function conversationCall(path) {
     try {
       const res = await post(path, {})
@@ -6988,7 +7039,7 @@
     $('convo-input').addEventListener('keydown', (ev) => {
       if (ev.isComposing) return
       if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); sendPrompt() }
-      else if (ev.key === 'Escape' && convo.running) { ev.preventDefault(); conversationCall('/api/conversation/stop') }
+      else if (ev.key === 'Escape' && convo.running) { ev.preventDefault(); stopAgent() }
       else if (ev.key === 'ArrowUp' && !ev.target.value && convo.lastPrompt) {
         ev.preventDefault()
         ev.target.value = convo.lastPrompt
@@ -7003,7 +7054,7 @@
     // tab it's on may not be showing yet.
     $('convo-input').addEventListener('focus', fitPrompt)
     requestAnimationFrame(fitPrompt)
-    $('convo-stop').addEventListener('click', () => conversationCall('/api/conversation/stop'))
+    $('convo-stop').addEventListener('click', stopAgent)
     setUpFresh()
     $('settings-prompts-markdown').checked = promptsAsMarkdown.on
     $('settings-prompts-markdown').addEventListener('change', () => setPromptsAsMarkdown($('settings-prompts-markdown').checked))

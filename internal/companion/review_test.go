@@ -1104,3 +1104,141 @@ func TestClosingAReviewLeavesATurnThatIsntItsAlone(t *testing.T) {
 		t.Errorf("the other turn ended %q", got)
 	}
 }
+
+// --- stopping the agent while it writes a review (docs/plan-stop-ends-review.md) --------
+
+func startWritingReview(t *testing.T, s *Server) *fakeAgent {
+	t.Helper()
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted","agent":true}`)); rec.Code != http.StatusAccepted {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	return f
+}
+
+func TestStoppingTheAgentWhileItWritesAReviewAsksFirstAndStopsNothing(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := startWritingReview(t, s)
+	defer close(f.release)
+	rec := do(t, s, post("/api/conversation/stop", `{}`))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("stop: %d %s", rec.Code, rec.Body)
+	}
+	var body struct {
+		Code  string `json:"code"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Code != "review-in-progress" || !strings.Contains(body.Error, "review") {
+		t.Errorf("the refusal: %+v", body)
+	}
+	if !s.convo.working() {
+		t.Error("the agent was stopped by a stop that was refused")
+	}
+	if r, _ := store.Load(); r.State != review.InProgress || r.Closed != "" {
+		t.Errorf("the review changed: %+v", r)
+	}
+}
+
+func TestConfirmingTheStopStopsTheAgentAndDropsTheReview(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := startWritingReview(t, s)
+	defer close(f.release)
+	if _, err := store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "half a review"}, review.Agent); err != nil {
+		t.Fatal(err)
+	}
+	if rec := do(t, s, post("/api/conversation/stop", `{"confirmed":true}`)); rec.Code != http.StatusOK {
+		t.Fatalf("stop: %d %s", rec.Code, rec.Body)
+	}
+	if got := lastDone(t, s); got != "stopped" {
+		t.Errorf("the agent's turn ended %q, not stopped", got)
+	}
+	r, _ := store.Load()
+	if !r.Started.IsZero() || len(r.Threads) != 0 {
+		t.Errorf("the half-written review is still there: %+v", r)
+	}
+	if !strings.Contains(r.Closed, "dropped") || !strings.Contains(r.Closed, "stopped") {
+		t.Errorf("why it closed doesn't say the stop dropped it: %q", r.Closed)
+	}
+	if _, err := store.Do(review.Request{Op: "comment", File: "a.txt", Line: 1, Body: "too late"}, review.Agent); err == nil {
+		t.Error("the agent could still comment on the dropped review")
+	}
+}
+
+func TestAStopOfATurnTheReviewDidNotBeginIsNotAskedAbout(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	defer close(f.release)
+	send(t, s, "/api/conversation/send", `{"prompt":"something else"}`)
+	rec := do(t, s, post("/api/conversation/stop", `{}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stop: %d %s", rec.Code, rec.Body)
+	}
+	if got := lastDone(t, s); got != "stopped" {
+		t.Errorf("the agent's turn ended %q, not stopped", got)
+	}
+	if r, _ := store.Load(); r.Closed != "" {
+		t.Errorf("a review was closed by a stop of another turn: %+v", r)
+	}
+}
+
+func TestAStopWhileTheAgentFixesCommentsOfAFinishedReviewIsNotAskedAboutAndKeepsTheReview(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	defer close(f.release)
+	doneWithOpenThread(t, s, store)
+	if rec := do(t, s, post("/api/review/submit", `{}`)); rec.Code != http.StatusAccepted {
+		t.Fatalf("submit: %d %s", rec.Code, rec.Body)
+	}
+	if rec := do(t, s, post("/api/conversation/stop", `{}`)); rec.Code != http.StatusOK {
+		t.Fatalf("stop: %d %s", rec.Code, rec.Body)
+	}
+	if r, _ := store.Load(); r.Closed != "" || len(r.Threads) != 1 || r.State != review.Done {
+		t.Errorf("a finished review was changed by a stop: %+v", r)
+	}
+}
+
+func TestAStopWithNoReviewTabIsAsItWas(t *testing.T) {
+	s := newServer(&fakeSbx{})
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	defer close(f.release)
+	send(t, s, "/api/conversation/send", `{"prompt":"hi"}`)
+	if rec := do(t, s, post("/api/conversation/stop", `{}`)); rec.Code != http.StatusOK {
+		t.Fatalf("stop: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// A review "in progress" that nothing is at work on (the agent crashed, the sandbox stopped, it forgot to say it was done) is
+// half a review nobody is writing: closing it drops it, as closing one being written does, rather than keeping half a review.
+func TestClosingAReviewInProgressThatNothingIsWritingDropsIt(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := startWritingReview(t, s)
+	if _, err := store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "half a review"}, review.Agent); err != nil {
+		t.Fatal(err)
+	}
+	// The turn that began it ends without `done`: nothing is at work on it, and the review says it is in progress.
+	close(f.release)
+	idle(t, s)
+	if r, _ := store.Load(); r.State != review.InProgress {
+		t.Fatalf("the review is %q: it should still be in progress", r.State)
+	}
+	if agentAtWork(t, s) {
+		t.Fatal("the agent is still at work on it")
+	}
+	if rec := do(t, s, post("/api/review/close", `{"stop":false}`)); rec.Code != http.StatusOK {
+		t.Fatalf("close: %d %s", rec.Code, rec.Body)
+	}
+	r, _ := store.Load()
+	if !r.Started.IsZero() || len(r.Threads) != 0 {
+		t.Errorf("half a review was kept: %+v", r)
+	}
+	if !strings.Contains(r.Closed, "dropped") || !strings.Contains(r.Closed, "stopped") {
+		t.Errorf("why it closed: %q", r.Closed)
+	}
+}

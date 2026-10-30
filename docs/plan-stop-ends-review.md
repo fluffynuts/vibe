@@ -1,6 +1,6 @@
 # Stopping the agent while it writes a review
 
-Planned 2026-10-29, not built. Raised by the user while reviewing: they started a review from the Review tab, switched to
+Planned 2026-10-29; the stop half built 2026-10-30 on `feat/stop-ends-review` (see "Built" at the end). Raised by the user while reviewing: they started a review from the Review tab, switched to
 the Conversation tab to ask the agent something, and pressed Stop. Back on the Review tab it still said "the agent is
 still reviewing: wait for it to finish", though nothing was. To be built on its own branch from master, straight after the
 release that this plan was committed with.
@@ -63,3 +63,19 @@ stopping, an agent that forgets `done`, a turn that errors.
 
 About 40 lines of Go, 30 of page, and the tests. Medium: the reason it isn't going in with the release that is already
 under review, though it behaves as a bug.
+
+## Built 2026-10-30
+
+- **Server:** `POST /api/conversation/stop` takes an optional `{"confirmed": true}`. While the agent is at a turn the review began and the
+  review is in progress, it answers 409 with code `review-in-progress` unless confirmed; confirmed, `stopAndDropReview` stops the turn and
+  drops the review (the one function `reviewClose` uses too). A turn the review didn't begin, and a finished review (the agent fixing its
+  comments), are stopped as before.
+- **Stale case:** closing a review that is in progress with nothing at work on it now drops it (`reviewClose`), with "The agent stopped before
+  finishing this review, so it was dropped".
+- **Page:** the Stop button and Escape both go through `stopAgent`; the 409 is a confirm dialog in the Review tab's words, and confirming
+  sends the stop again, confirmed, and puts the Review tab back to its start options. A review in progress with no agent at work says "the
+  agent stopped before finishing this review" with a **Discard it** button (which closes it, so it is dropped).
+- **The "not checked" list:** Escape in the prompt goes through the same call (now `stopAgent`). The Admin tab's and the power menu's
+  stop/restart, and `vibe --cancel`, end the vibe or its turn from outside this call: they leave a review in progress, which the stale case
+  now says and lets go of. A new prompt while busy isn't a stop. The agent's `vibe-review` calls into a dropped review fail (a test checks the
+  comment is refused).
