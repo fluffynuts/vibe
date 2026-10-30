@@ -62,7 +62,7 @@ test('pressing it starts that sign-in and shows the address to open and the code
     await p.click(p.$('admin-signin').querySelector('button.signin-go[data-kind=docker]'))
     assert.deepEqual(calls(p, '/api/signin/start').map((c) => c.body), [{ kind: 'docker' }])
     assert.equal(panel(p).hidden, false)
-    p.host.job = { kind: 'docker', running: true, lines: ['Waiting...'], url: 'https://login.docker.com/activate?user_code=AB-CD', code: 'AB-CD' }
+    p.host.job = { kind: 'docker', running: true, lines: ['Waiting...'], urlKnown: true, url: 'https://login.docker.com/activate?user_code=AB-CD', code: 'AB-CD' }
     await p.every('pollSignInJob')
     const link = panel(p).querySelector('a')
     assert.equal(link.href, 'https://login.docker.com/activate?user_code=AB-CD')
@@ -88,7 +88,7 @@ test('the agent\'s sign-in has a field for the code, which goes to the host and 
   const p = await pageWith({ docker: IN, agent: OUT })
   try {
     await p.click(p.$('admin-signin').querySelector('button.signin-go'))
-    p.host.job = { kind: 'agent', running: true, lines: [], url: 'https://claude.ai/oauth/authorize?x=1' }
+    p.host.job = { kind: 'agent', running: true, lines: [], urlKnown: true, url: 'https://claude.ai/oauth/authorize?x=1' }
     await p.every('pollSignInJob')
     const field = panel(p).querySelector('input')
     assert.ok(field, 'there is no field for the code')
@@ -105,7 +105,7 @@ test('nothing is sent for an empty field', async () => {
   const p = await pageWith({ docker: IN, agent: OUT })
   try {
     await p.click(p.$('admin-signin').querySelector('button.signin-go'))
-    p.host.job = { kind: 'agent', running: true, lines: [], url: 'https://claude.ai/oauth/authorize?x=1' }
+    p.host.job = { kind: 'agent', running: true, lines: [], urlKnown: true, url: 'https://claude.ai/oauth/authorize?x=1' }
     await p.every('pollSignInJob')
     await p.click(panel(p).querySelector('button.signin-send'))
     assert.equal(calls(p, '/api/signin/code').length, 0)
@@ -160,7 +160,7 @@ test('a start the host refuses is said, and no panel is left waiting', async () 
 })
 
 test('a sign-in already running when the page opens is shown', async () => {
-  const p = await pageWith({ docker: OUT, agent: IN, job: { kind: 'docker', running: true, lines: [], url: 'https://login.docker.com/x', code: 'ZZ-YY' } })
+  const p = await pageWith({ docker: OUT, agent: IN, job: { kind: 'docker', running: true, lines: [], urlKnown: true, url: 'https://login.docker.com/x', code: 'ZZ-YY' } })
   try {
     assert.equal(panel(p).hidden, false)
     assert.match(panel(p).textContent, /ZZ-YY/)
@@ -177,7 +177,7 @@ test('until the address is known the panel shows only that it is starting, with 
     assert.doesNotMatch(panel(p).textContent, /open the address/i, 'it tells of an address nobody can see')
     assert.equal(panel(p).querySelector('a'), null)
     assert.ok(panel(p).querySelector('button.signin-cancel'), 'it can be cancelled while starting')
-    p.host.job = { kind: 'docker', running: true, lines: [], url: 'https://login.docker.com/activate?user_code=AB-CD', code: 'AB-CD' }
+    p.host.job = { kind: 'docker', running: true, lines: [], urlKnown: true, url: 'https://login.docker.com/activate?user_code=AB-CD', code: 'AB-CD' }
     await p.every('pollSignInJob')
     assert.equal(panel(p).querySelector('.spinner'), null)
     assert.match(panel(p).textContent, /open the address/i)
@@ -191,7 +191,7 @@ test("the agent's panel waits the same way for its address before offering the f
     await p.click(p.$('admin-signin').querySelector('button.signin-go'))
     assert.ok(panel(p).querySelector('.spinner'))
     assert.equal(panel(p).querySelector('input'), null, 'a field for a code nobody has been given yet')
-    p.host.job = { kind: 'agent', running: true, lines: [], url: 'https://claude.ai/oauth/authorize?x=1' }
+    p.host.job = { kind: 'agent', running: true, lines: [], urlKnown: true, url: 'https://claude.ai/oauth/authorize?x=1' }
     await p.every('pollSignInJob')
     assert.ok(panel(p).querySelector('input'))
   } finally { p.close() }
@@ -202,7 +202,7 @@ test('once the code is sent the panel shows that it is being checked, with a spi
   const p = await pageWith({ docker: IN, agent: OUT })
   try {
     await p.click(p.$('admin-signin').querySelector('button.signin-go'))
-    p.host.job = { kind: 'agent', running: true, lines: [], url: 'https://claude.ai/oauth/authorize?x=1' }
+    p.host.job = { kind: 'agent', running: true, lines: [], urlKnown: true, url: 'https://claude.ai/oauth/authorize?x=1' }
     await p.every('pollSignInJob')
     await p.type(panel(p).querySelector('input'), 'the-code')
     await p.click(panel(p).querySelector('button.signin-send'))
@@ -222,7 +222,7 @@ test('a code that is not taken is not waited on for good: after a while it can b
   const p = await pageWith({ docker: IN, agent: OUT })
   try {
     await p.click(p.$('admin-signin').querySelector('button.signin-go'))
-    p.host.job = { kind: 'agent', running: true, lines: [], url: 'https://claude.ai/oauth/authorize?x=1' }
+    p.host.job = { kind: 'agent', running: true, lines: [], urlKnown: true, url: 'https://claude.ai/oauth/authorize?x=1' }
     await p.every('pollSignInJob')
     await p.type(panel(p).querySelector('input'), 'the-code')
     await p.click(panel(p).querySelector('button.signin-send'))
@@ -269,5 +269,30 @@ test("a user who has gone to another tab while it signed in isn't moved", async 
     p.host.job = { kind: 'agent', running: false, done: true, ok: true, lines: [] }
     await p.every('pollSignInJob')
     assert.equal(p.$('panel-log').hidden, false)
+  } finally { p.close() }
+})
+
+// The address of the agent's sign-in comes from the sandbox: only one the host knows to be on a sign-in host is a link.
+test('an address on a host the host did not recognise is text with a warning, not a link', async () => {
+  const p = await pageWith({ docker: IN, agent: OUT })
+  try {
+    await p.click(p.$('admin-signin').querySelector('button.signin-go'))
+    p.host.job = { kind: 'agent', running: true, lines: [], url: 'https://look-alike.example/signin', urlKnown: false }
+    await p.every('pollSignInJob')
+    assert.equal(panel(p).querySelector('a'), null, 'it was made a link')
+    assert.match(panel(p).textContent, /look-alike\.example\/signin/)
+    assert.match(panel(p).textContent, /isn't an address vibe recognises/i)
+    assert.ok(panel(p).querySelector('input'), 'the code can still be entered, by someone who has checked')
+  } finally { p.close() }
+})
+
+test('an address the host recognised is a link without a warning', async () => {
+  const p = await pageWith({ docker: IN, agent: OUT })
+  try {
+    await p.click(p.$('admin-signin').querySelector('button.signin-go'))
+    p.host.job = { kind: 'agent', running: true, lines: [], url: 'https://claude.ai/oauth/authorize?x=1', urlKnown: true }
+    await p.every('pollSignInJob')
+    assert.ok(panel(p).querySelector('a'))
+    assert.doesNotMatch(panel(p).textContent, /isn't an address vibe recognises/i)
   } finally { p.close() }
 })

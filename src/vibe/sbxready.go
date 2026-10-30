@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"vibe/internal/cliargs"
 	"vibe/internal/fscopy"
 	"vibe/internal/sbxrun"
 	"vibe/internal/signin"
@@ -71,6 +72,12 @@ func (s sbxReadySteps) run(ctx context.Context) {
 			return
 		}
 	}
+}
+
+// getsSbxReadyFirst says whether args start or make a sandbox (the plain start, a restart, a headless start, a rebuild),
+// which is where the questions of getting sbx ready belong; the other commands act on what is there, and need none.
+func getsSbxReadyFirst(args cliargs.Args) bool {
+	return args.ExclusiveActions() == 0 || args.Rebuilds() || args.Headless
 }
 
 // ensureSbxReady gets sbx ready before anything is asked of it: the network policy it wants chosen, and its sign-in to

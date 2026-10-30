@@ -144,3 +144,32 @@ func TestAStartThatWorksNeedsNoReason(t *testing.T) {
 		t.Errorf("started %v, why %q", started, why)
 	}
 }
+
+// The write end of a process's stdin is closed when it ends, or is stopped, not left to the garbage collector.
+func TestAnExecProcessesStdinIsClosedOnceItHasEnded(t *testing.T) {
+	processSbx(t)
+	p, err := StartExec("box", "plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := collect(t, p); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.stdin.Close(); err == nil {
+		t.Error("the stdin pipe was still open after the process ended")
+	}
+}
+
+func TestAStoppedExecProcessesStdinIsClosed(t *testing.T) {
+	sbxtest.OnPath(t, "echo up\ncat >/dev/null\n")
+	p, err := StartExec("box", "wait")
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-p.Lines()
+	p.Stop()
+	collect(t, p)
+	if err := p.stdin.Close(); err == nil {
+		t.Error("the stdin pipe was still open after the process was stopped")
+	}
+}

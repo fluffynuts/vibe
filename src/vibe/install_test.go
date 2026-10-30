@@ -493,3 +493,64 @@ func TestOnlyAnInstalledVibeThatSaysItIsADevelopmentBuildIsReplacedByOne(t *test
 		}
 	}
 }
+
+// The real installedVersion, with stand-in scripts for the installed binary: what decides whether an installed vibe is replaced
+// by a build from source, so a mistake either loses a release or leaves an old build running.
+func standInVibe(t *testing.T, script string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in is a shell script")
+	}
+	path := filepath.Join(t.TempDir(), "vibe")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestTheInstalledVibeIsAskedItsVersion(t *testing.T) {
+	path := standInVibe(t, `[ "$1" = --version ] && echo "vibe 0.1 (abc123)"`+"\n")
+	if got := installedVersion(path); got != "vibe 0.1 (abc123)" {
+		t.Errorf("installedVersion = %q", got)
+	}
+}
+
+func TestAnInstalledVibeThatCannotBeRunSaysNothing(t *testing.T) {
+	if got := installedVersion(standInVibe(t, "exit 1\n")); got != "" {
+		t.Errorf("a failing vibe said %q", got)
+	}
+	if got := installedVersion(filepath.Join(t.TempDir(), "no-such-vibe")); got != "" {
+		t.Errorf("a missing vibe said %q", got)
+	}
+}
+
+// Through installBinary, with nothing stood in for the version: a development build replaces what says it is one, and not a
+// release, nor what can't be asked.
+func TestWhatInstallBinaryDoesWithWhatIsInstalled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in is a shell script")
+	}
+	for name, tc := range map[string]struct {
+		script   string
+		replaced bool
+	}{
+		"a development build": {"echo 'vibe 0.1 (abc123)'\n", true},
+		"a release":           {"echo 'vibe 0.1.57 (abc123, built 2026-10-30T00:00:00Z)'\n", false},
+		"one that fails":      {"exit 1\n", false},
+		"one that says other": {"echo 'something else'\n", false},
+	} {
+		asBuild(t, "")
+		script := "#!/bin/sh\n" + tc.script
+		dest := installedBinaryOf(t, script)
+		if err := os.Chmod(dest, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := installBinary(); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(dest)
+		if replaced := string(data) != script; replaced != tc.replaced {
+			t.Errorf("%s: replaced = %v, want %v", name, replaced, tc.replaced)
+		}
+	}
+}

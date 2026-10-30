@@ -321,8 +321,9 @@ func run(argv []string) error {
 	}
 	sbxfind.Look()
 	// What sbx wants before it answers (a network policy, a sign-in to Docker) is asked here, on the terminal, and given,
-	// rather than the first command failing with sbx's own words. Nobody is asked with -f, or with no terminal.
-	if !args.Force {
+	// rather than the first command failing with sbx's own words. Only for what starts or makes a sandbox, and nobody is
+	// asked with -f, or with no terminal.
+	if !args.Force && getsSbxReadyFirst(args) {
 		ensureSbxReady()
 	}
 
@@ -437,7 +438,7 @@ func run(argv []string) error {
 	// A sandbox left with its folders gone (a deleted ~/.vibe) can't start: say so, and offer to make it afresh. A rebuild
 	// replaces the sandbox anyway.
 	if !args.Rebuilds() && !args.Delete && !detachedChild() {
-		if err := clearOrphanedSandbox(args, name); err != nil {
+		if err := clearOrphanedSandbox(args, name, vibeHome); err != nil {
 			return err
 		}
 	}

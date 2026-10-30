@@ -3207,9 +3207,11 @@
 
   // What the Sign-in card shows: whether sbx, and the agent, can be used, read by the host when the Admin tab is
   // opened and when Check now is pressed (each asks sbx, which can be slow, so it isn't polled).
-  const signInShown = { asked: false, checking: false, watching: false, lastJob: '', agent: 'the agent', job: null, codeSent: false, sentPolls: 0 }
+  const signInShown = { asked: false, checking: false, watching: false, lastJob: '', agent: 'the agent', job: null, codeSent: false, sentPolls: 0, lastCheck: 0 }
   // How many looks (1.5 s apart) at a code being checked before it can be entered again: a code that wasn't taken leaves the command waiting.
   const CODE_PATIENCE_POLLS = 15
+  // How soon after a look at the sign-ins a failed prompt asks for another.
+  const SIGNIN_RECHECK_MS = 10000
   const SIGNIN_WORDS = { 'signed-in': ['Signed in', 'ok'], 'signed-out': ['Signed out', 'bad'], 'needs-policy': ['Needs a network policy', 'bad'], unknown: ['Unknown', ''], unsupported: ['Not checked', ''] }
 
   function renderSignInPart(id, name, part, kind) {
@@ -3248,6 +3250,7 @@
     if (signInShown.checking) return
     signInShown.checking = true
     signInShown.asked = true
+    signInShown.lastCheck = Date.now()
     $('signin-check').disabled = true
     try {
       const res = await api('/api/signin', { timeout: 30000 })
@@ -3380,9 +3383,13 @@
       parts.push(el('p', { class: 'note', text: job.kind === 'docker'
         ? 'Open the address, check the code matches, and sign in. This page notices when you have.'
         : 'Open the address and sign in; it then shows a code. Paste that code here.' }))
-      parts.push(/^https:\/\//.test(job.url)
-        ? el('p', {}, el('a', { href: job.url, target: '_blank', rel: 'noopener noreferrer', text: job.url }))
-        : el('p', { class: 'note', text: job.url }))
+      // A link only where the host knows the address to be on a host this sign-in uses: the agent's command runs in the sandbox.
+      if (job.urlKnown && /^https:\/\//.test(job.url)) {
+        parts.push(el('p', {}, el('a', { href: job.url, target: '_blank', rel: 'noopener noreferrer', text: job.url })))
+      } else {
+        parts.push(el('p', { class: 'note', text: job.url }),
+          el('p', { class: 'note bad-text', text: "This isn't an address vibe recognises: check it before you sign in at it." }))
+      }
       if (job.code) parts.push(el('p', {}, 'Code: ', el('code', { text: job.code })))
       if (job.kind === 'agent') {
         parts.push(el('div', { class: 'bar' },
@@ -5229,8 +5236,9 @@
         if (state.signinStart) {
           convoNote('error', "The agent isn't signed in. Sign in from the Admin tab, then send your prompt again.", at)
           $('convo-log').lastElementChild.append(el('button', { type: 'button', class: 'small ghost', text: 'Open Sign-in', onclick: () => select('admin') }))
-          // A sign-in that has expired since the page was opened: the card and the notice find out.
-          loadSignIn()
+          // A sign-in that has expired since the page was opened: the card and the notice find out, if they haven't looked lately
+          // (old failures are drawn with the conversation, each one a look at the host).
+          if (Date.now() - signInShown.lastCheck > SIGNIN_RECHECK_MS) loadSignIn()
         } else {
           convoNote('error', "The agent isn't signed in, and can't be from this page. In a terminal, run vibe in the sandbox's folder and sign in there with /login, then send your prompt again.", at)
         }

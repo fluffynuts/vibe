@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"vibe/internal/cliargs"
 )
 
 // policyListed is `sbx policy ls` on a machine whose network policy is chosen: the row `sbx policy init` makes.
@@ -219,5 +221,42 @@ func TestASignedInSbxThatSaysItsPolicyHasNotBeenInitializedIsAskedForOne(t *test
 	r.run()
 	if r.done() != "policy" {
 		t.Errorf("did %q", r.done())
+	}
+}
+
+// Its questions belong to the commands that start or make a sandbox. The quick ones (what is running, stop, ssh in) don't
+// pay two sbx round trips for it, and are not stopped by a question they have no use for.
+func TestWhichCommandsGetSbxReadyFirst(t *testing.T) {
+	for argv, want := range map[string]bool{
+		"":                   true,
+		"/some/folder":       true,
+		"--restart":          true,
+		"--headless":         true,
+		"--re-create":        true,
+		"--re-init":          true,
+		"--re-compose":       true,
+		"--terminal":         true,
+		"--info":             false,
+		"--stop":             false,
+		"--stop-all":         false,
+		"--ssh":              false,
+		"--delete":           false,
+		"--cleanup":          false,
+		"--manage":           false,
+		"--git-token":        false,
+		"--migrate /a /b":    false,
+		"--update-sandboxes": false,
+	} {
+		var a []string
+		if argv != "" {
+			a = strings.Fields(argv)
+		}
+		args, err := cliargs.Parse(a)
+		if err != nil {
+			t.Fatalf("%q: %v", argv, err)
+		}
+		if got := getsSbxReadyFirst(args); got != want {
+			t.Errorf("%q: getsSbxReadyFirst = %v, want %v", argv, got, want)
+		}
 	}
 }

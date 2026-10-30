@@ -38,6 +38,7 @@ type fakeOrphan struct {
 	present   map[string]bool
 	yes       bool
 	asked     []string
+	defaults  []bool
 	removed   []string
 	removeErr error
 	said      []string
@@ -45,12 +46,17 @@ type fakeOrphan struct {
 
 func (f *fakeOrphan) check(args cliargs.Args, canAsk bool) error {
 	return clearOrphanedSandboxWith(context.Background(), "box", args, orphanSteps{
-		list:    func(context.Context) ([]sbxrun.Status, error) { return f.listed, f.listErr },
-		exists:  func(p string) bool { return f.present[p] },
-		canAsk:  canAsk,
-		confirm: func(q string) bool { f.asked = append(f.asked, q); return f.yes },
-		remove:  func(_ context.Context, name string) error { f.removed = append(f.removed, name); return f.removeErr },
-		say:     func(line string) { f.said = append(f.said, line) },
+		list:   func(context.Context) ([]sbxrun.Status, error) { return f.listed, f.listErr },
+		exists: func(p string) bool { return f.present[p] },
+		home:   "/home/me/.vibe",
+		canAsk: canAsk,
+		confirm: func(q string, def bool) bool {
+			f.asked = append(f.asked, q)
+			f.defaults = append(f.defaults, def)
+			return f.yes
+		},
+		remove: func(_ context.Context, name string) error { f.removed = append(f.removed, name); return f.removeErr },
+		say:    func(line string) { f.said = append(f.said, line) },
 	})
 }
 
@@ -135,5 +141,51 @@ func TestAListingThatFailsIsLeftForSbxsOwnErrorToSay(t *testing.T) {
 	f.listErr = errors.New("sbx ls: boom")
 	if err := f.check(cliargs.Args{}, true); err != nil || len(f.asked) != 0 {
 		t.Errorf("err %v, asked %v", err, f.asked)
+	}
+}
+
+// Enter removes it only when what is gone is all vibe's own (under ~/.vibe): a missing project folder, or any other, may be a
+// drive that isn't plugged in, and the sandbox could still be wanted.
+func TestRemovingIsTheDefaultOnlyWhenEveryMissingFolderIsVibesOwn(t *testing.T) {
+	f := orphaned()
+	f.listed[0].Workspaces = []string{"/work", "/home/me/.vibe/memories/box", "/home/me/.vibe/clipboard/box"}
+	f.present = map[string]bool{"/work": true}
+	f.yes = true
+	if err := f.check(cliargs.Args{}, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.defaults) != 1 || !f.defaults[0] {
+		t.Errorf("defaults %v: with only ~/.vibe's folders gone, yes should be the default", f.defaults)
+	}
+}
+
+func TestRemovingIsNotTheDefaultWhenTheProjectFolderIsMissing(t *testing.T) {
+	f := orphaned()
+	f.listed[0].Workspaces = []string{"/mnt/usb/project", "/home/me/.vibe/memories/box"}
+	f.present = map[string]bool{"/home/me/.vibe/memories/box": true}
+	f.yes = true
+	if err := f.check(cliargs.Args{}, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.defaults) != 1 || f.defaults[0] {
+		t.Errorf("defaults %v: with the project folder gone, no should be the default", f.defaults)
+	}
+	said := strings.Join(f.said, "\n")
+	if !strings.Contains(said, "/mnt/usb/project") || !strings.Contains(strings.ToLower(said), "project") {
+		t.Errorf("it doesn't name the project folder as the one that is missing:\n%s", said)
+	}
+	if !strings.Contains(strings.Join(f.asked, "\n"), "/mnt/usb/project") {
+		t.Errorf("the question doesn't name it: %v", f.asked)
+	}
+}
+
+func TestAMissingFolderBesideTheVibeHomeIsNotUnderIt(t *testing.T) {
+	f := orphaned()
+	f.listed[0].Workspaces = []string{"/home/me/.vibe-other/memories/box", "/home/me/.vibe/../elsewhere"}
+	f.present = map[string]bool{}
+	f.yes = true
+	f.check(cliargs.Args{}, true)
+	if len(f.defaults) != 1 || f.defaults[0] {
+		t.Errorf("defaults %v: a look-alike path counted as under the vibe home", f.defaults)
 	}
 }

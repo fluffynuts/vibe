@@ -69,14 +69,15 @@ func loginServer(f *fakeLogin, kinds *[]string) *Server {
 }
 
 type jobBody struct {
-	Kind    string   `json:"kind"`
-	Running bool     `json:"running"`
-	Done    bool     `json:"done"`
-	OK      bool     `json:"ok"`
-	URL     string   `json:"url"`
-	Code    string   `json:"code"`
-	Lines   []string `json:"lines"`
-	Error   string   `json:"error"`
+	Kind     string   `json:"kind"`
+	Running  bool     `json:"running"`
+	Done     bool     `json:"done"`
+	OK       bool     `json:"ok"`
+	URL      string   `json:"url"`
+	URLKnown bool     `json:"urlKnown"`
+	Code     string   `json:"code"`
+	Lines    []string `json:"lines"`
+	Error    string   `json:"error"`
 }
 
 func getJob(t *testing.T, s *Server) jobBody {
@@ -316,5 +317,163 @@ func TestTheSignInCallsNeedTheTokenAndAHostThatOffersThem(t *testing.T) {
 	bare := signInServer(func(c context.Context) signin.Status { return signin.Status{} })
 	if code, _ := postJSON(t, bare, "/api/signin/start", `{"kind":"docker"}`); code != http.StatusNotFound {
 		t.Errorf("a host that offers no sign-in: status %d", code)
+	}
+}
+
+// A start that is slow (sbx asked whether the sandbox is up, up to 30 s) does not hold what the page polls: the job is
+// there at once, running, with nothing yet to show.
+func TestAStartThatIsSlowDoesNotHoldThePollsOfTheJob(t *testing.T) {
+	release := make(chan struct{})
+	f := newFakeLogin()
+	s := loginServer(f, nil)
+	s.cfg.SignInStart = func(string) (LoginProcess, error) { <-release; return f, nil }
+	started := make(chan int, 1)
+	go func() { code, _ := postJSON(t, s, "/api/signin/start", `{"kind":"agent"}`); started <- code }()
+	polled := make(chan jobBody, 1)
+	go func() {
+		// Whatever the start is blocked on, this must not be.
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			if j := getJob(t, s); j.Running {
+				polled <- j
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+	select {
+	case j := <-polled:
+		if j.Kind != "agent" || j.Done {
+			t.Errorf("job = %+v", j)
+		}
+	case <-time.After(3 * time.Second):
+		close(release)
+		t.Fatal("the job couldn't be read while it was being started")
+	}
+	// A second start meanwhile is refused, not queued behind the first.
+	if code, body := postJSON(t, s, "/api/signin/start", `{"kind":"docker"}`); code != http.StatusConflict || !strings.Contains(body, "signin-running") {
+		t.Errorf("a second start: %d %s", code, body)
+	}
+	close(release)
+	if code := <-started; code != http.StatusOK {
+		t.Errorf("the first start: %d", code)
+	}
+	f.say("https://claude.ai/oauth/authorize?x=1")
+	jobWaitFor(t, s, "its address", func(j jobBody) bool { return j.URL != "" })
+}
+
+func TestACancelWhileStartingEndsTheJobOnceItHasAProcess(t *testing.T) {
+	release := make(chan struct{})
+	f := newFakeLogin()
+	s := loginServer(f, nil)
+	s.cfg.SignInStart = func(string) (LoginProcess, error) { <-release; return f, nil }
+	done := make(chan struct{})
+	go func() { postJSON(t, s, "/api/signin/start", `{"kind":"agent"}`); close(done) }()
+	jobWaitFor(t, s, "the job starting", func(j jobBody) bool { return j.Running })
+	if code, _ := postJSON(t, s, "/api/signin/cancel", `{}`); code != http.StatusOK {
+		t.Errorf("cancel: %d", code)
+	}
+	close(release)
+	<-done
+	j := jobWaitFor(t, s, "the end", func(j jobBody) bool { return j.Done })
+	if !f.stopped || j.OK || !strings.Contains(strings.ToLower(j.Error), "cancel") {
+		t.Errorf("stopped %v, job %+v", f.stopped, j)
+	}
+}
+
+func TestACodeWhileStillStartingIsRefusedNotLost(t *testing.T) {
+	release := make(chan struct{})
+	f := newFakeLogin()
+	s := loginServer(f, nil)
+	s.cfg.SignInStart = func(string) (LoginProcess, error) { <-release; return f, nil }
+	done := make(chan struct{})
+	go func() { postJSON(t, s, "/api/signin/start", `{"kind":"agent"}`); close(done) }()
+	jobWaitFor(t, s, "the job starting", func(j jobBody) bool { return j.Running })
+	if code, _ := postJSON(t, s, "/api/signin/code", `{"code":"x"}`); code != http.StatusConflict {
+		t.Errorf("a code before there is a process: %d", code)
+	}
+	close(release)
+	<-done
+	if got := f.wasSent(); len(got) != 0 {
+		t.Errorf("sent %q", got)
+	}
+}
+
+func TestAStartThatFailsLeavesNoJobRunningAndFreesTheNext(t *testing.T) {
+	s := loginServer(nil, nil)
+	s.cfg.SignInStart = func(string) (LoginProcess, error) { return nil, errors.New("the sandbox isn't running") }
+	if code, _ := postJSON(t, s, "/api/signin/start", `{"kind":"agent"}`); code != http.StatusInternalServerError {
+		t.Fatalf("status %d", code)
+	}
+	if j := getJob(t, s); j.Running {
+		t.Errorf("job = %+v", j)
+	}
+	f := newFakeLogin()
+	s.cfg.SignInStart = func(string) (LoginProcess, error) { return f, nil }
+	if code, body := postJSON(t, s, "/api/signin/start", `{"kind":"agent"}`); code != http.StatusOK {
+		t.Errorf("the next start: %d %s", code, body)
+	}
+}
+
+// The address a sign-in prints is the sandbox's to make (for the agent): the page only links one on a host the sign-in is
+// known to use, and shows any other as text with a warning.
+func TestAnAddressOnAKnownHostIsMarkedKnown(t *testing.T) {
+	for kind, url := range map[string]string{
+		"docker": "https://login.docker.com/activate?user_code=AB-CD",
+		"agent":  "https://claude.ai/oauth/authorize?code=true&state=abc",
+	} {
+		f := newFakeLogin()
+		s := loginServer(f, nil)
+		postJSON(t, s, "/api/signin/start", `{"kind":"`+kind+`"}`)
+		f.say("Open this URL to sign in: " + url)
+		j := jobWaitFor(t, s, "the address", func(j jobBody) bool { return j.URL != "" })
+		if j.URL != url || !j.URLKnown {
+			t.Errorf("%s: url %q known %v", kind, j.URL, j.URLKnown)
+		}
+	}
+}
+
+func TestEveryHostASignInMayUseIsKnownAndNothingThatMerelyEndsLikeThem(t *testing.T) {
+	for url, known := range map[string]map[string]bool{
+		"https://claude.ai/x":                    {"agent": true},
+		"https://www.claude.ai/x":                {"agent": true},
+		"https://claude.com/cai/oauth/authorize": {"agent": true},
+		"https://console.anthropic.com/oauth":    {"agent": true},
+		"https://login.docker.com/activate":      {"docker": true},
+		"https://evil-claude.ai/x":               {},
+		"https://claude.ai.evil.example/x":       {},
+		"https://evilanthropic.com/x":            {},
+		"https://login.docker.com.evil.test/x":   {},
+		"http://claude.ai/x":                     {},
+		"https://claude.ai@evil.example/x":       {},
+	} {
+		for _, kind := range []string{"agent", "docker"} {
+			if got := knownSignInAddress(kind, url); got != known[kind] {
+				t.Errorf("%s: knownSignInAddress(%q) = %v, want %v", kind, url, got, known[kind])
+			}
+		}
+	}
+}
+
+// An address that isn't known stays as what was printed (to be shown as text), and a known one printed later takes its place:
+// a sign-in's first address is not always the one meant.
+func TestAKnownAddressPrintedLaterReplacesAnUnknownOne(t *testing.T) {
+	f := newFakeLogin()
+	s := loginServer(f, nil)
+	postJSON(t, s, "/api/signin/start", `{"kind":"agent"}`)
+	f.say("see https://look-alike.example/signin")
+	j := jobWaitFor(t, s, "the first", func(j jobBody) bool { return j.URL != "" })
+	if j.URLKnown {
+		t.Errorf("an unknown host was marked known: %+v", j)
+	}
+	f.say("or https://claude.ai/oauth/authorize?x=1")
+	j = jobWaitFor(t, s, "the second", func(j jobBody) bool { return j.URLKnown })
+	if j.URL != "https://claude.ai/oauth/authorize?x=1" {
+		t.Errorf("url = %q", j.URL)
+	}
+	f.say("and https://another.example/")
+	jobWaitFor(t, s, "the third line", func(j jobBody) bool { return len(j.Lines) == 3 })
+	if got := getJob(t, s); got.URL != "https://claude.ai/oauth/authorize?x=1" {
+		t.Errorf("a known address was replaced: %q", got.URL)
 	}
 }

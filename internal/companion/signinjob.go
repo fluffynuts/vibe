@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -36,16 +37,17 @@ var signInKinds = map[string]bool{"docker": true, "agent": true}
 
 // signInJob is the one sign-in under way, or the last that was: what the page shows of it. Its fields are guarded by mu.
 type signInJob struct {
-	mu      sync.Mutex
-	proc    LoginProcess
-	kind    string
-	running bool
-	done    bool
-	ok      bool
-	url     string
-	code    string
-	lines   []string
-	err     string
+	mu       sync.Mutex
+	proc     LoginProcess
+	kind     string
+	running  bool
+	done     bool
+	ok       bool
+	url      string
+	urlKnown bool
+	code     string
+	lines    []string
+	err      string
 	// reason is why the command was ended from here (cancelled, given up on), when it was; it is what the page is told in
 	// place of how the kill looked.
 	reason string
@@ -53,14 +55,17 @@ type signInJob struct {
 
 // jobView is what the page is told. The code the user gives the command is not in it: it isn't kept.
 type jobView struct {
-	Kind    string   `json:"kind"`
-	Running bool     `json:"running"`
-	Done    bool     `json:"done"`
-	OK      bool     `json:"ok"`
-	URL     string   `json:"url,omitempty"`
-	Code    string   `json:"code,omitempty"`
-	Lines   []string `json:"lines"`
-	Error   string   `json:"error,omitempty"`
+	Kind    string `json:"kind"`
+	Running bool   `json:"running"`
+	Done    bool   `json:"done"`
+	OK      bool   `json:"ok"`
+	URL     string `json:"url,omitempty"`
+	// URLKnown says the address is on a host this sign-in is known to use: only then is it offered as a link. The
+	// agent's command runs in the sandbox, which is the agent's to change, so what it prints is not trusted to be the right page.
+	URLKnown bool     `json:"urlKnown,omitempty"`
+	Code     string   `json:"code,omitempty"`
+	Lines    []string `json:"lines"`
+	Error    string   `json:"error,omitempty"`
 }
 
 func (j *signInJob) view() jobView {
@@ -74,6 +79,29 @@ var (
 	codePattern    = regexp.MustCompile(`(?i)\bcode\b[^:\n]*:\s*([A-Z0-9]{3,}(?:-[A-Z0-9]{3,})+)`)
 )
 
+// signInHosts are the hosts a sign-in's address may be on, by kind: each host and its subdomains. sbx's runs on this machine;
+// the agent's runs in the sandbox.
+var signInHosts = map[string][]string{
+	"docker": {"docker.com"},
+	"agent":  {"claude.ai", "claude.com", "anthropic.com"},
+}
+
+// knownSignInAddress says address is https, on one of kind's hosts (or a subdomain of one), with no user part that could make
+// a different host look like it: "claude.ai.evil.example" and "https://claude.ai@evil.example" are not.
+func knownSignInAddress(kind, address string) bool {
+	u, err := url.Parse(address)
+	if err != nil || u.Scheme != "https" || u.User != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	for _, h := range signInHosts[kind] {
+		if host == h || strings.HasSuffix(host, "."+h) {
+			return true
+		}
+	}
+	return false
+}
+
 // noticing takes an address or a code from a line the command printed, keeping the first of each.
 func (j *signInJob) noticing(line string) {
 	if len(line) > jobLineLen {
@@ -85,9 +113,13 @@ func (j *signInJob) noticing(line string) {
 	if over := len(j.lines) - jobLinesKept; over > 0 {
 		j.lines = j.lines[over:]
 	}
-	if j.url == "" {
+	// The first address is kept, and shown as text unless it is on a known host; a known one printed later takes its place.
+	if j.url == "" || !j.urlKnown {
 		if m := addressPattern.FindString(line); m != "" {
-			j.url = strings.TrimRight(m, ".,;:)")
+			address := strings.TrimRight(m, ".,;:)")
+			if known := knownSignInAddress(j.kind, address); j.url == "" || known {
+				j.url, j.urlKnown = address, known
+			}
 		}
 	}
 	if j.code == "" {
@@ -133,21 +165,35 @@ func (s *Server) signInStart(w http.ResponseWriter, r *http.Request) {
 			"error": "a sign-in is already under way: finish or cancel it first", "code": "signin-running"})
 		return
 	}
-	// Held across the start, so two starts can't both get past the check.
-	defer job.mu.Unlock()
 	if s.cfg.SignInStart == nil {
+		job.mu.Unlock()
 		writeError(w, http.StatusNotFound, signInFeature.missing)
 		return
 	}
+	// The job is there, running, from here: starting the command can be slow (the sandbox is asked whether it is up), and
+	// what the page polls, and a second start, must not wait on it. Field by field: replacing the struct would replace the lock.
+	job.proc, job.kind, job.running, job.done, job.ok = nil, req.Kind, true, false, false
+	job.url, job.code, job.err, job.reason, job.lines = "", "", "", "", []string{}
+	job.mu.Unlock()
+
 	p, err := s.cfg.SignInStart(req.Kind)
+
+	job.mu.Lock()
 	if err != nil {
+		job.running, job.kind = false, ""
+		job.mu.Unlock()
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Field by field: replacing the struct would replace the lock this holds.
-	job.proc, job.kind, job.running, job.done, job.ok = p, req.Kind, true, false, false
-	job.url, job.code, job.err, job.reason, job.lines = "", "", "", "", []string{}
+	job.proc = p
+	// A cancel that came while it was starting could only mark the job: the command is ended now it exists.
+	cancelled := job.reason != ""
+	view := job.viewLocked()
+	job.mu.Unlock()
 	go job.follow(p)
+	if cancelled {
+		p.Stop()
+	}
 	time.AfterFunc(signInJobLimit, func() {
 		job.mu.Lock()
 		stillThis := job.proc == p && job.running
@@ -159,12 +205,12 @@ func (s *Server) signInStart(w http.ResponseWriter, r *http.Request) {
 			p.Stop()
 		}
 	})
-	writeJSON(w, http.StatusOK, job.viewLocked())
+	writeJSON(w, http.StatusOK, view)
 }
 
 // viewLocked is view for a caller that holds mu.
 func (j *signInJob) viewLocked() jobView {
-	return jobView{Kind: j.kind, Running: j.running, Done: j.done, OK: j.ok, URL: j.url, Code: j.code,
+	return jobView{Kind: j.kind, Running: j.running, Done: j.done, OK: j.ok, URL: j.url, URLKnown: j.urlKnown, Code: j.code,
 		Lines: append([]string{}, j.lines...), Error: j.err}
 }
 
@@ -185,7 +231,7 @@ func (s *Server) signInCode(w http.ResponseWriter, r *http.Request) {
 	job.mu.Lock()
 	p, running := job.proc, job.running
 	job.mu.Unlock()
-	if !running {
+	if !running || p == nil {
 		writeError(w, http.StatusConflict, "no sign-in is waiting for a code")
 		return
 	}
@@ -204,7 +250,8 @@ func (s *Server) signInCancel(w http.ResponseWriter, r *http.Request) {
 		job.reason = "cancelled"
 	}
 	job.mu.Unlock()
-	if running {
+	// Without a process yet (still starting), start ends it once it has one.
+	if running && p != nil {
 		p.Stop()
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"cancelled": running})

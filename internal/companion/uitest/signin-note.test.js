@@ -34,7 +34,6 @@ test('a signed-out agent is told to sign in from the Admin tab, with a button th
     const note = errorNote(p)
     assert.match(note.textContent, /isn't signed in/i)
     assert.doesNotMatch(note.textContent, /terminal/i, 'it still sends the user to a terminal')
-    assert.equal(p.calls.filter((c) => c.path === '/api/signin').length, 2, 'the sign-ins were not looked at again for the failure')
     await p.click(note.querySelector('button'))
     assert.equal(p.$('panel-admin').hidden, false)
     assert.equal(p.$('panel-conversation').hidden, true)
@@ -47,5 +46,56 @@ test('where the host has no sign-in card, the note still says to sign in in a te
     const note = errorNote(p)
     assert.match(note.textContent, /terminal/i)
     assert.equal(note.querySelector('button'), null)
+  } finally { p.close() }
+})
+
+// Old failures are drawn with the conversation, each one a look at the host (an sbx call and an exec into the sandbox):
+// they are asked about together, not one after another.
+async function pageWithEvents(events, clock) {
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, admin: true, signin: true, signinStart: true, attention: {} },
+      '/api/admin': { state: 'running', info: '' },
+      '/api/signin': { agent: 'claude', docker: { state: 'signed-in', manual: [] }, agentSignIn: { state: 'signed-out', manual: [] } },
+      '/api/signin/job': { kind: '', lines: [] },
+      '/api/conversation': (call) => {
+        const after = Number(new URLSearchParams(call.query).get('after') || 0)
+        return { events: events.filter((e) => e.seq > after), last: events.length, running: false }
+      },
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+    before: (w) => { w.Date.now = () => clock.now },
+  })
+  return p
+}
+
+const failure = (seq) => ({ seq, kind: 'agent', agent: { type: 'assistant', error: 'authentication_failed', message: { content: [{ type: 'text', text: 'Not logged in' }] } } })
+const looks = (p) => p.calls.filter((c) => c.path === '/api/signin').length
+
+test('several failures drawn together cause one more look, not one each', async () => {
+  const clock = { now: 1_000_000 }
+  const events = [{ seq: 1, kind: 'user', text: 'hi' }]
+  const p = await pageWithEvents(events, clock)
+  try {
+    await p.settle()
+    assert.equal(looks(p), 1, 'the look at page load')
+    clock.now += 60_000
+    events.push(failure(2), failure(3), failure(4))
+    await p.every('pollConversation')
+    assert.equal(looks(p), 2, 'looks: ' + looks(p))
+  } finally { p.close() }
+})
+
+test('a failure soon after a look does not cause another', async () => {
+  const clock = { now: 1_000_000 }
+  const events = [{ seq: 1, kind: 'user', text: 'hi' }]
+  const p = await pageWithEvents(events, clock)
+  try {
+    await p.settle()
+    clock.now += 2_000
+    events.push(failure(2))
+    await p.every('pollConversation')
+    assert.equal(looks(p), 1)
   } finally { p.close() }
 })
