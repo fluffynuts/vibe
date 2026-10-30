@@ -396,6 +396,13 @@
   // How long "Restarted" is shown before the page reloads by itself, to be read.
   const POWER_RELOAD_AFTER_MS = 2000
 
+  // closeThisTab closes the tab, which a browser allows only for one a script opened: when this one stays (the next line
+  // runs), it says so in into, rather than being a button that did nothing.
+  function closeThisTab(into) {
+    window.close()
+    into.textContent = "Your browser won't let a page close its own tab: close this tab yourself."
+  }
+
   // showPowerProgress shows what the action says as it runs, from the log
   // vibe keeps. It ends in one of three ways, told in words: vibe has gone
   // (a stop), vibe is back under a new boot (a restart), or the action ended
@@ -421,6 +428,7 @@
     let closable = !refreshes
     const buttons = (close, reload) => { closeButton.hidden = !close; reloadButton.hidden = !reload; closable = close }
     buttons(!refreshes, false)
+    closeButton.textContent = 'Close'
     $('power-end').textContent = refreshes ? 'This page will refresh by itself when vibe has restarted.' : ''
     dialog.oncancel = (ev) => { if (!closable) ev.preventDefault() }
     let next = 0
@@ -472,7 +480,15 @@
       } catch (e) {
         reached(false)
         away += 1
-        if (own && action === 'stop' && away >= 2) { end('vibe has ended. What it said is above; the sandbox is stopped when it says so.'); buttons(true, false) }
+        if (own && action === 'stop' && away >= 2) {
+          end('vibe has ended. What it said is above; the sandbox is stopped when it says so.')
+          buttons(true, false)
+          // Stopped on purpose, from here: Close closes the tab, as far as the browser lets it.
+          offline.stoppedHere = true
+          showGlass()
+          closeButton.textContent = 'Close this tab'
+          closeButton.onclick = () => closeThisTab($('power-end'))
+        }
       } finally {
         asking = false
       }
@@ -717,7 +733,7 @@
   // What the page shows while vibe isn't there: a cross on its icon, and
   // frosted glass over everything, as nothing on it can work. The glass can
   // be dismissed until vibe is back; the cross and the status stay.
-  const offline = { down: false, dismissed: false }
+  const offline = { down: false, dismissed: false, stoppedHere: false }
   const BEHIND_GLASS = ['.top', '#tabs', '#banner', 'main']
 
   function disconnected(down) {
@@ -727,8 +743,8 @@
     offline.dismissed = false
     favicon.down = down
     drawFavicon()
+    if (!down) offline.stoppedHere = false
     if (down) {
-      $('offline-text').textContent = offlineText()
       // Not the progress of a stop or restart, which is what is watched while vibe is away.
       for (const d of document.querySelectorAll('dialog[open]')) if (d.id !== 'power-progress') d.close('cancel')
     }
@@ -749,6 +765,13 @@
   function showGlass() {
     const shown = offline.down && !offline.dismissed
     $('offline').hidden = !shown
+    // What it says depends on whether the user stopped vibe from here, which may be known only after it went.
+    $('offline-dismiss').textContent = offline.stoppedHere ? 'Close this tab' : 'Dismiss until it reconnects'
+    if (offline.down) {
+      $('offline-text').textContent = offline.stoppedHere
+        ? 'You stopped vibe from this page. You can close this tab; run vibe again to come back.'
+        : offlineText()
+    }
     for (const sel of BEHIND_GLASS) {
       const node = document.querySelector(sel)
       if (node) node.inert = shown
@@ -6723,7 +6746,11 @@
   document.addEventListener('visibilitychange', tick)
   state.timer = setInterval(tick, POLL_MS)
   setInterval(ping, PING_MS)
-  $('offline-dismiss').addEventListener('click', () => { offline.dismissed = true; showGlass() })
+  $('offline-dismiss').addEventListener('click', () => {
+    if (offline.stoppedHere) return closeThisTab($('offline-text'))
+    offline.dismissed = true
+    showGlass()
+  })
   $('page-reload').addEventListener('click', () => location.reload())
 
   setLink('connecting', 'connecting…')

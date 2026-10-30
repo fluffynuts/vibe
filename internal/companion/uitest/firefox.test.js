@@ -475,6 +475,27 @@ test('the power menu stays on the page at every width, with a long reason beside
   }
 })
 
+// Every entry runs the width of the menu, so that the one under the pointer is lit across it, not as far as its words.
+test('every power menu entry spans the width of the menu', async () => {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 700 } })
+  try {
+    await page.goto(URL)
+    await page.click('#link')
+    await page.evaluate(() => { document.getElementById('power-actions').hidden = false })
+    const widths = await page.evaluate(() => {
+      const menu = document.getElementById('power-menu')
+      const style = getComputedStyle(menu)
+      const inner = menu.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth)
+      const items = [...menu.querySelectorAll('[role=menuitem]')].filter((el) => el.getBoundingClientRect().width > 0)
+      return { inner, items: items.map((el) => [el.id || el.textContent.trim(), el.getBoundingClientRect().width]) }
+    })
+    assert.ok(widths.items.length >= 4, 'the menu shows ' + JSON.stringify(widths.items))
+    for (const [name, width] of widths.items) {
+      assert.ok(Math.abs(width - widths.inner) < 1, `${name} is ${width}px wide in a menu ${widths.inner}px wide inside`)
+    }
+  } finally { await page.close() }
+})
+
 // The status of the folder's git at the top of the page is read as the command-line prompt's is (powerline's):
 // what is dirty, in yellow; what is pushed or kept, in green; what is new, in light blue; what is wrong, in red.
 test("the git status's parts have the prompt's colours, in the light and the dark theme", async () => {

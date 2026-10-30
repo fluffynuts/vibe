@@ -86,7 +86,7 @@ body {
 .power-menu[hidden] { display: none; }
 .power-menu hr { width: 100%; margin: 4px 0; border: 0; border-top: 1px solid var(--line); }
 .power-status { padding: 4px 8px; color: var(--muted); font-size: 12px; }
-.power-item { display: flex; align-items: flex-start; gap: 8px; padding: 4px 8px; border: 0; border-radius: 4px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.power-item { box-sizing: border-box; width: 100%; display: flex; align-items: flex-start; gap: 8px; padding: 4px 8px; border: 0; border-radius: 4px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .power-item:hover:not(:disabled), .power-item:focus-visible { background: var(--row-hover); }
 .power-item:disabled { color: var(--muted); cursor: default; }
 .power-text { display: flex; flex-direction: column; align-items: flex-start; }
