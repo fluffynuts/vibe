@@ -5427,6 +5427,7 @@
 
   async function sendPrompt() {
     const input = $('convo-input')
+    resolveTrailingEmoticon(input)
     const prompt = input.value.trim()
     if (!prompt || convo.running || gate.active) return
     if (await holdForPackages(prompt)) return
@@ -5919,7 +5920,7 @@
         : [found.slice(0, at), el('mark', { text: found.slice(at, at + q.length) }), found.slice(at + q.length)]
       const item = el('li', { id: 'convo-emoji-' + i, role: 'option', 'data-name': e.name, 'aria-selected': String(i === emojiState.at) },
         el('span', { class: 'glyph', text: e.char, 'aria-hidden': 'true' }), ':', ...label, ':',
-        e.alias ? el('span', { class: 'alias', text: e.name }) : null)
+        e.alias ? el('span', { class: 'alias', text: e.name }) : e.emoticon ? el('span', { class: 'alias', text: e.emoticon }) : null)
       // mousedown, not click: the prompt keeps the focus.
       item.addEventListener('mousedown', (ev) => { ev.preventDefault(); acceptEmoji(i) })
       return item
@@ -6016,17 +6017,36 @@
     putEmoji(word.start, picked.char, true)
   }
 
+  // resolveEmoticonAtCaret turns an emoticon that ends at the cursor into its emoji, for the Enter that follows it.
+  function resolveEmoticonAtCaret(input) {
+    if (!emojiState.on || !window.vibeEmoji || input.selectionStart !== input.selectionEnd) return
+    const end = input.selectionStart
+    const found = window.vibeEmoji.emoticonBefore(input.value, end)
+    if (found) replaceInPrompt(input, found.start, end, found.char)
+  }
+
+  // resolveTrailingEmoticon does the same for an emoticon the prompt ends with, wherever the cursor is: a message ending in
+  // :) is meant as the emoji, and is sent as it.
+  function resolveTrailingEmoticon(input) {
+    if (!emojiState.on || !window.vibeEmoji) return
+    const end = input.value.replace(/\s+$/, '').length
+    const found = end > 0 ? window.vibeEmoji.emoticonBefore(input.value, end) : null
+    if (found) replaceInPrompt(input, found.start, end, found.char)
+  }
+
   function setUpEmoji() {
     const input = $('convo-input')
-    // Ahead of the prompt's other keys, as the slash commands': while the list is open the arrows, Tab and Escape are its
-    // (Escape would otherwise stop the agent). Enter is not: it is a new line, so that ":D" and Enter is just that.
+    // Ahead of the prompt's other keys, as the slash commands': while the list is open the arrows, Tab, Enter and Escape are its
+    // (Escape would otherwise stop the agent). With it shut, Enter after an emoticon turns it into its emoji, and is then a
+    // new line as always.
     input.addEventListener('keydown', (ev) => {
+      if (!emojiState.open && ev.key === 'Enter' && !ev.isComposing) resolveEmoticonAtCaret(input)
       if (!emojiState.open || ev.isComposing) return
       const plain = !ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey
       let handled = true
       if (ev.key === 'ArrowDown' && plain) moveEmoji(1)
       else if (ev.key === 'ArrowUp' && plain) moveEmoji(-1)
-      else if (ev.key === 'Tab' && plain && emojiState.shown.length) acceptEmoji(emojiState.at)
+      else if ((ev.key === 'Tab' || ev.key === 'Enter') && plain && emojiState.shown.length) acceptEmoji(emojiState.at)
       else if (ev.key === 'Escape') closeEmoji()
       else handled = false
       if (handled) { ev.preventDefault(); ev.stopImmediatePropagation() }
@@ -6036,6 +6056,19 @@
       if (emojiState.on && window.vibeEmoji && ev.inputType === 'insertText' && ev.data === ':' && input.selectionStart === input.selectionEnd) {
         const done = window.vibeEmoji.closing(input.value, input.selectionStart)
         if (done) { putEmoji(done.start, done.char, false); return }
+      }
+      // The space that finishes an emoticon turns it into its emoji, and stays where it was typed.
+      if (emojiState.on && window.vibeEmoji && ev.inputType === 'insertText' && ev.data === ' ' && input.selectionStart === input.selectionEnd) {
+        const end = input.selectionStart - 1
+        const found = end > 0 ? window.vibeEmoji.emoticonBefore(input.value, end) : null
+        if (found && input.value[end] === ' ') {
+          replaceInPrompt(input, found.start, end, found.char)
+          const caret = found.start + found.char.length + 1
+          input.setSelectionRange(caret, caret)
+          promptChanged()
+          closeEmoji()
+          return
+        }
       }
       updateEmoji(true)
     })

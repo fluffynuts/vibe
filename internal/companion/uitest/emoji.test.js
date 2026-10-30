@@ -218,3 +218,61 @@ test('every name has the shape of one, every character is an emoji and not lette
   }
   assert.deepEqual([...aliases], [], 'aliases that are also names')
 })
+
+// Emoticons: a few, converted when the word is finished. Every one is a way for ordinary text to change, so they start a word,
+// end it, and are not in code.
+test('the emoticons stand for their emoji', () => {
+  for (const [emoticon, char] of [[':D', '😀'], [':)', '🙂'], ['(:', '🙂'], [':(', '🙁'], [':/', '😕'], [':P', '😛'], [';)', '😉'], [":'(", '😢'], ['<3', '❤️']]) {
+    const text = 'ok ' + emoticon
+    assert.deepEqual(emoji.emoticonBefore(text, text.length), { start: 3, char }, emoticon)
+  }
+})
+
+test('letters in an emoticon may be either case', () => {
+  assert.equal(emoji.emoticonBefore('ok :d', 5).char, '😀')
+  assert.equal(emoji.emoticonBefore('ok :p', 5).char, '😛')
+})
+
+test('one at the start of the text, or after a space or a newline, is one', () => {
+  assert.equal(emoji.emoticonBefore(':)', 2).char, '🙂')
+  assert.equal(emoji.emoticonBefore('a\n:)', 4).char, '🙂')
+  assert.equal(emoji.emoticonBefore('a\t:)', 4).char, '🙂')
+})
+
+test('what is not at the start of a word is not an emoticon: URLs, paths, times, keys', () => {
+  for (const text of ['http://x.com', 'see http:/', 'C:/Users', 'a:/b', 'Re:D', 'key:D', '3:)', '12:(', 'x<3', 'a;)', 'foo:P']) {
+    assert.equal(emoji.emoticonBefore(text, text.length), null, text)
+  }
+})
+
+test('one is only the end of the text up to where it is asked: the earlier ones are left', () => {
+  const text = 'a :) b :D'
+  assert.equal(emoji.emoticonBefore(text, 4).char, '🙂')
+  assert.equal(emoji.emoticonBefore(text, text.length).char, '😀')
+  assert.equal(emoji.emoticonBefore(text, 6), null)
+})
+
+test('in code, an emoticon is not one', () => {
+  assert.equal(emoji.emoticonBefore('use `a :)', 9), null)
+  assert.equal(emoji.emoticonBefore('```\nx :D', 8), null)
+  assert.equal(emoji.emoticonBefore(':(){ :|:& };:', 3), null, 'the fork bomb: :( is followed by ), and is at the start, but ")" is no end of a word')
+})
+
+test('a long one is taken in preference to a short one it ends with', () => {
+  assert.equal(emoji.emoticonBefore("ok :'(", 6).char, '😢')
+})
+
+test('(: is an emoticon at the end of a word, and still the start of a name when letters follow', () => {
+  assert.equal(emoji.emoticonBefore('go (:', 5).char, '🙂')
+  assert.deepEqual(emoji.at('go (:roc', 8), { start: 4, query: 'roc' })
+})
+
+test('typing :D or :P or :O, the emoticon is the first thing offered', () => {
+  const d = emoji.find('D')[0]
+  assert.equal(d.name, 'grinning')
+  assert.equal(d.emoticon, ':D')
+  assert.equal(emoji.find('p')[0].char, '😛')
+  assert.equal(emoji.find('O')[0].char, '😮')
+  assert.equal(emoji.find('d', 8).filter((e) => e.name === 'grinning').length, 1, 'listed twice')
+  assert.equal(emoji.find('ro')[0].emoticon, undefined, 'a name that is not an emoticon got one')
+})

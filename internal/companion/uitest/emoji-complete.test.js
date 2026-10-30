@@ -70,15 +70,28 @@ test('Tab puts the character in place of what was typed, with a space after it, 
   } finally { p.close() }
 })
 
-// Enter is the prompt's own (a new line): only Tab picks, so that ":D" and Enter is just that, with one letter enough to open
-// the list.
-test('Enter is left alone while the list is open: it is a new line, not a pick', async () => {
+// Enter picks again: ":D" and Enter is 😀, which is what was meant, now that the emoticon is what the list offers first.
+test('Enter picks, as Tab does, and is then neither a new line nor a send', async () => {
   const p = await pageWith()
   try {
     await typeText(p, ':tad')
     const ev = key(p, 'Enter')
-    assert.equal(ev.defaultPrevented, false, 'Enter was taken from the prompt')
-    assert.equal(input(p).value, ':tad')
+    assert.equal(ev.defaultPrevented, true)
+    assert.equal(input(p).value, '🎉 ')
+    assert.deepEqual(p.calls.filter((c) => c.method === 'POST' && c.path !== '/api/awake').map((c) => c.path), [], 'it sent the prompt')
+  } finally { p.close() }
+})
+
+test(':D and Enter is the grinning face, the emoticon first in the list and marked as one', async () => {
+  const p = await pageWith()
+  try {
+    await typeText(p, 'fine :D')
+    const first = list(p).querySelector('li[role=option]')
+    assert.equal(first.dataset.name, 'grinning')
+    assert.match(first.textContent, /😀/)
+    assert.match(first.textContent, /:D/)
+    key(p, 'Enter')
+    assert.equal(input(p).value, 'fine 😀 ')
   } finally { p.close() }
 })
 
@@ -95,16 +108,91 @@ test('one letter opens the list, and +1 does too', async () => {
   } finally { p.close() }
 })
 
-test('a smiley typed through and sent with Ctrl+Enter is sent as it was written', async () => {
+// Emoticons: converted when the word is finished (a space, Enter, or the prompt sent), never where they are not one.
+async function typeAnd(p, before, char, data = char) {
+  input(p).value = before + char
+  input(p).setSelectionRange((before + char).length, (before + char).length)
+  input(p).dispatchEvent(new p.window.InputEvent('input', { bubbles: true, inputType: 'insertText', data }))
+}
+
+test('an emoticon is turned into its emoji when the space after it is typed', async () => {
   const p = await pageWith()
   try {
-    await typeText(p, 'fine :D')
-    assert.equal(list(p).hidden, false)
+    await typeAnd(p, 'ok :)', ' ')
+    assert.equal(input(p).value, 'ok 🙂 ')
+    assert.equal(input(p).selectionStart, 'ok 🙂 '.length)
+    await typeAnd(p, '(: ', 'x')
+    assert.equal(input(p).value, '(: x', 'a (: that was not at the end of the word it is in was changed')
+    await typeAnd(p, '(:', ' ')
+    assert.equal(input(p).value, '🙂 ')
+    await typeAnd(p, 'sad :/', ' ')
+    assert.equal(input(p).value, 'sad 😕 ')
+    await typeAnd(p, 'wink ;)', ' ')
+    assert.equal(input(p).value, 'wink 😉 ')
+    await typeAnd(p, 'love <3', ' ')
+    assert.equal(input(p).value, 'love ❤️ ')
+  } finally { p.close() }
+})
+
+test('it is left alone where it is not an emoticon: a URL, a path, code', async () => {
+  const p = await pageWith()
+  try {
+    for (const before of ['see http:/', 'C:/', 'at 12:(', 'use `a :)', 'x<3']) {
+      await typeAnd(p, before, ' ')
+      assert.equal(input(p).value, before + ' ', before)
+    }
+  } finally { p.close() }
+})
+
+test('Enter after an emoticon turns it into the emoji, and goes on to be a new line', async () => {
+  const p = await pageWith()
+  try {
+    input(p).value = 'ok :)'
+    input(p).setSelectionRange(5, 5)
+    const ev = key(p, 'Enter')
+    assert.equal(input(p).value, 'ok 🙂')
+    assert.equal(ev.defaultPrevented, false, 'the new line was taken')
+  } finally { p.close() }
+})
+
+test('an emoticon the prompt ends with is turned into the emoji when it is sent, by Ctrl+Enter or the button', async () => {
+  for (const send of [(p) => key(p, 'Enter', { ctrlKey: true }), (p) => p.$('convo-form').dispatchEvent(new p.window.Event('submit', { bubbles: true, cancelable: true }))]) {
+    const p = await pageWith()
+    try {
+      input(p).value = 'fine :D'
+      input(p).setSelectionRange(7, 7)
+      send(p)
+      await p.settle()
+      const sent = p.calls.filter((c) => c.method === 'POST' && c.path !== '/api/awake')
+      assert.ok(sent.some((c) => JSON.stringify(c.body).includes('fine 😀')), JSON.stringify(sent.map((c) => c.path + ' ' + JSON.stringify(c.body))))
+      assert.ok(!sent.some((c) => JSON.stringify(c.body).includes(':D')), 'the emoticon was sent as it was typed')
+    } finally { p.close() }
+  }
+})
+
+test('with the setting off no emoticon is changed, on a space, on Enter or when sent', async () => {
+  const p = await pageWith({ 'vibe-emoji-complete': 'off' })
+  try {
+    await typeAnd(p, 'ok :)', ' ')
+    assert.equal(input(p).value, 'ok :) ')
+    input(p).value = 'ok :)'
+    input(p).setSelectionRange(5, 5)
+    key(p, 'Enter')
+    assert.equal(input(p).value, 'ok :)')
     key(p, 'Enter', { ctrlKey: true })
     await p.settle()
     const sent = p.calls.filter((c) => c.method === 'POST' && c.path !== '/api/awake')
-    assert.ok(sent.length >= 1, 'the prompt was not sent: ' + JSON.stringify(p.calls.map((c) => c.method + ' ' + c.path)))
-    assert.ok(sent.some((c) => JSON.stringify(c.body).includes('fine :D')), JSON.stringify(sent.map((c) => c.path + ' ' + JSON.stringify(c.body))))
+    assert.ok(sent.some((c) => JSON.stringify(c.body).includes('ok :)')))
+  } finally { p.close() }
+})
+
+test('Escape keeps :D as it was typed in the prompt, until a space finishes it', async () => {
+  const p = await pageWith()
+  try {
+    await typeText(p, ':D')
+    key(p, 'Escape')
+    assert.equal(list(p).hidden, true)
+    assert.equal(input(p).value, ':D')
   } finally { p.close() }
 })
 

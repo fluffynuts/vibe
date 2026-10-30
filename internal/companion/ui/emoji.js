@@ -9,6 +9,8 @@
 //   named(name)           the character a complete name stands for, or ""
 //   place(measures)       where the list goes, from how the prompt measured: above the line the colon is on, its left edge
 //                         at the colon and kept inside the box; below the line when there is no room above
+//   emoticonBefore(text, end)  the emoticon (:) :D (: :( :/ :P ;) :'( <3) that ends at end, as { start, char }, or null: it starts a
+//                         word (after a space or the start), and isn't in code
 //   closing(text, caret)  the complete :name: that ends at caret, as { start, char }, or null: what typing the closing
 //                         colon turns into the character
 (function (root) {
@@ -762,6 +764,36 @@ bridge_at_night 🌉
     for (const alias of aliases) if (!byName.has(alias)) byName.set(alias, entry)
   }
 
+  // The emoticons that become an emoji when the word is finished. Few, on purpose: each is a way for ordinary text to change.
+  // Longest first, so that :'( is taken whole. The letters match in either case.
+  const EMOTICONS = [
+    { text: ":'(", name: 'cry', char: '😢' },
+    { text: ':D', name: 'grinning', char: '😀' },
+    { text: ':)', name: 'slightly_smiling_face', char: '🙂' },
+    { text: '(:', name: 'slightly_smiling_face', char: '🙂' },
+    { text: ':(', name: 'slightly_frowning_face', char: '🙁' },
+    { text: ':/', name: 'confused', char: '😕' },
+    { text: ':P', name: 'stuck_out_tongue', char: '😛' },
+    { text: ':O', name: 'open_mouth', char: '😮' },
+    { text: ';)', name: 'wink', char: '😉' },
+    { text: '<3', name: 'heart', char: '❤️' },
+  ]
+  // The ones that are also the start of a name typed after a colon (:D, :P, :O): offered first while it is typed.
+  const LEAD = new Map(EMOTICONS.filter((e) => /^:[A-Z]$/.test(e.text)).map((e) => [e.text[1].toLowerCase(), e]))
+
+  // emoticonBefore is the emoticon that ends at end of text: one that starts a word (after a space, a new line or the start:
+  // not in http:/ or C:/ or 12:( ), and is not in code.
+  function emoticonBefore(text, end) {
+    for (const e of EMOTICONS) {
+      const start = end - e.text.length
+      if (start < 0 || text.slice(start, end).toLowerCase() !== e.text.toLowerCase()) continue
+      if (start > 0 && !/\s/.test(text[start - 1])) continue
+      if (insideCode(text, start)) continue
+      return { start, char: e.char }
+    }
+    return null
+  }
+
   // find is the emoji with query in a name or an alias: those starting with it first, shortest first, so the closest
   // match leads; one found only by an alias says which.
   function find(query, limit) {
@@ -785,7 +817,10 @@ bridge_at_night 🌉
     const order = (a, b) => a.matched.length - b.matched.length || a.name.localeCompare(b.name)
     starts.sort(order)
     within.sort(order)
-    const all = starts.concat(within).map(({ name, char, alias }) => ({ name, char, alias }))
+    let all = starts.concat(within).map(({ name, char, alias }) => ({ name, char, alias }))
+    // :D is 😀 and not whatever else has a d in it: the emoticon leads, and says so.
+    const lead = LEAD.get(q)
+    if (lead) all = [{ name: lead.name, char: lead.char, alias: '', emoticon: lead.text }].concat(all.filter((e) => e.name !== lead.name))
     return typeof limit === 'number' ? all.slice(0, limit) : all
   }
 
@@ -854,7 +889,7 @@ bridge_at_night 🌉
       : { left, top: caretTop + n(m.caretHeight) + gap, below: true }
   }
 
-  const api = { find, at, named, closing, place, count: entries.length }
+  const api = { find, at, named, closing, place, emoticonBefore, count: entries.length }
   if (typeof module === 'object' && module.exports) module.exports = api
   else root.vibeEmoji = api
 })(this)

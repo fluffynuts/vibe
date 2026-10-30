@@ -597,9 +597,12 @@ you're looking at:
   in ``` (and put globs like `*.go` in backticks) to keep it as it is. **My prompts as Markdown**, in the
   Admin tab's **Settings** card, turns that off for your prompts, in that browser, if you'd rather see them as you typed them.
   Typing a colon and the start of an emoji's name in the prompt (`:roc`, `:+1`, `:D`) opens a list of the emoji it could be, at the
-  colon: **Tab** (or a click) puts the emoji in, the arrow keys choose another, **Escape** closes the list, and Enter is still a new
-  line; typing the closing colon of a whole name (`:tada:`) gives the emoji too, and Ctrl+Z undoes either. It stays out of code, URLs and
-  times like `12:30`. **Complete :emoji: names while I type**, beside the other setting, turns it off, in that browser.
+  colon: **Tab**, **Enter** or a click puts the emoji in, the arrow keys choose another and **Escape** closes the list, leaving
+  what you typed; typing the closing colon of a whole name (`:tada:`) gives the emoji too. A few emoticons become their emoji when
+  the word is finished, by a space, Enter or sending: `:D` 😀, `:)` and `(:` 🙂, `:(` 🙁, `:/` 😕, `:P` 😛, `;)` 😉, `:'(` 😢 and
+  `<3` ❤️ (`:D` leads the list, so Enter after it gives 😀). Only where one starts a word, so `http://`, `C:/` and `12:30` are left
+  as they are, and never in code. Ctrl+Z undoes any of it. **Emoji: complete :names: and turn :) :D into emoji**, beside the other
+  setting, turns all of it off, in that browser.
   Each message shows the time it was said, and each prompt you send carries ticks like a chat message: one grey tick once vibe has
   it, two grey ticks once it has reached the sandbox, and two blue ticks once the agent has started
   answering. If it has been answering for an hour without a word, the pane says it may be stuck (it's

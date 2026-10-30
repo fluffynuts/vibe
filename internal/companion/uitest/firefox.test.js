@@ -503,6 +503,49 @@ test('Ctrl+Z after picking a slash command gives back what was typed', async () 
   } finally { await page.close() }
 })
 
+// Emoticons, typed by hand in a real browser: finished by a space or Enter, undone by Ctrl+Z.
+test('typing an emoticon and a space gives the emoji, and Ctrl+Z gives the emoticon back', async () => {
+  const page = await promptPage(1200)
+  try {
+    await page.focus('#convo-input')
+    await page.keyboard.type('fine :) ')
+    assert.equal(await page.inputValue('#convo-input'), 'fine 🙂 ')
+    await page.keyboard.press('Control+z')
+    assert.equal(await page.inputValue('#convo-input'), 'fine :) ')
+  } finally { await page.close() }
+})
+
+test(':D and Enter is the grinning face, and a smiley mid-sentence is left alone until it is finished', async () => {
+  const page = await promptPage(1200)
+  try {
+    await page.focus('#convo-input')
+    await page.keyboard.type('great :D')
+    await page.waitForSelector('#convo-emoji:not([hidden]) li')
+    assert.equal(await page.inputValue('#convo-input'), 'great :D', 'changed before it was finished')
+    await page.keyboard.press('Enter')
+    assert.equal(await page.inputValue('#convo-input'), 'great 😀 ')
+  } finally { await page.close() }
+})
+
+test('Enter after :) is the emoji and then a new line', async () => {
+  const page = await promptPage(1200)
+  try {
+    await page.focus('#convo-input')
+    await page.keyboard.type('nice :)')
+    await page.keyboard.press('Enter')
+    assert.equal(await page.inputValue('#convo-input'), 'nice 🙂\n')
+  } finally { await page.close() }
+})
+
+test('a URL, a path and code are typed as they are, with the setting on', async () => {
+  const page = await promptPage(1200)
+  try {
+    await page.focus('#convo-input')
+    await page.keyboard.type('see http://example.com and C:/Users and `a :) ` ok ')
+    assert.equal(await page.inputValue('#convo-input'), 'see http://example.com and C:/Users and `a :) ` ok ')
+  } finally { await page.close() }
+})
+
 // viewerPage opens the Conversation tab on a conversation that mentions the first of files (path -> text), and
 // the file viewer open on it, width pixels wide. The host is stubbed: it has a folder to show files from.
 async function viewerPage(files, width) {
