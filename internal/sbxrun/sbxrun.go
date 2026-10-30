@@ -676,3 +676,9 @@ func RemoveGitHubSecret(name string) error {
 	}
 	return nil
 }
+
+// Probe runs sbx with args and returns what it printed, stdout and stderr together, for reading one answer from it. It
+// is given no input, so a question sbx asks fails rather than waits; it is ended when ctx ends.
+func Probe(ctx context.Context, args ...string) (string, error) {
+	return captureOutContext(ctx, args...)
+}

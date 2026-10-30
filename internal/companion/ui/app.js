@@ -862,6 +862,9 @@
       state.manage = !!res.body.manage
       state.boot = res.body.boot || ''
       state.usage = !!res.body.usage
+      state.signin = !!res.body.signin
+      $('admin-signin').hidden = !state.signin
+      if (state.signin && state.tab === 'admin' && !signInShown.asked) loadSignIn()
       $('usage').hidden = !state.usage
       $('tab-admin').hidden = !state.admin
       $('tab-manage').hidden = !res.body.manage
@@ -1076,6 +1079,7 @@
       button.tabIndex = t === tab ? 0 : -1
     }
     if (tab === 'log') blockedSeen()
+    if (tab === 'admin' && state.signin) loadSignIn()
     if (tab === 'review') reviewSeen()
     // A comment asked for, not yet gone to, isn't gone to once you're elsewhere.
     else reviewView.goTo = null
@@ -3171,6 +3175,50 @@
   // What the tab last showed: the server's answer, and the features as the
   // profile has them (to tell what the user has ticked since).
   const adminView = { data: null, features: '', jobLines: -1 }
+
+  // --- signing in -------------------------------------------------------------
+
+  // What the Sign-in card shows: whether sbx, and the agent, can be used, read by the host when the Admin tab is
+  // opened and when Check now is pressed (each asks sbx, which can be slow, so it isn't polled).
+  const signInShown = { asked: false, checking: false }
+  const SIGNIN_WORDS = { 'signed-in': ['Signed in', 'ok'], 'signed-out': ['Signed out', 'bad'], 'needs-policy': ['Needs a network policy', 'bad'], unknown: ['Unknown', ''], unsupported: ['Not checked', ''] }
+
+  function renderSignInPart(id, name, part) {
+    const [word, cls] = SIGNIN_WORDS[part.state] || SIGNIN_WORDS.unknown
+    const box = $(id)
+    const steps = (part.manual || []).map((line) => el('li', { text: line }))
+    box.replaceChildren(
+      el('div', { class: 'signin-head' }, el('strong', { text: name }), el('span', { class: 'pill ' + cls, text: word })),
+      part.detail ? el('p', { class: 'note muted', text: part.detail }) : null,
+      steps.length ? el('details', {}, el('summary', { text: 'Do it yourself' }), el('ol', { class: 'steps' }, ...steps)) : null)
+  }
+
+  async function loadSignIn() {
+    if (signInShown.checking) return
+    signInShown.checking = true
+    signInShown.asked = true
+    const status = $('signin-status')
+    $('signin-check').disabled = true
+    try {
+      const res = await api('/api/signin', { timeout: 30000 })
+      reached(true)
+      if (!res.ok) {
+        status.textContent = "Couldn't check: " + (res.body.error || 'HTTP ' + res.status)
+        status.hidden = false
+        return
+      }
+      status.hidden = true
+      renderSignInPart('signin-docker', 'Docker (sbx)', res.body.docker || { state: 'unknown' })
+      renderSignInPart('signin-agent', res.body.agent || 'The agent', res.body.agentSignIn || { state: 'unknown' })
+    } catch (e) {
+      status.textContent = "Couldn't check: " + (e && e.message ? e.message : 'the host did not answer')
+      status.hidden = false
+    } finally {
+      signInShown.checking = false
+      $('signin-check').disabled = false
+    }
+  }
+  $('signin-check').addEventListener('click', loadSignIn)
 
   async function loadAdmin() {
     try {

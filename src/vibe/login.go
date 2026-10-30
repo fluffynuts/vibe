@@ -2,11 +2,11 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"time"
 
 	"vibe/internal/sbxrun"
+	"vibe/internal/signin"
 )
 
 // loginCheckWithin bounds asking the sandbox whether its agent is logged in.
@@ -34,17 +34,7 @@ func warnIfAgentLoggedOut(name, agent string) {
 
 // agentLoggedOut says, from sbx's credential mode and what 'claude auth
 // status' printed (ok when it could be asked), that the agent is certainly
-// logged out. With a mode other than none, sbx may be handing the agent
-// credentials itself, which the status may not know of.
+// logged out.
 func agentLoggedOut(mode, status string, ok bool) bool {
-	if !ok || (mode != "" && mode != "none") {
-		return false
-	}
-	var s struct {
-		LoggedIn *bool `json:"loggedIn"`
-	}
-	if json.Unmarshal([]byte(strings.TrimSpace(status)), &s) != nil || s.LoggedIn == nil {
-		return false
-	}
-	return !*s.LoggedIn
+	return signin.Claude(mode, status, ok).State == signin.SignedOut
 }
