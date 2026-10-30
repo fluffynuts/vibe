@@ -127,6 +127,9 @@ type Config struct {
 	// SignInStart starts the sign-in of kind ("docker" for sbx, "agent" for the sandbox's agent) for the card's buttons, and
 	// gives its running command; an error says why it can't. Nil means the card only shows how to sign in by hand.
 	SignInStart func(kind string) (LoginProcess, error)
+	// SignInAPIKey keeps an Anthropic API key in sbx, for every sandbox, as the card's other way to sign Claude in; nil means
+	// the card doesn't offer it.
+	SignInAPIKey func(ctx context.Context, key string) error
 	// GitAuthor is the question of whether the agent is given the user's git
 	// author, which it can't commit without; nil means there is none to ask.
 	GitAuthor *GitAuthor
@@ -395,6 +398,7 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"GET /api/signin/job", s.serving(signInFeature, s.signInJobState)},
 		{"POST /api/signin/code", s.serving(signInFeature, s.signInCode)},
 		{"POST /api/signin/cancel", s.serving(signInFeature, s.signInCancel)},
+		{"POST /api/signin/apikey", s.serving(signInFeature, s.signInAPIKey)},
 		{"GET /api/power", s.serving(powerFeature, s.powerState)},
 		{"POST /api/power", s.serving(powerFeature, s.powerDo)},
 		{"GET /api/power/log", s.serving(powerFeature, s.powerLog)},
@@ -633,6 +637,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"usage":                 s.cfg.Usage != nil,
 		"signin":                s.cfg.SignIn != nil,
 		"signinStart":           s.cfg.SignIn != nil && s.cfg.SignInStart != nil,
+		"signinKey":             s.cfg.SignIn != nil && s.cfg.SignInAPIKey != nil,
 		// A page for no sandbox has only the Profiles tab.
 		"sandboxTabs": s.cfg.Sandbox != "",
 	})

@@ -887,6 +887,7 @@
       state.usage = !!res.body.usage
       state.signin = !!res.body.signin
       state.signinStart = !!res.body.signinStart
+      state.signinKey = !!res.body.signinKey
       $('admin-signin').hidden = !state.signin
       if (state.signin && !signInShown.asked) loadSignIn()
       $('usage').hidden = !state.usage
@@ -3224,8 +3225,38 @@
     box.replaceChildren(...[
       el('div', { class: 'signin-head' }, el('strong', { text: name }), el('span', { class: 'pill ' + cls, text: word }), go),
       part.detail ? el('p', { class: 'note muted', text: part.detail }) : null,
+      kind === 'agent' && state.signinKey ? signInKeyOption() : null,
       steps.length ? el('details', {}, el('summary', { text: 'Do it yourself' }), el('ol', { class: 'steps' }, ...steps)) : null,
     ].filter(Boolean))
+  }
+
+  // The other way to sign Claude in: an API key, for someone who has one and not a subscription. It is kept in sbx, which hands
+  // it to the agent: the key never enters the sandbox, and applies to every sandbox on this machine.
+  function signInKeyOption() {
+    const input = el('input', { type: 'password', autocomplete: 'off', spellcheck: 'false', placeholder: 'sk-ant-…', 'aria-label': 'An Anthropic API key' })
+    const use = el('button', { type: 'button', class: 'signin-key-go ghost', text: 'Use this key', onclick: () => useApiKey(input) })
+    return el('details', {}, el('summary', { text: 'Use an API key instead' }),
+      el('p', { class: 'note muted', text: 'For an Anthropic API key, rather than a Claude subscription. It is kept in sbx, which hands it to the agent: it never enters the sandbox. It applies to every sandbox on this machine.' }),
+      el('div', { class: 'bar' }, input, use))
+  }
+
+  function useApiKey(input) {
+    const key = input.value.trim()
+    if (!key) return
+    confirmThen({
+      title: 'Use this API key for every sandbox?',
+      text: 'This replaces how sbx signs Claude in for every sandbox on this machine, including a subscription sign-in it holds now.',
+      commandNote: '',
+      danger: true,
+      runLabel: 'Use this key',
+      started: 'API key kept in sbx. If a prompt still fails, restart the sandbox.',
+      run: async () => {
+        input.value = '' // not left on the page, whatever comes of it
+        const res = await api('/api/signin/apikey', { method: 'POST', body: JSON.stringify({ key }) })
+        if (res.ok) loadSignIn()
+        return res
+      },
+    })
   }
 
   function signInProblem(text) {

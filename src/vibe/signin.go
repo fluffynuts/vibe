@@ -109,3 +109,13 @@ func startSignIn(ctx context.Context, kind, agent string, s signInStarters) (com
 	}
 	return nil, fmt.Errorf("no sign-in of kind %q", kind)
 }
+
+// signInAPIKeyFor stores an API key for Claude in sbx, for every sandbox; only an agent that is Claude has one to give.
+func signInAPIKeyFor(agent string) func(ctx context.Context, key string) error {
+	return func(ctx context.Context, key string) error {
+		if agent != "claude" {
+			return fmt.Errorf("an API key for %s can't be stored from here yet: this sandbox's agent isn't Claude", agent)
+		}
+		return sbxrun.SetAnthropicKey(ctx, key)
+	}
+}

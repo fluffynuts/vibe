@@ -364,6 +364,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		GitAuthor:              gitAuthor,
 		SignIn:                 signInFor(name, agent),
 		SignInStart:            signInStartFor(name, agent),
+		SignInAPIKey:           signInAPIKeyFor(agent),
 		Packages:               packageDesk(desk),
 		PackageConfig:          workspaceConfig,
 		PackageSync:            packageSyncOf(packageSync),

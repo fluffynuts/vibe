@@ -715,3 +715,22 @@ func Login() error {
 	}
 	return nil
 }
+
+// SetAnthropicKey stores an Anthropic API key in sbx's secret store, for every sandbox: sbx's proxy adds it to the agent's
+// requests to Anthropic, and the key itself never enters a sandbox. It goes in on stdin, never on the command line, where
+// anyone on the machine could read it. sbx only overwrites a secret without asking when it is given with -t, so what was
+// held (an API key, or a subscription sign-in) goes first; there being none to remove is fine. What sbx says of a refusal
+// is in the error, with the key taken out of it, should sbx have echoed it.
+func SetAnthropicKey(ctx context.Context, key string) error {
+	cancellable(ctx, "secret", "rm", "anthropic", "-f").Run()
+	cmd := cancellable(ctx, "secret", "set", "anthropic")
+	cmd.Stdin = strings.NewReader(key)
+	var out capped
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := out.run(cmd); err != nil {
+		said := strings.TrimSpace(strings.ReplaceAll(out.String(), key, "…"))
+		return fmt.Errorf("sbx secret set anthropic: %w: %s", err, said)
+	}
+	return nil
+}

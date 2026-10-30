@@ -2,7 +2,9 @@ package companion
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -19,4 +21,35 @@ func (s *Server) signInState(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), signInWithin)
 	defer cancel()
 	writeJSON(w, http.StatusOK, s.cfg.SignIn(ctx))
+}
+
+// maxAPIKey is the longest key taken: they are about a hundred characters.
+const maxAPIKey = 4096
+
+// signInAPIKey gives the host the API key the user typed on the card, to keep in sbx. The key is in nothing said back, and
+// is taken out of an error should the host's carry it.
+func (s *Server) signInAPIKey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, `expected {"key": "..."}`)
+		return
+	}
+	key := strings.TrimSpace(req.Key)
+	if key == "" || len(key) > maxAPIKey || strings.ContainsAny(key, "\r\n") {
+		writeError(w, http.StatusBadRequest, "expected the key on one line")
+		return
+	}
+	if s.cfg.SignInAPIKey == nil {
+		writeError(w, http.StatusNotFound, "this page has no way to store a key")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), signInWithin)
+	defer cancel()
+	if err := s.cfg.SignInAPIKey(ctx, key); err != nil {
+		writeError(w, http.StatusInternalServerError, strings.ReplaceAll(err.Error(), key, "…"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"set": true})
 }
