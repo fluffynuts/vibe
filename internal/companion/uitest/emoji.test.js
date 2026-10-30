@@ -171,3 +171,50 @@ test('nothing measured (no layout) is placed at the start rather than at NaN', (
   const at = emoji.place({ caretLeft: NaN, caretTop: NaN, caretHeight: NaN, listWidth: 0, listHeight: 0, boxWidth: 0, roomAbove: NaN })
   assert.ok(Number.isFinite(at.left) && Number.isFinite(at.top), JSON.stringify(at))
 })
+
+// A code span doesn't run across a blank line, so one stray backtick costs the paragraph it is in, not the message.
+test('a stray backtick switches the picker off for its paragraph and no further', () => {
+  const text = 'the `oops\n\nthen :roc'
+  assert.deepEqual(emoji.at(text, text.length), { start: text.indexOf(':'), query: 'roc' })
+  const same = 'the `oops :roc'
+  assert.equal(emoji.at(same, same.length), null, 'inside the paragraph with the open backtick')
+})
+
+test('an open fence switches it off until it is closed, blank lines or not', () => {
+  const open = '```js\nconst a = 1\n\n:roc'
+  assert.equal(emoji.at(open, open.length), null)
+  const closed = '```js\nx\n```\n\n:roc'
+  assert.deepEqual(emoji.at(closed, closed.length), { start: closed.lastIndexOf(':'), query: 'roc' })
+})
+
+test('a closed span earlier, in the same paragraph, leaves the rest of it free', () => {
+  const text = 'use `x` and `y`, then :roc'
+  assert.deepEqual(emoji.at(text, text.length), { start: text.lastIndexOf(':'), query: 'roc' })
+  assert.equal(emoji.closing('a `b :tada:', 11), null)
+  assert.deepEqual(emoji.closing('a `b`\n\n:tada:', 13), { start: 7, char: '🎉' })
+})
+
+// The table is typed by hand: its shape is checked, so a typo is found here and not by whoever types the name.
+test('every name has the shape of one, every character is an emoji and not letters or spaces, and no alias is another name', () => {
+  const names = new Set()
+  const aliases = new Map()
+  for (const letter of 'abcdefghijklmnopqrstuvwxyz0123456789_+-'.split('')) {
+    for (const e of emoji.find(letter)) names.add(e.name + '\u0000' + e.char)
+  }
+  const entries = [...names].map((s) => s.split('\u0000'))
+  assert.ok(entries.length >= emoji.count, `only ${entries.length} found by letter, of ${emoji.count}`)
+  const seen = new Set()
+  for (const [name, char] of entries) {
+    assert.match(name, /^[a-z0-9_+-]+$/, `the name ${JSON.stringify(name)}`)
+    assert.ok(!/[A-Za-z\s]/.test(char), `${name}'s character ${JSON.stringify(char)} has letters or spaces in it`)
+    assert.ok(char.length > 0, name + ' has no character')
+    assert.ok(!seen.has(name), 'the name ' + name + ' is in the table twice')
+    seen.add(name)
+  }
+  for (const e of emoji.find('')) assert.fail('listed ' + e.name)
+  // An alias that is another entry's name would only ever be found as that name: one of them is a typo.
+  for (const name of seen) {
+    for (const e of emoji.find(name)) if (e.alias === name && seen.has(name)) aliases.set(name, e.name)
+  }
+  assert.deepEqual([...aliases], [], 'aliases that are also names')
+})

@@ -791,10 +791,16 @@ bridge_at_night 🌉
 
   const NAME_CHARS = /[a-z0-9_+-]/i
 
-  // insideCode says position pos of text is in an open `code span` (or fence): an odd number of backticks come before it.
+  // insideCode says position pos of text is in code: in a fence that has been opened and not closed (which may run across
+  // blank lines), or in a `code span` that has: an odd number of backticks since the last blank line. A span doesn't cross a
+  // blank line, so one stray backtick costs the paragraph it is in, not the rest of the message.
   function insideCode(text, pos) {
-    let ticks = 0
-    for (let i = 0; i < pos; i++) if (text[i] === '`') ticks++
+    const before = text.slice(0, pos)
+    const fences = before.match(/^ {0,3}(?:`{3,}|~{3,})/gm)
+    if (fences && fences.length % 2 === 1) return true
+    const blank = [...before.matchAll(/\n[ \t]*\n/g)].pop()
+    const paragraph = blank ? before.slice(blank.index + blank[0].length) : before
+    const ticks = paragraph.replace(/^ {0,3}(?:`{3,}|~{3,}).*$/gm, '').split('`').length - 1
     return ticks % 2 === 1
   }
 

@@ -87,7 +87,8 @@ func TestTheNotesAreReadAsTextWhateverLineEndingsJqUses(t *testing.T) {
 		t.Skip("no jq")
 	}
 	dir := t.TempDir()
-	script := "#!/bin/sh\n" + real + " \"$@\" | sed 's/$/\\r/'\n"
+	// Quoted: a jq under a path with a space is still the jq.
+	script := "#!/bin/sh\n'" + real + "' \"$@\" | sed 's/$/\\r/'\n"
 	if err := os.WriteFile(filepath.Join(dir, "jq"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

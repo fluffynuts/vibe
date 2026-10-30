@@ -423,9 +423,10 @@ test('at the right edge of the prompt the emoji list stays inside it, moved left
       assert.ok(b.list.right <= b.ta.right + 1, `at ${width}px the list reaches ${b.list.right}, past the prompt's ${b.ta.right}`)
       assert.ok(b.list.left >= b.ta.left - 1, `at ${width}px the list starts at ${b.list.left}, before the prompt's ${b.ta.left}`)
       const listWidth = b.list.right - b.list.left
-      if (put.colonX + listWidth > b.ta.right - b.ta.left) {
-        assert.ok(b.list.left < b.ta.left + put.colonX - 10, `at ${width}px the list starts at the colon (${b.list.left}) and would run past the edge: it should have moved left`)
-      }
+      // The one check that shows the clamping: it must not be skippable. If the colon is not near enough the edge for the list
+      // to have run past it, this tests nothing, and is to be fixed by a closer colon, not passed over.
+      assert.ok(put.colonX + listWidth > b.ta.right - b.ta.left, `at ${width}px the colon (${put.colonX}) is not near enough the edge for a ${listWidth}px list to run past it: this does not test the clamp`)
+      assert.ok(b.list.left < b.ta.left + put.colonX - 10, `at ${width}px the list starts at the colon (${b.list.left}) and would run past the edge: it should have moved left`)
     } finally { await page.close() }
   }
 })
@@ -458,6 +459,47 @@ test('a prompt that has scrolled puts the emoji list at the visible caret', asyn
     assert.ok(await page.evaluate(() => document.getElementById('convo-input').scrollTop > 0), 'the prompt did not scroll, so this tests nothing')
     const b = await listBox(page)
     assert.ok(b.list.bottom <= b.ta.bottom + 1 && b.list.bottom >= b.ta.top, `the list ends at ${b.list.bottom}, the prompt spans ${b.ta.top}..${b.ta.bottom}: not at the caret in view`)
+  } finally { await page.close() }
+})
+
+// Picking is an edit like any other: Ctrl+Z gives back what was typed, as it does for a person's own typing.
+test('Ctrl+Z after picking an emoji gives back the name that was typed', async () => {
+  const page = await promptPage(1200)
+  try {
+    await page.focus('#convo-input')
+    await page.keyboard.type('hello :roc')
+    await page.waitForSelector('#convo-emoji:not([hidden]) li')
+    await page.keyboard.press('Tab')
+    assert.equal(await page.inputValue('#convo-input'), 'hello 🚀 ')
+    await page.keyboard.press('Control+z')
+    assert.equal(await page.inputValue('#convo-input'), 'hello :roc')
+  } finally { await page.close() }
+})
+
+test('Ctrl+Z after a :name: turns into its emoji gives back the name', async () => {
+  const page = await promptPage(1200)
+  try {
+    await page.focus('#convo-input')
+    await page.keyboard.type('nice :tada:')
+    assert.equal(await page.inputValue('#convo-input'), 'nice 🎉')
+    await page.keyboard.press('Control+z')
+    assert.equal(await page.inputValue('#convo-input'), 'nice :tada:')
+  } finally { await page.close() }
+})
+
+test('Ctrl+Z after picking a slash command gives back what was typed', async () => {
+  const page = await promptPage(1200)
+  try {
+    await page.route(/\/api\/conversation\?/, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ events: [], last: 0, running: false, commands: ['review', 'rebase'], commandsSeq: 1 }) }))
+    await page.reload()
+    await page.click('#tab-conversation')
+    await page.focus('#convo-input')
+    await page.keyboard.type('/rev')
+    await page.waitForSelector('#convo-commands:not([hidden]) li')
+    await page.keyboard.press('Tab')
+    assert.equal(await page.inputValue('#convo-input'), '/review ')
+    await page.keyboard.press('Control+z')
+    assert.equal(await page.inputValue('#convo-input'), '/rev')
   } finally { await page.close() }
 })
 

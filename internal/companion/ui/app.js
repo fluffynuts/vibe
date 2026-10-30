@@ -5734,6 +5734,20 @@
   }
   setUpFind()
 
+  // replaceInPrompt puts text in place of what runs from start to end in the prompt, through the browser's own editing, so that
+  // Ctrl+Z undoes it as it would a person's typing: setting the textarea's value would clear its undo history. Where the editing
+  // path isn't there (it says so by returning false), the value is set instead. The cursor ends up after text.
+  function replaceInPrompt(input, start, end, text) {
+    input.focus()
+    input.setSelectionRange(start, end)
+    let done = false
+    try { done = document.execCommand('insertText', false, text) } catch (e) { done = false }
+    if (!done || input.value.slice(start, start + text.length) !== text) {
+      input.value = input.value.slice(0, start) + text + input.value.slice(end)
+    }
+    input.setSelectionRange(start + text.length, start + text.length)
+  }
+
   // --- completing slash commands -----------------------------------------
 
   // The slash commands the agent has (learned from it as it starts, so none
@@ -5834,10 +5848,8 @@
     const word = commandWord(input)
     const name = slash.shown[i]
     if (!word || !name) { closeCommands(); return }
-    const rest = input.value.slice(word.end).replace(/^[ \t]+/, '')
-    input.value = '/' + name + ' ' + rest
-    const caret = name.length + 2
-    input.setSelectionRange(caret, caret)
+    const lead = input.value.slice(word.end).match(/^[ \t]*/)[0].length
+    replaceInPrompt(input, 0, word.end + lead, '/' + name + ' ')
     promptChanged()
     closeCommands()
   }
@@ -5991,9 +6003,7 @@
     const end = input.selectionStart
     const after = input.value.slice(end)
     const gap = space && !/^\s/.test(after) ? ' ' : ''
-    input.value = input.value.slice(0, start) + char + gap + after
-    const caret = start + char.length + gap.length
-    input.setSelectionRange(caret, caret)
+    replaceInPrompt(input, start, end, char + gap)
     promptChanged()
     closeEmoji()
   }
