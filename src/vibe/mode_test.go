@@ -330,3 +330,45 @@ func TestAFavouriteHeadlessStartInAFolderWithNoSandboxSaysItMakesOneFirst(t *tes
 		t.Errorf("headless %v, createFirst %v, said %q", headless, createFirst, said)
 	}
 }
+
+// A mode nobody chose isn't switched for the user, but they are nudged to choose: a warning, never a question, so a
+// scripted start isn't held up.
+func TestAStartWithNoModeChosenWarnsAndGoesOnWithATerminal(t *testing.T) {
+	var headless bool
+	said := notesOf(func() {
+		var err error
+		if headless, _, err = startMode(favouriteHome(t, ""), cliargs.Args{}, "box", "/work", modeNone); err != nil {
+			t.Error(err)
+		}
+	})
+	if headless {
+		t.Error("an unset mode was started headless")
+	}
+	all := strings.Join(said, "\n")
+	for _, want := range []string{"mode", "vibe --setup", "headless", "terminal"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("the warning lacks %q: %q", want, all)
+		}
+	}
+}
+
+func TestAStartWithAModeChosenOrTypedSaysNothingOfIt(t *testing.T) {
+	for name, tc := range map[string]struct {
+		settings string
+		args     cliargs.Args
+	}{
+		"a favourite terminal": {"mode: terminal\n", cliargs.Args{}},
+		"--terminal typed":     {"", cliargs.Args{Terminal: true}},
+		"--headless typed":     {"", cliargs.Args{Headless: true}},
+		"deleting":             {"", cliargs.Args{Delete: true}},
+	} {
+		said := notesOf(func() {
+			if _, _, err := startMode(favouriteHome(t, tc.settings), tc.args, "box", "/work", modeNone); err != nil {
+				t.Error(err)
+			}
+		})
+		if len(said) != 0 {
+			t.Errorf("%s: said %q", name, said)
+		}
+	}
+}

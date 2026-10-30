@@ -159,6 +159,9 @@ func startMode(lay layout.Layout, args cliargs.Args, name, target string, ended 
 			return false, false, err
 		}
 		want.Favourite = favourite
+		if favourite == "" {
+			note("%s", "WARNING: no start mode is chosen, so vibe starts with a terminal. Run 'vibe --setup' to choose headless (only the companion page, no terminal) or terminal.")
+		}
 		if favourite == "headless" && !args.Rebuilds() {
 			if want.SandboxExists, err = sbxrun.Exists(name); err != nil {
 				return false, false, err
