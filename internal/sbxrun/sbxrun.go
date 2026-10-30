@@ -272,6 +272,8 @@ type Status struct {
 	// State is what sbx says of it, lowercased: "running", "stopped", or
 	// whatever else sbx reports; "" when sbx's output didn't say.
 	State string
+	// Workspaces are the host folders it has mounted, as sbx lists them: a path may end in :ro, for a read-only mount.
+	Workspaces []string
 }
 
 // List returns every sandbox sbx knows about and whether it is running.
@@ -303,8 +305,9 @@ func parseList(out string) ([]Status, error) {
 		return nil, nil
 	}
 	var sandboxes []struct {
-		Name   string `json:"name"`
-		Status string `json:"status"`
+		Name       string   `json:"name"`
+		Status     string   `json:"status"`
+		Workspaces []string `json:"workspaces"`
 	}
 	if err := json.Unmarshal([]byte(out), &sandboxes); err != nil {
 		return nil, fmt.Errorf("couldn't read what sbx ls --json printed (%v) — vibe may need updating for this sbx:\n%s", err, out)
@@ -312,7 +315,7 @@ func parseList(out string) ([]Status, error) {
 	statuses := make([]Status, 0, len(sandboxes))
 	for _, sb := range sandboxes {
 		state := strings.ToLower(sb.Status)
-		statuses = append(statuses, Status{Name: sb.Name, Running: state == "running", State: state})
+		statuses = append(statuses, Status{Name: sb.Name, Running: state == "running", State: state, Workspaces: sb.Workspaces})
 	}
 	return statuses, nil
 }

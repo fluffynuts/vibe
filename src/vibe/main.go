@@ -431,6 +431,14 @@ func run(argv []string) error {
 		}
 	}
 
+	// A sandbox left with its folders gone (a deleted ~/.vibe) can't start: say so, and offer to make it afresh. A rebuild
+	// replaces the sandbox anyway.
+	if !args.Rebuilds() && !args.Delete && !detachedChild() {
+		if err := clearOrphanedSandbox(args, name); err != nil {
+			return err
+		}
+	}
+
 	ended := modeNone
 	if args.Restart && !detachedChild() {
 		var err error

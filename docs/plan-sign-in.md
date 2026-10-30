@@ -208,3 +208,14 @@ conversation now says when sbx (Docker) or the agent is known to be signed out, 
 finds it signed in, and the page looks again when a prompt fails for want of a sign-in. An agent whose sign-in vibe can't
 read (anything but Claude) shows under its own name as "Not checked", with no button and none of Claude's steps, and no
 notice.
+
+## An orphaned sandbox (2026-10-30, third real run)
+
+After `rm -rf ~/.vibe ~/.docker` the sandbox of the earlier half-run was still in sbx (its record is elsewhere), listed as
+stopped with its `~/.vibe/...` mounts "(missing)"; vibe took it as existing, tried to start it headless, and the child's
+failure said only "didn't start" because `sbx start`'s own output was thrown away (now kept: `sbxrun.StartExplained`).
+Now a start (not a rebuild, delete or the detached child) first lists sbx's sandboxes: one by this name whose mounted
+folders (`Workspaces` of `sbx ls --json`, a trailing :ro/:rw dropped) are gone from the host is said to be unable to start,
+with the folders named, and on a terminal the user is asked whether to remove it (`sbx rm -f`) and make it afresh (default
+no; its own disk goes, the project folder is untouched). With -f or no terminal it is never removed: the command is given.
+A listing that fails is left for sbx's own error.
