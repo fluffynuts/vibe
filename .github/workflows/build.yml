@@ -149,6 +149,15 @@ jobs:
             echo "::warning::couldn't look up the pull request $GITHUB_SHA came from: released without its summary"
             : >notes.md
           fi
+          # A push straight to master has no pull request: its last commit's message heads the notes instead, as it is most
+          # likely what changed. Subject as the heading, the rest below it. Also to a file, never into this script.
+          if [ ! -s notes.md ]; then
+            commit_filter='.commit.message | split("\n") | "## \(.[0])\n\n\(.[1:] | map(select(test("^Co-Authored-By:"; "i") | not)) | join("\n") | sub("^\\n+"; "") | sub("\\n+$"; ""))\n\n---\n"'
+            if ! gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq "$commit_filter" >notes.md; then
+              echo "::warning::couldn't read the commit message of $GITHUB_SHA: released without it"
+              : >notes.md
+            fi
+          fi
           cat >>notes.md <<'EOF'
           To install:
           - Linux/macOS: `curl -fsSL https://raw.githubusercontent.com/fluffynuts/vibe/master/install.sh | sh`
