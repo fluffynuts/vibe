@@ -888,7 +888,7 @@
       state.signin = !!res.body.signin
       state.signinStart = !!res.body.signinStart
       $('admin-signin').hidden = !state.signin
-      if (state.signin && state.tab === 'admin' && !signInShown.asked) loadSignIn()
+      if (state.signin && !signInShown.asked) loadSignIn()
       $('usage').hidden = !state.usage
       $('tab-admin').hidden = !state.admin
       $('tab-manage').hidden = !res.body.manage
@@ -3227,6 +3227,18 @@
     status.hidden = !text
   }
 
+  // The conversation says when sign-in is needed, as it is there that a prompt would fail: sbx's own first (nothing starts
+  // without it), then the agent's. What could not be told is not said: only what is known to be signed out.
+  function renderSignInNotice(parts) {
+    const docker = (parts.docker || {}).state === 'signed-out'
+    const agent = (parts.agentSignIn || {}).state === 'signed-out'
+    const name = parts.agent || 'The agent'
+    $('convo-signin').hidden = !(docker || agent)
+    $('convo-signin-text').textContent = docker
+      ? 'sbx is not signed in to Docker, so nothing can start. Sign in from the Admin tab.'
+      : name + ' is not signed in, so it cannot answer yet. Sign in from the Admin tab.'
+  }
+
   async function loadSignIn() {
     if (signInShown.checking) return
     signInShown.checking = true
@@ -3244,6 +3256,7 @@
       signInShown.parts = res.body
       renderSignInPart('signin-docker', 'Docker (sbx)', res.body.docker || { state: 'unknown' }, 'docker')
       renderSignInPart('signin-agent', signInShown.agent, res.body.agentSignIn || { state: 'unknown' }, 'agent')
+      renderSignInNotice(res.body)
     } catch (e) {
       signInProblem("Couldn't check: " + (e && e.message ? e.message : 'the host did not answer'))
     } finally {
@@ -3254,6 +3267,7 @@
     if (state.signinStart && !signInShown.watching) await followSignIn(true)
   }
   $('signin-check').addEventListener('click', loadSignIn)
+  $('convo-signin-open').addEventListener('click', () => select('admin'))
 
   async function startSignIn(kind) {
     signInProblem('')
@@ -5184,6 +5198,8 @@
         if (state.signinStart) {
           convoNote('error', "The agent isn't signed in. Sign in from the Admin tab, then send your prompt again.", at)
           $('convo-log').lastElementChild.append(el('button', { type: 'button', class: 'small ghost', text: 'Open Sign-in', onclick: () => select('admin') }))
+          // A sign-in that has expired since the page was opened: the card and the notice find out.
+          loadSignIn()
         } else {
           convoNote('error', "The agent isn't signed in, and can't be from this page. In a terminal, run vibe in the sandbox's folder and sign in there with /login, then send your prompt again.", at)
         }

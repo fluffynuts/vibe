@@ -34,6 +34,7 @@ test('a signed-out agent is told to sign in from the Admin tab, with a button th
     const note = errorNote(p)
     assert.match(note.textContent, /isn't signed in/i)
     assert.doesNotMatch(note.textContent, /terminal/i, 'it still sends the user to a terminal')
+    assert.equal(p.calls.filter((c) => c.path === '/api/signin').length, 2, 'the sign-ins were not looked at again for the failure')
     await p.click(note.querySelector('button'))
     assert.equal(p.$('panel-admin').hidden, false)
     assert.equal(p.$('panel-conversation').hidden, true)

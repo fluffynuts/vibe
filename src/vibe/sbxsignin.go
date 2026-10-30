@@ -23,7 +23,7 @@ func realSbxSignInSteps() sbxSignInSteps {
 	return sbxSignInSteps{
 		choose:  chooseFrom,
 		login:   sbxrun.Login,
-		recheck: probeWithin,
+		recheck: func(ctx context.Context) (string, error) { return probeWithin(ctx, "ls") },
 		say:     func(line string) { note("%s", line) },
 	}
 }

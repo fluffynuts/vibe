@@ -197,3 +197,14 @@ no -f) first looks at sbx once (`sbx ls`) and, when it is waiting for a network 
 it, then looks again (at most three rounds, since sbx may want either before the other). When sbx is ready that is one
 `sbx ls` and nothing said. `--install` and `--setup` do the same. Scripts (-f) and the detached headless child have no one
 to ask, and get sbx's own error as before.
+
+## Second real run, 2026-10-30 (the fresh VM again)
+
+`--install` got sbx in and offered the Docker sign-in; the network policy was asked only at the first sandbox, not at
+install: once signed in, `sbx ls` no longer asks for the policy, but `sbx policy ls` does (as on the first VM), so
+getting sbx ready now also looks at `sbx policy ls` when `sbx ls` is fine (two quick calls per start). The headless first
+run worked; the Admin tab's Sign-in card was there, but nothing said so on the Conversation tab: a notice above the
+conversation now says when sbx (Docker) or the agent is known to be signed out, with Open Sign-in; it clears once a check
+finds it signed in, and the page looks again when a prompt fails for want of a sign-in. An agent whose sign-in vibe can't
+read (anything but Claude) shows under its own name as "Not checked", with no button and none of Claude's steps, and no
+notice.

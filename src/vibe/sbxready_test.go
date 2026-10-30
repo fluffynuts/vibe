@@ -12,19 +12,32 @@ const signedOutText = "error: not signed in to Docker\n  try: sbx login"
 // readiness is a sbx whose answers to `sbx ls` are the list, one per look (the last repeated), and what is done about
 // what it wants, in order.
 type readiness struct {
-	looks  []string
-	policy bool // whether giving the policy works
-	signIn bool
-	did    []string
+	looks []string
+	// policyLooks are the answers to `sbx policy ls`, one per look (the last repeated; none means sbx has its policy).
+	policyLooks []string
+	policy      bool // whether giving the policy works
+	signIn      bool
+	did         []string
 }
 
 func (r *readiness) run() {
-	i := 0
+	i, j := 0, 0
 	sbxReadySteps{
 		probe: func(context.Context) (string, error) {
 			out := r.looks[min(i, len(r.looks)-1)]
 			i++
 			if out == "[]" {
+				return out, nil
+			}
+			return out, errors.New("exit 1")
+		},
+		policyProbe: func(context.Context) (string, error) {
+			if len(r.policyLooks) == 0 {
+				return "POLICY SOURCE", nil
+			}
+			out := r.policyLooks[min(j, len(r.policyLooks)-1)]
+			j++
+			if out == "POLICY SOURCE" {
 				return out, nil
 			}
 			return out, errors.New("exit 1")
@@ -36,21 +49,16 @@ func (r *readiness) run() {
 
 func (r *readiness) done() string { return strings.Join(r.did, ",") }
 
-func TestAnSbxThatIsReadyIsLookedAtOnceAndNothingIsDone(t *testing.T) {
-	r := &readiness{looks: []string{"[]"}, policy: true, signIn: true}
-	looks := 0
-	steps := sbxReadySteps{
-		probe:  func(context.Context) (string, error) { looks++; return "[]", nil },
-		policy: func(context.Context) bool { t.Error("policy"); return true },
-		signIn: func(context.Context) bool { t.Error("sign-in"); return true },
-	}
-	steps.run(context.Background())
-	if looks != 1 || r.done() != "" {
-		t.Errorf("looks = %d", looks)
+// sbx doesn't ask for its policy of `sbx ls` once signed in: it does of `sbx policy ls`, which is why that is looked at too.
+func TestAnSbxSignedInButWaitingForAPolicyIsGivenOne(t *testing.T) {
+	r := &readiness{looks: []string{"[]"}, policyLooks: []string{policyMenu, "POLICY SOURCE"}, policy: true}
+	r.run()
+	if r.done() != "policy" {
+		t.Errorf("did %q", r.done())
 	}
 }
 
-func TestAnSbxWaitingForAPolicyIsGivenOne(t *testing.T) {
+func TestAnSbxThatAsksForAPolicyOfSbxLsItselfIsGivenOneToo(t *testing.T) {
 	r := &readiness{looks: []string{policyMenu, "[]"}, policy: true}
 	r.run()
 	if r.done() != "policy" {
@@ -66,11 +74,11 @@ func TestAnSbxSignedOutIsOfferedASignIn(t *testing.T) {
 	}
 }
 
-// sbx asks for its policy before anything, and may ask after a sign-in what it asked before: whichever it wants next is given.
-func TestWhatSbxWantsNextAfterTheFirstIsGivenToo(t *testing.T) {
-	r := &readiness{looks: []string{policyMenu, signedOutText, policyMenu, "[]"}, policy: true, signIn: true}
+// A new machine: signed out, then (once signed in) waiting for the policy: the order the real VM showed.
+func TestASignInIsFollowedByThePolicyItLeadsTo(t *testing.T) {
+	r := &readiness{looks: []string{signedOutText, "[]"}, policyLooks: []string{policyMenu, "POLICY SOURCE"}, policy: true, signIn: true}
 	r.run()
-	if r.done() != "policy,sign-in,policy" {
+	if r.done() != "sign-in,policy" {
 		t.Errorf("did %q", r.done())
 	}
 }
@@ -81,7 +89,7 @@ func TestDecliningOrFailingEndsItAndDoesNotAskAgain(t *testing.T) {
 	if r.done() != "sign-in" {
 		t.Errorf("did %q", r.done())
 	}
-	r = &readiness{looks: []string{policyMenu}, policy: false}
+	r = &readiness{looks: []string{"[]"}, policyLooks: []string{policyMenu}, policy: false}
 	r.run()
 	if r.done() != "policy" {
 		t.Errorf("did %q", r.done())
@@ -101,5 +109,23 @@ func TestAnSbxThatSaysSomethingElseIsLeftAlone(t *testing.T) {
 	r.run()
 	if r.done() != "" {
 		t.Errorf("did %q", r.done())
+	}
+	r = &readiness{looks: []string{"[]"}, policyLooks: []string{"error: the daemon fell over"}, policy: true, signIn: true}
+	r.run()
+	if r.done() != "" {
+		t.Errorf("a policy listing that failed otherwise: did %q", r.done())
+	}
+}
+
+func TestAnSbxWithEverythingInPlaceIsLookedAtTwiceAndNothingIsDone(t *testing.T) {
+	looks, policyLooks := 0, 0
+	sbxReadySteps{
+		probe:       func(context.Context) (string, error) { looks++; return "[]", nil },
+		policyProbe: func(context.Context) (string, error) { policyLooks++; return "POLICY SOURCE", nil },
+		policy:      func(context.Context) bool { t.Error("policy"); return true },
+		signIn:      func(context.Context) bool { t.Error("sign-in"); return true },
+	}.run(context.Background())
+	if looks != 1 || policyLooks != 1 {
+		t.Errorf("looks %d, policy looks %d", looks, policyLooks)
 	}
 }

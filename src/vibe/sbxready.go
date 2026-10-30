@@ -13,8 +13,10 @@ const sbxReadyWithin = 30 * time.Second
 
 // sbxReadySteps are what getting sbx ready does, apart so that tests can answer for them.
 type sbxReadySteps struct {
-	// probe is what `sbx ls` printed, and its error.
-	probe func(ctx context.Context) (string, error)
+	// probe is what `sbx ls` printed, and its error; policyProbe the same of `sbx policy ls`, which is where sbx asks for its
+	// network policy once signed in (`sbx ls` doesn't).
+	probe       func(ctx context.Context) (string, error)
+	policyProbe func(ctx context.Context) (string, error)
 	// policy asks for the network policy sbx is waiting for, and gives it; signIn offers to sign sbx in. Each says whether
 	// it did what was needed (declining, or failing, is not).
 	policy func(ctx context.Context) bool
@@ -26,7 +28,7 @@ type sbxReadySteps struct {
 const maxSbxReadyRounds = 3
 
 // run looks at sbx, and while it is waiting for something vibe can give it (a network policy, a sign-in), gives it, and
-// looks again. When sbx is ready that is one `sbx ls`, and nothing said.
+// looks again. When sbx is ready that is an `sbx ls` and an `sbx policy ls`, and nothing said.
 func (s sbxReadySteps) run(ctx context.Context) {
 	for i := 0; i < maxSbxReadyRounds; i++ {
 		out, err := s.probe(ctx)
@@ -36,6 +38,13 @@ func (s sbxReadySteps) run(ctx context.Context) {
 			done = s.policy(ctx)
 		case signin.SignedOut:
 			done = s.signIn(ctx)
+		case signin.SignedIn:
+			// Signed in; sbx may still be waiting to be told its policy, which it asks of `policy ls`.
+			out, err = s.policyProbe(ctx)
+			if signin.Docker(out, err, ctx.Err() != nil).State != signin.NeedsPolicy {
+				return
+			}
+			done = s.policy(ctx)
 		default:
 			return
 		}
@@ -55,17 +64,18 @@ func ensureSbxReady() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	sbxReadySteps{
-		probe:  func(ctx context.Context) (string, error) { return probeWithin(ctx) },
-		policy: func(ctx context.Context) bool { return askNetworkPolicy(ctx, realNetworkPolicySteps()) },
-		signIn: func(ctx context.Context) bool { return offerSbxSignIn(ctx, realSbxSignInSteps()) },
+		probe:       func(ctx context.Context) (string, error) { return probeWithin(ctx, "ls") },
+		policyProbe: func(ctx context.Context) (string, error) { return probeWithin(ctx, "policy", "ls") },
+		policy:      func(ctx context.Context) bool { return askNetworkPolicy(ctx, realNetworkPolicySteps()) },
+		signIn:      func(ctx context.Context) bool { return offerSbxSignIn(ctx, realSbxSignInSteps()) },
 	}.run(ctx)
 }
 
-// probeWithin is `sbx ls`, given sbxReadyWithin.
-func probeWithin(ctx context.Context) (string, error) {
+// probeWithin is an sbx command, given sbxReadyWithin.
+func probeWithin(ctx context.Context, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, sbxReadyWithin)
 	defer cancel()
-	out, err := sbxrun.Probe(ctx, "ls")
+	out, err := sbxrun.Probe(ctx, args...)
 	if ctx.Err() != nil && err == nil {
 		err = ctx.Err()
 	}
