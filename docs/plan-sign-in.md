@@ -83,6 +83,23 @@ the same structure so the next agent can generalise (see the `cursor-support` no
 - vibe's own allow lists (kits, `allow network`) are per-sandbox rules on top, so they work with any of the three; under
   `deny-all` they are what lets a sandbox reach anything.
 
+## Found 2026-10-30, the policy question comes from other commands too
+
+- **On a pristine install, `sbx policy ls` (and so probably most sbx commands) asks the policy question** (Open /
+  Balanced / Locked Down) before answering, and blocks for input; Ctrl-C ends with `error: operation cancelled by
+  user`. After an answer, `ls` shows `local-policy  local  all  network: 195 allow; filesystem read: 1 allow;
+  filesystem write: 1 allow` and nothing else.
+- **`sbx policy reset` stops the daemon, resets, and asks the same question again**, blocking. Never run it from vibe
+  (it would also clear every sandbox's rules); the manual instructions may name it, with that warning.
+- So the policy has to be chosen **first**, before any other sbx call: `--install`/`--setup` asks and runs
+  `sbx policy init <choice>` ahead of anything else that talks to sbx.
+- What already protects vibe: its own captured sbx calls (`internal/policy.Exec`, `sbxrun.captureOutContext`) start sbx
+  with no stdin (the null device) and a timeout, so a prompt can't hang them; they'd get the "cancelled" error. Not yet
+  tried against a pristine sbx; to be tested for real (a fresh VM, the user's pristine Windows one can't run sandboxes
+  but can run `sbx policy ls`). Whatever vibe finds (`operation cancelled by user`, or the menu text in the output)
+  should be said in the user's terms: "sbx hasn't had its network policy chosen: run `vibe --setup`, or
+  `sbx policy init balanced`".
+
 ## Shape (to confirm once the questions are answered)
 
 - A **Sign-in card** (Admin tab, probably) showing the sbx sign-in and the agent's sign-in, each with its status.
