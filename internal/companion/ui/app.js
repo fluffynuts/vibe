@@ -5866,6 +5866,182 @@
     input.addEventListener('blur', closeCommands)
   }
 
+  // --- completing :emoji: names ------------------------------------------
+
+  // A colon and the start of a name in the prompt (:roc) offers the emoji it could be, as the slash commands are offered; the
+  // pick puts the character itself in the prompt, and typing the closing colon of a whole name (:tada:) does too. The
+  // names, and what is a name being typed, are ui/emoji.js's. It can be turned off (Settings), and is remembered.
+  const emojiState = { on: store.get('vibe-emoji-complete') !== 'off', shown: [], at: 0, open: false }
+  const EMOJI_SHOWN = 8
+
+  function closeEmoji() {
+    if (!emojiState.open && $('convo-emoji').hidden) return
+    emojiState.open = false
+    $('convo-emoji').hidden = true
+    $('convo-emoji').replaceChildren()
+    const input = $('convo-input')
+    input.setAttribute('aria-controls', 'convo-commands')
+    // The slash commands' list may be what is open: its own state says so.
+    if (!slash.open) {
+      input.setAttribute('aria-expanded', 'false')
+      input.removeAttribute('aria-activedescendant')
+    }
+  }
+
+  // updateEmoji shows the list for the name being typed at the cursor, or hides it; fresh is a change to the text, which picks
+  // the closest match again.
+  function updateEmoji(fresh) {
+    const input = $('convo-input')
+    if (!emojiState.on || !window.vibeEmoji || input.selectionStart !== input.selectionEnd) { closeEmoji(); return }
+    const word = window.vibeEmoji.at(input.value, input.selectionStart)
+    const shown = word ? window.vibeEmoji.find(word.query, EMOJI_SHOWN) : []
+    if (!shown.length) { closeEmoji(); return }
+    if (fresh || emojiState.at >= shown.length) emojiState.at = 0
+    emojiState.shown = shown
+    const q = word.query.toLowerCase()
+    const list = $('convo-emoji')
+    list.replaceChildren(...shown.map((e, i) => {
+      const found = e.alias || e.name
+      const at = found.toLowerCase().indexOf(q)
+      const label = at < 0 ? [found]
+        : [found.slice(0, at), el('mark', { text: found.slice(at, at + q.length) }), found.slice(at + q.length)]
+      const item = el('li', { id: 'convo-emoji-' + i, role: 'option', 'data-name': e.name, 'aria-selected': String(i === emojiState.at) },
+        el('span', { class: 'glyph', text: e.char, 'aria-hidden': 'true' }), ':', ...label, ':',
+        e.alias ? el('span', { class: 'alias', text: e.name }) : null)
+      // mousedown, not click: the prompt keeps the focus.
+      item.addEventListener('mousedown', (ev) => { ev.preventDefault(); acceptEmoji(i) })
+      return item
+    }))
+    emojiState.open = true
+    list.hidden = false
+    input.setAttribute('aria-controls', 'convo-emoji')
+    input.setAttribute('aria-expanded', 'true')
+    input.setAttribute('aria-activedescendant', 'convo-emoji-' + emojiState.at)
+    placeEmoji(word.start)
+    const picked = $('convo-emoji-' + emojiState.at)
+    if (picked) picked.scrollIntoView({ block: 'nearest' })
+  }
+
+  // caretPoint is where character index of the prompt is, from the top left of the prompt's border box: a textarea can't
+  // say, so the text up to there is laid out in a copy of it (off the page, the same font, padding, width and wrapping), and
+  // a marker after it says where it came to. The prompt's own scrolling is taken off.
+  const MIRRORED = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant', 'fontStretch', 'lineHeight', 'letterSpacing',
+    'wordSpacing', 'textTransform', 'textIndent', 'tabSize', 'direction', 'textAlign',
+    'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+    'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle']
+  function caretPoint(ta, index) {
+    const cs = window.getComputedStyle(ta)
+    const mirror = document.createElement('div')
+    const style = mirror.style
+    for (const prop of MIRRORED) style[prop] = cs[prop]
+    style.position = 'absolute'
+    style.visibility = 'hidden'
+    style.left = '-9999px'
+    style.top = '0'
+    style.boxSizing = 'border-box'
+    style.overflow = 'hidden'
+    style.whiteSpace = 'pre-wrap'
+    style.overflowWrap = 'break-word'
+    style.wordBreak = 'normal'
+    // As wide as the prompt's text is: a scrollbar takes some of it.
+    const scrollbar = Math.max(0, ta.offsetWidth - ta.clientWidth - parseFloat(cs.borderLeftWidth || 0) - parseFloat(cs.borderRightWidth || 0))
+    style.width = ta.offsetWidth + 'px'
+    style.paddingRight = (parseFloat(cs.paddingRight || 0) + scrollbar) + 'px'
+    mirror.textContent = ta.value.slice(0, index)
+    const marker = document.createElement('span')
+    marker.textContent = '\u200b'
+    mirror.append(marker)
+    document.body.append(mirror)
+    const point = {
+      left: marker.offsetLeft + parseFloat(cs.borderLeftWidth || 0) - ta.scrollLeft,
+      top: marker.offsetTop + parseFloat(cs.borderTopWidth || 0) - ta.scrollTop,
+      height: marker.offsetHeight || parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) || 0,
+    }
+    mirror.remove()
+    return point
+  }
+
+  // placeEmoji puts the list above the line the colon is on, at the colon, and inside the prompt: the list is in the prompt's
+  // wrapper, so the prompt's own offsets are added. Below the line when there is no room above it.
+  function placeEmoji(start) {
+    const ta = $('convo-input')
+    const list = $('convo-emoji')
+    const wrap = list.offsetParent || ta.parentElement
+    const caret = caretPoint(ta, start)
+    const wrapTop = wrap && wrap.getBoundingClientRect ? wrap.getBoundingClientRect().top : 0
+    const at = window.vibeEmoji.place({
+      caretLeft: caret.left + ta.offsetLeft, caretTop: caret.top + ta.offsetTop, caretHeight: caret.height,
+      listWidth: list.offsetWidth, listHeight: list.offsetHeight,
+      boxWidth: wrap ? wrap.clientWidth : ta.offsetWidth,
+      roomAbove: wrapTop + caret.top + ta.offsetTop,
+    })
+    list.style.left = at.left + 'px'
+    list.style.top = at.top + 'px'
+  }
+
+  function moveEmoji(by) {
+    if (!emojiState.shown.length) return
+    emojiState.at = (emojiState.at + by + emojiState.shown.length) % emojiState.shown.length
+    updateEmoji(false)
+  }
+
+  // putEmoji puts char in place of what runs from start to the cursor, with a space after, ready for what goes on.
+  function putEmoji(start, char, space) {
+    const input = $('convo-input')
+    const end = input.selectionStart
+    const after = input.value.slice(end)
+    const gap = space && !/^\s/.test(after) ? ' ' : ''
+    input.value = input.value.slice(0, start) + char + gap + after
+    const caret = start + char.length + gap.length
+    input.setSelectionRange(caret, caret)
+    promptChanged()
+    closeEmoji()
+  }
+
+  function acceptEmoji(i) {
+    const input = $('convo-input')
+    const word = window.vibeEmoji && window.vibeEmoji.at(input.value, input.selectionStart)
+    const picked = emojiState.shown[i]
+    if (!word || !picked) { closeEmoji(); return }
+    putEmoji(word.start, picked.char, true)
+  }
+
+  function setUpEmoji() {
+    const input = $('convo-input')
+    // Ahead of the prompt's other keys, as the slash commands': while the list is open the arrows, Tab and Escape are its
+    // (Escape would otherwise stop the agent). Enter is not: it is a new line, so that ":D" and Enter is just that.
+    input.addEventListener('keydown', (ev) => {
+      if (!emojiState.open || ev.isComposing) return
+      const plain = !ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey
+      let handled = true
+      if (ev.key === 'ArrowDown' && plain) moveEmoji(1)
+      else if (ev.key === 'ArrowUp' && plain) moveEmoji(-1)
+      else if (ev.key === 'Tab' && plain && emojiState.shown.length) acceptEmoji(emojiState.at)
+      else if (ev.key === 'Escape') closeEmoji()
+      else handled = false
+      if (handled) { ev.preventDefault(); ev.stopImmediatePropagation() }
+    })
+    input.addEventListener('input', (ev) => {
+      // The colon that closes a whole name turns it into the character: only typing it does, not a deletion that leaves one.
+      if (emojiState.on && window.vibeEmoji && ev.inputType === 'insertText' && ev.data === ':' && input.selectionStart === input.selectionEnd) {
+        const done = window.vibeEmoji.closing(input.value, input.selectionStart)
+        if (done) { putEmoji(done.start, done.char, false); return }
+      }
+      updateEmoji(true)
+    })
+    input.addEventListener('click', () => updateEmoji(false))
+    input.addEventListener('keyup', (ev) => {
+      if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) updateEmoji(false)
+    })
+    input.addEventListener('blur', closeEmoji)
+  }
+
+  function setEmojiComplete(on) {
+    emojiState.on = on
+    store.set('vibe-emoji-complete', on ? 'on' : 'off')
+    if (!on) closeEmoji()
+  }
+
   // --- pasting into the clipboard from anywhere on the conversation tab ---
 
   function editable(node) {
@@ -6764,6 +6940,7 @@
 
   function setUpConversation() {
     setUpCommands()
+    setUpEmoji()
     $('convo-form').addEventListener('submit', (ev) => { ev.preventDefault(); sendPrompt() })
     $('convo-input').addEventListener('keydown', (ev) => {
       if (ev.isComposing) return
@@ -6787,6 +6964,8 @@
     setUpFresh()
     $('settings-prompts-markdown').checked = promptsAsMarkdown.on
     $('settings-prompts-markdown').addEventListener('change', () => setPromptsAsMarkdown($('settings-prompts-markdown').checked))
+    $('settings-emoji').checked = emojiState.on
+    $('settings-emoji').addEventListener('change', () => setEmojiComplete($('settings-emoji').checked))
     document.addEventListener('paste', onPaste)
     setInterval(pollConversation, CONVO_POLL_MS)
   }

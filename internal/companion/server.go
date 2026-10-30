@@ -350,6 +350,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /app.js", static)
 	mux.Handle("GET /app.css", static)
 	mux.Handle("GET /markdown.js", static)
+	mux.Handle("GET /emoji.js", static)
 	mux.Handle("GET /manage.js", static)
 	mux.Handle("GET /review.js", static)
 

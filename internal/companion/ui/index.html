@@ -125,6 +125,7 @@
           <form id="convo-form" class="convo-form" autocomplete="off">
             <div class="prompt-wrap">
               <ul id="convo-commands" class="commands" role="listbox" aria-label="Slash commands" hidden></ul>
+              <ul id="convo-emoji" class="commands emoji" role="listbox" aria-label="Emoji" hidden></ul>
               <textarea id="convo-input" rows="3" aria-label="Prompt for the agent"
                 aria-autocomplete="list" aria-controls="convo-commands" aria-expanded="false"
                 placeholder="Ask the agent… Ctrl+Enter sends, Enter adds a line, / lists commands. Images and files you paste anywhere on this tab go to the clipboard on the right."></textarea>
@@ -389,6 +390,8 @@
           <p class="note muted">Kept in this browser.</p>
           <label class="inline-check" title="Show what you send as Markdown, as the agent's replies are. What's sent is what you typed, either way.">
             <input type="checkbox" id="settings-prompts-markdown"> My prompts as Markdown</label>
+          <label class="inline-check" title="Type a colon and the name of an emoji (:roc) in the prompt for a list to pick from, and :name: becomes the emoji. Off leaves what you type as it is.">
+            <input type="checkbox" id="settings-emoji"> Complete :emoji: names while I type</label>
         </section>
 
         <section class="card" aria-labelledby="admin-git-h">
@@ -584,6 +587,7 @@
 
   <div id="toast" class="toast" role="status" popover="manual" hidden></div>
   <script src="/markdown.js"></script>
+  <script src="/emoji.js"></script>
   <script src="/manage.js"></script>
   <script src="/review.js"></script>
   <script src="/app.js"></script>
