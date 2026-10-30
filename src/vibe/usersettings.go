@@ -236,13 +236,13 @@ var chooseMode = chooseFrom
 // modeChoices are what the user is offered for the default mode, in the order
 // of modeValues.
 var (
-	modeChoices = []string{"terminal: a session in this terminal, with the page beside it", "headless: no terminal, only the companion page"}
-	modeValues  = []string{"terminal", "headless"}
+	modeChoices = []string{"headless: no terminal, only the companion page (recommended)", "terminal: a session in this terminal, with the page beside it"}
+	modeValues  = []string{"headless", "terminal"}
 )
 
-// pickMode asks how vibe starts by default, starting on current (terminal when
-// unset or not one of the two, which is what vibe does with nothing said). Quitting
-// the question keeps current, or terminal.
+// pickMode asks how vibe starts by default, starting on current (headless, the
+// recommended one, when unset or not one of the two). Quitting the question
+// keeps current, or headless.
 func pickMode(current, question string) string {
 	idx := slices.Index(modeValues, current)
 	if idx < 0 {

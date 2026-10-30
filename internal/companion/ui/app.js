@@ -5178,10 +5178,15 @@
         if (block.type === 'text' && block.text) convoNote('agent', block.text, at)
         else if (block.type === 'tool_use') toolUsed(block)
       }
-      // The agent says to run /login, which needs its terminal: this page
-      // can't show the agent's own screens.
+      // The agent says to run /login, which needs its terminal, which this page can't show: the Sign-in card on the Admin
+      // tab does the same without one (where the host offers it).
       if (line.error === 'authentication_failed') {
-        convoNote('error', "The agent isn't logged in, and can't be from this page. In a terminal, run vibe in the sandbox's folder and log in there with /login, then send your prompt again.", at)
+        if (state.signinStart) {
+          convoNote('error', "The agent isn't signed in. Sign in from the Admin tab, then send your prompt again.", at)
+          $('convo-log').lastElementChild.append(el('button', { type: 'button', class: 'small ghost', text: 'Open Sign-in', onclick: () => select('admin') }))
+        } else {
+          convoNote('error', "The agent isn't signed in, and can't be from this page. In a terminal, run vibe in the sandbox's folder and sign in there with /login, then send your prompt again.", at)
+        }
       }
     } else if (line.type === 'user') {
       for (const block of content) if (block.type === 'tool_result') showResult(block)
