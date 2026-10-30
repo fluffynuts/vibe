@@ -863,6 +863,7 @@
       state.boot = res.body.boot || ''
       state.usage = !!res.body.usage
       state.signin = !!res.body.signin
+      state.signinStart = !!res.body.signinStart
       $('admin-signin').hidden = !state.signin
       if (state.signin && state.tab === 'admin' && !signInShown.asked) loadSignIn()
       $('usage').hidden = !state.usage
@@ -3180,46 +3181,161 @@
 
   // What the Sign-in card shows: whether sbx, and the agent, can be used, read by the host when the Admin tab is
   // opened and when Check now is pressed (each asks sbx, which can be slow, so it isn't polled).
-  const signInShown = { asked: false, checking: false }
+  const signInShown = { asked: false, checking: false, watching: false, lastJob: '', agent: 'the agent' }
   const SIGNIN_WORDS = { 'signed-in': ['Signed in', 'ok'], 'signed-out': ['Signed out', 'bad'], 'needs-policy': ['Needs a network policy', 'bad'], unknown: ['Unknown', ''], unsupported: ['Not checked', ''] }
 
-  function renderSignInPart(id, name, part) {
+  function renderSignInPart(id, name, part, kind) {
     const [word, cls] = SIGNIN_WORDS[part.state] || SIGNIN_WORDS.unknown
     const box = $(id)
     const steps = (part.manual || []).map((line) => el('li', { text: line }))
+    const go = state.signinStart && part.state === 'signed-out'
+      ? el('button', { type: 'button', class: 'signin-go', 'data-kind': kind, text: 'Sign in', disabled: signInShown.watching, onclick: () => startSignIn(kind) })
+      : null
     box.replaceChildren(...[
-      el('div', { class: 'signin-head' }, el('strong', { text: name }), el('span', { class: 'pill ' + cls, text: word })),
+      el('div', { class: 'signin-head' }, el('strong', { text: name }), el('span', { class: 'pill ' + cls, text: word }), go),
       part.detail ? el('p', { class: 'note muted', text: part.detail }) : null,
       steps.length ? el('details', {}, el('summary', { text: 'Do it yourself' }), el('ol', { class: 'steps' }, ...steps)) : null,
     ].filter(Boolean))
+  }
+
+  function signInProblem(text) {
+    const status = $('signin-status')
+    status.textContent = text
+    status.hidden = !text
   }
 
   async function loadSignIn() {
     if (signInShown.checking) return
     signInShown.checking = true
     signInShown.asked = true
-    const status = $('signin-status')
     $('signin-check').disabled = true
     try {
       const res = await api('/api/signin', { timeout: 30000 })
       reached(true)
       if (!res.ok) {
-        status.textContent = "Couldn't check: " + (res.body.error || 'HTTP ' + res.status)
-        status.hidden = false
+        signInProblem("Couldn't check: " + (res.body.error || 'HTTP ' + res.status))
         return
       }
-      status.hidden = true
-      renderSignInPart('signin-docker', 'Docker (sbx)', res.body.docker || { state: 'unknown' })
-      renderSignInPart('signin-agent', res.body.agent || 'The agent', res.body.agentSignIn || { state: 'unknown' })
+      signInProblem('')
+      signInShown.agent = res.body.agent || 'the agent'
+      signInShown.parts = res.body
+      renderSignInPart('signin-docker', 'Docker (sbx)', res.body.docker || { state: 'unknown' }, 'docker')
+      renderSignInPart('signin-agent', signInShown.agent, res.body.agentSignIn || { state: 'unknown' }, 'agent')
     } catch (e) {
-      status.textContent = "Couldn't check: " + (e && e.message ? e.message : 'the host did not answer')
-      status.hidden = false
+      signInProblem("Couldn't check: " + (e && e.message ? e.message : 'the host did not answer'))
     } finally {
       signInShown.checking = false
       $('signin-check').disabled = false
     }
+    // A sign-in begun before this page was opened (or reloaded) is picked up, not lost.
+    if (state.signinStart && !signInShown.watching) await followSignIn(true)
   }
   $('signin-check').addEventListener('click', loadSignIn)
+
+  async function startSignIn(kind) {
+    signInProblem('')
+    try {
+      const res = await api('/api/signin/start', { method: 'POST', body: JSON.stringify({ kind }) })
+      if (!res.ok) {
+        signInProblem("Couldn't start signing in: " + (res.body.error || 'HTTP ' + res.status))
+        return
+      }
+      signInShown.watching = true
+      signInShown.lastJob = ''
+      showSignInJob(res.body)
+      if (signInShown.parts) {
+        renderSignInPart('signin-docker', 'Docker (sbx)', signInShown.parts.docker || { state: 'unknown' }, 'docker')
+        renderSignInPart('signin-agent', signInShown.agent, signInShown.parts.agentSignIn || { state: 'unknown' }, 'agent')
+      }
+    } catch (e) {
+      signInProblem("Couldn't start signing in: " + (e && e.message ? e.message : 'the host did not answer'))
+    }
+  }
+
+  // followSignIn reads the sign-in under way and shows it; with adopt, one that is running is taken up and followed.
+  async function followSignIn(adopt) {
+    let res
+    try { res = await api('/api/signin/job') } catch (e) { return }
+    if (!res.ok) return
+    const job = res.body
+    if (!job.kind || (!signInShown.watching && !(adopt && job.running))) return
+    signInShown.watching = !!job.running || signInShown.watching
+    showSignInJob(job)
+    if (job.done) {
+      signInShown.watching = false
+      if (job.ok) loadSignIn()
+    }
+  }
+
+  function pollSignInJob() {
+    if (signInShown.watching) followSignIn(false)
+  }
+  setInterval(pollSignInJob, 1500)
+
+  async function sendSignInCode() {
+    const field = $('signin-job').querySelector('input')
+    const code = field ? field.value.trim() : ''
+    if (!code) return
+    field.value = ''
+    try {
+      const res = await api('/api/signin/code', { method: 'POST', body: JSON.stringify({ code }) })
+      if (!res.ok) signInProblem("Couldn't give it the code: " + (res.body.error || 'HTTP ' + res.status))
+    } catch (e) {
+      signInProblem("Couldn't give it the code: " + (e && e.message ? e.message : 'the host did not answer'))
+    }
+  }
+
+  async function cancelSignIn() {
+    try { await api('/api/signin/cancel', { method: 'POST', body: '{}' }) } catch (e) { /* the next poll says how it ended */ }
+    followSignIn(false)
+  }
+
+  function closeSignInJob() {
+    signInShown.lastJob = ''
+    $('signin-job').hidden = true
+    $('signin-job').replaceChildren()
+  }
+
+  // showSignInJob draws the sign-in under way in its place on the card: the address to open, the code to confirm or a field
+  // for the one to paste, and what is happening. It is redrawn only when the job has changed, keeping what is being typed.
+  function showSignInJob(job) {
+    const box = $('signin-job')
+    const key = JSON.stringify(job)
+    if (key === signInShown.lastJob && !box.hidden) return
+    signInShown.lastJob = key
+    const typed = box.querySelector('input') ? box.querySelector('input').value : ''
+    const who = job.kind === 'docker' ? 'Docker (sbx)' : signInShown.agent
+    const parts = [el('strong', { text: (job.running ? 'Signing in to ' : 'Sign-in to ') + who })]
+    if (job.running) {
+      parts.push(el('p', { class: 'note', text: job.kind === 'docker'
+        ? 'Open the address, check the code matches, and sign in. This page notices when you have.'
+        : 'Open the address and sign in; it then shows a code. Paste that code here.' }))
+      if (job.url) {
+        parts.push(/^https:\/\//.test(job.url)
+          ? el('p', {}, el('a', { href: job.url, target: '_blank', rel: 'noopener noreferrer', text: job.url }))
+          : el('p', { class: 'note', text: job.url }))
+      }
+      if (job.code) parts.push(el('p', {}, 'Code: ', el('code', { text: job.code })))
+      if (job.kind === 'agent') {
+        parts.push(el('div', { class: 'bar' },
+          el('input', { type: 'password', autocomplete: 'off', placeholder: 'the code it showed', 'aria-label': 'The code the sign-in showed', onkeydown: (ev) => { if (ev.key === 'Enter') sendSignInCode() } }),
+          el('button', { type: 'button', class: 'signin-send', text: 'Send code', onclick: sendSignInCode })))
+      }
+      parts.push(el('div', { class: 'bar' }, el('button', { type: 'button', class: 'signin-cancel ghost', text: 'Cancel', onclick: cancelSignIn })))
+    } else if (job.ok) {
+      parts.push(el('p', { class: 'note', text: 'Signed in.' }), el('div', { class: 'bar' }, el('button', { type: 'button', class: 'ghost', text: 'Close', onclick: closeSignInJob })))
+    } else {
+      parts.push(el('p', { class: 'note bad-text', text: "Didn't sign in: " + (job.error || 'it ended without signing in') }),
+        el('div', { class: 'bar' }, el('button', { type: 'button', class: 'ghost', text: 'Close', onclick: closeSignInJob })))
+    }
+    if ((job.lines || []).length) {
+      parts.push(el('details', {}, el('summary', { text: 'What it printed' }), el('pre', { class: 'info', text: job.lines.join('\n') })))
+    }
+    box.replaceChildren(...parts)
+    box.hidden = false
+    const field = box.querySelector('input')
+    if (field && typed) { field.value = typed; field.focus() }
+  }
 
   async function loadAdmin() {
     try {

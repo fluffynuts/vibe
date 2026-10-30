@@ -741,3 +741,8 @@ ul.signins { list-style: none; margin: 0; padding: 0; display: flex; flex-direct
 ul.signins .note { margin: 4px 0 0; }
 ul.signins details { margin-top: 4px; font-size: 13px; }
 ul.signins summary { cursor: pointer; color: var(--muted); }
+.signin-head .signin-go { margin-left: auto; padding: 2px 10px; font-size: 12px; }
+.signin-job { margin: 12px 0 0; padding: 10px; border: 1px solid var(--line); border-radius: 6px; display: flex; flex-direction: column; gap: 6px; }
+.signin-job p { margin: 0; overflow-wrap: anywhere; }
+.signin-job input { flex: 1; min-width: 0; }
+.signin-job code { user-select: all; }

@@ -150,8 +150,16 @@ Original list:
 2. **The network policy question in `--install` (first install, not with -f) and `--setup`**: when `sbx ls` shows the
    menu, ask Balanced (default) / Open / Locked down and run `sbx policy init <choice>`; says nothing when a policy
    exists; unanswered, it says how to do it by hand.
-3. Not built: the sign-in buttons (stage 3), the API-key field, the keyring workaround.
+3. **Stage 3, the buttons** (built, unpushed): "Sign in" beside a signed-out row. `sbx login` (docker) or `claude auth login`
+   run as the agent in the sandbox (agent) are started by `POST /api/signin/start`, one at a time, as a process whose output
+   vibe reads line by line (`sbxrun.Process`): the first https address and the "code is: XXXX-XXXX" line are shown on the
+   card (the address only as a link when it is https), the rest under "What it printed" (last 40 lines). The agent's has
+   a password-type field whose value goes to the process's stdin as one line and is kept nowhere. Cancel ends it; it is
+   given up on after 10 minutes. On success the card checks again. A sign-in already running when the page opens is
+   picked up.
+4. Not built: the API-key field (`sbx secret set anthropic` from the page), the keyring workaround, the same for Cursor.
 
-**Not tried against real sbx** (none here): the card's real output, `sbx ls` on a pristine machine from vibe (stdin is
+**Not tried against real sbx** (none here; the stage 3 process code is tested with a stand-in sbx, and what `claude auth
+login` prints without a terminal is not known: the address is found by pattern, and the whole output is shown): the card's real output, `sbx ls` on a pristine machine from vibe (stdin is
 the null device, which should give "operation cancelled by user" at once), `sbx policy init` from vibe. To try on the
 user's restore-pointed VM / laptop.

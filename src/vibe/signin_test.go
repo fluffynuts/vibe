@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"vibe/internal/companion"
 	"vibe/internal/signin"
 )
 
@@ -79,5 +80,59 @@ func TestAnotherAgentIsSaidNotToBeCheckableAndIsNotAsked(t *testing.T) {
 	got := f.check("cursor")
 	if f.agentAsked || got.AgentPart.State != signin.Unsupported || got.Docker.State != signin.SignedIn {
 		t.Errorf("asked %v, got %+v", f.agentAsked, got)
+	}
+}
+
+type fakeStarters struct {
+	running   bool
+	runningOK bool
+	started   []string
+	err       error
+}
+
+func (f *fakeStarters) starters() signInStarters {
+	return signInStarters{
+		running: func(context.Context) (bool, bool) { return f.running, f.runningOK },
+		login:   func() (companion.LoginProcess, error) { f.started = append(f.started, "sbx login"); return nil, f.err },
+		agentLogin: func() (companion.LoginProcess, error) {
+			f.started = append(f.started, "claude auth login in the sandbox")
+			return nil, f.err
+		},
+	}
+}
+
+func TestSigningInToDockerRunsSbxLogin(t *testing.T) {
+	f := &fakeStarters{}
+	if _, err := startSignIn(context.Background(), "docker", "claude", f.starters()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.started) != 1 || f.started[0] != "sbx login" {
+		t.Errorf("started %v", f.started)
+	}
+}
+
+func TestSigningInClaudeRunsItsLoginInTheSandboxWhenItRuns(t *testing.T) {
+	f := &fakeStarters{running: true, runningOK: true}
+	if _, err := startSignIn(context.Background(), "agent", "claude", f.starters()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.started) != 1 || !strings.Contains(f.started[0], "claude auth login") {
+		t.Errorf("started %v", f.started)
+	}
+}
+
+func TestSigningTheAgentInNeedsTheSandboxRunningAndSaysSo(t *testing.T) {
+	f := &fakeStarters{running: false, runningOK: true}
+	_, err := startSignIn(context.Background(), "agent", "claude", f.starters())
+	if err == nil || !strings.Contains(err.Error(), "isn't running") || len(f.started) != 0 {
+		t.Errorf("err = %v, started %v", err, f.started)
+	}
+}
+
+func TestAnotherAgentCannotBeSignedInYetAndSaysSo(t *testing.T) {
+	f := &fakeStarters{running: true, runningOK: true}
+	_, err := startSignIn(context.Background(), "agent", "cursor", f.starters())
+	if err == nil || !strings.Contains(err.Error(), "cursor") || len(f.started) != 0 {
+		t.Errorf("err = %v, started %v", err, f.started)
 	}
 }

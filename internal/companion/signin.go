@@ -11,7 +11,7 @@ import (
 var signInWithin = 20 * time.Second
 
 var signInFeature = feature{func(s *Server) bool { return s.cfg.SignIn != nil },
-	"this page has no sign-in to show", 1 << 10}
+	"this page has no sign-in to show", 8 << 10}
 
 // signInState asks the host afresh each time: it is read when the Admin tab is opened and when the user presses Check
 // now, which wants what is so now.

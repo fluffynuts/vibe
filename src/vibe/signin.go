@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 
+	"vibe/internal/companion"
 	"vibe/internal/sbxrun"
 	"vibe/internal/signin"
 )
@@ -54,4 +57,55 @@ func checkSignIn(ctx context.Context, name, agent string, p signInProbes) signin
 		status.AgentPart = signin.Claude(mode, said, err == nil)
 	}
 	return status
+}
+
+// signInStarters are how a sign-in is started, apart so that tests can answer for them.
+type signInStarters struct {
+	running    func(ctx context.Context) (running, ok bool)
+	login      func() (companion.LoginProcess, error)
+	agentLogin func() (companion.LoginProcess, error)
+}
+
+// signInStartFor is what the Sign-in card's buttons start: sbx's own sign-in, or the agent's in the sandbox.
+func signInStartFor(name, agent string) func(kind string) (companion.LoginProcess, error) {
+	starters := signInStarters{
+		running: func(ctx context.Context) (bool, bool) { return sbxrun.Running(ctx, name) },
+		login: func() (companion.LoginProcess, error) {
+			p, err := sbxrun.StartLogin()
+			if err != nil {
+				return nil, err
+			}
+			return p, nil
+		},
+		agentLogin: func() (companion.LoginProcess, error) {
+			p, err := sbxrun.StartExec(name, asAgent("claude auth login")...)
+			if err != nil {
+				return nil, err
+			}
+			return p, nil
+		},
+	}
+	return func(kind string) (companion.LoginProcess, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), loginCheckWithin)
+		defer cancel()
+		return startSignIn(ctx, kind, agent, starters)
+	}
+}
+
+// startSignIn starts the sign-in of kind: the agent's needs a sandbox that is running, and an agent whose sign-in vibe
+// knows how to drive.
+func startSignIn(ctx context.Context, kind, agent string, s signInStarters) (companion.LoginProcess, error) {
+	switch kind {
+	case "docker":
+		return s.login()
+	case "agent":
+		if agent != "claude" {
+			return nil, fmt.Errorf("vibe can't sign %s in yet: sign it in by hand", agent)
+		}
+		if running, ok := s.running(ctx); !ok || !running {
+			return nil, errors.New("the sandbox isn't running: start it first, then sign in")
+		}
+		return s.agentLogin()
+	}
+	return nil, fmt.Errorf("no sign-in of kind %q", kind)
 }
