@@ -91,3 +91,14 @@ a detached HEAD included, and a review reopened is tied to the branch the folder
 `Store.CloseOnBranch` closes when it differs. The branch is read by the isolated helper (`review.CurrentBranch`, op `branch`). It is noted
 when the review is started from the page and when it is reopened, and, for one started any other way (the agent's own start, one from
 before this), at its first look: the review tab's own polls (`reviewState`) do the watching, so a switch is seen when the tab next looks.
+
+## Review fixes (2026-11-02, threads #209–#213)
+
+- **One server-side rule for "abandoned":** a review in progress, no turn of any kind running, and the agent quiet for `reviewQuiet`
+  (3 minutes since its last touch, or since the review started). `/api/review` sends it as `abandoned`; the page uses that and no longer
+  guesses from `agentAtWork`. While any turn runs, or the agent touched the review lately, it counts as still being written, so an
+  agent-started review (inbox) is asked about before Stop too.
+- **Branch watcher** waits on `convo.working()` (any turn), like `CloseOver`; branch lookups are throttled to once per `branchLookEvery`
+  (5 s) except on `?diff=1`, which always looks.
+- **A confirmed stop** stops first, then drops the review only if the turn was still writing it, and answers `stopped` truthfully; a review
+  already finished is kept.

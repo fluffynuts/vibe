@@ -1,6 +1,7 @@
 package companion
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -45,9 +46,10 @@ func gitIn(t *testing.T, dir string, args ...string) {
 }
 
 type reviewResult struct {
-	Review review.Review `json:"review"`
-	Diff   []review.File `json:"diff"`
-	Error  string        `json:"diffError"`
+	Review    review.Review `json:"review"`
+	Diff      []review.File `json:"diff"`
+	Error     string        `json:"diffError"`
+	Abandoned bool          `json:"abandoned"`
 }
 
 func getReview(t *testing.T, s *Server, path string) reviewResult {
@@ -1217,19 +1219,20 @@ func TestAStopWithNoReviewTabIsAsItWas(t *testing.T) {
 // A review "in progress" that nothing is at work on (the agent crashed, the sandbox stopped, it forgot to say it was done) is
 // half a review nobody is writing: closing it drops it, as closing one being written does, rather than keeping half a review.
 func TestClosingAReviewInProgressThatNothingIsWritingDropsIt(t *testing.T) {
-	s, store := reviewTabServer(t)
+	s, store, clock := tabServerWithClock(t)
 	f := startWritingReview(t, s)
 	if _, err := store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "half a review"}, review.Agent); err != nil {
 		t.Fatal(err)
 	}
-	// The turn that began it ends without `done`: nothing is at work on it, and the review says it is in progress.
+	// The turn that began it ends without `done`, and the agent has left it alone for a while: nothing is writing it.
 	close(f.release)
 	idle(t, s)
+	clock.advance(reviewQuiet + time.Minute)
 	if r, _ := store.Load(); r.State != review.InProgress {
 		t.Fatalf("the review is %q: it should still be in progress", r.State)
 	}
-	if agentAtWork(t, s) {
-		t.Fatal("the agent is still at work on it")
+	if got := getReview(t, s, "/api/review"); !got.Abandoned {
+		t.Fatal("the tab isn't told the review is abandoned")
 	}
 	if rec := do(t, s, post("/api/review/close", `{"stop":false}`)); rec.Code != http.StatusOK {
 		t.Fatalf("close: %d %s", rec.Code, rec.Body)
@@ -1243,12 +1246,215 @@ func TestClosingAReviewInProgressThatNothingIsWritingDropsIt(t *testing.T) {
 	}
 }
 
+// --- a review the agent started itself: nothing of the page's began its turn -----------------
+
+// agentStartedReview is a review the agent made in an ordinary turn, as `vibe-review start` does: in progress, with a turn running
+// that the page didn't begin for it.
+func agentStartedReview(t *testing.T) (*Server, *review.Store, *reviewClock, *fakeAgent) {
+	t.Helper()
+	s, store, clock := tabServerWithClock(t)
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	send(t, s, "/api/conversation/send", `{"prompt":"please review my changes"}`)
+	if _, err := store.Do(review.Request{Op: "start", Note: "x"}, review.Agent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "so far"}, review.Agent); err != nil {
+		t.Fatal(err)
+	}
+	return s, store, clock, f
+}
+
+func TestAReviewTheAgentStartedItselfIsNotAbandonedWhileItsTurnRuns(t *testing.T) {
+	s, _, clock, f := agentStartedReview(t)
+	defer close(f.release)
+	clock.advance(reviewQuiet + time.Hour) // however long since it was touched: a turn is running
+	if got := getReview(t, s, "/api/review"); got.Abandoned {
+		t.Error("a review being written by a running turn was called abandoned")
+	}
+}
+
+func TestStoppingTheTurnOfAReviewTheAgentStartedItselfAsksFirstAndConfirmedDropsIt(t *testing.T) {
+	s, store, _, f := agentStartedReview(t)
+	defer close(f.release)
+	rec := do(t, s, post("/api/conversation/stop", `{}`))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "review-in-progress") {
+		t.Fatalf("stop: %d %s", rec.Code, rec.Body)
+	}
+	if !s.convo.working() {
+		t.Fatal("the turn was stopped by a stop that was refused")
+	}
+	if rec := do(t, s, post("/api/conversation/stop", `{"confirmed":true}`)); rec.Code != http.StatusOK {
+		t.Fatalf("confirmed stop: %d %s", rec.Code, rec.Body)
+	}
+	if r, _ := store.Load(); !r.Started.IsZero() || !strings.Contains(r.Closed, "dropped") {
+		t.Errorf("the half-written review was kept: %+v", r)
+	}
+}
+
+func TestClosingAReviewTheAgentStartedItselfWhileItsTurnRunsAsksToStopTheAgent(t *testing.T) {
+	s, store, _, f := agentStartedReview(t)
+	defer close(f.release)
+	rec := do(t, s, post("/api/review/close", `{}`))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "stops the agent") {
+		t.Fatalf("close without agreeing to stop: %d %s", rec.Code, rec.Body)
+	}
+	if r, _ := store.Load(); r.Closed != "" {
+		t.Errorf("the review was closed: %+v", r)
+	}
+	if rec := do(t, s, post("/api/review/close", `{"stop":true}`)); rec.Code != http.StatusOK {
+		t.Fatalf("close: %d %s", rec.Code, rec.Body)
+	}
+	if r, _ := store.Load(); !r.Started.IsZero() || !strings.Contains(r.Closed, "dropped") {
+		t.Errorf("not dropped: %+v", r)
+	}
+}
+
+func TestAReviewTheAgentIsWritingItselfIsNotClosedByABranchSwitchWhileItsTurnRuns(t *testing.T) {
+	s, store, _, f := agentStartedReview(t)
+	reviewIsClosed(t, s) // the first look, which notes the branch the agent started it on
+	checkout(t, s, "-b", "feat/other")
+	if closed, _ := reviewIsClosed(t, s); closed != "" {
+		t.Fatalf("closed under the agent: %q", closed)
+	}
+	close(f.release)
+	idle(t, s)
+	store.Do(review.Request{Op: "done"}, review.Agent)
+	if closed, _ := reviewIsClosed(t, s); closed == "" {
+		t.Error("not closed once the agent had finished")
+	}
+}
+
+// An old review in progress, with an unrelated prompt now running: that turn is not writing it, so stopping it is not asked about.
+func TestStoppingAnUnrelatedTurnIsNotAskedAboutBecauseAnOldReviewIsInProgress(t *testing.T) {
+	s, store, clock := tabServerWithClock(t)
+	if _, err := store.Do(review.Request{Op: "start", Note: "x"}, review.Agent); err != nil {
+		t.Fatal(err)
+	}
+	clock.advance(reviewQuiet + time.Hour)
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	defer close(f.release)
+	send(t, s, "/api/conversation/send", `{"prompt":"something else"}`)
+	if rec := do(t, s, post("/api/conversation/stop", `{}`)); rec.Code != http.StatusOK {
+		t.Fatalf("stop: %d %s", rec.Code, rec.Body)
+	}
+	if r, _ := store.Load(); r.Closed != "" || r.State != review.InProgress {
+		t.Errorf("the old review was changed by a stop of another turn: %+v", r)
+	}
+}
+
+// A review the agent is writing from a terminal session shows as no turn here: it has touched it lately, so it is not abandoned.
+func TestAReviewTheAgentTouchedLatelyIsNotAbandonedEvenWithNoTurnRunning(t *testing.T) {
+	s, store, clock := tabServerWithClock(t)
+	if _, err := store.Do(review.Request{Op: "start", Note: "x"}, review.Agent); err != nil {
+		t.Fatal(err)
+	}
+	if got := getReview(t, s, "/api/review"); got.Abandoned {
+		t.Error("called abandoned the moment it was started")
+	}
+	clock.advance(reviewQuiet - time.Minute)
+	if got := getReview(t, s, "/api/review"); got.Abandoned {
+		t.Error("called abandoned before the quiet time")
+	}
+	clock.advance(2 * time.Minute)
+	if got := getReview(t, s, "/api/review"); !got.Abandoned {
+		t.Error("not called abandoned once it had been left alone for the quiet time")
+	}
+}
+
+// --- a confirmed stop says what really happened ----------------------------------------------
+
+func TestAConfirmedStopAfterTheAgentHasFinishedTheReviewKeepsItAndSaysNothingWasStopped(t *testing.T) {
+	s, store, _ := tabServerWithClock(t)
+	f := &fakeAgent{release: make(chan struct{})}
+	s.cfg.Converse = f.converse
+	defer close(f.release)
+	doneWithOpenThread(t, s, store)
+	rec := do(t, s, post("/api/conversation/stop", `{"confirmed":true}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stop: %d %s", rec.Code, rec.Body)
+	}
+	var body struct {
+		Stopped bool `json:"stopped"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body.Stopped {
+		t.Error("it said it stopped something: nothing was running")
+	}
+	if r, _ := store.Load(); r.Closed != "" || len(r.Threads) != 1 || r.State != review.Done {
+		t.Errorf("a finished review was changed: %+v", r)
+	}
+}
+
+// --- the branch is not looked up on every poll -------------------------------------------------
+
+func TestTheBranchIsLookedUpAtMostEveryFewSecondsAndAlwaysWhenTheDiffIsAsked(t *testing.T) {
+	s, _, clock := tabServerWithClock(t)
+	startReviewOnMain(t, s)
+	var looks int
+	was := s.branchLookup
+	s.branchLookup = func(ctx context.Context, dir string) (string, error) { looks++; return was(ctx, dir) }
+	for i := 0; i < 5; i++ {
+		getReview(t, s, "/api/review")
+	}
+	if looks > 1 {
+		t.Errorf("%d lookups for 5 polls within a moment", looks)
+	}
+	before := looks
+	getReview(t, s, "/api/review?diff=1")
+	if looks != before+1 {
+		t.Errorf("a diff was asked for and the branch was not looked up: %d lookups, was %d", looks, before)
+	}
+	clock.advance(branchLookEvery + time.Second)
+	getReview(t, s, "/api/review")
+	if looks != before+2 {
+		t.Errorf("not looked up again after the time: %d lookups", looks)
+	}
+}
+
 // --- a review closes itself when the folder switches branch -------------------------------
 
+// reviewClock stands in for the server's clock, to be moved on by tests.
+type reviewClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *reviewClock) read() time.Time { c.mu.Lock(); defer c.mu.Unlock(); return c.now }
+func (c *reviewClock) advance(d time.Duration) {
+	c.mu.Lock()
+	c.now = c.now.Add(d)
+	c.mu.Unlock()
+}
+
+func withReviewClock(s *Server) *reviewClock {
+	c := &reviewClock{now: time.Now()}
+	s.clock = c.read
+	return c
+}
+
+// reviewIsClosed looks at the review as the tab does when it polls, some seconds after the last look: the branch is not looked up more
+// than every few seconds.
 func reviewIsClosed(t *testing.T, s *Server) (closed string, rv review.Review) {
 	t.Helper()
+	if c, ok := reviewClocks.Load(s); ok {
+		c.(*reviewClock).advance(10 * time.Second)
+	}
 	r := getReview(t, s, "/api/review")
 	return r.Review.Closed, r.Review
+}
+
+// reviewClocks are the clocks of the servers a test gave one (see tabServerWithClock).
+var reviewClocks sync.Map
+
+func tabServerWithClock(t *testing.T) (*Server, *review.Store, *reviewClock) {
+	t.Helper()
+	s, store := reviewTabServer(t)
+	c := withReviewClock(s)
+	reviewClocks.Store(s, c)
+	t.Cleanup(func() { reviewClocks.Delete(s) })
+	return s, store, c
 }
 
 func checkout(t *testing.T, s *Server, args ...string) {
@@ -1264,7 +1470,7 @@ func startReviewOnMain(t *testing.T, s *Server) {
 }
 
 func TestAReviewIsClosedByTheFolderSwitchingBranchAndSaysWhichBranchesAndIsKept(t *testing.T) {
-	s, store := reviewTabServer(t)
+	s, store, _ := tabServerWithClock(t)
 	startReviewOnMain(t, s)
 	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "keep me"}, review.Agent)
 	if closed, _ := reviewIsClosed(t, s); closed != "" {
@@ -1283,7 +1489,7 @@ func TestAReviewIsClosedByTheFolderSwitchingBranchAndSaysWhichBranchesAndIsKept(
 }
 
 func TestAReviewStaysOpenWhileTheFolderStaysOnItsBranch(t *testing.T) {
-	s, _ := reviewTabServer(t)
+	s, _, _ := tabServerWithClock(t)
 	startReviewOnMain(t, s)
 	for i := 0; i < 3; i++ {
 		if closed, _ := reviewIsClosed(t, s); closed != "" {
@@ -1293,7 +1499,7 @@ func TestAReviewStaysOpenWhileTheFolderStaysOnItsBranch(t *testing.T) {
 }
 
 func TestComingBackToTheBranchDoesNotReopenTheReview(t *testing.T) {
-	s, _ := reviewTabServer(t)
+	s, _, _ := tabServerWithClock(t)
 	startReviewOnMain(t, s)
 	checkout(t, s, "-b", "feat/other")
 	reviewIsClosed(t, s)
@@ -1304,7 +1510,7 @@ func TestComingBackToTheBranchDoesNotReopenTheReview(t *testing.T) {
 }
 
 func TestADetachedHeadIsLeavingTheBranch(t *testing.T) {
-	s, _ := reviewTabServer(t)
+	s, _, _ := tabServerWithClock(t)
 	startReviewOnMain(t, s)
 	checkout(t, s, "--detach")
 	closed, _ := reviewIsClosed(t, s)
@@ -1314,7 +1520,7 @@ func TestADetachedHeadIsLeavingTheBranch(t *testing.T) {
 }
 
 func TestAReviewIsNotClosedByTheBranchWhileTheAgentIsWritingItButIsOnceItHasFinished(t *testing.T) {
-	s, store := reviewTabServer(t)
+	s, store, _ := tabServerWithClock(t)
 	f := startWritingReview(t, s)
 	checkout(t, s, "-b", "feat/other")
 	if closed, _ := reviewIsClosed(t, s); closed != "" {
@@ -1329,7 +1535,7 @@ func TestAReviewIsNotClosedByTheBranchWhileTheAgentIsWritingItButIsOnceItHasFini
 }
 
 func TestReopeningAReviewTiesItToTheBranchItIsReopenedOnAndLeavingThatClosesItAgain(t *testing.T) {
-	s, _ := reviewTabServer(t)
+	s, _, _ := tabServerWithClock(t)
 	startReviewOnMain(t, s)
 	checkout(t, s, "-b", "feat/other")
 	reviewIsClosed(t, s)
@@ -1348,7 +1554,7 @@ func TestReopeningAReviewTiesItToTheBranchItIsReopenedOnAndLeavingThatClosesItAg
 }
 
 func TestAReviewTheAgentStartedLooksAtTheBranchOnItsFirstLookAndClosesOnLeavingIt(t *testing.T) {
-	s, store := reviewTabServer(t)
+	s, store, _ := tabServerWithClock(t)
 	// Started through the agent's own request, so no branch was noted at the start.
 	if _, err := store.Do(review.Request{Op: "start", Note: "x"}, review.User); err != nil {
 		t.Fatal(err)
@@ -1363,9 +1569,25 @@ func TestAReviewTheAgentStartedLooksAtTheBranchOnItsFirstLookAndClosesOnLeavingI
 }
 
 func TestStartingAReviewNotesTheBranchAtOnceSoASwitchBeforeTheFirstLookIsNoted(t *testing.T) {
-	s, store := reviewTabServer(t)
+	s, store, _ := tabServerWithClock(t)
 	startReviewOnMain(t, s)
 	if rv, _ := store.Load(); !rv.BranchKnown || rv.Branch != "main" {
 		t.Errorf("not noted at the start: %+v", rv)
+	}
+}
+
+// The turn ended between the question and the confirmation: nothing was running to stop, so nothing is dropped and nothing is said to
+// have been stopped.
+func TestStoppingAndDroppingWhenTheTurnHasEndedStopsAndDropsNothing(t *testing.T) {
+	s, store, _ := tabServerWithClock(t)
+	f := startWritingReview(t, s)
+	close(f.release)
+	idle(t, s)
+	rv, stopped, dropped, err := s.stopAndDropReview("why")
+	if err != nil || stopped || dropped {
+		t.Fatalf("stopped %v, dropped %v, %v", stopped, dropped, err)
+	}
+	if r, _ := store.Load(); r.State != review.InProgress || r.Closed != "" || rv.Started.IsZero() {
+		t.Errorf("the review was changed: %+v", r)
 	}
 }

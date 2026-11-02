@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 	"vibe/internal/fscopy"
-	"vibe/internal/review"
 )
 
 // Converser runs one turn of the conversation: it sends prompt to the agent
@@ -659,19 +658,19 @@ func (s *Server) conversationStop(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&req) // the body is optional: a stop from before it had one
 	if tab := s.cfg.ReviewTab; tab != nil {
-		if rv, err := tab.Store.Load(); err == nil && rv.State == review.InProgress && s.agentAtWorkOnReview() {
+		if rv, err := tab.Store.Load(); err == nil && s.reviewWriting(rv) {
 			if !req.Confirmed {
 				writeJSON(w, http.StatusConflict, map[string]interface{}{
 					"error": "the agent is writing a review: stopping it drops the review, which can be started again at any time",
 					"code":  "review-in-progress"})
 				return
 			}
-			dropped, err := s.stopAndDropReview("You stopped the agent while it was still writing this review, so it was dropped: start another whenever you like.")
+			dropped, stopped, _, err := s.stopAndDropReview("You stopped the agent while it was still writing this review, so it was dropped: start another whenever you like.")
 			if err != nil {
 				writeStoreError(w, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]interface{}{"stopped": true, "review": dropped})
+			writeJSON(w, http.StatusOK, map[string]interface{}{"stopped": stopped, "review": dropped})
 			return
 		}
 	}

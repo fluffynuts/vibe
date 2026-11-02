@@ -46,6 +46,7 @@ import (
 
 	"vibe/internal/pathresolve"
 	"vibe/internal/policy"
+	"vibe/internal/review"
 	"vibe/internal/signin"
 )
 
@@ -212,6 +213,15 @@ type Server struct {
 	signInJob signInJob
 	blocked   blockedCache
 	clock     func() time.Time
+	// branchLookup reads the branch the review's folder is on (a variable for tests), and branchSeen is the last answer and when it
+	// was asked: the Review tab's polls look at most every branchLookEvery.
+	branchLookup func(ctx context.Context, dir string) (string, error)
+	branchSeen   struct {
+		mu     sync.Mutex
+		at     time.Time
+		branch string
+		ok     bool
+	}
 	// lifeCtx ends with the server: what it starts for the page (a fetch)
 	// ends with it.
 	lifeCtx    context.Context
@@ -238,7 +248,7 @@ type asked struct {
 func New(cfg Config) *Server {
 	ui, _ := fs.Sub(uiFiles, "ui")
 	life, cancel := context.WithCancel(context.Background())
-	return &Server{cfg: cfg, ui: ui, clock: time.Now, lifeCtx: life, lifeCancel: cancel, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer(colourAtOnce), boot: newBoot()}
+	return &Server{cfg: cfg, ui: ui, clock: time.Now, branchLookup: review.CurrentBranch, lifeCtx: life, lifeCancel: cancel, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer(colourAtOnce), boot: newBoot()}
 }
 
 // Start listens on 127.0.0.1 at cfg.Port and serves in the background.

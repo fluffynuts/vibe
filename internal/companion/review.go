@@ -66,16 +66,64 @@ func branchWords(branch string) string {
 	return "'" + branch + "'"
 }
 
+// reviewQuiet is how long a review in progress may go untouched by the agent, with no turn running, before it is taken as abandoned:
+// the agent may be writing it from a terminal session, which is no turn of the page's to see. A variable for tests.
+var reviewQuiet = 3 * time.Minute
+
+// branchLookEvery is how often at most the branch is looked up by the Review tab's polls (a lookup starts the helper process); asking
+// for the diff always looks.
+var branchLookEvery = 5 * time.Second
+
+// reviewQuietFor says the agent has left the review alone for longer than reviewQuiet: since it last touched it, or since it began.
+func (s *Server) reviewQuietFor(rv review.Review) bool {
+	last := rv.AgentAt
+	if last.IsZero() || rv.Started.After(last) {
+		last = rv.Started
+	}
+	return s.clock().Sub(last) > reviewQuiet
+}
+
+// reviewAbandoned says a review in progress has nothing writing it: no turn of the conversation's agent is running, and the agent
+// hasn't touched it for a while. Not "no turn vibe began for it": a review the agent starts itself, in an ordinary turn, is written by
+// a turn that vibe didn't begin for it (see agentAtWorkOnReview).
+func (s *Server) reviewAbandoned(rv review.Review) bool {
+	return rv.State == review.InProgress && !s.convo.working() && s.reviewQuietFor(rv)
+}
+
+// reviewWriting says a turn is running that is writing the review in progress: one vibe began for it, or one running while the agent
+// has touched it lately (not a turn for something else while an old review sits there).
+func (s *Server) reviewWriting(rv review.Review) bool {
+	return rv.State == review.InProgress && s.convo.working() && (s.agentAtWorkOnReview() || !s.reviewQuietFor(rv))
+}
+
+// currentBranch is the branch the review's folder is on, looked up at most every branchLookEvery unless force.
+func (s *Server) currentBranch(ctx context.Context, force bool) (string, error) {
+	seen := &s.branchSeen
+	seen.mu.Lock()
+	defer seen.mu.Unlock()
+	now := s.clock()
+	if !force && seen.ok && now.Sub(seen.at) < branchLookEvery {
+		return seen.branch, nil
+	}
+	branch, err := s.branchLookup(ctx, s.cfg.ReviewTab.Workspace)
+	if err != nil {
+		return "", err
+	}
+	seen.at, seen.branch, seen.ok = now, branch, true
+	return branch, nil
+}
+
 // watchBranch ties the review to the branch the folder is on: the first time it is looked at, if it wasn't noted when it was
 // started, and from then on the review closes itself when the folder is on another (a review of a feature is confusing once the
-// folder is back on master, after it is released). It is kept, to be reopened. Not while the agent is at work on it: what it says
-// next would go into a closed review, out of sight; the next look after closes it. A branch that can't be read leaves it as it is.
-func (s *Server) watchBranch(ctx context.Context, rv review.Review) review.Review {
+// folder is back on master, after it is released). It is kept, to be reopened. Not while a turn is running, as with a review that
+// has nothing left in it (CloseOver): what the agent says next would go into a closed review, out of sight; the next look after
+// closes it. A branch that can't be read leaves it as it is. force looks the branch up whatever the last look was.
+func (s *Server) watchBranch(ctx context.Context, rv review.Review, force bool) review.Review {
 	if rv.Started.IsZero() || rv.Closed != "" {
 		return rv
 	}
 	store := s.cfg.ReviewTab.Store
-	now, err := review.CurrentBranch(ctx, s.cfg.ReviewTab.Workspace)
+	now, err := s.currentBranch(ctx, force)
 	if err != nil {
 		return rv
 	}
@@ -85,7 +133,7 @@ func (s *Server) watchBranch(ctx context.Context, rv review.Review) review.Revie
 		}
 		return rv
 	}
-	if now == rv.Branch || s.agentAtWorkOnReview() {
+	if now == rv.Branch || s.convo.working() {
 		return rv
 	}
 	why := "Closed by itself: this folder is on " + branchWords(now) + " now, and the review was of " + branchWords(rv.Branch) +
@@ -99,7 +147,7 @@ func (s *Server) watchBranch(ctx context.Context, rv review.Review) review.Revie
 // noteBranch notes the branch the folder is on for the review just started (or reopened); one that can't be read is left for the
 // first look to note.
 func (s *Server) noteBranch(ctx context.Context, rv review.Review) review.Review {
-	now, err := review.CurrentBranch(ctx, s.cfg.ReviewTab.Workspace)
+	now, err := s.currentBranch(ctx, true)
 	if err != nil {
 		return rv
 	}
@@ -121,10 +169,10 @@ func (s *Server) reviewState(w http.ResponseWriter, r *http.Request) {
 	}
 	{
 		ctx, cancel := context.WithTimeout(r.Context(), diffWithin)
-		rv = s.watchBranch(ctx, rv)
+		rv = s.watchBranch(ctx, rv, r.URL.Query().Get("diff") == "1")
 		cancel()
 	}
-	body := map[string]interface{}{"review": rv, "agentAtWork": s.agentAtWorkOnReview()}
+	body := map[string]interface{}{"review": rv, "agentAtWork": s.agentAtWorkOnReview(), "abandoned": s.reviewAbandoned(rv)}
 	if ask := s.answeringAsk(); ask != nil {
 		body["ask"] = ask
 	}
@@ -691,10 +739,17 @@ func (s *Server) agentAtWorkOnReview() bool {
 }
 
 // stopAndDropReview stops the agent's turn and drops the review it was writing, saying why: the one place both closing the review
-// and stopping the agent do it, since a review half written is never kept (it would only be started again).
-func (s *Server) stopAndDropReview(why string) (review.Review, error) {
-	s.convo.stop()
-	return s.cfg.ReviewTab.Store.Drop(why)
+// and stopping the agent do it, since a review half written is never kept (it would only be started again). It says what really
+// happened: the review is dropped only when the stop found a turn to stop and the review was still in progress after it, so a turn
+// that ended in the meantime (with `done`, say) leaves its review as it is.
+func (s *Server) stopAndDropReview(why string) (rv review.Review, stopped, dropped bool, err error) {
+	store := s.cfg.ReviewTab.Store
+	stopped = s.convo.stop()
+	if rv, err = store.Load(); err != nil || !stopped || rv.State != review.InProgress {
+		return rv, stopped, false, err
+	}
+	rv, err = store.Drop(why)
+	return rv, stopped, err == nil, err
 }
 
 // reviewClose closes the review. The agent at work on it is stopped, when
@@ -722,23 +777,27 @@ func (s *Server) reviewClose(w http.ResponseWriter, r *http.Request) {
 	for _, t := range rv.Threads {
 		open = open || t.Status == review.Open
 	}
-	stopping := s.agentAtWorkOnReview() && (writing || open)
+	stopping := (s.agentAtWorkOnReview() || s.reviewWriting(rv)) && (writing || open)
 	if stopping && !req.Stop {
 		writeError(w, http.StatusConflict, "the agent is at work on this review, and closing it now stops the agent: it was left open")
 		return
 	}
+	dropped := false
 	if stopping && writing {
-		rv, err = s.stopAndDropReview("You closed it while the agent was still writing it, so it was dropped: start another whenever you like.")
-	} else if writing && !s.agentAtWorkOnReview() {
-		// In progress with nothing at work on it (the agent crashed, the sandbox stopped, it forgot `done`): half a review that
-		// nobody is writing, dropped as one being written is, and nothing to stop.
+		rv, _, dropped, err = s.stopAndDropReview("You closed it while the agent was still writing it, so it was dropped: start another whenever you like.")
+	} else if writing && s.reviewAbandoned(rv) {
+		// In progress with nothing writing it (the agent crashed, the sandbox stopped, it forgot `done`): half a review that nobody is
+		// writing, dropped as one being written is, and nothing to stop.
 		rv, err = store.Drop("The agent stopped before finishing this review, so it was dropped: start another whenever you like.")
-	} else {
-		if stopping {
+		dropped = err == nil
+	}
+	if err == nil && !dropped {
+		// The agent finished (or its turn ended) while it was being closed: closed, and kept.
+		if stopping && !writing {
 			s.convo.stop()
 		}
 		why := "You closed it."
-		if stopping {
+		if stopping && !writing {
 			why = "You closed it, stopping the agent's work on it."
 		}
 		rv, err = store.Do(review.Request{Op: "close", Body: why}, review.User)

@@ -545,7 +545,7 @@ const allOptions = { uncommitted: true, defaultBranch: 'master', upstream: 'orig
 // closes and reopens it.
 // agentAtWork is whether vibe says the agent is at work on the review; close
 // answers a close (else it's closed, as asked).
-async function startPage({ review = none, options = allOptions, conversation = true, defaultBranch = { why: '' }, agentAtWork = false, close = null, diff = [], extra = {} } = {}) {
+async function startPage({ review = none, options = allOptions, conversation = true, defaultBranch = { why: '' }, agentAtWork = false, abandoned = false, close = null, diff = [], extra = {} } = {}) {
   let current = review
   const setCurrent = (r) => { current = r }
   return openPage({
@@ -553,7 +553,7 @@ async function startPage({ review = none, options = allOptions, conversation = t
       ...(typeof extra === 'function' ? extra(setCurrent) : extra),
       '/api/default-branch': (call) => (typeof defaultBranch === 'function' ? defaultBranch(call) : defaultBranch),
       '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation, reviewAt: '', attention: {} },
-      '/api/review': () => ({ review: current, diff, agentAtWork: typeof agentAtWork === 'function' ? agentAtWork() : agentAtWork }),
+      '/api/review': () => ({ review: current, diff, abandoned, agentAtWork: typeof agentAtWork === 'function' ? agentAtWork() : agentAtWork }),
       '/api/review/close': (call) => (close && close(call)) || ({ review: (current = { ...current, closed: 'You closed it.' }) }),
       '/api/review/options': options,
       '/api/review/start': (call) => ({ review: (current = { ...none, started: '2026-10-16T12:00:00Z', state: call.body.agent ? 'in progress' : '' }) }),
@@ -741,6 +741,7 @@ test('a close vibe refuses, the agent having begun work on the review since, ask
   let atWork = false
   const p = await startPage({
     review: { ...openReview, state: 'in progress', threads: [] },
+    abandoned: true, // as far as the page knew: the agent began work on it after the page last looked
     agentAtWork: () => atWork,
     close: (call) => (call.body.stop ? null : { status: 409, body: { error: 'the agent is at work on this review, and closing it now stops the agent: it was left open' } }),
   })
@@ -756,7 +757,7 @@ test('a close vibe refuses, the agent having begun work on the review since, ask
 
 test('a close vibe keeps refusing is asked again once, then says why', async () => {
   const refusal = 'the agent is at work on this review, and closing it now stops the agent: it was left open'
-  const p = await startPage({ review: { ...openReview, state: 'in progress', threads: [] }, close: () => ({ status: 409, body: { error: refusal } }) })
+  const p = await startPage({ review: { ...openReview, state: 'in progress', threads: [] }, abandoned: true, close: () => ({ status: 409, body: { error: refusal } }) })
   try {
     await p.click('review-close')
     assert.equal(p.$('confirm').open, true, 'asked again, as stopping the agent')
@@ -3383,8 +3384,8 @@ test('a stop with no review being written is not asked about', async () => {
 
 // A review "in progress" with no agent at work on it (the agent crashed, the sandbox stopped, it forgot `done`) says so
 // and offers to discard it, instead of saying the agent is still reviewing.
-test('a review in progress with nothing at work on it says the agent stopped, and offers to discard it', async () => {
-  const p = await startPage({ review: writingReview, agentAtWork: false })
+test('a review in progress that the server says is abandoned says the agent stopped, and offers to discard it', async () => {
+  const p = await startPage({ review: writingReview, agentAtWork: false, abandoned: true })
   try {
     assert.match(p.$('review-state').textContent, /agent stopped before finishing this review/)
     assert.doesNotMatch(p.$('review-state').textContent, /still reviewing/)
@@ -3400,5 +3401,34 @@ test('with the agent at work on it, a review in progress says so and has nothing
   try {
     assert.match(p.$('review-state').textContent, /still reviewing/)
     assert.equal(p.$('review-discard').hidden, true)
+  } finally { p.close() }
+})
+
+// A review the agent started itself isn't one of the turns vibe began for it (agentAtWork is false), yet it is being written: the
+// server says whether it is abandoned, and the page goes by that, not by agentAtWork.
+test('a review in progress that is not abandoned says the agent is still reviewing, with nothing to discard, whatever agentAtWork says', async () => {
+  const p = await startPage({ review: writingReview, agentAtWork: false, abandoned: false })
+  try {
+    assert.match(p.$('review-state').textContent, /still reviewing/)
+    assert.doesNotMatch(p.$('review-state').textContent, /stopped before finishing/)
+    assert.equal(p.$('review-discard').hidden, true)
+  } finally { p.close() }
+})
+
+test('closing a review in progress that is not abandoned warns that it stops the agent, as closing one the page began does', async () => {
+  const p = await startPage({ review: writingReview, agentAtWork: false, abandoned: false })
+  try {
+    await p.click('review-close')
+    assert.ok(p.$('confirm').open, 'closed without asking')
+    assert.match(p.$('confirm-text').textContent, /still writing this review/)
+    await p.confirm(true)
+    assert.deepEqual(p.posted('/api/review/close'), [{ stop: true }])
+  } finally { p.close() }
+})
+
+test('Submit to agent waits for a review still being written, however its turn began', async () => {
+  const p = await startPage({ review: { ...writingReview, threads: [{ id: 1, status: 'open', comments: [{ author: 'user', body: 'x', at: '2026-10-16T10:00:00Z', sent: false }] }], lastId: 1 }, agentAtWork: false, abandoned: false })
+  try {
+    assert.equal(p.$('review-submit').disabled, true)
   } finally { p.close() }
 })
