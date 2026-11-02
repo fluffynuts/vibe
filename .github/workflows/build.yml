@@ -144,7 +144,7 @@ jobs:
           # and description head the notes. A push straight to master has none.
           # Not finding it is said, and the release goes ahead without it.
           # The description goes to a file, never into this script.
-          pr_filter='[.[] | select(.merged_at != null)][0] | if . then "## \(.title) (#\(.number))\n\n\(.body // "")\n\n---\n" else "" end'
+          pr_filter='[.[] | select(.merged_at != null)][0] | if . then "## \(.title) (#\(.number))\n\n\(.body // "")\n\n---\n" else empty end'
           if ! gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq "$pr_filter" >notes.md; then
             echo "::warning::couldn't look up the pull request $GITHUB_SHA came from: released without its summary"
             : >notes.md
