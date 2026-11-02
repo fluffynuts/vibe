@@ -147,6 +147,38 @@ func themeIn(ctx context.Context, name, file string) (value string, found, ok bo
 	return value, found, true
 }
 
+// SetInSandbox sets the theme a running sandbox's agent uses, as /theme would,
+// keeping the rest of its settings. The file is written whole and moved into
+// place, so the agent never reads half of it; one that can't be read as JSON
+// is left as it is, and said so.
+//
+// It reads, changes and writes the file back as separate calls into the sandbox, so a write
+// by the agent in between (a /theme at that moment) is lost. That is the same read-merge-write the
+// agent does itself, the window is about a second, and the loser sees the theme they chose not
+// take: a known limit, left as it is.
+func SetInSandbox(ctx context.Context, name, choice string) error {
+	if choice != Default && !builtIn[choice] && !validName.MatchString(choice) {
+		return fmt.Errorf("not a theme name: %q", choice)
+	}
+	current := ""
+	if sbxrun.ExecSilent(ctx, name, "test", "-e", settingsPath) {
+		out, err := sbxrun.ExecStdout(ctx, name, "cat", settingsPath)
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", settingsPath, err)
+		}
+		current = out
+	}
+	merged, err := withTheme(current, settingValue(choice))
+	if err != nil {
+		return fmt.Errorf("%s isn't readable as JSON, so it is left as it is: %w", settingsPath, err)
+	}
+	const place = `mkdir -p "$(dirname "$1")" && cat > "$1.new" && mv "$1.new" "$1"`
+	if _, err := sbxrun.ExecInputStdout(ctx, name, merged, "sh", "-c", place, "sh", settingsPath); err != nil {
+		return fmt.Errorf("writing %s: %w", settingsPath, err)
+	}
+	return nil
+}
+
 // FromProfile reads the theme recorded in a profile's directory (in its
 // user preferences: see internal/userprefs).
 func FromProfile(profileDir string) (choice string, ok bool) {

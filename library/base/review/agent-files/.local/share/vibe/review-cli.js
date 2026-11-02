@@ -31,6 +31,8 @@ const USAGE = [
   "  reply --thread N BODY",
   "  resolve --thread N [BODY]",
   "  dismiss --thread N [BODY]",
+  "  withdraw --thread N take back a comment made by mistake: your own thread, and",
+  "                      only while the user hasn't replied on it",
   "  order               the reading order, as JSON on stdin:",
   "                      [{\"file\": ..., \"line\": N, \"label\": ..., \"body\": ...}]",
   "  done                the review is finished",
@@ -138,6 +140,49 @@ function startAndWait(request) {
       "with its companion page (not --no-companion, nor companion: off)? The start waits in the inbox, and is taken in once it is.", 1);
   }
   fail("the start was taken in, but vibe hasn't said what became of it: see vibe-review list", 1);
+}
+
+// resolveFile is the path the tab has for file, as the agent named it. The tab's paths are from the top of the
+// repository, but an agent that has gone into a subfolder names files from there, or by the end of their path, and
+// a thread on a path the tab doesn't have is shown apart from the diff. So: a path the repository has is kept; one
+// that is a file under where the agent is, is that; one that ends a single file's path is that file (and it is
+// said); one that ends several files' paths is refused, naming them, as nobody can tell which was meant. A path
+// the repository doesn't have is kept, and said: it may be of a file the review is of and the tree no longer is.
+function resolveFile(file) {
+  const given = path.posix.normalize(file.replace(/\\/g, "/"));
+  const all = repoFiles();
+  if (all === null) return file; // not a repository: there is nothing to tell the path from
+  const known = new Set(all);
+  if (known.has(given)) return given;
+  const made = function (path) {
+    process.stderr.write("vibe-review: " + file + " is " + path + " in this repository: used that\n");
+    return path;
+  };
+  const here = path.relative(fs.realpathSync(root()), fs.realpathSync(process.cwd())).split(path.sep).join("/");
+  if (here && !here.startsWith("..") && known.has(here + "/" + given)) return made(here + "/" + given);
+  const ends = all.filter(function (f) { return f.endsWith("/" + given); });
+  if (ends.length === 1) return made(ends[0]);
+  if (ends.length > 1) {
+    fail(file + " could be any of " + ends.slice(0, 10).join(", ") + (ends.length > 10 ? ", ..." : "") +
+      ": give the path from the top of the repository");
+  }
+  process.stderr.write("vibe-review: " + file + " isn't a file in this repository: kept under that name " +
+    "(right for a deleted file; otherwise check the path, which is from the top of the repository)\n");
+  return given;
+}
+
+// repoFiles is every file the repository has (tracked, or untracked and not ignored), listed once per run: an
+// order of many stops asks for it for each. null when this isn't a repository.
+let listedFiles;
+function repoFiles() {
+  if (listedFiles === undefined) {
+    try {
+      listedFiles = git(["ls-files", "-z"]).split("\0").concat(git(["ls-files", "--others", "--exclude-standard", "-z"]).split("\0")).filter(Boolean);
+    } catch (e) {
+      listedFiles = null;
+    }
+  }
+  return listedFiles;
 }
 
 // linesOf is lines first to last of file as they read now, for the tab to
@@ -283,11 +328,15 @@ function main(argv) {
       if (side !== "new" && side !== "old") fail("--side is new or old, not " + JSON.stringify(o.side));
       const line = number(o, "line", true);
       const endLine = number(o, "end-line", false);
-      drop({ op: "comment", file: o.file, line: line, endLine: endLine, side: side, code: side === "new" ? linesOf(o.file, line, endLine || line) : undefined, body: body(o, true) });
+      const file = resolveFile(o.file);
+      drop({ op: "comment", file: file, line: line, endLine: endLine, side: side, code: side === "new" ? linesOf(file, line, endLine || line) : undefined, body: body(o, true) });
       return;
     }
     case "general":
       drop({ op: "general", body: body(parse(rest), true) });
+      return;
+    case "withdraw":
+      drop({ op: "withdraw", thread: number(parse(rest), "thread", true) });
       return;
     case "reply":
     case "resolve":
@@ -301,6 +350,7 @@ function main(argv) {
       try { stops = JSON.parse(fs.readFileSync(0, "utf8")); } catch (e) { fail("order reads its stops as JSON on stdin: " + e.message); }
       if (!Array.isArray(stops)) fail("order reads a JSON list of stops on stdin");
       stops.forEach(checkStop);
+      stops.forEach(function (stop) { stop.file = resolveFile(stop.file); });
       drop({ op: "order", stops: stops });
       return;
     }

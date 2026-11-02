@@ -164,6 +164,8 @@ type Config struct {
 	// itself out with ("" for none: the page's own); nil means none. It may
 	// be slow (it can ask the sandbox), so it is asked for seldom.
 	ThemeColor func() string
+	// Themes is how the page changes that theme; nil means it can't.
+	Themes ThemePicker
 	// Power is what the page's power menu and Profiles tab stop, restart and
 	// start vibes with; nil means the page has no such items.
 	Power Power
@@ -414,6 +416,8 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"GET /api/power", s.serving(powerFeature, s.powerState)},
 		{"POST /api/power", s.serving(powerFeature, s.powerDo)},
 		{"GET /api/power/log", s.serving(powerFeature, s.powerLog)},
+		{"GET /api/theme", s.authed(s.themeState)},
+		{"POST /api/theme", s.serving(themeFeature, s.themeSet)},
 		{"GET /api/admin", s.authed(s.adminState)},
 		{"POST /api/admin/do", s.serving(adminFeature, s.adminDo)},
 		{"POST /api/admin/upgrades", s.serving(adminFeature, s.adminCheckUpgrades)},
@@ -642,6 +646,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"conversation":          s.cfg.Converse != nil,
 		"choice":                choiceFeature.present(s),
 		"admin":                 s.cfg.Admin != nil,
+		"themes":                s.cfg.Themes != nil,
 		"manage":                s.cfg.Manage != nil,
 		"review":                s.cfg.ReviewTab != nil,
 		"viewFiles":             fileFeature.present(s),
@@ -870,6 +875,8 @@ type cache struct {
 	mu      sync.Mutex
 	ttl     time.Duration
 	entries map[string]*cacheEntry
+	// refreshing counts the refreshes under way, for a test to wait for them.
+	refreshing sync.WaitGroup
 }
 
 type cacheEntry struct {
@@ -934,7 +941,8 @@ func (c *cache) getStale(key string, ttl time.Duration, fn func() (interface{}, 
 		case <-e.done:
 			if time.Since(e.at) >= ttl && !e.refreshing {
 				e.refreshing = true
-				go c.refresh(key, fn)
+				c.refreshing.Add(1)
+				go c.refresh(key, e, fn)
 			}
 			c.mu.Unlock()
 			return e.val, e.err
@@ -954,14 +962,18 @@ func (c *cache) getStale(key string, ttl time.Duration, fn func() (interface{}, 
 	return e.val, e.err
 }
 
-// refresh replaces key's answer with a fresh one. The old entry is left as it
-// was, for those already holding it.
-func (c *cache) refresh(key string, fn func() (interface{}, error)) {
+// refresh replaces key's answer, the old one being stale, with a fresh one. The old entry is left as it was, for
+// those already holding it. If the key was forgotten (or replaced) while this was fetching, what it fetched is
+// out of date already, and is dropped.
+func (c *cache) refresh(key string, stale *cacheEntry, fn func() (interface{}, error)) {
+	defer c.refreshing.Done()
 	val, err := fn()
 	fresh := &cacheEntry{done: make(chan struct{}), at: time.Now(), val: val, err: err}
 	close(fresh.done)
 	c.mu.Lock()
-	c.entries[key] = fresh
+	if c.entries[key] == stale {
+		c.entries[key] = fresh
+	}
 	c.mu.Unlock()
 }
 

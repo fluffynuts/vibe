@@ -162,7 +162,11 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .commands li mark { background: none; color: inherit; font-weight: 700; }
 .commands li.hint { font-family: inherit; color: var(--muted); cursor: default; white-space: normal; }
 .convo-form textarea { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; resize: vertical; min-height: 64px; }
-.convo-form textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The agent's colour theme on the Settings card: its label, the drop-down, and what to know of the choice. */
+.settings-theme { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; }
+.settings-theme .note { margin: 0; }
+/* Where typing on the tab would land, though focus is elsewhere (see showTypingGoesToPrompt). */
+.convo-form textarea.takes-typing, .convo-form textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .convo-clip .wait {
   flex: 1; min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
   border: 1px dashed var(--line); border-radius: 6px; padding: 16px; text-align: center;
@@ -484,6 +488,7 @@ ol.steps code { font: 12px var(--mono); padding: 1px 4px; border: 1px solid var(
 html.themed body { border-top: 3px solid var(--theme); }
 html.themed .brand .project { color: var(--theme-ink); }
 html.themed .tabs button[aria-selected="true"] { border-bottom-color: var(--theme); }
+html.themed textarea.takes-typing,
 html.themed textarea:focus-visible,
 html.themed input:focus-visible,
 html.themed button:focus-visible,

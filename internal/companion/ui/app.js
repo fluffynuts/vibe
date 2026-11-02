@@ -765,6 +765,7 @@
   function showGlass() {
     const shown = offline.down && !offline.dismissed
     $('offline').hidden = !shown
+    showTypingGoesToPrompt()
     // What it says depends on whether the user stopped vibe from here, which may be known only after it went.
     $('offline-dismiss').textContent = offline.stoppedHere ? 'Close this tab' : 'Dismiss until it reconnects'
     if (offline.down) {
@@ -885,6 +886,7 @@
       $('convo-choice').hidden = !state.choice
       if (state.choice) initChoice()
       state.admin = !!res.body.admin
+      state.themes = !!res.body.themes
       state.power = !!res.body.power
       state.manage = !!res.body.manage
       state.boot = res.body.boot || ''
@@ -1100,6 +1102,7 @@
     const wanted = tab
     if (!TABS.includes(tab) || $('tab-' + tab).hidden) tab = TABS.find((t) => !$('tab-' + t).hidden) || 'log'
     state.tab = tab
+    showTypingGoesToPrompt()
     // Only a tab that was asked for is a choice to keep: where it wasn't there to go to (no conversation yet, on a first
     // open), the one stood in for isn't, or it would stay the choice once the conversation is.
     if (remember && tab === wanted) store.set('vibe-companion-tab', tab)
@@ -1112,6 +1115,7 @@
     }
     if (tab === 'log') blockedSeen()
     if (tab === 'admin' && state.signin) loadSignIn()
+    if (tab === 'admin' && state.themes) loadTheme()
     if (tab === 'review') reviewSeen()
     // A comment asked for, not yet gone to, isn't gone to once you're elsewhere.
     else reviewView.goTo = null
@@ -3462,6 +3466,61 @@
     if (field && typed) { field.value = typed; field.focus() }
   }
 
+  // --- the agent's colour theme, on the Settings card ----------------------
+
+  // The drop-down shows the theme the agent has; choosing one sets it at once, and the page's accent
+  // takes its colour without waiting for the next state.
+  const themeChoice = { shown: '' }
+
+  function drawTheme(t) {
+    const select = $('settings-theme')
+    select.replaceChildren(...t.options.map((name) => {
+      const option = el('option', { text: name === 'default' ? 'Default' : name })
+      option.value = name
+      return option
+    }))
+    select.value = t.current
+    themeChoice.shown = t.current
+    $('settings-theme-note').textContent = t.live ? '' : "This sandbox isn't running: a choice is kept for the next time it is built."
+  }
+
+  async function loadTheme() {
+    $('settings-theme-row').hidden = !state.themes
+    try {
+      const res = await api('/api/theme')
+      reached(true)
+      if (res.ok) drawTheme(res.body)
+      else $('settings-theme-note').textContent = res.body.error || "vibe couldn't say what the theme is."
+    } catch (e) {
+      reached(false)
+    }
+  }
+
+  async function chooseTheme() {
+    const select = $('settings-theme')
+    const choice = select.value
+    select.disabled = true
+    try {
+      const res = await post('/api/theme', { choice })
+      reached(true)
+      if (!res.ok) {
+        select.value = themeChoice.shown
+        $('settings-theme-note').textContent = res.body.error || "vibe couldn't change the theme."
+        return
+      }
+      themeChoice.shown = choice
+      applyTheme(res.body.color || '')
+      $('settings-theme-note').textContent = res.body.live
+        ? 'Changed. A Claude terminal that is already open keeps its colours until it is restarted.'
+        : "This sandbox isn't running: the choice is kept for the next time it is built."
+    } catch (e) {
+      select.value = themeChoice.shown
+      reached(false)
+    } finally {
+      select.disabled = false
+    }
+  }
+
   async function loadAdmin() {
     try {
       const res = await api('/api/admin')
@@ -3861,14 +3920,21 @@
     p.className = 'pill' + (cls ? ' ' + cls : '')
   }
 
+  // What each action that takes the sandbox away is called, in 'unavailable while ...'.
+  const UNAVAILABLE_WHILE = { reinit: 'rebuilding', rebuild: 'rebuilding', recompose: 're-composing', restore: 'restoring a backup', update: 'updating', delete: 'deleting' }
+
   function renderAdmin(data) {
     adminView.data = data
     const st = data.status || {}
     const job = data.job
     const busy = !!(job && job.running)
 
-    pill('admin-state', st.running ? 'running' : st.exists ? 'stopped' : 'not created',
-      st.running ? 'ok' : 'bad')
+    // While this page is taking the sandbox away (a rebuild, a re-compose...), it is not "running" whatever sbx last
+    // said: the pill says what is being done, and, if the sandbox can't be read, the message says that is why.
+    const taking = busy && UNAVAILABLE_WHILE[job.kind]
+    if (taking) pill('admin-state', taking, 'warn')
+    else pill('admin-state', st.running ? 'running' : st.exists ? 'stopped' : 'not created', st.running ? 'ok' : 'bad')
+    const unreadable = taking && st.error
     $('admin-start').hidden = !st.exists || st.running
     $('admin-stop').hidden = !st.running
     for (const id of ['admin-start', 'admin-stop', 'admin-reinit', 'admin-memories', 'admin-recompose']) {
@@ -3878,7 +3944,8 @@
     $('admin-reinit').disabled = busy || !st.profile
     $('admin-info').textContent = st.info || ''
     $('admin-error').hidden = !st.error
-    $('admin-error').textContent = st.error || ''
+    $('admin-error').textContent = unreadable ? 'The sandbox is unavailable while ' + taking + '.' : st.error || ''
+    $('admin-error').title = unreadable ? st.error : ''
 
     // The editors are drawn once (so typing isn't undone by a poll), but
     // whether Optimise can run follows the sandbox: redraw them when it
@@ -6158,16 +6225,37 @@
   window.addEventListener('focus', refocusPrompt)
   document.addEventListener('visibilitychange', refocusPrompt)
 
+  // typingGoesToPrompt says whether typing, wherever focus is on the conversation tab, lands in the
+  // prompt: unless a dialog or the offline glass is up, or something else that is typed into has focus.
+  // Focus inside the clipboard's frame (another origin, which this page can't see into) isn't "typed into" as far as
+  // this can tell, so the prompt looks focused while a text box in the frame, such as a pasted image's title, is too.
+  // Both highlighted is accepted: the keys do go to the box that is focused.
+  function typingGoesToPrompt() {
+    if (state.tab !== 'conversation') return false
+    if (document.querySelector('dialog[open]') || !$('offline').hidden) return false
+    const active = document.activeElement
+    return active === $('convo-input') || !typingInto(active)
+  }
+
   // promptCanTake says whether a character typed with focus elsewhere on
   // the conversation tab is meant for the prompt.
   function promptCanTake(ev) {
-    if (state.tab !== 'conversation' || ev.isComposing || ev.ctrlKey || ev.metaKey || ev.altKey || ev.key.length !== 1) return false
-    if (document.querySelector('dialog[open]') || !$('offline').hidden) return false
+    if (ev.isComposing || ev.ctrlKey || ev.metaKey || ev.altKey || ev.key.length !== 1) return false
+    if (!typingGoesToPrompt()) return false
     const active = document.activeElement
-    if (active === $('convo-input') || typingInto(active)) return false
+    if (active === $('convo-input')) return false
     // Space presses a focused button or ticks a box, as it should.
     return !(ev.key === ' ' && active && (active.tagName === 'BUTTON' || active.tagName === 'INPUT'))
   }
+
+  // The prompt looks focused whenever typing would go to it, so nobody has to wonder where it will go.
+  function showTypingGoesToPrompt() {
+    $('convo-input').classList.toggle('takes-typing', typingGoesToPrompt())
+  }
+  document.addEventListener('focusin', showTypingGoesToPrompt)
+  document.addEventListener('focusout', showTypingGoesToPrompt)
+  // A dialog's close doesn't bubble.
+  document.addEventListener('close', showTypingGoesToPrompt, true)
 
   // typingInto says whether node is something typed into: a checkbox isn't.
   function typingInto(node) {
@@ -7079,6 +7167,7 @@
     setUpFresh()
     $('settings-prompts-markdown').checked = promptsAsMarkdown.on
     $('settings-prompts-markdown').addEventListener('change', () => setPromptsAsMarkdown($('settings-prompts-markdown').checked))
+    $('settings-theme').addEventListener('change', chooseTheme)
     $('settings-emoji').checked = emojiState.on
     $('settings-emoji').addEventListener('change', () => setEmojiComplete($('settings-emoji').checked))
     document.addEventListener('paste', onPaste)

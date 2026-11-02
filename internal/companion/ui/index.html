@@ -390,7 +390,12 @@
 
         <section class="card" aria-labelledby="admin-settings-h">
           <h2 id="admin-settings-h">Settings</h2>
-          <p class="note muted">Kept in this browser.</p>
+          <p class="note muted">Kept in this browser, except the colour theme, which is the agent's.</p>
+          <div id="settings-theme-row" class="settings-theme" hidden>
+            <label for="settings-theme" title="The agent's colour theme. The page's accent follows it, so each project is told apart at a glance.">Colour theme</label>
+            <select id="settings-theme"></select>
+            <span id="settings-theme-note" class="muted note" role="status"></span>
+          </div>
           <label class="inline-check" title="Show what you send as Markdown, as the agent's replies are. What's sent is what you typed, either way.">
             <input type="checkbox" id="settings-prompts-markdown"> My prompts as Markdown</label>
           <label class="inline-check" title="Type a colon and the start of an emoji's name (:roc) for a list to pick from, :name: becomes the emoji, and :) :D (: :( :/ :P ;) :'( <3 become theirs when the word is finished. Off leaves what you type as it is.">
