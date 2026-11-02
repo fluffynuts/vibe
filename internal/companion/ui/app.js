@@ -2633,6 +2633,7 @@
     $('review-start').hidden = on
     $('review-body').hidden = !on
     $('review-actions').hidden = !on
+    $('review-comments-open').hidden = !on
     $('review-wait').hidden = reviewView.files !== null || !on
     if (!on) drawStart(rv)
     $('review-title').textContent = on && rv.note ? 'Review: ' + rv.note : 'Review'
@@ -6742,6 +6743,10 @@
   const FRESH_OPTIONS_MS = 4 * 60 * 1000
   const FRESH_FETCH_MS = 3 * 60 * 1000
   const FRESH_START_MS = 5 * 60 * 1000
+  // A clipboard page that doesn't answer may still be starting with the sandbox: ask again this
+  // often, this many times, then leave the reason showing.
+  const FRESH_RETRY_MS = 3000
+  const FRESH_RETRIES = 20
   const fresh = { generation: 0, options: null, fetching: false, fetched: null, cancel: null, nameTyped: false }
 
   // branchNameProblem is why git would refuse name for a branch (git check-ref-format's rules, as far
@@ -6798,7 +6803,7 @@
   function openFresh() {
     if (fresh.cancel) fresh.cancel.abort()
     const generation = ++fresh.generation
-    Object.assign(fresh, { options: null, fetching: false, fetched: null, setterWhy: null, cancel: new AbortController() })
+    Object.assign(fresh, { options: null, retries: 0, rechecking: false, clipboardWasOff: false, fetching: false, fetched: null, setterWhy: null, cancel: new AbortController() })
     $('fresh-clipboard').checked = true
     $('fresh-unsent').checked = true
     $('fresh-review').checked = true
@@ -6823,13 +6828,21 @@
     const failed = (text) => {
       if (generation !== fresh.generation) return
       freshError(text)
-      if (!keep) { fresh.options = {}; drawFresh() }
+      fresh.rechecking = false
+      if (!keep) fresh.options = {}
+      drawFresh()
     }
     post('/api/conversation/new/options', {}, { timeout: FRESH_OPTIONS_MS, cancel: fresh.cancel }).then((res) => {
       if (!res.ok) { failed(res.body.error || "vibe couldn't say what else can be done."); return }
       if (generation !== fresh.generation) return
       fresh.options = res.body
+      const c = res.body.clipboard
+      const again = !!(c && c.retry && fresh.retries++ < FRESH_RETRIES)
+      fresh.rechecking = again
       drawFresh()
+      if (again) {
+        setTimeout(() => { if (generation === fresh.generation) askFreshOptions(true) }, FRESH_RETRY_MS)
+      }
     }, () => failed('Could not reach vibe to ask what else can be done.'))
   }
 
@@ -6853,8 +6866,18 @@
     showIf('fresh-clipboard-row', !!c && (!!c.unavailable || c.sent + c.unsent > 0))
     if (c) {
       $('fresh-clipboard').disabled = !!c.unavailable
-      if (c.unavailable) $('fresh-clipboard').checked = false
-      $('fresh-clipboard-why').textContent = c.unavailable || ''
+      if (c.unavailable) {
+        $('fresh-clipboard').checked = false
+        fresh.clipboardWasOff = true
+      } else if (fresh.clipboardWasOff) {
+        $('fresh-clipboard').checked = true
+        fresh.clipboardWasOff = false
+      }
+      const why = $('fresh-clipboard-why')
+      const checking = !!c.unavailable && fresh.rechecking
+      why.replaceChildren(
+        ...(checking ? [el('span', { class: 'spinner', 'aria-hidden': 'true' })] : []),
+        (c.unavailable || '') + (checking ? ' Checking again…' : ''))
       showIf('fresh-clipboard-why', !!c.unavailable)
       $('fresh-clipboard-count').textContent = !c.unavailable && c.sent ? '(' + plural(c.sent, 'item') + ' sent)' : ''
       showIf('fresh-unsent-row', !c.unavailable && c.unsent > 0 && $('fresh-clipboard').checked)

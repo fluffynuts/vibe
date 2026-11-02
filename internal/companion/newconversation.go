@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -37,6 +38,9 @@ type clipboardOffer struct {
 	Sent        int    `json:"sent"`
 	Unsent      int    `json:"unsent"`
 	Unavailable string `json:"unavailable,omitempty"`
+	// Retry says the page didn't answer, which is likely to pass (the sandbox's start-up script may
+	// still be starting it): the dialog asks again.
+	Retry bool `json:"retry,omitempty"`
 }
 
 type branchOffer struct {
@@ -109,13 +113,20 @@ func (s *Server) repositoryHere() bool {
 	return read(s.cfg.Workspace) != nil
 }
 
+// couldntConnect is whether err is the page not answering at all, which a moment may cure, rather
+// than it answering with something that won't change.
+func couldntConnect(err error) bool {
+	var failed *url.Error
+	return errors.As(err, &failed) && !errors.Is(err, context.Canceled)
+}
+
 func (s *Server) clipboardOffer(ctx context.Context, asleep string) clipboardOffer {
 	if asleep != "" {
 		return clipboardOffer{Unavailable: asleep}
 	}
 	items, err := clipboardItems(ctx, pasteClient, s.clipboardAt())
 	if err != nil {
-		return clipboardOffer{Unavailable: "The clipboard page couldn't be reached: " + err.Error()}
+		return clipboardOffer{Unavailable: "The clipboard page couldn't be reached: " + err.Error(), Retry: couldntConnect(err)}
 	}
 	var offer clipboardOffer
 	for _, item := range items {

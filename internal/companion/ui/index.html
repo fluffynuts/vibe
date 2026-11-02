@@ -211,15 +211,15 @@
     </section>
 
     <section id="panel-review" class="panel panel-review" hidden>
-      <div class="bar">
-        <strong id="review-title">Review</strong>
-        <span id="review-state" class="pill" hidden></span>
-        <span id="review-of" class="muted"></span>
-        <span class="spacer"></span>
+      <div class="bar review-bar">
+        <div class="review-bar-title">
+          <strong id="review-title">Review</strong>
+          <span id="review-state" class="pill" hidden></span>
+          <span id="review-of" class="muted"></span>
+        </div>
+        <div class="review-bar-buttons">
         <span id="review-actions" class="review-actions">
           <button type="button" id="review-submit" disabled title="Send the agent your comments it hasn't seen yet">Submit to agent</button>
-          <button type="button" id="review-comments-open" class="review-comments-open" aria-controls="review-comments" aria-expanded="false"
-            title="All the comments, in a pane over the diff"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 2.5h11v8h-5l-3 3v-3h-3z"/></svg><span id="review-comments-count">0</span></button>
           <span class="review-scroller">
             <span class="review-order-wrap">
               <button type="button" id="review-order" class="review-order" aria-haspopup="menu" aria-expanded="false"><span id="review-count"></span> ▾</button>
@@ -238,6 +238,9 @@
         </span>
         <span id="review-pastes" class="muted" hidden title="Pasted here or beside the conversation: they go to the agent with your next message (Submit, Ask, or on the Conversation tab)"></span>
         <button type="button" id="review-refresh" class="ghost" title="Work out the diff afresh">Refresh</button>
+        <button type="button" id="review-comments-open" class="review-comments-open" aria-controls="review-comments" aria-expanded="false"
+            title="All the comments, in a pane over the diff"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 2.5h11v8h-5l-3 3v-3h-3z"/></svg><span id="review-comments-count">0</span></button>
+        </div>
       </div>
       <aside id="review-comments" class="review-comments" aria-label="Comments" aria-hidden="true" inert>
         <div class="review-comments-head">

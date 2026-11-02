@@ -182,6 +182,11 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .spacer { flex: 1; }
+/* The title (with its state and what it is of) always has a line to itself, wrapping if it must;
+   the buttons sit under it, to the right, nearer the middle of the screen than the edge. */
+.review-bar { flex-direction: column; align-items: stretch; gap: 6px; }
+.review-bar-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.review-bar-buttons { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .summary { font-weight: 600; }
 .summary .ok { color: var(--ok); }
 .summary .bad { color: var(--bad); }
@@ -413,7 +418,7 @@ ul.plain li .spacer { flex: 1; }
 .comment-card.awaiting { background: var(--warn-bg); border-left: 3px solid var(--warn-line); }
 .comment-card-said { font-size: 13px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .comment-card-replies { font-size: 12px; }
-.review-actions { display: inline-flex; align-items: center; gap: 8px; }
+.review-actions { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
 /* with no review open: the ways to start one, in the middle of the tab */
 .review-start { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 15vh 16px 32px; text-align: center; }
 .review-start-options { display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 18em; }

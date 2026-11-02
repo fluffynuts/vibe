@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -642,5 +643,38 @@ func TestWithNoOriginRemoteTheDefaultBranchIsntGuessed(t *testing.T) {
 	o := options(t, s)
 	if o.Branch.Default != "" || !strings.Contains(o.Branch.NoDefault, "no origin remote") {
 		t.Errorf("branch = %+v", o.Branch)
+	}
+}
+
+func TestTheClipboardOfferAsksAgainOnlyWhereAMomentMayCureIt(t *testing.T) {
+	var status int
+	var body string
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		io.WriteString(w, body)
+	}))
+	defer page.Close()
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closedURL := closed.URL
+	closed.Close()
+
+	cases := []struct {
+		name, url, asleep, body string
+		status                  int
+		retry                   bool
+	}{
+		{"nothing listening", closedURL, "", "", 0, true},
+		{"asleep", page.URL, "the sandbox could not be woken", `{"items":[]}`, 200, false},
+		{"answering", page.URL, "", `{"items":[]}`, 200, false},
+		{"an error status", page.URL, "", "", 500, false},
+		{"unreadable items", page.URL, "", "not json", 200, false},
+	}
+	for _, c := range cases {
+		status, body = c.status, c.body
+		s := freshServer(t, freshSetup{})
+		s.cfg.ClipboardURL = func() string { return c.url }
+		if got := s.clipboardOffer(context.Background(), c.asleep); got.Retry != c.retry {
+			t.Errorf("%s: Retry is %v, want %v (%+v)", c.name, got.Retry, c.retry, got)
+		}
 	}
 }

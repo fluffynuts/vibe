@@ -2605,8 +2605,9 @@ test("the log says when it couldn't be checked against the rules", async () => {
 // with clickNow, which lets the page run a few turns (see turns).
 const clickNow = async (p, id) => { p.$(id).click(); await turns() }
 
-async function freshPage({ options = { review: false }, fetched = { checked: true, local: true, ahead: 0, behind: 0 }, answer = { ok: true }, open = true } = {}) {
+async function freshPage({ options = { review: false }, fetched = { checked: true, local: true, ahead: 0, behind: 0 }, answer = { ok: true }, open = true, before = null } = {}) {
   const p = await openPage({
+    before,
     routes: {
       '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, attention: {} },
       '/api/conversation': { events: [], last: 0, running: false },
@@ -2674,6 +2675,73 @@ test('with nothing unsent, only the sent items are offered for clearing', async 
     assert.ok(!shown(p, 'fresh-unsent-row'))
     await p.click('fresh-run')
     assert.equal(p.posted('/api/conversation/new')[0].clipboard, 'sent')
+  } finally { p.close() }
+})
+
+test('a clipboard page that could not be reached is asked after again, and offered once it answers', async () => {
+  const held = []
+  const RETRY_MS = 3000
+  let answers = 0
+  const p = await freshPage({
+    options: () => ++answers === 1
+      ? { clipboard: { unavailable: "The clipboard page couldn't be reached: refused", retry: true } }
+      : { clipboard: { sent: 2, unsent: 0 } },
+    before: (w) => {
+      const real = w.setTimeout.bind(w)
+      w.setTimeout = (fn, ms, ...rest) => ms === RETRY_MS ? held.push(fn) : real(fn, ms, ...rest)
+    },
+  })
+  try {
+    assert.ok(p.$('fresh-clipboard').disabled, 'not offered yet')
+    assert.equal(held.length, 1, 'will ask again')
+    assert.ok(p.$('fresh-clipboard-why').querySelector('.spinner'), 'says it is checking again')
+    held.shift()()
+    await p.settle()
+    assert.ok(!p.$('fresh-clipboard').disabled && p.$('fresh-clipboard').checked, 'offered now')
+    assert.ok(!shown(p, 'fresh-clipboard-why'))
+    assert.equal(held.length, 0, 'no more asking')
+    assert.ok(!p.$('fresh-clipboard-why').querySelector('.spinner'), 'spinner gone')
+  } finally { p.close() }
+})
+
+test('a clipboard page that never answers is asked after a limited number of times, then the reason is left showing', async () => {
+  const held = []
+  const reason = "The clipboard page couldn't be reached: refused"
+  const p = await freshPage({
+    options: { clipboard: { unavailable: reason, retry: true } },
+    before: (w) => {
+      const real = w.setTimeout.bind(w)
+      w.setTimeout = (fn, ms, ...rest) => ms === 3000 ? held.push(fn) : real(fn, ms, ...rest)
+    },
+  })
+  try {
+    let asks = 1
+    while (held.length) {
+      held.shift()()
+      await p.settle()
+      asks++
+      assert.ok(asks < 100, 'it never stops asking')
+    }
+    assert.equal(asks, 21, 'the first ask and twenty more')
+    assert.ok(!p.$('fresh-clipboard-why').querySelector('.spinner'), 'no longer says it is checking')
+    assert.ok(shown(p, 'fresh-clipboard-why'))
+    assert.ok(p.$('fresh-clipboard-why').textContent.includes(reason))
+    assert.ok(!p.$('fresh-clipboard-why').textContent.includes('Checking again'))
+  } finally { p.close() }
+})
+
+test('a clipboard page that is unavailable for another reason is not asked after', async () => {
+  const held = []
+  const p = await freshPage({
+    options: { clipboard: { unavailable: 'this sandbox could not be woken' } },
+    before: (w) => {
+      const real = w.setTimeout.bind(w)
+      w.setTimeout = (fn, ms, ...rest) => ms === 3000 ? held.push(fn) : real(fn, ms, ...rest)
+    },
+  })
+  try {
+    assert.equal(held.length, 0)
+    assert.ok(!p.$('fresh-clipboard-why').querySelector('.spinner'), 'nothing to wait for')
   } finally { p.close() }
 })
 
