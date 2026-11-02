@@ -715,3 +715,72 @@ func TestReopeningTiesTheReviewToTheBranchItIsReopenedOn(t *testing.T) {
 		t.Error("not closed on leaving the branch it was reopened on")
 	}
 }
+
+// The agent can take back a comment made by mistake: its own thread, and only while nobody has answered it, as
+// that would take their words with it.
+func TestTheAgentCanWithdrawItsOwnUnansweredThread(t *testing.T) {
+	s := NewStore(t.TempDir())
+	clockAt(s)
+	drop(t, s, "1.json", Request{Op: "comment", File: "a.go", Line: 1, Body: "by mistake"})
+	drop(t, s, "2.json", Request{Op: "comment", File: "a.go", Line: 2, Body: "meant"})
+	drop(t, s, "3.json", Request{Op: "withdraw", Thread: 1})
+	r, err := s.Take()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Problems) != 0 {
+		t.Errorf("problems: %q", r.Problems)
+	}
+	if len(r.Threads) != 1 || r.Threads[0].Body() != "meant" {
+		t.Errorf("threads: %+v", r.Threads)
+	}
+	// Ids are not reused: the user may still be looking at, or have quoted, the number.
+	drop(t, s, "4.json", Request{Op: "comment", File: "a.go", Line: 3, Body: "later"})
+	r, _ = s.Take()
+	if len(r.Threads) != 2 || r.Threads[1].ID != 3 {
+		t.Errorf("threads after: %+v", r.Threads)
+	}
+}
+
+func TestAThreadTheUserHasAnsweredOrStartedCantBeWithdrawn(t *testing.T) {
+	s := NewStore(t.TempDir())
+	clockAt(s)
+	drop(t, s, "1.json", Request{Op: "comment", File: "a.go", Line: 1, Body: "agent's"})
+	if _, err := s.Take(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Do(Request{Op: "reply", Thread: 1, Body: "no, because"}, User); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Do(Request{Op: "comment", File: "b.go", Line: 1, Body: "user's"}, User); err != nil {
+		t.Fatal(err)
+	}
+	drop(t, s, "2.json", Request{Op: "withdraw", Thread: 1})
+	drop(t, s, "3.json", Request{Op: "withdraw", Thread: 2})
+	drop(t, s, "4.json", Request{Op: "withdraw", Thread: 99})
+	r, err := s.Take()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Threads) != 2 {
+		t.Errorf("a thread was withdrawn that shouldn't be: %+v", r.Threads)
+	}
+	if len(r.Problems) != 3 {
+		t.Fatalf("problems: %q", r.Problems)
+	}
+	for i, want := range []string{"replied", "yours", "no thread 99"} {
+		if !strings.Contains(r.Problems[i], want) {
+			t.Errorf("problem %d = %q, want it to mention %q", i, r.Problems[i], want)
+		}
+	}
+}
+
+func TestTheUserCantWithdraw(t *testing.T) {
+	s := NewStore(t.TempDir())
+	clockAt(s)
+	drop(t, s, "1.json", Request{Op: "comment", File: "a.go", Line: 1, Body: "agent's"})
+	s.Take()
+	if _, err := s.Do(Request{Op: "withdraw", Thread: 1}, User); err == nil {
+		t.Error("the user could withdraw the agent's comment")
+	}
+}

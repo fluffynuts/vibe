@@ -280,3 +280,73 @@ func TestAccentIsTheThemesPromptBorder(t *testing.T) {
 		}
 	}
 }
+
+// fakeSandboxStdin is fakeSandbox for exec -i too: stdin reaches the command.
+func fakeSandboxStdin(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	sbxtest.OnPath(t, "[ \"$1\" = exec ] || exit 1\nshift\n[ \"$1\" = -i ] && shift\nshift 2\n"+
+		"[ \"$1\" = /bin/true ] && exit 0\n"+
+		"for a; do shift; set -- \"$@\" \"$(printf %s \"$a\" | sed \"s#^/home/agent#"+root+"#\")\"; done\n"+
+		"exec \"$@\"\n")
+	return root
+}
+
+func TestSetInSandboxChangesTheThemeAndKeepsTheRestOfTheSettings(t *testing.T) {
+	home := fakeSandboxStdin(t)
+	settings := filepath.Join(home, ".claude", "settings.json")
+	os.MkdirAll(filepath.Dir(settings), 0o755)
+	os.WriteFile(settings, []byte(`{"defaultMode":"plan","theme":"light"}`), 0o644)
+	if err := SetInSandbox(context.Background(), "any", "amber"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(settings)
+	var got map[string]interface{}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("settings.json isn't JSON now: %v\n%s", err, data)
+	}
+	if got["theme"] != "custom:amber" || got["defaultMode"] != "plan" {
+		t.Errorf("settings = %v", got)
+	}
+	if err := SetInSandbox(context.Background(), "any", Default); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(settings)
+	if strings.Contains(string(data), "theme") || !strings.Contains(string(data), "defaultMode") {
+		t.Errorf("the default should leave no theme, and the rest: %s", data)
+	}
+	if left, _ := filepath.Glob(settings + ".*"); len(left) != 0 {
+		t.Errorf("left beside settings.json: %v", left)
+	}
+}
+
+func TestSetInSandboxMakesSettingsWhereThereAreNone(t *testing.T) {
+	home := fakeSandboxStdin(t)
+	if err := SetInSandbox(context.Background(), "any", "amber"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil || !strings.Contains(string(data), "custom:amber") {
+		t.Errorf("settings: %q, %v", data, err)
+	}
+}
+
+func TestSetInSandboxWontOverwriteSettingsItCantRead(t *testing.T) {
+	home := fakeSandboxStdin(t)
+	settings := filepath.Join(home, ".claude", "settings.json")
+	os.MkdirAll(filepath.Dir(settings), 0o755)
+	os.WriteFile(settings, []byte("not json"), 0o644)
+	if err := SetInSandbox(context.Background(), "any", "amber"); err == nil {
+		t.Error("it wrote over a settings.json it couldn't read")
+	}
+	if data, _ := os.ReadFile(settings); string(data) != "not json" {
+		t.Errorf("settings.json is now %q", data)
+	}
+}
+
+func TestSetInSandboxRefusesANameThatNeedsQuoting(t *testing.T) {
+	fakeSandboxStdin(t)
+	if err := SetInSandbox(context.Background(), "any", "a b; rm -rf /"); err == nil {
+		t.Error("a theme name that needs quoting was taken")
+	}
+}

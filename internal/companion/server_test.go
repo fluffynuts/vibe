@@ -821,3 +821,41 @@ func TestAChangeSbxRefusedKeepsNothing(t *testing.T) {
 		t.Errorf("kept %d times", kept)
 	}
 }
+
+// A refresh under way when a key is forgotten (the answer it is fetching is already out of date) doesn't put that
+// answer back.
+func TestARefreshUnderWayWhenAKeyIsForgottenDoesntPutItsAnswerBack(t *testing.T) {
+	c := &cache{entries: map[string]*cacheEntry{}, ttl: time.Hour}
+	value := "old"
+	started := make(chan struct{})
+	finish := make(chan struct{})
+	slow := func() (interface{}, error) {
+		got := value
+		started <- struct{}{}
+		<-finish
+		return got, nil
+	}
+	// The first answer is waited for; the entry then ages past its ttl so the next ask starts a refresh.
+	if _, err := c.getStale("k", time.Hour, func() (interface{}, error) { return "old", nil }); err != nil {
+		t.Fatal(err)
+	}
+	c.entries["k"].at = time.Now().Add(-2 * time.Hour)
+	v, _ := c.getStale("k", time.Hour, slow)
+	if v != "old" {
+		t.Fatalf("the stale answer: %v", v)
+	}
+	<-started
+	value = "new"
+	c.forget("k")
+	close(finish)
+	// What is asked for now is a fresh answer, not the refresh's.
+	got, _ := c.getStale("k", time.Hour, func() (interface{}, error) { return value, nil })
+	if got != "new" {
+		t.Errorf("after forget, the answer is %v", got)
+	}
+	c.refreshing.Wait()
+	got, _ = c.getStale("k", time.Hour, func() (interface{}, error) { return "unasked", nil })
+	if got != "new" {
+		t.Errorf("a refresh begun before the forget replaced the answer: %v", got)
+	}
+}

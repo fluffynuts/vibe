@@ -868,6 +868,59 @@ test('the Conversation tab is marked while the agent works, then when it has ans
   } finally { p.close() }
 })
 
+test('the prompt looks focused wherever typing on the Conversation tab would land, and only there', async () => {
+  const p = await convoPage({ events: [], running: false })
+  try {
+    const looksFocused = () => p.$('convo-input').classList.contains('takes-typing')
+    assert.ok(!looksFocused(), 'on another tab')
+    await p.click('tab-conversation')
+    assert.ok(looksFocused(), 'on opening the tab')
+    p.$('convo-new').focus()
+    assert.ok(looksFocused(), 'with a button focused, which typing goes past')
+    p.$('convo-find-input').focus()
+    assert.ok(!looksFocused(), 'with another text box focused, which takes the typing itself')
+    p.$('convo-find-input').blur()
+    assert.ok(looksFocused(), 'once that lets go')
+    // A browser moves focus into a dialog as it opens, which is what runs the check.
+    p.$('confirm').showModal()
+    p.$('confirm').querySelector('button').focus()
+    assert.ok(!looksFocused(), 'while a dialog is open, which typing does not go past')
+    // Focus is left on the dialog's button: only the dialog's closing says typing goes to the prompt again.
+    p.$('confirm').close()
+    await p.settle()
+    assert.ok(looksFocused(), 'after a dialog is gone')
+    await p.click('tab-log')
+    assert.ok(!looksFocused(), 'on leaving the tab')
+  } finally { p.close() }
+})
+
+test('the prompt does not look focused while the page says it is disconnected, and does again once it is back', async () => {
+  let down = false
+  const gone = () => { if (down) throw new Error('refused') }
+  const p = await openPage({
+    routes: {
+      '/api/state': () => { gone(); return { sandbox: 'box', sandboxTabs: true, conversation: true, attention: {} } },
+      '/api/conversation': () => { gone(); return { events: [], last: 0, running: false } },
+      '/api/log': () => { gone(); return { entries: [] } },
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+  })
+  try {
+    const looksFocused = () => p.$('convo-input').classList.contains('takes-typing')
+    assert.ok(looksFocused(), 'with vibe there')
+    down = true
+    await p.poll()
+    await p.every('pollConversation')
+    assert.equal(p.$('offline').hidden, false, 'the page did not say it was disconnected')
+    assert.ok(!looksFocused(), 'while the disconnected glass is up')
+    down = false
+    await p.poll()
+    await p.every('pollConversation')
+    assert.equal(p.$('offline').hidden, true)
+    assert.ok(looksFocused(), 'once vibe is back')
+  } finally { p.close() }
+})
+
 test('the Conversation tab is never marked while it is open', async () => {
   const convo = { events: [{ seq: 1, kind: 'user', text: 'hi' }], running: false }
   const p = await convoPage(convo)

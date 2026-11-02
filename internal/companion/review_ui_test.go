@@ -20,11 +20,15 @@ func TestTheReviewTabsPlacing(t *testing.T) {
 	}
 }
 
-// TestThePageItself runs the tests of the page as a whole (uitest/page.test.js),
-// and of the clipboard bridge's page beside it (uitest/clipboard-page.test.js),
-// in jsdom. jsdom is installed with `npm ci` in uitest: without it they're
-// skipped here, saying how to get it, but never in CI, where skipping would
-// pass them unseen.
+// ownRunners are the page tests with a Go test of their own (and Firefox's, which needs a browser): every other
+// uitest/*.test.js is run by TestThePageItself, so a new one runs without anyone remembering to list it.
+var ownRunners = map[string]bool{
+	"review.test.js": true, "emoji.test.js": true, "markdown.test.js": true, "manage.test.js": true, "firefox.test.js": true,
+}
+
+// TestThePageItself runs the tests of the page as a whole (every uitest/*.test.js but ownRunners), in jsdom.
+// jsdom is installed with `npm ci` in uitest: without it they're skipped here, saying how to get it, but never in
+// CI, where skipping would pass them unseen.
 func TestThePageItself(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -37,10 +41,27 @@ func TestThePageItself(t *testing.T) {
 		}
 		t.Skip(how)
 	}
-	for _, file := range []string{"page.test.js", "packages.test.js", "polling.test.js", "usage.test.js", "blocked.test.js", "light.test.js", "choice.test.js", "notes.test.js", "sync.test.js", "sendcheck.test.js", "stale.test.js", "search.test.js", "wantsyou.test.js", "clipboard-page.test.js", "fileview.test.js", "toolgroups.test.js", "gitauthor.test.js"} {
-		out, err := exec.Command(node, "--test", filepath.Join("uitest", file)).CombinedOutput()
-		if err != nil {
-			t.Fatalf("node --test uitest/%s failed: %v\n%s", file, err, out)
+	files, err := filepath.Glob(filepath.Join("uitest", "*.test.js"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no page tests found in uitest: %v", err)
+	}
+	present := map[string]bool{}
+	var run []string
+	for _, file := range files {
+		name := filepath.Base(file)
+		present[name] = true
+		if !ownRunners[name] {
+			run = append(run, file)
 		}
+	}
+	for name := range ownRunners {
+		if !present[name] {
+			t.Errorf("ownRunners names %s, which is not in uitest: remove it", name)
+		}
+	}
+	// One node, which runs the files side by side: the page tests are many, and each is quick.
+	out, err := exec.Command(node, append([]string{"--test"}, run...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node --test failed: %v\n%s", err, out)
 	}
 }

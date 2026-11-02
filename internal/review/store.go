@@ -575,6 +575,25 @@ func (s *Store) apply(r *Review, req Request, author string) error {
 				break
 			}
 		}
+	case "withdraw":
+		t := r.thread(req.Thread)
+		if t == nil {
+			return fmt.Errorf("there's no thread %d", req.Thread)
+		}
+		if len(t.Comments) > 0 && t.Comments[0].Author != Agent {
+			return fmt.Errorf("thread %d was started by the user, so it isn't yours to withdraw", req.Thread)
+		}
+		for _, c := range t.Comments {
+			if c.Author == User {
+				return fmt.Errorf("the user has replied on thread %d, so it can't be withdrawn (their words would go with it): resolve or dismiss it instead", req.Thread)
+			}
+		}
+		for i := range r.Threads {
+			if r.Threads[i].ID == req.Thread {
+				r.Threads = append(r.Threads[:i], r.Threads[i+1:]...)
+				break
+			}
+		}
 	case "order":
 		r.Order = req.Stops
 	case "done":
