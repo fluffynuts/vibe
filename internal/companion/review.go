@@ -58,6 +58,57 @@ const diffWithin = 30 * time.Second
 // Chroma's lexers can be made to take without end. A variable for tests.
 var colourWithin = 15 * time.Second
 
+// branchWords says a branch as the page does: its name, or a detached HEAD.
+func branchWords(branch string) string {
+	if branch == "" {
+		return "a detached HEAD"
+	}
+	return "'" + branch + "'"
+}
+
+// watchBranch ties the review to the branch the folder is on: the first time it is looked at, if it wasn't noted when it was
+// started, and from then on the review closes itself when the folder is on another (a review of a feature is confusing once the
+// folder is back on master, after it is released). It is kept, to be reopened. Not while the agent is at work on it: what it says
+// next would go into a closed review, out of sight; the next look after closes it. A branch that can't be read leaves it as it is.
+func (s *Server) watchBranch(ctx context.Context, rv review.Review) review.Review {
+	if rv.Started.IsZero() || rv.Closed != "" {
+		return rv
+	}
+	store := s.cfg.ReviewTab.Store
+	now, err := review.CurrentBranch(ctx, s.cfg.ReviewTab.Workspace)
+	if err != nil {
+		return rv
+	}
+	if !rv.BranchKnown {
+		if noted, err := store.SetBranch(rv.Started, now); err == nil {
+			return noted
+		}
+		return rv
+	}
+	if now == rv.Branch || s.agentAtWorkOnReview() {
+		return rv
+	}
+	why := "Closed by itself: this folder is on " + branchWords(now) + " now, and the review was of " + branchWords(rv.Branch) +
+		". It is kept: reopen it whenever you like."
+	if closed, _, err := store.CloseOnBranch(rv.Started, now, why); err == nil {
+		return closed
+	}
+	return rv
+}
+
+// noteBranch notes the branch the folder is on for the review just started (or reopened); one that can't be read is left for the
+// first look to note.
+func (s *Server) noteBranch(ctx context.Context, rv review.Review) review.Review {
+	now, err := review.CurrentBranch(ctx, s.cfg.ReviewTab.Workspace)
+	if err != nil {
+		return rv
+	}
+	if noted, err := s.cfg.ReviewTab.Store.SetBranch(rv.Started, now); err == nil {
+		return noted
+	}
+	return rv
+}
+
 // reviewState is the review, with what the agent has dropped since taken
 // in; with ?diff=1, the diff too, worked out afresh (without whitespace
 // changes, with &whitespace=ignore). Polls leave the diff
@@ -67,6 +118,11 @@ func (s *Server) reviewState(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeStoreError(w, err)
 		return
+	}
+	{
+		ctx, cancel := context.WithTimeout(r.Context(), diffWithin)
+		rv = s.watchBranch(ctx, rv)
+		cancel()
 	}
 	body := map[string]interface{}{"review": rv, "agentAtWork": s.agentAtWorkOnReview()}
 	if ask := s.answeringAsk(); ask != nil {
@@ -213,6 +269,12 @@ func (s *Server) reviewDo(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, status, err.Error())
 		return
+	}
+	if req.Op == "reopen-review" {
+		// Reopened on the branch the folder is on now, which is the one it closes itself for leaving.
+		ctx, cancel := context.WithTimeout(r.Context(), diffWithin)
+		rv = s.noteBranch(ctx, rv)
+		cancel()
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"review": rv})
 }
@@ -565,6 +627,7 @@ func (s *Server) reviewStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	rv = s.noteBranch(ctx, rv)
 	launch()
 	status := http.StatusOK
 	if req.Agent {

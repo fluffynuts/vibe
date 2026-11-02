@@ -1242,3 +1242,130 @@ func TestClosingAReviewInProgressThatNothingIsWritingDropsIt(t *testing.T) {
 		t.Errorf("why it closed: %q", r.Closed)
 	}
 }
+
+// --- a review closes itself when the folder switches branch -------------------------------
+
+func reviewIsClosed(t *testing.T, s *Server) (closed string, rv review.Review) {
+	t.Helper()
+	r := getReview(t, s, "/api/review")
+	return r.Review.Closed, r.Review
+}
+
+func checkout(t *testing.T, s *Server, args ...string) {
+	t.Helper()
+	gitIn(t, s.cfg.ReviewTab.Workspace, append([]string{"checkout", "-q"}, args...)...)
+}
+
+func startReviewOnMain(t *testing.T, s *Server) {
+	t.Helper()
+	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestAReviewIsClosedByTheFolderSwitchingBranchAndSaysWhichBranchesAndIsKept(t *testing.T) {
+	s, store := reviewTabServer(t)
+	startReviewOnMain(t, s)
+	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "keep me"}, review.Agent)
+	if closed, _ := reviewIsClosed(t, s); closed != "" {
+		t.Fatalf("closed before anything changed: %q", closed)
+	}
+	checkout(t, s, "-b", "feat/other")
+	closed, rv := reviewIsClosed(t, s)
+	for _, want := range []string{"main", "feat/other", "Closed by itself"} {
+		if !strings.Contains(closed, want) {
+			t.Errorf("why it closed lacks %q: %q", want, closed)
+		}
+	}
+	if len(rv.Threads) != 1 {
+		t.Errorf("the review was not kept: %+v", rv)
+	}
+}
+
+func TestAReviewStaysOpenWhileTheFolderStaysOnItsBranch(t *testing.T) {
+	s, _ := reviewTabServer(t)
+	startReviewOnMain(t, s)
+	for i := 0; i < 3; i++ {
+		if closed, _ := reviewIsClosed(t, s); closed != "" {
+			t.Fatalf("closed on look %d: %q", i, closed)
+		}
+	}
+}
+
+func TestComingBackToTheBranchDoesNotReopenTheReview(t *testing.T) {
+	s, _ := reviewTabServer(t)
+	startReviewOnMain(t, s)
+	checkout(t, s, "-b", "feat/other")
+	reviewIsClosed(t, s)
+	checkout(t, s, "main")
+	if closed, _ := reviewIsClosed(t, s); closed == "" {
+		t.Error("the review reopened itself on the branch it was of")
+	}
+}
+
+func TestADetachedHeadIsLeavingTheBranch(t *testing.T) {
+	s, _ := reviewTabServer(t)
+	startReviewOnMain(t, s)
+	checkout(t, s, "--detach")
+	closed, _ := reviewIsClosed(t, s)
+	if closed == "" || !strings.Contains(closed, "detached") {
+		t.Errorf("closed %q: should say the folder is on a detached head", closed)
+	}
+}
+
+func TestAReviewIsNotClosedByTheBranchWhileTheAgentIsWritingItButIsOnceItHasFinished(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := startWritingReview(t, s)
+	checkout(t, s, "-b", "feat/other")
+	if closed, _ := reviewIsClosed(t, s); closed != "" {
+		t.Fatalf("closed while the agent was writing it: %q", closed)
+	}
+	close(f.release)
+	idle(t, s)
+	store.Do(review.Request{Op: "done"}, review.Agent)
+	if closed, _ := reviewIsClosed(t, s); closed == "" {
+		t.Error("not closed once the agent had finished")
+	}
+}
+
+func TestReopeningAReviewTiesItToTheBranchItIsReopenedOnAndLeavingThatClosesItAgain(t *testing.T) {
+	s, _ := reviewTabServer(t)
+	startReviewOnMain(t, s)
+	checkout(t, s, "-b", "feat/other")
+	reviewIsClosed(t, s)
+	if rec := do(t, s, post("/api/review/do", `{"op":"reopen-review"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("reopen: %d %s", rec.Code, rec.Body)
+	}
+	for i := 0; i < 2; i++ {
+		if closed, _ := reviewIsClosed(t, s); closed != "" {
+			t.Fatalf("closed on the branch it was reopened on: %q", closed)
+		}
+	}
+	checkout(t, s, "main")
+	if closed, _ := reviewIsClosed(t, s); closed == "" {
+		t.Error("not closed on leaving the branch it was reopened on")
+	}
+}
+
+func TestAReviewTheAgentStartedLooksAtTheBranchOnItsFirstLookAndClosesOnLeavingIt(t *testing.T) {
+	s, store := reviewTabServer(t)
+	// Started through the agent's own request, so no branch was noted at the start.
+	if _, err := store.Do(review.Request{Op: "start", Note: "x"}, review.User); err != nil {
+		t.Fatal(err)
+	}
+	if closed, rv := reviewIsClosed(t, s); closed != "" || !rv.BranchKnown || rv.Branch != "main" {
+		t.Fatalf("first look: closed %q, %+v", closed, rv)
+	}
+	checkout(t, s, "-b", "feat/other")
+	if closed, _ := reviewIsClosed(t, s); closed == "" {
+		t.Error("not closed on leaving the branch it was first seen on")
+	}
+}
+
+func TestStartingAReviewNotesTheBranchAtOnceSoASwitchBeforeTheFirstLookIsNoted(t *testing.T) {
+	s, store := reviewTabServer(t)
+	startReviewOnMain(t, s)
+	if rv, _ := store.Load(); !rv.BranchKnown || rv.Branch != "main" {
+		t.Errorf("not noted at the start: %+v", rv)
+	}
+}

@@ -70,6 +70,13 @@ type Review struct {
 	// Reopened says the user reopened the review: it's theirs to read, and
 	// doesn't close itself again (see CloseOver).
 	Reopened bool `json:"reopened,omitempty"`
+	// Branch is the branch the folder was on when the review was started
+	// (or reopened): "" with BranchKnown set is a detached HEAD. The review
+	// closes itself when the folder is on another (CloseOnBranch); one with
+	// no branch known (BranchKnown unset: one from before this, or not
+	// looked at yet) never does.
+	Branch      string `json:"branch,omitempty"`
+	BranchKnown bool   `json:"branchKnown,omitempty"`
 	// Note says what's being reviewed, as the agent put it.
 	Note string `json:"note,omitempty"`
 	// State is "" before a review is started, then InProgress, then Done.
@@ -691,6 +698,38 @@ func (s *Store) CloseOver(started time.Time, why string) (Review, bool, error) {
 		return r, false, err
 	}
 	if !r.Started.Equal(started) || r.Closed != "" || r.Reopened {
+		return r, false, nil
+	}
+	r.Closed = why
+	return r, true, s.save(r)
+}
+
+// SetBranch remembers the branch the folder is on for the review started at started: when it is started, reopened, or first
+// looked at. A review started since is left alone.
+func (s *Store) SetBranch(started time.Time, branch string) (Review, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, err := s.load()
+	if err != nil {
+		return r, err
+	}
+	if !r.Started.Equal(started) {
+		return r, nil
+	}
+	r.Branch, r.BranchKnown = branch, true
+	return r, s.save(r)
+}
+
+// CloseOnBranch closes the review started at started because the folder is on now, saying why, when the review is open and its
+// branch is known and isn't now. The review is kept, to be reopened (on whichever branch that is then).
+func (s *Store) CloseOnBranch(started time.Time, now, why string) (Review, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, err := s.load()
+	if err != nil {
+		return r, false, err
+	}
+	if !r.Started.Equal(started) || r.Closed != "" || !r.BranchKnown || r.Branch == now {
 		return r, false, nil
 	}
 	r.Closed = why

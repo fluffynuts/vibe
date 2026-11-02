@@ -610,3 +610,108 @@ func TestADroppedReviewLeavesNothingToReopen(t *testing.T) {
 		t.Errorf("kept reviews: %v", kept)
 	}
 }
+
+// --- a review belongs to the branch the folder was on ----------------------------------
+
+func startedReview(t *testing.T) (*Store, Review) {
+	t.Helper()
+	s := NewStore(t.TempDir())
+	clockAt(s)
+	rv, err := s.Do(Request{Op: "start", Note: "x"}, User)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s, rv
+}
+
+func TestTheBranchAReviewWasOfIsRemembered(t *testing.T) {
+	s, rv := startedReview(t)
+	got, err := s.SetBranch(rv.Started, "feat/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Branch != "feat/x" || !got.BranchKnown {
+		t.Errorf("got %+v", got)
+	}
+	if again, _ := NewStore(s.dir).Load(); again.Branch != "feat/x" || !again.BranchKnown {
+		t.Errorf("not kept: %+v", again)
+	}
+}
+
+func TestADetachedHeadIsABranchOfItsOwnToLeave(t *testing.T) {
+	s, rv := startedReview(t)
+	s.SetBranch(rv.Started, "")
+	got, closed, err := s.CloseOnBranch(rv.Started, "main", "gone")
+	if err != nil || !closed || got.Closed != "gone" {
+		t.Errorf("closed %v, %+v, %v", closed, got, err)
+	}
+}
+
+func TestLeavingTheBranchClosesTheReviewAndKeepsIt(t *testing.T) {
+	s, rv := startedReview(t)
+	s.Do(Request{Op: "comment", File: "a.go", Line: 1, Body: "keep me"}, Agent)
+	s.SetBranch(rv.Started, "feat/x")
+	got, closed, err := s.CloseOnBranch(rv.Started, "main", "left feat/x")
+	if err != nil || !closed {
+		t.Fatalf("closed %v, %v", closed, err)
+	}
+	if got.Closed != "left feat/x" || len(got.Threads) != 1 {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestStayingOnTheBranchLeavesTheReviewOpen(t *testing.T) {
+	s, rv := startedReview(t)
+	s.SetBranch(rv.Started, "feat/x")
+	if got, closed, err := s.CloseOnBranch(rv.Started, "feat/x", "left"); err != nil || closed || got.Closed != "" {
+		t.Errorf("closed %v, %+v, %v", closed, got, err)
+	}
+}
+
+func TestAReviewWithNoBranchRememberedIsNeverClosedForLeavingOne(t *testing.T) {
+	s, rv := startedReview(t)
+	if got, closed, err := s.CloseOnBranch(rv.Started, "anywhere", "left"); err != nil || closed || got.Closed != "" {
+		t.Errorf("closed %v, %+v, %v", closed, got, err)
+	}
+}
+
+func TestAReviewStartedSinceIsNotClosedForTheBranchOfAnEarlierOne(t *testing.T) {
+	s, rv := startedReview(t)
+	s.SetBranch(rv.Started, "feat/x")
+	if _, closed, err := s.CloseOnBranch(rv.Started.Add(-time.Hour), "main", "left"); err != nil || closed {
+		t.Errorf("closed %v, %v", closed, err)
+	}
+	if _, err := s.SetBranch(rv.Started.Add(-time.Hour), "other"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Load(); got.Branch != "feat/x" {
+		t.Errorf("the branch of a review started since was set: %+v", got)
+	}
+}
+
+func TestAReviewAlreadyClosedIsNotClosedAgain(t *testing.T) {
+	s, rv := startedReview(t)
+	s.SetBranch(rv.Started, "feat/x")
+	s.Do(Request{Op: "close", Body: "You closed it."}, User)
+	if got, closed, err := s.CloseOnBranch(rv.Started, "main", "left"); err != nil || closed || got.Closed != "You closed it." {
+		t.Errorf("closed %v, %+v, %v", closed, got, err)
+	}
+}
+
+func TestReopeningTiesTheReviewToTheBranchItIsReopenedOn(t *testing.T) {
+	s, rv := startedReview(t)
+	s.SetBranch(rv.Started, "feat/x")
+	s.CloseOnBranch(rv.Started, "main", "left")
+	if _, err := s.Do(Request{Op: "reopen-review"}, User); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetBranch(rv.Started, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, closed, _ := s.CloseOnBranch(rv.Started, "main", "left"); closed {
+		t.Error("closed on the branch it was reopened on")
+	}
+	if _, closed, _ := s.CloseOnBranch(rv.Started, "other", "left"); !closed {
+		t.Error("not closed on leaving the branch it was reopened on")
+	}
+}

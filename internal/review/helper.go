@@ -115,6 +115,8 @@ func serve(in io.Reader) helperAnswer {
 		result, err = optionsOf(ctx, a.Dir)
 	case "defaultBranch":
 		result, err = defaultBranchOf(a.Dir)
+	case "branch":
+		result, err = branchOf(a.Dir)
 	case "projectFiles":
 		result, err = projectFilesOf(ctx, a.Dir, a.Ref)
 	case "origin":
@@ -288,6 +290,12 @@ func Unpushed(ctx context.Context, dir, upstream string, how ...Diffing) ([]File
 func Root(ctx context.Context, dir string) (string, error) {
 	var out string
 	return out, isolated(ctx, "root", helperArgs{Dir: dir}, &out)
+}
+
+// CurrentBranch is the branch the folder dir is on, "" when its HEAD is detached.
+func CurrentBranch(ctx context.Context, dir string) (string, error) {
+	var out string
+	return out, isolated(ctx, "branch", helperArgs{Dir: dir}, &out)
 }
 
 // DefaultBranch is the main line of the repository the folder dir is in:

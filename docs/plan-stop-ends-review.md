@@ -79,3 +79,15 @@ under review, though it behaves as a bug.
   stop/restart, and `vibe --cancel`, end the vibe or its turn from outside this call: they leave a review in progress, which the stale case
   now says and lets go of. A new prompt while busy isn't a stop. The agent's `vibe-review` calls into a dropped review fail (a test checks the
   comment is refused).
+
+## Closing on a branch switch (built 2026-10-30/11-02, same branch)
+
+Asked for alongside: a review closes itself when the folder switches branch, since one of a feature is confusing once the folder is back on
+master after the release. Decided with the user: (1) switching back doesn't reopen it: it is kept, and reopening is the user's; (2) not
+while the agent is at work on it, but on the next look after (as with "nothing left to review"); (3) any change of HEAD's branch counts,
+a detached HEAD included, and a review reopened is tied to the branch the folder is on then.
+
+`Review.Branch` and `BranchKnown` remember the branch (a detached HEAD is `""` with BranchKnown set); `Store.SetBranch` notes it and
+`Store.CloseOnBranch` closes when it differs. The branch is read by the isolated helper (`review.CurrentBranch`, op `branch`). It is noted
+when the review is started from the page and when it is reopened, and, for one started any other way (the agent's own start, one from
+before this), at its first look: the review tab's own polls (`reviewState`) do the watching, so a switch is seen when the tab next looks.
