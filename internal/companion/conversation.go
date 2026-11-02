@@ -648,7 +648,32 @@ func (s *Server) claimTurn(prompt string) (launch func(), abandon func(error), o
 	return launch, abandon, true
 }
 
+// conversationStop stops the agent's turn. While the agent is writing a review, that ends the review (it would be left saying the
+// agent is reviewing, with nothing at work on it): so it asks first, with a 409 and the code "review-in-progress", unless the
+// request says confirmed; confirmed, the turn is stopped and the review dropped, as closing the review does. A turn the review didn't
+// begin, and a review that is finished, are stopped as they always were.
 func (s *Server) conversationStop(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Confirmed bool `json:"confirmed"`
+	}
+	json.NewDecoder(r.Body).Decode(&req) // the body is optional: a stop from before it had one
+	if tab := s.cfg.ReviewTab; tab != nil {
+		if rv, err := tab.Store.Load(); err == nil && s.reviewWriting(rv) {
+			if !req.Confirmed {
+				writeJSON(w, http.StatusConflict, map[string]interface{}{
+					"error": "the agent is writing a review: stopping it drops the review, which can be started again at any time",
+					"code":  "review-in-progress"})
+				return
+			}
+			rv, stopped, _, err := s.stopAndDropReview("You stopped the agent while it was still writing this review, so it was dropped: start another whenever you like.")
+			if err != nil {
+				writeStoreError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]interface{}{"stopped": stopped, "review": rv})
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"stopped": s.convo.stop()})
 }
 

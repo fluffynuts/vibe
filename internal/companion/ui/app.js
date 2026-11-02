@@ -867,6 +867,10 @@
       state.sandboxTabs = res.body.sandboxTabs !== false
       $('sandbox').textContent = state.sandbox || 'all profiles and sandboxes'
       renderWhere(res.body.folder || '', res.body.git || null)
+      // What can be reviewed depends on the branch, so the start screen's answer is asked again when it changes.
+      const branchNow = res.body.git ? res.body.git.branch : ''
+      if (reviewView.branch !== undefined && reviewView.branch !== branchNow && reviewView.review && !reviewIsOn(reviewView.review)) loadOptions()
+      reviewView.branch = branchNow
       document.title = state.sandbox ? 'vibe · ' + state.sandbox : 'vibe · profiles'
       setFaviconAgent(res.body.agent || '')
       applyTheme(res.body.themeColor || '')
@@ -1341,7 +1345,7 @@
         if (res.ok && res.body.warning) {
           toast(res.body.warning, true)
         } else if (res.ok) {
-          toast(opts.started ? opts.started : 'Done: ' + (res.body.command || opts.command), false,
+          toast(opts.started ? (typeof opts.started === 'function' ? opts.started(res) : opts.started) : 'Done: ' + (res.body.command || opts.command), false,
             opts.progress ? { label: 'Show progress', run: opts.progress } : null)
         } else {
           toast((res.body && res.body.error) || 'That failed.', true)
@@ -1544,6 +1548,9 @@
     // agentAtWork is vibe saying the agent is at a turn the review began
     // (its start, a Submit or an Ask): closing the review stops it.
     agentAtWork: false,
+    // quietMinutes is vibe saying how long a review in progress has been left alone by the agent, with no turn running (0: not at all
+    // or not for long). It says nothing of whether the agent stopped: it may be writing where vibe can't see (a terminal session).
+    quietMinutes: 0,
     // announced is the review's start and state as last announced by toast (see announceReview).
     announced: null,
     // options are the reviews that can be started, while none is open
@@ -2347,6 +2354,7 @@
         reviewView.review = res.body.review
         reviewView.ask = res.body.ask || null
         reviewView.agentAtWork = !!res.body.agentAtWork
+        reviewView.quietMinutes = res.body.quietMinutes || 0
         // What can be reviewed is asked when the start screen shows, not at
         // every poll: it's git, which polls keep clear of.
         if (!reviewIsOn(reviewView.review) && (wasOn || (!reviewView.options && !reviewView.optionsError))) loadOptions()
@@ -2411,7 +2419,8 @@
   // review, by the agent (when the page can talk to it), or just its diff.
   function drawStart(rv) {
     $('review-closed').hidden = !rv.closed
-    $('review-closed').textContent = rv.closed ? 'The last review was closed. ' + rv.closed : ''
+    // A reason that is already the whole sentence (a branch switch's) is shown as it is.
+    $('review-closed').textContent = !rv.closed ? '' : rv.closed.startsWith('The last review was closed') ? rv.closed : 'The last review was closed. ' + rv.closed
     // A dropped review left nothing behind to reopen.
     $('review-reopen').hidden = !rv.closed || (!rv.threads.length && (!rv.started || String(rv.started).startsWith('0001-')))
     const o = reviewView.options
@@ -2547,7 +2556,7 @@
   function closeReview(again = false) {
     const rv = reviewView.review
     const open = rv.threads.filter((t) => t.status === 'open').length
-    const writing = reviewView.agentAtWork && rv.state === 'in progress'
+    const writing = rv.state === 'in progress'
     const stop = writing || (reviewView.agentAtWork && open > 0)
     const close = async () => {
       const res = await post('/api/review/close', { stop })
@@ -2568,8 +2577,11 @@
       return
     }
     const opens = open === 1 ? '1 comment is' : open + ' comments are'
+    const quiet = reviewView.quietMinutes
     const text = writing
-      ? 'The agent is still writing this review. Closing it stops the agent, and the review is dropped: you can start another at any time.'
+      ? (quiet
+        ? 'The agent has not touched this review for ' + quiet + ' minutes: it may have stopped, or be working where vibe cannot see. Closing it drops the review (and stops the agent, if it is running): you can start another at any time.'
+        : 'The agent is still writing this review. Closing it stops the agent, and the review is dropped: you can start another at any time.')
       : 'This review is incomplete: ' + opens + ' still open. ' +
         (stop ? "Closing it stops the agent's work on it: changes it has finished are kept, but one it's partway through may be left half-done. " : '') +
         'The review is kept: you can reopen it at any time.'
@@ -2625,12 +2637,18 @@
     if (!on) drawStart(rv)
     $('review-title').textContent = on && rv.note ? 'Review: ' + rv.note : 'Review'
     $('review-state').hidden = !on || !rv.state
-    $('review-state').textContent = rv.state === 'in progress' ? 'the agent is still reviewing: wait for it to finish' : rv.state || ''
+    // In progress and left alone by the agent for a while, with no turn running: said as it is, without claiming it stopped, which
+    // vibe can't know (it may be writing from a terminal session).
+    $('review-state').textContent = rv.state === 'in progress'
+      ? (on && reviewView.quietMinutes
+        ? 'no word from the agent for ' + reviewView.quietMinutes + ' minutes: it may have stopped, or be working where vibe can\'t see'
+        : 'the agent is still reviewing: wait for it to finish')
+      : rv.state || ''
     $('review-state').classList.toggle('reviewing', on && rv.state === 'in progress')
     if (on) announceReview(rv)
     $('review-of').textContent = !on ? '' : rv.commit ? 'of commit ' + rv.commit : rv.unpushed ? 'of the commits not pushed to ' + rv.ref : rv.ref ? 'against ' + rv.ref : 'of the uncommitted changes'
     const unsent = unsentCount(rv)
-    const stillWriting = rv.state === 'in progress' && reviewView.agentAtWork
+    const stillWriting = rv.state === 'in progress'
     $('review-submit').disabled = !unsent || !state.conversation || stillWriting
     $('review-submit').textContent = unsent ? 'Submit ' + unsent + ' to agent' : 'Submit to agent'
     $('review-submit').title = !state.conversation ? "This sandbox's agent can't be talked to from the page"
@@ -5557,6 +5575,37 @@
     renderGate(b)
   }
 
+  // stopAgent stops the agent's turn. While the agent is writing a review, that ends the review: vibe says so (409,
+  // review-in-progress) and it is asked first, in the words closing the review uses; confirmed, the stop is sent again, saying so,
+  // and the Review tab goes back to its start options. The Stop button and Escape both come here.
+  async function stopAgent() {
+    try {
+      const res = await post('/api/conversation/stop', {})
+      reached(true)
+      if (res.status === 409 && res.body && res.body.code === 'review-in-progress') { askToStopWriting(); return }
+      if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true)
+      pollConversation()
+    } catch (e) {
+      reached(false)
+      toast('Could not reach vibe.', true)
+    }
+  }
+
+  function askToStopWriting() {
+    confirmThen({
+      title: 'Stop the agent?',
+      text: 'The agent is still writing a review. Stopping it stops the agent, and the review is dropped: you can start another at any time. Are you sure you want to stop it?',
+      safe: true, commandNote: '', command: '', runLabel: 'Stop the agent',
+      started: (res) => (res.body.stopped ? 'Stopped.' : 'The agent had already stopped.'),
+      run: async () => {
+        const res = await post('/api/conversation/stop', { confirmed: true })
+        if (res.ok && res.body.review) { tookReview(res.body.review); reviewView.key = null; drawReview(); loadOptions() }
+        pollConversation()
+        return res
+      },
+    })
+  }
+
   async function conversationCall(path) {
     try {
       const res = await post(path, {})
@@ -6988,7 +7037,7 @@
     $('convo-input').addEventListener('keydown', (ev) => {
       if (ev.isComposing) return
       if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); sendPrompt() }
-      else if (ev.key === 'Escape' && convo.running) { ev.preventDefault(); conversationCall('/api/conversation/stop') }
+      else if (ev.key === 'Escape' && convo.running) { ev.preventDefault(); stopAgent() }
       else if (ev.key === 'ArrowUp' && !ev.target.value && convo.lastPrompt) {
         ev.preventDefault()
         ev.target.value = convo.lastPrompt
@@ -7003,7 +7052,7 @@
     // tab it's on may not be showing yet.
     $('convo-input').addEventListener('focus', fitPrompt)
     requestAnimationFrame(fitPrompt)
-    $('convo-stop').addEventListener('click', () => conversationCall('/api/conversation/stop'))
+    $('convo-stop').addEventListener('click', stopAgent)
     setUpFresh()
     $('settings-prompts-markdown').checked = promptsAsMarkdown.on
     $('settings-prompts-markdown').addEventListener('change', () => setPromptsAsMarkdown($('settings-prompts-markdown').checked))

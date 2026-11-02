@@ -1,6 +1,6 @@
 # Stopping the agent while it writes a review
 
-Planned 2026-10-29, not built. Raised by the user while reviewing: they started a review from the Review tab, switched to
+Planned 2026-10-29; the stop half built 2026-10-30 on `feat/stop-ends-review` (see "Built" at the end). Raised by the user while reviewing: they started a review from the Review tab, switched to
 the Conversation tab to ask the agent something, and pressed Stop. Back on the Review tab it still said "the agent is
 still reviewing: wait for it to finish", though nothing was. To be built on its own branch from master, straight after the
 release that this plan was committed with.
@@ -63,3 +63,64 @@ stopping, an agent that forgets `done`, a turn that errors.
 
 About 40 lines of Go, 30 of page, and the tests. Medium: the reason it isn't going in with the release that is already
 under review, though it behaves as a bug.
+
+## Built 2026-10-30
+
+- **Server:** `POST /api/conversation/stop` takes an optional `{"confirmed": true}`. While the agent is at a turn the review began and the
+  review is in progress, it answers 409 with code `review-in-progress` unless confirmed; confirmed, `stopAndDropReview` stops the turn and
+  drops the review (the one function `reviewClose` uses too). A turn the review didn't begin, and a finished review (the agent fixing its
+  comments), are stopped as before.
+- **Stale case:** closing a review that is in progress with nothing at work on it now drops it (`reviewClose`), with "The agent stopped before
+  finishing this review, so it was dropped".
+- **Page:** the Stop button and Escape both go through `stopAgent`; the 409 is a confirm dialog in the Review tab's words, and confirming
+  sends the stop again, confirmed, and puts the Review tab back to its start options. A review in progress with no agent at work says "the
+  agent stopped before finishing this review" with a **Discard it** button (which closes it, so it is dropped).
+- **The "not checked" list:** Escape in the prompt goes through the same call (now `stopAgent`). The Admin tab's and the power menu's
+  stop/restart, and `vibe --cancel`, end the vibe or its turn from outside this call: they leave a review in progress, which the stale case
+  now says and lets go of. A new prompt while busy isn't a stop. The agent's `vibe-review` calls into a dropped review fail (a test checks the
+  comment is refused).
+
+## Closing on a branch switch (built 2026-10-30/11-02, same branch)
+
+Asked for alongside: a review closes itself when the folder switches branch, since one of a feature is confusing once the folder is back on
+master after the release. Decided with the user: (1) switching back doesn't reopen it: it is kept, and reopening is the user's; (2) not
+while the agent is at work on it, but on the next look after (as with "nothing left to review"); (3) any change of HEAD's branch counts,
+a detached HEAD included, and a review reopened is tied to the branch the folder is on then.
+
+`Review.Branch` and `BranchKnown` remember the branch (a detached HEAD is `""` with BranchKnown set); `Store.SetBranch` notes it and
+`Store.CloseOnBranch` closes when it differs. The branch is read by the isolated helper (`review.CurrentBranch`, op `branch`). It is noted
+when the review is started from the page and when it is reopened, and, for one started any other way (the agent's own start, one from
+before this), at its first look: the review tab's own polls (`reviewState`) do the watching, so a switch is seen when the tab next looks.
+
+## Review fixes (2026-11-02, threads #209–#213)
+
+- **One server-side rule for "abandoned":** a review in progress, no turn of any kind running, and the agent quiet for `reviewQuiet`
+  (3 minutes since its last touch, or since the review started). `/api/review` sends it as `abandoned`; the page uses that and no longer
+  guesses from `agentAtWork`. While any turn runs, or the agent touched the review lately, it counts as still being written, so an
+  agent-started review (inbox) is asked about before Stop too.
+- **Branch watcher** waits on `convo.working()` (any turn), like `CloseOver`; branch lookups are throttled to once per `branchLookEvery`
+  (5 s) except on `?diff=1`, which always looks.
+- **A confirmed stop** stops first, then drops the review only if the turn was still writing it, and answers `stopped` truthfully; a review
+  already finished is kept.
+
+## Review fixes, second round (2026-11-02, threads #215–#218)
+
+- **Reopen** forgets the branch the review was closed for leaving, in the same store step, so no poll can close it again before it is
+  tied to the branch it is reopened on (at once, or at the first look if the branch can't be read then).
+- **Closing a review still in progress** whose turn has ended without finishing it drops it (as a stop does): `stopAndDropReview` drops
+  whenever the review is still in progress after the stop, and `stopped` says only whether a turn was found. A finished review is kept.
+- **The page** says "The agent had already stopped." when a confirmed stop found nothing to stop.
+- **The branch lookup** is shared by the polls that come while one is under way, bounded by the server's life, not by the first poll's
+  context; each poll stops waiting when its own context ends; no lock is held across git.
+
+## Quiet, not "abandoned" (2026-11-02)
+
+Vibe can't tell an agent that stopped from one writing the review in a terminal session (no turn here to see), so it no longer claims
+the agent stopped, and nothing offers to drop a review unasked. Supersedes the "Stale case" and **Discard it** above and the `abandoned`
+answer of the first review round:
+
+- `/api/review` sends `quietMinutes` (0, or the whole minutes) for a review in progress with no turn running and the agent quiet for
+  more than `reviewQuiet` (3 minutes). The page says "no word from the agent for N minutes: it may have stopped, or be working where vibe
+  can't see". The Discard button is gone.
+- Closing a review in progress always asks (the question says how long it has been quiet, when it has) and drops it only when
+  confirmed (`{"stop": true}`); an unconfirmed close of one gets a 409. Its reason no longer says the agent stopped.

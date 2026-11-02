@@ -299,6 +299,16 @@ func optionsOf(ctx context.Context, dir string) (StartOptions, error) {
 	return o, nil
 }
 
+// branchOf is the branch the folder dir is on, "" when its HEAD is detached.
+func branchOf(dir string) (string, error) {
+	r, err := open(dir)
+	if err != nil {
+		return "", err
+	}
+	defer r.close()
+	return r.branch(), nil
+}
+
 // branch is the branch HEAD is on (one with no commits yet included), or
 // "" when it's detached.
 func (r *repository) branch() string {
