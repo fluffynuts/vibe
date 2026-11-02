@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -223,14 +224,76 @@ func themeColorFor(lay layout.Layout, name string, inst state.Instance, agent st
 				return ""
 			}
 		}
-		// The kit's themes, or one the profile adds.
-		for _, dir := range []string{lay.DefaultsDir(), profileDir} {
-			if color, ok := claudetheme.Accent(dir, choice); ok {
-				return color
-			}
-		}
-		return ""
+		return themeAccent(lay, profileDir, choice)
 	}
+}
+
+// themeAccent is the accent colour of a theme, from the kit's themes or one the profile adds; "" for none.
+func themeAccent(lay layout.Layout, profileDir, choice string) string {
+	for _, dir := range []string{lay.DefaultsDir(), profileDir} {
+		if color, ok := claudetheme.Accent(dir, choice); ok {
+			return color
+		}
+	}
+	return ""
+}
+
+// themePickerFor is the page's way of changing the theme of the sandbox's agent: only claude has themes.
+func themePickerFor(lay layout.Layout, name string, inst state.Instance, agent string) companion.ThemePicker {
+	if agent != "" && agent != "claude" {
+		return nil
+	}
+	return &themeDesk{lay: lay, name: name, inst: inst}
+}
+
+// themeDesk changes the theme of one sandbox's agent: in the sandbox while it runs, and in its profile, which
+// the next build of it starts from.
+type themeDesk struct {
+	lay  layout.Layout
+	name string
+	inst state.Instance
+}
+
+func (d *themeDesk) known() []string { return claudetheme.Available(d.lay.DefaultsDir()) }
+
+func (d *themeDesk) Themes(ctx context.Context) companion.ThemeState {
+	known := d.known()
+	running := runningNow(ctx, d.name)
+	choice, ok := "", false
+	if running {
+		choice, ok = claudetheme.FromSandbox(ctx, d.name)
+	}
+	if !ok {
+		choice, _ = claudetheme.FromProfile(d.lay.ProfileDir(d.inst.Profile))
+	}
+	current, _ := claudetheme.Resolve(choice, known)
+	options := claudetheme.Choices(known)
+	// A theme Claude has built in (picked with /theme) is not the kit's to offer, but it is the one in force.
+	if !slices.Contains(options, current) {
+		options = append(options, current)
+	}
+	return companion.ThemeState{Current: current, Options: options, Live: running}
+}
+
+func (d *themeDesk) SetTheme(ctx context.Context, choice string) (companion.ThemeSet, error) {
+	offered := false
+	for _, o := range claudetheme.Choices(d.known()) {
+		offered = offered || o == choice
+	}
+	if !offered {
+		return companion.ThemeSet{}, companion.ErrNoSuchTheme
+	}
+	running := runningNow(ctx, d.name)
+	if running {
+		if err := claudetheme.SetInSandbox(ctx, d.name, choice); err != nil {
+			return companion.ThemeSet{}, err
+		}
+	}
+	profileDir := d.lay.ProfileDir(d.inst.Profile)
+	if err := claudetheme.SaveToProfile(profileDir, choice); err != nil {
+		return companion.ThemeSet{}, fmt.Errorf("the theme was set, but couldn't be recorded in the profile (a rebuild would lose it): %w", err)
+	}
+	return companion.ThemeSet{Live: running, Color: themeAccent(d.lay, profileDir, choice)}, nil
 }
 
 // hasConversation says the sandbox's agent can be driven by the page: only
@@ -373,6 +436,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		Manage:                 &companionManager{lay: lay, own: name},
 		Power:                  &powerDesk{lay: lay, own: name},
 		ThemeColor:             themeColorFor(lay, name, inst, agent),
+		Themes:                 themePickerFor(lay, name, inst, agent),
 		KeepAwake:              keepAwakeFor(name),
 		Log:                    func(line string) { note("%s", line) },
 	})

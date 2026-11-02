@@ -564,3 +564,200 @@ func TestTheAgentIsToldAReviewTheUserClosedTakesNothingMore(t *testing.T) {
 		t.Errorf("requests were left in the inbox: %v", entries)
 	}
 }
+
+// repoWith is a git repository holding the files (paths from its top, each with a line of content), and the
+// review folder to review it with.
+func repoWith(t *testing.T, tracked []string, untracked ...string) (work, dir string) {
+	t.Helper()
+	need(t, "git")
+	work = t.TempDir()
+	write := func(files []string) {
+		for _, f := range files {
+			os.MkdirAll(filepath.Join(work, filepath.Dir(f)), 0o755)
+			os.WriteFile(filepath.Join(work, f), []byte("one\ntwo\n"), 0o644)
+		}
+	}
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Dir = work
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q", "-b", "main")
+	write(tracked)
+	run("add", "-A")
+	run("commit", "-q", "-m", "start")
+	write(untracked)
+	return work, reviewFolder(t)
+}
+
+func commentedFile(t *testing.T, dir string) string {
+	t.Helper()
+	r, err := review.NewStore(dir).Take()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Threads) != 1 {
+		t.Fatalf("threads: %+v", r.Threads)
+	}
+	return r.Threads[0].File
+}
+
+// An agent that has gone into a subfolder gives paths the tab can't match: they are the tab's (from the top of the
+// repository) or they come to nothing. One file they can only mean is what they are made into, and the agent told.
+func TestACommentOnAFileNamedFromASubfolderIsMadeTheTabsPathWhenOneFileIsMeant(t *testing.T) {
+	work, dir := repoWith(t, []string{"internal/companion/ui/app.js", "internal/other/readme.md"})
+	out, code := vibeReviewIn(t, filepath.Join(work, "internal", "companion"), dir, "", "comment", "--file", "ui/app.js", "--line", "2", "--body", "x")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	if got := commentedFile(t, dir); got != "internal/companion/ui/app.js" {
+		t.Errorf("the comment is on %q", got)
+	}
+	if !strings.Contains(out, "internal/companion/ui/app.js") {
+		t.Errorf("the agent isn't told what it was made into:\n%s", out)
+	}
+}
+
+func TestACommentOnAnUntrackedFileIsMadeTheTabsPathToo(t *testing.T) {
+	work, dir := repoWith(t, []string{"a/one.go"}, "internal/new/fresh.go")
+	if out, code := vibeReviewIn(t, work, dir, "", "comment", "--file", "new/fresh.go", "--line", "1", "--body", "x"); code != 0 {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	if got := commentedFile(t, dir); got != "internal/new/fresh.go" {
+		t.Errorf("the comment is on %q", got)
+	}
+}
+
+func TestAPathTheTabHasIsLeftAsItIsAndNothingIsSaid(t *testing.T) {
+	work, dir := repoWith(t, []string{"internal/ui/app.js", "ui/app.js"})
+	out, code := vibeReviewIn(t, filepath.Join(work, "internal"), dir, "", "comment", "--file", "ui/app.js", "--line", "1", "--body", "x")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	// Both ui/app.js (from the top) and internal/ui/app.js (from here) exist: from the top is what the tab has.
+	if got := commentedFile(t, dir); got != "ui/app.js" {
+		t.Errorf("the comment is on %q", got)
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("it said something about a path that was right:\n%s", out)
+	}
+}
+
+func TestAFileNamedFromWhereTheAgentIsIsTheOneThere(t *testing.T) {
+	work, dir := repoWith(t, []string{"a/app.js", "b/app.js"})
+	if out, code := vibeReviewIn(t, filepath.Join(work, "b"), dir, "", "comment", "--file", "app.js", "--line", "1", "--body", "x"); code != 0 {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	if got := commentedFile(t, dir); got != "b/app.js" {
+		t.Errorf("the comment is on %q", got)
+	}
+}
+
+func TestAFileNamedByAnEndOfPathSeveralFilesHaveIsRefusedNamingThem(t *testing.T) {
+	work, dir := repoWith(t, []string{"a/app.js", "b/app.js", "c/other.js"})
+	out, code := vibeReviewIn(t, work, dir, "", "comment", "--file", "app.js", "--line", "1", "--body", "x")
+	if code == 0 {
+		t.Fatalf("it took a path that is several files:\n%s", out)
+	}
+	for _, want := range []string{"a/app.js", "b/app.js"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("it doesn't name %s:\n%s", want, out)
+		}
+	}
+	if left, _ := os.ReadDir(filepath.Join(dir, "inbox")); len(left) != 0 {
+		t.Errorf("a comment was made on a file nobody could tell: %v", left)
+	}
+}
+
+// A file the repository doesn't have may be one the review is of and the working tree no longer is (a deleted one).
+func TestAFileTheRepositoryDoesntHaveIsKeptAsNamedAndSaidSo(t *testing.T) {
+	work, dir := repoWith(t, []string{"a/app.js"})
+	out, code := vibeReviewIn(t, work, dir, "", "comment", "--file", "gone.js", "--line", "1", "--side", "old", "--body", "x")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	if got := commentedFile(t, dir); got != "gone.js" {
+		t.Errorf("the comment is on %q", got)
+	}
+	if !strings.Contains(out, "gone.js") {
+		t.Errorf("nothing said about a file the repository hasn't:\n%s", out)
+	}
+}
+
+func TestAnOrderNamesFilesTheSameWay(t *testing.T) {
+	work, dir := repoWith(t, []string{"internal/companion/ui/app.js", "a/app.js", "b/app.js"})
+	sub := filepath.Join(work, "internal", "companion")
+	out, code := vibeReviewIn(t, sub, dir, `[{"file":"ui/app.js","line":1,"label":"core"}]`, "order")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	r, err := review.NewStore(dir).Take()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Order) != 1 || r.Order[0].File != "internal/companion/ui/app.js" {
+		t.Errorf("order: %+v", r.Order)
+	}
+	if _, code := vibeReviewIn(t, work, reviewFolder(t), `[{"file":"app.js","line":1}]`, "order"); code == 0 {
+		t.Error("an order naming several files by one end of path was taken")
+	}
+}
+
+func TestTheAgentWithdrawsAThreadFromTheCommandLine(t *testing.T) {
+	dir := reviewFolder(t)
+	store := host(t, dir, 0)
+	for _, args := range [][]string{
+		{"comment", "--file", "a.go", "--line", "1", "--body", "by mistake"},
+		{"comment", "--file", "a.go", "--line", "2", "--body", "meant"},
+		{"withdraw", "--thread", "1"},
+	} {
+		if out, code := vibeReview(t, dir, "", args...); code != 0 {
+			t.Fatalf("vibe-review %v: exit %d\n%s", args, code, out)
+		}
+	}
+	r, err := store.Take()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Threads) != 1 || r.Threads[0].Body() != "meant" {
+		t.Errorf("threads: %+v", r.Threads)
+	}
+	if out, code := vibeReview(t, dir, "", "withdraw"); code == 0 || !strings.Contains(out, "--thread") {
+		t.Errorf("withdraw without a thread: exit %d\n%s", code, out)
+	}
+}
+
+// A path the repository has, written a way the tab wouldn't (./ in front, backslashes), is the tab's.
+func TestAPathWrittenWithADotSlashOrBackslashesIsMadeTheTabsPath(t *testing.T) {
+	for _, written := range []string{"./ui/app.js", `ui\app.js`, "./ui/./app.js"} {
+		work, dir := repoWith(t, []string{"ui/app.js", "other/x.go"})
+		out, code := vibeReviewIn(t, work, dir, "", "comment", "--file", written, "--line", "1", "--body", "x")
+		if code != 0 {
+			t.Fatalf("%s: exit %d\n%s", written, code, out)
+		}
+		if got := commentedFile(t, dir); got != "ui/app.js" {
+			t.Errorf("%s: the comment is on %q", written, got)
+		}
+	}
+}
+
+func TestAnOrderOfSeveralStopsNamesThemAll(t *testing.T) {
+	work, dir := repoWith(t, []string{"a/one.go", "b/two.go", "c/three.go"})
+	out, code := vibeReviewIn(t, work, dir, `[{"file":"one.go","line":1},{"file":"./b/two.go","line":2},{"file":"c/three.go","line":3}]`, "order")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	r, err := review.NewStore(dir).Take()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, s := range r.Order {
+		got = append(got, s.File)
+	}
+	if strings.Join(got, ",") != "a/one.go,b/two.go,c/three.go" {
+		t.Errorf("order: %v", got)
+	}
+}

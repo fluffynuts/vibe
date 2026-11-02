@@ -56,6 +56,8 @@ One comment per finding, on the lines it's about:
     P2: <the problem>. <what it leads to>. <the fix>.
     BODY
 
+- `--file` is the path as `vibe-review diff` shows it, from the top of the repository, wherever you are
+  running from. A path that names one file is corrected (and said); one that could be several is refused.
 - `--line` is the line's number in the new file; for a deleted line, add
   `--side old` and use its old number.
 - Start with the severity: **P1** (must not merge: broken, insecure, loses
@@ -107,3 +109,7 @@ reply. Answer with `vibe-review reply --thread <n> --body ...`, and
 `vibe-review resolve --thread <n>` (with a body saying what was done) when
 a finding has been dealt with. A review is read-only: don't change code
 unless the user asks.
+
+A comment made by mistake (wrong file, a probe) is taken back with
+`vibe-review withdraw --thread <n>`: it removes your own thread, and only while
+the user hasn't replied on it. Otherwise `dismiss` it, with a body saying why.
