@@ -171,8 +171,8 @@ func (s *Server) watchBranch(ctx context.Context, rv review.Review, force bool) 
 	if now == rv.Branch || s.convo.working() {
 		return rv
 	}
-	why := "Closed by itself when this folder switched to " + branchWords(now) + "; the review was of " + branchWords(rv.Branch) +
-		". It is kept: reopen it whenever you like."
+	why := "The last review was closed when the branch for this workspace switched to " + branchWords(now) + ". The review was of " +
+		branchWords(rv.Branch) + ". It is kept: reopen it whenever you like."
 	if closed, _, err := store.CloseOnBranch(rv.Started, now, why); err == nil {
 		return closed
 	}

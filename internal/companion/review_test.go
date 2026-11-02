@@ -1480,7 +1480,7 @@ func TestAReviewIsClosedByTheFolderSwitchingBranchAndSaysWhichBranchesAndIsKept(
 	}
 	checkout(t, s, "-b", "feat/other")
 	closed, rv := reviewIsClosed(t, s)
-	for _, want := range []string{"main", "feat/other", "Closed by itself"} {
+	for _, want := range []string{"main", "feat/other", "was closed when the branch"} {
 		if !strings.Contains(closed, want) {
 			t.Errorf("why it closed lacks %q: %q", want, closed)
 		}
@@ -1516,8 +1516,9 @@ func TestTheBranchSwitchMessageStaysTrueOnceTheFolderIsBackOnTheBranch(t *testin
 	startReviewOnMain(t, s)
 	checkout(t, s, "-b", "feat/other")
 	closed, _ := reviewIsClosed(t, s)
-	if strings.Contains(closed, " now") || !strings.Contains(closed, "switched to 'feat/other'") || !strings.Contains(closed, "'main'") {
-		t.Errorf("closed %q: should say when the folder switched, and claim nothing about where it is now", closed)
+	want := "The last review was closed when the branch for this workspace switched to 'feat/other'. The review was of 'main'. It is kept: reopen it whenever you like."
+	if closed != want {
+		t.Errorf("closed %q, want %q", closed, want)
 	}
 }
 

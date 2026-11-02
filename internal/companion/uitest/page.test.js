@@ -646,6 +646,14 @@ test('a closed review says why, and can be reopened', async () => {
   } finally { p.close() }
 })
 
+test('a closed review whose reason is a sentence of its own is shown as it is, not after "The last review was closed."', async () => {
+  const closed = { ...none, started: '2026-10-16T10:00:00Z', closed: "The last review was closed when the branch for this workspace switched to 'master'. The review was of 'feat/x'. It is kept: reopen it whenever you like." }
+  const p = await startPage({ review: closed })
+  try {
+    assert.equal(p.$('review-closed').textContent, closed.closed)
+  } finally { p.close() }
+})
+
 const openReview = { ...none, started: '2026-10-16T10:00:00Z', lastId: 2, threads: [
   { id: 1, status: 'open', comments: said('x') },
   { id: 2, status: 'resolved', comments: said('y') },

@@ -2419,7 +2419,8 @@
   // review, by the agent (when the page can talk to it), or just its diff.
   function drawStart(rv) {
     $('review-closed').hidden = !rv.closed
-    $('review-closed').textContent = rv.closed ? 'The last review was closed. ' + rv.closed : ''
+    // A reason that is already the whole sentence (a branch switch's) is shown as it is.
+    $('review-closed').textContent = !rv.closed ? '' : rv.closed.startsWith('The last review was closed') ? rv.closed : 'The last review was closed. ' + rv.closed
     // A dropped review left nothing behind to reopen.
     $('review-reopen').hidden = !rv.closed || (!rv.threads.length && (!rv.started || String(rv.started).startsWith('0001-')))
     const o = reviewView.options
