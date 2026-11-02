@@ -110,3 +110,49 @@ func TestAThemeTheKitDoesntHaveIsNotMadeUpInTheList(t *testing.T) {
 		t.Errorf("themes: %+v", got)
 	}
 }
+
+// An agent with no themes of its own (cursor, so far) still has the page's accent: the choice is recorded in its
+// profile and read from there, and nothing is written into the sandbox.
+func TestAnAgentWithoutThemesOfItsOwnHasTheChoiceRecordedAndNothingWrittenIntoItsSandbox(t *testing.T) {
+	keepAwakeStandIns(t, true, false) // running: a Claude sandbox would be written into, and no sbx is here
+	lay, profile := themeHome(t)
+	desk := &themeDesk{lay: lay, name: "box", inst: state.Instance{Profile: "p"}, agent: "cursor"}
+	set, err := desk.SetTheme(context.Background(), "amber")
+	if err != nil {
+		t.Fatalf("it went to the sandbox, which it should not for this agent: %v", err)
+	}
+	if set.AgentThemes || set.Live || set.Color != "#ffaa00" {
+		t.Errorf("set: %+v", set)
+	}
+	if got, ok := claudetheme.FromProfile(profile); !ok || got != "amber" {
+		t.Errorf("the profile has %q, %v", got, ok)
+	}
+	themes := desk.Themes(context.Background())
+	if themes.Current != "amber" || themes.AgentThemes || themes.Live {
+		t.Errorf("themes: %+v", themes)
+	}
+}
+
+func TestClaudeHasThemesOfItsOwnAndCursorDoesNot(t *testing.T) {
+	keepAwakeStandIns(t, false, false)
+	lay, _ := themeHome(t)
+	for agent, want := range map[string]bool{"": true, "claude": true, "cursor": false, "opencode": false} {
+		desk := &themeDesk{lay: lay, name: "box", inst: state.Instance{Profile: "p"}, agent: agent}
+		if got := desk.Themes(context.Background()).AgentThemes; got != want {
+			t.Errorf("agent %q: AgentThemes = %v, want %v", agent, got, want)
+		}
+	}
+}
+
+func TestThePagesColourForAnAgentWithoutThemesComesFromTheProfileAlone(t *testing.T) {
+	keepAwakeStandIns(t, true, false) // running, and no sbx here: the sandbox must not be asked
+	lay, profile := themeHome(t)
+	inst := state.Instance{Profile: "p"}
+	if got := themeColorFor(lay, "box", inst, "cursor")(); got != "" {
+		t.Errorf("no choice recorded, and the colour is %q", got)
+	}
+	claudetheme.SaveToProfile(profile, "teal")
+	if got := themeColorFor(lay, "box", inst, "cursor")(); got != "#00aaaa" {
+		t.Errorf("the colour is %q", got)
+	}
+}

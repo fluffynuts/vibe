@@ -206,15 +206,14 @@ const themeReadTimeout = 15 * time.Second
 // the companion page: as the agent has it now (it may have been changed with
 // /theme), else as its profile recorded it. Only claude has themes.
 func themeColorFor(lay layout.Layout, name string, inst state.Instance, agent string) func() string {
-	if agent != "" && agent != "claude" {
-		return nil
-	}
 	return func() string {
 		profileDir := lay.ProfileDir(inst.Profile)
 		choice, ok := "", false
 		// Asking the sandbox would start a stopped one again, every
-		// minute the page is open: the profile's record stands in.
-		if runningNow(context.Background(), name) {
+		// minute the page is open: the profile's record stands in. An agent
+		// with no themes of its own has nothing to ask: the profile's record
+		// is the choice.
+		if hasOwnThemes(agent) && runningNow(context.Background(), name) {
 			ctx, cancel := context.WithTimeout(context.Background(), themeReadTimeout)
 			choice, ok = claudetheme.FromSandbox(ctx, name)
 			cancel()
@@ -228,6 +227,9 @@ func themeColorFor(lay layout.Layout, name string, inst state.Instance, agent st
 	}
 }
 
+// hasOwnThemes says the agent has colour themes of its own for a choice to change: only claude does so far.
+func hasOwnThemes(agent string) bool { return agent == "" || agent == "claude" }
+
 // themeAccent is the accent colour of a theme, from the kit's themes or one the profile adds; "" for none.
 func themeAccent(lay layout.Layout, profileDir, choice string) string {
 	for _, dir := range []string{lay.DefaultsDir(), profileDir} {
@@ -238,27 +240,27 @@ func themeAccent(lay layout.Layout, profileDir, choice string) string {
 	return ""
 }
 
-// themePickerFor is the page's way of changing the theme of the sandbox's agent: only claude has themes.
+// themePickerFor is the page's way of choosing the colour theme of the sandbox's project: every agent has it, as the
+// page's accent follows it; only claude's own colours are changed with it.
 func themePickerFor(lay layout.Layout, name string, inst state.Instance, agent string) companion.ThemePicker {
-	if agent != "" && agent != "claude" {
-		return nil
-	}
-	return &themeDesk{lay: lay, name: name, inst: inst}
+	return &themeDesk{lay: lay, name: name, inst: inst, agent: agent}
 }
 
 // themeDesk changes the theme of one sandbox's agent: in the sandbox while it runs, and in its profile, which
 // the next build of it starts from.
 type themeDesk struct {
-	lay  layout.Layout
-	name string
-	inst state.Instance
+	lay   layout.Layout
+	name  string
+	inst  state.Instance
+	agent string
 }
 
 func (d *themeDesk) known() []string { return claudetheme.Available(d.lay.DefaultsDir()) }
 
 func (d *themeDesk) Themes(ctx context.Context) companion.ThemeState {
 	known := d.known()
-	running := runningNow(ctx, d.name)
+	own := hasOwnThemes(d.agent)
+	running := own && runningNow(ctx, d.name)
 	choice, ok := "", false
 	if running {
 		choice, ok = claudetheme.FromSandbox(ctx, d.name)
@@ -272,7 +274,7 @@ func (d *themeDesk) Themes(ctx context.Context) companion.ThemeState {
 	if !slices.Contains(options, current) {
 		options = append(options, current)
 	}
-	return companion.ThemeState{Current: current, Options: options, Live: running}
+	return companion.ThemeState{Current: current, Options: options, AgentThemes: own, Live: running}
 }
 
 func (d *themeDesk) SetTheme(ctx context.Context, choice string) (companion.ThemeSet, error) {
@@ -283,7 +285,8 @@ func (d *themeDesk) SetTheme(ctx context.Context, choice string) (companion.Them
 	if !offered {
 		return companion.ThemeSet{}, companion.ErrNoSuchTheme
 	}
-	running := runningNow(ctx, d.name)
+	own := hasOwnThemes(d.agent)
+	running := own && runningNow(ctx, d.name)
 	if running {
 		if err := claudetheme.SetInSandbox(ctx, d.name, choice); err != nil {
 			return companion.ThemeSet{}, err
@@ -293,7 +296,7 @@ func (d *themeDesk) SetTheme(ctx context.Context, choice string) (companion.Them
 	if err := claudetheme.SaveToProfile(profileDir, choice); err != nil {
 		return companion.ThemeSet{}, fmt.Errorf("the theme was set, but couldn't be recorded in the profile (a rebuild would lose it): %w", err)
 	}
-	return companion.ThemeSet{Live: running, Color: themeAccent(d.lay, profileDir, choice)}, nil
+	return companion.ThemeSet{AgentThemes: own, Live: running, Color: themeAccent(d.lay, profileDir, choice)}, nil
 }
 
 // hasConversation says the sandbox's agent can be driven by the page: only

@@ -24,14 +24,18 @@ type ThemePicker interface {
 type ThemeState struct {
 	Current string   `json:"current"`
 	Options []string `json:"options"`
+	// AgentThemes says the agent has themes of its own, which a choice changes. For one that hasn't, a choice
+	// only colours this page: it is recorded in the profile, and nothing is written into the sandbox.
+	AgentThemes bool `json:"agentThemes"`
 	// Live says the sandbox is running, so a change reaches its agent now: else it is only recorded, for
-	// the next time the sandbox is built.
+	// the next time the sandbox is built. Always false for an agent with no themes of its own.
 	Live bool `json:"live"`
 }
 
 // ThemeSet is what a change of theme came to.
 type ThemeSet struct {
-	Live bool `json:"live"`
+	AgentThemes bool `json:"agentThemes"`
+	Live        bool `json:"live"`
 	// Color is the accent colour of the theme, "" for none.
 	Color string `json:"color"`
 }
