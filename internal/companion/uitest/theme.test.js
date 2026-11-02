@@ -5,7 +5,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const { openPage } = require('./page.js')
 
-async function pageWith({ themes = true, current = 'default', live = true, set = null } = {}) {
+async function pageWith({ themes = true, current = 'default', live = true, own = true, set = null } = {}) {
   const at = { current }
   const p = await openPage({
     routes: {
@@ -14,10 +14,10 @@ async function pageWith({ themes = true, current = 'default', live = true, set =
       '/api/admin': { instructions: {} },
       '/api/log': { entries: [] },
       '/api/theme': (call) => {
-        if (call.method === 'GET') return { current: at.current, options: ['default', 'amber', 'teal'], live }
+        if (call.method === 'GET') return { current: at.current, options: ['default', 'amber', 'teal'], agentThemes: own, live: own && live }
         if (set) return set(call, at)
         at.current = call.body.choice
-        return { live, color: call.body.choice === 'teal' ? '#00aaaa' : '#ffaa00' }
+        return { agentThemes: own, live: own && live, color: call.body.choice === 'teal' ? '#00aaaa' : '#ffaa00' }
       },
     },
     storage: { 'vibe-companion-tab': 'admin' },
@@ -103,5 +103,19 @@ test('a theme that could not be set is said, and the drop-down goes back to what
     assert.equal(p.$('settings-theme').value, 'amber')
     assert.match(p.$('settings-theme-note').textContent, /isn't readable/)
     assert.ok(!p.$('settings-theme').disabled)
+  } finally { p.close() }
+})
+
+test('for an agent with no themes of its own, the note says a choice colours this page only, before and after choosing', async () => {
+  const p = await pageWith({ own: false })
+  try {
+    const note = () => p.$('settings-theme-note').textContent
+    assert.match(note(), /this page only/i)
+    p.$('settings-theme').value = 'teal'
+    p.$('settings-theme').dispatchEvent(new p.window.Event('change', { bubbles: true }))
+    await p.settle()
+    assert.match(note(), /this page only/i)
+    assert.doesNotMatch(note(), /terminal|built|restart/i, 'a warning for a terminal this change did not touch')
+    assert.equal(p.window.document.documentElement.style.getPropertyValue('--theme'), '#00aaaa')
   } finally { p.close() }
 })

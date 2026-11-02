@@ -3472,6 +3472,14 @@
   // takes its colour without waiting for the next state.
   const themeChoice = { shown: '' }
 
+  // themeNote says what a choice came to, for the agent it is made for: a change in the running agent's own themes
+  // (changed says it was just made), kept for a build, or only the page's accent, for an agent with no themes.
+  function themeNote(agentThemes, live, changed) {
+    if (!agentThemes) return "Colours this page only: this agent's own colours aren't changed."
+    if (!live) return "This sandbox isn't running: a choice is kept for the next time it is built."
+    return changed ? 'Changed. A Claude terminal that is already open keeps its colours until it is restarted.' : ''
+  }
+
   function drawTheme(t) {
     const select = $('settings-theme')
     select.replaceChildren(...t.options.map((name) => {
@@ -3481,7 +3489,7 @@
     }))
     select.value = t.current
     themeChoice.shown = t.current
-    $('settings-theme-note').textContent = t.live ? '' : "This sandbox isn't running: a choice is kept for the next time it is built."
+    $('settings-theme-note').textContent = themeNote(t.agentThemes, t.live, false)
   }
 
   async function loadTheme() {
@@ -3510,9 +3518,7 @@
       }
       themeChoice.shown = choice
       applyTheme(res.body.color || '')
-      $('settings-theme-note').textContent = res.body.live
-        ? 'Changed. A Claude terminal that is already open keeps its colours until it is restarted.'
-        : "This sandbox isn't running: the choice is kept for the next time it is built."
+      $('settings-theme-note').textContent = themeNote(res.body.agentThemes, res.body.live, true)
     } catch (e) {
       select.value = themeChoice.shown
       reached(false)
