@@ -487,3 +487,40 @@ func TestLineEndingsAloneAreNotADifference(t *testing.T) {
 		t.Errorf("differences: %v", got)
 	}
 }
+
+// A feature kept as a link into a checkout is a normal way to work on one: it is the same files as the folder it
+// points to, and is compared as them (WalkDir doesn't follow a link it is given as its root).
+func linkOrSkip(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("can't make a symlink here: %v", err)
+	}
+}
+
+func TestACopyReachedThroughASymlinkIsComparedAsTheFilesItIs(t *testing.T) {
+	dir := t.TempDir()
+	shipped, checkout, mine := filepath.Join(dir, "shipped"), filepath.Join(dir, "checkout"), filepath.Join(dir, "mine")
+	for _, root := range []string{shipped, checkout} {
+		write(t, filepath.Join(root, "config.yaml"), "a: 1\n")
+		write(t, filepath.Join(root, "install-scripts", "01-x"), "x\n")
+	}
+	linkOrSkip(t, checkout, mine)
+	if got := Differences(mine, shipped); len(got) != 0 {
+		t.Errorf("an identical copy behind a symlink differs in %v", got)
+	}
+	if got := Differences(shipped, mine); len(got) != 0 {
+		t.Errorf("the shipped copy behind a symlink differs in %v", got)
+	}
+}
+
+func TestACopyReachedThroughASymlinkThatDiffersIsStillSaidToDiffer(t *testing.T) {
+	dir := t.TempDir()
+	shipped, checkout, mine := filepath.Join(dir, "shipped"), filepath.Join(dir, "checkout"), filepath.Join(dir, "mine")
+	write(t, filepath.Join(shipped, "config.yaml"), "a: 1\n")
+	write(t, filepath.Join(checkout, "config.yaml"), "a: 2\n")
+	write(t, filepath.Join(checkout, "extra"), "e\n")
+	linkOrSkip(t, checkout, mine)
+	if got := Differences(mine, shipped); !reflect.DeepEqual(got, []string{"config.yaml", "extra"}) {
+		t.Errorf("differences = %v", got)
+	}
+}

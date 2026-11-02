@@ -69,7 +69,8 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 		return finish(lay, args, name)
 	}
 
-	if args.Headless {
+	// With --no-start too it is the setup a headless start is to follow (see createBeforeHeadless), not a start.
+	if args.Headless && !args.NoStart {
 		return noSandboxForHeadless(name, target)
 	}
 	profile := resolveProfileName(args, target)

@@ -12,10 +12,10 @@ const PAGE = path.join(__dirname, '..', '..', '..', 'library', 'base', 'clipboar
 
 // openClipboardPage loads the page with a fake server that says a paste is
 // already waiting when its file name is in waiting.
-function openClipboardPage(waiting) {
+function openClipboardPage(waiting, search = '') {
   const html = fs.readFileSync(PAGE, 'utf8')
   const script = html.match(/<script>([\s\S]*)<\/script>/)[1]
-  const dom = new JSDOM(html.replace(/<script>[\s\S]*<\/script>/, ''), { url: 'http://localhost:5390/', runScripts: 'outside-only', pretendToBeVisual: true })
+  const dom = new JSDOM(html.replace(/<script>[\s\S]*<\/script>/, ''), { url: 'http://localhost:5390/' + search, runScripts: 'outside-only', pretendToBeVisual: true })
   const w = dom.window
   let inFlight = 0
   let poll = () => {}
@@ -80,11 +80,26 @@ function openClipboardPage(waiting) {
   }
 }
 
-test('a paste is added, to go with the next message', async () => {
+test('the title and the sandbox name are shown on the page by itself, and left out when the app frames it', async () => {
+  const shown = (p) => p.window.getComputedStyle(p.window.document.querySelector('header')).display !== 'none'
+  const alone = openClipboardPage([])
+  const framed = openClipboardPage([], '?framed=1')
+  try {
+    await alone.settle()
+    await framed.settle()
+    assert.equal(shown(alone), true)
+    assert.equal(shown(framed), false)
+  } finally {
+    alone.close()
+    framed.close()
+  }
+})
+
+test('a paste added says nothing: the item shows where it is', async () => {
   const p = openClipboardPage([])
   try {
     await p.paste('a.png')
-    assert.equal(p.status(), "Added — it'll reach the agent with your next message.")
+    assert.equal(p.status(), '')
   } finally { p.close() }
 })
 
@@ -96,11 +111,11 @@ test('a paste already waiting to go says so, and isn’t added again', async () 
   } finally { p.close() }
 })
 
-test('of several pasted at once, those already waiting are counted apart', async () => {
+test('of several pasted at once, those already waiting are said apart', async () => {
   const p = openClipboardPage(['a.png'])
   try {
     await p.paste('a.png', 'b.png', 'c.png')
-    assert.equal(p.status(), 'Added 2 items. (1 already pasted.)')
+    assert.equal(p.status(), '1 already pasted.')
   } finally { p.close() }
   const all = openClipboardPage(['a.png', 'b.png'])
   try {
@@ -193,7 +208,7 @@ test('what is held is added once the server answers again', async () => {
     await p.poll()
     assert.deepEqual(p.server.uploads.sort(), ['a.png', 'b.png'])
     assert.deepEqual(p.held(), [])
-    assert.match(p.status(), /Added 2 items/)
+    assert.equal(p.status(), '')
   } finally { p.close() }
 })
 

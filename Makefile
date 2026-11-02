@@ -10,6 +10,8 @@ BINARY ?= vibe
 PKG    := ./src/vibe
 
 SOURCES := $(shell find . -name '*.go' -not -path './.git/*')
+# What the formatting check covers: the Go files CI would see. tmp/ is git-ignored scratch.
+FMT_SOURCES := $(shell find . -name '*.go' -not -path './.git/*' -not -path './tmp/*')
 # Files pulled in by go:embed; editing them must trigger a rebuild too.
 EMBEDDED := $(shell find internal/companion/ui -type f)
 
@@ -33,7 +35,7 @@ vet: ## run go vet
 # Changes nothing: it lists the files gofmt would change, and fails if there are any.
 .PHONY: fmt-check
 fmt-check: ## check formatting (gofmt), changing nothing: fails if a file would change
-	@unformatted=$$($(GOFMT) -l $(SOURCES)) || exit 1; \
+	@unformatted=$$($(GOFMT) -l $(FMT_SOURCES)) || exit 1; \
 	if [ -n "$$unformatted" ]; then \
 	  echo "gofmt would change these files (gofmt -w <file> formats one):" >&2; \
 	  echo "$$unformatted" >&2; \

@@ -92,3 +92,11 @@ func TestAVibeThatWontEndRestartsNothingAndSaysSo(t *testing.T) {
 		t.Errorf("err = %v, want which vibe, and that nothing was restarted", err)
 	}
 }
+
+func TestARestartRefusedForARebuildSaysToRestartOnceItsDone(t *testing.T) {
+	restartStandIns(t, false, true, true, true)
+	_, err := restart(t.TempDir(), "box", "/work", []running.Claim{{PID: 7, Work: "rebuilding sandbox 'box'"}}, false)
+	if err == nil || !strings.Contains(err.Error(), "rebuilding sandbox 'box'") || !strings.HasSuffix(err.Error(), ", then restart") {
+		t.Errorf("err = %v", err)
+	}
+}

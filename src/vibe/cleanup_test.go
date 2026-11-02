@@ -331,12 +331,12 @@ func TestWhatEachSandboxOffersToDo(t *testing.T) {
 	}{
 		{"gone from sbx", inventorySandbox{inst: base}, ""},
 		{"this page's", inventorySandbox{inst: state.Instance{Name: "mine"}, inSbx: true, running: true}, ""},
-		{"attached", inventorySandbox{inst: base, inSbx: true, running: true, attached: true}, "stop"},
-		{"attached, though sbx says it's stopped", inventorySandbox{inst: base, inSbx: true, attached: true}, "stop"},
+		{"attached", inventorySandbox{inst: base, inSbx: true, running: true, attached: true}, "stop restartvibe"},
+		{"attached, though sbx says it's stopped", inventorySandbox{inst: base, inSbx: true, attached: true}, "stop restartvibe"},
 		{"being rebuilt", inventorySandbox{inst: base, inSbx: true, running: true, attached: true, rebuilding: "rebuilding sandbox 'a'"}, ""},
 		{"folder gone, stopped", inventorySandbox{inst: base, inSbx: true, folderGone: true}, ""},
-		{"running", inventorySandbox{inst: base, inSbx: true, running: true}, "stop rebuild"},
-		{"stopped, out of date", inventorySandbox{inst: base, inSbx: true, outOfDate: "changed"}, "start rebuild update"},
+		{"running", inventorySandbox{inst: base, inSbx: true, running: true}, "stop startvibe rebuild"},
+		{"stopped, out of date", inventorySandbox{inst: base, inSbx: true, outOfDate: "changed"}, "start startvibe rebuild update"},
 	} {
 		if got := strings.Join(sandboxActions(tc.s, "mine"), " "); got != tc.want {
 			t.Errorf("%s: actions = %q, want %q", tc.name, got, tc.want)

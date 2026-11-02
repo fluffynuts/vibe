@@ -65,6 +65,18 @@
 
   const $ = (id) => document.getElementById(id)
 
+  // The clipboard page is told it is framed here, which says where it is
+  // already, so it leaves out its title.
+  function framedClipboardUrl(url) {
+    try {
+      const framed = new URL(url)
+      framed.searchParams.set('framed', '1')
+      return framed.href
+    } catch (e) {
+      return url
+    }
+  }
+
   const store = {
     get(key) { try { return localStorage.getItem(key) } catch (e) { return null } },
     set(key, value) { try { localStorage.setItem(key, value) } catch (e) { /* private window: carry on */ } },
@@ -94,7 +106,7 @@
     clipboardWaitingSince: 0,
     clipboardStarting: false,
     conversation: false,
-    tab: store.get('vibe-companion-tab') || 'log',
+    tab: store.get('vibe-companion-tab') || 'conversation',
     filter: 'all',
     search: '',
     log: null,
@@ -260,11 +272,231 @@
 
   // --- the link to vibe -------------------------------------------------
 
-  function setLink(up, text) {
+  // setLink shows whether vibe is reached ('up', 'down' or 'connecting') on
+  // the power button, and says it, in words, to everything that can't see
+  // its colour: its tooltip and label, the screen reader's live region, and
+  // the first line of its menu.
+  function setLink(how, text) {
     const link = $('link')
-    link.classList.toggle('up', up)
-    link.classList.toggle('down', !up)
+    for (const s of ['up', 'down', 'connecting']) link.classList.toggle(s, s === how)
+    link.title = text
+    link.setAttribute('aria-label', 'Power menu: ' + text)
     $('link-text').textContent = text
+    $('power-status').textContent = 'Status: ' + (how === 'up' ? 'connected' : how === 'down' ? 'not connected — ' + text : text)
+  }
+
+  // setUpPowerMenu makes the power button open its menu, and nothing more: it
+  // never acts on a click. The menu is the same wherever vibe is reached or
+  // not, as what it holds works without vibe.
+  function setUpPowerMenu() {
+    const button = $('link')
+    const menu = $('power-menu')
+    const close = () => { menu.hidden = true; button.setAttribute('aria-expanded', 'false') }
+    button.addEventListener('click', () => {
+      if (!menu.hidden) { close(); return }
+      menu.hidden = false
+      button.setAttribute('aria-expanded', 'true')
+      const first = menu.querySelector('a, button:not(:disabled)')
+      if (first) first.focus()
+      showPowerActions()
+    })
+    for (const action of ['stop', 'restart']) {
+      $('power-' + action).addEventListener('click', () => { close(); askPower(action, state.sandbox, powerChecked) })
+    }
+    menu.addEventListener('click', (ev) => { if (ev.target.closest('a')) close() })
+    menu.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); close(); button.focus() } })
+    document.addEventListener('pointerdown', (ev) => { if (!menu.hidden && !ev.target.closest('.power-wrap')) close() })
+  }
+
+  // What the power menu can do to this sandbox, as vibe last said.
+  let powerChecked = null
+
+  // showPowerActions fills the menu's Stop and Restart from what vibe says
+  // can be done: each is disabled, with the reason beside it, when it can't,
+  // as it can't when vibe isn't there.
+  async function showPowerActions() {
+    $('power-actions').hidden = !state.power || !state.sandbox
+    if (!state.power || !state.sandbox) return
+    const set = (action, ok, why) => {
+      const item = $('power-' + action)
+      item.disabled = !ok
+      item.querySelector('.power-why').textContent = ok ? '' : ' (' + why + ')'
+    }
+    if (offline.down) {
+      set('stop', false, offlineText())
+      set('restart', false, offlineText())
+      return
+    }
+    try {
+      const res = await api('/api/power')
+      if (!res.ok || res.body.error) throw new Error((res.body && res.body.error) || 'vibe could not say')
+      powerChecked = res.body
+      for (const action of ['stop', 'restart']) {
+        const can = (res.body.actions || {})[action] || { ok: false, why: 'vibe did not say' }
+        set(action, can.ok, can.why || '')
+      }
+    } catch (e) {
+      powerChecked = null
+      set('stop', false, 'vibe could not be asked: ' + e.message)
+      set('restart', false, 'vibe could not be asked: ' + e.message)
+    }
+  }
+
+  // askPower asks before stopping or restarting a sandbox's vibe, naming
+  // the sandbox and its folder, and what it would interrupt, then asks vibe
+  // to and shows what it says as it goes. check is what vibe said of it.
+  function askPower(action, sandbox, check) {
+    const can = ((check || {}).actions || {})[action] || {}
+    const folder = (check || {}).folder || ''
+    const words = {
+      stop: { title: 'Stop sandbox ', ing: 'Stopping', label: 'Stop',
+        text: 'This ends vibe for ' + folder + ' and stops the sandbox.' + (sandbox === state.sandbox ? ' This page disconnects; vibe in that folder starts it again.' : '') },
+      restart: { title: 'Restart vibe for sandbox ', ing: 'Restarting', label: 'Restart',
+        text: 'This ends vibe for ' + folder + ' and starts it again, headless, on the same port.' + (sandbox === state.sandbox ? ' This page refreshes by itself when it is back.' : '') },
+      start: { title: 'Start vibe for sandbox ', ing: 'Starting vibe for', label: 'Start',
+        text: 'This starts a headless vibe for ' + folder + ', which can be talked to from its page. A terminal session is not something to start from here: run vibe in the folder for one.' },
+    }[action]
+    confirmThen({
+      title: words.title + "'" + sandbox + "'?",
+      text: words.text,
+      list: can.warns || [],
+      commandNote: '',
+      danger: action !== 'start',
+      runLabel: words.label,
+      started: words.ing + " '" + sandbox + "'",
+      run: async () => {
+        // What the user was shown is sent too: if more would be interrupted now, vibe asks again.
+        const res = await post('/api/power', { sandbox, action, confirmed: true, warns: can.warns || [] })
+        if (res.ok) showPowerProgress(action, sandbox)
+        return res
+      },
+    })
+  }
+
+  // askPowerForRow asks vibe what the action would interrupt for the sandbox
+  // of a row of the Profiles tab, then asks the user.
+  async function askPowerForRow(action, row) {
+    let check = { folder: row.folder }
+    try {
+      const res = await api('/api/power?sandbox=' + encodeURIComponent(row.name))
+      reached(true)
+      if (!res.ok) { toast((res.body && res.body.error) || 'vibe could not say what that would interrupt.', true); return }
+      check = res.body
+    } catch (e) {
+      reached(false)
+      toast('Could not reach vibe.', true)
+      return
+    }
+    askPower(action, row.name, check)
+  }
+
+  const power = { timer: null }
+  // How many polls of the log (every 700ms) a restart gets before its box can be closed regardless: about two minutes.
+  const POWER_SLOW_POLLS = 170
+  // How long "Restarted" is shown before the page reloads by itself, to be read.
+  const POWER_RELOAD_AFTER_MS = 2000
+
+  // closeThisTab closes the tab, which a browser allows only for one a script opened: when this one stays (the next line
+  // runs), it says so in into, rather than being a button that did nothing.
+  function closeThisTab(into) {
+    window.close()
+    into.textContent = "Your browser won't let a page close its own tab: close this tab yourself."
+  }
+
+  // showPowerProgress shows what the action says as it runs, from the log
+  // vibe keeps. It ends in one of three ways, told in words: vibe has gone
+  // (a stop), vibe is back under a new boot (a restart), or the action ended
+  // and vibe is as it was (it didn't take effect).
+  function showPowerProgress(action, sandbox) {
+    const dialog = $('power-progress')
+    const ing = { stop: 'Stopping ', restart: 'Restarting ', start: 'Starting vibe for ' }[action]
+    $('power-progress-title').textContent = ing + "'" + sandbox + "'"
+    $('power-log').textContent = ''
+    // Only this page's own vibe is ended by its own sandbox's stop or restart,
+    // so only then does the page gone, or come back under a new boot, say how it ended.
+    const own = sandbox === state.sandbox && action !== 'start'
+    // Which run of vibe is asked, from the log's own answer: a restart is the
+    // log answered under another boot, which the page's regular poll of the
+    // state may not have seen yet.
+    const boot = state.boot
+    // This page's own vibe restarted is a new vibe, perhaps a new build: the page refreshes itself to meet it, once
+    // it is up. Nothing is there to be pressed until then (a reload before would find nothing to load), so the box
+    // says so, and has no way to close it: Escape included.
+    const refreshes = own && action === 'restart'
+    const closeButton = $('power-close')
+    const reloadButton = $('power-reload')
+    let closable = !refreshes
+    const buttons = (close, reload) => { closeButton.hidden = !close; reloadButton.hidden = !reload; closable = close }
+    buttons(!refreshes, false)
+    closeButton.textContent = 'Close'
+    $('power-end').textContent = refreshes ? 'This page will refresh by itself when vibe has restarted.' : ''
+    dialog.oncancel = (ev) => { if (!closable) ev.preventDefault() }
+    let next = 0
+    let away = 0
+    let ended = false
+    let asking = false
+    let polls = 0
+    let reloadTimer = null
+    const end = (text) => { ended = true; $('power-end').textContent = text; if (state.manage) loadManage() }
+    clearInterval(power.timer)
+    power.timer = setInterval(async function pollPower() {
+      // One question at a time: a slow answer is not asked for again, which would add its text twice.
+      if (ended || asking) return
+      asking = true
+      // A backstop, not an end: past it the person is told what to do if the page hasn't refreshed, and the restart carries on.
+      polls += 1
+      if (refreshes && !closable && polls >= POWER_SLOW_POLLS) {
+        buttons(true, true)
+        $('power-end').textContent = "This is taking longer than expected. If this page doesn't refresh by itself, reload it. The restart carries on."
+      }
+      try {
+        const res = await api('/api/power/log?sandbox=' + encodeURIComponent(sandbox) + '&from=' + next)
+        if (!res.ok) throw new Error('not ok')
+        reached(true)
+        away = 0
+        if (res.body.text) {
+          $('power-log').append(res.body.text)
+          $('power-log').scrollTop = $('power-log').scrollHeight
+        }
+        next = res.body.next
+        if (own && boot && res.body.boot && res.body.boot !== boot) {
+          // Serving under a new boot isn't up: what started it (a restart) is done when the vibe has said its page is up
+          // and its sandbox started, which is when the helper ends.
+          if (action === 'restart' && !res.body.running) {
+            end('Restarted: the new vibe is up and serving. Refreshing this page…')
+            buttons(false, false)
+            // Not at once, so that it can be read.
+            reloadTimer = setInterval(function reloadSoon() { clearInterval(reloadTimer); location.reload() }, POWER_RELOAD_AFTER_MS)
+          }
+        } else if (!res.body.running && next > 0) {
+          // Answered, by the same vibe, after what ran has finished: a stop that worked leaves nothing to answer.
+          end(own && action === 'stop'
+            ? "The stop didn't take effect: vibe is still running. What it said is above."
+            : own
+              ? "That ended and didn't take effect: vibe is as it was. What it said is above."
+              : 'That has ended. What it said is above; the Profiles tab shows how the sandbox is now.')
+          buttons(true, false)
+        }
+      } catch (e) {
+        reached(false)
+        away += 1
+        if (own && action === 'stop' && away >= 2) {
+          end('vibe has ended. What it said is above; the sandbox is stopped when it says so.')
+          buttons(true, false)
+          // Stopped on purpose, from here: Close closes the tab, as far as the browser lets it.
+          offline.stoppedHere = true
+          showGlass()
+          closeButton.textContent = 'Close this tab'
+          closeButton.onclick = () => closeThisTab($('power-end'))
+        }
+      } finally {
+        asking = false
+      }
+    }, 700)
+    closeButton.onclick = () => dialog.close()
+    reloadButton.onclick = () => location.reload()
+    dialog.onclose = () => { clearInterval(power.timer); clearInterval(reloadTimer) }
+    dialog.showModal()
   }
 
   // The banner says what went wrong, each problem kept under what it came
@@ -481,13 +713,13 @@
   function reached(ok) {
     if (ok) {
       state.failures = 0
-      setLink(true, 'connected')
+      setLink('up', 'connected')
       disconnected(false)
       return
     }
     state.failures += 1
     if (state.failures >= 2) {
-      setLink(false, offlineText())
+      setLink('down', offlineText())
       disconnected(true)
     }
   }
@@ -501,7 +733,7 @@
   // What the page shows while vibe isn't there: a cross on its icon, and
   // frosted glass over everything, as nothing on it can work. The glass can
   // be dismissed until vibe is back; the cross and the status stay.
-  const offline = { down: false, dismissed: false }
+  const offline = { down: false, dismissed: false, stoppedHere: false }
   const BEHIND_GLASS = ['.top', '#tabs', '#banner', 'main']
 
   function disconnected(down) {
@@ -511,9 +743,10 @@
     offline.dismissed = false
     favicon.down = down
     drawFavicon()
+    if (!down) offline.stoppedHere = false
     if (down) {
-      $('offline-text').textContent = offlineText()
-      for (const d of document.querySelectorAll('dialog[open]')) d.close('cancel')
+      // Not the progress of a stop or restart, which is what is watched while vibe is away.
+      for (const d of document.querySelectorAll('dialog[open]')) if (d.id !== 'power-progress') d.close('cancel')
     }
     showGlass()
   }
@@ -532,6 +765,13 @@
   function showGlass() {
     const shown = offline.down && !offline.dismissed
     $('offline').hidden = !shown
+    // What it says depends on whether the user stopped vibe from here, which may be known only after it went.
+    $('offline-dismiss').textContent = offline.stoppedHere ? 'Close this tab' : 'Dismiss until it reconnects'
+    if (offline.down) {
+      $('offline-text').textContent = offline.stoppedHere
+        ? 'You stopped vibe from this page. You can close this tab; run vibe again to come back.'
+        : offlineText()
+    }
     for (const sel of BEHIND_GLASS) {
       const node = document.querySelector(sel)
       if (node) node.inert = shown
@@ -594,20 +834,26 @@
     box.replaceChildren()
     $('git-part').hidden = !git
     if (!git) return
-    const part = (cls, text) => {
+    const part = (cls, text, title) => {
       const span = document.createElement('span')
       span.className = cls
       span.textContent = text
+      span.title = title
       box.append(span)
     }
-    part('branch', git.branch)
-    if (git.staged) part('staged', '+' + git.staged)
-    if (git.modified) part('modified', '~' + git.modified)
-    if (git.untracked) part('untracked', '?' + git.untracked)
-    if (git.conflicted) part('conflicted', '✘' + git.conflicted)
-    if (git.ahead) part('ahead', '↑' + git.ahead)
-    if (git.behind) part('behind', '↓' + git.behind)
-    if (git.stashed) part('stashed', '#' + git.stashed)
+    const files = (n, what) => n + ' ' + what + ' file' + (n === 1 ? '' : 's')
+    // The glyphs and the order are the command-line prompt's (powerline's), so that what is read here is read as there.
+    if (git.detached) part('branch detached', git.branch, 'detached HEAD at ' + git.branch.replace(/^@/, '') + ': not on a branch')
+    else part('branch', git.branch, 'branch ' + git.branch)
+    if (git.operation) part('operation', git.operation, git.operation + ' under way')
+    if (git.staged) part('staged', '+' + git.staged, files(git.staged, 'staged'))
+    if (git.modified) part('modified', '!' + git.modified, files(git.modified, 'modified or deleted, not staged'))
+    if (git.untracked) part('untracked', '?' + git.untracked, files(git.untracked, 'untracked'))
+    if (git.conflicted) part('conflicted', '✘' + git.conflicted, files(git.conflicted, 'conflicted'))
+    if (git.ahead) part('ahead', '⇡' + git.ahead, git.ahead + ' commit' + (git.ahead === 1 ? '' : 's') + ' not pushed')
+    if (git.behind) part('behind', '⇣' + git.behind, git.behind + ' commit' + (git.behind === 1 ? '' : 's') + ' fetched but not merged')
+    if (git.stashed) part('stashed', '#' + git.stashed, git.stashed + ' stash' + (git.stashed === 1 ? '' : 'es'))
+    if (git.noUpstream) part('noupstream', 'no upstream', 'this branch follows no branch, so there is nothing for it to be ahead of or behind')
   }
 
   async function loadState() {
@@ -621,6 +867,10 @@
       state.sandboxTabs = res.body.sandboxTabs !== false
       $('sandbox').textContent = state.sandbox || 'all profiles and sandboxes'
       renderWhere(res.body.folder || '', res.body.git || null)
+      // What can be reviewed depends on the branch, so the start screen's answer is asked again when it changes.
+      const branchNow = res.body.git ? res.body.git.branch : ''
+      if (reviewView.branch !== undefined && reviewView.branch !== branchNow && reviewView.review && !reviewIsOn(reviewView.review)) loadOptions()
+      reviewView.branch = branchNow
       document.title = state.sandbox ? 'vibe · ' + state.sandbox : 'vibe · profiles'
       setFaviconAgent(res.body.agent || '')
       applyTheme(res.body.themeColor || '')
@@ -635,7 +885,15 @@
       $('convo-choice').hidden = !state.choice
       if (state.choice) initChoice()
       state.admin = !!res.body.admin
+      state.power = !!res.body.power
+      state.manage = !!res.body.manage
+      state.boot = res.body.boot || ''
       state.usage = !!res.body.usage
+      state.signin = !!res.body.signin
+      state.signinStart = !!res.body.signinStart
+      state.signinKey = !!res.body.signinKey
+      $('admin-signin').hidden = !state.signin
+      if (state.signin && !signInShown.asked) loadSignIn()
       $('usage').hidden = !state.usage
       $('tab-admin').hidden = !state.admin
       $('tab-manage').hidden = !res.body.manage
@@ -670,14 +928,14 @@
           // it has the page, it keeps it while the address stays the same:
           // the page carries on by itself when its server comes back (the
           // sandbox restarted, say), where loading it again would flash.
-          if (ready && state.clipboardLoaded !== url) $(view.frame).src = url
+          if (ready && state.clipboardLoaded !== url) $(view.frame).src = framedClipboardUrl(url)
           else if (!url || (moved && !ready)) $(view.frame).removeAttribute('src')
         }
         if (ready) state.clipboardLoaded = url
       }
       renderGitAuthor(res.body.gitAuthor)
       renderClipboard()
-      if ($('tab-' + state.tab).hidden) select(state.tab)
+      if ($('tab-' + state.tab).hidden) select(state.tab, false)
     } catch (e) {
       reached(false)
     }
@@ -838,10 +1096,13 @@
   // --- tabs -------------------------------------------------------------
 
   // select shows tab, or the first tab the page has when it hasn't that one.
-  function select(tab) {
+  function select(tab, remember = true) {
+    const wanted = tab
     if (!TABS.includes(tab) || $('tab-' + tab).hidden) tab = TABS.find((t) => !$('tab-' + t).hidden) || 'log'
     state.tab = tab
-    store.set('vibe-companion-tab', tab)
+    // Only a tab that was asked for is a choice to keep: where it wasn't there to go to (no conversation yet, on a first
+    // open), the one stood in for isn't, or it would stay the choice once the conversation is.
+    if (remember && tab === wanted) store.set('vibe-companion-tab', tab)
     showBanner()
     for (const t of TABS) {
       $('panel-' + t).hidden = t !== tab
@@ -850,6 +1111,7 @@
       button.tabIndex = t === tab ? 0 : -1
     }
     if (tab === 'log') blockedSeen()
+    if (tab === 'admin' && state.signin) loadSignIn()
     if (tab === 'review') reviewSeen()
     // A comment asked for, not yet gone to, isn't gone to once you're elsewhere.
     else reviewView.goTo = null
@@ -1083,7 +1345,7 @@
         if (res.ok && res.body.warning) {
           toast(res.body.warning, true)
         } else if (res.ok) {
-          toast(opts.started ? opts.started : 'Done: ' + (res.body.command || opts.command), false,
+          toast(opts.started ? (typeof opts.started === 'function' ? opts.started(res) : opts.started) : 'Done: ' + (res.body.command || opts.command), false,
             opts.progress ? { label: 'Show progress', run: opts.progress } : null)
         } else {
           toast((res.body && res.body.error) || 'That failed.', true)
@@ -1286,6 +1548,9 @@
     // agentAtWork is vibe saying the agent is at a turn the review began
     // (its start, a Submit or an Ask): closing the review stops it.
     agentAtWork: false,
+    // quietMinutes is vibe saying how long a review in progress has been left alone by the agent, with no turn running (0: not at all
+    // or not for long). It says nothing of whether the agent stopped: it may be writing where vibe can't see (a terminal session).
+    quietMinutes: 0,
     // announced is the review's start and state as last announced by toast (see announceReview).
     announced: null,
     // options are the reviews that can be started, while none is open
@@ -2089,6 +2354,7 @@
         reviewView.review = res.body.review
         reviewView.ask = res.body.ask || null
         reviewView.agentAtWork = !!res.body.agentAtWork
+        reviewView.quietMinutes = res.body.quietMinutes || 0
         // What can be reviewed is asked when the start screen shows, not at
         // every poll: it's git, which polls keep clear of.
         if (!reviewIsOn(reviewView.review) && (wasOn || (!reviewView.options && !reviewView.optionsError))) loadOptions()
@@ -2153,7 +2419,8 @@
   // review, by the agent (when the page can talk to it), or just its diff.
   function drawStart(rv) {
     $('review-closed').hidden = !rv.closed
-    $('review-closed').textContent = rv.closed ? 'The last review was closed. ' + rv.closed : ''
+    // A reason that is already the whole sentence (a branch switch's) is shown as it is.
+    $('review-closed').textContent = !rv.closed ? '' : rv.closed.startsWith('The last review was closed') ? rv.closed : 'The last review was closed. ' + rv.closed
     // A dropped review left nothing behind to reopen.
     $('review-reopen').hidden = !rv.closed || (!rv.threads.length && (!rv.started || String(rv.started).startsWith('0001-')))
     const o = reviewView.options
@@ -2289,7 +2556,7 @@
   function closeReview(again = false) {
     const rv = reviewView.review
     const open = rv.threads.filter((t) => t.status === 'open').length
-    const writing = reviewView.agentAtWork && rv.state === 'in progress'
+    const writing = rv.state === 'in progress'
     const stop = writing || (reviewView.agentAtWork && open > 0)
     const close = async () => {
       const res = await post('/api/review/close', { stop })
@@ -2310,8 +2577,11 @@
       return
     }
     const opens = open === 1 ? '1 comment is' : open + ' comments are'
+    const quiet = reviewView.quietMinutes
     const text = writing
-      ? 'The agent is still writing this review. Closing it stops the agent, and the review is dropped: you can start another at any time.'
+      ? (quiet
+        ? 'The agent has not touched this review for ' + quiet + ' minutes: it may have stopped, or be working where vibe cannot see. Closing it drops the review (and stops the agent, if it is running): you can start another at any time.'
+        : 'The agent is still writing this review. Closing it stops the agent, and the review is dropped: you can start another at any time.')
       : 'This review is incomplete: ' + opens + ' still open. ' +
         (stop ? "Closing it stops the agent's work on it: changes it has finished are kept, but one it's partway through may be left half-done. " : '') +
         'The review is kept: you can reopen it at any time.'
@@ -2363,16 +2633,23 @@
     $('review-start').hidden = on
     $('review-body').hidden = !on
     $('review-actions').hidden = !on
+    $('review-comments-open').hidden = !on
     $('review-wait').hidden = reviewView.files !== null || !on
     if (!on) drawStart(rv)
     $('review-title').textContent = on && rv.note ? 'Review: ' + rv.note : 'Review'
     $('review-state').hidden = !on || !rv.state
-    $('review-state').textContent = rv.state === 'in progress' ? 'the agent is still reviewing: wait for it to finish' : rv.state || ''
+    // In progress and left alone by the agent for a while, with no turn running: said as it is, without claiming it stopped, which
+    // vibe can't know (it may be writing from a terminal session).
+    $('review-state').textContent = rv.state === 'in progress'
+      ? (on && reviewView.quietMinutes
+        ? 'no word from the agent for ' + reviewView.quietMinutes + ' minutes: it may have stopped, or be working where vibe can\'t see'
+        : 'the agent is still reviewing: wait for it to finish')
+      : rv.state || ''
     $('review-state').classList.toggle('reviewing', on && rv.state === 'in progress')
     if (on) announceReview(rv)
     $('review-of').textContent = !on ? '' : rv.commit ? 'of commit ' + rv.commit : rv.unpushed ? 'of the commits not pushed to ' + rv.ref : rv.ref ? 'against ' + rv.ref : 'of the uncommitted changes'
     const unsent = unsentCount(rv)
-    const stillWriting = rv.state === 'in progress' && reviewView.agentAtWork
+    const stillWriting = rv.state === 'in progress'
     $('review-submit').disabled = !unsent || !state.conversation || stillWriting
     $('review-submit').textContent = unsent ? 'Submit ' + unsent + ' to agent' : 'Submit to agent'
     $('review-submit').title = !state.conversation ? "This sandbox's agent can't be talked to from the page"
@@ -2945,6 +3222,245 @@
   // What the tab last showed: the server's answer, and the features as the
   // profile has them (to tell what the user has ticked since).
   const adminView = { data: null, features: '', jobLines: -1 }
+
+  // --- signing in -------------------------------------------------------------
+
+  // What the Sign-in card shows: whether sbx, and the agent, can be used, read by the host when the Admin tab is
+  // opened and when Check now is pressed (each asks sbx, which can be slow, so it isn't polled).
+  const signInShown = { asked: false, checking: false, watching: false, lastJob: '', agent: 'the agent', job: null, codeSent: false, sentPolls: 0, lastCheck: 0 }
+  // How many looks (1.5 s apart) at a code being checked before it can be entered again: a code that wasn't taken leaves the command waiting.
+  const CODE_PATIENCE_POLLS = 15
+  // How soon after a look at the sign-ins a failed prompt asks for another.
+  const SIGNIN_RECHECK_MS = 10000
+  const SIGNIN_WORDS = { 'signed-in': ['Signed in', 'ok'], 'signed-out': ['Signed out', 'bad'], 'needs-policy': ['Needs a network policy', 'bad'], unknown: ['Unknown', ''], unsupported: ['Not checked', ''] }
+
+  function renderSignInPart(id, name, part, kind) {
+    const [word, cls] = SIGNIN_WORDS[part.state] || SIGNIN_WORDS.unknown
+    const box = $(id)
+    const steps = (part.manual || []).map((line) => el('li', { text: line }))
+    const go = state.signinStart && part.state === 'signed-out'
+      ? el('button', { type: 'button', class: 'signin-go', 'data-kind': kind, text: 'Sign in', disabled: signInShown.watching, onclick: () => startSignIn(kind) })
+      : null
+    box.replaceChildren(...[
+      el('div', { class: 'signin-head' }, el('strong', { text: name }), el('span', { class: 'pill ' + cls, text: word }), go),
+      part.detail ? el('p', { class: 'note muted', text: part.detail }) : null,
+      kind === 'agent' && state.signinKey ? signInKeyOption() : null,
+      steps.length ? el('details', {}, el('summary', { text: 'Do it yourself' }), el('ol', { class: 'steps' }, ...steps)) : null,
+    ].filter(Boolean))
+  }
+
+  // The other way to sign Claude in: an API key, for someone who has one and not a subscription. It is kept in sbx, which hands
+  // it to the agent: the key never enters the sandbox, and applies to every sandbox on this machine.
+  function signInKeyOption() {
+    const input = el('input', { type: 'password', autocomplete: 'off', spellcheck: 'false', placeholder: 'sk-ant-…', 'aria-label': 'An Anthropic API key' })
+    const use = el('button', { type: 'button', class: 'signin-key-go ghost', text: 'Use this key', onclick: () => useApiKey(input) })
+    return el('details', {}, el('summary', { text: 'Use an API key instead' }),
+      el('p', { class: 'note muted', text: 'For an Anthropic API key, rather than a Claude subscription. It is kept in sbx, which hands it to the agent: it never enters the sandbox. It applies to every sandbox on this machine.' }),
+      el('div', { class: 'bar' }, input, use))
+  }
+
+  function useApiKey(input) {
+    const key = input.value.trim()
+    if (!key) return
+    confirmThen({
+      title: 'Use this API key for every sandbox?',
+      text: 'This replaces how sbx signs Claude in for every sandbox on this machine, including a subscription sign-in it holds now.',
+      commandNote: '',
+      danger: true,
+      runLabel: 'Use this key',
+      started: 'API key kept in sbx. If a prompt still fails, restart the sandbox.',
+      run: async () => {
+        input.value = '' // not left on the page, whatever comes of it
+        const res = await api('/api/signin/apikey', { method: 'POST', body: JSON.stringify({ key }) })
+        if (res.ok) loadSignIn()
+        return res
+      },
+    })
+  }
+
+  function signInProblem(text) {
+    const status = $('signin-status')
+    status.textContent = text
+    status.hidden = !text
+  }
+
+  // The conversation says when sign-in is needed, as it is there that a prompt would fail: sbx's own first (nothing starts
+  // without it), then the agent's. What could not be told is not said: only what is known to be signed out.
+  function renderSignInNotice(parts) {
+    const docker = (parts.docker || {}).state === 'signed-out'
+    const agent = (parts.agentSignIn || {}).state === 'signed-out'
+    const name = parts.agent || 'The agent'
+    $('convo-signin').hidden = !(docker || agent)
+    $('convo-signin-text').textContent = docker
+      ? 'sbx is not signed in to Docker, so nothing can start. Sign in from the Admin tab.'
+      : name + ' is not signed in, so it cannot answer yet. Sign in from the Admin tab.'
+  }
+
+  async function loadSignIn() {
+    if (signInShown.checking) return
+    signInShown.checking = true
+    signInShown.asked = true
+    signInShown.lastCheck = Date.now()
+    $('signin-check').disabled = true
+    try {
+      const res = await api('/api/signin', { timeout: 30000 })
+      reached(true)
+      if (!res.ok) {
+        signInProblem("Couldn't check: " + (res.body.error || 'HTTP ' + res.status))
+        return
+      }
+      signInProblem('')
+      signInShown.agent = res.body.agent || 'the agent'
+      signInShown.parts = res.body
+      renderSignInPart('signin-docker', 'Docker (sbx)', res.body.docker || { state: 'unknown' }, 'docker')
+      renderSignInPart('signin-agent', signInShown.agent, res.body.agentSignIn || { state: 'unknown' }, 'agent')
+      renderSignInNotice(res.body)
+    } catch (e) {
+      signInProblem("Couldn't check: " + (e && e.message ? e.message : 'the host did not answer'))
+    } finally {
+      signInShown.checking = false
+      $('signin-check').disabled = false
+    }
+    // A sign-in begun before this page was opened (or reloaded) is picked up, not lost.
+    if (state.signinStart && !signInShown.watching) await followSignIn(true)
+  }
+  $('signin-check').addEventListener('click', loadSignIn)
+  $('convo-signin-open').addEventListener('click', () => select('admin'))
+
+  async function startSignIn(kind) {
+    signInProblem('')
+    try {
+      const res = await api('/api/signin/start', { method: 'POST', body: JSON.stringify({ kind }) })
+      if (!res.ok) {
+        signInProblem("Couldn't start signing in: " + (res.body.error || 'HTTP ' + res.status))
+        return
+      }
+      signInShown.watching = true
+      signInShown.lastJob = ''
+      signInShown.codeSent = false
+      signInShown.sentPolls = 0
+      showSignInJob(res.body)
+      if (signInShown.parts) {
+        renderSignInPart('signin-docker', 'Docker (sbx)', signInShown.parts.docker || { state: 'unknown' }, 'docker')
+        renderSignInPart('signin-agent', signInShown.agent, signInShown.parts.agentSignIn || { state: 'unknown' }, 'agent')
+      }
+    } catch (e) {
+      signInProblem("Couldn't start signing in: " + (e && e.message ? e.message : 'the host did not answer'))
+    }
+  }
+
+  // followSignIn reads the sign-in under way and shows it; with adopt, one that is running is taken up and followed.
+  async function followSignIn(adopt) {
+    let res
+    try { res = await api('/api/signin/job') } catch (e) { return }
+    if (!res.ok) return
+    const job = res.body
+    if (!job.kind || (!signInShown.watching && !(adopt && job.running))) return
+    signInShown.watching = !!job.running || signInShown.watching
+    if (job.running && signInShown.codeSent) signInShown.sentPolls += 1
+    showSignInJob(job)
+    if (job.done) {
+      signInShown.watching = false
+      if (job.ok) {
+        loadSignIn()
+        // Signed in, the next thing is to prompt the agent, which isn't obvious to someone new: go there, if still here.
+        if (job.kind === 'agent' && state.tab === 'admin' && state.conversation) {
+          toast('Signed in. You can prompt the agent now.')
+          select('conversation')
+        }
+      }
+    }
+  }
+
+  function pollSignInJob() {
+    if (signInShown.watching) followSignIn(false)
+  }
+  setInterval(pollSignInJob, 1500)
+
+  async function sendSignInCode() {
+    const field = $('signin-job').querySelector('input')
+    const code = field ? field.value.trim() : ''
+    if (!code) return
+    field.value = ''
+    // The field is gone at once, so what is shown has to say it is being checked.
+    signInShown.codeSent = true
+    signInShown.sentPolls = 0
+    if (signInShown.job) showSignInJob(signInShown.job)
+    try {
+      const res = await api('/api/signin/code', { method: 'POST', body: JSON.stringify({ code }) })
+      if (!res.ok) signInProblem("Couldn't give it the code: " + (res.body.error || 'HTTP ' + res.status))
+    } catch (e) {
+      signInProblem("Couldn't give it the code: " + (e && e.message ? e.message : 'the host did not answer'))
+    }
+  }
+
+  async function cancelSignIn() {
+    try { await api('/api/signin/cancel', { method: 'POST', body: '{}' }) } catch (e) { /* the next poll says how it ended */ }
+    followSignIn(false)
+  }
+
+  function closeSignInJob() {
+    signInShown.lastJob = ''
+    $('signin-job').hidden = true
+    $('signin-job').replaceChildren()
+  }
+
+  // showSignInJob draws the sign-in under way in its place on the card: the address to open, the code to confirm or a field
+  // for the one to paste, and what is happening. It is redrawn only when the job has changed, keeping what is being typed.
+  function showSignInJob(job) {
+    const box = $('signin-job')
+    signInShown.job = job
+    const late = signInShown.codeSent && signInShown.sentPolls >= CODE_PATIENCE_POLLS
+    const key = JSON.stringify([job, signInShown.codeSent, late])
+    if (key === signInShown.lastJob && !box.hidden) return
+    signInShown.lastJob = key
+    const typed = box.querySelector('input') ? box.querySelector('input').value : ''
+    const who = job.kind === 'docker' ? 'Docker (sbx)' : signInShown.agent
+    const parts = [el('strong', { text: (job.running ? 'Signing in to ' : 'Sign-in to ') + who })]
+    const waiting = (text) => el('p', { class: 'note' }, el('span', { class: 'spinner', 'aria-hidden': 'true' }), text)
+    const cancel = el('div', { class: 'bar' }, el('button', { type: 'button', class: 'signin-cancel ghost', text: 'Cancel', onclick: cancelSignIn }))
+    if (job.running && !job.url) {
+      // Nothing is said of an address the user can't see yet.
+      parts.push(waiting('Starting the sign-in…'), cancel)
+    } else if (job.running && job.kind === 'agent' && signInShown.codeSent) {
+      parts.push(waiting('Checking the code…'))
+      if (late) {
+        parts.push(el('p', { class: 'note muted', text: "It's taking a while. If the code was wrong or didn't go through, you can enter it again." }),
+          el('div', { class: 'bar' }, el('button', { type: 'button', class: 'signin-again', text: 'Enter the code again', onclick: () => { signInShown.codeSent = false; showSignInJob(job) } })))
+      }
+      parts.push(cancel)
+    } else if (job.running) {
+      parts.push(el('p', { class: 'note', text: job.kind === 'docker'
+        ? 'Open the address, check the code matches, and sign in. This page notices when you have.'
+        : 'Open the address and sign in; it then shows a code. Paste that code here.' }))
+      // A link only where the host knows the address to be on a host this sign-in uses: the agent's command runs in the sandbox.
+      if (job.urlKnown && /^https:\/\//.test(job.url)) {
+        parts.push(el('p', {}, el('a', { href: job.url, target: '_blank', rel: 'noopener noreferrer', text: job.url })))
+      } else {
+        parts.push(el('p', { class: 'note', text: job.url }),
+          el('p', { class: 'note bad-text', text: "This isn't an address vibe recognises: check it before you sign in at it." }))
+      }
+      if (job.code) parts.push(el('p', {}, 'Code: ', el('code', { text: job.code })))
+      if (job.kind === 'agent') {
+        parts.push(el('div', { class: 'bar' },
+          el('input', { type: 'password', autocomplete: 'off', placeholder: 'the code it showed', 'aria-label': 'The code the sign-in showed', onkeydown: (ev) => { if (ev.key === 'Enter') sendSignInCode() } }),
+          el('button', { type: 'button', class: 'signin-send', text: 'Send code', onclick: sendSignInCode })))
+      }
+      parts.push(cancel)
+    } else if (job.ok) {
+      parts.push(el('p', { class: 'note', text: 'Signed in.' }), el('div', { class: 'bar' }, el('button', { type: 'button', class: 'ghost', text: 'Close', onclick: closeSignInJob })))
+    } else {
+      parts.push(el('p', { class: 'note bad-text', text: "Didn't sign in: " + (job.error || 'it ended without signing in') }),
+        el('div', { class: 'bar' }, el('button', { type: 'button', class: 'ghost', text: 'Close', onclick: closeSignInJob })))
+    }
+    if ((job.lines || []).length) {
+      parts.push(el('details', {}, el('summary', { text: 'What it printed' }), el('pre', { class: 'info', text: job.lines.join('\n') })))
+    }
+    box.replaceChildren(...parts)
+    box.hidden = false
+    const field = box.querySelector('input')
+    if (field && typed) { field.value = typed; field.focus() }
+  }
 
   async function loadAdmin() {
     try {
@@ -3739,6 +4255,8 @@
       title: 'Rebuild sandbox ' + name + '?',
       text: "It's destroyed and made again from its profile, which takes a few minutes, and left running or stopped as it was. The agent's memories are kept; anything installed by hand, or kept outside its folder, goes.",
       command: 'vibe -r <its folder>' }) },
+    startvibe: { label: 'Start vibe…', power: 'start' },
+    restartvibe: { label: 'Restart vibe…', power: 'restart' },
     update: { label: 'Update…', ask: (name, isProfile) => ({
       title: 'Bring ' + (isProfile ? 'profile ' + name + ' and its sandboxes' : 'sandbox ' + name) + ' up to date?',
       text: "A profile the library has moved on from is composed afresh (backed up first, and not if it was edited by hand), and each sandbox built from what has since changed is rebuilt, left running or stopped as it was. The agent's memories are kept.",
@@ -3761,6 +4279,7 @@
   async function manageAction(kind, row, isProfile) {
     const run = () => post('/api/manage/do', { kind, id: row.id })
     const a = MANAGE_ACTIONS[kind]
+    if (a.power) { askPowerForRow(a.power, row); return }
     if (!a.ask) {
       try {
         const res = await run()
@@ -4761,10 +5280,18 @@
         if (block.type === 'text' && block.text) convoNote('agent', block.text, at)
         else if (block.type === 'tool_use') toolUsed(block)
       }
-      // The agent says to run /login, which needs its terminal: this page
-      // can't show the agent's own screens.
+      // The agent says to run /login, which needs its terminal, which this page can't show: the Sign-in card on the Admin
+      // tab does the same without one (where the host offers it).
       if (line.error === 'authentication_failed') {
-        convoNote('error', "The agent isn't logged in, and can't be from this page. In a terminal, run vibe in the sandbox's folder and log in there with /login, then send your prompt again.", at)
+        if (state.signinStart) {
+          convoNote('error', "The agent isn't signed in. Sign in from the Admin tab, then send your prompt again.", at)
+          $('convo-log').lastElementChild.append(el('button', { type: 'button', class: 'small ghost', text: 'Open Sign-in', onclick: () => select('admin') }))
+          // A sign-in that has expired since the page was opened: the card and the notice find out, if they haven't looked lately
+          // (old failures are drawn with the conversation, each one a look at the host).
+          if (Date.now() - signInShown.lastCheck > SIGNIN_RECHECK_MS) loadSignIn()
+        } else {
+          convoNote('error', "The agent isn't signed in, and can't be from this page. In a terminal, run vibe in the sandbox's folder and sign in there with /login, then send your prompt again.", at)
+        }
       }
     } else if (line.type === 'user') {
       for (const block of content) if (block.type === 'tool_result') showResult(block)
@@ -4924,6 +5451,7 @@
 
   async function sendPrompt() {
     const input = $('convo-input')
+    resolveTrailingEmoticon(input)
     const prompt = input.value.trim()
     if (!prompt || convo.running || gate.active) return
     if (await holdForPackages(prompt)) return
@@ -5051,6 +5579,37 @@
     gate.fetching = false
     gate.failed = (b.last && b.last.error) || 'some packages are still missing.'
     renderGate(b)
+  }
+
+  // stopAgent stops the agent's turn. While the agent is writing a review, that ends the review: vibe says so (409,
+  // review-in-progress) and it is asked first, in the words closing the review uses; confirmed, the stop is sent again, saying so,
+  // and the Review tab goes back to its start options. The Stop button and Escape both come here.
+  async function stopAgent() {
+    try {
+      const res = await post('/api/conversation/stop', {})
+      reached(true)
+      if (res.status === 409 && res.body && res.body.code === 'review-in-progress') { askToStopWriting(); return }
+      if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true)
+      pollConversation()
+    } catch (e) {
+      reached(false)
+      toast('Could not reach vibe.', true)
+    }
+  }
+
+  function askToStopWriting() {
+    confirmThen({
+      title: 'Stop the agent?',
+      text: 'The agent is still writing a review. Stopping it stops the agent, and the review is dropped: you can start another at any time. Are you sure you want to stop it?',
+      safe: true, commandNote: '', command: '', runLabel: 'Stop the agent',
+      started: (res) => (res.body.stopped ? 'Stopped.' : 'The agent had already stopped.'),
+      run: async () => {
+        const res = await post('/api/conversation/stop', { confirmed: true })
+        if (res.ok && res.body.review) { tookReview(res.body.review); reviewView.key = null; drawReview(); loadOptions() }
+        pollConversation()
+        return res
+      },
+    })
   }
 
   async function conversationCall(path) {
@@ -5231,6 +5790,20 @@
   }
   setUpFind()
 
+  // replaceInPrompt puts text in place of what runs from start to end in the prompt, through the browser's own editing, so that
+  // Ctrl+Z undoes it as it would a person's typing: setting the textarea's value would clear its undo history. Where the editing
+  // path isn't there (it says so by returning false), the value is set instead. The cursor ends up after text.
+  function replaceInPrompt(input, start, end, text) {
+    input.focus()
+    input.setSelectionRange(start, end)
+    let done = false
+    try { done = document.execCommand('insertText', false, text) } catch (e) { done = false }
+    if (!done || input.value.slice(start, start + text.length) !== text) {
+      input.value = input.value.slice(0, start) + text + input.value.slice(end)
+    }
+    input.setSelectionRange(start + text.length, start + text.length)
+  }
+
   // --- completing slash commands -----------------------------------------
 
   // The slash commands the agent has (learned from it as it starts, so none
@@ -5331,10 +5904,8 @@
     const word = commandWord(input)
     const name = slash.shown[i]
     if (!word || !name) { closeCommands(); return }
-    const rest = input.value.slice(word.end).replace(/^[ \t]+/, '')
-    input.value = '/' + name + ' ' + rest
-    const caret = name.length + 2
-    input.setSelectionRange(caret, caret)
+    const lead = input.value.slice(word.end).match(/^[ \t]*/)[0].length
+    replaceInPrompt(input, 0, word.end + lead, '/' + name + ' ')
     promptChanged()
     closeCommands()
   }
@@ -5361,6 +5932,212 @@
       if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) updateCommands(false)
     })
     input.addEventListener('blur', closeCommands)
+  }
+
+  // --- completing :emoji: names ------------------------------------------
+
+  // A colon and the start of a name in the prompt (:roc) offers the emoji it could be, as the slash commands are offered; the
+  // pick puts the character itself in the prompt, and typing the closing colon of a whole name (:tada:) does too. The
+  // names, and what is a name being typed, are ui/emoji.js's. It can be turned off (Settings), and is remembered.
+  const emojiState = { on: store.get('vibe-emoji-complete') !== 'off', shown: [], at: 0, open: false }
+  const EMOJI_SHOWN = 8
+
+  function closeEmoji() {
+    if (!emojiState.open && $('convo-emoji').hidden) return
+    emojiState.open = false
+    $('convo-emoji').hidden = true
+    $('convo-emoji').replaceChildren()
+    const input = $('convo-input')
+    input.setAttribute('aria-controls', 'convo-commands')
+    // The slash commands' list may be what is open: its own state says so.
+    if (!slash.open) {
+      input.setAttribute('aria-expanded', 'false')
+      input.removeAttribute('aria-activedescendant')
+    }
+  }
+
+  // updateEmoji shows the list for the name being typed at the cursor, or hides it; fresh is a change to the text, which picks
+  // the closest match again.
+  function updateEmoji(fresh) {
+    const input = $('convo-input')
+    if (!emojiState.on || !window.vibeEmoji || input.selectionStart !== input.selectionEnd) { closeEmoji(); return }
+    const word = window.vibeEmoji.at(input.value, input.selectionStart)
+    const shown = word ? window.vibeEmoji.find(word.query, EMOJI_SHOWN) : []
+    if (!shown.length) { closeEmoji(); return }
+    if (fresh || emojiState.at >= shown.length) emojiState.at = 0
+    emojiState.shown = shown
+    const q = word.query.toLowerCase()
+    const list = $('convo-emoji')
+    list.replaceChildren(...shown.map((e, i) => {
+      const found = e.alias || e.name
+      const at = found.toLowerCase().indexOf(q)
+      const label = at < 0 ? [found]
+        : [found.slice(0, at), el('mark', { text: found.slice(at, at + q.length) }), found.slice(at + q.length)]
+      const item = el('li', { id: 'convo-emoji-' + i, role: 'option', 'data-name': e.name, 'aria-selected': String(i === emojiState.at) },
+        el('span', { class: 'glyph', text: e.char, 'aria-hidden': 'true' }), ':', ...label, ':',
+        e.alias ? el('span', { class: 'alias', text: e.name }) : e.emoticon ? el('span', { class: 'alias', text: e.emoticon }) : null)
+      // mousedown, not click: the prompt keeps the focus.
+      item.addEventListener('mousedown', (ev) => { ev.preventDefault(); acceptEmoji(i) })
+      return item
+    }))
+    emojiState.open = true
+    list.hidden = false
+    input.setAttribute('aria-controls', 'convo-emoji')
+    input.setAttribute('aria-expanded', 'true')
+    input.setAttribute('aria-activedescendant', 'convo-emoji-' + emojiState.at)
+    placeEmoji(word.start)
+    const picked = $('convo-emoji-' + emojiState.at)
+    if (picked) picked.scrollIntoView({ block: 'nearest' })
+  }
+
+  // caretPoint is where character index of the prompt is, from the top left of the prompt's border box: a textarea can't
+  // say, so the text up to there is laid out in a copy of it (off the page, the same font, padding, width and wrapping), and
+  // a marker after it says where it came to. The prompt's own scrolling is taken off.
+  const MIRRORED = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant', 'fontStretch', 'lineHeight', 'letterSpacing',
+    'wordSpacing', 'textTransform', 'textIndent', 'tabSize', 'direction', 'textAlign',
+    'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+    'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle']
+  function caretPoint(ta, index) {
+    const cs = window.getComputedStyle(ta)
+    const mirror = document.createElement('div')
+    const style = mirror.style
+    for (const prop of MIRRORED) style[prop] = cs[prop]
+    style.position = 'absolute'
+    style.visibility = 'hidden'
+    style.left = '-9999px'
+    style.top = '0'
+    style.boxSizing = 'border-box'
+    style.overflow = 'hidden'
+    style.whiteSpace = 'pre-wrap'
+    style.overflowWrap = 'break-word'
+    style.wordBreak = 'normal'
+    // As wide as the prompt's text is: a scrollbar takes some of it.
+    const scrollbar = Math.max(0, ta.offsetWidth - ta.clientWidth - parseFloat(cs.borderLeftWidth || 0) - parseFloat(cs.borderRightWidth || 0))
+    style.width = ta.offsetWidth + 'px'
+    style.paddingRight = (parseFloat(cs.paddingRight || 0) + scrollbar) + 'px'
+    mirror.textContent = ta.value.slice(0, index)
+    const marker = document.createElement('span')
+    marker.textContent = '\u200b'
+    mirror.append(marker)
+    document.body.append(mirror)
+    const point = {
+      left: marker.offsetLeft + parseFloat(cs.borderLeftWidth || 0) - ta.scrollLeft,
+      top: marker.offsetTop + parseFloat(cs.borderTopWidth || 0) - ta.scrollTop,
+      height: marker.offsetHeight || parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) || 0,
+    }
+    mirror.remove()
+    return point
+  }
+
+  // placeEmoji puts the list above the line the colon is on, at the colon, and inside the prompt: the list is in the prompt's
+  // wrapper, so the prompt's own offsets are added. Below the line when there is no room above it.
+  function placeEmoji(start) {
+    const ta = $('convo-input')
+    const list = $('convo-emoji')
+    const wrap = list.offsetParent || ta.parentElement
+    const caret = caretPoint(ta, start)
+    const wrapTop = wrap && wrap.getBoundingClientRect ? wrap.getBoundingClientRect().top : 0
+    const at = window.vibeEmoji.place({
+      caretLeft: caret.left + ta.offsetLeft, caretTop: caret.top + ta.offsetTop, caretHeight: caret.height,
+      listWidth: list.offsetWidth, listHeight: list.offsetHeight,
+      boxWidth: wrap ? wrap.clientWidth : ta.offsetWidth,
+      roomAbove: wrapTop + caret.top + ta.offsetTop,
+    })
+    list.style.left = at.left + 'px'
+    list.style.top = at.top + 'px'
+  }
+
+  function moveEmoji(by) {
+    if (!emojiState.shown.length) return
+    emojiState.at = (emojiState.at + by + emojiState.shown.length) % emojiState.shown.length
+    updateEmoji(false)
+  }
+
+  // putEmoji puts char in place of what runs from start to the cursor, with a space after, ready for what goes on.
+  function putEmoji(start, char, space) {
+    const input = $('convo-input')
+    const end = input.selectionStart
+    const after = input.value.slice(end)
+    const gap = space && !/^\s/.test(after) ? ' ' : ''
+    replaceInPrompt(input, start, end, char + gap)
+    promptChanged()
+    closeEmoji()
+  }
+
+  function acceptEmoji(i) {
+    const input = $('convo-input')
+    const word = window.vibeEmoji && window.vibeEmoji.at(input.value, input.selectionStart)
+    const picked = emojiState.shown[i]
+    if (!word || !picked) { closeEmoji(); return }
+    putEmoji(word.start, picked.char, true)
+  }
+
+  // resolveEmoticonAtCaret turns an emoticon that ends at the cursor into its emoji, for the Enter that follows it.
+  function resolveEmoticonAtCaret(input) {
+    if (!emojiState.on || !window.vibeEmoji || input.selectionStart !== input.selectionEnd) return
+    const end = input.selectionStart
+    const found = window.vibeEmoji.emoticonBefore(input.value, end)
+    if (found) replaceInPrompt(input, found.start, end, found.char)
+  }
+
+  // resolveTrailingEmoticon does the same for an emoticon the prompt ends with, wherever the cursor is: a message ending in
+  // :) is meant as the emoji, and is sent as it.
+  function resolveTrailingEmoticon(input) {
+    if (!emojiState.on || !window.vibeEmoji) return
+    const end = input.value.replace(/\s+$/, '').length
+    const found = end > 0 ? window.vibeEmoji.emoticonBefore(input.value, end) : null
+    if (found) replaceInPrompt(input, found.start, end, found.char)
+  }
+
+  function setUpEmoji() {
+    const input = $('convo-input')
+    // Ahead of the prompt's other keys, as the slash commands': while the list is open the arrows, Tab, Enter and Escape are its
+    // (Escape would otherwise stop the agent). With it shut, Enter after an emoticon turns it into its emoji, and is then a
+    // new line as always.
+    input.addEventListener('keydown', (ev) => {
+      if (!emojiState.open && ev.key === 'Enter' && !ev.isComposing) resolveEmoticonAtCaret(input)
+      if (!emojiState.open || ev.isComposing) return
+      const plain = !ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey
+      let handled = true
+      if (ev.key === 'ArrowDown' && plain) moveEmoji(1)
+      else if (ev.key === 'ArrowUp' && plain) moveEmoji(-1)
+      else if ((ev.key === 'Tab' || ev.key === 'Enter') && plain && emojiState.shown.length) acceptEmoji(emojiState.at)
+      else if (ev.key === 'Escape') closeEmoji()
+      else handled = false
+      if (handled) { ev.preventDefault(); ev.stopImmediatePropagation() }
+    })
+    input.addEventListener('input', (ev) => {
+      // The colon that closes a whole name turns it into the character: only typing it does, not a deletion that leaves one.
+      if (emojiState.on && window.vibeEmoji && ev.inputType === 'insertText' && ev.data === ':' && input.selectionStart === input.selectionEnd) {
+        const done = window.vibeEmoji.closing(input.value, input.selectionStart)
+        if (done) { putEmoji(done.start, done.char, false); return }
+      }
+      // The space that finishes an emoticon turns it into its emoji, and stays where it was typed.
+      if (emojiState.on && window.vibeEmoji && ev.inputType === 'insertText' && ev.data === ' ' && input.selectionStart === input.selectionEnd) {
+        const end = input.selectionStart - 1
+        const found = end > 0 ? window.vibeEmoji.emoticonBefore(input.value, end) : null
+        if (found && input.value[end] === ' ') {
+          replaceInPrompt(input, found.start, end, found.char)
+          const caret = found.start + found.char.length + 1
+          input.setSelectionRange(caret, caret)
+          promptChanged()
+          closeEmoji()
+          return
+        }
+      }
+      updateEmoji(true)
+    })
+    input.addEventListener('click', () => updateEmoji(false))
+    input.addEventListener('keyup', (ev) => {
+      if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) updateEmoji(false)
+    })
+    input.addEventListener('blur', closeEmoji)
+  }
+
+  function setEmojiComplete(on) {
+    emojiState.on = on
+    store.set('vibe-emoji-complete', on ? 'on' : 'off')
+    if (!on) closeEmoji()
   }
 
   // --- pasting into the clipboard from anywhere on the conversation tab ---
@@ -6054,6 +6831,10 @@
   const FRESH_OPTIONS_MS = 4 * 60 * 1000
   const FRESH_FETCH_MS = 3 * 60 * 1000
   const FRESH_START_MS = 5 * 60 * 1000
+  // A clipboard page that doesn't answer may still be starting with the sandbox: ask again this
+  // often, this many times, then leave the reason showing.
+  const FRESH_RETRY_MS = 3000
+  const FRESH_RETRIES = 20
   const fresh = { generation: 0, options: null, fetching: false, fetched: null, cancel: null, nameTyped: false }
 
   // branchNameProblem is why git would refuse name for a branch (git check-ref-format's rules, as far
@@ -6110,7 +6891,7 @@
   function openFresh() {
     if (fresh.cancel) fresh.cancel.abort()
     const generation = ++fresh.generation
-    Object.assign(fresh, { options: null, fetching: false, fetched: null, setterWhy: null, cancel: new AbortController() })
+    Object.assign(fresh, { options: null, retries: 0, rechecking: false, clipboardWasOff: false, fetching: false, fetched: null, setterWhy: null, cancel: new AbortController() })
     $('fresh-clipboard').checked = true
     $('fresh-unsent').checked = true
     $('fresh-review').checked = true
@@ -6135,13 +6916,21 @@
     const failed = (text) => {
       if (generation !== fresh.generation) return
       freshError(text)
-      if (!keep) { fresh.options = {}; drawFresh() }
+      fresh.rechecking = false
+      if (!keep) fresh.options = {}
+      drawFresh()
     }
     post('/api/conversation/new/options', {}, { timeout: FRESH_OPTIONS_MS, cancel: fresh.cancel }).then((res) => {
       if (!res.ok) { failed(res.body.error || "vibe couldn't say what else can be done."); return }
       if (generation !== fresh.generation) return
       fresh.options = res.body
+      const c = res.body.clipboard
+      const again = !!(c && c.retry && fresh.retries++ < FRESH_RETRIES)
+      fresh.rechecking = again
       drawFresh()
+      if (again) {
+        setTimeout(() => { if (generation === fresh.generation) askFreshOptions(true) }, FRESH_RETRY_MS)
+      }
     }, () => failed('Could not reach vibe to ask what else can be done.'))
   }
 
@@ -6165,8 +6954,18 @@
     showIf('fresh-clipboard-row', !!c && (!!c.unavailable || c.sent + c.unsent > 0))
     if (c) {
       $('fresh-clipboard').disabled = !!c.unavailable
-      if (c.unavailable) $('fresh-clipboard').checked = false
-      $('fresh-clipboard-why').textContent = c.unavailable || ''
+      if (c.unavailable) {
+        $('fresh-clipboard').checked = false
+        fresh.clipboardWasOff = true
+      } else if (fresh.clipboardWasOff) {
+        $('fresh-clipboard').checked = true
+        fresh.clipboardWasOff = false
+      }
+      const why = $('fresh-clipboard-why')
+      const checking = !!c.unavailable && fresh.rechecking
+      why.replaceChildren(
+        ...(checking ? [el('span', { class: 'spinner', 'aria-hidden': 'true' })] : []),
+        (c.unavailable || '') + (checking ? ' Checking again…' : ''))
       showIf('fresh-clipboard-why', !!c.unavailable)
       $('fresh-clipboard-count').textContent = !c.unavailable && c.sent ? '(' + plural(c.sent, 'item') + ' sent)' : ''
       showIf('fresh-unsent-row', !c.unavailable && c.unsent > 0 && $('fresh-clipboard').checked)
@@ -6345,11 +7144,12 @@
 
   function setUpConversation() {
     setUpCommands()
+    setUpEmoji()
     $('convo-form').addEventListener('submit', (ev) => { ev.preventDefault(); sendPrompt() })
     $('convo-input').addEventListener('keydown', (ev) => {
       if (ev.isComposing) return
       if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); sendPrompt() }
-      else if (ev.key === 'Escape' && convo.running) { ev.preventDefault(); conversationCall('/api/conversation/stop') }
+      else if (ev.key === 'Escape' && convo.running) { ev.preventDefault(); stopAgent() }
       else if (ev.key === 'ArrowUp' && !ev.target.value && convo.lastPrompt) {
         ev.preventDefault()
         ev.target.value = convo.lastPrompt
@@ -6364,10 +7164,12 @@
     // tab it's on may not be showing yet.
     $('convo-input').addEventListener('focus', fitPrompt)
     requestAnimationFrame(fitPrompt)
-    $('convo-stop').addEventListener('click', () => conversationCall('/api/conversation/stop'))
+    $('convo-stop').addEventListener('click', stopAgent)
     setUpFresh()
-    $('convo-md').checked = promptsAsMarkdown.on
-    $('convo-md').addEventListener('change', () => setPromptsAsMarkdown($('convo-md').checked))
+    $('settings-prompts-markdown').checked = promptsAsMarkdown.on
+    $('settings-prompts-markdown').addEventListener('change', () => setPromptsAsMarkdown($('settings-prompts-markdown').checked))
+    $('settings-emoji').checked = emojiState.on
+    $('settings-emoji').addEventListener('change', () => setEmojiComplete($('settings-emoji').checked))
     document.addEventListener('paste', onPaste)
     setInterval(pollConversation, CONVO_POLL_MS)
   }
@@ -6418,11 +7220,16 @@
   document.addEventListener('visibilitychange', tick)
   state.timer = setInterval(tick, POLL_MS)
   setInterval(ping, PING_MS)
-  $('offline-dismiss').addEventListener('click', () => { offline.dismissed = true; showGlass() })
+  $('offline-dismiss').addEventListener('click', () => {
+    if (offline.stoppedHere) return closeThisTab($('offline-text'))
+    offline.dismissed = true
+    showGlass()
+  })
   $('page-reload').addEventListener('click', () => location.reload())
 
-  setLink(false, 'connecting…')
-  loadState().then(() => select(state.tab))
+  setLink('connecting', 'connecting…')
+  setUpPowerMenu()
+  loadState().then(() => select(state.tab, false))
 }
 
   start()

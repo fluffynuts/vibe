@@ -15,6 +15,7 @@
   --ok: #1a7f37;
   --bad: #cf222e;
   --amber: #9a6700;
+  --git-untracked: #0b7bb5;
   --warn-bg: #fff4d6;
   --warn-line: #e0b84a;
   --row-hover: #f3f5f8;
@@ -40,6 +41,7 @@
     --ok: #7ad06f;
     --bad: #f47067;
     --amber: #e3b341;
+    --git-untracked: #79c0ff;
     --warn-bg: #3a3012;
     --warn-line: #7a6420;
     --row-hover: #20242b;
@@ -64,17 +66,36 @@ body {
 .brand .project { font-weight: 700; color: var(--project); }
 .brand .sep { color: var(--muted); margin-right: 8px; }
 .brand .folder { color: var(--folder); word-break: break-all; }
+/* The command-line prompt's colours (powerline's): what is dirty, yellow; what is pushed or kept, green; what is new, light blue; what is wrong, red. */
 .git .branch { color: var(--ok); }
-.git .staged, .git .stashed { color: var(--ok); }
-.git .modified { color: var(--bad); }
-.git .untracked { color: var(--accent); }
-.git .conflicted { color: var(--project); }
-.git .ahead, .git .behind { color: var(--amber); }
+.git .operation, .git .conflicted { color: var(--bad); }
+.git .staged, .git .modified { color: var(--amber); }
+.git .untracked { color: var(--git-untracked); }
+.git .ahead, .git .behind, .git .stashed { color: var(--ok); }
+.git .noupstream { color: var(--muted); }
 .git span + span { margin-left: 6px; }
-.link { margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-.link.up .dot { background: var(--ok); }
-.link.down .dot { background: var(--bad); }
+.power-wrap { position: relative; margin-left: auto; }
+/* Lit and glowing when vibe is reached, flat and dim when it isn't, dim and pulsing while the first answer is awaited: the states differ in brightness and glow, not in colour alone. */
+.link { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: var(--panel); color: var(--muted); cursor: pointer; }
+.link svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.link.up { color: var(--ok); border-color: var(--ok); box-shadow: 0 0 6px 1px var(--ok); }
+.link.down { color: var(--bad); border-color: var(--bad); opacity: .7; box-shadow: none; }
+.link.connecting { animation: tab-dot-pulse 2.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .link.connecting { animation: none; opacity: .6; } }
+.power-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; display: flex; flex-direction: column; width: max-content; max-width: min(360px, 90vw); padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); box-shadow: 0 4px 12px rgba(0, 0, 0, .25); }
+.power-menu[hidden] { display: none; }
+.power-menu hr { width: 100%; margin: 4px 0; border: 0; border-top: 1px solid var(--line); }
+.power-status { padding: 4px 8px; color: var(--muted); font-size: 12px; }
+.power-item { box-sizing: border-box; width: 100%; display: flex; align-items: flex-start; gap: 8px; padding: 4px 8px; border: 0; border-radius: 4px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.power-item:hover:not(:disabled), .power-item:focus-visible { background: var(--row-hover); }
+.power-item:disabled { color: var(--muted); cursor: default; }
+.power-text { display: flex; flex-direction: column; align-items: flex-start; }
+.power-icon { flex: none; width: 14px; height: 14px; margin-top: 3px; fill: currentColor; }
+.power-why { color: var(--muted); font-size: 12px; white-space: normal; max-width: 320px; }
+.power-log { max-height: 50vh; min-width: min(560px, 80vw); overflow: auto; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font: 12px/1.4 var(--mono); white-space: pre-wrap; }
+#power-end { min-height: 1.4em; }
+.power-menu a { display: flex; align-items: flex-start; gap: 8px; padding: 4px 8px; border-radius: 4px; color: var(--text); text-decoration: none; white-space: nowrap; }
+.power-menu a:hover, .power-menu a:focus-visible { background: var(--row-hover); }
 
 .tabbar { display: flex; align-items: stretch; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--panel); overflow-x: auto; }
 .tabs { display: flex; gap: 2px; flex: none; }
@@ -161,6 +182,11 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .spacer { flex: 1; }
+/* The title (with its state and what it is of) always has a line to itself, wrapping if it must;
+   the buttons sit under it, to the right, nearer the middle of the screen than the edge. */
+.review-bar { flex-direction: column; align-items: stretch; gap: 6px; }
+.review-bar-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.review-bar-buttons { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .summary { font-weight: 600; }
 .summary .ok { color: var(--ok); }
 .summary .bad { color: var(--bad); }
@@ -392,7 +418,7 @@ ul.plain li .spacer { flex: 1; }
 .comment-card.awaiting { background: var(--warn-bg); border-left: 3px solid var(--warn-line); }
 .comment-card-said { font-size: 13px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .comment-card-replies { font-size: 12px; }
-.review-actions { display: inline-flex; align-items: center; gap: 8px; }
+.review-actions { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
 /* with no review open: the ways to start one, in the middle of the tab */
 .review-start { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 15vh 16px 32px; text-align: center; }
 .review-start-options { display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 18em; }
@@ -717,3 +743,17 @@ dialog.file-view.outside .file-view-url::before { content: "⚠"; flex: none; ma
 /* A model the plan can't run is under a heading that says so (see drawChoice), and red where a browser paints that:
    Firefox's drop-down doesn't, however it is asked. */
 #choice-model option.unavailable { color: var(--bad); }
+/* The Sign-in card: one row per thing signed in to, its pill beside its name, and the by-hand steps folded under it. */
+ul.signins { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.signin-head { display: flex; align-items: center; gap: 8px; }
+ul.signins .note { margin: 4px 0 0; }
+ul.signins details { margin-top: 4px; font-size: 13px; }
+ul.signins summary { cursor: pointer; color: var(--muted); }
+.signin-head .signin-go { margin-left: auto; padding: 2px 10px; font-size: 12px; }
+.signin-job { margin: 12px 0 0; padding: 10px; border: 1px solid var(--line); border-radius: 6px; display: flex; flex-direction: column; gap: 6px; }
+.signin-job p { margin: 0; overflow-wrap: anywhere; }
+.signin-job input { flex: 1; min-width: 0; }
+.signin-job code { user-select: all; }
+.commands.emoji { bottom: auto; }
+.commands.emoji li .glyph { display: inline-block; min-width: 1.6em; margin-right: 4px; text-align: center; }
+.commands.emoji li .alias { color: var(--muted); margin-left: 6px; font-size: 12px; }

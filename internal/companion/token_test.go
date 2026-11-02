@@ -45,7 +45,7 @@ func TestThePageKnowsATokenWhenItSeesOne(t *testing.T) {
 // allows.
 func TestThePageUsesNoStyleTheBrowserWouldDrop(t *testing.T) {
 	inline := regexp.MustCompile(`[{,]\s*style\s*:|\sstyle="|<style[\s>]`)
-	for _, name := range []string{"app.js", "manage.js", "review.js", "markdown.js", "index.html"} {
+	for _, name := range []string{"app.js", "manage.js", "review.js", "markdown.js", "emoji.js", "index.html"} {
 		data, err := os.ReadFile(filepath.Join("ui", name))
 		if err != nil {
 			t.Fatal(err)

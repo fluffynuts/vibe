@@ -49,11 +49,12 @@ target_vet() {
   "$GO" vet ./...
 }
 
-# Changes nothing: it lists the files gofmt would change, and fails if there are any.
+# Changes nothing: it lists the files gofmt would change, and fails if there are any. It covers the Go
+# files CI would see: tmp/ is git-ignored scratch.
 target_fmt_check() {
   echo "$GOFMT -l ."
   local unformatted
-  unformatted="$(find . -name '*.go' -not -path './.git/*' -print0 | xargs -0 "$GOFMT" -l)"
+  unformatted="$(find . -name '*.go' -not -path './.git/*' -not -path './tmp/*' -print0 | xargs -0 "$GOFMT" -l)"
   if [[ -n "$unformatted" ]]; then
     echo "gofmt would change these files (gofmt -w <file> formats one):" >&2
     echo "$unformatted" >&2

@@ -88,7 +88,7 @@ func answeringMode(t *testing.T, pick func(labels []string, def int) (int, bool)
 }
 
 func TestThePickedModeIsTerminalOrHeadless(t *testing.T) {
-	for want, i := range map[string]int{"terminal": 0, "headless": 1} {
+	for want, i := range map[string]int{"headless": 0, "terminal": 1} {
 		_, restore := answeringMode(t, func([]string, int) (int, bool) { return i, true })
 		got := pickMode("", "how?")
 		restore()
@@ -98,12 +98,12 @@ func TestThePickedModeIsTerminalOrHeadless(t *testing.T) {
 	}
 }
 
-func TestTheModeQuestionStartsOnWhatIsSetAndOnTerminalWhenNothingIs(t *testing.T) {
-	for current, want := range map[string]int{"": 0, "terminal": 0, "headless": 1, "headles": 0} {
+func TestTheModeQuestionStartsOnWhatIsSetAndOnHeadlessWhenNothingIs(t *testing.T) {
+	for current, want := range map[string]int{"": 0, "terminal": 1, "headless": 0, "headles": 0} {
 		var started int
 		_, restore := answeringMode(t, func(labels []string, def int) (int, bool) {
 			started = def
-			if len(labels) != 2 || !strings.HasPrefix(labels[0], "terminal") || !strings.HasPrefix(labels[1], "headless") {
+			if len(labels) != 2 || !strings.HasPrefix(labels[0], "headless") || !strings.HasPrefix(labels[1], "terminal") {
 				t.Errorf("labels %q", labels)
 			}
 			return def, true
@@ -117,7 +117,7 @@ func TestTheModeQuestionStartsOnWhatIsSetAndOnTerminalWhenNothingIs(t *testing.T
 }
 
 func TestQuittingTheModeQuestionKeepsWhatWasSet(t *testing.T) {
-	for current, want := range map[string]string{"": "terminal", "headless": "headless"} {
+	for current, want := range map[string]string{"": "headless", "terminal": "terminal"} {
 		_, restore := answeringMode(t, func([]string, int) (int, bool) { return 0, false })
 		got := pickMode(current, "how?")
 		restore()

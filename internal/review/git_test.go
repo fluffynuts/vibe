@@ -166,3 +166,33 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 	}
 	return string(out)
 }
+
+func TestTheBranchOfAFolderIsItsHeadsAndEmptyWhenDetached(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git isn't installed")
+	}
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q", "-b", "main")
+	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a\n"), 0o644)
+	run("add", "-A")
+	run("commit", "-q", "-m", "one")
+	if got, err := CurrentBranch(context.Background(), dir); err != nil || got != "main" {
+		t.Errorf("on main: %q, %v", got, err)
+	}
+	run("checkout", "-q", "-b", "feat/x")
+	if got, _ := CurrentBranch(context.Background(), dir); got != "feat/x" {
+		t.Errorf("on feat/x: %q", got)
+	}
+	run("checkout", "-q", "--detach")
+	if got, err := CurrentBranch(context.Background(), dir); err != nil || got != "" {
+		t.Errorf("detached: %q, %v", got, err)
+	}
+}

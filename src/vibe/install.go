@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -251,7 +254,9 @@ func installBinary() error {
 	replacing := statErr == nil
 	// A build from source would lose the vibe installed there — most likely
 	// a release — and leave 'vibe --upgrade' offering that release back.
-	if replacing && vibe.Build == "" {
+	// An installed development build has nothing to lose, though: leaving it is how an unpacked newer build went on running
+	// as the old one.
+	if replacing && vibe.Build == "" && !isDevelopmentVersion(installedVersion(dest)) {
 		note("  this is a development build (%s): leaving the vibe at %s as it is", vibe.String(), dest)
 		note("  to run this build from your PATH, copy %s there yourself", exe)
 		return warnIfNotOnPath(binDir, "vibe")
@@ -265,6 +270,26 @@ func installBinary() error {
 		note("  copied the vibe binary to %s", dest)
 	}
 	return warnIfNotOnPath(binDir, "vibe")
+}
+
+// installedVersion is what the vibe at path says of itself (its --version), or "" when it can't be run. A variable for tests.
+var installedVersion = func(path string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "--version").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// developmentVersionPattern is a version with no build number, as only a build from source says it: "vibe 0.1", with or
+// without the commit after; a release has a third part ("vibe 0.1.57").
+var developmentVersionPattern = regexp.MustCompile(`^vibe \d+\.\d+( |$)`)
+
+// isDevelopmentVersion says whether what a vibe printed for --version is a development build's.
+func isDevelopmentVersion(says string) bool {
+	return developmentVersionPattern.MatchString(says)
 }
 
 // replaceFile puts a copy of src at dest, safely even while dest is running

@@ -33,6 +33,12 @@ func pwshScriptPath(t *testing.T) string {
 // pwshTarball is a gzipped tar of a fake PowerShell, and its checksum.
 func pwshTarball(t *testing.T) (data []byte, sum string) {
 	t.Helper()
+	return pwshTarballOf(t, "#!/bin/sh\necho 7.6.9\n")
+}
+
+// pwshTarballOf is that, with pwsh being the script body.
+func pwshTarballOf(t *testing.T, body string) (data []byte, sum string) {
+	t.Helper()
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
@@ -40,7 +46,7 @@ func pwshTarball(t *testing.T) (data []byte, sum string) {
 		name, body string
 		mode       int64
 	}{
-		{"pwsh", "#!/bin/sh\necho 7.6.9\n", 0o644},
+		{"pwsh", body, 0o644},
 		{"Modules/Some/Some.psd1", "@{}\n", 0o644},
 	} {
 		if err := tw.WriteHeader(&tar.Header{Name: f.name, Mode: f.mode, Size: int64(len(f.body)), Typeflag: tar.TypeReg}); err != nil {
@@ -244,5 +250,81 @@ func TestThePwshFeatureIsOfferedWithADescriptionAndComposesWithWhatItNeeds(t *te
 	}
 	if kit, _ := os.ReadFile(filepath.Join(dir, "kit-instructions.md")); !strings.Contains(string(kit), "pwsh") {
 		t.Errorf("the agent isn't told of it:\n%s", kit)
+	}
+}
+
+// leftovers are what a run leaves beside the install that isn't it: a half-unpacked one, the old one set aside.
+func leftovers(prefix string) []string {
+	var found []string
+	for _, suffix := range []string{".staging", ".old"} {
+		if _, err := os.Stat(prefix + suffix); err == nil {
+			found = append(found, prefix+suffix)
+		}
+	}
+	return found
+}
+
+func oldPwshInstalled(prefix string) {
+	os.MkdirAll(prefix, 0o755)
+	os.WriteFile(filepath.Join(prefix, "pwsh"), []byte("#!/bin/sh\necho old\n"), 0o755)
+}
+
+func TestAnInstallThatCantBeLinkedLeavesTheWorkingOneAsItWasAndNothingBeside(t *testing.T) {
+	tarball, sum := pwshTarball(t)
+	run := runPwshInstall(t, tarball, sum, "", func(prefix string) {
+		oldPwshInstalled(prefix)
+		// Where the link goes is a file, so the folder for it can't be made.
+		os.WriteFile(filepath.Join(filepath.Dir(filepath.Dir(prefix)), "bin"), []byte("x"), 0o644)
+	})
+	if data, err := os.ReadFile(filepath.Join(run.prefix, "pwsh")); err != nil || !strings.Contains(string(data), "old") {
+		t.Errorf("the working install was lost to one that couldn't be linked: %q, %v", data, err)
+	}
+	if left := leftovers(run.prefix); len(left) != 0 {
+		t.Errorf("left beside the install: %v", left)
+	}
+	if !strings.Contains(run.log, "WARN:") {
+		t.Errorf("the log doesn't say it failed:\n%s", run.log)
+	}
+}
+
+func TestAnInstallThatWontRunPutsTheOldOneBackWorkingAndLinked(t *testing.T) {
+	tarball, sum := pwshTarballOf(t, "#!/bin/sh\nexit 3\n")
+	run := runPwshInstall(t, tarball, sum, "", oldPwshInstalled)
+	if out, err := exec.Command(filepath.Join(run.prefix, "pwsh")).Output(); err != nil || strings.TrimSpace(string(out)) != "old" {
+		t.Errorf("the old install isn't back: %q, %v", out, err)
+	}
+	if target, err := os.Readlink(run.link); err != nil || target != filepath.Join(run.prefix, "pwsh") {
+		t.Errorf("the link: %q, %v", target, err)
+	}
+	if left := leftovers(run.prefix); len(left) != 0 {
+		t.Errorf("left beside the install: %v", left)
+	}
+	if !strings.Contains(run.log, "WARN:") || !strings.Contains(run.log, "won't run") {
+		t.Errorf("the log doesn't say why:\n%s", run.log)
+	}
+}
+
+func TestAnInstallThatWontRunAndHasNothingToPutBackLeavesNoPwshToBeTakenForOne(t *testing.T) {
+	tarball, sum := pwshTarballOf(t, "#!/bin/sh\nexit 3\n")
+	run := runPwshInstall(t, tarball, sum, "", nil)
+	if _, err := os.Stat(run.prefix); err == nil {
+		t.Error("an install that won't run was left in place")
+	}
+	if _, err := os.Lstat(run.link); err == nil {
+		t.Error("pwsh is on the path, though it won't run: the agent is told it is there when it is")
+	}
+	if !strings.Contains(run.log, "WARN:") || !strings.Contains(run.log, "won't run") {
+		t.Errorf("the log doesn't say why:\n%s", run.log)
+	}
+}
+
+func TestASuccessfulInstallLeavesNothingBesideIt(t *testing.T) {
+	tarball, sum := pwshTarball(t)
+	run := runPwshInstall(t, tarball, sum, "", oldPwshInstalled)
+	if left := leftovers(run.prefix); len(left) != 0 {
+		t.Errorf("left beside the install: %v", left)
+	}
+	if out, err := exec.Command(run.link).Output(); err != nil || strings.TrimSpace(string(out)) != "7.6.9" {
+		t.Errorf("the new one isn't what runs: %q, %v", out, err)
 	}
 }

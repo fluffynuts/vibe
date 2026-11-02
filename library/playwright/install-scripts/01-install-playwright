@@ -1,0 +1,105 @@
+#!/bin/sh
+# vibe: description: Install Playwright with headless Chromium and Firefox and the libraries they need, so a browser is there without a download: adds time to building the sandbox, a few minutes (non-fatal)
+# vibe: user: 0
+#
+# Playwright's latest version, installed globally, with the two browsers an agent reaches for
+# (Chromium as its headless shell, which is what a headless launch runs, and Firefox) in a folder
+# every user can read and the agent can add to: a project that pins another version of Playwright
+# downloads its own revision of a browser there. WebKit, and the full Chromium that a headed run
+# or a "chromium" channel wants, are left out: they are the larger part of the download, and
+# `npx playwright install` adds either.
+#
+# The system libraries come from apt and take longest, the browsers from Playwright's own CDN:
+# they share nothing, so they are fetched together.
+BROWSERS="chromium-headless-shell firefox"
+
+# Where to: set only to try this script.
+FOLDER="${PW_BROWSERS_PATH:-/opt/ms-playwright}"
+LOG="${PW_LOG:-/tmp/sbx-setup.log}"
+
+echo "--- installing Playwright $(date -Is)" >>"$LOG"
+
+install_playwright() {
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "WARN: npm isn't installed, so Playwright can't be: not installed" >>"$LOG"
+    return
+  fi
+  if ! npm install -g playwright@latest >>"$LOG" 2>&1; then
+    echo "WARN: npm couldn't install Playwright: not installed" >>"$LOG"
+    return
+  fi
+  playwright="$(npm prefix -g)/bin/playwright"
+  if [ ! -x "$playwright" ]; then
+    echo "WARN: npm installed Playwright, but there is no $playwright to run: not installed" >>"$LOG"
+    return
+  fi
+  version=$("$playwright" --version | sed 's/^Version //')
+  if ! mkdir -p "$FOLDER"; then
+    echo "WARN: couldn't make $FOLDER for the browsers: not installed" >>"$LOG"
+    return
+  fi
+  export PLAYWRIGHT_BROWSERS_PATH="$FOLDER"
+  work=$(mktemp -d) || { echo "WARN: couldn't make a folder to keep what the installs say in" >>"$LOG"; return; }
+
+  # Not quoted: the two names are two arguments.
+  "$playwright" install-deps $BROWSERS >"$work/libraries.log" 2>&1 &
+  libraries=$!
+  # Not checking for the libraries Playwright's install would look for at its end: they are being fetched at
+  # this moment, and it would warn in every build log that the host is missing them.
+  PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1 "$playwright" install $BROWSERS >"$work/browsers.log" 2>&1
+  browsers_status=$?
+  wait "$libraries"
+  libraries_status=$?
+  cat "$work/libraries.log" "$work/browsers.log" >>"$LOG"
+  if [ "$libraries_status" -ne 0 ]; then
+    echo "WARN: the libraries the browsers need (apt) couldn't be installed: they may not launch" >>"$LOG"
+  fi
+  if [ "$browsers_status" -ne 0 ]; then
+    echo "WARN: the browsers couldn't be downloaded: Playwright $version is installed without them" >>"$LOG"
+  fi
+
+  # The agent adds to this folder (another project's revision of a browser), and every user reads it. Without an
+  # agent to give it to, it is the folders that anyone may add to, not a browser's own files: what the agent then
+  # runs is not for any process to replace.
+  owner=$(id -un 1000 2>/dev/null)
+  if [ -z "$owner" ] || ! chown -R "$owner:" "$FOLDER" 2>/dev/null; then
+    find "$FOLDER" -type d -exec chmod a+rwx {} +
+  fi
+  chmod -R a+rX "$FOLDER"
+
+  if [ "$libraries_status" -eq 0 ] && [ "$browsers_status" -eq 0 ]; then
+    cat >"$work/check.js" <<'CHECK'
+const { chromium, firefox } = require("playwright")
+;(async () => {
+  const said = []
+  for (const [name, type] of [["chromium", chromium], ["firefox", firefox]]) {
+    const browser = await type.launch()
+    said.push(name + " " + browser.version())
+    await browser.close()
+  }
+  console.log(said.join(", "))
+})().catch((e) => { console.error(e.message); process.exit(1) })
+CHECK
+    chmod 755 "$work"
+    chmod 644 "$work/check.js"
+    command="PLAYWRIGHT_BROWSERS_PATH='$FOLDER' NODE_PATH='$(npm root -g)' '$(command -v node)' '$work/check.js'"
+    # As the agent, who is who the browsers are for: Firefox won't start as root in another user's session,
+    # which is what a build gives root (the agent's HOME and XDG_RUNTIME_DIR), though it starts for the agent.
+    if [ "$(id -u)" = 0 ] && [ -n "$owner" ] && [ "$owner" != root ]; then
+      said=$(su "$owner" -c "$command" 2>"$work/launch.log")
+    else
+      said=$(sh -c "$command" 2>"$work/launch.log")
+    fi
+    if [ $? -eq 0 ]; then
+      echo "installed Playwright $version: launched headless: $said" >>"$LOG"
+    else
+      # The first line only says that it failed: what the browser itself said, which names why, follows it.
+      echo "WARN: Playwright $version is installed, but its browsers won't launch:" >>"$LOG"
+      head -n 15 "$work/launch.log" | sed 's/^/    /' >>"$LOG"
+    fi
+  fi
+  rm -rf "$work"
+}
+
+install_playwright
+true

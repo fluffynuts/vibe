@@ -388,3 +388,22 @@ func TestTheAgentMayCommentOnlyOnTheFoldersFiles(t *testing.T) {
 		t.Errorf("a file outside it: %v", err)
 	}
 }
+
+func TestAPageStartedByARestartFromThePageIsServedButNotOpenedAgain(t *testing.T) {
+	t.Setenv(companionNoOpenEnv, "1")
+	for setting, want := range map[string]string{"": companionServe, "open": companionServe, "serve": companionServe, "off": companionOff} {
+		if got, err := companionMode(false, setting); err != nil || got != want {
+			t.Errorf("setting %q: %q, %v, want %q", setting, got, err, want)
+		}
+	}
+	if got, _ := companionMode(true, ""); got != companionOff {
+		t.Errorf("-N: %q", got)
+	}
+}
+
+func TestWithoutThatOnlyTheSettingDecidesWhetherThePageIsOpened(t *testing.T) {
+	t.Setenv(companionNoOpenEnv, "")
+	if got, _ := companionMode(false, ""); got != companionOpen {
+		t.Errorf("%q", got)
+	}
+}

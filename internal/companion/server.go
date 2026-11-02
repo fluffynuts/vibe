@@ -46,6 +46,8 @@ import (
 
 	"vibe/internal/pathresolve"
 	"vibe/internal/policy"
+	"vibe/internal/review"
+	"vibe/internal/signin"
 )
 
 //go:embed ui
@@ -119,6 +121,16 @@ type Config struct {
 	// Admin is what the page's Admin tab does to the sandbox; nil means the
 	// page has no such tab.
 	Admin Admin
+	// SignIn reads whether sbx, and the sandbox's agent, are signed in, for the
+	// Admin tab's Sign-in card; it reads and changes nothing. Nil means the
+	// page has no such card.
+	SignIn func(ctx context.Context) signin.Status
+	// SignInStart starts the sign-in of kind ("docker" for sbx, "agent" for the sandbox's agent) for the card's buttons, and
+	// gives its running command; an error says why it can't. Nil means the card only shows how to sign in by hand.
+	SignInStart func(kind string) (LoginProcess, error)
+	// SignInAPIKey keeps an Anthropic API key in sbx, for every sandbox, as the card's other way to sign Claude in; nil means
+	// the card doesn't offer it.
+	SignInAPIKey func(ctx context.Context, key string) error
 	// GitAuthor is the question of whether the agent is given the user's git
 	// author, which it can't commit without; nil means there is none to ask.
 	GitAuthor *GitAuthor
@@ -152,6 +164,9 @@ type Config struct {
 	// itself out with ("" for none: the page's own); nil means none. It may
 	// be slow (it can ask the sandbox), so it is asked for seldom.
 	ThemeColor func() string
+	// Power is what the page's power menu and Profiles tab stop, restart and
+	// start vibes with; nil means the page has no such items.
+	Power Power
 	// History is the file the conversation is kept in between runs, so it
 	// survives vibe being started again; "" keeps it only in memory.
 	History string
@@ -193,9 +208,21 @@ type Server struct {
 	}
 	// usage is the last reading of the sandbox's load, and clock the
 	// clock it's aged by.
-	usage   usageCache
-	blocked blockedCache
-	clock   func() time.Time
+	usage usageCache
+	// signInJob is the sign-in the card started, or the last that was.
+	signInJob signInJob
+	blocked   blockedCache
+	clock     func() time.Time
+	// branchLookup reads the branch the review's folder is on (a variable for tests), and branchSeen is the last answer and when it
+	// was asked: the Review tab's polls look at most every branchLookEvery, sharing a look under way (flight).
+	branchLookup func(ctx context.Context, dir string) (string, error)
+	branchSeen   struct {
+		mu     sync.Mutex
+		at     time.Time
+		branch string
+		ok     bool
+		flight *branchFlight
+	}
 	// lifeCtx ends with the server: what it starts for the page (a fetch)
 	// ends with it.
 	lifeCtx    context.Context
@@ -204,6 +231,9 @@ type Server struct {
 	// page left open across a rebuild of vibe can tell it's out of date.
 	pageVersion string
 	colours     *colourer
+	// boot is this run of the server: a page that has seen it change knows
+	// vibe was restarted.
+	boot string
 }
 
 // asked is the thread of the review the user last asked the agent about,
@@ -219,7 +249,7 @@ type asked struct {
 func New(cfg Config) *Server {
 	ui, _ := fs.Sub(uiFiles, "ui")
 	life, cancel := context.WithCancel(context.Background())
-	return &Server{cfg: cfg, ui: ui, clock: time.Now, lifeCtx: life, lifeCancel: cancel, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer(colourAtOnce)}
+	return &Server{cfg: cfg, ui: ui, clock: time.Now, branchLookup: review.CurrentBranch, lifeCtx: life, lifeCancel: cancel, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer(colourAtOnce), boot: newBoot()}
 }
 
 // Start listens on 127.0.0.1 at cfg.Port and serves in the background.
@@ -331,6 +361,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /app.js", static)
 	mux.Handle("GET /app.css", static)
 	mux.Handle("GET /markdown.js", static)
+	mux.Handle("GET /emoji.js", static)
 	mux.Handle("GET /manage.js", static)
 	mux.Handle("GET /review.js", static)
 
@@ -375,6 +406,15 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"GET /api/default-branch", s.serving(defaultBranchFeature, s.defaultBranchState)},
 		{"POST /api/default-branch", s.serving(defaultBranchFeature, s.defaultBranchSet)},
 		{"GET /api/usage", s.serving(usageFeature, s.usageHandler)},
+		{"GET /api/signin", s.serving(signInFeature, s.signInState)},
+		{"POST /api/signin/start", s.serving(signInFeature, s.signInStart)},
+		{"GET /api/signin/job", s.serving(signInFeature, s.signInJobState)},
+		{"POST /api/signin/code", s.serving(signInFeature, s.signInCode)},
+		{"POST /api/signin/cancel", s.serving(signInFeature, s.signInCancel)},
+		{"POST /api/signin/apikey", s.serving(signInFeature, s.signInAPIKey)},
+		{"GET /api/power", s.serving(powerFeature, s.powerState)},
+		{"POST /api/power", s.serving(powerFeature, s.powerDo)},
+		{"GET /api/power/log", s.serving(powerFeature, s.powerLog)},
 		{"GET /api/admin", s.authed(s.adminState)},
 		{"POST /api/admin/do", s.serving(adminFeature, s.adminDo)},
 		{"POST /api/admin/upgrades", s.serving(adminFeature, s.adminCheckUpgrades)},
@@ -589,6 +629,8 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"blockedHosts":          blockedHosts,
 		"reviewAt":              reviewAt,
 		"pageVersion":           s.pageVersion,
+		"boot":                  s.boot,
+		"power":                 s.cfg.Power != nil,
 		"themeColor":            theme,
 		"sandbox":               s.cfg.Sandbox,
 		"agent":                 s.cfg.Agent,
@@ -606,6 +648,9 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"viewFiles":             fileFeature.present(s),
 		"gitAuthor":             s.gitAuthorState(),
 		"usage":                 s.cfg.Usage != nil,
+		"signin":                s.cfg.SignIn != nil,
+		"signinStart":           s.cfg.SignIn != nil && s.cfg.SignInStart != nil,
+		"signinKey":             s.cfg.SignIn != nil && s.cfg.SignInAPIKey != nil,
 		// A page for no sandbox has only the Profiles tab.
 		"sandboxTabs": s.cfg.Sandbox != "",
 	})
@@ -964,4 +1009,11 @@ func versionOf(ui fs.FS) string {
 		return nil
 	})
 	return hex.EncodeToString(h.Sum(nil)[:8])
+}
+
+// branchFlight is a branch lookup under way, which the polls that come meanwhile wait on; branch and err are set before done closes.
+type branchFlight struct {
+	done   chan struct{}
+	branch string
+	err    error
 }

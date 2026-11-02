@@ -473,7 +473,7 @@ func doManage(lay layout.Layout) error {
 		}
 		return nil
 	}
-	srv, err := companion.Start(companion.Config{Token: token, Port: port, Manage: &companionManager{lay: lay}})
+	srv, err := companion.Start(companion.Config{Token: token, Port: port, Manage: &companionManager{lay: lay}, Power: &powerDesk{lay: lay}})
 	if err != nil {
 		return fmt.Errorf("couldn't serve the Profiles page on port %d: %w", port, err)
 	}
@@ -494,14 +494,15 @@ func doManage(lay layout.Layout) error {
 // sandboxActions are what the Profiles tab offers to do to s, besides
 // deleting it. The page's own sandbox is the Admin tab's to work on, and one
 // being rebuilt is left to its rebuild. One with a vibe attached can only be
-// stopped, which ends that vibe too, whatever sbx says of the sandbox; one
-// whose folder is gone, only when it's running.
+// stopped, which ends that vibe too, whatever sbx says of the sandbox, or have
+// its vibe restarted; one whose folder is gone, only stopped, and only when it's
+// running. A vibe can be started for one that has none (the power menu's own).
 func sandboxActions(s inventorySandbox, own string) []string {
 	switch {
 	case !s.inSbx || s.inst.Name == own || s.rebuilding != "":
 		return []string{}
 	case s.attached:
-		return []string{companion.ManageStop}
+		return []string{companion.ManageStop, companion.ManageRestartVibe}
 	case s.folderGone:
 		if s.running {
 			return []string{companion.ManageStop}
@@ -512,7 +513,7 @@ func sandboxActions(s inventorySandbox, own string) []string {
 	if s.running {
 		actions = []string{companion.ManageStop}
 	}
-	actions = append(actions, companion.ManageRebuild)
+	actions = append(actions, companion.ManageStartVibe, companion.ManageRebuild)
 	if s.outOfDate != "" {
 		actions = append(actions, companion.ManageUpdate)
 	}

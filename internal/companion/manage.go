@@ -34,6 +34,10 @@ const (
 	ManageRebuild   = "rebuild"   // rebuild a sandbox from its profile, leaving it running or stopped as it was
 	ManageUpdate    = "update"    // bring a sandbox, or a profile and its sandboxes, up to date
 	ManageRecompose = "recompose" // compose a profile afresh, then rebuild its sandboxes
+	// These two are the power menu's (see Power): the page does them with its
+	// calls, and the row only says it can be offered them.
+	ManageStartVibe   = "startvibe"   // start a headless vibe for a sandbox
+	ManageRestartVibe = "restartvibe" // end the vibe of a sandbox and start a headless one
 )
 
 // manageWords name the actions for people, and manageSlowAfter is far

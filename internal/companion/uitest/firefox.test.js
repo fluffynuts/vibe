@@ -342,6 +342,210 @@ test('a conversation of many tools is the words of the agent with a line for eac
   } finally { await page.close() }
 })
 
+// The emoji list is drawn over the page like the slash commands': above the prompt, on the page, with the characters drawn.
+test('the emoji list opens above the prompt, on the page, with each emoji drawn beside its name, at every width', async () => {
+  for (const width of [1200, 700, 380]) {
+    const page = await browser.newPage({ viewport: { width, height: 800 } })
+    try {
+      await page.route(/\/api\/state$/, async (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(Object.assign(await (await route.fetch()).json(), { conversation: true })) }))
+      await page.route(/\/api\/conversation\?/, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ events: [], last: 0, running: false }) }))
+      await page.goto(URL)
+      await page.click('#tab-conversation')
+      await page.fill('#convo-input', 'go :roc')
+      await page.waitForSelector('#convo-emoji:not([hidden]) li')
+      const box = await page.evaluate(() => {
+        const list = document.getElementById('convo-emoji').getBoundingClientRect()
+        const input = document.getElementById('convo-input').getBoundingClientRect()
+        const glyph = document.querySelector('#convo-emoji li .glyph').getBoundingClientRect()
+        return { list: { top: list.top, bottom: list.bottom, left: list.left, right: list.right }, inputTop: input.top, glyph: { w: glyph.width, h: glyph.height }, width: innerWidth }
+      })
+      assert.ok(box.list.left >= 0 && box.list.right <= box.width, `at ${width}px the list is across ${box.list.left}..${box.list.right}`)
+      // At the colon, which is on the prompt's first line here: above that line, not over the whole prompt.
+      assert.ok(box.list.bottom <= box.inputTop + 24, `at ${width}px the list (to ${box.list.bottom}) covers the prompt (from ${box.inputTop})`)
+      assert.ok(box.list.top >= 0, `at ${width}px the list starts off the top of the page: ${box.list.top}`)
+      assert.ok(box.glyph.w > 8 && box.glyph.h > 8, `the emoji has no room: ${JSON.stringify(box.glyph)}`)
+    } finally { await page.close() }
+  }
+})
+
+// The emoji list opens at the colon: just above its line, left edge there, and never outside the prompt box.
+async function promptPage(width) {
+  const page = await browser.newPage({ viewport: { width, height: 800 } })
+  await page.route(/\/api\/state$/, async (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(Object.assign(await (await route.fetch()).json(), { conversation: true })) }))
+  await page.route(/\/api\/conversation\?/, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ events: [], last: 0, running: false }) }))
+  await page.goto(URL)
+  await page.click('#tab-conversation')
+  return page
+}
+
+// listBox is where the list is, where the prompt is, and how high a line of it is.
+const listBox = (page) => page.evaluate(() => {
+  const ta = document.getElementById('convo-input')
+  const t = ta.getBoundingClientRect()
+  const l = document.getElementById('convo-emoji').getBoundingClientRect()
+  const cs = getComputedStyle(ta)
+  return {
+    list: { left: l.left, right: l.right, top: l.top, bottom: l.bottom },
+    ta: { left: t.left, right: t.right, top: t.top, bottom: t.bottom },
+    pad: parseFloat(cs.paddingTop) + parseFloat(cs.borderTopWidth), line: parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2,
+  }
+})
+
+test('the emoji list opens at the colon, not at the left of the prompt', async () => {
+  const page = await promptPage(1200)
+  try {
+    await page.fill('#convo-input', 'a few words before :roc')
+    await page.waitForSelector('#convo-emoji:not([hidden]) li')
+    const b = await listBox(page)
+    assert.ok(b.list.left > b.ta.left + 100, `the list starts at ${b.list.left}, the prompt at ${b.ta.left}: it didn't follow the colon`)
+    assert.ok(b.list.left < b.ta.left + 400, `the list starts at ${b.list.left}: far past a colon after a few words`)
+  } finally { await page.close() }
+})
+
+test('at the right edge of the prompt the emoji list stays inside it, moved left of the colon', async () => {
+  for (const width of [1200, 700, 420]) {
+    const page = await promptPage(width)
+    try {
+      // As many x as put the colon about 40px short of the right edge of the first line, measured as the prompt draws them.
+      const put = await page.evaluate(() => {
+        const ta = document.getElementById('convo-input')
+        const cs = getComputedStyle(ta)
+        const ctx = document.createElement('canvas').getContext('2d')
+        ctx.font = cs.font
+        const inner = ta.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)
+        let n = 1
+        while (ctx.measureText('x'.repeat(n + 1) + ' ').width < inner - 40) n++
+        return { n, colonX: ctx.measureText('x'.repeat(n) + ' ').width + parseFloat(cs.paddingLeft) }
+      })
+      await page.fill('#convo-input', 'x'.repeat(put.n) + ' :roc')
+      await page.waitForSelector('#convo-emoji:not([hidden]) li')
+      const b = await listBox(page)
+      assert.ok(b.list.right <= b.ta.right + 1, `at ${width}px the list reaches ${b.list.right}, past the prompt's ${b.ta.right}`)
+      assert.ok(b.list.left >= b.ta.left - 1, `at ${width}px the list starts at ${b.list.left}, before the prompt's ${b.ta.left}`)
+      const listWidth = b.list.right - b.list.left
+      // The one check that shows the clamping: it must not be skippable. If the colon is not near enough the edge for the list
+      // to have run past it, this tests nothing, and is to be fixed by a closer colon, not passed over.
+      assert.ok(put.colonX + listWidth > b.ta.right - b.ta.left, `at ${width}px the colon (${put.colonX}) is not near enough the edge for a ${listWidth}px list to run past it: this does not test the clamp`)
+      assert.ok(b.list.left < b.ta.left + put.colonX - 10, `at ${width}px the list starts at the colon (${b.list.left}) and would run past the edge: it should have moved left`)
+    } finally { await page.close() }
+  }
+})
+
+test('on a later line of the prompt the emoji list is above that line, not above the prompt', async () => {
+  const page = await promptPage(1200)
+  try {
+    await page.fill('#convo-input', 'first line\nsecond line\nthird :roc')
+    await page.waitForSelector('#convo-emoji:not([hidden]) li')
+    const b = await listBox(page)
+    const thirdLineTop = b.ta.top + b.pad + 2 * b.line
+    assert.ok(Math.abs(b.list.bottom - thirdLineTop) < 10, `the list ends at ${b.list.bottom}; the third line starts at ${thirdLineTop}`)
+    await page.fill('#convo-input', ':roc')
+    await page.waitForSelector('#convo-emoji:not([hidden]) li')
+    const first = await listBox(page)
+    assert.ok(first.list.bottom < b.list.bottom - b.line, 'the list did not move down with the caret')
+  } finally { await page.close() }
+})
+
+test('a prompt that has scrolled puts the emoji list at the visible caret', async () => {
+  const page = await promptPage(1200)
+  try {
+    const lines = Array.from({ length: 20 }, (_, i) => 'line ' + (i + 1)).join('\n')
+    await page.fill('#convo-input', lines + '\nlast')
+    // Typed at the end, as a person does: the prompt scrolls to the caret by itself.
+    await page.focus('#convo-input')
+    await page.keyboard.press('Control+End')
+    await page.keyboard.type(' :roc')
+    await page.waitForSelector('#convo-emoji:not([hidden]) li')
+    assert.ok(await page.evaluate(() => document.getElementById('convo-input').scrollTop > 0), 'the prompt did not scroll, so this tests nothing')
+    const b = await listBox(page)
+    assert.ok(b.list.bottom <= b.ta.bottom + 1 && b.list.bottom >= b.ta.top, `the list ends at ${b.list.bottom}, the prompt spans ${b.ta.top}..${b.ta.bottom}: not at the caret in view`)
+  } finally { await page.close() }
+})
+
+// Picking is an edit like any other: Ctrl+Z gives back what was typed, as it does for a person's own typing.
+test('Ctrl+Z after picking an emoji gives back the name that was typed', async () => {
+  const page = await promptPage(1200)
+  try {
+    await page.focus('#convo-input')
+    await page.keyboard.type('hello :roc')
+    await page.waitForSelector('#convo-emoji:not([hidden]) li')
+    await page.keyboard.press('Tab')
+    assert.equal(await page.inputValue('#convo-input'), 'hello 🚀 ')
+    await page.keyboard.press('Control+z')
+    assert.equal(await page.inputValue('#convo-input'), 'hello :roc')
+  } finally { await page.close() }
+})
+
+test('Ctrl+Z after a :name: turns into its emoji gives back the name', async () => {
+  const page = await promptPage(1200)
+  try {
+    await page.focus('#convo-input')
+    await page.keyboard.type('nice :tada:')
+    assert.equal(await page.inputValue('#convo-input'), 'nice 🎉')
+    await page.keyboard.press('Control+z')
+    assert.equal(await page.inputValue('#convo-input'), 'nice :tada:')
+  } finally { await page.close() }
+})
+
+test('Ctrl+Z after picking a slash command gives back what was typed', async () => {
+  const page = await promptPage(1200)
+  try {
+    await page.route(/\/api\/conversation\?/, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ events: [], last: 0, running: false, commands: ['review', 'rebase'], commandsSeq: 1 }) }))
+    await page.reload()
+    await page.click('#tab-conversation')
+    await page.focus('#convo-input')
+    await page.keyboard.type('/rev')
+    await page.waitForSelector('#convo-commands:not([hidden]) li')
+    await page.keyboard.press('Tab')
+    assert.equal(await page.inputValue('#convo-input'), '/review ')
+    await page.keyboard.press('Control+z')
+    assert.equal(await page.inputValue('#convo-input'), '/rev')
+  } finally { await page.close() }
+})
+
+// Emoticons, typed by hand in a real browser: finished by a space or Enter, undone by Ctrl+Z.
+test('typing an emoticon and a space gives the emoji, and Ctrl+Z gives the emoticon back', async () => {
+  const page = await promptPage(1200)
+  try {
+    await page.focus('#convo-input')
+    await page.keyboard.type('fine :) ')
+    assert.equal(await page.inputValue('#convo-input'), 'fine 🙂 ')
+    await page.keyboard.press('Control+z')
+    assert.equal(await page.inputValue('#convo-input'), 'fine :) ')
+  } finally { await page.close() }
+})
+
+test(':D and Enter is the grinning face, and a smiley mid-sentence is left alone until it is finished', async () => {
+  const page = await promptPage(1200)
+  try {
+    await page.focus('#convo-input')
+    await page.keyboard.type('great :D')
+    await page.waitForSelector('#convo-emoji:not([hidden]) li')
+    assert.equal(await page.inputValue('#convo-input'), 'great :D', 'changed before it was finished')
+    await page.keyboard.press('Enter')
+    assert.equal(await page.inputValue('#convo-input'), 'great 😀 ')
+  } finally { await page.close() }
+})
+
+test('Enter after :) is the emoji and then a new line', async () => {
+  const page = await promptPage(1200)
+  try {
+    await page.focus('#convo-input')
+    await page.keyboard.type('nice :)')
+    await page.keyboard.press('Enter')
+    assert.equal(await page.inputValue('#convo-input'), 'nice 🙂\n')
+  } finally { await page.close() }
+})
+
+test('a URL, a path and code are typed as they are, with the setting on', async () => {
+  const page = await promptPage(1200)
+  try {
+    await page.focus('#convo-input')
+    await page.keyboard.type('see http://example.com and C:/Users and `a :) ` ok ')
+    assert.equal(await page.inputValue('#convo-input'), 'see http://example.com and C:/Users and `a :) ` ok ')
+  } finally { await page.close() }
+})
+
 // viewerPage opens the Conversation tab on a conversation that mentions the first of files (path -> text), and
 // the file viewer open on it, width pixels wide. The host is stubbed: it has a folder to show files from.
 async function viewerPage(files, width) {
@@ -438,6 +642,136 @@ test('the models a plan cannot run are listed under "Not on your plan", after th
     assert.equal(group[0], 'Not on your plan')
     assert.deepEqual(group[1], ['sonnet', 'haiku'])
     assert.ok(shown.indexOf(group) > shown.indexOf('opus'), 'after the model it can run')
+  } finally { await page.close() }
+})
+
+// The power button is the one thing at the top right that says whether vibe is reached, so the states are told
+// apart by brightness and glow as well as by hue (red and green look alike to many), and changing state moves nothing.
+test('the power button changes state without moving the bar, and the states differ in glow and brightness, not only in colour', async () => {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 700 } })
+  try {
+    await page.goto(URL)
+    const look = (state) => page.evaluate((s) => {
+      const link = document.getElementById('link')
+      for (const c of ['up', 'down', 'connecting']) link.classList.toggle(c, c === s)
+      link.style.animation = 'none'
+      const style = getComputedStyle(link)
+      const box = link.getBoundingClientRect()
+      const bar = document.querySelector('.top').getBoundingClientRect()
+      return { glow: style.boxShadow, opacity: style.opacity, box: [box.x, box.y, box.width, box.height], bar: [bar.width, bar.height] }
+    }, state)
+    const up = await look('up')
+    const down = await look('down')
+    const connecting = await look('connecting')
+    assert.deepEqual(down.box, up.box, 'the button moved between up and down')
+    assert.deepEqual(connecting.box, up.box, 'the button moved between up and connecting')
+    assert.deepEqual(down.bar, up.bar, 'the bar changed size between up and down')
+    assert.notEqual(up.glow, 'none', 'up has no glow')
+    assert.equal(down.glow, 'none', 'down glows')
+    assert.ok(Number(down.opacity) < Number(up.opacity), `down (${down.opacity}) is not dimmer than up (${up.opacity})`)
+  } finally { await page.close() }
+})
+
+// The menu opens from the button at the top right, whose room is the page's width: it has to stay on the page, long
+// reasons and all, however narrow the page is.
+test('the power menu stays on the page at every width, with a long reason beside a disabled item', async () => {
+  for (const width of [1000, 600, 360]) {
+    const page = await browser.newPage({ viewport: { width, height: 700 } })
+    try {
+      await page.goto(URL)
+      await page.click('#link')
+      // After the click, which sets them from what vibe says (nothing, for this page).
+      await page.evaluate(() => {
+        document.getElementById('power-actions').hidden = false
+        const item = document.getElementById('power-restart')
+        item.disabled = true
+        item.querySelector('.power-why').textContent = ' (a vibe here has a terminal session, which a restart from the page cannot give back: run vibe --restart in a terminal)'
+      })
+      const box = await page.evaluate(() => {
+        const r = document.getElementById('power-menu').getBoundingClientRect()
+        return { left: r.left, right: r.right, bottom: r.bottom, width: innerWidth, height: innerHeight }
+      })
+      assert.ok(box.left >= 0 && box.right <= box.width, `at ${width}px the menu is across ${box.left}..${box.right}`)
+      assert.ok(box.bottom <= box.height, `at ${width}px the menu runs off the bottom: ${box.bottom}`)
+    } finally { await page.close() }
+  }
+})
+
+// Every entry runs the width of the menu, so that the one under the pointer is lit across it, not as far as its words.
+test('every power menu entry spans the width of the menu', async () => {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 700 } })
+  try {
+    await page.goto(URL)
+    await page.click('#link')
+    await page.evaluate(() => { document.getElementById('power-actions').hidden = false })
+    const widths = await page.evaluate(() => {
+      const menu = document.getElementById('power-menu')
+      const style = getComputedStyle(menu)
+      const inner = menu.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth)
+      const items = [...menu.querySelectorAll('[role=menuitem]')].filter((el) => el.getBoundingClientRect().width > 0)
+      return { inner, items: items.map((el) => [el.id || el.textContent.trim(), el.getBoundingClientRect().width]) }
+    })
+    assert.ok(widths.items.length >= 4, 'the menu shows ' + JSON.stringify(widths.items))
+    for (const [name, width] of widths.items) {
+      assert.ok(Math.abs(width - widths.inner) < 1, `${name} is ${width}px wide in a menu ${widths.inner}px wide inside`)
+    }
+  } finally { await page.close() }
+})
+
+// The status of the folder's git at the top of the page is read as the command-line prompt's is (powerline's):
+// what is dirty, in yellow; what is pushed or kept, in green; what is new, in light blue; what is wrong, in red.
+test("the git status's parts have the prompt's colours, in the light and the dark theme", async () => {
+  const expected = {
+    branch: '--ok', operation: '--bad', staged: '--amber', modified: '--amber', untracked: '--git-untracked',
+    conflicted: '--bad', ahead: '--ok', behind: '--ok', stashed: '--ok', noupstream: '--muted',
+  }
+  for (const scheme of ['light', 'dark']) {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 }, colorScheme: scheme })
+    try {
+      await page.goto(URL)
+      const seen = await page.evaluate((classes) => {
+        const box = document.getElementById('git')
+        box.replaceChildren(...Object.keys(classes).map((cls) => Object.assign(document.createElement('span'), { className: cls, textContent: cls })))
+        const colourOf = (node) => getComputedStyle(node).color
+        const probe = document.createElement('span')
+        document.body.append(probe)
+        const out = {}
+        for (const [cls, variable] of Object.entries(classes)) {
+          probe.style.color = 'var(' + variable + ')'
+          out[cls] = { got: colourOf(box.querySelector('.' + cls)), want: colourOf(probe) }
+        }
+        probe.remove()
+        return out
+      }, expected)
+      for (const [cls, colours] of Object.entries(seen)) {
+        assert.equal(colours.got, colours.want, `${scheme}: .${cls} is ${colours.got}, not ${expected[cls]} (${colours.want})`)
+      }
+      // The ones the prompt makes the same are the same, and the ones it makes different are not.
+      assert.notEqual(seen.untracked.got, seen.staged.got)
+      assert.notEqual(seen.ahead.got, seen.modified.got, 'an unpushed commit reads as an uncommitted file')
+    } finally { await page.close() }
+  }
+})
+
+// The Admin tab's small cards after the wide one (the agent's instructions) share a row, when there is room for three:
+// what they say is in settings.test.js, where they are is here.
+test('the admin tab puts profile backups, settings and the GitHub token on one row, below the instructions', async () => {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
+  try {
+    await page.goto(URL)
+    const rects = await page.evaluate(() => {
+      document.getElementById('panel-admin').hidden = false
+      const rect = (heading) => {
+        const h2 = [...document.querySelectorAll('#panel-admin .admin-grid > section.card > h2')].find((h) => h.textContent.trim().startsWith(heading))
+        const r = h2.parentElement.getBoundingClientRect()
+        return { top: r.top, left: r.left, bottom: r.bottom }
+      }
+      return { instructions: rect('Agent instructions'), backups: rect('Profile backups'), settings: rect('Settings'), git: rect('GitHub token') }
+    })
+    assert.ok(Math.abs(rects.backups.top - rects.settings.top) < 1 && Math.abs(rects.settings.top - rects.git.top) < 1,
+      `the three aren't on one row: tops ${rects.backups.top}, ${rects.settings.top}, ${rects.git.top}`)
+    assert.ok(rects.backups.left < rects.settings.left && rects.settings.left < rects.git.left, 'they are not in that order, left to right')
+    assert.ok(rects.instructions.bottom <= rects.backups.top, 'the instructions are not above them')
   } finally { await page.close() }
 })
 
