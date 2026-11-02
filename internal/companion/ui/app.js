@@ -867,6 +867,10 @@
       state.sandboxTabs = res.body.sandboxTabs !== false
       $('sandbox').textContent = state.sandbox || 'all profiles and sandboxes'
       renderWhere(res.body.folder || '', res.body.git || null)
+      // What can be reviewed depends on the branch, so the start screen's answer is asked again when it changes.
+      const branchNow = res.body.git ? res.body.git.branch : ''
+      if (reviewView.branch !== undefined && reviewView.branch !== branchNow && reviewView.review && !reviewIsOn(reviewView.review)) loadOptions()
+      reviewView.branch = branchNow
       document.title = state.sandbox ? 'vibe · ' + state.sandbox : 'vibe · profiles'
       setFaviconAgent(res.body.agent || '')
       applyTheme(res.body.themeColor || '')

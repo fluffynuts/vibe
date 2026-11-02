@@ -1509,6 +1509,16 @@ func TestComingBackToTheBranchDoesNotReopenTheReview(t *testing.T) {
 	}
 }
 
+func TestTheBranchSwitchMessageStaysTrueOnceTheFolderIsBackOnTheBranch(t *testing.T) {
+	s, _, _ := tabServerWithClock(t)
+	startReviewOnMain(t, s)
+	checkout(t, s, "-b", "feat/other")
+	closed, _ := reviewIsClosed(t, s)
+	if strings.Contains(closed, " now") || !strings.Contains(closed, "switched to 'feat/other'") || !strings.Contains(closed, "'main'") {
+		t.Errorf("closed %q: should say when the folder switched, and claim nothing about where it is now", closed)
+	}
+}
+
 func TestADetachedHeadIsLeavingTheBranch(t *testing.T) {
 	s, _, _ := tabServerWithClock(t)
 	startReviewOnMain(t, s)

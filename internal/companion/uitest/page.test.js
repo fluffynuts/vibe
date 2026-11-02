@@ -545,14 +545,14 @@ const allOptions = { uncommitted: true, defaultBranch: 'master', upstream: 'orig
 // closes and reopens it.
 // agentAtWork is whether vibe says the agent is at work on the review; close
 // answers a close (else it's closed, as asked).
-async function startPage({ review = none, options = allOptions, conversation = true, defaultBranch = { why: '' }, agentAtWork = false, abandoned = false, close = null, diff = [], extra = {} } = {}) {
+async function startPage({ review = none, options = allOptions, conversation = true, defaultBranch = { why: '' }, agentAtWork = false, abandoned = false, close = null, diff = [], extra = {}, state = null } = {}) {
   let current = review
   const setCurrent = (r) => { current = r }
   return openPage({
     routes: {
       ...(typeof extra === 'function' ? extra(setCurrent) : extra),
       '/api/default-branch': (call) => (typeof defaultBranch === 'function' ? defaultBranch(call) : defaultBranch),
-      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation, reviewAt: '', attention: {} },
+      '/api/state': state || { sandbox: 'box', sandboxTabs: true, review: true, conversation, reviewAt: '', attention: {} },
       '/api/review': () => ({ review: current, diff, abandoned, agentAtWork: typeof agentAtWork === 'function' ? agentAtWork() : agentAtWork }),
       '/api/review/close': (call) => (close && close(call)) || ({ review: (current = { ...current, closed: 'You closed it.' }) }),
       '/api/review/options': options,
@@ -565,6 +565,21 @@ async function startPage({ review = none, options = allOptions, conversation = t
 }
 
 const startButtons = (p) => Array.from(p.$('review-start-options').querySelectorAll('button')).map((b) => b.textContent)
+
+test('with no review open, what can be reviewed is asked again when the folder switches branch', async () => {
+  let branch = 'master'
+  const p = await startPage({
+    options: () => (branch === 'master' ? {} : allOptions),
+    state: () => ({ sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, folder: '/f', git: { branch } }),
+  })
+  try {
+    assert.deepEqual(startButtons(p), [], 'nothing to review on master')
+    branch = 'feat/x'
+    await p.poll()
+    await p.poll()
+    assert.ok(startButtons(p).includes('Review against master'), 'the buttons are back without a Refresh')
+  } finally { p.close() }
+})
 
 test('with no review, the tab offers to start one, and nothing else', async () => {
   const p = await startPage()
