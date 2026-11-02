@@ -66,34 +66,41 @@ func branchWords(branch string) string {
 	return "'" + branch + "'"
 }
 
-// reviewQuiet is how long a review in progress may go untouched by the agent, with no turn running, before it is taken as abandoned:
-// the agent may be writing it from a terminal session, which is no turn of the page's to see. A variable for tests.
+// reviewQuiet is how long a review in progress may go untouched by the agent, with no turn running, before the tab says so: the agent
+// may have stopped, or be writing from a terminal session, which is no turn of the page's to see. Vibe can't tell those apart, so
+// nothing is dropped for it. A variable for tests.
 var reviewQuiet = 3 * time.Minute
 
 // branchLookEvery is how often at most the branch is looked up by the Review tab's polls (a lookup starts the helper process); asking
 // for the diff always looks.
 var branchLookEvery = 5 * time.Second
 
-// reviewQuietFor says the agent has left the review alone for longer than reviewQuiet: since it last touched it, or since it began.
-func (s *Server) reviewQuietFor(rv review.Review) bool {
+// reviewQuietSince is how long the agent has left the review alone: since it last touched it, or since it began.
+func (s *Server) reviewQuietSince(rv review.Review) time.Duration {
 	last := rv.AgentAt
 	if last.IsZero() || rv.Started.After(last) {
 		last = rv.Started
 	}
-	return s.clock().Sub(last) > reviewQuiet
+	return s.clock().Sub(last)
 }
 
-// reviewAbandoned says a review in progress has nothing writing it: no turn of the conversation's agent is running, and the agent
-// hasn't touched it for a while. Not "no turn vibe began for it": a review the agent starts itself, in an ordinary turn, is written by
-// a turn that vibe didn't begin for it (see agentAtWorkOnReview).
-func (s *Server) reviewAbandoned(rv review.Review) bool {
-	return rv.State == review.InProgress && !s.convo.working() && s.reviewQuietFor(rv)
+// reviewQuietMinutes is, for a review in progress that no turn of the conversation's agent is running and the agent has left alone for
+// more than reviewQuiet, the whole minutes it has been quiet; else 0. It is no claim that anything stopped: a review the agent
+// starts itself, in an ordinary turn, or writes from a terminal, is written by something vibe doesn't see (see agentAtWorkOnReview).
+func (s *Server) reviewQuietMinutes(rv review.Review) int {
+	if rv.State != review.InProgress || s.convo.working() {
+		return 0
+	}
+	if quiet := s.reviewQuietSince(rv); quiet > reviewQuiet {
+		return int(quiet / time.Minute)
+	}
+	return 0
 }
 
 // reviewWriting says a turn is running that is writing the review in progress: one vibe began for it, or one running while the agent
 // has touched it lately (not a turn for something else while an old review sits there).
 func (s *Server) reviewWriting(rv review.Review) bool {
-	return rv.State == review.InProgress && s.convo.working() && (s.agentAtWorkOnReview() || !s.reviewQuietFor(rv))
+	return rv.State == review.InProgress && s.convo.working() && (s.agentAtWorkOnReview() || s.reviewQuietSince(rv) <= reviewQuiet)
 }
 
 // currentBranch is the branch the review's folder is on, looked up at most every branchLookEvery unless force. The lock is held only
@@ -207,7 +214,7 @@ func (s *Server) reviewState(w http.ResponseWriter, r *http.Request) {
 		rv = s.watchBranch(ctx, rv, r.URL.Query().Get("diff") == "1")
 		cancel()
 	}
-	body := map[string]interface{}{"review": rv, "agentAtWork": s.agentAtWorkOnReview(), "abandoned": s.reviewAbandoned(rv)}
+	body := map[string]interface{}{"review": rv, "agentAtWork": s.agentAtWorkOnReview(), "quietMinutes": s.reviewQuietMinutes(rv)}
 	if ask := s.answeringAsk(); ask != nil {
 		body["ask"] = ask
 	}
@@ -820,10 +827,14 @@ func (s *Server) reviewClose(w http.ResponseWriter, r *http.Request) {
 	dropped := false
 	if writing && stopping {
 		rv, _, dropped, err = s.stopAndDropReview("You closed it while the agent was still writing it, so it was dropped: start another whenever you like.")
-	} else if writing && (req.Stop || s.reviewAbandoned(rv)) {
-		// In progress with nothing running to stop (the agent crashed, the sandbox stopped, it forgot `done`, or its turn ended since
-		// the page warned): half a review that nobody is writing, dropped as one being written is.
-		rv, err = store.Drop("The agent stopped before finishing this review, so it was dropped: start another whenever you like.")
+	} else if writing {
+		// In progress with nothing vibe can see running (the agent crashed, the sandbox stopped, it forgot `done`, it is writing from a
+		// terminal, or its turn ended since the page warned): asked first, like one being written, and dropped only when confirmed.
+		if !req.Stop {
+			writeError(w, http.StatusConflict, "this review is still in progress, and closing it drops it: it was left open")
+			return
+		}
+		rv, err = store.Drop("You closed it before the agent had finished it, so it was dropped: start another whenever you like.")
 		dropped = err == nil
 	}
 	if err == nil && !dropped {

@@ -112,3 +112,15 @@ before this), at its first look: the review tab's own polls (`reviewState`) do t
 - **The page** says "The agent had already stopped." when a confirmed stop found nothing to stop.
 - **The branch lookup** is shared by the polls that come while one is under way, bounded by the server's life, not by the first poll's
   context; each poll stops waiting when its own context ends; no lock is held across git.
+
+## Quiet, not "abandoned" (2026-11-02)
+
+Vibe can't tell an agent that stopped from one writing the review in a terminal session (no turn here to see), so it no longer claims
+the agent stopped, and nothing offers to drop a review unasked. Supersedes the "Stale case" and **Discard it** above and the `abandoned`
+answer of the first review round:
+
+- `/api/review` sends `quietMinutes` (0, or the whole minutes) for a review in progress with no turn running and the agent quiet for
+  more than `reviewQuiet` (3 minutes). The page says "no word from the agent for N minutes: it may have stopped, or be working where vibe
+  can't see". The Discard button is gone.
+- Closing a review in progress always asks (the question says how long it has been quiet, when it has) and drops it only when
+  confirmed (`{"stop": true}`); an unconfirmed close of one gets a 409. Its reason no longer says the agent stopped.

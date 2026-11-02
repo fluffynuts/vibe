@@ -48,10 +48,10 @@ func gitIn(t *testing.T, dir string, args ...string) {
 }
 
 type reviewResult struct {
-	Review    review.Review `json:"review"`
-	Diff      []review.File `json:"diff"`
-	Error     string        `json:"diffError"`
-	Abandoned bool          `json:"abandoned"`
+	Review       review.Review `json:"review"`
+	Diff         []review.File `json:"diff"`
+	Error        string        `json:"diffError"`
+	QuietMinutes int           `json:"quietMinutes"`
 }
 
 func getReview(t *testing.T, s *Server, path string) reviewResult {
@@ -1218,33 +1218,39 @@ func TestAStopWithNoReviewTabIsAsItWas(t *testing.T) {
 	}
 }
 
-// A review "in progress" that nothing is at work on (the agent crashed, the sandbox stopped, it forgot to say it was done) is
-// half a review nobody is writing: closing it drops it, as closing one being written does, rather than keeping half a review.
-func TestClosingAReviewInProgressThatNothingIsWritingDropsIt(t *testing.T) {
+// A review "in progress" that nothing vibe can see is at work on (the agent crashed, the sandbox stopped, it forgot to say it was
+// done, or it is writing from a terminal session) is told to the tab as quiet, for how many minutes. Vibe can't tell those apart, so
+// it drops nothing by itself and closing asks first, as for a review being written: only a confirmed close drops it.
+func TestAReviewInProgressThatNothingIsWritingIsToldAsQuietAndOnlyAConfirmedCloseDropsIt(t *testing.T) {
 	s, store, clock := tabServerWithClock(t)
 	f := startWritingReview(t, s)
 	if _, err := store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "half a review"}, review.Agent); err != nil {
 		t.Fatal(err)
 	}
-	// The turn that began it ends without `done`, and the agent has left it alone for a while: nothing is writing it.
 	close(f.release)
 	idle(t, s)
-	clock.advance(reviewQuiet + time.Minute)
+	clock.advance(5*time.Minute + 30*time.Second)
 	if r, _ := store.Load(); r.State != review.InProgress {
 		t.Fatalf("the review is %q: it should still be in progress", r.State)
 	}
-	if got := getReview(t, s, "/api/review"); !got.Abandoned {
-		t.Fatal("the tab isn't told the review is abandoned")
+	if got := getReview(t, s, "/api/review"); got.QuietMinutes != 5 {
+		t.Fatalf("the tab is told it has been quiet for %d minutes, want 5", got.QuietMinutes)
 	}
-	if rec := do(t, s, post("/api/review/close", `{"stop":false}`)); rec.Code != http.StatusOK {
-		t.Fatalf("close: %d %s", rec.Code, rec.Body)
+	if rec := do(t, s, post("/api/review/close", `{"stop":false}`)); rec.Code != http.StatusConflict {
+		t.Fatalf("unconfirmed close: %d %s: should ask first", rec.Code, rec.Body)
+	}
+	if r, _ := store.Load(); r.Started.IsZero() || r.Closed != "" {
+		t.Fatalf("an unconfirmed close changed the review: %+v", r)
+	}
+	if rec := do(t, s, post("/api/review/close", `{"stop":true}`)); rec.Code != http.StatusOK {
+		t.Fatalf("confirmed close: %d %s", rec.Code, rec.Body)
 	}
 	r, _ := store.Load()
 	if !r.Started.IsZero() || len(r.Threads) != 0 {
 		t.Errorf("half a review was kept: %+v", r)
 	}
-	if !strings.Contains(r.Closed, "dropped") || !strings.Contains(r.Closed, "stopped") {
-		t.Errorf("why it closed: %q", r.Closed)
+	if !strings.Contains(r.Closed, "dropped") || strings.Contains(r.Closed, "agent stopped") {
+		t.Errorf("why it closed: %q: should say it was dropped, and not claim the agent stopped", r.Closed)
 	}
 }
 
@@ -1267,12 +1273,12 @@ func agentStartedReview(t *testing.T) (*Server, *review.Store, *reviewClock, *fa
 	return s, store, clock, f
 }
 
-func TestAReviewTheAgentStartedItselfIsNotAbandonedWhileItsTurnRuns(t *testing.T) {
+func TestAReviewTheAgentStartedItselfIsNotQuietWhileItsTurnRuns(t *testing.T) {
 	s, _, clock, f := agentStartedReview(t)
 	defer close(f.release)
 	clock.advance(reviewQuiet + time.Hour) // however long since it was touched: a turn is running
-	if got := getReview(t, s, "/api/review"); got.Abandoned {
-		t.Error("a review being written by a running turn was called abandoned")
+	if got := getReview(t, s, "/api/review"); got.QuietMinutes != 0 {
+		t.Error("a review being written by a running turn was called quiet")
 	}
 }
 
@@ -1346,22 +1352,22 @@ func TestStoppingAnUnrelatedTurnIsNotAskedAboutBecauseAnOldReviewIsInProgress(t 
 	}
 }
 
-// A review the agent is writing from a terminal session shows as no turn here: it has touched it lately, so it is not abandoned.
-func TestAReviewTheAgentTouchedLatelyIsNotAbandonedEvenWithNoTurnRunning(t *testing.T) {
+// A review the agent is writing from a terminal session shows as no turn here: it has touched it lately, so it is not quiet.
+func TestAReviewTheAgentTouchedLatelyIsNotQuietEvenWithNoTurnRunning(t *testing.T) {
 	s, store, clock := tabServerWithClock(t)
 	if _, err := store.Do(review.Request{Op: "start", Note: "x"}, review.Agent); err != nil {
 		t.Fatal(err)
 	}
-	if got := getReview(t, s, "/api/review"); got.Abandoned {
-		t.Error("called abandoned the moment it was started")
+	if got := getReview(t, s, "/api/review"); got.QuietMinutes != 0 {
+		t.Error("called quiet the moment it was started")
 	}
 	clock.advance(reviewQuiet - time.Minute)
-	if got := getReview(t, s, "/api/review"); got.Abandoned {
-		t.Error("called abandoned before the quiet time")
+	if got := getReview(t, s, "/api/review"); got.QuietMinutes != 0 {
+		t.Error("called quiet before the quiet time")
 	}
 	clock.advance(2 * time.Minute)
-	if got := getReview(t, s, "/api/review"); !got.Abandoned {
-		t.Error("not called abandoned once it had been left alone for the quiet time")
+	if got := getReview(t, s, "/api/review"); got.QuietMinutes == 0 {
+		t.Error("not called quiet once it had been left alone for the quiet time")
 	}
 }
 

@@ -1548,9 +1548,9 @@
     // agentAtWork is vibe saying the agent is at a turn the review began
     // (its start, a Submit or an Ask): closing the review stops it.
     agentAtWork: false,
-    // abandoned is vibe saying a review in progress has nothing writing it: no turn is running and the agent hasn't touched it for a while.
-    // Not "agentAtWork is false": a review the agent starts itself is written by a turn vibe didn't begin for it.
-    abandoned: false,
+    // quietMinutes is vibe saying how long a review in progress has been left alone by the agent, with no turn running (0: not at all
+    // or not for long). It says nothing of whether the agent stopped: it may be writing where vibe can't see (a terminal session).
+    quietMinutes: 0,
     // announced is the review's start and state as last announced by toast (see announceReview).
     announced: null,
     // options are the reviews that can be started, while none is open
@@ -2354,7 +2354,7 @@
         reviewView.review = res.body.review
         reviewView.ask = res.body.ask || null
         reviewView.agentAtWork = !!res.body.agentAtWork
-        reviewView.abandoned = !!res.body.abandoned
+        reviewView.quietMinutes = res.body.quietMinutes || 0
         // What can be reviewed is asked when the start screen shows, not at
         // every poll: it's git, which polls keep clear of.
         if (!reviewIsOn(reviewView.review) && (wasOn || (!reviewView.options && !reviewView.optionsError))) loadOptions()
@@ -2556,7 +2556,7 @@
   function closeReview(again = false) {
     const rv = reviewView.review
     const open = rv.threads.filter((t) => t.status === 'open').length
-    const writing = rv.state === 'in progress' && !reviewView.abandoned
+    const writing = rv.state === 'in progress'
     const stop = writing || (reviewView.agentAtWork && open > 0)
     const close = async () => {
       const res = await post('/api/review/close', { stop })
@@ -2565,7 +2565,6 @@
         // asked again, saying what closing now does.
         await loadReview(false)
         reviewView.agentAtWork = true
-        reviewView.abandoned = false
         closeReview(true)
         return { asked: true }
       }
@@ -2578,8 +2577,11 @@
       return
     }
     const opens = open === 1 ? '1 comment is' : open + ' comments are'
+    const quiet = reviewView.quietMinutes
     const text = writing
-      ? 'The agent is still writing this review. Closing it stops the agent, and the review is dropped: you can start another at any time.'
+      ? (quiet
+        ? 'The agent has not touched this review for ' + quiet + ' minutes: it may have stopped, or be working where vibe cannot see. Closing it drops the review (and stops the agent, if it is running): you can start another at any time.'
+        : 'The agent is still writing this review. Closing it stops the agent, and the review is dropped: you can start another at any time.')
       : 'This review is incomplete: ' + opens + ' still open. ' +
         (stop ? "Closing it stops the agent's work on it: changes it has finished are kept, but one it's partway through may be left half-done. " : '') +
         'The review is kept: you can reopen it at any time.'
@@ -2602,21 +2604,6 @@
     card.scrollIntoView({ block: 'start' })
     card.focus({ preventScroll: true })
   }
-
-  // discardReview drops a review nothing is writing: vibe drops it (a stale review in progress is dropped by being closed), and the tab
-  // goes back to its start options.
-  async function discardReview() {
-    try {
-      const res = await post('/api/review/close', { stop: false })
-      reached(true)
-      if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); return }
-      tookReview(res.body.review); reviewView.key = null; drawReview(); loadOptions()
-    } catch (e) {
-      reached(false)
-      toast('Could not reach vibe.', true)
-    }
-  }
-  $('review-discard').addEventListener('click', discardReview)
 
   async function reopenReview() {
     try {
@@ -2650,18 +2637,18 @@
     if (!on) drawStart(rv)
     $('review-title').textContent = on && rv.note ? 'Review: ' + rv.note : 'Review'
     $('review-state').hidden = !on || !rv.state
-    // In progress with nothing at work on it (the agent crashed, the sandbox stopped, it forgot to say it was done): said as it is,
-    // with a way to drop it, not "still reviewing" for ever.
-    const abandoned = on && rv.state === 'in progress' && reviewView.abandoned
+    // In progress and left alone by the agent for a while, with no turn running: said as it is, without claiming it stopped, which
+    // vibe can't know (it may be writing from a terminal session).
     $('review-state').textContent = rv.state === 'in progress'
-      ? (abandoned ? 'the agent stopped before finishing this review' : 'the agent is still reviewing: wait for it to finish')
+      ? (on && reviewView.quietMinutes
+        ? 'no word from the agent for ' + reviewView.quietMinutes + ' minutes: it may have stopped, or be working where vibe can\'t see'
+        : 'the agent is still reviewing: wait for it to finish')
       : rv.state || ''
-    $('review-discard').hidden = !abandoned
     $('review-state').classList.toggle('reviewing', on && rv.state === 'in progress')
     if (on) announceReview(rv)
     $('review-of').textContent = !on ? '' : rv.commit ? 'of commit ' + rv.commit : rv.unpushed ? 'of the commits not pushed to ' + rv.ref : rv.ref ? 'against ' + rv.ref : 'of the uncommitted changes'
     const unsent = unsentCount(rv)
-    const stillWriting = rv.state === 'in progress' && !reviewView.abandoned
+    const stillWriting = rv.state === 'in progress'
     $('review-submit').disabled = !unsent || !state.conversation || stillWriting
     $('review-submit').textContent = unsent ? 'Submit ' + unsent + ' to agent' : 'Submit to agent'
     $('review-submit').title = !state.conversation ? "This sandbox's agent can't be talked to from the page"
