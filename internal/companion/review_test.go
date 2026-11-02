@@ -3,6 +3,7 @@ package companion
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1563,6 +1565,66 @@ func TestReopeningAReviewTiesItToTheBranchItIsReopenedOnAndLeavingThatClosesItAg
 	}
 }
 
+func TestAReviewReopenedWhenTheBranchCantBeReadIsNotClosedAgainByTheBranchItWasClosedFor(t *testing.T) {
+	s, _, _ := tabServerWithClock(t)
+	startReviewOnMain(t, s)
+	checkout(t, s, "-b", "feat/other")
+	reviewIsClosed(t, s)
+	real := s.branchLookup
+	s.branchLookup = func(context.Context, string) (string, error) { return "", errors.New("git is not answering") }
+	if rec := do(t, s, post("/api/review/do", `{"op":"reopen-review"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("reopen: %d %s", rec.Code, rec.Body)
+	}
+	if closed, _ := reviewIsClosed(t, s); closed != "" {
+		t.Fatalf("closed while the branch can't be read: %q", closed)
+	}
+	s.branchLookup = real
+	if closed, rv := reviewIsClosed(t, s); closed != "" || rv.Branch != "feat/other" {
+		t.Fatalf("once readable: closed %q, branch %q: should be tied to the branch it is on now", closed, rv.Branch)
+	}
+}
+
+// A look at the branch that hangs (git on a stalled disk) is shared by the polls that come while it hangs, and each of them stops
+// waiting when its own context ends, instead of queueing behind it.
+func TestPollsWaitingOnAHungBranchLookupShareItAndGiveUpWhenTheirContextEnds(t *testing.T) {
+	s, _, _ := tabServerWithClock(t)
+	var lookups int32
+	release := make(chan struct{})
+	started := make(chan struct{}, 4)
+	s.branchLookup = func(ctx context.Context, dir string) (string, error) {
+		atomic.AddInt32(&lookups, 1)
+		started <- struct{}{}
+		select {
+		case <-release:
+			return "main", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	first := make(chan error, 1)
+	go func() { _, err := s.currentBranch(context.Background(), false); first <- err }()
+	<-started
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	waited := make(chan error, 1)
+	go func() { _, err := s.currentBranch(ctx, false); waited <- err }()
+	select {
+	case err := <-waited:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("second poll: %v, want its own deadline", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the second poll queued behind the hung lookup")
+	}
+	if n := atomic.LoadInt32(&lookups); n != 1 {
+		t.Errorf("%d lookups: the second poll should have shared the first", n)
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Errorf("the first poll: %v", err)
+	}
+}
+
 func TestAReviewTheAgentStartedLooksAtTheBranchOnItsFirstLookAndClosesOnLeavingIt(t *testing.T) {
 	s, store, _ := tabServerWithClock(t)
 	// Started through the agent's own request, so no branch was noted at the start.
@@ -1586,18 +1648,33 @@ func TestStartingAReviewNotesTheBranchAtOnceSoASwitchBeforeTheFirstLookIsNoted(t
 	}
 }
 
-// The turn ended between the question and the confirmation: nothing was running to stop, so nothing is dropped and nothing is said to
-// have been stopped.
-func TestStoppingAndDroppingWhenTheTurnHasEndedStopsAndDropsNothing(t *testing.T) {
+// The turn ended between the question and the confirmation without the review being finished (it crashed, say): nothing was running to
+// stop, so nothing is said to have been stopped, but the review is half written and is dropped all the same.
+func TestStoppingAndDroppingWhenTheTurnHasEndedDropsAReviewStillInProgressAndSaysNothingWasStopped(t *testing.T) {
 	s, store, _ := tabServerWithClock(t)
 	f := startWritingReview(t, s)
 	close(f.release)
 	idle(t, s)
-	rv, stopped, dropped, err := s.stopAndDropReview("why")
-	if err != nil || stopped || dropped {
+	_, stopped, dropped, err := s.stopAndDropReview("why")
+	if err != nil || stopped || !dropped {
 		t.Fatalf("stopped %v, dropped %v, %v", stopped, dropped, err)
 	}
-	if r, _ := store.Load(); r.State != review.InProgress || r.Closed != "" || rv.Started.IsZero() {
-		t.Errorf("the review was changed: %+v", r)
+	if r, _ := store.Load(); !r.Started.IsZero() {
+		t.Errorf("the review is still there: %+v", r)
+	}
+}
+
+// Closing, with the user's agreement to the warning (stop), a review in progress whose turn has ended without it: dropped, not kept
+// half written.
+func TestClosingAReviewStillInProgressAfterItsTurnEndedDropsIt(t *testing.T) {
+	s, store, _ := tabServerWithClock(t)
+	f := startWritingReview(t, s)
+	close(f.release)
+	idle(t, s)
+	if rec := do(t, s, post("/api/review/close", `{"stop":true}`)); rec.Code != http.StatusOK {
+		t.Fatalf("close: %d %s", rec.Code, rec.Body)
+	}
+	if r, _ := store.Load(); !r.Started.IsZero() {
+		t.Errorf("kept half written: %+v", r)
 	}
 }

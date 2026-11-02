@@ -471,7 +471,9 @@ func (s *Store) apply(r *Review, req Request, author string) error {
 			return fmt.Errorf("closing or reopening the review is the user's to do")
 		}
 		if req.Op == "reopen-review" {
-			r.Closed, r.Reopened = "", true
+			// The branch it was closed for leaving is forgotten in the same step, so no look can close it again before it is
+			// tied to the one it is reopened on (SetBranch, or the first look).
+			r.Closed, r.Reopened, r.Branch, r.BranchKnown = "", true, "", false
 			break
 		}
 		r.Closed = req.Body

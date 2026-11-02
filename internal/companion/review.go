@@ -96,20 +96,55 @@ func (s *Server) reviewWriting(rv review.Review) bool {
 	return rv.State == review.InProgress && s.convo.working() && (s.agentAtWorkOnReview() || !s.reviewQuietFor(rv))
 }
 
-// currentBranch is the branch the review's folder is on, looked up at most every branchLookEvery unless force.
+// currentBranch is the branch the review's folder is on, looked up at most every branchLookEvery unless force. The lock is held only
+// to read and write what was last seen, never across the lookup (a git on a stalled disk can hang for diffWithin): polls that come
+// while one is under way share it, and each stops waiting when its own ctx ends. The shared lookup is bounded by the server's life and
+// diffWithin, not by whichever poll began it, so that poll giving up doesn't fail the others. force looks for itself, joining none.
 func (s *Server) currentBranch(ctx context.Context, force bool) (string, error) {
 	seen := &s.branchSeen
 	seen.mu.Lock()
-	defer seen.mu.Unlock()
-	now := s.clock()
-	if !force && seen.ok && now.Sub(seen.at) < branchLookEvery {
-		return seen.branch, nil
+	if !force && seen.ok && s.clock().Sub(seen.at) < branchLookEvery {
+		branch := seen.branch
+		seen.mu.Unlock()
+		return branch, nil
 	}
+	if force {
+		seen.mu.Unlock()
+		return s.lookBranch(ctx)
+	}
+	flight := seen.flight
+	if flight == nil {
+		flight = &branchFlight{done: make(chan struct{})}
+		seen.flight = flight
+		go func() {
+			lookCtx, cancel := context.WithTimeout(s.lifeCtx, diffWithin)
+			defer cancel()
+			flight.branch, flight.err = s.lookBranch(lookCtx)
+			seen.mu.Lock()
+			seen.flight = nil
+			seen.mu.Unlock()
+			close(flight.done)
+		}()
+	}
+	seen.mu.Unlock()
+	select {
+	case <-flight.done:
+		return flight.branch, flight.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+// lookBranch asks for the branch and remembers the answer and when it was had.
+func (s *Server) lookBranch(ctx context.Context) (string, error) {
 	branch, err := s.branchLookup(ctx, s.cfg.ReviewTab.Workspace)
 	if err != nil {
 		return "", err
 	}
-	seen.at, seen.branch, seen.ok = now, branch, true
+	seen := &s.branchSeen
+	seen.mu.Lock()
+	seen.at, seen.branch, seen.ok = s.clock(), branch, true
+	seen.mu.Unlock()
 	return branch, nil
 }
 
@@ -319,7 +354,7 @@ func (s *Server) reviewDo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Op == "reopen-review" {
-		// Reopened on the branch the folder is on now, which is the one it closes itself for leaving.
+		// Tied to the branch the folder is on now, which is the one it closes itself for leaving; if that can't be read now, the first look does it.
 		ctx, cancel := context.WithTimeout(r.Context(), diffWithin)
 		rv = s.noteBranch(ctx, rv)
 		cancel()
@@ -740,12 +775,12 @@ func (s *Server) agentAtWorkOnReview() bool {
 
 // stopAndDropReview stops the agent's turn and drops the review it was writing, saying why: the one place both closing the review
 // and stopping the agent do it, since a review half written is never kept (it would only be started again). It says what really
-// happened: the review is dropped only when the stop found a turn to stop and the review was still in progress after it, so a turn
-// that ended in the meantime (with `done`, say) leaves its review as it is.
+// happened: stopped is whether a turn was found to stop, and the review is dropped whenever it is still in progress after the stop
+// (the turn may have ended already without finishing it); one that was finished in the meantime is left as it is.
 func (s *Server) stopAndDropReview(why string) (rv review.Review, stopped, dropped bool, err error) {
 	store := s.cfg.ReviewTab.Store
 	stopped = s.convo.stop()
-	if rv, err = store.Load(); err != nil || !stopped || rv.State != review.InProgress {
+	if rv, err = store.Load(); err != nil || rv.State != review.InProgress {
 		return rv, stopped, false, err
 	}
 	rv, err = store.Drop(why)
@@ -783,16 +818,16 @@ func (s *Server) reviewClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dropped := false
-	if stopping && writing {
+	if writing && stopping {
 		rv, _, dropped, err = s.stopAndDropReview("You closed it while the agent was still writing it, so it was dropped: start another whenever you like.")
-	} else if writing && s.reviewAbandoned(rv) {
-		// In progress with nothing writing it (the agent crashed, the sandbox stopped, it forgot `done`): half a review that nobody is
-		// writing, dropped as one being written is, and nothing to stop.
+	} else if writing && (req.Stop || s.reviewAbandoned(rv)) {
+		// In progress with nothing running to stop (the agent crashed, the sandbox stopped, it forgot `done`, or its turn ended since
+		// the page warned): half a review that nobody is writing, dropped as one being written is.
 		rv, err = store.Drop("The agent stopped before finishing this review, so it was dropped: start another whenever you like.")
 		dropped = err == nil
 	}
 	if err == nil && !dropped {
-		// The agent finished (or its turn ended) while it was being closed: closed, and kept.
+		// Closed, and kept: finished, or open comments the agent was fixing (which is stopped), or finished while being closed.
 		if stopping && !writing {
 			s.convo.stop()
 		}

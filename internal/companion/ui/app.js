@@ -1345,7 +1345,7 @@
         if (res.ok && res.body.warning) {
           toast(res.body.warning, true)
         } else if (res.ok) {
-          toast(opts.started ? opts.started : 'Done: ' + (res.body.command || opts.command), false,
+          toast(opts.started ? (typeof opts.started === 'function' ? opts.started(res) : opts.started) : 'Done: ' + (res.body.command || opts.command), false,
             opts.progress ? { label: 'Show progress', run: opts.progress } : null)
         } else {
           toast((res.body && res.body.error) || 'That failed.', true)
@@ -5607,7 +5607,8 @@
     confirmThen({
       title: 'Stop the agent?',
       text: 'The agent is still writing a review. Stopping it stops the agent, and the review is dropped: you can start another at any time. Are you sure you want to stop it?',
-      safe: true, commandNote: '', command: '', runLabel: 'Stop the agent', started: 'Stopped.',
+      safe: true, commandNote: '', command: '', runLabel: 'Stop the agent',
+      started: (res) => (res.body.stopped ? 'Stopped.' : 'The agent had already stopped.'),
       run: async () => {
         const res = await post('/api/conversation/stop', { confirmed: true })
         if (res.ok && res.body.review) { tookReview(res.body.review); reviewView.key = null; drawReview(); loadOptions() }

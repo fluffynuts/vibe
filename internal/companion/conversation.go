@@ -665,12 +665,12 @@ func (s *Server) conversationStop(w http.ResponseWriter, r *http.Request) {
 					"code":  "review-in-progress"})
 				return
 			}
-			dropped, stopped, _, err := s.stopAndDropReview("You stopped the agent while it was still writing this review, so it was dropped: start another whenever you like.")
+			rv, stopped, _, err := s.stopAndDropReview("You stopped the agent while it was still writing this review, so it was dropped: start another whenever you like.")
 			if err != nil {
 				writeStoreError(w, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]interface{}{"stopped": stopped, "review": dropped})
+			writeJSON(w, http.StatusOK, map[string]interface{}{"stopped": stopped, "review": rv})
 			return
 		}
 	}

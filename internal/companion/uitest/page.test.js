@@ -3330,10 +3330,10 @@ test('Submit to agent waits while the agent is still writing the review, and say
 const writingReview = { ...none, started: '2026-10-16T10:00:00Z', state: 'in progress', threads: [], lastId: 0 }
 
 // stopRoutes answer a stop: the first with "the agent is writing a review" while confirmed isn't there, else with the review dropped.
-const stopRoutes = (running) => (setCurrent) => ({
+const stopRoutes = (running, stopped = true) => (setCurrent) => ({
   '/api/conversation': { events: [], last: 0, running },
   '/api/conversation/stop': (call) => (call.body && call.body.confirmed
-    ? { stopped: true, review: (() => { const r = { ...none, closed: 'You stopped the agent while it was still writing this review, so it was dropped: start another whenever you like.' }; setCurrent(r); return r })() }
+    ? { stopped, review: (() => { const r = { ...none, closed: 'You stopped the agent while it was still writing this review, so it was dropped: start another whenever you like.' }; setCurrent(r); return r })() }
     : { status: 409, body: { error: 'the agent is writing a review', code: 'review-in-progress' } }),
 })
 
@@ -3373,6 +3373,16 @@ test('confirming sends the stop again, confirmed, and the Review tab goes back t
     await p.poll()
     assert.equal(p.$('review-start').hidden, false, 'back to starting one')
     assert.match(p.$('review-closed').textContent, /dropped/)
+  } finally { p.close() }
+})
+
+test('confirming a stop that found nothing to stop says so, not "Stopped."', async () => {
+  const p = await startPage({ review: writingReview, agentAtWork: true, extra: stopRoutes(true, false) })
+  try {
+    await p.poll()
+    await p.click('convo-stop')
+    await p.confirm(true)
+    assert.match(p.$('toast').textContent, /already stopped/)
   } finally { p.close() }
 })
 

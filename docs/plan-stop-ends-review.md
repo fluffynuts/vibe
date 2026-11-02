@@ -102,3 +102,13 @@ before this), at its first look: the review tab's own polls (`reviewState`) do t
   (5 s) except on `?diff=1`, which always looks.
 - **A confirmed stop** stops first, then drops the review only if the turn was still writing it, and answers `stopped` truthfully; a review
   already finished is kept.
+
+## Review fixes, second round (2026-11-02, threads #215–#218)
+
+- **Reopen** forgets the branch the review was closed for leaving, in the same store step, so no poll can close it again before it is
+  tied to the branch it is reopened on (at once, or at the first look if the branch can't be read then).
+- **Closing a review still in progress** whose turn has ended without finishing it drops it (as a stop does): `stopAndDropReview` drops
+  whenever the review is still in progress after the stop, and `stopped` says only whether a turn was found. A finished review is kept.
+- **The page** says "The agent had already stopped." when a confirmed stop found nothing to stop.
+- **The branch lookup** is shared by the polls that come while one is under way, bounded by the server's life, not by the first poll's
+  context; each poll stops waiting when its own context ends; no lock is held across git.
