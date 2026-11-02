@@ -158,8 +158,8 @@ function resolveFile(file) {
     process.stderr.write("vibe-review: " + file + " is " + path + " in this repository: used that\n");
     return path;
   };
-  const here = path.relative(fs.realpathSync(root()), fs.realpathSync(process.cwd())).split(path.sep).join("/");
-  if (here && !here.startsWith("..") && known.has(here + "/" + given)) return made(here + "/" + given);
+  const there = underHere(given, known);
+  if (there) return made(there);
   const ends = all.filter(function (f) { return f.endsWith("/" + given); });
   if (ends.length === 1) return made(ends[0]);
   if (ends.length > 1) {
@@ -169,6 +169,23 @@ function resolveFile(file) {
   process.stderr.write("vibe-review: " + file + " isn't a file in this repository: kept under that name " +
     "(right for a deleted file; otherwise check the path, which is from the top of the repository)\n");
   return given;
+}
+
+// underHere is the repository's path of the file the agent means by given, a path from where it is, or "" if
+// there is no such file. git is asked, as a path of this folder compared with the repository's top is not
+// reliable across platforms (Windows has short and long forms of one folder's name, and its own separators).
+function underHere(given, known) {
+  const found = [];
+  for (const extra of [[], ["--others", "--exclude-standard"]]) {
+    try {
+      const out = childProcess.execFileSync("git", ["--literal-pathspecs", "-c", "core.quotepath=false", "ls-files", "--full-name", "-z"].concat(extra, ["--", given]),
+        { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+      for (const f of out.split("\0")) if (f) found.push(f);
+    } catch (e) { /* not in a repository: nothing is under here */ }
+  }
+  // Only a file the repository of the review has, and named by exactly what was given (not a folder holding it).
+  const files = found.filter(function (f) { return known.has(f) && (f === given || f.endsWith("/" + given)); });
+  return files.length === 1 ? files[0] : "";
 }
 
 // repoFiles is every file the repository has (tracked, or untracked and not ignored), listed once per run: an
