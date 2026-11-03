@@ -3,8 +3,10 @@ package sbxrun
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -118,5 +120,44 @@ func TestAReachabilityProbeThatNeverAnswersIsNo(t *testing.T) {
 	}
 	if took := time.Since(began); took > 10*time.Second {
 		t.Errorf("took %s", took)
+	}
+}
+
+// A create that takes minutes says so on the way: a page action's log would otherwise go quiet while sbx works
+// (with its progress off, it prints nothing between starting and finishing).
+func TestACreateThatTakesAWhileSaysItIsStillWorkingAndStopsWhenItEnds(t *testing.T) {
+	sbxtest.OnPath(t, "sleep 1\n")
+	old := stillWorkingEvery
+	stillWorkingEvery = 100 * time.Millisecond
+	t.Cleanup(func() { stillWorkingEvery = old })
+	var mu sync.Mutex
+	var elapsed []time.Duration
+	var ended, late bool
+	err := Create(context.Background(), CreateOpts{Name: "box", Output: io.Discard, StillWorking: func(d time.Duration) {
+		mu.Lock()
+		defer mu.Unlock()
+		elapsed = append(elapsed, d)
+		late = late || ended
+	}})
+	mu.Lock()
+	ended = true
+	got := append([]time.Duration(nil), elapsed...)
+	mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) < 3 {
+		t.Fatalf("it said it was working %d times in a second, at every 100ms: %v", len(got), got)
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i] <= got[i-1] {
+			t.Errorf("the elapsed time didn't grow: %v", got)
+		}
+	}
+	// Create doesn't return until its ticker has stopped, so nothing can be said after it.
+	mu.Lock()
+	defer mu.Unlock()
+	if late || len(elapsed) != len(got) {
+		t.Errorf("it said it was working after the create ended: %v", elapsed)
 	}
 }

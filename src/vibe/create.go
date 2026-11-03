@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -282,6 +283,7 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 		env = append(env, k+"="+merged.Env[k])
 	}
 
+	output := actionOutput()
 	if err := sbxrun.Create(ctx, sbxrun.CreateOpts{
 		Name:    name,
 		KitDir:  kitDir,
@@ -293,7 +295,9 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 		Target:  target,
 		Mounts:  mounts,
 		NoInput: !sbxMayAsk,
-		Output:  actionOutput(),
+		Output:  output,
+		// A page's log would otherwise be silent for as long as the build takes (minutes, with Playwright or .NET).
+		StillWorking: stillWorking(output, name),
 	}); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -309,8 +313,10 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 	}
 
 	if restoreAfterCreate {
-		if err := agentmem.Restore(name, memoryStore); err != nil {
+		if restored, err := agentmem.Restore(name, memoryStore); err != nil {
 			note("WARNING: %s", err)
+		} else if restored {
+			note("  memories restored from %s", memoryStore)
 		}
 	}
 	noteRestoredRules(vibeHome, name)
@@ -333,4 +339,15 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 		return err
 	}
 	return nil
+}
+
+// stillWorking is what says a sandbox is still being built, for a page's log (output is where that is going): the
+// terminal has sbx's own progress, which says it itself, so nothing is said there.
+func stillWorking(output io.Writer, name string) func(time.Duration) {
+	if output == nil {
+		return nil
+	}
+	return func(elapsed time.Duration) {
+		note("  still building sandbox '%s': %s so far…", name, elapsed.Round(time.Second))
+	}
 }

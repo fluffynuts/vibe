@@ -341,7 +341,13 @@ type CreateOpts struct {
 	// terminal (nil): a companion page's log, when the terminal is a
 	// session's agent's screen.
 	Output io.Writer
+	// StillWorking, when not nil, is called every stillWorkingEvery while sbx works, with how long it has: with its
+	// progress off, a long create prints nothing, and whoever is reading its log should not wonder if it hangs.
+	StillWorking func(elapsed time.Duration)
 }
+
+// stillWorkingEvery is how often CreateOpts.StillWorking is called, a variable so a test needn't wait.
+var stillWorkingEvery = 15 * time.Second
 
 // Create provisions a new sandbox (does not start it), ending sbx when ctx
 // ends.
@@ -371,6 +377,26 @@ func Create(ctx context.Context, opts CreateOpts) error {
 		cmd.Stdin = os.Stdin
 	}
 	outputTo(cmd, opts.Output)
+	if opts.StillWorking != nil {
+		started := time.Now()
+		done := make(chan struct{})
+		stopped := make(chan struct{})
+		go func() {
+			defer close(stopped)
+			ticker := time.NewTicker(stillWorkingEvery)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-done:
+					return
+				case <-ticker.C:
+					opts.StillWorking(time.Since(started))
+				}
+			}
+		}()
+		// Not returned from until the ticker is stopped: nothing is said after the create ends.
+		defer func() { close(done); <-stopped }()
+	}
 	return cmd.Run()
 }
 

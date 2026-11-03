@@ -128,24 +128,25 @@ func dropLostFound(store string) {
 }
 
 // Restore waits for the (re-created) sandbox to come up and copies memories
-// back in from store, before the agent starts.
-func Restore(sandboxName, store string) error {
+// back in from store, before the agent starts. It says whether it put any
+// back: a store with nothing in it has nothing to restore, which is no failure.
+func Restore(sandboxName, store string) (restored bool, err error) {
 	dropLostFound(store) // from a backup made before Backup dropped it
 	entries, err := os.ReadDir(store)
 	if err != nil || len(entries) == 0 {
-		return nil
+		return false, nil
 	}
 	if !sbxrun.WaitReachable(context.Background(), sandboxName, 120) {
-		return fmt.Errorf("sandbox not reachable — memories left in %s", store)
+		return false, fmt.Errorf("sandbox not reachable — memories left in %s", store)
 	}
 	inside, err := sandboxPath(context.Background(), sandboxName, store)
 	if err != nil {
-		return fmt.Errorf("%w — memories left in %s", err, store)
+		return false, fmt.Errorf("%w — memories left in %s", err, store)
 	}
 	if !copyInSandbox(context.Background(), sandboxName, inside, agentPath) {
-		return fmt.Errorf("restore failed — memories left in %s", store)
+		return false, fmt.Errorf("restore failed — memories left in %s", store)
 	}
-	return nil
+	return true, nil
 }
 
 // hostOS is runtime.GOOS, as a variable so tests can play at being Windows.

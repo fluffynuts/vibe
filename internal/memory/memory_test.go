@@ -221,7 +221,7 @@ func TestProbeAndBackupFindMemoriesHoweverSbxPassesArgs(t *testing.T) {
 			if err := os.RemoveAll(agent); err != nil {
 				t.Fatal(err)
 			}
-			if err := Restore("any", store); err != nil {
+			if _, err := Restore("any", store); err != nil {
 				t.Fatalf("Restore: %v", err)
 			}
 			if _, err := os.Stat(mem); err != nil {
@@ -275,5 +275,39 @@ func TestSandboxPathOnWindowsFindsTheMountByItsMarker(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	if got, err := sandboxPath(context.Background(), "any", store); err == nil {
 		t.Errorf("sandboxPath with nothing mounted = %q, want an error", got)
+	}
+}
+
+func TestRestoreSaysWhetherItPutMemoriesBack(t *testing.T) {
+	fakeSbx(t, false)
+	agent := filepath.Join(t.TempDir(), "projects")
+	useAgentPath(t, agent)
+	store := filepath.Join(t.TempDir(), "store")
+
+	// Nothing in the store: nothing was restored, and that's no failure.
+	restored, err := Restore("any", store)
+	if restored || err != nil {
+		t.Errorf("Restore of a store that isn't there = %v, %v; want false, nil", restored, err)
+	}
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if restored, err := Restore("any", store); restored || err != nil {
+		t.Errorf("Restore of an empty store = %v, %v; want false, nil", restored, err)
+	}
+
+	mem := filepath.Join(store, "-proj", "memory", "MEMORY.md")
+	if err := os.MkdirAll(filepath.Dir(mem), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mem, []byte("- a memory\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	restored, err = Restore("any", store)
+	if !restored || err != nil {
+		t.Fatalf("Restore = %v, %v; want true, nil", restored, err)
+	}
+	if _, err := os.Stat(filepath.Join(agent, "-proj", "memory", "MEMORY.md")); err != nil {
+		t.Errorf("memory not restored: %v", err)
 	}
 }
