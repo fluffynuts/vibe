@@ -19,7 +19,7 @@ const maxModel = 100
 // command, so this is checked before it is stored and again before it is
 // used, and it is quoted as well: this is for refusing nonsense early, with
 // a message, not the only guard.
-var safeModel = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:\[\]-]*$`)
+var safeModel = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]*$`)
 
 // CheckModel says why model can't be used, or nil. Empty is fine: it means
 // the agent's own default.
@@ -28,7 +28,7 @@ func CheckModel(model string) error {
 		return nil
 	}
 	if len(model) > maxModel || !safeModel.MatchString(model) {
-		return fmt.Errorf("%q isn't a model name: it can have letters, digits and . _ : [ ] -, must start with a letter or digit, and be at most %d characters", model, maxModel)
+		return fmt.Errorf("%q isn't a model name: it can have letters, digits and . _ : / [ ] -, must start with a letter or digit, and be at most %d characters", model, maxModel)
 	}
 	return nil
 }

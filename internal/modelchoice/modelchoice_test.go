@@ -69,12 +69,12 @@ func TestHelpWithoutAnEffortFlagIsAnError(t *testing.T) {
 }
 
 func TestAModelNameIsOnlyAcceptedWhenSafeToPutInACommand(t *testing.T) {
-	for _, ok := range []string{"", "opus", "sonnet[1m]", "claude-opus-5-5", "us.anthropic.claude-sonnet-4:0", "a"} {
+	for _, ok := range []string{"", "opus", "sonnet[1m]", "claude-opus-5-5", "us.anthropic.claude-sonnet-4:0", "a", "opencode/big-pickle", "openrouter/anthropic/claude-haiku-4.5"} {
 		if err := CheckModel(ok); err != nil {
 			t.Errorf("%q refused: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"-rm", "a b", "a;b", "$(x)", "a'b", "a\"b", "a\nb", "`x`", "a|b", "a&b", "é", strings.Repeat("a", 101)} {
+	for _, bad := range []string{"-rm", "a b", "a;b", "$(x)", "a'b", "a\"b", "a\nb", "`x`", "a|b", "a&b", "é", "/etc/passwd", "../x", strings.Repeat("a", 101)} {
 		if err := CheckModel(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
