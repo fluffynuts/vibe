@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,11 +22,24 @@ const opencodeChoiceNote = "OpenCode lists the models of every provider the sand
 // maxOpencodeList is the most OpenCode's verbose list may be: a few KB for each of a few hundred models.
 const maxOpencodeList = 8 << 20
 
-// opencodeFreeGroup and opencodeNeedsKey are what the page says of the models the sandbox has no key for.
-const (
-	opencodeFreeGroup = "Needs a key"
-	opencodeNeedsKey  = "These models need a key for their provider, which this sandbox doesn't have. Store one on your machine with: sbx secret set <provider> (anthropic, openai, google, groq, mistral, openrouter, xai, nebius or copilot), then choose Check again."
-)
+// opencodeFreeGroup is the heading over the models the sandbox has no key for.
+const opencodeFreeGroup = "Needs a key"
+
+// opencodeWhy is what the page says of them: which providers' keys are missing, and which keys sbx does have, so a
+// mistaken reading of sbx can be told from a real lack.
+func opencodeWhy(missing, have, login []string) string {
+	has := "sbx has no keys stored for this sandbox"
+	if len(have) > 0 {
+		has = "sbx has keys for: " + strings.Join(have, ", ")
+	}
+	why := fmt.Sprintf("These models need a key, and sbx has no key for %s (%s). Store one on your machine with: sbx secret set <provider>, then choose Check again.", strings.Join(missing, ", "), has)
+	for _, service := range missing {
+		if slices.Contains(login, service) {
+			why += fmt.Sprintf(" %s is signed in with OAuth, which only the agent it was made for can use: OpenCode can't use it as a key.", service)
+		}
+	}
+	return why
+}
 
 // opencodeProviderServices is the sbx service whose secret is the key for an OpenCode provider: only a provider here
 // can be told to have no key. One that isn't (a local model, say) can't be known to have none, and nor can OpenCode's
@@ -47,6 +61,7 @@ type opencodeKeys struct {
 
 	mu       sync.Mutex
 	services []string
+	logins   []string
 	known    bool
 	at       time.Time
 }
@@ -68,12 +83,19 @@ func (k *opencodeKeys) has(service string) (has, known bool) {
 		text, err := k.read(ctx)
 		k.at = k.now()
 		k.known = err == nil
-		k.services = nil
+		k.services, k.logins = nil, nil
 		if err == nil {
-			k.services = sbxrun.SecretServices(text, k.sandbox)
+			k.services, k.logins = sbxrun.SecretKinds(text, k.sandbox)
 		}
 	}
 	return slices.Contains(k.services, service), k.known
+}
+
+// stored are the services sbx has a key for, and those it has only a login for, as last read.
+func (k *opencodeKeys) stored() (keys, logins []string) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return slices.Clone(k.services), slices.Clone(k.logins)
 }
 
 // forget is the user saying to check again: what was read is read again.
@@ -148,7 +170,7 @@ func opencodeLimits(keys *opencodeKeys, listFile string) *companion.Limits {
 	if !ok {
 		return nil
 	}
-	var out []string
+	var out, missing []string
 	for _, key := range cat.Keys() {
 		if cat.Free(key) {
 			continue
@@ -163,12 +185,16 @@ func opencodeLimits(keys *opencodeKeys, listFile string) *companion.Limits {
 		}
 		if !has {
 			out = append(out, key)
+			if !slices.Contains(missing, service) {
+				missing = append(missing, service)
+			}
 		}
 	}
 	if len(out) == 0 {
 		return nil
 	}
-	return &companion.Limits{Unavailable: out, Why: opencodeNeedsKey, Group: opencodeFreeGroup}
+	have, logins := keys.stored()
+	return &companion.Limits{Unavailable: out, Why: opencodeWhy(missing, have, logins), Group: opencodeFreeGroup}
 }
 
 // loadOpencodeList is what OpenCode's list of models, as kept in file, makes: not ok when none is kept, or what is

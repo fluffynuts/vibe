@@ -191,6 +191,10 @@ func TestModelsOfAProviderSbxHasNoKeyForAreOutOfReachAndTheRestAreNot(t *testing
 	if limits.Group != "Needs a key" || !strings.Contains(limits.Why, "sbx secret set") {
 		t.Errorf("group %q, why %q", limits.Group, limits.Why)
 	}
+	// What is missing, and what vibe can see, are said: a mistaken reading of sbx can then be told from a real lack.
+	if !strings.Contains(limits.Why, "anthropic") || !strings.Contains(limits.Why, "github") {
+		t.Errorf("why doesn't say what is missing and what is there: %q", limits.Why)
+	}
 	if limits.Unavailable[0] == "ollama/qwen3" || slices.Contains(limits.Unavailable, "opencode/big-zen") {
 		t.Errorf("a model whose key can't be told about is marked: %v", limits.Unavailable)
 	}
@@ -248,4 +252,53 @@ func opencodeAskedFor(t *testing.T, c *companion.Choice) companion.Options {
 		t.Fatal(err)
 	}
 	return opts
+}
+
+func TestTheReasonSaysWhichKeysAreMissingAndWhichAreThere(t *testing.T) {
+	more := `openai/gpt-x
+{"id": "gpt-x", "providerID": "openai", "name": "GPT X", "status": "active",
+ "cost": {"input": 1, "output": 2}, "capabilities": {"toolcall": true}}
+`
+	ask, _ := opencodeSaysModels(t, paidHaiku+more)
+	c, files := newOpencodeChoice(t, ask)
+	opencodeAskedFor(t, c)
+	*files.secrets = "SCOPE TYPE NAME SECRET\n(global) service github (stored)\n(global) service xai (stored)\n"
+	why := c.Limits().Why
+	if !strings.Contains(why, "no key for anthropic, openai") || !strings.Contains(why, "github, xai") {
+		t.Errorf("why: %q", why)
+	}
+	*files.secrets = ""
+	if err := c.Unlock(); err != nil {
+		t.Fatal(err)
+	}
+	if why := c.Limits().Why; !strings.Contains(why, "sbx has no keys stored") {
+		t.Errorf("with none stored: %q", why)
+	}
+}
+
+// What went wrong on the first real try: sbx had an anthropic secret, the user's Claude login (OAuth), and Anthropic
+// refused it as a key ("invalid x-api-key").
+func TestASecretThatIsALoginIsNotAKeyAndTheReasonSaysSo(t *testing.T) {
+	ask, _ := opencodeSaysModels(t, paidHaiku)
+	c, files := newOpencodeChoice(t, ask)
+	opencodeAskedFor(t, c)
+	*files.secrets = "SCOPE TYPE NAME SECRET\n(global) service anthropic (oauth configured)\n(global) service github (stored)\n"
+	limits := c.Limits()
+	if limits == nil || !slices.Equal(limits.Unavailable, []string{"anthropic/claude-haiku-4-5"}) {
+		t.Fatalf("limits: %+v", limits)
+	}
+	if !strings.Contains(limits.Why, "anthropic is signed in with OAuth") || !strings.Contains(limits.Why, "can't use") {
+		t.Errorf("why: %q", limits.Why)
+	}
+	if strings.Contains(limits.Why, "has keys for: anthropic") {
+		t.Errorf("a login is said to be a key: %q", limits.Why)
+	}
+	// With a key stored as well, the model is within reach.
+	*files.secrets += "(global) service anthropic (stored)\n"
+	if err := c.Unlock(); err != nil {
+		t.Fatal(err)
+	}
+	if limits := c.Limits(); limits != nil {
+		t.Errorf("with a key stored too: %+v", limits)
+	}
 }
