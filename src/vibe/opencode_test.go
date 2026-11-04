@@ -73,6 +73,7 @@ func opencodeSays(t *testing.T, lines []string, err error) (prompts *[]string) {
 	var got []string
 	opencodeStream = func(ctx context.Context, name, input string, delivered func(), onLine func([]byte), args ...string) error {
 		got = append(got, input)
+		lastOpencodeCommand = strings.Join(args, " ")
 		delivered()
 		for _, l := range lines {
 			onLine([]byte(l))
@@ -81,6 +82,9 @@ func opencodeSays(t *testing.T, lines []string, err error) (prompts *[]string) {
 	}
 	return &got
 }
+
+// lastOpencodeCommand is the command the last turn run by opencodeSays was given.
+var lastOpencodeCommand string
 
 const (
 	ocText   = `{"type":"text","sessionID":"ses_a","part":{"type":"text","text":"hello"}}`
@@ -152,5 +156,17 @@ func TestOpencodeHasAConversationButNoPickersYet(t *testing.T) {
 	}
 	if choiceFor("/home", "box", state.Instance{Agent: "opencode"}, profileChoice{}) != nil {
 		t.Error("OpenCode is offered pickers that aren't built")
+	}
+}
+
+// Until the page can choose, a turn runs a model that costs nothing: OpenCode's own default can be one that needs a
+// payment or a key (one was Grok), which fails the turn.
+func TestATurnRunsAFreeModelUntilThePageCanChoose(t *testing.T) {
+	opencodeSays(t, []string{ocText, ocFinish}, nil)
+	if err := converseOpencode("box", "/w")(context.Background(), "x", "", func() {}, func([]byte) {}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(lastOpencodeCommand, "'-m' 'opencode/big-pickle'") {
+		t.Errorf("command: %s", lastOpencodeCommand)
 	}
 }

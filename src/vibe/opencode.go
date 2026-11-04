@@ -39,6 +39,11 @@ func opencodeCommand(workspace, session, pidFile, model, variant string) []strin
 	return asAgent(wrapTurn(inner, pidFile))
 }
 
+// opencodeFreeModel is the model a turn runs until the page can choose one. OpenCode's own default can be one that
+// needs a payment or a key (it was Grok on the first real try), which fails the turn with an API key error; this one
+// costs nothing, needs no sign-in, and is on OpenCode's free list both in October and in November 2026.
+const opencodeFreeModel = "opencode/big-pickle"
+
 // opencodeStream runs a turn in the sandbox. A variable for tests.
 var opencodeStream = sbxrun.ExecStream
 
@@ -59,7 +64,7 @@ func converseOpencode(name, workspace string) companion.Converser {
 				}
 				onLine(line)
 			}
-		}, opencodeCommand(workspace, session, pidFile, "", "")...)
+		}, opencodeCommand(workspace, session, pidFile, opencodeFreeModel, "")...)
 		if ctx.Err() != nil {
 			stopTurn(name, pidFile)
 		}
