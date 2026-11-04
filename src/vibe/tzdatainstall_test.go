@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// runTzdataInstall runs the defaults' tzdata step with a stub sudo that
+// runTzdataInstall runs the base timezone feature's tzdata step with a stub sudo that
 // records what it is asked, against a zoneinfo folder that exists or not.
 func runTzdataInstall(t *testing.T, hasZoneinfo bool) string {
 	t.Helper()
@@ -30,7 +30,7 @@ func runTzdataInstall(t *testing.T, hasZoneinfo bool) string {
 			t.Fatal(err)
 		}
 	}
-	cmd := exec.Command("/bin/sh", filepath.Join(repoRoot(t), "defaults", "install-scripts", "04-install-tzdata"))
+	cmd := exec.Command("/bin/sh", filepath.Join(repoRoot(t), "library", "base", "timezone", "install-scripts", "01-install-tzdata"))
 	cmd.Env = []string{"PATH=" + dir, "TZDATA_INSTALL_LOG=" + filepath.Join(dir, "log"), "TZDATA_ZONEINFO=" + zoneinfo}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("install step failed: %v\n%s", err, out)

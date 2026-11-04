@@ -71,7 +71,7 @@ func TestLoadKitBundledProfile(t *testing.T) {
 	}
 
 	installSteps, _ := setup["install"].([]interface{})
-	const defaultSteps = 5
+	const defaultSteps = 4
 	wantSteps := defaultSteps + profileSteps // default scripts + the profile's own
 	if len(installSteps) != wantSteps {
 		t.Fatalf("expected %d install steps, got %d", wantSteps, len(installSteps))
@@ -205,5 +205,20 @@ func TestTheKitSbxIsHandedMergesVibesDenyRulesIntoTheAgentsSettings(t *testing.T
 	}
 	if !strings.Contains(string(text), "Read(./.env)") || !strings.Contains(string(text), "Merge vibe's settings") {
 		t.Error("the kit has no step merging vibe's deny rules into the agent's settings.json")
+	}
+}
+
+func TestEveryProfilesKitInstallsTzdata(t *testing.T) {
+	root, _ := goldenBundle(t)
+	doc, _, err := loadKit(layout.New(t.TempDir(), root), bundledProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := kitspec.MarshalV3(doc, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(text), "Install tzdata") {
+		t.Error("the kit has no step installing tzdata")
 	}
 }
