@@ -1,6 +1,8 @@
-// Package kitspec builds the generated sbx kit spec (a schemaVersion "2"
-// mixin document) for a sandbox: it merges the base and profile config.yaml
-// fragments, then generates the setup.install, setup.files and startup
+// Package kitspec builds the generated sbx kit spec for a sandbox. Documents
+// are built and edited here in the v2 shape the config.yaml fragments are
+// written in; ToV3 (v3.go) renders that as the schemaVersion "3" mixin sbx
+// needs, since it won't compose its v3 agents with a v1/v2 kit. Build merges
+// the base and profile config.yaml fragments, then generates the setup.install, setup.files and startup
 // sections from the defaults and profile install-scripts / agent-files
 // directories.
 package kitspec

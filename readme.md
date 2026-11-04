@@ -575,7 +575,7 @@ name, the project folder (the workspace, which doesn't follow the agent's `cd`),
 `?` untracked, `✘` conflicted, `↑`/`↓` ahead/behind, `#` stash count). It refreshes every 2 seconds and after each
 turn. A second line, `copy-paste at: <url>`, shows the
 clipboard page's address (from `clipboard-url`), or `copy-paste at: (starting)` until the clipboard server is
-listening and vibe has confirmed its host port for this boot. Claude Code loads it automatically from `~/.claude/skills/`, so nothing needs configuring; delete
+listening and vibe has confirmed its host port for this boot. The sbx claude kit mounts `~/.claude/skills/` read-only, so vibe installs the plugin under `~/.local/share/vibe/plugins/vibe-band/` and lists that folder in `CLAUDE_CODE_PLUGIN_DIRS` (in the sandbox's `~/.claude/settings.json`); Claude Code loads it from there, so nothing needs configuring. To leave it out, delete
 the folder from `~/.vibe/defaults/agent-files/.claude/skills/` to leave it out. As with themes, a
 `~/.vibe/defaults` seeded before it existed won't have it until the bundle's copy is added.
 

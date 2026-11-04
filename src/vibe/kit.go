@@ -82,13 +82,17 @@ func loadKit(lay layout.Layout, profile string) (kitspec.Doc, settings.Settings,
 	return doc, merged, nil
 }
 
-func writeKit(doc kitspec.Doc, name string) (string, error) {
+// writeKit writes doc as a schemaVersion 3 kit for agent into a new temporary
+// directory, which the caller removes. sbx refuses to compose a v3 agent (as
+// its claude now is) with a kit of any other version.
+func writeKit(doc kitspec.Doc, name, agent string) (string, error) {
 	dir, err := os.MkdirTemp("", "vibe-kit-"+name+"-")
 	if err != nil {
 		return "", err
 	}
-	data, err := kitspec.Marshal(doc)
+	data, err := kitspec.MarshalV3(doc, agent)
 	if err != nil {
+		os.RemoveAll(dir)
 		return "", err
 	}
 	if err := fscopy.WriteWholeMode(filepath.Join(dir, "spec.yaml"), data, 0o644); err != nil {
