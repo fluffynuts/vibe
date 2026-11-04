@@ -1285,6 +1285,19 @@ Overriding one bundled feature (a base one too, as `~/.vibe/library/base/<featur
 unlike `defaults/`, that replaces only the feature you copied, so features the bundle adds later
 still show up.
 
+### The `go` feature
+
+Go, as `go` and `gofmt`, for a sandbox whose agent builds or tests Go code (vibe itself, for one): the new sbx
+claude sandbox ships without it. The install script installs the `golang-1.26` package from the Docker Hardened Images
+repository and links its tools into `/usr/local/bin`, so any shell finds them, an agent's included. A project whose
+`go.mod` asks for a newer Go than that makes `go` download the toolchain it wants on first use.
+
+- **The sandbox may reach** `proxy.golang.org` and `sum.golang.org`: where toolchains and modules come from, and the
+  checksums they are checked against. Modules hosted elsewhere (a `github.com` dependency is fetched through the proxy,
+  but a private one is not) need their hosts added to the profile.
+- **A step that fails is a warning, not a failed sandbox:** it is written to `/tmp/sbx-setup.log`, which the agent's
+  instructions point to if `go` isn't there.
+
 ### The `pwsh` feature
 
 PowerShell 7, as `pwsh`, for a sandbox whose agent (or project) runs scripts in it. The install script
