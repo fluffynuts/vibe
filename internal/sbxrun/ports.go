@@ -71,7 +71,7 @@ func WriteFile(name, file, content string) error {
 	if !ExecSilent(context.Background(), name, "mkdir", "-p", path.Dir(file)) {
 		return fmt.Errorf("could not create %s in the sandbox", path.Dir(file))
 	}
-	if err := ExecInput(name, content, "cp", "/dev/stdin", file); err != nil {
+	if err := ExecInput(name, content, "tee", file); err != nil {
 		return fmt.Errorf("writing %s in the sandbox: %w", file, err)
 	}
 	return nil
