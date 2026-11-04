@@ -188,3 +188,22 @@ func TestLoadKitOverlayWins(t *testing.T) {
 		t.Errorf("install steps = %v, want exactly the overlay's %v", descriptions, want)
 	}
 }
+
+func TestTheKitSbxIsHandedMergesVibesDenyRulesIntoTheAgentsSettings(t *testing.T) {
+	root, _ := goldenBundle(t)
+	doc, _, err := loadKit(layout.New(t.TempDir(), root), bundledProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v3, err := kitspec.ToV3(doc, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, err := kitspec.MarshalV3(doc, "claude")
+	if err != nil || v3 == nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(text), "Read(./.env)") || !strings.Contains(string(text), "Merge vibe's settings") {
+		t.Error("the kit has no step merging vibe's deny rules into the agent's settings.json")
+	}
+}

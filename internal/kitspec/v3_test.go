@@ -1,6 +1,10 @@
 package kitspec
 
 import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -270,5 +274,92 @@ func TestToV3DoesNotChangeTheDocumentItWasGiven(t *testing.T) {
 	}
 	if n := len(asList(asDoc(doc["setup"])["install"])); n != 1 {
 		t.Errorf("install grew to %d", n)
+	}
+}
+
+func settingsDoc(content string) Doc {
+	return skillsDoc(Doc{"path": "/home/agent/.claude/settings.json", "mode": "0644", "onlyIfMissing": true, "content": content})
+}
+
+func lastInstallStep(t *testing.T, doc Doc) Doc {
+	t.Helper()
+	steps := asList(capability(t, doc, capLifecycle)["install"])
+	return asDoc(steps[len(steps)-1])
+}
+
+const denyRules = `{"permissions": {"deny": ["Read(./.env)"]}}`
+
+func TestToV3MergesVibesSettingsIntoTheOnesTheKitAlreadyMade(t *testing.T) {
+	out, err := ToV3(settingsDoc(denyRules), "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := lastInstallStep(t, out)
+	cmd, _ := step["command"].(string)
+	if !strings.Contains(cmd, "SETTINGS='"+denyRules+"'") || step["user"] != "1000" {
+		t.Errorf("no merge of the deny rules as the agent: %v", step)
+	}
+	if strings.Contains(cmd, "${") {
+		t.Error("sbx validates brace substitutions in a kit: the script mustn't have any")
+	}
+}
+
+func TestToV3DoesNotMergeSettingsThatAreDeployedOverTheKits(t *testing.T) {
+	doc := skillsDoc(Doc{"path": "/home/agent/.claude/settings.json", "content": denyRules})
+	out, _ := ToV3(doc, "claude")
+	for _, s := range asList(capability(t, out, capLifecycle)["install"]) {
+		if strings.Contains(asDoc(s)["command"].(string), "SETTINGS=") {
+			t.Error("merged a settings file that replaces the kit's anyway")
+		}
+	}
+}
+
+func TestToV3RefusesSettingsItsMergeStepCannotCarry(t *testing.T) {
+	if _, err := ToV3(settingsDoc(`{"a": "it's"}`), "claude"); err == nil {
+		t.Error("a quote would break out of the script's literal")
+	}
+}
+
+// The merge is run as the sandbox runs it, on a settings.json like the
+// kit's: what the user has is kept, the rules are added, once.
+func TestTheSettingsMergeKeepsWhatIsThereAddsWhatIsNotAndIsRepeatable(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("no python3")
+	}
+	out, err := ToV3(settingsDoc(`{"permissions": {"deny": ["Read(./.env)", "Read(**/*.pem)"], "defaultMode": "plan"}}`), "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.ReplaceAll(lastInstallStep(t, out)["command"].(string), "/home/agent/.claude/settings.json", "$FILE")
+	dir := t.TempDir()
+	file := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(file, []byte(`{"permissions": {"defaultMode": "bypassPermissions", "deny": ["Read(**/*.pem)"]}, "theme": "x"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := func() {
+		cmd := exec.Command("/bin/sh", "-c", script)
+		cmd.Env = append(os.Environ(), "FILE="+file)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+	}
+	run()
+	run()
+	var got struct {
+		Permissions struct {
+			DefaultMode string   `json:"defaultMode"`
+			Deny        []string `json:"deny"`
+		} `json:"permissions"`
+		Theme string `json:"theme"`
+	}
+	data, _ := os.ReadFile(file)
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("%v\n%s", err, data)
+	}
+	if got.Permissions.DefaultMode != "bypassPermissions" || got.Theme != "x" {
+		t.Errorf("what was there was changed: %s", data)
+	}
+	if strings.Join(got.Permissions.Deny, ",") != "Read(**/*.pem),Read(./.env)" {
+		t.Errorf("deny = %v, want the pem rule once and the .env rule added", got.Permissions.Deny)
 	}
 }
