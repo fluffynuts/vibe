@@ -6505,6 +6505,190 @@
     if (select.value !== value) select.value = value
   }
 
+  // --- a drop-down that can be searched -------------------------------------
+  //
+  // A list can be long (OpenCode lists every provider's models), and a native drop-down can't be typed into. This is a
+  // button that opens a panel with a filter and the options, over the native select, which stays where it was, hidden:
+  // the page goes on reading and setting its value, options and disabled state, and this follows it. Choosing sets the
+  // select's value and fires its change, as picking from the native list would.
+
+  const filterSelects = new WeakMap()
+
+  // syncFilterSelect makes select searchable the first time, and says what it holds now every time.
+  function syncFilterSelect(select) {
+    let fs = filterSelects.get(select)
+    if (!fs) {
+      fs = makeFilterSelect(select)
+      filterSelects.set(select, fs)
+    }
+    fs.sync()
+  }
+
+  function makeFilterSelect(select) {
+    const noun = (select.title || 'item').toLowerCase()
+    const listId = select.id + '-list'
+    const trigger = el('button', { type: 'button', class: 'fs-trigger', id: select.id + '-button', title: select.title, 'aria-haspopup': 'listbox', 'aria-expanded': 'false' })
+    const label = el('span', { class: 'fs-label' })
+    trigger.append(label, el('span', { class: 'fs-caret', 'aria-hidden': 'true', text: '▾' }))
+    const input = el('input', { type: 'text', class: 'fs-filter', role: 'combobox', autocomplete: 'off', placeholder: 'Type to filter…',
+      'aria-label': 'Filter the ' + noun + 's', 'aria-controls': listId, 'aria-expanded': 'true', 'aria-autocomplete': 'list' })
+    const list = el('ul', { class: 'fs-list', id: listId, role: 'listbox', 'aria-label': select.title })
+    const none = el('p', { class: 'fs-none muted', hidden: true, text: 'No ' + noun + ' matches.' })
+    const panel = el('div', { class: 'fs-panel', hidden: true })
+    panel.append(input, list, none)
+    const box = el('div', { class: 'fs', id: select.id + '-box' })
+    box.append(trigger, panel)
+    // The label that named the select now names the button: the select is hidden.
+    const named = document.querySelector('label[for="' + select.id + '"]')
+    if (named) named.htmlFor = trigger.id
+    select.before(box)
+    select.classList.add('fs-native')
+    select.setAttribute('aria-hidden', 'true')
+    select.tabIndex = -1
+
+    let items = []
+    let built = ''
+    let activeValue = null
+    const isOpen = () => !panel.hidden
+
+    const build = () => {
+      const entries = []
+      for (const child of select.children) {
+        if (child.tagName === 'OPTGROUP') {
+          entries.push({ group: child.label })
+          for (const o of child.children) entries.push({ option: o, disabled: child.disabled || o.disabled })
+        } else if (child.tagName === 'OPTION') entries.push({ option: child, disabled: child.disabled })
+      }
+      const signature = JSON.stringify(entries.map((e) => e.group !== undefined ? ['g', e.group] : [e.option.value, e.option.textContent, !!e.disabled, e.option.className]))
+      if (signature === built) return
+      built = signature
+      items = []
+      list.replaceChildren(...entries.map((e, i) => {
+        if (e.group !== undefined) return el('li', { class: 'fs-group', role: 'presentation', text: e.group })
+        const li = el('li', { class: 'fs-opt' + (e.option.className ? ' ' + e.option.className : ''), role: 'option', id: listId + '-' + i, 'data-value': e.option.value, text: e.option.textContent, 'aria-selected': 'false' })
+        if (e.disabled) li.setAttribute('aria-disabled', 'true')
+        items.push({ value: e.option.value, text: e.option.textContent, disabled: !!e.disabled, li })
+        return li
+      }))
+    }
+
+    const shown = () => items.filter((it) => !it.li.hidden)
+    const reachable = () => shown().filter((it) => !it.disabled)
+
+    const setActive = (value) => {
+      activeValue = value
+      for (const it of items) it.li.classList.toggle('active', it.value === value)
+      const it = items.find((x) => x.value === value)
+      if (it) {
+        input.setAttribute('aria-activedescendant', it.li.id)
+        if (it.li.scrollIntoView) it.li.scrollIntoView({ block: 'nearest' })
+      } else input.removeAttribute('aria-activedescendant')
+    }
+
+    const filter = () => {
+      const text = input.value.trim().toLowerCase()
+      for (const it of items) it.li.hidden = !!text && !it.text.toLowerCase().includes(text) && !it.value.toLowerCase().includes(text)
+      // A heading is shown over something that matched.
+      let heading = null
+      let any = false
+      const settle = () => { if (heading) heading.hidden = !any }
+      for (const li of list.children) {
+        if (li.classList.contains('fs-group')) { settle(); heading = li; any = false } else if (!li.hidden) any = true
+      }
+      settle()
+      none.hidden = shown().length > 0
+      const ok = reachable()
+      setActive(ok.some((it) => it.value === activeValue) ? activeValue : ok.length ? ok[0].value : null)
+    }
+
+    // After a choice the page disables the select while it saves it, and a disabled button can't hold focus: it goes to
+    // nothing, and a keyboard user's place with it. The button is given the focus back when it is enabled again, unless the
+    // user has gone elsewhere (see the focusin listener).
+    let regain = false
+    const nobodyHasFocus = () => !document.activeElement || document.activeElement === document.body || panel.contains(document.activeElement)
+
+    const sync = () => {
+      build()
+      for (const it of items) it.li.setAttribute('aria-selected', String(it.value === select.value))
+      const chosen = select.options[select.selectedIndex]
+      label.textContent = chosen ? chosen.textContent : ''
+      const wasDisabled = trigger.disabled
+      trigger.disabled = select.disabled
+      if (wasDisabled && !trigger.disabled) {
+        if (regain && nobodyHasFocus()) trigger.focus()
+        regain = false
+      } else if (!wasDisabled && !trigger.disabled) {
+        // Nothing was being saved: no focus is owed.
+        regain = false
+      }
+      if (select.disabled && isOpen()) close(false)
+      if (isOpen()) filter()
+    }
+
+    const open = () => {
+      if (select.disabled || isOpen()) return
+      sync()
+      panel.hidden = false
+      trigger.setAttribute('aria-expanded', 'true')
+      input.value = ''
+      filter()
+      const current = items.find((it) => it.value === select.value && !it.disabled)
+      if (current) setActive(current.value)
+      input.focus()
+    }
+
+    function close(refocus) {
+      if (!isOpen()) return
+      panel.hidden = true
+      trigger.setAttribute('aria-expanded', 'false')
+      if (refocus) trigger.focus()
+    }
+
+    const choose = (it) => {
+      if (!it || it.disabled) return
+      regain = true
+      select.value = it.value
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+      close(true)
+      sync()
+    }
+
+    const move = (by) => {
+      const ok = reachable()
+      if (!ok.length) return
+      const at = ok.findIndex((it) => it.value === activeValue)
+      setActive(ok[Math.min(ok.length - 1, Math.max(0, at + by))].value)
+    }
+
+    trigger.addEventListener('click', () => (isOpen() ? close(true) : open()))
+    trigger.addEventListener('keydown', (ev) => {
+      if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') { ev.preventDefault(); open() }
+    })
+    input.addEventListener('input', filter)
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'ArrowDown') { ev.preventDefault(); move(1) }
+      else if (ev.key === 'ArrowUp') { ev.preventDefault(); move(-1) }
+      else if (ev.key === 'Enter') { ev.preventDefault(); choose(items.find((it) => it.value === activeValue)) }
+      else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); close(true) }
+      else if (ev.key === 'Tab') close(false)
+    })
+    list.addEventListener('click', (ev) => {
+      const li = ev.target.closest('.fs-opt')
+      if (li) choose(items.find((it) => it.li === li))
+    })
+    // A press outside closes the panel. The listener goes with the component: once the box has left the page, the next
+    // press lets it go.
+    const listening = new AbortController()
+    document.addEventListener('focusin', (ev) => { if (!box.contains(ev.target)) regain = false }, { signal: listening.signal })
+    document.addEventListener('pointerdown', (ev) => {
+      if (!box.isConnected) { listening.abort(); return }
+      if (isOpen() && !box.contains(ev.target)) close(false)
+    }, { signal: listening.signal })
+    // What the page does to the native select (fills it, groups it, disables it) is followed as it happens.
+    new MutationObserver(sync).observe(select, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled', 'label', 'class'] })
+    return { sync }
+  }
+
   function drawChoice() {
     const o = choice.options
     const current = o && o.current ? o.current.replace(/\s*\(default\)\s*$/i, '') : ''
@@ -6538,6 +6722,7 @@
     $('convo-choice').classList.toggle('loading', locked)
     $('convo-choice').setAttribute('aria-busy', String(locked))
     $('choice-model').disabled = $('choice-effort').disabled = locked || choice.saving
+    syncFilterSelect($('choice-model'))
 
     const said = choiceBubble()
     const problem = said.kind === 'problem'
