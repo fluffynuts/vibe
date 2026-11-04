@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -32,6 +33,28 @@ type Choice struct {
 	Cached func() (opts Options, at time.Time, ok bool)
 	// Remember keeps the agent's lists for the next run.
 	Remember func(Options) error
+	// Limits is what the agent's plan can't run, as far as is known now: nil
+	// when nothing is known to be out of reach, and for an agent that has no
+	// such thing. Asked for each time the choice is read, since it is learned
+	// as the agent is used and forgotten as time goes by.
+	Limits func() *Limits
+	// Unlock is the user saying the plan has changed (an upgrade, say): what
+	// was learned of its limits is taken away, and learned again if it was
+	// wrong. Nil for an agent that has no limits to speak of.
+	Unlock func() error
+}
+
+// Limits are the models the agent's plan can't run, which the page shows as
+// they are but won't let be chosen.
+type Limits struct {
+	// Unavailable are the listed models that can't be chosen.
+	Unavailable []string `json:"unavailable"`
+	// Why is said to the user of them.
+	Why string `json:"why"`
+	// Group is the heading the page lists them under, where it isn't the default, "Not on your plan".
+	Group string `json:"group,omitempty"`
+	// Since is when it was learned, in milliseconds since the epoch.
+	Since int64 `json:"since,omitempty"`
 }
 
 // Options are the agent's own lists, as the page offers them.
@@ -41,6 +64,22 @@ type Options struct {
 	Models      []string `json:"models"`
 	OtherModels []string `json:"otherModels"`
 	Efforts     []string `json:"efforts"`
+	// OnlyListed says the agent takes only the models listed, so the page
+	// offers no Other… to name one that isn't (as claude takes any full
+	// model name).
+	OnlyListed bool `json:"onlyListed,omitempty"`
+	// Note is something the agent's choice needs the user to know, said in
+	// the bubble beside the drop-downs.
+	Note string `json:"note,omitempty"`
+	// EffortsByModel, for an agent whose efforts differ from one model to the
+	// next, are the efforts each model takes (none, for one that takes none:
+	// an empty list, not a missing one); Efforts is then all of them, for what
+	// can't be told by model. Nil for an agent whose efforts are the same for
+	// every model.
+	EffortsByModel map[string][]string `json:"effortsByModel,omitempty"`
+	// EffortNames are what the page calls an effort ("High effort") where
+	// that isn't just its name in title case.
+	EffortNames map[string]string `json:"effortNames,omitempty"`
 	// Names are what the agent calls each of those models ("Opus 5.5" for
 	// "opus"), for the page to show their versions. A model it couldn't
 	// say the name of isn't in it.
@@ -166,6 +205,11 @@ func (s *Server) choiceBody() (map[string]interface{}, error) {
 		inherited["model"], inherited["effort"] = ownModel == "" && model != "", ownEffort == "" && effort != ""
 	}
 	body["inherited"] = inherited
+	if s.cfg.Choice.Limits != nil {
+		if limits := s.cfg.Choice.Limits(); limits != nil {
+			body["limits"] = limits
+		}
+	}
 	body["running"] = s.convo.ranModel()
 	body["session"] = s.convo.hasSession()
 	return body, nil
@@ -201,7 +245,11 @@ func (s *Server) choiceSet(w http.ResponseWriter, r *http.Request) {
 	// one from an earlier run may be out of date, and refusing what the agent
 	// now takes would be wrong (an effort it doesn't take it ignores, saying so).
 	if have, _, fresh := s.freshOptions(); have != nil && fresh {
-		err = modelchoice.CheckEffort(req.Effort, have.Efforts)
+		allowed := have.Efforts
+		if own, ok := have.EffortsByModel[req.Model]; ok {
+			allowed = own
+		}
+		err = modelchoice.CheckEffort(req.Effort, allowed)
 	} else {
 		err = modelchoice.CheckEffortName(req.Effort)
 	}
@@ -209,7 +257,29 @@ func (s *Server) choiceSet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// The page doesn't offer what the plan can't run, but another page may not
+	// have been told.
+	if s.cfg.Choice.Limits != nil {
+		if limits := s.cfg.Choice.Limits(); limits != nil && slices.Contains(limits.Unavailable, req.Model) {
+			writeError(w, http.StatusConflict, limits.Why)
+			return
+		}
+	}
 	if !s.keepChoice(w, req.Model, req.Effort) {
+		return
+	}
+	s.choiceState(w, r)
+}
+
+// choiceUnlock is the user saying the plan has changed: what was learned of
+// its limits is taken away.
+func (s *Server) choiceUnlock(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Choice.Unlock == nil {
+		writeError(w, http.StatusNotFound, "this agent's plan has no limits to take away")
+		return
+	}
+	if err := s.cfg.Choice.Unlock(); err != nil {
+		writeError(w, http.StatusInternalServerError, "the limits couldn't be taken away: "+err.Error())
 		return
 	}
 	s.choiceState(w, r)

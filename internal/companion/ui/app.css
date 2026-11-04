@@ -745,6 +745,9 @@ dialog.file-view header button svg { width: 14px; height: 14px; fill: none; stro
 dialog.file-view.outside { border-color: var(--warn-line); border-width: 2px; }
 dialog.file-view.outside .file-view-url::before { content: "⚠"; flex: none; margin-right: 6px; }
 
+/* A model the plan can't run is under a heading that says so (see drawChoice), and red where a browser paints that:
+   Firefox's drop-down doesn't, however it is asked. */
+#choice-model option.unavailable { color: var(--bad); }
 /* The Sign-in card: one row per thing signed in to, its pill beside its name, and the by-hand steps folded under it. */
 ul.signins { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .signin-head { display: flex; align-items: center; gap: 8px; }

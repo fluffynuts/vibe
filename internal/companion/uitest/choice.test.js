@@ -26,10 +26,14 @@ async function choicePage(over = {}, { choice = true } = {}, storage = {}) {
   const body = () => Object.assign({
     model: at.model || at.globalModel || '', effort: at.effort || at.globalEffort || '', running: at.running, session: at.session,
     inherited: { model: !at.model && !!at.globalModel, effort: !at.effort && !!at.globalEffort },
-  }, listed())
+  }, listed(), at.limits ? { limits: at.limits } : {})
   const routes = {
     '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, choice, attention: {} },
-    '/api/conversation': () => ({ events: [], last: 0, running: at.busy }),
+    '/api/conversation': (call) => {
+      const after = Number(new URLSearchParams(call.query).get('after')) || 0
+      const events = (at.events || []).filter((e) => e.seq > after)
+      return { events, last: (at.events || []).reduce((m, e) => Math.max(m, e.seq), 0), running: at.busy }
+    },
     '/api/conversation/choice': async (call) => {
       if (call.method === 'GET') { if (at.holdRead) await at.holdRead; return body() }
       if (at.refuse) return { status: 400, body: { error: at.refuse } }
@@ -56,6 +60,13 @@ async function choicePage(over = {}, { choice = true } = {}, storage = {}) {
       if (at.optionsError && !(call.body && call.body.wake)) return { status: 502, body: { error: at.optionsError } }
       at.haveOptions = true
       return listed()
+    },
+    // The user saying the plan has changed: the limits go.
+    '/api/conversation/choice/unlock': () => {
+      at.unlocks = (at.unlocks || 0) + 1
+      if (at.unlockFails) return { status: 500, body: { error: 'the limits could not be taken away' } }
+      at.limits = null
+      return body()
     },
     '/api/log': { entries: [] },
   }
@@ -1376,5 +1387,242 @@ test('an answer to adopting that comes after the user chose is not shown over th
     await turns()
     assert.equal(p.$('choice-model').value, 'opus', 'still the user\'s choice')
     assert.equal(p.at.model, 'opus')
+  } finally { p.close() }
+})
+
+// An agent whose efforts differ from one model to the next (Cursor's).
+const PER_MODEL = {
+  models: ['auto', 'codex', 'composer'], otherModels: [], onlyListed: true,
+  efforts: ['fast', 'low', 'high'], effortsByModel: { auto: [], codex: ['low', 'high'], composer: ['fast'] },
+  effortNames: { fast: 'Fast', low: 'Low effort', high: 'High effort' },
+  names: { auto: 'Auto', codex: 'Codex 5.3', composer: 'Composer 2.5' }, defaultAlias: '',
+}
+
+test('where efforts differ by model, the effort drop-down offers those of the model chosen, by the names the agent gave', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'codex' })
+  try {
+    assert.deepEqual(values(p.$('choice-effort')), ['', 'low', 'high'])
+    assert.deepEqual(texts(p.$('choice-effort')), ['Default effort', 'Low effort', 'High effort'])
+    await choose(p, 'choice-model', 'composer')
+    assert.deepEqual(texts(p.$('choice-effort')), ['Default effort', 'Fast'])
+  } finally { p.close() }
+})
+
+test('a model that takes no effort has the one entry, Default effort, not an empty list', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'auto' })
+  try {
+    assert.deepEqual(texts(p.$('choice-effort')), ['Default effort'])
+  } finally { p.close() }
+})
+
+test('with no model chosen yet, where efforts differ by model, only Default effort is offered', async () => {
+  const p = await choicePage({ options: PER_MODEL })
+  try {
+    assert.deepEqual(texts(p.$('choice-effort')), ['Default effort'])
+  } finally { p.close() }
+})
+
+test('an agent that takes only the models it lists has no Other…', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'codex' })
+  try {
+    assert.deepEqual(values(p.$('choice-model')), ['auto', 'codex', 'composer'])
+  } finally { p.close() }
+})
+
+test('an agent whose efforts are the same for every model is as it was', async () => {
+  const p = await choicePage({ model: 'opus' })
+  try {
+    assert.deepEqual(values(p.$('choice-effort')), ['', 'low', 'medium', 'high'])
+    assert.ok(values(p.$('choice-model')).includes('__other__'))
+  } finally { p.close() }
+})
+
+test("what the agent's options say of choosing is in the bubble, with the rest", async () => {
+  const p = await choicePage({ options: Object.assign({}, PER_MODEL, { note: "A model chosen here is also the one Cursor uses in its own terminal." }), model: 'codex' })
+  try {
+    await choose(p, 'choice-effort', 'low')
+    assert.match(p.$('choice-bubble-text').textContent, /applies to your next prompt\. .*also the one Cursor uses in its own terminal\./)
+  } finally { p.close() }
+})
+
+test('a model the host set back to Auto during a turn is what the drop-down shows when the turn ends, with only Default effort to go with it', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'codex', effort: 'high' })
+  try {
+    assert.equal(p.$('choice-model').value, 'codex')
+    p.at.busy = true
+    await p.every('pollConversation')
+    // What vibe does when the plan can't run the model chosen: the choice goes back to Auto.
+    p.at.model = 'auto'
+    p.at.effort = ''
+    p.at.running = 'Auto'
+    p.at.busy = false
+    await p.every('pollConversation')
+    assert.equal(p.$('choice-model').value, 'auto')
+    assert.deepEqual(texts(p.$('choice-effort')), ['Default effort'])
+  } finally { p.close() }
+})
+
+const choiceNote = (seq) => ({ seq, kind: 'agent', agent: { type: 'vibe_note', text: 'the model is now set to Auto', refresh: 'choice' } })
+
+test('a note saying the choice was changed has the drop-down show it at once, not when the turn ends', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'codex', effort: 'high', events: [] })
+  try {
+    p.at.busy = true
+    await p.every('pollConversation')
+    assert.equal(p.$('choice-model').value, 'codex')
+    // What vibe does when the plan can't run the model chosen, before it says so.
+    p.at.model = 'auto'
+    p.at.effort = ''
+    p.at.events = [choiceNote(1)]
+    await p.every('pollConversation')
+    await p.settle()
+    assert.equal(p.$('choice-model').value, 'auto', 'while the turn is still running')
+    assert.deepEqual(texts(p.$('choice-effort')), ['Default effort'])
+  } finally { p.close() }
+})
+
+test('such a note among what was said before the page was opened is not a reason to read the choice again', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'auto', events: [choiceNote(1)] })
+  try {
+    await p.settle()
+    const reads = p.calls.filter((c) => c.method === 'GET' && c.path === '/api/conversation/choice').length
+    assert.equal(reads, 1, 'the one when the page opened')
+  } finally { p.close() }
+})
+
+test('a choice the user is deciding on, in a dialog, is not read over by such a note', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'codex', session: true, events: [] })
+  try {
+    // The first poll is what was said before the page was opened.
+    await p.every('pollConversation')
+    await choose(p, 'choice-model', 'composer')
+    assert.ok(p.$('choice-warn').open, 'the user is being asked')
+    // vibe changed the choice meanwhile, and says so.
+    p.at.model = 'auto'
+    p.at.events = [choiceNote(1)]
+    await p.every('pollConversation')
+    assert.ok(p.$('choice-warn').open, 'the question is still there')
+    assert.equal(p.$('choice-model').value, 'composer', 'and the drop-down still shows what the user picked, not what vibe set')
+  } finally { p.close() }
+})
+
+// --- what the plan can't run ---
+
+const FREE = { unavailable: ['codex', 'composer'], why: 'Your Cursor plan can only use Auto: a prompt on another model was refused.', since: 1793000000000 }
+const optionFor = (p, value) => Array.from(p.$('choice-model').options).find((o) => o.value === value)
+
+test('the models the plan cannot run are listed all the same, under a heading that says so, and the one it can run is not', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'auto', limits: FREE })
+  try {
+    assert.deepEqual(values(p.$('choice-model')), ['auto', 'codex', 'composer'], 'all of them are listed')
+    const group = p.$('choice-model').querySelector('optgroup')
+    assert.equal(group.label, 'Not on your plan')
+    assert.deepEqual(Array.from(group.querySelectorAll('option')).map((o) => o.value), ['codex', 'composer'])
+    assert.equal(optionFor(p, 'codex').textContent, 'Codex 5.3')
+    assert.ok(optionFor(p, 'codex').classList.contains('unavailable'), 'and red, where a browser paints that')
+    assert.ok(!optionFor(p, 'auto').classList.contains('unavailable') && !optionFor(p, 'auto').closest('optgroup'))
+    assert.ok(!optionFor(p, 'codex').disabled, 'they can be picked: that is what says why they cannot')
+  } finally { p.close() }
+})
+
+test('the heading over the models out of reach is the host\'s, when it gives one', async () => {
+  const limits = { unavailable: ['codex'], why: 'This one needs a key.', group: 'Needs a key' }
+  const p = await choicePage({ options: PER_MODEL, model: 'auto', limits })
+  try {
+    assert.equal(p.$('choice-model').querySelector('optgroup').label, 'Needs a key')
+  } finally { p.close() }
+})
+
+test('the models the plan can run come first, whatever order the host listed them in', async () => {
+  const options = Object.assign({}, PER_MODEL, { models: ['codex', 'auto', 'composer'] })
+  const p = await choicePage({ options, model: 'auto', limits: FREE })
+  try {
+    assert.deepEqual(values(p.$('choice-model')), ['auto', 'codex', 'composer'])
+  } finally { p.close() }
+})
+
+test('with no limits, no model is marked', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'auto' })
+  try {
+    assert.equal(p.$('choice-model').querySelectorAll('option.unavailable').length, 0)
+    assert.equal(p.$('choice-model').querySelector('optgroup'), null)
+    assert.equal(optionFor(p, 'codex').textContent, 'Codex 5.3')
+  } finally { p.close() }
+})
+
+test('choosing a model the plan cannot run keeps nothing, says why, and leaves the drop-down where it was', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'auto', limits: FREE })
+  try {
+    await choose(p, 'choice-model', 'codex')
+    assert.deepEqual(p.posted('/api/conversation/choice'), [], 'nothing was sent')
+    assert.equal(p.$('choice-model').value, 'auto', 'back where it was')
+    assert.ok(open(p), 'the reason is said where it will be seen')
+    assert.match(p.$('choice-bubble-text').textContent, /Your Cursor plan can only use Auto/)
+    assert.ok(!p.$('choice-warn').open, "and it isn't a question about re-reading the conversation")
+  } finally { p.close() }
+})
+
+test('the bubble offers to check again while the plan is limited, and not otherwise', async () => {
+  const limited = await choicePage({ options: PER_MODEL, model: 'auto', limits: FREE })
+  const free = await choicePage({ options: PER_MODEL, model: 'auto' })
+  try {
+    await choose(limited, 'choice-model', 'codex')
+    assert.ok(!limited.$('choice-bubble-unlock').hidden)
+    await free.click('choice-info')
+    assert.ok(free.$('choice-bubble-unlock').hidden)
+  } finally { limited.close(); free.close() }
+})
+
+test('Check again takes the limits away at once: every model can be chosen, and is no longer marked', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'auto', limits: FREE })
+  try {
+    await choose(p, 'choice-model', 'codex')
+    await p.click('choice-bubble-unlock')
+    assert.equal(p.at.unlocks, 1)
+    assert.equal(p.$('choice-model').querySelectorAll('option.unavailable').length, 0)
+    assert.equal(p.$('choice-model').querySelector('optgroup'), null, 'no heading either')
+    assert.equal(optionFor(p, 'codex').textContent, 'Codex 5.3')
+    await choose(p, 'choice-model', 'codex')
+    assert.deepEqual(p.posted('/api/conversation/choice'), [{ model: 'codex', effort: '' }])
+  } finally { p.close() }
+})
+
+test('when the limits cannot be taken away, that is said and they stay', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'auto', limits: FREE, unlockFails: true })
+  try {
+    await choose(p, 'choice-model', 'codex')
+    await p.click('choice-bubble-unlock')
+    assert.ok(optionFor(p, 'codex').classList.contains('unavailable'), 'still out of reach')
+    assert.match(p.$('choice-bubble-text').textContent, /could not be taken away/)
+  } finally { p.close() }
+})
+
+test('what is learned as a turn runs shows when it ends: a model refused is marked from then on', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'auto' })
+  try {
+    assert.equal(p.$('choice-model').querySelectorAll('option.unavailable').length, 0)
+    p.at.limits = FREE
+    await endTurn(p, 'Auto')
+    assert.ok(optionFor(p, 'codex').classList.contains('unavailable'))
+  } finally { p.close() }
+})
+
+test('the limits expiring shows as the models being offered again, when the choice is next read', async () => {
+  const p = await choicePage({ options: PER_MODEL, model: 'auto', limits: FREE })
+  try {
+    p.at.limits = null
+    await endTurn(p, 'Auto')
+    assert.equal(p.$('choice-model').querySelectorAll('option.unavailable').length, 0)
+  } finally { p.close() }
+})
+
+test('a model the host refuses to keep because of the plan is said, and the drop-down goes back', async () => {
+  // Another page may have learned of the limit first.
+  const p = await choicePage({ options: PER_MODEL, model: 'auto', refuse: FREE.why })
+  try {
+    await choose(p, 'choice-model', 'codex')
+    assert.ok(p.$('choice-error').open)
+    assert.match(p.$('choice-error-text').textContent, /can only use Auto/)
+    assert.equal(p.$('choice-model').value, 'auto')
   } finally { p.close() }
 })

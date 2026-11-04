@@ -5380,6 +5380,10 @@
       if (bits.length) convoNote('meta', bits.join(' · '))
     } else if (line.type === 'system' && line.subtype === 'compact_boundary') {
       convoNote('meta', 'The agent compacted its context: it now works from a summary of the conversation so far.')
+    } else if (line.type === 'vibe_note' && typeof line.text === 'string') {
+      convoNote('meta', line.text, at)
+      // What it says changed (the model chosen) is shown as it is said, not at the turn's end.
+      if (line.refresh === 'choice') convo.choiceChanged = true
     } else if (line.type === 'truncated') {
       convoNote('meta', '(that was too long to show)')
     }
@@ -5466,6 +5470,7 @@
         if (slash.open) updateCommands(false)
       }
       for (const ev of res.body.events || []) showEvent(ev)
+      if (convo.choiceChanged) { convo.choiceChanged = false; rereadChoice() }
       if (res.body.receipt) showReceipt(res.body.receipt.seq, res.body.receipt.state)
       convo.last = res.body.last || 0
       // A turn that isn't running has no tools still being used, whatever the last thing said was.
@@ -6368,7 +6373,9 @@
   const CHOICE_LOCK_MS = 30000
   const choice = { model: '', effort: '', running: '', session: false, options: null, optionsAt: 0, optionsError: '', problem: '', pending: false, bubble: false, unseen: false, started: false, pendingTurns: 0, inherited: { model: false, effort: false },
     goneModel: '', goneEffort: '', goneLabel: '', refreshing: false, adopting: false, adoptWait: false,
-    loaded: false, asking: false, saving: false, choosing: false, changes: 0, adoptSkipped: false, lockExpired: false, slow: false, lockTimer: 0 }
+    loaded: false, asking: false, saving: false, choosing: false, changes: 0, adoptSkipped: false, lockExpired: false, slow: false, lockTimer: 0,
+    // limits are the models the plan can't run, as the host last said; blocked the one the user just tried to choose; limitError why they couldn't be lifted.
+    limits: null, blocked: '', limitError: '' }
 
   // dialogAnswer shows a modal dialog and gives what it was closed with, ''
   // when it was dismissed (Escape).
@@ -6457,13 +6464,16 @@
     const gone = choiceGone()
     if (gone) return { kind: 'gone', text: gone }
     if (choice.slow && choiceWaiting()) return { kind: 'slow', text: "Still asking the agent which models and efforts it has: it's taking longer than usual. You can carry on, and the lists fill in when they arrive." }
+    if (choice.limitError) return { kind: 'limited', text: choice.limitError }
+    if (choice.blocked && choice.limits) return { kind: 'limited', text: (modelName(choice.blocked) || titleCase(choice.blocked)) + " can't be used: " + choice.limits.why }
     if (choiceOdd()) return { kind: 'odd', text: 'You asked for ' + choice.model + ', but the agent says it ran ' + choice.running + '.' }
     // What comes from the global settings: a model can be overridden by choosing another here; an
     // effort has a Default that can't take it away.
     const from = []
     if (choice.inherited.model) from.push(' The model comes from your global settings.yaml; choosing one here overrides it for this profile.')
     if (choice.inherited.effort) from.push(" The effort comes from your global settings.yaml, so Default here can't take it away.")
-    return { kind: 'news', text: 'A change to the model or effort applies to your next prompt.' + (choice.running ? ' The last turn ran on ' + choice.running + '.' : '') + from.join('') }
+    const note = choice.options && choice.options.note ? ' ' + choice.options.note : ''
+    return { kind: 'news', text: 'A change to the model or effort applies to your next prompt.' + (choice.running ? ' The last turn ran on ' + choice.running + '.' : '') + from.join('') + (choice.limits ? ' ' + choice.limits.why : '') + note }
   }
 
   // modelName is what the agent calls the model an alias stands for ("Opus
@@ -6490,6 +6500,21 @@
     return (effort === 'xhigh' ? 'Extra High' : titleCase(effort)) + ' effort'
   }
 
+  // effortName is how an effort is shown: as the agent says it is called, where it said.
+  function effortName(effort) {
+    const o = choice.options
+    return (o && o.effortNames && o.effortNames[effort]) || effortLabel(effort)
+  }
+
+  // effortsOffered are the efforts the drop-down offers (besides Default): those of the model
+  // chosen where they differ by model (none, for a model that takes none, or while none is
+  // chosen), else the same for all.
+  function effortsOffered(o) {
+    if (!o) return []
+    if (o.effortsByModel) return o.effortsByModel[choice.model] || []
+    return o.efforts || []
+  }
+
   // modelLabel is how a model is shown: by the name the agent gives it where
   // it's one of the plain ones ("Opus 5.5", as the agent's own picker has it);
   // elsewhere with the alias it is kept as after the name, so what's chosen is
@@ -6503,11 +6528,28 @@
   // rebuilt when they differ: a drop-down that is open is closed by a rebuild,
   // and a redraw for some other reason (the spinner, a bubble) shouldn't do that.
   function fillSelect(select, items, value) {
-    const same = select.options.length === items.length &&
-      items.every((item, i) => select.options[i].value === item.value && select.options[i].textContent === item.text)
+    // What it holds is told by what it was made of, so nothing else need be compared.
+    const made = JSON.stringify(items)
+    const same = select.dataset.items === made
     // A drop-down in use is left as it is: what changed is taken in once it is let go (blur).
     if (!same && select === document.activeElement) return
-    if (!same) select.replaceChildren(...items.map((i) => el('option', { value: i.value, text: i.text })))
+    if (!same) {
+      const kids = []
+      for (const item of items) {
+        const option = el('option', { value: item.value, text: item.text, class: item.bad ? 'unavailable' : '' })
+        if (!item.group) { kids.push(option); continue }
+        // Consecutive items of one group are under one heading.
+        let group = kids[kids.length - 1]
+        if (!group || group.tagName !== 'OPTGROUP' || group.label !== item.group) {
+          group = el('optgroup', {})
+          group.label = item.group
+          kids.push(group)
+        }
+        group.append(option)
+      }
+      select.replaceChildren(...kids)
+      select.dataset.items = made
+    }
     if (select.value !== value) select.value = value
   }
 
@@ -6520,13 +6562,19 @@
     const def = (o && o.defaultAlias) || ''
     const defaultMark = (m) => (m === def ? ' (default)' : '')
     const models = choice.model ? [] : [{ value: '', text: current ? 'Default (' + current + ')' : 'Default' }]
-    for (const m of (o && o.models) || []) models.push({ value: m, text: modelLabel(m, true) + defaultMark(m) })
+    // What the plan can't run is listed, to show what there is, but after what it can, under a heading that says so:
+    // an option's own colour isn't painted by every browser's drop-down.
+    const outOfReach = (m) => !!(choice.limits && choice.limits.unavailable.includes(m))
+    const listed = (o && o.models) || []
+    for (const m of listed.filter((m) => !outOfReach(m))) models.push({ value: m, text: modelLabel(m, true) + defaultMark(m) })
+    for (const m of listed.filter(outOfReach)) models.push({ value: m, text: modelLabel(m, true) + defaultMark(m), bad: true, group: choice.limits.group || 'Not on your plan' })
     if (choice.model && !models.some((m) => m.value === choice.model)) models.push({ value: choice.model, text: modelLabel(choice.model, false) + defaultMark(choice.model) })
-    models.push({ value: OTHER_MODEL, text: 'Other…' })
+    // Other… is for what isn't listed (and a full name typed): not for an agent that takes only the listed.
+    if (!o || !o.onlyListed) models.push({ value: OTHER_MODEL, text: 'Other…' })
     fillSelect($('choice-model'), models, choice.model)
     const efforts = [{ value: '', text: 'Default effort' }]
-    for (const e of (o && o.efforts) || []) efforts.push({ value: e, text: effortLabel(e) })
-    if (choice.effort && !efforts.some((e) => e.value === choice.effort)) efforts.push({ value: choice.effort, text: effortLabel(choice.effort) })
+    for (const e of effortsOffered(o)) efforts.push({ value: e, text: effortName(e) })
+    if (choice.effort && !efforts.some((e) => e.value === choice.effort)) efforts.push({ value: choice.effort, text: effortName(choice.effort) })
     fillSelect($('choice-effort'), efforts, choice.effort)
 
     // Said beside the drop-downs only when it's news: that the models are on
@@ -6560,6 +6608,7 @@
     $('choice-bubble-stale').textContent = stale
     $('choice-bubble-stale').hidden = !stale
     $('choice-bubble-retry').hidden = !problem && !stale
+    $('choice-bubble-unlock').hidden = !choice.limits
     // Only what can be told to stop is: not that the agent ran another model.
     $('choice-quiet-row').hidden = said.kind !== 'news'
     $('choice-quiet').checked = choiceQuiet()
@@ -6567,6 +6616,7 @@
 
   function setChoiceBubble(on) {
     if (!on && choice.bubble) choice.unseen = false
+    if (!on) { choice.blocked = ''; choice.limitError = '' }
     choice.bubble = on
     drawChoice()
   }
@@ -6584,6 +6634,7 @@
     choice.effort = body.effort || ''
     choice.running = body.running || ''
     choice.session = !!body.session
+    choice.limits = body.limits || null
     choice.inherited = { model: !!(body.inherited && body.inherited.model), effort: !!(body.inherited && body.inherited.effort) }
     if (body.options) adoptOptions(body.options, body.optionsAt || 0)
   }
@@ -6658,7 +6709,7 @@
   function choiceGone() {
     const gone = []
     if (choice.goneModel && choice.goneModel === choice.model && !modelListed(choice.options, choice.model)) gone.push(choice.goneLabel)
-    if (choice.goneEffort && choice.goneEffort === choice.effort && !((choice.options && choice.options.efforts) || []).includes(choice.effort)) gone.push(effortLabel(choice.effort))
+    if (choice.goneEffort && choice.goneEffort === choice.effort && !((choice.options && choice.options.efforts) || []).includes(choice.effort)) gone.push(effortName(choice.effort))
     if (!gone.length) return ''
     return gone.map((g) => '"' + g + '"').join(' and ') + " isn't offered by the agent any more, and is what's chosen: your next prompt will probably fail. Choose another" +
       (gone.length > 1 ? ' model and effort.' : choice.goneModel === choice.model ? ' model.' : ' effort.')
@@ -6676,6 +6727,14 @@
     if (choice.problem) choice.unseen = true
     drawChoice()
     maybeAdopt()
+  }
+
+  // rereadChoice shows the choice as vibe has it now, for a change vibe made itself. Not before the first read
+  // (what was said before the page was opened is in it), and not over one the user is making or saving: the
+  // end of the turn reads it again, and theirs is the newest word.
+  async function rereadChoice() {
+    if (!state.choice || !choice.loaded || choice.saving || choice.choosing) return
+    await readChoice()
   }
 
   // askChoiceOptions asks for the agent's lists. wake says the sandbox may be
@@ -6709,6 +6768,27 @@
     choice.loaded = true
     await askChoiceOptions(false)
     if (choiceProblem()) setChoiceBubble(true)
+  }
+
+  // unlockChoice is the user saying the plan has changed: the host forgets what it learned of its limits.
+  async function unlockChoice() {
+    choice.limitError = ''
+    try {
+      const res = await post('/api/conversation/choice/unlock', {})
+      reached(true)
+      if (res.ok) {
+        takeChoice(res.body)
+        choice.blocked = ''
+        setChoiceBubble(false)
+        toast("Every model is offered again. If your plan still can't run one, vibe finds out when you use it.")
+        return
+      }
+      choice.limitError = res.body.error || "the limits couldn't be taken away."
+    } catch (e) {
+      reached(false)
+      choice.limitError = 'Could not reach vibe to take the limits away.'
+    }
+    drawChoice()
   }
 
   async function retryChoice() {
@@ -6816,6 +6896,14 @@
     choice.choosing = true
     try {
       const value = $('choice-model').value
+      // Listed, so as to show what there is, but not to be chosen: the drop-down goes back, and why is said.
+      if (choice.limits && choice.limits.unavailable.includes(value)) {
+        choice.blocked = value
+        choice.unseen = true
+        setChoiceBubble(true)
+        drawChoice()
+        return
+      }
       if (value !== OTHER_MODEL) { await changeModel(value); return }
       const other = await pickOtherModel()
       if (other == null) { drawChoice(); return }
@@ -7111,6 +7199,7 @@
     $('choice-info').addEventListener('click', () => setChoiceBubble(!choice.bubble))
     $('choice-bubble-close').addEventListener('click', () => { setChoiceBubble(false); $('choice-info').focus() })
     $('choice-bubble-retry').addEventListener('click', retryChoice)
+    $('choice-bubble-unlock').addEventListener('click', unlockChoice)
     $('choice-quiet').addEventListener('change', () => { store.set(CHOICE_QUIET, $('choice-quiet').checked ? 'yes' : ''); drawChoice() })
     // Escape is the agent's Stop in the prompt box, so it only closes the
     // bubble from inside the choice.
