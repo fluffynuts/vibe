@@ -195,12 +195,8 @@ func TestTheKitSbxIsHandedMergesVibesDenyRulesIntoTheAgentsSettings(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	v3, err := kitspec.ToV3(doc, "claude")
-	if err != nil {
-		t.Fatal(err)
-	}
 	text, err := kitspec.MarshalV3(doc, "claude")
-	if err != nil || v3 == nil {
+	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(text), "Read(./.env)") || !strings.Contains(string(text), "Merge vibe's settings") {
@@ -220,5 +216,49 @@ func TestEveryProfilesKitInstallsTzdata(t *testing.T) {
 	}
 	if !strings.Contains(string(text), "Install tzdata") {
 		t.Error("the kit has no step installing tzdata")
+	}
+}
+
+func TestAFailedCreateKeepsOnlyTheLatestKitForASandboxName(t *testing.T) {
+	tmp := t.TempDir()
+	for _, v := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(v, tmp)
+	}
+	doc := kitspec.Doc{"schemaVersion": "2", "kind": "mixin", "name": "x"}
+	keep := func(name, marker string) string {
+		dir, err := writeKit(doc, name, "claude")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "marker"), []byte(marker), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		kept, err := keepFailedKit(dir, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return kept
+	}
+	first := keep("box", "first")
+	other := keep("other", "other's")
+	second := keep("box", "second")
+	if first != second {
+		t.Errorf("a second failure kept the kit somewhere else: %s, then %s", first, second)
+	}
+	if got, _ := os.ReadFile(filepath.Join(second, "marker")); string(got) != "second" {
+		t.Errorf("the kit kept is %q's, want the latest", got)
+	}
+	if _, err := os.Stat(filepath.Join(second, "spec.yaml")); err != nil {
+		t.Errorf("the kept kit has no spec.yaml: %v", err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("another sandbox's kept kit was touched: %v", err)
+	}
+	forgetFailedKit("box")
+	if _, err := os.Stat(second); !os.IsNotExist(err) {
+		t.Errorf("the kept kit is still there after the sandbox was made: %v", err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("forgetting one sandbox's kit removed another's: %v", err)
 	}
 }

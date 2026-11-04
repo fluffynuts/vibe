@@ -101,6 +101,31 @@ func writeKit(doc kitspec.Doc, name, agent string) (string, error) {
 	return dir, nil
 }
 
+// keptKitDir is where the kit of a sandbox sbx failed to create is kept for a
+// look: one folder per sandbox name, so failed attempts don't pile up.
+func keptKitDir(name string) string {
+	return filepath.Join(os.TempDir(), "vibe-kit-"+name+"-failed")
+}
+
+// keepFailedKit moves kitDir (what writeKit made) to keptKitDir(name), in place
+// of the kit a failed create before it left there, and returns where it is.
+func keepFailedKit(kitDir, name string) (string, error) {
+	kept := keptKitDir(name)
+	if err := os.RemoveAll(kept); err != nil {
+		return "", err
+	}
+	if err := os.Rename(kitDir, kept); err != nil {
+		return "", err
+	}
+	return kept, nil
+}
+
+// forgetFailedKit removes the kit kept for name: the sandbox has been made
+// since, so there is nothing left to look into.
+func forgetFailedKit(name string) {
+	os.RemoveAll(keptKitDir(name))
+}
+
 type publishMapping struct {
 	name          string
 	containerPort int
