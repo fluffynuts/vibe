@@ -761,3 +761,39 @@ func TestAnOrderOfSeveralStopsNamesThemAll(t *testing.T) {
 		t.Errorf("order: %v", got)
 	}
 }
+
+// A path written up through the folder the agent is in (../b/two.go) is the file git says it is.
+func TestAPathWithDotDotFromWhereTheAgentIsIsTheTabsPath(t *testing.T) {
+	work, dir := repoWith(t, []string{"a/one.go", "b/two.go"})
+	out, code := vibeReviewIn(t, filepath.Join(work, "a"), dir, "", "comment", "--file", "../b/two.go", "--line", "1", "--body", "x")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	if got := commentedFile(t, dir); got != "b/two.go" {
+		t.Errorf("the comment is on %q", got)
+	}
+	if !strings.Contains(out, "b/two.go") {
+		t.Errorf("the agent isn't told what it was made into:\n%s", out)
+	}
+	deep, deepDir := repoWith(t, []string{"internal/memory/m.go", "src/vibe/create.go"})
+	if out, code := vibeReviewIn(t, filepath.Join(deep, "internal", "memory"), deepDir, "", "comment", "--file", "../../src/vibe/create.go", "--line", "1", "--body", "x"); code != 0 {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	if got := commentedFile(t, deepDir); got != "src/vibe/create.go" {
+		t.Errorf("the comment is on %q", got)
+	}
+}
+
+// A folder isn't a file, and a path out of the repository isn't in it.
+func TestADotDotPathThatIsAFolderOrLeavesTheRepositoryIsNotMadeUpAsAFile(t *testing.T) {
+	work, dir := repoWith(t, []string{"a/one.go", "b/two.go"})
+	for _, written := range []string{"../b", "../../outside.go"} {
+		out, code := vibeReviewIn(t, filepath.Join(work, "a"), dir, "", "comment", "--file", written, "--line", "1", "--body", "x")
+		if code != 0 {
+			t.Fatalf("%s: exit %d\n%s", written, code, out)
+		}
+		if !strings.Contains(out, "isn't a file in this repository") {
+			t.Errorf("%s: nothing said about it:\n%s", written, out)
+		}
+	}
+}

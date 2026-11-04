@@ -2662,8 +2662,9 @@
         : "Nothing new to send: comment on a line, or reply, first"
     $('review-error').hidden = !reviewView.diffError
     $('review-error').textContent = reviewView.diffError
-    $('review-problems').hidden = !(rv.problems || []).length
-    $('review-problems').replaceChildren(...(rv.problems || []).map((p) => el('li', { text: "The agent's request failed: " + p })))
+    const problems = on ? rv.problems || [] : []
+    $('review-problems').hidden = !problems.length
+    $('review-problems').replaceChildren(...problems.map((p) => el('li', { text: "The agent's request failed: " + p })))
 
     const files = reviewView.files || []
     reviewView.shown = new Map()

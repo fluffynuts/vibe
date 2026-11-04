@@ -183,8 +183,10 @@ function underHere(given, known) {
       for (const f of out.split("\0")) if (f) found.push(f);
     } catch (e) { /* not in a repository: nothing is under here */ }
   }
-  // Only a file the repository of the review has, and named by exactly what was given (not a folder holding it).
-  const files = found.filter(function (f) { return known.has(f) && (f === given || f.endsWith("/" + given)); });
+  // Only a file the repository of the review has, and the one given (not a folder holding files, which git lists
+  // as well): its own name is the last part of what was given, however it got there (a "../" from here, say).
+  const name = path.posix.basename(given);
+  const files = found.filter(function (f) { return known.has(f) && path.posix.basename(f) === name; });
   return files.length === 1 ? files[0] : "";
 }
 

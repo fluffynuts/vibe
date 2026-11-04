@@ -646,6 +646,19 @@ test('a closed review says why, and can be reopened', async () => {
   } finally { p.close() }
 })
 
+// What the agent's failed requests were about is the open review's: once it is closed they are not to stay on the page.
+test("the agent's failed requests are listed with its review, and not once the review is closed", async () => {
+  const problems = ["comment: x.go isn't in the sandbox's folder", 'withdraw: there\'s no thread 9']
+  const open = await startPage({ review: { ...none, started: '2026-10-16T10:00:00Z', threads: [], problems } })
+  const closed = await startPage({ review: { ...none, started: '2026-10-16T10:00:00Z', closed: 'You closed it.', threads: [], problems } })
+  try {
+    assert.equal(open.$('review-problems').hidden, false)
+    assert.deepEqual(Array.from(open.$('review-problems').children).map((li) => li.textContent), problems.map((x) => "The agent's request failed: " + x))
+    assert.equal(closed.$('review-problems').hidden, true, 'a closed review still lists what failed')
+    assert.equal(closed.$('review-problems').children.length, 0)
+  } finally { open.close(); closed.close() }
+})
+
 test('a closed review whose reason is a sentence of its own is shown as it is, not after "The last review was closed."', async () => {
   const closed = { ...none, started: '2026-10-16T10:00:00Z', closed: "The last review was closed when the branch for this workspace switched to 'master'. The review was of 'feat/x'. It is kept: reopen it whenever you like." }
   const p = await startPage({ review: closed })
