@@ -219,7 +219,7 @@ test('the bubble over the info button moves nothing, and stays on the page', asy
   for (const width of [1500, 600]) {
     const page = await conversationPage(width)
     try {
-      const watched = ['#convo-input', '#convo-send', '#choice-model', '#choice-ran', '#convo-log']
+      const watched = ['#convo-input', '#convo-send', '#choice-model-box', '#choice-ran', '#convo-log']
       const before = await Promise.all(watched.map((sel) => box(page, sel)))
       await page.click('#choice-info')
       await page.waitForSelector('#choice-bubble:not([hidden])')
@@ -235,7 +235,7 @@ test('the bubble over the info button moves nothing, and stays on the page', asy
 test('the drop-downs are the same size whatever they hold, so the lists arriving moves nothing', async () => {
   const page = await conversationPage(1500)
   try {
-    const sizes = () => Promise.all(['#choice-model', '#choice-effort', '#convo-choice'].map((sel) => box(page, sel)))
+    const sizes = () => Promise.all(['#choice-model-box .fs-trigger', '#choice-effort', '#convo-choice'].map((sel) => box(page, sel)))
     const full = await sizes()
     await page.evaluate(() => {
       for (const id of ['choice-model', 'choice-effort']) {
@@ -254,7 +254,7 @@ test('the spinner coming and going moves nothing in the widget', async () => {
   for (const width of [1500, 600]) {
     const page = await conversationPage(width)
     try {
-      const watched = ['#convo-choice', '#choice-model', '#choice-effort', '#choice-info', '#convo-send']
+      const watched = ['#convo-choice', '#choice-model-box', '#choice-effort', '#choice-info', '#convo-send']
       const read = () => Promise.all(watched.map((sel) => box(page, sel)))
       await page.evaluate(() => { document.getElementById('choice-spinner').hidden = true })
       const without = await read()
@@ -262,10 +262,73 @@ test('the spinner coming and going moves nothing in the widget', async () => {
       const spinning = await read()
       assert.deepEqual(spinning, without, `at ${width}px wide, the spinner moved something`)
       const spinner = await box(page, '#choice-spinner')
-      const model = await box(page, '#choice-model')
+      const model = await box(page, '#choice-model-box')
       assert.ok(spinner.x + spinner.width <= model.x, `at ${width}px, the spinner isn't to the left of the model drop-down`)
     } finally { await page.close() }
   }
+})
+
+// The model panel opens upwards from the foot of the page, and has to stay on the page whatever its width; typing narrows it.
+test('the model panel opens on the page at any width, narrows as it is typed into, and closes with Escape', async () => {
+  for (const width of [1500, 600]) {
+    const page = await conversationPage(width)
+    try {
+      await page.click('#choice-model-box .fs-trigger')
+      await page.waitForSelector('#choice-model-box .fs-panel:not([hidden])')
+      const panel = await box(page, '#choice-model-box .fs-panel')
+      assert.ok(panel.x >= 0 && panel.x + panel.width <= width, `at ${width}px, the panel runs off the side: ${JSON.stringify(panel)}`)
+      assert.ok(panel.y >= 0, `at ${width}px, the panel runs off the top: ${JSON.stringify(panel)}`)
+      const trigger = await box(page, '#choice-model-box .fs-trigger')
+      assert.ok(panel.y + panel.height <= trigger.y + 1, `at ${width}px, the panel isn't above the button it opened from`)
+      const all = await page.locator('#choice-model-box .fs-opt:visible').count()
+      const texts = await page.locator('#choice-model-box .fs-opt').allTextContents()
+      await page.keyboard.type('haiku')
+      const narrowed = await page.locator('#choice-model-box .fs-opt:visible').count()
+      assert.ok(narrowed >= 1 && narrowed < all, `typing didn't narrow the list (${all} then ${narrowed}); the models: ${JSON.stringify(texts)}; the filter has ${JSON.stringify(await page.inputValue('#choice-model-box .fs-filter'))}`)
+      await page.keyboard.press('Escape')
+      assert.ok(await page.locator('#choice-model-box .fs-panel').isHidden(), 'Escape left the panel open')
+      assert.equal(await page.evaluate(() => document.activeElement.id), 'choice-model-button')
+    } finally { await page.close() }
+  }
+})
+
+// Arrowing through a long list has to keep the row it is on in view (jsdom has no scrolling, so only a browser can say).
+test('arrowing down a long model list keeps the active row inside the list', async () => {
+  const page = await conversationPage(1500)
+  try {
+    await page.evaluate(() => {
+      const select = document.getElementById('choice-model')
+      for (let i = 0; i < 40; i++) select.append(Object.assign(document.createElement('option'), { value: 'vendor/model-' + i, textContent: 'Vendor model ' + i }))
+    })
+    await page.click('#choice-model-box .fs-trigger')
+    await page.waitForSelector('#choice-model-box .fs-opt:nth-of-type(30)', { state: 'attached' })
+    for (let i = 0; i < 30; i++) {
+      await page.keyboard.press('ArrowDown')
+      const rows = await page.evaluate(() => {
+        const list = document.querySelector('#choice-model-box .fs-list').getBoundingClientRect()
+        const row = document.querySelector('#choice-model-box .fs-opt.active').getBoundingClientRect()
+        return { listTop: list.top, listBottom: list.bottom, top: row.top, bottom: row.bottom }
+      })
+      assert.ok(rows.top >= rows.listTop - 1 && rows.bottom <= rows.listBottom + 1, `after ${i + 1} presses, the active row is outside the list: ${JSON.stringify(rows)}`)
+    }
+  } finally { await page.close() }
+})
+
+// A choice is saved with the control disabled; the keyboard user's place in the page must survive that.
+test('after choosing with Enter, focus is on the model button, and Tab goes on to the effort drop-down', async () => {
+  const page = await conversationPage(1500)
+  try {
+    await page.click('#choice-model-box .fs-trigger')
+    await page.keyboard.type('haiku')
+    await page.keyboard.press('Enter')
+    // Saved when the button is let be used again (polled: the page's policy forbids waitForFunction).
+    for (let i = 0; i < 60 && await page.evaluate(() => document.getElementById('choice-model-button').disabled); i++) await page.waitForTimeout(50)
+    assert.ok(!await page.evaluate(() => document.getElementById('choice-model-button').disabled), 'the choice was never saved')
+    const focused = await page.evaluate(() => document.activeElement.id || document.activeElement.tagName)
+    assert.equal(focused, 'choice-model-button', `focus was lost after the choice was kept: it is on ${focused}`)
+    await page.keyboard.press('Tab')
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'choice-effort')
+  } finally { await page.close() }
 })
 
 test('the longest everyday entries fit their drop-downs without being cut off', async () => {
@@ -275,7 +338,8 @@ test('the longest everyday entries fit their drop-downs without being cut off', 
       const measure = document.createElement('canvas').getContext('2d')
       const out = {}
       for (const [id, texts] of [['choice-model', ['Default (Opus 5.5)', 'Sonnet 5.5', 'Fable 5.1', 'Haiku 5.5']], ['choice-effort', ['Default effort', 'Medium effort', 'Extra High effort']]]) {
-        const select = document.getElementById(id)
+        // The model drop-down is a button over the native select (see syncFilterSelect).
+        const select = id === 'choice-model' ? document.querySelector('#choice-model-box .fs-trigger') : document.getElementById(id)
         const style = getComputedStyle(select)
         measure.font = style.font
         // room for the text: the box, less its padding and the arrow the browser draws

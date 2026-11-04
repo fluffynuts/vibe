@@ -804,7 +804,8 @@ test('the spinner is the first thing in the widget, before the Model label', asy
     const group = p.$('convo-choice')
     const first = Array.from(group.children).find((c) => !c.hidden || c.contains(p.$('choice-spinner')))
     assert.ok(first.contains(p.$('choice-spinner')), 'first in the group')
-    const label = group.querySelector('label[for=choice-model]')
+    // The label names the model button, which stands in for the hidden native select.
+    const label = group.querySelector('label[for=choice-model-button]')
     assert.ok(p.$('choice-spinner').compareDocumentPosition(label) & p.window.Node.DOCUMENT_POSITION_FOLLOWING, 'ahead of the label')
     assert.ok(!p.$('choice-ran').contains(p.$('choice-spinner')), 'and not in the caption slot')
   } finally { p.close() }
@@ -813,11 +814,12 @@ test('the spinner is the first thing in the widget, before the Model label', asy
 test('the drop-downs have no visible labels: the entries say what they are, and screen readers and tooltips still have the names', async () => {
   const p = await choicePage({ model: 'opus' })
   try {
-    for (const [id, name] of [['choice-model', 'Model'], ['choice-effort', 'Effort']]) {
-      const select = p.$(id)
-      assert.deepEqual(Array.from(select.labels).map((l) => l.textContent.trim()), [name], id + ' is named by a label')
-      assert.ok(Array.from(select.labels).every((l) => l.classList.contains('sr-only')), 'the label is for screen readers only')
-      assert.equal(select.title, name, id + ' has a tooltip')
+    // The model drop-down is a button over the hidden native select (see syncFilterSelect), and the button is what is named.
+    for (const [id, name] of [['choice-model-button', 'Model'], ['choice-effort', 'Effort']]) {
+      const control = p.$(id)
+      assert.deepEqual(Array.from(control.labels).map((l) => l.textContent.trim()), [name], id + ' is named by a label')
+      assert.ok(Array.from(control.labels).every((l) => l.classList.contains('sr-only')), 'the label is for screen readers only')
+      assert.equal(control.title, name, id + ' has a tooltip')
     }
   } finally { p.close() }
 })
@@ -1624,5 +1626,314 @@ test('a model the host refuses to keep because of the plan is said, and the drop
     assert.ok(p.$('choice-error').open)
     assert.match(p.$('choice-error-text').textContent, /can only use Auto/)
     assert.equal(p.$('choice-model').value, 'auto')
+  } finally { p.close() }
+})
+
+// --- the model list is searchable ---
+//
+// A model list can be hundreds of rows (OpenCode lists every provider's), so the model drop-down is a button that opens a
+// panel with a filter, over the native select, which stays the page's own source of truth.
+
+const MANY = Object.assign({}, OPTIONS, {
+  models: ['sonnet', 'opus', 'haiku'].concat(Array.from({ length: 30 }, (_, i) => 'vendor/model-' + String(i).padStart(2, '0'))),
+  names: Object.assign({}, OPTIONS.names, { 'vendor/model-07': 'Strata Seven', 'vendor/model-08': 'Strata Eight' }),
+})
+const fsBox = (p) => p.$('choice-model-box')
+const fsTrigger = (p) => fsBox(p).querySelector('.fs-trigger')
+const fsLabel = (p) => fsTrigger(p).querySelector('.fs-label').textContent.trim()
+const fsPanel = (p) => fsBox(p).querySelector('.fs-panel')
+const fsInput = (p) => fsBox(p).querySelector('.fs-filter')
+const fsItems = (p) => Array.from(fsBox(p).querySelectorAll('.fs-list .fs-opt'))
+const fsShown = (p) => fsItems(p).filter((li) => !li.hidden)
+const fsKey = (p, node, key) => node.dispatchEvent(new p.window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+async function fsType(p, text) {
+  fsInput(p).value = text
+  fsInput(p).dispatchEvent(new p.window.Event('input', { bubbles: true }))
+  await p.settle()
+}
+async function fsOpen(p) {
+  fsTrigger(p).click()
+  await p.settle()
+}
+
+test('the model drop-down is a button showing the chosen model, which opens a panel of every model with a filter', async () => {
+  const p = await choicePage({ options: MANY, model: 'haiku', haveOptions: true })
+  try {
+    await p.every('pollConversation')
+    assert.equal(fsLabel(p), 'Haiku 5.5')
+    assert.ok(fsPanel(p).hidden, 'the panel is open before it was asked for')
+    assert.equal(fsTrigger(p).getAttribute('aria-expanded'), 'false')
+    await fsOpen(p)
+    assert.ok(!fsPanel(p).hidden)
+    assert.equal(fsTrigger(p).getAttribute('aria-expanded'), 'true')
+    assert.equal(p.window.document.activeElement, fsInput(p), 'the filter is where typing goes')
+    assert.equal(fsItems(p).length, p.$('choice-model').options.length, 'every model is listed, "Other…" too')
+  } finally { p.close() }
+})
+
+test('typing narrows the models to those whose name or id has it in, ignoring case, and says so when none does', async () => {
+  const p = await choicePage({ options: MANY, haveOptions: true })
+  try {
+    await p.every('pollConversation')
+    await fsOpen(p)
+    await fsType(p, 'STRATA')
+    assert.deepEqual(fsShown(p).map((li) => li.dataset.value), ['vendor/model-07', 'vendor/model-08'])
+    await fsType(p, 'model-1')
+    assert.ok(fsShown(p).length >= 10 && fsShown(p).every((li) => li.dataset.value.includes('model-1')), 'the id counts too')
+    await fsType(p, 'nothing like it')
+    assert.equal(fsShown(p).length, 0)
+    assert.match(fsBox(p).querySelector('.fs-none').textContent, /No model matches/)
+    assert.ok(!fsBox(p).querySelector('.fs-none').hidden)
+    await fsType(p, '')
+    assert.equal(fsShown(p).length, fsItems(p).length, 'emptying it shows them all again')
+    assert.ok(fsBox(p).querySelector('.fs-none').hidden)
+  } finally { p.close() }
+})
+
+test('clicking a model chooses it, as picking from the native list does, and closes the panel', async () => {
+  const p = await choicePage({ options: MANY, haveOptions: true })
+  try {
+    await p.every('pollConversation')
+    await fsOpen(p)
+    await fsType(p, 'strata seven')
+    fsShown(p)[0].click()
+    await p.settle()
+    assert.deepEqual(p.posted('/api/conversation/choice'), [{ model: 'vendor/model-07', effort: '' }])
+    assert.ok(fsPanel(p).hidden)
+    assert.equal(fsLabel(p), 'Strata Seven')
+  } finally { p.close() }
+})
+
+test('the arrow keys move through what matches, Enter chooses, and Escape closes with focus back on the button', async () => {
+  const p = await choicePage({ options: MANY, haveOptions: true })
+  try {
+    await p.every('pollConversation')
+    await fsOpen(p)
+    await fsType(p, 'strata')
+    assert.ok(fsShown(p)[0].classList.contains('active'), 'the first match is where Enter would choose')
+    fsKey(p, fsInput(p), 'ArrowDown')
+    assert.ok(fsShown(p)[1].classList.contains('active') && !fsShown(p)[0].classList.contains('active'))
+    assert.equal(fsInput(p).getAttribute('aria-activedescendant'), fsShown(p)[1].id)
+    fsKey(p, fsInput(p), 'ArrowDown')
+    assert.ok(fsShown(p)[1].classList.contains('active'), 'it stops at the last')
+    fsKey(p, fsInput(p), 'ArrowUp')
+    fsKey(p, fsInput(p), 'Enter')
+    await p.settle()
+    assert.deepEqual(p.posted('/api/conversation/choice'), [{ model: 'vendor/model-07', effort: '' }])
+    await fsOpen(p)
+    fsKey(p, fsInput(p), 'Escape')
+    await p.settle()
+    assert.ok(fsPanel(p).hidden)
+    assert.equal(p.window.document.activeElement, fsTrigger(p))
+    assert.equal(p.posted('/api/conversation/choice').length, 1, 'closing chose nothing')
+  } finally { p.close() }
+})
+
+test('opening it again starts from all the models, and a press outside it closes it', async () => {
+  const p = await choicePage({ options: MANY, haveOptions: true })
+  try {
+    await p.every('pollConversation')
+    await fsOpen(p)
+    await fsType(p, 'strata')
+    p.window.document.body.dispatchEvent(new p.window.Event('pointerdown', { bubbles: true }))
+    await p.settle()
+    assert.ok(fsPanel(p).hidden)
+    await fsOpen(p)
+    assert.equal(fsInput(p).value, '')
+    assert.equal(fsShown(p).length, fsItems(p).length)
+  } finally { p.close() }
+})
+
+test('a model the list shows but cannot be chosen is not chosen, and one that is out of reach still can be, as in the native list', async () => {
+  const p = await choicePage({ options: MANY, haveOptions: true })
+  try {
+    await p.every('pollConversation')
+    const select = p.$('choice-model')
+    const gone = Array.from(select.options).find((o) => o.value === 'vendor/model-03')
+    gone.disabled = true
+    await p.settle()
+    await fsOpen(p)
+    const item = fsItems(p).find((li) => li.dataset.value === 'vendor/model-03')
+    assert.equal(item.getAttribute('aria-disabled'), 'true')
+    item.click()
+    await p.settle()
+    assert.equal(p.posted('/api/conversation/choice').length, 0, 'a disabled model was chosen')
+    assert.ok(!fsPanel(p).hidden, 'and the panel stays for another try')
+  } finally { p.close() }
+})
+
+test('groups of models have their headings, and a heading with nothing under it is not shown', async () => {
+  const p = await choicePage({ options: MANY, haveOptions: true })
+  try {
+    await p.every('pollConversation')
+    const select = p.$('choice-model')
+    const group = p.window.document.createElement('optgroup')
+    group.label = 'Needs a key'
+    for (const value of ['vendor/model-20', 'vendor/model-21']) {
+      const option = select.querySelector('option[value="' + value + '"]')
+      group.append(option)
+    }
+    select.append(group)
+    await p.settle()
+    await fsOpen(p)
+    const headings = () => Array.from(fsBox(p).querySelectorAll('.fs-group')).filter((h) => !h.hidden).map((h) => h.textContent)
+    assert.deepEqual(headings(), ['Needs a key'])
+    await fsType(p, 'model-21')
+    assert.deepEqual(headings(), ['Needs a key'])
+    await fsType(p, 'sonnet')
+    assert.deepEqual(headings(), [], 'a heading is shown over nothing')
+  } finally { p.close() }
+})
+
+test('the button is disabled when the drop-down is, and shows what the page chose when it is changed elsewhere', async () => {
+  const p = await choicePage({ options: MANY, haveOptions: true })
+  try {
+    await p.every('pollConversation')
+    assert.ok(!fsTrigger(p).disabled)
+    p.$('choice-model').disabled = true
+    await p.settle()
+    assert.ok(fsTrigger(p).disabled)
+    p.$('choice-model').disabled = false
+    p.at.model = 'opus'
+    await p.every('pollConversation')
+    assert.equal(fsLabel(p), 'Opus 5.5 (default)', 'the page labels the model it defaults to so')
+  } finally { p.close() }
+})
+
+test('a redraw while the panel is open keeps the filter and where in the list the user was', async () => {
+  const p = await choicePage({ options: MANY, haveOptions: true })
+  try {
+    await p.every('pollConversation')
+    await fsOpen(p)
+    await fsType(p, 'strata')
+    fsKey(p, fsInput(p), 'ArrowDown')
+    p.$('choice-model').dispatchEvent(new p.window.Event('blur'))
+    await p.every('pollConversation')
+    assert.ok(!fsPanel(p).hidden)
+    assert.equal(fsInput(p).value, 'strata')
+    assert.deepEqual(fsShown(p).map((li) => li.dataset.value), ['vendor/model-07', 'vendor/model-08'])
+    assert.ok(fsShown(p)[1].classList.contains('active'))
+  } finally { p.close() }
+})
+
+test('the button is named by the Model label, which now points at it and not at the hidden native select', async () => {
+  const p = await choicePage({ options: MANY, haveOptions: true })
+  try {
+    await p.every('pollConversation')
+    const label = p.window.document.querySelector('label.sr-only[for$="choice-model-button"], label[for="choice-model-button"]')
+    assert.ok(label, 'no label points at the button')
+    assert.equal(label.textContent.trim(), 'Model')
+    assert.equal(label.control, fsTrigger(p), 'the label names something else')
+    assert.equal(p.window.document.querySelector('label[for="choice-model"]'), null, 'a label still points at the hidden select')
+  } finally { p.close() }
+})
+
+test('the arrow keys on the button open the panel, and a disabled button does not open', async () => {
+  const p = await choicePage({ options: MANY, haveOptions: true })
+  try {
+    await p.every('pollConversation')
+    for (const key of ['ArrowDown', 'ArrowUp']) {
+      fsKey(p, fsTrigger(p), key)
+      await p.settle()
+      assert.ok(!fsPanel(p).hidden, key + ' did not open it')
+      fsKey(p, fsInput(p), 'Escape')
+      await p.settle()
+      assert.ok(fsPanel(p).hidden)
+    }
+    p.$('choice-model').disabled = true
+    await p.settle()
+    fsTrigger(p).click()
+    fsKey(p, fsTrigger(p), 'ArrowDown')
+    await p.settle()
+    assert.ok(fsPanel(p).hidden, 'a disabled button opened')
+  } finally { p.close() }
+})
+
+test('Tab in the filter closes the panel and chooses nothing', async () => {
+  const p = await choicePage({ options: MANY, haveOptions: true })
+  try {
+    await p.every('pollConversation')
+    await fsOpen(p)
+    await fsType(p, 'strata')
+    fsKey(p, fsInput(p), 'Tab')
+    await p.settle()
+    assert.ok(fsPanel(p).hidden)
+    assert.equal(p.posted('/api/conversation/choice').length, 0)
+  } finally { p.close() }
+})
+
+// A press outside closes the panel, by a listener that goes with the component: one left on the page for a component
+// that is gone would keep it, and what it holds, alive.
+test('the listener that closes the panel on a press outside is let go of once the panel is gone from the page', async () => {
+  const signals = []
+  const p = await choicePage({ options: MANY, haveOptions: true, before: (w) => {
+    const real = w.document.addEventListener.bind(w.document)
+    w.document.addEventListener = (type, fn, opts) => { if (type === 'pointerdown' && opts && opts.signal) signals.push(opts.signal); return real(type, fn, opts) }
+  } })
+  try {
+    await p.every('pollConversation')
+    assert.equal(signals.length, 1, 'the listener is not one that can be let go of')
+    assert.ok(!signals[0].aborted)
+    fsBox(p).remove()
+    p.window.document.body.dispatchEvent(new p.window.Event('pointerdown', { bubbles: true }))
+    await p.settle()
+    assert.ok(signals[0].aborted, 'it is still listening')
+  } finally { p.close() }
+})
+
+// The page disables the drop-down while a choice is saved, and a browser takes focus off a disabled button: the keyboard
+// user's place is given back when it is enabled again, unless they have gone somewhere else meanwhile.
+const someTurns = async () => { for (let i = 0; i < 12; i++) await new Promise((resolve) => setImmediate(resolve)) }
+
+test('after a choice is saved the button has the focus again, as it had it when the choice was made', async () => {
+  let release
+  const hold = new Promise((resolve) => { release = resolve })
+  const p = await choicePage({ options: MANY, haveOptions: true, holdSave: hold })
+  try {
+    await p.every('pollConversation')
+    await fsOpen(p)
+    await fsType(p, 'strata seven')
+    fsKey(p, fsInput(p), 'Enter')
+    await someTurns()
+    assert.ok(fsTrigger(p).disabled, 'it is not disabled while the choice is saved')
+    fsTrigger(p).blur() // what a browser does to a button that is disabled
+    release()
+    await p.settle()
+    assert.ok(!fsTrigger(p).disabled)
+    assert.equal(p.window.document.activeElement, fsTrigger(p), 'focus was not given back')
+  } finally { p.close() }
+})
+
+test('a choice being saved does not take the focus back from where the user has gone meanwhile', async () => {
+  let release
+  const hold = new Promise((resolve) => { release = resolve })
+  const p = await choicePage({ options: MANY, haveOptions: true, holdSave: hold })
+  try {
+    await p.every('pollConversation')
+    await fsOpen(p)
+    await fsType(p, 'strata seven')
+    fsKey(p, fsInput(p), 'Enter')
+    await someTurns()
+    // The other drop-down is disabled while the choice is saved too: the prompt is where they could have gone.
+    p.$('convo-input').focus()
+    release()
+    await p.settle()
+    assert.equal(p.window.document.activeElement, p.$('convo-input'))
+  } finally { p.close() }
+})
+
+test('focus is not taken to the button by a later change to the drop-down that is not the end of a choice being saved', async () => {
+  const p = await choicePage({ options: MANY, haveOptions: true })
+  try {
+    await p.every('pollConversation')
+    await fsOpen(p)
+    fsKey(p, fsInput(p), 'Enter')
+    await p.settle()
+    p.$('convo-input').focus()
+    p.$('choice-model').disabled = true
+    await p.settle()
+    p.$('choice-model').disabled = false
+    await p.settle()
+    assert.equal(p.window.document.activeElement, p.$('convo-input'))
   } finally { p.close() }
 })

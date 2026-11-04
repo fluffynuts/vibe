@@ -549,6 +549,29 @@ html.themed .commands li[aria-selected="true"] {
 .choice select { box-sizing: border-box; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
 /* a width of their own, so what they hold arriving (the agent's lists) moves nothing: room for "Default (Opus 5.5)" and "Extra High effort" */
 #choice-model { width: 14em; }
+
+/* The model drop-down is a button that opens a panel with a filter (see syncFilterSelect): over the native select, hidden. */
+.fs-native { display: none; }
+.fs { position: relative; display: inline-block; }
+.fs-trigger { display: inline-flex; align-items: center; justify-content: space-between; gap: 6px; box-sizing: border-box; width: 14em; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; cursor: pointer; text-align: left; }
+.fs-trigger:disabled { opacity: .6; cursor: default; }
+.fs-trigger:focus-visible, .fs-filter:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.fs-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fs-caret { flex: none; font-size: 10px; color: var(--muted); }
+/* Opens upwards: the drop-down is at the foot of the page. */
+.fs-panel { position: absolute; bottom: calc(100% + 4px); left: 0; z-index: 30; display: flex; flex-direction: column; gap: 6px; box-sizing: border-box; min-width: 100%; width: 26em; max-width: min(34em, 92vw); max-height: min(60vh, 28em); padding: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 0, 0, .35); }
+.fs-panel[hidden] { display: none; }
+.fs-filter { box-sizing: border-box; width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+.fs-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; min-height: 0; }
+.fs-group { padding: 6px 8px 2px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.fs-opt { padding: 4px 8px; border-radius: 4px; cursor: pointer; overflow-wrap: anywhere; }
+.fs-opt[aria-selected="true"]::before { content: "✓ "; color: var(--accent); }
+.fs-opt.active { background: var(--accent); color: var(--accent-text); }
+.fs-opt.active[aria-selected="true"]::before { color: inherit; }
+.fs-opt.unavailable { color: var(--bad); }
+.fs-opt.unavailable.active { color: var(--accent-text); }
+.fs-opt[aria-disabled="true"] { opacity: .5; cursor: default; }
+.fs-none { margin: 0; padding: 4px 8px; }
 #choice-effort { width: 11em; }
 .choice select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* a slot of its own, so what's said there (that the models are loading, or that the agent ran another) coming and going moves nothing */
