@@ -26,13 +26,26 @@ func opencodeSaysModels(t *testing.T, extra string) (ask askAgent, scripts *[]st
 	scripts = &[]string{}
 	return func(_ context.Context, script string) (string, error) {
 		*scripts = append(*scripts, script)
+		if strings.HasSuffix(script, "debug config") {
+			return opencodeConfig, nil
+		}
 		return said, nil
 	}, scripts
 }
 
+// opencodeConfig is what the sandbox's opencode debug config prints: set by a test.
+var opencodeConfig = `{"$schema": "https://opencode.ai/config.json", "autoupdate": false}`
+
 const paidHaiku = `anthropic/claude-haiku-4-5
 {"id": "claude-haiku-4-5", "providerID": "anthropic", "name": "Claude Haiku 4.5", "status": "active",
  "cost": {"input": 1, "output": 5}, "capabilities": {"toolcall": true}, "variants": {"high": {}, "max": {}}}
+`
+
+// localStrata is a local model as OpenCode lists it for the config of a user's own server (docs: a friend's strata).
+const localStrata = `strata/qwen3.8-flash-next-gyro-gyro-m
+{"id": "qwen3.8-flash-next-gyro-gyro-m", "providerID": "strata", "name": "Qwen3.8-Flash-Next (local)", "status": "active",
+ "cost": {"input": 0, "output": 0, "cache": {"read": 0, "write": 0}},
+ "capabilities": {"toolcall": true}, "variants": {}}
 `
 
 const localModel = `ollama/qwen3
@@ -49,6 +62,7 @@ type opencodeFiles struct {
 	kept    profileChoice
 	options string
 	list    string
+	deflt   string
 	keys    *opencodeKeys
 	secrets *string
 	reads   *int
@@ -61,15 +75,15 @@ func newOpencodeChoice(t *testing.T, ask askAgent) (*companion.Choice, opencodeF
 	text := ""
 	reads := 0
 	keys := newOpencodeKeys("box", func(context.Context) (string, error) { reads++; return text, nil }, time.Now)
-	files := opencodeFiles{kept: kept, options: filepath.Join(dir, "options.json"), list: filepath.Join(dir, "models.txt"), keys: keys, secrets: &text, reads: &reads}
-	return opencodeChoice(ask, "/work/box", kept, files.options, files.list, keys), files
+	files := opencodeFiles{kept: kept, options: filepath.Join(dir, "options.json"), list: filepath.Join(dir, "models.txt"), deflt: filepath.Join(dir, "default.txt"), keys: keys, secrets: &text, reads: &reads}
+	return opencodeChoice(ask, "/work/box", kept, files.options, files.list, files.deflt, keys), files
 }
 
 func TestOpencodesListIsAskedForInTheWorkspaceAndOffersEveryModelWithItsOwnEfforts(t *testing.T) {
 	ask, scripts := opencodeSaysModels(t, paidHaiku)
 	c, _ := newOpencodeChoice(t, ask)
 	opts := opencodeAskedFor(t, c)
-	if len(*scripts) != 1 || !strings.Contains((*scripts)[0], "cd '/work/box' && ") || !strings.Contains((*scripts)[0], "models --verbose") {
+	if len(*scripts) != 2 || !strings.Contains((*scripts)[0], "cd '/work/box' && ") || !strings.Contains((*scripts)[0], "models --verbose") || !strings.HasSuffix((*scripts)[1], "debug config") {
 		t.Errorf("asked: %q", *scripts)
 	}
 	if !slices.Contains(opts.Models, "opencode/big-pickle") || !slices.Contains(opts.Models, "anthropic/claude-haiku-4-5") || len(opts.OtherModels) != 0 {
@@ -146,7 +160,7 @@ func TestAKeptModelOpencodeNoLongerListsIsNeitherShownNorRun(t *testing.T) {
 	if model, effort, _ := c.Get(); model != "" || effort != "" {
 		t.Errorf("shown %q, %q", model, effort)
 	}
-	turn, err := opencodeTurnChoice(files.kept, files.list)()
+	turn, err := opencodeTurnChoice(files.kept, files.list, files.deflt, nil, "/w")()
 	if err != nil || turn.Model != opencodeFreeModel || turn.Variant != "" {
 		t.Errorf("turn: %+v, %v", turn, err)
 	}
@@ -159,7 +173,7 @@ func TestATurnRunsTheModelAndEffortThatWereChosen(t *testing.T) {
 	if err := c.Set("opencode/beam-free", "xhigh"); err != nil {
 		t.Fatal(err)
 	}
-	turn, err := opencodeTurnChoice(files.kept, files.list)()
+	turn, err := opencodeTurnChoice(files.kept, files.list, files.deflt, nil, "/w")()
 	if err != nil || turn.Model != "opencode/beam-free" || turn.Variant != "xhigh" {
 		t.Errorf("turn: %+v, %v", turn, err)
 	}
@@ -171,7 +185,7 @@ func TestNothingChosenRunsTheFreeModelAndNothingUnverifiedIsSent(t *testing.T) {
 	if err := files.kept.set("opencode/beam-free", "high"); err != nil {
 		t.Fatal(err)
 	}
-	turn, err := opencodeTurnChoice(files.kept, files.list)()
+	turn, err := opencodeTurnChoice(files.kept, files.list, files.deflt, nil, "/w")()
 	if err != nil || turn.Model != opencodeFreeModel || turn.Variant != "" {
 		t.Errorf("turn: %+v, %v", turn, err)
 	}
@@ -213,7 +227,7 @@ func TestWhenSbxCantBeAskedAboutKeysNothingIsMarked(t *testing.T) {
 	kept, settings := choiceHome(t, "")
 	dir := filepath.Dir(settings)
 	keys := newOpencodeKeys("box", func(context.Context) (string, error) { return "", os.ErrNotExist }, time.Now)
-	c := opencodeChoice(ask, "/w", kept, filepath.Join(dir, "o.json"), filepath.Join(dir, "m.txt"), keys)
+	c := opencodeChoice(ask, "/w", kept, filepath.Join(dir, "o.json"), filepath.Join(dir, "m.txt"), filepath.Join(dir, "d.txt"), keys)
 	opencodeAskedFor(t, c)
 	if limits := c.Limits(); limits != nil {
 		t.Errorf("limits with no way to know: %+v", limits)
@@ -300,5 +314,72 @@ func TestASecretThatIsALoginIsNotAKeyAndTheReasonSaysSo(t *testing.T) {
 	}
 	if limits := c.Limits(); limits != nil {
 		t.Errorf("with a key stored too: %+v", limits)
+	}
+}
+
+// The model OpenCode would run with nothing chosen is what the sandbox's own config says (a local model, say), and only
+// where it says none is it the free model: a private model's code is not sent to a hosted one.
+func TestWithNothingChosenATurnRunsTheModelTheSandboxsConfigSaysAndElseTheFreeOne(t *testing.T) {
+	t.Cleanup(func() { opencodeConfig = `{"$schema": "https://opencode.ai/config.json", "autoupdate": false}` })
+	opencodeConfig = `{"model": "strata/qwen3.8-flash-next-gyro-gyro-m", "provider": {}}`
+	ask, _ := opencodeSaysModels(t, localStrata)
+	c, files := newOpencodeChoice(t, ask)
+	opts := opencodeAskedFor(t, c)
+	if opts.Current != "strata/qwen3.8-flash-next-gyro-gyro-m" {
+		t.Errorf("the default shown is %q", opts.Current)
+	}
+	turn, err := opencodeTurnChoice(files.kept, files.list, files.deflt, nil, "/w")()
+	if err != nil || turn.Model != "strata/qwen3.8-flash-next-gyro-gyro-m" || turn.Variant != "" {
+		t.Errorf("turn: %+v, %v", turn, err)
+	}
+	// A default the list doesn't have can't be vouched for.
+	opencodeConfig = `{"model": "strata/gone"}`
+	opencodeAskedFor(t, c)
+	if turn, _ := opencodeTurnChoice(files.kept, files.list, files.deflt, nil, "/w")(); turn.Model != opencodeFreeModel {
+		t.Errorf("an unlisted default ran as %q", turn.Model)
+	}
+	// And a config that says none leaves the free model.
+	opencodeConfig = `{"autoupdate": false}`
+	opencodeAskedFor(t, c)
+	if turn, _ := opencodeTurnChoice(files.kept, files.list, files.deflt, nil, "/w")(); turn.Model != opencodeFreeModel {
+		t.Errorf("with no default in the config, the turn ran %q", turn.Model)
+	}
+}
+
+// A first prompt can come before the page has asked for the lists: the default is then asked for, not guessed.
+func TestADefaultNobodyHasAskedForYetIsAskedForBeforeTheTurn(t *testing.T) {
+	t.Cleanup(func() { opencodeConfig = `{"$schema": "https://opencode.ai/config.json", "autoupdate": false}` })
+	opencodeConfig = `{"model": "strata/qwen3.8-flash-next-gyro-gyro-m"}`
+	ask, scripts := opencodeSaysModels(t, localStrata)
+	c, files := newOpencodeChoice(t, ask)
+	opencodeAskedFor(t, c)
+	if err := os.Remove(files.deflt); err != nil {
+		t.Fatal(err)
+	}
+	*scripts = nil
+	turn, err := opencodeTurnChoice(files.kept, files.list, files.deflt, ask, "/w")()
+	if err != nil || turn.Model != "strata/qwen3.8-flash-next-gyro-gyro-m" {
+		t.Errorf("turn: %+v, %v", turn, err)
+	}
+	if len(*scripts) != 1 || !strings.HasSuffix((*scripts)[0], "debug config") {
+		t.Errorf("asked: %q", *scripts)
+	}
+	// And it is kept: the next turn doesn't ask.
+	*scripts = nil
+	opencodeTurnChoice(files.kept, files.list, files.deflt, ask, "/w")()
+	if len(*scripts) != 0 {
+		t.Errorf("asked again: %q", *scripts)
+	}
+}
+
+func TestADefaultTheSandboxCantSayIsNoneAndTheTurnIsNotStopped(t *testing.T) {
+	ask, _ := opencodeSaysModels(t, "")
+	c, files := newOpencodeChoice(t, ask)
+	opencodeAskedFor(t, c)
+	os.Remove(files.deflt)
+	broken := func(context.Context, string) (string, error) { return "not json at all", nil }
+	turn, err := opencodeTurnChoice(files.kept, files.list, files.deflt, broken, "/w")()
+	if err != nil || turn.Model != opencodeFreeModel {
+		t.Errorf("turn: %+v, %v", turn, err)
 	}
 }

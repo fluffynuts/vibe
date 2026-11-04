@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -21,6 +22,9 @@ const opencodeChoiceNote = "OpenCode lists the models of every provider the sand
 
 // maxOpencodeList is the most OpenCode's verbose list may be: a few KB for each of a few hundred models.
 const maxOpencodeList = 8 << 20
+
+// maxOpencodeConfig is the most the printed config may be.
+const maxOpencodeConfig = 1 << 20
 
 // opencodeFreeGroup is the heading over the models the sandbox has no key for.
 const opencodeFreeGroup = "Needs a key"
@@ -111,7 +115,7 @@ func (k *opencodeKeys) forget() error {
 //
 // What the profile holds can be put there by another agent, or by hand, so a model that isn't in OpenCode's list is
 // neither shown as chosen nor run.
-func opencodeChoice(ask askAgent, workspace string, kept profileChoice, optionsFile, listFile string, keys *opencodeKeys) *companion.Choice {
+func opencodeChoice(ask askAgent, workspace string, kept profileChoice, optionsFile, listFile, defaultFile string, keys *opencodeKeys) *companion.Choice {
 	cached, remember := keptOptionsTidied(optionsFile, time.Now, func(*companion.Options) {})
 	// shown is a stored choice as the page has it: the model if OpenCode has it, and the effort if the model takes it.
 	shown := func(c turnChoice) (string, string) {
@@ -152,7 +156,7 @@ func opencodeChoice(ask askAgent, workspace string, kept profileChoice, optionsF
 			return kept.set(model, effort)
 		},
 		Options: func(ctx context.Context) (companion.Options, error) {
-			return opencodeOptions(ctx, ask, workspace, listFile)
+			return opencodeOptions(ctx, ask, workspace, listFile, defaultFile)
 		},
 		Cached:   cached,
 		Remember: remember,
@@ -214,12 +218,8 @@ func loadOpencodeList(file string) (opencodemodels.Catalogue, bool) {
 // opencodeOptions asks the OpenCode in the sandbox which models it has, in the folder the sandbox works in, keeps
 // what it said in listFile, and gives the page's lists: each model, and the efforts it takes. A list with no model in
 // it is an error, said, not shown as having no models.
-func opencodeOptions(ctx context.Context, ask askAgent, workspace, listFile string) (companion.Options, error) {
-	command := "opencode models --verbose"
-	if workspace != "" {
-		command = "cd " + shellQuote(workspace) + " && " + command
-	}
-	text, err := within(ctx, ask, command, maxOpencodeList, "models --verbose")
+func opencodeOptions(ctx context.Context, ask askAgent, workspace, listFile, defaultFile string) (companion.Options, error) {
+	text, err := within(ctx, ask, opencodeInFolder(workspace, "opencode models --verbose"), maxOpencodeList, "models --verbose")
 	if err != nil {
 		return companion.Options{}, fmt.Errorf("asking OpenCode which models it has: %w", err)
 	}
@@ -239,7 +239,15 @@ func opencodeOptions(ctx context.Context, ask askAgent, workspace, listFile stri
 		EffortNames:    map[string]string{},
 		Names:          map[string]string{},
 	}
-	if cat.Has(opencodeFreeModel) {
+	// What runs with nothing chosen: the model the sandbox's config names, else the free one.
+	defaultModel, ok := opencodeFetchDefault(ctx, ask, workspace, defaultFile)
+	if !ok {
+		defaultModel = opencodeAskDefault(ctx, nil, workspace, defaultFile)
+	}
+	switch {
+	case defaultModel != "" && cat.Has(defaultModel):
+		opts.Current = defaultModel
+	case cat.Has(opencodeFreeModel):
 		opts.Current = opencodeFreeModel
 	}
 	for _, key := range cat.Keys() {
@@ -257,10 +265,61 @@ func opencodeOptions(ctx context.Context, ask askAgent, workspace, listFile stri
 	return opts, nil
 }
 
+// opencodeDefaultModel is the model a turn runs when none is chosen: the one the sandbox's OpenCode config names, when
+// it is a model OpenCode lists, else the free model. A model the config names is the user's own choice (a local
+// model, say: its code is not for a hosted one). cat is the list, known only if listed.
+func opencodeDefaultModel(ask askAgent, workspace, defaultFile string, cat opencodemodels.Catalogue, listed bool) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	name := opencodeAskDefault(ctx, ask, workspace, defaultFile)
+	if name != "" && (!listed || cat.Has(name)) {
+		return name
+	}
+	return opencodeFreeModel
+}
+
+// opencodeFetchDefault asks the sandbox's OpenCode which model its config names as the default (opencode debug config
+// prints the config as it resolves, every file in it), and keeps the answer in file: nothing in the file when the config
+// names none. ok is false when it couldn't be asked or the answer couldn't be kept.
+func opencodeFetchDefault(ctx context.Context, ask askAgent, workspace, file string) (name string, ok bool) {
+	if ask == nil {
+		return "", false
+	}
+	text, err := within(ctx, ask, opencodeInFolder(workspace, "opencode debug config"), maxOpencodeConfig, "debug config")
+	if err != nil {
+		return "", false
+	}
+	var config struct {
+		Model string `json:"model"`
+	}
+	if json.Unmarshal([]byte(text), &config) == nil && modelchoice.CheckModel(config.Model) == nil {
+		name = config.Model
+	}
+	return name, fscopy.WriteWhole(file, []byte(name)) == nil
+}
+
+// opencodeAskDefault is the default model as kept in file, asked of the sandbox first when none is kept. "" when there
+// is none, or it can't be told: the free model is then the default.
+func opencodeAskDefault(ctx context.Context, ask askAgent, workspace, file string) string {
+	if data, err := fscopy.ReadFile(file); err == nil {
+		return strings.TrimSpace(string(data))
+	}
+	name, _ := opencodeFetchDefault(ctx, ask, workspace, file)
+	return name
+}
+
+// opencodeInFolder is command run in the folder the sandbox works in.
+func opencodeInFolder(workspace, command string) string {
+	if workspace == "" {
+		return command
+	}
+	return "cd " + shellQuote(workspace) + " && " + command
+}
+
 // opencodeTurnChoice is the model and variant a turn asks OpenCode for: those the profile holds, when OpenCode has
-// them, else the free model, and no variant. One that can't be vouched for (not in the list, or the list isn't known
+// them, else the default (see opencodeDefaultModel), and no variant. One that can't be vouched for (not in the list, or the list isn't known
 // yet) isn't sent. One that isn't safe to put on a command line is refused, naming the file to fix.
-func opencodeTurnChoice(kept profileChoice, listFile string) func() (opencodeTurn, error) {
+func opencodeTurnChoice(kept profileChoice, listFile, defaultFile string, ask askAgent, workspace string) func() (opencodeTurn, error) {
 	return func() (opencodeTurn, error) {
 		c, err := kept.resolve()
 		if err != nil {
@@ -271,7 +330,7 @@ func opencodeTurnChoice(kept profileChoice, listFile string) func() (opencodeTur
 		}
 		cat, ok := loadOpencodeList(listFile)
 		if c.Model == "" || !ok || !cat.Has(c.Model) {
-			return opencodeTurn{Model: opencodeFreeModel}, nil
+			return opencodeTurn{Model: opencodeDefaultModel(ask, workspace, defaultFile, cat, ok)}, nil
 		}
 		turn := opencodeTurn{Model: c.Model}
 		if c.Effort != "" && slices.Contains(cat.Efforts(c.Model), c.Effort) {

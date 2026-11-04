@@ -275,6 +275,12 @@ func OpencodeOptionsPath(vibeHome, name string) string {
 	return filepath.Join(vibeHome, "companion", name+".opencode-options.json")
 }
 
+// OpencodeDefaultPath is where the model a sandbox's OpenCode config names as its default is kept (nothing in the file
+// when it names none).
+func OpencodeDefaultPath(vibeHome, name string) string {
+	return filepath.Join(vibeHome, "companion", name+".opencode-default.txt")
+}
+
 // OpencodeModelsPath is where what OpenCode's models --verbose said is kept, as it said it: a choice of model and
 // effort is checked against it.
 func OpencodeModelsPath(vibeHome, name string) string {

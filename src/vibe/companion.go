@@ -309,7 +309,7 @@ func hasConversation(inst state.Instance) bool {
 // agent, or nil when it has none: only claude can be driven this way so far.
 func conversationFor(vibeHome, name string, inst state.Instance, choice profileChoice) companion.Converser {
 	if inst.Agent == "opencode" {
-		return converseOpencode(name, inst.Target, opencodeTurnChoice(choice, state.OpencodeModelsPath(vibeHome, name)))
+		return converseOpencode(name, inst.Target, opencodeTurnChoice(choice, state.OpencodeModelsPath(vibeHome, name), state.OpencodeDefaultPath(vibeHome, name), opencodeAsk(name), inst.Target))
 	}
 	if !hasConversation(inst) {
 		return nil
@@ -321,7 +321,7 @@ func conversationFor(vibeHome, name string, inst state.Instance, choice profileC
 // name's agent, or nil when it has none to choose (see conversationFor).
 func choiceFor(vibeHome, name string, inst state.Instance, kept profileChoice) *companion.Choice {
 	if inst.Agent == "opencode" {
-		return opencodeChoice(opencodeAsk(name), inst.Target, kept, state.OpencodeOptionsPath(vibeHome, name), state.OpencodeModelsPath(vibeHome, name),
+		return opencodeChoice(opencodeAsk(name), inst.Target, kept, state.OpencodeOptionsPath(vibeHome, name), state.OpencodeModelsPath(vibeHome, name), state.OpencodeDefaultPath(vibeHome, name),
 			newOpencodeKeys(name, sbxrun.Secrets, time.Now))
 	}
 	if !hasConversation(inst) {
