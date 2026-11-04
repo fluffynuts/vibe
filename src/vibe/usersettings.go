@@ -204,6 +204,10 @@ func pickCPUs(want int, ask bool, question string) int {
 	return options[i]
 }
 
+// chooseAgent asks which of the agents, with the filter: the list grows as sbx supports more agents, and typing narrows
+// it. A variable for tests.
+var chooseAgent = filterFrom
+
 // pickAgent asks which agent a sandbox runs, from the ones sbx lists,
 // starting on current (claude when unset). Without ask, current is kept.
 func pickAgent(current string, ask bool, question string) string {
@@ -222,7 +226,7 @@ func pickAgent(current string, ask bool, question string) string {
 		agents = append([]string{current}, agents...)
 		idx = 0
 	}
-	i, ok := chooseFrom(question, agents, idx)
+	i, ok := chooseAgent(question, agents, idx)
 	if !ok {
 		note("  keeping agent: %s", current)
 		return current
