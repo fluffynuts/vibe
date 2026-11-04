@@ -9,6 +9,9 @@ import (
 	"vibe/internal/state"
 )
 
+// freeTurn is a turn with nothing chosen.
+func freeTurn() (opencodeTurn, error) { return opencodeTurn{Model: opencodeFreeModel}, nil }
+
 func TestOpencodeCommandRunsOpencodeInTheWorkspaceWithJSONEventsAndNoTerminal(t *testing.T) {
 	cmd := opencodeCommand("/home/me/my project", "", "/tmp/t.pid", "", "")
 	if cmd[0] != "sh" || cmd[1] != "-c" || cmd[2] != asAgentScript || cmd[3] != "converse" || len(cmd) != 5 {
@@ -96,7 +99,7 @@ func TestATurnGivesThePageWhatOpencodeSaidAsWhatItDraws(t *testing.T) {
 	prompts := opencodeSays(t, []string{ocText, ocFinish}, nil)
 	var seen []string
 	delivered := false
-	err := converseOpencode("box", "/w")(context.Background(), "do the thing", "", func() { delivered = true }, func(l []byte) { seen = append(seen, string(l)) })
+	err := converseOpencode("box", "/w", freeTurn)(context.Background(), "do the thing", "", func() { delivered = true }, func(l []byte) { seen = append(seen, string(l)) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +115,7 @@ func TestATurnGivesThePageWhatOpencodeSaidAsWhatItDraws(t *testing.T) {
 func TestAnErrorOpencodeSaidIsNotSaidAgainAsAnExitStatus(t *testing.T) {
 	opencodeSays(t, []string{ocError}, errors.New("exit status 1"))
 	var seen []string
-	err := converseOpencode("box", "/w")(context.Background(), "x", "", func() {}, func(l []byte) { seen = append(seen, string(l)) })
+	err := converseOpencode("box", "/w", freeTurn)(context.Background(), "x", "", func() {}, func(l []byte) { seen = append(seen, string(l)) })
 	if err != nil {
 		t.Errorf("the turn failed again as %v", err)
 	}
@@ -123,7 +126,7 @@ func TestAnErrorOpencodeSaidIsNotSaidAgainAsAnExitStatus(t *testing.T) {
 
 func TestAFailureOpencodeSaidNothingAboutIsTheTurnFailing(t *testing.T) {
 	opencodeSays(t, nil, errors.New("exit status 127: opencode: not found"))
-	err := converseOpencode("box", "/w")(context.Background(), "x", "", func() {}, func([]byte) {})
+	err := converseOpencode("box", "/w", freeTurn)(context.Background(), "x", "", func() {}, func([]byte) {})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("err = %v", err)
 	}
@@ -141,29 +144,29 @@ func TestStoppingATurnEndsWhatItStartedInTheSandbox(t *testing.T) {
 		cancel()
 		return ctx.Err()
 	}
-	converseOpencode("box", "/w")(ctx, "x", "", func() {}, func([]byte) {})
+	converseOpencode("box", "/w", freeTurn)(ctx, "x", "", func() {}, func([]byte) {})
 	if !strings.HasPrefix(stopped, "box /tmp/vibe-turn-") {
 		t.Errorf("stopTurn: %q", stopped)
 	}
 }
 
-func TestOpencodeHasAConversationButNoPickersYet(t *testing.T) {
+func TestOpencodeHasAConversationAndPickers(t *testing.T) {
 	if !hasConversation(state.Instance{Agent: "opencode"}) {
 		t.Error("OpenCode has no Conversation tab")
 	}
 	if conversationFor("/home", "box", state.Instance{Agent: "opencode"}, profileChoice{}) == nil {
 		t.Error("OpenCode has no way to talk to")
 	}
-	if choiceFor("/home", "box", state.Instance{Agent: "opencode"}, profileChoice{}) != nil {
-		t.Error("OpenCode is offered pickers that aren't built")
+	if choiceFor("/home", "box", state.Instance{Agent: "opencode"}, profileChoice{}) == nil {
+		t.Error("OpenCode has no way to choose a model")
 	}
 }
 
-// Until the page can choose, a turn runs a model that costs nothing: OpenCode's own default can be one that needs a
-// payment or a key (one was Grok), which fails the turn.
-func TestATurnRunsAFreeModelUntilThePageCanChoose(t *testing.T) {
+// With nothing chosen a turn runs a model that costs nothing: OpenCode's own default can be one that needs a payment or
+// a key (one was Grok), which fails the turn.
+func TestATurnRunsAFreeModelWhenNoneIsChosen(t *testing.T) {
 	opencodeSays(t, []string{ocText, ocFinish}, nil)
-	if err := converseOpencode("box", "/w")(context.Background(), "x", "", func() {}, func([]byte) {}); err != nil {
+	if err := converseOpencode("box", "/w", freeTurn)(context.Background(), "x", "", func() {}, func([]byte) {}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(lastOpencodeCommand, "'-m' 'opencode/big-pickle'") {

@@ -312,6 +312,17 @@ type keptOptionsFile struct {
 // that can't be read is said, and not used, and the agent is asked as if
 // nothing were kept.
 func keptOptions(file string, now func() time.Time) (cached func() (companion.Options, time.Time, bool), remember func(companion.Options) error) {
+	return keptOptionsTidied(file, now, func(opts *companion.Options) {
+		// Kept in whatever order it was in then.
+		opts.Models, opts.OtherModels = modelchoice.BySize(opts.Models), modelchoice.BySize(opts.OtherModels)
+		// Said by the list itself since lists kept earlier were made.
+		opts.Rules = modelchoice.RulesAmong(opts.OtherModels)
+	})
+}
+
+// keptOptionsTidied is keptOptions for an agent whose lists are tidied as it
+// says, on the way out of the file.
+func keptOptionsTidied(file string, now func() time.Time, tidy func(*companion.Options)) (cached func() (companion.Options, time.Time, bool), remember func(companion.Options) error) {
 	cached = func() (companion.Options, time.Time, bool) {
 		data, err := fscopy.ReadFile(file)
 		if os.IsNotExist(err) {
@@ -331,10 +342,7 @@ func keptOptions(file string, now func() time.Time) (cached func() (companion.Op
 			note("the list of models kept in %s can't be used (%v): the agent is asked afresh", file, err)
 			return companion.Options{}, time.Time{}, false
 		}
-		// Kept in whatever order it was in then.
-		kept.Options.Models, kept.Options.OtherModels = modelchoice.BySize(kept.Options.Models), modelchoice.BySize(kept.Options.OtherModels)
-		// Said by the list itself since lists kept earlier were made.
-		kept.Options.Rules = modelchoice.RulesAmong(kept.Options.OtherModels)
+		tidy(&kept.Options)
 		return kept.Options, kept.At, true
 	}
 	remember = func(opts companion.Options) error {

@@ -269,6 +269,18 @@ func ConversationPath(vibeHome, name string) string {
 	return filepath.Join(vibeHome, "companion", name+".conversation.json")
 }
 
+// OpencodeOptionsPath is where the models and efforts a sandbox's OpenCode said it has are kept, as the page offers
+// them: apart from ModelOptionsPath's, which are claude's, as a sandbox's agent can be switched.
+func OpencodeOptionsPath(vibeHome, name string) string {
+	return filepath.Join(vibeHome, "companion", name+".opencode-options.json")
+}
+
+// OpencodeModelsPath is where what OpenCode's models --verbose said is kept, as it said it: a choice of model and
+// effort is checked against it.
+func OpencodeModelsPath(vibeHome, name string) string {
+	return filepath.Join(vibeHome, "companion", name+".opencode-models.txt")
+}
+
 // ModelOptionsPath is where the models and efforts a sandbox's agent said it
 // has are kept on the host, so the page has them to show at once next time.
 func ModelOptionsPath(vibeHome, name string) string {
