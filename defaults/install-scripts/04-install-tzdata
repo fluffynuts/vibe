@@ -1,0 +1,14 @@
+#!/bin/sh
+# vibe: description: Install tzdata, so the sandbox can be set to the user's timezone (non-fatal)
+# vibe: user: 0
+# sbx's claude image has no /usr/share/zoneinfo, and vibe sets the sandbox's
+# timezone from it at every session start; without it the sandbox stays in UTC.
+LOG="${TZDATA_INSTALL_LOG:-/tmp/sbx-setup.log}"
+ZONEINFO="${TZDATA_ZONEINFO:-/usr/share/zoneinfo}"
+if [ -d "$ZONEINFO" ]; then
+  exit 0
+fi
+echo "--- installing tzdata $(date -Is)" >>"$LOG"
+sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y tzdata </dev/null >>"$LOG" 2>&1 \
+  || echo "WARN: tzdata install failed: the sandbox's timezone can't be set" >>"$LOG"
+true

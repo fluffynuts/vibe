@@ -71,7 +71,7 @@ func TestLoadKitBundledProfile(t *testing.T) {
 	}
 
 	installSteps, _ := setup["install"].([]interface{})
-	const defaultSteps = 4
+	const defaultSteps = 5
 	wantSteps := defaultSteps + profileSteps // default scripts + the profile's own
 	if len(installSteps) != wantSteps {
 		t.Fatalf("expected %d install steps, got %d", wantSteps, len(installSteps))
