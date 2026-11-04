@@ -309,7 +309,9 @@ func hasConversation(inst state.Instance) bool {
 // agent, or nil when it has none: only claude can be driven this way so far.
 func conversationFor(vibeHome, name string, inst state.Instance, choice profileChoice) companion.Converser {
 	if inst.Agent == "opencode" {
-		return converseOpencode(name, inst.Target, opencodeTurnChoice(choice, state.OpencodeModelsPath(vibeHome, name), state.OpencodeDefaultPath(vibeHome, name), opencodeAsk(name), inst.Target))
+		return keepingTranscript(
+			converseOpencode(name, inst.Target, opencodeTurnChoice(choice, state.OpencodeModelsPath(vibeHome, name), state.OpencodeDefaultPath(vibeHome, name), opencodeAsk(name), inst.Target)),
+			sandboxOpencodeSessions(name), state.TranscriptPath(vibeHome, name))
 	}
 	if !hasConversation(inst) {
 		return nil
