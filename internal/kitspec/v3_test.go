@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -323,6 +324,9 @@ func TestToV3RefusesSettingsItsMergeStepCannotCarry(t *testing.T) {
 // The merge is run as the sandbox runs it, on a settings.json like the
 // kit's: what the user has is kept, the rules are added, once.
 func TestTheSettingsMergeKeepsWhatIsThereAddsWhatIsNotAndIsRepeatable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the install step is for a Linux sandbox: it needs /bin/sh")
+	}
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("no python3")
 	}

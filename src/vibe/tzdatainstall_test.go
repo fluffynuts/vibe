@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -11,6 +12,9 @@ import (
 // records what it is asked, against a zoneinfo folder that exists or not.
 func runTzdataInstall(t *testing.T, hasZoneinfo bool) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the install step is for a Linux sandbox: it needs /bin/sh")
+	}
 	dir := t.TempDir()
 	calls := filepath.Join(dir, "calls")
 	stub := "#!/bin/sh\necho \"$@\" >>" + calls + "\n"

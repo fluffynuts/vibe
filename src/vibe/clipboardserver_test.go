@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -237,6 +238,9 @@ func clipboardCurrent(t *testing.T, base string) int {
 // for sudo (which records what it was asked to do) and, if withNode, node.
 func runNodeInstall(t *testing.T, withNode bool, failing string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the install step is for a Linux sandbox: it needs /bin/sh")
+	}
 	dir := t.TempDir()
 	calls := filepath.Join(dir, "calls")
 	stub := func(name, body string) {

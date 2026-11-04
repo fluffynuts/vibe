@@ -4,12 +4,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
 // The package is named as the image's apt knows it: dotnet-sdk-10.0 is
 // Microsoft's name for it, and sbx's image has no Microsoft repository.
 func TestTheDotnetStepInstallsThePackageTheImagesAptHas(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the install step is for a Linux sandbox: it needs /bin/sh")
+	}
 	dir := t.TempDir()
 	calls := filepath.Join(dir, "calls")
 	if err := os.WriteFile(filepath.Join(dir, "sudo"), []byte("#!/bin/sh\necho \"$@\" >>"+calls+"\n"), 0o755); err != nil {

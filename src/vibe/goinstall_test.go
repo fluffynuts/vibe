@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -13,6 +14,9 @@ import (
 // already on the PATH. failing is a fragment of a sudo command that fails.
 func runGoInstall(t *testing.T, withGo bool, failing string) (calls string, links string) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the install step is for a Linux sandbox: it needs /bin/sh")
+	}
 	dir := t.TempDir()
 	linkDir := filepath.Join(dir, "links")
 	if err := os.Mkdir(linkDir, 0o755); err != nil {
