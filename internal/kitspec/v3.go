@@ -120,6 +120,12 @@ func ToV3(doc Doc, agent string) (Doc, error) {
 		if port == nil {
 			continue
 		}
+		// The port capability is written here with no protocol, which is how a
+		// tcp port is published: a port of another protocol would be published
+		// as tcp, unsaid, so it is refused.
+		if proto, _ := port["protocol"].(string); proto != "" && !strings.EqualFold(proto, "tcp") {
+			return nil, fmt.Errorf("port %v is %s: vibe only carries tcp ports into a schemaVersion 3 kit so far", port["container"], proto)
+		}
 		config := Doc{"container": port["container"]}
 		if name, ok := port["name"]; ok {
 			config["name"] = name
@@ -367,9 +373,10 @@ func skillFile(entry Doc) (name, inner string, ok bool, err error) {
 	return name, inner, true, nil
 }
 
-// pluginDirsScript is the install step that names dirs, a colon-separated list, as
+// pluginDirsScript is the install step that adds dirs, a colon-separated list, to
 // CLAUDE_CODE_PLUGIN_DIRS in the agent's user settings, where its sessions
-// read it from. It runs after the claude kit has made the settings file, as the
+// read it from: the folders already named there are kept, and none is named
+// twice. It runs after the claude kit has made the settings file, as the
 // claude theme step does, and says in the setup log if it can't.
 func pluginDirsScript(dirs string) string {
 	return `#!/bin/sh
@@ -385,14 +392,18 @@ fi
 if command -v node >/dev/null 2>&1; then
   node -e 'const fs = require("fs"); const [f, d] = process.argv.slice(1);
 const s = JSON.parse(fs.readFileSync(f, "utf8"));
-s.env = Object.assign({}, s.env, { CLAUDE_CODE_PLUGIN_DIRS: d });
+const have = ((s.env || {}).CLAUDE_CODE_PLUGIN_DIRS || "").split(":").filter(Boolean);
+const add = d.split(":").filter((x) => !have.includes(x));
+s.env = Object.assign({}, s.env, { CLAUDE_CODE_PLUGIN_DIRS: have.concat(add).join(":") });
 fs.writeFileSync(f, JSON.stringify(s, null, 2) + "\n");' "$F" "$DIRS" && exit 0
 fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -c 'import json, sys
 f, d = sys.argv[1], sys.argv[2]
 s = json.load(open(f))
-s.setdefault("env", {})["CLAUDE_CODE_PLUGIN_DIRS"] = d
+env = s.setdefault("env", {})
+have = [x for x in env.get("CLAUDE_CODE_PLUGIN_DIRS", "").split(":") if x]
+env["CLAUDE_CODE_PLUGIN_DIRS"] = ":".join(have + [x for x in d.split(":") if x not in have])
 open(f, "w").write(json.dumps(s, indent=2) + "\n")' "$F" "$DIRS" && exit 0
 fi
 echo "WARN: could not name vibe's plugins in $F — they will not load" >>/tmp/sbx-setup.log

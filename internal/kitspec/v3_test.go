@@ -367,3 +367,101 @@ func TestTheSettingsMergeKeepsWhatIsThereAddsWhatIsNotAndIsRepeatable(t *testing
 		t.Errorf("deny = %v, want the pem rule once and the .env rule added", got.Permissions.Deny)
 	}
 }
+
+// runPluginDirsScript runs the step that names vibe's plugin folders over a
+// settings.json holding existing, with PATH as given, and returns the folders
+// it names (CLAUDE_CODE_PLUGIN_DIRS) afterwards.
+func runPluginDirsScript(t *testing.T, existing, path string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the install step is for a Linux sandbox: it needs /bin/sh")
+	}
+	out, err := ToV3(skillsDoc(
+		Doc{"path": "/home/agent/.claude/skills/b/SKILL.md", "content": "b"},
+		Doc{"path": "/home/agent/.claude/skills/a/SKILL.md", "content": "a"},
+	), "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.ReplaceAll(lastInstallStep(t, out)["command"].(string), "/home/agent/.claude/settings.json", "$FILE")
+	file := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(file, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("/bin/sh", "-c", script)
+	cmd.Env = []string{"FILE=" + file, "PATH=" + path}
+	if got, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, got)
+	}
+	var settings struct {
+		Env map[string]string `json:"env"`
+	}
+	data, _ := os.ReadFile(file)
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("%v\n%s", err, data)
+	}
+	return settings.Env["CLAUDE_CODE_PLUGIN_DIRS"]
+}
+
+// pathWith is a PATH holding only the named tools, linked from where they are.
+func pathWith(t *testing.T, tools ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, tool := range tools {
+		real, err := exec.LookPath(tool)
+		if err != nil {
+			t.Skipf("no %s on this machine", tool)
+		}
+		if err := os.Symlink(real, filepath.Join(dir, tool)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+const vibePlugins = "/home/agent/.local/share/vibe/plugins/a:/home/agent/.local/share/vibe/plugins/b"
+
+func TestThePluginFoldersAreAddedToOnesTheSettingsAlreadyNameWithEachInterpreter(t *testing.T) {
+	existing := `{"env": {"CLAUDE_CODE_PLUGIN_DIRS": "/opt/theirs:/home/agent/.local/share/vibe/plugins/a", "OTHER": "kept"}}`
+	want := "/opt/theirs:" + vibePlugins
+	for _, tool := range []string{"node", "python3"} {
+		t.Run(tool, func(t *testing.T) {
+			if got := runPluginDirsScript(t, existing, pathWith(t, tool)); got != want {
+				t.Errorf("CLAUDE_CODE_PLUGIN_DIRS = %q, want %q (theirs kept, vibe's added once)", got, want)
+			}
+		})
+	}
+}
+
+func TestThePluginFoldersAreNamedWhenTheSettingsNameNone(t *testing.T) {
+	for _, tool := range []string{"node", "python3"} {
+		t.Run(tool, func(t *testing.T) {
+			if got := runPluginDirsScript(t, `{}`, pathWith(t, tool)); got != vibePlugins {
+				t.Errorf("CLAUDE_CODE_PLUGIN_DIRS = %q, want %q", got, vibePlugins)
+			}
+		})
+	}
+}
+
+func TestToV3RefusesAPortThatIsNotTcpRatherThanPublishItAsTcp(t *testing.T) {
+	doc := v2Doc()
+	doc["ports"] = []interface{}{Doc{"container": 5353, "protocol": "udp", "name": "dns"}}
+	_, err := ToV3(doc, "claude")
+	if err == nil || !strings.Contains(err.Error(), "5353") || !strings.Contains(err.Error(), "udp") {
+		t.Errorf("err = %v, want the port and its protocol named", err)
+	}
+}
+
+func TestToV3AcceptsTcpPortsWhateverTheCaseOrWhetherTheProtocolIsSaid(t *testing.T) {
+	for _, proto := range []interface{}{"tcp", "TCP", nil} {
+		doc := v2Doc()
+		port := Doc{"container": 5390, "name": "clipboard"}
+		if proto != nil {
+			port["protocol"] = proto
+		}
+		doc["ports"] = []interface{}{port}
+		if _, err := ToV3(doc, "claude"); err != nil {
+			t.Errorf("protocol %v: %v", proto, err)
+		}
+	}
+}
