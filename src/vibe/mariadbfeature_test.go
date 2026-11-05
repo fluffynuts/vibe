@@ -10,11 +10,11 @@ import (
 	"time"
 )
 
-// The mysql feature's scripts are run as they are, with stubs for sudo (which records what it is asked) and
+// The mariadb feature's scripts are run as they are, with stubs for sudo (which records what it is asked) and
 // mysqld: on the image (Debian) the server is MariaDB, which has no mysql-server package and whose mysqld
 // has no --daemonize.
 
-func mysqlStubs(t *testing.T) (dir, calls string) {
+func mariadbStubs(t *testing.T) (dir, calls string) {
 	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("the scripts are for a Linux sandbox: they need GNU tools and /proc")
@@ -40,10 +40,10 @@ func mysqlStubs(t *testing.T) (dir, calls string) {
 	return dir, calls
 }
 
-func TestTheMysqlStepInstallsThePackageTheImagesAptHas(t *testing.T) {
-	dir, calls := mysqlStubs(t)
-	cmd := exec.Command("/bin/sh", filepath.Join(repoRoot(t), "library", "mysql", "install-scripts", "01-install-mysql"))
-	cmd.Env = []string{"PATH=" + dir, "MYSQL_INSTALL_LOG=" + filepath.Join(dir, "log")}
+func TestTheMariadbStepInstallsThePackageTheImagesAptHas(t *testing.T) {
+	dir, calls := mariadbStubs(t)
+	cmd := exec.Command("/bin/sh", filepath.Join(repoRoot(t), "library", "mariadb", "install-scripts", "01-install-mariadb"))
+	cmd.Env = []string{"PATH=" + dir, "MARIADB_INSTALL_LOG=" + filepath.Join(dir, "log")}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -58,9 +58,9 @@ func TestTheMysqlStepInstallsThePackageTheImagesAptHas(t *testing.T) {
 
 // startMysql runs start-mysql with listening saying whether something already listens on 3306, and returns
 // what sudo was asked, once mysqld's start (a background job) has been asked for when it should be.
-func startMysql(t *testing.T, listening bool) string {
+func startMariadb(t *testing.T, listening bool) string {
 	t.Helper()
-	dir, calls := mysqlStubs(t)
+	dir, calls := mariadbStubs(t)
 	table := "  sl  local_address rem_address   st\n"
 	if listening {
 		table += "   0: 0100007F:0CEA 00000000:0000 0A 00000000:00000000 00:00000000 00000000   100        0 1 1\n"
@@ -69,8 +69,8 @@ func startMysql(t *testing.T, listening bool) string {
 	if err := os.WriteFile(net, []byte(table), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("/bin/sh", filepath.Join(repoRoot(t), "library", "mysql", "agent-files", ".local", "bin", "start-mysql"))
-	cmd.Env = []string{"PATH=" + dir, "MYSQL_START_LOG=" + filepath.Join(dir, "log"), "MYSQL_NET_TCP=" + net}
+	cmd := exec.Command("/bin/sh", filepath.Join(repoRoot(t), "library", "mariadb", "agent-files", ".local", "bin", "start-mariadb"))
+	cmd.Env = []string{"PATH=" + dir, "MARIADB_START_LOG=" + filepath.Join(dir, "log"), "MARIADB_NET_TCP=" + net}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		logged, _ := os.ReadFile(filepath.Join(dir, "log"))
 		t.Fatalf("%v\n%s\n%s", err, out, logged)
@@ -89,8 +89,8 @@ func startMysql(t *testing.T, listening bool) string {
 	return string(got)
 }
 
-func TestStartMysqlStartsTheServerInTheBackgroundWithoutDaemonize(t *testing.T) {
-	got := startMysql(t, false)
+func TestStartMariadbStartsTheServerInTheBackgroundWithoutDaemonize(t *testing.T) {
+	got := startMariadb(t, false)
 	if !strings.Contains(got, "-u mysql setsid nohup mysqld --pid-file=/var/run/mysqld/mysqld.pid --socket=/var/run/mysqld/mysqld.sock") {
 		t.Errorf("mysqld wasn't started as the mysql user, in the background: %q", got)
 	}
@@ -102,8 +102,8 @@ func TestStartMysqlStartsTheServerInTheBackgroundWithoutDaemonize(t *testing.T) 
 	}
 }
 
-func TestStartMysqlLeavesAServerThatIsAlreadyListening(t *testing.T) {
-	if got := startMysql(t, true); strings.Contains(got, "mysqld --") || strings.Contains(got, "setsid") {
+func TestStartMariadbLeavesAServerThatIsAlreadyListening(t *testing.T) {
+	if got := startMariadb(t, true); strings.Contains(got, "mysqld --") || strings.Contains(got, "setsid") {
 		t.Errorf("started a second server: %q", got)
 	}
 }

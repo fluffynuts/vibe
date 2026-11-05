@@ -1,0 +1,128 @@
+#!/bin/sh
+# vibe: description: Install MySQL 8.4 (Oracle's own Community Server, from its generic Linux tarball, checked against a pinned checksum: non-fatal)
+# vibe: user: 0
+#
+# Debian has no Oracle MySQL (its "mysql" packages are MariaDB), so this is Oracle's generic Linux tarball, which
+# runs on any glibc 2.28 or newer: it bundles its own OpenSSL and the rest, and takes only libaio from the system.
+# It is unpacked into a folder of its own, named for the series, so that a later series (a mysql-9.x feature) sits
+# beside it rather than over it, and its programs are linked from /usr/local/bin.
+#
+# To move to another 8.4 release: change VERSION and both checksums. Oracle publishes an MD5 beside each file on
+# https://dev.mysql.com/downloads/mysql/8.4.html (choose "Linux - Generic"); the SHA-256s here are of files whose MD5
+# matched Oracle's. Oracle has a minimal x86_64 build (no debug binaries, stripped: a tenth of the size) and none for
+# ARM, which gets the full one.
+VERSION=8.4.13
+SERIES=8.4
+SHA256_X64=5dfbb764f731df40ef9e4f5d69aed32bdac8ba1af20bd96b7d40a942d83d4ed2
+SHA256_ARM64=6531bb50f64c986a2abdab6b647cbd553e8740b3e5d3867f5415e33568879fc9
+
+# Where from, and where to: set only to try this script (or to use a mirror).
+BASE="${MYSQL_BASE:-https://cdn.mysql.com}"
+PREFIX="${MYSQL_PREFIX:-/opt/mysql-8.4}"
+LINKS="${MYSQL_LINKS:-/usr/local/bin}"
+DATADIR="${MYSQL_DATADIR:-/var/lib/mysql-8.4}"
+LOG="${MYSQL_INSTALL_LOG:-/tmp/sbx-setup.log}"
+CA_BUNDLE="${MYSQL_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
+
+echo "--- installing MySQL $VERSION $(date -Is)" >>"$LOG"
+
+apt_install() {
+  sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y "$@" </dev/null >>"$LOG" 2>&1
+}
+
+# The libraries' names differ by Debian release: 13 ships libaio as libaio.so.1t64, which MySQL doesn't look for.
+have_libaio() {
+  ls /usr/lib/*/libaio.so.1 /lib/*/libaio.so.1 >/dev/null 2>&1
+}
+
+install_mysql() {
+  case "$(uname -m)" in
+    x86_64 | amd64) asset="mysql-$VERSION-linux-glibc2.28-x86_64-minimal.tar.xz"; want=$SHA256_X64 ;;
+    aarch64 | arm64) asset="mysql-$VERSION-linux-glibc2.28-aarch64.tar.xz"; want=$SHA256_ARM64 ;;
+    *)
+      echo "WARN: there is no MySQL build for $(uname -m): not installed" >>"$LOG"
+      return
+      ;;
+  esac
+
+  # What the download and unpacking take: curl, xz (the tarball is .tar.xz), tar and the certificates for https.
+  need=""
+  command -v curl >/dev/null 2>&1 || need="$need curl"
+  command -v xz >/dev/null 2>&1 || need="$need xz-utils"
+  command -v tar >/dev/null 2>&1 || need="$need tar"
+  [ -s "$CA_BUNDLE" ] || need="$need ca-certificates"
+  if [ -n "$need" ]; then
+    echo "installing$need" >>"$LOG"
+    # Not quoted: each is a package name.
+    apt_install $need || echo "WARN: couldn't install$need, which the MySQL download needs" >>"$LOG"
+  fi
+
+  work=$(mktemp -d) || { echo "WARN: couldn't make a folder to download MySQL into" >>"$LOG"; return; }
+  tarball="$work/$asset"
+  # The release being served is in Downloads; once there is a newer one, it is in the archive.
+  if ! curl -fsSL --retry 3 --connect-timeout 20 -o "$tarball" "$BASE/Downloads/MySQL-$SERIES/$asset" >>"$LOG" 2>&1 \
+    && ! curl -fsSL --retry 3 --connect-timeout 20 -o "$tarball" "$BASE/archives/mysql-$SERIES/$asset" >>"$LOG" 2>&1; then
+    echo "WARN: the MySQL download failed: not installed" >>"$LOG"
+    rm -rf "$work"
+    return
+  fi
+  got=$(sha256sum "$tarball" | cut -d' ' -f1)
+  if [ "$got" != "$want" ]; then
+    echo "WARN: the MySQL download's checksum is $got, not the expected $want: not installed" >>"$LOG"
+    rm -rf "$work"
+    return
+  fi
+
+  # Unpacked beside where it goes, and the one that is there set aside, not deleted: it is put back if the new one
+  # won't run, and deleted only once it does.
+  stage="$PREFIX.staging"
+  old="$PREFIX.old"
+  rm -rf "$stage" "$old"
+  if ! { mkdir -p "$stage" && tar -xJf "$tarball" -C "$stage" --strip-components=1; }; then
+    echo "WARN: MySQL couldn't be unpacked: not installed" >>"$LOG"
+    rm -rf "$stage" "$work"
+    return
+  fi
+  rm -rf "$work"
+
+  if ! have_libaio; then
+    apt_install libaio1t64 || apt_install libaio1 || echo "WARN: couldn't install libaio, which mysqld needs" >>"$LOG"
+  fi
+  if ! have_libaio; then
+    t64=$(ls /usr/lib/*/libaio.so.1t64 /lib/*/libaio.so.1t64 2>/dev/null | head -n 1)
+    # Beside the bundled libraries, which mysqld searches first: nothing outside its folder is touched.
+    [ -n "$t64" ] && ln -sf "$t64" "$stage/lib/private/libaio.so.1"
+  fi
+
+  if [ -e "$PREFIX" ] && ! mv "$PREFIX" "$old"; then
+    echo "WARN: the MySQL in $PREFIX couldn't be set aside: left as it is" >>"$LOG"
+    rm -rf "$stage"
+    return
+  fi
+  if mv "$stage" "$PREFIX" && said=$("$PREFIX/bin/mysqld" --version 2>>"$LOG"); then
+    echo "installed $said" >>"$LOG"
+    rm -rf "$old"
+  else
+    echo "WARN: MySQL couldn't be moved into $PREFIX, or won't run: it isn't installed" >>"$LOG"
+    rm -rf "$PREFIX" "$stage"
+    if [ -e "$old" ]; then
+      mv "$old" "$PREFIX" && echo "the MySQL that was there is back" >>"$LOG" \
+        || echo "WARN: the MySQL that was there couldn't be put back; it is in $old" >>"$LOG"
+    fi
+    return
+  fi
+
+  mkdir -p "$LINKS" || { echo "WARN: couldn't make $LINKS" >>"$LOG"; return; }
+  for program in "$PREFIX"/bin/*; do
+    ln -sf "$program" "$LINKS/$(basename "$program")" || echo "WARN: couldn't link $program into $LINKS" >>"$LOG"
+  done
+
+  # mysqld refuses to run as root: its own user, and the folder for its data, which start-mysql-8.4 fills.
+  getent passwd mysql >/dev/null 2>&1 \
+    || useradd --system --user-group --home-dir "$DATADIR" --no-create-home --shell /usr/sbin/nologin mysql >>"$LOG" 2>&1 \
+    || echo "WARN: couldn't make the mysql user" >>"$LOG"
+  install -d -o mysql -g mysql -m 750 "$DATADIR" >>"$LOG" 2>&1 || echo "WARN: couldn't make $DATADIR" >>"$LOG"
+}
+
+install_mysql
+true

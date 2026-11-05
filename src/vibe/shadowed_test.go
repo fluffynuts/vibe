@@ -61,7 +61,7 @@ func TestACopyThatIsTheSameAsTheShippedOneIsNotSpokenOf(t *testing.T) {
 func TestWithNoCopiesOfTheUsersOwnNothingIsSaid(t *testing.T) {
 	root, _ := goldenBundle(t)
 	lay := layout.New(t.TempDir(), root)
-	if said := strings.Join(notesOf(func() { noteShadowedFeatures(lay, []string{"mysql"}) }), "\n"); said != "" {
+	if said := strings.Join(notesOf(func() { noteShadowedFeatures(lay, []string{"mysql-8.4"}) }), "\n"); said != "" {
 		t.Errorf("it said %q", said)
 	}
 }
@@ -69,12 +69,12 @@ func TestWithNoCopiesOfTheUsersOwnNothingIsSaid(t *testing.T) {
 func TestAChosenFeatureTheUserOverrodeIsSaidToo(t *testing.T) {
 	root, _ := goldenBundle(t)
 	lay := layout.New(t.TempDir(), root)
-	if err := copyTree(lay.BundlePath("library", "mysql"), lay.HomePath("library", "mysql")); err != nil {
+	if err := copyTree(lay.BundlePath("library", "mysql-8.4"), lay.HomePath("library", "mysql-8.4")); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(lay.HomePath("library", "mysql"), "install-scripts", "99-mine"), "echo mine\n")
-	said := strings.Join(notesOf(func() { noteShadowedFeatures(lay, []string{"mysql"}) }), "\n")
-	if !strings.Contains(said, "'mysql'") || !strings.Contains(said, "99-mine") {
+	writeFile(t, filepath.Join(lay.HomePath("library", "mysql-8.4"), "install-scripts", "99-mine"), "echo mine\n")
+	said := strings.Join(notesOf(func() { noteShadowedFeatures(lay, []string{"mysql-8.4"}) }), "\n")
+	if !strings.Contains(said, "'mysql-8.4'") || !strings.Contains(said, "99-mine") {
 		t.Errorf("it said %q", said)
 	}
 	// Not one that isn't being composed in.

@@ -185,7 +185,7 @@ existing profile, a blank profile to grow yourself, or a guided walk
 through picking features from the library. Profiles live in profiles/<name>
 next to the vibe binary. ~/.vibe (or $VIBE_HOME) overrides the bundle: a
 single file or a whole profile/feature overrides one at a time, so you can
-override just one library feature (say, library/mysql) without affecting
+override just one library feature (say, library/redis) without affecting
 any other, and pick up new ones the bundle adds later.
 
 -c requires 'sbx setup ssh' to have been run once on this machine.

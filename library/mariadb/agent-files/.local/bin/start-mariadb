@@ -1,13 +1,13 @@
 #!/bin/sh
-# vibe: description: Start mysqld backgrounded and wait until it answers
+# vibe: description: Start MariaDB (mysqld) backgrounded and wait until it answers
 # No braced shell expansions: sbx validates every brace-form
 # substitution in file content against its own placeholder list.
-LOG="${MYSQL_START_LOG:-/tmp/mysql.log}"
+LOG="${MARIADB_START_LOG:-/tmp/mariadb.log}"
 exec >>"$LOG" 2>&1
-echo "=== start-mysql at $(date -Is) ==="
+echo "=== start-mariadb at $(date -Is) ==="
 
 # 0CEA is 3306 in hex, 0A is LISTEN.
-if awk '$2 ~ /:0CEA$/ && $4 == "0A" { f = 1 } END { exit f ? 0 : 1 }' "${MYSQL_NET_TCP:-/proc/net/tcp}"; then
+if awk '$2 ~ /:0CEA$/ && $4 == "0A" { f = 1 } END { exit f ? 0 : 1 }' "${MARIADB_NET_TCP:-/proc/net/tcp}"; then
   echo "mysqld already listening on 3306"
 else
   if ! command -v mysqld >/dev/null 2>&1; then

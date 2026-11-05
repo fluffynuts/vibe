@@ -1,0 +1,6 @@
+# Kit fragment for the mysql-8.4 feature, merged into the config.yaml of any
+# profile composed with it.
+environment:
+  variables:
+    # Where this server's socket is, so `mysql` and the like find it without being told.
+    MYSQL_UNIX_PORT: /run/mysqld/mysqld.sock

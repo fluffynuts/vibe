@@ -1298,18 +1298,50 @@ repository, which puts `go` and `gofmt` on every shell's PATH, an agent's includ
 - **A step that fails is a warning, not a failed sandbox:** it is written to `/tmp/sbx-setup.log`, which the agent's
   instructions point to if `go` isn't there.
 
-### The `mysql` feature
+### The `mysql-8.4` feature
 
-A MySQL-compatible server, for a sandbox whose project needs a database on `127.0.0.1:3306`. The sandbox's image is
-Debian, which has no Oracle MySQL, so this is **MariaDB** (the `default-mysql-server` package, which provides
-`mysqld`, `mysql` and `mysqladmin` under the MySQL names). `start-mysql` starts it when the sandbox starts and waits
-until it answers, and the agent is told how to reach it: `sudo mysql` for administration (root signs in through the
-socket), and a user and database of its own for the project, over TCP.
+Oracle's own MySQL Community Server **8.4** (the long-term-support series), for a sandbox whose project needs a
+database on `127.0.0.1:3306`, or a `mysqld` of its own on the PATH (a throwaway test database, say). The sandbox's image
+is Debian, which has no Oracle MySQL (its "mysql" packages are MariaDB), so the install script downloads Oracle's
+generic Linux tarball, checks it against a pinned SHA-256, and unpacks it into `/opt/mysql-8.4`, linking `mysqld`,
+`mysql`, `mysqladmin`, `mysqldump` and the rest from `/usr/local/bin`. The tarball bundles its own OpenSSL and the rest;
+the one thing it takes from the system is libaio, which Debian 13 names differently, so the script links it into the
+unpacked folder (nothing outside it is touched).
 
-- **It is not Oracle MySQL.** A project that needs MySQL 8 behaviour may not run on MariaDB. Oracle's own repository
-  isn't added: say if you need it.
-- **A step that fails is a warning, not a failed sandbox:** it is written to `/tmp/sbx-setup.log`, and `start-mysql`
-  logs to `/tmp/mysql.log`.
+- **The start:** `start-mysql-8.4` runs when the sandbox starts. The first time, it initialises `/var/lib/mysql-8.4`,
+  with a `root` account with no password (the server listens on 127.0.0.1 only, in a sandbox, and `MYSQL_UNIX_PORT`
+  names its socket, so `mysql -uroot` just works). It starts the server with no option file read (a `my.cnf` left by
+  another package can't stop it), and waits until it answers. It never initialises over data that is there, and
+  refuses a folder it can't read or one with other files in it, rather than touch it.
+- **The version is pinned,** in the script, with a checksum for each architecture (Oracle has a minimal x86_64 build, a
+  tenth of the size, and no minimal ARM one, which gets the full 786 MB). To move to another 8.4 release, change
+  `VERSION` and the checksums (Oracle publishes an MD5 beside each file on its downloads page, and the pinned SHA-256s
+  are of files whose MD5 matched). The release being served is downloaded from `cdn.mysql.com`'s `Downloads` folder, and
+  once there is a newer one from its `archives`: both are tried.
+- **The version is in the feature's name** so that a later series (a `mysql-9.x`, say) is a sibling beside it, each
+  with its own folder and data: differences between Oracle's releases are large enough that one feature shouldn't
+  quietly change from one to another. Pick one: two servers can't share port 3306.
+- **The sandbox may reach** `cdn.mysql.com` (found from the script's own URLs).
+- **A step that fails is a warning, not a failed sandbox:** it is written to `/tmp/sbx-setup.log`, and the server's own
+  log is `/tmp/mysql-8.4.log`.
+- **Tried on x86_64** on the Debian image: the real download, the install, an initialise and start, a restart that
+  keeps the data, an application user over TCP, and a `mysqld` started from the PATH as an ordinary user. The ARM build is
+  pinned and checked against Oracle's MD5 but has not been run.
+
+### The `mariadb` feature
+
+MariaDB, for a sandbox whose project wants a MySQL-compatible server and isn't fussy about which. The image is Debian,
+whose `default-mysql-server` package is MariaDB under the MySQL names (`mysqld`, `mysql` and `mysqladmin` are all
+there), and that is what this installs. `start-mariadb` starts it when the sandbox starts and waits until it answers,
+and the agent is told how to reach it: `sudo mysql` for administration (root signs in through the socket), and a user
+and database of its own for the project, over TCP.
+
+- **It is not Oracle MySQL.** A project that needs MySQL's own behaviour (its JSON, authentication or SQL differences,
+  or a library that starts a `mysqld` and expects MySQL's) needs the `mysql-8.4` feature instead. This feature used to be
+  called `mysql`, when the image was Ubuntu and the package was Oracle's: a profile that lists `mysql` has to name one of
+  these two now.
+- **A step that fails is a warning, not a failed sandbox:** it is written to `/tmp/sbx-setup.log`, and `start-mariadb`
+  logs to `/tmp/mariadb.log`.
 
 ### The `pwsh` feature
 
