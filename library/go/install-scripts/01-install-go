@@ -1,0 +1,19 @@
+#!/bin/sh
+# vibe: description: Install Go (non-fatal)
+# vibe: user: 0
+# golang-1.26 is the Docker Hardened Images package; it puts go and gofmt on
+# the PATH itself (/usr/bin). A go.mod that wants a newer Go than this one has
+# its toolchain downloaded by go itself on first use.
+LOG="${GO_INSTALL_LOG:-/tmp/sbx-setup.log}"
+if command -v go >/dev/null 2>&1; then
+  exit 0
+fi
+echo "--- installing Go $(date -Is)" >>"$LOG"
+apt_install() {
+  sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 "$@" </dev/null >>"$LOG" 2>&1
+}
+apt_install install -y golang-1.26 \
+  || { apt_install update && apt_install install -y golang-1.26; } \
+  || { echo "WARN: Go install failed: there is no go" >>"$LOG"; exit 0; }
+command -v go >/dev/null 2>&1 || echo "WARN: Go installed but go is not on the PATH" >>"$LOG"
+true

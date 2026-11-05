@@ -207,10 +207,13 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 	// Every sandbox's agent is told where to look for its rules for
 	// pushing, since a token can be given to a sandbox after it's made.
 	kitspec.AppendAgentInstructions(doc, gittoken.KitInstructions)
-	kitDir, err := writeKit(doc, name)
+	kitDir, err := writeKit(doc, name, agentOf(merged))
 	if err != nil {
 		return err
 	}
+	// Kept (see keepFailedKit) when sbx fails to make the sandbox: sbx's own
+	// logs are inside a sandbox that then never comes up, so the kit is all
+	// there is to look at.
 	defer os.RemoveAll(kitDir)
 
 	agent := merged.Agent
@@ -303,8 +306,13 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 			return ctx.Err()
 		}
 		warnIfClockIsOff()
+		if kept, keepErr := keepFailedKit(kitDir, name); keepErr == nil {
+			note("  the kit sbx was given is kept for a look: %s", filepath.Join(kept, "spec.yaml"))
+			note("  only the latest is kept for '%s'; it goes when the sandbox is next made, and you can delete it yourself once vibe is up", name)
+		}
 		return err
 	}
+	forgetFailedKit(name)
 
 	// Before the agent starts, so it starts on the sandbox's local time;
 	// on-start puts it back at every later session.

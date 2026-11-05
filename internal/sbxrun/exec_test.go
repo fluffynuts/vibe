@@ -2,6 +2,8 @@ package sbxrun
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -108,6 +110,23 @@ func TestWriteFileSaysWhyItCouldNotWrite(t *testing.T) {
 	err := WriteFile("box", "fail", "content")
 	if err == nil || !strings.Contains(err.Error(), "writing fail in the sandbox") || !strings.Contains(err.Error(), "on stderr") {
 		t.Errorf("err = %v, want which file and what sbx said", err)
+	}
+}
+
+// sbx exec's stdin is not something cp can open as /dev/stdin ("No such
+// device or address"), so the file is written by a command that reads fd 0.
+func TestWriteFileReadsItsContentFromStandardInputNotADevicePath(t *testing.T) {
+	record := filepath.Join(t.TempDir(), "args")
+	sbxtest.OnPath(t, "echo \"$*\" >>"+record+"\ncat >/dev/null\n")
+	if err := WriteFile("box", "/home/agent/f", "content"); err != nil {
+		t.Fatal(err)
+	}
+	recorded, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(recorded), "/dev/stdin") || !strings.Contains(string(recorded), "exec -i box -- tee /home/agent/f") {
+		t.Errorf("sbx was run as:\n%s", recorded)
 	}
 }
 

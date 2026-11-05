@@ -1,7 +1,11 @@
 #!/bin/sh
-# vibe: description: Install the .NET 10 SDK from the distro (non-fatal)
+# vibe: description: Install the .NET 10 SDK (non-fatal)
 # vibe: user: 0
-echo "--- installing dotnet-sdk-10.0 $(date -Is)" >>/tmp/sbx-setup.log
-sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y dotnet-sdk-10.0 </dev/null >>/tmp/sbx-setup.log 2>&1 \
-  || echo "WARN: dotnet-sdk-10.0 install failed" >>/tmp/sbx-setup.log
+# dotnet-sdk-10 is the Docker Hardened Images package, which links dotnet into
+# /usr/bin. The image's apt has no Microsoft repository, so the dotnet-sdk-10.0
+# that package is called there does not exist.
+LOG="${DOTNET_INSTALL_LOG:-/tmp/sbx-setup.log}"
+echo "--- installing dotnet-sdk-10 $(date -Is)" >>"$LOG"
+sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y dotnet-sdk-10 </dev/null >>"$LOG" 2>&1 \
+  || echo "WARN: dotnet-sdk-10 install failed" >>"$LOG"
 true

@@ -1,0 +1,10 @@
+# Kit fragment for the go feature, merged into the config.yaml of any
+# profile composed with it.
+permissions:
+  network:
+    allow:
+      # a go.mod that wants a newer Go than the installed one has its toolchain
+      # fetched through the module proxy, and every download is checked against
+      # the checksum database
+      - proxy.golang.org
+      - sum.golang.org

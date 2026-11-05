@@ -575,7 +575,7 @@ name, the project folder (the workspace, which doesn't follow the agent's `cd`),
 `?` untracked, `✘` conflicted, `↑`/`↓` ahead/behind, `#` stash count). It refreshes every 2 seconds and after each
 turn. A second line, `copy-paste at: <url>`, shows the
 clipboard page's address (from `clipboard-url`), or `copy-paste at: (starting)` until the clipboard server is
-listening and vibe has confirmed its host port for this boot. Claude Code loads it automatically from `~/.claude/skills/`, so nothing needs configuring; delete
+listening and vibe has confirmed its host port for this boot. The sbx claude kit mounts `~/.claude/skills/` read-only, so vibe installs the plugin under `~/.local/share/vibe/plugins/vibe-band/` and lists that folder in `CLAUDE_CODE_PLUGIN_DIRS` (in the sandbox's `~/.claude/settings.json`); Claude Code loads it from there, so nothing needs configuring. To leave it out, delete
 the folder from `~/.vibe/defaults/agent-files/.claude/skills/` to leave it out. As with themes, a
 `~/.vibe/defaults` seeded before it existed won't have it until the bundle's copy is added.
 
@@ -1284,6 +1284,19 @@ to adopt one. The refusal comes first, before any running vibe is stopped or any
 Overriding one bundled feature (a base one too, as `~/.vibe/library/base/<feature>/`) means dropping your own `~/.vibe/library/<feature>/` next to it — Your copy beats the shipped one whole, so what vibe changes in the feature afterwards never reaches a profile composed from it: whenever a profile is composed, vibe says which of the features being composed are read from a copy of yours that differs from the shipped one (naming the files, and a `diff -r` to see them), and is silent about one that is the same.
 unlike `defaults/`, that replaces only the feature you copied, so features the bundle adds later
 still show up.
+
+### The `go` feature
+
+Go, as `go` and `gofmt`, for a sandbox whose agent builds or tests Go code (vibe itself, for one): the new sbx
+claude sandbox ships without it. The install script installs the `golang-1.26` package from the Docker Hardened Images
+repository, which puts `go` and `gofmt` on every shell's PATH, an agent's included. A project whose
+`go.mod` asks for a newer Go than that makes `go` download the toolchain it wants on first use.
+
+- **The sandbox may reach** `proxy.golang.org` and `sum.golang.org`: where toolchains and modules come from, and the
+  checksums they are checked against. Modules hosted elsewhere (a `github.com` dependency is fetched through the proxy,
+  but a private one is not) need their hosts added to the profile.
+- **A step that fails is a warning, not a failed sandbox:** it is written to `/tmp/sbx-setup.log`, which the agent's
+  instructions point to if `go` isn't there.
 
 ### The `pwsh` feature
 

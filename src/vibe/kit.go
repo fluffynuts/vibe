@@ -82,19 +82,48 @@ func loadKit(lay layout.Layout, profile string) (kitspec.Doc, settings.Settings,
 	return doc, merged, nil
 }
 
-func writeKit(doc kitspec.Doc, name string) (string, error) {
+// writeKit writes doc as a schemaVersion 3 kit for agent into a new temporary
+// directory, which the caller removes. sbx refuses to compose a v3 agent (as
+// its claude now is) with a kit of any other version.
+func writeKit(doc kitspec.Doc, name, agent string) (string, error) {
 	dir, err := os.MkdirTemp("", "vibe-kit-"+name+"-")
 	if err != nil {
 		return "", err
 	}
-	data, err := kitspec.Marshal(doc)
+	data, err := kitspec.MarshalV3(doc, agent)
 	if err != nil {
+		os.RemoveAll(dir)
 		return "", err
 	}
 	if err := fscopy.WriteWholeMode(filepath.Join(dir, "spec.yaml"), data, 0o644); err != nil {
 		return "", err
 	}
 	return dir, nil
+}
+
+// keptKitDir is where the kit of a sandbox sbx failed to create is kept for a
+// look: one folder per sandbox name, so failed attempts don't pile up.
+func keptKitDir(name string) string {
+	return filepath.Join(os.TempDir(), "vibe-kit-"+name+"-failed")
+}
+
+// keepFailedKit moves kitDir (what writeKit made) to keptKitDir(name), in place
+// of the kit a failed create before it left there, and returns where it is.
+func keepFailedKit(kitDir, name string) (string, error) {
+	kept := keptKitDir(name)
+	if err := os.RemoveAll(kept); err != nil {
+		return "", err
+	}
+	if err := os.Rename(kitDir, kept); err != nil {
+		return "", err
+	}
+	return kept, nil
+}
+
+// forgetFailedKit removes the kit kept for name: the sandbox has been made
+// since, so there is nothing left to look into.
+func forgetFailedKit(name string) {
+	os.RemoveAll(keptKitDir(name))
 }
 
 type publishMapping struct {

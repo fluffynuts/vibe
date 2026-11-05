@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -231,4 +232,60 @@ func clipboardCurrent(t *testing.T, base string) int {
 		t.Fatal(err)
 	}
 	return got.Current
+}
+
+// runNodeInstall runs the clipboard feature's Node install step with stubs
+// for sudo (which records what it was asked to do) and, if withNode, node.
+func runNodeInstall(t *testing.T, withNode bool, failing string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the install step is for a Linux sandbox: it needs /bin/sh")
+	}
+	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls")
+	stub := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stub("sudo", "echo \"$@\" >>"+calls+"\ncase \"$*\" in *"+failing+"*) exit 1;; esac\n")
+	if withNode {
+		stub("node", "")
+	}
+	// Only date from the real PATH: a node installed on this machine must not be found.
+	realDate, err := exec.LookPath("date")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realDate, filepath.Join(dir, "date")); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join("..", "..", "library", "base", "clipboard-bridge", "install-scripts", "00-install-node")
+	cmd := exec.Command("/bin/sh", script)
+	cmd.Env = []string{"PATH=" + dir, "NODE_INSTALL_LOG=" + filepath.Join(dir, "log")}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("install step failed: %v\n%s", err, out)
+	}
+	recorded, _ := os.ReadFile(calls)
+	return string(recorded)
+}
+
+func TestTheNodeInstallStepLeavesANodeThatIsThere(t *testing.T) {
+	if got := runNodeInstall(t, true, "never-matches"); got != "" {
+		t.Errorf("installed over an existing node: %q", got)
+	}
+}
+
+func TestTheNodeInstallStepInstallsNodeWhenMissing(t *testing.T) {
+	got := runNodeInstall(t, false, "never-matches")
+	if !strings.Contains(got, "install -y nodejs-24") {
+		t.Errorf("sudo was asked: %q, want nodejs-24 installed", got)
+	}
+}
+
+func TestTheNodeInstallStepFallsBackToDebiansNodeWhenTheFirstChoiceFails(t *testing.T) {
+	got := runNodeInstall(t, false, "nodejs-24")
+	if !strings.Contains(got, "apt-get -o DPkg::Lock::Timeout=300 install -y nodejs\n") {
+		t.Errorf("sudo was asked: %q, want a fall-back to nodejs", got)
+	}
 }

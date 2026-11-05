@@ -23,12 +23,18 @@ import (
 )
 
 // fingerprintVersion begins every fingerprint: one made before the host's
-// folders were counted has none, and vibe can say why that sandbox is out
-// of date.
-const fingerprintVersion = "2:"
+// folders were counted has none, and one made before sbx was handed version 3
+// kits (fingerprintVersion "2:") says so, so vibe can say why that sandbox is
+// out of date.
+const fingerprintVersion = "3:"
+
+// marshalKit makes the kit sbx is handed. A variable so tests can change what
+// the conversion makes without changing the document.
+var marshalKit = kitspec.MarshalV3
 
 // kitFingerprint fingerprints what the sandbox inst records is built from:
-// the kit sbx is handed, the agent, the environment, the published ports,
+// the kit sbx is handed (as sbx gets it: the version 3 kit, so a change in
+// how a document becomes one shows), the agent, the environment, the published ports,
 // and the host's folders it's given (sandboxFolders). A sandbox whose
 // recorded fingerprint differs from this is out of date. The Claude theme
 // is left out: it's a choice rather than a feature, and sandboxes sharing a
@@ -49,7 +55,7 @@ func kitFingerprint(lay layout.Layout, inst state.Instance) (string, error) {
 		kitspec.DropClaudeFiles(doc)
 	}
 	kitspec.AppendAgentInstructions(doc, gittoken.KitInstructions)
-	spec, err := kitspec.Marshal(doc)
+	spec, err := marshalKit(doc, agent)
 	if err != nil {
 		return "", err
 	}
@@ -177,6 +183,8 @@ func sandboxOutOfDate(lay layout.Layout, inst state.Instance) (string, error) {
 		return "", nil
 	case inst.KitHash == "":
 		return "it was built before vibe kept track of what it was built from", nil
+	case strings.HasPrefix(inst.KitHash, "2:"):
+		return "it was built before vibe wrote the version 3 kits that sbx's agents now need", nil
 	case !strings.HasPrefix(inst.KitHash, fingerprintVersion):
 		return "it was built before vibe kept track of the host's folders it gives a sandbox", nil
 	default:

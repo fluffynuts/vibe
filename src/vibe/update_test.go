@@ -11,6 +11,7 @@ import (
 
 	"vibe/internal/backup"
 	"vibe/internal/cliargs"
+	"vibe/internal/kitspec"
 	"vibe/internal/layout"
 	"vibe/internal/profilegen"
 	"vibe/internal/prompt"
@@ -701,5 +702,41 @@ func TestNoAutoUpdateStartsEvenWhenTheSandboxRecordCantBeRead(t *testing.T) {
 	}
 	if err := autoUpdate(lay, cliargs.Args{NoAutoUpdate: true}, "box", t.TempDir()); err != nil {
 		t.Errorf("--no-auto-update, the way out, failed on a damaged record: %v", err)
+	}
+}
+
+// The fingerprint is of what sbx is handed, the v3 kit, not of the v2
+// document it is made from: a change only in the conversion has to show.
+func TestAFingerprintChangesWhenOnlyTheKitSbxIsHandedChanges(t *testing.T) {
+	lay := updateLayout(t)
+	inst := sandboxFor(t, lay, false)
+	before, err := kitFingerprint(lay, inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	was := marshalKit
+	defer func() { marshalKit = was }()
+	marshalKit = func(doc kitspec.Doc, agent string) ([]byte, error) {
+		data, err := was(doc, agent)
+		return append(data, "# a different conversion\n"...), err
+	}
+	after, err := kitFingerprint(lay, inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Error("the fingerprint ignores what the v3 conversion makes of the document")
+	}
+}
+
+// A sandbox built before the kits were written in version 3 is told so: the
+// message about folders would be wrong for it.
+func TestASandboxBuiltBeforeKitsWereVersion3SaysSo(t *testing.T) {
+	lay := updateLayout(t)
+	inst := sandboxFor(t, lay, false)
+	inst.KitHash = "2:" + strings.Repeat("ab", 32)
+	why, err := sandboxOutOfDate(lay, inst)
+	if err != nil || !strings.Contains(why, "version 3") || strings.Contains(why, "folders") {
+		t.Errorf("why = %q, %v; want it to say it was built before version 3 kits", why, err)
 	}
 }
