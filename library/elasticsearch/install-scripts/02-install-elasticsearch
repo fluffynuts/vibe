@@ -1,5 +1,5 @@
 #!/bin/sh
-# vibe: description: Install Elasticsearch (no Ubuntu package exists)
+# vibe: description: Install Elasticsearch (from Elastic's repository: Debian has no package)
 # vibe: user: 0
 echo "--- installing elasticsearch $(date -Is)" >>/tmp/sbx-setup.log
 sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y elasticsearch </dev/null >>/tmp/sbx-setup.log 2>&1 \
