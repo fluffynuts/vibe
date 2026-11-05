@@ -252,6 +252,13 @@ do what they say). Without make, `./make.sh` (bash) and `./make.ps1` (PowerShell
 targets. The binary finds its bundle relative to its own location, so leave it where it is built
 and put it on `PATH` with a symlink — or use `vibe --install`.
 
+`./tools/check-apt-packages.sh`, run **inside a sandbox** (whose apt is the image's: Debian and Docker Hardened
+Images; the CI machines' is Ubuntu's), lists the apt packages the library's install scripts ask for and says which the
+image doesn't have: the `mysql-server` mistake, found before a build instead of during one. It reads the names the
+scripts spell out, lists every one it checked so a missing one is plain to see, and exits 1 if any has no candidate. A
+name that is only a fall-back for another (`libaio1` after `libaio1t64`) is reported missing, as it should be.
+It isn't part of a release (the zips hold only the bundle below).
+
 `make dist` (or `./make.sh dist`) packages a zip in `dist/` holding the binary and that bundle,
 for this machine or for whatever `GOOS`/`GOARCH` are set to. Every push to GitHub does this for
 Linux, macOS and Windows on both amd64 and arm64 (`.github/workflows/build.yml`), after running
