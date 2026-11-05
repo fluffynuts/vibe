@@ -1,0 +1,49 @@
+#!/bin/sh
+# vibe: description: Install pnpm, at the version the project's packageManager says, fetched when pnpm is first run (non-fatal)
+# vibe: user: 0
+#
+# pnpm is installed through corepack, which puts a pnpm shim on the PATH that reads "packageManager" from the nearest
+# package.json each time it is run, and fetches (once, then from its cache) exactly that version. So nothing here says
+# which pnpm: a project that pins one gets it, and one that doesn't gets corepack's default. A project that changes its
+# pin is followed the next time pnpm is run, without rebuilding the sandbox.
+#
+# corepack is installed from npm: the image's Node has none (Node 25 stopped shipping it, and the Docker Hardened
+# Images package doesn't have it).
+LOG="${PNPM_LOG:-/tmp/sbx-setup.log}"
+SHIM_FOLDER="${PNPM_SHIM_FOLDER:-/usr/local/bin}"
+
+echo "--- installing pnpm $(date -Is)" >>"$LOG"
+
+apt_install() {
+  sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 "$@" </dev/null >>"$LOG" 2>&1
+}
+
+install_pnpm() {
+  # Debian's npm brings its own node unless the Docker Hardened Images one is there first.
+  command -v node >/dev/null 2>&1 || apt_install install -y nodejs-24 || apt_install install -y nodejs
+  command -v npm >/dev/null 2>&1 || apt_install install -y npm
+  if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+    echo "WARN: node and npm aren't installed, and couldn't be, so pnpm can't be: not installed" >>"$LOG"
+    return
+  fi
+  if ! command -v corepack >/dev/null 2>&1; then
+    if ! npm install -g corepack >>"$LOG" 2>&1; then
+      echo "WARN: npm couldn't install corepack: pnpm not installed" >>"$LOG"
+      return
+    fi
+    PATH="$(npm prefix -g)/bin:$PATH"
+    export PATH
+  fi
+  if ! command -v corepack >/dev/null 2>&1; then
+    echo "WARN: npm installed corepack, but it isn't on the PATH: pnpm not installed" >>"$LOG"
+    return
+  fi
+  if ! corepack enable --install-directory "$SHIM_FOLDER" pnpm >>"$LOG" 2>&1; then
+    echo "WARN: corepack couldn't put pnpm in $SHIM_FOLDER: pnpm not installed" >>"$LOG"
+    return
+  fi
+  echo "pnpm is set up: it is fetched, at the version a project's packageManager names, when first run" >>"$LOG"
+}
+
+install_pnpm
+true

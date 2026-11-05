@@ -18,7 +18,7 @@ type prereqRun struct {
 }
 
 var prereqPackageCommand = map[string]string{
-	"curl": "curl", "gnupg": "gpg", "tar": "tar", "gzip": "gzip", "xz-utils": "xz", "util-linux": "flock",
+	"curl": "curl", "gnupg": "gpg", "tar": "tar", "gzip": "gzip", "xz-utils": "xz", "util-linux": "flock", "file": "file",
 	"nodejs-24": "node", "nodejs": "node",
 }
 
@@ -75,7 +75,7 @@ exit 0
 	return run
 }
 
-var allPrereqTools = []string{"curl", "gpg", "tar", "gzip", "xz", "flock", "node"}
+var allPrereqTools = []string{"curl", "gpg", "tar", "gzip", "xz", "flock", "file", "node"}
 
 func TestPrerequisitesAreNotInstalledWhenTheyAreAllThere(t *testing.T) {
 	run := runPrerequisites(t, allPrereqTools, true, "never-matches")
@@ -89,7 +89,7 @@ func TestPrerequisitesTheImageLacksAreInstalledInOneAptRun(t *testing.T) {
 	if len(run.calls) != 1 {
 		t.Fatalf("expected one apt run, got %d: %v", len(run.calls), run.calls)
 	}
-	for _, want := range []string{"curl", "ca-certificates", "gnupg", "tar", "gzip", "xz-utils", "util-linux", "nodejs-24"} {
+	for _, want := range []string{"curl", "ca-certificates", "gnupg", "tar", "gzip", "xz-utils", "util-linux", "file", "nodejs-24"} {
 		if !strings.Contains(run.calls[0], " "+want) {
 			t.Errorf("%s isn't in the one apt run: %s", want, run.calls[0])
 		}
@@ -100,11 +100,11 @@ func TestPrerequisitesTheImageLacksAreInstalledInOneAptRun(t *testing.T) {
 }
 
 func TestOnlyWhatIsMissingIsAskedFor(t *testing.T) {
-	run := runPrerequisites(t, []string{"curl", "gpg", "tar", "gzip", "flock", "node"}, true, "never-matches")
+	run := runPrerequisites(t, []string{"curl", "gpg", "tar", "gzip", "flock", "file", "node"}, true, "never-matches")
 	if len(run.calls) != 1 || !strings.HasSuffix(run.calls[0], "install -y xz-utils") {
 		t.Errorf("expected xz-utils alone: %v", run.calls)
 	}
-	run = runPrerequisites(t, []string{"curl", "gpg", "tar", "gzip", "xz", "flock"}, true, "never-matches")
+	run = runPrerequisites(t, []string{"curl", "gpg", "tar", "gzip", "xz", "flock", "file"}, true, "never-matches")
 	if len(run.calls) != 1 || !strings.HasSuffix(run.calls[0], "install -y nodejs-24") {
 		t.Errorf("expected Node alone: %v", run.calls)
 	}
@@ -117,7 +117,7 @@ func TestAPackageTheImageLacksDoesNotKeepTheOthersFromBeingInstalled(t *testing.
 	run := runPrerequisites(t, nil, false, "nodejs-24")
 	var toolsAlone, debiansNode bool
 	for _, call := range run.calls {
-		if strings.HasSuffix(call, "install -y curl ca-certificates gnupg tar gzip xz-utils util-linux") {
+		if strings.HasSuffix(call, "install -y curl ca-certificates gnupg tar gzip xz-utils util-linux file") {
 			toolsAlone = true
 		}
 		if strings.HasSuffix(call, "install -y nodejs") {

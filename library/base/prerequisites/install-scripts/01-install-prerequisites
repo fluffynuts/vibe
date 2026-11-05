@@ -1,5 +1,5 @@
 #!/bin/sh
-# vibe: description: Make sure the image has the tools the features and vibe's own scripts assume (curl, certificates, gpg, tar, gzip, xz, flock) and Node.js, in one apt run (non-fatal)
+# vibe: description: Make sure the image has the tools the features and vibe's own scripts assume (curl, certificates, gpg, tar, gzip, xz, flock, file) and Node.js, in one apt run (non-fatal)
 # vibe: user: 0
 #
 # The image promises none of these (sbx's earlier one had Node; its Debian one has neither Node nor xz), and every
@@ -27,6 +27,7 @@ command -v tar >/dev/null 2>&1 || tools="$tools tar"
 command -v gzip >/dev/null 2>&1 || tools="$tools gzip"
 command -v xz >/dev/null 2>&1 || tools="$tools xz-utils"
 command -v flock >/dev/null 2>&1 || tools="$tools util-linux"
+command -v file >/dev/null 2>&1 || tools="$tools file"
 node=""
 command -v node >/dev/null 2>&1 || node="nodejs-24"
 
@@ -58,6 +59,7 @@ command -v gpg >/dev/null 2>&1 || echo "WARN: gpg is still missing" >>"$LOG"
 command -v tar >/dev/null 2>&1 || echo "WARN: tar is still missing" >>"$LOG"
 command -v gzip >/dev/null 2>&1 || echo "WARN: gzip is still missing" >>"$LOG"
 command -v xz >/dev/null 2>&1 || echo "WARN: xz is still missing" >>"$LOG"
+command -v file >/dev/null 2>&1 || echo "WARN: file is still missing" >>"$LOG"
 command -v flock >/dev/null 2>&1 || echo "WARN: flock is still missing: the startup script will run without its lock" >>"$LOG"
 command -v node >/dev/null 2>&1 || echo "WARN: node is still missing: the clipboard page and vibe-review need it" >>"$LOG"
 true
