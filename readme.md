@@ -1298,6 +1298,19 @@ repository, which puts `go` and `gofmt` on every shell's PATH, an agent's includ
 - **A step that fails is a warning, not a failed sandbox:** it is written to `/tmp/sbx-setup.log`, which the agent's
   instructions point to if `go` isn't there.
 
+### The `mysql` feature
+
+A MySQL-compatible server, for a sandbox whose project needs a database on `127.0.0.1:3306`. The sandbox's image is
+Debian, which has no Oracle MySQL, so this is **MariaDB** (the `default-mysql-server` package, which provides
+`mysqld`, `mysql` and `mysqladmin` under the MySQL names). `start-mysql` starts it when the sandbox starts and waits
+until it answers, and the agent is told how to reach it: `sudo mysql` for administration (root signs in through the
+socket), and a user and database of its own for the project, over TCP.
+
+- **It is not Oracle MySQL.** A project that needs MySQL 8 behaviour may not run on MariaDB. Oracle's own repository
+  isn't added: say if you need it.
+- **A step that fails is a warning, not a failed sandbox:** it is written to `/tmp/sbx-setup.log`, and `start-mysql`
+  logs to `/tmp/mysql.log`.
+
 ### The `pwsh` feature
 
 PowerShell 7, as `pwsh`, for a sandbox whose agent (or project) runs scripts in it. The install script
