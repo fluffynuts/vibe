@@ -12,10 +12,8 @@ permissions:
       - playwright.azureedge.net
       - playwright-akamai.azureedge.net
       - playwright-verizon.azureedge.net
-      # the libraries the browsers need (arm64 machines use ports)
-      - archive.ubuntu.com
-      - security.ubuntu.com
-      - ports.ubuntu.com
+      # The libraries the browsers need, and Node and npm, come from the image's own apt repositories (Debian's and
+      # Docker Hardened Images'), which sandboxes may always reach: nothing to allow for them.
 environment:
   variables:
     # Where the browsers are, for Playwright of any version in any project.

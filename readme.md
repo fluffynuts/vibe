@@ -1350,13 +1350,16 @@ download one". It **adds time to building the sandbox**: a few minutes, the syst
   newer one, and the log says which.
 - **The sandbox may reach** `registry.npmjs.org`, `cdn.playwright.dev` (where the current Chromium is offered from, and
   only from) and `playwright.download.prss.microsoft.com` (Firefox's fallback), the `azureedge.net` hosts older versions
-  of Playwright download from (`playwright`, `playwright-akamai` and `playwright-verizon`), and Ubuntu's apt hosts
-  (`archive.ubuntu.com`, `security.ubuntu.com`, and `ports.ubuntu.com` for arm64).
+  of Playwright download from (`playwright`, `playwright-akamai` and `playwright-verizon`). The libraries, and Node and
+  npm (which the image doesn't have, so the step installs them first), come from the image's own apt repositories,
+  which need no rule.
 - **A step that fails is a warning, not a failed sandbox,** in `/tmp/sbx-setup.log`. The last step launches both browsers
   headless, as the agent's user, and logs their versions (`installed Playwright 1.64.1: launched headless: chromium
   156.0.8078.4, firefox 157.0`); if one won't launch, the log has the first lines of what the browser said, which name
   why.
-- **Tried on x86_64.** It is written for arm64 too (Playwright picks its own builds), but that hasn't been run yet: if
+- **Tried on x86_64**, on the Debian image (2026-11-05): Playwright's own check of the machine lists the libraries it
+  needs for Debian 13, and the step installs npm; the browser downloads and the launch check have not been run since the
+  image changed. It is written for arm64 too (Playwright picks its own builds), but that hasn't been run yet: if
   you try it there, the line above in `/tmp/sbx-setup.log` is the thing to look at.
 
 ## State
