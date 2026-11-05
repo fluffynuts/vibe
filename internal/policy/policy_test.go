@@ -446,3 +446,42 @@ func TestResolvedLogSaysWhenTheRulesCouldNotBeRead(t *testing.T) {
 		t.Errorf("unresolved = %q, want why the rules couldn't be read", got.Unresolved)
 	}
 }
+
+// From 'sbx policy ls vibe --json --wide --type network', sbx v0.51: the rules that matter here, as it printed them. It
+// lists a rule of its own, "default-deny-all", denying "**": the fallback for a request no policy decides, not a rule
+// anyone wrote.
+const rulesV051 = `{
+  "rules": [
+    {"id": "af5a750c", "name": "af5a750c", "scope": "sandbox:vibe", "applies_to": "sandbox:vibe", "resource_type": "network",
+     "decision": "allow", "resources": ["cdn.mysql.com:443"], "origin": "scoped", "layer": "local", "status": "active",
+     "editable": true, "sandbox_id": "vibe", "provenance": {"created_via": "added"}, "actions": ["net:connect:tcp"]},
+    {"id": "d3adb33f", "name": "d3adb33f", "scope": "sandbox:vibe", "applies_to": "sandbox:vibe", "resource_type": "network",
+     "decision": "deny", "resources": ["blocked-by-me.example.com:443"], "origin": "scoped", "layer": "local", "status": "active",
+     "editable": true, "sandbox_id": "vibe", "provenance": {"created_via": "added"}, "actions": ["net:connect:tcp"]},
+    {"id": "default-deny-all", "name": "default-deny-all", "policy_name": "default-deny-all", "scope": "global", "applies_to": "all",
+     "resource_type": "network", "decision": "deny", "resources": ["**"], "origin": "local", "layer": "local", "status": "active",
+     "reason": "Implicit fallback when no applicable policy decides the request.", "editable": false,
+     "actions": ["net:connect:tcp", "net:connect:udp"]}
+  ]
+}`
+
+// A host the user allowed from the page stayed "Blocked": sbx's own deny-everything fallback matches every host, and
+// was read as a deny the allow couldn't beat.
+func TestAHostAllowedWhileTheImplicitDenyAllIsListedIsMarkedUnblocked(t *testing.T) {
+	rules, err := ParseRules([]byte(rulesV051))
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := Log{Entries: []LogEntry{
+		{Host: "cdn.mysql.com:443", Decision: Blocked},
+		{Host: "artifacts.elastic.co:443", Decision: Blocked},
+		{Host: "blocked-by-me.example.com:443", Decision: Blocked},
+		{Host: "api.anthropic.com:443", Decision: Allowed},
+	}}
+	want := []string{Unblocked, Blocked, Blocked, Allowed}
+	for i, e := range Resolve(log, rules).Entries {
+		if e.Decision != want[i] {
+			t.Errorf("%s: got %q, want %q", e.Host, e.Decision, want[i])
+		}
+	}
+}

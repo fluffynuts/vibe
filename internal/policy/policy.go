@@ -97,6 +97,10 @@ type Rule struct {
 	Source string `json:"source,omitempty"`
 	Scope  string `json:"scope,omitempty"`
 	Status string `json:"status,omitempty"`
+	// Reason is what sbx says of a rule it made itself: the fallback that
+	// denies what no policy decides says so here, and the rules people add
+	// say nothing.
+	Reason string `json:"reason,omitempty"`
 	// Removable is true for a rule the page offers to remove: one sbx says
 	// is editable. The removal is always scoped to the sandbox, so a global
 	// rule is never touched from the page: sbx refuses, and says so.
@@ -160,8 +164,16 @@ func (c *Client) ResolvedLog() (Log, error) {
 	return Resolve(log, rules), nil
 }
 
+// implicitFallback says whether r is sbx's own rule denying whatever no policy
+// decides ("**", from sbx v0.51 on): it is where a request ends up when no rule
+// allows it, not a rule against any host, so it can't be what stops an allow.
+func (r Rule) implicitFallback() bool {
+	return r.Decision == Blocked && strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.Reason)), "implicit fallback")
+}
+
 // Resolve marks as Unblocked each blocked entry whose host is allowed by a
-// rule and denied by none: a deny wins over an allow.
+// rule and denied by none: a deny wins over an allow. The fallback deny sbx
+// lists (implicitFallback) is none: it matches every host.
 func Resolve(log Log, rules Rules) Log {
 	out := log
 	out.Entries = make([]LogEntry, len(log.Entries))
@@ -173,7 +185,7 @@ func Resolve(log Log, rules Rules) Log {
 		allowed, denied := false, false
 		for _, r := range rules.Rules {
 			st := strings.ToLower(r.Status)
-			if strings.Contains(st, "inactive") || strings.Contains(st, "suppress") {
+			if strings.Contains(st, "inactive") || strings.Contains(st, "suppress") || r.implicitFallback() {
 				continue
 			}
 			for _, res := range r.Resources {
@@ -458,6 +470,7 @@ func ParseRules(data []byte) (Rules, error) {
 			Resources []string `json:"resources"`
 			Origin    string   `json:"origin"`
 			Status    string   `json:"status"`
+			Reason    string   `json:"reason"`
 			Editable  bool     `json:"editable"`
 		}
 		if err := json.Unmarshal(raw, &r); err != nil {
@@ -483,6 +496,7 @@ func ParseRules(data []byte) (Rules, error) {
 			Source:    r.Origin,
 			Scope:     r.Scope,
 			Status:    r.Status,
+			Reason:    r.Reason,
 			Removable: r.Editable && r.ID != "",
 			Raw:       raw,
 		})
