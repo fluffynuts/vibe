@@ -1305,13 +1305,16 @@ database on `127.0.0.1:3306`, or a `mysqld` of its own on the PATH (a throwaway 
 is Debian, which has no Oracle MySQL (its "mysql" packages are MariaDB), so the install script downloads Oracle's
 generic Linux tarball, checks it against a pinned SHA-256, and unpacks it into `/opt/mysql-8.4`, linking `mysqld`,
 `mysql`, `mysqladmin`, `mysqldump` and the rest from `/usr/local/bin`. The tarball bundles its own OpenSSL and the rest;
-the one thing it takes from the system is libaio, which Debian 13 names differently, so the script links it into the
-unpacked folder (nothing outside it is touched).
+what it takes from the system is libaio (which Debian 13 names differently, so the script links it into the unpacked
+folder: nothing outside it is touched), libnuma and, for the `mysql` client, libncurses. The image has none of them
+promised, so each is installed if it is missing, and a program that still can't find one is named in the log.
 
 - **The start:** `start-mysql-8.4` runs when the sandbox starts. The first time, it initialises `/var/lib/mysql-8.4`,
   with a `root` account with no password (the server listens on 127.0.0.1 only, in a sandbox, and `MYSQL_UNIX_PORT`
   names its socket, so `mysql -uroot` just works). It starts the server with no option file read (a `my.cnf` left by
-  another package can't stop it), and waits until it answers. It never initialises over data that is there, and
+  another package can't stop it), and waits until it answers. Starts take turns (the sandbox's own at boot and vibe's
+  at the start of a session can overlap), so the data is set up once; and a log someone else made and closed doesn't
+  stop the agent running it by hand (it keeps a log of its own beside it). It never initialises over data that is there, and
   refuses a folder it can't read or one with other files in it, rather than touch it.
 - **The version is pinned,** in the script, with a checksum for each architecture (Oracle has a minimal x86_64 build, a
   tenth of the size, and no minimal ARM one, which gets the full 786 MB). To move to another 8.4 release, change

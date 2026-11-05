@@ -75,14 +75,24 @@ func fakeMysqlTarball(t *testing.T, mysqldBody string) (data []byte, sum string)
 }
 
 type mysql84Install struct {
-	prefix, links, log string
-	requests           []string
-	exit               error
+	prefix, links, log, calls string
+	requests                  []string
+	exit                      error
 }
 
 // runMysql84Install runs the install script against a stand-in server that serves what serve says for each path
 // (and 404 for the rest), with the script's pinned checksums replaced by sums (the fake tarball's, or not).
 func runMysql84Install(t *testing.T, serve map[string][]byte, sums string, arch string, prefixHasMysql bool) mysql84Install {
+	t.Helper()
+	return runMysql84InstallWith(t, serve, sums, arch, prefixHasMysql, mysql84AllLibs)
+}
+
+// The libraries the programs take from the system, as files in the folder the script is told to look in.
+var mysql84AllLibs = []string{"libnuma.so.1", "libncurses.so.6", "libaio.so.1"}
+
+// runMysql84InstallWith is that with the system having libs (file names) of the ones the programs need, and no
+// others.
+func runMysql84InstallWith(t *testing.T, serve map[string][]byte, sums string, arch string, prefixHasMysql bool, libs []string) mysql84Install {
 	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("the script is for a Linux sandbox")
@@ -122,16 +132,24 @@ func runMysql84Install(t *testing.T, serve map[string][]byte, sums string, arch 
 	bundle := filepath.Join(dir, "certs.crt")
 	os.WriteFile(bundle, []byte("certs"), 0o644)
 
+	libdir := filepath.Join(dir, "lib")
+	os.MkdirAll(libdir, 0o755)
+	for _, lib := range libs {
+		os.WriteFile(filepath.Join(libdir, lib), []byte("lib"), 0o644)
+	}
 	run.prefix, run.links, run.log = filepath.Join(dir, "opt", "mysql-8.4"), filepath.Join(dir, "links"), filepath.Join(dir, "log")
 	if prefixHasMysql {
 		writeExecutable(t, filepath.Join(run.prefix, "bin", "mysqld"), "echo old mysqld\n")
 	}
 	cmd := exec.Command("/bin/sh", edited)
 	cmd.Env = []string{"PATH=" + bin, "MYSQL_BASE=" + srv.URL, "MYSQL_PREFIX=" + run.prefix, "MYSQL_LINKS=" + run.links,
-		"MYSQL_DATADIR=" + filepath.Join(dir, "data"), "MYSQL_INSTALL_LOG=" + run.log, "MYSQL_CA_BUNDLE=" + bundle}
+		"MYSQL_DATADIR=" + filepath.Join(dir, "data"), "MYSQL_INSTALL_LOG=" + run.log, "MYSQL_CA_BUNDLE=" + bundle,
+		"MYSQL_LIBDIRS=" + libdir}
 	run.exit = cmd.Run()
 	logged, _ := os.ReadFile(run.log)
 	run.log = string(logged)
+	recorded, _ := os.ReadFile(calls)
+	run.calls = string(recorded)
 	return run
 }
 
@@ -398,5 +416,137 @@ func TestTheMysql84FeatureIsOfferedAndComposesIntoAProfile(t *testing.T) {
 	instructions, _ := os.ReadFile(filepath.Join(dir, "kit-instructions.md"))
 	if !strings.Contains(string(instructions), "MySQL 8.4") {
 		t.Errorf("the profile's kit-instructions.md lacks the feature's:\n%s", instructions)
+	}
+}
+
+// The image doesn't promise the libraries the programs load: a sandbox that had other packages installed first has
+// some of them, and one that hasn't does not (which is how the first real build failed: libnuma).
+func TestMysql84InstallsTheLibrariesTheImageLacks(t *testing.T) {
+	data, sum := fakeMysqlTarball(t, mysqldOK)
+	run := runMysql84InstallWith(t, map[string][]byte{"/Downloads/MySQL-8.4/" + x64Asset: data}, sum, "x86_64", false, nil)
+	for _, want := range []string{"install -y libnuma1", "install -y libncurses6", "install -y libaio1t64"} {
+		if !strings.Contains(run.calls, want) {
+			t.Errorf("apt was never asked for %q:\n%s", want, run.calls)
+		}
+	}
+}
+
+func TestMysql84InstallsOnlyTheLibrariesThatAreMissing(t *testing.T) {
+	data, sum := fakeMysqlTarball(t, mysqldOK)
+	run := runMysql84InstallWith(t, map[string][]byte{"/Downloads/MySQL-8.4/" + x64Asset: data}, sum, "x86_64", false, []string{"libnuma.so.1", "libaio.so.1"})
+	if !strings.Contains(run.calls, "libncurses6") || strings.Contains(run.calls, "libnuma1") || strings.Contains(run.calls, "libaio") {
+		t.Errorf("expected libncurses6 alone to be installed:\n%s", run.calls)
+	}
+	run = runMysql84InstallWith(t, map[string][]byte{"/Downloads/MySQL-8.4/" + x64Asset: data}, sum, "x86_64", false, mysql84AllLibs)
+	if strings.Contains(run.calls, "libnuma1") || strings.Contains(run.calls, "libncurses6") || strings.Contains(run.calls, "libaio") {
+		t.Errorf("installed libraries the image has:\n%s", run.calls)
+	}
+}
+
+// Debian 13 has libaio as libaio.so.1t64, which mysqld doesn't look for: it is linked under the name it does, inside
+// the unpacked folder.
+func TestMysql84GetsLibaioItsNameWhenTheSystemsIsCalledSomethingElse(t *testing.T) {
+	data, sum := fakeMysqlTarball(t, mysqldOK)
+	run := runMysql84InstallWith(t, map[string][]byte{"/Downloads/MySQL-8.4/" + x64Asset: data}, sum, "x86_64", false,
+		[]string{"libnuma.so.1", "libncurses.so.6", "libaio.so.1t64"})
+	target, err := os.Readlink(filepath.Join(run.prefix, "lib", "private", "libaio.so.1"))
+	if err != nil || !strings.HasSuffix(target, "libaio.so.1t64") {
+		t.Errorf("libaio.so.1 isn't linked to the system's libaio.so.1t64: %q, %v", target, err)
+	}
+}
+
+// Two starts at once (boot, and vibe's nudge) must not both initialise the data folder: one would clear what the
+// other was making. The second waits and finds the data there.
+func TestTwoStartsAtOnceInitialiseTheDataFolderOnce(t *testing.T) {
+	if _, err := exec.LookPath("flock"); err != nil {
+		t.Skip("no flock on this machine")
+	}
+	if runtime.GOOS != "linux" {
+		t.Skip("the script is for a Linux sandbox")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	os.MkdirAll(bin, 0o755)
+	mysql84Tools(t, bin, "date", "awk", "ls", "find", "sh", "sleep", "flock", "mkdir")
+	calls := filepath.Join(dir, "calls")
+	datadir := filepath.Join(dir, "data")
+	os.MkdirAll(datadir, 0o755)
+	// The initialise takes a moment, and makes the folder's data when it ends: what the second start must wait for.
+	writeExecutable(t, filepath.Join(bin, "sudo"), `echo "$@" >>`+calls+`
+case "$1" in
+  sh) exec "$@" ;;
+  -u) case "$*" in *--initialize-insecure*) sleep 0.4; mkdir -p "$FAKE_DATADIR/mysql" ;; esac ;;
+esac
+exit 0
+`)
+	prefix := filepath.Join(dir, "opt")
+	writeExecutable(t, filepath.Join(prefix, "bin", "mysqld"), "exit 0\n")
+	writeExecutable(t, filepath.Join(prefix, "bin", "mysqladmin"), "exit 0\n")
+	net := filepath.Join(dir, "tcp")
+	os.WriteFile(net, []byte("  sl  local_address rem_address   st\n"), 0o644)
+
+	start := func() *exec.Cmd {
+		cmd := exec.Command("/bin/sh", mysql84Script(t, "agent-files", ".local", "bin", "start-mysql-8.4"))
+		cmd.Env = []string{"PATH=" + bin, "MYSQL_START_LOG=" + filepath.Join(dir, "log"), "MYSQL_NET_TCP=" + net,
+			"MYSQL_PREFIX=" + prefix, "MYSQL_DATADIR=" + datadir, "MYSQL_RUNDIR=" + filepath.Join(dir, "run"),
+			"MYSQL_LOCK=" + filepath.Join(dir, "lock"), "FAKE_DATADIR=" + datadir}
+		return cmd
+	}
+	first, second := start(), start()
+	if err := first.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Wait(); err != nil {
+		t.Errorf("the first start failed: %v", err)
+	}
+	if err := second.Wait(); err != nil {
+		t.Errorf("the second start failed: %v", err)
+	}
+	got, _ := os.ReadFile(calls)
+	if n := strings.Count(string(got), "--initialize-insecure"); n != 1 {
+		t.Errorf("the data folder was initialised %d times, want once:\n%s", n, got)
+	}
+	if strings.Contains(string(got), "-delete") {
+		t.Errorf("the data folder was cleared:\n%s", got)
+	}
+}
+
+// Root makes the log at boot, and the agent is told to run the script by hand: a log it can't write must not stop it.
+func TestStartMysql84UsesALogOfItsOwnWhenTheOneThereIsClosedToIt(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can write any file, so there is no closed log to meet")
+	}
+	if runtime.GOOS != "linux" {
+		t.Skip("the script is for a Linux sandbox")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	os.MkdirAll(bin, 0o755)
+	mysql84Tools(t, bin, "date", "awk", "id", "ls", "sh", "sleep")
+	prefix := filepath.Join(dir, "opt")
+	writeExecutable(t, filepath.Join(prefix, "bin", "mysqladmin"), "exit 0\n")
+	closed := filepath.Join(dir, "log")
+	if err := os.WriteFile(closed, []byte("root's"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	net := filepath.Join(dir, "tcp")
+	os.WriteFile(net, []byte("  sl  local_address rem_address   st\n   0: 0100007F:0CEA 00000000:0000 0A 00000000:00000000 00:00000000 00000000   100        0 1 1\n"), 0o644)
+	cmd := exec.Command("/bin/sh", mysql84Script(t, "agent-files", ".local", "bin", "start-mysql-8.4"))
+	cmd.Env = []string{"PATH=" + bin, "MYSQL_START_LOG=" + closed, "MYSQL_NET_TCP=" + net, "MYSQL_LOCK=" + filepath.Join(dir, "lock"), "MYSQL_PREFIX=" + prefix}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("it stopped on a log it couldn't write: %v\n%s", err, out)
+	}
+	if got, _ := os.ReadFile(closed); string(got) != "root's" {
+		t.Errorf("the closed log was changed: %q", got)
+	}
+	entries, _ := filepath.Glob(closed + ".*")
+	if len(entries) != 1 {
+		t.Fatalf("expected a log of its own beside it, found %v", entries)
+	}
+	if got, _ := os.ReadFile(entries[0]); !strings.Contains(string(got), "already listening") {
+		t.Errorf("its own log doesn't have what it said: %q", got)
 	}
 }

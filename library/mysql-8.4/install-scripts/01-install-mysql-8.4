@@ -30,9 +30,36 @@ apt_install() {
   sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y "$@" </dev/null >>"$LOG" 2>&1
 }
 
-# The libraries' names differ by Debian release: 13 ships libaio as libaio.so.1t64, which MySQL doesn't look for.
-have_libaio() {
-  ls /usr/lib/*/libaio.so.1 /lib/*/libaio.so.1 >/dev/null 2>&1
+# Where the system's libraries are, to look for the ones mysqld and mysql load (set only to try this script).
+LIBDIRS="${MYSQL_LIBDIRS:-/usr/lib/*-linux-gnu /lib/*-linux-gnu /usr/lib /lib}"
+
+# Not quoted: LIBDIRS is a list of folders, some of them globs.
+have_lib() {
+  for dir in $LIBDIRS; do
+    [ -e "$dir/$1" ] && return 0
+  done
+  return 1
+}
+
+# What the tarball's programs take from the system: it bundles OpenSSL and the rest, but not these. The image doesn't
+# promise any of them (a sandbox that had MariaDB or Playwright's libraries installed first has some, and one that
+# hasn't does not), so each is installed if it is missing. libaio's soname differs by Debian release: 13 ships it as
+# libaio.so.1t64, which MySQL doesn't look for.
+install_libraries() {
+  have_lib libnuma.so.1 || apt_install libnuma1 || echo "WARN: couldn't install libnuma1, which mysqld needs" >>"$LOG"
+  have_lib libncurses.so.6 || apt_install libncurses6 || echo "WARN: couldn't install libncurses6, which the mysql client needs" >>"$LOG"
+  if ! have_lib libaio.so.1; then
+    apt_install libaio1t64 || apt_install libaio1 || echo "WARN: couldn't install libaio, which mysqld needs" >>"$LOG"
+  fi
+}
+
+# What the programs still can't find, said in the log by name rather than left to a program's own error.
+check_libraries() {
+  command -v ldd >/dev/null 2>&1 || return 0
+  for program in "$1"/bin/mysqld "$1"/bin/mysql; do
+    missing=$(ldd "$program" 2>&1 | grep -i "not found" | sed 's/^[[:space:]]*//' | tr '\n' ';')
+    [ -n "$missing" ] && echo "WARN: $(basename "$program") can't find: $missing" >>"$LOG"
+  done
 }
 
 install_mysql() {
@@ -85,14 +112,17 @@ install_mysql() {
   fi
   rm -rf "$work"
 
-  if ! have_libaio; then
-    apt_install libaio1t64 || apt_install libaio1 || echo "WARN: couldn't install libaio, which mysqld needs" >>"$LOG"
+  install_libraries
+  if ! have_lib libaio.so.1; then
+    for dir in $LIBDIRS; do
+      if [ -e "$dir/libaio.so.1t64" ]; then
+        # Beside the bundled libraries, which mysqld searches first: nothing outside its folder is touched.
+        ln -sf "$dir/libaio.so.1t64" "$stage/lib/private/libaio.so.1"
+        break
+      fi
+    done
   fi
-  if ! have_libaio; then
-    t64=$(ls /usr/lib/*/libaio.so.1t64 /lib/*/libaio.so.1t64 2>/dev/null | head -n 1)
-    # Beside the bundled libraries, which mysqld searches first: nothing outside its folder is touched.
-    [ -n "$t64" ] && ln -sf "$t64" "$stage/lib/private/libaio.so.1"
-  fi
+  check_libraries "$stage"
 
   if [ -e "$PREFIX" ] && ! mv "$PREFIX" "$old"; then
     echo "WARN: the MySQL in $PREFIX couldn't be set aside: left as it is" >>"$LOG"
