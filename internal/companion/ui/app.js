@@ -1447,12 +1447,25 @@
     return threads
   }
 
+  // awaitingYou says whether thread t is waiting on the user: still open, and the agent had the last word.
+  function awaitingYou(t) {
+    const last = t.comments[t.comments.length - 1]
+    return t.status === 'open' && !!last && last.author === 'agent'
+  }
+
   // drawCommentsPane draws the comments pane's cards: each thread, where
   // it is, its state, how it starts, and how many replies it has; one the
   // agent had the last word on, still open, is marked as awaiting your answer.
+  // The button that opens the pane is coloured as those cards are while any
+  // thread waits on you, so it is seen without the pane being open.
   function drawCommentsPane() {
     const rv = reviewView.review
     $('review-comments-count').textContent = String(rv ? rv.threads.length : 0)
+    const waiting = rv ? rv.threads.filter(awaitingYou).length : 0
+    const opener = $('review-comments-open')
+    opener.classList.toggle('awaiting', waiting > 0)
+    opener.title = 'All the comments, in a pane over the diff' +
+      (waiting ? ': ' + (waiting === 1 ? '1 is' : waiting + ' are') + ' awaiting your answer' : '')
     const pane = reviewView.pane
     for (const b of $('review-comments').querySelectorAll('[data-filter]')) b.setAttribute('aria-pressed', String(b.dataset.filter === pane.filter))
     // Path and reading order are the comment arrows' own (as chosen under the
@@ -1465,8 +1478,7 @@
       const first = t.comments[0] || { author: '', body: '' }
       const replies = t.comments.length - 1
       const where = t.file ? t.file + ':' + t.line + (t.endLine > t.line ? '–' + t.endLine : '') + (t.side === 'old' ? ' (old)' : '') : 'on the whole review'
-      const last = t.comments[t.comments.length - 1]
-      const awaiting = t.status === 'open' && !!last && last.author === 'agent'
+      const awaiting = awaitingYou(t)
       // What the thread is waiting on, or how it ended, is the first thing on the card, on a line of its own, so that
       // it is seen first and a long path can't squeeze it; a card with nothing to say has no such line.
       const states = [
