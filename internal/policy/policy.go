@@ -101,6 +101,11 @@ type Rule struct {
 	// denies what no policy decides says so here, and the rules people add
 	// say nothing.
 	Reason string `json:"reason,omitempty"`
+	// Layer is the policy layer the rule is from (local, for sbx's own and
+	// the user's); editable is whether sbx says it can be edited, nil when it
+	// didn't say.
+	Layer    string `json:"layer,omitempty"`
+	editable *bool
 	// Removable is true for a rule the page offers to remove: one sbx says
 	// is editable. The removal is always scoped to the sandbox, so a global
 	// rule is never touched from the page: sbx refuses, and says so.
@@ -165,10 +170,32 @@ func (c *Client) ResolvedLog() (Log, error) {
 }
 
 // implicitFallback says whether r is sbx's own rule denying whatever no policy
-// decides ("**", from sbx v0.51 on): it is where a request ends up when no rule
-// allows it, not a rule against any host, so it can't be what stops an allow.
+// decides (from sbx v0.51 on): where a request ends up when no rule allows it,
+// not a rule against any host, so it can't be what stops an allow. It matches
+// every host, so taking it for a deny that stands would leave nothing ever
+// unblocked; and taking a deny that stands for it would show a host as open
+// that a rule is blocking, so what counts is narrow:
+//   - its shape: a deny of "**" alone that sbx says can't be edited, on the
+//     local layer. That is what it is, whatever words it explains itself in,
+//     and a rule a user added (editable), an organisation's (another layer), or
+//     one that doesn't say whether it can be edited, is not it;
+//   - or its own account of itself: a reason that starts "Implicit fallback".
 func (r Rule) implicitFallback() bool {
-	return r.Decision == Blocked && strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.Reason)), "implicit fallback")
+	if r.Decision != Blocked {
+		return false
+	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.Reason)), "implicit fallback") {
+		return true
+	}
+	if r.editable == nil || *r.editable || r.Layer != "local" || len(r.Resources) == 0 {
+		return false
+	}
+	for _, res := range r.Resources {
+		if strings.TrimSpace(res) != "**" {
+			return false
+		}
+	}
+	return true
 }
 
 // Resolve marks as Unblocked each blocked entry whose host is allowed by a
@@ -471,7 +498,8 @@ func ParseRules(data []byte) (Rules, error) {
 			Origin    string   `json:"origin"`
 			Status    string   `json:"status"`
 			Reason    string   `json:"reason"`
-			Editable  bool     `json:"editable"`
+			Layer     string   `json:"layer"`
+			Editable  *bool    `json:"editable"`
 		}
 		if err := json.Unmarshal(raw, &r); err != nil {
 			return Rules{}, unusable(command, data, err.Error())
@@ -497,7 +525,9 @@ func ParseRules(data []byte) (Rules, error) {
 			Scope:     r.Scope,
 			Status:    r.Status,
 			Reason:    r.Reason,
-			Removable: r.Editable && r.ID != "",
+			Layer:     r.Layer,
+			editable:  r.Editable,
+			Removable: r.Editable != nil && *r.Editable && r.ID != "",
 			Raw:       raw,
 		})
 	}

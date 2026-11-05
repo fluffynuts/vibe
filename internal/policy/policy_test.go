@@ -485,3 +485,52 @@ func TestAHostAllowedWhileTheImplicitDenyAllIsListedIsMarkedUnblocked(t *testing
 		}
 	}
 }
+
+// denyEverything is a rule denying "**", as sbx might list it, with fields (JSON, each ending in a comma) put in or left
+// out, and the cdn.mysql.com allow beside it: what Resolve makes of that host says whether the deny was taken for
+// sbx's own fallback (unblocked) or for a rule that stands (blocked).
+func resolveWithDenyEverything(t *testing.T, fields string) string {
+	t.Helper()
+	rules, err := ParseRules([]byte(`{"rules": [
+	  {"id": "allow", "scope": "sandbox:vibe", "decision": "allow", "resources": ["cdn.mysql.com:443"], "layer": "local", "status": "active", "editable": true},
+	  {"id": "everything", ` + fields + ` "decision": "deny", "resources": ["**"], "status": "active"}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Resolve(Log{Entries: []LogEntry{{Host: "cdn.mysql.com:443", Decision: Blocked}}}, rules).Entries[0].Decision
+}
+
+// What sbx's own fallback is told by is what it is (a deny of everything that can't be edited, on the local layer), so
+// the words it uses to say so can change.
+func TestTheImplicitFallbackIsKnownByItsShapeNotItsWording(t *testing.T) {
+	if got := resolveWithDenyEverything(t, `"editable": false, "layer": "local", "reason": "Something else entirely.",`); got != Unblocked {
+		t.Errorf("a non-editable local deny of everything, however it explains itself: %q, want %q", got, Unblocked)
+	}
+	if got := resolveWithDenyEverything(t, `"editable": false, "layer": "local",`); got != Unblocked {
+		t.Errorf("a non-editable local deny of everything with no explanation: %q, want %q", got, Unblocked)
+	}
+}
+
+// And if the shape changes, what it says of itself still tells it.
+func TestTheImplicitFallbackIsStillKnownByItsReasonIfItsShapeChanges(t *testing.T) {
+	if got := resolveWithDenyEverything(t, `"editable": true, "layer": "remote", "reason": "Implicit fallback when no applicable policy decides the request.",`); got != Unblocked {
+		t.Errorf("got %q, want %q", got, Unblocked)
+	}
+}
+
+// Anything that isn't clearly that rule is a deny that stands: ignoring one wrongly would show a host as open that a
+// rule is still blocking.
+func TestADenyOfEverythingThatIsNotTheFallbackStillStopsAnAllow(t *testing.T) {
+	for name, fields := range map[string]string{
+		"one a user added (editable)":                   `"editable": true, "layer": "local", "provenance": {"created_via": "added"},`,
+		"one from an organisation (another layer)":      `"editable": false, "layer": "org",`,
+		"one that doesn't say whether it can be edited": `"layer": "local",`,
+		"one with no layer given":                       `"editable": false,`,
+		"one whose reason merely mentions a fallback":   `"editable": true, "layer": "local", "reason": "Kept as the fallback for the office network.",`,
+	} {
+		if got := resolveWithDenyEverything(t, fields); got != Blocked {
+			t.Errorf("%s: %q, want %q", name, got, Blocked)
+		}
+	}
+}
