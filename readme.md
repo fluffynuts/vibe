@@ -1232,6 +1232,19 @@ sandbox is created, so anything that should be refreshed on every sandbox start 
 in `agent-files/.local/bin/`, which the generated `on-start` runs (as root: re-enter as the agent
 user for anything written under `/home/agent`, or the agent can't replace it later).
 
+The generated `on-start` runs twice for each sandbox start: sbx runs it as the sandbox boots, and vibe runs it again
+when a session starts (its "nudge"), so a script has to be safe to run again, and the two can overlap while a slow
+service is still starting. So **it takes a lock** (`flock`, on `/tmp/on-start.lock`) and one run waits for the other
+instead of running its scripts among theirs. The lock is the kernel's: it goes when the process holding it does, however
+that ends, so a killed run can't leave one behind; and it is taken so that the daemons a script starts don't inherit it
+(`flock -o`), or the first service left running would hold it for good. A run waits at most `VIBE_ON_START_LOCK_WAIT`
+seconds (90 by default, a constant in the script), then says it gave up and ends without error: the run in front of it is
+starting everything anyway. If the lock can't be had at all (no `flock`, a lock file it can't open) the scripts run
+without it, and the log says so. The log, `/tmp/start-services.log`, also says how long each script took (`start-mysql-8.4
+took 3 s`), how long the whole run did (`=== took 18 s ===`), and how long a run waited for another. A script that starts
+a service should itself be safe against a second copy of itself (it can be run by hand too): `start-mysql-8.4` takes its
+own lock for the data folder's first set-up.
+
 A feature vibe no longer has — `diffity`, whose reviews are on the companion page's Review tab now — is
 left out, with a note, wherever it's still named: in `defaultFeatures`, and in a profile's recorded
 features when it's re-composed or updated.

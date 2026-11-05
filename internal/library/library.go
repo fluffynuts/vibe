@@ -465,11 +465,50 @@ const onStartAsRoot = `if [ "$(id -u)" != 0 ] && sudo -n true 2>/dev/null; then
 fi
 `
 
+// onStartLocked makes a generated on-start run one at a time. It runs at boot (as setup.startup) and again when vibe
+// starts a session (its "nudge"), and the two can overlap: a slow service, such as Elasticsearch or a first MySQL
+// start, is still starting when the second arrives, and two starts of one service race (two initialisations of one
+// data folder, say).
+//
+// The lock is flock's, taken by a flock that runs this script again. It goes when the process holding it does, however
+// that ends (a killed run leaves nothing to clear), and -o runs the script with the lock's file descriptor closed, so
+// the daemons the start scripts launch don't inherit it and hold it after the run is over. How long a run waits is
+// VIBE_ON_START_LOCK_WAIT seconds: a run that has waited that long gives up, since the one in front of it is starting
+// everything anyway. A lock that can't be had (flock missing, the file not openable) is no reason not to start the
+// services: the run goes on without it, and says so. The overrides are for trying the script.
+const onStartLocked = `[ -n "$VIBE_ON_START_LOG" ] || VIBE_ON_START_LOG=/tmp/start-services.log
+[ -n "$VIBE_ON_START_BIN" ] || VIBE_ON_START_BIN=/home/agent/.local/bin
+exec >>"$VIBE_ON_START_LOG" 2>&1
+if [ -z "$VIBE_ON_START_LOCKED" ] && command -v flock >/dev/null 2>&1; then
+  [ -n "$VIBE_ON_START_LOCK" ] || VIBE_ON_START_LOCK=/tmp/on-start.lock
+  [ -n "$VIBE_ON_START_LOCK_WAIT" ] || VIBE_ON_START_LOCK_WAIT=90
+  ( umask 000; : >>"$VIBE_ON_START_LOCK" ) 2>/dev/null
+  VIBE_ON_START_LOCKED=1 VIBE_ON_START_QUEUED_AT=$(date +%s) \
+    flock -o -E 99 -w "$VIBE_ON_START_LOCK_WAIT" "$VIBE_ON_START_LOCK" "$0" "$@"
+  status=$?
+  case $status in
+    99)
+      echo "=== on-start at $(date -Is): another is still running after $VIBE_ON_START_LOCK_WAIT s: not starting a second ==="
+      exit 0
+      ;;
+    66) echo "WARN: on-start couldn't open its lock $VIBE_ON_START_LOCK: running without it" ;;
+    *) exit $status ;;
+  esac
+fi
+if [ -n "$VIBE_ON_START_QUEUED_AT" ]; then
+  waited=$(( $(date +%s) - $VIBE_ON_START_QUEUED_AT ))
+  [ "$waited" -gt 0 ] && echo "waited $waited s for another on-start to finish"
+fi
+`
+
 // writeOnStart generates a startup script — in the same vein as
 // library/on-start.example — that runs every given agent-files/.local/bin
 // script, in order, and reports which ones failed without stopping the
-// rest. kitspec's StartupSteps picks this file up automatically once it is
-// in place at agent-files/.local/bin/on-start.
+// rest, and how long each took (so that what a boot costs is in its log).
+// kitspec's StartupSteps picks this file up automatically once it is in place
+// at agent-files/.local/bin/on-start. No braced shell expansions in it: sbx
+// validates every brace-form substitution in file content against its own
+// placeholder list.
 func writeOnStart(profileDir string, scripts []string) error {
 	dest := filepath.Join(profileDir, "agent-files", ".local", "bin", "on-start")
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
@@ -479,13 +518,17 @@ func writeOnStart(profileDir string, scripts []string) error {
 	fmt.Fprintf(&b, "#!/bin/sh\n")
 	fmt.Fprintf(&b, "# vibe: description: Run the startup scripts for: %s\n", strings.Join(scripts, ", "))
 	b.WriteString(onStartAsRoot)
-	b.WriteString("exec >>/tmp/start-services.log 2>&1\n")
+	b.WriteString(onStartLocked)
 	b.WriteString("echo \"=== start-services at $(date -Is) ===\"\n")
+	b.WriteString("started=$(date +%s)\n")
 	fmt.Fprintf(&b, "for s in %s; do\n", strings.Join(scripts, " "))
 	b.WriteString("  echo \"--- $s\"\n")
-	b.WriteString("  /home/agent/.local/bin/$s || echo \"WARN: $s exited $?\"\n")
+	b.WriteString("  began=$(date +%s)\n")
+	b.WriteString("  $VIBE_ON_START_BIN/$s || echo \"WARN: $s exited $?\"\n")
+	b.WriteString("  echo \"    $s took $(( $(date +%s) - $began )) s\"\n")
 	b.WriteString("done\n")
 	b.WriteString("echo \"=== done at $(date -Is) ===\"\n")
+	b.WriteString("echo \"=== took $(( $(date +%s) - $started )) s ===\"\n")
 	return fscopy.WriteWholeMode(dest, []byte(b.String()), 0o644)
 }
 
