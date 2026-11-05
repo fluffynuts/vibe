@@ -1,6 +1,6 @@
 # The sandbox's helpers in Go, so a sandbox needs no Node (planned, not built)
 
-Raised 2026-11-04. The want: the clipboard page's server is a Node script, so every sandbox has to install Node (`library/base/clipboard-bridge/install-scripts/00-install-node`) now that sbx's claude image no longer ships it. Write the helpers in Go, which vibe already is, and make Node a feature a user picks (`library/node`, as `library/go` is) for projects that want it.
+Raised 2026-11-04. The want: the clipboard page's server is a Node script, so every sandbox has to install Node (the Node line in `library/base/prerequisites/install-scripts/01-install-prerequisites`, which both the clipboard server and `vibe-review` rely on) now that sbx's claude image no longer ships it. Write the helpers in Go, which vibe already is, and make Node a feature a user picks (`library/node`, as `library/go` is) for projects that want it.
 
 ## What there is
 
@@ -32,7 +32,7 @@ Recommendation: **A**, as one binary `vibe-agent` with subcommands (`clipboard-s
 2. `cmd/vibe-agent` (or `internal/agent`): the server first, with the existing Go tests rewritten to run it directly (no host node). Keep the API and the page exactly as they are (`/api/claim`, `/api/clipboard`, the history under `~/.local/state/vibe/clipboard`, the ready-file-descriptor handshake `start-clipboard` uses).
 3. The hook and `sbx-clipboard-fallback`'s counterpart; then `review`.
 4. Delivery: the build step, the embed, the copy, and `start-clipboard`/`clipboard-hook`/`vibe-review` calling the binary instead of `node`. Missing-binary messages follow `missingtool_test.go`.
-5. Drop `00-install-node`; add `library/node` (installs `nodejs-24`, as that script does now) as an optional feature, with its test and readme section.
+5. Drop Node from the `prerequisites` base feature (its install line, its `node` check and its tests); add `library/node` (installs `nodejs-24` with the fall-back to Debian's, as that step does now) as an optional feature, with its test and readme section.
 6. Readme and a rebuild note: sandboxes composed before the change keep working (they still have the JS and Node), and `vibe -C` moves them over.
 
 ## Not decided

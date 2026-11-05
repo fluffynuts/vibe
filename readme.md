@@ -1055,7 +1055,7 @@ defaults/             # tooling applied to every profile, regardless of tech sta
   agent-files/
 library/              # selectable features a guided profile is composed from
   <feature-name>/     # same shape as a profile — see "Library features"
-  base/               # features every guided profile always gets (clipboard-bridge)
+  base/               # features every guided profile always gets (clipboard-bridge, prerequisites, review, timezone)
 profiles/
   <profile-name>/
     config.yaml          # profile-specific kit fragment, merged over the base one
@@ -1260,6 +1260,19 @@ history inside itself until it is next rebuilt. `start-clipboard` waits for the 
 listening: a server that crashes is reported at once, and one that hasn't started within 30 seconds is
 reported as stuck. Either way the companion's clipboard pane shows why. The server logs to
 `/tmp/clipboard.log` and `/tmp/clipboard-server.log`.
+
+The other base features, which every guided profile has too:
+
+- **`prerequisites`** makes sure the image has what the features and vibe's own scripts assume: `curl`, the
+  certificates, `gpg`, `tar`, `gzip`, `xz`, `flock` and Node.js (the clipboard page's server and `vibe-review` are written
+  in it). The image promises none of them, and its Debian one has neither Node nor `xz`. It asks apt for only what is
+  missing, in one run, or for nothing when it's all there; if that run fails because the image lacks one of the packages
+  (apt installs nothing when it can't find one name), the tools and Node are asked for separately, Node falling back to
+  Debian's own. Anything still missing is named in `/tmp/sbx-setup.log`. A feature still checks for the tools it uses
+  itself, which costs nothing when they're there.
+- **`timezone`** installs `tzdata`, which the image lacks, so the sandbox can be set to your timezone at every session
+  start (a project whose tests expect a timezone gets it).
+- **`review`** is the tooling behind the Review tab: the `vibe-review` command and its skill.
 
 The profile that comes out is an ordinary profile directory: edit it afterwards like any other.
 Composing happens **once**, when the profile is created — the library is never read again, so a

@@ -1,0 +1,63 @@
+#!/bin/sh
+# vibe: description: Make sure the image has the tools the features and vibe's own scripts assume (curl, certificates, gpg, tar, gzip, xz, flock) and Node.js, in one apt run (non-fatal)
+# vibe: user: 0
+#
+# The image promises none of these (sbx's earlier one had Node; its Debian one has neither Node nor xz), and every
+# feature that downloads or unpacks something, and the generated on-start (which takes a lock with flock), assumes
+# some of them. A feature still checks for what it uses itself, which costs nothing when it is there; this is the one
+# place that says what the sandbox is expected to have, and the common case is one apt run, or none.
+#
+# Node.js is here because vibe's own helpers need it: the clipboard page's server, and vibe-review (review-cli.js),
+# both base features. It goes when they are written in Go (docs/plan-agent-helper-in-go.md).
+LOG="${PREREQ_LOG:-/tmp/sbx-setup.log}"
+CA_BUNDLE="${PREREQ_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
+
+echo "--- checking prerequisites $(date -Is)" >>"$LOG"
+
+apt_install() {
+  sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 "$@" </dev/null >>"$LOG" 2>&1
+}
+
+# The package for each thing that is missing, in the order they are asked for.
+tools=""
+command -v curl >/dev/null 2>&1 || tools="$tools curl"
+[ -s "$CA_BUNDLE" ] || tools="$tools ca-certificates"
+command -v gpg >/dev/null 2>&1 || tools="$tools gnupg"
+command -v tar >/dev/null 2>&1 || tools="$tools tar"
+command -v gzip >/dev/null 2>&1 || tools="$tools gzip"
+command -v xz >/dev/null 2>&1 || tools="$tools xz-utils"
+command -v flock >/dev/null 2>&1 || tools="$tools util-linux"
+node=""
+command -v node >/dev/null 2>&1 || node="nodejs-24"
+
+if [ -z "$tools" ] && [ -z "$node" ]; then
+  echo "prerequisites are all there" >>"$LOG"
+  exit 0
+fi
+echo "missing:$tools $node" >>"$LOG"
+
+# One run for all of it. If that fails, a package the image doesn't have (nodejs-24 is a Docker Hardened Images
+# name) would take the rest down with it: apt installs nothing when one name in the command is unknown. So the
+# indexes are refreshed and it is tried again, and then the tools and Node are asked for separately.
+# Not quoted: each is a package name.
+if ! apt_install install -y $tools $node; then
+  if ! { apt_install update && apt_install install -y $tools $node; }; then
+    if [ -n "$tools" ]; then
+      apt_install install -y $tools || echo "WARN: couldn't install$tools" >>"$LOG"
+    fi
+    if [ -n "$node" ]; then
+      # Debian's own nodejs, if the image has no nodejs-24.
+      apt_install install -y nodejs-24 || apt_install install -y nodejs || echo "WARN: couldn't install Node.js" >>"$LOG"
+    fi
+  fi
+fi
+
+# Said by name, rather than left for a feature to fail on.
+command -v curl >/dev/null 2>&1 || echo "WARN: curl is still missing" >>"$LOG"
+command -v gpg >/dev/null 2>&1 || echo "WARN: gpg is still missing" >>"$LOG"
+command -v tar >/dev/null 2>&1 || echo "WARN: tar is still missing" >>"$LOG"
+command -v gzip >/dev/null 2>&1 || echo "WARN: gzip is still missing" >>"$LOG"
+command -v xz >/dev/null 2>&1 || echo "WARN: xz is still missing" >>"$LOG"
+command -v flock >/dev/null 2>&1 || echo "WARN: flock is still missing: the startup script will run without its lock" >>"$LOG"
+command -v node >/dev/null 2>&1 || echo "WARN: node is still missing: the clipboard page and vibe-review need it" >>"$LOG"
+true
