@@ -1904,6 +1904,30 @@ test("a card whose thread waits on your answer (open, the agent's the last word)
   } finally { p.close() }
 })
 
+// A card's state (what it waits on, or how it ended) is the first thing on it, on a line of its own, above the path:
+// beside a long path it was squeezed into a few lines. A card with nothing to say has no such line.
+test("a card's state is on a line of its own above the path, and a card with none has no line for it", async () => {
+  const p = await reviewPage({ review: overlaid, diff: twoFiles })
+  try {
+    await p.click('tab-review')
+    await p.click('review-comments-open')
+    const card = (id) => p.$('review-comments-list').querySelector(`[data-thread="${id}"]`)
+    const awaiting = card(1)
+    const state = awaiting.querySelector('.comment-card-state')
+    assert.ok(state, 'a card waiting on you has a state line')
+    assert.equal(awaiting.firstElementChild, state, 'the state is the first thing on the card')
+    assert.match(state.textContent, /awaiting your answer/)
+    assert.equal(awaiting.querySelector('.comment-card-where .pill'), null, 'the path line holds no pill')
+    const resolved = card(4)
+    assert.equal(resolved.firstElementChild.className, 'comment-card-state')
+    assert.match(resolved.firstElementChild.textContent, /resolved/)
+    assert.equal(resolved.querySelector('.comment-card-where .pill'), null)
+    // Open, and not waiting on you: nothing to say.
+    assert.equal(card(5).querySelector('.comment-card-state'), null, 'yours, unanswered: no state line')
+    assert.equal(card(5).firstElementChild.className, 'comment-card-where')
+  } finally { p.close() }
+})
+
 test('the pane filters to open threads, or yours, and orders by newest', async () => {
   const p = await reviewPage({ review: overlaid, diff: twoFiles })
   try {

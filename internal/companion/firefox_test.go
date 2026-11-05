@@ -21,7 +21,9 @@ import (
 // playwright install firefox, in uitest): without it, it's skipped saying
 // so, but never in CI on Linux, where it's installed and skipping would
 // pass it unseen.
-func TestThePageInFirefox(t *testing.T) {
+// needFirefox says (skipping, or failing in CI on Linux) when the browser tests can't run, and gives node's path.
+func needFirefox(t *testing.T) string {
+	t.Helper()
 	need := func(why string) {
 		t.Helper()
 		how := why + ": in internal/companion/uitest, run npm ci, then npx playwright install firefox"
@@ -42,7 +44,11 @@ func TestThePageInFirefox(t *testing.T) {
 	if check.Run() != nil {
 		need("Playwright's Firefox isn't installed")
 	}
+	return node
+}
 
+func TestThePageInFirefox(t *testing.T) {
+	node := needFirefox(t)
 	dir := t.TempDir()
 	var lines []string
 	for i := 1; i <= 60; i++ {
@@ -64,6 +70,19 @@ func TestThePageInFirefox(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	url := servePage(t, dir, store)
+
+	cmd := exec.Command(node, "--test", "firefox.test.js")
+	cmd.Dir = "uitest"
+	cmd.Env = append(os.Environ(), "VIBE_PAGE_URL="+url)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("node --test uitest/firefox.test.js failed: %v\n%s", err, out)
+	}
+}
+
+// servePage serves the page for the repository in dir, whose review is kept in store, and gives its address.
+func servePage(t *testing.T, dir string, store *review.Store) string {
+	t.Helper()
 	// A token shaped as vibe makes them: the page takes nothing else from
 	// its address.
 	pageToken := strings.Repeat("0123456789abcdef", 4)
@@ -78,12 +97,63 @@ func TestThePageInFirefox(t *testing.T) {
 		Converse:  (&fakeAgent{}).converse,
 		Choice:    (&choosing{model: "opus", options: claudeOptions}).config()}).Handler()}
 	go srv.Serve(ln)
-	defer srv.Close()
+	t.Cleanup(func() { srv.Close() })
 
-	cmd := exec.Command(node, "--test", "firefox.test.js")
+	return fmt.Sprintf("http://localhost:%d/#%s", port, pageToken)
+}
+
+// TestTheCommentsPaneInFirefox runs uitest/commentspane.firefox.test.js: the comments pane's cards in a real Firefox,
+// for their layout (a card's state is on a line of its own above a long path, and not squeezed beside it), which
+// jsdom can't show. The repository has a file with a long path, with a comment from the agent on it, so that its
+// thread waits on the user's answer.
+func TestTheCommentsPaneInFirefox(t *testing.T) {
+	node := needFirefox(t)
+	url := commentsPaneFixture(t)
+
+	cmd := exec.Command(node, "--test", "commentspane.firefox.test.js")
 	cmd.Dir = "uitest"
-	cmd.Env = append(os.Environ(), fmt.Sprintf("VIBE_PAGE_URL=http://localhost:%d/#%s", port, pageToken))
+	cmd.Env = append(os.Environ(), "VIBE_PAGE_URL="+url)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("node --test uitest/firefox.test.js failed: %v\n%s", err, out)
+		t.Fatalf("node --test uitest/commentspane.firefox.test.js failed: %v\n%s", err, out)
 	}
+}
+
+// commentsPaneFixture serves the page for a repository with a long-pathed file the agent has commented on, and a short
+// one the user has, and gives its address.
+func commentsPaneFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	long := "Yumbi.Web/ApplicationCode/Helpers/Controls/HtmlHelperFormExtensions.cs"
+	var lines []string
+	for i := 1; i <= 2100; i++ {
+		lines = append(lines, fmt.Sprintf("line %d", i))
+	}
+	if err := os.MkdirAll(filepath.Join(dir, filepath.Dir(long)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func() {
+		os.WriteFile(filepath.Join(dir, long), []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+		os.WriteFile(filepath.Join(dir, "short.txt"), []byte("a\nb\nc\nd\n"), 0o644)
+	}
+	write()
+	gitIn(t, dir, "init", "-q", "-b", "main")
+	gitIn(t, dir, "add", "-A")
+	gitIn(t, dir, "commit", "-q", "-m", "start")
+	for i := 2029; i <= 2031; i++ {
+		lines[i] += " changed"
+	}
+	write()
+	os.WriteFile(filepath.Join(dir, "short.txt"), []byte("a\nB\nc\nd\n"), 0o644)
+
+	store := review.NewStore(t.TempDir())
+	do := func(req review.Request, who string) {
+		t.Helper()
+		if _, err := store.Do(req, who); err != nil {
+			t.Fatal(err)
+		}
+	}
+	do(review.Request{Op: "start"}, review.User)
+	do(review.Request{Op: "comment", File: long, Line: 2030, EndLine: 2032, Body: "P2: Image form controls now resize through a blocking HTTP POST while the view renders, followed by EnsureSuccessStatusCode(). If the service is slow the whole page waits."}, review.Agent)
+	do(review.Request{Op: "comment", File: "short.txt", Line: 2, Body: "a short one, nothing waiting on you"}, review.User)
+	return servePage(t, dir, store)
 }

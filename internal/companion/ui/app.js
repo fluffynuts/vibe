@@ -1467,10 +1467,15 @@
       const where = t.file ? t.file + ':' + t.line + (t.endLine > t.line ? '–' + t.endLine : '') + (t.side === 'old' ? ' (old)' : '') : 'on the whole review'
       const last = t.comments[t.comments.length - 1]
       const awaiting = t.status === 'open' && !!last && last.author === 'agent'
+      // What the thread is waiting on, or how it ended, is the first thing on the card, on a line of its own, so that
+      // it is seen first and a long path can't squeeze it; a card with nothing to say has no such line.
+      const states = [
+        t.status === 'open' ? null : el('span', { class: 'pill', text: t.status }),
+        awaiting ? el('span', { class: 'pill warn', text: 'awaiting your answer' }) : null,
+      ].filter(Boolean)
       return el('button', { type: 'button', class: 'comment-card ' + t.status + (awaiting ? ' awaiting' : ''), 'data-thread': String(t.id), onclick: () => goToThread(t.id) },
-        el('span', { class: 'comment-card-where' }, el('code', { text: where }),
-          t.status === 'open' ? null : el('span', { class: 'pill', text: t.status }),
-          awaiting ? el('span', { class: 'pill warn', text: 'awaiting your answer' }) : null),
+        states.length ? el('span', { class: 'comment-card-state' }, ...states) : null,
+        el('span', { class: 'comment-card-where' }, el('code', { text: where })),
         el('span', { class: 'comment-card-said' }, el('strong', { text: first.author === 'agent' ? 'Agent: ' : 'You: ' }), first.body.replace(/\s+/g, ' ').slice(0, 160)),
         replies ? el('span', { class: 'comment-card-replies muted', text: plural(replies, 'reply', 'replies') }) : null)
     }) : [el('p', { class: 'muted', text: pane.filter === 'all' ? 'No comments yet.' : 'None of these.' })]))
