@@ -127,6 +127,59 @@ test('a request that fails is said on its cards, which stay unusable, with a way
   } finally { retry.release(ADMIN); await turns(); p.close() }
 })
 
+test('a failed first load that the next poll answers is put right without a press: the failure is gone and the card usable', async () => {
+  let asked = 0
+  const p = await adminPage({ '/api/admin': () => (++asked === 1 ? { status: 500, body: { error: 'sbx fell over' } } : ADMIN) })
+  try {
+    const { features } = adminCards(p)
+    assert.ok(features.querySelector('.card-load-failed'), 'it failed first')
+    await p.kick('tick')
+    await turns()
+    assert.ok(asked >= 2, 'it was asked again')
+    assert.equal(features.querySelector('.card-load-failed'), null, 'the failure is gone')
+    assert.equal(features.classList.contains('load-failed'), false)
+    assert.equal(busy(features), false)
+    assert.equal(unusable(p.$('admin-recompose')), false, 'and the card can be used')
+  } finally { p.close() }
+})
+
+test('a request that throws, not answering at all, is said on its card too, and put right when it answers', async () => {
+  let asked = 0
+  const p = await adminPage({ '/api/admin': () => (++asked === 1 ? Promise.reject(new Error('the host did not answer')) : ADMIN) })
+  try {
+    const { features } = adminCards(p)
+    assert.equal(busy(features), false, 'it is not left spinning')
+    assert.match(features.querySelector('.card-load-failed').textContent, /Couldn't load this/)
+    assert.ok(unusable(p.$('admin-recompose')), 'what is in it is not usable')
+    features.querySelector('.card-load-failed button').click()
+    await turns()
+    assert.equal(features.querySelector('.card-load-failed'), null)
+    assert.equal(unusable(p.$('admin-recompose')), false)
+  } finally { p.close() }
+})
+
+test('an answer the page can not show is said on its card, not left spinning', async () => {
+  const p = await adminPage({ '/api/admin': { status: { exists: true, guided: true, features: 5, availableFeatures: 7 }, job: null, upgrades: {} } })
+  try {
+    const { features } = adminCards(p)
+    assert.equal(busy(features), false, 'it is not left spinning')
+    assert.ok(features.querySelector('.card-load-failed'), 'and says it could not load')
+  } finally { p.close() }
+})
+
+test('the other cards say so too when their own request throws', async () => {
+  const p = await adminPage({
+    '/api/admin/instructions': () => Promise.reject(new Error('down')),
+    '/api/packages': () => Promise.reject(new Error('down')),
+  })
+  try {
+    for (const card of [p.$('admin-instructions').closest('.card'), p.$('admin-packages-all')]) {
+      assert.equal(busy(card), false, 'not spinning')
+      assert.ok(card.querySelector(':scope > .card-load-failed'), 'says it could not load')
+    }
+  } finally { p.close() }
+})
+
 test('a request that says its card does not apply settles it: the card is not left busy', async () => {
   const p = await adminPage({
     '/api/packages': { status: 404, body: { error: 'this sandbox cannot ask for packages' } },

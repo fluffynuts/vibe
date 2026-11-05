@@ -39,10 +39,16 @@ func needFirefox(t *testing.T) string {
 	if _, err := exec.LookPath("git"); err != nil {
 		need("git isn't installed")
 	}
-	check := exec.Command(node, "-e", "const fs = require('fs'); process.exit(fs.existsSync(require('playwright').firefox.executablePath()) ? 0 : 1)")
+	check := exec.Command(node, "-e", `
+let playwright
+try { playwright = require('playwright') } catch (e) { console.error(e.message); process.exit(2) }
+process.exit(require('fs').existsSync(playwright.firefox.executablePath()) ? 0 : 1)`)
 	check.Dir = "uitest"
-	if check.Run() != nil {
+	out, err := check.CombinedOutput()
+	if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
 		need("Playwright's Firefox isn't installed")
+	} else if err != nil {
+		need("Playwright can't be loaded (it needs Node 20 or later, and npm ci in internal/companion/uitest): " + strings.TrimSpace(string(out)) + " " + err.Error())
 	}
 	return node
 }

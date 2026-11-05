@@ -3623,6 +3623,7 @@
       cardLoaded('admin')
     } catch (e) {
       reached(false)
+      cardFailed('admin')
     }
   }
 
@@ -3651,6 +3652,7 @@
       cardLoaded('sync')
     } catch (e) {
       reached(false)
+      cardFailed('sync')
     }
   }
 
@@ -3768,6 +3770,7 @@
       cardLoaded('packages')
     } catch (e) {
       reached(false)
+      cardFailed('packages')
     }
   }
 
@@ -4692,6 +4695,7 @@
       cardLoaded('instructions')
     } catch (e) {
       reached(false)
+      cardFailed('instructions')
     }
   }
 
