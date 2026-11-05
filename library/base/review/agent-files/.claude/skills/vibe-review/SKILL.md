@@ -67,6 +67,13 @@ One comment per finding, on the lines it's about:
   consequence, the fix. A one- or two-line fix can go in a code block.
 - Use `--body-file -` with a quoted heredoc, as above, for anything with
   quotes, backticks or several lines.
+- To refer to another comment, write its number as the tab shows it: `#9`
+  (not "comment 1" or "the first one"). On the tab that is a link to the
+  comment, and the numbers are the tab's own, not the order you wrote them
+  in. Post the comment you refer to first, and take its number from
+  `vibe-review list`; a bare `#9`
+  after a word or letter (`issue#9`) is not a link. This goes for replies
+  and the general comment too.
 - A pattern rather than a one-off: comment on its first occurrence, say
   it's a pattern, and suggest a mechanical fix (a lint rule, a type, a
   test) rather than listing every instance.
