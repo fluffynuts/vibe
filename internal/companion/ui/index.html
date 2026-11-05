@@ -286,7 +286,7 @@
 
     <section id="panel-admin" class="panel panel-admin" hidden>
       <div class="admin-grid">
-        <section class="card" aria-labelledby="admin-sandbox-h">
+        <section class="card" data-loads="admin" aria-labelledby="admin-sandbox-h">
           <h2 id="admin-sandbox-h">Sandbox <span id="admin-state" class="pill"></span></h2>
           <div class="bar">
             <button type="button" id="admin-start" hidden>Start</button>
@@ -298,7 +298,7 @@
           <p id="admin-error" class="note bad-text" hidden></p>
         </section>
 
-        <section class="card" id="admin-signin" aria-labelledby="admin-signin-h" hidden>
+        <section class="card" id="admin-signin" data-loads="signin" aria-labelledby="admin-signin-h" hidden>
           <h2 id="admin-signin-h">Sign-in</h2>
           <p class="note muted">What vibe can read of whether sbx and the agent can be used. It changes nothing.</p>
           <ul class="signins">
@@ -310,7 +310,7 @@
           <p id="signin-status" class="note bad-text" role="status" hidden></p>
         </section>
 
-        <section class="card card-packages" id="admin-packages-all" aria-labelledby="admin-packages-all-h" hidden>
+        <section class="card card-packages" id="admin-packages-all" data-loads="packages sync" aria-labelledby="admin-packages-all-h" hidden>
           <progress id="admin-sync-progress" class="card-progress" aria-label="Packages fetched" hidden></progress>
           <h2 id="admin-packages-all-h">Packages</h2>
 
@@ -359,14 +359,14 @@
           <div class="bar"><button type="button" id="admin-cancel" class="danger" hidden>Cancel</button></div>
         </section>
 
-        <section class="card" aria-labelledby="admin-features-h">
+        <section class="card" data-loads="admin" aria-labelledby="admin-features-h">
           <h2 id="admin-features-h">Features</h2>
           <p id="admin-features-note" class="muted note"></p>
           <ul id="admin-features" class="checks"></ul>
           <div class="bar"><button type="button" id="admin-recompose">Re-compose with these…</button></div>
         </section>
 
-        <section class="card" id="admin-upgrades-card" aria-labelledby="admin-upgrades-h">
+        <section class="card" id="admin-upgrades-card" data-loads="admin" aria-labelledby="admin-upgrades-h">
           <h2 id="admin-upgrades-h">Upgrades</h2>
           <p id="admin-upgrades" class="note"></p>
           <ul id="admin-upgrades-list" class="plain"></ul>
@@ -376,13 +376,13 @@
           </div>
         </section>
 
-        <section class="card card-wide" aria-labelledby="admin-instructions-h">
+        <section class="card card-wide" data-loads="instructions" aria-labelledby="admin-instructions-h">
           <h2 id="admin-instructions-h">Agent instructions</h2>
           <p id="admin-instructions-note" class="note muted"></p>
           <div id="admin-instructions" class="instructions"></div>
         </section>
 
-        <section class="card" aria-labelledby="admin-backups-h">
+        <section class="card" data-loads="admin" aria-labelledby="admin-backups-h">
           <h2 id="admin-backups-h">Profile backups</h2>
           <p class="note muted">Taken each time the profile is re-composed. Restoring one re-composes from it and rebuilds the sandbox.</p>
           <ul id="admin-backups" class="plain"></ul>
@@ -402,7 +402,7 @@
             <input type="checkbox" id="settings-emoji"> Emoji: complete :names: and turn :) :D into emoji</label>
         </section>
 
-        <section class="card" aria-labelledby="admin-git-h">
+        <section class="card" data-loads="admin" aria-labelledby="admin-git-h">
           <h2 id="admin-git-h">GitHub token</h2>
           <p id="admin-git" class="note"></p>
           <ol id="admin-git-steps" class="steps" hidden></ol>

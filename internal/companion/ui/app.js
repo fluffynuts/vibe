@@ -3342,6 +3342,7 @@
     } finally {
       signInShown.checking = false
       $('signin-check').disabled = false
+      cardLoaded('signin')
     }
     // A sign-in begun before this page was opened (or reloaded) is picked up, not lost.
     if (state.signinStart && !signInShown.watching) await followSignIn(true)
@@ -3539,13 +3540,87 @@
     }
   }
 
+  // --- what the Admin tab's cards are waiting for --------------------------------
+  // A card names (data-loads) the requests that fill it. Until each has answered once it is busy: dimmed, a spinner
+  // on it, and nothing in it usable, so that a button can't act on what hasn't arrived (Re-compose, with no
+  // features listed yet, would offer to rebuild the sandbox with none). Only that first answer counts: the
+  // refreshes after it change a card without a flicker. A request that fails says so on its cards, which stay
+  // unusable, with a way to try again; one that says its card doesn't apply (no packages here) has answered.
+  const cardLoads = new Map()
+  const cardLoaders = {}
+
+  const cardsWaitingOn = (key) => [...cardLoads].filter(([, waiting]) => waiting.has(key)).map(([card]) => card)
+
+  // what in a card is out of use, its title apart.
+  function setCardUsable(card, usable) {
+    for (const child of card.children) {
+      if (child.tagName === 'H2' || child.classList.contains('card-load-failed')) continue
+      child.toggleAttribute('inert', !usable)
+    }
+  }
+
+  function setCardBusy(card, isBusy) {
+    if (isBusy) card.setAttribute('aria-busy', 'true')
+    else card.removeAttribute('aria-busy')
+  }
+
+  function clearCardFailure(card) {
+    card.classList.remove('load-failed')
+    const failed = card.querySelector(':scope > .card-load-failed')
+    if (failed) failed.remove()
+  }
+
+  function cardLoaded(key) {
+    for (const card of cardsWaitingOn(key)) {
+      const waiting = cardLoads.get(card)
+      waiting.delete(key)
+      if (waiting.size) continue
+      setCardBusy(card, false)
+      clearCardFailure(card)
+      setCardUsable(card, true)
+    }
+  }
+
+  function cardFailed(key) {
+    for (const card of cardsWaitingOn(key)) {
+      setCardBusy(card, false)
+      setCardUsable(card, false)
+      if (card.querySelector(':scope > .card-load-failed')) continue
+      card.classList.add('load-failed')
+      const failed = el('p', { class: 'note bad-text card-load-failed' }, "Couldn't load this. ",
+        el('button', { type: 'button', class: 'small ghost', text: 'Try again', onclick: () => retryCards(key) }))
+      card.querySelector(':scope > h2').after(failed)
+    }
+  }
+
+  function retryCards(key) {
+    for (const card of cardsWaitingOn(key)) {
+      clearCardFailure(card)
+      setCardUsable(card, false)
+      setCardBusy(card, true)
+    }
+    cardLoaders[key]()
+  }
+
+  function setUpCardLoading() {
+    Object.assign(cardLoaders, {
+      admin: loadAdmin, signin: loadSignIn, packages: loadPackages, sync: loadSync, instructions: () => loadInstructions(false),
+    })
+    for (const card of document.querySelectorAll('#panel-admin .card[data-loads]')) {
+      cardLoads.set(card, new Set(card.dataset.loads.split(/\s+/).filter(Boolean)))
+      setCardBusy(card, true)
+      setCardUsable(card, false)
+    }
+  }
+
   async function loadAdmin() {
     try {
       const res = await api('/api/admin')
       reached(true)
-      if (!res.ok) { problem('admin', res); return }
+      if (!res.ok) { problem('admin', res); cardFailed('admin'); return }
       banner('admin', '')
       renderAdmin(res.body)
+      cardLoaded('admin')
     } catch (e) {
       reached(false)
     }
@@ -3573,6 +3648,7 @@
       $('admin-sync-card').hidden = !res.ok
       showPackagesCard()
       if (res.ok) renderSync(res.body)
+      cardLoaded('sync')
     } catch (e) {
       reached(false)
     }
@@ -3689,6 +3765,7 @@
       $('admin-packages-card').hidden = !res.ok
       showPackagesCard()
       if (res.ok) renderPackages(res.body)
+      cardLoaded('packages')
     } catch (e) {
       reached(false)
     }
@@ -4174,6 +4251,7 @@
   }
 
   function setUpAdmin() {
+    setUpCardLoading()
     wirePackages()
     $('admin-cancel').addEventListener('click', () => {
       if (!REBUILDS.includes(adminView.jobKind)) { cancelAdmin(); return }
@@ -4604,9 +4682,14 @@
     try {
       const res = await api('/api/admin/instructions')
       reached(true)
-      if (!res.ok) { $('admin-instructions-note').textContent = (res.body && res.body.error) || "The agent's instructions can't be edited here."; return }
+      if (!res.ok) {
+        $('admin-instructions-note').textContent = (res.body && res.body.error) || "The agent's instructions can't be edited here."
+        cardLoaded('instructions')
+        return
+      }
       instr.loaded = true
       renderInstructions(res.body)
+      cardLoaded('instructions')
     } catch (e) {
       reached(false)
     }

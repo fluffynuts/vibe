@@ -515,6 +515,11 @@ html.themed .commands li[aria-selected="true"] {
 .instr .status { font-size: 12px; min-height: 1.2em; white-space: pre-wrap; }
 .instr .status.bad { color: var(--bad); }
 .instr .status.ok { color: var(--ok); }
+/* A card waiting for what fills it (the Admin tab's, on its first load): dimmed, with a spinner on it, and nothing in it usable (index.html's data-loads, and the page's card loading). */
+.card[aria-busy="true"] { position: relative; }
+.card[aria-busy="true"] > :not(h2), .card.load-failed > :not(h2):not(.card-load-failed) { opacity: .45; }
+.card[aria-busy="true"]::after { content: ''; position: absolute; top: 14px; right: 14px; width: 14px; height: 14px; box-sizing: border-box; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .card[aria-busy="true"]::after { animation-duration: 3s; } }
 .spinner { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -1px; margin-right: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
