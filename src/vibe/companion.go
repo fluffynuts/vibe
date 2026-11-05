@@ -552,6 +552,10 @@ func keepAwakeFor(name string) func() string {
 		if !startSandboxForPage(startCtx, name) {
 			return "sandbox '" + name + "' was stopped, and couldn't be started again for the page — 'sbx ls' says what state it is in"
 		}
+		// As when a turn starts it (readyForTurn) or the Admin tab's Start does: a session held for the sandbox to be
+		// back runs its start-up again, which rewrites what vibe tells the sandbox (the published URLs, the agent's
+		// instructions, the timezone) for this boot.
+		hold.release()
 		return "sandbox '" + name + "' was stopped: started it again"
 	}
 }
