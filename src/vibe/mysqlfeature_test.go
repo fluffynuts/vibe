@@ -79,7 +79,7 @@ func startMysql(t *testing.T, listening bool) string {
 		// The server is started as a background job, so it may be asked for just after the script ends.
 		deadline := time.Now().Add(5 * time.Second)
 		for time.Now().Before(deadline) {
-			if got, _ := os.ReadFile(calls); strings.Contains(string(got), "mysqld") {
+			if got, _ := os.ReadFile(calls); strings.Contains(string(got), "nohup mysqld") {
 				break
 			}
 			time.Sleep(10 * time.Millisecond)
