@@ -1,0 +1,9 @@
+version: 2
+updates:
+  # Playwright's Firefox is the browser the companion page's layout tests run in. Each Playwright
+  # release brings a newer Firefox, so a bump is a PR whose CI run shows whether the page still
+  # works there, rather than a surprise months later.
+  - package-ecosystem: npm
+    directory: /internal/companion/uitest
+    schedule:
+      interval: weekly
