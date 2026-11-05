@@ -110,6 +110,24 @@ func (r playwrightRun) called(what string) bool { return strings.Contains(r.call
 // at all when noNpm.
 func runPlaywrightInstall(t *testing.T, noNpm bool, env ...string) playwrightRun {
 	t.Helper()
+	return runPlaywrightInstallWith(t, playwrightSetup{noNpm: noNpm}, env...)
+}
+
+// playwrightSetup says what the machine the script runs on lacks: node, npm, or both, and whether it has a sudo whose
+// apt-get installs them (a stand-in that records what it was asked, and makes the node or npm stand-in appear).
+type playwrightSetup struct{ noNode, noNpm, apt bool }
+
+const fakeSudo = `#!/bin/sh
+echo "sudo $*" >> "$FAKE_CALLS"
+if [ -n "$FAKE_APT_FAILS" ]; then echo "E: apt said no" >&2; exit 100; fi
+case "$*" in
+  *"install -y nodejs-24"*) cp "$FAKE_BIN/node-source" "$FAKE_BIN/node" ;;
+  *"install -y npm"*) cp "$FAKE_BIN/npm-source" "$FAKE_BIN/npm" ;;
+esac
+`
+
+func runPlaywrightInstallWith(t *testing.T, setup playwrightSetup, env ...string) playwrightRun {
+	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("the script is for a Linux sandbox")
 	}
@@ -118,11 +136,18 @@ func runPlaywrightInstall(t *testing.T, noNpm bool, env ...string) playwrightRun
 	os.MkdirAll(bin, 0o755)
 	realID, _ := exec.LookPath("id")
 	realChown, _ := exec.LookPath("chown")
-	stand := map[string]string{"playwright-source": fakePlaywright, "node": fakeNode, "su": fakeSu,
+	stand := map[string]string{"playwright-source": fakePlaywright, "su": fakeSu,
+		"node-source": fakeNode, "npm-source": fakeNpm,
 		"id":    strings.ReplaceAll(fakeID, "REAL_ID", realID),
 		"chown": strings.ReplaceAll(fakeChown, "REAL_CHOWN", realChown)}
-	if !noNpm {
+	if !setup.noNode {
+		stand["node"] = fakeNode
+	}
+	if !setup.noNpm {
 		stand["npm"] = fakeNpm
+	}
+	if setup.apt {
+		stand["sudo"] = fakeSudo
 	}
 	for name, body := range stand {
 		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
@@ -143,7 +168,7 @@ func runPlaywrightInstall(t *testing.T, noNpm bool, env ...string) playwrightRun
 	cmd := exec.Command("sh", playwrightScriptPath(t))
 	cmd.Env = append(os.Environ(),
 		"PATH="+bin,
-		"FAKE_CALLS="+run.calls, "FAKE_MARKS="+filepath.Join(dir, "marks"), "FAKE_PREFIX="+run.prefix, "FAKE_PLAYWRIGHT="+filepath.Join(bin, "playwright-source"),
+		"FAKE_BIN="+bin, "FAKE_CALLS="+run.calls, "FAKE_MARKS="+filepath.Join(dir, "marks"), "FAKE_PREFIX="+run.prefix, "FAKE_PLAYWRIGHT="+filepath.Join(bin, "playwright-source"),
 		"PW_BROWSERS_PATH="+run.browsers, "PW_LOG="+logFile)
 	cmd.Env = append(cmd.Env, env...)
 	run.exit = cmd.Run()
@@ -294,10 +319,14 @@ func TestThePlaywrightFeatureIsOfferedSaysItTakesTimeAndComposesWithWhatItNeeds(
 	config, _ := os.ReadFile(filepath.Join(dir, "config.yaml"))
 	// The instructions say a project pinning another version can download its own browser: the hosts such a version
 	// downloads from (the ones current versions use, and the azureedge ones older versions do) are allowed.
-	for _, want := range []string{"cdn.playwright.dev", "playwright.download.prss.microsoft.com", "playwright.azureedge.net", "playwright-akamai.azureedge.net", "playwright-verizon.azureedge.net", "registry.npmjs.org", "archive.ubuntu.com", "PLAYWRIGHT_BROWSERS_PATH: /opt/ms-playwright"} {
+	for _, want := range []string{"cdn.playwright.dev", "playwright.download.prss.microsoft.com", "playwright.azureedge.net", "playwright-akamai.azureedge.net", "playwright-verizon.azureedge.net", "registry.npmjs.org", "PLAYWRIGHT_BROWSERS_PATH: /opt/ms-playwright"} {
 		if !strings.Contains(string(config), want) {
 			t.Errorf("config.yaml lacks %s:\n%s", want, config)
 		}
+	}
+	// The image is Debian: an Ubuntu mirror named here is a host nothing reaches.
+	if strings.Contains(string(config), "ubuntu.com") {
+		t.Errorf("config.yaml still allows an Ubuntu mirror:\n%s", config)
 	}
 	scripts, _ := filepath.Glob(filepath.Join(dir, "install-scripts", "*-install-playwright"))
 	if len(scripts) != 1 {
@@ -384,5 +413,45 @@ func TestWhenTheFolderCantBeGivenToTheAgentOnlyItsFoldersAreWritableByAll(t *tes
 	}
 	if binary.Mode().Perm()&0o005 != 0o005 {
 		t.Errorf("a browser's own file is %v: not readable and runnable by all", binary.Mode())
+	}
+}
+
+// The image has no Node or npm: the script installs them, node first, so the npm package finds it, and goes on.
+func TestNodeAndNpmAreInstalledWhenTheImageHasNeitherAndPlaywrightGoesOn(t *testing.T) {
+	run := runPlaywrightInstallWith(t, playwrightSetup{noNode: true, noNpm: true, apt: true})
+	if run.exit != nil {
+		t.Fatalf("the script failed: %v\n%s", run.exit, run.log)
+	}
+	node := strings.Index(run.calls, "install -y nodejs-24")
+	npm := strings.Index(run.calls, "install -y npm")
+	if node < 0 || npm < 0 || node > npm {
+		t.Errorf("node should be installed, then npm:\n%s", run.calls)
+	}
+	if !run.called("npm install -g playwright@latest") || strings.Contains(run.log, "WARN") {
+		t.Errorf("it didn't go on to install Playwright cleanly:\n%s\n%s", run.calls, run.log)
+	}
+}
+
+func TestOnlyNpmIsInstalledWhenTheImageHasNode(t *testing.T) {
+	run := runPlaywrightInstallWith(t, playwrightSetup{noNpm: true, apt: true})
+	if !run.called("install -y npm") || run.called("install -y nodejs") {
+		t.Errorf("expected npm alone to be installed:\n%s", run.calls)
+	}
+}
+
+func TestNothingIsInstalledWhenNodeAndNpmAreThere(t *testing.T) {
+	run := runPlaywrightInstallWith(t, playwrightSetup{apt: true})
+	if run.called("sudo") {
+		t.Errorf("apt was asked for something although node and npm are there:\n%s", run.calls)
+	}
+}
+
+func TestAnAptThatCannotInstallNodeIsSaidAndNothingElseIsRun(t *testing.T) {
+	run := runPlaywrightInstallWith(t, playwrightSetup{noNode: true, noNpm: true, apt: true}, "FAKE_APT_FAILS=1")
+	if run.called("npm install") || run.called("playwright") {
+		t.Errorf("Playwright was gone on with, without npm:\n%s", run.calls)
+	}
+	if !strings.Contains(run.log, "WARN: node and npm aren't installed") {
+		t.Errorf("the log doesn't say why:\n%s", run.log)
 	}
 }

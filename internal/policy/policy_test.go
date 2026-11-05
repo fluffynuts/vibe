@@ -446,3 +446,91 @@ func TestResolvedLogSaysWhenTheRulesCouldNotBeRead(t *testing.T) {
 		t.Errorf("unresolved = %q, want why the rules couldn't be read", got.Unresolved)
 	}
 }
+
+// From 'sbx policy ls vibe --json --wide --type network', sbx v0.51: the rules that matter here, as it printed them. It
+// lists a rule of its own, "default-deny-all", denying "**": the fallback for a request no policy decides, not a rule
+// anyone wrote.
+const rulesV051 = `{
+  "rules": [
+    {"id": "af5a750c", "name": "af5a750c", "scope": "sandbox:vibe", "applies_to": "sandbox:vibe", "resource_type": "network",
+     "decision": "allow", "resources": ["cdn.mysql.com:443"], "origin": "scoped", "layer": "local", "status": "active",
+     "editable": true, "sandbox_id": "vibe", "provenance": {"created_via": "added"}, "actions": ["net:connect:tcp"]},
+    {"id": "d3adb33f", "name": "d3adb33f", "scope": "sandbox:vibe", "applies_to": "sandbox:vibe", "resource_type": "network",
+     "decision": "deny", "resources": ["blocked-by-me.example.com:443"], "origin": "scoped", "layer": "local", "status": "active",
+     "editable": true, "sandbox_id": "vibe", "provenance": {"created_via": "added"}, "actions": ["net:connect:tcp"]},
+    {"id": "default-deny-all", "name": "default-deny-all", "policy_name": "default-deny-all", "scope": "global", "applies_to": "all",
+     "resource_type": "network", "decision": "deny", "resources": ["**"], "origin": "local", "layer": "local", "status": "active",
+     "reason": "Implicit fallback when no applicable policy decides the request.", "editable": false,
+     "actions": ["net:connect:tcp", "net:connect:udp"]}
+  ]
+}`
+
+// A host the user allowed from the page stayed "Blocked": sbx's own deny-everything fallback matches every host, and
+// was read as a deny the allow couldn't beat.
+func TestAHostAllowedWhileTheImplicitDenyAllIsListedIsMarkedUnblocked(t *testing.T) {
+	rules, err := ParseRules([]byte(rulesV051))
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := Log{Entries: []LogEntry{
+		{Host: "cdn.mysql.com:443", Decision: Blocked},
+		{Host: "artifacts.elastic.co:443", Decision: Blocked},
+		{Host: "blocked-by-me.example.com:443", Decision: Blocked},
+		{Host: "api.anthropic.com:443", Decision: Allowed},
+	}}
+	want := []string{Unblocked, Blocked, Blocked, Allowed}
+	for i, e := range Resolve(log, rules).Entries {
+		if e.Decision != want[i] {
+			t.Errorf("%s: got %q, want %q", e.Host, e.Decision, want[i])
+		}
+	}
+}
+
+// denyEverything is a rule denying "**", as sbx might list it, with fields (JSON, each ending in a comma) put in or left
+// out, and the cdn.mysql.com allow beside it: what Resolve makes of that host says whether the deny was taken for
+// sbx's own fallback (unblocked) or for a rule that stands (blocked).
+func resolveWithDenyEverything(t *testing.T, fields string) string {
+	t.Helper()
+	rules, err := ParseRules([]byte(`{"rules": [
+	  {"id": "allow", "scope": "sandbox:vibe", "decision": "allow", "resources": ["cdn.mysql.com:443"], "layer": "local", "status": "active", "editable": true},
+	  {"id": "everything", ` + fields + ` "decision": "deny", "resources": ["**"], "status": "active"}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Resolve(Log{Entries: []LogEntry{{Host: "cdn.mysql.com:443", Decision: Blocked}}}, rules).Entries[0].Decision
+}
+
+// What sbx's own fallback is told by is what it is (a deny of everything that can't be edited, on the local layer), so
+// the words it uses to say so can change.
+func TestTheImplicitFallbackIsKnownByItsShapeNotItsWording(t *testing.T) {
+	if got := resolveWithDenyEverything(t, `"editable": false, "layer": "local", "reason": "Something else entirely.",`); got != Unblocked {
+		t.Errorf("a non-editable local deny of everything, however it explains itself: %q, want %q", got, Unblocked)
+	}
+	if got := resolveWithDenyEverything(t, `"editable": false, "layer": "local",`); got != Unblocked {
+		t.Errorf("a non-editable local deny of everything with no explanation: %q, want %q", got, Unblocked)
+	}
+}
+
+// And if the shape changes, what it says of itself still tells it.
+func TestTheImplicitFallbackIsStillKnownByItsReasonIfItsShapeChanges(t *testing.T) {
+	if got := resolveWithDenyEverything(t, `"editable": true, "layer": "remote", "reason": "Implicit fallback when no applicable policy decides the request.",`); got != Unblocked {
+		t.Errorf("got %q, want %q", got, Unblocked)
+	}
+}
+
+// Anything that isn't clearly that rule is a deny that stands: ignoring one wrongly would show a host as open that a
+// rule is still blocking.
+func TestADenyOfEverythingThatIsNotTheFallbackStillStopsAnAllow(t *testing.T) {
+	for name, fields := range map[string]string{
+		"one a user added (editable)":                   `"editable": true, "layer": "local", "provenance": {"created_via": "added"},`,
+		"one from an organisation (another layer)":      `"editable": false, "layer": "org",`,
+		"one that doesn't say whether it can be edited": `"layer": "local",`,
+		"one with no layer given":                       `"editable": false,`,
+		"one whose reason merely mentions a fallback":   `"editable": true, "layer": "local", "reason": "Kept as the fallback for the office network.",`,
+	} {
+		if got := resolveWithDenyEverything(t, fields); got != Blocked {
+			t.Errorf("%s: %q, want %q", name, got, Blocked)
+		}
+	}
+}

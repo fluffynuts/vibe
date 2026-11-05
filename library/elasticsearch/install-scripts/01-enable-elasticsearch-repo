@@ -1,11 +1,27 @@
 #!/bin/sh
-# vibe: description: Add the Elastic apt repository
+# vibe: description: Add the Elastic apt repository (and curl, gpg and certificates it needs, if the image lacks them)
 # vibe: user: 0
-echo "--- elasticsearch repo $(date -Is)" >>/tmp/sbx-setup.log
-curl -fsSL https://artifacts.elastic.co/GPG-KEY-elasticsearch 2>>/tmp/sbx-setup.log \
-  | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/elasticsearch-keyring.gpg 2>>/tmp/sbx-setup.log \
+LOG="${ELASTIC_SETUP_LOG:-/tmp/sbx-setup.log}"
+CA_BUNDLE="${ELASTIC_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
+echo "--- elasticsearch repo $(date -Is)" >>"$LOG"
+
+# The repository's key is fetched over https and turned into a keyring, which takes curl, gpg (the gnupg package)
+# and the certificate bundle: the image doesn't promise any of them.
+need=""
+command -v curl >/dev/null 2>&1 || need="$need curl"
+command -v gpg >/dev/null 2>&1 || need="$need gnupg"
+[ -s "$CA_BUNDLE" ] || need="$need ca-certificates"
+if [ -n "$need" ]; then
+  echo "installing$need" >>"$LOG"
+  # Not quoted: each is a package name.
+  sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y $need </dev/null >>"$LOG" 2>&1 \
+    || echo "WARN: couldn't install$need, which the Elastic repository needs" >>"$LOG"
+fi
+
+curl -fsSL https://artifacts.elastic.co/GPG-KEY-elasticsearch 2>>"$LOG" \
+  | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/elasticsearch-keyring.gpg 2>>"$LOG" \
   && echo "deb [signed-by=/usr/share/keyrings/elasticsearch-keyring.gpg] https://artifacts.elastic.co/packages/9.x/apt stable main" \
     | sudo tee /etc/apt/sources.list.d/elastic-9.x.list >/dev/null \
-  && sudo apt-get -o DPkg::Lock::Timeout=300 update >>/tmp/sbx-setup.log 2>&1 \
-  || echo "WARN: elastic repo setup failed" >>/tmp/sbx-setup.log
+  && sudo apt-get -o DPkg::Lock::Timeout=300 update >>"$LOG" 2>&1 \
+  || echo "WARN: elastic repo setup failed" >>"$LOG"
 true

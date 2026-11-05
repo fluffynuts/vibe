@@ -1904,6 +1904,71 @@ test("a card whose thread waits on your answer (open, the agent's the last word)
   } finally { p.close() }
 })
 
+// The button that opens the pane is coloured as the cards waiting on you are while any thread waits on you, so it is
+// seen with the pane shut; and it says how many.
+const waitingOnYou = (t) => t.status === 'open' && t.comments[t.comments.length - 1].author === 'agent'
+
+test('the comments button is coloured, and says so, while a thread waits on your answer', async () => {
+  const waiting = overlaid.threads.filter(waitingOnYou).length
+  assert.ok(waiting >= 1, 'the fixture has a thread waiting on you')
+  const p = await reviewPage({ review: overlaid, diff: twoFiles })
+  try {
+    await p.click('tab-review')
+    const button = p.$('review-comments-open')
+    assert.equal(button.classList.contains('awaiting'), true)
+    assert.match(button.title, waiting === 1 ? /1 is awaiting your answer/ : new RegExp(waiting + ' are awaiting your answer'))
+    assert.equal(button.textContent.trim(), String(overlaid.threads.length), 'it still counts every thread')
+  } finally { p.close() }
+})
+
+test('the comments button says how many threads wait on you, however many', async () => {
+  const two = { ...overlaid, threads: [...overlaid.threads.filter((t) => !waitingOnYou(t)),
+    { id: 7, file: 'a.txt', side: 'new', line: 1, status: 'open', comments: [{ author: 'agent', body: 'one', at: '2026-10-16T10:00:00Z' }] },
+    { id: 8, file: 'a.txt', side: 'new', line: 2, status: 'open', comments: [{ author: 'agent', body: 'two', at: '2026-10-16T10:01:00Z' }] }] }
+  const p = await reviewPage({ review: two, diff: twoFiles })
+  try {
+    await p.click('tab-review')
+    assert.match(p.$('review-comments-open').title, /2 are awaiting your answer/)
+  } finally { p.close() }
+})
+
+test('the comments button is plain while nothing waits on you', async () => {
+  const none = { ...overlaid, threads: overlaid.threads.filter((t) => !waitingOnYou(t)) }
+  assert.ok(none.threads.length > 0, 'the fixture still has threads: open ones the agent is waiting on, resolved ones')
+  const p = await reviewPage({ review: none, diff: twoFiles })
+  try {
+    await p.click('tab-review')
+    const button = p.$('review-comments-open')
+    assert.equal(button.classList.contains('awaiting'), false)
+    assert.equal(button.title, 'All the comments, in a pane over the diff')
+    assert.equal(button.textContent.trim(), String(none.threads.length))
+  } finally { p.close() }
+})
+
+// A card's state (what it waits on, or how it ended) is the first thing on it, on a line of its own, above the path:
+// beside a long path it was squeezed into a few lines. A card with nothing to say has no such line.
+test("a card's state is on a line of its own above the path, and a card with none has no line for it", async () => {
+  const p = await reviewPage({ review: overlaid, diff: twoFiles })
+  try {
+    await p.click('tab-review')
+    await p.click('review-comments-open')
+    const card = (id) => p.$('review-comments-list').querySelector(`[data-thread="${id}"]`)
+    const awaiting = card(1)
+    const state = awaiting.querySelector('.comment-card-state')
+    assert.ok(state, 'a card waiting on you has a state line')
+    assert.equal(awaiting.firstElementChild, state, 'the state is the first thing on the card')
+    assert.match(state.textContent, /awaiting your answer/)
+    assert.equal(awaiting.querySelector('.comment-card-where .pill'), null, 'the path line holds no pill')
+    const resolved = card(4)
+    assert.equal(resolved.firstElementChild.className, 'comment-card-state')
+    assert.match(resolved.firstElementChild.textContent, /resolved/)
+    assert.equal(resolved.querySelector('.comment-card-where .pill'), null)
+    // Open, and not waiting on you: nothing to say.
+    assert.equal(card(5).querySelector('.comment-card-state'), null, 'yours, unanswered: no state line')
+    assert.equal(card(5).firstElementChild.className, 'comment-card-where')
+  } finally { p.close() }
+})
+
 test('the pane filters to open threads, or yours, and orders by newest', async () => {
   const p = await reviewPage({ review: overlaid, diff: twoFiles })
   try {

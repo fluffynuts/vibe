@@ -33,7 +33,7 @@ func goldenBundle(t *testing.T) (root string, profileSteps int) {
 	lay := layout.New(t.TempDir(), repo)
 	dir := filepath.Join(root, "profiles", bundledProfile)
 	// The base features first, as a guided profile is composed.
-	features := append(lay.BaseFeatures(), "dotnet", "mysql", "rabbitmq", "elasticsearch", "redis")
+	features := append(lay.BaseFeatures(), "dotnet", "mysql-8.4", "rabbitmq", "elasticsearch", "redis")
 	if err := library.Compose(features, lay.FeatureDir, dir); err != nil {
 		t.Fatalf("composing the golden profile: %v", err)
 	}

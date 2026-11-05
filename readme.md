@@ -252,6 +252,13 @@ do what they say). Without make, `./make.sh` (bash) and `./make.ps1` (PowerShell
 targets. The binary finds its bundle relative to its own location, so leave it where it is built
 and put it on `PATH` with a symlink — or use `vibe --install`.
 
+`./tools/check-apt-packages.sh`, run **inside a sandbox** (whose apt is the image's: Debian and Docker Hardened
+Images; the CI machines' is Ubuntu's), lists the apt packages the library's install scripts ask for and says which the
+image doesn't have: the `mysql-server` mistake, found before a build instead of during one. It reads the names the
+scripts spell out, lists every one it checked so a missing one is plain to see, and exits 1 if any has no candidate. A
+name that is only a fall-back for another (`libaio1` after `libaio1t64`) is reported missing, as it should be.
+It isn't part of a release (the zips hold only the bundle below).
+
 `make dist` (or `./make.sh dist`) packages a zip in `dist/` holding the binary and that bundle,
 for this machine or for whatever `GOOS`/`GOARCH` are set to. Every push to GitHub does this for
 Linux, macOS and Windows on both amd64 and arm64 (`.github/workflows/build.yml`), after running
@@ -1055,7 +1062,7 @@ defaults/             # tooling applied to every profile, regardless of tech sta
   agent-files/
 library/              # selectable features a guided profile is composed from
   <feature-name>/     # same shape as a profile — see "Library features"
-  base/               # features every guided profile always gets (clipboard-bridge)
+  base/               # features every guided profile always gets (clipboard-bridge, prerequisites, review, timezone)
 profiles/
   <profile-name>/
     config.yaml          # profile-specific kit fragment, merged over the base one
@@ -1232,6 +1239,19 @@ sandbox is created, so anything that should be refreshed on every sandbox start 
 in `agent-files/.local/bin/`, which the generated `on-start` runs (as root: re-enter as the agent
 user for anything written under `/home/agent`, or the agent can't replace it later).
 
+The generated `on-start` runs twice for each sandbox start: sbx runs it as the sandbox boots, and vibe runs it again
+when a session starts (its "nudge"), so a script has to be safe to run again, and the two can overlap while a slow
+service is still starting. So **it takes a lock** (`flock`, on `/tmp/on-start.lock`) and one run waits for the other
+instead of running its scripts among theirs. The lock is the kernel's: it goes when the process holding it does, however
+that ends, so a killed run can't leave one behind; and it is taken so that the daemons a script starts don't inherit it
+(`flock -o`), or the first service left running would hold it for good. A run waits at most `VIBE_ON_START_LOCK_WAIT`
+seconds (90 by default, a constant in the script), then says it gave up and ends without error: the run in front of it is
+starting everything anyway. If the lock can't be had at all (no `flock`, a lock file it can't open) the scripts run
+without it, and the log says so. The log, `/tmp/start-services.log`, also says how long each script took (`start-mysql-8.4
+took 3 s`), how long the whole run did (`=== took 18 s ===`), and how long a run waited for another. A script that starts
+a service should itself be safe against a second copy of itself (it can be run by hand too): `start-mysql-8.4` takes its
+own lock for the data folder's first set-up.
+
 A feature vibe no longer has — `diffity`, whose reviews are on the companion page's Review tab now — is
 left out, with a note, wherever it's still named: in `defaultFeatures`, and in a profile's recorded
 features when it's re-composed or updated.
@@ -1260,6 +1280,19 @@ history inside itself until it is next rebuilt. `start-clipboard` waits for the 
 listening: a server that crashes is reported at once, and one that hasn't started within 30 seconds is
 reported as stuck. Either way the companion's clipboard pane shows why. The server logs to
 `/tmp/clipboard.log` and `/tmp/clipboard-server.log`.
+
+The other base features, which every guided profile has too:
+
+- **`prerequisites`** makes sure the image has what the features and vibe's own scripts assume: `curl`, the
+  certificates, `gpg`, `tar`, `gzip`, `xz`, `flock` and Node.js (the clipboard page's server and `vibe-review` are written
+  in it). The image promises none of them, and its Debian one has neither Node nor `xz`. It asks apt for only what is
+  missing, in one run, or for nothing when it's all there; if that run fails because the image lacks one of the packages
+  (apt installs nothing when it can't find one name), the tools and Node are asked for separately, Node falling back to
+  Debian's own. Anything still missing is named in `/tmp/sbx-setup.log`. A feature still checks for the tools it uses
+  itself, which costs nothing when they're there.
+- **`timezone`** installs `tzdata`, which the image lacks, so the sandbox can be set to your timezone at every session
+  start (a project whose tests expect a timezone gets it).
+- **`review`** is the tooling behind the Review tab: the `vibe-review` command and its skill.
 
 The profile that comes out is an ordinary profile directory: edit it afterwards like any other.
 Composing happens **once**, when the profile is created — the library is never read again, so a
@@ -1297,6 +1330,54 @@ repository, which puts `go` and `gofmt` on every shell's PATH, an agent's includ
   but a private one is not) need their hosts added to the profile.
 - **A step that fails is a warning, not a failed sandbox:** it is written to `/tmp/sbx-setup.log`, which the agent's
   instructions point to if `go` isn't there.
+
+### The `mysql-8.4` feature
+
+Oracle's own MySQL Community Server **8.4** (the long-term-support series), for a sandbox whose project needs a
+database on `127.0.0.1:3306`, or a `mysqld` of its own on the PATH (a throwaway test database, say). The sandbox's image
+is Debian, which has no Oracle MySQL (its "mysql" packages are MariaDB), so the install script downloads Oracle's
+generic Linux tarball, checks it against a pinned SHA-256, and unpacks it into `/opt/mysql-8.4`, linking `mysqld`,
+`mysql`, `mysqladmin`, `mysqldump` and the rest from `/usr/local/bin`. The tarball bundles its own OpenSSL and the rest;
+what it takes from the system is libaio (which Debian 13 names differently, so the script links it into the unpacked
+folder: nothing outside it is touched), libnuma and, for the `mysql` client, libncurses. The image has none of them
+promised, so each is installed if it is missing, and a program that still can't find one is named in the log.
+
+- **The start:** `start-mysql-8.4` runs when the sandbox starts. The first time, it initialises `/var/lib/mysql-8.4`,
+  with a `root` account with no password (the server listens on 127.0.0.1 only, in a sandbox, and `MYSQL_UNIX_PORT`
+  names its socket, so `mysql -uroot` just works). It starts the server with no option file read (a `my.cnf` left by
+  another package can't stop it), and waits until it answers. Starts take turns (the sandbox's own at boot and vibe's
+  at the start of a session can overlap), so the data is set up once; and a log someone else made and closed doesn't
+  stop the agent running it by hand (it keeps a log of its own beside it). It never initialises over data that is there, and
+  refuses a folder it can't read or one with other files in it, rather than touch it.
+- **The version is pinned,** in the script, with a checksum for each architecture (Oracle has a minimal x86_64 build, a
+  tenth of the size, and no minimal ARM one, which gets the full 786 MB). To move to another 8.4 release, change
+  `VERSION` and the checksums (Oracle publishes an MD5 beside each file on its downloads page, and the pinned SHA-256s
+  are of files whose MD5 matched). The release being served is downloaded from `cdn.mysql.com`'s `Downloads` folder, and
+  once there is a newer one from its `archives`: both are tried.
+- **The version is in the feature's name** so that a later series (a `mysql-9.x`, say) is a sibling beside it, each
+  with its own folder and data: differences between Oracle's releases are large enough that one feature shouldn't
+  quietly change from one to another. Pick one: two servers can't share port 3306.
+- **The sandbox may reach** `cdn.mysql.com` (found from the script's own URLs).
+- **A step that fails is a warning, not a failed sandbox:** it is written to `/tmp/sbx-setup.log`, and the server's own
+  log is `/tmp/mysql-8.4.log`.
+- **Tried on x86_64** on the Debian image: the real download, the install, an initialise and start, a restart that
+  keeps the data, an application user over TCP, and a `mysqld` started from the PATH as an ordinary user. The ARM build is
+  pinned and checked against Oracle's MD5 but has not been run.
+
+### The `mariadb` feature
+
+MariaDB, for a sandbox whose project wants a MySQL-compatible server and isn't fussy about which. The image is Debian,
+whose `default-mysql-server` package is MariaDB under the MySQL names (`mysqld`, `mysql` and `mysqladmin` are all
+there), and that is what this installs. `start-mariadb` starts it when the sandbox starts and waits until it answers,
+and the agent is told how to reach it: `sudo mysql` for administration (root signs in through the socket), and a user
+and database of its own for the project, over TCP.
+
+- **It is not Oracle MySQL.** A project that needs MySQL's own behaviour (its JSON, authentication or SQL differences,
+  or a library that starts a `mysqld` and expects MySQL's) needs the `mysql-8.4` feature instead. This feature used to be
+  called `mysql`, when the image was Ubuntu and the package was Oracle's: a profile that lists `mysql` has to name one of
+  these two now.
+- **A step that fails is a warning, not a failed sandbox:** it is written to `/tmp/sbx-setup.log`, and `start-mariadb`
+  logs to `/tmp/mariadb.log`.
 
 ### The `pwsh` feature
 
@@ -1337,13 +1418,16 @@ download one". It **adds time to building the sandbox**: a few minutes, the syst
   newer one, and the log says which.
 - **The sandbox may reach** `registry.npmjs.org`, `cdn.playwright.dev` (where the current Chromium is offered from, and
   only from) and `playwright.download.prss.microsoft.com` (Firefox's fallback), the `azureedge.net` hosts older versions
-  of Playwright download from (`playwright`, `playwright-akamai` and `playwright-verizon`), and Ubuntu's apt hosts
-  (`archive.ubuntu.com`, `security.ubuntu.com`, and `ports.ubuntu.com` for arm64).
+  of Playwright download from (`playwright`, `playwright-akamai` and `playwright-verizon`). The libraries, and Node and
+  npm (which the image doesn't have, so the step installs them first), come from the image's own apt repositories,
+  which need no rule.
 - **A step that fails is a warning, not a failed sandbox,** in `/tmp/sbx-setup.log`. The last step launches both browsers
   headless, as the agent's user, and logs their versions (`installed Playwright 1.64.1: launched headless: chromium
   156.0.8078.4, firefox 157.0`); if one won't launch, the log has the first lines of what the browser said, which name
   why.
-- **Tried on x86_64.** It is written for arm64 too (Playwright picks its own builds), but that hasn't been run yet: if
+- **Tried on x86_64**, on the Debian image (2026-11-05): Playwright's own check of the machine lists the libraries it
+  needs for Debian 13, and the step installs npm; the browser downloads and the launch check have not been run since the
+  image changed. It is written for arm64 too (Playwright picks its own builds), but that hasn't been run yet: if
   you try it there, the line above in `/tmp/sbx-setup.log` is the thing to look at.
 
 ## State

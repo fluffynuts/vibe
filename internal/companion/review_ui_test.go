@@ -23,7 +23,7 @@ func TestTheReviewTabsPlacing(t *testing.T) {
 // ownRunners are the page tests with a Go test of their own (and Firefox's, which needs a browser): every other
 // uitest/*.test.js is run by TestThePageItself, so a new one runs without anyone remembering to list it.
 var ownRunners = map[string]bool{
-	"review.test.js": true, "emoji.test.js": true, "markdown.test.js": true, "manage.test.js": true, "firefox.test.js": true,
+	"review.test.js": true, "emoji.test.js": true, "markdown.test.js": true, "manage.test.js": true, "firefox.test.js": true, "commentspane.firefox.test.js": true,
 }
 
 // TestThePageItself runs the tests of the page as a whole (every uitest/*.test.js but ownRunners), in jsdom.

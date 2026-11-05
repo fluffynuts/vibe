@@ -1,0 +1,98 @@
+#!/bin/sh
+# vibe: description: Start MySQL 8.4 backgrounded, initialising its data the first time, and wait until it answers
+# No braced shell expansions: sbx validates every brace-form
+# substitution in file content against its own placeholder list.
+# Run as root at boot and as the agent when it is told to run this by hand: the log is open to everyone when it is
+# made, and one that someone else made and closed is left alone for a log of the agent's own, rather than stop here.
+LOG="${MYSQL_START_LOG:-/tmp/mysql-8.4.log}"
+( umask 000; : >>"$LOG" ) 2>/dev/null
+[ -w "$LOG" ] || LOG="$LOG.$(id -u)"
+exec >>"$LOG" 2>&1
+echo "=== start-mysql-8.4 at $(date -Is) ==="
+
+# Two starts at once happen: the sandbox's own at boot, and vibe's nudge at the start of a session. Both would see a
+# folder with no data in it and set it up, and one would then clear what the other was making. So one at a time: the
+# second waits for the first, then finds the server already there. The lock file is open to everyone, as root or the
+# agent may be the one to make it.
+LOCK="${MYSQL_LOCK:-/tmp/start-mysql-8.4.lock}"
+if command -v flock >/dev/null 2>&1; then
+  ( umask 000; : >>"$LOCK" ) 2>/dev/null
+  exec 9>>"$LOCK"
+  flock 9
+fi
+
+PREFIX="${MYSQL_PREFIX:-/opt/mysql-8.4}"
+DATADIR="${MYSQL_DATADIR:-/var/lib/mysql-8.4}"
+RUNDIR="${MYSQL_RUNDIR:-/run/mysqld}"
+SOCKET="$RUNDIR/mysqld.sock"
+MYSQLD="$PREFIX/bin/mysqld"
+
+# 0CEA is 3306 in hex, 0A is LISTEN.
+if awk '$2 ~ /:0CEA$/ && $4 == "0A" { f = 1 } END { exit f ? 0 : 1 }' "${MYSQL_NET_TCP:-/proc/net/tcp}"; then
+  echo "mysqld already listening on 3306"
+else
+  if [ ! -x "$MYSQLD" ]; then
+    echo "ERROR: $MYSQLD is not installed: see /tmp/sbx-setup.log"
+    exit 1
+  fi
+
+  # No option file is read (--no-defaults, which has to come first): this server's settings are the ones below, and a
+  # my.cnf some other package left in /etc/mysql, written for a server that isn't this one, can't stop it starting.
+  #
+  # The first start makes the data folder's contents. The root account has no password (--initialize-insecure):
+  # the server listens on this machine only, in a sandbox.
+  sudo install -d -o mysql -g mysql -m 750 "$DATADIR" || echo "WARN: could not prepare $DATADIR"
+  # The folder belongs to mysql and is closed to everyone else, the agent (who may be running this) included: what is
+  # in it is read as root, and what can't be read is not taken to be empty.
+  state=$(sudo sh -c 'if [ -d "$1/mysql" ]; then echo data; elif [ -z "$(ls -A "$1")" ]; then echo empty; else echo other; fi' sh "$DATADIR") \
+    || state=unknown
+  case "$state" in
+    data) ;;
+    empty)
+      echo "initialising $DATADIR"
+      if ! sudo -u mysql "$MYSQLD" --no-defaults --initialize-insecure --basedir="$PREFIX" --datadir="$DATADIR"; then
+        # Only what this run made: the folder was empty. Left, it would stop every later start.
+        sudo find "$DATADIR" -mindepth 1 -delete
+        echo "ERROR: mysqld could not initialise $DATADIR"
+        exit 1
+      fi
+      ;;
+    other)
+      echo "ERROR: $DATADIR has files in it but no MySQL data: not touching it"
+      exit 1
+      ;;
+    *)
+      echo "ERROR: could not tell what is in $DATADIR: not touching it"
+      exit 1
+      ;;
+  esac
+
+  # The run folder is on tmpfs and is gone after a container restart.
+  sudo install -d -o mysql -g mysql -m 755 "$RUNDIR" || echo "WARN: could not prepare $RUNDIR"
+
+  # Started in the background here: mysqld has no --daemonize.
+  echo "starting mysqld"
+  sudo -u mysql setsid nohup "$MYSQLD" --no-defaults \
+    --basedir="$PREFIX" --datadir="$DATADIR" \
+    --socket="$SOCKET" --pid-file="$RUNDIR/mysqld.pid" \
+    --bind-address=127.0.0.1 --mysqlx=OFF </dev/null 9>&- &
+fi
+
+# Starting returns at once, not when the server is ready; wait for a real
+# answer rather than assume.
+i=0
+ready=0
+while [ $i -lt 90 ]; do
+  if "$PREFIX/bin/mysqladmin" --socket="$SOCKET" -uroot ping >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+if [ $ready -eq 0 ]; then
+  echo "ERROR: mysqld not ready after $i seconds"
+  echo "check $LOG for the boot failure"
+  exit 1
+fi
+echo "mysqld ready after $i seconds"

@@ -19,9 +19,17 @@ LOG="${PW_LOG:-/tmp/sbx-setup.log}"
 
 echo "--- installing Playwright $(date -Is)" >>"$LOG"
 
+apt_install() {
+  sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 "$@" </dev/null >>"$LOG" 2>&1
+}
+
 install_playwright() {
-  if ! command -v npm >/dev/null 2>&1; then
-    echo "WARN: npm isn't installed, so Playwright can't be: not installed" >>"$LOG"
+  # The image has no Node or npm. nodejs-24 (Docker Hardened Images) goes first, and npm second, so that the npm
+  # package finds the node there rather than bringing Debian's own beside it.
+  command -v node >/dev/null 2>&1 || apt_install install -y nodejs-24 || apt_install install -y nodejs
+  command -v npm >/dev/null 2>&1 || apt_install install -y npm
+  if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+    echo "WARN: node and npm aren't installed, and couldn't be, so Playwright can't be: not installed" >>"$LOG"
     return
   fi
   if ! npm install -g playwright@latest >>"$LOG" 2>&1; then

@@ -154,7 +154,7 @@ func TestComposeRenumbersEachFeatureBlockInOrder(t *testing.T) {
 	}
 	// Run as the agent user, on-start must become root before it opens
 	// root's log, or it dies there.
-	if i, j := strings.Index(got, `exec sudo -n "$0"`), strings.Index(got, "exec >>/tmp/start-services.log"); i < 0 || j < 0 || i > j {
+	if i, j := strings.Index(got, `exec sudo -n "$0"`), strings.Index(got, `exec >>"$VIBE_ON_START_LOG"`); i < 0 || j < 0 || i > j {
 		t.Errorf("on-start does not re-run itself as root before opening its log:\n%s", got)
 	}
 }

@@ -20,7 +20,23 @@ PREFIX="${PWSH_PREFIX:-/opt/pwsh}"
 LINK="${PWSH_LINK:-/usr/local/bin/pwsh}"
 LOG="${PWSH_LOG:-/tmp/sbx-setup.log}"
 
+CA_BUNDLE="${PWSH_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
+
 echo "--- installing PowerShell $VERSION $(date -Is)" >>"$LOG"
+
+# The release is downloaded over https and unpacked: curl, tar, gzip and the certificate bundle, which the image
+# doesn't promise.
+need=""
+command -v curl >/dev/null 2>&1 || need="$need curl"
+command -v tar >/dev/null 2>&1 || need="$need tar"
+command -v gzip >/dev/null 2>&1 || need="$need gzip"
+[ -s "$CA_BUNDLE" ] || need="$need ca-certificates"
+if [ -n "$need" ]; then
+  echo "installing$need" >>"$LOG"
+  # Not quoted: each is a package name.
+  sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y $need </dev/null >>"$LOG" 2>&1 \
+    || echo "WARN: couldn't install$need, which the PowerShell download needs" >>"$LOG"
+fi
 
 install_pwsh() {
   case "$(uname -m)" in

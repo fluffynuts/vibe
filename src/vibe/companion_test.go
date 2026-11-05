@@ -215,6 +215,40 @@ func TestKeepingAwakeStartsASandboxSbxStoppedWhileThePageWasAway(t *testing.T) {
 	}
 }
 
+// A headless vibe holds for the sandbox to come back, and runs its start-up (the published URLs the status band reads,
+// the agent's instructions, the timezone) when it is released. The page waking a sandbox sbx stopped for being idle is
+// the sandbox coming back like any other: without it, the clipboard's address stays the one confirmed before the
+// stop, which `clipboard-url --if-ready` takes for stale, and the band says "(starting)" until the next session.
+func TestKeepingAwakeResumesAHeldSessionWhenItStartsTheSandboxAgain(t *testing.T) {
+	keepAwakeStandIns(t, false, true)
+	old := hold
+	hold = &sessionHold{}
+	t.Cleanup(func() { hold = old })
+	hold.begin()
+	resume := hold.waiting()
+	keepAwakeFor("box")()
+	select {
+	case <-resume:
+	default:
+		t.Error("the held session wasn't released, so it won't run its start-up again")
+	}
+}
+
+func TestKeepingAwakeLeavesASessionHeldWhenTheSandboxWontStart(t *testing.T) {
+	keepAwakeStandIns(t, false, false)
+	old := hold
+	hold = &sessionHold{}
+	t.Cleanup(func() { hold = old })
+	hold.begin()
+	resume := hold.waiting()
+	keepAwakeFor("box")()
+	select {
+	case <-resume:
+		t.Error("the session was released although the sandbox didn't start")
+	default:
+	}
+}
+
 func TestKeepingAwakeLeavesASandboxStoppedOnPurpose(t *testing.T) {
 	starts := keepAwakeStandIns(t, false, true)
 	stoppedOnPurpose.Store(true)
