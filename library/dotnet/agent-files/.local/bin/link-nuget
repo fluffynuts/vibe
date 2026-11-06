@@ -13,8 +13,8 @@ exec >>"$LOG" 2>&1
 echo "=== link-nuget at $(date -Is) ==="
 
 # What the sandbox was made with is in PID 1's environment. sudo and su - drop it from ours, and this script is run by
-# on-start, which the session start runs under sudo: without it, a later run finds nothing to do and leaves a sandbox
-# without what a newer version of this script would persist. start-clipboard does the same for its own.
+# on-start, which the session start runs under sudo: without it, every run after the first boot's finds "nothing to do",
+# although the sandbox is set up, and a first boot that failed is never put right. start-clipboard does the same for its own.
 PID_ONE_ENVIRON=/proc/1/environ
 if [ -n "$SBX_PROC1_ENVIRON" ]; then
   PID_ONE_ENVIRON=$SBX_PROC1_ENVIRON

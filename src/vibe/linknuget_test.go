@@ -135,18 +135,6 @@ func TestLinkNugetMakesTheHostsPackagesAReadOnlyFallback(t *testing.T) {
 	}
 }
 
-// Code that finds a package's assemblies for itself (DependencyModel, which RazorLight and others use) looks in the
-// probing paths the app is run with, else in NUGET_PACKAGES, else in ~/.nuget/packages: never in a fallback folder. The
-// SDK's runtimeconfig.dev.json is where it puts the fallback folders as probing paths, and it no longer writes one unless
-// asked. Without it, a package whose assemblies aren't copied to the output (its compile assets only) can't be found in
-// the host's cache: "Cannot find compilation library location for package".
-func TestLinkNugetAsksTheSdkForTheProbingPathsThatNameTheFallbackFolder(t *testing.T) {
-	got := runLinkNuget(t, "", "SBX_HOST_NUGET_PACKAGES="+t.TempDir())
-	if !strings.Contains(got, "export GenerateRuntimeConfigDevFile=true") {
-		t.Errorf("persistent file lacks GenerateRuntimeConfigDevFile:\n%s", got)
-	}
-}
-
 func TestLinkNugetIsIdempotent(t *testing.T) {
 	packages := t.TempDir()
 	once := runLinkNuget(t, "", "SBX_HOST_NUGET_PACKAGES="+packages)
@@ -584,10 +572,8 @@ func pidOneEnvironment(t *testing.T, vars ...string) string {
 func TestLinkNugetFindsWhatTheSandboxWasMadeWithInPidOnesEnvironmentWhenSudoDroppedIt(t *testing.T) {
 	packages := t.TempDir()
 	got := runLinkNuget(t, "", pidOneEnvironment(t, "OTHER=1", "SBX_HOST_NUGET_PACKAGES="+packages))
-	for _, want := range []string{"export NUGET_FALLBACK_PACKAGES=" + packages, "export GenerateRuntimeConfigDevFile=true"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("persistent file lacks %q:\n%s", want, got)
-		}
+	if want := "export NUGET_FALLBACK_PACKAGES=" + packages; !strings.Contains(got, want) {
+		t.Errorf("persistent file lacks %q:\n%s", want, got)
 	}
 }
 
@@ -613,4 +599,87 @@ func TestLinkNugetWithNothingInEitherEnvironmentStillChangesNothing(t *testing.T
 	if got := runLinkNuget(t, "export KEEP=1\n", pidOneEnvironment(t, "OTHER=1")); got != "export KEEP=1\n" {
 		t.Errorf("changed the file: %q", got)
 	}
+}
+
+// exportedBy is the variables a persistent file exports, which is what every command the agent runs afterwards has.
+func exportedBy(persisted string) []string {
+	var vars []string
+	for _, line := range strings.Split(persisted, "\n") {
+		if assignment, ok := strings.CutPrefix(line, "export "); ok {
+			vars = append(vars, assignment)
+		}
+	}
+	return vars
+}
+
+// buildEmptyProject builds a console project with no packages in it, which needs no network, with env, and gives the
+// build's runtimeconfig.dev.json (empty when the SDK wrote none) and the path of the app it built.
+func buildEmptyProject(t *testing.T, env []string) (devJSON, app string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "app.csproj"), []byte(`<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net$(NETCoreAppMaximumVersion)</TargetFramework></PropertyGroup>
+</Project>
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Program.cs"), []byte("System.Console.WriteLine(\"ran\");\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	cmd := exec.Command("dotnet", "build", "-nologo", "-v", "q")
+	cmd.Dir = dir
+	cmd.Env = append([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "DOTNET_CLI_HOME=" + home, "DOTNET_NOLOGO=1",
+		"DOTNET_CLI_TELEMETRY_OPTOUT=1", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1"}, env...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("dotnet build: %v\n%s", err, out)
+	}
+	app = filepath.Join(dir, "bin", "Debug", "app.dll")
+	if built, _ := filepath.Glob(filepath.Join(dir, "bin", "*", "*", "app.dll")); len(built) == 1 {
+		app = built[0]
+	}
+	found, _ := filepath.Glob(filepath.Join(dir, "bin", "*", "*", "*.runtimeconfig.dev.json"))
+	if len(found) == 0 {
+		return "", app
+	}
+	data, err := os.ReadFile(found[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data), app
+}
+
+// The reason link-nuget sets GenerateRuntimeConfigDevFile, pinned against the SDK itself so that an SDK that changes how it
+// writes the file is noticed: code that finds a package's assemblies for itself (DependencyModel, which RazorLight uses)
+// never looks in a fallback folder, only in the probing paths the app runs with, which the SDK puts in
+// runtimeconfig.dev.json, and which it no longer writes unless asked. Skipped without a dotnet SDK.
+func TestWhatLinkNugetPersistsMakesTheSdkNameTheFallbackFolderAsAProbingPath(t *testing.T) {
+	if _, err := exec.LookPath("dotnet"); err != nil {
+		t.Skip("no dotnet SDK on PATH")
+	}
+	fallback := t.TempDir()
+	persisted := runLinkNuget(t, "", "SBX_HOST_NUGET_PACKAGES="+fallback)
+
+	t.Run("with what link-nuget persists", func(t *testing.T) {
+		devJSON, app := buildEmptyProject(t, exportedBy(persisted))
+		if !strings.Contains(devJSON, "additionalProbingPaths") || !strings.Contains(devJSON, fallback) {
+			t.Fatalf("runtimeconfig.dev.json doesn't name the fallback folder %s as a probing path:\n%s", fallback, devJSON)
+		}
+		// It also names the sandbox's own cache, which may not exist (on a host, never): the runtime must not mind.
+		if out, err := exec.Command("dotnet", app).CombinedOutput(); err != nil || !strings.Contains(string(out), "ran") {
+			t.Errorf("the app doesn't run with that probing path list: %v\n%s", err, out)
+		}
+	})
+
+	t.Run("without the setting, which is why it is set", func(t *testing.T) {
+		var without []string
+		for _, assignment := range exportedBy(persisted) {
+			if !strings.HasPrefix(assignment, "GenerateRuntimeConfigDevFile=") {
+				without = append(without, assignment)
+			}
+		}
+		if devJSON, _ := buildEmptyProject(t, without); devJSON != "" {
+			t.Errorf("the SDK writes runtimeconfig.dev.json without being asked, so the setting is no longer needed:\n%s", devJSON)
+		}
+	})
 }
