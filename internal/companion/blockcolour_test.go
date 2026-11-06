@@ -157,3 +157,23 @@ func TestThePageAndTheHostColourBlocksToTheSameLimits(t *testing.T) {
 		t.Errorf("the page's idea of a tag is %v, the host's %s", tag, review.BlockTagPattern)
 	}
 }
+
+// An HTML or XML entity comes back as its own run, of the class the page draws as a constant: through the endpoint, helper process and
+// all, as the page asks. (Seen plain on a page: this holds the host's half.)
+func TestAnEntityInAnHTMLBlockComesBackAsItsOwnRun(t *testing.T) {
+	text := "<!doctype html>\n<html lang=\"en\">\n  <body class=\"x\"><p id=\"a\">hi &amp; bye</p></body>\n</html>"
+	for _, tag := range []string{"html", "xml"} {
+		code, h := colourBlock(t, blockServer(), tag, text)
+		var found bool
+		for _, line := range h.Lines {
+			for _, run := range line {
+				if run.Text == "&amp;" && run.Class == "ni" {
+					found = true
+				}
+			}
+		}
+		if code != http.StatusOK || !found {
+			t.Errorf("%s: %d, and the entity was not a run of class ni: %+v", tag, code, h.Lines)
+		}
+	}
+}
