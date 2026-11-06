@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/alecthomas/chroma/v2"
@@ -47,6 +48,12 @@ func Highlight(path, text string) Highlighted {
 	if lexer == nil || lexer.Config().Name == "plaintext" {
 		return Highlighted{}
 	}
+	return tokenise(lexer, text)
+}
+
+// tokenise is text as runs per line, by what Chroma's lexer makes of it: so what spans lines (a comment, a string) is coloured on
+// each of them.
+func tokenise(lexer chroma.Lexer, text string) Highlighted {
 	lexer = chroma.Coalesce(lexer)
 	it, err := lexer.Tokenise(nil, text)
 	if err != nil {
@@ -65,11 +72,56 @@ func Highlight(path, text string) Highlighted {
 			}
 		}
 	}
-	// The file's last newline ends its last line: it doesn't start another.
+	// The text's last newline ends its last line: it doesn't start another.
 	if n := len(out.Lines); n > 1 && len(out.Lines[n-1]) == 0 && strings.HasSuffix(text, "\n") {
 		out.Lines = out.Lines[:n-1]
 	}
 	return out
+}
+
+// A block in the conversation is not a file: it's text the agent wrote, a few lines as a rule, so a lower limit than a file's.
+const (
+	maxBlockBytes = 200 << 10
+	maxBlockLines = 5000
+)
+
+// aTag is what a fence's language can be: a word (c++, f#, objective-c, vb.net), not a path or a pattern, since it is given to
+// Chroma's matching of file names.
+var aTag = regexp.MustCompile(`^[A-Za-z0-9_+#.-]{1,40}$`)
+
+// lexerForTag is the language a fence's tag names, or nil: by name, alias or file extension, as Chroma has it, and never by
+// guessing from the text, which could take prose for code. Plain text is no language.
+func lexerForTag(tag string) chroma.Lexer {
+	if !aTag.MatchString(tag) {
+		return nil
+	}
+	lexer := lexers.Get(tag)
+	if lexer == nil || lexer.Config().Name == "plaintext" {
+		return nil
+	}
+	return lexer
+}
+
+// blockTooLong says why text is past what a block is coloured to, or "".
+func blockTooLong(text string) string {
+	lines := strings.Count(text, "\n")
+	if len(text) > maxBlockBytes || lines > maxBlockLines {
+		return fmt.Sprintf("too long to colour here (%d lines; a block over %d lines or %d KB isn't coloured)", lines, maxBlockLines, maxBlockBytes>>10)
+	}
+	return ""
+}
+
+// HighlightBlock colours text, the contents of a fenced block, by the language its tag names. Nothing comes back (no lines, nothing
+// said) for a tag that names none: that is a block that is plain, not one that wasn't coloured.
+func HighlightBlock(tag, text string) Highlighted {
+	lexer := lexerForTag(tag)
+	if lexer == nil {
+		return Highlighted{}
+	}
+	if why := blockTooLong(text); why != "" {
+		return Highlighted{Skipped: why}
+	}
+	return tokenise(lexer, text)
 }
 
 // colour is path's text, from review rv's old side or its new one,

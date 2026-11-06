@@ -54,6 +54,9 @@ type helperArgs struct {
 	Review Review    `json:"review"`
 	How    []Diffing `json:"how,omitempty"`
 	Old    bool      `json:"old,omitempty"`
+	// Tag and Text are a fenced block to colour (see ColourBlock).
+	Tag  string `json:"tag,omitempty"`
+	Text string `json:"text,omitempty"`
 }
 
 // ServeHelperIfAsked, run first thing, serves as the helper when this
@@ -131,6 +134,8 @@ func serve(in io.Reader) helperAnswer {
 		result, err = fileInFolder(a.Dir, a.Path)
 	case "colour":
 		result, err = colour(ctx, a.Dir, a.Review, a.Path, a.Old)
+	case "colourBlock":
+		result = HighlightBlock(a.Tag, a.Text)
 	default:
 		err = fmt.Errorf("the helper has no %q", req.Op)
 	}
@@ -356,6 +361,20 @@ func FileLines(ctx context.Context, dir string, r Review, path string) ([]string
 func Colour(ctx context.Context, dir string, rv Review, path string, old bool) (Highlighted, error) {
 	var out Highlighted
 	return out, isolated(ctx, "colour", helperArgs{Dir: dir, Review: rv, Path: path, Old: old}, &out)
+}
+
+// ColourBlock is text, the contents of a fenced block in the conversation, coloured by the language its tag names (see
+// HighlightBlock), in a helper that is ended when ctx is: the text is the sandbox's to write, and can be made to take without end.
+// What needs no colouring (a tag naming no language, text past the limit) is answered here, and the text is not sent.
+func ColourBlock(ctx context.Context, tag, text string) (Highlighted, error) {
+	if lexerForTag(tag) == nil {
+		return Highlighted{}, nil
+	}
+	if why := blockTooLong(text); why != "" {
+		return Highlighted{Skipped: why}, nil
+	}
+	var out Highlighted
+	return out, isolated(ctx, "colourBlock", helperArgs{Tag: tag, Text: text}, &out)
 }
 
 // InFolder says whether file, a path in the repository the folder is in (as
