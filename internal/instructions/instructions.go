@@ -94,6 +94,30 @@ func Merge(universal, project string) string {
 	return strings.Join(sections, "\n")
 }
 
+// CopyableBlocksHeading is the heading, in the kits' instructions, of what the
+// copyable-blocks feature tells an agent to do.
+const CopyableBlocksHeading = "Text for the user to copy"
+
+// WithKitPointers is merged with, after it, a pointer to the parts of the
+// kits' instructions that the agent has to be sent to. The kits' instructions
+// reach the agent as reading for when a kit is relevant, and an agent asked for
+// a pull request description doesn't think that one is, so without the pointer
+// it never opens them. Only what kit carries is pointed to.
+func WithKitPointers(merged, kit string) string {
+	if !strings.Contains(kit, CopyableBlocksHeading) {
+		return merged
+	}
+	const heading = "Kit instructions to read"
+	pointer := heading + "\n" + strings.Repeat("-", len(heading)) + "\n\n" +
+		"Before you give the user text to paste somewhere else (a pull request description, a commit message, an issue, a message), " +
+		"read the section \"" + CopyableBlocksHeading + "\" in your kit instructions (for Claude, the files in ~/.claude/kits-agent-context/): " +
+		"it says how to hand it over.\n"
+	if merged == "" {
+		return pointer
+	}
+	return strings.TrimRight(merged, "\n") + "\n\n" + pointer
+}
+
 // normalise gives text Unix line endings, whatever it was edited with.
 func normalise(text string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")

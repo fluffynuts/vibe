@@ -168,3 +168,24 @@ func TestOnlyOneTaggedDocumentIsTakenFromTheReply(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentsAreToldWhereToFindHowToHandOverTextToPasteWhenTheirKitCarriesIt(t *testing.T) {
+	kit := "## " + CopyableBlocksHeading + "\n\nPut it in one block.\n"
+	withPointer := WithKitPointers("Universal instructions\n---\n\nBe kind.\n", kit)
+	for _, want := range []string{"Be kind.", CopyableBlocksHeading, "kits-agent-context"} {
+		if !strings.Contains(withPointer, want) {
+			t.Errorf("missing %q:\n%s", want, withPointer)
+		}
+	}
+	if !strings.HasPrefix(withPointer, "Universal instructions") {
+		t.Errorf("the user's own text isn't first:\n%s", withPointer)
+	}
+	if only := WithKitPointers("", kit); !strings.Contains(only, CopyableBlocksHeading) {
+		t.Errorf("with nothing of the user's, the pointer is still wanted: %q", only)
+	}
+	for what, kit := range map[string]string{"no kit text": "", "kit text without it": "## Reviewing\n\nUse vibe-review.\n"} {
+		if got := WithKitPointers("Be kind.", kit); got != "Be kind." {
+			t.Errorf("%s: the text changed to %q", what, got)
+		}
+	}
+}
