@@ -125,13 +125,25 @@ func runLinkNugetOn(t *testing.T, mounting fakeMounting, file, persisted string,
 func TestLinkNugetMakesTheHostsPackagesAReadOnlyFallback(t *testing.T) {
 	packages := t.TempDir()
 	got := runLinkNuget(t, "export NUGET_PACKAGES=/old/shared/packages\nexport KEEP=1\n", "SBX_HOST_NUGET_PACKAGES="+packages)
-	for _, want := range []string{"export NUGET_FALLBACK_PACKAGES=" + packages, "export RestoreIgnoreFailedSources=true", "export KEEP=1"} {
+	for _, want := range []string{"export NUGET_FALLBACK_PACKAGES=" + packages, "export RestoreIgnoreFailedSources=true", "export GenerateRuntimeConfigDevFile=true", "export KEEP=1"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("persistent file lacks %q:\n%s", want, got)
 		}
 	}
 	if strings.Contains(got, "export NUGET_PACKAGES=") {
 		t.Errorf("a leftover NUGET_PACKAGES would send packages to the read-only cache:\n%s", got)
+	}
+}
+
+// Code that finds a package's assemblies for itself (DependencyModel, which RazorLight and others use) looks in the
+// probing paths the app is run with, else in NUGET_PACKAGES, else in ~/.nuget/packages: never in a fallback folder. The
+// SDK's runtimeconfig.dev.json is where it puts the fallback folders as probing paths, and it no longer writes one unless
+// asked. Without it, a package whose assemblies aren't copied to the output (its compile assets only) can't be found in
+// the host's cache: "Cannot find compilation library location for package".
+func TestLinkNugetAsksTheSdkForTheProbingPathsThatNameTheFallbackFolder(t *testing.T) {
+	got := runLinkNuget(t, "", "SBX_HOST_NUGET_PACKAGES="+t.TempDir())
+	if !strings.Contains(got, "export GenerateRuntimeConfigDevFile=true") {
+		t.Errorf("persistent file lacks GenerateRuntimeConfigDevFile:\n%s", got)
 	}
 }
 
@@ -146,11 +158,11 @@ func TestLinkNugetIsIdempotent(t *testing.T) {
 
 func TestLinkNugetSharedKeepsPinningNugetPackagesToTheHost(t *testing.T) {
 	nuget := t.TempDir()
-	got := runLinkNuget(t, "export NUGET_FALLBACK_PACKAGES=/x\nexport RestoreIgnoreFailedSources=true\nexport VIBE_NUGET_OVERLAY=1\n", "SBX_HOST_NUGET="+nuget)
+	got := runLinkNuget(t, "export NUGET_FALLBACK_PACKAGES=/x\nexport RestoreIgnoreFailedSources=true\nexport GenerateRuntimeConfigDevFile=true\nexport VIBE_NUGET_OVERLAY=1\n", "SBX_HOST_NUGET="+nuget)
 	if !strings.Contains(got, "export NUGET_PACKAGES="+nuget+"/packages") {
 		t.Errorf("shared should pin NUGET_PACKAGES:\n%s", got)
 	}
-	if strings.Contains(got, "NUGET_FALLBACK_PACKAGES") || strings.Contains(got, "RestoreIgnoreFailedSources") || strings.Contains(got, "VIBE_NUGET_OVERLAY") {
+	if strings.Contains(got, "NUGET_FALLBACK_PACKAGES") || strings.Contains(got, "RestoreIgnoreFailedSources") || strings.Contains(got, "GenerateRuntimeConfigDevFile") || strings.Contains(got, "VIBE_NUGET_OVERLAY") {
 		t.Errorf("a switch from fallback leaves its settings behind:\n%s", got)
 	}
 }
@@ -217,7 +229,7 @@ func TestLinkNugetOverlaysTheHostsPackagesAtTheirOwnPath(t *testing.T) {
 	packages := t.TempDir()
 	base := filepath.Join(t.TempDir(), "vibe-nuget")
 	mounting := newFakeMounting(t, true)
-	got := runLinkNugetMounting(t, mounting, "export NUGET_FALLBACK_PACKAGES=/old\n", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_OVERLAY=1", "SBX_NUGET_UPPER_BASE="+base)
+	got := runLinkNugetMounting(t, mounting, "export NUGET_FALLBACK_PACKAGES=/old\nexport GenerateRuntimeConfigDevFile=true\n", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_OVERLAY=1", "SBX_NUGET_UPPER_BASE="+base)
 	calls := mounting.mounts(t)
 	if len(calls) != 1 {
 		t.Fatalf("want one mount, got %q", calls)
@@ -232,7 +244,7 @@ func TestLinkNugetOverlaysTheHostsPackagesAtTheirOwnPath(t *testing.T) {
 			t.Errorf("persistent file lacks %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "NUGET_FALLBACK_PACKAGES") {
+	if strings.Contains(got, "NUGET_FALLBACK_PACKAGES") || strings.Contains(got, "GenerateRuntimeConfigDevFile") {
 		t.Errorf("with the overlay the cache is the one place, not a fallback:\n%s", got)
 	}
 	if info, err := os.Stat(filepath.Join(base, "upper")); err != nil || !info.IsDir() {
