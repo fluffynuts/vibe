@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeMounting is a bin folder holding a sudo that runs what it's given and a
@@ -601,6 +603,29 @@ func TestLinkNugetWithNothingInEitherEnvironmentStillChangesNothing(t *testing.T
 	}
 }
 
+// What a dotnet build is given of the machine's environment: little, so that what the machine running the tests exports (a
+// sandbox with this very feature exports GenerateRuntimeConfigDevFile, and the fallback folder) can't change what they find,
+// but what dotnet itself needs. TMPDIR is one: on macOS NuGet's first-run migration takes a named mutex under it, and with it
+// missing the build died with `lstat("", ...) == -1` (CI, macos-latest).
+func TestADotnetBuildGetsWhatDotnetNeedsOfTheEnvironmentAndNothingThatChangesWhatTheTestsFind(t *testing.T) {
+	t.Setenv("TMPDIR", "/the/tmp")
+	t.Setenv("DOTNET_ROOT", "/the/dotnet")
+	t.Setenv("GenerateRuntimeConfigDevFile", "true")
+	t.Setenv("NUGET_FALLBACK_PACKAGES", "/the/host/cache")
+	t.Setenv("NUGET_PACKAGES", "/the/own/cache")
+	got := strings.Join(dotnetBuildEnvironment("/the/home"), "\n")
+	for _, want := range []string{"TMPDIR=/the/tmp", "DOTNET_ROOT=/the/dotnet", "HOME=/the/home", "DOTNET_CLI_HOME=/the/home"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the environment lacks %q:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"GenerateRuntimeConfigDevFile", "NUGET_FALLBACK_PACKAGES", "NUGET_PACKAGES"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("the environment carries %q from the machine:\n%s", unwanted, got)
+		}
+	}
+}
+
 // exportedBy is the variables a persistent file exports, which is what every command the agent runs afterwards has.
 func exportedBy(persisted string) []string {
 	var vars []string
@@ -610,6 +635,21 @@ func exportedBy(persisted string) []string {
 		}
 	}
 	return vars
+}
+
+// dotnetBuildEnvironment is the environment a dotnet build is run in: home as its home, and of the machine's own only what
+// dotnet needs to run at all.
+func dotnetBuildEnvironment(home string) []string {
+	needed := map[string]bool{"PATH": true, "TMPDIR": true, "TMP": true, "TEMP": true, "SYSTEMROOT": true}
+	var env []string
+	for _, assignment := range os.Environ() {
+		name, _, _ := strings.Cut(assignment, "=")
+		if needed[name] || strings.HasPrefix(name, "DOTNET_ROOT") {
+			env = append(env, assignment)
+		}
+	}
+	return append(env, "HOME="+home, "DOTNET_CLI_HOME="+home, "DOTNET_NOLOGO=1", "DOTNET_CLI_TELEMETRY_OPTOUT=1",
+		"DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1", "DOTNET_CLI_USE_MSBUILD_SERVER=0", "MSBUILDDISABLENODEREUSE=1")
 }
 
 // buildEmptyProject builds a console project with no packages in it, which needs no network, with env, and gives the
@@ -626,11 +666,14 @@ func buildEmptyProject(t *testing.T, env []string) (devJSON, app string) {
 	if err := os.WriteFile(filepath.Join(dir, "Program.cs"), []byte("System.Console.WriteLine(\"ran\");\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	home := t.TempDir()
-	cmd := exec.Command("dotnet", "build", "-nologo", "-v", "q")
+	// Bounded, and with no build servers left running: one that outlives the build holds its output open, and would
+	// have the wait for the output (and a CI job) go on for as long as it lives.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "dotnet", "build", "-nologo", "-v", "q", "-nodeReuse:false", "-p:UseSharedCompilation=false")
 	cmd.Dir = dir
-	cmd.Env = append([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "DOTNET_CLI_HOME=" + home, "DOTNET_NOLOGO=1",
-		"DOTNET_CLI_TELEMETRY_OPTOUT=1", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1"}, env...)
+	cmd.WaitDelay = 10 * time.Second
+	cmd.Env = append(dotnetBuildEnvironment(t.TempDir()), env...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("dotnet build: %v\n%s", err, out)
 	}
@@ -666,7 +709,11 @@ func TestWhatLinkNugetPersistsMakesTheSdkNameTheFallbackFolderAsAProbingPath(t *
 			t.Fatalf("runtimeconfig.dev.json doesn't name the fallback folder %s as a probing path:\n%s", fallback, devJSON)
 		}
 		// It also names the sandbox's own cache, which may not exist (on a host, never): the runtime must not mind.
-		if out, err := exec.Command("dotnet", app).CombinedOutput(); err != nil || !strings.Contains(string(out), "ran") {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		run := exec.CommandContext(ctx, "dotnet", app)
+		run.WaitDelay = 5 * time.Second
+		if out, err := run.CombinedOutput(); err != nil || !strings.Contains(string(out), "ran") {
 			t.Errorf("the app doesn't run with that probing path list: %v\n%s", err, out)
 		}
 	})
