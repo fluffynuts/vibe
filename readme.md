@@ -742,9 +742,11 @@ The page needs `sbx` to be signed in (`sbx login`), the same as `sbx policy` doe
 
 The page follows your system's light or dark setting. To have it differ (to try the other theme without changing your whole
 desktop), the power menu at the top right ends with **System theme** (the default), **Dark theme** and **Light theme**: the
-one the page is in is ticked. The choice is kept in this browser (per address, so per sandbox), not in vibe's settings, and
-is applied before the page is drawn, so it doesn't flash the other theme first. Choosing **System theme** goes back to
-following your system.
+one the page is in is ticked. The choice is kept in this browser, in a cookie (`vibe-theme`, for a year), not in vibe's
+settings. A browser shares a host's cookies between its ports, so one choice holds for every sandbox's page and the Profiles
+page, and a page that is open follows a choice made in another within a few seconds (at once when it comes back into view).
+It is applied before the page is drawn, so it doesn't flash the other theme first. Choosing **System theme** goes back to
+following your system. (`localhost` and `127.0.0.1` are different hosts to a browser, so each has a choice of its own.)
 
 Its address is the same at every start (the port is kept in the sandbox's instance record, and so is a
 secret token, in `~/.vibe/companion/<name>.token`), so a bookmark keeps working. The page lives as

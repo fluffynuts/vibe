@@ -312,6 +312,13 @@
     document.addEventListener('pointerdown', (ev) => { if (!menu.hidden && !ev.target.closest('.power-wrap')) close() })
   }
 
+  // followTheme takes up a theme chosen in another tab (its cookie changed), as a page in view does each poll, and one coming
+  // back into view at once.
+  function followTheme() {
+    if (window.vibeTheme.sync()) showThemeChoice()
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') followTheme() })
+
   // showThemeChoice ticks the menu's light or dark (or the system's) that the page is in (see theme.js).
   function showThemeChoice() {
     const now = window.vibeTheme.current()
@@ -1088,6 +1095,7 @@
 
   function tick() {
     if (document.visibilityState !== 'visible') return
+    followTheme()
     // Only in view: out of sight, sbx is left to stop an idle sandbox, and
     // coming back asks at once (it starts it again, if it was stopped).
     if (state.sandboxTabs !== false && Date.now() - awakeAsked >= AWAKE_MS) {

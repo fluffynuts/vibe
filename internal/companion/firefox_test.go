@@ -77,10 +77,13 @@ func TestThePageInFirefox(t *testing.T) {
 	}
 
 	url := servePage(t, dir, store)
+	// A second page, on a port of its own, as another sandbox's is: the browser shares a host's cookies between its ports, and
+	// only one tab of a page is let to stay open, so the theme chosen on one page reaching the other is told with two.
+	otherURL := servePage(t, dir, store)
 
 	cmd := exec.Command(node, "--test", "firefox.test.js")
 	cmd.Dir = "uitest"
-	cmd.Env = append(os.Environ(), "VIBE_PAGE_URL="+url)
+	cmd.Env = append(os.Environ(), "VIBE_PAGE_URL="+url, "VIBE_PAGE_URL_OTHER="+otherURL)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("node --test uitest/firefox.test.js failed: %v\n%s", err, out)
 	}

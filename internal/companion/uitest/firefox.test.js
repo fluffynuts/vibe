@@ -927,7 +927,7 @@ test('Reload keeps the place in the file, and Back goes to where it was left in 
 async function lookOf(colorScheme, chosen) {
   const page = await browser.newPage({ colorScheme, viewport: { width: 1000, height: 700 } })
   try {
-    if (chosen) await page.addInitScript((c) => localStorage.setItem('vibe-companion-theme', c), chosen)
+    if (chosen) await page.addInitScript((c) => { document.cookie = 'vibe-theme=' + c + '; Path=/' }, chosen)
     await page.goto(URL)
     return await page.evaluate(async () => {
       const css = await (await fetch('/app.css')).text()
@@ -959,4 +959,54 @@ test('dark chosen in the menu looks as a dark system does, and so does light', a
   // A choice also tells the browser, for what it draws itself (scrollbars, form controls).
   assert.equal(darkChosen._colorScheme, 'dark')
   assert.equal(lightChosen._colorScheme, 'light')
+})
+
+// The choice is one for the whole host: kept in a cookie, which a browser shares between the ports of a host (a page's
+// localStorage is its own), so it holds for every sandbox's page, each on a port of its own; and a page that is open follows a
+// choice made in another. Here two pages on two ports of localhost, as two sandboxes' are (a second tab of one page is not let to
+// stay open, so it is two pages and not two tabs).
+const OTHER_URL = process.env.VIBE_PAGE_URL_OTHER
+
+test('a theme chosen on one sandbox\'s page is followed by another\'s on its own port, and is kept as a host-wide cookie', async () => {
+  assert.notEqual(new globalThis.URL(URL).port, new globalThis.URL(OTHER_URL).port, 'two pages on different ports')
+  assert.equal(new globalThis.URL(URL).hostname, new globalThis.URL(OTHER_URL).hostname, 'on one host')
+  const context = await browser.newContext({ colorScheme: 'dark', viewport: { width: 1000, height: 700 } })
+  try {
+    const one = await context.newPage()
+    const two = await context.newPage()
+    await one.goto(URL)
+    await two.goto(OTHER_URL)
+    const themeOf = (page) => page.evaluate(() => document.documentElement.getAttribute('data-theme'))
+    assert.equal(await themeOf(two), null)
+    await one.click('#link')
+    await one.click('#theme-light')
+    assert.equal(await themeOf(one), 'light')
+    await eventually(two, 'the other port\'s page to follow', async () => (await themeOf(two)) === 'light')
+    assert.equal(await two.getAttribute('#theme-light', 'aria-checked'), 'true')
+    const cookie = (await context.cookies()).find((c) => c.name === 'vibe-theme')
+    assert.ok(cookie, 'the choice is a cookie')
+    assert.equal(cookie.value, 'light')
+    assert.equal(cookie.path, '/')
+    assert.equal(cookie.httpOnly, false, 'the head script reads it')
+    assert.equal(cookie.sameSite, 'Lax')
+    assert.ok(cookie.expires > Date.now() / 1000 + 300 * 24 * 3600, 'kept for about a year: expires ' + cookie.expires)
+    // A page opened afterwards, on the other port (its first one closed: only one of a page is let to stay), starts in it: no flash
+    // of the system's first.
+    await two.close()
+    const three = await context.newPage()
+    // Sampled when <body> first exists: the head's scripts have run, and nothing has been drawn yet.
+    await three.addInitScript(() => {
+      new MutationObserver((_, observer) => {
+        if (document.body) { window.__first = document.documentElement.getAttribute('data-theme'); observer.disconnect() }
+      }).observe(document, { childList: true, subtree: true })
+    })
+    await three.goto(OTHER_URL)
+    assert.equal(await themeOf(three), 'light')
+    assert.equal(await three.evaluate(() => window.__first), 'light')
+    // Back to the system's: the cookie goes, and that page follows.
+    await one.click('#link')
+    await one.click('#theme-system')
+    await eventually(three, 'the other port\'s page to go back to the system', async () => (await themeOf(three)) === null)
+    assert.equal((await context.cookies()).some((c) => c.name === 'vibe-theme'), false)
+  } finally { await context.close() }
 })
