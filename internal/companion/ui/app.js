@@ -866,6 +866,9 @@
       state.sandbox = res.body.sandbox || ''
       state.loaded = true
       state.sandboxTabs = res.body.sandboxTabs !== false
+      // A try to wake the sandbox found sbx signed out (the page coming back into view asks for one): the card and the banner
+      // find out, as for a failed turn, and not more often than that.
+      if (res.body.sbxSignedOut && state.signin && Date.now() - signInShown.lastCheck > SIGNIN_RECHECK_MS) loadSignIn()
       $('sandbox').textContent = state.sandbox || 'all profiles and sandboxes'
       renderWhere(res.body.folder || '', res.body.git || null)
       // What can be reviewed depends on the branch, so the start screen's answer is asked again when it changes.
@@ -5490,7 +5493,12 @@
     else if (ev.kind === 'note') convoNote('meta', ev.text || '', undefined, ev.seq)
     // What vibe said it was doing, no longer so (the sandbox is up): gone, not left to be read as current.
     else if (ev.kind === 'retract') $('convo-log').querySelectorAll('[data-seq="' + Number(ev.of) + '"]').forEach((n) => n.remove())
-    else if (ev.kind === 'error') convoNote('error', ev.text || 'That failed.', ev.at)
+    else if (ev.kind === 'error') {
+      convoNote('error', ev.text || 'That failed.', ev.at)
+      // A turn that failed may have failed for want of a sign-in (sbx's, when it couldn't start the sandbox): the card and the
+      // notice find out, if they haven't looked lately, rather than the page matching the words of the failure.
+      if (state.signin && Date.now() - signInShown.lastCheck > SIGNIN_RECHECK_MS) loadSignIn()
+    }
     else if (ev.kind === 'done' && ev.text === 'stopped') convoNote('meta', 'Stopped.')
   }
 

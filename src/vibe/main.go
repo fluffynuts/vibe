@@ -202,6 +202,11 @@ func main() {
 		note("waiting for %s: another program (a virus scanner, say) has it open", pathresolve.Tilde(path))
 	}
 	err := run(os.Args[1:])
+	if err != nil {
+		if args, parseErr := cliargs.Parse(os.Args[1:]); parseErr == nil && retryAfterSignIn(err, args, interactive(), realSbxSignInSteps()) {
+			err = run(os.Args[1:])
+		}
+	}
 	termtitle.Restore()
 	session.Release()
 	if err != nil {
@@ -320,6 +325,7 @@ func run(argv []string) error {
 			"then make sure its bin directory is on PATH (e.g. ${HOME}/.docker/sbx/bin).", hint)
 	}
 	sbxfind.Look()
+	keepWakeLog()
 	// What sbx wants before it answers (a network policy, a sign-in to Docker) is asked here, on the terminal, and given,
 	// rather than the first command failing with sbx's own words. Only for what starts or makes a sandbox, and nobody is
 	// asked with -f, or with no terminal.

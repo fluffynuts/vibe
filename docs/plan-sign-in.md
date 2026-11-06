@@ -237,3 +237,81 @@ no terminal sbx doesn't show its menu, which is why recognising the menu (and th
 all missed it. `signin.Docker` now reads "network policy has not been initialized" as NeedsPolicy, as it does the menu and "operation
 cancelled by user"; `policyWanted` is that, or a clean listing without the local-policy row (unless one was chosen here before),
 and any other failure is left alone.
+
+## Signed out while a sandbox is stopped (2026-11-06, from the user's own `sbx logout`)
+
+What `sbx` does when it is signed out and a sandbox has to be woken, as the user saw it on their host (vibe 0.x, this branch):
+
+- **`sbx logout` asks "Your running local sandboxes will be stopped. Proceed y/N?", stops them and the daemon.** So a page left open
+  comes back to a dead clipboard server and a stopped sandbox. What signs sbx out *without* a logout (expiry?) is not known.
+- **`sbx ls` signed out**: `error: not signed in to Docker` / `try: sbx login`, exit 1, at once (as found 2026-10-30).
+- **`sbx start` is not a command** (`error: sbx: unknown command: sbx start`). The only thing that wakes a stopped sandbox is
+  `sbx exec`, so `sbxrun.Start` was never starting anything itself.
+- **`sbx exec <sandbox> true` on a stopped sandbox, signed out, on a terminal**: prints `not signed in to Docker; starting the
+  sign-in flow…`, the agreement line, a one-time code and `https://login.docker.com/activate?user_code=<code>`, then
+  `Waiting for authentication...` and blocks. Once confirmed in the browser it prints `Signed in as <name>.` and
+  `✓ sandbox <name> — started`: the exec carries on and the sandbox starts.
+- **The same with no terminal (as vibe runs it for the page)**: no flow. It fails in under a second with exit 125 and
+  `error: not signed in to Docker` / `try: sbx login`.
+- **`sbx login` when already signed in**: `You are signed in [username: <name>]`, and then sits for a few seconds before it
+  exits (unexplained).
+- Before this was understood, the page's start waited out its whole 3 minutes with nothing said (a terminal-less flow it could
+  not answer, on the first guess; the real log says the exec failed fast, and what hid it was `sbx start` being unknown, whose
+  error was shown instead), and the Sign-in notice was only looked for at page load, on the Admin tab, and after an
+  `authentication_failed`.
+
+### Built (`feat/signed-out-start`)
+
+1. **Waking reads sbx's output as it comes** (`internal/sbxrun/wake.go`): a docker.com address with a `user_code`
+   (`signin.DeviceLink`) ends the wait with a `NotSignedInError`; a failed exec whose output names
+   `sbx login` is the same. Neither carries the address: a wake's output is what a command run in the sandbox printed, which
+   the agent can make, and an address it printed could be a Docker sign-in of its own for the user to authorise (found in
+   review). Both go by the shape or the command, not sbx's words, which it may translate. What is read is capped (64 KB) and
+   the process stopped at the cap, a line at a time, so hostile output can't cost the host CPU.
+2. **A failure nothing recognises asks `sbx login` as a last resort** (which the sandbox can cause: a failed wake is a command's output,
+   which the agent can make, so a faked failure has the host run `sbx login`; accepted, since it is throttled, harmless signed in, and
+   its code is never shown) (not a probe: signed out it starts a flow and leaves a
+   code to expire, so at most once in two minutes): an address in its output is signed out, none (it finishes) says signing in
+   isn't the cause. Not seen end to end (it needs a failure nothing recognises, which a signed-out sbx no longer is), but
+   what it rests on is confirmed: `sbx login </dev/null` signed out prints the same flow as on a terminal (the code, the
+   activate address, "Waiting for authentication...") and waits, and a Ctrl-C ends it with `error: auth login failed:
+   completing login: context canceled`.
+3. **The page**: a start that can't happen says sbx is signed out (with the address and code only from the last resort's own `sbx login`) and points to
+   the Admin tab; any other failure is in sbx's own words with the path of `~/.vibe/sbx-wake.log`; a failed turn makes the
+   page look at the sign-in again. That log keeps what sbx printed for each wake that failed or took over 5 s (256 KB, then it
+   starts again).
+4. **`vibe --list` and `--info`** offer `sbx login` on the terminal when sbx says it is signed out, and run again once it
+   took. Reacting to the failure, not looking first: the commands that start or make a sandbox still look first
+   (`ensureSbxReady`).
+
+### Left
+
+- Letting the terminal flow finish for the page: signed out on a terminal, the exec's own flow starts the sandbox once
+  confirmed. The page has no terminal, so it cannot.
+- A language-neutral signal for `sbx ls` failing (`signin.Docker` still matches "not signed in"; a rewording degrades it to
+  "unknown", which is the safe direction).
+- What signs sbx out other than `sbx logout`; whether the few seconds `sbx login` spends after "You are signed in" matter to
+  the Sign-in card's button.
+
+### Tried by hand on the real thing (2026-11-06, `./test-clean` on `feat/signed-out-start`, then `sbx logout`)
+
+- **`vibe -l` signed out** asked "sbx isn't signed in to Docker, which it needs for everything. Sign in now?", ran `sbx login` on
+  the terminal (address and code, "Signed in as ..."), said "signed in to Docker", and listed the sandboxes straight after.
+- **A prompt on the page, signed out again**: the red error "sbx isn't signed in to Docker, so sandbox 'vibe' can't start. Sign in
+  from the Admin tab, then send your prompt again", then the Conversation banner with its button; the Admin card's Sign in
+  signed sbx in and the page worked. No address or code was on the page, as intended.
+- **`~/.vibe/sbx-wake.log`** after the page's wake attempts: "failed, pointing to sbx login: exit status 125 after 294ms" with
+  sbx's own two lines, one entry for each of two attempts.
+- **The 13:05 prompt did write its entries** (13:05:00 and 13:05:10, same wording), so a failed start for a turn is noted.
+- **Asked for, then built** (the user, after trying it): the page brought back into view shows the same banner as a failed prompt,
+  with no prompt: a try to wake the sandbox that finds sbx signed out is kept (`sbxrun.NotSignedInSeen`, cleared by a wake that
+  works), passed on in `/api/state` as `sbxSignedOut`, and the page looks at the sign-in when it is true (no more often than
+  for a failed turn). And the last resort, whatever it finds, says in its message that it was used and asks for a report of
+  what sbx said (`NotSignedInError.LastResort`), since it only runs for a message nothing recognised.
+
+### What a second review of this branch found (2026-11-06)
+
+- The "sbx found signed out" flag (`sbxrun.NotSignedInSeen`) was only cleared by a wake that worked, so after signing in the page
+  went on looking at the sign-in every 10 s while a running sandbox (which isn't woken) left it set. It is now cleared by whatever
+  confirms sbx signed in: the Sign-in card's own check (`checkSignIn`), and a sandbox listed as running (`keepAwakeFor`).
+  A check that finds sbx still signed out, or can't tell, leaves it alone.

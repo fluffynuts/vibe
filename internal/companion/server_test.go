@@ -859,3 +859,33 @@ func TestARefreshUnderWayWhenAKeyIsForgottenDoesntPutItsAnswerBack(t *testing.T)
 		t.Errorf("a refresh begun before the forget replaced the answer: %v", got)
 	}
 }
+
+// What a try to wake the sandbox found, passed on: the page looks at the sign-in when it says sbx is signed out, which is how
+// it comes to show its banner on being brought back into view, with no prompt sent and no probe of its own.
+func TestTheStateSaysWhenWakingTheSandboxFoundSbxSignedOut(t *testing.T) {
+	var seen atomic.Bool
+	s := New(Config{Sandbox: "vibe", Token: token, Port: testPort, SbxSignedOut: seen.Load})
+	read := func() bool {
+		var got struct {
+			SignedOut bool `json:"sbxSignedOut"`
+		}
+		json.Unmarshal(do(t, s, req{path: "/api/state", headers: authed(nil)}).Body.Bytes(), &got)
+		return got.SignedOut
+	}
+	if read() {
+		t.Error("said signed out when nothing found it so")
+	}
+	seen.Store(true)
+	if !read() {
+		t.Error("didn't say so when waking the sandbox found sbx signed out")
+	}
+}
+
+func TestTheStateSaysNothingOfSbxBeingSignedOutWhenNobodyIsAsked(t *testing.T) {
+	s := New(Config{Sandbox: "vibe", Token: token, Port: testPort})
+	var got map[string]json.RawMessage
+	json.Unmarshal(do(t, s, req{path: "/api/state", headers: authed(nil)}).Body.Bytes(), &got)
+	if string(got["sbxSignedOut"]) != "false" {
+		t.Errorf("sbxSignedOut = %s", got["sbxSignedOut"])
+	}
+}
