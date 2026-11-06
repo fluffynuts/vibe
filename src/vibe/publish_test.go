@@ -43,6 +43,15 @@ func hostPorts(mappings []publishMapping) []int {
 	return out
 }
 
+// allocatePublishFor is allocatePublish with its reservations given up when the test ends: a lock held on a file in the
+// test's home would stop Windows removing it.
+func allocatePublishFor(t *testing.T, home, name string, merged settings.Settings) ([]publishMapping, error) {
+	t.Helper()
+	mappings, err := allocatePublish(home, name, merged)
+	t.Cleanup(func() { releasePublishReservations(home, mappings) })
+	return mappings, err
+}
+
 func saveInstance(t *testing.T, home, name string, recs ...state.PublishRecord) {
 	t.Helper()
 	if err := state.Save(home, state.Instance{Name: name, Profile: "p", Publish: recs}); err != nil {
@@ -55,7 +64,7 @@ func TestAllocatePublishFreshTakesContainerPort(t *testing.T) {
 	home := t.TempDir()
 	base := freeBase(t, 2)
 
-	got, err := allocatePublish(home, "crit", publishOne(base))
+	got, err := allocatePublishFor(t, home, "crit", publishOne(base))
 	if err != nil {
 		t.Fatalf("allocatePublish: %v", err)
 	}
@@ -75,7 +84,7 @@ func TestAllocatePublishReclaimsOwnRecordedPort(t *testing.T) {
 	base := freeBase(t, 4)
 	saveInstance(t, home, "crit", state.PublishRecord{Name: "dashboard", ContainerPort: base, HostPort: base + 2})
 
-	got, err := allocatePublish(home, "crit", publishOne(base))
+	got, err := allocatePublishFor(t, home, "crit", publishOne(base))
 	if err != nil {
 		t.Fatalf("allocatePublish: %v", err)
 	}
@@ -92,7 +101,7 @@ func TestAllocatePublishSkipsPortClaimedByAnotherStoppedSandbox(t *testing.T) {
 	base := freeBase(t, 4)
 	saveInstance(t, home, "valleyrunner", state.PublishRecord{Name: "dashboard", ContainerPort: base, HostPort: base})
 
-	got, err := allocatePublish(home, "crit", publishOne(base))
+	got, err := allocatePublishFor(t, home, "crit", publishOne(base))
 	if err != nil {
 		t.Fatalf("allocatePublish: %v", err)
 	}
@@ -114,7 +123,7 @@ func TestAllocatePublishNoDuplicateWithinOnePass(t *testing.T) {
 
 	// base is claimed, so the first container port slides to base+1 — which
 	// is exactly what the second container port would otherwise take.
-	got, err := allocatePublish(home, "crit", publishOne(base, base+1))
+	got, err := allocatePublishFor(t, home, "crit", publishOne(base, base+1))
 	if err != nil {
 		t.Fatalf("allocatePublish: %v", err)
 	}
@@ -140,7 +149,7 @@ func TestAllocatePublishSkipsLiveListener(t *testing.T) {
 
 	saveInstance(t, home, "crit", state.PublishRecord{Name: "dashboard", ContainerPort: base, HostPort: base})
 
-	got, err := allocatePublish(home, "crit", publishOne(base))
+	got, err := allocatePublishFor(t, home, "crit", publishOne(base))
 	if err != nil {
 		t.Fatalf("allocatePublish: %v", err)
 	}
@@ -154,7 +163,7 @@ func TestAllocatePublishUrlEnvOnFirstPortOnly(t *testing.T) {
 	home := t.TempDir()
 	base := freeBase(t, 3)
 
-	got, err := allocatePublish(home, "crit", publishOne(base, base+1))
+	got, err := allocatePublishFor(t, home, "crit", publishOne(base, base+1))
 	if err != nil {
 		t.Fatalf("allocatePublish: %v", err)
 	}
@@ -173,4 +182,68 @@ func equal(a, b []int) bool {
 		}
 	}
 	return true
+}
+
+// The race this exists for: vibes started together choose their ports before any of them has a record to show for it, and
+// sbx binds a published port only once it is made, minutes on. Another vibe has chosen the port, and says so by reserving it:
+// no record, nothing listening.
+func TestAllocatePublishSkipsAPortAnotherVibeIsAboutToUse(t *testing.T) {
+	home := t.TempDir()
+	base := freeBase(t, 4)
+	other := portalloc.NewReservations(publishReservationsDir(home))
+	defer other.Release()
+	if ok, err := other.Reserve(base); err != nil || !ok {
+		t.Fatalf("reserve: %v, %v", ok, err)
+	}
+
+	got, err := allocatePublishFor(t, home, "crit", publishOne(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hostPorts(got)[0] == base {
+		t.Errorf("host port = %d, which another vibe is about to use", base)
+	}
+}
+
+func TestTwoVibesAllocatingTogetherGetDifferentPorts(t *testing.T) {
+	home := t.TempDir()
+	base := freeBase(t, 4)
+	// The second is a vibe of its own: not this process's reservations.
+	otherVibe := portalloc.NewReservations(publishReservationsDir(home))
+	defer otherVibe.Release()
+
+	first, err := allocatePublishFor(t, home, "one", publishOne(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := allocateWith(otherVibe, home, "two", publishOne(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hostPorts(first)[0] == hostPorts(second)[0] {
+		t.Errorf("both were given %d", hostPorts(first)[0])
+	}
+}
+
+// A vibe that remakes its own sandbox is not kept from the port it holds.
+func TestAllocatePublishAgainInTheSameVibeKeepsItsOwnPorts(t *testing.T) {
+	home := t.TempDir()
+	base := freeBase(t, 4)
+	first, _ := allocatePublishFor(t, home, "crit", publishOne(base))
+	second, err := allocatePublishFor(t, home, "crit", publishOne(base))
+	if err != nil || hostPorts(first)[0] != hostPorts(second)[0] {
+		t.Errorf("first %v, then %v, %v", hostPorts(first), hostPorts(second), err)
+	}
+}
+
+func TestReleasedPublishPortsCanBeChosenByAnotherVibe(t *testing.T) {
+	home := t.TempDir()
+	base := freeBase(t, 4)
+	mappings, _ := allocatePublish(home, "one", publishOne(base))
+	releasePublishReservations(home, mappings)
+	other := portalloc.NewReservations(publishReservationsDir(home))
+	defer other.Release()
+	if ok, _ := other.Reserve(base); !ok {
+		t.Error("the port is still held after its sandbox was made (or failed to be)")
+	}
 }

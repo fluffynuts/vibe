@@ -1191,6 +1191,12 @@ mapping can change afterwards (`sbx ports --publish`). So at every session start
 preference to the variable. If sbx can't confirm a port, the file says so on a second
 `unverified:` line.
 
+A host port is chosen when the sandbox is created, but the sandbox's record (which makes it permanent, and keeps other
+sandboxes off it) is written when the sandbox has been made, which can be minutes on (a build with Playwright or .NET). So that
+vibes started together don't choose the same port, each port is reserved as it is chosen: a lock file in `~/.vibe/ports/`
+that other vibes see at once, held until the record is written (or the create fails). It is a lock, so a vibe that dies
+leaves nothing to clean up. The lock files are empty and stay; they are harmless.
+
 `publish` entries append across base → profile, so a profile only needs to list what it's adding.
 `defaultFeatures` is the exception that replaces rather than appends, and it is read from the base
 settings only — it is what the guided picker starts with selected, so it is consulted before the
