@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"vibe/internal/signin"
@@ -20,6 +21,14 @@ func (e *NotSignedInError) Error() string {
 		return "sbx isn't signed in to Docker (run: sbx login)"
 	}
 	return fmt.Sprintf("sbx isn't signed in to Docker (sign in at %s, with the code %s, or run: sbx login)", e.URL, e.Code)
+}
+
+// Hint is where the sign-in flow sbx started waits, for a message: empty when sbx didn't start one.
+func (e *NotSignedInError) Hint() string {
+	if e.URL == "" {
+		return ""
+	}
+	return fmt.Sprintf(", or open %s (code %s)", e.URL, e.Code)
 }
 
 // wakeError is a wake that failed: what sbx said when it did, which is the reason, or how the command ended when it said
@@ -107,4 +116,67 @@ func noteWake(name string, began time.Time, outcome, said string) {
 	}
 	WakeLog(fmt.Sprintf("%s sbx exec %s: %s after %s\n%s", began.Format(time.RFC3339), name, outcome,
 		time.Since(began).Round(time.Millisecond), strings.TrimRight(said, "\n")))
+}
+
+var (
+	signInCheckMu   sync.Mutex
+	lastSignInCheck time.Time
+)
+
+const (
+	// signInCheckEvery is how seldom sbx login is asked: signed out, each ask leaves a sign-in code waiting to expire, and
+	// a page that is brought into view again and again would leave one each time.
+	signInCheckEvery = 2 * time.Minute
+	// signInCheckWithin bounds one ask.
+	signInCheckWithin = 30 * time.Second
+)
+
+// explainWithSignIn is the last resort for a sandbox that couldn't be woken for a reason nothing recognised: sbx login,
+// which says without words: signed out, it prints its flow's address (and waits, so it is stopped there); signed in, it
+// finishes without one. So the wording of sbx's messages doesn't matter. It runs at most once in signInCheckEvery, and
+// leaves err as it was when it can't tell.
+func explainWithSignIn(ctx context.Context, err error) error {
+	signInCheckMu.Lock()
+	if !lastSignInCheck.IsZero() && time.Since(lastSignInCheck) < signInCheckEvery {
+		signInCheckMu.Unlock()
+		return err
+	}
+	lastSignInCheck = time.Now()
+	signInCheckMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(ctx, signInCheckWithin)
+	defer cancel()
+	p, startErr := start(false, "login")
+	if startErr != nil {
+		return err
+	}
+	stopped := make(chan struct{})
+	defer close(stopped)
+	go func() {
+		select {
+		case <-ctx.Done():
+			p.Stop()
+		case <-stopped:
+		}
+	}()
+	var said strings.Builder
+	for line := range p.Lines() {
+		if said.Len() < 64<<10 {
+			said.WriteString(line + "\n")
+		}
+		if link, ok := signin.DeviceLink(said.String()); ok {
+			p.Stop()
+			for range p.Lines() {
+			}
+			<-p.Done()
+			noteWake("(sign-in check)", time.Now(), "sbx login started its flow", said.String())
+			return &NotSignedInError{URL: link.URL, Code: link.Code}
+		}
+	}
+	if ended := <-p.Done(); ended != nil || ctx.Err() != nil {
+		noteWake("(sign-in check)", time.Now(), "sbx login didn't finish well", said.String())
+		return err
+	}
+	noteWake("(sign-in check)", time.Now(), "sbx login finished without a flow: signed in", said.String())
+	return fmt.Errorf("%w (sbx login finishes without asking for anything, so signing in isn't the cause)", err)
 }

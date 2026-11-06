@@ -462,7 +462,7 @@ func TestKeepingAwakeSaysSbxIsSignedOutAndWhereToSignIn(t *testing.T) {
 		return &sbxrun.NotSignedInError{URL: "https://login.docker.com/activate?user_code=AAAA-BBBB", Code: "AAAA-BBBB"}
 	}
 	said := keepAwakeFor("box")()
-	if !strings.Contains(said, "signed out") || !strings.Contains(said, "Admin tab") {
+	if !strings.Contains(said, "signed out") || !strings.Contains(said, "Admin tab") || !strings.Contains(said, "AAAA-BBBB") {
 		t.Errorf("said %q", said)
 	}
 }

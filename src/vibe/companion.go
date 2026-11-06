@@ -590,7 +590,7 @@ func readyForTurn(name string) func(ctx context.Context, say func(string)) error
 			}
 			var signedOut *sbxrun.NotSignedInError
 			if errors.As(err, &signedOut) {
-				return fmt.Errorf("sbx isn't signed in to Docker, so sandbox '%s' can't start. Sign in from the Admin tab, then send your prompt again", name)
+				return fmt.Errorf("sbx isn't signed in to Docker, so sandbox '%s' can't start. Sign in from the Admin tab%s, then send your prompt again", name, signedOut.Hint())
 			}
 			return fmt.Errorf("sandbox '%s' didn't start: %s", name, startFailure(err))
 		}
@@ -621,7 +621,7 @@ func sandboxGitFor(name, target string) func(ctx context.Context, args ...string
 func startFailure(err error) string {
 	var signedOut *sbxrun.NotSignedInError
 	if errors.As(err, &signedOut) {
-		return "sbx is signed out of Docker. Sign in from the Admin tab (or run: sbx login)"
+		return "sbx is signed out of Docker. Sign in from the Admin tab" + signedOut.Hint() + " (or run: sbx login)"
 	}
 	return err.Error() + " (what sbx printed is in " + wakeLogFile() + ")"
 }

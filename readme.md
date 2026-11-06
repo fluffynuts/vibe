@@ -744,7 +744,10 @@ When sbx has been signed out of Docker (`sbx logout` does it, and stops your san
 woken. With no terminal to answer on (as vibe runs it for the page), `sbx exec` fails at once, pointing to `sbx login`; on a
 terminal it starts a sign-in flow and waits for a browser. vibe recognises both (the command it names, and the flow's
 docker.com address, not sbx's words), and says sbx is signed out at once, with the Sign-in card on the Admin tab to put it
-right, rather than waiting out the start. Any other failure to start a sandbox is given in sbx's own words. What sbx printed
+right, rather than waiting out the start. A failure nothing recognises (sbx may have reworded it) is the last resort for
+`sbx login`, asked at most once in two minutes: signed out, it prints its flow's address (which the message then gives, with the
+code); signed in, it finishes without one, and the message says signing in isn't the cause. Any other failure to start a
+sandbox is given in sbx's own words. What sbx printed
 for a wake that failed or was slow is kept in
 `~/.vibe/sbx-wake.log` (it starts again at 256 KB). `vibe --list` and `vibe --info`, which only read, offer `sbx login` on
 the terminal when sbx is signed out, and carry on once you are.

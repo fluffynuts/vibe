@@ -527,6 +527,16 @@ func StartExplained(ctx context.Context, name string) (started bool, why string)
 // StartChecked is Start, returning why the sandbox didn't start: a *NotSignedInError when sbx is signed out of Docker
 // (which it says by starting its sign-in flow, in place of starting the sandbox), or what sbx said otherwise.
 func StartChecked(ctx context.Context, name string) error {
+	err := startOnce(ctx, name)
+	var signedOut *NotSignedInError
+	if err == nil || errors.As(err, &signedOut) || ctx.Err() != nil {
+		return err
+	}
+	// Nothing said why in words vibe knows (sbx may have changed them): as a last resort, sbx login is asked.
+	return explainWithSignIn(ctx, err)
+}
+
+func startOnce(ctx context.Context, name string) error {
 	err := wake(ctx, name)
 	if err == nil {
 		return nil
