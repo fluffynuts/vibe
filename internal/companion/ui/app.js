@@ -866,6 +866,9 @@
       state.sandbox = res.body.sandbox || ''
       state.loaded = true
       state.sandboxTabs = res.body.sandboxTabs !== false
+      // A try to wake the sandbox found sbx signed out (the page coming back into view asks for one): the card and the banner
+      // find out, as for a failed turn, and not more often than that.
+      if (res.body.sbxSignedOut && state.signin && Date.now() - signInShown.lastCheck > SIGNIN_RECHECK_MS) loadSignIn()
       $('sandbox').textContent = state.sandbox || 'all profiles and sandboxes'
       renderWhere(res.body.folder || '', res.body.git || null)
       // What can be reviewed depends on the branch, so the start screen's answer is asked again when it changes.

@@ -114,3 +114,61 @@ test('a turn that fails causes a look at the sign-in, whatever it says', async (
     assert.equal(looks(p), 2, 'looks: ' + looks(p))
   } finally { p.close() }
 })
+
+// Brought back into view with sbx signed out, the page says so before a prompt is sent: the host's try to wake the sandbox
+// found it signed out, the state says so, and the page looks at the sign-in, which shows the banner.
+async function pageWhereSbxMaySignOut(clock, status) {
+  return openPage({
+    routes: {
+      '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, conversation: true, admin: true, signin: true, signinStart: true, attention: {}, sbxSignedOut: status.found }),
+      '/api/admin': { state: 'running', info: '' },
+      '/api/signin': () => ({ agent: 'claude', docker: { state: status.docker, manual: [] }, agentSignIn: { state: 'signed-in', manual: [] } }),
+      '/api/signin/job': { kind: '', lines: [] },
+      '/api/conversation': { events: [{ seq: 1, kind: 'user', text: 'hi' }], last: 1, running: false },
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+    before: (w) => { w.Date.now = () => clock.now },
+  })
+}
+
+test('waking the sandbox finding sbx signed out shows the sign-in banner with no prompt sent', async () => {
+  const clock = { now: 1_000_000 }
+  const status = { found: false, docker: 'signed-in' }
+  const p = await pageWhereSbxMaySignOut(clock, status)
+  try {
+    assert.equal(p.$('convo-signin').hidden, true, 'a banner before anything was wrong')
+    status.found = true
+    status.docker = 'signed-out'
+    clock.now += 60_000
+    await p.poll()
+    assert.equal(p.$('convo-signin').hidden, false)
+    assert.match(p.$('convo-signin-text').textContent, /not signed in to Docker/i)
+  } finally { p.close() }
+})
+
+test('a state that says nothing was found causes no look at the sign-in', async () => {
+  const clock = { now: 1_000_000 }
+  const status = { found: false, docker: 'signed-in' }
+  const p = await pageWhereSbxMaySignOut(clock, status)
+  try {
+    const before = looks(p)
+    clock.now += 60_000
+    await p.poll()
+    assert.equal(looks(p), before)
+  } finally { p.close() }
+})
+
+test('the page does not keep looking while sbx is found signed out: not more often than it looks for a failed turn', async () => {
+  const clock = { now: 1_000_000 }
+  const status = { found: true, docker: 'signed-out' }
+  const p = await pageWhereSbxMaySignOut(clock, status)
+  try {
+    await p.settle()
+    const before = looks(p)
+    clock.now += 2_000
+    await p.poll()
+    await p.poll()
+    assert.equal(looks(p), before, 'looked again within the interval')
+  } finally { p.close() }
+})

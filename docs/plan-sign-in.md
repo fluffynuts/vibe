@@ -300,6 +300,9 @@ What `sbx` does when it is signed out and a sandbox has to be woken, as the user
   signed sbx in and the page worked. No address or code was on the page, as intended.
 - **`~/.vibe/sbx-wake.log`** after the page's wake attempts: "failed, pointing to sbx login: exit status 125 after 294ms" with
   sbx's own two lines, one entry for each of two attempts.
-- **Not looked at**: whether the failed start for the 13:05 prompt wrote its own entry (the log sent had none after 13:02, and may
-  have been copied before the prompt); what the page shows on being brought back into view alone (it only logs, and no banner is
-  built for that).
+- **The 13:05 prompt did write its entries** (13:05:00 and 13:05:10, same wording), so a failed start for a turn is noted.
+- **Asked for, then built** (the user, after trying it): the page brought back into view shows the same banner as a failed prompt,
+  with no prompt: a try to wake the sandbox that finds sbx signed out is kept (`sbxrun.NotSignedInSeen`, cleared by a wake that
+  works), passed on in `/api/state` as `sbxSignedOut`, and the page looks at the sign-in when it is true (no more often than
+  for a failed turn). And the last resort, whatever it finds, says in its message that it was used and asks for a report of
+  what sbx said (`NotSignedInError.LastResort`), since it only runs for a message nothing recognised.

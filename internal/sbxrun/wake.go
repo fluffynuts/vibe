@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -19,6 +20,9 @@ import (
 // in that output takes it for a sign that sbx is signed out, and gives it to nobody.
 type NotSignedInError struct {
 	URL, Code string
+	// LastResort says nothing else recognised that sbx was signed out, and `sbx login` had to be asked: it is said, so that
+	// someone who sees it can say what sbx printed, and the message that nothing recognised can be learnt.
+	LastResort bool
 
 	said string
 	took time.Duration
@@ -27,9 +31,17 @@ type NotSignedInError struct {
 
 func (e *NotSignedInError) Error() string {
 	if e.URL == "" {
-		return "sbx isn't signed in to Docker (run: sbx login)"
+		return "sbx isn't signed in to Docker (run: sbx login)" + e.LastResortNote()
 	}
-	return fmt.Sprintf("sbx isn't signed in to Docker (sign in at %s, with the code %s, or run: sbx login)", e.URL, e.Code)
+	return fmt.Sprintf("sbx isn't signed in to Docker (sign in at %s, with the code %s, or run: sbx login)", e.URL, e.Code) + e.LastResortNote()
+}
+
+// LastResortNote says, for the end of a message, that it took the last resort to find out (see LastResort): empty otherwise.
+func (e *NotSignedInError) LastResortNote() string {
+	if !e.LastResort {
+		return ""
+	}
+	return " (vibe didn't recognise what sbx said, and found this out by asking sbx login as a last resort: please report what sbx said, which is in ~/.vibe/sbx-wake.log)"
 }
 
 // Hint is where the sign-in flow sbx started waits, for a message: empty when there isn't one to give.
@@ -155,18 +167,21 @@ func wake(ctx context.Context, name string) error {
 	said, _, found, ended := readUntilDeviceLink(ctx, p)
 	took := time.Since(began)
 	if found {
+		signedOutSeen.Store(true)
 		return &NotSignedInError{said: said, took: took, how: "sbx started its sign-in flow"}
 	}
 	if ctx.Err() != nil {
 		ended = ctx.Err()
 	}
 	if ended == nil {
+		signedOutSeen.Store(false)
 		if took > slowWake {
 			noteWake(name, "worked, slowly", said, took)
 		}
 		return nil
 	}
 	if ctx.Err() == nil && pointsToSbxLogin(said) {
+		signedOutSeen.Store(true)
 		return &NotSignedInError{said: said, took: took, how: "failed, pointing to sbx login: " + ended.Error()}
 	}
 	return &wakeError{said: said, err: ended, took: took}
@@ -215,6 +230,13 @@ func noteWake(name, outcome, said string, took time.Duration) {
 		took.Round(time.Millisecond), strings.TrimRight(printable(said), "\n")))
 }
 
+// signedOutSeen is whether the last try to wake a sandbox found sbx signed out: it is the page's to be told, so that it can
+// show its banner when it is brought back into view, which is a reaction to a failure that happened anyway and not a probe.
+var signedOutSeen atomic.Bool
+
+// NotSignedInSeen says the last wake found sbx signed out, and none has worked since.
+func NotSignedInSeen() bool { return signedOutSeen.Load() }
+
 var (
 	signInCheckMu   sync.Mutex
 	lastSignInCheck time.Time
@@ -254,11 +276,12 @@ func explainWithSignIn(ctx context.Context, err error) error {
 	switch {
 	case found:
 		noteWake("(sign-in check)", "sbx login started its flow", said, took)
-		return &NotSignedInError{URL: link.URL, Code: link.Code}
+		signedOutSeen.Store(true)
+		return &NotSignedInError{URL: link.URL, Code: link.Code, LastResort: true}
 	case ended != nil || ctx.Err() != nil:
 		noteWake("(sign-in check)", "sbx login didn't finish well", said, took)
-		return err
+		return fmt.Errorf("%w (vibe asked sbx login as a last resort, and it gave no answer: please report this, with ~/.vibe/sbx-wake.log)", err)
 	}
 	noteWake("(sign-in check)", "sbx login finished without a flow: signed in", said, took)
-	return fmt.Errorf("%w (sbx login finishes without asking for anything, so signing in isn't the cause)", err)
+	return fmt.Errorf("%w (vibe asked sbx login as a last resort: it finishes without asking for anything, so signing in isn't the cause; please report this, with ~/.vibe/sbx-wake.log)", err)
 }

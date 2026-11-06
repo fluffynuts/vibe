@@ -82,3 +82,60 @@ func readLines(t *testing.T, file string) int {
 	}
 	return len(strings.Fields(string(data)))
 }
+
+// The last resort is for what nothing recognised, so that it ran is said, whatever it found: someone who sees it can say what
+// sbx said, which is how a message nothing recognises gets recognised.
+func TestTheLastResortSaysItWasUsedWhateverItFinds(t *testing.T) {
+	cases := map[string]string{
+		"signed out": "  login) echo 'Open: https://login.docker.com/activate?user_code=WXYZ-1234'; exec sleep 60 ;;\n",
+		"signed in":  "  login) echo 'You are signed in'; exit 0 ;;\n",
+		"no answer":  "  login) echo 'something odd'; exit 3 ;;\n",
+	}
+	for name, login := range cases {
+		t.Run(name, func(t *testing.T) {
+			resetSignInCheck(t)
+			sbxtest.OnPath(t, unrecognisedWakeFailure+login+"  *) echo 'unknown command' >&2; exit 1 ;;\nesac\n")
+			err := StartChecked(context.Background(), "box")
+			if err == nil || !strings.Contains(err.Error(), "last resort") {
+				t.Errorf("err = %v, want it to say sbx login was asked as a last resort", err)
+			}
+		})
+	}
+}
+
+func TestWhenTheLastResortFindsSbxSignedOutThePageMessageAsksForAReport(t *testing.T) {
+	resetSignInCheck(t)
+	sbxtest.OnPath(t, unrecognisedWakeFailure+
+		"  login) echo 'Open: https://login.docker.com/activate?user_code=WXYZ-1234'; exec sleep 60 ;;\n"+
+		"  *) echo 'unknown command' >&2; exit 1 ;;\nesac\n")
+	err := StartChecked(context.Background(), "box")
+	var signedOut *NotSignedInError
+	if !errors.As(err, &signedOut) || !signedOut.LastResort || !strings.Contains(signedOut.LastResortNote(), "report") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// Recognised plainly (sbx pointing to sbx login), the last resort isn't mentioned.
+func TestAFailureSbxSaysPlainlyIsNotPutDownToTheLastResort(t *testing.T) {
+	resetSignInCheck(t)
+	sbxtest.OnPath(t, signedOutNoTerminal)
+	err := StartChecked(context.Background(), "box")
+	var signedOut *NotSignedInError
+	if !errors.As(err, &signedOut) || signedOut.LastResort || signedOut.LastResortNote() != "" || strings.Contains(err.Error(), "last resort") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// What a try to wake the sandbox found is kept, for the page: sbx found signed out until a wake works.
+func TestWhatTheLastWakeFoundOfSbxBeingSignedOutIsKept(t *testing.T) {
+	sbxtest.OnPath(t, signedOutNoTerminal)
+	Reachable(context.Background(), "box")
+	if !NotSignedInSeen() {
+		t.Error("not seen after a wake that found sbx signed out")
+	}
+	sbxtest.OnPath(t, "exit 0\n")
+	Reachable(context.Background(), "box")
+	if NotSignedInSeen() {
+		t.Error("still seen after a wake that worked")
+	}
+}
