@@ -576,6 +576,41 @@ func (s *Server) reviewHighlight(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := r.URL.Query().Get("path")
+	old := r.URL.Query().Get("side") == "old"
+	s.colouring(w, r, func(ctx context.Context) (review.Highlighted, error) {
+		return review.Colour(ctx, s.cfg.ReviewTab.Workspace, rv, path, old)
+	})
+}
+
+// maxBlockRequest is the most a request to colour a block is read to: more than the longest block that is coloured.
+const maxBlockRequest = 1 << 20
+
+// highlightBlock is the contents of a fenced block in the conversation coloured, by the language its tag names ({"lang", "text"}):
+// the page asks for each block it draws with a tag. The text is the sandbox's to write, so it is coloured as a file is, under the
+// same bounds.
+func (s *Server) highlightBlock(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Lang string `json:"lang"`
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBlockRequest)).Decode(&in); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeError(w, http.StatusRequestEntityTooLarge, "that is more than a block is coloured to")
+			return
+		}
+		writeError(w, http.StatusBadRequest, `expected {"lang": "go", "text": "..."}`)
+		return
+	}
+	s.colouring(w, r, func(ctx context.Context) (review.Highlighted, error) {
+		return review.ColourBlock(ctx, in.Lang, in.Text)
+	})
+}
+
+// colouring answers with what colour makes of something, as both of the ways to be coloured are: not at all while colouring is
+// turned off, a few at a time, and not for longer than colourWithin, since what is coloured may have been built to take without
+// end (and a few that do turn colouring off).
+func (s *Server) colouring(w http.ResponseWriter, r *http.Request, colour func(ctx context.Context) (review.Highlighted, error)) {
 	if why := s.colours.off(); why != "" {
 		writeJSON(w, http.StatusOK, review.Highlighted{Skipped: why})
 		return
@@ -588,7 +623,7 @@ func (s *Server) reviewHighlight(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), colourWithin)
 	defer cancel()
-	h, err := review.Colour(ctx, s.cfg.ReviewTab.Workspace, rv, path, r.URL.Query().Get("side") == "old")
+	h, err := colour(ctx)
 	switch {
 	case ctx.Err() == context.DeadlineExceeded:
 		s.colours.tooLong.Add(1)

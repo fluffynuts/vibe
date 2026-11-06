@@ -444,6 +444,7 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"POST /api/review/submit", s.serving(reviewFeature, s.reviewSubmit)},
 		{"GET /api/review/options", s.serving(reviewFeature, s.reviewOptions)},
 		{"GET /api/review/highlight", s.serving(reviewFeature, s.reviewHighlight)},
+		{"POST /api/highlight", s.authed(s.highlightBlock)},
 		{"POST /api/clipboard/paste", s.authed(s.clipboardPaste)},
 		{"POST /api/review/start", s.serving(reviewFeature, s.reviewStart)},
 		{"POST /api/review/close", s.serving(reviewFeature, s.reviewClose)},
