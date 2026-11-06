@@ -16,8 +16,31 @@ type NotSignedInError struct {
 }
 
 func (e *NotSignedInError) Error() string {
+	if e.URL == "" {
+		return "sbx isn't signed in to Docker (run: sbx login)"
+	}
 	return fmt.Sprintf("sbx isn't signed in to Docker (sign in at %s, with the code %s, or run: sbx login)", e.URL, e.Code)
 }
+
+// wakeError is a wake that failed: what sbx said when it did, which is the reason, or how the command ended when it said
+// nothing.
+type wakeError struct {
+	said string
+	err  error
+}
+
+func (e *wakeError) Error() string {
+	if said := strings.TrimSpace(e.said); said != "" {
+		return said
+	}
+	return e.err.Error()
+}
+
+func (e *wakeError) Unwrap() error { return e.err }
+
+// pointsToSbxLogin says what sbx printed sends the user to `sbx login`. With no terminal to answer on, that is how it says
+// it is signed out; the command is looked for and not the words around it, which sbx may translate.
+func pointsToSbxLogin(said string) bool { return strings.Contains(said, "sbx login") }
 
 // WakeLog, when set, is given a note of each wake that failed or took long, with what sbx printed: what sbx does in a
 // sandbox that can't be woken is only learnt from what it said.
@@ -67,10 +90,15 @@ func wake(ctx context.Context, name string) error {
 	}
 	if err != nil {
 		noteWake(name, began, "failed: "+err.Error(), said.String())
-	} else if time.Since(began) > slowWake {
+		if ctx.Err() == nil && pointsToSbxLogin(said.String()) {
+			return &NotSignedInError{}
+		}
+		return &wakeError{said: said.String(), err: err}
+	}
+	if time.Since(began) > slowWake {
 		noteWake(name, began, "worked, slowly", said.String())
 	}
-	return err
+	return nil
 }
 
 func noteWake(name string, began time.Time, outcome, said string) {

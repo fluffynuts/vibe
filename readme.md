@@ -741,9 +741,11 @@ whatever the sandbox asked to reach, so it can be a pattern of the agent's makin
 The page needs `sbx` to be signed in (`sbx login`), the same as `sbx policy` does; until then it says so.
 
 When sbx has been signed out of Docker (`sbx logout` does it, and stops your sandboxes), a sandbox sbx has stopped can't be
-woken: `sbx exec` starts a sign-in flow instead, and waits for a browser. vibe reads that as it comes, and says sbx is
-signed out at once (with the Sign-in card on the Admin tab to put it right) rather than waiting out the start; any other
-failure to start a sandbox is given in sbx's own words. What sbx printed for a wake that failed or was slow is kept in
+woken. With no terminal to answer on (as vibe runs it for the page), `sbx exec` fails at once, pointing to `sbx login`; on a
+terminal it starts a sign-in flow and waits for a browser. vibe recognises both (the command it names, and the flow's
+docker.com address, not sbx's words), and says sbx is signed out at once, with the Sign-in card on the Admin tab to put it
+right, rather than waiting out the start. Any other failure to start a sandbox is given in sbx's own words. What sbx printed
+for a wake that failed or was slow is kept in
 `~/.vibe/sbx-wake.log` (it starts again at 256 KB). `vibe --list` and `vibe --info`, which only read, offer `sbx login` on
 the terminal when sbx is signed out, and carry on once you are.
 

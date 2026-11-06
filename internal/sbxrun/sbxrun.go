@@ -540,10 +540,11 @@ func StartChecked(ctx context.Context, name string) error {
 		if ctx.Err() == nil && Reachable(ctx, name) {
 			return nil
 		}
+		// Both are what sbx said: the exec's is the sandbox's own trouble, and an sbx without a start command says that.
 		if said = strings.TrimSpace(said); said != "" {
-			return errors.New(said)
+			return fmt.Errorf("%v (and sbx start said: %s)", err, said)
 		}
-		return startErr
+		return err
 	}
 	for i := 0; i < startTimeout; i++ {
 		err = wake(ctx, name)

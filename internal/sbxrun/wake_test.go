@@ -79,3 +79,43 @@ func TestAQuickWakeThatWorksIsNotLogged(t *testing.T) {
 		t.Errorf("logged = %q", logged)
 	}
 }
+
+// What sbx's exec does with no terminal to answer on, as seen on a real machine: it fails at once (exit 125), saying the
+// command that puts it right, and `sbx start` isn't a command at all.
+const signedOutNoTerminal = "case \"$1\" in\n" +
+	"  exec) echo 'error: not signed in to Docker' >&2; echo '  try: sbx login' >&2; exit 125 ;;\n" +
+	"  *) echo \"error: sbx: unknown command: sbx $1\" >&2; exit 1 ;;\n" +
+	"esac\n"
+
+func TestAStartThatSbxRefusesForWantOfASignInSaysSoNotThatStartIsUnknown(t *testing.T) {
+	sbxtest.OnPath(t, signedOutNoTerminal)
+	err := StartChecked(context.Background(), "box")
+	var signedOut *NotSignedInError
+	if !errors.As(err, &signedOut) {
+		t.Fatalf("err = %v, want one saying sbx is signed out", err)
+	}
+	if strings.Contains(err.Error(), "unknown command") {
+		t.Errorf("the real reason is hidden by what sbx start said: %v", err)
+	}
+}
+
+// Whatever the words, it is the command it names that is looked for: they are sbx's own to change or translate.
+func TestAnExecThatPointsToSbxLoginIsTakenForSignedOutInAnyLanguage(t *testing.T) {
+	sbxtest.OnPath(t, "echo 'erreur : pas connecté à Docker' >&2; echo '  essayez : sbx login' >&2; exit 125\n")
+	var signedOut *NotSignedInError
+	if err := StartChecked(context.Background(), "box"); !errors.As(err, &signedOut) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestAnExecThatFailsForAnotherReasonIsNotTakenForSignedOut(t *testing.T) {
+	sbxtest.OnPath(t, "case \"$1\" in\n  exec) echo 'error: no such sandbox' >&2; exit 125 ;;\n  *) echo 'error: unknown command' >&2; exit 1 ;;\nesac\n")
+	err := StartChecked(context.Background(), "box")
+	var signedOut *NotSignedInError
+	if err == nil || errors.As(err, &signedOut) {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "no such sandbox") {
+		t.Errorf("what exec said is lost: %v", err)
+	}
+}
