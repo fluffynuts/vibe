@@ -270,8 +270,10 @@ What `sbx` does when it is signed out and a sandbox has to be woken, as the user
    the process stopped at the cap, a line at a time, so hostile output can't cost the host CPU.
 2. **A failure nothing recognises asks `sbx login` as a last resort** (not a probe: signed out it starts a flow and leaves a
    code to expire, so at most once in two minutes): an address in its output is signed out, none (it finishes) says signing in
-   isn't the cause. Not yet seen against a real signed-out sbx with no terminal; `sbx login </dev/null` signed out would show
-   whether it prints the flow.
+   isn't the cause. Not seen end to end (it needs a failure nothing recognises, which a signed-out sbx no longer is), but
+   what it rests on is confirmed: `sbx login </dev/null` signed out prints the same flow as on a terminal (the code, the
+   activate address, "Waiting for authentication...") and waits, and a Ctrl-C ends it with `error: auth login failed:
+   completing login: context canceled`.
 3. **The page**: a start that can't happen says sbx is signed out (with the address and code only from the last resort's own `sbx login`) and points to
    the Admin tab; any other failure is in sbx's own words with the path of `~/.vibe/sbx-wake.log`; a failed turn makes the
    page look at the sign-in again. That log keeps what sbx printed for each wake that failed or took over 5 s (256 KB, then it
@@ -288,3 +290,16 @@ What `sbx` does when it is signed out and a sandbox has to be woken, as the user
   "unknown", which is the safe direction).
 - What signs sbx out other than `sbx logout`; whether the few seconds `sbx login` spends after "You are signed in" matter to
   the Sign-in card's button.
+
+### Tried by hand on the real thing (2026-11-06, `./test-clean` on `feat/signed-out-start`, then `sbx logout`)
+
+- **`vibe -l` signed out** asked "sbx isn't signed in to Docker, which it needs for everything. Sign in now?", ran `sbx login` on
+  the terminal (address and code, "Signed in as ..."), said "signed in to Docker", and listed the sandboxes straight after.
+- **A prompt on the page, signed out again**: the red error "sbx isn't signed in to Docker, so sandbox 'vibe' can't start. Sign in
+  from the Admin tab, then send your prompt again", then the Conversation banner with its button; the Admin card's Sign in
+  signed sbx in and the page worked. No address or code was on the page, as intended.
+- **`~/.vibe/sbx-wake.log`** after the page's wake attempts: "failed, pointing to sbx login: exit status 125 after 294ms" with
+  sbx's own two lines, one entry for each of two attempts.
+- **Not looked at**: whether the failed start for the 13:05 prompt wrote its own entry (the log sent had none after 13:02, and may
+  have been copied before the prompt); what the page shows on being brought back into view alone (it only logs, and no banner is
+  built for that).
