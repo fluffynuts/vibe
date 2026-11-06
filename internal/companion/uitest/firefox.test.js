@@ -179,16 +179,23 @@ async function conversationPage(width) {
 
 const box = (page, sel) => page.locator(sel).boundingBox()
 
+// Stop is shown and every box read in one turn of the page: its conversation poll hides Stop again whenever the agent isn't
+// running (every 700 ms), so a poll that landed between showing it and a later measurement left it unrendered, and its box
+// null (seen on a slow CI runner).
+const stopShownAndMeasured = (page) => page.evaluate(() => {
+  const rect = (id) => { const r = document.getElementById(id).getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height } }
+  const before = rect('convo-choice')
+  document.getElementById('convo-stop').hidden = false
+  return { before, during: rect('convo-choice'), send: rect('convo-send'), stop: rect('convo-stop') }
+})
+
 test('the model and effort stay where they are while Stop comes and goes, wide and narrow', async () => {
   for (const width of [1500, 1000, 600]) {
     const page = await conversationPage(width)
     try {
-      const before = await box(page, '#convo-choice')
-      await page.evaluate(() => { document.getElementById('convo-stop').hidden = false })
-      const during = await box(page, '#convo-choice')
+      const { before, during, send, stop } = await stopShownAndMeasured(page)
       assert.deepEqual(during, before, `at ${width}px wide, Stop appearing moved them`)
-      const send = await box(page, '#convo-send')
-      const stop = await box(page, '#convo-stop')
+      assert.ok(stop.width > 0 && stop.height > 0, `at ${width}px, Stop wasn't drawn`)
       assert.ok(stop.x + stop.width <= during.x || stop.y >= during.y + during.height, `at ${width}px, Stop overlaps them`)
       assert.ok(send.x + send.width <= page.viewportSize().width, `at ${width}px, Send is off the page`)
     } finally { await page.close() }
