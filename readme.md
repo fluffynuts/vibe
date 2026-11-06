@@ -1134,10 +1134,11 @@ itself in `~/.codex/AGENTS.md`. vibe's part of those files sits between `<!-- vi
 markers, and the rest is left alone: the agent writes there too, when asked to remember something.
 Other agents don't load them yet.
 
-One more thing is in what the agent loads every session: when the profile has the `copyable-blocks` feature, vibe adds a
-short "Kit instructions to read" pointer to its "Text for the user to copy" section. The kits' instructions are
-reading for when a kit is relevant, and an agent asked for a pull request description doesn't think one is, so without the
-pointer a fresh agent never opened them.
+One more thing is in what the agent loads every session: when the profile has the `copyable-blocks` feature, vibe puts a
+short "Text for the user to paste (from vibe)" section ahead of yours: the feature's rule in brief (one fenced block with only
+the text, tagged `markdown` or `text`, four backticks round text that holds a code block). The kits' instructions are
+reading for when a kit is relevant, and an agent asked for a pull request description doesn't think one is, so the full text
+in `kit-instructions.md` was never opened, even with a pointer to it.
 
 They're applied whenever a sandbox starts, and straight away to running sandboxes when you save one
 from the companion page's Admin tab. A session already open in the terminal picks changes up when it

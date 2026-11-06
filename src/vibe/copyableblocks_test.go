@@ -38,8 +38,9 @@ func TestEverySandboxIsToldToPutTextToPasteInOneTaggedBlock(t *testing.T) {
 }
 
 // The kits' instructions are only read by an agent when it thinks a kit is relevant, and one asked for a pull request description
-// doesn't (seen with a fresh agent, which never opened them): the instructions it always loads have to send it there.
-func TestTheInstructionsAnAgentAlwaysLoadsSendItToTheCopyableBlocksSection(t *testing.T) {
+// doesn't (seen with fresh agents, which never opened them, and which ignored a pointer to them at the end of the always-loaded
+// text): the rule itself has to be in the instructions it always loads.
+func TestTheInstructionsAnAgentAlwaysLoadsCarryTheCopyableBlocksRule(t *testing.T) {
 	feature, err := os.ReadFile(filepath.Join(repoRoot(t), "library", "base", "copyable-blocks", "agent-instructions.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -60,14 +61,14 @@ func TestTheInstructionsAnAgentAlwaysLoadsSendItToTheCopyableBlocksSection(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Be kind.", instructions.CopyableBlocksHeading} {
+	for _, want := range []string{"Be kind.", "four backticks"} {
 		if !strings.Contains(merged, want) {
 			t.Errorf("the always-loaded instructions lack %q:\n%s", want, merged)
 		}
 	}
 
 	writeFile(t, lay.HomePath("profiles", "p", "kit-instructions.md"), "")
-	if merged, _, _ := instructionsFor(lay, "box"); strings.Contains(merged, instructions.CopyableBlocksHeading) {
-		t.Errorf("a profile without the feature is pointed to it:\n%s", merged)
+	if merged, _, _ := instructionsFor(lay, "box"); strings.Contains(merged, "four backticks") {
+		t.Errorf("a profile without the feature is given its rule:\n%s", merged)
 	}
 }
