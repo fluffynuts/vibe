@@ -350,7 +350,7 @@
 
   // tokenKind is the kind of thing a Chroma class (as its HTML formatter
   // names them) is, to colour: a keyword, a string, a comment, and so on;
-  // '' to leave as plain text.
+  // '' to leave as plain text. A diff's lines are what was deleted or inserted, and its headings meta.
   function tokenKind(c) {
     if (!c || c === 'err' || c === 'p' || c === 'nx') return ''
     if (c === 'kt') return 'type'
@@ -365,6 +365,9 @@
     if (c[0] === 'n' && c[1] === 'v') return 'var'
     if (c[0] === 's' || c === 'dl') return 'str'
     if (c[0] === 'm' || c === 'il') return 'num'
+    if (c === 'gd') return 'del'
+    if (c === 'gi') return 'ins'
+    if (c === 'gh' || c === 'gu') return 'meta'
     if (c[0] === 'c') return 'comment'
     if (c[0] === 'o') return 'op'
     return ''

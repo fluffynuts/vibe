@@ -307,6 +307,14 @@ test("Chroma's classes come down to a few kinds of thing to colour", () => {
   })
 })
 
+// What a diff is made of (Chroma's "generic" classes), which a block in the conversation tagged diff is coloured by: what was taken out,
+// what was put in, and where, as a reviewer reads them. Nothing else of the generic classes is coloured.
+test("a diff's deleted and inserted lines, and its headings, are kinds of thing to colour", () => {
+  const { tokenKind } = require('../ui/review.js')
+  assert.deepEqual(Object.fromEntries(['gd', 'gi', 'gh', 'gu', 'ge', 'gs', 'go', 'gp', 'gt', 'gr'].map((c) => [c, tokenKind(c)])),
+    { gd: 'del', gi: 'ins', gh: 'meta', gu: 'meta', ge: '', gs: '', go: '', gp: '', gt: '', gr: '' })
+})
+
 test("a line's runs are used only while they still spell the line", () => {
   const { lineRuns } = require('../ui/review.js')
   const runs = [{ c: 'k', t: 'func' }, { t: ' ' }, { c: 'nf', t: 'f' }]

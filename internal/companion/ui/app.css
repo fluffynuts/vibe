@@ -749,6 +749,8 @@ dialog.glass::backdrop { background: rgba(250, 250, 250, .55); backdrop-filter: 
 .review-lines .hl-meta, #file-view-body .hl-meta, .md .code-block .hl-meta { color: var(--hl-meta); }
 .review-lines .hl-const, #file-view-body .hl-const, .md .code-block .hl-const { color: var(--hl-const); }
 .review-lines .hl-op, #file-view-body .hl-op, .md .code-block .hl-op { color: var(--hl-op); }
+.review-lines .hl-del, #file-view-body .hl-del, .md .code-block .hl-del { color: var(--bad); }
+.review-lines .hl-ins, #file-view-body .hl-ins, .md .code-block .hl-ins { color: var(--ok); }
 .review-uncoloured { font-size: 12px; }
 
 #admin-nugetconfig { margin-top: 12px; border-top: 1px solid var(--line, #8883); padding-top: 8px; }

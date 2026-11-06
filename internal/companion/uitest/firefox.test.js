@@ -1021,7 +1021,7 @@ test('a coloured block in the conversation has the syntax colours, in the light 
       const found = await page.evaluate(() => {
         const md = document.createElement('div')
         md.className = 'md'
-        md.innerHTML = '<div class="code-block"><pre><code><span class="hl-kw">a</span><span class="hl-str">b</span><span class="hl-comment">c</span><span class="hl-num">d</span>plain</code></pre></div>'
+        md.innerHTML = '<div class="code-block"><pre><code><span class="hl-kw">a</span><span class="hl-str">b</span><span class="hl-comment">c</span><span class="hl-num">d</span><span class="hl-del">e</span><span class="hl-ins">f</span>plain</code></pre></div>'
         document.body.append(md)
         // What a colour variable is, as the browser computes a colour: through an element, as the page's style can only be set from script.
         const probe = (name) => { const p = document.createElement('span'); p.style.color = 'var(' + name + ')'; document.body.append(p); return getComputedStyle(p).color }
@@ -1029,8 +1029,8 @@ test('a coloured block in the conversation has the syntax colours, in the light 
         const of = (cls) => getComputedStyle(md.querySelector('.' + cls)).color
         return {
           plain: getComputedStyle(code).color,
-          kw: of('hl-kw'), str: of('hl-str'), comment: of('hl-comment'), num: of('hl-num'),
-          wantKw: probe('--hl-kw'), wantStr: probe('--hl-str'), wantComment: probe('--hl-comment'), wantNum: probe('--hl-num'),
+          kw: of('hl-kw'), str: of('hl-str'), comment: of('hl-comment'), num: of('hl-num'), del: of('hl-del'), ins: of('hl-ins'),
+          wantKw: probe('--hl-kw'), wantStr: probe('--hl-str'), wantComment: probe('--hl-comment'), wantNum: probe('--hl-num'), wantDel: probe('--bad'), wantIns: probe('--ok'),
           italic: getComputedStyle(md.querySelector('.hl-comment')).fontStyle,
         }
       })
@@ -1038,6 +1038,9 @@ test('a coloured block in the conversation has the syntax colours, in the light 
       assert.equal(found.str, found.wantStr, colorScheme + ': string')
       assert.equal(found.comment, found.wantComment, colorScheme + ': comment')
       assert.equal(found.num, found.wantNum, colorScheme + ': number')
+      assert.equal(found.del, found.wantDel, colorScheme + ': deleted line of a diff')
+      assert.equal(found.ins, found.wantIns, colorScheme + ': inserted line of a diff')
+      assert.notEqual(found.del, found.ins, colorScheme + ': deleted and inserted are told apart')
       assert.notEqual(found.kw, found.plain, colorScheme + ': a keyword reads as one')
       assert.equal(found.italic, 'italic')
     } finally { await page.close() }
