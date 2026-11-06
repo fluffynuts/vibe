@@ -3,6 +3,9 @@ package companion
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,10 +17,13 @@ import (
 // and is sent runs per line. It needs no repository (the Review tab's files do), only the token.
 func blockServer() *Server { return New(Config{Sandbox: "box", Token: token, Port: testPort}) }
 
+// asJSON is the headers of a page's call with a body: the token, and the type the same-origin check wants.
+func asJSON() map[string]string { return authed(map[string]string{"Content-Type": "application/json"}) }
+
 func colourBlock(t *testing.T, s *Server, tag, text string) (int, review.Highlighted) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"lang": tag, "text": text})
-	rec := do(t, s, req{method: "POST", path: "/api/highlight", headers: authed(nil), body: string(body)})
+	rec := do(t, s, req{method: "POST", path: "/api/highlight", headers: asJSON(), body: string(body)})
 	var h review.Highlighted
 	json.Unmarshal(rec.Body.Bytes(), &h)
 	return rec.Code, h
@@ -56,14 +62,14 @@ func TestABlockTooLongComesBackSayingWhyItIsntColoured(t *testing.T) {
 func TestWhatIsntAColouringRequestIsRefused(t *testing.T) {
 	s := blockServer()
 	for what, body := range map[string]string{"not JSON": "{", "no fields": "[]", "a text that isn't text": `{"lang":"go","text":5}`} {
-		rec := do(t, s, req{method: "POST", path: "/api/highlight", headers: authed(nil), body: body})
+		rec := do(t, s, req{method: "POST", path: "/api/highlight", headers: asJSON(), body: body})
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: %d %s", what, rec.Code, rec.Body)
 		}
 	}
 	// Past any block that could be coloured, the request is refused unread: no more than a megabyte is taken.
 	huge := `{"lang":"go","text":"` + strings.Repeat("a", 2<<20) + `"}`
-	rec := do(t, s, req{method: "POST", path: "/api/highlight", headers: authed(nil), body: huge})
+	rec := do(t, s, req{method: "POST", path: "/api/highlight", headers: asJSON(), body: huge})
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("2 MB: %d", rec.Code)
 	}
@@ -121,5 +127,33 @@ func TestOnlyAFewBlocksAreColouredAtOnce(t *testing.T) {
 	}
 	if took := time.Since(began); took < 2*colourWithin {
 		t.Errorf("4 blocks that each took %s were coloured in %s: more than 2 at once", colourWithin, took)
+	}
+}
+
+// The page doesn't send a block that is past what the host colours, and says so itself, so it has the host's limits (and its idea of
+// what a tag is) written into it. Nothing but this makes them the same: they are read out of the page's source and held to the host's.
+func TestThePageAndTheHostColourBlocksToTheSameLimits(t *testing.T) {
+	data, err := os.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(data)
+	number := func(pattern string) int {
+		m := regexp.MustCompile(pattern).FindStringSubmatch(js)
+		if m == nil {
+			t.Fatalf("app.js has nothing matching %s", pattern)
+		}
+		n, _ := strconv.Atoi(m[1])
+		return n
+	}
+	if got := number(`const COLOUR_MAX_BYTES = (\d+) \* 1024`) * 1024; got != review.MaxBlockBytes {
+		t.Errorf("the page colours blocks up to %d bytes, the host %d", got, review.MaxBlockBytes)
+	}
+	if got := number(`const COLOUR_MAX_LINES = (\d+)`); got != review.MaxBlockLines {
+		t.Errorf("the page colours blocks up to %d lines, the host %d", got, review.MaxBlockLines)
+	}
+	tag := regexp.MustCompile("const COLOUR_TAG = /(.+)/\n").FindStringSubmatch(js)
+	if tag == nil || tag[1] != review.BlockTagPattern {
+		t.Errorf("the page's idea of a tag is %v, the host's %s", tag, review.BlockTagPattern)
 	}
 }

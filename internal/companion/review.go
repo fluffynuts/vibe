@@ -585,6 +585,10 @@ func (s *Server) reviewHighlight(w http.ResponseWriter, r *http.Request) {
 // maxBlockRequest is the most a request to colour a block is read to: more than the longest block that is coloured.
 const maxBlockRequest = 1 << 20
 
+// blockColourFeature is colouring a block: any page can ask, as it needs no repository, only the token and its own origin (the
+// same as any call that takes a body).
+var blockColourFeature = feature{func(*Server) bool { return true }, "", maxBlockRequest}
+
 // highlightBlock is the contents of a fenced block in the conversation coloured, by the language its tag names ({"lang", "text"}):
 // the page asks for each block it draws with a tag. The text is the sandbox's to write, so it is coloured as a file is, under the
 // same bounds.
@@ -593,7 +597,7 @@ func (s *Server) highlightBlock(w http.ResponseWriter, r *http.Request) {
 		Lang string `json:"lang"`
 		Text string `json:"text"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBlockRequest)).Decode(&in); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
 			writeError(w, http.StatusRequestEntityTooLarge, "that is more than a block is coloured to")

@@ -221,25 +221,25 @@ func TestATagThatIsntAPlainWordIsLeftPlain(t *testing.T) {
 // limit is lower than a file's.
 func TestABlockTooLongIsntColoured(t *testing.T) {
 	for what, text := range map[string]string{
-		"too many lines": strings.Repeat("x := 1\n", maxBlockLines+1),
-		"too many bytes": strings.Repeat("x := 1 // "+strings.Repeat("a", 90)+"\n", maxBlockBytes/100+1),
+		"too many lines": strings.Repeat("x := 1\n", MaxBlockLines+1),
+		"too many bytes": strings.Repeat("x := 1 // "+strings.Repeat("a", 90)+"\n", MaxBlockBytes/100+1),
 	} {
 		h := HighlightBlock("go", text)
 		if h.Lines != nil || !strings.Contains(h.Skipped, "too long") {
 			t.Errorf("%s: skipped %q, %d lines", what, h.Skipped, len(h.Lines))
 		}
 	}
-	if maxBlockLines >= maxHighlightLines || maxBlockBytes >= maxHighlightBytes {
+	if MaxBlockLines >= maxHighlightLines || MaxBlockBytes >= maxHighlightBytes {
 		t.Error("a conversation block's limit isn't below a file's")
 	}
-	if h := HighlightBlock("go", strings.Repeat("x := 1\n", maxBlockLines)); h.Skipped != "" || h.Lines == nil {
+	if h := HighlightBlock("go", strings.Repeat("x := 1\n", MaxBlockLines)); h.Skipped != "" || h.Lines == nil {
 		t.Errorf("at the limit: skipped %q", h.Skipped)
 	}
 }
 
 // Text that no language is asked for isn't counted: nothing is said of a size that would never have been coloured.
 func TestABlockOfNoLanguageIsntToldItWasTooLong(t *testing.T) {
-	if h := HighlightBlock("text", strings.Repeat("x\n", maxBlockLines*2)); h.Skipped != "" {
+	if h := HighlightBlock("text", strings.Repeat("x\n", MaxBlockLines*2)); h.Skipped != "" {
 		t.Errorf("skipped %q", h.Skipped)
 	}
 }
@@ -279,7 +279,7 @@ func TestABlockThatNeedsNoColouringStartsNoHelper(t *testing.T) {
 	for what, args := range map[string][2]string{
 		"no language": {"klingon", "x\n"},
 		"plain":       {"text", "x\n"},
-		"too long":    {"go", strings.Repeat("x := 1\n", maxBlockLines+1)},
+		"too long":    {"go", strings.Repeat("x := 1\n", MaxBlockLines+1)},
 	} {
 		if _, err := ColourBlock(ctx, args[0], args[1]); err != nil {
 			t.Errorf("%s: %v", what, err)

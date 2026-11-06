@@ -79,15 +79,18 @@ func tokenise(lexer chroma.Lexer, text string) Highlighted {
 	return out
 }
 
-// A block in the conversation is not a file: it's text the agent wrote, a few lines as a rule, so a lower limit than a file's.
+// A block in the conversation is not a file: it's text the agent wrote, a few lines as a rule, so a lower limit than a file's. The page
+// has the limits too, to send nothing past them (a test holds the two to each other).
 const (
-	maxBlockBytes = 200 << 10
-	maxBlockLines = 5000
+	MaxBlockBytes = 200 << 10
+	MaxBlockLines = 5000
 )
 
-// aTag is what a fence's language can be: a word (c++, f#, objective-c, vb.net), not a path or a pattern, since it is given to
-// Chroma's matching of file names.
-var aTag = regexp.MustCompile(`^[A-Za-z0-9_+#.-]{1,40}$`)
+// BlockTagPattern is what a fence's language can be: a word (c++, f#, objective-c, vb.net), not a path or a pattern, since it is given
+// to Chroma's matching of file names. The page has it too.
+const BlockTagPattern = `^[A-Za-z0-9_+#.-]{1,40}$`
+
+var aTag = regexp.MustCompile(BlockTagPattern)
 
 // lexerForTag is the language a fence's tag names, or nil: by name, alias or file extension, as Chroma has it, and never by
 // guessing from the text, which could take prose for code. Plain text is no language.
@@ -105,8 +108,8 @@ func lexerForTag(tag string) chroma.Lexer {
 // blockTooLong says why text is past what a block is coloured to, or "".
 func blockTooLong(text string) string {
 	lines := strings.Count(text, "\n")
-	if len(text) > maxBlockBytes || lines > maxBlockLines {
-		return fmt.Sprintf("too long to colour here (%d lines; a block over %d lines or %d KB isn't coloured)", lines, maxBlockLines, maxBlockBytes>>10)
+	if len(text) > MaxBlockBytes || lines > MaxBlockLines {
+		return fmt.Sprintf("too long to colour here (%d lines; a block over %d lines or %d KB isn't coloured)", lines, MaxBlockLines, MaxBlockBytes>>10)
 	}
 	return ""
 }

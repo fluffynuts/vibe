@@ -4982,7 +4982,7 @@
       switch (b.type) {
         case 'para': return el('p', {}, ...inline(b.inline))
         case 'heading': return el('h' + Math.min(6, Math.max(1, b.level)), {}, ...inline(b.inline))
-        case 'code': return isMarkdownTag(b.lang) ? markdownBlock(b.text) : codeBlock(b.text)
+        case 'code': return isMarkdownTag(b.lang) ? markdownBlock(b.text) : codeBlock(b.text, b.lang)
         case 'hr': return el('hr')
         case 'quote': return el('div', { class: 'quote-block' }, el('blockquote', {}, ...blocks(b.blocks)),
           el('button', { type: 'button', class: 'copy-code small', title: 'Copy the quote as Markdown', 'aria-label': 'Copy the quote as Markdown', onclick: () => copyText(b.source) }, copyIcon()))
@@ -5163,6 +5163,12 @@
   function codeView(text, colour) {
     const note = colour && colour.skipped ? [el('p', { class: 'muted', text: 'Not coloured: ' + colour.skipped })] : []
     if (!colour || !Array.isArray(colour.lines)) return [...note, el('pre', {}, el('code', { text: visible(text) }))]
+    return [...note, el('pre', {}, el('code', {}, ...colouredParts(text, colour)))]
+  }
+
+  // colouredParts is text as what a code element holds: each line's runs as spans by what they are, as the host coloured it, and
+  // the hidden control characters shown as symbols. A line the colouring no longer spells is plain.
+  function colouredParts(text, colour) {
     const lines = text.replace(/\r\n/g, '\n').split('\n')
     const parts = []
     lines.forEach((line, i) => {
@@ -5171,7 +5177,7 @@
       else parts.push(visible(line))
       if (i < lines.length - 1) parts.push('\n')
     })
-    return [...note, el('pre', {}, el('code', {}, ...parts))]
+    return parts
   }
 
   // endOfPath scrolls the path bar to the end of the path, where the file's name is, when it is too long for the
@@ -5226,11 +5232,119 @@
   }
 
   // codeBlock is a block of code with a button copying it: selecting it by
-  // hand means scrolling, as Ctrl+A takes the whole conversation.
-  function codeBlock(code) {
+  // hand means scrolling, as Ctrl+A takes the whole conversation. With a language tag it is coloured, once the host has done it.
+  function codeBlock(code, lang) {
     const text = code.replace(/\r\n/g, '\n')
-    return el('div', { class: 'code-block' }, el('pre', {}, el('code', { text: visible(text) })),
+    const codeEl = el('code', { text: visible(text) })
+    const block = el('div', { class: 'code-block' }, el('pre', {}, codeEl),
       el('button', { type: 'button', class: 'copy-code small', title: 'Copy', 'aria-label': 'Copy the code', onclick: () => copyText(text) }, copyIcon()))
+    if (colourableTag(lang)) wantColour(block, codeEl, lang, text)
+    return block
+  }
+
+  // --- colour for fenced blocks ---------------------------------------------------------------
+
+  // What the host colours a block to (review.maxBlockBytes and maxBlockLines: a test holds the two to each other): past it a
+  // block is not sent, and says so. A tag is a word, as the host holds it to (review's aTag).
+  const COLOUR_MAX_BYTES = 200 * 1024
+  const COLOUR_MAX_LINES = 5000
+  const COLOUR_TAG = /^[A-Za-z0-9_+#.-]{1,40}$/
+  const PLAIN_TAGS = /^(text|txt|plain|plaintext)$/i
+  // Each is a process of the host's: only what is in view is asked for, and a few at a time.
+  const COLOUR_AT_ONCE = 2
+  const COLOUR_KEPT = 300
+
+  // colourableTag is whether a fenced block's tag is worth asking the host about: a language is not known until it says, but a block
+  // with no tag, a plain one or Markdown (drawn as such) is not one.
+  function colourableTag(lang) {
+    return !!lang && COLOUR_TAG.test(lang) && !PLAIN_TAGS.test(lang) && !isMarkdownTag(lang)
+  }
+
+  const colourKept = new Map() // language and text -> what the host said, kept as long as the page lives (the oldest go first)
+  const colourAsked = new Map() // language and text -> the answer on its way, for blocks that are the same to share
+  const colourWaiting = []
+  let colourRunning = 0
+
+  function colourKey(lang, text) { return lang.toLowerCase() + '\u0000' + text }
+
+  // inColourSlot runs ask when fewer than COLOUR_AT_ONCE are being asked, else when one has been answered.
+  function inColourSlot(ask) {
+    return new Promise((resolve, reject) => {
+      const go = () => {
+        colourRunning++
+        ask().then(resolve, reject).finally(() => {
+          colourRunning--
+          const next = colourWaiting.shift()
+          if (next) next()
+        })
+      }
+      if (colourRunning < COLOUR_AT_ONCE) go()
+      else colourWaiting.push(go)
+    })
+  }
+
+  // colourOutcome is what a block is shown from an answer of the host: its colours, or why it has none (nothing at all for a language
+  // it doesn't know: that block is plain, not one that wasn't coloured).
+  function colourOutcome(body) {
+    if (body && Array.isArray(body.lines)) return { colour: body }
+    if (body && body.skipped) return { note: 'Not coloured: ' + body.skipped }
+    return {}
+  }
+
+  // colourFor is what the host says of a block, asked once for the same text in the same language, and kept.
+  function colourFor(lang, text) {
+    const key = colourKey(lang, text)
+    if (colourKept.has(key)) return Promise.resolve(colourKept.get(key))
+    if (colourAsked.has(key)) return colourAsked.get(key)
+    const asking = inColourSlot(async () => {
+      try {
+        const res = await api('/api/highlight', { method: 'POST', body: JSON.stringify({ lang, text }) })
+        if (!res.ok) return { note: "Couldn't colour this block: " + ((res.body && res.body.error) || 'HTTP ' + res.status) }
+        const outcome = colourOutcome(res.body)
+        colourKept.set(key, outcome)
+        if (colourKept.size > COLOUR_KEPT) colourKept.delete(colourKept.keys().next().value)
+        return outcome
+      } catch (e) {
+        return { note: "Couldn't colour this block: " + (e && e.message ? e.message : 'vibe did not answer') }
+      }
+    }).finally(() => colourAsked.delete(key))
+    colourAsked.set(key, asking)
+    return asking
+  }
+
+  // The blocks waiting to come into view to be asked for.
+  let colourSeen = null
+  const colourOnSight = new Map()
+
+  // wantColour has block coloured: at once from what was kept, else when it is in view (or at once with nothing to see by), as the
+  // host says. A block too long for that says so without being sent.
+  function wantColour(block, codeEl, lang, text) {
+    const newlines = text.split('\n').length - 1
+    if (text.length > COLOUR_MAX_BYTES || newlines > COLOUR_MAX_LINES) {
+      block.append(el('div', { class: 'code-note', text: 'Not coloured: too long to colour here (' + newlines + ' lines; a block over ' + COLOUR_MAX_LINES + ' lines or ' + (COLOUR_MAX_BYTES >> 10) + ' KB isn\'t coloured)' }))
+      return
+    }
+    const show = (outcome) => {
+      if (outcome.colour) codeEl.replaceChildren(...colouredParts(text, outcome.colour))
+      if (outcome.note) block.append(el('div', { class: 'code-note', text: outcome.note }))
+    }
+    const kept = colourKept.get(colourKey(lang, text))
+    if (kept) { show(kept); return }
+    const ask = () => colourFor(lang, text).then(show)
+    if (!window.IntersectionObserver) { ask(); return }
+    if (!colourSeen) {
+      colourSeen = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue
+          colourSeen.unobserve(entry.target)
+          const go = colourOnSight.get(entry.target)
+          colourOnSight.delete(entry.target)
+          if (go) go()
+        }
+      }, { rootMargin: '300px' })
+    }
+    colourOnSight.set(block, ask)
+    colourSeen.observe(block)
   }
 
   // isMarkdownTag is whether a fenced block's language says its text is Markdown.

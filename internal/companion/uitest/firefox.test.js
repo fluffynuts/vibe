@@ -1010,3 +1010,36 @@ test('a theme chosen on one sandbox\'s page is followed by another\'s on its own
     assert.equal((await context.cookies()).some((c) => c.name === 'vibe-theme'), false)
   } finally { await context.close() }
 })
+
+// The syntax colours of a block in the conversation are the page's own (the ones the Review tab's files have), in the light theme and
+// in the dark: the classes the host's colours become are styled inside a conversation block, not only in a file.
+test('a coloured block in the conversation has the syntax colours, in the light and the dark theme', async () => {
+  for (const colorScheme of ['light', 'dark']) {
+    const page = await browser.newPage({ colorScheme, viewport: { width: 1000, height: 700 } })
+    try {
+      await page.goto(URL)
+      const found = await page.evaluate(() => {
+        const md = document.createElement('div')
+        md.className = 'md'
+        md.innerHTML = '<div class="code-block"><pre><code><span class="hl-kw">a</span><span class="hl-str">b</span><span class="hl-comment">c</span><span class="hl-num">d</span>plain</code></pre></div>'
+        document.body.append(md)
+        // What a colour variable is, as the browser computes a colour: through an element, as the page's style can only be set from script.
+        const probe = (name) => { const p = document.createElement('span'); p.style.color = 'var(' + name + ')'; document.body.append(p); return getComputedStyle(p).color }
+        const code = md.querySelector('code')
+        const of = (cls) => getComputedStyle(md.querySelector('.' + cls)).color
+        return {
+          plain: getComputedStyle(code).color,
+          kw: of('hl-kw'), str: of('hl-str'), comment: of('hl-comment'), num: of('hl-num'),
+          wantKw: probe('--hl-kw'), wantStr: probe('--hl-str'), wantComment: probe('--hl-comment'), wantNum: probe('--hl-num'),
+          italic: getComputedStyle(md.querySelector('.hl-comment')).fontStyle,
+        }
+      })
+      assert.equal(found.kw, found.wantKw, colorScheme + ': keyword')
+      assert.equal(found.str, found.wantStr, colorScheme + ': string')
+      assert.equal(found.comment, found.wantComment, colorScheme + ': comment')
+      assert.equal(found.num, found.wantNum, colorScheme + ': number')
+      assert.notEqual(found.kw, found.plain, colorScheme + ': a keyword reads as one')
+      assert.equal(found.italic, 'italic')
+    } finally { await page.close() }
+  }
+})
