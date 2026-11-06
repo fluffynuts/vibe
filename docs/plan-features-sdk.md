@@ -47,6 +47,28 @@ These are what guided creation, and a check on a finished feature, should encode
   for the pattern), and a real run in a scratch sandbox before a feature is trusted.
 - **Don't kill processes by name** in any script, test or tool: the sandbox's own PID 1 and 2 belong to the agent user.
 
+## What the first feature built the plain way showed (`pnpm`, 2026-11-05)
+
+`library/pnpm` was written by hand, before any of the below existed, for a project that pins its pnpm. It is the first
+feature that had to follow something about the project, and it turned up what the plan lacked:
+
+- **Features take no options.** The answer for pnpm was to need none: the feature installs corepack, whose `pnpm` shim
+  reads the project's `packageManager` each time it is run (lazy, so a changed pin is followed without a rebuild).
+  That works where the project already says the thing; a feature wanting something the project doesn't record (a port, a
+  version of a service) has nowhere to be told. Is an options mechanism wanted, or is "follow the project" the pattern to
+  document and generate?
+- **Features can't depend on one another.** pnpm needs Node, and so does `playwright`; each installs it inline, with the
+  same fall-back from `nodejs-24` to Debian's `nodejs`. `docs/plan-agent-helper-in-go.md` makes Node a feature of its
+  own, and nothing says how another feature would require it. Guided creation will keep generating that inline copy until
+  there is.
+- **A runtime behaviour beats an install-time one.** Anything fetched at install time is as old as the build; a shim that
+  decides when it is run keeps up with the project. Guided creation could ask for which of the two a feature wants.
+- **The pattern for testing an install script holds** (stand-ins for sudo, node, npm and the tool; `go`, `prerequisites`
+  and `playwright` have the same shape): `src/vibe/pnpminstall_test.go` is a fourth copy of the stand-in plumbing, which
+  a generated test file would repeat unless it is shared.
+- **The image's Node has no corepack**, which is the kind of thing "check what it uses, install what is missing" is for:
+  the step installs it from npm.
+
 ## Proposed (a first shape, to be argued with)
 
 1. **`vibe --new-feature <name>`**, guided: asks what the feature gives the sandbox (a package from apt, a download, a
@@ -93,5 +115,6 @@ network.
 
 ## Related
 
+- `library/pnpm`: the first feature written by hand with this plan in view.
 - `docs/plan-agent-helper-in-go.md`: Node becomes a feature a user picks, an obvious first feature to build with this.
 - `docs/plan-name-collision.md`, `docs/plan-downgrade.md`: other plans that touch what vibe keeps under `~/.vibe`.

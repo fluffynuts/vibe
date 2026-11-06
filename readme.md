@@ -1398,6 +1398,22 @@ that `pwsh` is there and how to run it (`pwsh -NoProfile -Command '...'`, `pwsh 
   and the one that was there is put back if the new one can't be linked or won't run, so an install that fails leaves
   a working PowerShell as it was.
 
+### The `pnpm` feature
+
+[pnpm](https://pnpm.io), at the version the project says it wants.
+
+- **How the version is chosen:** `pnpm` in the sandbox is a [corepack](https://github.com/nodejs/corepack) shim, which reads
+  `packageManager` from the nearest `package.json` each time it is run and fetches exactly that pnpm (the first time; then
+  from its cache, checked against the hash in the field if there is one). A project that changes its pin is followed the
+  next time `pnpm` runs, without rebuilding the sandbox. A project with no `packageManager` gets corepack's default
+  pnpm. The feature itself names no version.
+- **What is installed:** corepack (from npm: the image's Node has none) and the `pnpm` shim in `/usr/local/bin`, and Node
+  and npm if the image lacks them.
+- **The sandbox may reach** `registry.npmjs.org`, which is where corepack and each pnpm come from, so the first `pnpm` in a
+  project, or after its pin changes, needs the network.
+- **A step that fails is a warning, not a failed sandbox:** it is written to `/tmp/sbx-setup.log`, which the agent's
+  instructions point to if `pnpm` isn't there.
+
 ### The `playwright` feature
 
 [Playwright](https://playwright.dev) with the browsers an agent reaches for, already in the sandbox, so that a visual

@@ -1,0 +1,11 @@
+# Kit fragment for the pnpm feature, merged into the config.yaml of any
+# profile composed with it.
+permissions:
+  network:
+    allow:
+      # corepack installs, and fetches each pnpm a project pins, from the npm registry
+      - registry.npmjs.org
+environment:
+  variables:
+    # corepack asks before its first download, and nobody is there to answer in an agent's shell
+    COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
