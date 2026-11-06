@@ -202,6 +202,11 @@ func main() {
 		note("waiting for %s: another program (a virus scanner, say) has it open", pathresolve.Tilde(path))
 	}
 	err := run(os.Args[1:])
+	if err != nil {
+		if args, parseErr := cliargs.Parse(os.Args[1:]); parseErr == nil && retryAfterSignIn(err, args, interactive(), realSbxSignInSteps()) {
+			err = run(os.Args[1:])
+		}
+	}
 	termtitle.Restore()
 	session.Release()
 	if err != nil {
