@@ -332,8 +332,8 @@ func TestAStoppedSandboxIsStartedForATurnSayingSo(t *testing.T) {
 func TestATurnSaysWhenTheSandboxWontStart(t *testing.T) {
 	keepAwakeStandIns(t, false, false)
 	err := readyForTurn("box")(context.Background(), func(string) {})
-	if err == nil || !strings.Contains(err.Error(), "sbx ls") {
-		t.Errorf("err = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "sbx said no") {
+		t.Errorf("err = %v, want sbx's own reason", err)
 	}
 }
 
@@ -474,14 +474,6 @@ func TestATurnThatCannotStartTheSandboxBecauseSbxIsSignedOutSaysSoWithoutTheFixe
 	}
 	err := readyForTurn("box")(context.Background(), func(string) {})
 	if err == nil || !strings.Contains(err.Error(), "isn't signed in to Docker") || strings.Contains(err.Error(), "3m0s") {
-		t.Errorf("err = %v", err)
-	}
-}
-
-func TestATurnThatCannotStartTheSandboxSaysWhatSbxSaid(t *testing.T) {
-	keepAwakeStandIns(t, false, false)
-	err := readyForTurn("box")(context.Background(), func(string) {})
-	if err == nil || !strings.Contains(err.Error(), "sbx said no") {
 		t.Errorf("err = %v", err)
 	}
 }
