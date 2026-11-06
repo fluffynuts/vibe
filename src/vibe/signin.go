@@ -41,6 +41,9 @@ func signInFor(name, agent string) func(ctx context.Context) signin.Status {
 func checkSignIn(ctx context.Context, name, agent string, p signInProbes) signin.Status {
 	out, err := p.sbx(ctx)
 	docker := signin.Docker(out, err, ctx.Err() != nil)
+	if docker.State == signin.SignedIn {
+		sbxrun.NoteSignedIn()
+	}
 	status := signin.Status{Agent: agent, Docker: docker}
 	if agent != "claude" {
 		status.AgentPart = signin.Other(agent)

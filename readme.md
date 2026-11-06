@@ -748,7 +748,7 @@ right, rather than waiting out the start. That address is never shown to you: a 
 output the agent can make, and an address printed there could be a Docker sign-in of the agent's own that you would be
 authorising. A failure nothing recognises (sbx may have reworded it) is the last resort for
 `sbx login`, asked at most once in two minutes: it is the host's own sbx that prints the address then, and signed out the
-message gives it, with the code; signed in, it finishes without one, and the message says signing in isn't the cause. Whatever it finds, the message says that it was asked and to report what sbx said, since it only runs for a message vibe doesn't know. Any other
+message gives it, with the code; signed in, it finishes without one, and the message says signing in isn't the cause. Whatever it finds, the message says that it was asked and to report what sbx said, since it only runs for a message vibe doesn't know. Be aware that the agent can make it run: a failed wake is the output of a command run in the sandbox, which the agent can make print and fail as it likes, and nothing tells that from sbx's own failure, so a sandbox that wants to can have your `sbx login` run, at most once in two minutes. Signed in that does nothing (it says you are signed in); signed out it leaves a sign-in code to expire, which is never shown to you. Any other
 failure to start a sandbox is given in sbx's own words, shortened (300 characters, control characters removed). What sbx
 printed for a wake that failed or was slow, whole but for control characters and 64 KB, is kept in
 `~/.vibe/sbx-wake.log` (it starts again at 256 KB), as the first and last failure of a run of tries and not each. A sandbox being

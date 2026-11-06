@@ -234,8 +234,13 @@ func noteWake(name, outcome, said string, took time.Duration) {
 // show its banner when it is brought back into view, which is a reaction to a failure that happened anyway and not a probe.
 var signedOutSeen atomic.Bool
 
-// NotSignedInSeen says the last wake found sbx signed out, and none has worked since.
+// NotSignedInSeen says the last wake found sbx signed out, and nothing has confirmed it signed in since.
 func NotSignedInSeen() bool { return signedOutSeen.Load() }
+
+// NoteSignedIn says sbx has been confirmed signed in, by something other than a wake (sbx answering `sbx ls`, a sandbox it
+// lists as running): what a wake found of it being signed out is no longer so. Without it the flag stays until a wake works,
+// which with a sandbox that is running may be never, and a page that is told of it looks at the sign-in every few seconds.
+func NoteSignedIn() { signedOutSeen.Store(false) }
 
 var (
 	signInCheckMu   sync.Mutex
@@ -255,6 +260,12 @@ const (
 // finishes without one. So the wording of sbx's messages doesn't matter. It runs at most once in signInCheckEvery, and
 // leaves err as it was when it can't tell. It is the host's own sbx that prints the address, and so the one place the
 // address is given to the user.
+//
+// The sandbox can cause it to run. What a failed wake looks like is partly the agent's to make (the command run in the sandbox
+// can print what it likes, and fail), and the failure is all that is known of why, so nothing tells a failure of sbx's from one
+// the agent faked: a /bin/true that prints more than maxWakeOutput, or anything unrecognised, and fails, has the host run
+// `sbx login`. That is accepted: it is at most once in signInCheckEvery, harmless when signed in (it says so and ends), and when
+// signed out leaves a sign-in code to expire, which nobody is given.
 func explainWithSignIn(ctx context.Context, err error) error {
 	signInCheckMu.Lock()
 	if !lastSignInCheck.IsZero() && time.Since(lastSignInCheck) < signInCheckEvery {

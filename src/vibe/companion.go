@@ -543,6 +543,8 @@ func keepAwakeFor(name string) func() string {
 		ctx, cancel := context.WithTimeout(context.Background(), statusWithin)
 		defer cancel()
 		if runningNow(ctx, name) {
+			// sbx lists it as running, which it only does signed in.
+			sbxrun.NoteSignedIn()
 			sbxrun.ExecSilent(ctx, name, "true")
 			return ""
 		}

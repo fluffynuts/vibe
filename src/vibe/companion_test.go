@@ -289,6 +289,17 @@ func TestKeepingAwakeTouchesARunningSandbox(t *testing.T) {
 	}
 }
 
+// A sandbox sbx lists as running means sbx is signed in: what waking it found of sbx being signed out is no longer so.
+func TestKeepingAwakeARunningSandboxClearsWhatWakingFoundOfSbxBeingSignedOut(t *testing.T) {
+	foundSbxSignedOut(t)
+	loggingSbx(t, "box running\\n")
+	keepAwakeStandIns(t, true, true)
+	keepAwakeFor("box")()
+	if sbxrun.NotSignedInSeen() {
+		t.Error("a sandbox is running and the page is still told sbx was found signed out")
+	}
+}
+
 // The page asks for the theme's colour every minute; for a stopped sandbox,
 // asking it would start it again, so the profile's record stands in.
 func TestTheThemeOfAStoppedSandboxDoesntStartIt(t *testing.T) {

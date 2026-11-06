@@ -139,3 +139,15 @@ func TestWhatTheLastWakeFoundOfSbxBeingSignedOutIsKept(t *testing.T) {
 		t.Error("still seen after a wake that worked")
 	}
 }
+
+func TestNotingSbxIsSignedInClearsWhatWakingFound(t *testing.T) {
+	sbxtest.OnPath(t, signedOutNoTerminal)
+	Reachable(context.Background(), "box")
+	if !NotSignedInSeen() {
+		t.Fatal("not seen")
+	}
+	NoteSignedIn()
+	if NotSignedInSeen() {
+		t.Error("still seen after sbx was confirmed signed in")
+	}
+}

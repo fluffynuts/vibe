@@ -268,7 +268,9 @@ What `sbx` does when it is signed out and a sandbox has to be woken, as the user
    the agent can make, and an address it printed could be a Docker sign-in of its own for the user to authorise (found in
    review). Both go by the shape or the command, not sbx's words, which it may translate. What is read is capped (64 KB) and
    the process stopped at the cap, a line at a time, so hostile output can't cost the host CPU.
-2. **A failure nothing recognises asks `sbx login` as a last resort** (not a probe: signed out it starts a flow and leaves a
+2. **A failure nothing recognises asks `sbx login` as a last resort** (which the sandbox can cause: a failed wake is a command's output,
+   which the agent can make, so a faked failure has the host run `sbx login`; accepted, since it is throttled, harmless signed in, and
+   its code is never shown) (not a probe: signed out it starts a flow and leaves a
    code to expire, so at most once in two minutes): an address in its output is signed out, none (it finishes) says signing in
    isn't the cause. Not seen end to end (it needs a failure nothing recognises, which a signed-out sbx no longer is), but
    what it rests on is confirmed: `sbx login </dev/null` signed out prints the same flow as on a terminal (the code, the
@@ -306,3 +308,10 @@ What `sbx` does when it is signed out and a sandbox has to be woken, as the user
   works), passed on in `/api/state` as `sbxSignedOut`, and the page looks at the sign-in when it is true (no more often than
   for a failed turn). And the last resort, whatever it finds, says in its message that it was used and asks for a report of
   what sbx said (`NotSignedInError.LastResort`), since it only runs for a message nothing recognised.
+
+### What a second review of this branch found (2026-11-06)
+
+- The "sbx found signed out" flag (`sbxrun.NotSignedInSeen`) was only cleared by a wake that worked, so after signing in the page
+  went on looking at the sign-in every 10 s while a running sandbox (which isn't woken) left it set. It is now cleared by whatever
+  confirms sbx signed in: the Sign-in card's own check (`checkSignIn`), and a sandbox listed as running (`keepAwakeFor`).
+  A check that finds sbx still signed out, or can't tell, leaves it alone.
