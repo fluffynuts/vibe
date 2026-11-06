@@ -299,10 +299,10 @@ test('quotes and lists take in each whole line selected', () => {
 
 test("Chroma's classes come down to a few kinds of thing to colour", () => {
   const { tokenKind } = require('../ui/review.js')
-  const kinds = Object.fromEntries(['k', 'kd', 'kn', 'kt', 'kc', 'nf', 'fm', 'nc', 'nt', 'nb', 'na', 'nv', 'nd', 's', 's2', 'sr', 'dl', 'm', 'mi', 'il', 'c', 'c1', 'cm', 'cp', 'o', 'ow', 'p', '', 'err', 'nx'].map((c) => [c, tokenKind(c)]))
+  const kinds = Object.fromEntries(['k', 'kd', 'kn', 'kt', 'kc', 'nf', 'fm', 'nc', 'nt', 'nb', 'na', 'nv', 'nd', 'ni', 's', 's2', 'sr', 'dl', 'm', 'mi', 'il', 'c', 'c1', 'cm', 'cp', 'o', 'ow', 'p', '', 'err', 'nx'].map((c) => [c, tokenKind(c)]))
   assert.deepEqual(kinds, {
     k: 'kw', kd: 'kw', kn: 'kw', kt: 'type', kc: 'const', nf: 'fn', fm: 'fn', nc: 'type', nt: 'tag', nb: 'builtin', na: 'attr',
-    nv: 'var', nd: 'meta', s: 'str', s2: 'str', sr: 'str', dl: 'str', m: 'num', mi: 'num', il: 'num', c: 'comment', c1: 'comment',
+    nv: 'var', nd: 'meta', ni: 'const', s: 'str', s2: 'str', sr: 'str', dl: 'str', m: 'num', mi: 'num', il: 'num', c: 'comment', c1: 'comment',
     cm: 'comment', cp: 'meta', o: 'op', ow: 'kw', p: '', '': '', err: '', nx: '',
   })
 })

@@ -360,6 +360,7 @@
     if (c === 'nc' || c === 'nn') return 'type'
     if (c === 'nt') return 'tag'
     if (c === 'nb' || c === 'bp') return 'builtin'
+    if (c === 'ni') return 'const'
     if (c === 'na') return 'attr'
     if (c === 'nd' || c === 'cp' || c === 'cpf') return 'meta'
     if (c[0] === 'n' && c[1] === 'v') return 'var'
