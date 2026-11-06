@@ -740,6 +740,12 @@ whatever the sandbox asked to reach, so it can be a pattern of the agent's makin
 
 The page needs `sbx` to be signed in (`sbx login`), the same as `sbx policy` does; until then it says so.
 
+The page follows your system's light or dark setting. To have it differ (to try the other theme without changing your whole
+desktop), the power menu at the top right ends with **System theme** (the default), **Dark theme** and **Light theme**: the
+one the page is in is ticked. The choice is kept in this browser (per address, so per sandbox), not in vibe's settings, and
+is applied before the page is drawn, so it doesn't flash the other theme first. Choosing **System theme** goes back to
+following your system.
+
 Its address is the same at every start (the port is kept in the sandbox's instance record, and so is a
 secret token, in `~/.vibe/companion/<name>.token`), so a bookmark keeps working. The page lives as
 long as vibe does: when the session ends it shows "vibe is not running for this sandbox", and

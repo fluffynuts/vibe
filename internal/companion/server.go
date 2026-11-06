@@ -360,6 +360,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	static := http.FileServer(http.FS(s.ui))
 	mux.Handle("GET /{$}", static)
+	mux.Handle("GET /theme.js", static)
 	mux.Handle("GET /app.js", static)
 	mux.Handle("GET /app.css", static)
 	mux.Handle("GET /markdown.js", static)

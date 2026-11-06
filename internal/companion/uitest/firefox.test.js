@@ -919,3 +919,44 @@ test('Reload keeps the place in the file, and Back goes to where it was left in 
     await eventually(page, 'back at its place', async () => Math.abs((await place()) - was) < 6)
   } finally { await page.close() }
 })
+
+// The dark theme's CSS is written twice: for a system that is dark (CSS alone, no script), and for dark chosen in the power menu
+// (a data-theme attribute, set by theme.js before the page is drawn). They are two copies of the same colours and must not drift
+// apart: whatever the stylesheet sets as a custom property, and the glass over the page when vibe is gone, must come out the same
+// whichever way the theme was come by, for light as for dark.
+async function lookOf(colorScheme, chosen) {
+  const page = await browser.newPage({ colorScheme, viewport: { width: 1000, height: 700 } })
+  try {
+    if (chosen) await page.addInitScript((c) => localStorage.setItem('vibe-companion-theme', c), chosen)
+    await page.goto(URL)
+    return await page.evaluate(async () => {
+      const css = await (await fetch('/app.css')).text()
+      const names = [...new Set(css.match(/--[a-z0-9-]+(?=\s*:)/g))].sort()
+      const root = getComputedStyle(document.documentElement)
+      const look = {}
+      for (const name of names) look[name] = root.getPropertyValue(name).trim()
+      const glass = document.getElementById('offline')
+      look['offline background'] = getComputedStyle(glass).backgroundColor
+      look['_names'] = names.length
+      // Not part of the look compared: a system that is dark gets its native controls dark from the page's meta tag, so the
+      // property reads "normal" there, where a choice sets it.
+      look['_colorScheme'] = root.colorScheme
+      return look
+    })
+  } finally { await page.close() }
+}
+
+test('dark chosen in the menu looks as a dark system does, and so does light', async () => {
+  const systemDark = await lookOf('dark', null)
+  const systemLight = await lookOf('light', null)
+  assert.notDeepEqual(systemDark, systemLight, 'the two themes were not told apart: this test would prove nothing')
+  assert.ok(systemDark._names > 20, 'only ' + systemDark._names + ' custom properties were found')
+  const strip = ({ _colorScheme, ...look }) => look
+  const darkChosen = await lookOf('light', 'dark')
+  const lightChosen = await lookOf('dark', 'light')
+  assert.deepEqual(strip(darkChosen), strip(systemDark), 'dark chosen on a light system')
+  assert.deepEqual(strip(lightChosen), strip(systemLight), 'light chosen on a dark system')
+  // A choice also tells the browser, for what it draws itself (scrollbars, form controls).
+  assert.equal(darkChosen._colorScheme, 'dark')
+  assert.equal(lightChosen._colorScheme, 'light')
+})

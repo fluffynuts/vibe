@@ -303,9 +303,19 @@
     for (const action of ['stop', 'restart']) {
       $('power-' + action).addEventListener('click', () => { close(); askPower(action, state.sandbox, powerChecked) })
     }
+    for (const item of menu.querySelectorAll('.theme-item')) {
+      item.addEventListener('click', () => { window.vibeTheme.choose(item.dataset.choice); showThemeChoice(); close() })
+    }
+    showThemeChoice()
     menu.addEventListener('click', (ev) => { if (ev.target.closest('a')) close() })
     menu.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); close(); button.focus() } })
     document.addEventListener('pointerdown', (ev) => { if (!menu.hidden && !ev.target.closest('.power-wrap')) close() })
+  }
+
+  // showThemeChoice ticks the menu's light or dark (or the system's) that the page is in (see theme.js).
+  function showThemeChoice() {
+    const now = window.vibeTheme.current()
+    for (const item of document.querySelectorAll('.theme-item')) item.setAttribute('aria-checked', String(item.dataset.choice === now))
   }
 
   // What the power menu can do to this sandbox, as vibe last said.

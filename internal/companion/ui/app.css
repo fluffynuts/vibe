@@ -23,8 +23,11 @@
   --folder: #0e7490;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
+/* The dark theme is written twice, the same colours: for a system that is dark (CSS alone, unless light was chosen in the
+   power menu), and for dark chosen there (theme.js sets data-theme on the page). A test in a real Firefox (firefox.test.js)
+   has the two come out the same, here and wherever else this is done. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     /* syntax colours, GitHub's (dark) */
     --hl-kw: #ff7b72; --hl-str: #a5d6ff; --hl-comment: #8b949e; --hl-num: #79c0ff; --hl-fn: #d2a8ff;
     --hl-type: #ffa657; --hl-builtin: #79c0ff; --hl-tag: #7ee787; --hl-attr: #79c0ff; --hl-var: #ffa657;
@@ -49,6 +52,32 @@
     --folder: #56b6c2;
   }
 }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  /* syntax colours, GitHub's (dark) */
+  --hl-kw: #ff7b72; --hl-str: #a5d6ff; --hl-comment: #8b949e; --hl-num: #79c0ff; --hl-fn: #d2a8ff;
+  --hl-type: #ffa657; --hl-builtin: #79c0ff; --hl-tag: #7ee787; --hl-attr: #79c0ff; --hl-var: #ffa657;
+  --hl-meta: #d2a8ff; --hl-const: #79c0ff;
+  --bg: #14161a;
+  --panel: #1b1e24;
+  --line: #2d323b;
+  --text: #dfe3ea;
+  --muted: #8b93a1;
+  --accent: #5b8def;
+  --accent-text: #0d1117;
+  --bubble: #25422f;
+  --tick-seen: #53bdeb;
+  --ok: #7ad06f;
+  --bad: #f47067;
+  --amber: #e3b341;
+  --git-untracked: #79c0ff;
+  --warn-bg: #3a3012;
+  --warn-line: #7a6420;
+  --row-hover: #20242b;
+  --project: #d670d6;
+  --folder: #56b6c2;
+}
+:root[data-theme="light"] { color-scheme: light; }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
@@ -89,6 +118,9 @@ body {
 .power-item { box-sizing: border-box; width: 100%; display: flex; align-items: flex-start; gap: 8px; padding: 4px 8px; border: 0; border-radius: 4px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .power-item:hover:not(:disabled), .power-item:focus-visible { background: var(--row-hover); }
 .power-item:disabled { color: var(--muted); cursor: default; }
+/* The theme choices: the one the page is in is ticked, and the others keep the room, so the labels line up. */
+.theme-check { flex: none; width: 1.1em; text-align: center; }
+.theme-item[aria-checked="true"] .theme-check::before { content: "\2713"; }
 .power-text { display: flex; flex-direction: column; align-items: flex-start; }
 .power-icon { flex: none; width: 14px; height: 14px; margin-top: 3px; fill: currentColor; }
 .power-why { color: var(--muted); font-size: 12px; white-space: normal; max-width: 320px; }
@@ -486,8 +518,9 @@ ol.steps code { font: 12px var(--mono); padding: 1px 4px; border: 1px solid var(
    page's own background. */
 :root { --theme: var(--accent); --theme-ink: color-mix(in oklab, var(--theme) 78%, black); }
 @media (prefers-color-scheme: dark) {
-  :root { --theme-ink: color-mix(in oklab, var(--theme) 70%, white); }
+  :root:not([data-theme="light"]) { --theme-ink: color-mix(in oklab, var(--theme) 70%, white); }
 }
+:root[data-theme="dark"] { --theme-ink: color-mix(in oklab, var(--theme) 70%, white); }
 html.themed body { border-top: 3px solid var(--theme); }
 html.themed .brand .project { color: var(--theme-ink); }
 html.themed .tabs button[aria-selected="true"] { border-bottom-color: var(--theme); }
@@ -611,10 +644,12 @@ html.themed .commands li[aria-selected="true"] {
 #choice-other-name { font: 13px var(--mono); flex: 1; min-width: 0; }
 /* a question that must be answered: the page behind is frosted, as when vibe isn't there (see .offline) */
 dialog.glass::backdrop { background: rgba(250, 250, 250, .55); backdrop-filter: blur(6px) saturate(.7); -webkit-backdrop-filter: blur(6px) saturate(.7); }
-@media (prefers-color-scheme: dark) { dialog.glass::backdrop { background: rgba(20, 22, 26, .55); } }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) dialog.glass::backdrop { background: rgba(20, 22, 26, .55); } }
+:root[data-theme="dark"] dialog.glass::backdrop { background: rgba(20, 22, 26, .55); }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   dialog.glass::backdrop { background: rgba(250, 250, 250, .88); }
-  @media (prefers-color-scheme: dark) { dialog.glass::backdrop { background: rgba(20, 22, 26, .88); } }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) dialog.glass::backdrop { background: rgba(20, 22, 26, .88); } }
+  :root[data-theme="dark"] dialog.glass::backdrop { background: rgba(20, 22, 26, .88); }
 }
 
 /* the agent's replies, as Markdown */
@@ -688,12 +723,14 @@ dialog.glass::backdrop { background: rgba(250, 250, 250, .55); backdrop-filter: 
 .offline-title { margin: 0 0 6px; font-size: 18px; font-weight: 700; color: var(--bad); }
 .starting-title { margin: 0; color: inherit; }
 @media (prefers-color-scheme: dark) {
-  .offline { background: rgba(20, 22, 26, .55); }
+  :root:not([data-theme="light"]) .offline { background: rgba(20, 22, 26, .55); }
 }
+:root[data-theme="dark"] .offline { background: rgba(20, 22, 26, .55); }
 /* Without blur, the glass is frosted by being less clear instead. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .offline { background: rgba(250, 250, 250, .88); }
-  @media (prefers-color-scheme: dark) { .offline { background: rgba(20, 22, 26, .88); } }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .offline { background: rgba(20, 22, 26, .88); } }
+  :root[data-theme="dark"] .offline { background: rgba(20, 22, 26, .88); }
 }
 
 /* syntax colours on a diff's code: kinds from review.js's tokenKind */
