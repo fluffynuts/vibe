@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"vibe/internal/fscopy"
 	"vibe/internal/instructions"
@@ -145,6 +146,32 @@ const portSearchSpan = 60
 // Ports handed out earlier in this same pass are excluded on the same
 // grounds, since the sandbox that will bind them does not exist yet.
 func allocatePublish(vibeHome, name string, merged settings.Settings) ([]publishMapping, error) {
+	return allocateWith(publishReservationsFor(vibeHome), vibeHome, name, merged)
+}
+
+// publishReservations are this vibe's claims on host ports, by the folder they are kept in (a vibe's home, in practice one).
+var publishReservations sync.Map
+
+func publishReservationsDir(vibeHome string) string { return filepath.Join(vibeHome, "ports") }
+
+func publishReservationsFor(vibeHome string) *portalloc.Reservations {
+	got, _ := publishReservations.LoadOrStore(publishReservationsDir(vibeHome), portalloc.NewReservations(publishReservationsDir(vibeHome)))
+	return got.(*portalloc.Reservations)
+}
+
+// releasePublishReservations gives up the ports mappings holds once the sandbox's record says they are its own, or it has
+// failed to be made and has no use for them.
+func releasePublishReservations(vibeHome string, mappings []publishMapping) {
+	ports := make([]int, 0, len(mappings))
+	for _, m := range mappings {
+		ports = append(ports, m.hostPort)
+	}
+	publishReservationsFor(vibeHome).Release(ports...)
+}
+
+// allocateWith is allocatePublish, claiming each port it chooses in reservations as it chooses it: a sandbox's record is
+// written when it has been made, minutes after, and vibes started together would otherwise choose the same ports.
+func allocateWith(reservations *portalloc.Reservations, vibeHome, name string, merged settings.Settings) ([]publishMapping, error) {
 	instances, err := state.List(vibeHome)
 	if err != nil {
 		return nil, err
@@ -161,12 +188,25 @@ func allocatePublish(vibeHome, name string, merged settings.Settings) ([]publish
 		}
 	}
 
+	warned := false
+	reserve := func(port int) bool {
+		ok, err := reservations.Reserve(port)
+		if err != nil {
+			if !warned {
+				warned = true
+				note("WARNING: couldn't reserve host port %d (%s): a vibe started at the same time may choose it too", port, err)
+			}
+			return true
+		}
+		return ok
+	}
+
 	var mappings []publishMapping
 	for _, entry := range merged.Publish {
 		for i, cp := range entry.Ports {
 			hostPort := remembered[cp]
-			if hostPort == 0 || taken[hostPort] || portalloc.InUse(hostPort) {
-				hostPort, err = portalloc.FindFree(cp, cp+portSearchSpan, taken)
+			if hostPort == 0 || taken[hostPort] || portalloc.InUse(hostPort) || !reserve(hostPort) {
+				hostPort, err = portalloc.FindFreeWhere(cp, cp+portSearchSpan, taken, reserve)
 				if err != nil {
 					return nil, err
 				}

@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"vibe/internal/filelock"
 	"vibe/internal/fscopy"
 )
 
@@ -135,7 +136,7 @@ func claim(path, target string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := lock(f); err != nil {
+	if err := filelock.TryLock(f); err != nil {
 		f.Close()
 		return nil, fmt.Errorf("locking %s: %w", f.Name(), err)
 	}
@@ -265,7 +266,7 @@ func held(path string) bool {
 	if err != nil {
 		return false
 	}
-	if lock(f) != nil {
+	if filelock.TryLock(f) != nil {
 		f.Close()
 		return true
 	}

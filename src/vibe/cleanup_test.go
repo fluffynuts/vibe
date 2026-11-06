@@ -192,7 +192,7 @@ func TestDeletingASandboxFreesItsPublishedPorts(t *testing.T) {
 	if err := (removal{sandboxes: []inventorySandbox{s}}).run(lay, remover(t, &removed)); err != nil {
 		t.Fatal(err)
 	}
-	mappings, err := allocatePublish(lay.Home, "new", publishOne(base))
+	mappings, err := allocatePublishFor(t, lay.Home, "new", publishOne(base))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -258,6 +258,9 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 	if err != nil {
 		return err
 	}
+	// Held from here until the sandbox's record is written (or it fails to be made): that is when other vibes can see the
+	// ports are taken, and until then it is the reservation they see.
+	defer releasePublishReservations(vibeHome, publishMappings)
 
 	var publishArgs []string
 	var publishRecords []state.PublishRecord
