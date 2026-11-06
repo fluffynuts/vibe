@@ -237,10 +237,7 @@ func Exists(name string) (bool, error) {
 // Reachable reports whether the sandbox will currently accept an exec.
 // It gives up if ctx is cancelled.
 func Reachable(ctx context.Context, name string) bool {
-	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-	_, err := captureOutContext(ctx, "exec", name, "--", "/bin/true")
-	return err == nil
+	return wake(ctx, name) == nil
 }
 
 // probeTimeout is the backstop on one reachability probe: many times what
@@ -515,30 +512,54 @@ func WaitReachable(ctx context.Context, name string, limit int) bool {
 // can say what they could not do instead of assuming an answer.
 // sbx (and the wait) is ended when ctx ends.
 func Start(ctx context.Context, name string) bool {
-	started, _ := StartExplained(ctx, name)
-	return started
+	return StartChecked(ctx, name) == nil
 }
 
 // StartExplained is Start, saying why when the sandbox didn't start: what sbx said of the start, which is the only
 // place the reason is, or that it took the start and the sandbox never answered.
 func StartExplained(ctx context.Context, name string) (started bool, why string) {
-	if Reachable(ctx, name) {
-		return true, ""
-	}
-	said, err := captureOutContext(ctx, "start", name)
-	if err != nil {
-		if ctx.Err() == nil && Reachable(ctx, name) {
-			return true, ""
-		}
-		if said = strings.TrimSpace(said); said != "" {
-			return false, said
-		}
+	if err := StartChecked(ctx, name); err != nil {
 		return false, err.Error()
 	}
-	if WaitReachable(ctx, name, startTimeout) {
-		return true, ""
+	return true, ""
+}
+
+// StartChecked is Start, returning why the sandbox didn't start: a *NotSignedInError when sbx is signed out of Docker
+// (which it says by starting its sign-in flow, in place of starting the sandbox), or what sbx said otherwise.
+func StartChecked(ctx context.Context, name string) error {
+	err := wake(ctx, name)
+	if err == nil {
+		return nil
 	}
-	return false, fmt.Sprintf("sbx started it, but it didn't accept a command in %d seconds", startTimeout)
+	var signedOut *NotSignedInError
+	if errors.As(err, &signedOut) {
+		return err
+	}
+	said, startErr := captureOutContext(ctx, "start", name)
+	if startErr != nil {
+		if ctx.Err() == nil && Reachable(ctx, name) {
+			return nil
+		}
+		if said = strings.TrimSpace(said); said != "" {
+			return errors.New(said)
+		}
+		return startErr
+	}
+	for i := 0; i < startTimeout; i++ {
+		err = wake(ctx, name)
+		if err == nil {
+			return nil
+		}
+		if errors.As(err, &signedOut) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("sbx started it, but it didn't accept a command in %d seconds", startTimeout)
+		case <-time.After(time.Second):
+		}
+	}
+	return fmt.Errorf("sbx started it, but it didn't accept a command in %d seconds", startTimeout)
 }
 
 // startTimeout is how long Start waits for a booting sandbox to accept an
