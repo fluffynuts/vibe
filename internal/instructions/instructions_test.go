@@ -172,7 +172,7 @@ func TestOnlyOneTaggedDocumentIsTakenFromTheReply(t *testing.T) {
 func TestAgentsAreToldWhereToFindHowToHandOverTextToPasteWhenTheirKitCarriesIt(t *testing.T) {
 	kit := "## " + CopyableBlocksHeading + "\n\nPut it in one block.\n"
 	withPointer := WithKitPointers("Universal instructions\n---\n\nBe kind.\n", kit)
-	for _, want := range []string{"Be kind.", CopyableBlocksHeading, "kits-agent-context"} {
+	for _, want := range []string{"Be kind.", CopyableBlocksHeading, "kits-agent-context", "four backticks"} {
 		if !strings.Contains(withPointer, want) {
 			t.Errorf("missing %q:\n%s", want, withPointer)
 		}

@@ -20,6 +20,10 @@ func TestEverySandboxIsToldToPutTextToPasteInOneTaggedBlock(t *testing.T) {
 		t.Fatalf("the base feature that tells agents so: %v", err)
 	}
 	text := string(data)
+	// The rule agents broke when it was a bullet at the end: it is in the opening paragraph, before the list.
+	if opening, _, _ := strings.Cut(text, "\n- "); !strings.Contains(opening, "four backticks") {
+		t.Errorf("the four-backticks rule isn't up front, before the list:\n%s", text)
+	}
 	for what, want := range map[string]string{
 		"one block, with only the text in it": "exactly that text",
 		"the Markdown tag":                    "markdown",

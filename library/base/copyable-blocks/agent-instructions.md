@@ -5,10 +5,13 @@ to someone), put exactly that text in one fenced code block, with nothing of you
 (an introduction, what you tested, a question) outside the block, before or after. The companion page gives a block a button
 that copies just its contents, so the user can take the text without trimming your words off the ends.
 
+**If the text has a code block of its own (a pull request description often does), fence the whole of it with four backticks, not
+three.** With three, the code's own closing fence ends yours early: the rest of the text falls outside the block, and the user
+copies only the start of it.
+
 - Tag the block's language `markdown` when the text is Markdown (a pull request description, an issue, a comment): the page
   then shows it formatted, and its button copies the Markdown you wrote. Use `text` for plain text, and the language's name
   for code.
 - Several things to paste (a title and a description) go in a block each.
-- If the text has fenced blocks of its own, fence it with four backticks (more than the longest fence inside it), not three,
-  or the first of its own fences ends yours.
+- Four backticks is "more than the longest fence inside it": use five if the text has fences of four.
 - To show Markdown as an example of its syntax, leave the tag off, so that it is shown as typed.

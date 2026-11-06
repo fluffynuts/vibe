@@ -111,7 +111,7 @@ func WithKitPointers(merged, kit string) string {
 	pointer := heading + "\n" + strings.Repeat("-", len(heading)) + "\n\n" +
 		"Before you give the user text to paste somewhere else (a pull request description, a commit message, an issue, a message), " +
 		"read the section \"" + CopyableBlocksHeading + "\" in your kit instructions (for Claude, the files in ~/.claude/kits-agent-context/): " +
-		"it says how to hand it over.\n"
+		"it says how to hand it over. In particular: when that text has a code block of its own, fence the whole of it with four backticks, not three.\n"
 	if merged == "" {
 		return pointer
 	}
