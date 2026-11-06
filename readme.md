@@ -971,6 +971,8 @@ on the host, and the agent can't plant code in a package your own builds then ru
   probing paths the app runs with, `NUGET_PACKAGES`, or `~/.nuget/packages`. For a package whose assemblies aren't copied to the output
   that failed with "Cannot find compilation library location for package". The feature sets `GenerateRuntimeConfigDevFile=true` in the
   sandbox, so the SDK writes the fallback cache into `runtimeconfig.dev.json` as a probing path (not with `nuget: overlay` or shared, where the cache is `NUGET_PACKAGES`).
+  `link-nuget` runs at every session start, under `sudo`, which drops the variables the sandbox was made with; it reads them from PID 1's
+  environment, so a sandbox whose script has changed since it was made gets the new settings without being rebuilt.
 - **Public packages** (nuget.org) the sandbox restores itself, into a cache of its own, with your
   cache as a read-only fallback beside it. The files the sandbox's restore writes
   (`obj/project.assets.json`, `obj/*.nuget.g.props`) name the sandbox's cache, so your IDE needs

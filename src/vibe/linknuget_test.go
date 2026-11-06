@@ -110,7 +110,7 @@ func runLinkNugetOn(t *testing.T, mounting fakeMounting, file, persisted string,
 		defer os.Remove(kept)
 	}
 	cmd := exec.Command("sh", script)
-	cmd.Env = append([]string{"PATH=" + mounting.bin + string(os.PathListSeparator) + os.Getenv("PATH"), "SBX_PERSIST_FILE=" + file, "SBX_LINK_NUGET_LOG=" + filepath.Join(t.TempDir(), "link-nuget.log"), "SBX_NUGET_LINK=" + filepath.Join(t.TempDir(), ".nuget"), "HOME=" + t.TempDir()}, env...)
+	cmd.Env = append([]string{"PATH=" + mounting.bin + string(os.PathListSeparator) + os.Getenv("PATH"), "SBX_PERSIST_FILE=" + file, "SBX_LINK_NUGET_LOG=" + filepath.Join(t.TempDir(), "link-nuget.log"), "SBX_NUGET_LINK=" + filepath.Join(t.TempDir(), ".nuget"), "HOME=" + t.TempDir(), noPidOneEnvironment(t)}, env...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("link-nuget: %v\n%s", err, out)
 	}
@@ -556,5 +556,61 @@ func TestLinkNugetReplacesAPersistentFileInAFolderOnlyRootMayWrite(t *testing.T)
 	got, _ := runLinkNugetOn(t, newFakeMounting(t, false), file, "export KEEP=1\n", 0o644, "SBX_HOST_NUGET_PACKAGES="+packages, "FAKE_SUDO_UNLOCK="+dir)
 	if !strings.Contains(got, "export NUGET_FALLBACK_PACKAGES="+packages) || !strings.Contains(got, "export KEEP=1") {
 		t.Errorf("content:\n%s", got)
+	}
+}
+
+// noPidOneEnvironment is the default for a run: an environment of PID 1 with nothing in it, so that what the machine
+// running the tests was made with (a sandbox with this very feature) doesn't change what they find.
+func noPidOneEnvironment(t *testing.T) string {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "environ")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return "SBX_PROC1_ENVIRON=" + file
+}
+
+// sudo drops what a sandbox was made with (the session-start nudge runs on-start under it, and on-start runs this script):
+// it is in PID 1's environment, as start-clipboard finds its own.
+func pidOneEnvironment(t *testing.T, vars ...string) string {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "environ")
+	if err := os.WriteFile(file, []byte(strings.Join(vars, "\x00")+"\x00"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return "SBX_PROC1_ENVIRON=" + file
+}
+
+func TestLinkNugetFindsWhatTheSandboxWasMadeWithInPidOnesEnvironmentWhenSudoDroppedIt(t *testing.T) {
+	packages := t.TempDir()
+	got := runLinkNuget(t, "", pidOneEnvironment(t, "OTHER=1", "SBX_HOST_NUGET_PACKAGES="+packages))
+	for _, want := range []string{"export NUGET_FALLBACK_PACKAGES=" + packages, "export GenerateRuntimeConfigDevFile=true"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("persistent file lacks %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestLinkNugetKeepsTheOverlayChoiceFromPidOnesEnvironment(t *testing.T) {
+	packages := t.TempDir()
+	mounting := newFakeMounting(t, true)
+	base := filepath.Join(t.TempDir(), "vibe-nuget")
+	got := runLinkNugetMounting(t, mounting, "", pidOneEnvironment(t, "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_OVERLAY=1"), "SBX_NUGET_UPPER_BASE="+base)
+	if !strings.Contains(got, "export NUGET_PACKAGES="+packages) || !strings.Contains(got, "export VIBE_NUGET_OVERLAY=1") {
+		t.Errorf("the overlay choice was lost:\n%s", got)
+	}
+}
+
+func TestLinkNugetPrefersItsOwnEnvironmentToPidOnes(t *testing.T) {
+	ours, theirs := t.TempDir(), t.TempDir()
+	got := runLinkNuget(t, "", "SBX_HOST_NUGET_PACKAGES="+ours, pidOneEnvironment(t, "SBX_HOST_NUGET_PACKAGES="+theirs))
+	if !strings.Contains(got, "export NUGET_FALLBACK_PACKAGES="+ours) || strings.Contains(got, theirs) {
+		t.Errorf("PID 1's environment overrode ours:\n%s", got)
+	}
+}
+
+func TestLinkNugetWithNothingInEitherEnvironmentStillChangesNothing(t *testing.T) {
+	if got := runLinkNuget(t, "export KEEP=1\n", pidOneEnvironment(t, "OTHER=1")); got != "export KEEP=1\n" {
+		t.Errorf("changed the file: %q", got)
 	}
 }

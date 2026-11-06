@@ -12,6 +12,25 @@ fi
 exec >>"$LOG" 2>&1
 echo "=== link-nuget at $(date -Is) ==="
 
+# What the sandbox was made with is in PID 1's environment. sudo and su - drop it from ours, and this script is run by
+# on-start, which the session start runs under sudo: without it, a later run finds nothing to do and leaves a sandbox
+# without what a newer version of this script would persist. start-clipboard does the same for its own.
+PID_ONE_ENVIRON=/proc/1/environ
+if [ -n "$SBX_PROC1_ENVIRON" ]; then
+  PID_ONE_ENVIRON=$SBX_PROC1_ENVIRON
+fi
+for name in SBX_HOST_NUGET SBX_HOST_NUGET_PACKAGES SBX_NUGET_OVERLAY; do
+  eval "current=\$$name"
+  if [ -z "$current" ]; then
+    value=$(tr '\000' '\n' <"$PID_ONE_ENVIRON" 2>/dev/null | sed -n "s/^$name=//p" | head -n 1)
+    if [ -n "$value" ]; then
+      eval "$name=\$value"
+      export "$name"
+      echo "$name taken from PID 1's environment: $value"
+    fi
+  fi
+done
+
 PERSIST=/etc/sandbox-persistent.sh
 if [ -n "$SBX_PERSIST_FILE" ]; then
   PERSIST=$SBX_PERSIST_FILE
