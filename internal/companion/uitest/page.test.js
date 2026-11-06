@@ -1093,6 +1093,20 @@ test('a block with a language tag is asked of the host and coloured by what it s
   } finally { p.close() }
 })
 
+// What the host sends for an HTML entity (&amp;), as it does: a "name entity" run, which the page draws as a constant, in the same
+// colour a number has, and not as plain text. (The path from the host's class to the colour goes through review.js, not app.js.)
+test('an HTML entity in a coloured block is drawn as a constant', async () => {
+  const html = '<p>hi &amp; bye</p>'
+  const answer = { language: 'HTML', lines: [[{ c: 'p', t: '<' }, { c: 'nt', t: 'p' }, { c: 'p', t: '>' }, { t: 'hi ' }, { c: 'ni', t: '&amp;' }, { t: ' bye' }, { c: 'p', t: '</' }, { c: 'nt', t: 'p' }, { c: 'p', t: '>' }]] }
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, fenced(html, 'html')], running: false }, { '/api/highlight': answer })
+  try {
+    await p.settle()
+    const entity = [...blockCode(p).querySelectorAll('span')].find((e) => e.textContent === '&amp;')
+    assert.ok(entity, 'the entity has a span of its own')
+    assert.equal(entity.className, 'hl-const')
+  } finally { p.close() }
+})
+
 test('a coloured block copies its code as it was written, not as spans', async () => {
   const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, fenced(GO)], running: false }, { '/api/highlight': GO_COLOURED })
   try {
