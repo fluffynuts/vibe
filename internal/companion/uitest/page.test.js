@@ -984,6 +984,91 @@ test('a quote the agent wrote has a button copying its Markdown, without the > m
   } finally { p.close() }
 })
 
+// A block tagged as Markdown is text for the user to read and paste somewhere (a PR description, say): drawn as the Markdown it
+// is, and copied as the source the agent wrote, so what is pasted is raw, and what is read is formatted.
+const PR = '## Changes\n\n- **Waking** a sandbox reads `sbx` output\n- a second point\n\nSee [the docs](https://example.com/x).'
+
+const agentBlocks = (p) => p.$('convo-log').querySelector('.msg.agent')
+
+test('a block tagged markdown is drawn as Markdown and copies its source', async () => {
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, 'Here:\n\n```markdown\n' + PR + '\n```\n\nand more')], running: false })
+  try {
+    const written = clipboardOf(p)
+    const block = agentBlocks(p).querySelector('.markdown-block')
+    assert.ok(block, 'drawn as a Markdown block')
+    assert.ok(block.querySelector('h2'), 'the heading is a heading')
+    assert.equal(block.querySelectorAll('li').length, 2)
+    assert.ok(block.querySelector('strong'), 'bold is bold')
+    assert.ok(!block.textContent.includes('##') && !block.textContent.includes('**'), 'the markers are not shown: ' + block.textContent)
+    const copies = block.querySelectorAll(':scope > button.copy-code')
+    assert.equal(copies.length, 1, 'one copy button for the block')
+    await p.click(copies[0])
+    assert.deepEqual(written, [PR], 'the source is what is copied, not the text as drawn')
+    assert.equal(p.$('toast').textContent, 'Copied')
+  } finally { p.close() }
+})
+
+test('md, any case, and words after the language, are Markdown too', async () => {
+  for (const tag of ['md', 'MARKDOWN', 'Markdown title=summary']) {
+    const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, '```' + tag + '\n# Title\n```')], running: false })
+    try {
+      assert.ok(agentBlocks(p).querySelector('.markdown-block h1'), tag + ' was not drawn as Markdown')
+    } finally { p.close() }
+  }
+})
+
+test('a block with no language, or another, stays code', async () => {
+  for (const tag of ['', 'js', 'text', 'markdownish']) {
+    const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, '```' + tag + '\n# not a heading\n```')], running: false })
+    try {
+      const msg = agentBlocks(p)
+      assert.ok(!msg.querySelector('.markdown-block'), '"' + tag + '" was drawn as Markdown')
+      assert.equal(msg.querySelector('.code-block code').textContent, '# not a heading')
+    } finally { p.close() }
+  }
+})
+
+// A Markdown block holding a fenced block (the outer one is longer), as a PR description with code in it: the inner block is
+// code with a copy of its own, and the outer copy is the whole source, fences and all.
+test('a Markdown block with a code block in it copies the whole source, and the code block its code', async () => {
+  const source = 'Run:\n\n```sh\nmake test\n```\n\nDone.'
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, '````markdown\n' + source + '\n````')], running: false })
+  try {
+    const written = clipboardOf(p)
+    const block = agentBlocks(p).querySelector('.markdown-block')
+    assert.equal(block.querySelector('.code-block code').textContent, 'make test')
+    await p.click(block.querySelector('.code-block button.copy-code'))
+    await p.click(block.querySelector(':scope > button.copy-code'))
+    assert.deepEqual(written, ['make test', source])
+  } finally { p.close() }
+})
+
+// What the agent writes is never markup, here either: HTML is text, and a link shows its address.
+test('a Markdown block has no markup in it and no link the page would follow', async () => {
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, '```markdown\n<img src=x onerror="alert(1)"> and [click](https://evil.example/a)\n```')], running: false })
+  try {
+    const block = agentBlocks(p).querySelector('.markdown-block')
+    assert.equal(block.querySelector('img'), null)
+    assert.equal(block.querySelector('a'), null)
+    assert.ok(block.textContent.includes('<img src=x onerror="alert(1)">'), block.textContent)
+    assert.ok(block.textContent.includes('https://evil.example/a'), 'the address is shown: ' + block.textContent)
+  } finally { p.close() }
+})
+
+// Hidden control characters (an escape that ends a terminal's bracketed paste, so what follows is run) are shown, and left out of
+// the copy with a say-so, as in any other block.
+test('a Markdown block shows hidden control characters and copies without them', async () => {
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, '```markdown\nsafe\x1b[201~ text\n```')], running: false })
+  try {
+    const written = clipboardOf(p)
+    const block = agentBlocks(p).querySelector('.markdown-block')
+    assert.ok(block.textContent.includes('safe\u241b[201~ text'), block.textContent)
+    await p.click(block.querySelector(':scope > button.copy-code'))
+    assert.deepEqual(written, ['safe[201~ text'])
+    assert.equal(p.$('toast').textContent, 'Copied, leaving out 1 hidden control character')
+  } finally { p.close() }
+})
+
 // What the agent writes can hide control characters in code (an escape that
 // ends a terminal's bracketed paste, so what follows runs): a code block
 // shows them, and its copy leaves them out, saying so. Newlines are kept

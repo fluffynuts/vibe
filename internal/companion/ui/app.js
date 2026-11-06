@@ -4964,7 +4964,7 @@
       switch (b.type) {
         case 'para': return el('p', {}, ...inline(b.inline))
         case 'heading': return el('h' + Math.min(6, Math.max(1, b.level)), {}, ...inline(b.inline))
-        case 'code': return codeBlock(b.text)
+        case 'code': return isMarkdownTag(b.lang) ? markdownBlock(b.text) : codeBlock(b.text)
         case 'hr': return el('hr')
         case 'quote': return el('div', { class: 'quote-block' }, el('blockquote', {}, ...blocks(b.blocks)),
           el('button', { type: 'button', class: 'copy-code small', title: 'Copy the quote as Markdown', 'aria-label': 'Copy the quote as Markdown', onclick: () => copyText(b.source) }, copyIcon()))
@@ -5213,6 +5213,20 @@
     const text = code.replace(/\r\n/g, '\n')
     return el('div', { class: 'code-block' }, el('pre', {}, el('code', { text: visible(text) })),
       el('button', { type: 'button', class: 'copy-code small', title: 'Copy', 'aria-label': 'Copy the code', onclick: () => copyText(text) }, copyIcon()))
+  }
+
+  // isMarkdownTag is whether a fenced block's language says its text is Markdown.
+  function isMarkdownTag(lang) {
+    return /^(markdown|md)$/i.test(lang || '')
+  }
+
+  // markdownBlock is a block the agent tagged as Markdown: text for the user to read and paste somewhere else (a PR description),
+  // so it is drawn as the Markdown it is, and its button copies the source it was written in, which is what goes where it is
+  // pasted. Copying leaves out hidden control characters as for any block (copyText).
+  function markdownBlock(code) {
+    const text = code.replace(/\r\n/g, '\n')
+    return el('div', { class: 'code-block markdown-block' }, markdown(text),
+      el('button', { type: 'button', class: 'copy-code small', title: 'Copy the Markdown source', 'aria-label': 'Copy the Markdown source', onclick: () => copyText(text) }, copyIcon()))
   }
 
   // copyText puts text on the user's clipboard, leaving out hidden control characters (an escape
