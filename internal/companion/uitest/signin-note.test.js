@@ -99,3 +99,18 @@ test('a failure soon after a look does not cause another', async () => {
     assert.equal(looks(p), 1)
   } finally { p.close() }
 })
+
+// A turn that couldn't start the sandbox because sbx is signed out says so as a plain error, with no code to go by: the page
+// looks at the sign-in when any turn fails, rather than matching what the failure says.
+test('a turn that fails causes a look at the sign-in, whatever it says', async () => {
+  const clock = { now: 1_000_000 }
+  const events = [{ seq: 1, kind: 'user', text: 'hi' }]
+  const p = await pageWithEvents(events, clock)
+  try {
+    await p.settle()
+    clock.now += 60_000
+    events.push({ seq: 2, kind: 'error', text: 'a failure with words the page has never seen' })
+    await p.every('pollConversation')
+    assert.equal(looks(p), 2, 'looks: ' + looks(p))
+  } finally { p.close() }
+})

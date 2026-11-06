@@ -13,6 +13,7 @@ import (
 	"vibe/internal/cliargs"
 	"vibe/internal/companion"
 	"vibe/internal/layout"
+	"vibe/internal/sbxrun"
 	"vibe/internal/state"
 )
 
@@ -204,7 +205,13 @@ func keepAwakeStandIns(t *testing.T, running, startWorks bool) *int {
 		setAttached(false)
 	})
 	runningNow = func(context.Context, string) bool { return running }
-	startSandboxForPage = func(context.Context, string) bool { *starts++; return startWorks }
+	startSandboxForPage = func(context.Context, string) error {
+		*starts++
+		if startWorks {
+			return nil
+		}
+		return errors.New("sbx said no")
+	}
 	return starts
 }
 
@@ -439,5 +446,42 @@ func TestWithoutThatOnlyTheSettingDecidesWhetherThePageIsOpened(t *testing.T) {
 	t.Setenv(companionNoOpenEnv, "")
 	if got, _ := companionMode(false, ""); got != companionOpen {
 		t.Errorf("%q", got)
+	}
+}
+
+func TestKeepingAwakeSaysWhySbxCouldNotStartTheSandbox(t *testing.T) {
+	keepAwakeStandIns(t, false, false)
+	if said := keepAwakeFor("box")(); !strings.Contains(said, "sbx said no") {
+		t.Errorf("said %q, want sbx's reason", said)
+	}
+}
+
+func TestKeepingAwakeSaysSbxIsSignedOutAndWhereToSignIn(t *testing.T) {
+	keepAwakeStandIns(t, false, true)
+	startSandboxForPage = func(context.Context, string) error {
+		return &sbxrun.NotSignedInError{URL: "https://login.docker.com/activate?user_code=AAAA-BBBB", Code: "AAAA-BBBB"}
+	}
+	said := keepAwakeFor("box")()
+	if !strings.Contains(said, "signed out") || !strings.Contains(said, "Admin tab") {
+		t.Errorf("said %q", said)
+	}
+}
+
+func TestATurnThatCannotStartTheSandboxBecauseSbxIsSignedOutSaysSoWithoutTheFixedWait(t *testing.T) {
+	keepAwakeStandIns(t, false, true)
+	startSandboxForPage = func(context.Context, string) error {
+		return &sbxrun.NotSignedInError{URL: "https://login.docker.com/activate?user_code=AAAA-BBBB", Code: "AAAA-BBBB"}
+	}
+	err := readyForTurn("box")(context.Background(), func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "isn't signed in to Docker") || strings.Contains(err.Error(), "3m0s") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestATurnThatCannotStartTheSandboxSaysWhatSbxSaid(t *testing.T) {
+	keepAwakeStandIns(t, false, false)
+	err := readyForTurn("box")(context.Background(), func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "sbx said no") {
+		t.Errorf("err = %v", err)
 	}
 }

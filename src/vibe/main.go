@@ -320,6 +320,7 @@ func run(argv []string) error {
 			"then make sure its bin directory is on PATH (e.g. ${HOME}/.docker/sbx/bin).", hint)
 	}
 	sbxfind.Look()
+	keepWakeLog()
 	// What sbx wants before it answers (a network policy, a sign-in to Docker) is asked here, on the terminal, and given,
 	// rather than the first command failing with sbx's own words. Only for what starts or makes a sandbox, and nobody is
 	// asked with -f, or with no terminal.

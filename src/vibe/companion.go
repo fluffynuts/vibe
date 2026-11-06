@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -549,8 +550,8 @@ func keepAwakeFor(name string) func() string {
 		}
 		startCtx, cancelStart := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancelStart()
-		if !startSandboxForPage(startCtx, name) {
-			return "sandbox '" + name + "' was stopped, and couldn't be started again for the page — 'sbx ls' says what state it is in"
+		if err := startSandboxForPage(startCtx, name); err != nil {
+			return "sandbox '" + name + "' was stopped, and couldn't be started again for the page: " + startFailure(err)
 		}
 		// As when a turn starts it (readyForTurn) or the Admin tab's Start does: a session held for the sandbox to be
 		// back runs its start-up again, which rewrites what vibe tells the sandbox (the published URLs, the agent's
@@ -583,11 +584,15 @@ func readyForTurn(name string) func(ctx context.Context, say func(string)) error
 		say("starting the sandbox (sbx stops one that's left idle) — the agent answers once it's up")
 		start, cancel := context.WithTimeout(ctx, turnStartWithin)
 		defer cancel()
-		if !startSandboxForPage(start, name) {
+		if err := startSandboxForPage(start, name); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			return fmt.Errorf("sandbox '%s' didn't start within %s — 'sbx ls' says what state it is in", name, turnStartWithin)
+			var signedOut *sbxrun.NotSignedInError
+			if errors.As(err, &signedOut) {
+				return fmt.Errorf("sbx isn't signed in to Docker, so sandbox '%s' can't start. Sign in from the Admin tab, then send your prompt again", name)
+			}
+			return fmt.Errorf("sandbox '%s' didn't start: %s", name, startFailure(err))
 		}
 		stoppedOnPurpose.Store(false)
 		// A session (terminal or headless) waiting for the sandbox to be back
@@ -611,9 +616,19 @@ func sandboxGitFor(name, target string) func(ctx context.Context, args ...string
 	}
 }
 
+// startFailure is why a sandbox couldn't be started, for the page: sbx being signed out is said as that, and where to put
+// it right (the sign-in flow's own address and code are the Admin tab's to show), and anything else in sbx's own words.
+func startFailure(err error) string {
+	var signedOut *sbxrun.NotSignedInError
+	if errors.As(err, &signedOut) {
+		return "sbx is signed out of Docker. Sign in from the Admin tab (or run: sbx login)"
+	}
+	return err.Error() + " (what sbx printed is in " + wakeLogFile() + ")"
+}
+
 // startSandboxForPage starts sandbox name for the page. A variable for
 // tests.
-var startSandboxForPage = sbxrun.Start
+var startSandboxForPage = sbxrun.StartChecked
 
 // packageSyncOf is sync for the page's Config, which takes none as nil: a nil
 // *Sync in an interface isn't.
