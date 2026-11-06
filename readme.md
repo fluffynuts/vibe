@@ -744,12 +744,15 @@ When sbx has been signed out of Docker (`sbx logout` does it, and stops your san
 woken. With no terminal to answer on (as vibe runs it for the page), `sbx exec` fails at once, pointing to `sbx login`; on a
 terminal it starts a sign-in flow and waits for a browser. vibe recognises both (the command it names, and the flow's
 docker.com address, not sbx's words), and says sbx is signed out at once, with the Sign-in card on the Admin tab to put it
-right, rather than waiting out the start. A failure nothing recognises (sbx may have reworded it) is the last resort for
-`sbx login`, asked at most once in two minutes: signed out, it prints its flow's address (which the message then gives, with the
-code); signed in, it finishes without one, and the message says signing in isn't the cause. Any other failure to start a
-sandbox is given in sbx's own words. What sbx printed
-for a wake that failed or was slow is kept in
-`~/.vibe/sbx-wake.log` (it starts again at 256 KB). `vibe --list` and `vibe --info`, which only read, offer `sbx login` on
+right, rather than waiting out the start. That address is never shown to you: a wake runs a command in the sandbox, whose
+output the agent can make, and an address printed there could be a Docker sign-in of the agent's own that you would be
+authorising. A failure nothing recognises (sbx may have reworded it) is the last resort for
+`sbx login`, asked at most once in two minutes: it is the host's own sbx that prints the address then, and signed out the
+message gives it, with the code; signed in, it finishes without one, and the message says signing in isn't the cause. Any other
+failure to start a sandbox is given in sbx's own words, shortened (300 characters, control characters removed). What sbx
+printed for a wake that failed or was slow, whole but for control characters and 64 KB, is kept in
+`~/.vibe/sbx-wake.log` (it starts again at 256 KB), as the first and last failure of a run of tries and not each. A sandbox being
+waited for (at session start, and for its memories) is given up on at once when sbx is signed out. `vibe --list` and `vibe --info`, which only read, offer `sbx login` on
 the terminal when sbx is signed out, and carry on once you are.
 
 Its address is the same at every start (the port is kept in the sandbox's instance record, and so is a

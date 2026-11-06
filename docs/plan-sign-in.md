@@ -263,13 +263,16 @@ What `sbx` does when it is signed out and a sandbox has to be woken, as the user
 ### Built (`feat/signed-out-start`)
 
 1. **Waking reads sbx's output as it comes** (`internal/sbxrun/wake.go`): a docker.com address with a `user_code`
-   (`signin.DeviceLink`) ends the wait with a `NotSignedInError` carrying the address and code; a failed exec whose output names
-   `sbx login` is the same, without them. Both go by the shape or the command, not sbx's words, which it may translate.
+   (`signin.DeviceLink`) ends the wait with a `NotSignedInError`; a failed exec whose output names
+   `sbx login` is the same. Neither carries the address: a wake's output is what a command run in the sandbox printed, which
+   the agent can make, and an address it printed could be a Docker sign-in of its own for the user to authorise (found in
+   review). Both go by the shape or the command, not sbx's words, which it may translate. What is read is capped (64 KB) and
+   the process stopped at the cap, a line at a time, so hostile output can't cost the host CPU.
 2. **A failure nothing recognises asks `sbx login` as a last resort** (not a probe: signed out it starts a flow and leaves a
    code to expire, so at most once in two minutes): an address in its output is signed out, none (it finishes) says signing in
    isn't the cause. Not yet seen against a real signed-out sbx with no terminal; `sbx login </dev/null` signed out would show
    whether it prints the flow.
-3. **The page**: a start that can't happen says sbx is signed out (with the address and code when there are any) and points to
+3. **The page**: a start that can't happen says sbx is signed out (with the address and code only from the last resort's own `sbx login`) and points to
    the Admin tab; any other failure is in sbx's own words with the path of `~/.vibe/sbx-wake.log`; a failed turn makes the
    page look at the sign-in again. That log keeps what sbx printed for each wake that failed or took over 5 s (256 KB, then it
    starts again).
