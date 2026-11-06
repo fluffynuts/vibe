@@ -12,6 +12,25 @@ fi
 exec >>"$LOG" 2>&1
 echo "=== link-nuget at $(date -Is) ==="
 
+# What the sandbox was made with is in PID 1's environment. sudo and su - drop it from ours, and this script is run by
+# on-start, which the session start runs under sudo: without it, every run after the first boot's finds "nothing to do",
+# although the sandbox is set up, and a first boot that failed is never put right. start-clipboard does the same for its own.
+PID_ONE_ENVIRON=/proc/1/environ
+if [ -n "$SBX_PROC1_ENVIRON" ]; then
+  PID_ONE_ENVIRON=$SBX_PROC1_ENVIRON
+fi
+for name in SBX_HOST_NUGET SBX_HOST_NUGET_PACKAGES SBX_NUGET_OVERLAY; do
+  eval "current=\$$name"
+  if [ -z "$current" ]; then
+    value=$(tr '\000' '\n' <"$PID_ONE_ENVIRON" 2>/dev/null | sed -n "s/^$name=//p" | head -n 1)
+    if [ -n "$value" ]; then
+      eval "$name=\$value"
+      export "$name"
+      echo "$name taken from PID 1's environment: $value"
+    fi
+  fi
+done
+
 PERSIST=/etc/sandbox-persistent.sh
 if [ -n "$SBX_PERSIST_FILE" ]; then
   PERSIST=$SBX_PERSIST_FILE
@@ -153,6 +172,7 @@ if [ -n "$SBX_HOST_NUGET" ]; then
   persist NUGET_PACKAGES "$SBX_HOST_NUGET/packages"
   unpersist NUGET_FALLBACK_PACKAGES
   unpersist RestoreIgnoreFailedSources
+  unpersist GenerateRuntimeConfigDevFile
   unpersist VIBE_NUGET_OVERLAY
 elif [ -n "$SBX_HOST_NUGET_PACKAGES" ]; then
   if [ ! -d "$SBX_HOST_NUGET_PACKAGES" ]; then
@@ -165,6 +185,7 @@ elif [ -n "$SBX_HOST_NUGET_PACKAGES" ]; then
     persist NUGET_PACKAGES "$SBX_HOST_NUGET_PACKAGES"
     persist VIBE_NUGET_OVERLAY 1
     unpersist NUGET_FALLBACK_PACKAGES
+    unpersist GenerateRuntimeConfigDevFile
   else
     # The host's cache is read-only, and a fallback: packages found there
     # are used in place, anything else lands in the sandbox's own
@@ -172,6 +193,10 @@ elif [ -n "$SBX_HOST_NUGET_PACKAGES" ]; then
     persist NUGET_FALLBACK_PACKAGES "$SBX_HOST_NUGET_PACKAGES"
     unpersist NUGET_PACKAGES
     unpersist VIBE_NUGET_OVERLAY
+    # Code that finds a package's assemblies for itself (Microsoft.Extensions.DependencyModel, which RazorLight uses) never
+    # looks in a fallback folder: only in the probing paths the app runs with, NUGET_PACKAGES, or ~/.nuget/packages. The
+    # SDK names the fallback folders as probing paths in runtimeconfig.dev.json, which it no longer writes by default.
+    persist GenerateRuntimeConfigDevFile true
   fi
   # A private feed the sandbox can't sign in to is a warning, not a failed
   # restore: what it holds is asked of the host (vibe-nuget fetch).

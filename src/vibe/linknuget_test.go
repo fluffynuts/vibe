@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeMounting is a bin folder holding a sudo that runs what it's given and a
@@ -110,7 +112,7 @@ func runLinkNugetOn(t *testing.T, mounting fakeMounting, file, persisted string,
 		defer os.Remove(kept)
 	}
 	cmd := exec.Command("sh", script)
-	cmd.Env = append([]string{"PATH=" + mounting.bin + string(os.PathListSeparator) + os.Getenv("PATH"), "SBX_PERSIST_FILE=" + file, "SBX_LINK_NUGET_LOG=" + filepath.Join(t.TempDir(), "link-nuget.log"), "SBX_NUGET_LINK=" + filepath.Join(t.TempDir(), ".nuget"), "HOME=" + t.TempDir()}, env...)
+	cmd.Env = append([]string{"PATH=" + mounting.bin + string(os.PathListSeparator) + os.Getenv("PATH"), "SBX_PERSIST_FILE=" + file, "SBX_LINK_NUGET_LOG=" + filepath.Join(t.TempDir(), "link-nuget.log"), "SBX_NUGET_LINK=" + filepath.Join(t.TempDir(), ".nuget"), "HOME=" + t.TempDir(), noPidOneEnvironment(t)}, env...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("link-nuget: %v\n%s", err, out)
 	}
@@ -125,7 +127,7 @@ func runLinkNugetOn(t *testing.T, mounting fakeMounting, file, persisted string,
 func TestLinkNugetMakesTheHostsPackagesAReadOnlyFallback(t *testing.T) {
 	packages := t.TempDir()
 	got := runLinkNuget(t, "export NUGET_PACKAGES=/old/shared/packages\nexport KEEP=1\n", "SBX_HOST_NUGET_PACKAGES="+packages)
-	for _, want := range []string{"export NUGET_FALLBACK_PACKAGES=" + packages, "export RestoreIgnoreFailedSources=true", "export KEEP=1"} {
+	for _, want := range []string{"export NUGET_FALLBACK_PACKAGES=" + packages, "export RestoreIgnoreFailedSources=true", "export GenerateRuntimeConfigDevFile=true", "export KEEP=1"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("persistent file lacks %q:\n%s", want, got)
 		}
@@ -146,11 +148,11 @@ func TestLinkNugetIsIdempotent(t *testing.T) {
 
 func TestLinkNugetSharedKeepsPinningNugetPackagesToTheHost(t *testing.T) {
 	nuget := t.TempDir()
-	got := runLinkNuget(t, "export NUGET_FALLBACK_PACKAGES=/x\nexport RestoreIgnoreFailedSources=true\nexport VIBE_NUGET_OVERLAY=1\n", "SBX_HOST_NUGET="+nuget)
+	got := runLinkNuget(t, "export NUGET_FALLBACK_PACKAGES=/x\nexport RestoreIgnoreFailedSources=true\nexport GenerateRuntimeConfigDevFile=true\nexport VIBE_NUGET_OVERLAY=1\n", "SBX_HOST_NUGET="+nuget)
 	if !strings.Contains(got, "export NUGET_PACKAGES="+nuget+"/packages") {
 		t.Errorf("shared should pin NUGET_PACKAGES:\n%s", got)
 	}
-	if strings.Contains(got, "NUGET_FALLBACK_PACKAGES") || strings.Contains(got, "RestoreIgnoreFailedSources") || strings.Contains(got, "VIBE_NUGET_OVERLAY") {
+	if strings.Contains(got, "NUGET_FALLBACK_PACKAGES") || strings.Contains(got, "RestoreIgnoreFailedSources") || strings.Contains(got, "GenerateRuntimeConfigDevFile") || strings.Contains(got, "VIBE_NUGET_OVERLAY") {
 		t.Errorf("a switch from fallback leaves its settings behind:\n%s", got)
 	}
 }
@@ -217,7 +219,7 @@ func TestLinkNugetOverlaysTheHostsPackagesAtTheirOwnPath(t *testing.T) {
 	packages := t.TempDir()
 	base := filepath.Join(t.TempDir(), "vibe-nuget")
 	mounting := newFakeMounting(t, true)
-	got := runLinkNugetMounting(t, mounting, "export NUGET_FALLBACK_PACKAGES=/old\n", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_OVERLAY=1", "SBX_NUGET_UPPER_BASE="+base)
+	got := runLinkNugetMounting(t, mounting, "export NUGET_FALLBACK_PACKAGES=/old\nexport GenerateRuntimeConfigDevFile=true\n", "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_OVERLAY=1", "SBX_NUGET_UPPER_BASE="+base)
 	calls := mounting.mounts(t)
 	if len(calls) != 1 {
 		t.Fatalf("want one mount, got %q", calls)
@@ -232,7 +234,7 @@ func TestLinkNugetOverlaysTheHostsPackagesAtTheirOwnPath(t *testing.T) {
 			t.Errorf("persistent file lacks %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "NUGET_FALLBACK_PACKAGES") {
+	if strings.Contains(got, "NUGET_FALLBACK_PACKAGES") || strings.Contains(got, "GenerateRuntimeConfigDevFile") {
 		t.Errorf("with the overlay the cache is the one place, not a fallback:\n%s", got)
 	}
 	if info, err := os.Stat(filepath.Join(base, "upper")); err != nil || !info.IsDir() {
@@ -545,4 +547,186 @@ func TestLinkNugetReplacesAPersistentFileInAFolderOnlyRootMayWrite(t *testing.T)
 	if !strings.Contains(got, "export NUGET_FALLBACK_PACKAGES="+packages) || !strings.Contains(got, "export KEEP=1") {
 		t.Errorf("content:\n%s", got)
 	}
+}
+
+// noPidOneEnvironment is the default for a run: an environment of PID 1 with nothing in it, so that what the machine
+// running the tests was made with (a sandbox with this very feature) doesn't change what they find.
+func noPidOneEnvironment(t *testing.T) string {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "environ")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return "SBX_PROC1_ENVIRON=" + file
+}
+
+// sudo drops what a sandbox was made with (the session-start nudge runs on-start under it, and on-start runs this script):
+// it is in PID 1's environment, as start-clipboard finds its own.
+func pidOneEnvironment(t *testing.T, vars ...string) string {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "environ")
+	if err := os.WriteFile(file, []byte(strings.Join(vars, "\x00")+"\x00"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return "SBX_PROC1_ENVIRON=" + file
+}
+
+func TestLinkNugetFindsWhatTheSandboxWasMadeWithInPidOnesEnvironmentWhenSudoDroppedIt(t *testing.T) {
+	packages := t.TempDir()
+	got := runLinkNuget(t, "", pidOneEnvironment(t, "OTHER=1", "SBX_HOST_NUGET_PACKAGES="+packages))
+	if want := "export NUGET_FALLBACK_PACKAGES=" + packages; !strings.Contains(got, want) {
+		t.Errorf("persistent file lacks %q:\n%s", want, got)
+	}
+}
+
+func TestLinkNugetKeepsTheOverlayChoiceFromPidOnesEnvironment(t *testing.T) {
+	packages := t.TempDir()
+	mounting := newFakeMounting(t, true)
+	base := filepath.Join(t.TempDir(), "vibe-nuget")
+	got := runLinkNugetMounting(t, mounting, "", pidOneEnvironment(t, "SBX_HOST_NUGET_PACKAGES="+packages, "SBX_NUGET_OVERLAY=1"), "SBX_NUGET_UPPER_BASE="+base)
+	if !strings.Contains(got, "export NUGET_PACKAGES="+packages) || !strings.Contains(got, "export VIBE_NUGET_OVERLAY=1") {
+		t.Errorf("the overlay choice was lost:\n%s", got)
+	}
+}
+
+func TestLinkNugetPrefersItsOwnEnvironmentToPidOnes(t *testing.T) {
+	ours, theirs := t.TempDir(), t.TempDir()
+	got := runLinkNuget(t, "", "SBX_HOST_NUGET_PACKAGES="+ours, pidOneEnvironment(t, "SBX_HOST_NUGET_PACKAGES="+theirs))
+	if !strings.Contains(got, "export NUGET_FALLBACK_PACKAGES="+ours) || strings.Contains(got, theirs) {
+		t.Errorf("PID 1's environment overrode ours:\n%s", got)
+	}
+}
+
+func TestLinkNugetWithNothingInEitherEnvironmentStillChangesNothing(t *testing.T) {
+	if got := runLinkNuget(t, "export KEEP=1\n", pidOneEnvironment(t, "OTHER=1")); got != "export KEEP=1\n" {
+		t.Errorf("changed the file: %q", got)
+	}
+}
+
+// What a dotnet build is given of the machine's environment: little, so that what the machine running the tests exports (a
+// sandbox with this very feature exports GenerateRuntimeConfigDevFile, and the fallback folder) can't change what they find,
+// but what dotnet itself needs. TMPDIR is one: on macOS NuGet's first-run migration takes a named mutex under it, and with it
+// missing the build died with `lstat("", ...) == -1` (CI, macos-latest).
+func TestADotnetBuildGetsWhatDotnetNeedsOfTheEnvironmentAndNothingThatChangesWhatTheTestsFind(t *testing.T) {
+	t.Setenv("TMPDIR", "/the/tmp")
+	t.Setenv("DOTNET_ROOT", "/the/dotnet")
+	t.Setenv("GenerateRuntimeConfigDevFile", "true")
+	t.Setenv("NUGET_FALLBACK_PACKAGES", "/the/host/cache")
+	t.Setenv("NUGET_PACKAGES", "/the/own/cache")
+	got := strings.Join(dotnetBuildEnvironment("/the/home"), "\n")
+	for _, want := range []string{"TMPDIR=/the/tmp", "DOTNET_ROOT=/the/dotnet", "HOME=/the/home", "DOTNET_CLI_HOME=/the/home"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the environment lacks %q:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"GenerateRuntimeConfigDevFile", "NUGET_FALLBACK_PACKAGES", "NUGET_PACKAGES"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("the environment carries %q from the machine:\n%s", unwanted, got)
+		}
+	}
+}
+
+// exportedBy is the variables a persistent file exports, which is what every command the agent runs afterwards has.
+func exportedBy(persisted string) []string {
+	var vars []string
+	for _, line := range strings.Split(persisted, "\n") {
+		if assignment, ok := strings.CutPrefix(line, "export "); ok {
+			vars = append(vars, assignment)
+		}
+	}
+	return vars
+}
+
+// dotnetBuildEnvironment is the environment a dotnet build is run in: home as its home, and of the machine's own only what
+// dotnet needs to run at all.
+func dotnetBuildEnvironment(home string) []string {
+	needed := map[string]bool{"PATH": true, "TMPDIR": true, "TMP": true, "TEMP": true, "SYSTEMROOT": true}
+	var env []string
+	for _, assignment := range os.Environ() {
+		name, _, _ := strings.Cut(assignment, "=")
+		if needed[name] || strings.HasPrefix(name, "DOTNET_ROOT") {
+			env = append(env, assignment)
+		}
+	}
+	return append(env, "HOME="+home, "DOTNET_CLI_HOME="+home, "DOTNET_NOLOGO=1", "DOTNET_CLI_TELEMETRY_OPTOUT=1",
+		"DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1", "DOTNET_CLI_USE_MSBUILD_SERVER=0", "MSBUILDDISABLENODEREUSE=1")
+}
+
+// buildEmptyProject builds a console project with no packages in it, which needs no network, with env, and gives the
+// build's runtimeconfig.dev.json (empty when the SDK wrote none) and the path of the app it built.
+func buildEmptyProject(t *testing.T, env []string) (devJSON, app string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "app.csproj"), []byte(`<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net$(NETCoreAppMaximumVersion)</TargetFramework></PropertyGroup>
+</Project>
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Program.cs"), []byte("System.Console.WriteLine(\"ran\");\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Bounded, and with no build servers left running: one that outlives the build holds its output open, and would
+	// have the wait for the output (and a CI job) go on for as long as it lives.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "dotnet", "build", "-nologo", "-v", "q", "-nodeReuse:false", "-p:UseSharedCompilation=false")
+	cmd.Dir = dir
+	cmd.WaitDelay = 10 * time.Second
+	cmd.Env = append(dotnetBuildEnvironment(t.TempDir()), env...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("dotnet build: %v\n%s", err, out)
+	}
+	app = filepath.Join(dir, "bin", "Debug", "app.dll")
+	if built, _ := filepath.Glob(filepath.Join(dir, "bin", "*", "*", "app.dll")); len(built) == 1 {
+		app = built[0]
+	}
+	found, _ := filepath.Glob(filepath.Join(dir, "bin", "*", "*", "*.runtimeconfig.dev.json"))
+	if len(found) == 0 {
+		return "", app
+	}
+	data, err := os.ReadFile(found[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data), app
+}
+
+// The reason link-nuget sets GenerateRuntimeConfigDevFile, pinned against the SDK itself so that an SDK that changes how it
+// writes the file is noticed: code that finds a package's assemblies for itself (DependencyModel, which RazorLight uses)
+// never looks in a fallback folder, only in the probing paths the app runs with, which the SDK puts in
+// runtimeconfig.dev.json, and which it no longer writes unless asked. Skipped without a dotnet SDK.
+func TestWhatLinkNugetPersistsMakesTheSdkNameTheFallbackFolderAsAProbingPath(t *testing.T) {
+	if _, err := exec.LookPath("dotnet"); err != nil {
+		t.Skip("no dotnet SDK on PATH")
+	}
+	fallback := t.TempDir()
+	persisted := runLinkNuget(t, "", "SBX_HOST_NUGET_PACKAGES="+fallback)
+
+	t.Run("with what link-nuget persists", func(t *testing.T) {
+		devJSON, app := buildEmptyProject(t, exportedBy(persisted))
+		if !strings.Contains(devJSON, "additionalProbingPaths") || !strings.Contains(devJSON, fallback) {
+			t.Fatalf("runtimeconfig.dev.json doesn't name the fallback folder %s as a probing path:\n%s", fallback, devJSON)
+		}
+		// It also names the sandbox's own cache, which may not exist (on a host, never): the runtime must not mind.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		run := exec.CommandContext(ctx, "dotnet", app)
+		run.WaitDelay = 5 * time.Second
+		if out, err := run.CombinedOutput(); err != nil || !strings.Contains(string(out), "ran") {
+			t.Errorf("the app doesn't run with that probing path list: %v\n%s", err, out)
+		}
+	})
+
+	t.Run("without the setting, which is why it is set", func(t *testing.T) {
+		var without []string
+		for _, assignment := range exportedBy(persisted) {
+			if !strings.HasPrefix(assignment, "GenerateRuntimeConfigDevFile=") {
+				without = append(without, assignment)
+			}
+		}
+		if devJSON, _ := buildEmptyProject(t, without); devJSON != "" {
+			t.Errorf("the SDK writes runtimeconfig.dev.json without being asked, so the setting is no longer needed:\n%s", devJSON)
+		}
+	})
 }

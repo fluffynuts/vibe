@@ -966,6 +966,17 @@ else of `~/.nuget`: its config (private feeds' addresses and credentials) and it
 on the host, and the agent can't plant code in a package your own builds then run.
 
 - **Packages the host already has** are used as they are.
+- **Code that looks for packages itself.** NuGet and MSBuild use the fallback cache; code that finds a package's assemblies on its
+  own (`Microsoft.Extensions.DependencyModel`, which RazorLight uses to compile templates) doesn't look in a fallback folder, only in the
+  probing paths the app runs with, `NUGET_PACKAGES`, or `~/.nuget/packages`. For a package whose assemblies aren't copied to the output
+  that failed with "Cannot find compilation library location for package". The feature sets `GenerateRuntimeConfigDevFile=true` in the
+  sandbox, so the SDK writes the fallback cache into `runtimeconfig.dev.json` as a probing path (not with `nuget: overlay` or shared, where the cache is `NUGET_PACKAGES`).
+  The setting applies to every build in the sandbox, and each leaves a `bin/**/*.runtimeconfig.dev.json` in the workspace, which your
+  host sees: it names the sandbox's own cache (`/home/agent/.nuget/packages`, which a host doesn't have, and the runtime ignores a probing
+  path that isn't there) and your cache. It is a build output, not source: leave it to your `.gitignore` for `bin/`.
+  `link-nuget` runs at every session start, under `sudo`, which drops the variables the sandbox was made with, so it reads them from PID 1's
+  environment, where they stay. A changed script only reaches a sandbox by rebuilding it, whose first boot has the variables: what this
+  adds is a log that doesn't say "nothing to do" at each later start, and a first boot that failed being put right at the next.
 - **Public packages** (nuget.org) the sandbox restores itself, into a cache of its own, with your
   cache as a read-only fallback beside it. The files the sandbox's restore writes
   (`obj/project.assets.json`, `obj/*.nuget.g.props`) name the sandbox's cache, so your IDE needs
