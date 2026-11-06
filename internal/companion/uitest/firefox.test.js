@@ -1046,3 +1046,21 @@ test('a coloured block in the conversation has the syntax colours, in the light 
     } finally { await page.close() }
   }
 })
+
+test('New conversation stays at the right of the conversation bar, whatever the status beside it', async () => {
+  const page = await conversationPage(1000)
+  try {
+    // A status that nearly fills the bar: it fits on the line, the button does not fit beside it, so the button wraps onto a line of its own.
+    const measure = (nearlyFull) => page.evaluate((nearlyFull) => {
+      const button = document.getElementById('convo-new')
+      const status = document.getElementById('convo-status')
+      const bar = button.parentElement
+      status.textContent = nearlyFull ? 'The agent is compacting its context.' : ''
+      status.style.flex = 'none'
+      status.style.width = nearlyFull ? (bar.getBoundingClientRect().width - 10) + 'px' : ''
+      return Math.round(bar.getBoundingClientRect().right - button.getBoundingClientRect().right)
+    }, nearlyFull)
+    assert.ok(Math.abs(await measure(false)) <= 1, 'with no status, the button is not at the right edge')
+    assert.ok(Math.abs(await measure(true)) <= 1, 'with a status that fills the line, the button is not at the right edge')
+  } finally { await page.close() }
+})

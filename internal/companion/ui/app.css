@@ -218,6 +218,7 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .spacer { flex: 1; }
+#convo-new { margin-left: auto; }
 /* The title (with its state and what it is of) always has a line to itself, wrapping if it must;
    the buttons sit under it, to the right, nearer the middle of the screen than the edge. */
 .review-bar { flex-direction: column; align-items: stretch; gap: 6px; }
