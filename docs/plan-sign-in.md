@@ -237,3 +237,51 @@ no terminal sbx doesn't show its menu, which is why recognising the menu (and th
 all missed it. `signin.Docker` now reads "network policy has not been initialized" as NeedsPolicy, as it does the menu and "operation
 cancelled by user"; `policyWanted` is that, or a clean listing without the local-policy row (unless one was chosen here before),
 and any other failure is left alone.
+
+## Signed out while a sandbox is stopped (2026-11-06, from the user's own `sbx logout`)
+
+What `sbx` does when it is signed out and a sandbox has to be woken, as the user saw it on their host (vibe 0.x, this branch):
+
+- **`sbx logout` asks "Your running local sandboxes will be stopped. Proceed y/N?", stops them and the daemon.** So a page left open
+  comes back to a dead clipboard server and a stopped sandbox. What signs sbx out *without* a logout (expiry?) is not known.
+- **`sbx ls` signed out**: `error: not signed in to Docker` / `try: sbx login`, exit 1, at once (as found 2026-10-30).
+- **`sbx start` is not a command** (`error: sbx: unknown command: sbx start`). The only thing that wakes a stopped sandbox is
+  `sbx exec`, so `sbxrun.Start` was never starting anything itself.
+- **`sbx exec <sandbox> true` on a stopped sandbox, signed out, on a terminal**: prints `not signed in to Docker; starting the
+  sign-in flow…`, the agreement line, a one-time code and `https://login.docker.com/activate?user_code=<code>`, then
+  `Waiting for authentication...` and blocks. Once confirmed in the browser it prints `Signed in as <name>.` and
+  `✓ sandbox <name> — started`: the exec carries on and the sandbox starts.
+- **The same with no terminal (as vibe runs it for the page)**: no flow. It fails in under a second with exit 125 and
+  `error: not signed in to Docker` / `try: sbx login`.
+- **`sbx login` when already signed in**: `You are signed in [username: <name>]`, and then sits for a few seconds before it
+  exits (unexplained).
+- Before this was understood, the page's start waited out its whole 3 minutes with nothing said (a terminal-less flow it could
+  not answer, on the first guess; the real log says the exec failed fast, and what hid it was `sbx start` being unknown, whose
+  error was shown instead), and the Sign-in notice was only looked for at page load, on the Admin tab, and after an
+  `authentication_failed`.
+
+### Built (`feat/signed-out-start`)
+
+1. **Waking reads sbx's output as it comes** (`internal/sbxrun/wake.go`): a docker.com address with a `user_code`
+   (`signin.DeviceLink`) ends the wait with a `NotSignedInError` carrying the address and code; a failed exec whose output names
+   `sbx login` is the same, without them. Both go by the shape or the command, not sbx's words, which it may translate.
+2. **A failure nothing recognises asks `sbx login` as a last resort** (not a probe: signed out it starts a flow and leaves a
+   code to expire, so at most once in two minutes): an address in its output is signed out, none (it finishes) says signing in
+   isn't the cause. Not yet seen against a real signed-out sbx with no terminal; `sbx login </dev/null` signed out would show
+   whether it prints the flow.
+3. **The page**: a start that can't happen says sbx is signed out (with the address and code when there are any) and points to
+   the Admin tab; any other failure is in sbx's own words with the path of `~/.vibe/sbx-wake.log`; a failed turn makes the
+   page look at the sign-in again. That log keeps what sbx printed for each wake that failed or took over 5 s (256 KB, then it
+   starts again).
+4. **`vibe --list` and `--info`** offer `sbx login` on the terminal when sbx says it is signed out, and run again once it
+   took. Reacting to the failure, not looking first: the commands that start or make a sandbox still look first
+   (`ensureSbxReady`).
+
+### Left
+
+- Letting the terminal flow finish for the page: signed out on a terminal, the exec's own flow starts the sandbox once
+  confirmed. The page has no terminal, so it cannot.
+- A language-neutral signal for `sbx ls` failing (`signin.Docker` still matches "not signed in"; a rewording degrades it to
+  "unknown", which is the safe direction).
+- What signs sbx out other than `sbx logout`; whether the few seconds `sbx login` spends after "You are signed in" matter to
+  the Sign-in card's button.
