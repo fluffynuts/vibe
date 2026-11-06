@@ -278,3 +278,29 @@ func TestACommandThatSucceedsIsNotFailedByAnythingItLeftHoldingItsOutput(t *test
 		t.Errorf("it took %v to be reported ended", took)
 	}
 }
+
+// A process that is stopped while it is printing without end must still be reaped: its output is read and dropped once nobody
+// wants it, or the copy of it into the pipe blocks for good and Done never says it has ended.
+func TestAProcessStoppedWhilePrintingWithoutEndStillEnds(t *testing.T) {
+	sbxtest.OnPath(t, "exec yes 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'\n")
+	p, err := StartLogin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for line := range p.Lines() {
+		if seen += len(line); seen > 70000 {
+			break
+		}
+	}
+	p.Stop()
+	go func() {
+		for range p.Lines() {
+		}
+	}()
+	select {
+	case <-p.Done():
+	case <-time.After(15 * time.Second):
+		t.Fatal("a stopped process never ended")
+	}
+}
