@@ -1414,6 +1414,10 @@ that `pwsh` is there and how to run it (`pwsh -NoProfile -Command '...'`, `pwsh 
   every time. To move to another, change `VERSION` and both checksums (each release publishes them as `hashes.sha256`);
   to do it for yourself without waiting for a release of vibe, copy the feature to `~/.vibe/library/pwsh/` and change it
   there (see above).
+- **ICU is installed first:** PowerShell is .NET, which stops at start without the ICU library ("Couldn't find a valid
+  ICU package"), and the image doesn't promise it. The step installs the newest `libicu<version>` the image's apt has
+  (`libicu76` on Debian 13), whatever the PowerShell release. Without it, the log said PowerShell "won't run" and the
+  step took it away again.
 - **The sandbox may reach** `github.com`, `objects.githubusercontent.com` and `release-assets.githubusercontent.com`:
   what the download redirects to.
 - **A step that fails is a warning, not a failed sandbox:** it is written to `/tmp/sbx-setup.log` in the sandbox, which
