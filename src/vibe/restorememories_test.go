@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"vibe/internal/claudetheme"
 	"vibe/internal/cliargs"
 	agentmem "vibe/internal/memory"
 	"vibe/internal/sbxtest"
@@ -96,5 +97,126 @@ func TestARebuildThatFailsToMakeTheSandboxSaysWhereTheMemoriesAreAndThatTheNextR
 		if !strings.Contains(notes, want) {
 			t.Errorf("the notes don't say %q:\n%s", want, notes)
 		}
+	}
+}
+
+// memorySbx stands in for sbx: it logs every call (the file it returns), lists the sandboxes in rows ("box running\\n"), and says
+// a sandbox it is asked has memories in it.
+func memorySbx(t *testing.T, rows string) string {
+	t.Helper()
+	dir := sbxtest.OnPath(t, "echo \"$*\" >>\"$(dirname \"$0\")/calls\"\n"+
+		"[ \"$1\" = ls ] && [ \"$2\" = --quiet ] && { printf '"+rows+"' | cut -d' ' -f1; exit 0; }\n"+
+		sbxLsJSON(rows)+
+		"case \"$*\" in *' find '*) echo '"+agentmem.AgentPath+"/x'; exit 0;; esac\n"+
+		"exit 0\n")
+	return filepath.Join(dir, "calls")
+}
+
+// answeringEveryQuestion makes vibe think there is a terminal, and answers each yes/no question with answer ("y" or "n").
+func answeringEveryQuestion(t *testing.T, answer string) {
+	t.Helper()
+	keys := filepath.Join(t.TempDir(), "keys")
+	if err := os.WriteFile(keys, []byte(strings.Repeat(answer+"\n", 64)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := openTerminalInput
+	openTerminalInput = func() (*os.File, func(), bool) {
+		f, err := os.Open(keys)
+		return f, func() { f.Close() }, err == nil
+	}
+	t.Cleanup(func() { openTerminalInput = old })
+}
+
+// rebuiltAtATerminalAnswering rebuilds a running Claude sandbox "box" whose memory store holds a memory, the user answering every
+// yes/no question with answer: among them, whether to preserve the sandbox's memories. It returns the sbx calls, vibe's notes and
+// the store.
+func rebuiltAtATerminalAnswering(t *testing.T, answer string) (calls, notes, store string) {
+	t.Helper()
+	answerable(t)
+	answeringEveryQuestion(t, answer)
+	var startedOn string
+	var asked bool
+	answeringAgent(t, "claude", &startedOn, &asked)
+	lay := updateLayout(t)
+	inst := sandboxRecord(t, lay, "box", "p").inst
+	inst.Agent = "claude"
+	if err := state.Save(lay.Home, inst); err != nil {
+		t.Fatal(err)
+	}
+	// With a theme on record, Claude doesn't ask which one: nothing can be drawn on here.
+	if err := claudetheme.SaveToProfile(lay.ProfileDir("p"), claudetheme.Default); err != nil {
+		t.Fatal(err)
+	}
+	store = agentmem.StoreFor(lay.Home, "", "box")
+	writeFile(t, filepath.Join(store, "-proj", "memory", "MEMORY.md"), "- last session's memory\n")
+	log := memorySbx(t, "box running\\n")
+	got := notesOf(func() {
+		if err := rebuildSandbox(context.Background(), lay, cliargs.Args{}, "box", inst.Target, true, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	data, _ := os.ReadFile(log)
+	return string(data), strings.Join(got, "\n"), store
+}
+
+// The store is kept up to date by the copy at the end of each session, so it holds the sandbox's memories whether or not the user
+// agrees to preserve them: saying no has to mean the new sandbox starts without them.
+func TestARebuildWhereTheUserDeclinesToPreserveMemoriesRestoresNone(t *testing.T) {
+	calls, notes, store := rebuiltAtATerminalAnswering(t, "n")
+	if !strings.Contains(notes, "removing sandbox 'box'") {
+		t.Fatalf("the sandbox wasn't rebuilt:\n%s", notes)
+	}
+	if restore := "cp -a " + store + "/. " + agentmem.AgentPath; strings.Contains(calls, restore) || strings.Contains(notes, "restored") {
+		t.Errorf("memories were put into the new sandbox after the user said no:\n%s\n%s", calls, notes)
+	}
+	if !strings.Contains(notes, "not preserving the memories in 'box'") {
+		t.Errorf("vibe didn't say the new sandbox starts without them:\n%s", notes)
+	}
+	if _, err := os.Stat(filepath.Join(store, "-proj", "memory", "MEMORY.md")); err != nil {
+		t.Errorf("declining took what the store held away: %v", err)
+	}
+}
+
+func TestARebuildWhereTheUserAgreesToPreserveMemoriesSavesThemAndRestoresThem(t *testing.T) {
+	calls, notes, store := rebuiltAtATerminalAnswering(t, "y")
+	for what, want := range map[string]string{
+		"saved out":   "cp -a " + agentmem.AgentPath + "/. " + store + "/",
+		"put back in": "cp -a " + store + "/. " + agentmem.AgentPath + "/",
+	} {
+		if !strings.Contains(calls, want) {
+			t.Errorf("the memories weren't %s (%q):\n%s", what, want, calls)
+		}
+	}
+	if !strings.Contains(notes, "memories restored from "+store) {
+		t.Errorf("the memories coming back weren't said:\n%s", notes)
+	}
+}
+
+// What the note after a failed make promises: with a record, no sandbox and a store holding memories, plain vibe makes the
+// sandbox and puts them in.
+func TestPlainVibeInAFolderWhoseSandboxIsGoneMakesItAndRestoresItsMemories(t *testing.T) {
+	lay := updateLayout(t)
+	inst := sandboxRecord(t, lay, "box", "p").inst
+	inst.Agent = "claude"
+	if err := state.Save(lay.Home, inst); err != nil {
+		t.Fatal(err)
+	}
+	store := agentmem.StoreFor(lay.Home, "", "box")
+	writeFile(t, filepath.Join(store, "-proj", "memory", "MEMORY.md"), "- saved before the sandbox went\n")
+	log := memorySbx(t, "")
+
+	var err error
+	notes := strings.Join(notesOf(func() {
+		err = doCreateOrAttach(lay, cliargs.Args{Force: true, NoStart: true, Profile: "p"}, "box", inst.Target)
+	}), "\n")
+	if err != nil {
+		t.Fatalf("doCreateOrAttach = %v\n%s", err, notes)
+	}
+	calls, _ := os.ReadFile(log)
+	if !strings.Contains(string(calls), "create") {
+		t.Errorf("no sandbox was made:\n%s\n%s", calls, notes)
+	}
+	if want := "cp -a " + store + "/. " + agentmem.AgentPath + "/"; !strings.Contains(string(calls), want) || !strings.Contains(notes, "memories restored from "+store) {
+		t.Errorf("the memories weren't put into the new sandbox (%q):\n%s\n%s", want, calls, notes)
 	}
 }

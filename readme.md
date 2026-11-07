@@ -1485,7 +1485,8 @@ state:
   They are also copied back out each time a session ends, so the host copy keeps up. Ctrl-C
   during that copy asks before quitting. Answering yes puts back the memories the store held
   before the copy started, so an interrupted copy never leaves a mix of old and new ones.
-  Whenever a sandbox is made, what its store holds is copied into it, whichever run saved it: a
+  Whenever a sandbox is made, what its store holds is copied into it, whichever run saved it (unless you
+  said no to "Preserve agent memories?" on a rebuild, which starts the new sandbox without them): a
   rebuild that saved the memories and removed the sandbox, then failed to make the new one (the
   image fetch can fail), says the memories are safe, and the next run makes the sandbox and puts them
   back. (`vibe --delete` removes the store with the sandbox.)

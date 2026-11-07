@@ -103,7 +103,7 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 	if err != nil {
 		return err
 	}
-	if err := createSandbox(context.Background(), lay, name, target, profile, doc, merged, !args.Force, timezone.Host(), !args.Force, "", git, !args.Force); err != nil {
+	if err := createSandbox(context.Background(), lay, name, target, profile, doc, merged, !args.Force, timezone.Host(), !args.Force, true, "", git, !args.Force); err != nil {
 		return err
 	}
 	return finish(lay, args, name)
@@ -201,8 +201,9 @@ func setClaudeTheme(lay layout.Layout, profile string, doc kitspec.Doc, fromSand
 // sandbox gets, starting on the memory and cpus settings; without it, those
 // settings are used as long as this machine can give them. git, when not nil, is the GitHub token the agent may
 // push with. sbxMayAsk lets sbx ask on the terminal; without it, a question
-// from sbx fails the create, for when nobody is there to answer.
-func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile string, doc kitspec.Doc, merged settings.Settings, askResources bool, zone string, askZone bool, memoryStore string, git *gitAccess, sbxMayAsk bool) error {
+// from sbx fails the create, for when nobody is there to answer. restoreMemories says the memories in the sandbox's store are to be
+// put into it (false once the user has declined to preserve them).
+func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile string, doc kitspec.Doc, merged settings.Settings, askResources bool, zone string, askZone, restoreMemories bool, memoryStore string, git *gitAccess, sbxMayAsk bool) error {
 	vibeHome := lay.Home
 	// Every sandbox's agent is told where to look for its rules for
 	// pushing, since a token can be given to a sandbox after it's made.
@@ -323,10 +324,11 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 		note("WARNING: could not set the sandbox's timezone: %s", err)
 	}
 
-	// Whatever the store holds, not only what this run backed up: a rebuild that saved the memories, removed the sandbox and then
+	// What the store holds, not only what this run backed up: a rebuild that saved the memories, removed the sandbox and then
 	// failed to make the new one (the image fetch can) leaves them in the store, and the run that retries finds no sandbox to
-	// back up, so nothing in it knows they are waiting.
-	if agentmem.Supported(agent) {
+	// back up, so nothing in it knows they are waiting. Unless the user said no to preserving them: the store is kept up to date
+	// at the end of every session, so it holds them all the same.
+	if restoreMemories && agentmem.Supported(agent) {
 		if restored, err := agentmem.Restore(name, memoryStore); err != nil {
 			note("WARNING: %s", err)
 		} else if restored {
