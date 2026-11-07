@@ -33,7 +33,7 @@ func runPnpmInstall(t *testing.T, stand pnpmStand) (calls, log string) {
 	if stand.enableFails {
 		corepack += "exit 1\n"
 	}
-	npm := "#!/bin/sh\necho \"npm $*\" >>" + callsFile + "\n" +
+	npm := "#!/bin/sh\necho \"npm $*\" >>" + callsFile + "\necho \"npm-cache [$npm_config_cache]\" >>" + callsFile + "\n" +
 		"case \"$1\" in\n  prefix) echo " + filepath.Join(dir, "global") + "; exit 0 ;;\nesac\n"
 	if stand.npmFails {
 		npm += "exit 1\n"
@@ -121,5 +121,18 @@ func TestThePnpmInstallStepSaysWhenThereIsNoNode(t *testing.T) {
 	_, log := runPnpmInstall(t, pnpmStand{})
 	if !strings.Contains(log, "WARN: node and npm aren't installed") {
 		t.Errorf("log: %q", log)
+	}
+}
+
+// The step runs as root with the agent's home: npm with its default cache would fill ~/.npm with root's files, and the agent's
+// own npm install then fails with EACCES (seen in a re-composed sandbox: this step ran after the Playwright one had given
+// the cache back to the agent, and took it again).
+func TestThePnpmInstallStepKeepsRootsNpmCacheOutOfTheAgentsHome(t *testing.T) {
+	calls, _ := runPnpmInstall(t, pnpmStand{haveNode: true, haveNpm: true})
+	if !strings.Contains(calls, "npm install -g corepack\n") {
+		t.Fatalf("npm wasn't run to install corepack: %q", calls)
+	}
+	if !strings.Contains(calls, "npm-cache [") || strings.Contains(calls, "npm-cache []") || strings.Contains(calls, "/.npm") {
+		t.Errorf("npm was run with no cache of its own (or with ~/.npm): %q", calls)
 	}
 }

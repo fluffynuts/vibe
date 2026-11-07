@@ -19,6 +19,11 @@ LOG="${PW_LOG:-/tmp/sbx-setup.log}"
 
 echo "--- installing Playwright $(date -Is)" >>"$LOG"
 
+# This runs as root with the agent's home: npm's default cache, ~/.npm, would be filled with root's files, and the agent's own
+# `npm install` in a project would fail with EACCES. Root's npm has a cache of its own (the same one every such step uses).
+npm_config_cache="${TMPDIR:-/tmp}/npm-cache-root"
+export npm_config_cache
+
 apt_install() {
   sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 "$@" </dev/null >>"$LOG" 2>&1
 }
@@ -74,12 +79,6 @@ install_playwright() {
     find "$FOLDER" -type d -exec chmod a+rwx {} +
   fi
   chmod -R a+rX "$FOLDER"
-
-  # This runs as root with the agent's home, so the npm cache it filled there is root's: the agent's own `npm install`,
-  # in a project, would then fail with EACCES.
-  if [ -n "$owner" ] && [ -d "$HOME/.npm" ]; then
-    chown -R "$owner:" "$HOME/.npm" 2>/dev/null || echo "WARN: couldn't give $HOME/.npm to $owner: npm needs --cache to install as them" >>"$LOG"
-  fi
 
   if [ "$libraries_status" -eq 0 ] && [ "$browsers_status" -eq 0 ]; then
     cat >"$work/check.js" <<'CHECK'

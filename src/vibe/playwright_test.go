@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -24,6 +25,7 @@ func playwrightScriptPath(t *testing.T) string {
 
 const fakeNpm = `#!/bin/sh
 echo "npm $*" >> "$FAKE_CALLS"
+echo "npm-cache [$npm_config_cache]" >> "$FAKE_CALLS"
 case "$1 $2" in
   "prefix -g") echo "$FAKE_PREFIX"; exit 0 ;;
   "root -g") echo "$FAKE_PREFIX/lib/node_modules"; exit 0 ;;
@@ -458,25 +460,23 @@ func TestAnAptThatCannotInstallNodeIsSaidAndNothingElseIsRun(t *testing.T) {
 	}
 }
 
-// The script runs as root with the agent's home, so the npm cache it fills there (~/.npm) is root's: the agent's own
-// npm install, in a project, then fails with EACCES. Seen in a re-composed sandbox, where every npm needed --cache.
-func TestTheNpmCacheTheInstallLeavesInTheAgentsHomeIsTheAgentsToo(t *testing.T) {
+// The script runs as root with the agent's home, so an npm using its default cache fills ~/.npm with root's files, and the
+// agent's own npm install, in a project, fails with EACCES. Seen in a re-composed sandbox, where every npm needed --cache.
+// Giving ~/.npm to the agent after was not enough: the next step to run npm as root (pnpm's) filled it again. So root's npm
+// has a cache of its own, and ~/.npm is never touched, whatever runs before or after.
+func TestRootsNpmKeepsItsCacheOutOfTheAgentsHome(t *testing.T) {
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".npm", "_cacache"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	run := runPlaywrightInstall(t, false, "FAKE_ROOT=1", "HOME="+home)
 	if run.exit != nil {
 		t.Fatalf("the script failed: %v\n%s", run.exit, run.log)
 	}
-	if want := "chown -R agent: " + filepath.Join(home, ".npm"); !run.called(want) {
-		t.Errorf("the npm cache wasn't given to the agent (%q); calls:\n%s", want, run.calls)
+	caches := regexp.MustCompile(`npm-cache \[([^\]]*)\]`).FindAllStringSubmatch(run.calls, -1)
+	if len(caches) == 0 {
+		t.Fatalf("npm was never run; calls:\n%s", run.calls)
 	}
-}
-
-func TestNoNpmCacheInTheHomeIsNothingToGiveAway(t *testing.T) {
-	run := runPlaywrightInstall(t, false, "FAKE_ROOT=1", "HOME="+t.TempDir())
-	if run.called(".npm") {
-		t.Errorf("something was done to an npm cache that isn't there; calls:\n%s", run.calls)
+	for _, cache := range caches {
+		if cache[1] == "" || strings.HasPrefix(cache[1], home) || strings.Contains(cache[1], "/.npm") {
+			t.Errorf("npm ran with the cache %q, which is the agent's home or npm's default; calls:\n%s", cache[1], run.calls)
+		}
 	}
 }

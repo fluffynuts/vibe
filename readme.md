@@ -1455,7 +1455,7 @@ download one". It **adds time to building the sandbox**: a few minutes, the syst
   (`npx playwright install firefox`), which the sandbox's network allows. At the latest version, the installed browsers
   are used as they are. The version installed is the latest *at the time the sandbox is built*, so a rebuild may pick a
   newer one, and the log says which.
-- **The npm cache** the install fills in the agent's home (`~/.npm`) is given to the agent, so that its own `npm install` works.
+- **The npm cache:** the install runs npm as root, with a cache of its own (not `~/.npm`, in the agent's home, which would then be root's and make the agent's own `npm install` fail with EACCES). The `pnpm` feature's step does the same, and a test requires it of every install step that runs npm.
 - **The sandbox may reach** `registry.npmjs.org`, `cdn.playwright.dev` (where the current Chromium is offered from, and
   only from) and `playwright.download.prss.microsoft.com` (Firefox's fallback), the `azureedge.net` hosts older versions
   of Playwright download from (`playwright`, `playwright-akamai` and `playwright-verizon`). The libraries, and Node and
