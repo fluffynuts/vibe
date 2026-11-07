@@ -11,7 +11,7 @@ import (
 func TestThePagesEmojiNames(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("node isn't installed: the page's emoji tests need it")
+		t.Fatal(nodeMissing("the page's emoji"))
 	}
 	out, err := exec.Command(node, "--test", filepath.Join("uitest", "emoji.test.js")).CombinedOutput()
 	if err != nil {

@@ -28,6 +28,12 @@ $(BINARY): $(SOURCES) $(EMBEDDED) go.mod go.sum VERSION
 test: ## run tests
 	$(GO) test ./...
 
+# What the page's tests need, which they fail without: jsdom (from the lockfile) and the Firefox that the Playwright
+# pinned in package.json runs. Quick when both are there. Node (22.22 or later) is not installed by this.
+.PHONY: test-deps
+test-deps: ## install what the page's tests need: jsdom, and the Firefox for the pinned Playwright
+	cd internal/companion/uitest && npm ci && npx playwright install firefox
+
 .PHONY: vet
 vet: ## run go vet
 	$(GO) vet ./...

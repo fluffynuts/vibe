@@ -252,6 +252,12 @@ do what they say). Without make, `./make.sh` (bash) and `./make.ps1` (PowerShell
 targets. The binary finds its bundle relative to its own location, so leave it where it is built
 and put it on `PATH` with a symlink — or use `vibe --install`.
 
+The companion page's tests (jsdom, and a real Firefox) fail rather than skip when what they need isn't there, because a
+skipped test passes: `make test-deps` (or `./make.sh test-deps`, `./make.ps1 test-deps`) installs jsdom from the lockfile and
+the Firefox that the pinned Playwright runs (it needs Node 22.22, 24.15 or 26 and later: it doesn't install Node). They also
+fail when what is installed isn't what `uitest/package.json` pins, since `node_modules` doesn't follow a branch: run it again
+after switching to one that pins other versions.
+
 `./tools/check-apt-packages.sh`, run **inside a sandbox** (whose apt is the image's: Debian and Docker Hardened
 Images; the CI machines' is Ubuntu's), lists the apt packages the library's install scripts ask for and says which the
 image doesn't have: the `mysql-server` mistake, found before a build instead of during one. It reads the names the
@@ -1449,6 +1455,7 @@ download one". It **adds time to building the sandbox**: a few minutes, the syst
   (`npx playwright install firefox`), which the sandbox's network allows. At the latest version, the installed browsers
   are used as they are. The version installed is the latest *at the time the sandbox is built*, so a rebuild may pick a
   newer one, and the log says which.
+- **The npm cache** the install fills in the agent's home (`~/.npm`) is given to the agent, so that its own `npm install` works.
 - **The sandbox may reach** `registry.npmjs.org`, `cdn.playwright.dev` (where the current Chromium is offered from, and
   only from) and `playwright.download.prss.microsoft.com` (Firefox's fallback), the `azureedge.net` hosts older versions
   of Playwright download from (`playwright`, `playwright-akamai` and `playwright-verizon`). The libraries, and Node and

@@ -11,7 +11,7 @@ import (
 func TestTheProfilesTabsTicks(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("node isn't installed: the Profiles tab's tests need it")
+		t.Fatal(nodeMissing("the Profiles tab's"))
 	}
 	out, err := exec.Command(node, "--test", filepath.Join("uitest", "manage.test.js")).CombinedOutput()
 	if err != nil {

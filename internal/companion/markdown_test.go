@@ -11,7 +11,7 @@ import (
 func TestThePagesMarkdownReader(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("node isn't installed: the page's Markdown tests need it")
+		t.Fatal(nodeMissing("the page's Markdown"))
 	}
 	out, err := exec.Command(node, "--test", filepath.Join("uitest", "markdown.test.js")).CombinedOutput()
 	if err != nil {
