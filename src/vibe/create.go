@@ -103,7 +103,7 @@ func doCreateOrAttach(lay layout.Layout, args cliargs.Args, name, target string)
 	if err != nil {
 		return err
 	}
-	if err := createSandbox(context.Background(), lay, name, target, profile, doc, merged, !args.Force, timezone.Host(), !args.Force, false, "", git, !args.Force); err != nil {
+	if err := createSandbox(context.Background(), lay, name, target, profile, doc, merged, !args.Force, timezone.Host(), !args.Force, "", git, !args.Force); err != nil {
 		return err
 	}
 	return finish(lay, args, name)
@@ -202,7 +202,7 @@ func setClaudeTheme(lay layout.Layout, profile string, doc kitspec.Doc, fromSand
 // settings are used as long as this machine can give them. git, when not nil, is the GitHub token the agent may
 // push with. sbxMayAsk lets sbx ask on the terminal; without it, a question
 // from sbx fails the create, for when nobody is there to answer.
-func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile string, doc kitspec.Doc, merged settings.Settings, askResources bool, zone string, askZone, restoreAfterCreate bool, memoryStore string, git *gitAccess, sbxMayAsk bool) error {
+func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile string, doc kitspec.Doc, merged settings.Settings, askResources bool, zone string, askZone bool, memoryStore string, git *gitAccess, sbxMayAsk bool) error {
 	vibeHome := lay.Home
 	// Every sandbox's agent is told where to look for its rules for
 	// pushing, since a token can be given to a sandbox after it's made.
@@ -323,7 +323,10 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 		note("WARNING: could not set the sandbox's timezone: %s", err)
 	}
 
-	if restoreAfterCreate {
+	// Whatever the store holds, not only what this run backed up: a rebuild that saved the memories, removed the sandbox and then
+	// failed to make the new one (the image fetch can) leaves them in the store, and the run that retries finds no sandbox to
+	// back up, so nothing in it knows they are waiting.
+	if agentmem.Supported(agent) {
 		if restored, err := agentmem.Restore(name, memoryStore); err != nil {
 			note("WARNING: %s", err)
 		} else if restored {
