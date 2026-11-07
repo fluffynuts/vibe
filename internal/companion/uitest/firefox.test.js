@@ -533,6 +533,9 @@ test('a prompt that has scrolled puts the emoji list at the visible caret', asyn
   } finally { await page.close() }
 })
 
+// The browser's own undo, which the page leaves alone: Ctrl+Z, but Cmd+Z on a Mac (where Control+z does nothing: macOS CI failed all four).
+const undo = 'ControlOrMeta'
+
 // Picking is an edit like any other: Ctrl+Z gives back what was typed, as it does for a person's own typing.
 test('Ctrl+Z after picking an emoji gives back the name that was typed', async () => {
   const page = await promptPage(1200)
@@ -542,7 +545,7 @@ test('Ctrl+Z after picking an emoji gives back the name that was typed', async (
     await page.waitForSelector('#convo-emoji:not([hidden]) li')
     await page.keyboard.press('Tab')
     assert.equal(await page.inputValue('#convo-input'), 'hello 🚀 ')
-    await page.keyboard.press('Control+z')
+    await page.keyboard.press(`${undo}+z`)
     assert.equal(await page.inputValue('#convo-input'), 'hello :roc')
   } finally { await page.close() }
 })
@@ -553,7 +556,7 @@ test('Ctrl+Z after a :name: turns into its emoji gives back the name', async () 
     await page.focus('#convo-input')
     await page.keyboard.type('nice :tada:')
     assert.equal(await page.inputValue('#convo-input'), 'nice 🎉')
-    await page.keyboard.press('Control+z')
+    await page.keyboard.press(`${undo}+z`)
     assert.equal(await page.inputValue('#convo-input'), 'nice :tada:')
   } finally { await page.close() }
 })
@@ -569,7 +572,7 @@ test('Ctrl+Z after picking a slash command gives back what was typed', async () 
     await page.waitForSelector('#convo-commands:not([hidden]) li')
     await page.keyboard.press('Tab')
     assert.equal(await page.inputValue('#convo-input'), '/review ')
-    await page.keyboard.press('Control+z')
+    await page.keyboard.press(`${undo}+z`)
     assert.equal(await page.inputValue('#convo-input'), '/rev')
   } finally { await page.close() }
 })
@@ -581,7 +584,7 @@ test('typing an emoticon and a space gives the emoji, and Ctrl+Z gives the emoti
     await page.focus('#convo-input')
     await page.keyboard.type('fine :) ')
     assert.equal(await page.inputValue('#convo-input'), 'fine 🙂 ')
-    await page.keyboard.press('Control+z')
+    await page.keyboard.press(`${undo}+z`)
     assert.equal(await page.inputValue('#convo-input'), 'fine :) ')
   } finally { await page.close() }
 })
