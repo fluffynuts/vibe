@@ -169,7 +169,9 @@ func runPlaywrightInstallWith(t *testing.T, setup playwrightSetup, env ...string
 	cmd.Env = append(os.Environ(),
 		"PATH="+bin,
 		"FAKE_BIN="+bin, "FAKE_CALLS="+run.calls, "FAKE_MARKS="+filepath.Join(dir, "marks"), "FAKE_PREFIX="+run.prefix, "FAKE_PLAYWRIGHT="+filepath.Join(bin, "playwright-source"),
-		"PW_BROWSERS_PATH="+run.browsers, "PW_LOG="+logFile)
+		"PW_BROWSERS_PATH="+run.browsers, "PW_LOG="+logFile,
+		// Its own, so that what the script does to ~/.npm never depends on the machine the tests run on.
+		"HOME="+filepath.Join(dir, "home"))
 	cmd.Env = append(cmd.Env, env...)
 	run.exit = cmd.Run()
 	calls, _ := os.ReadFile(run.calls)
@@ -453,5 +455,28 @@ func TestAnAptThatCannotInstallNodeIsSaidAndNothingElseIsRun(t *testing.T) {
 	}
 	if !strings.Contains(run.log, "WARN: node and npm aren't installed") {
 		t.Errorf("the log doesn't say why:\n%s", run.log)
+	}
+}
+
+// The script runs as root with the agent's home, so the npm cache it fills there (~/.npm) is root's: the agent's own
+// npm install, in a project, then fails with EACCES. Seen in a re-composed sandbox, where every npm needed --cache.
+func TestTheNpmCacheTheInstallLeavesInTheAgentsHomeIsTheAgentsToo(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".npm", "_cacache"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := runPlaywrightInstall(t, false, "FAKE_ROOT=1", "HOME="+home)
+	if run.exit != nil {
+		t.Fatalf("the script failed: %v\n%s", run.exit, run.log)
+	}
+	if want := "chown -R agent: " + filepath.Join(home, ".npm"); !run.called(want) {
+		t.Errorf("the npm cache wasn't given to the agent (%q); calls:\n%s", want, run.calls)
+	}
+}
+
+func TestNoNpmCacheInTheHomeIsNothingToGiveAway(t *testing.T) {
+	run := runPlaywrightInstall(t, false, "FAKE_ROOT=1", "HOME="+t.TempDir())
+	if run.called(".npm") {
+		t.Errorf("something was done to an npm cache that isn't there; calls:\n%s", run.calls)
 	}
 }

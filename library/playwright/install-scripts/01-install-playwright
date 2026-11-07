@@ -75,6 +75,12 @@ install_playwright() {
   fi
   chmod -R a+rX "$FOLDER"
 
+  # This runs as root with the agent's home, so the npm cache it filled there is root's: the agent's own `npm install`,
+  # in a project, would then fail with EACCES.
+  if [ -n "$owner" ] && [ -d "$HOME/.npm" ]; then
+    chown -R "$owner:" "$HOME/.npm" 2>/dev/null || echo "WARN: couldn't give $HOME/.npm to $owner: npm needs --cache to install as them" >>"$LOG"
+  fi
+
   if [ "$libraries_status" -eq 0 ] && [ "$browsers_status" -eq 0 ]; then
     cat >"$work/check.js" <<'CHECK'
 const { chromium, firefox } = require("playwright")
