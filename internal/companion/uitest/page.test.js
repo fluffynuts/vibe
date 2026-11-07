@@ -892,6 +892,8 @@ test('the prompt looks focused wherever typing on the Conversation tab would lan
     assert.ok(looksFocused(), 'on opening the tab')
     p.$('convo-new').focus()
     assert.ok(looksFocused(), 'with a button focused, which typing goes past')
+    // Opened as a user does: a browser (and jsdom since 25) won't focus a box inside the find bar while it is hidden.
+    await p.click('convo-find-open')
     p.$('convo-find-input').focus()
     assert.ok(!looksFocused(), 'with another text box focused, which takes the typing itself')
     p.$('convo-find-input').blur()

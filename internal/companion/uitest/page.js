@@ -25,7 +25,7 @@ async function openPage({ routes = {}, storage = {}, settled = true, seeing = fa
   const unimplemented = []
   const errors = []
   const virtualConsole = new VirtualConsole()
-  virtualConsole.sendTo(console, { omitJSDOMErrors: true })
+  virtualConsole.forwardTo(console, { jsdomErrors: 'none' })
   virtualConsole.on('jsdomError', (e) => {
     if (/Not implemented/.test(e.message)) {
       unimplemented.push(e.message)
