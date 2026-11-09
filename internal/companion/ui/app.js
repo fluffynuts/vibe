@@ -1543,6 +1543,7 @@
       card = $('review-thread-' + id)
     }
     if (!card) return
+    hintIfBehind(id)
     if (card.closest('[hidden]')) { toast("That comment is in a file you've ticked as viewed: untick it to see it."); return }
     const i = arrowCards().indexOf(card)
     if (i >= 0) { reviewView.at = i; reviewView.steering = true; countComments() }
@@ -2583,6 +2584,24 @@
     $('review-refresh').classList.toggle('stale', stale)
   }
 
+  // codeChangedSinceDiff asks vibe whether the code is still the one the diff on the page is of: true or false, or null when that
+  // can't be told (no diff held yet, a question already on its way, vibe not answering). An answer is about the diff the question
+  // set out with: if another has been worked out since, it says nothing.
+  async function codeChangedSinceDiff() {
+    const key = reviewView.diffKey
+    if (!reviewView.review || reviewView.files === null || !key || reviewView.checking) return null
+    reviewView.checking = true
+    try {
+      const res = await api('/api/review/changed?key=' + encodeURIComponent(key) + (reviewView.diffKeyIgnoresSpace ? '&whitespace=ignore' : ''), { timeout: 40000 })
+      if (!res.ok || !res.body || reviewView.diffKey !== key) return null
+      return !!res.body.changed
+    } catch (e) {
+      return null
+    } finally {
+      reviewView.checking = false
+    }
+  }
+
   // reviewTurnEnded asks vibe, once the agent's turn is over, whether the code is still the one the diff on the page is of: the
   // agent, answering a round of review, can change it, and the comments it then makes are placed for the new code (comments
   // follow their code only when a diff is worked out). With the tab open, a change is said, beside Refresh, and the diff is left
@@ -2591,24 +2610,27 @@
   // answered for is no reason to say anything.
   async function reviewTurnEnded() {
     const rv = reviewView.review
-    const key = reviewView.diffKey
-    if (!rv || !reviewIsOn(rv) || reviewView.files === null || !key || reviewView.checking) return
-    reviewView.checking = true
-    try {
-      const res = await api('/api/review/changed?key=' + encodeURIComponent(key) + (reviewView.diffKeyIgnoresSpace ? '&whitespace=ignore' : ''), { timeout: 40000 })
-      // A diff worked out since this set out has its own key: this answer is about another.
-      if (!res.ok || !res.body || !res.body.changed || reviewView.diffKey !== key) return
-      if (state.tab === 'review') {
-        showStale(true)
-      } else {
-        forgetFiles()
-        reviewView.files = null
-      }
-    } catch (e) {
-      // Nothing to say: not a reason to nag.
-    } finally {
-      reviewView.checking = false
+    if (!rv || !reviewIsOn(rv)) return
+    if (!(await codeChangedSinceDiff())) return
+    if (state.tab === 'review') {
+      showStale(true)
+    } else {
+      forgetFiles()
+      reviewView.files = null
     }
+  }
+
+  // hintIfBehind is for going to comment id: a comment on a file the diff on the page doesn't have is drawn under "On files not in
+  // this diff", which is the whole truth when the diff is current, and the page being behind when the code has changed since it
+  // was worked out (Refresh would put the comment where it belongs). So it says so only then, having asked vibe (or knowing, from
+  // the note already showing). It says it in a toast, with a Refresh of its own, because the comments pane is a fly-out over the
+  // right of the diff and can cover the note beside Refresh; the note shows as well, for when the pane is shut.
+  async function hintIfBehind(id) {
+    const drawn = reviewView.drawn
+    if (!drawn || !drawn.placed.elsewhere.includes(id)) return
+    if (!reviewView.stale && !(await codeChangedSinceDiff())) return
+    showStale(true)
+    toast("That comment isn't in the diff you have: the code has changed since it was loaded.", false, { label: 'Refresh', run: refreshReview })
   }
 
   // refreshReview loads the review and its diff afresh, and what can be

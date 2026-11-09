@@ -24,7 +24,7 @@ async function stalePage({ tab = 'review', review = running, world = {} } = {}) 
         if (w.failing) throw new Error('vibe says no')
         return { changed: w.changed, key: 'k2' }
       },
-      '/api/conversation': () => ({ events: [], last: 0, running: w.running }),
+      '/api/conversation': () => ({ events: w.events || [], last: w.events && w.events.length ? w.events[w.events.length - 1].seq : 0, running: w.running }),
       '/api/log': { entries: [] },
     },
     storage: { 'vibe-companion-tab': tab },
@@ -180,5 +180,121 @@ test('an answer about a diff that has been replaced since is not about the one o
     await turns()
     await p.settle()
     assert.equal(note(p).hidden, true, 'the answer was about the diff before the Refresh')
+  } finally { p.close() }
+})
+
+// --- a comment on a file the diff on the page does not have ----------------------------------------
+
+// The review has a comment (#7) on b.go, and one (#8) on a.go, and one on the whole review (#9); the diff the page holds has
+// a.go alone. #7 is drawn under "On files not in this diff", which is the plain truth when the diff is current, and the page
+// being behind when the code has changed since it was worked out: then Refresh would put it where it belongs. So going to it
+// asks vibe, and says so only when the page is behind. It says it in a toast, with a Refresh of its own, because the comments
+// pane is a fly-out over the right of the diff and can cover the note beside Refresh; the note shows as well, for when it is shut.
+const said = (by, body) => [{ author: by, body, at: '2026-10-16T11:00:00Z', sent: true }]
+const withMissing = {
+  threads: [
+    { id: 7, file: 'b.go', side: 'new', line: 3, status: 'open', comments: said('agent', 'why this?') },
+    { id: 8, file: 'a.go', side: 'new', line: 1, status: 'open', comments: said('agent', 'and this?') },
+    { id: 9, status: 'open', comments: said('agent', 'on the whole review') },
+  ],
+  lastId: 9, started: '2026-10-16T10:00:00Z', state: 'done',
+}
+const toastShowing = (p) => (p.$('toast').hidden ? null : p.$('toast').textContent)
+const mentions = (id) => ({ seq: 1, kind: 'agent', agent: { type: 'assistant', message: { content: [{ type: 'text', text: 'please look at #' + id }] } } })
+
+async function pageWithMissing(world = {}) {
+  const p = await stalePage({ review: withMissing, world })
+  await p.click('review-comments-open')
+  return p
+}
+const cardFor = (p, id) => p.$('review-comments-list').querySelector('[data-thread="' + id + '"]')
+const goTo = async (p, id) => { cardFor(p, id).click(); await p.settle() }
+
+test('going to a comment on a file the diff lacks, when the code has changed since, says so with a Refresh of its own, and the note shows too', async () => {
+  const p = await pageWithMissing({ changed: true })
+  try {
+    assert.ok(p.$('review-thread-7'), 'the premise: #7 is drawn, under the files not in the diff')
+    assert.equal(p.$('review-files').querySelector('[data-path="b.go"]'), null, 'and b.go is not in the diff')
+    await goTo(p, 7)
+    assert.equal(asked(p).length, 1, 'vibe was asked')
+    assert.match(toastShowing(p), /isn't in the diff you have/)
+    assert.equal(p.$('toast').querySelector('.toast-action').textContent, 'Refresh')
+    assert.equal(note(p).hidden, false, 'the note beside Refresh shows, for when the pane is shut')
+    assert.ok(p.$('review-refresh').classList.contains('stale'))
+  } finally { p.close() }
+})
+
+test('going to one when the diff is current says nothing: the file just is not in it', async () => {
+  const p = await pageWithMissing({ changed: false })
+  try {
+    await goTo(p, 7)
+    assert.equal(asked(p).length, 1, 'vibe was asked')
+    assert.equal(toastShowing(p), null)
+    assert.equal(note(p).hidden, true)
+  } finally { p.close() }
+})
+
+test('with the note already showing, going to one says it at once, without asking again', async () => {
+  const p = await pageWithMissing({ changed: true })
+  try {
+    await p.every('pollConversation')
+    p.world.running = true
+    await p.every('pollConversation')
+    p.world.running = false
+    await p.every('pollConversation') // a turn ends: the code has changed, so the note shows
+    assert.equal(note(p).hidden, false)
+    const before = asked(p).length
+    await goTo(p, 7)
+    assert.match(toastShowing(p), /isn't in the diff you have/)
+    assert.equal(asked(p).length, before, 'no second question')
+  } finally { p.close() }
+})
+
+test('the Refresh in that toast works the diff out afresh, and takes the toast and the note away', async () => {
+  const p = await pageWithMissing({ changed: true })
+  try {
+    await goTo(p, 7)
+    const loads = diffLoads(p)
+    p.world.diffKey = 'k4'
+    p.$('toast').querySelector('.toast-action').click()
+    await p.settle()
+    assert.equal(diffLoads(p), loads + 1)
+    assert.equal(note(p).hidden, true)
+    assert.equal(p.$('toast').hidden, true)
+  } finally { p.close() }
+})
+
+test('a link to such a comment, in the conversation, says the same', async () => {
+  const p = await pageWithMissing({ changed: true, events: [mentions(7)] })
+  try {
+    await p.every('pollConversation')
+    p.$('convo-log').querySelector('.thread-ref').click()
+    await p.settle()
+    assert.match(toastShowing(p) || '', /isn't in the diff you have/)
+    assert.equal(note(p).hidden, false)
+  } finally { p.close() }
+})
+
+test('a link to a comment the review does not have says there is none, and asks nothing about the code', async () => {
+  const p = await pageWithMissing({ changed: true, events: [mentions(99)] })
+  try {
+    await p.every('pollConversation')
+    p.$('convo-log').querySelector('.thread-ref').click()
+    await p.settle()
+    assert.match(toastShowing(p) || '', /no comment #99/)
+    assert.equal(asked(p).length, 0)
+    assert.equal(note(p).hidden, true)
+  } finally { p.close() }
+})
+
+test('a comment the diff does have, and one on the whole review, are gone to without a word about the diff or a question', async () => {
+  const p = await pageWithMissing({ changed: true })
+  try {
+    assert.ok(p.$('review-thread-8'), 'the premise: the page has a card for #8 in a file')
+    await goTo(p, 8)
+    await goTo(p, 9)
+    assert.equal(toastShowing(p), null)
+    assert.equal(asked(p).length, 0)
+    assert.equal(note(p).hidden, true)
   } finally { p.close() }
 })
