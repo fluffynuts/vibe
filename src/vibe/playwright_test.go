@@ -68,6 +68,7 @@ exit 0
 // With FAKE_ROOT set, the script is root, and the agent is a user called agent: id says so, chown does nothing, and su
 // runs what it is given with FAKE_AS saying as whom. Otherwise they are the real ones.
 const fakeID = `#!/bin/sh
+if [ -n "$FAKE_NOT_ROOT" ] && [ "$*" = "-u" ]; then echo 1000; exit 0; fi
 if [ -n "$FAKE_ROOT" ]; then
   case "$*" in
     "-u") echo 0 ;;
@@ -463,10 +464,10 @@ func TestAnAptThatCannotInstallNodeIsSaidAndNothingElseIsRun(t *testing.T) {
 // The script runs as root with the agent's home, so an npm using its default cache fills ~/.npm with root's files, and the
 // agent's own npm install, in a project, fails with EACCES. Seen in a re-composed sandbox, where every npm needed --cache.
 // Giving ~/.npm to the agent after was not enough: the next step to run npm as root (pnpm's) filled it again. So root's npm
-// has a cache of its own, and ~/.npm is never touched, whatever runs before or after.
-func TestRootsNpmKeepsItsCacheOutOfTheAgentsHome(t *testing.T) {
-	home := t.TempDir()
-	run := runPlaywrightInstall(t, false, "FAKE_ROOT=1", "HOME="+home)
+// has a cache of its own, in a folder only root can reach (not /tmp, where anything in the sandbox could have made it first),
+// and ~/.npm is never touched, whatever runs before or after.
+func TestRootsNpmKeepsItsCacheInARootOnlyFolderNotTheAgentsHome(t *testing.T) {
+	run := runPlaywrightInstall(t, false, "FAKE_ROOT=1", "HOME="+t.TempDir())
 	if run.exit != nil {
 		t.Fatalf("the script failed: %v\n%s", run.exit, run.log)
 	}
@@ -475,8 +476,19 @@ func TestRootsNpmKeepsItsCacheOutOfTheAgentsHome(t *testing.T) {
 		t.Fatalf("npm was never run; calls:\n%s", run.calls)
 	}
 	for _, cache := range caches {
-		if cache[1] == "" || strings.HasPrefix(cache[1], home) || strings.Contains(cache[1], "/.npm") {
-			t.Errorf("npm ran with the cache %q, which is the agent's home or npm's default; calls:\n%s", cache[1], run.calls)
+		if cache[1] != "/root/.cache/npm" {
+			t.Errorf("npm ran with the cache %q, not /root/.cache/npm; calls:\n%s", cache[1], run.calls)
 		}
+	}
+}
+
+// Not root (a developer trying the script, or a test), the folder above isn't there to be had: npm keeps its own cache.
+func TestNpmKeepsItsOwnDefaultCacheWhenTheScriptIsNotRoot(t *testing.T) {
+	run := runPlaywrightInstall(t, false, "FAKE_NOT_ROOT=1")
+	if run.exit != nil {
+		t.Fatalf("the script failed: %v\n%s", run.exit, run.log)
+	}
+	if !run.called("npm-cache []") || run.called("/root/.cache/npm") {
+		t.Errorf("npm was given a cache of the script's choosing when it isn't root; calls:\n%s", run.calls)
 	}
 }

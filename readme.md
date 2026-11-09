@@ -254,7 +254,7 @@ and put it on `PATH` with a symlink — or use `vibe --install`.
 
 The companion page's tests (jsdom, and a real Firefox) fail rather than skip when what they need isn't there, because a
 skipped test passes: `make test-deps` (or `./make.sh test-deps`, `./make.ps1 test-deps`) installs jsdom from the lockfile and
-the Firefox that the pinned Playwright runs (it needs Node 22.22, 24.15 or 26 and later: it doesn't install Node). They also
+the Firefox that the pinned Playwright runs (it needs the Node versions in the `engines` of `uitest/package.json`: it doesn't install Node). They also
 fail when what is installed isn't what `uitest/package.json` pins, since `node_modules` doesn't follow a branch: run it again
 after switching to one that pins other versions.
 
@@ -1459,7 +1459,7 @@ download one". It **adds time to building the sandbox**: a few minutes, the syst
   (`npx playwright install firefox`), which the sandbox's network allows. At the latest version, the installed browsers
   are used as they are. The version installed is the latest *at the time the sandbox is built*, so a rebuild may pick a
   newer one, and the log says which.
-- **The npm cache:** the install runs npm as root, with a cache of its own (not `~/.npm`, in the agent's home, which would then be root's and make the agent's own `npm install` fail with EACCES). The `pnpm` feature's step does the same, and a test requires it of every install step that runs npm.
+- **The npm cache:** the install runs npm as root, with a cache of its own in `/root/.cache/npm` (not `~/.npm`, in the agent's home, which would then be root's and make the agent's own `npm install` fail with EACCES, and not `/tmp`, where anything in the sandbox could have made it first). The `pnpm` feature's step does the same, and a test requires it of every install step that runs npm.
 - **The sandbox may reach** `registry.npmjs.org`, `cdn.playwright.dev` (where the current Chromium is offered from, and
   only from) and `playwright.download.prss.microsoft.com` (Firefox's fallback), the `azureedge.net` hosts older versions
   of Playwright download from (`playwright`, `playwright-akamai` and `playwright-verizon`). The libraries, and Node and

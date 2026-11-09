@@ -44,7 +44,7 @@ process.exit(require('fs').existsSync(playwright.firefox.executablePath()) ? 0 :
 	if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
 		need("Playwright's Firefox isn't installed")
 	} else if err != nil {
-		need("Playwright can't be loaded (it needs Node 22.22 or later, and npm ci in internal/companion/uitest): " + strings.TrimSpace(string(out)) + " " + err.Error())
+		need("Playwright can't be loaded (it needs " + nodeRangeIn("uitest") + ", and npm ci in internal/companion/uitest): " + strings.TrimSpace(string(out)) + " " + err.Error())
 	}
 	return node
 }

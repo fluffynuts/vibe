@@ -15,6 +15,7 @@ import (
 type pnpmStand struct {
 	haveNode, haveNpm, haveCorepack bool
 	npmFails, enableFails           bool
+	notRoot                         bool
 }
 
 func runPnpmInstall(t *testing.T, stand pnpmStand) (calls, log string) {
@@ -55,6 +56,12 @@ func runPnpmInstall(t *testing.T, stand pnpmStand) (calls, log string) {
 		installs = "case \"$*\" in *'install -y npm'*) cp " + filepath.Join(dir, "npm-stand") + " " + filepath.Join(bin, "npm") + " ;; esac\n"
 		writeExecutable(t, filepath.Join(dir, "npm-stand"), npm)
 	}
+	// Root, as a build runs it, unless the test says otherwise.
+	uid := "0"
+	if stand.notRoot {
+		uid = "1000"
+	}
+	writeExecutable(t, filepath.Join(bin, "id"), "echo "+uid+"\n")
 	writeExecutable(t, filepath.Join(bin, "sudo"), "echo \"$*\" >>"+callsFile+"\n"+installs)
 	mysql84Tools(t, bin, "date", "cp", "chmod")
 	cmd := exec.Command("/bin/sh", filepath.Join(repoRoot(t), "library", "pnpm", "install-scripts", "01-install-pnpm"))
@@ -126,13 +133,20 @@ func TestThePnpmInstallStepSaysWhenThereIsNoNode(t *testing.T) {
 
 // The step runs as root with the agent's home: npm with its default cache would fill ~/.npm with root's files, and the agent's
 // own npm install then fails with EACCES (seen in a re-composed sandbox: this step ran after the Playwright one had given
-// the cache back to the agent, and took it again).
-func TestThePnpmInstallStepKeepsRootsNpmCacheOutOfTheAgentsHome(t *testing.T) {
+// the cache back to the agent, and took it again). Root's npm has a cache in a folder only root can reach.
+func TestThePnpmInstallStepKeepsRootsNpmCacheInARootOnlyFolder(t *testing.T) {
 	calls, _ := runPnpmInstall(t, pnpmStand{haveNode: true, haveNpm: true})
 	if !strings.Contains(calls, "npm install -g corepack\n") {
 		t.Fatalf("npm wasn't run to install corepack: %q", calls)
 	}
-	if !strings.Contains(calls, "npm-cache [") || strings.Contains(calls, "npm-cache []") || strings.Contains(calls, "/.npm") {
-		t.Errorf("npm was run with no cache of its own (or with ~/.npm): %q", calls)
+	if strings.Count(calls, "npm-cache [/root/.cache/npm]") != 2 || strings.Contains(calls, "npm-cache []") {
+		t.Errorf("npm wasn't run, each time, with /root/.cache/npm as its cache: %q", calls)
+	}
+}
+
+func TestThePnpmInstallStepLeavesNpmsCacheAloneWhenItIsNotRoot(t *testing.T) {
+	calls, _ := runPnpmInstall(t, pnpmStand{haveNode: true, haveNpm: true, notRoot: true})
+	if strings.Contains(calls, "/root/") || !strings.Contains(calls, "npm-cache []") {
+		t.Errorf("npm was given a cache of the step's choosing when it isn't root: %q", calls)
 	}
 }

@@ -15,9 +15,12 @@ SHIM_FOLDER="${PNPM_SHIM_FOLDER:-/usr/local/bin}"
 echo "--- installing pnpm $(date -Is)" >>"$LOG"
 
 # This runs as root with the agent's home: npm's default cache, ~/.npm, would be filled with root's files, and the agent's own
-# `npm install` in a project would fail with EACCES. Root's npm has a cache of its own (the same one every such step uses).
-npm_config_cache="${TMPDIR:-/tmp}/npm-cache-root"
-export npm_config_cache
+# `npm install` in a project would fail with EACCES. Root's npm has a cache of its own, in a folder only root can reach (not /tmp,
+# where anything in the sandbox could have made it first): the same one for every step that runs npm.
+if [ "$(id -u)" = 0 ]; then
+  npm_config_cache=/root/.cache/npm
+  export npm_config_cache
+fi
 
 apt_install() {
   sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 "$@" </dev/null >>"$LOG" 2>&1

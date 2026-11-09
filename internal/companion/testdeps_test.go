@@ -13,9 +13,27 @@ import (
 // skipped test passes, and a green run that didn't run them went unnoticed.
 const getTestDeps = "run `make test-deps` (`./make.sh test-deps`, or `./make.ps1 test-deps` on Windows)"
 
-// nodeMissing is what a page test says when node isn't installed (jsdom wants 22.22, 24.15 or 26 and later).
+// nodeRangeIn is the node versions the page's tests run on, as the engines of dir's package.json say (what the pinned jsdom asks
+// for): read from there, not written here, so that it is right on every branch, whichever jsdom it pins.
+func nodeRangeIn(dir string) string {
+	var pkg struct {
+		Engines struct {
+			Node string `json:"node"`
+		} `json:"engines"`
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err == nil {
+		err = json.Unmarshal(data, &pkg)
+	}
+	if err != nil || pkg.Engines.Node == "" {
+		return "the versions in the engines of uitest/package.json"
+	}
+	return "node " + pkg.Engines.Node + ", the engines of uitest/package.json"
+}
+
+// nodeMissing is what a page test says when node isn't installed.
 func nodeMissing(whose string) string {
-	return "node isn't installed, and " + whose + " tests need it (22.22 or later): install it, then " + getTestDeps
+	return "node isn't installed, and " + whose + " tests need it (" + nodeRangeIn("uitest") + "): install it, then " + getTestDeps
 }
 
 // staleDeps says, of a uitest folder, which of the dependencies its package.json pins aren't installed at that version
