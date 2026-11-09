@@ -154,6 +154,9 @@ type Config struct {
 	// being idle, or start it again if it was; it returns what it did, if
 	// it says, for the log. Nil means nothing is done. It may be slow.
 	KeepAwake func() string
+	// SbxSignedOut says the last try to wake the sandbox found sbx signed out of Docker, until one works: the state passes it on,
+	// and the page looks at the sign-in when it is true, to show its banner. Nil means it never is.
+	SbxSignedOut func() bool
 	// Log says something in vibe's own output; nil means nowhere.
 	Log func(string)
 	// Manage is what the page's Profiles tab works on; nil means the page
@@ -435,6 +438,7 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"POST /api/admin/instructions/optimise", s.serving(instructionsFeature, s.instructionsOptimise)},
 		{"POST /api/awake", s.authed(s.changing(s.keepAwake))},
 		{"GET /api/review", s.serving(reviewFeature, s.reviewState)},
+		{"GET /api/review/changed", s.serving(reviewFeature, s.reviewChanged)},
 		{"POST /api/git-author", s.serving(gitAuthorFeature, s.gitAuthorAnswer)},
 		{"GET /api/review/file", s.serving(reviewFeature, s.reviewFile)},
 		{"GET /api/workspace-file", s.serving(fileFeature, s.workspaceFileHandler)},
@@ -627,6 +631,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"attention":             attention,
+		"sbxSignedOut":          s.cfg.SbxSignedOut != nil && s.cfg.SbxSignedOut(),
 		"packagesWaiting":       s.packagesWaitingCount(),
 		"packagesToFetch":       s.packagesToFetch(),
 		"packagesStale":         s.packagesStale(),

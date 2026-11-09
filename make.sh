@@ -44,6 +44,13 @@ target_test() {
   "$GO" test ./...
 }
 
+# What the page's tests need, which they fail without: jsdom (from the lockfile) and the Firefox that the Playwright pinned in
+# package.json runs. Quick when both are there. Node (22.22 or later) is not installed by this.
+target_test_deps() {
+  echo "cd internal/companion/uitest && npm ci && npx playwright install firefox"
+  (cd internal/companion/uitest && npm ci && npx playwright install firefox)
+}
+
 target_vet() {
   echo "$GO vet ./..."
   "$GO" vet ./...
@@ -107,6 +114,7 @@ target_clean() {
 TARGETS=(
   "build:build the vibe binary"
   "test:run tests"
+  "test-deps:install what the page's tests need: jsdom, and the Firefox for the pinned Playwright"
   "vet:run go vet"
   "fmt-check:check formatting (gofmt), changing nothing: fails if a file would change"
   "check:run the formatting check, vet and tests"

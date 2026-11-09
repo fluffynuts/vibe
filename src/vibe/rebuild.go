@@ -136,7 +136,8 @@ func rebuildSandboxWith(ctx context.Context, lay layout.Layout, args cliargs.Arg
 	merged.Agent = agent
 	warnUnsupportedFeatures(lay, profile, agent)
 
-	restoreAfterCreate := false
+	savedMemories := false
+	restoreMemories := true
 	var memoryStore string
 	var themeFromSandbox string
 	zone := recordedTimezone(vibeHome, name)
@@ -192,8 +193,11 @@ func rebuildSandboxWith(ctx context.Context, lay layout.Layout, args cliargs.Arg
 					memoryStore = ""
 				} else {
 					note("  memories saved to %s", memoryStore)
-					restoreAfterCreate = true
+					savedMemories = true
 				}
+			default:
+				restoreMemories = false
+				note("  not preserving the memories in '%s' — the new sandbox starts without them (those saved before stay in %s)", name, agentmem.StoreFor(vibeHome, merged.MemoryRoot, name))
 			}
 		}
 		// Read after the memories: checking for those will have started a
@@ -228,9 +232,9 @@ func rebuildSandboxWith(ctx context.Context, lay layout.Layout, args cliargs.Arg
 		if name, target, err = relocate(); err != nil {
 			return err
 		}
-		// The memories went with the rest: a store named after the sandbox
+		// The memories went with the rest: a store this run saved, named after the sandbox,
 		// is renamed with it (see migrateRecords).
-		if dir, base := filepath.Split(memoryStore); restoreAfterCreate && base == oldName {
+		if dir, base := filepath.Split(memoryStore); savedMemories && base == oldName {
 			memoryStore = filepath.Join(dir, name)
 		}
 	}
@@ -252,7 +256,11 @@ func rebuildSandboxWith(ctx context.Context, lay layout.Layout, args cliargs.Arg
 	// moves a sandbox rather than resizing it, and a rebuild with -f, or from
 	// the page, has no one to ask.
 	askSize := !args.Force && relocate == nil
-	return createSandbox(ctx, lay, name, target, profile, doc, merged, askSize, zone, askZone, restoreAfterCreate, memoryStore, git, !args.Force)
+	err = createSandbox(ctx, lay, name, target, profile, doc, merged, askSize, zone, askZone, restoreMemories, memoryStore, git, !args.Force)
+	if err != nil && savedMemories {
+		note("  '%s' is gone, and its memories are safe in %s: running vibe again makes it again and restores them", name, memoryStore)
+	}
+	return err
 }
 
 // folderGone says, when a sandbox's folder target no longer exists, why

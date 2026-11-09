@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"vibe/internal/companion"
+	"vibe/internal/sbxrun"
+	"vibe/internal/sbxtest"
 	"vibe/internal/signin"
 )
 
@@ -134,5 +136,48 @@ func TestAnotherAgentCannotBeSignedInYetAndSaysSo(t *testing.T) {
 	_, err := startSignIn(context.Background(), "agent", "cursor", f.starters())
 	if err == nil || !strings.Contains(err.Error(), "cursor") || len(f.started) != 0 {
 		t.Errorf("err = %v, started %v", err, f.started)
+	}
+}
+
+// foundSbxSignedOut has a try to wake a sandbox find sbx signed out, as it does with no terminal: sbx pointing to sbx login.
+func foundSbxSignedOut(t *testing.T) {
+	t.Helper()
+	sbxtest.OnPath(t, "echo 'error: not signed in to Docker' >&2; echo '  try: sbx login' >&2; exit 125\n")
+	sbxrun.Reachable(context.Background(), "box")
+	if !sbxrun.NotSignedInSeen() {
+		t.Fatal("waking the sandbox didn't find sbx signed out: the test can't start")
+	}
+}
+
+// What waking the sandbox found is passed to the page, which looks at the sign-in while it says sbx is signed out: so when
+// sbx is confirmed signed in by anything else (the card's own check, once the user has signed in), it stops saying so, or
+// the page would look every ten seconds for as long as it was open.
+func TestAConfirmedSignInClearsWhatWakingFoundOfSbxBeingSignedOut(t *testing.T) {
+	foundSbxSignedOut(t)
+	f := &fakeSignIn{sbxOut: "[]"}
+	if got := f.check("claude"); got.Docker.State != signin.SignedIn {
+		t.Fatalf("got %+v", got)
+	}
+	if sbxrun.NotSignedInSeen() {
+		t.Error("sbx is confirmed signed in, and the page is still told it was found signed out")
+	}
+}
+
+func TestACheckThatFindsSbxStillSignedOutKeepsWhatWakingFound(t *testing.T) {
+	foundSbxSignedOut(t)
+	f := &fakeSignIn{sbxOut: "error: not signed in to Docker\n  try: sbx login", sbxErr: errors.New("exit status 1")}
+	f.check("claude")
+	if !sbxrun.NotSignedInSeen() {
+		t.Error("a check that found sbx signed out cleared that it was found so")
+	}
+}
+
+// A check that couldn't tell (sbx didn't answer in time) says nothing either way.
+func TestACheckThatCouldNotTellLeavesWhatWakingFoundAlone(t *testing.T) {
+	foundSbxSignedOut(t)
+	f := &fakeSignIn{sbxOut: "something odd", sbxErr: errors.New("exit status 1")}
+	f.check("claude")
+	if !sbxrun.NotSignedInSeen() {
+		t.Error("a check that couldn't tell cleared it")
 	}
 }

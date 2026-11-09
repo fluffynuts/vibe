@@ -1,18 +1,18 @@
 package companion
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 // TestTheReviewTabsPlacing runs the page's own tests for ui/review.js with
-// node, so `go test` covers them; without node, it says so and skips.
+// node, so `go test` covers them; without node, it fails, saying so.
 func TestTheReviewTabsPlacing(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("node isn't installed: the Review tab's tests need it")
+		t.Fatal(nodeMissing("the Review tab's"))
 	}
 	out, err := exec.Command(node, "--test", filepath.Join("uitest", "review.test.js")).CombinedOutput()
 	if err != nil {
@@ -27,19 +27,14 @@ var ownRunners = map[string]bool{
 }
 
 // TestThePageItself runs the tests of the page as a whole (every uitest/*.test.js but ownRunners), in jsdom.
-// jsdom is installed with `npm ci` in uitest: without it they're skipped here, saying how to get it, but never in
-// CI, where skipping would pass them unseen.
+// jsdom is installed with `npm ci` in uitest (make test-deps): without it they fail, saying so: skipping would pass them unseen.
 func TestThePageItself(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("node isn't installed: the page's tests need it")
+		t.Fatal(nodeMissing("the page's"))
 	}
-	if _, err := os.Stat(filepath.Join("uitest", "node_modules", "jsdom")); err != nil {
-		const how = "the page's tests need jsdom: run `npm ci` in internal/companion/uitest"
-		if os.Getenv("CI") != "" {
-			t.Fatal(how)
-		}
-		t.Skip(how)
+	if stale := staleDeps("uitest"); len(stale) > 0 {
+		t.Fatal("the page's tests need the pinned dependencies, and these are not: " + strings.Join(stale, "; ") + ": " + getTestDeps)
 	}
 	files, err := filepath.Glob(filepath.Join("uitest", "*.test.js"))
 	if err != nil || len(files) == 0 {

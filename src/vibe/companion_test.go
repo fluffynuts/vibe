@@ -13,6 +13,7 @@ import (
 	"vibe/internal/cliargs"
 	"vibe/internal/companion"
 	"vibe/internal/layout"
+	"vibe/internal/sbxrun"
 	"vibe/internal/state"
 )
 
@@ -204,7 +205,13 @@ func keepAwakeStandIns(t *testing.T, running, startWorks bool) *int {
 		setAttached(false)
 	})
 	runningNow = func(context.Context, string) bool { return running }
-	startSandboxForPage = func(context.Context, string) bool { *starts++; return startWorks }
+	startSandboxForPage = func(context.Context, string) error {
+		*starts++
+		if startWorks {
+			return nil
+		}
+		return errors.New("sbx said no")
+	}
 	return starts
 }
 
@@ -282,6 +289,17 @@ func TestKeepingAwakeTouchesARunningSandbox(t *testing.T) {
 	}
 }
 
+// A sandbox sbx lists as running means sbx is signed in: what waking it found of sbx being signed out is no longer so.
+func TestKeepingAwakeARunningSandboxClearsWhatWakingFoundOfSbxBeingSignedOut(t *testing.T) {
+	foundSbxSignedOut(t)
+	loggingSbx(t, "box running\\n")
+	keepAwakeStandIns(t, true, true)
+	keepAwakeFor("box")()
+	if sbxrun.NotSignedInSeen() {
+		t.Error("a sandbox is running and the page is still told sbx was found signed out")
+	}
+}
+
 // The page asks for the theme's colour every minute; for a stopped sandbox,
 // asking it would start it again, so the profile's record stands in.
 func TestTheThemeOfAStoppedSandboxDoesntStartIt(t *testing.T) {
@@ -325,8 +343,8 @@ func TestAStoppedSandboxIsStartedForATurnSayingSo(t *testing.T) {
 func TestATurnSaysWhenTheSandboxWontStart(t *testing.T) {
 	keepAwakeStandIns(t, false, false)
 	err := readyForTurn("box")(context.Background(), func(string) {})
-	if err == nil || !strings.Contains(err.Error(), "sbx ls") {
-		t.Errorf("err = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "sbx said no") {
+		t.Errorf("err = %v, want sbx's own reason", err)
 	}
 }
 
@@ -439,5 +457,34 @@ func TestWithoutThatOnlyTheSettingDecidesWhetherThePageIsOpened(t *testing.T) {
 	t.Setenv(companionNoOpenEnv, "")
 	if got, _ := companionMode(false, ""); got != companionOpen {
 		t.Errorf("%q", got)
+	}
+}
+
+func TestKeepingAwakeSaysWhySbxCouldNotStartTheSandbox(t *testing.T) {
+	keepAwakeStandIns(t, false, false)
+	if said := keepAwakeFor("box")(); !strings.Contains(said, "sbx said no") {
+		t.Errorf("said %q, want sbx's reason", said)
+	}
+}
+
+func TestKeepingAwakeSaysSbxIsSignedOutAndWhereToSignIn(t *testing.T) {
+	keepAwakeStandIns(t, false, true)
+	startSandboxForPage = func(context.Context, string) error {
+		return &sbxrun.NotSignedInError{URL: "https://login.docker.com/activate?user_code=AAAA-BBBB", Code: "AAAA-BBBB"}
+	}
+	said := keepAwakeFor("box")()
+	if !strings.Contains(said, "signed out") || !strings.Contains(said, "Admin tab") || !strings.Contains(said, "AAAA-BBBB") {
+		t.Errorf("said %q", said)
+	}
+}
+
+func TestATurnThatCannotStartTheSandboxBecauseSbxIsSignedOutSaysSoWithoutTheFixedWait(t *testing.T) {
+	keepAwakeStandIns(t, false, true)
+	startSandboxForPage = func(context.Context, string) error {
+		return &sbxrun.NotSignedInError{URL: "https://login.docker.com/activate?user_code=AAAA-BBBB", Code: "AAAA-BBBB"}
+	}
+	err := readyForTurn("box")(context.Background(), func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "isn't signed in to Docker") || strings.Contains(err.Error(), "3m0s") {
+		t.Errorf("err = %v", err)
 	}
 }

@@ -62,6 +62,10 @@ func start(withInput bool, args ...string) (*Process, error) {
 	scanned := make(chan struct{})
 	go func() {
 		defer close(scanned)
+		// What the process goes on to print, once nobody wants it, is read and dropped: a pipe nobody reads blocks the
+		// copy of its output for good, and the process is never reaped. After the lines are closed, so that waiting for
+		// them doesn't wait for the process to end.
+		defer io.Copy(io.Discard, pr)
 		defer close(p.lines)
 		r := bufio.NewReaderSize(pr, 4096)
 		var line []byte

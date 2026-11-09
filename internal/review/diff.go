@@ -3,6 +3,13 @@
 // (see docs/plan-review-tab.md).
 package review
 
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"sort"
+	"strings"
+)
+
 // A file's Status.
 const (
 	Modified = "modified"
@@ -42,6 +49,19 @@ type File struct {
 	// ids, modes; for an untracked file, a digest of its content, else its
 	// size and time): what the fingerprint is made of.
 	stamp string
+}
+
+// DiffKey stands for a diff as a whole: the same while no file's change is (its path, its status, its fingerprint), whatever order
+// the files came in, and other when any is. The page holds the key of the diff it shows, and asks, once the agent's turn is over,
+// whether the code is still the one it stood for.
+func DiffKey(files []File) string {
+	lines := make([]string, 0, len(files))
+	for _, f := range files {
+		lines = append(lines, f.Path+"\x00"+f.Status+"\x00"+f.Fingerprint)
+	}
+	sort.Strings(lines)
+	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+	return hex.EncodeToString(sum[:])
 }
 
 // Hunk is a run of changed lines with their context. Section is what git

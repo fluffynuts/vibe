@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -17,27 +16,24 @@ import (
 
 // TestThePageInFirefox runs uitest/firefox.test.js: the page in a real
 // Firefox, for what jsdom can't show, served for a repository where a.txt's
-// lines 20-22 are changed, and main.go's line 4. It needs Playwright's Firefox (npm ci, then npx
-// playwright install firefox, in uitest): without it, it's skipped saying
-// so, but never in CI on Linux, where it's installed and skipping would
-// pass it unseen.
-// needFirefox says (skipping, or failing in CI on Linux) when the browser tests can't run, and gives node's path.
+// lines 20-22 are changed, and main.go's line 4. It needs Playwright's Firefox (make test-deps: npm ci, then npx
+// playwright install firefox, in uitest): without it, it fails, saying so: skipping would pass it unseen.
+// needFirefox fails, saying how to get it, when the browser tests can't run, and gives node's path.
 func needFirefox(t *testing.T) string {
 	t.Helper()
 	need := func(why string) {
 		t.Helper()
-		how := why + ": in internal/companion/uitest, run npm ci, then npx playwright install firefox"
-		if os.Getenv("CI") != "" && runtime.GOOS == "linux" {
-			t.Fatal(how)
-		}
-		t.Skip(how)
+		t.Fatal(why + ": " + getTestDeps)
 	}
 	node, err := exec.LookPath("node")
 	if err != nil {
-		need("node isn't installed")
+		t.Fatal(nodeMissing("the real-Firefox"))
 	}
 	if _, err := exec.LookPath("git"); err != nil {
 		need("git isn't installed")
+	}
+	if stale := staleDeps("uitest"); len(stale) > 0 {
+		t.Fatal("the real-Firefox tests need the pinned dependencies, and these are not: " + strings.Join(stale, "; ") + ": " + getTestDeps)
 	}
 	check := exec.Command(node, "-e", `
 let playwright
@@ -48,7 +44,7 @@ process.exit(require('fs').existsSync(playwright.firefox.executablePath()) ? 0 :
 	if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
 		need("Playwright's Firefox isn't installed")
 	} else if err != nil {
-		need("Playwright can't be loaded (it needs Node 20 or later, and npm ci in internal/companion/uitest): " + strings.TrimSpace(string(out)) + " " + err.Error())
+		need("Playwright can't be loaded (it needs " + nodeRangeIn("uitest") + ", and npm ci in internal/companion/uitest): " + strings.TrimSpace(string(out)) + " " + err.Error())
 	}
 	return node
 }

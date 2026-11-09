@@ -42,6 +42,19 @@ function Invoke-Build {
 
 function Invoke-Test { Invoke-Step $Go @('test', './...') }
 
+# What the page's tests need, which they fail without: jsdom (from the lockfile) and the Firefox that the Playwright pinned in
+# package.json runs. Quick when both are there. Node (22.22 or later) is not installed by this.
+function Invoke-TestDeps {
+    Write-Host 'cd internal/companion/uitest && npm ci && npx playwright install firefox'
+    Push-Location internal/companion/uitest
+    try {
+        Invoke-Step 'npm' @('ci')
+        Invoke-Step 'npx' @('playwright', 'install', 'firefox')
+    } finally {
+        Pop-Location
+    }
+}
+
 function Invoke-Vet { Invoke-Step $Go @('vet', './...') }
 
 # Changes nothing: it lists the files gofmt would change, and fails if there are any.
@@ -80,6 +93,7 @@ function Invoke-Clean {
 $Targets = [ordered]@{
     'build' = @('build the vibe binary', { Invoke-Build })
     'test'  = @('run tests', { Invoke-Test })
+    'test-deps' = @("install what the page's tests need: jsdom, and the Firefox for the pinned Playwright", { Invoke-TestDeps })
     'vet'   = @('run go vet', { Invoke-Vet })
     'fmt-check' = @('check formatting (gofmt), changing nothing: fails if a file would change', { Invoke-FmtCheck })
     'check' = @('run the formatting check, vet and tests', { Invoke-Check })
