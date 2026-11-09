@@ -234,6 +234,7 @@ func (s *Server) reviewState(w http.ResponseWriter, r *http.Request) {
 				files = []review.File{}
 			}
 			body["diff"] = files
+			body["diffKey"] = review.DiffKey(files)
 			// Comments follow their code when lines above them came or went.
 			if moves := review.Moves(ctx, folder, rv); len(moves) > 0 {
 				if err := s.cfg.ReviewTab.Store.Move(moves); err != nil {
@@ -269,6 +270,33 @@ func (s *Server) reviewState(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, body)
+}
+
+// reviewChanged says whether the diff is still the one the page holds, by the key it was given with it (?key=, and &whitespace=ignore
+// when the page's diff leaves whitespace out). It is asked once the agent's turn is over, as the agent may have changed the code
+// since. It only looks: a diff request moves comments to follow their code and closes a review with nothing left in it, which are
+// not for a question to do.
+func (s *Server) reviewChanged(w http.ResponseWriter, r *http.Request) {
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		writeError(w, http.StatusBadRequest, "the key of the diff the page holds is needed")
+		return
+	}
+	rv, err := s.cfg.ReviewTab.Store.Load()
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), diffWithin)
+	defer cancel()
+	how := review.Diffing{IgnoreSpace: r.URL.Query().Get("whitespace") == "ignore"}
+	files, err := diffOf(ctx, s.cfg.ReviewTab.Workspace, rv, how)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "the code couldn't be looked at: "+err.Error())
+		return
+	}
+	now := review.DiffKey(files)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"changed": now != key, "key": now})
 }
 
 // answeringAsk is the thread the user last asked the agent about, and

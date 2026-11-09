@@ -434,6 +434,7 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"POST /api/admin/instructions/optimise", s.serving(instructionsFeature, s.instructionsOptimise)},
 		{"POST /api/awake", s.authed(s.changing(s.keepAwake))},
 		{"GET /api/review", s.serving(reviewFeature, s.reviewState)},
+		{"GET /api/review/changed", s.serving(reviewFeature, s.reviewChanged)},
 		{"POST /api/git-author", s.serving(gitAuthorFeature, s.gitAuthorAnswer)},
 		{"GET /api/review/file", s.serving(reviewFeature, s.reviewFile)},
 		{"GET /api/workspace-file", s.serving(fileFeature, s.workspaceFileHandler)},
