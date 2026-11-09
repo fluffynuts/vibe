@@ -533,6 +533,9 @@ test('a prompt that has scrolled puts the emoji list at the visible caret', asyn
   } finally { await page.close() }
 })
 
+// The browser's own undo, which the page leaves alone: Ctrl+Z, but Cmd+Z on a Mac (where Control+z does nothing: macOS CI failed all four).
+const undo = 'ControlOrMeta'
+
 // Picking is an edit like any other: Ctrl+Z gives back what was typed, as it does for a person's own typing.
 test('Ctrl+Z after picking an emoji gives back the name that was typed', async () => {
   const page = await promptPage(1200)
@@ -542,7 +545,7 @@ test('Ctrl+Z after picking an emoji gives back the name that was typed', async (
     await page.waitForSelector('#convo-emoji:not([hidden]) li')
     await page.keyboard.press('Tab')
     assert.equal(await page.inputValue('#convo-input'), 'hello 🚀 ')
-    await page.keyboard.press('Control+z')
+    await page.keyboard.press(`${undo}+z`)
     assert.equal(await page.inputValue('#convo-input'), 'hello :roc')
   } finally { await page.close() }
 })
@@ -553,7 +556,7 @@ test('Ctrl+Z after a :name: turns into its emoji gives back the name', async () 
     await page.focus('#convo-input')
     await page.keyboard.type('nice :tada:')
     assert.equal(await page.inputValue('#convo-input'), 'nice 🎉')
-    await page.keyboard.press('Control+z')
+    await page.keyboard.press(`${undo}+z`)
     assert.equal(await page.inputValue('#convo-input'), 'nice :tada:')
   } finally { await page.close() }
 })
@@ -569,7 +572,7 @@ test('Ctrl+Z after picking a slash command gives back what was typed', async () 
     await page.waitForSelector('#convo-commands:not([hidden]) li')
     await page.keyboard.press('Tab')
     assert.equal(await page.inputValue('#convo-input'), '/review ')
-    await page.keyboard.press('Control+z')
+    await page.keyboard.press(`${undo}+z`)
     assert.equal(await page.inputValue('#convo-input'), '/rev')
   } finally { await page.close() }
 })
@@ -581,7 +584,7 @@ test('typing an emoticon and a space gives the emoji, and Ctrl+Z gives the emoti
     await page.focus('#convo-input')
     await page.keyboard.type('fine :) ')
     assert.equal(await page.inputValue('#convo-input'), 'fine 🙂 ')
-    await page.keyboard.press('Control+z')
+    await page.keyboard.press(`${undo}+z`)
     assert.equal(await page.inputValue('#convo-input'), 'fine :) ')
   } finally { await page.close() }
 })
@@ -918,4 +921,29 @@ test('Reload keeps the place in the file, and Back goes to where it was left in 
     await eventually(page, 'the first file shown again', async () => (await title()) === 'A')
     await eventually(page, 'back at its place', async () => Math.abs((await place()) - was) < 6)
   } finally { await page.close() }
+})
+
+// The note beside Refresh that the code has changed under the diff (see reviewstale.test.js) is one more thing in the Review bar
+// when it shows: it must not push the controls after it off the page, or the page sideways, at any width.
+test('the note that the code has changed fits the Review bar beside Refresh, at every width', async () => {
+  for (const width of [1400, 1000, 700]) {
+    const page = await browser.newPage({ viewport: { width, height: 900 } })
+    try {
+      await page.goto(URL)
+      await page.click('#tab-review')
+      await page.waitForSelector(plusSel('R20'), { state: 'attached' })
+      const measure = () => page.evaluate(() => {
+        const rect = (id) => { const r = document.getElementById(id).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom } }
+        return { refresh: rect('review-refresh'), comments: rect('review-comments-open'), wide: document.documentElement.scrollWidth > innerWidth }
+      })
+      const before = await measure()
+      await page.evaluate(() => { document.getElementById('review-stale').hidden = false })
+      const after = await measure()
+      assert.equal(after.wide, before.wide, `at ${width}px wide, showing the note made the page wider than the window`)
+      assert.ok(after.comments.right <= width, `at ${width}px wide, the comments button is pushed off the page (${Math.round(after.comments.right)})`)
+      assert.ok(after.refresh.right <= width, `at ${width}px wide, Refresh is pushed off the page`)
+      const noteBox = await page.locator('#review-stale').boundingBox()
+      assert.ok(noteBox && noteBox.width > 0 && noteBox.x + noteBox.width <= width, `at ${width}px wide, the note isn't drawn inside the window: ${JSON.stringify(noteBox)}`)
+    } finally { await page.close() }
+  }
 })

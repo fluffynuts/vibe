@@ -35,13 +35,12 @@ jobs:
         with:
           go-version-file: go.mod
       # jsdom, for the companion page's tests: go test fails them without it
-      # in CI rather than skipping.
+      # rather than skipping.
       - run: npm ci --prefix internal/companion/uitest
-      # Firefox, for the companion page's tests that need a real browser:
-      # on Linux only (go test skips them elsewhere, but not in CI on Linux).
-      - if: runner.os == 'Linux'
-        working-directory: internal/companion/uitest
-        run: npx playwright install --with-deps firefox
+      # Firefox, for the companion page's tests that need a real browser: they fail
+      # without it, on every OS. --with-deps (the system libraries) is for Linux only.
+      - working-directory: internal/companion/uitest
+        run: npx playwright install ${{ runner.os == 'Linux' && '--with-deps ' || '' }}firefox
       # Formatting doesn't depend on the OS (every file is checked out with LF: see
       # .gitattributes), so once is enough. Changes nothing: it fails if a file would change.
       - if: runner.os == 'Linux'

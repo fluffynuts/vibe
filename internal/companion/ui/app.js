@@ -1624,7 +1624,11 @@
     // the review is drawn to go to it (see openThread).
     goTo: null,
     // ignoreSpace: the diff leaves out changes of whitespace alone.
-    ignoreSpace: store.get(REVIEW_WHITESPACE) === 'ignore' }
+    ignoreSpace: store.get(REVIEW_WHITESPACE) === 'ignore',
+    // diffKey stands for the diff the page holds (vibe says it with the diff), and diffKeyIgnoresSpace whether that diff left
+    // whitespace out: what the code is asked about, once the agent's turn is over (see reviewTurnEnded). stale says it has
+    // changed since, with the tab open; checking, that the question is on its way.
+    diffKey: null, diffKeyIgnoresSpace: false, stale: false, checking: false }
 
   // changeReview asks vibe for a change to the review (do, ask, submit,
   // start), taking the review it gives back (see tookReview): every change
@@ -2389,6 +2393,9 @@
       if (withDiff && reviewView.loadingEpoch === reviewView.epoch) {
         reviewView.files = res.body.diff || []
         reviewView.diffError = res.body.diffError || ''
+        reviewView.diffKey = res.body.diffKey || null
+        reviewView.diffKeyIgnoresSpace = reviewView.ignoreSpace
+        showStale(false)
         // The code may have changed with the same files: drawn afresh.
         reviewView.key = null
       }
@@ -2548,6 +2555,42 @@
     reviewView.colours.clear()
     reviewView.unfolded.clear()
     reviewView.key = null
+    showStale(false)
+  }
+
+  // showStale says, beside Refresh, whether the code has changed under the diff the page holds.
+  function showStale(stale) {
+    reviewView.stale = stale
+    $('review-stale').hidden = !stale
+    $('review-refresh').classList.toggle('stale', stale)
+  }
+
+  // reviewTurnEnded asks vibe, once the agent's turn is over, whether the code is still the one the diff on the page is of: the
+  // agent, answering a round of review, can change it, and the comments it then makes are placed for the new code (comments
+  // follow their code only when a diff is worked out). With the tab open, a change is said, beside Refresh, and the diff is left
+  // alone: it is being read, and a refresh forgets the gaps opened and the place in it. With another tab open, the diff is
+  // dropped, to be worked out afresh when the tab is shown. A turn that changed nothing does neither; one that can't be
+  // answered for is no reason to say anything.
+  async function reviewTurnEnded() {
+    const rv = reviewView.review
+    const key = reviewView.diffKey
+    if (!rv || !reviewIsOn(rv) || reviewView.files === null || !key || reviewView.checking) return
+    reviewView.checking = true
+    try {
+      const res = await api('/api/review/changed?key=' + encodeURIComponent(key) + (reviewView.diffKeyIgnoresSpace ? '&whitespace=ignore' : ''), { timeout: 40000 })
+      // A diff worked out since this set out has its own key: this answer is about another.
+      if (!res.ok || !res.body || !res.body.changed || reviewView.diffKey !== key) return
+      if (state.tab === 'review') {
+        showStale(true)
+      } else {
+        forgetFiles()
+        reviewView.files = null
+      }
+    } catch (e) {
+      // Nothing to say: not a reason to nag.
+    } finally {
+      reviewView.checking = false
+    }
   }
 
   // refreshReview loads the review and its diff afresh, and what can be
@@ -5538,6 +5581,7 @@
     convo.running = running
     // What the agent ran is known now, and what was chosen has been used.
     if (ended && state.choice) choiceTurnEnded()
+    if (ended) reviewTurnEnded()
     $('convo-send').disabled = running
     // Only while it answers: what it has left running ends with the next
     // prompt anyway.

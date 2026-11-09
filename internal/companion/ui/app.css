@@ -196,6 +196,9 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .summary .bad { color: var(--bad); }
 .summary .warn { color: var(--amber); }
 .muted { color: var(--muted); }
+/* The note beside Refresh that the code has changed under the diff: it stays until Refresh, and is not a toast. */
+.review-stale { background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 6px; padding: 2px 8px; font-size: 0.9em; }
+#review-refresh.stale { border-color: var(--warn-line); }
 .note { margin: 0; font-size: 12px; }
 
 button, .button, input[type="text"], input[type="search"] {

@@ -62,14 +62,28 @@ func pwshTarballOf(t *testing.T, body string) (data []byte, sum string) {
 
 // pwshRun is one run of the install script.
 type pwshRun struct {
-	log, prefix, link string
-	requests          int32
-	exit              error
+	log, prefix, link, calls string
+	requests                 int32
+	exit                     error
 }
+
+// pwshApt is what apt does, for a run: the packages apt-cache lists (one "name - description" a line), and whether
+// installing fails. The script's apt is never the machine's: a real one would install packages on whoever runs the tests.
+type pwshApt struct {
+	cache string
+	fails bool
+}
+
+var defaultPwshApt = pwshApt{cache: "libicu76 - International Components for Unicode\n"}
 
 // runPwshInstall runs the script against a server serving tarball (404 when it is nil), with the checksums
 // it will accept being sums, and arch what uname says the machine is ("" for the real one).
 func runPwshInstall(t *testing.T, tarball []byte, sums string, arch string, before func(prefix string)) pwshRun {
+	t.Helper()
+	return runPwshInstallWith(t, tarball, sums, arch, before, defaultPwshApt)
+}
+
+func runPwshInstallWith(t *testing.T, tarball []byte, sums string, arch string, before func(prefix string), apt pwshApt) pwshRun {
 	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("the script is for a Linux sandbox: GNU tar, sha256sum and date")
@@ -107,16 +121,24 @@ func runPwshInstall(t *testing.T, tarball []byte, sums string, arch string, befo
 	if before != nil {
 		before(run.prefix)
 	}
-	cmd := exec.Command("sh", path)
-	cmd.Env = append(os.Environ(), "PWSH_BASE="+srv.URL, "PWSH_PREFIX="+run.prefix, "PWSH_LINK="+run.link, "PWSH_LOG="+logFile)
+	fake := t.TempDir()
+	callsFile := filepath.Join(fake, "calls")
+	os.WriteFile(filepath.Join(fake, "sudo"), []byte("#!/bin/sh\necho \"sudo $*\" >>\"$FAKE_CALLS\"\n[ -n \"$FAKE_APT_FAILS\" ] && exit 100\nexit 0\n"), 0o755)
+	os.WriteFile(filepath.Join(fake, "apt-cache"), []byte("#!/bin/sh\nprintf '%s' \"$FAKE_APT_CACHE\"\n"), 0o755)
 	if arch != "" {
-		fake := t.TempDir()
 		os.WriteFile(filepath.Join(fake, "uname"), []byte("#!/bin/sh\necho "+arch+"\n"), 0o755)
-		cmd.Env = append(cmd.Env, "PATH="+fake+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	cmd := exec.Command("sh", path)
+	cmd.Env = append(os.Environ(), "PWSH_BASE="+srv.URL, "PWSH_PREFIX="+run.prefix, "PWSH_LINK="+run.link, "PWSH_LOG="+logFile,
+		"PATH="+fake+string(os.PathListSeparator)+os.Getenv("PATH"), "FAKE_CALLS="+callsFile, "FAKE_APT_CACHE="+apt.cache)
+	if apt.fails {
+		cmd.Env = append(cmd.Env, "FAKE_APT_FAILS=1")
 	}
 	run.exit = cmd.Run()
 	log, _ := os.ReadFile(logFile)
 	run.log = string(log)
+	calls, _ := os.ReadFile(callsFile)
+	run.calls = string(calls)
 	run.requests = atomic.LoadInt32(&requests)
 	return run
 }
@@ -326,5 +348,50 @@ func TestASuccessfulInstallLeavesNothingBesideIt(t *testing.T) {
 	}
 	if out, err := exec.Command(run.link).Output(); err != nil || strings.TrimSpace(string(out)) != "7.6.9" {
 		t.Errorf("the new one isn't what runs: %q, %v", out, err)
+	}
+}
+
+// PowerShell is .NET, which stops at start without ICU ("Couldn't find a valid ICU package"): seen in a built sandbox,
+// whose log said it "won't run" and which had no pwsh. So the ICU library is installed first, whichever version the
+// image's apt has (the package's name carries it: libicu76 on Debian 13).
+func TestTheIcuLibraryIsInstalledBeforePwshIsRun(t *testing.T) {
+	tarball, sum := pwshTarball(t)
+	run := runPwshInstall(t, tarball, sum, "", nil)
+	if run.exit != nil {
+		t.Fatalf("the script failed: %v\n%s", run.exit, run.log)
+	}
+	if !strings.Contains(run.calls, "apt-get -o DPkg::Lock::Timeout=300 install -y libicu76") {
+		t.Errorf("libicu76 wasn't installed; calls:\n%s", run.calls)
+	}
+	icu, ran := strings.Index(run.log, "libicu76"), strings.Index(run.log, "installed PowerShell")
+	if icu < 0 || ran < 0 || icu > ran {
+		t.Errorf("the log doesn't show ICU installed before PowerShell was run:\n%s", run.log)
+	}
+}
+
+func TestTheNewestIcuPackageTheImageHasIsTheOneInstalled(t *testing.T) {
+	tarball, sum := pwshTarball(t)
+	run := runPwshInstallWith(t, tarball, sum, "", nil, pwshApt{cache: "libicu9 - old\nlibicu76 - new\nlibicu72 - older\n"})
+	if !strings.Contains(run.calls, "install -y libicu76") || strings.Contains(run.calls, "libicu72") || strings.Contains(run.calls, "libicu9") {
+		t.Errorf("not the newest only; calls:\n%s", run.calls)
+	}
+}
+
+func TestAnImageWithNoIcuPackageIsSaidAndPwshIsStillInstalled(t *testing.T) {
+	tarball, sum := pwshTarball(t)
+	run := runPwshInstallWith(t, tarball, sum, "", nil, pwshApt{})
+	if run.exit != nil || !strings.Contains(run.log, "installed PowerShell") {
+		t.Errorf("the install didn't go on: %v\n%s", run.exit, run.log)
+	}
+	if !strings.Contains(run.log, "WARN: no ICU package") || strings.Contains(run.calls, "install -y libicu") {
+		t.Errorf("not said, or something was installed; log:\n%s\ncalls:\n%s", run.log, run.calls)
+	}
+}
+
+func TestAnIcuInstallThatFailsIsSaidAndPwshIsStillTried(t *testing.T) {
+	tarball, sum := pwshTarball(t)
+	run := runPwshInstallWith(t, tarball, sum, "", nil, pwshApt{cache: defaultPwshApt.cache, fails: true})
+	if !strings.Contains(run.log, "WARN: couldn't install libicu76") || !strings.Contains(run.log, "installed PowerShell") {
+		t.Errorf("not said, or the install didn't go on:\n%s", run.log)
 	}
 }
