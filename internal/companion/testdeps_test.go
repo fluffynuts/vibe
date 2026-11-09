@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 )
 
@@ -36,9 +37,40 @@ func nodeMissing(whose string) string {
 	return "node isn't installed, and " + whose + " tests need it (" + nodeRangeIn("uitest") + "): install it, then " + getTestDeps
 }
 
+// plainVersion is a pin staleDeps can compare with an installed version: major.minor.patch, with a prerelease tag if it has one.
+var plainVersion = regexp.MustCompile(`^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$`)
+
+// inexactPins says, of a uitest folder, which of the dependencies its package.json pins aren't a plain version, and why that
+// matters. Nothing is returned when all are.
+func inexactPins(dir string) []string {
+	var pinned struct {
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err == nil {
+		err = json.Unmarshal(data, &pinned)
+	}
+	if err != nil {
+		return []string{fmt.Sprintf("%s's package.json can't be read (%v)", dir, err)}
+	}
+	var problems []string
+	for name, pin := range pinned.DevDependencies {
+		if !plainVersion.MatchString(pin) {
+			problems = append(problems, fmt.Sprintf("%s (%q) is not a plain version (major.minor.patch): the check for what is installed compares it with the version installed, so a range or a tag would fail for ever", name, pin))
+		}
+	}
+	sort.Strings(problems)
+	return problems
+}
+
 // staleDeps says, of a uitest folder, which of the dependencies its package.json pins aren't installed at that version
 // (jsdom and Playwright are pinned exactly). node_modules follows no branch, so one that pins another version than the
 // one before it leaves the tests running against the wrong one. Nothing is returned when all are as pinned.
+//
+// "Installed at the pinned version" means the pin is a plain version: a range (^30.1) would fail for ever, as 30.1.3 is not
+// "^30.1". They are plain because the pins are ours (devDependencies, installed by make test-deps and CI, no one else's range to
+// honour), and inexactPins, which a test runs over uitest/package.json, says when one isn't. Comparing with the lockfile instead
+// would need each package manager's own; ranges would need a semver library.
 func staleDeps(dir string) []string {
 	var pinned struct {
 		DevDependencies map[string]string `json:"devDependencies"`

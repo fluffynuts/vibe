@@ -100,3 +100,41 @@ func TestWithNoEnginesToReadTheMessageSaysWhereToLookInstead(t *testing.T) {
 		}
 	}
 }
+
+// staleDeps (testdeps_test.go) compares what is installed with what package.json pins, which only means "stale" while every pin is a
+// plain version. The pins are ours (devDependencies, installed by make test-deps and CI), so they are kept exact, and this says when
+// one isn't.
+func TestEveryPinInUitestPackageJSONIsAPlainVersion(t *testing.T) {
+	if problems := inexactPins("uitest"); len(problems) != 0 {
+		t.Errorf("uitest/package.json pins what staleDeps can't compare with what is installed:\n%s", strings.Join(problems, "\n"))
+	}
+}
+
+func TestAPinThatIsNotAPlainVersionIsNamedWithWhyItMatters(t *testing.T) {
+	dir := t.TempDir()
+	pins := `{"devDependencies": {"jsdom": "^30.1", "playwright": "1.64.1", "tagged": "latest", "local": "file:../x", "tilde": "~1.2.3",
+		"gte": ">=1", "wild": "1.x", "pre": "1.2.3-beta.1", "two": "1.2"}}`
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pins), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(inexactPins(dir), "\n")
+	for _, bad := range []string{`jsdom ("^30.1")`, `tagged ("latest")`, `local ("file:../x")`, `tilde ("~1.2.3")`, `gte (">=1")`, `wild ("1.x")`, `two ("1.2")`} {
+		if !strings.Contains(got, bad) {
+			t.Errorf("%s isn't named:\n%s", bad, got)
+		}
+	}
+	for _, fine := range []string{"playwright", "pre ("} {
+		if strings.Contains(got, fine) {
+			t.Errorf("%s was refused, but is a plain version:\n%s", fine, got)
+		}
+	}
+	if !strings.Contains(got, "plain version") || !strings.Contains(got, "fail for ever") {
+		t.Errorf("it doesn't say what a plain version is, or why one is wanted:\n%s", got)
+	}
+}
+
+func TestPinsThatCantBeReadAreSaidNotPassed(t *testing.T) {
+	if got := inexactPins(t.TempDir()); len(got) != 1 || !strings.Contains(got[0], "package.json") {
+		t.Errorf("inexactPins = %v, want one line about the package.json that can't be read", got)
+	}
+}
