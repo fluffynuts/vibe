@@ -487,29 +487,36 @@ func SshConfigured(host string) bool {
 	return false
 }
 
-// WaitReachable polls until the sandbox will accept an exec, or limit
-// seconds pass. sbx create provisions but does not start; sbx run boots it.
-// It gives up early when ctx ends.
-func WaitReachable(ctx context.Context, name string, limit int) bool {
+// WaitReachable polls until the sandbox will accept an exec, or within has passed (see waitUntilReachable). sbx create
+// provisions but does not start; sbx run boots it. It gives up early when ctx ends. How long is worth waiting is the caller's to
+// say, as the wait is for something it has already committed to: a memory restore, the start nudge, Start each give their own.
+func WaitReachable(ctx context.Context, name string, within time.Duration) bool {
 	failed := failedWakes{name: name}
 	defer failed.finish()
-	for i := 0; i < limit; i++ {
+	return waitUntilReachable(ctx, name, within, &failed) == nil
+}
+
+// waitUntilReachable is the one wait for a sandbox to take an exec: it asks once a second until it does, or until within has
+// passed since it began (a try is begun until then, and not after, so the first is always made), noting what each failed try
+// said in failed. It stops at once when ctx ends, or when sbx is signed out, which asking again won't change. It returns nil,
+// or what the last try said. The limit is the clock's and not a number of tries: a try can take a long time of its own.
+func waitUntilReachable(ctx context.Context, name string, within time.Duration, failed *failedWakes) error {
+	began := time.Now()
+	for {
 		err := wake(ctx, name)
 		if err == nil {
-			return true
+			return nil
 		}
 		failed.saw(err)
-		// Asking again won't sign sbx in.
-		if isNotSignedIn(err) {
-			return false
+		if isNotSignedIn(err) || ctx.Err() != nil || time.Since(began) >= within {
+			return err
 		}
 		select {
 		case <-ctx.Done():
-			return false
+			return err
 		case <-time.After(time.Second):
 		}
 	}
-	return false
 }
 
 // Start boots a stopped sandbox without attaching a session to it, and
@@ -569,30 +576,19 @@ func startOnce(ctx context.Context, name string) error {
 		return err
 	}
 	began := time.Now()
-	for {
-		err = wake(ctx, name)
-		if err == nil {
-			return nil
-		}
-		failed.saw(err)
-		if isNotSignedIn(err) {
-			return err
-		}
-		if ctx.Err() != nil || time.Since(began) >= time.Duration(startTimeout)*time.Second {
-			break
-		}
-		select {
-		case <-ctx.Done():
-		case <-time.After(time.Second):
-		}
+	if err = waitUntilReachable(ctx, name, startTimeout, &failed); err == nil {
+		return nil
+	}
+	if isNotSignedIn(err) {
+		return err
 	}
 	return fmt.Errorf("sbx started it, but it didn't accept a command in %d seconds: %w", int(time.Since(began).Round(time.Second)/time.Second), err)
 }
 
 // startTimeout is how long Start waits for a booting sandbox to accept an
-// exec, in seconds — generous, since it is only ever reached when the user
-// has already committed to the operation the start is for.
-var startTimeout = 60
+// exec — generous, since it is only ever reached when the user has already
+// committed to the operation the start is for.
+var startTimeout = 60 * time.Second
 
 // Remove deletes a sandbox, ending sbx when ctx ends. force maps to
 // `sbx rm -f`. What sbx prints goes to out, or the terminal when out is nil

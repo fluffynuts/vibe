@@ -49,8 +49,10 @@ func instructionsFor(lay layout.Layout, name string) (merged, agent string, err 
 	if p := lay.HomePath(instructions.File); p != "" {
 		universal = read(p)
 	}
-	project := read(filepath.Join(lay.ProfileDir(inst.Profile), instructions.File))
-	return instructions.Merge(universal, project), agent, nil
+	profileDir := lay.ProfileDir(inst.Profile)
+	project := read(filepath.Join(profileDir, instructions.File))
+	merged = instructions.WithCopyableBlocksRule(instructions.Merge(universal, project), read(filepath.Join(profileDir, instructions.KitFile)))
+	return merged, agent, nil
 }
 
 // sandboxFileWrite writes stdin to the file named by $1 in the sandbox,

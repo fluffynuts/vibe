@@ -1,0 +1,179 @@
+package companion
+
+import (
+	"encoding/json"
+	"net/http"
+	"os"
+	"regexp"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"vibe/internal/review"
+)
+
+// A fenced block in the conversation is coloured by the host, by the language on its fence: the page sends the tag and the text,
+// and is sent runs per line. It needs no repository (the Review tab's files do), only the token.
+func blockServer() *Server { return New(Config{Sandbox: "box", Token: token, Port: testPort}) }
+
+// asJSON is the headers of a page's call with a body: the token, and the type the same-origin check wants.
+func asJSON() map[string]string { return authed(map[string]string{"Content-Type": "application/json"}) }
+
+func colourBlock(t *testing.T, s *Server, tag, text string) (int, review.Highlighted) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{"lang": tag, "text": text})
+	rec := do(t, s, req{method: "POST", path: "/api/highlight", headers: asJSON(), body: string(body)})
+	var h review.Highlighted
+	json.Unmarshal(rec.Body.Bytes(), &h)
+	return rec.Code, h
+}
+
+func TestABlockIsColouredByItsTag(t *testing.T) {
+	code, h := colourBlock(t, blockServer(), "go", "package main\n\nfunc f() {}\n")
+	if code != http.StatusOK || h.Language != "Go" || len(h.Lines) != 3 {
+		t.Errorf("%d %+v", code, h)
+	}
+}
+
+func TestColouringABlockNeedsTheToken(t *testing.T) {
+	rec := do(t, blockServer(), req{method: "POST", path: "/api/highlight", body: `{"lang":"go","text":"x"}`})
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestABlockOfNoLanguageComesBackPlainAndSaysNothing(t *testing.T) {
+	for _, tag := range []string{"", "text", "klingon"} {
+		code, h := colourBlock(t, blockServer(), tag, "just words\n")
+		if code != http.StatusOK || h.Lines != nil || h.Language != "" || h.Skipped != "" {
+			t.Errorf("%q: %d %+v", tag, code, h)
+		}
+	}
+}
+
+func TestABlockTooLongComesBackSayingWhyItIsntColoured(t *testing.T) {
+	code, h := colourBlock(t, blockServer(), "go", strings.Repeat("x := 1\n", 6000))
+	if code != http.StatusOK || h.Lines != nil || !strings.Contains(h.Skipped, "too long") {
+		t.Errorf("%d skipped %q", code, h.Skipped)
+	}
+}
+
+func TestWhatIsntAColouringRequestIsRefused(t *testing.T) {
+	s := blockServer()
+	for what, body := range map[string]string{"not JSON": "{", "no fields": "[]", "a text that isn't text": `{"lang":"go","text":5}`} {
+		rec := do(t, s, req{method: "POST", path: "/api/highlight", headers: asJSON(), body: body})
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: %d %s", what, rec.Code, rec.Body)
+		}
+	}
+	// Past any block that could be coloured, the request is refused unread: no more than a megabyte is taken.
+	huge := `{"lang":"go","text":"` + strings.Repeat("a", 2<<20) + `"}`
+	rec := do(t, s, req{method: "POST", path: "/api/highlight", headers: asJSON(), body: huge})
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("2 MB: %d", rec.Code)
+	}
+}
+
+// A block's colouring can be made never to end (Chroma's JSONata lexer, on a comment that isn't closed), and the text is the sandbox's
+// to write: it is shown plain once its time is up, saying so, and counts toward colouring being turned off, as a file does.
+func TestABlockThatTakesTooLongToColourIsShownWithout(t *testing.T) {
+	old := colourWithin
+	colourWithin = time.Second
+	t.Cleanup(func() { colourWithin = old })
+	began := time.Now()
+	code, h := colourBlock(t, blockServer(), "jsonata", "/*")
+	if code != http.StatusOK || h.Lines != nil || !strings.Contains(h.Skipped, "too long") {
+		t.Errorf("%d %+v", code, h)
+	}
+	if took := time.Since(began); took > 10*time.Second {
+		t.Errorf("took %s", took)
+	}
+}
+
+func TestBlocksAndFilesShareWhatTurnsColouringOff(t *testing.T) {
+	old := colourWithin
+	t.Cleanup(func() { colourWithin = old })
+	s := blockServer()
+	if _, h := colourBlock(t, s, "go", "package b\n"); h.Language != "Go" {
+		t.Fatalf("before: %+v", h)
+	}
+	colourWithin = 200 * time.Millisecond
+	for i := 0; i < colourGiveUpAfter; i++ {
+		if _, h := colourBlock(t, s, "jsonata", "/*"); !strings.Contains(h.Skipped, "too long") {
+			t.Fatalf("try %d: %+v", i+1, h)
+		}
+	}
+	colourWithin = old
+	code, h := colourBlock(t, s, "go", "package b\n")
+	if code != http.StatusOK || h.Lines != nil || !strings.Contains(h.Skipped, "turned off") {
+		t.Errorf("after %d took too long: %d %+v", colourGiveUpAfter, code, h)
+	}
+}
+
+func TestOnlyAFewBlocksAreColouredAtOnce(t *testing.T) {
+	old := colourWithin
+	colourWithin = 500 * time.Millisecond
+	t.Cleanup(func() { colourWithin = old })
+	s := blockServer()
+	s.colours = newColourer(2)
+	began := time.Now()
+	done := make(chan struct{})
+	for range 4 {
+		go func() { colourBlock(t, s, "jsonata", "/*"); done <- struct{}{} }()
+	}
+	for range 4 {
+		<-done
+	}
+	if took := time.Since(began); took < 2*colourWithin {
+		t.Errorf("4 blocks that each took %s were coloured in %s: more than 2 at once", colourWithin, took)
+	}
+}
+
+// The page doesn't send a block that is past what the host colours, and says so itself, so it has the host's limits (and its idea of
+// what a tag is) written into it. Nothing but this makes them the same: they are read out of the page's source and held to the host's.
+func TestThePageAndTheHostColourBlocksToTheSameLimits(t *testing.T) {
+	data, err := os.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(data)
+	number := func(pattern string) int {
+		m := regexp.MustCompile(pattern).FindStringSubmatch(js)
+		if m == nil {
+			t.Fatalf("app.js has nothing matching %s", pattern)
+		}
+		n, _ := strconv.Atoi(m[1])
+		return n
+	}
+	if got := number(`const COLOUR_MAX_BYTES = (\d+) \* 1024`) * 1024; got != review.MaxBlockBytes {
+		t.Errorf("the page colours blocks up to %d bytes, the host %d", got, review.MaxBlockBytes)
+	}
+	if got := number(`const COLOUR_MAX_LINES = (\d+)`); got != review.MaxBlockLines {
+		t.Errorf("the page colours blocks up to %d lines, the host %d", got, review.MaxBlockLines)
+	}
+	tag := regexp.MustCompile("const COLOUR_TAG = /(.+)/\n").FindStringSubmatch(js)
+	if tag == nil || tag[1] != review.BlockTagPattern {
+		t.Errorf("the page's idea of a tag is %v, the host's %s", tag, review.BlockTagPattern)
+	}
+}
+
+// An HTML or XML entity comes back as its own run, of the class the page draws as a constant: through the endpoint, helper process and
+// all, as the page asks. (Seen plain on a page: this holds the host's half.)
+func TestAnEntityInAnHTMLBlockComesBackAsItsOwnRun(t *testing.T) {
+	text := "<!doctype html>\n<html lang=\"en\">\n  <body class=\"x\"><p id=\"a\">hi &amp; bye</p></body>\n</html>"
+	for _, tag := range []string{"html", "xml"} {
+		code, h := colourBlock(t, blockServer(), tag, text)
+		var found bool
+		for _, line := range h.Lines {
+			for _, run := range line {
+				if run.Text == "&amp;" && run.Class == "ni" {
+					found = true
+				}
+			}
+		}
+		if code != http.StatusOK || !found {
+			t.Errorf("%s: %d, and the entity was not a run of class ni: %+v", tag, code, h.Lines)
+		}
+	}
+}

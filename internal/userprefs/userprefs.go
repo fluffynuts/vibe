@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -50,31 +49,12 @@ const header = `# Choices made through vibe for this profile. Safe to edit: dele
 # the whole file, to go back to being asked (or to the default).
 `
 
-// Dead code to remove, with everything that names these files, two releases
-// after the one that moved the choices here: see "Dead code to remove" in
-// docs/plan-user-preferences.md for the list. LegacyFiles are where earlier
-// vibes kept a choice of their own, one line
-// each: the theme and the git author answer. They are still read, for what
-// the new file doesn't say, and moved into it the first time it is changed.
-var LegacyFiles = []string{legacyTheme, legacyGitAuthor}
-
-const (
-	legacyTheme     = "claude-theme"
-	legacyGitAuthor = "git-author"
-)
-
 // Path is the preferences' file in the profile folder dir.
 func Path(dir string) string { return filepath.Join(dir, File) }
 
 // Load reads the preferences in profile folder dir: none, when there is no
-// file. Choices only an old file has are read too.
+// file.
 func Load(dir string) (Prefs, error) {
-	p, err := loadWithLegacy(dir)
-	return p, err
-}
-
-// loadNew reads the new file alone.
-func loadNew(dir string) (Prefs, error) {
 	data, err := fscopy.ReadFile(Path(dir))
 	if os.IsNotExist(err) {
 		return Prefs{}, nil
@@ -93,31 +73,6 @@ func parse(dir string, data []byte) (Prefs, error) {
 	return p, nil
 }
 
-// loadWithLegacy is Load, with what the old files say filling what the file
-// doesn't.
-func loadWithLegacy(dir string) (Prefs, error) {
-	p, err := loadNew(dir)
-	if err != nil {
-		return Prefs{}, err
-	}
-	fillFromLegacy(dir, &p)
-	return p, nil
-}
-
-func fillFromLegacy(dir string, p *Prefs) {
-	for _, f := range []struct {
-		file string
-		into *string
-	}{{legacyTheme, &p.Theme}, {legacyGitAuthor, &p.GitAuthor}} {
-		if *f.into != "" {
-			continue
-		}
-		if data, err := fscopy.ReadFile(filepath.Join(dir, f.file)); err == nil {
-			*f.into = strings.TrimSpace(string(data))
-		}
-	}
-}
-
 // updating holds a lock for each folder being updated: several parts of vibe
 // (the page's model choice, the git author question, the migration) change the
 // same file from their own goroutines, and an update made from what was read
@@ -130,8 +85,7 @@ var updating sync.Map
 // user wrote it: a key this vibe doesn't know, and comments. A file that can't
 // be read is an error, not written over: the user may have been editing it. A
 // folder that isn't there isn't made, as that would hide the real profile. With
-// nothing left to keep, the file goes. What the old files held is moved into
-// the file, and they go.
+// nothing left to keep, the file goes.
 func Update(dir string, change func(*Prefs)) error {
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return fmt.Errorf("there is no folder %s to keep the preferences in", dir)
@@ -148,7 +102,6 @@ func Update(dir string, change func(*Prefs)) error {
 		return err
 	}
 	want := current
-	fillFromLegacy(dir, &want)
 	change(&want)
 	original := data
 	created := len(data) == 0
@@ -190,22 +143,6 @@ func Update(dir string, change func(*Prefs)) error {
 	case !bytes.Equal(data, original):
 		if err := fscopy.WriteWholeMode(Path(dir), data, modeOf(Path(dir))); err != nil {
 			return err
-		}
-	}
-	for _, old := range LegacyFiles {
-		if err := os.Remove(filepath.Join(dir, old)); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("the preferences are kept in %s, but the old %s couldn't be removed, and would be read again: %w", File, old, err)
-		}
-	}
-	return nil
-}
-
-// Migrate moves what the old files held into the file; with none, it does
-// nothing, so a file as the user wrote it is left as it is.
-func Migrate(dir string) error {
-	for _, old := range LegacyFiles {
-		if _, err := os.Stat(filepath.Join(dir, old)); err == nil {
-			return Update(dir, func(*Prefs) {})
 		}
 	}
 	return nil

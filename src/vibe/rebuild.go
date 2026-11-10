@@ -333,8 +333,6 @@ func preferencesToKeep(lay layout.Layout, profile string, force bool) ([]byte, e
 	if dir == "" || !fileExists(dir) {
 		return nil, nil
 	}
-	// Earlier vibes' files, and the model and effort in settings.yaml, move in first.
-	migratePreferences(lay, profile)
 	data, err := fscopy.ReadFile(userprefs.Path(dir))
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -554,10 +552,6 @@ func recomposeBlank(lay layout.Layout, args cliargs.Args, name, profile string, 
 // replaceProfile backs profile up, under backupName (the sandbox it's for),
 // and composes it afresh from features.
 func replaceProfile(lay layout.Layout, profile, backupName string, features []string) error {
-	// What earlier vibes kept in files of their own, and the model and effort
-	// they kept in settings.yaml, move into the preferences first, so what is
-	// carried is all there is.
-	migratePreferences(lay, profile)
 	// The user's choices (the theme, the git author answer, the model and
 	// effort) aren't something the features produce, so they would go with the
 	// rest of the old profile; carry them across, as the user's own

@@ -923,6 +923,151 @@ test('Reload keeps the place in the file, and Back goes to where it was left in 
   } finally { await page.close() }
 })
 
+// The dark theme's CSS is written twice: for a system that is dark (CSS alone, no script), and for dark chosen in the power menu
+// (a data-theme attribute, set by theme.js before the page is drawn). They are two copies of the same colours and must not drift
+// apart: whatever the stylesheet sets as a custom property, and the glass over the page when vibe is gone, must come out the same
+// whichever way the theme was come by, for light as for dark.
+async function lookOf(colorScheme, chosen) {
+  const page = await browser.newPage({ colorScheme, viewport: { width: 1000, height: 700 } })
+  try {
+    if (chosen) await page.addInitScript((c) => { document.cookie = 'vibe-theme=' + c + '; Path=/' }, chosen)
+    await page.goto(URL)
+    return await page.evaluate(async () => {
+      const css = await (await fetch('/app.css')).text()
+      const names = [...new Set(css.match(/--[a-z0-9-]+(?=\s*:)/g))].sort()
+      const root = getComputedStyle(document.documentElement)
+      const look = {}
+      for (const name of names) look[name] = root.getPropertyValue(name).trim()
+      const glass = document.getElementById('offline')
+      look['offline background'] = getComputedStyle(glass).backgroundColor
+      look['_names'] = names.length
+      // Not part of the look compared: a system that is dark gets its native controls dark from the page's meta tag, so the
+      // property reads "normal" there, where a choice sets it.
+      look['_colorScheme'] = root.colorScheme
+      return look
+    })
+  } finally { await page.close() }
+}
+
+test('dark chosen in the menu looks as a dark system does, and so does light', async () => {
+  const systemDark = await lookOf('dark', null)
+  const systemLight = await lookOf('light', null)
+  assert.notDeepEqual(systemDark, systemLight, 'the two themes were not told apart: this test would prove nothing')
+  assert.ok(systemDark._names > 20, 'only ' + systemDark._names + ' custom properties were found')
+  const strip = ({ _colorScheme, ...look }) => look
+  const darkChosen = await lookOf('light', 'dark')
+  const lightChosen = await lookOf('dark', 'light')
+  assert.deepEqual(strip(darkChosen), strip(systemDark), 'dark chosen on a light system')
+  assert.deepEqual(strip(lightChosen), strip(systemLight), 'light chosen on a dark system')
+  // A choice also tells the browser, for what it draws itself (scrollbars, form controls).
+  assert.equal(darkChosen._colorScheme, 'dark')
+  assert.equal(lightChosen._colorScheme, 'light')
+})
+
+// The choice is one for the whole host: kept in a cookie, which a browser shares between the ports of a host (a page's
+// localStorage is its own), so it holds for every sandbox's page, each on a port of its own; and a page that is open follows a
+// choice made in another. Here two pages on two ports of localhost, as two sandboxes' are (a second tab of one page is not let to
+// stay open, so it is two pages and not two tabs).
+const OTHER_URL = process.env.VIBE_PAGE_URL_OTHER
+
+test('a theme chosen on one sandbox\'s page is followed by another\'s on its own port, and is kept as a host-wide cookie', async () => {
+  assert.notEqual(new globalThis.URL(URL).port, new globalThis.URL(OTHER_URL).port, 'two pages on different ports')
+  assert.equal(new globalThis.URL(URL).hostname, new globalThis.URL(OTHER_URL).hostname, 'on one host')
+  const context = await browser.newContext({ colorScheme: 'dark', viewport: { width: 1000, height: 700 } })
+  try {
+    const one = await context.newPage()
+    const two = await context.newPage()
+    await one.goto(URL)
+    await two.goto(OTHER_URL)
+    const themeOf = (page) => page.evaluate(() => document.documentElement.getAttribute('data-theme'))
+    assert.equal(await themeOf(two), null)
+    await one.click('#link')
+    await one.click('#theme-light')
+    assert.equal(await themeOf(one), 'light')
+    await eventually(two, 'the other port\'s page to follow', async () => (await themeOf(two)) === 'light')
+    assert.equal(await two.getAttribute('#theme-light', 'aria-checked'), 'true')
+    const cookie = (await context.cookies()).find((c) => c.name === 'vibe-theme')
+    assert.ok(cookie, 'the choice is a cookie')
+    assert.equal(cookie.value, 'light')
+    assert.equal(cookie.path, '/')
+    assert.equal(cookie.httpOnly, false, 'the head script reads it')
+    assert.equal(cookie.sameSite, 'Lax')
+    assert.ok(cookie.expires > Date.now() / 1000 + 300 * 24 * 3600, 'kept for about a year: expires ' + cookie.expires)
+    // A page opened afterwards, on the other port (its first one closed: only one of a page is let to stay), starts in it: no flash
+    // of the system's first.
+    await two.close()
+    const three = await context.newPage()
+    // Sampled when <body> first exists: the head's scripts have run, and nothing has been drawn yet.
+    await three.addInitScript(() => {
+      new MutationObserver((_, observer) => {
+        if (document.body) { window.__first = document.documentElement.getAttribute('data-theme'); observer.disconnect() }
+      }).observe(document, { childList: true, subtree: true })
+    })
+    await three.goto(OTHER_URL)
+    assert.equal(await themeOf(three), 'light')
+    assert.equal(await three.evaluate(() => window.__first), 'light')
+    // Back to the system's: the cookie goes, and that page follows.
+    await one.click('#link')
+    await one.click('#theme-system')
+    await eventually(three, 'the other port\'s page to go back to the system', async () => (await themeOf(three)) === null)
+    assert.equal((await context.cookies()).some((c) => c.name === 'vibe-theme'), false)
+  } finally { await context.close() }
+})
+
+// The syntax colours of a block in the conversation are the page's own (the ones the Review tab's files have), in the light theme and
+// in the dark: the classes the host's colours become are styled inside a conversation block, not only in a file.
+test('a coloured block in the conversation has the syntax colours, in the light and the dark theme', async () => {
+  for (const colorScheme of ['light', 'dark']) {
+    const page = await browser.newPage({ colorScheme, viewport: { width: 1000, height: 700 } })
+    try {
+      await page.goto(URL)
+      const found = await page.evaluate(() => {
+        const md = document.createElement('div')
+        md.className = 'md'
+        md.innerHTML = '<div class="code-block"><pre><code><span class="hl-kw">a</span><span class="hl-str">b</span><span class="hl-comment">c</span><span class="hl-num">d</span><span class="hl-del">e</span><span class="hl-ins">f</span>plain</code></pre></div>'
+        document.body.append(md)
+        // What a colour variable is, as the browser computes a colour: through an element, as the page's style can only be set from script.
+        const probe = (name) => { const p = document.createElement('span'); p.style.color = 'var(' + name + ')'; document.body.append(p); return getComputedStyle(p).color }
+        const code = md.querySelector('code')
+        const of = (cls) => getComputedStyle(md.querySelector('.' + cls)).color
+        return {
+          plain: getComputedStyle(code).color,
+          kw: of('hl-kw'), str: of('hl-str'), comment: of('hl-comment'), num: of('hl-num'), del: of('hl-del'), ins: of('hl-ins'),
+          wantKw: probe('--hl-kw'), wantStr: probe('--hl-str'), wantComment: probe('--hl-comment'), wantNum: probe('--hl-num'), wantDel: probe('--bad'), wantIns: probe('--ok'),
+          italic: getComputedStyle(md.querySelector('.hl-comment')).fontStyle,
+        }
+      })
+      assert.equal(found.kw, found.wantKw, colorScheme + ': keyword')
+      assert.equal(found.str, found.wantStr, colorScheme + ': string')
+      assert.equal(found.comment, found.wantComment, colorScheme + ': comment')
+      assert.equal(found.num, found.wantNum, colorScheme + ': number')
+      assert.equal(found.del, found.wantDel, colorScheme + ': deleted line of a diff')
+      assert.equal(found.ins, found.wantIns, colorScheme + ': inserted line of a diff')
+      assert.notEqual(found.del, found.ins, colorScheme + ': deleted and inserted are told apart')
+      assert.notEqual(found.kw, found.plain, colorScheme + ': a keyword reads as one')
+      assert.equal(found.italic, 'italic')
+    } finally { await page.close() }
+  }
+})
+
+test('New conversation stays at the right of the conversation bar, whatever the status beside it', async () => {
+  const page = await conversationPage(1000)
+  try {
+    // A status that nearly fills the bar: it fits on the line, the button does not fit beside it, so the button wraps onto a line of its own.
+    const measure = (nearlyFull) => page.evaluate((nearlyFull) => {
+      const button = document.getElementById('convo-new')
+      const status = document.getElementById('convo-status')
+      const bar = button.parentElement
+      status.textContent = nearlyFull ? 'The agent is compacting its context.' : ''
+      status.style.flex = 'none'
+      status.style.width = nearlyFull ? (bar.getBoundingClientRect().width - 10) + 'px' : ''
+      return Math.round(bar.getBoundingClientRect().right - button.getBoundingClientRect().right)
+    }, nearlyFull)
+    assert.ok(Math.abs(await measure(false)) <= 1, 'with no status, the button is not at the right edge')
+    assert.ok(Math.abs(await measure(true)) <= 1, 'with a status that fills the line, the button is not at the right edge')
+  } finally { await page.close() }
+})
+
 // The note beside Refresh that the code has changed under the diff (see reviewstale.test.js) is one more thing in the Review bar
 // when it shows: it must not push the controls after it off the page, or the page sideways, at any width.
 test('the note that the code has changed fits the Review bar beside Refresh, at every width', async () => {

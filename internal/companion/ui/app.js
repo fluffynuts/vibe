@@ -303,9 +303,26 @@
     for (const action of ['stop', 'restart']) {
       $('power-' + action).addEventListener('click', () => { close(); askPower(action, state.sandbox, powerChecked) })
     }
+    for (const item of menu.querySelectorAll('.theme-item')) {
+      item.addEventListener('click', () => { window.vibeTheme.choose(item.dataset.choice); showThemeChoice(); close() })
+    }
+    showThemeChoice()
     menu.addEventListener('click', (ev) => { if (ev.target.closest('a')) close() })
     menu.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); close(); button.focus() } })
     document.addEventListener('pointerdown', (ev) => { if (!menu.hidden && !ev.target.closest('.power-wrap')) close() })
+  }
+
+  // followTheme takes up a theme chosen in another tab (its cookie changed), as a page in view does each poll, and one coming
+  // back into view at once.
+  function followTheme() {
+    if (window.vibeTheme.sync()) showThemeChoice()
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') followTheme() })
+
+  // showThemeChoice ticks the menu's light or dark (or the system's) that the page is in (see theme.js).
+  function showThemeChoice() {
+    const now = window.vibeTheme.current()
+    for (const item of document.querySelectorAll('.theme-item')) item.setAttribute('aria-checked', String(item.dataset.choice === now))
   }
 
   // What the power menu can do to this sandbox, as vibe last said.
@@ -1081,6 +1098,7 @@
 
   function tick() {
     if (document.visibilityState !== 'visible') return
+    followTheme()
     // Only in view: out of sight, sbx is left to stop an idle sandbox, and
     // coming back asks at once (it starts it again, if it was stopped).
     if (state.sandboxTabs !== false && Date.now() - awakeAsked >= AWAKE_MS) {
@@ -1371,7 +1389,7 @@
   // --- the default branch, when origin can't say ---------------------------
 
   // defaultBranchSetter offers to set the repository's default branch, for
-  // when origin can't say which it is (see docs/plan-new-conversation.md):
+  // when origin can't say which it is (see docs/adr/2026-10-18-new-conversation.md):
   // the name last set is suggested, and the repository's branches offered.
   // set is called with what vibe then says of it.
   let defaultBranchSetters = 0
@@ -1525,6 +1543,7 @@
       card = $('review-thread-' + id)
     }
     if (!card) return
+    hintIfBehind(id)
     if (card.closest('[hidden]')) { toast("That comment is in a file you've ticked as viewed: untick it to see it."); return }
     const i = arrowCards().indexOf(card)
     if (i >= 0) { reviewView.at = i; reviewView.steering = true; countComments() }
@@ -2565,6 +2584,24 @@
     $('review-refresh').classList.toggle('stale', stale)
   }
 
+  // codeChangedSinceDiff asks vibe whether the code is still the one the diff on the page is of: true or false, or null when that
+  // can't be told (no diff held yet, a question already on its way, vibe not answering). An answer is about the diff the question
+  // set out with: if another has been worked out since, it says nothing.
+  async function codeChangedSinceDiff() {
+    const key = reviewView.diffKey
+    if (!reviewView.review || reviewView.files === null || !key || reviewView.checking) return null
+    reviewView.checking = true
+    try {
+      const res = await api('/api/review/changed?key=' + encodeURIComponent(key) + (reviewView.diffKeyIgnoresSpace ? '&whitespace=ignore' : ''), { timeout: 40000 })
+      if (!res.ok || !res.body || reviewView.diffKey !== key) return null
+      return !!res.body.changed
+    } catch (e) {
+      return null
+    } finally {
+      reviewView.checking = false
+    }
+  }
+
   // reviewTurnEnded asks vibe, once the agent's turn is over, whether the code is still the one the diff on the page is of: the
   // agent, answering a round of review, can change it, and the comments it then makes are placed for the new code (comments
   // follow their code only when a diff is worked out). With the tab open, a change is said, beside Refresh, and the diff is left
@@ -2573,24 +2610,27 @@
   // answered for is no reason to say anything.
   async function reviewTurnEnded() {
     const rv = reviewView.review
-    const key = reviewView.diffKey
-    if (!rv || !reviewIsOn(rv) || reviewView.files === null || !key || reviewView.checking) return
-    reviewView.checking = true
-    try {
-      const res = await api('/api/review/changed?key=' + encodeURIComponent(key) + (reviewView.diffKeyIgnoresSpace ? '&whitespace=ignore' : ''), { timeout: 40000 })
-      // A diff worked out since this set out has its own key: this answer is about another.
-      if (!res.ok || !res.body || !res.body.changed || reviewView.diffKey !== key) return
-      if (state.tab === 'review') {
-        showStale(true)
-      } else {
-        forgetFiles()
-        reviewView.files = null
-      }
-    } catch (e) {
-      // Nothing to say: not a reason to nag.
-    } finally {
-      reviewView.checking = false
+    if (!rv || !reviewIsOn(rv)) return
+    if (!(await codeChangedSinceDiff())) return
+    if (state.tab === 'review') {
+      showStale(true)
+    } else {
+      forgetFiles()
+      reviewView.files = null
     }
+  }
+
+  // hintIfBehind is for going to comment id: a comment on a file the diff on the page doesn't have is drawn under "On files not in
+  // this diff", which is the whole truth when the diff is current, and the page being behind when the code has changed since it
+  // was worked out (Refresh would put the comment where it belongs). So it says so only then, having asked vibe (or knowing, from
+  // the note already showing). It says it in a toast, with a Refresh of its own, because the comments pane is a fly-out over the
+  // right of the diff and can cover the note beside Refresh; the note shows as well, for when the pane is shut.
+  async function hintIfBehind(id) {
+    const drawn = reviewView.drawn
+    if (!drawn || !drawn.placed.elsewhere.includes(id)) return
+    if (!reviewView.stale && !(await codeChangedSinceDiff())) return
+    showStale(true)
+    toast("That comment isn't in the diff you have: the code has changed since it was loaded.", false, { label: 'Refresh', run: refreshReview })
   }
 
   // refreshReview loads the review and its diff afresh, and what can be
@@ -5010,7 +5050,7 @@
       switch (b.type) {
         case 'para': return el('p', {}, ...inline(b.inline))
         case 'heading': return el('h' + Math.min(6, Math.max(1, b.level)), {}, ...inline(b.inline))
-        case 'code': return codeBlock(b.text)
+        case 'code': return isMarkdownTag(b.lang) ? markdownBlock(b.text) : codeBlock(b.text, b.lang)
         case 'hr': return el('hr')
         case 'quote': return el('div', { class: 'quote-block' }, el('blockquote', {}, ...blocks(b.blocks)),
           el('button', { type: 'button', class: 'copy-code small', title: 'Copy the quote as Markdown', 'aria-label': 'Copy the quote as Markdown', onclick: () => copyText(b.source) }, copyIcon()))
@@ -5191,6 +5231,12 @@
   function codeView(text, colour) {
     const note = colour && colour.skipped ? [el('p', { class: 'muted', text: 'Not coloured: ' + colour.skipped })] : []
     if (!colour || !Array.isArray(colour.lines)) return [...note, el('pre', {}, el('code', { text: visible(text) }))]
+    return [...note, el('pre', {}, el('code', {}, ...colouredParts(text, colour)))]
+  }
+
+  // colouredParts is text as what a code element holds: each line's runs as spans by what they are, as the host coloured it, and
+  // the hidden control characters shown as symbols. A line the colouring no longer spells is plain.
+  function colouredParts(text, colour) {
     const lines = text.replace(/\r\n/g, '\n').split('\n')
     const parts = []
     lines.forEach((line, i) => {
@@ -5199,7 +5245,7 @@
       else parts.push(visible(line))
       if (i < lines.length - 1) parts.push('\n')
     })
-    return [...note, el('pre', {}, el('code', {}, ...parts))]
+    return parts
   }
 
   // endOfPath scrolls the path bar to the end of the path, where the file's name is, when it is too long for the
@@ -5254,11 +5300,133 @@
   }
 
   // codeBlock is a block of code with a button copying it: selecting it by
-  // hand means scrolling, as Ctrl+A takes the whole conversation.
-  function codeBlock(code) {
+  // hand means scrolling, as Ctrl+A takes the whole conversation. With a language tag it is coloured, once the host has done it.
+  function codeBlock(code, lang) {
     const text = code.replace(/\r\n/g, '\n')
-    return el('div', { class: 'code-block' }, el('pre', {}, el('code', { text: visible(text) })),
+    const codeEl = el('code', { text: visible(text) })
+    const block = el('div', { class: 'code-block' }, el('pre', {}, codeEl),
       el('button', { type: 'button', class: 'copy-code small', title: 'Copy', 'aria-label': 'Copy the code', onclick: () => copyText(text) }, copyIcon()))
+    if (colourableTag(lang)) wantColour(block, codeEl, lang, text)
+    return block
+  }
+
+  // --- colour for fenced blocks ---------------------------------------------------------------
+
+  // What the host colours a block to (review.maxBlockBytes and maxBlockLines: a test holds the two to each other): past it a
+  // block is not sent, and says so. A tag is a word, as the host holds it to (review's aTag).
+  const COLOUR_MAX_BYTES = 200 * 1024
+  const COLOUR_MAX_LINES = 5000
+  const COLOUR_TAG = /^[A-Za-z0-9_+#.-]{1,40}$/
+  const PLAIN_TAGS = /^(text|txt|plain|plaintext)$/i
+  // Each is a process of the host's: only what is in view is asked for, and a few at a time.
+  const COLOUR_AT_ONCE = 2
+  const COLOUR_KEPT = 300
+
+  // colourableTag is whether a fenced block's tag is worth asking the host about: a language is not known until it says, but a block
+  // with no tag, a plain one or Markdown (drawn as such) is not one.
+  function colourableTag(lang) {
+    return !!lang && COLOUR_TAG.test(lang) && !PLAIN_TAGS.test(lang) && !isMarkdownTag(lang)
+  }
+
+  const colourKept = new Map() // language and text -> what the host said, kept as long as the page lives (the oldest go first)
+  const colourAsked = new Map() // language and text -> the answer on its way, for blocks that are the same to share
+  const colourWaiting = []
+  let colourRunning = 0
+
+  function colourKey(lang, text) { return lang.toLowerCase() + '\u0000' + text }
+
+  // inColourSlot runs ask when fewer than COLOUR_AT_ONCE are being asked, else when one has been answered.
+  function inColourSlot(ask) {
+    return new Promise((resolve, reject) => {
+      const go = () => {
+        colourRunning++
+        ask().then(resolve, reject).finally(() => {
+          colourRunning--
+          const next = colourWaiting.shift()
+          if (next) next()
+        })
+      }
+      if (colourRunning < COLOUR_AT_ONCE) go()
+      else colourWaiting.push(go)
+    })
+  }
+
+  // colourOutcome is what a block is shown from an answer of the host: its colours, or why it has none (nothing at all for a language
+  // it doesn't know: that block is plain, not one that wasn't coloured).
+  function colourOutcome(body) {
+    if (body && Array.isArray(body.lines)) return { colour: body }
+    if (body && body.skipped) return { note: 'Not coloured: ' + body.skipped }
+    return {}
+  }
+
+  // colourFor is what the host says of a block, asked once for the same text in the same language, and kept.
+  function colourFor(lang, text) {
+    const key = colourKey(lang, text)
+    if (colourKept.has(key)) return Promise.resolve(colourKept.get(key))
+    if (colourAsked.has(key)) return colourAsked.get(key)
+    const asking = inColourSlot(async () => {
+      try {
+        const res = await api('/api/highlight', { method: 'POST', body: JSON.stringify({ lang, text }) })
+        if (!res.ok) return { note: "Couldn't colour this block: " + ((res.body && res.body.error) || 'HTTP ' + res.status) }
+        const outcome = colourOutcome(res.body)
+        colourKept.set(key, outcome)
+        if (colourKept.size > COLOUR_KEPT) colourKept.delete(colourKept.keys().next().value)
+        return outcome
+      } catch (e) {
+        return { note: "Couldn't colour this block: " + (e && e.message ? e.message : 'vibe did not answer') }
+      }
+    }).finally(() => colourAsked.delete(key))
+    colourAsked.set(key, asking)
+    return asking
+  }
+
+  // The blocks waiting to come into view to be asked for.
+  let colourSeen = null
+  const colourOnSight = new Map()
+
+  // wantColour has block coloured: at once from what was kept, else when it is in view (or at once with nothing to see by), as the
+  // host says. A block too long for that says so without being sent.
+  function wantColour(block, codeEl, lang, text) {
+    const newlines = text.split('\n').length - 1
+    if (text.length > COLOUR_MAX_BYTES || newlines > COLOUR_MAX_LINES) {
+      block.append(el('div', { class: 'code-note', text: 'Not coloured: too long to colour here (' + newlines + ' lines; a block over ' + COLOUR_MAX_LINES + ' lines or ' + (COLOUR_MAX_BYTES >> 10) + ' KB isn\'t coloured)' }))
+      return
+    }
+    const show = (outcome) => {
+      if (outcome.colour) codeEl.replaceChildren(...colouredParts(text, outcome.colour))
+      if (outcome.note) block.append(el('div', { class: 'code-note', text: outcome.note }))
+    }
+    const kept = colourKept.get(colourKey(lang, text))
+    if (kept) { show(kept); return }
+    const ask = () => colourFor(lang, text).then(show)
+    if (!window.IntersectionObserver) { ask(); return }
+    if (!colourSeen) {
+      colourSeen = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue
+          colourSeen.unobserve(entry.target)
+          const go = colourOnSight.get(entry.target)
+          colourOnSight.delete(entry.target)
+          if (go) go()
+        }
+      }, { rootMargin: '300px' })
+    }
+    colourOnSight.set(block, ask)
+    colourSeen.observe(block)
+  }
+
+  // isMarkdownTag is whether a fenced block's language says its text is Markdown.
+  function isMarkdownTag(lang) {
+    return /^(markdown|md)$/i.test(lang || '')
+  }
+
+  // markdownBlock is a block the agent tagged as Markdown: text for the user to read and paste somewhere else (a PR description),
+  // so it is drawn as the Markdown it is, and its button copies the source it was written in, which is what goes where it is
+  // pasted. Copying leaves out hidden control characters as for any block (copyText).
+  function markdownBlock(code) {
+    const text = code.replace(/\r\n/g, '\n')
+    return el('div', { class: 'code-block markdown-block' }, markdown(text),
+      el('button', { type: 'button', class: 'copy-code small', title: 'Copy the Markdown source', 'aria-label': 'Copy the Markdown source', onclick: () => copyText(text) }, copyIcon()))
   }
 
   // copyText puts text on the user's clipboard, leaving out hidden control characters (an escape
@@ -6500,7 +6668,7 @@
   // --- the model and effort ----------------------------------------------
 
   // The drop-downs beside Send choose the model and effort the agent is asked
-  // to use (see docs/plan-model-effort.md). What they show is what vibe keeps,
+  // to use (see docs/adr/2026-10-19-model-and-effort.md). What they show is what vibe keeps,
   // which the agent is asked for on each turn; the lists are the agent's own.
   // A change applies from the next prompt.
   //
@@ -7163,7 +7331,7 @@
 
   // --- "New conversation" -----------------------------------------------
 
-  // The dialog offers only what applies (see docs/plan-new-conversation.md).
+  // The dialog offers only what applies (see docs/adr/2026-10-18-new-conversation.md).
   // What the sandbox can do is asked when it opens, which may wake the
   // sandbox; origin is checked once a new branch is ticked, once per opening.
   // generation tells an answer for an earlier opening, which is dropped.

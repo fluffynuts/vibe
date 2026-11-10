@@ -160,7 +160,7 @@ func TestWaitingForASandboxStopsAtOnceWhenSbxIsSignedOut(t *testing.T) {
 	defer func() { WakeLog = old }()
 	var reachable bool
 	began := time.Now()
-	finishesWithin(t, 20*time.Second, "the wait", func() { reachable = WaitReachable(context.Background(), "box", 30) })
+	finishesWithin(t, 20*time.Second, "the wait", func() { reachable = WaitReachable(context.Background(), "box", 30*time.Second) })
 	if reachable {
 		t.Error("reachable")
 	}
@@ -180,7 +180,7 @@ func TestAWaitThatFailsNotesItsFirstAndLastFailureOnly(t *testing.T) {
 	old := WakeLog
 	WakeLog = func(entry string) { logged = append(logged, entry) }
 	defer func() { WakeLog = old }()
-	WaitReachable(context.Background(), "box", 4)
+	WaitReachable(context.Background(), "box", 4*time.Second)
 	if len(logged) != 2 {
 		t.Errorf("%d notes for 4 failed probes, want the first and the last: %q", len(logged), logged)
 	}
@@ -217,7 +217,7 @@ func TestWhatAWakePrintedIsKeptWithoutControlCharactersAndShownShort(t *testing.
 // After sbx start has been accepted, a sandbox that never answers says what the last try said: that is what explains it.
 func TestASandboxThatNeverAnswersAfterAStartSaysWhatItLastSaid(t *testing.T) {
 	old := startTimeout
-	startTimeout = 2
+	startTimeout = 2 * time.Second
 	defer func() { startTimeout = old }()
 	sbxtest.OnPath(t, "case \"$1\" in\n  start) exit 0 ;;\n  exec) echo 'the disk is full' >&2; exit 1 ;;\nesac\n")
 	err := StartChecked(context.Background(), "box")

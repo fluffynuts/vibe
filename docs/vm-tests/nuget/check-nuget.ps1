@@ -1,4 +1,4 @@
-# Checks, with plain dotnet, what vibe's NuGet design (docs/plan-nuget-feeds.md)
+# Checks, with plain dotnet, what vibe's NuGet design (docs/adr/2026-10-18-nuget-without-the-hosts-nuget.md)
 # relies on, for a Windows machine. Needs the dotnet SDK on the PATH. Prints
 # PASS, FAIL or SKIP for each check, and exits 1 if any failed. Touches nothing
 # outside a temporary folder: a fake home, with a NuGet config of its own,

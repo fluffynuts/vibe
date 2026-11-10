@@ -94,6 +94,35 @@ func Merge(universal, project string) string {
 	return strings.Join(sections, "\n")
 }
 
+// CopyableBlocksHeading is the heading, in the kits' instructions, of what the
+// copyable-blocks feature tells an agent to do.
+const CopyableBlocksHeading = "Text for the user to copy"
+
+// WithCopyableBlocksRule is merged with, ahead of it, the short form of what the
+// copyable-blocks feature tells an agent about text for the user to paste. The
+// kits' instructions reach the agent as reading for when a kit is relevant, and an
+// agent asked for a pull request description doesn't think one is: fresh agents
+// never opened them, and ignored a pointer to them put after the user's text. So
+// the rule itself is in what the agent always loads, only for a kit that carries
+// the feature.
+func WithCopyableBlocksRule(merged, kit string) string {
+	if !strings.Contains(kit, CopyableBlocksHeading) {
+		return merged
+	}
+	const heading = "Text for the user to paste (from vibe)"
+	rule := heading + "\n" + strings.Repeat("-", len(heading)) + "\n\n" +
+		"When you give the user text to paste somewhere else (a pull request description, a commit message, an issue, a message), " +
+		"put exactly that text, and nothing of yours, in one fenced code block, and say what you have to say about it outside the block. " +
+		"Tag the block `markdown` when the text is Markdown (the page shows it formatted, and its button copies the Markdown) and `text` when it is plain. " +
+		"A title and a description go in a block each. " +
+		"If the text has a code block of its own, fence the whole of it with four backticks, not three. " +
+		"More is in the section \"" + CopyableBlocksHeading + "\" of your kit instructions.\n"
+	if merged == "" {
+		return rule
+	}
+	return rule + "\n" + merged
+}
+
 // normalise gives text Unix line endings, whatever it was edited with.
 func normalise(text string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")

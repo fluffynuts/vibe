@@ -1,6 +1,6 @@
 # NuGet checks for a machine that can't run the tests
 
-vibe's NuGet design (`docs/plan-nuget-feeds.md`) rests on how `dotnet` behaves: a read-only
+vibe's NuGet design (`docs/adr/2026-10-18-nuget-without-the-hosts-nuget.md`) rests on how `dotnet` behaves: a read-only
 package cache as a fallback, which config files a restore reads, and what a restore runs. These
 scripts check that with plain `dotnet`, so they run where vibe's own tests can't (a macOS VM
 that can't run `sbx`, a Windows machine).

@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 
@@ -23,28 +22,13 @@ const HashFile = "composed-hash"
 
 // notComposed are the files in a profile's folder that composing doesn't
 // write, so they're left out of its hash: the user's own instructions and
-// preferences, which carry across a re-compose (and the files earlier vibes
-// kept single preferences in, until they are moved into the preferences), the
-// note saying the profile is generated (which may be rewritten or deleted),
-// and the hash itself.
-var notComposed = notComposedFiles()
-
-func notComposedFiles() map[string]bool {
-	files := map[string]bool{instructions.File: true, userprefs.File: true, ReadmeFile: true, HashFile: true}
-	for _, old := range userprefs.LegacyFiles {
-		files[old] = true
-	}
-	return files
-}
+// preferences, which carry across a re-compose, the note saying the profile is
+// generated (which may be rewritten or deleted), and the hash itself.
+var notComposed = map[string]bool{instructions.File: true, userprefs.File: true, ReadmeFile: true, HashFile: true}
 
 // ContentHash is a hash of what composing wrote into a profile's folder:
 // every file's path and content, the user's own files aside.
-func ContentHash(dir string) (string, error) { return ContentHashWith(dir, nil) }
-
-// ContentHashWith is ContentHash as it would be if the files in changed (by
-// path from dir, with forward slashes) held what it says, or were gone for a
-// nil: to know what changing a file would do to it, without changing it.
-func ContentHashWith(dir string, changed map[string][]byte) (string, error) {
+func ContentHash(dir string) (string, error) {
 	var paths []string
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -54,40 +38,25 @@ func ContentHashWith(dir string, changed map[string][]byte) (string, error) {
 		if err != nil {
 			return err
 		}
-		if slash := filepath.ToSlash(rel); !d.IsDir() && !notComposed[rel] && !removed(changed, slash) {
-			paths = append(paths, slash)
+		if !d.IsDir() && !notComposed[rel] {
+			paths = append(paths, filepath.ToSlash(rel))
 		}
 		return nil
 	})
 	if err != nil {
 		return "", err
 	}
-	// A file that isn't there yet, but would be.
-	for rel, data := range changed {
-		if data != nil && !notComposed[rel] && !slices.Contains(paths, rel) {
-			paths = append(paths, rel)
-		}
-	}
 	sort.Strings(paths)
 	h := sha256.New()
 	for _, rel := range paths {
-		data, ok := changed[rel]
-		if !ok {
-			var err error
-			if data, err = fscopy.ReadFile(filepath.Join(dir, filepath.FromSlash(rel))); err != nil {
-				return "", err
-			}
+		data, err := fscopy.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
+		if err != nil {
+			return "", err
 		}
 		fmt.Fprintf(h, "%s\x00%d\x00", rel, len(data))
 		h.Write(data)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-// removed says rel is a file changed says is gone.
-func removed(changed map[string][]byte, rel string) bool {
-	data, ok := changed[rel]
-	return ok && data == nil
 }
 
 // RecordHash records what dir's composition is now as what it was composed
@@ -124,27 +93,6 @@ const (
 	// would lose that, so that's for the user to do.
 	Edited
 )
-
-// ComposedFile is the file rel (from the profile's folder, with forward
-// slashes) as composing features for profile writes it now, in the library as
-// it is: ok is false for a file composing doesn't write. To know what a file
-// of the profile would be but for what the user has done to it.
-func ComposedFile(l layout.Layout, profile string, features []string, rel string) (data []byte, ok bool, err error) {
-	scratch, err := os.MkdirTemp("", "vibe-compose-")
-	if err != nil {
-		return nil, false, err
-	}
-	defer os.RemoveAll(scratch)
-	fresh := filepath.Join(scratch, profile)
-	if err := composeInto(l, fresh, profile, features); err != nil {
-		return nil, false, fmt.Errorf("composing profile '%s' afresh: %w", profile, err)
-	}
-	data, err = fscopy.ReadFile(filepath.Join(fresh, filepath.FromSlash(rel)))
-	if os.IsNotExist(err) {
-		return nil, false, nil
-	}
-	return data, err == nil, err
-}
 
 // Check compares the guided profile in dir, named profile, with a fresh
 // composition of features (what it records) from the library as it is now.

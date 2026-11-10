@@ -11,7 +11,7 @@ import (
 )
 
 // Choice is how the page chooses the model and effort the agent is asked to
-// use (see docs/plan-model-effort.md): kept by vibe, read for every turn.
+// use (see docs/adr/2026-10-19-model-and-effort.md): kept by vibe, read for every turn.
 type Choice struct {
 	// Get is what is chosen now; empty for either is the agent's own default.
 	Get func() (model, effort string, err error)
@@ -309,7 +309,7 @@ func (s *Server) modelInUse() string {
 // or inherited. Not choosing is no choice of "whatever claude's default is":
 // the user is on a model, and a change of claude's default must not move them
 // to another, so the model they are on is kept as theirs, with nothing said as
-// nothing has changed (see docs/plan-model-effort.md). The profile's own effort
+// nothing has changed (see docs/adr/2026-10-19-model-and-effort.md). The profile's own effort
 // is kept as it is. It does nothing when there's nothing to go by.
 func (s *Server) choiceAdopt(w http.ResponseWriter, r *http.Request) {
 	s.choosing.Lock()

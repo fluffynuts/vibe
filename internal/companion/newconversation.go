@@ -17,7 +17,7 @@ import (
 
 // What "New conversation" does besides forgetting the conversation: close
 // the review, clear the clipboard, start a new branch (see
-// docs/plan-new-conversation.md). Git that changes the repository runs in
+// docs/adr/2026-10-18-new-conversation.md). Git that changes the repository runs in
 // the sandbox (Config.SandboxGit): git run on this machine would run hooks
 // and config the sandbox can write.
 

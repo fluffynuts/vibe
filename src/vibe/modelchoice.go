@@ -33,6 +33,9 @@ type profileChoice struct {
 
 func (p profileChoice) dir() string { return p.lay.ProfileDir(p.profile) }
 
+// settingsFile is a profile's own settings.
+const settingsFile = "settings.yaml"
+
 func (p profileChoice) settingsPath() string { return filepath.Join(p.dir(), settingsFile) }
 
 // chosen is a choice, and where each part of it comes from.
@@ -128,7 +131,6 @@ func (p profileChoice) set(model, effort string) error {
 	if dir := p.lay.HomePath("profiles", p.profile); dir == "" || !fileExists(dir) {
 		return fmt.Errorf("profile '%s' is vibe's own, which can't be written to: make a profile of your own (--profile) to keep the choice in", p.profile)
 	}
-	migratePreferences(p.lay, p.profile)
 	// First, so that a settings.yaml that can't be changed leaves the choice as
 	// it was, as the failure says, and not half made.
 	if err := p.dropFromSettings(model == "", effort == ""); err != nil {

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"vibe/internal/kitspec"
 	"vibe/internal/sbxrun"
@@ -127,6 +128,10 @@ func dropLostFound(store string) {
 	os.RemoveAll(filepath.Join(store, lostFound))
 }
 
+// reachableToRestore is how long Restore waits for the new sandbox to take a command: its memories are the user's, and
+// the sandbox has only just been made.
+const reachableToRestore = 120 * time.Second
+
 // Restore waits for the (re-created) sandbox to come up and copies memories
 // back in from store, before the agent starts. It says whether it put any
 // back: a store with nothing in it has nothing to restore, which is no failure.
@@ -136,7 +141,7 @@ func Restore(sandboxName, store string) (restored bool, err error) {
 	if err != nil || len(entries) == 0 {
 		return false, nil
 	}
-	if !sbxrun.WaitReachable(context.Background(), sandboxName, 120) {
+	if !sbxrun.WaitReachable(context.Background(), sandboxName, reachableToRestore) {
 		return false, fmt.Errorf("sandbox not reachable — memories left in %s", store)
 	}
 	inside, err := sandboxPath(context.Background(), sandboxName, store)

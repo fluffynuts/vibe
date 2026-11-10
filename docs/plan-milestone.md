@@ -1,6 +1,6 @@
 # Plan: milestone, a safe point to start a new conversation
 
-Status: planned 2026-10-16, not built. Build it on master, after `feat/review-tab` has merged, as its own small release.
+Status: planned 2026-10-16, not built (no milestone code exists as of 2026-11-10). The review tab it waited for has merged (`docs/adr/2026-10-15-review-tab.md`), so it can be built on master as its own small release.
 Phase 2 (the feature loop, below) builds on it, as a separate release after milestone has had real use.
 
 ## Goal

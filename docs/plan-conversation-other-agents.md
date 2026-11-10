@@ -1,7 +1,10 @@
 # Plan: the Conversation tab for agents other than Claude
 
 Status: planned 2026-10-21; OpenCode 1.19.3 checked for real the same day, on a free model (findings below; real
-output saved in `docs/samples/opencode/`). Not started. Codex not looked at.
+output saved in `docs/samples/opencode/`). **OpenCode is built on `feat/opencode`, which is not merged** (15 commits ahead of
+master as of 2026-11-10: a Conversation tab running `opencode run`, its events read as the page's stream, per-model efforts, the
+model list and its secrets from sbx, a conversation surviving a rebuild). Codex not looked at. This plan has not been rewritten
+to say which of its steps those commits cover; do that when the branch is merged, and then make it an ADR.
 
 ## The outcome
 
@@ -10,7 +13,7 @@ work, stops it, and carries on the next day. OpenCode first, since it is where t
 usable at no cost. Then Codex, tried by someone with a subscription. Every other agent is left with the same
 support and relies on user reports.
 
-This is the groundwork for [plan-model-effort.md](plan-model-effort.md): the model and effort drop-downs need
+This is the groundwork for [the model and effort ADR](adr/2026-10-19-model-and-effort.md): the model and effort drop-downs need
 the agent's own lists and flags, so they ride on this. Build Claude's drop-downs first; this plan follows.
 
 ## What's Claude-only today (read from the code, 2026-10-21)

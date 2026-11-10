@@ -8,7 +8,7 @@ const path = require('node:path')
 const { JSDOM, VirtualConsole } = require('jsdom')
 
 const UI = path.join(__dirname, '..', 'ui')
-const SCRIPTS = ['markdown.js', 'manage.js', 'review.js', 'emoji.js', 'app.js']
+const SCRIPTS = ['theme.js', 'markdown.js', 'manage.js', 'review.js', 'emoji.js', 'app.js']
 const TOKEN = 'a'.repeat(64)
 
 // openPage loads the page with routes: { '/api/state': body or (call) =>
@@ -25,7 +25,7 @@ async function openPage({ routes = {}, storage = {}, settled = true, seeing = fa
   const unimplemented = []
   const errors = []
   const virtualConsole = new VirtualConsole()
-  virtualConsole.sendTo(console, { omitJSDOMErrors: true })
+  virtualConsole.forwardTo(console, { jsdomErrors: 'none' })
   virtualConsole.on('jsdomError', (e) => {
     if (/Not implemented/.test(e.message)) {
       unimplemented.push(e.message)

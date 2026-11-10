@@ -833,9 +833,11 @@ test("each file in the tree has an icon for what happened to it", async () => {
 
 // convoPage is a page on the Review tab whose conversation is convo, which
 // a test can add to: { events, running }.
-async function convoPage(convo) {
+async function convoPage(convo, extraRoutes = {}, options = {}) {
   const p = await openPage({
+    ...options,
     routes: {
+      ...extraRoutes,
       '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
       '/api/review': { review: none, diff: [] },
       '/api/conversation': (call) => {
@@ -890,6 +892,8 @@ test('the prompt looks focused wherever typing on the Conversation tab would lan
     assert.ok(looksFocused(), 'on opening the tab')
     p.$('convo-new').focus()
     assert.ok(looksFocused(), 'with a button focused, which typing goes past')
+    // Opened as a user does: a browser (and jsdom since 25) won't focus a box inside the find bar while it is hidden.
+    await p.click('convo-find-open')
     p.$('convo-find-input').focus()
     assert.ok(!looksFocused(), 'with another text box focused, which takes the typing itself')
     p.$('convo-find-input').blur()
@@ -981,6 +985,278 @@ test('a quote the agent wrote has a button copying its Markdown, without the > m
     await p.click(copy)
     assert.deepEqual(written, [quote])
     assert.equal(p.$('toast').textContent, 'Copied')
+  } finally { p.close() }
+})
+
+// A block tagged as Markdown is text for the user to read and paste somewhere (a PR description, say): drawn as the Markdown it
+// is, and copied as the source the agent wrote, so what is pasted is raw, and what is read is formatted.
+const PR = '## Changes\n\n- **Waking** a sandbox reads `sbx` output\n- a second point\n\nSee [the docs](https://example.com/x).'
+
+const agentBlocks = (p) => p.$('convo-log').querySelector('.msg.agent')
+
+test('a block tagged markdown is drawn as Markdown and copies its source', async () => {
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, 'Here:\n\n```markdown\n' + PR + '\n```\n\nand more')], running: false })
+  try {
+    const written = clipboardOf(p)
+    const block = agentBlocks(p).querySelector('.markdown-block')
+    assert.ok(block, 'drawn as a Markdown block')
+    assert.ok(block.querySelector('h2'), 'the heading is a heading')
+    assert.equal(block.querySelectorAll('li').length, 2)
+    assert.ok(block.querySelector('strong'), 'bold is bold')
+    assert.ok(!block.textContent.includes('##') && !block.textContent.includes('**'), 'the markers are not shown: ' + block.textContent)
+    const copies = block.querySelectorAll(':scope > button.copy-code')
+    assert.equal(copies.length, 1, 'one copy button for the block')
+    await p.click(copies[0])
+    assert.deepEqual(written, [PR], 'the source is what is copied, not the text as drawn')
+    assert.equal(p.$('toast').textContent, 'Copied')
+  } finally { p.close() }
+})
+
+test('md, any case, and words after the language, are Markdown too', async () => {
+  for (const tag of ['md', 'MARKDOWN', 'Markdown title=summary']) {
+    const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, '```' + tag + '\n# Title\n```')], running: false })
+    try {
+      assert.ok(agentBlocks(p).querySelector('.markdown-block h1'), tag + ' was not drawn as Markdown')
+    } finally { p.close() }
+  }
+})
+
+test('a block with no language, or another, stays code', async () => {
+  for (const tag of ['', 'js', 'text', 'markdownish']) {
+    const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, '```' + tag + '\n# not a heading\n```')], running: false })
+    try {
+      const msg = agentBlocks(p)
+      assert.ok(!msg.querySelector('.markdown-block'), '"' + tag + '" was drawn as Markdown')
+      assert.equal(msg.querySelector('.code-block code').textContent, '# not a heading')
+    } finally { p.close() }
+  }
+})
+
+// A Markdown block holding a fenced block (the outer one is longer), as a PR description with code in it: the inner block is
+// code with a copy of its own, and the outer copy is the whole source, fences and all.
+test('a Markdown block with a code block in it copies the whole source, and the code block its code', async () => {
+  const source = 'Run:\n\n```sh\nmake test\n```\n\nDone.'
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, '````markdown\n' + source + '\n````')], running: false })
+  try {
+    const written = clipboardOf(p)
+    const block = agentBlocks(p).querySelector('.markdown-block')
+    assert.equal(block.querySelector('.code-block code').textContent, 'make test')
+    await p.click(block.querySelector('.code-block button.copy-code'))
+    await p.click(block.querySelector(':scope > button.copy-code'))
+    assert.deepEqual(written, ['make test', source])
+  } finally { p.close() }
+})
+
+// What the agent writes is never markup, here either: HTML is text, and a link shows its address.
+test('a Markdown block has no markup in it and no link the page would follow', async () => {
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, '```markdown\n<img src=x onerror="alert(1)"> and [click](https://evil.example/a)\n```')], running: false })
+  try {
+    const block = agentBlocks(p).querySelector('.markdown-block')
+    assert.equal(block.querySelector('img'), null)
+    assert.equal(block.querySelector('a'), null)
+    assert.ok(block.textContent.includes('<img src=x onerror="alert(1)">'), block.textContent)
+    assert.ok(block.textContent.includes('https://evil.example/a'), 'the address is shown: ' + block.textContent)
+  } finally { p.close() }
+})
+
+// Hidden control characters (an escape that ends a terminal's bracketed paste, so what follows is run) are shown, and left out of
+// the copy with a say-so, as in any other block.
+test('a Markdown block shows hidden control characters and copies without them', async () => {
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, agentSaid(2, '```markdown\nsafe\x1b[201~ text\n```')], running: false })
+  try {
+    const written = clipboardOf(p)
+    const block = agentBlocks(p).querySelector('.markdown-block')
+    assert.ok(block.textContent.includes('safe\u241b[201~ text'), block.textContent)
+    await p.click(block.querySelector(':scope > button.copy-code'))
+    assert.deepEqual(written, ['safe[201~ text'])
+    assert.equal(p.$('toast').textContent, 'Copied, leaving out 1 hidden control character')
+  } finally { p.close() }
+})
+
+// A fenced block with a language tag is coloured by the host, which is asked for it (what it is told: the tag and the text, and nothing
+// else); the block is plain until the answer comes, and stays so where there is none. Never by guessing from the text.
+const GO = 'package main\n\nfunc f() {}'
+const GO_COLOURED = {
+  language: 'Go',
+  lines: [[{ c: 'kn', t: 'package' }, { t: ' main' }], [], [{ c: 'kd', t: 'func' }, { t: ' f() {}' }]],
+}
+const colourAsks = (p) => p.posted('/api/highlight')
+const blockCode = (p) => p.$('convo-log').querySelector('.msg.agent .code-block code')
+const fenced = (code, tag = 'go') => agentSaid(2, '```' + tag + '\n' + code + '\n```')
+
+test('a block with a language tag is asked of the host and coloured by what it says', async () => {
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, fenced(GO)], running: false }, { '/api/highlight': GO_COLOURED })
+  try {
+    await p.settle()
+    assert.deepEqual(colourAsks(p), [{ lang: 'go', text: GO }])
+    const code = blockCode(p)
+    assert.equal(code.textContent, GO, 'colouring changes what is shown by nothing but colour')
+    assert.deepEqual([...code.querySelectorAll('span')].map((e) => e.className + ':' + e.textContent), ['hl-kw:package', 'hl-kw:func'])
+  } finally { p.close() }
+})
+
+// What the host sends for an HTML entity (&amp;), as it does: a "name entity" run, which the page draws as a constant, in the same
+// colour a number has, and not as plain text. (The path from the host's class to the colour goes through review.js, not app.js.)
+test('an HTML entity in a coloured block is drawn as a constant', async () => {
+  const html = '<p>hi &amp; bye</p>'
+  const answer = { language: 'HTML', lines: [[{ c: 'p', t: '<' }, { c: 'nt', t: 'p' }, { c: 'p', t: '>' }, { t: 'hi ' }, { c: 'ni', t: '&amp;' }, { t: ' bye' }, { c: 'p', t: '</' }, { c: 'nt', t: 'p' }, { c: 'p', t: '>' }]] }
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, fenced(html, 'html')], running: false }, { '/api/highlight': answer })
+  try {
+    await p.settle()
+    const entity = [...blockCode(p).querySelectorAll('span')].find((e) => e.textContent === '&amp;')
+    assert.ok(entity, 'the entity has a span of its own')
+    assert.equal(entity.className, 'hl-const')
+  } finally { p.close() }
+})
+
+test('a coloured block copies its code as it was written, not as spans', async () => {
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, fenced(GO)], running: false }, { '/api/highlight': GO_COLOURED })
+  try {
+    const written = clipboardOf(p)
+    await p.settle()
+    await p.click(p.$('convo-log').querySelector('.msg.agent button.copy-code'))
+    assert.deepEqual(written, [GO])
+  } finally { p.close() }
+})
+
+test('a block with no tag, a plain one, or Markdown is not asked about at all', async () => {
+  for (const tag of ['', 'text', 'txt', 'plain', 'markdown', 'md']) {
+    const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, fenced('package main', tag)], running: false }, { '/api/highlight': GO_COLOURED })
+    try {
+      await p.settle()
+      assert.equal(colourAsks(p).length, 0, '"' + tag + '" was asked about')
+    } finally { p.close() }
+  }
+})
+
+test('a tag that isn\'t a plain word is not asked about', async () => {
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, fenced('x', '../etc/passwd')], running: false }, { '/api/highlight': GO_COLOURED })
+  try {
+    await p.settle()
+    assert.equal(colourAsks(p).length, 0)
+  } finally { p.close() }
+})
+
+test('a language the host doesn\'t know leaves the block plain, with nothing said about it', async () => {
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, fenced('some words', 'klingon')], running: false }, { '/api/highlight': {} })
+  try {
+    await p.settle()
+    assert.equal(colourAsks(p).length, 1)
+    assert.equal(blockCode(p).querySelectorAll('span').length, 0)
+    assert.equal(p.$('convo-log').querySelector('.code-note'), null)
+  } finally { p.close() }
+})
+
+// A block that is too long is not sent, and says why it isn't coloured: it is shown, and copies, as it is.
+test('a block that is too long to colour says so, and is not sent to the host', async () => {
+  const long = Array.from({ length: 5002 }, (_, i) => 'x := ' + i).join('\n')
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, fenced(long)], running: false }, { '/api/highlight': GO_COLOURED })
+  try {
+    await p.settle()
+    assert.equal(colourAsks(p).length, 0)
+    const note = p.$('convo-log').querySelector('.code-note')
+    assert.ok(note, 'there is a notice')
+    assert.match(note.textContent, /Not coloured: too long to colour here \(5001 lines/)
+    assert.equal(blockCode(p).textContent, long)
+    assert.equal(blockCode(p).querySelectorAll('span').length, 0)
+  } finally { p.close() }
+})
+
+test('a block over the size limit in bytes says so too', async () => {
+  const wide = 'x'.repeat(205 * 1024)
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, fenced(wide)], running: false }, { '/api/highlight': GO_COLOURED })
+  try {
+    await p.settle()
+    assert.equal(colourAsks(p).length, 0)
+    assert.match(p.$('convo-log').querySelector('.code-note').textContent, /Not coloured: too long to colour here/)
+  } finally { p.close() }
+})
+
+test('what the host says of why it did not colour a block is shown with the block', async () => {
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, fenced(GO)], running: false },
+    { '/api/highlight': { skipped: 'colouring is turned off until vibe restarts: 5 files took too long to colour' } })
+  try {
+    await p.settle()
+    assert.match(p.$('convo-log').querySelector('.code-note').textContent, /^Not coloured: colouring is turned off until vibe restarts/)
+    assert.equal(blockCode(p).textContent, GO)
+  } finally { p.close() }
+})
+
+test('a block the host could not colour is shown plain, saying so', async () => {
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, fenced(GO)], running: false },
+    { '/api/highlight': { status: 400, body: { error: "vibe's helper failed" } } })
+  try {
+    await p.settle()
+    assert.match(p.$('convo-log').querySelector('.code-note').textContent, /Couldn't colour this block: vibe's helper failed/)
+    assert.equal(blockCode(p).textContent, GO)
+  } finally { p.close() }
+})
+
+// The conversation is drawn again as it changes: a block already coloured is not asked for again, nor drawn plain for a moment first.
+test('a block already coloured is coloured again from what was kept, and not asked for twice', async () => {
+  const convo = { events: [{ seq: 1, kind: 'user', text: 'hi' }, fenced(GO)], running: false }
+  const p = await convoPage(convo, { '/api/highlight': GO_COLOURED })
+  try {
+    await p.settle()
+    assert.equal(colourAsks(p).length, 1)
+    convo.events.push(agentSaid(3, 'and another block with the same code:\n\n```go\n' + GO + '\n```'))
+    await p.every('pollConversation')
+    await p.settle()
+    const blocks = [...p.$('convo-log').querySelectorAll('.msg.agent .code-block code')]
+    assert.equal(blocks.length, 2)
+    assert.ok(blocks.every((c) => c.querySelectorAll('span.hl-kw').length === 2), 'both are coloured')
+    assert.equal(colourAsks(p).length, 1, 'the same code in the same language is asked for once')
+  } finally { p.close() }
+})
+
+// Control characters in a coloured block are shown, as in any other, and copying leaves them out.
+test('a coloured block still shows hidden control characters', async () => {
+  const code = 'echo a\x1b[201~b'
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, fenced(code, 'sh')], running: false },
+    { '/api/highlight': { language: 'Bash', lines: [[{ c: 'nb', t: 'echo' }, { t: ' a\x1b[201~b' }]] } })
+  try {
+    const written = clipboardOf(p)
+    await p.settle()
+    assert.equal(blockCode(p).textContent, 'echo a\u241b[201~b')
+    assert.ok(blockCode(p).querySelector('span'), 'it is coloured')
+    await p.click(p.$('convo-log').querySelector('.msg.agent button.copy-code'))
+    assert.deepEqual(written, ['echo a[201~b'])
+  } finally { p.close() }
+})
+
+// A conversation can have many blocks, and each asked of the host is a process: only what is in view is, and no more than two at once.
+test('a block is asked for only once it comes into view', async () => {
+  const p = await convoPage({ events: [{ seq: 1, kind: 'user', text: 'hi' }, fenced(GO)], running: false }, { '/api/highlight': GO_COLOURED }, { seeing: true })
+  try {
+    await p.settle()
+    assert.equal(colourAsks(p).length, 0, 'asked before it was seen')
+    await p.seen((el) => el.classList && el.classList.contains('code-block'))
+    await p.settle()
+    assert.equal(colourAsks(p).length, 1)
+    assert.equal(blockCode(p).querySelectorAll('span.hl-kw').length, 2)
+  } finally { p.close() }
+})
+
+test('no more than two blocks are asked for at a time', async () => {
+  const events = [{ seq: 1, kind: 'user', text: 'hi' }]
+  for (let i = 0; i < 6; i++) events.push(agentSaid(2 + i, '```go\nvar v' + i + ' = ' + i + '\n```'))
+  // Each answer takes a moment, so what is asked for at once overlaps: the most that did is what is measured
+  let now = 0
+  let most = 0
+  // (a number of turns of the event loop, not a timer: the page's settling waits only so many.)
+  const route = async () => {
+    now++
+    most = Math.max(most, now)
+    for (let turn = 0; turn < 30; turn++) await new Promise((resolve) => setImmediate(resolve))
+    now--
+    return {}
+  }
+  const p = await convoPage({ events, running: false }, { '/api/highlight': route })
+  try {
+    await p.settle()
+    assert.equal(colourAsks(p).length, 6, 'all six were asked for in the end')
+    assert.ok(most <= 2, 'at most ' + most + ' at once')
+    assert.ok(most >= 2, 'the two at a time were used: ' + most)
   } finally { p.close() }
 })
 

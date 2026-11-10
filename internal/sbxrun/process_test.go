@@ -142,7 +142,7 @@ func TestAFailedStartSaysWhatSbxSaid(t *testing.T) {
 
 func TestAStartThatSbxAcceptedButTheSandboxNeverAnsweredSaysSo(t *testing.T) {
 	old := startTimeout
-	startTimeout = 1
+	startTimeout = time.Second
 	defer func() { startTimeout = old }()
 	sbxtest.OnPath(t, "case \"$1\" in\n  start) exit 0 ;;\n  exec) exit 1 ;;\nesac\n")
 	started, why := StartExplained(context.Background(), "box")

@@ -168,3 +168,25 @@ func TestOnlyOneTaggedDocumentIsTakenFromTheReply(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentsWithTheCopyableBlocksFeatureAreToldItsRuleUpFront(t *testing.T) {
+	kit := "## " + CopyableBlocksHeading + "\n\nPut it in one block.\n"
+	got := WithCopyableBlocksRule("Universal instructions\n---\n\nBe kind.\n", kit)
+	for _, want := range []string{"Be kind.", CopyableBlocksHeading, "one fenced code block", "`markdown`", "four backticks"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+	// The user's own instructions are last, so that where they differ from vibe's, theirs are the later word.
+	if rule, mine := strings.Index(got, "four backticks"), strings.Index(got, "Be kind."); rule < 0 || mine < rule {
+		t.Errorf("the rule isn't ahead of the user's instructions:\n%s", got)
+	}
+	if only := WithCopyableBlocksRule("", kit); !strings.Contains(only, "four backticks") {
+		t.Errorf("with nothing of the user's, the rule is still wanted: %q", only)
+	}
+	for what, kit := range map[string]string{"no kit text": "", "kit text without it": "## Reviewing\n\nUse vibe-review.\n"} {
+		if got := WithCopyableBlocksRule("Be kind.", kit); got != "Be kind." {
+			t.Errorf("%s: the text changed to %q", what, got)
+		}
+	}
+}

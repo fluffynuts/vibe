@@ -455,7 +455,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 
 // reviewTabFor is what the page's Review tab works on: the sandbox's folder,
 // which is the same path on the host, and its reviews, kept on the host
-// (see docs/plan-review-tab.md). Nil, and no tab, for a sandbox with no
+// (see docs/adr/2026-10-15-review-tab.md). Nil, and no tab, for a sandbox with no
 // folder on record.
 func reviewTabFor(vibeHome, name string, inst state.Instance) *companion.ReviewTab {
 	if inst.Target == "" {

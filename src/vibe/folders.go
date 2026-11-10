@@ -98,7 +98,7 @@ func sandboxFolders(vibeHome, name, target string, merged settings.Settings, age
 	// The companion page's Review tab keeps the sandbox's reviews on the
 	// host; vibe-review, in the sandbox, drops the agent's comments in the
 	// inbox there, and reads the review from the view, read-only (see
-	// docs/plan-review-tab.md). Nothing else of it is the sandbox's to
+	// docs/adr/2026-10-15-review-tab.md). Nothing else of it is the sandbox's to
 	// touch: the host acts on what's there. vibe-review runs git where the
 	// tab does: from the workspace's top.
 	reviews := state.ReviewPath(vibeHome, name)
