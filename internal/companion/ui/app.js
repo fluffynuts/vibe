@@ -1389,7 +1389,7 @@
   // --- the default branch, when origin can't say ---------------------------
 
   // defaultBranchSetter offers to set the repository's default branch, for
-  // when origin can't say which it is (see docs/plan-new-conversation.md):
+  // when origin can't say which it is (see docs/adr/2026-10-18-new-conversation.md):
   // the name last set is suggested, and the repository's branches offered.
   // set is called with what vibe then says of it.
   let defaultBranchSetters = 0
@@ -7331,7 +7331,7 @@
 
   // --- "New conversation" -----------------------------------------------
 
-  // The dialog offers only what applies (see docs/plan-new-conversation.md).
+  // The dialog offers only what applies (see docs/adr/2026-10-18-new-conversation.md).
   // What the sandbox can do is asked when it opens, which may wake the
   // sandbox; origin is checked once a new branch is ticked, once per opening.
   // generation tells an answer for an earlier opening, which is dropped.

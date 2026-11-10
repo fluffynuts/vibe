@@ -14,7 +14,7 @@ import (
 // A repository's default branch is what origin's HEAD names. When origin
 // can't say (there's no origin yet, or nothing pushed), the user can set
 // it for the repository, in its git config, and vibe remembers the name to
-// suggest it next time (see docs/plan-new-conversation.md).
+// suggest it next time (see docs/adr/2026-10-18-new-conversation.md).
 
 // defaultBranchState is the folder's default branch, with what to suggest
 // for setting one when it can't be told.
