@@ -6668,7 +6668,7 @@
   // --- the model and effort ----------------------------------------------
 
   // The drop-downs beside Send choose the model and effort the agent is asked
-  // to use (see docs/plan-model-effort.md). What they show is what vibe keeps,
+  // to use (see docs/adr/2026-10-19-model-and-effort.md). What they show is what vibe keeps,
   // which the agent is asked for on each turn; the lists are the agent's own.
   // A change applies from the next prompt.
   //
