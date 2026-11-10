@@ -1,5 +1,5 @@
 // Package packagereq is how a sandbox asks the host for a package it can't
-// get itself (see docs/plan-nuget-feeds.md): the agent's command drops a
+// get itself (see docs/adr/2026-10-18-nuget-without-the-hosts-nuget.md): the agent's command drops a
 // request in an inbox folder, and the host answers in a read-only view
 // folder, each a folder of the host's mounted into the sandbox. What's in
 // the inbox is the agent's to make, so it's read only as a small plain file,

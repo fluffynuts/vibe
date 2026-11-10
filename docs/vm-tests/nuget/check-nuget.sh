@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Checks, with plain dotnet, what vibe's NuGet design (docs/plan-nuget-feeds.md)
+# Checks, with plain dotnet, what vibe's NuGet design (docs/adr/2026-10-18-nuget-without-the-hosts-nuget.md)
 # relies on. For macOS and Linux machines, such as a macOS VM that can't run sbx.
 # Needs the dotnet SDK on the PATH. Prints PASS, FAIL or SKIP for each check,
 # and exits 1 if any failed. Touches nothing outside a temporary folder: a fake

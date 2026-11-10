@@ -1,5 +1,5 @@
 // Package nugetfetch fetches a NuGet package onto the host for a sandbox
-// that asked for it (see docs/plan-nuget-feeds.md). The request comes from
+// that asked for it (see docs/adr/2026-10-18-nuget-without-the-hosts-nuget.md). The request comes from
 // the agent, so it is data only and checked before anything is written or
 // run: nothing of it is ever interpreted as code, and nothing from the
 // agent's workspace is read.
