@@ -1,6 +1,6 @@
 # An accessibility sweep, and options for how the page looks (planned, not built)
 
-Raised 2026-10-23, as a note on the power menu (`docs/plan-quality-of-life.md`): a sweep of the page for accessibility, and options (more contrast, less animation, bigger text), possibly with a lighter theme. It wants a lot of back and forth to get right, so it is its own branch, **after** the power menu's.
+Raised 2026-10-23, as a note on the power menu (`docs/adr/2026-10-23-page-ergonomics.md`): a sweep of the page for accessibility, and options (more contrast, less animation, bigger text), possibly with a lighter theme. It wants a lot of back and forth to get right, so it is its own branch, **after** the power menu's.
 
 ## What there is (read from the code, not run)
 

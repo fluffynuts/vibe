@@ -17,7 +17,7 @@ Raised 2026-10-23. The want: `vibe --remote user@host <path/to/repo>`, and the w
 - **A headless one** (`--headless`): runs `vibe --headless <path>` over ssh, reads the `vibe-headless-ready` line, picks a free *local* port, starts `ssh -N -L local:127.0.0.1:remote host`, and opens the *local* browser at `http://localhost:<local>/#<token>`. If the remote vibe says it is already running for the folder, it just does the tunnel: this is also how to reconnect. The tunnel is held by this vibe in the foreground with a status line (Ctrl-C closes it and leaves the remote vibe running); a `--detach` could hand it to a background process, as `--headless` does, later.
 - **Other commands** (`--stop`, `--list`, `--info`, `--restart`, rebuilds, `--git-token`…) are run remotely as they are, output streamed back. `--info` rewrites its forwarding hint for the user's end (`ssh` target as given), since "this machine" there is the remote.
 - **`--remote host --install` and `--upgrade`:** if the remote can reach GitHub, run its own `install.sh` (the checks are the script's own). If it can't (a build box behind a firewall: common), this vibe fetches the release asset for the *remote's* platform (found with `ssh host 'uname -sm'`, `selfupdate.AssetName`), checks it against `SHA256SUMS`, and streams it to the remote to install; the remote runs `vibe --install` from there. `--install-sbx` likewise.
-- **Questions on the remote:** a terminal session's questions come through the terminal. A headless vibe's questions are on its page (the git author is; the profile re-compose before a restart is planned to be, see `docs/plan-quality-of-life.md`), which is reached through the tunnel like the rest.
+- **Questions on the remote:** a terminal session's questions come through the terminal. A headless vibe's questions are on its page (the git author is; the profile re-compose before a restart is not yet, see "Not built, on purpose" in `docs/adr/2026-10-23-page-ergonomics.md`), which is reached through the tunnel like the rest.
 
 ## What must not go wrong
 
@@ -42,4 +42,4 @@ Go, with a stand-in `ssh` on `PATH` (a script that records its arguments and run
 
 ## Order
 
-After `docs/plan-quality-of-life.md`'s restart (its page questions are what a remote headless session relies on) and `docs/plan-clone.md` is independent of it. Start with a terminal session and `--list`/`--info` (the cheap, safe part), then headless with the tunnel, then `--install`/`--upgrade` last: it is the part that writes to another machine.
+After the restart in `docs/adr/2026-10-23-page-ergonomics.md` (its page questions, which are not built, are what a remote headless session relies on) and `docs/plan-clone.md` is independent of it. Start with a terminal session and `--list`/`--info` (the cheap, safe part), then headless with the tunnel, then `--install`/`--upgrade` last: it is the part that writes to another machine.

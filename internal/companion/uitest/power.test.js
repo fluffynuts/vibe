@@ -1,5 +1,5 @@
 // Tests of the power button at the top right of the page, which says whether vibe is reached and opens
-// the menu of what can be done about it. See docs/plan-quality-of-life.md, "A power menu on the page".
+// the menu of what can be done about it. See docs/adr/2026-10-23-page-ergonomics.md, "A power menu on the page".
 'use strict'
 const test = require('node:test')
 const assert = require('node:assert/strict')
