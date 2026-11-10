@@ -115,7 +115,7 @@ func TestAReachabilityProbeThatNeverAnswersIsNo(t *testing.T) {
 	if Reachable(context.Background(), "box") {
 		t.Error("a sandbox that never answered was reported reachable")
 	}
-	if WaitReachable(context.Background(), "box", 2) {
+	if WaitReachable(context.Background(), "box", 2*time.Second) {
 		t.Error("a sandbox that never answered was waited for and reported reachable")
 	}
 	if took := time.Since(began); took > 10*time.Second {

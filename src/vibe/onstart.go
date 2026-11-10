@@ -16,10 +16,14 @@ import (
 	"vibe/internal/timezone"
 )
 
+// reachableToNudge is how long the start nudge waits for the sandbox to take a command: a session is starting, and a cold boot
+// can be slow, so it is longer than a restore waits.
+const reachableToNudge = 180 * time.Second
+
 func nudgeOnStart(lay layout.Layout, name string, reached func()) {
 	vibeHome := lay.Home
 	logf := sessionStartLogger(vibeHome, name)
-	if !sbxrun.WaitReachable(context.Background(), name, 180) {
+	if !sbxrun.WaitReachable(context.Background(), name, reachableToNudge) {
 		logf("gave up waiting for reachability")
 		return
 	}
