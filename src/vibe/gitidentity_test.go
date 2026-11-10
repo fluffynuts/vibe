@@ -215,24 +215,6 @@ func TestTheAnswerKeptBeatsWhatSettingsSayAndTheProfilesSettingsBeatTheGlobalOne
 	}
 }
 
-func TestAnAnswerAnEarlierVibeKeptInItsOwnFileIsStillReadAndMovedWhenChanged(t *testing.T) {
-	lay := updateLayout(t)
-	old := lay.HomePath("profiles", "p", "git-author")
-	writeFile(t, old, "import\n")
-	if got, err := gitAuthorPreference(lay, "p"); err != nil || got != gitAuthorImport {
-		t.Errorf("read %q, %v", got, err)
-	}
-	if err := keepGitAuthorChoice(lay, "p", gitAuthorLeave); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(old); err == nil {
-		t.Error("the old file was left to be read again")
-	}
-	if got, _ := gitAuthorPreference(lay, "p"); got != gitAuthorLeave {
-		t.Errorf("after: %q", got)
-	}
-}
-
 func TestNoChoiceAnywhereIsToAsk(t *testing.T) {
 	lay := updateLayout(t)
 	if got, err := gitAuthorPreference(lay, "p"); err != nil || got != "" {

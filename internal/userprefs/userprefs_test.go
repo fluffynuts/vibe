@@ -140,75 +140,6 @@ func TestTheFileCanBeReadByOthersAndIsNeverSeenHalfWritten(t *testing.T) {
 
 func windows() bool { return os.PathSeparator == '\\' }
 
-func TestWhatEarlierVibesKeptInTheirOwnFilesIsStillRead(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "claude-theme"), []byte("amber\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "git-author"), []byte("import\n"), 0o644)
-	got, err := Load(dir)
-	if err != nil || got.Theme != "amber" || got.GitAuthor != "import" {
-		t.Errorf("got %+v, %v", got, err)
-	}
-}
-
-func TestTheNewFileWinsOverWhatEarlierVibesKept(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "claude-theme"), []byte("amber\n"), 0o644)
-	os.WriteFile(Path(dir), []byte("theme: dark\n"), 0o644)
-	if got, _ := Load(dir); got.Theme != "dark" {
-		t.Errorf("theme = %q", got.Theme)
-	}
-}
-
-func TestTheFirstChangeMovesTheOldFilesIntoTheNewOne(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "claude-theme"), []byte("amber\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "git-author"), []byte("leave\n"), 0o644)
-	if err := Update(dir, func(p *Prefs) { p.Model = "opus" }); err != nil {
-		t.Fatal(err)
-	}
-	for _, old := range LegacyFiles {
-		if _, err := os.Stat(filepath.Join(dir, old)); err == nil {
-			t.Errorf("%s was left", old)
-		}
-	}
-	got, _ := Load(dir)
-	if got.Theme != "amber" || got.GitAuthor != "leave" || got.Model != "opus" {
-		t.Errorf("got %+v", got)
-	}
-}
-
-func TestAnOldChoiceUndoneStaysUndone(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "git-author"), []byte("import\n"), 0o644)
-	Update(dir, func(p *Prefs) { p.GitAuthor = "" })
-	if got, _ := Load(dir); got.GitAuthor != "" {
-		t.Errorf("the old file's answer came back: %q", got.GitAuthor)
-	}
-}
-
-func TestMovingTheOldFilesWithNothingElseToKeepLeavesNoEmptyFile(t *testing.T) {
-	dir := t.TempDir()
-	if err := Migrate(dir); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(Path(dir)); err == nil {
-		t.Error("a file was made with nothing to say")
-	}
-	os.WriteFile(filepath.Join(dir, "claude-theme"), []byte("amber\n"), 0o644)
-	if err := Migrate(dir); err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := Load(dir); got.Theme != "amber" {
-		t.Errorf("got %+v", got)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "claude-theme")); err == nil {
-		t.Error("the old file was left")
-	}
-	if err := Migrate(dir); err != nil {
-		t.Errorf("a second time: %v", err)
-	}
-}
-
 func TestAFileTheUserMadePrivateStaysSoAndANewOneIsReadableByOthers(t *testing.T) {
 	if windows() {
 		t.Skip("no modes here")
@@ -239,18 +170,6 @@ func TestACommentAndAnUnknownKeyTheUserWroteSurviveAChange(t *testing.T) {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("lost %q:\n%s", want, data)
 		}
-	}
-}
-
-func TestMigratingWithNothingOldToMoveLeavesTheFileExactlyAsItIs(t *testing.T) {
-	dir := t.TempDir()
-	text := "# mine\ntheme:   amber\nfuture: thing\n"
-	os.WriteFile(Path(dir), []byte(text), 0o644)
-	if err := Migrate(dir); err != nil {
-		t.Fatal(err)
-	}
-	if data, _ := os.ReadFile(Path(dir)); string(data) != text {
-		t.Errorf("the file was rewritten: %q", data)
 	}
 }
 
@@ -299,5 +218,32 @@ func TestAnUpdateThatChangesNothingDoesNotWriteTheFile(t *testing.T) {
 	info, err := os.Stat(Path(dir))
 	if err != nil || !info.ModTime().Equal(then) {
 		t.Errorf("modified %v, want it left at %v: %v", info.ModTime(), then, err)
+	}
+}
+
+// Earlier vibes kept the theme and the git author answer in files of their own (claude-theme, git-author). They were read, and
+// moved into the preferences, for as long as a profile might still have them; no profile of this age can. They are nobody's now:
+// not read, and not removed either, as a file that is there is the user's to deal with.
+func TestTheFilesEarlierVibesKeptChoicesInAreNeitherReadNorTouched(t *testing.T) {
+	dir := t.TempDir()
+	for name, body := range map[string]string{"claude-theme": "amber\n", "git-author": "import\n"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := Load(dir); err != nil || got.Theme != "" || got.GitAuthor != "" {
+		t.Errorf("Load = %+v, %v: an old file was read", got, err)
+	}
+	if err := Update(dir, func(p *Prefs) { p.Model = "sonnet" }); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := Load(dir)
+	if got.Model != "sonnet" || got.Theme != "" || got.GitAuthor != "" {
+		t.Errorf("after an update: %+v: an old file was moved in", got)
+	}
+	for _, name := range []string{"claude-theme", "git-author"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("%s was removed: %v", name, err)
+		}
 	}
 }

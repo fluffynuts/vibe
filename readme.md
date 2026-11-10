@@ -994,7 +994,7 @@ It's yours to edit (delete a line, or the file, to go back to being asked, or to
 
 A profile vibe generated (guided) has a `README.md` in its folder saying so: its files may be edited, but a re-compose or an automatic update replaces them (after backing the profile up; `vibe --restore` lists the backups), while `user-preferences.yaml` and `agent-instructions.md` are yours and carried across. It's not part of what makes a profile out of date or edited, so rewrite or delete it freely; vibe adds it again only when there isn't one, and never to a profile you made by hand.
 
-Earlier vibes kept these in files of their own (`claude-theme`, `git-author`) and the model and effort in the profile's `settings.yaml`. They are moved into `user-preferences.yaml` the next time the profile is updated or re-composed, or a choice is made; a `model:` or `effort:` that can't be taken out of `settings.yaml` without leaving the profile looking edited by hand (you changed something else there too) is left, and said so; the preferences are read first.
+Vibes before v0.1.146 kept the theme and the git author answer in files of their own (`claude-theme`, `git-author`), and the model and effort in the profile's `settings.yaml`, and moved them here. That is no longer done: such a file (in an old profile restored from a backup, say) is not read, and counts as an edit to the profile, so delete it and choose again. A `model:` or `effort:` in `settings.yaml` is still read, after this file's.
 
 ### NuGet packages and private feeds
 

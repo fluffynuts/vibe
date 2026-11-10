@@ -297,7 +297,6 @@ func keepGitAuthorChoice(lay layout.Layout, profile, choice string) error {
 	if !fileExists(dir) {
 		return fmt.Errorf("profile '%s' is vibe's own, which can't be written to: make a profile of your own (--profile) to keep the choice in", profile)
 	}
-	migratePreferences(lay, profile)
 	return userprefs.Update(dir, func(p *userprefs.Prefs) { p.GitAuthor = choice })
 }
 

@@ -204,42 +204,21 @@ func TestAProfileMissingABaseFeatureIsToldWhich(t *testing.T) {
 	}
 }
 
-func TestReComposingKeepsTheModelAndEffortChosenOnThePage(t *testing.T) {
+// Earlier vibes kept the model and effort chosen on the page in the profile's settings.yaml, and moved them into the preferences at
+// a re-compose. That is no longer done: composing writes settings.yaml afresh (the old one is in the backup), so what was only
+// there is not carried, and is not found in the preferences either.
+func TestAModelAndEffortOnlyInSettingsYamlAreNotMovedIntoThePreferencesByAReCompose(t *testing.T) {
 	lay, dir := instructionsFixture(t)
 	args := cliargs.Args{Force: true, Profile: "foo-browser"}
 	writeFile(t, filepath.Join(dir, "settings.yaml"), "memory: 8g\nmodel: sonnet\neffort: high\n")
 	if err := recomposeProfile(lay, args, "foo-browser", t.TempDir(), false, nil); err != nil {
 		t.Fatal(err)
 	}
-	got, err := profileChoice{lay: lay, profile: "foo-browser"}.get()
-	if err != nil || got != (turnChoice{Model: "sonnet", Effort: "high"}) {
-		t.Errorf("after re-composing, the choice is %+v, %v; want sonnet, high", got, err)
+	if prefs, _ := userprefs.Load(dir); prefs.Model != "" || prefs.Effort != "" {
+		t.Errorf("preferences = %+v: the keys in settings.yaml were moved in", prefs)
 	}
-	// And it is where it is kept now, not in the settings composing wrote.
-	if text, _ := readFile(t, filepath.Join(dir, "settings.yaml")); strings.Contains(text, "model") || strings.Contains(text, "effort") {
-		t.Errorf("settings.yaml = %q", text)
-	}
-	if prefs, _ := userprefs.Load(dir); prefs.Model != "sonnet" || prefs.Effort != "high" {
-		t.Errorf("preferences = %+v", prefs)
-	}
-}
-
-func TestReComposingKeepsTheThemeAndTheGitAuthorAnswerWhereverEarlierVibesPutThem(t *testing.T) {
-	lay, dir := instructionsFixture(t)
-	args := cliargs.Args{Force: true, Profile: "foo-browser"}
-	writeFile(t, filepath.Join(dir, "claude-theme"), "amber\n")
-	writeFile(t, filepath.Join(dir, "git-author"), "import\n")
-	if err := recomposeProfile(lay, args, "foo-browser", t.TempDir(), false, nil); err != nil {
-		t.Fatal(err)
-	}
-	prefs, err := userprefs.Load(dir)
-	if err != nil || prefs.Theme != "amber" || prefs.GitAuthor != "import" {
-		t.Errorf("after re-composing: %+v, %v", prefs, err)
-	}
-	for _, old := range userprefs.LegacyFiles {
-		if _, err := os.Stat(filepath.Join(dir, old)); err == nil {
-			t.Errorf("%s was left beside the preferences", old)
-		}
+	if got, err := (profileChoice{lay: lay, profile: "foo-browser"}).get(); err != nil || got != (turnChoice{}) {
+		t.Errorf("after re-composing, the choice is %+v, %v: composed settings carry no choice", got, err)
 	}
 }
 
@@ -380,23 +359,6 @@ func TestReCreateKeepsAFileItCannotReadAsItIsAndSaysItCouldntRead(t *testing.T) 
 	}
 }
 
-func TestReCreateKeepsWhatEarlierVibesKeptInFilesOfTheirOwn(t *testing.T) {
-	lay, dir := profileWith(t, map[string]string{"claude-theme": "amber\n", "git-author": "import\n"})
-	asked, restore := answeringKeep(t, nil)
-	defer restore()
-	doReCreate(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "foo-browser", t.TempDir())
-	if len(*asked) != 0 {
-		t.Errorf("asked %q", *asked)
-	}
-	prefs, err := userprefs.Load(dir)
-	if err != nil || prefs.Theme != "amber" || prefs.GitAuthor != "import" {
-		t.Errorf("prefs %+v, %v", prefs, err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "claude-theme")); err == nil {
-		t.Error("the old theme file came back")
-	}
-}
-
 func TestTheKeptChoicesAreBackOnceTheNewProfileIsMadeAndBeforeTheKitIsRead(t *testing.T) {
 	lay := layout.New(t.TempDir(), t.TempDir())
 	var madeFirst bool
@@ -464,7 +426,7 @@ func TestReCreateOfAProfileThatIsNotThereMakesNoBackup(t *testing.T) {
 }
 
 func TestReCreateBacksUpTheChoicesToo(t *testing.T) {
-	lay, _ := profileWith(t, map[string]string{"claude-theme": "amber\n"})
+	lay, _ := profileWith(t, map[string]string{"user-preferences.yaml": "theme: amber\n"})
 	doReCreate(lay, cliargs.Args{Force: true, Profile: "foo-browser"}, "box", t.TempDir())
 	backups, _ := backup.List(lay.HomePath("backup"), "box")
 	if len(backups) != 1 {
@@ -473,7 +435,7 @@ func TestReCreateBacksUpTheChoicesToo(t *testing.T) {
 	dir := t.TempDir()
 	backup.Restore(backups[0].Path, dir)
 	if prefs, err := userprefs.Load(dir); err != nil || prefs.Theme != "amber" {
-		t.Errorf("the backup's preferences %+v, %v: what is backed up should be what the user had, with earlier vibes' files moved in", prefs, err)
+		t.Errorf("the backup's preferences %+v, %v: what is backed up should be what the user had", prefs, err)
 	}
 }
 
