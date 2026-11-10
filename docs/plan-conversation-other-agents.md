@@ -1,7 +1,10 @@
 # Plan: the Conversation tab for agents other than Claude
 
 Status: planned 2026-10-21; OpenCode 1.19.3 checked for real the same day, on a free model (findings below; real
-output saved in `docs/samples/opencode/`). Not started. Codex not looked at.
+output saved in `docs/samples/opencode/`). **OpenCode is built on `feat/opencode`, which is not merged** (15 commits ahead of
+master as of 2026-11-10: a Conversation tab running `opencode run`, its events read as the page's stream, per-model efforts, the
+model list and its secrets from sbx, a conversation surviving a rebuild). Codex not looked at. This plan has not been rewritten
+to say which of its steps those commits cover; do that when the branch is merged, and then make it an ADR.
 
 ## The outcome
 

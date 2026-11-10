@@ -9,7 +9,7 @@ What was built is in `docs/adr/2026-10-29-signing-in.md`. Nothing here is built.
   `--oauth` is openai only (anthropic only with `--cloud`), so a subscription can't go through `sbx secret`. The "Do it yourself" steps already
   show the command.
 - Cursor, and other agents, the same way once their sign-in can be read; build alongside Claude's with the same structure so the next agent can
-  generalise (`docs/plan-cursor-support.md` if it exists, else the cursor notes).
+  generalise (there is no Cursor plan yet).
 
 ## The keyring stall
 
