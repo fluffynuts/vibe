@@ -1,6 +1,6 @@
 // Package review is the companion page's Review tab's: the diff of a
 // sandbox's folder, worked out on the host with git, and the review of it
-// (see docs/plan-review-tab.md).
+// (see docs/adr/2026-10-15-review-tab.md).
 package review
 
 import (

@@ -37,4 +37,4 @@ Now (`vibe-review start`): the uncommitted changes, `--ref BRANCH` (the changes 
 
 ## Where
 
-Both are the Review tab's own, and independent of the model/effort work: a branch of their own off master after `feat/model-and-effort` merges, alongside `docs/plan-review-stale-diff.md` (the stale diff notice, next-unresolved navigation, Submit's disabled state), which touches the same code. Do them together or in that order: the description (1) first, as the range (2) needs it for its label.
+Both are the Review tab's own, and independent of the model/effort work: a branch of their own off master after `feat/model-and-effort` merges, alongside `docs/plan-review-tab-enhancements.md` (next-unresolved navigation, Submit's disabled state, and the first build's loose ends), which touches the same code. (The stale-diff notice that used to be planned with them is built: `docs/adr/2026-10-15-review-tab.md`.) Do them together or in that order: the description (1) first, as the range (2) needs it for its label.
