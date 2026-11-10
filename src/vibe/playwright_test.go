@@ -16,7 +16,7 @@ import (
 
 // The playwright feature's install script is run as it is, with stand-ins for npm, playwright and node on its PATH:
 // what it asks them for, when, and what it does when they fail, without the network. The real run, against the real
-// downloads, is a different kind of test (see docs/plan-playwright.md).
+// downloads, is a different kind of test (see docs/adr/2026-10-28-playwright-feature.md).
 
 func playwrightScriptPath(t *testing.T) string {
 	t.Helper()
