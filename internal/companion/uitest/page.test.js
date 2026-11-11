@@ -1884,6 +1884,39 @@ test('the comment arrows pass over comments in viewed files, and say so', async 
   } finally { p.close() }
 })
 
+// --- keeping a text selection to the side of a split diff it began on ---------------------------------------
+
+const mouse = (node, type) => node.dispatchEvent(new node.ownerDocument.defaultView.MouseEvent(type, { bubbles: true }))
+
+test('starting a selection on one side of a split diff marks the table so the other side is unselectable, until the mouse is let go', async () => {
+  const p = await viewedPage()
+  try {
+    const table = p.$('review-files').querySelector('[data-path="b.txt"] table.review-lines')
+    assert.ok(table.classList.contains('split'), 'split is the default layout')
+    const row = Array.from(table.rows).find((r) => !r.classList.contains('hunk') && !r.classList.contains('threads') && r.cells.length === 6)
+    const thread = Array.from(table.rows).find((r) => r.classList.contains('threads'))
+    assert.ok(row && thread, 'both a line row and a thread row are there to test')
+
+    mouse(row.cells[0], 'mousedown') // the old side's line number
+    assert.ok(table.classList.contains('select-old'))
+    assert.ok(!table.classList.contains('select-new'))
+    mouse(p.window.document.body, 'mouseup')
+    assert.ok(!table.classList.contains('select-old'), 'let go, so the next drag decides afresh')
+
+    mouse(row.cells[5], 'mousedown') // the new side's code
+    assert.ok(table.classList.contains('select-new'))
+    assert.ok(!table.classList.contains('select-old'))
+    mouse(p.window.document.body, 'mouseup')
+
+    mouse(thread.cells[0], 'mousedown') // the thread row's old side (colspan 3, one cell)
+    assert.ok(table.classList.contains('select-old'))
+    mouse(p.window.document.body, 'mouseup')
+
+    mouse(thread.cells[1], 'mousedown') // its new side
+    assert.ok(table.classList.contains('select-new'))
+  } finally { p.close() }
+})
+
 // --- the formatting toolbar ------------------------------------------------------------------
 
 const select = (box, text, from, to) => { box.focus(); box.value = text; box.dispatchEvent(new box.ownerDocument.defaultView.Event('input', { bubbles: true })); box.setSelectionRange(from, to) }

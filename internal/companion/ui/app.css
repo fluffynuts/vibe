@@ -381,6 +381,13 @@ ul.plain li .spacer { flex: 1; }
 .review-lines td.sign.blank { background-position: -4.5em 0; }
 .review-lines td.code.blank { background-position: -6em 0; }
 .review-lines.split td.start { border-left: 1px solid var(--line); }
+/* A selection begun on one side of a split diff stays on it: the other side is unselectable for as long as the
+   drag lasts (setUpSplitSelection toggles these classes). Every row is built old side first, new side after,
+   whether as three cells each or, for a row of threads or a comment being written, one (colspan 3) each. */
+.review-lines.split.select-old tr:not(.threads) td:nth-child(n+4),
+.review-lines.split.select-old tr.threads td:nth-child(2) { user-select: none; }
+.review-lines.split.select-new tr:not(.threads) td:nth-child(-n+3),
+.review-lines.split.select-new tr.threads td:nth-child(1) { user-select: none; }
 .review-lines tr.hunk td { color: var(--muted); background: color-mix(in srgb, var(--accent) 10%, transparent); padding: 4px 10px; }
 /* A gap's buttons, stacked in the line-number column, as GitHub has them. */
 .review-lines td.gap-buttons { padding: 0; text-align: center; vertical-align: middle; background: color-mix(in srgb, var(--accent) 25%, transparent); }

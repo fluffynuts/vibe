@@ -2196,6 +2196,33 @@
     })
   }
 
+  // splitSelectSide is which side of a split diff's table td belongs to: every row of it is built old side first,
+  // new side after, whether as three cells each (a line's number, its +/- and its code) or, on a row of threads or
+  // a comment being written, one cell each (colspan 3): td.cellIndex says which, the same way for every row.
+  function splitSelectSide(td) {
+    const inThreads = td.closest('tr').classList.contains('threads')
+    return td.cellIndex < (inThreads ? 1 : 3) ? 'old' : 'new'
+  }
+
+  // setUpSplitSelection keeps a text selection begun on one side of a split diff to it: dragging from code into a
+  // suggested edit must not carry the other side's lines in with it. The other side is made unselectable for as
+  // long as the drag lasts (a selection already under way isn't undone by it, only kept from growing into it), and
+  // let go again once the mouse is, so the next drag decides afresh.
+  function setUpSplitSelection() {
+    document.addEventListener('mousedown', (ev) => {
+      const table = ev.target.closest && ev.target.closest('table.review-lines.split')
+      const td = table && ev.target.closest('td')
+      if (!td) return
+      table.classList.remove('select-old', 'select-new')
+      table.classList.add('select-' + splitSelectSide(td))
+    })
+    document.addEventListener('mouseup', () => {
+      for (const table of document.querySelectorAll('table.review-lines.split.select-old, table.review-lines.split.select-new')) {
+        table.classList.remove('select-old', 'select-new')
+      }
+    })
+  }
+
   // composerRow is the comment being written, as a row of a file's table:
   // Write (Markdown, as typed) and Preview (as it will show).
   function composerRow(columns) {
@@ -5103,6 +5130,7 @@
     $('review-close').addEventListener('click', () => closeReview())
     setUpCommentsPane()
     setUpLineDrag()
+    setUpSplitSelection()
     setUpOrderMenu()
     $('panel-review').addEventListener('paste', reviewPaste)
     // Scrolling by hand (not the arrows' scrolling) says where the page is.
