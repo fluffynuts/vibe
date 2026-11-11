@@ -3204,27 +3204,48 @@
     goToWanted()
   }
 
-  // viewedState is whether file f is ticked as viewed: 'viewed', 'changed'
-  // (ticked, but its change has changed since), or ''.
-  function viewedState(f) {
-    const seen = reviewView.review && reviewView.review.viewed ? reviewView.review.viewed[f.path] : undefined
-    return !seen ? '' : seen === f.fingerprint ? 'viewed' : 'changed'
+  // viewedCommentCount is how many comments file f has now: part of what ticking it as viewed stands for, so the
+  // agent commenting on a file folded away is as much a reason to look again as its code changing.
+  function viewedCommentCount(f) {
+    return R.commentsByFile(reviewView.review ? reviewView.review.threads : []).get(f.path) || 0
   }
 
-  // viewedTick is the Viewed tick in file f's header, saying when its
-  // change has changed since it was ticked.
+  // viewedCode is what a tick of Viewed for file f is checked against later: its fingerprint and its comment count
+  // now, joined by a ':' (never in a fingerprint, which is hex).
+  function viewedCode(f) {
+    return f.fingerprint + ':' + viewedCommentCount(f)
+  }
+
+  // viewedState is whether file f is ticked as viewed: 'viewed', 'changed' (ticked, but its code has changed
+  // since), 'commented' (ticked, its code the same, but there's more said about it since), or ''. A tick from
+  // before 'commented' existed (no ':' in it, just the code) is read as if it already had as many comments as it
+  // does now, so updating vibe doesn't itself unfold everything already ticked.
+  function viewedState(f) {
+    const seen = reviewView.review && reviewView.review.viewed ? reviewView.review.viewed[f.path] : undefined
+    if (!seen) return ''
+    const sep = seen.lastIndexOf(':')
+    const seenCode = sep < 0 ? seen : seen.slice(0, sep)
+    const seenComments = sep < 0 ? String(viewedCommentCount(f)) : seen.slice(sep + 1)
+    if (seenCode !== f.fingerprint) return 'changed'
+    if (seenComments !== String(viewedCommentCount(f))) return 'commented'
+    return 'viewed'
+  }
+
+  // viewedTick is the Viewed tick in file f's header, saying when its code, or what is said about it, has changed
+  // since it was ticked.
   function viewedTick(f) {
     const was = viewedState(f)
     const box = el('input', { type: 'checkbox' })
     box.checked = was === 'viewed'
     box.addEventListener('change', () => tickViewed(f, box.checked))
+    const since = was === 'changed' ? 'changed since you viewed it' : was === 'commented' ? 'commented on since you viewed it' : ''
     return el('label', { class: 'review-viewed', title: 'Ticked, its diff is folded away until you untick it' },
-      was === 'changed' ? el('span', { class: 'review-changed', text: 'changed since you viewed it' }) : null, box, ' Viewed')
+      since ? el('span', { class: 'review-changed', text: since }) : null, box, ' Viewed')
   }
 
   async function tickViewed(f, on) {
     try {
-      const res = await doReview(on ? { op: 'view', file: f.path, code: f.fingerprint } : { op: 'unview', file: f.path })
+      const res = await doReview(on ? { op: 'view', file: f.path, code: viewedCode(f) } : { op: 'unview', file: f.path })
       reached(true)
       if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); redrawReview(); return }
       redrawReview()

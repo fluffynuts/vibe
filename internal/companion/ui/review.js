@@ -207,6 +207,15 @@
     return out
   }
 
+  // commentsByFile is how many comments each file has now, every thread's and every reply counted (not just how
+  // many threads, which a reply to one already there wouldn't move): a file ticked as viewed is known to have more
+  // said about it since, the same way it's known to have changed.
+  function commentsByFile(threads) {
+    const out = new Map()
+    for (const t of threads) if (t.file) out.set(t.file, (out.get(t.file) || 0) + (t.comments || []).length)
+    return out
+  }
+
   // stepTo is which of the threads at tops (in page order, where each now
   // is) the comment arrows go to from a page scrolled so line is where a
   // thread is shown (just under the bar): the next past it, or the one
@@ -382,7 +391,7 @@
     return runs.map((r) => ({ kind: tokenKind(r.c), text: r.t }))
   }
 
-  const api = { tokenKind, lineRuns, formatText, inStepOrder, diffSquares, currentOf, positionOf, placeInGaps, placeThreads, inTreeOrder, sideBySide, gaps, gapView, GAP_STEP, fileTree, matchesFilter, agentUpdated, threadsByFile, stepTo }
+  const api = { tokenKind, lineRuns, formatText, inStepOrder, diffSquares, currentOf, positionOf, placeInGaps, placeThreads, inTreeOrder, sideBySide, gaps, gapView, GAP_STEP, fileTree, matchesFilter, agentUpdated, threadsByFile, commentsByFile, stepTo }
   if (typeof module === 'object' && module.exports) module.exports = api
   else root.vibeReview = api
 })(this)

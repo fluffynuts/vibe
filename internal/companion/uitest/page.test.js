@@ -1805,23 +1805,24 @@ test('a comment that has followed its code says where it was made', async () => 
 // vibe keeps the ticks the page asks for.
 async function viewedPage(viewed = {}) {
   const one = (path) => ({ path, status: 'modified', fingerprint: 'fp-' + path, hunks: [{ oldStart: 1, newStart: 1, header: '', lines: [{ kind: 'add', new: 1, text: 'x' }] }] })
-  let review = { ...none, started: '2026-10-16T10:00:00Z', lastId: 1, viewed,
-    threads: [{ id: 1, file: 'b.txt', side: 'new', line: 1, endLine: 1, code: 'x', status: 'open', comments: said('on b') }] }
-  return openPage({
+  const at = { review: { ...none, started: '2026-10-16T10:00:00Z', lastId: 1, viewed,
+    threads: [{ id: 1, file: 'b.txt', side: 'new', line: 1, endLine: 1, code: 'x', status: 'open', comments: said('on b') }] } }
+  const p = await openPage({
     routes: {
       '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
-      '/api/review': () => ({ review, diff: ['a.txt', 'b.txt', 'c.txt'].map(one) }),
+      '/api/review': () => ({ review: at.review, diff: ['a.txt', 'b.txt', 'c.txt'].map(one) }),
       '/api/review/do': (call) => {
-        const v = { ...review.viewed }
+        const v = { ...at.review.viewed }
         if (call.body.op === 'view') v[call.body.file] = call.body.code
         if (call.body.op === 'unview') delete v[call.body.file]
-        review = { ...review, viewed: v }
-        return { review }
+        at.review = { ...at.review, viewed: v }
+        return { review: at.review }
       },
       '/api/log': { entries: [] },
     },
     storage: { 'vibe-companion-tab': 'review' },
   })
+  return Object.assign(p, { at })
 }
 
 const tick = (p, path) => p.$('review-files').querySelector('[data-path="' + path + '"] header .review-viewed input')
@@ -1832,7 +1833,7 @@ test('ticking a file as viewed folds it, dims it in the tree, and counts it', as
   try {
     assert.equal(tick(p, 'b.txt').checked, false)
     await p.click(tick(p, 'b.txt'))
-    assert.deepEqual(p.posted('/api/review/do'), [{ op: 'view', file: 'b.txt', code: 'fp-b.txt' }])
+    assert.deepEqual(p.posted('/api/review/do'), [{ op: 'view', file: 'b.txt', code: 'fp-b.txt:1' }])
     assert.equal(tick(p, 'b.txt').checked, true)
     assert.ok(folded(p, 'b.txt'), 'its diff folded away')
     assert.ok(treeRow(p, 'b.txt').classList.contains('viewed'))
@@ -1840,6 +1841,27 @@ test('ticking a file as viewed folds it, dims it in the tree, and counts it', as
     await p.click(tick(p, 'b.txt'))
     assert.deepEqual(p.posted('/api/review/do')[1], { op: 'unview', file: 'b.txt' })
     assert.equal(folded(p, 'b.txt'), false, 'shown again')
+  } finally { p.close() }
+})
+
+// A reply landing in a file already ticked viewed is as much a reason to look again as its code changing, so it
+// unticks and unfolds the same way, with its own words for it.
+test('a new comment on a viewed file unticks and unfolds it, apart from a code change', async () => {
+  const p = await viewedPage()
+  try {
+    await p.click(tick(p, 'b.txt'))
+    assert.deepEqual(p.posted('/api/review/do'), [{ op: 'view', file: 'b.txt', code: 'fp-b.txt:1' }])
+    assert.ok(folded(p, 'b.txt'))
+    p.at.review = { ...p.at.review, threads: [{ ...p.at.review.threads[0], comments: [...p.at.review.threads[0].comments, { author: 'agent', body: 'and this', at: '2026-10-16T10:05:00Z' }] }] }
+    await p.poll()
+    assert.equal(tick(p, 'b.txt').checked, false)
+    assert.equal(folded(p, 'b.txt'), false, 'unfolded so the new comment can be seen')
+    const text = p.$('review-files').querySelector('[data-path="b.txt"] header').textContent
+    assert.match(text, /commented on since you viewed it/)
+    assert.doesNotMatch(text, /changed since you viewed it/, 'its code did not change, only what is said about it')
+    assert.doesNotMatch(p.$('review-tree-count').textContent, /viewed/, 'none are, so nothing is counted as viewed')
+    await p.click(tick(p, 'b.txt'))
+    assert.deepEqual(p.posted('/api/review/do')[1], { op: 'view', file: 'b.txt', code: 'fp-b.txt:2' }, 'ticked again, its new total is what is checked against next')
   } finally { p.close() }
 })
 

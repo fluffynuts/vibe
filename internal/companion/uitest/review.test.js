@@ -173,6 +173,18 @@ test('the file tree counts each file’s comment threads, open or not', () => {
   assert.deepEqual(Object.fromEntries(counts), { 'a.go': 3, 'b.go': 1 })
 })
 
+test('the file tree counts each file’s comments, every reply with its thread', () => {
+  const { commentsByFile } = require('../ui/review.js')
+  const counts = commentsByFile([
+    { id: 1, file: 'a.go', status: 'open', comments: ['a', 'b'] },
+    { id: 2, file: 'a.go', status: 'resolved', comments: ['c'] },
+    { id: 3, file: 'b.go', status: 'open', comments: ['d'] },
+    { id: 4, status: 'open', comments: ['e', 'f'] },
+    { id: 5, file: 'c.go', status: 'open' },
+  ])
+  assert.deepEqual(Object.fromEntries(counts), { 'a.go': 3, 'b.go': 1, 'c.go': 0 })
+})
+
 test('the comment arrows go to the thread after or before where the page is, round at the ends', () => {
   const { stepTo } = require('../ui/review.js')
   const tops = [-300, 40, 500, 900] // where each thread is; 40 is just under the bar
