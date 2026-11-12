@@ -3,6 +3,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"vibe/internal/companion"
 )
 
 // alive says process pid is still running (a zombie, reaped by nobody here,
@@ -110,5 +113,56 @@ func TestATurnsAgentGetsItsPromptAndItsExitStatusCounts(t *testing.T) {
 	}
 	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 3 {
 		t.Errorf("exit: %v, want the agent's 3", err)
+	}
+}
+
+// A stop that reaches the sandbox before the turn's shell has written where
+// it is finds nothing to stop; the agent must not then start unseen.
+func TestATurnStoppedBeforeItsShellRecordedItselfNeverStartsTheAgent(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "turn.pid")
+	started := filepath.Join(t.TempDir(), "agent-started")
+	if out, err := exec.Command("sh", "-c", stopTurnScript(pidFile)).CombinedOutput(); err != nil {
+		t.Fatalf("stopping a turn not yet begun: %v\n%s", err, out)
+	}
+	turn := exec.Command("sh", "-c", wrapTurn("touch "+shellQuote(started)+"; sleep 300", pidFile))
+	if err := turn.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- turn.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		turn.Process.Kill()
+		t.Fatal("the turn went on after it had been stopped")
+	}
+	if _, err := os.Stat(started); err == nil {
+		t.Error("the agent started after the turn was stopped")
+	}
+	for _, f := range []string{pidFile, pidFile + ".stop"} {
+		if _, err := os.Stat(f); err == nil {
+			t.Errorf("%s is left behind", f)
+		}
+	}
+}
+
+// When vibe can't confirm in the sandbox that a stopped turn's agent has
+// ended, it says so: the page would otherwise report a clean stop of an
+// agent that may still be running.
+func TestAStopThatCouldNotBeConfirmedInTheSandboxSaysSo(t *testing.T) {
+	dir := t.TempDir()
+	fake := "#!/bin/sh\nfor a; do [ \"$a\" = -i ] && exec sleep 30; done\necho 'sandbox unreachable' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "sbx"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(300*time.Millisecond, cancel)
+	err := converse("box", "/work", func() (turnChoice, error) { return turnChoice{}, nil })(ctx, "hi", "", func() {}, func([]byte) {})
+	if !errors.Is(err, companion.ErrStopUnconfirmed) {
+		t.Fatalf("error = %v, want one saying the stop could not be confirmed", err)
+	}
+	if !strings.Contains(err.Error(), "box") {
+		t.Errorf("%q doesn't name the sandbox", err)
 	}
 }

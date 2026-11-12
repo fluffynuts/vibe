@@ -3891,6 +3891,28 @@ test('a stop with no review being written is not asked about', async () => {
   } finally { p.close() }
 })
 
+test('a stop with no review being written says at once that the agent is being stopped, and Send stays open for a prompt to wait', async () => {
+  let stopped = false
+  const p = await startPage({ extra: (setCurrent) => ({ '/api/conversation': () => ({ events: [], last: 0, running: true, stopState: stopped ? 'stopping' : '' }), '/api/conversation/stop': () => { stopped = true; return { stopped: true } } }) })
+  try {
+    await p.every('pollConversation')
+    await p.click('convo-stop')
+    assert.match(p.$('convo-status').textContent, /Stopping the agent/)
+    assert.equal(p.$('convo-stop').disabled, true, 'Stop can be pressed again while it is being stopped')
+    assert.equal(p.$('convo-send').disabled, false, 'a prompt cannot be sent while it is being stopped')
+  } finally { p.close() }
+})
+
+test('the page says it is waiting for the agent to stop, not that it is stopping it, once a prompt waits behind the stop', async () => {
+  const p = await startPage({ extra: (setCurrent) => ({ '/api/conversation': { events: [], last: 0, running: true, stopState: 'waiting' } }) })
+  try {
+    await p.every('pollConversation')
+    assert.match(p.$('convo-status').textContent, /Waiting for the agent to stop/)
+    assert.doesNotMatch(p.$('convo-status').textContent, /Stopping the agent/)
+    assert.equal(p.$('convo-send').disabled, true, 'a second prompt can be sent while one waits')
+  } finally { p.close() }
+})
+
 // A review "in progress" that no turn is writing and the agent has left alone for a while may have been stopped, or be written where
 // vibe can't see (a terminal session). Vibe can't tell, so the tab says what it knows, offers nothing that drops it unasked, and
 // closing asks first, as for one being written.

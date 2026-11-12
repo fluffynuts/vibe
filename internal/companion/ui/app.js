@@ -4967,7 +4967,7 @@
 
   // news: the agent has said something since the Conversation tab was last
   // open (its dot); loaded: the conversation so far has been fetched once.
-  const convo = { last: 0, running: false, polling: false, behind: false, news: false, loaded: false, lastPrompt: '', ticks: new Map(), typing: null, group: null }
+  const convo = { last: 0, running: false, stopState: '', polling: false, behind: false, news: false, loaded: false, lastPrompt: '', ticks: new Map(), typing: null, group: null }
 
   // showTyping keeps the "typing" bubble below the agent's latest message
   // for as long as it is answering, and takes it away once it has. Its
@@ -5521,8 +5521,8 @@
   // The ticks on what the user said, as on a chat message: one when vibe has
   // it, two when the sandbox has it, two in blue once the agent has started
   // answering.
-  const RECEIPT_TICKS = { sent: '✓', delivered: '✓✓', seen: '✓✓', undelivered: '✕' }
-  const RECEIPT_WORDS = { sent: 'Sent', delivered: 'Delivered', seen: 'The agent is answering', undelivered: 'Not given to the agent' }
+  const RECEIPT_TICKS = { queued: '…', sent: '✓', delivered: '✓✓', seen: '✓✓', undelivered: '✕' }
+  const RECEIPT_WORDS = { queued: 'Waiting for the agent to stop', sent: 'Sent', delivered: 'Delivered', seen: 'The agent is answering', undelivered: 'Not given to the agent' }
 
   function showReceipt(seq, receipt) {
     const ticks = convo.ticks.get(seq)
@@ -5741,7 +5741,10 @@
     light.setAttribute('aria-label', light.title)
   }
 
-  function setConvoRunning(running, background, quietMinutes, compacting) {
+  // stopState is '' normally, 'stopping' while the agent is being stopped, and 'waiting' once a prompt waits behind that.
+  function setConvoRunning(running, background, quietMinutes, compacting, stopState) {
+    stopState = running ? stopState || '' : ''
+    convo.stopState = stopState
     const ended = convo.running && !running
     drawAgentLight(running, background, quietMinutes, compacting)
     if (running) setFaviconDot('working')
@@ -5750,15 +5753,20 @@
     // What the agent ran is known now, and what was chosen has been used.
     if (ended && state.choice) choiceTurnEnded()
     if (ended) reviewTurnEnded()
-    $('convo-send').disabled = running
+    $('convo-send').disabled = running && stopState !== 'stopping'
     // Only while it answers: what it has left running ends with the next
     // prompt anyway.
     $('convo-stop').hidden = !running
+    $('convo-stop').disabled = !!stopState
     $('convo-new').disabled = running
     // While it answers, the typing bubble says so.
     const status = $('convo-status')
     status.classList.toggle('warn-text', !!(running && quietMinutes))
-    status.textContent = running && compacting
+    status.textContent = stopState === 'stopping'
+      ? 'Stopping the agent… you can send another prompt now: it goes to the agent once this has stopped.'
+      : stopState === 'waiting'
+      ? 'Waiting for the agent to stop… your prompt goes to it as soon as it has.'
+      : running && compacting
       ? 'The agent is compacting its context (summarising the conversation so far to make room). This can take a few minutes; it answers once it is done.'
       : running && quietMinutes
       ? 'No output from the agent for ' + quietMinutes + ' minutes — it may be stuck. Stop it, or check "sbx ls" in a terminal; it is still being waited for.'
@@ -5788,7 +5796,7 @@
       convo.last = res.body.last || 0
       // A turn that isn't running has no tools still being used, whatever the last thing said was.
       if (!res.body.running) endToolGroup()
-      setConvoRunning(!!res.body.running, !!res.body.background, res.body.quietMinutes || 0, !!res.body.compacting)
+      setConvoRunning(!!res.body.running, !!res.body.background, res.body.quietMinutes || 0, !!res.body.compacting, res.body.stopState)
       if ((res.body.events || []).length) {
         if ($('panel-conversation').hidden) {
           convo.behind = true
@@ -5840,7 +5848,7 @@
     const input = $('convo-input')
     resolveTrailingEmoticon(input)
     const prompt = input.value.trim()
-    if (!prompt || convo.running || gate.active) return
+    if (!prompt || (convo.running && convo.stopState !== 'stopping') || gate.active) return
     if (await holdForPackages(prompt)) return
     await deliverPrompt(prompt)
   }
@@ -5858,7 +5866,7 @@
       // would arrive below the fold. Being at the end also makes the renders that follow stick.
       const log = $('convo-log')
       log.scrollTop = log.scrollHeight
-      setConvoRunning(true)
+      setConvoRunning(true, false, 0, false, res.body.queued ? 'waiting' : '')
       showTyping()
       pollConversation()
     } catch (e) {
@@ -5977,6 +5985,7 @@
       reached(true)
       if (res.status === 409 && res.body && res.body.code === 'review-in-progress') { askToStopWriting(); return }
       if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true)
+      else if (res.body.stopped) setConvoRunning(true, false, 0, false, 'stopping')
       pollConversation()
     } catch (e) {
       reached(false)
@@ -7658,7 +7667,7 @@
     $('convo-input').addEventListener('keydown', (ev) => {
       if (ev.isComposing) return
       if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); sendPrompt() }
-      else if (ev.key === 'Escape' && convo.running) { ev.preventDefault(); stopAgent() }
+      else if (ev.key === 'Escape' && convo.running && !convo.stopState) { ev.preventDefault(); stopAgent() }
       else if (ev.key === 'ArrowUp' && !ev.target.value && convo.lastPrompt) {
         ev.preventDefault()
         ev.target.value = convo.lastPrompt

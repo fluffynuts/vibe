@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -70,7 +71,11 @@ func conversationCommand(workspace, session, pidFile string, choice turnChoice) 
 // stop it, and all it started. The agent isn't exec'd, so the shell stays
 // its parent: what's under it is the turn's.
 func wrapTurn(agent, pidFile string) string {
-	return "echo $$ > " + shellQuote(pidFile) + "; trap " + shellQuote("rm -f "+shellQuote(pidFile)) + " EXIT; " + agent
+	// A stop that got here first left pidFile+".stop": the agent never starts.
+	// It is looked for after the pid is recorded, and stopTurnScript leaves it
+	// before it looks for the pid, so one of them always sees the other.
+	pid, stop := shellQuote(pidFile), shellQuote(pidFile+".stop")
+	return "echo $$ > " + pid + "; trap " + shellQuote("rm -f "+shellQuote(pidFile)+" "+shellQuote(pidFile+".stop")) + " EXIT; [ -e " + stop + " ] && exit 0; " + agent
 }
 
 // turnStopWithin is how long a stopped turn's processes have to end before
@@ -80,9 +85,12 @@ const turnStopWithin = "50" // tenths of a second
 // stopTurnScript stops the turn wrapTurn recorded in pidFile: its shell and
 // everything under it (the agent, its tool calls, what it left running) are
 // asked to end, and killed if they haven't within 5 seconds, which it then
-// says. A turn that has already ended has no pidFile: there's nothing to do.
+// says. A turn that has already ended has no pidFile: there's nothing to do,
+// but the stop is left for a turn that has yet to record itself (the stop got
+// to the sandbox before its shell ran) to find, so that it never starts.
 func stopTurnScript(pidFile string) string {
 	return `f=` + shellQuote(pidFile) + `
+touch "$f.stop"
 [ -f "$f" ] || exit 0
 tree() { for c in $(pgrep -P "$1"); do tree "$c"; done; echo "$1"; }
 alive() { kill -0 "$1" 2>/dev/null && ! grep -q ') Z ' "/proc/$1/stat" 2>/dev/null; }
@@ -92,12 +100,12 @@ i=0
 while [ "$i" -lt ` + turnStopWithin + ` ]; do
   left=
   for p in $pids; do alive "$p" && left="$left $p"; done
-  [ -z "$left" ] && { rm -f "$f"; exit 0; }
+  [ -z "$left" ] && { rm -f "$f" "$f.stop"; exit 0; }
   sleep 0.1
   i=$((i + 1))
 done
 kill -KILL $left 2>/dev/null
-rm -f "$f"
+rm -f "$f" "$f.stop"
 echo "killed what was still running 5s after being asked to stop:$left"
 `
 }
@@ -106,18 +114,19 @@ echo "killed what was still running 5s after being asked to stop:$left"
 const stopTurnWithin = 20 * time.Second
 
 // stopTurn stops the turn recorded in pidFile in sandbox name, saying so
-// when it had to kill it, or couldn't reach it. A variable for tests.
-var stopTurn = func(name, pidFile string) {
+// when it had to kill it. An error says it couldn't be confirmed that the
+// agent has ended. A variable for tests.
+var stopTurn = func(name, pidFile string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), stopTurnWithin)
 	defer cancel()
 	out, err := sbxrun.ExecStdout(ctx, name, "sh", "-c", stopTurnScript(pidFile))
 	if err != nil {
-		note("WARNING: couldn't stop the agent's turn in sandbox '%s', so it may still be running: %v — 'sbx exec %s ps -ef' shows", name, err, name)
-		return
+		return fmt.Errorf("couldn't stop the agent's turn in sandbox '%s', so it may still be running: %w — 'sbx exec %s ps -ef' shows", name, err, name)
 	}
 	if said := strings.TrimSpace(out); said != "" {
 		note("stopping the agent's turn in sandbox '%s': %s", name, said)
 	}
+	return nil
 }
 
 // converse is the companion page's conversation with the agent of sandbox
@@ -134,7 +143,9 @@ func converse(name, workspace string, choose func() (turnChoice, error)) compani
 		pidFile := "/tmp/vibe-turn-" + turnID() + ".pid"
 		err = sbxrun.ExecStream(ctx, name, prompt, delivered, onLine, conversationCommand(workspace, session, pidFile, choice)...)
 		if ctx.Err() != nil {
-			stopTurn(name, pidFile)
+			if stopErr := stopTurn(name, pidFile); stopErr != nil {
+				return fmt.Errorf("%w: %v", companion.ErrStopUnconfirmed, stopErr)
+			}
 		}
 		return err
 	}
