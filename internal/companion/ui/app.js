@@ -829,6 +829,8 @@
 
   async function load(kind) {
     const path = { log: '/api/log', rules: '/api/rules', fs: '/api/fs-rules' }[kind]
+    // Not in the way of the table: the user may be in the act of allowing a host.
+    if (kind === 'log') $('log-refreshing').classList.add('on')
     try {
       const res = await api(path)
       reached(true)
@@ -841,7 +843,24 @@
       }
     } catch (e) {
       reached(false)
+    } finally {
+      if (kind === 'log') $('log-refreshing').classList.remove('on')
     }
+  }
+
+  // The hosts the Network log was refreshed for, as they were blocked: the log is only polled while its tab is open,
+  // so a host seen blocked from another tab would not be in it when the user went there.
+  let logRefreshedFor = new Set()
+
+  // refreshLogForNewBlocks reads the Network log in the background when hosts are blocked that it has not been read for,
+  // so the blocked request is in it by the time the user gets there.
+  function refreshLogForNewBlocks() {
+    const hosts = Array.isArray(state.blockedHosts) ? state.blockedHosts : []
+    logRefreshedFor = new Set([...logRefreshedFor].filter((h) => hosts.includes(h)))
+    const fresh = (state.newBlocked || []).filter((h) => !logRefreshedFor.has(h))
+    if (!fresh.length) return
+    for (const h of fresh) logRefreshedFor.add(h)
+    unlessBusy('tab log', () => load('log'))
   }
 
   // The folder and git status, as the infobar in the sandbox shows them.
@@ -927,6 +946,7 @@
       renderStaleWaiting(res.body.packagesStale || 0, res.body.packagesStaleProjects || [])
       state.blockedHosts = res.body.blockedHosts
       noteBlocked(state.blockedHosts)
+      refreshLogForNewBlocks()
       state.reviewAt = res.body.review ? res.body.reviewAt || '' : ''
       showAllAttention()
       // A page left open across a rebuild of vibe is the old page: say so.
