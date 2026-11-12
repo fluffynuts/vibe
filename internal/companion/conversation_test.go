@@ -298,10 +298,23 @@ func TestAPromptSentWhileTheAgentIsBeingStoppedIsShownAtOnceAndGivenToItOnceItHa
 	if p.StopState != "" {
 		t.Errorf("stopState = %q after it ran", p.StopState)
 	}
-	for _, e := range p.Events {
-		if e.Kind == "user" && e.Text == "instead" && e.Receipt == "queued" {
-			t.Error("the prompt is still said to be queued")
+	stoppedAt, promptAt, prompts := -1, -1, 0
+	for i, e := range p.Events {
+		if e.Kind == "done" && e.Text == "stopped" {
+			stoppedAt = i
 		}
+		if e.Kind == "user" && e.Text == "instead" {
+			promptAt, prompts = i, prompts+1
+			if e.Receipt == "queued" {
+				t.Error("the prompt is still said to be queued")
+			}
+		}
+	}
+	if prompts != 1 {
+		t.Errorf("the prompt is in the conversation %d times", prompts)
+	}
+	if stoppedAt < 0 || promptAt < stoppedAt {
+		t.Errorf("the prompt (at %d) comes before the stop it waited for (at %d): %s", promptAt, stoppedAt, kinds(p))
 	}
 }
 

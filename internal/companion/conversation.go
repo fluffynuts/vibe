@@ -422,11 +422,28 @@ func (c *conversation) finish(err error, stopped bool) {
 	default:
 		c.add("done", "", nil)
 	}
+	if next != nil {
+		next.seq = c.moveBelowEnd(next.seq, next.prompt)
+	}
 	c.running, c.stopping = false, false
 	c.answered, c.superseded, c.compacting = false, false, false
 	c.cancel = nil
 	c.save()
 	close(c.ended)
+}
+
+// moveBelowEnd puts the queued prompt (whose user event is seq) after how
+// the turn it waited on ended, as it is when the agent is given it: shown
+// at once it sat above "stopped", as though that were its own end. The page
+// is told to drop the event it has, and to show the prompt anew; it gives
+// the new event's Seq.
+func (c *conversation) moveBelowEnd(seq int, prompt string) int {
+	c.events = slices.DeleteFunc(c.events, func(e event) bool { return e.Seq == seq })
+	c.add("retract", "", nil)
+	c.events[len(c.events)-1].Of = seq
+	c.add("user", prompt, nil)
+	c.events[len(c.events)-1].Receipt = receiptQueued
+	return c.seq
 }
 
 // answering says the agent is answering a prompt: running, and not yet

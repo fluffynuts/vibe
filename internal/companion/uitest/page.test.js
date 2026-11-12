@@ -3913,6 +3913,23 @@ test('the page says it is waiting for the agent to stop, not that it is stopping
   } finally { p.close() }
 })
 
+test('a prompt that waited for a stop is shown once, below the stop, when it is moved there', async () => {
+  let body = { events: [{ seq: 1, kind: 'user', text: 'count', receipt: 'delivered' }, { seq: 2, kind: 'user', text: 'instead', receipt: 'queued' }], last: 2, running: true, stopState: 'waiting' }
+  const p = await startPage({ extra: (setCurrent) => ({ '/api/conversation': () => body }) })
+  try {
+    await p.every('pollConversation')
+    assert.equal(p.window.document.querySelectorAll('.msg.user').length, 2)
+    body = { events: [{ seq: 3, kind: 'done', text: 'stopped' }, { seq: 4, kind: 'retract', of: 2 }, { seq: 5, kind: 'user', text: 'instead', receipt: 'queued' }], last: 5, running: true }
+    await p.every('pollConversation')
+    const log = p.$('convo-log')
+    const texts = [...log.children].map((n) => n.textContent.trim())
+    assert.equal(texts.filter((t) => t.startsWith('instead')).length, 1, 'the prompt is shown twice: ' + JSON.stringify(texts))
+    const stoppedAt = texts.findIndex((t) => t.startsWith('Stopped'))
+    const promptAt = texts.findIndex((t) => t.startsWith('instead'))
+    assert.ok(stoppedAt >= 0 && promptAt > stoppedAt, 'the prompt is not below the stop: ' + JSON.stringify(texts))
+  } finally { p.close() }
+})
+
 // A review "in progress" that no turn is writing and the agent has left alone for a while may have been stopped, or be written where
 // vibe can't see (a terminal session). Vibe can't tell, so the tab says what it knows, offers nothing that drops it unasked, and
 // closing asks first, as for one being written.

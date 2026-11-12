@@ -5562,7 +5562,7 @@
     const ticks = el('span', { class: 'ticks' })
     convo.ticks.set(ev.seq, ticks)
     const text = ev.text || ''
-    const msg = el('div', { class: 'msg user' }, promptBody(text), el('span', { class: 'foot' }, stamp(ev.at), ticks))
+    const msg = el('div', { class: 'msg user', 'data-seq': String(ev.seq) }, promptBody(text), el('span', { class: 'foot' }, stamp(ev.at), ticks))
     msg.prompt = text
     $('convo-log').append(msg)
     showReceipt(ev.seq, ev.receipt || 'sent')
@@ -5703,7 +5703,7 @@
     else if (ev.kind === 'agent') showAgent(ev.agent, ev.at)
     else if (ev.kind === 'note') convoNote('meta', ev.text || '', undefined, ev.seq)
     // What vibe said it was doing, no longer so (the sandbox is up): gone, not left to be read as current.
-    else if (ev.kind === 'retract') $('convo-log').querySelectorAll('[data-seq="' + Number(ev.of) + '"]').forEach((n) => n.remove())
+    else if (ev.kind === 'retract') { convo.ticks.delete(Number(ev.of)); $('convo-log').querySelectorAll('[data-seq="' + Number(ev.of) + '"]').forEach((n) => n.remove()) }
     else if (ev.kind === 'error') {
       convoNote('error', ev.text || 'That failed.', ev.at)
       // A turn that failed may have failed for want of a sign-in (sbx's, when it couldn't start the sandbox): the card and the
