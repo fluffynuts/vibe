@@ -830,7 +830,13 @@
   async function load(kind) {
     const path = { log: '/api/log', rules: '/api/rules', fs: '/api/fs-rules' }[kind]
     // Not in the way of the table: the user may be in the act of allowing a host.
-    if (kind === 'log') $('log-refreshing').classList.add('on')
+    const reading = kind === 'log' && $('log-refreshing')
+    if (reading) {
+      // Just after a rule was changed the read waits for sbx a second or two, and says so at once.
+      reading.classList.add('on')
+      if (logReadAtOnce) reading.classList.add('at-once')
+      logReadAtOnce = false
+    }
     try {
       const res = await api(path)
       reached(true)
@@ -844,9 +850,12 @@
     } catch (e) {
       reached(false)
     } finally {
-      if (kind === 'log') $('log-refreshing').classList.remove('on')
+      if (reading) reading.classList.remove('on', 'at-once')
     }
   }
+
+  // logReadAtOnce says the next read of the Network log follows a change to a rule: see load.
+  let logReadAtOnce = false
 
   // The hosts the Network log was refreshed for, as they were blocked: the log is only polled while its tab is open,
   // so a host seen blocked from another tab would not be in it when the user went there.
@@ -1372,7 +1381,12 @@
     return (host.match(/:/g) || []).length === 1 ? host.replace(/:[^:\]]*$/, '') : host
   }
 
-  const ruleLabel = (r) => r.name || r.id || (r.resources || []).join(', ')
+  // sbx names a rule vibe made with its own id, which says nothing: a name is only one someone gave it.
+  const ruleName = (r) => (r.name && r.name !== r.id ? r.name : '')
+  const shortId = (id) => (id.length > 12 ? id.slice(0, 8) + '…' : id)
+  const ruleLabel = (r) => ruleName(r) || (r.resources || []).join(', ') || r.id
+  // ruleLine says what a rule allows, and which it is by its short id (the whole one is in the command shown with it).
+  const ruleLine = (r) => (ruleName(r) ? ruleName(r) + ': allows ' : 'Allows ') + (r.resources || []).join(', ') + (r.id ? ' (rule ' + shortId(r.id) + ')' : '')
 
   // blockUnblocked blocks a host that was blocked and is allowed now by a rule. sbx refuses a deny beside an allow for the
   // same host, so the rule(s) that allow it are removed instead, and the host goes back to being blocked: after saying what else
@@ -1395,7 +1409,7 @@
       text: "sbx won't add a block beside a rule that allows the host, so " + (rules.length === 1 ? 'the rule that allows it is' : 'the rules that allow it are') +
         ' removed instead, and the host is blocked again. The change applies to this sandbox only.' +
         (others.length ? ' What is removed also allows ' + others.join(', ') + ', which are blocked too.' : ''),
-      list: rules.map((r) => ruleLabel(r) + ': allows ' + (r.resources || []).join(', ')),
+      list: rules.map(ruleLine),
       command: rules.map((r) => 'sbx policy rm network --sandbox ' + state.sandbox + ' --id ' + r.id + ' --force').join('\n'),
       danger: true,
       runLabel: rules.length === 1 ? 'Remove the rule' : 'Remove the rules',
@@ -1474,7 +1488,11 @@
         reached(false)
         toast('Could not reach vibe.', true)
       }
+      // Whatever was asked changed, or failed after changing some: the log is read again, and says so at once. (tick starts the
+      // read before it returns, so the flag is spent by then, on the log or on nothing.)
+      logReadAtOnce = true
       tick()
+      logReadAtOnce = false
     }
     dialog.showModal()
     // A toast showing stays over the dialog.

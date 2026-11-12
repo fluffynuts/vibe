@@ -116,3 +116,60 @@ test('Block on an allowed host, one never blocked, is as it always was', async (
     assert.deepEqual(posted(p, '/api/remove'), [])
   } finally { p.close() }
 })
+
+const UUID = 'ac481252-f95f-488d-8ef7-8c89545206cf'
+
+// A rule vibe made is named by sbx with its own id: a line of a long number says nothing, the host it allows does.
+test('a rule is described by what it allows, with a short id, not its whole id: the command has that', async () => {
+  const p = await logPage([unblocked([rule({ id: UUID, name: UUID })])])
+  try {
+    await p.click(block(p))
+    const q = ask(p)
+    assert.equal(q.list, 'Allows www.kernel.org:443 (rule ac481252…)')
+    assert.doesNotMatch(q.list, new RegExp(UUID), 'the whole id is in the list')
+    assert.match(q.command, new RegExp('--id ' + UUID + ' --force'), 'the command lost the whole id')
+  } finally { p.close() }
+})
+
+test('a rule someone named is described by its name', async () => {
+  const p = await logPage([unblocked([rule({ id: UUID, name: 'for kernel work' })])])
+  try {
+    await p.click(block(p))
+    assert.equal(ask(p).list, 'for kernel work: allows www.kernel.org:443 (rule ac481252…)')
+  } finally { p.close() }
+})
+
+const turns = async (n) => { for (let i = 0; i < n; i++) await new Promise((resolve) => setImmediate(resolve)) }
+
+// The log is read again after a rule is changed, which waits for sbx for a second or two: the sign that it is reading shows
+// at once then, not after the short pause that keeps the quick reads of every poll from flickering.
+test('after a rule is changed the Network log says at once that it is reading again, and stops when it has', async () => {
+  let held = null
+  let release
+  const p = await logPage([unblocked([rule()])], { '/api/log': () => held || { entries: [unblocked([rule()])] } })
+  try {
+    const spinner = p.$('log-refreshing')
+    await p.click(block(p))
+    held = new Promise((resolve) => { release = () => resolve({ entries: [{ ...unblocked(null), decision: 'blocked' }] }) })
+    p.$('confirm').close('run')
+    await turns(30)
+    assert.ok(spinner.classList.contains('on'), 'no sign of reading the log again')
+    assert.ok(spinner.classList.contains('at-once'), 'the sign waits for the pause meant for quick polls')
+    release()
+    await p.settle()
+    assert.equal(spinner.classList.contains('on'), false, 'still reading after it has')
+    assert.equal(spinner.classList.contains('at-once'), false, 'the next poll would show it at once too')
+  } finally { p.close() }
+})
+
+test('an ordinary poll of the Network log does not show the sign at once', async () => {
+  let held = null
+  const p = await logPage([unblocked([rule()])], { '/api/log': () => held || { entries: [unblocked([rule()])] } })
+  try {
+    held = new Promise(() => {})
+    await p.kick('tick')
+    const spinner = p.$('log-refreshing')
+    assert.ok(spinner.classList.contains('on'))
+    assert.equal(spinner.classList.contains('at-once'), false)
+  } finally { p.close() }
+})
