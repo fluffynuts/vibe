@@ -72,6 +72,18 @@ shows changed. The Admin tab (13 elements were rewritten on every poll), the Net
 also redrawn by the review's diff and colours arriving) all follow it. **Mechanical:** `untouched.test.js` watches each tab's DOM with a `MutationObserver` while polls
 bring nothing new and fails on any change.
 
+### 8. A page reading the log is not read beside in the background
+
+Reading the log is two `sbx` calls (`policy log`, `policy ls <sandbox>`), timed by the user at about **1.7 to 1.9 seconds each** (about 3.6 s a reading, at 5 to 7% CPU: nearly all
+of it waiting), more with several sandboxes, and each sandbox has its own vibe. Every vibe also read the log **in the background** (at most every `blockedEvery`, 5 seconds, on
+any tab) for the blocked-hosts notice, so a page on the Network log, polling, had the same two calls made again beside its own. The page's own reading (`readLog`) now says what is
+blocked as a background one would, and counts as a check of it (`readingLog`, as it begins: so one is not started while it is in flight; and again as it ends), so the
+background reading only runs when nothing else has read the log for `blockedEvery`. With the log tab not open, nothing changes.
+
+**Running the two calls of one reading at once** (`ResolvedLog`) would roughly halve a reading when `sbx` lets them overlap (a timed run of both together took 2.0 s, against about
+3.6 s one after the other), but a second timed run met `WARN: docker hub refresh lock held by another process: context deadline exceeded` and took 5.5 s. It is **shelved**
+until the user has spoken with the `sbx` people: more `sbx` processes in flight at once may make that lock worse, for every vibe at once.
+
 ## Consequences
 
 - Blocking an unblocked host is one confirmation, with the rule it will remove shown; the host goes back to Blocked at the next read.
@@ -81,6 +93,7 @@ bring nothing new and fails on any change.
 
 ## Not built, on purpose
 
+- **Parallel calls in `ResolvedLog`**: shelved, see 8.
 - **Block on an "Allowed" host** (never blocked) is as it was: `sbx policy deny`. Whether sbx refuses it when an allow rule covers it was not tried.
 - **Removing a global rule from the page.** It would change every sandbox, and `/api/remove` is always scoped to one; the command is given instead.
 - **Optimistic updating** of a row (assuming the change worked and showing the result): rejected for the reasons in 4b; the row says it is updating instead.

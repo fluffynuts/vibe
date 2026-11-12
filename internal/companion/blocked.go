@@ -58,6 +58,11 @@ func (s *Server) readBlocked() {
 		// would drop the page's dot, and raise it again after.
 		return
 	}
+	b.hosts, b.known = blockedIn(log), true
+}
+
+// blockedIn is the hosts a resolved log says are blocked: once each, sorted, and not more than maxBlockedHosts.
+func blockedIn(log policy.Log) []string {
 	seen := map[string]bool{}
 	hosts := []string{}
 	for _, e := range log.Entries {
@@ -70,5 +75,31 @@ func (s *Server) readBlocked() {
 	if len(hosts) > maxBlockedHosts {
 		hosts = hosts[:maxBlockedHosts]
 	}
-	b.hosts, b.known = hosts, true
+	return hosts
+}
+
+// readingLog is what the network log's own reading calls as it begins: that is a reading of what the background one is for,
+// so it isn't made beside it. A reading is two sbx calls, each a couple of seconds, and every vibe makes them: a page on the
+// Network log, polling, used to have the same two calls made again in the background.
+func (s *Server) readingLog() {
+	b := &s.blocked
+	b.mu.Lock()
+	b.checked = s.clock()
+	b.mu.Unlock()
+}
+
+// readLog is the network log checked against the rules, as the page's reading of it asks sbx: what it finds is what the state
+// says is blocked, as a reading in the background would have found.
+func (s *Server) readLog() (interface{}, error) {
+	s.readingLog()
+	log, err := s.cfg.Policy.ResolvedLog()
+	if err != nil {
+		return log, err
+	}
+	b := &s.blocked
+	b.mu.Lock()
+	b.checked = s.clock()
+	b.hosts, b.known = blockedIn(log), true
+	b.mu.Unlock()
+	return log, nil
 }

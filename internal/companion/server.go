@@ -393,7 +393,7 @@ func (s *Server) apiRoutes() []apiRoute {
 	return []apiRoute{
 		{"GET /api/ping", s.ping},
 		{"GET /api/state", s.authed(s.state)},
-		{"GET /api/log", s.authed(s.reading("log", func() (interface{}, error) { return s.cfg.Policy.ResolvedLog() }))},
+		{"GET /api/log", s.authed(s.reading("log", s.readLog))},
 		{"GET /api/rules", s.authed(s.reading("rules", func() (interface{}, error) { return s.cfg.Policy.NetworkRules() }))},
 		{"GET /api/fs-rules", s.authed(s.reading("fs-rules", func() (interface{}, error) { return s.cfg.Policy.FilesystemRules() }))},
 		{"POST /api/allow", s.authed(s.changing(s.allow))},
