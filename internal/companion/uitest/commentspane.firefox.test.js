@@ -30,25 +30,35 @@ async function commentsPane() {
 test("a card's state is one line, above the path, and not squeezed by a long one", async () => {
   const page = await commentsPane()
   try {
-    const awaiting = page.locator('.comment-card.awaiting').first()
-    assert.equal(await awaiting.locator('.comment-card-state .pill').count(), 1, 'a card waiting on you has its state on a line of its own')
-    const pill = await awaiting.locator('.comment-card-state .pill').boundingBox()
-    const path = await awaiting.locator('.comment-card-where code').boundingBox()
-    assert.ok(pill.y + pill.height <= path.y + 1, `the pill (${JSON.stringify(pill)}) isn't above the path (${JSON.stringify(path)})`)
-    assert.ok(pill.height < 26, `the pill is ${pill.height}px tall: it has wrapped onto more than one line`)
-    // Its text is all of "awaiting your answer", on that one line: as wide as the words take.
-    const natural = await awaiting.locator('.comment-card-state .pill').evaluate((el) => {
-      const probe = el.cloneNode(true)
+    // Measured in one step inside the page: the pane draws its cards afresh on every poll of the review, and a
+    // handle held across that (as a locator's boundingBox is) comes back null when the redraw falls between two steps,
+    // which a slow machine makes likely.
+    const m = await page.evaluate(() => {
+      const rect = (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height } }
+      const awaiting = document.querySelector('#review-comments-list .comment-card.awaiting')
+      const pills = awaiting.querySelectorAll('.comment-card-state .pill')
+      const pill = pills[0]
+      const probe = pill.cloneNode(true)
       probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;width:auto'
-      el.parentNode.appendChild(probe)
-      const w = probe.getBoundingClientRect().width
+      pill.parentNode.appendChild(probe)
+      const natural = probe.getBoundingClientRect().width
       probe.remove()
-      return w
+      return {
+        pills: pills.length,
+        pill: rect(pill),
+        path: rect(awaiting.querySelector('.comment-card-where code')),
+        natural,
+        stateLinesOnCardsWithNothingToSay: document.querySelectorAll('.comment-card:not(.awaiting) .comment-card-state').length,
+      }
     })
-    assert.ok(Math.abs(pill.width - natural) < 2, `the pill is ${pill.width}px wide, and its words take ${natural}px`)
+    assert.equal(m.pills, 1, 'a card waiting on you has its state on a line of its own')
+    assert.ok(m.pill.y + m.pill.height <= m.path.y + 1, `the pill (${JSON.stringify(m.pill)}) isn't above the path (${JSON.stringify(m.path)})`)
+    assert.ok(m.pill.height < 26, `the pill is ${m.pill.height}px tall: it has wrapped onto more than one line`)
+    // Its text is all of "awaiting your answer", on that one line: as wide as the words take.
+    assert.ok(Math.abs(m.pill.width - m.natural) < 2, `the pill is ${m.pill.width}px wide, and its words take ${m.natural}px`)
     // The path starts where the pill does: under it, not indented past it.
-    assert.ok(Math.abs(path.x - pill.x) < 1, `the path starts at ${path.x} and the pill at ${pill.x}`)
+    assert.ok(Math.abs(m.path.x - m.pill.x) < 1, `the path starts at ${m.path.x} and the pill at ${m.pill.x}`)
     // A card with nothing to say has no line for it.
-    assert.equal(await page.locator('.comment-card:not(.awaiting) .comment-card-state').count(), 0)
+    assert.equal(m.stateLinesOnCardsWithNothingToSay, 0)
   } finally { await page.close() }
 })

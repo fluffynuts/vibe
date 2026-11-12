@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"reflect"
@@ -76,6 +77,8 @@ type pollResult struct {
 	Background bool                   `json:"background"`
 	Reset      bool                   `json:"reset"`
 	Receipt    map[string]interface{} `json:"receipt"`
+	// StopState is "stopping" while a stop is under way, "waiting" once a prompt waits behind it.
+	StopState string `json:"stopState"`
 }
 
 func poll(t *testing.T, s *Server, after int) (p pollResult) {
@@ -198,6 +201,157 @@ func TestStoppingEndsTheTurnAndSaysSo(t *testing.T) {
 	}
 	if _, body := send(t, s, "/api/conversation/stop", `{}`); body["stopped"] != false {
 		t.Errorf("stopping nothing = %v", body)
+	}
+}
+
+// Stopping a turn in a sandbox takes a while (the agent is asked to end, and
+// killed if it hasn't within seconds), during which the turn is still running:
+// the page must be told a stop is under way, or Stop appears to do nothing.
+func TestAStopIsSaidToBeUnderWayUntilTheTurnHasEnded(t *testing.T) {
+	ended := make(chan struct{})
+	started := make(chan struct{})
+	slowToStop := func(ctx context.Context, prompt, session string, delivered func(), onLine func([]byte)) error {
+		delivered()
+		close(started)
+		<-ctx.Done()
+		<-ended
+		return ctx.Err()
+	}
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: slowToStop})
+	send(t, s, "/api/conversation/send", `{"prompt":"slow"}`)
+	<-started
+	send(t, s, "/api/conversation/stop", `{}`)
+	if p := poll(t, s, 0); !p.Running || p.StopState != "stopping" {
+		t.Errorf("while the agent is still being stopped: running %v, stopState %q", p.Running, p.StopState)
+	}
+	close(ended)
+	if p := idle(t, s); p.StopState != "" {
+		t.Errorf("stopState %q after the turn ended", p.StopState)
+	}
+}
+
+// slowStopper is an agent that takes its time to end once stopped, and
+// notes what it is asked.
+type slowStopper struct {
+	mu      sync.Mutex
+	prompts []string
+	started chan struct{}
+	ended   chan struct{}
+}
+
+func (f *slowStopper) converse(ctx context.Context, prompt, session string, delivered func(), onLine func([]byte)) error {
+	delivered()
+	f.mu.Lock()
+	f.prompts = append(f.prompts, prompt)
+	first := len(f.prompts) == 1
+	f.mu.Unlock()
+	if !first {
+		onLine([]byte(`{"type":"result","session_id":"s"}`))
+		return nil
+	}
+	close(f.started)
+	<-ctx.Done()
+	<-f.ended
+	return ctx.Err()
+}
+
+func (f *slowStopper) asked() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.prompts...)
+}
+
+func stoppingServer(t *testing.T) (*Server, *slowStopper) {
+	f := &slowStopper{started: make(chan struct{}), ended: make(chan struct{})}
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: f.converse})
+	send(t, s, "/api/conversation/send", `{"prompt":"slow"}`)
+	<-f.started
+	send(t, s, "/api/conversation/stop", `{}`)
+	return s, f
+}
+
+func TestAPromptSentWhileTheAgentIsBeingStoppedIsShownAtOnceAndGivenToItOnceItHasStopped(t *testing.T) {
+	s, f := stoppingServer(t)
+	if code, body := send(t, s, "/api/conversation/send", `{"prompt":"instead"}`); code != http.StatusAccepted || body["queued"] != true {
+		t.Fatalf("send while stopping: %d %v", code, body)
+	}
+	p := poll(t, s, 0)
+	last := p.Events[len(p.Events)-1]
+	if last.Kind != "user" || last.Text != "instead" || last.Receipt != "queued" {
+		t.Errorf("the page is shown %+v", last)
+	}
+	if p.StopState != "waiting" {
+		t.Errorf("stopState = %q, want waiting", p.StopState)
+	}
+	if got := f.asked(); len(got) != 1 {
+		t.Errorf("the agent was given %q before the stop had finished", got)
+	}
+	close(f.ended)
+	deadline := time.Now().Add(2 * time.Second)
+	for len(f.asked()) < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := f.asked(); len(got) != 2 || got[1] != "instead" {
+		t.Fatalf("the agent was given %q", got)
+	}
+	p = idle(t, s)
+	if p.StopState != "" {
+		t.Errorf("stopState = %q after it ran", p.StopState)
+	}
+	stoppedAt, promptAt, prompts := -1, -1, 0
+	for i, e := range p.Events {
+		if e.Kind == "done" && e.Text == "stopped" {
+			stoppedAt = i
+		}
+		if e.Kind == "user" && e.Text == "instead" {
+			promptAt, prompts = i, prompts+1
+			if e.Receipt == "queued" {
+				t.Error("the prompt is still said to be queued")
+			}
+		}
+	}
+	if prompts != 1 {
+		t.Errorf("the prompt is in the conversation %d times", prompts)
+	}
+	if stoppedAt < 0 || promptAt < stoppedAt {
+		t.Errorf("the prompt (at %d) comes before the stop it waited for (at %d): %s", promptAt, stoppedAt, kinds(p))
+	}
+}
+
+func TestOnlyOnePromptWaitsForAStopAndOneNotBeingStoppedIsRefused(t *testing.T) {
+	s, f := stoppingServer(t)
+	send(t, s, "/api/conversation/send", `{"prompt":"one"}`)
+	if code, _ := send(t, s, "/api/conversation/send", `{"prompt":"two"}`); code != http.StatusConflict {
+		t.Errorf("a second waiting prompt: %d", code)
+	}
+	close(f.ended)
+	idle(t, s)
+
+	g := &fakeAgent{release: make(chan struct{})}
+	s2 := converseServer(g)
+	send(t, s2, "/api/conversation/send", `{"prompt":"busy"}`)
+	if code, _ := send(t, s2, "/api/conversation/send", `{"prompt":"impatient"}`); code != http.StatusConflict {
+		t.Errorf("a prompt while the agent answers and is not being stopped: %d", code)
+	}
+	close(g.release)
+	idle(t, s2)
+}
+
+func TestAStopThatCouldNotBeConfirmedIsReportedBesideTheStop(t *testing.T) {
+	unconfirmed := func(ctx context.Context, prompt, session string, delivered func(), onLine func([]byte)) error {
+		delivered()
+		<-ctx.Done()
+		return fmt.Errorf("%w: sandbox unreachable", ErrStopUnconfirmed)
+	}
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: unconfirmed})
+	send(t, s, "/api/conversation/send", `{"prompt":"slow"}`)
+	send(t, s, "/api/conversation/stop", `{}`)
+	p := idle(t, s)
+	if got := kinds(p); !strings.HasSuffix(got, "error,done") {
+		t.Fatalf("events = %q, want the error before the stop", got)
+	}
+	if e := p.Events[len(p.Events)-2]; !strings.Contains(e.Text, "sandbox unreachable") {
+		t.Errorf("error = %q", e.Text)
 	}
 }
 

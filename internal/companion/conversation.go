@@ -24,6 +24,11 @@ import (
 // handed to the sandbox.
 type Converser func(ctx context.Context, prompt, session string, delivered func(), onLine func(line []byte)) error
 
+// ErrStopUnconfirmed is what a Converser returns, after its context was
+// cancelled, when it couldn't confirm that the agent has really ended: the
+// turn is over, but the agent may still be running in the sandbox.
+var ErrStopUnconfirmed = errors.New("the agent may not have stopped")
+
 // What the user is told about their latest prompt, like the ticks of a
 // chat message: it was kept (sent), it reached the sandbox (delivered), the
 // agent has started answering (seen). They only ever advance.
@@ -33,6 +38,9 @@ const (
 	receiptSeen      = "seen"
 	// receiptUndelivered is a prompt never given to the agent.
 	receiptUndelivered = "undelivered"
+	// receiptQueued is a prompt sent while the agent was still being stopped:
+	// it goes to the agent when that has ended.
+	receiptQueued = "queued"
 )
 
 var receiptRank = map[string]int{receiptSent: 1, receiptDelivered: 2, receiptSeen: 3}
@@ -96,6 +104,15 @@ type conversation struct {
 	// compacting says the agent is summarising its context to make room,
 	// which can take minutes with nothing else said.
 	compacting bool
+	// stopping says a stop was asked for and the turn has not yet ended: the
+	// agent is being stopped in the sandbox, which takes a while.
+	stopping bool
+	// queued is a prompt sent while the agent was being stopped, waiting for
+	// the turn to end: the one slot is all a person types in that time.
+	queued *queuedPrompt
+	// startQueued gives the queued prompt to the agent, once the turn it
+	// waited on has ended. Set by the server, which knows how to run a turn.
+	startQueued func(seq int, prompt string)
 	// ended is closed when the running turn has finished.
 	ended chan struct{}
 	// heard is when the agent last said anything in the running turn (or
@@ -115,6 +132,13 @@ type conversation struct {
 	// page that outlives one carries on where it was; "" keeps it only in
 	// memory.
 	file string
+}
+
+// queuedPrompt is a prompt in the conversation (its user event is seq) that
+// the agent has not yet been given.
+type queuedPrompt struct {
+	seq    int
+	prompt string
 }
 
 // saved is what file holds.
@@ -155,6 +179,11 @@ func (c *conversation) load(file string) error {
 	c.model = was.Model
 	if SessionID.MatchString(was.Session) {
 		c.session = was.Session
+	}
+	for i := range c.events {
+		if c.events[i].Receipt == receiptQueued {
+			c.events[i].Receipt = receiptUndelivered
+		}
 	}
 	if was.Running {
 		c.add("error", "vibe stopped before the agent had finished answering", nil)
@@ -224,15 +253,68 @@ func (c *conversation) begin(prompt string) (session string, ctx context.Context
 		return "", nil, false
 	}
 	ctx, c.cancel = context.WithCancel(context.Background())
+	c.add("user", prompt, nil)
+	c.events[len(c.events)-1].Receipt = receiptSent
+	return c.starting(c.seq, ctx)
+}
+
+// starting makes the turn for the user event seq the running one.
+func (c *conversation) starting(seq int, ctx context.Context) (session string, _ context.Context, ok bool) {
 	c.running = true
+	c.stopping = false
 	c.answered, c.superseded, c.compacting = false, false, false
 	c.ended = make(chan struct{})
 	c.heard = c.clock()
-	c.add("user", prompt, nil)
-	c.prompt = c.seq
-	c.events[len(c.events)-1].Receipt = receiptSent
+	c.prompt = seq
 	c.save()
 	return c.session, ctx, true
+}
+
+// beginQueued starts the turn for the queued prompt, whose user event is
+// already in the conversation.
+func (c *conversation) beginQueued(seq int) (session string, ctx context.Context, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.running {
+		return "", nil, false
+	}
+	ctx, c.cancel = context.WithCancel(context.Background())
+	for i := range c.events {
+		if c.events[i].Seq == seq {
+			c.events[i].Receipt = receiptSent
+		}
+	}
+	return c.starting(seq, ctx)
+}
+
+// queue puts prompt in the conversation to be given to the agent once the
+// turn being stopped has ended; false when no stop is under way, or a prompt
+// is already waiting.
+func (c *conversation) queue(prompt string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.running || !c.stopping || c.queued != nil {
+		return false
+	}
+	c.add("user", prompt, nil)
+	c.events[len(c.events)-1].Receipt = receiptQueued
+	c.queued = &queuedPrompt{seq: c.seq, prompt: prompt}
+	c.save()
+	return true
+}
+
+// stopState is what the page says of a stop under way: "stopping" the agent,
+// or "waiting" for it to be stopped, when a prompt is queued behind it.
+func (c *conversation) stopState() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch {
+	case !c.running || !c.stopping:
+		return ""
+	case c.queued != nil:
+		return "waiting"
+	}
+	return "stopping"
 }
 
 // undeliver marks the latest prompt as never given to the agent: a turn
@@ -318,23 +400,50 @@ func (c *conversation) line(raw []byte) string {
 
 func (c *conversation) finish(err error, stopped bool) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	next := c.queued
+	c.queued = nil
+	defer func() {
+		c.mu.Unlock()
+		if next != nil && c.startQueued != nil {
+			c.startQueued(next.seq, next.prompt)
+		}
+	}()
 	switch {
 	case c.superseded:
 		// Ended for the next prompt, after it had answered: nothing to say.
 		c.add("done", "", nil)
 	case stopped:
+		if errors.Is(err, ErrStopUnconfirmed) {
+			c.add("error", err.Error(), nil)
+		}
 		c.add("done", "stopped", nil)
 	case err != nil:
 		c.add("error", err.Error(), nil)
 	default:
 		c.add("done", "", nil)
 	}
-	c.running = false
+	if next != nil {
+		next.seq = c.moveBelowEnd(next.seq, next.prompt)
+	}
+	c.running, c.stopping = false, false
 	c.answered, c.superseded, c.compacting = false, false, false
 	c.cancel = nil
 	c.save()
 	close(c.ended)
+}
+
+// moveBelowEnd puts the queued prompt (whose user event is seq) after how
+// the turn it waited on ended, as it is when the agent is given it: shown
+// at once it sat above "stopped", as though that were its own end. The page
+// is told to drop the event it has, and to show the prompt anew; it gives
+// the new event's Seq.
+func (c *conversation) moveBelowEnd(seq int, prompt string) int {
+	c.events = slices.DeleteFunc(c.events, func(e event) bool { return e.Seq == seq })
+	c.add("retract", "", nil)
+	c.events[len(c.events)-1].Of = seq
+	c.add("user", prompt, nil)
+	c.events[len(c.events)-1].Receipt = receiptQueued
+	return c.seq
 }
 
 // answering says the agent is answering a prompt: running, and not yet
@@ -378,6 +487,7 @@ func (c *conversation) stop() bool {
 		return false
 	}
 	c.cancel()
+	c.stopping = true
 	return true
 }
 
@@ -580,6 +690,7 @@ func (s *Server) conversationEvents(w http.ResponseWriter, r *http.Request) {
 		// is long enough to say so.
 		"quietMinutes": quietMinutes(s.convo.quiet()),
 		"compacting":   s.convo.isCompacting(),
+		"stopState":    s.convo.stopState(),
 	}
 	// The slash commands go only to a page without the latest (it says
 	// which it has), not with every poll.
@@ -610,11 +721,15 @@ func (s *Server) conversationSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "there is nothing to send")
 		return
 	}
-	if !s.startTurn(req.Prompt) {
-		writeError(w, http.StatusConflict, "the agent is still answering the last prompt")
+	if s.startTurn(req.Prompt) {
+		writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
+	if s.convo.queue(req.Prompt) {
+		writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true, "queued": true})
+		return
+	}
+	writeError(w, http.StatusConflict, "the agent is still answering the last prompt")
 }
 
 // startTurn sends prompt to the agent as a turn, in the background; false
@@ -625,6 +740,14 @@ func (s *Server) startTurn(prompt string) bool {
 		launch()
 	}
 	return ok
+}
+
+// startQueuedTurn gives the agent the prompt that waited for a stopped turn
+// to end.
+func (s *Server) startQueuedTurn(seq int, prompt string) {
+	if session, ctx, ok := s.convo.beginQueued(seq); ok {
+		go s.convo.run(ctx, s.cfg.Prepare, s.cfg.Converse, prompt, session)
+	}
 }
 
 // claimTurn makes prompt the next turn, unless the agent is still at the

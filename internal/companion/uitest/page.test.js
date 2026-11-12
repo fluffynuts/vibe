@@ -2152,6 +2152,40 @@ test('the comments button opens a pane of every thread over the diff, and closes
   } finally { p.close() }
 })
 
+// The review is polled every couple of seconds, and drew the pane's cards afresh each time: the card a user had begun to select
+// text in, or was hovering, or had focused, was replaced under them. Cards are only drawn again when what they say has changed.
+test('a review drawn again with nothing new in the cards leaves the pane’s cards as they are, the very same elements', async () => {
+  const p = await reviewPage({ review: overlaid, diff: twoFiles })
+  try {
+    await p.click('tab-review')
+    await p.click('review-comments-open')
+    const before = Array.from(p.$('review-comments-list').children)
+    assert.equal(before.length, 5)
+    // Something in the review changed that no card says: the review is drawn afresh, as it is when colours or the diff arrive.
+    p.at.review = { ...overlaid, lastId: 6 }
+    await p.poll()
+    await p.poll()
+    const after = Array.from(p.$('review-comments-list').children)
+    assert.equal(after.length, 5)
+    assert.ok(after.every((card, i) => card === before[i]), 'a card was replaced though what it says had not changed')
+  } finally { p.close() }
+})
+
+test('a card is drawn again when what it says changes, and cards of threads that are gone are dropped', async () => {
+  const p = await reviewPage({ review: overlaid, diff: twoFiles })
+  try {
+    await p.click('tab-review')
+    await p.click('review-comments-open')
+    assert.doesNotMatch(p.$('review-comments-list').querySelector('[data-thread="5"]').textContent, /resolved/)
+    p.at.review = { ...overlaid, threads: overlaid.threads.map((t) => (t.id === 5 ? { ...t, status: 'resolved' } : t)) }
+    await p.poll()
+    assert.match(p.$('review-comments-list').querySelector('[data-thread="5"]').textContent, /resolved/)
+    p.at.review = { ...overlaid, threads: overlaid.threads.slice(0, 2) }
+    await p.poll()
+    assert.equal(cards(p).length, 2, 'the cards of threads that are gone are still shown')
+  } finally { p.close() }
+})
+
 test('each card says where its thread is, its state, how it starts, and its replies', async () => {
   const p = await reviewPage({ review: overlaid, diff: twoFiles })
   try {
@@ -3888,6 +3922,45 @@ test('a stop with no review being written is not asked about', async () => {
     await p.click('convo-stop')
     assert.equal(p.$('confirm').open, false)
     assert.deepEqual(p.posted('/api/conversation/stop'), [{}])
+  } finally { p.close() }
+})
+
+test('a stop with no review being written says at once that the agent is being stopped, and Send stays open for a prompt to wait', async () => {
+  let stopped = false
+  const p = await startPage({ extra: (setCurrent) => ({ '/api/conversation': () => ({ events: [], last: 0, running: true, stopState: stopped ? 'stopping' : '' }), '/api/conversation/stop': () => { stopped = true; return { stopped: true } } }) })
+  try {
+    await p.every('pollConversation')
+    await p.click('convo-stop')
+    assert.match(p.$('convo-status').textContent, /Stopping the agent/)
+    assert.equal(p.$('convo-stop').disabled, true, 'Stop can be pressed again while it is being stopped')
+    assert.equal(p.$('convo-send').disabled, false, 'a prompt cannot be sent while it is being stopped')
+  } finally { p.close() }
+})
+
+test('the page says it is waiting for the agent to stop, not that it is stopping it, once a prompt waits behind the stop', async () => {
+  const p = await startPage({ extra: (setCurrent) => ({ '/api/conversation': { events: [], last: 0, running: true, stopState: 'waiting' } }) })
+  try {
+    await p.every('pollConversation')
+    assert.match(p.$('convo-status').textContent, /Waiting for the agent to stop/)
+    assert.doesNotMatch(p.$('convo-status').textContent, /Stopping the agent/)
+    assert.equal(p.$('convo-send').disabled, true, 'a second prompt can be sent while one waits')
+  } finally { p.close() }
+})
+
+test('a prompt that waited for a stop is shown once, below the stop, when it is moved there', async () => {
+  let body = { events: [{ seq: 1, kind: 'user', text: 'count', receipt: 'delivered' }, { seq: 2, kind: 'user', text: 'instead', receipt: 'queued' }], last: 2, running: true, stopState: 'waiting' }
+  const p = await startPage({ extra: (setCurrent) => ({ '/api/conversation': () => body }) })
+  try {
+    await p.every('pollConversation')
+    assert.equal(p.window.document.querySelectorAll('.msg.user').length, 2)
+    body = { events: [{ seq: 3, kind: 'done', text: 'stopped' }, { seq: 4, kind: 'retract', of: 2 }, { seq: 5, kind: 'user', text: 'instead', receipt: 'queued' }], last: 5, running: true }
+    await p.every('pollConversation')
+    const log = p.$('convo-log')
+    const texts = [...log.children].map((n) => n.textContent.trim())
+    assert.equal(texts.filter((t) => t.startsWith('instead')).length, 1, 'the prompt is shown twice: ' + JSON.stringify(texts))
+    const stoppedAt = texts.findIndex((t) => t.startsWith('Stopped'))
+    const promptAt = texts.findIndex((t) => t.startsWith('instead'))
+    assert.ok(stoppedAt >= 0 && promptAt > stoppedAt, 'the prompt is not below the stop: ' + JSON.stringify(texts))
   } finally { p.close() }
 })
 

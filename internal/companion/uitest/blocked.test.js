@@ -9,11 +9,11 @@ const { openPage } = require('./page.js')
 // not read yet), on the tab given. storage is the browser's, which a test can
 // keep across pages.
 function blockedPage(blocked, { storage = {}, tab = 'rules' } = {}) {
-  const at = { blocked }
+  const at = { blocked, log: { entries: [] } }
   const routes = {
     '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, conversation: true, attention: {}, blockedHosts: at.blocked }),
     '/api/conversation': { events: [], last: 0, running: false },
-    '/api/log': { entries: [] },
+    '/api/log': () => at.log,
     '/api/rules': { rules: [] },
   }
   return openPage({ routes, storage: Object.assign({ 'vibe-companion-tab': tab }, storage) }).then((p) => Object.assign(p, { at }))
@@ -228,4 +228,60 @@ test('a dismissal is kept for the next page load', async () => {
     assert.equal(notice(second), null)
     assert.equal(dot(second), null)
   } finally { second.close() }
+})
+
+const logReads = (p) => p.calls.filter((c) => c.path === '/api/log').length
+
+test('a host blocked while another tab is open has the Network log read in the background, once', async () => {
+  const p = await blockedPage(['a.example'])
+  try {
+    const before = logReads(p)
+    p.at.blocked = ['a.example', 'new.example']
+    await p.poll()
+    assert.equal(logReads(p), before + 1, 'the log was not read for the new block')
+    await p.poll()
+    assert.equal(logReads(p), before + 1, 'the same block read it again')
+    p.at.blocked = ['a.example', 'new.example', 'another.example']
+    await p.poll()
+    assert.equal(logReads(p), before + 2, 'a further block did not read it')
+  } finally { p.close() }
+})
+
+test('a host that is blocked again after it stopped being so has the log read again', async () => {
+  const p = await blockedPage(['a.example'])
+  try {
+    p.at.blocked = ['a.example', 'new.example']
+    await p.poll()
+    p.at.blocked = ['a.example']
+    await p.poll()
+    const before = logReads(p)
+    p.at.blocked = ['a.example', 'new.example']
+    await p.poll()
+    assert.equal(logReads(p), before + 1)
+  } finally { p.close() }
+})
+
+test('nothing blocked that is already seen reads the log: the first visit is not news', async () => {
+  const p = await blockedPage(['a.example', 'b.example'])
+  try {
+    const before = logReads(p)
+    await p.poll()
+    assert.equal(logReads(p), before)
+  } finally { p.close() }
+})
+
+test('the Network log says it is refreshing for as long as it is, and nothing is blocked while it does', async () => {
+  let release
+  const slow = new Promise((resolve) => { release = () => resolve({ entries: [] }) })
+  const p = await blockedPage(['a.example'])
+  try {
+    p.at.log = slow
+    p.at.blocked = ['a.example', 'new.example']
+    await p.kick('tick')
+    assert.ok(p.$('log-refreshing').classList.contains('on'), 'no sign of the refresh')
+    assert.equal(p.$('tab-log').disabled, false)
+    release()
+    await p.settle()
+    assert.equal(p.$('log-refreshing').classList.contains('on'), false, 'still refreshing after it was done')
+  } finally { p.close() }
 })

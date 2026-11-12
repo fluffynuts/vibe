@@ -829,6 +829,8 @@
 
   async function load(kind) {
     const path = { log: '/api/log', rules: '/api/rules', fs: '/api/fs-rules' }[kind]
+    // Not in the way of the table: the user may be in the act of allowing a host.
+    if (kind === 'log') $('log-refreshing').classList.add('on')
     try {
       const res = await api(path)
       reached(true)
@@ -841,7 +843,24 @@
       }
     } catch (e) {
       reached(false)
+    } finally {
+      if (kind === 'log') $('log-refreshing').classList.remove('on')
     }
+  }
+
+  // The hosts the Network log was refreshed for, as they were blocked: the log is only polled while its tab is open,
+  // so a host seen blocked from another tab would not be in it when the user went there.
+  let logRefreshedFor = new Set()
+
+  // refreshLogForNewBlocks reads the Network log in the background when hosts are blocked that it has not been read for,
+  // so the blocked request is in it by the time the user gets there.
+  function refreshLogForNewBlocks() {
+    const hosts = Array.isArray(state.blockedHosts) ? state.blockedHosts : []
+    logRefreshedFor = new Set([...logRefreshedFor].filter((h) => hosts.includes(h)))
+    const fresh = (state.newBlocked || []).filter((h) => !logRefreshedFor.has(h))
+    if (!fresh.length) return
+    for (const h of fresh) logRefreshedFor.add(h)
+    unlessBusy('tab log', () => load('log'))
   }
 
   // The folder and git status, as the infobar in the sandbox shows them.
@@ -927,6 +946,7 @@
       renderStaleWaiting(res.body.packagesStale || 0, res.body.packagesStaleProjects || [])
       state.blockedHosts = res.body.blockedHosts
       noteBlocked(state.blockedHosts)
+      refreshLogForNewBlocks()
       state.reviewAt = res.body.review ? res.body.reviewAt || '' : ''
       showAllAttention()
       // A page left open across a rebuild of vibe is the old page: say so.
@@ -1154,6 +1174,22 @@
 
   // --- the network log --------------------------------------------------
 
+  // setText gives node the text, but only when it isn't already so: setting textContent replaces the text node even with the
+  // same words, and a poll does that every couple of seconds, which clears the selection of anyone copying the text.
+  function setText(node, text) {
+    if (node.textContent !== String(text)) node.textContent = text
+  }
+
+  // drawnKeys is what each node drawnAs holds the drawing of.
+  const drawnKeys = new WeakMap()
+  // drawnAs fills node with what children() makes, only when key (everything the drawing depends on) isn't the one it was last
+  // drawn for: for the same reason as setText.
+  function drawnAs(node, key, children) {
+    if (drawnKeys.get(node) === key) return
+    drawnKeys.set(node, key)
+    node.replaceChildren(...children())
+  }
+
   function when(iso) {
     if (!iso) return ''
     const d = new Date(iso)
@@ -1181,6 +1217,12 @@
     const data = state.log
     if (!data) return
     const entries = data.entries || []
+    // Drawn again only when something it shows has changed: polls bring the same log most of the time, and drawing it afresh
+    // clears the selection of anyone copying a host from it.
+    const drawnFor = JSON.stringify([entries, state.filter, state.search, Array.from(state.open).sort()])
+    const logBody = $('log-table').tBodies[0]
+    if (drawnKeys.get(logBody) === drawnFor) return
+    drawnKeys.set(logBody, drawnFor)
     const blocked = entries.filter((e) => e.decision === 'blocked').length
     const allowed = entries.filter((e) => e.decision === 'allowed').length
     const unblocked = entries.filter((e) => e.decision === 'unblocked').length
@@ -1255,6 +1297,10 @@
     if (!data) return
     const rules = data.rules || []
     const body = $(tableId).tBodies[0]
+    // As the log is: drawn again only when what it shows has changed.
+    const drawnFor = JSON.stringify([rules, Array.from(state.open).sort()])
+    if (drawnKeys.get(body) === drawnFor) return
+    drawnKeys.set(body, drawnFor)
     body.textContent = ''
     const columns = withActions ? 6 : 5
     if (!rules.length) {
@@ -1291,7 +1337,7 @@
     })
     const note = $(noteId)
     if (kind === 'fs') {
-      note.textContent = "Read-only: sbx doesn't log filesystem access yet, so there are only the rules to show."
+      setText(note, "Read-only: sbx doesn't log filesystem access yet, so there are only the rules to show.")
     }
   }
 
@@ -1494,12 +1540,24 @@
     const order = $('review-comments-order')
     order.querySelector('[value=reading]').disabled = reviewSteps().size === 0
     order.value = pane.order === 'newest' ? 'newest' : reviewView.order
-    const threads = paneThreads()
-    $('review-comments-list').replaceChildren(...(threads.length ? threads.map((t) => {
+    // What each card says. The review is drawn again whenever its diff or colouring arrives, which draws this pane again too:
+    // cards are replaced only when what they say has changed, or whoever was selecting text in one, hovering it or
+    // focused on it would have it replaced under them.
+    const cards = paneThreads().map((t) => {
       const first = t.comments[0] || { author: '', body: '' }
-      const replies = t.comments.length - 1
-      const where = t.file ? t.file + ':' + t.line + (t.endLine > t.line ? '–' + t.endLine : '') + (t.side === 'old' ? ' (old)' : '') : 'on the whole review'
-      const awaiting = awaitingYou(t)
+      return {
+        thread: t,
+        where: t.file ? t.file + ':' + t.line + (t.endLine > t.line ? '–' + t.endLine : '') + (t.side === 'old' ? ' (old)' : '') : 'on the whole review',
+        awaiting: awaitingYou(t),
+        author: first.author,
+        said: first.body.replace(/\s+/g, ' ').slice(0, 160),
+        replies: t.comments.length - 1,
+      }
+    })
+    const drawn = JSON.stringify([pane.filter, cards.map(({ thread, ...said }) => ({ id: thread.id, status: thread.status, ...said }))])
+    if (drawn === pane.drawn) return
+    pane.drawn = drawn
+    $('review-comments-list').replaceChildren(...(cards.length ? cards.map(({ thread: t, where, awaiting, author, said, replies }) => {
       // What the thread is waiting on, or how it ended, is the first thing on the card, on a line of its own, so that
       // it is seen first and a long path can't squeeze it; a card with nothing to say has no such line.
       const states = [
@@ -1509,7 +1567,7 @@
       return el('button', { type: 'button', class: 'comment-card ' + t.status + (awaiting ? ' awaiting' : ''), 'data-thread': String(t.id), onclick: () => goToThread(t.id) },
         states.length ? el('span', { class: 'comment-card-state' }, ...states) : null,
         el('span', { class: 'comment-card-where' }, el('code', { text: where })),
-        el('span', { class: 'comment-card-said' }, el('strong', { text: first.author === 'agent' ? 'Agent: ' : 'You: ' }), first.body.replace(/\s+/g, ' ').slice(0, 160)),
+        el('span', { class: 'comment-card-said' }, el('strong', { text: author === 'agent' ? 'Agent: ' : 'You: ' }), said),
         replies ? el('span', { class: 'comment-card-replies muted', text: plural(replies, 'reply', 'replies') }) : null)
     }) : [el('p', { class: 'muted', text: pane.filter === 'all' ? 'No comments yet.' : 'None of these.' })]))
   }
@@ -3758,12 +3816,12 @@
     syncView.last = b
     const count = b.count || 0
     const running = !!b.running || syncView.starting
-    $('admin-sync-summary').textContent = count
+    setText($('admin-sync-summary'), count
       ? packagesWord(count) + " the sandbox restored " + (count === 1 ? "isn't" : "aren't") + " in your package cache, so your IDE (Rider, say) can't find " +
         (count === 1 ? 'it' : 'them') + '. Fetching uses your own NuGet config on this machine, as for a package the agent asks for.'
       : (b.stale || 0) > 0
         ? 'Everything the sandbox restored is in your package cache.'
-        : 'Everything the sandbox restored is in your package cache, so your IDE can find it.'
+        : 'Everything the sandbox restored is in your package cache, so your IDE can find it.')
     $('admin-sync-details').hidden = count === 0
     const key = JSON.stringify(b.missing || [])
     if (key !== syncView.listKey) {
@@ -3949,9 +4007,9 @@
     // The button says what it will do: what's ticked is allowed, and what isn't is left out.
     const allow = $('admin-packages-allow')
     allow.disabled = ticked === 0
-    allow.textContent = ticked === 0 ? 'Allow selected'
+    setText(allow, ticked === 0 ? 'Allow selected'
       : left > 0 ? 'Allow ' + ticked + ', deny ' + left
-      : ticked === 1 ? 'Allow it' : 'Allow all ' + ticked
+      : ticked === 1 ? 'Allow it' : 'Allow all ' + ticked)
     $('admin-packages-deny').disabled = undecided.length === 0
   }
 
@@ -3980,8 +4038,8 @@
     $('admin-packages-none').hidden = requests.length > 0
     $('admin-packages-bar').hidden = requests.length === 0
     $('admin-packages-status').hidden = approved === 0
-    $('admin-packages-status').textContent = approved + ' approved — being fetched together.' +
-      (undecided ? ' ' + undecided + ' more to decide.' : '')
+    setText($('admin-packages-status'), approved + ' approved — being fetched together.' +
+      (undecided ? ' ' + undecided + ' more to decide.' : ''))
     packagesWant.requests = undecided > 0
     showPackagesCard()
     pill('admin-packages-count', requests.length ? String(undecided) + ' waiting' + (approved ? ' · ' + approved + ' approved' : '') : '', undecided ? 'bad' : '')
@@ -4100,8 +4158,9 @@
 
   function pill(id, text, cls) {
     const p = $(id)
-    p.textContent = text
-    p.className = 'pill' + (cls ? ' ' + cls : '')
+    setText(p, text)
+    const className = 'pill' + (cls ? ' ' + cls : '')
+    if (p.className !== className) p.className = className
   }
 
   // What each action that takes the sandbox away is called, in 'unavailable while ...'.
@@ -4126,9 +4185,9 @@
     }
     $('admin-memories').disabled = busy || !st.running
     $('admin-reinit').disabled = busy || !st.profile
-    $('admin-info').textContent = st.info || ''
+    setText($('admin-info'), st.info || '')
     $('admin-error').hidden = !st.error
-    $('admin-error').textContent = unreadable ? 'The sandbox is unavailable while ' + taking + '.' : st.error || ''
+    setText($('admin-error'), unreadable ? 'The sandbox is unavailable while ' + taking + '.' : st.error || '')
     $('admin-error').title = unreadable ? st.error : ''
 
     // The editors are drawn once (so typing isn't undone by a poll), but
@@ -4178,12 +4237,12 @@
     if (!st.guided) {
       list.replaceChildren()
       adminView.features = ''
-      note.textContent = st.profile
+      setText(note, st.profile
         ? "This profile doesn't record the features it was composed from, so it can't be re-composed here (vibe -R builds a fresh one)."
-        : 'There is no profile to compose.'
+        : 'There is no profile to compose.')
       return
     }
-    note.textContent = 'Select what the sandbox should have; re-composing rebuilds it. New features go after the ones it has.'
+    setText(note, 'Select what the sandbox should have; re-composing rebuilds it. New features go after the ones it has.')
     const features = st.features || []
     const key = JSON.stringify(features.map((f) => [f.name, f.on]))
     if (key === adminView.features) return
@@ -4211,16 +4270,16 @@
 
   function renderAdminUpgrades(up, commands) {
     const found = up.found || []
-    $('admin-upgrades').textContent = up.checking ? 'Checking for newer releases…'
+    setText($('admin-upgrades'), up.checking ? 'Checking for newer releases…'
       : !up.checked ? 'Not checked yet.'
-      : found.length ? 'Newer releases are available:' : 'vibe and Docker SBX are up to date.'
-    $('admin-upgrades-list').replaceChildren(...found.map((l) => el('li', { text: l })))
+      : found.length ? 'Newer releases are available:' : 'vibe and Docker SBX are up to date.')
+    drawnAs($('admin-upgrades-list'), JSON.stringify(found), () => found.map((l) => el('li', { text: l })))
     $('admin-upgrades-card').classList.toggle('wants-you', found.length > 0)
     $('admin-check').disabled = !!up.checking
     const cmd = $('admin-upgrade-command')
     cmd.hidden = !found.length
     // --upgrade asks which to install; -f installs them all, unasked.
-    cmd.textContent = (commands['upgrade'] || 'vibe --upgrade') + '  ·  all of them, unasked: ' + (commands['upgrade-all'] || 'vibe --upgrade -f')
+    setText(cmd, (commands['upgrade'] || 'vibe --upgrade') + '  ·  all of them, unasked: ' + (commands['upgrade-all'] || 'vibe --upgrade -f'))
   }
 
   function link(href, text) {
@@ -4248,8 +4307,9 @@
       status.push("There's no token, so the agent can't push. To give it one:")
     }
     if (git.renewUrl) status.push(' To renew it:')
-    box.className = 'note' + (git.expired ? ' bad-text' : '')
-    box.replaceChildren(...status.map((p) => document.createTextNode(p)))
+    const boxClass = 'note' + (git.expired ? ' bad-text' : '')
+    if (box.className !== boxClass) box.className = boxClass
+    drawnAs(box, JSON.stringify(status), () => status.map((p) => document.createTextNode(p)))
 
     let list = []
     if (git.newTokenUrl) {
@@ -4270,13 +4330,13 @@
       ]
     }
     steps.hidden = !list.length
-    steps.replaceChildren(...list)
+    drawnAs(steps, JSON.stringify(git), () => list)
   }
 
   function renderAdminBackups(backups, busy) {
     const list = $('admin-backups')
-    if (!backups.length) { list.replaceChildren(el('li', { class: 'muted', text: 'No backups yet.' })); return }
-    list.replaceChildren(...backups.map((b) => el('li', {},
+    if (!backups.length) { drawnAs(list, 'none', () => [el('li', { class: 'muted', text: 'No backups yet.' })]); return }
+    drawnAs(list, JSON.stringify([backups, busy]), () => backups.map((b) => el('li', {},
       el('span', { text: b.label }), el('span', { class: 'spacer' }),
       el('button', { type: 'button', class: 'small ghost', text: 'Restore…', disabled: busy,
         onclick: () => adminConfirm('restore', { backup: b.id }, {
@@ -4589,7 +4649,7 @@
 
   function updateManage() {
     const inv = manageView.inv || { profiles: [], unknown: [] }
-    $('manage-count').textContent = M.summary(inv, manageView.ticked)
+    setText($('manage-count'), M.summary(inv, manageView.ticked))
     $('manage-delete').disabled = manageView.busy || !M.picked(inv, manageView.ticked).length
     $('manage-trash').disabled = manageView.busy
     $('manage-none').disabled = manageView.busy
@@ -4787,9 +4847,9 @@
 
   function renderInstructions(info) {
     instr.info = info
-    $('admin-instructions-note').textContent = !info.applies
+    setText($('admin-instructions-note'), !info.applies
       ? 'The ' + (info.agent || 'sandbox') + " agent doesn't load these files yet: they're kept, and used by sandboxes whose agent does."
-      : 'Loaded by the agent at the start of every session: the universal file first, then the profile\'s.'
+      : 'Loaded by the agent at the start of every session: the universal file first, then the profile\'s.')
     $('admin-instructions').replaceChildren(...(info.files || []).map((f) => instructionsEditor(f, info)))
   }
 
@@ -4967,7 +5027,7 @@
 
   // news: the agent has said something since the Conversation tab was last
   // open (its dot); loaded: the conversation so far has been fetched once.
-  const convo = { last: 0, running: false, polling: false, behind: false, news: false, loaded: false, lastPrompt: '', ticks: new Map(), typing: null, group: null }
+  const convo = { last: 0, running: false, stopState: '', polling: false, behind: false, news: false, loaded: false, lastPrompt: '', ticks: new Map(), typing: null, group: null }
 
   // showTyping keeps the "typing" bubble below the agent's latest message
   // for as long as it is answering, and takes it away once it has. Its
@@ -5521,8 +5581,8 @@
   // The ticks on what the user said, as on a chat message: one when vibe has
   // it, two when the sandbox has it, two in blue once the agent has started
   // answering.
-  const RECEIPT_TICKS = { sent: '✓', delivered: '✓✓', seen: '✓✓', undelivered: '✕' }
-  const RECEIPT_WORDS = { sent: 'Sent', delivered: 'Delivered', seen: 'The agent is answering', undelivered: 'Not given to the agent' }
+  const RECEIPT_TICKS = { queued: '…', sent: '✓', delivered: '✓✓', seen: '✓✓', undelivered: '✕' }
+  const RECEIPT_WORDS = { queued: 'Waiting for the agent to stop', sent: 'Sent', delivered: 'Delivered', seen: 'The agent is answering', undelivered: 'Not given to the agent' }
 
   function showReceipt(seq, receipt) {
     const ticks = convo.ticks.get(seq)
@@ -5562,7 +5622,7 @@
     const ticks = el('span', { class: 'ticks' })
     convo.ticks.set(ev.seq, ticks)
     const text = ev.text || ''
-    const msg = el('div', { class: 'msg user' }, promptBody(text), el('span', { class: 'foot' }, stamp(ev.at), ticks))
+    const msg = el('div', { class: 'msg user', 'data-seq': String(ev.seq) }, promptBody(text), el('span', { class: 'foot' }, stamp(ev.at), ticks))
     msg.prompt = text
     $('convo-log').append(msg)
     showReceipt(ev.seq, ev.receipt || 'sent')
@@ -5703,7 +5763,7 @@
     else if (ev.kind === 'agent') showAgent(ev.agent, ev.at)
     else if (ev.kind === 'note') convoNote('meta', ev.text || '', undefined, ev.seq)
     // What vibe said it was doing, no longer so (the sandbox is up): gone, not left to be read as current.
-    else if (ev.kind === 'retract') $('convo-log').querySelectorAll('[data-seq="' + Number(ev.of) + '"]').forEach((n) => n.remove())
+    else if (ev.kind === 'retract') { convo.ticks.delete(Number(ev.of)); $('convo-log').querySelectorAll('[data-seq="' + Number(ev.of) + '"]').forEach((n) => n.remove()) }
     else if (ev.kind === 'error') {
       convoNote('error', ev.text || 'That failed.', ev.at)
       // A turn that failed may have failed for want of a sign-in (sbx's, when it couldn't start the sandbox): the card and the
@@ -5741,7 +5801,10 @@
     light.setAttribute('aria-label', light.title)
   }
 
-  function setConvoRunning(running, background, quietMinutes, compacting) {
+  // stopState is '' normally, 'stopping' while the agent is being stopped, and 'waiting' once a prompt waits behind that.
+  function setConvoRunning(running, background, quietMinutes, compacting, stopState) {
+    stopState = running ? stopState || '' : ''
+    convo.stopState = stopState
     const ended = convo.running && !running
     drawAgentLight(running, background, quietMinutes, compacting)
     if (running) setFaviconDot('working')
@@ -5750,15 +5813,20 @@
     // What the agent ran is known now, and what was chosen has been used.
     if (ended && state.choice) choiceTurnEnded()
     if (ended) reviewTurnEnded()
-    $('convo-send').disabled = running
+    $('convo-send').disabled = running && stopState !== 'stopping'
     // Only while it answers: what it has left running ends with the next
     // prompt anyway.
     $('convo-stop').hidden = !running
+    $('convo-stop').disabled = !!stopState
     $('convo-new').disabled = running
     // While it answers, the typing bubble says so.
     const status = $('convo-status')
     status.classList.toggle('warn-text', !!(running && quietMinutes))
-    status.textContent = running && compacting
+    status.textContent = stopState === 'stopping'
+      ? 'Stopping the agent… you can send another prompt now: it goes to the agent once this has stopped.'
+      : stopState === 'waiting'
+      ? 'Waiting for the agent to stop… your prompt goes to it as soon as it has.'
+      : running && compacting
       ? 'The agent is compacting its context (summarising the conversation so far to make room). This can take a few minutes; it answers once it is done.'
       : running && quietMinutes
       ? 'No output from the agent for ' + quietMinutes + ' minutes — it may be stuck. Stop it, or check "sbx ls" in a terminal; it is still being waited for.'
@@ -5788,7 +5856,7 @@
       convo.last = res.body.last || 0
       // A turn that isn't running has no tools still being used, whatever the last thing said was.
       if (!res.body.running) endToolGroup()
-      setConvoRunning(!!res.body.running, !!res.body.background, res.body.quietMinutes || 0, !!res.body.compacting)
+      setConvoRunning(!!res.body.running, !!res.body.background, res.body.quietMinutes || 0, !!res.body.compacting, res.body.stopState)
       if ((res.body.events || []).length) {
         if ($('panel-conversation').hidden) {
           convo.behind = true
@@ -5840,7 +5908,7 @@
     const input = $('convo-input')
     resolveTrailingEmoticon(input)
     const prompt = input.value.trim()
-    if (!prompt || convo.running || gate.active) return
+    if (!prompt || (convo.running && convo.stopState !== 'stopping') || gate.active) return
     if (await holdForPackages(prompt)) return
     await deliverPrompt(prompt)
   }
@@ -5858,7 +5926,7 @@
       // would arrive below the fold. Being at the end also makes the renders that follow stick.
       const log = $('convo-log')
       log.scrollTop = log.scrollHeight
-      setConvoRunning(true)
+      setConvoRunning(true, false, 0, false, res.body.queued ? 'waiting' : '')
       showTyping()
       pollConversation()
     } catch (e) {
@@ -5977,6 +6045,7 @@
       reached(true)
       if (res.status === 409 && res.body && res.body.code === 'review-in-progress') { askToStopWriting(); return }
       if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true)
+      else if (res.body.stopped) setConvoRunning(true, false, 0, false, 'stopping')
       pollConversation()
     } catch (e) {
       reached(false)
@@ -7658,7 +7727,7 @@
     $('convo-input').addEventListener('keydown', (ev) => {
       if (ev.isComposing) return
       if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); sendPrompt() }
-      else if (ev.key === 'Escape' && convo.running) { ev.preventDefault(); stopAgent() }
+      else if (ev.key === 'Escape' && convo.running && !convo.stopState) { ev.preventDefault(); stopAgent() }
       else if (ev.key === 'ArrowUp' && !ev.target.value && convo.lastPrompt) {
         ev.preventDefault()
         ev.target.value = convo.lastPrompt
