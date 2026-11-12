@@ -173,3 +173,29 @@ test('an ordinary poll of the Network log does not show the sign at once', async
     assert.equal(spinner.classList.contains('at-once'), false)
   } finally { p.close() }
 })
+
+// sbx refuses `rm --sandbox X` for a rule of the global policy ("exists in the global policy, not in sandbox X"), so offering that is
+// offering what fails, after the user has confirmed it. The page says up front, with the command that does remove it.
+test('a global rule is not offered for removal here: it is explained, with the command that removes it for every sandbox', async () => {
+  const p = await logPage([unblocked([rule({ id: UUID, name: UUID, resources: ['www.kernel.org'], scope: 'global', source: 'local', removable: true })])])
+  try {
+    await p.click(block(p))
+    assert.equal(p.$('confirm').open, false, 'asked to confirm what sbx will refuse')
+    const said = p.$('toast').textContent
+    assert.match(said, /global rule/)
+    assert.match(said, /every sandbox/)
+    assert.ok(said.includes('sbx policy rm network --id ' + UUID), 'the command that removes it is not given: ' + said)
+    assert.doesNotMatch(said, /--sandbox/, 'the command is for the sandbox alone, which sbx refuses for a global rule')
+    assert.deepEqual(posted(p, '/api/remove'), [])
+    assert.deepEqual(posted(p, '/api/deny'), [])
+  } finally { p.close() }
+})
+
+test("a global rule beside one of the sandbox's own removes nothing: the host would be left unblocked", async () => {
+  const p = await logPage([unblocked([rule({ id: 'mine' }), rule({ id: UUID, name: UUID, scope: 'global', resources: ['www.kernel.org'] })])])
+  try {
+    await p.click(block(p))
+    assert.equal(p.$('confirm').open, false)
+    assert.deepEqual(posted(p, '/api/remove'), [], "removed the sandbox's own rule and left the global one")
+  } finally { p.close() }
+})

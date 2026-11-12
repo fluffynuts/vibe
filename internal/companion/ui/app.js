@@ -1407,11 +1407,16 @@
   function blockUnblocked(entry) {
     const rules = entry.allowedBy || []
     if (!rules.length) { confirmChange('deny', entry.host); return }
-    const stuck = rules.filter((r) => !r.removable || !r.id)
+    // sbx refuses to remove a rule of the global policy for one sandbox ("exists in the global policy, not in sandbox X"), and says
+    // the command that does: it is for every sandbox, so it is given, not run from here.
+    const isGlobal = (r) => !!r.scope && r.scope !== 'sandbox:' + state.sandbox
+    const stuck = rules.filter((r) => !r.removable || !r.id || isGlobal(r))
     if (stuck.length) {
       toast("Can't block " + entry.host + ' from here: ' +
-        stuck.map((r) => ruleLabel(r) + " allows it, and can't be removed here" + (r.source ? ' (it comes from ' + r.source + ')' : '')).join('; ') +
-        '. Remove or change ' + (stuck.length === 1 ? 'that rule' : 'those rules') + ' where ' + (stuck.length === 1 ? 'it comes' : 'they come') + ' from.', true)
+        stuck.map((r) => isGlobal(r)
+          ? ruleLabel(r) + " is a global rule, for every sandbox, so it can't be removed from here" + (r.id ? ' (in a terminal, for every sandbox: sbx policy rm network --id ' + r.id + ')' : '')
+          : ruleLabel(r) + " allows it, and can't be removed here" + (r.source ? ' (it comes from ' + r.source + ')' : '')).join('; ') +
+        '. Nothing was removed.', true)
       return
     }
     const here = bareHost(entry.host)
