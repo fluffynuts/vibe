@@ -2152,6 +2152,40 @@ test('the comments button opens a pane of every thread over the diff, and closes
   } finally { p.close() }
 })
 
+// The review is polled every couple of seconds, and drew the pane's cards afresh each time: the card a user had begun to select
+// text in, or was hovering, or had focused, was replaced under them. Cards are only drawn again when what they say has changed.
+test('a review drawn again with nothing new in the cards leaves the pane’s cards as they are, the very same elements', async () => {
+  const p = await reviewPage({ review: overlaid, diff: twoFiles })
+  try {
+    await p.click('tab-review')
+    await p.click('review-comments-open')
+    const before = Array.from(p.$('review-comments-list').children)
+    assert.equal(before.length, 5)
+    // Something in the review changed that no card says: the review is drawn afresh, as it is when colours or the diff arrive.
+    p.at.review = { ...overlaid, lastId: 6 }
+    await p.poll()
+    await p.poll()
+    const after = Array.from(p.$('review-comments-list').children)
+    assert.equal(after.length, 5)
+    assert.ok(after.every((card, i) => card === before[i]), 'a card was replaced though what it says had not changed')
+  } finally { p.close() }
+})
+
+test('a card is drawn again when what it says changes, and cards of threads that are gone are dropped', async () => {
+  const p = await reviewPage({ review: overlaid, diff: twoFiles })
+  try {
+    await p.click('tab-review')
+    await p.click('review-comments-open')
+    assert.doesNotMatch(p.$('review-comments-list').querySelector('[data-thread="5"]').textContent, /resolved/)
+    p.at.review = { ...overlaid, threads: overlaid.threads.map((t) => (t.id === 5 ? { ...t, status: 'resolved' } : t)) }
+    await p.poll()
+    assert.match(p.$('review-comments-list').querySelector('[data-thread="5"]').textContent, /resolved/)
+    p.at.review = { ...overlaid, threads: overlaid.threads.slice(0, 2) }
+    await p.poll()
+    assert.equal(cards(p).length, 2, 'the cards of threads that are gone are still shown')
+  } finally { p.close() }
+})
+
 test('each card says where its thread is, its state, how it starts, and its replies', async () => {
   const p = await reviewPage({ review: overlaid, diff: twoFiles })
   try {

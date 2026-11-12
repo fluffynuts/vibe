@@ -1514,12 +1514,24 @@
     const order = $('review-comments-order')
     order.querySelector('[value=reading]').disabled = reviewSteps().size === 0
     order.value = pane.order === 'newest' ? 'newest' : reviewView.order
-    const threads = paneThreads()
-    $('review-comments-list').replaceChildren(...(threads.length ? threads.map((t) => {
+    // What each card says. The review is drawn again whenever its diff or colouring arrives, which draws this pane again too:
+    // cards are replaced only when what they say has changed, or whoever was selecting text in one, hovering it or
+    // focused on it would have it replaced under them.
+    const cards = paneThreads().map((t) => {
       const first = t.comments[0] || { author: '', body: '' }
-      const replies = t.comments.length - 1
-      const where = t.file ? t.file + ':' + t.line + (t.endLine > t.line ? '–' + t.endLine : '') + (t.side === 'old' ? ' (old)' : '') : 'on the whole review'
-      const awaiting = awaitingYou(t)
+      return {
+        thread: t,
+        where: t.file ? t.file + ':' + t.line + (t.endLine > t.line ? '–' + t.endLine : '') + (t.side === 'old' ? ' (old)' : '') : 'on the whole review',
+        awaiting: awaitingYou(t),
+        author: first.author,
+        said: first.body.replace(/\s+/g, ' ').slice(0, 160),
+        replies: t.comments.length - 1,
+      }
+    })
+    const drawn = JSON.stringify([pane.filter, cards.map(({ thread, ...said }) => ({ id: thread.id, status: thread.status, ...said }))])
+    if (drawn === pane.drawn) return
+    pane.drawn = drawn
+    $('review-comments-list').replaceChildren(...(cards.length ? cards.map(({ thread: t, where, awaiting, author, said, replies }) => {
       // What the thread is waiting on, or how it ended, is the first thing on the card, on a line of its own, so that
       // it is seen first and a long path can't squeeze it; a card with nothing to say has no such line.
       const states = [
@@ -1529,7 +1541,7 @@
       return el('button', { type: 'button', class: 'comment-card ' + t.status + (awaiting ? ' awaiting' : ''), 'data-thread': String(t.id), onclick: () => goToThread(t.id) },
         states.length ? el('span', { class: 'comment-card-state' }, ...states) : null,
         el('span', { class: 'comment-card-where' }, el('code', { text: where })),
-        el('span', { class: 'comment-card-said' }, el('strong', { text: first.author === 'agent' ? 'Agent: ' : 'You: ' }), first.body.replace(/\s+/g, ' ').slice(0, 160)),
+        el('span', { class: 'comment-card-said' }, el('strong', { text: author === 'agent' ? 'Agent: ' : 'You: ' }), said),
         replies ? el('span', { class: 'comment-card-replies muted', text: plural(replies, 'reply', 'replies') }) : null)
     }) : [el('p', { class: 'muted', text: pane.filter === 'all' ? 'No comments yet.' : 'None of these.' })]))
   }
