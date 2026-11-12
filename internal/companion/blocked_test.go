@@ -191,3 +191,37 @@ func TestAPageWithNoPolicyHasNoBlockedHostsToSay(t *testing.T) {
 		t.Errorf("body = %s", rec.Body)
 	}
 }
+
+// The page's Block on an unblocked host removes the rules that let it through (sbx won't add a deny beside an
+// allow), so the log has to say which they are.
+func TestTheLogNamesTheRulesThatLetAnUnblockedHostThrough(t *testing.T) {
+	sbx := &fakeSbx{out: map[string]string{
+		"log": `{"blocked": [{"host": "www.kernel.org:443", "count": 1, "last_seen": "2026-11-12T12:39:25Z"}]}`,
+		"ls-network": `{"rules": [` +
+			`{"id":"r-exact","resources":["www.kernel.org:443"],"decision":"allow","origin":"local","editable":true},` +
+			`{"id":"r-wild","resources":["*.kernel.org"],"decision":"allow","origin":"local","editable":false}]}`,
+	}}
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Policy: &policy.Client{Sandbox: "box", Run: sbx.run}})
+	rec := do(t, s, req{path: "/api/log", headers: authed(nil)})
+	var body struct {
+		Entries []struct {
+			Host      string `json:"host"`
+			Decision  string `json:"decision"`
+			AllowedBy []struct {
+				ID        string `json:"id"`
+				Removable bool   `json:"removable"`
+				Wider     bool   `json:"wider"`
+			} `json:"allowedBy"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("%v: %s", err, rec.Body)
+	}
+	if len(body.Entries) != 1 || body.Entries[0].Decision != "unblocked" {
+		t.Fatalf("entries = %+v", body.Entries)
+	}
+	by := body.Entries[0].AllowedBy
+	if len(by) != 2 || by[0].ID != "r-exact" || !by[0].Removable || by[0].Wider || by[1].ID != "r-wild" || by[1].Removable || !by[1].Wider {
+		t.Errorf("allowedBy = %+v, want the exact rule (removable) and the wildcard (not removable, wider)", by)
+	}
+}

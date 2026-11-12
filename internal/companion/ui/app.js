@@ -1283,7 +1283,11 @@
       return el('button', { type: 'button', class: 'small', text: 'Allow',
         onclick: () => confirmChange('allow', entry.host) })
     }
-    if (entry.decision === 'allowed' || entry.decision === 'unblocked') {
+    if (entry.decision === 'unblocked') {
+      return el('button', { type: 'button', class: 'small ghost', text: 'Block',
+        onclick: () => blockUnblocked(entry) })
+    }
+    if (entry.decision === 'allowed') {
       return el('button', { type: 'button', class: 'small ghost', text: 'Block',
         onclick: () => confirmChange('deny', entry.host) })
     }
@@ -1359,6 +1363,51 @@
       command: 'sbx policy ' + decision + ' network --sandbox ' + state.sandbox + ' ' + host,
       danger: !allow,
       run: () => post('/api/' + decision, { host }),
+    })
+  }
+
+  // bareHost is host without its port and case: what a rule's resource is compared to.
+  function bareHost(host) {
+    host = String(host).trim().toLowerCase()
+    return (host.match(/:/g) || []).length === 1 ? host.replace(/:[^:\]]*$/, '') : host
+  }
+
+  const ruleLabel = (r) => r.name || r.id || (r.resources || []).join(', ')
+
+  // blockUnblocked blocks a host that was blocked and is allowed now by a rule. sbx refuses a deny beside an allow for the
+  // same host, so the rule(s) that allow it are removed instead, and the host goes back to being blocked: after saying what else
+  // they allow, which goes with them. A rule that can't be removed from here is said so, and nothing is removed: the
+  // host would be left half unblocked.
+  function blockUnblocked(entry) {
+    const rules = entry.allowedBy || []
+    if (!rules.length) { confirmChange('deny', entry.host); return }
+    const stuck = rules.filter((r) => !r.removable || !r.id)
+    if (stuck.length) {
+      toast("Can't block " + entry.host + ' from here: ' +
+        stuck.map((r) => ruleLabel(r) + " allows it, and can't be removed here" + (r.source ? ' (it comes from ' + r.source + ')' : '')).join('; ') +
+        '. Remove or change ' + (stuck.length === 1 ? 'that rule' : 'those rules') + ' where ' + (stuck.length === 1 ? 'it comes' : 'they come') + ' from.', true)
+      return
+    }
+    const here = bareHost(entry.host)
+    const others = Array.from(new Set(rules.filter((r) => r.wider).flatMap((r) => (r.resources || []).filter((x) => bareHost(x) !== here))))
+    confirmThen({
+      title: 'Block ' + entry.host + '?',
+      text: "sbx won't add a block beside a rule that allows the host, so " + (rules.length === 1 ? 'the rule that allows it is' : 'the rules that allow it are') +
+        ' removed instead, and the host is blocked again. The change applies to this sandbox only.' +
+        (others.length ? ' What is removed also allows ' + others.join(', ') + ', which are blocked too.' : ''),
+      list: rules.map((r) => ruleLabel(r) + ': allows ' + (r.resources || []).join(', ')),
+      command: rules.map((r) => 'sbx policy rm network --sandbox ' + state.sandbox + ' --id ' + r.id + ' --force').join('\n'),
+      danger: true,
+      runLabel: rules.length === 1 ? 'Remove the rule' : 'Remove the rules',
+      started: 'Blocked again: ' + (rules.length === 1 ? 'the rule that allowed it is removed.' : 'the ' + rules.length + ' rules that allowed it are removed.'),
+      run: async () => {
+        let res
+        for (const r of rules) {
+          res = await post('/api/remove', { id: r.id })
+          if (!res.ok) return res
+        }
+        return res
+      },
     })
   }
 

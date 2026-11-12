@@ -78,8 +78,28 @@ type LogEntry struct {
 	Rule      string `json:"rule,omitempty"`
 	ProxyType string `json:"proxyType,omitempty"`
 	Reason    string `json:"reason,omitempty"`
+	// AllowedBy is, for an Unblocked entry, the rules that let its host
+	// through: what has to go for the host to be blocked again, since sbx
+	// refuses a deny beside an allow for the same host.
+	AllowedBy []RuleRef `json:"allowedBy,omitempty"`
 	// Raw is the entry as sbx printed it.
 	Raw json.RawMessage `json:"raw"`
+}
+
+// RuleRef is a rule as a log entry names it: enough to say what it is and
+// where it comes from, and to remove it.
+type RuleRef struct {
+	ID        string   `json:"id,omitempty"`
+	Name      string   `json:"name,omitempty"`
+	Resources []string `json:"resources"`
+	Source    string   `json:"source,omitempty"`
+	Scope     string   `json:"scope,omitempty"`
+	// Removable is Rule.Removable.
+	Removable bool `json:"removable"`
+	// Wider says the rule allows more than the host it is named for (a
+	// wildcard, or another host in the same rule), so removing it blocks
+	// those too.
+	Wider bool `json:"wider"`
 }
 
 // Rule is one policy rule that applies to the sandbox.
@@ -210,11 +230,13 @@ func Resolve(log Log, rules Rules) Log {
 			continue
 		}
 		allowed, denied := false, false
+		var allowedBy []RuleRef
 		for _, r := range rules.Rules {
 			st := strings.ToLower(r.Status)
 			if strings.Contains(st, "inactive") || strings.Contains(st, "suppress") || r.implicitFallback() {
 				continue
 			}
+			listed := false
 			for _, res := range r.Resources {
 				if !hostMatches(res, e.Host) {
 					continue
@@ -223,14 +245,32 @@ func Resolve(log Log, rules Rules) Log {
 					denied = true
 				} else if r.Decision == Allowed {
 					allowed = true
+					if !listed {
+						listed = true
+						allowedBy = append(allowedBy, RuleRef{ID: r.ID, Name: r.Name, Resources: r.Resources, Source: r.Source, Scope: r.Scope,
+							Removable: r.Removable, Wider: reachesFurther(r.Resources, e.Host)})
+					}
 				}
 			}
 		}
 		if allowed && !denied {
 			out.Entries[i].Decision = Unblocked
+			out.Entries[i].AllowedBy = allowedBy
 		}
 	}
 	return out
+}
+
+// reachesFurther says a rule's resources allow something other than host
+// alone: ports and case don't make a resource another host.
+func reachesFurther(resources []string, host string) bool {
+	host = stripPort(strings.ToLower(strings.TrimSpace(host)))
+	for _, res := range resources {
+		if stripPort(strings.ToLower(strings.TrimSpace(res))) != host {
+			return true
+		}
+	}
+	return false
 }
 
 // hostMatches says whether a rule's resource covers host. Ports are ignored;

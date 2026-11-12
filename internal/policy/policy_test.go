@@ -428,6 +428,60 @@ func TestResolveMarksBlockedHostsARuleNowAllows(t *testing.T) {
 
 // With the rules unreadable, the log is still what happened, but it says
 // that blocked hosts a rule now allows can't be marked.
+func TestAnUnblockedHostSaysWhichRulesAllowItAndWhetherTheyReachFurtherThanIt(t *testing.T) {
+	log := Log{Entries: []LogEntry{
+		{Host: "www.kernel.org:443", Decision: Blocked},
+		{Host: "other.org:443", Decision: Blocked},
+		{Host: "ok.net:443", Decision: Allowed},
+	}}
+	rules := Rules{Rules: []Rule{
+		{ID: "exact", Name: "the exact one", Resources: []string{"www.kernel.org:443"}, Decision: Allowed, Removable: true, Source: "local", Scope: "sandbox:vibe"},
+		{ID: "wild", Resources: []string{"*.kernel.org"}, Decision: Allowed, Removable: true},
+		{ID: "several", Resources: []string{"www.kernel.org", "git.example.org"}, Decision: Allowed, Removable: true},
+		{Resources: []string{"WWW.Kernel.org"}, Decision: Allowed, Source: "organisation"},
+		{ID: "off", Resources: []string{"www.kernel.org"}, Decision: Allowed, Removable: true, Status: "inactive"},
+		{ID: "elsewhere", Resources: []string{"unrelated.example"}, Decision: Allowed, Removable: true},
+	}}
+	got := Resolve(log, rules)
+
+	by := got.Entries[0].AllowedBy
+	var ids []string
+	for _, r := range by {
+		ids = append(ids, r.ID)
+	}
+	if want := []string{"exact", "wild", "several", ""}; !equalStrings(ids, want) {
+		t.Fatalf("allowed by %q, want %q (inactive and unrelated rules are not listed, and none that is removed twice)", ids, want)
+	}
+	wider := map[string]bool{}
+	for _, r := range by {
+		wider[r.ID] = r.Wider
+	}
+	if wider["exact"] || !wider["wild"] || !wider["several"] || wider[""] {
+		t.Errorf("wider = %v: only the wildcard and the rule with another host in it reach further than the host (ports and case don't count)", wider)
+	}
+	if by[0].Name != "the exact one" || by[0].Source != "local" || by[0].Scope != "sandbox:vibe" || !by[0].Removable {
+		t.Errorf("the rule is not described as it is: %+v", by[0])
+	}
+	if by[3].Removable {
+		t.Error("a rule sbx gave no id for, and says nothing of being editable, is said to be removable")
+	}
+	if got.Entries[1].AllowedBy != nil || got.Entries[2].AllowedBy != nil {
+		t.Error("a host that is blocked, or that was never blocked, lists the rules that allow it")
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestResolvedLogSaysWhenTheRulesCouldNotBeRead(t *testing.T) {
 	c := &Client{Sandbox: "vibe", Run: func(_ context.Context, args ...string) ([]byte, error) {
 		if args[1] == "ls" {
