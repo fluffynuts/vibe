@@ -1174,6 +1174,22 @@
 
   // --- the network log --------------------------------------------------
 
+  // setText gives node the text, but only when it isn't already so: setting textContent replaces the text node even with the
+  // same words, and a poll does that every couple of seconds, which clears the selection of anyone copying the text.
+  function setText(node, text) {
+    if (node.textContent !== String(text)) node.textContent = text
+  }
+
+  // drawnKeys is what each node drawnAs holds the drawing of.
+  const drawnKeys = new WeakMap()
+  // drawnAs fills node with what children() makes, only when key (everything the drawing depends on) isn't the one it was last
+  // drawn for: for the same reason as setText.
+  function drawnAs(node, key, children) {
+    if (drawnKeys.get(node) === key) return
+    drawnKeys.set(node, key)
+    node.replaceChildren(...children())
+  }
+
   function when(iso) {
     if (!iso) return ''
     const d = new Date(iso)
@@ -1201,6 +1217,12 @@
     const data = state.log
     if (!data) return
     const entries = data.entries || []
+    // Drawn again only when something it shows has changed: polls bring the same log most of the time, and drawing it afresh
+    // clears the selection of anyone copying a host from it.
+    const drawnFor = JSON.stringify([entries, state.filter, state.search, Array.from(state.open).sort()])
+    const logBody = $('log-table').tBodies[0]
+    if (drawnKeys.get(logBody) === drawnFor) return
+    drawnKeys.set(logBody, drawnFor)
     const blocked = entries.filter((e) => e.decision === 'blocked').length
     const allowed = entries.filter((e) => e.decision === 'allowed').length
     const unblocked = entries.filter((e) => e.decision === 'unblocked').length
@@ -1275,6 +1297,10 @@
     if (!data) return
     const rules = data.rules || []
     const body = $(tableId).tBodies[0]
+    // As the log is: drawn again only when what it shows has changed.
+    const drawnFor = JSON.stringify([rules, Array.from(state.open).sort()])
+    if (drawnKeys.get(body) === drawnFor) return
+    drawnKeys.set(body, drawnFor)
     body.textContent = ''
     const columns = withActions ? 6 : 5
     if (!rules.length) {
@@ -1311,7 +1337,7 @@
     })
     const note = $(noteId)
     if (kind === 'fs') {
-      note.textContent = "Read-only: sbx doesn't log filesystem access yet, so there are only the rules to show."
+      setText(note, "Read-only: sbx doesn't log filesystem access yet, so there are only the rules to show.")
     }
   }
 
@@ -3790,12 +3816,12 @@
     syncView.last = b
     const count = b.count || 0
     const running = !!b.running || syncView.starting
-    $('admin-sync-summary').textContent = count
+    setText($('admin-sync-summary'), count
       ? packagesWord(count) + " the sandbox restored " + (count === 1 ? "isn't" : "aren't") + " in your package cache, so your IDE (Rider, say) can't find " +
         (count === 1 ? 'it' : 'them') + '. Fetching uses your own NuGet config on this machine, as for a package the agent asks for.'
       : (b.stale || 0) > 0
         ? 'Everything the sandbox restored is in your package cache.'
-        : 'Everything the sandbox restored is in your package cache, so your IDE can find it.'
+        : 'Everything the sandbox restored is in your package cache, so your IDE can find it.')
     $('admin-sync-details').hidden = count === 0
     const key = JSON.stringify(b.missing || [])
     if (key !== syncView.listKey) {
@@ -3981,9 +4007,9 @@
     // The button says what it will do: what's ticked is allowed, and what isn't is left out.
     const allow = $('admin-packages-allow')
     allow.disabled = ticked === 0
-    allow.textContent = ticked === 0 ? 'Allow selected'
+    setText(allow, ticked === 0 ? 'Allow selected'
       : left > 0 ? 'Allow ' + ticked + ', deny ' + left
-      : ticked === 1 ? 'Allow it' : 'Allow all ' + ticked
+      : ticked === 1 ? 'Allow it' : 'Allow all ' + ticked)
     $('admin-packages-deny').disabled = undecided.length === 0
   }
 
@@ -4012,8 +4038,8 @@
     $('admin-packages-none').hidden = requests.length > 0
     $('admin-packages-bar').hidden = requests.length === 0
     $('admin-packages-status').hidden = approved === 0
-    $('admin-packages-status').textContent = approved + ' approved — being fetched together.' +
-      (undecided ? ' ' + undecided + ' more to decide.' : '')
+    setText($('admin-packages-status'), approved + ' approved — being fetched together.' +
+      (undecided ? ' ' + undecided + ' more to decide.' : ''))
     packagesWant.requests = undecided > 0
     showPackagesCard()
     pill('admin-packages-count', requests.length ? String(undecided) + ' waiting' + (approved ? ' · ' + approved + ' approved' : '') : '', undecided ? 'bad' : '')
@@ -4132,8 +4158,9 @@
 
   function pill(id, text, cls) {
     const p = $(id)
-    p.textContent = text
-    p.className = 'pill' + (cls ? ' ' + cls : '')
+    setText(p, text)
+    const className = 'pill' + (cls ? ' ' + cls : '')
+    if (p.className !== className) p.className = className
   }
 
   // What each action that takes the sandbox away is called, in 'unavailable while ...'.
@@ -4158,9 +4185,9 @@
     }
     $('admin-memories').disabled = busy || !st.running
     $('admin-reinit').disabled = busy || !st.profile
-    $('admin-info').textContent = st.info || ''
+    setText($('admin-info'), st.info || '')
     $('admin-error').hidden = !st.error
-    $('admin-error').textContent = unreadable ? 'The sandbox is unavailable while ' + taking + '.' : st.error || ''
+    setText($('admin-error'), unreadable ? 'The sandbox is unavailable while ' + taking + '.' : st.error || '')
     $('admin-error').title = unreadable ? st.error : ''
 
     // The editors are drawn once (so typing isn't undone by a poll), but
@@ -4210,12 +4237,12 @@
     if (!st.guided) {
       list.replaceChildren()
       adminView.features = ''
-      note.textContent = st.profile
+      setText(note, st.profile
         ? "This profile doesn't record the features it was composed from, so it can't be re-composed here (vibe -R builds a fresh one)."
-        : 'There is no profile to compose.'
+        : 'There is no profile to compose.')
       return
     }
-    note.textContent = 'Select what the sandbox should have; re-composing rebuilds it. New features go after the ones it has.'
+    setText(note, 'Select what the sandbox should have; re-composing rebuilds it. New features go after the ones it has.')
     const features = st.features || []
     const key = JSON.stringify(features.map((f) => [f.name, f.on]))
     if (key === adminView.features) return
@@ -4243,16 +4270,16 @@
 
   function renderAdminUpgrades(up, commands) {
     const found = up.found || []
-    $('admin-upgrades').textContent = up.checking ? 'Checking for newer releases…'
+    setText($('admin-upgrades'), up.checking ? 'Checking for newer releases…'
       : !up.checked ? 'Not checked yet.'
-      : found.length ? 'Newer releases are available:' : 'vibe and Docker SBX are up to date.'
-    $('admin-upgrades-list').replaceChildren(...found.map((l) => el('li', { text: l })))
+      : found.length ? 'Newer releases are available:' : 'vibe and Docker SBX are up to date.')
+    drawnAs($('admin-upgrades-list'), JSON.stringify(found), () => found.map((l) => el('li', { text: l })))
     $('admin-upgrades-card').classList.toggle('wants-you', found.length > 0)
     $('admin-check').disabled = !!up.checking
     const cmd = $('admin-upgrade-command')
     cmd.hidden = !found.length
     // --upgrade asks which to install; -f installs them all, unasked.
-    cmd.textContent = (commands['upgrade'] || 'vibe --upgrade') + '  ·  all of them, unasked: ' + (commands['upgrade-all'] || 'vibe --upgrade -f')
+    setText(cmd, (commands['upgrade'] || 'vibe --upgrade') + '  ·  all of them, unasked: ' + (commands['upgrade-all'] || 'vibe --upgrade -f'))
   }
 
   function link(href, text) {
@@ -4280,8 +4307,9 @@
       status.push("There's no token, so the agent can't push. To give it one:")
     }
     if (git.renewUrl) status.push(' To renew it:')
-    box.className = 'note' + (git.expired ? ' bad-text' : '')
-    box.replaceChildren(...status.map((p) => document.createTextNode(p)))
+    const boxClass = 'note' + (git.expired ? ' bad-text' : '')
+    if (box.className !== boxClass) box.className = boxClass
+    drawnAs(box, JSON.stringify(status), () => status.map((p) => document.createTextNode(p)))
 
     let list = []
     if (git.newTokenUrl) {
@@ -4302,13 +4330,13 @@
       ]
     }
     steps.hidden = !list.length
-    steps.replaceChildren(...list)
+    drawnAs(steps, JSON.stringify(git), () => list)
   }
 
   function renderAdminBackups(backups, busy) {
     const list = $('admin-backups')
-    if (!backups.length) { list.replaceChildren(el('li', { class: 'muted', text: 'No backups yet.' })); return }
-    list.replaceChildren(...backups.map((b) => el('li', {},
+    if (!backups.length) { drawnAs(list, 'none', () => [el('li', { class: 'muted', text: 'No backups yet.' })]); return }
+    drawnAs(list, JSON.stringify([backups, busy]), () => backups.map((b) => el('li', {},
       el('span', { text: b.label }), el('span', { class: 'spacer' }),
       el('button', { type: 'button', class: 'small ghost', text: 'Restore…', disabled: busy,
         onclick: () => adminConfirm('restore', { backup: b.id }, {
@@ -4621,7 +4649,7 @@
 
   function updateManage() {
     const inv = manageView.inv || { profiles: [], unknown: [] }
-    $('manage-count').textContent = M.summary(inv, manageView.ticked)
+    setText($('manage-count'), M.summary(inv, manageView.ticked))
     $('manage-delete').disabled = manageView.busy || !M.picked(inv, manageView.ticked).length
     $('manage-trash').disabled = manageView.busy
     $('manage-none').disabled = manageView.busy
@@ -4819,9 +4847,9 @@
 
   function renderInstructions(info) {
     instr.info = info
-    $('admin-instructions-note').textContent = !info.applies
+    setText($('admin-instructions-note'), !info.applies
       ? 'The ' + (info.agent || 'sandbox') + " agent doesn't load these files yet: they're kept, and used by sandboxes whose agent does."
-      : 'Loaded by the agent at the start of every session: the universal file first, then the profile\'s.'
+      : 'Loaded by the agent at the start of every session: the universal file first, then the profile\'s.')
     $('admin-instructions').replaceChildren(...(info.files || []).map((f) => instructionsEditor(f, info)))
   }
 
