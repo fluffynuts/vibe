@@ -21,3 +21,5 @@ where there is something to say. A decision that is later changed gets a note in
 | [2026-10-23-page-ergonomics](2026-10-23-page-ergonomics.md) | Questions that stand out, a power menu, reporting an issue |
 | [2026-10-28-playwright-feature](2026-10-28-playwright-feature.md) | Browsers installed at build time |
 | [2026-10-29-signing-in](2026-10-29-signing-in.md) | Signing in to sbx and the agent; the network policy; a start while signed out |
+| [2026-11-12-stop-feedback](2026-11-12-stop-feedback.md) | Stopping the agent says so at once; a prompt sent meanwhile waits for the stop |
+| [2026-11-12-network-block-and-filter](2026-11-12-network-block-and-filter.md) | The network tabs: blocking a host a rule allows, a filter, a read sign, polls that change nothing |
