@@ -179,7 +179,7 @@
       <div class="bar">
         <span id="log-summary" class="summary"></span>
         <span class="spacer"></span>
-        <span class="log-spin"><span id="log-refreshing" class="spinner" aria-hidden="true" title="Refreshing the log"></span></span>
+        <span class="log-spin"><span id="log-refreshing" class="spinner read-sign" aria-hidden="true" title="Refreshing the log"></span></span>
         <div class="seg" id="log-filter" role="group" aria-label="Show">
           <button type="button" data-filter="all" aria-pressed="true">All</button>
           <button type="button" data-filter="blocked" aria-pressed="false">Blocked</button>
@@ -195,12 +195,17 @@
     </section>
 
     <section id="panel-rules" class="panel" hidden>
-      <form id="rule-form" class="bar" autocomplete="off">
-        <input id="rule-host" type="text" placeholder="host, *.domain, or CIDR" aria-label="Host to allow or block" spellcheck="false">
-        <button type="submit" data-decision="allow">Allow</button>
-        <button type="submit" data-decision="deny" class="danger">Block</button>
-        <span class="muted">for this sandbox only</span>
-      </form>
+      <div class="bar">
+        <form id="rule-form" class="bar" autocomplete="off">
+          <input id="rule-host" type="text" placeholder="host, *.domain, or CIDR" aria-label="Host to allow or block" spellcheck="false">
+          <button type="submit" data-decision="allow">Allow</button>
+          <button type="submit" data-decision="deny" class="danger">Block</button>
+          <span class="muted">for this sandbox only</span>
+        </form>
+        <span class="spacer"></span>
+        <span class="log-spin"><span id="rules-refreshing" class="spinner read-sign" aria-hidden="true" title="Refreshing the rules"></span></span>
+        <input id="rules-search" type="search" placeholder="Filter rules" aria-label="Filter rules" autocomplete="off">
+      </div>
       <div class="scroll"><table id="rules-table">
         <thead><tr><th>Decision</th><th>Resources</th><th>Source</th><th>Applies to</th><th>Protocol</th><th></th></tr></thead>
         <tbody></tbody>
@@ -209,6 +214,11 @@
     </section>
 
     <section id="panel-fs" class="panel" hidden>
+      <div class="bar">
+        <span class="spacer"></span>
+        <span class="log-spin"><span id="fs-refreshing" class="spinner read-sign" aria-hidden="true" title="Refreshing the rules"></span></span>
+        <input id="fs-search" type="search" placeholder="Filter rules" aria-label="Filter rules" autocomplete="off">
+      </div>
       <div class="scroll"><table id="fs-table">
         <thead><tr><th>Decision</th><th>Resources</th><th>Source</th><th>Applies to</th><th>Status</th></tr></thead>
         <tbody></tbody>

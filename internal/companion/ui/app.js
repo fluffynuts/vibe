@@ -109,6 +109,8 @@
     tab: store.get('vibe-companion-tab') || 'conversation',
     filter: 'all',
     search: '',
+    // What is typed in the Network rules and Filesystem rules tabs' filters.
+    ruleSearch: { rules: '', fs: '' },
     log: null,
     rules: null,
     fs: null,
@@ -830,7 +832,7 @@
   async function load(kind) {
     const path = { log: '/api/log', rules: '/api/rules', fs: '/api/fs-rules' }[kind]
     // Not in the way of the table: the user may be in the act of allowing a host.
-    const reading = kind === 'log' && $('log-refreshing')
+    const reading = $(READ_SIGN[kind])
     if (reading) {
       // Just after a rule was changed the read waits for sbx a second or two, and says so at once.
       reading.classList.add('on')
@@ -854,7 +856,10 @@
     }
   }
 
-  // logReadAtOnce says the next read of the Network log follows a change to a rule: see load.
+  // READ_SIGN is the sign on each tab that its list is being read.
+  const READ_SIGN = { log: 'log-refreshing', rules: 'rules-refreshing', fs: 'fs-refreshing' }
+
+  // logReadAtOnce says the next read of a tab's list follows a change to a rule: see load.
   let logReadAtOnce = false
 
   // The hosts the Network log was refreshed for, as they were blocked: the log is only polled while its tab is open,
@@ -1305,21 +1310,28 @@
 
   // --- rules ------------------------------------------------------------
 
+  // ruleWords is everything a rule says, for the filter to look in.
+  const ruleWords = (r) => [(r.resources || []).join(' '), r.name, r.source, r.scope, r.protocol, r.status, r.decision].filter(Boolean).join(' ').toLowerCase()
+
   function renderRules(kind, tableId, noteId, withActions) {
     const data = state[kind]
     if (!data) return
-    const rules = data.rules || []
+    const allRules = data.rules || []
     const body = $(tableId).tBodies[0]
+    const needle = (state.ruleSearch[kind] || '').trim().toLowerCase()
     // As the log is: drawn again only when what it shows has changed.
-    const drawnFor = JSON.stringify([rules, Array.from(state.open).sort()])
+    const drawnFor = JSON.stringify([allRules, needle, Array.from(state.open).sort()])
     if (drawnKeys.get(body) === drawnFor) return
     drawnKeys.set(body, drawnFor)
     body.textContent = ''
     const columns = withActions ? 6 : 5
-    if (!rules.length) {
-      body.append(el('tr', {}, el('td', { class: 'empty', colspan: String(columns), text: 'No rules.' })))
+    // A rule is kept, whole, when what is typed is in any of what it says. Its place in the full list is what names it when it
+    // has no id, so a filter doesn't make an open rule another.
+    const shown = allRules.map((r, i) => ({ r, i })).filter(({ r }) => !needle || ruleWords(r).includes(needle))
+    if (!shown.length) {
+      body.append(el('tr', {}, el('td', { class: 'empty', colspan: String(columns), text: allRules.length ? 'Nothing matches.' : 'No rules.' })))
     }
-    rules.forEach((r, i) => {
+    shown.forEach(({ r, i }) => {
       const key = kind + ':' + (r.id || i)
       const cells = [
         el('td', {}, statusCell(r.decision)),
@@ -7842,6 +7854,8 @@
     })
   }
   $('log-search').addEventListener('input', (ev) => { state.search = ev.target.value; renderLog() })
+  $('rules-search').addEventListener('input', (ev) => { state.ruleSearch.rules = ev.target.value; render('rules') })
+  $('fs-search').addEventListener('input', (ev) => { state.ruleSearch.fs = ev.target.value; render('fs') })
 
   $('rule-form').addEventListener('submit', (ev) => {
     ev.preventDefault()
