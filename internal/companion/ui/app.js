@@ -1396,7 +1396,14 @@
   // sbx names a rule vibe made with its own id, which says nothing: a name is only one someone gave it.
   const ruleName = (r) => (r.name && r.name !== r.id ? r.name : '')
   const shortId = (id) => (id.length > 12 ? id.slice(0, 8) + '…' : id)
-  const ruleLabel = (r) => ruleName(r) || (r.resources || []).join(', ') || r.id
+  // shortList names a few of a rule's resources: some have dozens.
+  const shortList = (items) => (items.length > 3 ? items.slice(0, 3).join(', ') + ' and ' + (items.length - 3) + ' more' : items.join(', '))
+  const ruleLabel = (r) => ruleName(r) || shortList(r.resources || []) || r.id
+  // sbx refuses to remove a rule of the global policy for one sandbox ("exists in the global policy, not in sandbox X"), and says
+  // the command that does: it is for every sandbox, so it is given, not run from here.
+  const isGlobalRule = (r) => !!r.scope && r.scope !== 'sandbox:' + state.sandbox
+  const globalRuleNote = (r) => ruleLabel(r) + " is a global rule, for every sandbox, so it can't be removed from here" +
+    (r.id ? ' (in a terminal, for every sandbox: sbx policy rm network --id ' + r.id + ')' : '')
   // ruleLine says what a rule allows, and which it is by its short id (the whole one is in the command shown with it).
   const ruleLine = (r) => (ruleName(r) ? ruleName(r) + ': allows ' : 'Allows ') + (r.resources || []).join(', ') + (r.id ? ' (rule ' + shortId(r.id) + ')' : '')
 
@@ -1407,14 +1414,11 @@
   function blockUnblocked(entry) {
     const rules = entry.allowedBy || []
     if (!rules.length) { confirmChange('deny', entry.host); return }
-    // sbx refuses to remove a rule of the global policy for one sandbox ("exists in the global policy, not in sandbox X"), and says
-    // the command that does: it is for every sandbox, so it is given, not run from here.
-    const isGlobal = (r) => !!r.scope && r.scope !== 'sandbox:' + state.sandbox
-    const stuck = rules.filter((r) => !r.removable || !r.id || isGlobal(r))
+    const stuck = rules.filter((r) => !r.removable || !r.id || isGlobalRule(r))
     if (stuck.length) {
       toast("Can't block " + entry.host + ' from here: ' +
-        stuck.map((r) => isGlobal(r)
-          ? ruleLabel(r) + " is a global rule, for every sandbox, so it can't be removed from here" + (r.id ? ' (in a terminal, for every sandbox: sbx policy rm network --id ' + r.id + ')' : '')
+        stuck.map((r) => isGlobalRule(r)
+          ? globalRuleNote(r)
           : ruleLabel(r) + " allows it, and can't be removed here" + (r.source ? ' (it comes from ' + r.source + ')' : '')).join('; ') +
         '. Nothing was removed.', true)
       return
@@ -1443,9 +1447,11 @@
   }
 
   function confirmRemove(rule) {
+    if (isGlobalRule(rule)) { toast(globalRuleNote(rule), true); return }
+    const kind = rule.decision === 'allowed' ? 'an allow rule' : rule.decision === 'blocked' ? 'a block rule' : 'a rule'
     confirmThen({
       title: 'Remove this rule?',
-      text: (rule.resources || []).join(', ') + ' — a ' + (rule.decision || 'rule') + ' rule for this sandbox.',
+      text: shortList(rule.resources || []) + ' — ' + kind + ' for this sandbox.',
       command: 'sbx policy rm network --sandbox ' + state.sandbox + ' --id ' + rule.id + ' --force',
       danger: true,
       run: () => post('/api/remove', { id: rule.id }),
