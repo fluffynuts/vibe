@@ -13,7 +13,7 @@ const rules = [
 ]
 
 async function rulesPage(tab, { held = null } = {}) {
-  const at = { rules, held }
+  const at = { rules, held, post: null }
   const p = await openPage({
     routes: {
       '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, attention: {} },
@@ -21,7 +21,7 @@ async function rulesPage(tab, { held = null } = {}) {
       '/api/log': { entries: [] },
       '/api/rules': () => at.held || { rules: at.rules },
       '/api/fs-rules': () => at.held || { rules: at.rules.map((r) => ({ ...r, status: 'active' })) },
-      '/api/remove': { command: 'sbx policy rm ...' },
+      '/api/remove': () => at.post || { command: 'sbx policy rm ...' },
     },
     storage: { 'vibe-companion-tab': tab },
   })
@@ -142,5 +142,45 @@ test('typing Enter in the rules filter does not submit the form that adds a rule
     assert.equal(input.closest('form'), null, 'the filter is inside the form that adds a rule: Enter would try to allow a host')
     assert.equal(p.$('confirm').open, false)
     assert.ok(p.calls.length >= before)
+  } finally { p.close() }
+})
+
+const removeWild = (p) => [...p.$('rules-table').tBodies[0].querySelectorAll('tr.entry')].find((r) => r.textContent.includes('*.kernel.org')).querySelector('button')
+
+test('Network rules: the sign is on as soon as a removal is confirmed, while sbx runs the command, and off when the rules have been read', async () => {
+  let release
+  const p = await rulesPage('rules')
+  try {
+    const sign = p.$('rules-refreshing')
+    removeWild(p).click()
+    await new Promise((resolve) => setImmediate(resolve))
+    p.at.post = new Promise((resolve) => { release = () => resolve({ command: 'x' }) })
+    p.$('confirm').close('run')
+    for (let i = 0; i < 40; i++) await new Promise((resolve) => setImmediate(resolve))
+    assert.ok(sign.classList.contains('on') && sign.classList.contains('at-once'), 'no sign while sbx runs the command')
+    p.at.post = null
+    release()
+    await p.settle()
+    assert.equal(sign.classList.contains('on'), false, 'the sign is still on after the rules have been read')
+  } finally { p.close() }
+})
+
+test('Network rules: going to another tab while sbx runs the command does not leave this tab\'s sign on', async () => {
+  let release
+  const p = await rulesPage('rules')
+  try {
+    const sign = p.$('rules-refreshing')
+    removeWild(p).click()
+    await new Promise((resolve) => setImmediate(resolve))
+    p.at.post = new Promise((resolve) => { release = () => resolve({ command: 'x' }) })
+    p.$('confirm').close('run')
+    for (let i = 0; i < 40; i++) await new Promise((resolve) => setImmediate(resolve))
+    assert.ok(sign.classList.contains('on'))
+    p.$('tab-log').click()
+    for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve))
+    p.at.post = null
+    release()
+    await p.settle()
+    assert.equal(sign.classList.contains('on'), false, 'a tab nobody is reading shows a sign for ever')
   } finally { p.close() }
 })

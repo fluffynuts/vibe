@@ -857,7 +857,8 @@
     } catch (e) {
       reached(false)
     } finally {
-      if (reading) reading.classList.remove('on', 'at-once')
+      // Still on while the user's change is being made (the read that found the old state is not its answer), and while rows wait.
+      if (reading && !changesUnderWay && !(kind === 'log' && state.updating.size)) reading.classList.remove('on', 'at-once')
     }
   }
 
@@ -870,11 +871,23 @@
   // logReads counts the reads of the Network log begun, so a read can be told from one that began before a change.
   let logReads = 0
 
-  // markUpdating puts hosts' rows in the updating state, until a read of the log that begins after now has come back. A read
-  // already on its way began before the change and may say the old thing, so it doesn't take the mark off.
-  function markUpdating(hosts) {
+  // changesUnderWay counts the changes the user has confirmed that sbx has not yet finished: while there are any, a read finishing
+  // does not take a tab's sign off, whatever it found.
+  let changesUnderWay = 0
+
+  // markUpdating puts hosts' rows in the updating state, until a read of the log that began after `at` reads had begun has come
+  // back. A read already on its way began before the change and may say the old thing, so it doesn't take the mark off; and
+  // while sbx is still running the command nothing can have changed, so `at` is Infinity until it has answered.
+  function markUpdating(hosts, at) {
     if (!hosts.length) return
-    for (const host of hosts) state.updating.set(host, logReads)
+    for (const host of hosts) state.updating.set(host, at)
+    renderLog()
+  }
+
+  // unmark takes the mark off hosts that no change is being made to after all.
+  function unmark(hosts) {
+    if (!hosts.length) return
+    for (const host of hosts) state.updating.delete(host)
     renderLog()
   }
 
@@ -1527,11 +1540,25 @@
         if (opts.cancelled) opts.cancelled()
         return
       }
+      // From the moment it is confirmed the page says a change is under way: sbx takes a few seconds to run the command itself, before
+      // the list can even be read again, and people will wait longer for something that says it is happening. The rows it is
+      // for say so, and the tab's sign is on (at once), until the read that follows the change has come back.
+      const affects = opts.affects || []
+      const tab = state.tab
+      const sign = READ_SIGN[tab] ? $(READ_SIGN[tab]) : null
+      changesUnderWay++
+      markUpdating(affects, Infinity)
+      if (sign) sign.classList.add('on', 'at-once')
+      // The change is over, however it ended: a sign on a tab that is no longer the one being read has nothing to end it.
+      const over = () => {
+        changesUnderWay--
+        if (sign && state.tab !== tab) sign.classList.remove('on', 'at-once')
+      }
       try {
         const res = await opts.run()
         reached(true)
         // asked: run asked something else instead, which says what's what.
-        if (res.asked) return
+        if (res.asked) { over(); unmark(affects); return }
         // warning: done, but not all of it (see the server's changing).
         if (res.ok && res.body.warning) {
           toast(res.body.warning, true)
@@ -1545,11 +1572,12 @@
         reached(false)
         toast('Could not reach vibe.', true)
       }
-      // Whatever was asked changed, or failed after changing some: the log is read again, and says so at once. (tick starts the
-      // read before it returns, so the flag is spent by then, on the log or on nothing.)
+      // Whatever was asked changed, or failed after changing some: the list is read again. The rows of the hosts it was for wait
+      // for a read that begins after this: marked before tick begins one. (tick starts the read before it returns, so the
+      // flag that has the sign on at once is spent by then, on the list or on nothing.)
+      over()
+      markUpdating(affects, logReads)
       logReadAtOnce = true
-      // The rows of the hosts it was for wait for a read that begins after this: marked before tick begins one.
-      markUpdating(opts.affects || [])
       tick()
       logReadAtOnce = false
     }

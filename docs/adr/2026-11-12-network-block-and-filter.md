@@ -46,8 +46,11 @@ rule being changed, which waits for sbx for a second or two. Nothing is disabled
 
 ### 4b. A row whose rule was just changed says it is updating
 
-After the user confirms an Allow, Block or Remove from a **row** of the Network log, that host's row says **"Updating…"** (a small spinner, no status) and its button is
-disabled, until a read of the log that **began after the change** has come back. It claims nothing about the outcome: the status is derived on the server from the log and
+**From the moment** the user confirms an Allow, Block or Remove from a **row** of the Network log, that host's row says **"Updating…"** (a small spinner, no status) and its
+button is disabled, and the tab's sign is on (at once, 4): sbx takes a few seconds to run the command itself, before the list can even be read again, and a page that shows
+nothing for those seconds looks as though nothing was asked (found in use: the marker used to start when sbx had answered). It lasts until a read of the log that **began
+after sbx finished the command** has come back; while the command is still running no read can take it off (`at` is infinity until then), or a poll in those seconds would
+show the old status again. Cancelling the confirmation marks nothing. It claims nothing about the outcome: the status is derived on the server from the log and
 all the rules (a deny beats an allow; a wildcard may still cover the host), and a guess in the page would be a second copy of `Resolve`, and wrong where a user trusts it most.
 A read already on its way when the change was made may say the old thing, so it does **not** take the mark off (each read is numbered, and a mark records how many had begun
 when it was made); a change that failed is marked too, since part of it may have been made, and shows the truth when it is read. A rule added from the Network rules

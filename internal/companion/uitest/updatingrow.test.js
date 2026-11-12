@@ -116,3 +116,67 @@ test('a rule added from the Network rules tab marks no row: the log is not being
     assert.doesNotMatch(words(p, 'www.kernel.org'), /Updating/, 'a marker was left on a row that is no longer being waited for')
   } finally { p.close() }
 })
+
+// sbx takes a few seconds to run the command itself, before the log can even be read again: the row and the sign say so from the
+// moment the user confirms, not from when sbx has answered, or those seconds are a page that looks as though nothing was asked.
+const held = () => { let release; const promise = new Promise((resolve) => { release = (value) => resolve(value) }); return { promise, release } }
+const logReads = (p) => p.calls.filter((c) => c.path === '/api/log').length
+
+test('the row and the sign say it is updating as soon as the change is confirmed, before sbx has run the command', async () => {
+  const command = held()
+  const p = await logPage({ entries: [row('blocked'), other], routes: { '/api/allow': () => command.promise } })
+  try {
+    const sign = p.$('log-refreshing')
+    assert.equal(sign.classList.contains('on'), false)
+    const readsBefore = logReads(p)
+    rowOf(p, 'www.kernel.org').querySelector('button').click()
+    await turns(10)
+    p.$('confirm').close('run')
+    await turns(40)
+    assert.match(words(p, 'www.kernel.org'), /Updating…/, 'nothing says the change was asked for, while sbx runs it')
+    assert.equal(rowOf(p, 'www.kernel.org').querySelector('button').disabled, true)
+    assert.ok(sign.classList.contains('on') && sign.classList.contains('at-once'), 'no sign while sbx runs the command')
+    assert.equal(logReads(p), readsBefore, 'the log was read before the command had finished')
+    const read = hold(p)
+    command.release({ command: 'sbx policy allow ...' })
+    await turns(40)
+    assert.match(words(p, 'www.kernel.org'), /Updating…/)
+    assert.ok(sign.classList.contains('on'), 'the sign went out between the command and the read of its result')
+    read([row('unblocked'), other])
+    await p.settle()
+    assert.match(words(p, 'www.kernel.org'), /Unblocked/)
+    assert.equal(sign.classList.contains('on'), false)
+    assert.equal(sign.classList.contains('at-once'), false)
+  } finally { p.close() }
+})
+
+test('a read that begins while the command is still running does not take the mark off', async () => {
+  const command = held()
+  const p = await logPage({ entries: [row('blocked'), other], routes: { '/api/allow': () => command.promise } })
+  try {
+    rowOf(p, 'www.kernel.org').querySelector('button').click()
+    await turns(10)
+    p.$('confirm').close('run')
+    await turns(40)
+    await p.kick('tick') // a poll, which reads the old state: sbx has not finished
+    await turns(40)
+    assert.match(words(p, 'www.kernel.org'), /Updating…/, 'a poll during the command showed the old status as though nothing had been asked')
+    p.at.entries = [row('unblocked'), other]
+    command.release({ command: 'sbx policy allow ...' })
+    await p.settle()
+    assert.doesNotMatch(words(p, 'www.kernel.org'), /Updating/)
+    assert.match(words(p, 'www.kernel.org'), /Unblocked/)
+  } finally { p.close() }
+})
+
+test('cancelling the confirmation marks nothing and starts no sign', async () => {
+  const p = await logPage({ entries: [row('blocked'), other] })
+  try {
+    rowOf(p, 'www.kernel.org').querySelector('button').click()
+    await turns(10)
+    p.$('confirm').close('cancel')
+    await turns(30)
+    assert.doesNotMatch(words(p, 'www.kernel.org'), /Updating/)
+    assert.equal(p.$('log-refreshing').classList.contains('on'), false)
+  } finally { p.close() }
+})
