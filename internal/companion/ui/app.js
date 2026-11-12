@@ -111,6 +111,9 @@
     search: '',
     // What is typed in the Network rules and Filesystem rules tabs' filters.
     ruleSearch: { rules: '', fs: '' },
+    // The Network log's hosts whose rule was just changed, each with how many reads of the log had begun by then: the row says it
+    // is updating until a read that began after the change has come back (see markUpdating).
+    updating: new Map(),
     log: null,
     rules: null,
     fs: null,
@@ -832,6 +835,7 @@
   async function load(kind) {
     const path = { log: '/api/log', rules: '/api/rules', fs: '/api/fs-rules' }[kind]
     // Not in the way of the table: the user may be in the act of allowing a host.
+    const began = kind === 'log' ? ++logReads : 0
     const reading = $(READ_SIGN[kind])
     if (reading) {
       // Just after a rule was changed the read waits for sbx a second or two, and says so at once.
@@ -845,6 +849,7 @@
       if (res.ok) {
         banner(kind, res.body.unresolved || '')
         state[kind] = res.body
+        if (kind === 'log') readDone(began)
         render(kind)
       } else {
         problem(kind, res)
@@ -854,6 +859,32 @@
     } finally {
       if (reading) reading.classList.remove('on', 'at-once')
     }
+  }
+
+  // updatingCell is what a row's status says while its host's rule is being changed: that it is, and nothing of the outcome, which
+  // only sbx knows (a deny rule beats an allow; a wildcard may still cover the host).
+  function updatingCell() {
+    return el('span', { class: 'updating' }, el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Updating…')
+  }
+
+  // logReads counts the reads of the Network log begun, so a read can be told from one that began before a change.
+  let logReads = 0
+
+  // markUpdating puts hosts' rows in the updating state, until a read of the log that begins after now has come back. A read
+  // already on its way began before the change and may say the old thing, so it doesn't take the mark off.
+  function markUpdating(hosts) {
+    if (!hosts.length) return
+    for (const host of hosts) state.updating.set(host, logReads)
+    renderLog()
+  }
+
+  // readDone takes the mark off the hosts whose change the read that began as number began came after.
+  function readDone(began) {
+    let cleared = false
+    for (const [host, at] of state.updating) {
+      if (began > at) { state.updating.delete(host); cleared = true }
+    }
+    return cleared
   }
 
   // READ_SIGN is the sign on each tab that its list is being read.
@@ -1233,7 +1264,7 @@
     const entries = data.entries || []
     // Drawn again only when something it shows has changed: polls bring the same log most of the time, and drawing it afresh
     // clears the selection of anyone copying a host from it.
-    const drawnFor = JSON.stringify([entries, state.filter, state.search, Array.from(state.open).sort()])
+    const drawnFor = JSON.stringify([entries, state.filter, state.search, Array.from(state.open).sort(), Array.from(state.updating.keys()).sort()])
     const logBody = $('log-table').tBodies[0]
     if (drawnKeys.get(logBody) === drawnFor) return
     drawnKeys.set(logBody, drawnFor)
@@ -1265,9 +1296,9 @@
         el('td', { class: 'when', text: when(e.lastSeen) }),
         el('td', { class: 'host', text: e.host }),
         el('td', { class: 'num', text: String(e.hits || '') }),
-        el('td', {}, statusCell(e.decision)),
+        el('td', {}, state.updating.has(e.host) ? updatingCell() : statusCell(e.decision)),
         el('td', { class: 'mono', text: e.rule || '' }),
-        el('td', {}, actionFor(e)))
+        el('td', {}, ((act) => { if (act && state.updating.has(e.host)) act.disabled = true; return act })(actionFor(e))))
       const toggle = () => {
         if (state.open.has(key)) state.open.delete(key); else state.open.add(key)
         renderLog()
@@ -1295,7 +1326,7 @@
     if (entry.decision === 'blocked') {
       if (!namesOneHost(entry.host)) return null
       return el('button', { type: 'button', class: 'small', text: 'Allow',
-        onclick: () => confirmChange('allow', entry.host) })
+        onclick: () => confirmChange('allow', entry.host, [entry.host]) })
     }
     if (entry.decision === 'unblocked') {
       return el('button', { type: 'button', class: 'small ghost', text: 'Block',
@@ -1303,7 +1334,7 @@
     }
     if (entry.decision === 'allowed') {
       return el('button', { type: 'button', class: 'small ghost', text: 'Block',
-        onclick: () => confirmChange('deny', entry.host) })
+        onclick: () => confirmChange('deny', entry.host, [entry.host]) })
     }
     return null
   }
@@ -1374,7 +1405,8 @@
 
   // --- changing rules ---------------------------------------------------
 
-  function confirmChange(decision, host) {
+  // affects are the Network log's hosts whose rows are waiting for this change: those of the row it was asked from.
+  function confirmChange(decision, host, affects = []) {
     const allow = decision === 'allow'
     confirmThen({
       title: (allow ? 'Allow ' : 'Block ') + host + '?',
@@ -1383,6 +1415,7 @@
         : 'The sandbox will be stopped from reaching this host. The rule applies to this sandbox only.',
       command: 'sbx policy ' + decision + ' network --sandbox ' + state.sandbox + ' ' + host,
       danger: !allow,
+      affects,
       run: () => post('/api/' + decision, { host }),
     })
   }
@@ -1413,7 +1446,7 @@
   // host would be left half unblocked.
   function blockUnblocked(entry) {
     const rules = entry.allowedBy || []
-    if (!rules.length) { confirmChange('deny', entry.host); return }
+    if (!rules.length) { confirmChange('deny', entry.host, [entry.host]); return }
     const stuck = rules.filter((r) => !r.removable || !r.id || isGlobalRule(r))
     if (stuck.length) {
       toast("Can't block " + entry.host + ' from here: ' +
@@ -1433,6 +1466,7 @@
       list: rules.map(ruleLine),
       command: rules.map((r) => 'sbx policy rm network --sandbox ' + state.sandbox + ' --id ' + r.id + ' --force').join('\n'),
       danger: true,
+      affects: [entry.host],
       runLabel: rules.length === 1 ? 'Remove the rule' : 'Remove the rules',
       started: 'Blocked again: ' + (rules.length === 1 ? 'the rule that allowed it is removed.' : 'the ' + rules.length + ' rules that allowed it are removed.'),
       run: async () => {
@@ -1514,6 +1548,8 @@
       // Whatever was asked changed, or failed after changing some: the log is read again, and says so at once. (tick starts the
       // read before it returns, so the flag is spent by then, on the log or on nothing.)
       logReadAtOnce = true
+      // The rows of the hosts it was for wait for a read that begins after this: marked before tick begins one.
+      markUpdating(opts.affects || [])
       tick()
       logReadAtOnce = false
     }

@@ -846,3 +846,6 @@ ul.signins summary { cursor: pointer; color: var(--muted); }
 .commands.emoji { bottom: auto; }
 .commands.emoji li .glyph { display: inline-block; min-width: 1.6em; margin-right: 4px; text-align: center; }
 .commands.emoji li .alias { color: var(--muted); margin-left: 6px; font-size: 12px; }
+
+/* a Network log row whose host's rule is being changed: that it is, and nothing of the outcome */
+.updating { color: var(--muted); }

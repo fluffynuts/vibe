@@ -44,6 +44,15 @@ The Network log, Network rules and Filesystem rules tabs each have the existing 
 only after 0.2 seconds** (a CSS transition delay, no timer), so the quick read of every poll does not flicker; and **at once** (`at-once`) for the read that follows a
 rule being changed, which waits for sbx for a second or two. Nothing is disabled while it shows: the user may be allowing a host.
 
+### 4b. A row whose rule was just changed says it is updating
+
+After the user confirms an Allow, Block or Remove from a **row** of the Network log, that host's row says **"Updating…"** (a small spinner, no status) and its button is
+disabled, until a read of the log that **began after the change** has come back. It claims nothing about the outcome: the status is derived on the server from the log and
+all the rules (a deny beats an allow; a wildcard may still cover the host), and a guess in the page would be a second copy of `Resolve`, and wrong where a user trusts it most.
+A read already on its way when the change was made may say the old thing, so it does **not** take the mark off (each read is numbered, and a mark records how many had begun
+when it was made); a change that failed is marked too, since part of it may have been made, and shows the truth when it is read. A rule added from the Network rules
+tab marks no row: the log is not being read there.
+
 ### 5. A host seen blocked has the Network log read at once
 
 When the page first sees a host blocked, it reads the Network log in the background whichever tab is open, once per host (a host that stops being blocked and is blocked
@@ -74,7 +83,7 @@ bring nothing new and fails on any change.
 
 - **Block on an "Allowed" host** (never blocked) is as it was: `sbx policy deny`. Whether sbx refuses it when an allow rule covers it was not tried.
 - **Removing a global rule from the page.** It would change every sandbox, and `/api/remove` is always scoped to one; the command is given instead.
-- Optimistic updating of a row after a change: the row waits for sbx's answer.
+- **Optimistic updating** of a row (assuming the change worked and showing the result): rejected for the reasons in 4b; the row says it is updating instead.
 
 ## Not verified
 
