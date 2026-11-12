@@ -207,12 +207,39 @@
     return out
   }
 
-  // commentsByFile is how many comments each file has now, every thread's and every reply counted (not just how
-  // many threads, which a reply to one already there wouldn't move): a file ticked as viewed is known to have more
-  // said about it since, the same way it's known to have changed.
-  function commentsByFile(threads) {
+  // fnv1a is a short digest of text: not for anything adversarial, only to tell "the comments changed" from "they
+  // didn't" cheaply, so commentsDigest need not keep the comments themselves around to compare.
+  function fnv1a(text) {
+    let h = 0x811c9dc5
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i)
+      h = Math.imul(h, 0x01000193)
+    }
+    return (h >>> 0).toString(16).padStart(8, '0')
+  }
+
+  // emptyCommentsDigest is commentsDigest's answer for a file with nothing said about it.
+  const emptyCommentsDigest = fnv1a('')
+
+  // commentsDigest is a short digest of each file's comments now, every thread's and every reply's body counted, in
+  // a stable order (thread id, then position in it): a file ticked as viewed is known to have more, or other, said
+  // about it since, the same way it's known to have changed. Unlike a count, a comment undone (deleted, or an edit
+  // reverted) isn't mistaken for nothing having changed, except where that leaves the exact words there were when
+  // ticked: correctly, since there is then nothing new left to look at. A file with none isn't a key of the map
+  // (its caller's "nothing" is emptyCommentsDigest, which is what an empty one would digest to all the same).
+  function commentsDigest(threads) {
+    const byFile = new Map()
+    for (const t of threads) {
+      if (!t.file) continue
+      if (!byFile.has(t.file)) byFile.set(t.file, [])
+      byFile.get(t.file).push(t)
+    }
     const out = new Map()
-    for (const t of threads) if (t.file) out.set(t.file, (out.get(t.file) || 0) + (t.comments || []).length)
+    for (const [file, fileThreads] of byFile) {
+      fileThreads.sort((a, b) => a.id - b.id)
+      const text = fileThreads.flatMap((t) => (t.comments || []).map((c) => c.body)).join('\u0000')
+      out.set(file, fnv1a(text))
+    }
     return out
   }
 
@@ -391,7 +418,7 @@
     return runs.map((r) => ({ kind: tokenKind(r.c), text: r.t }))
   }
 
-  const api = { tokenKind, lineRuns, formatText, inStepOrder, diffSquares, currentOf, positionOf, placeInGaps, placeThreads, inTreeOrder, sideBySide, gaps, gapView, GAP_STEP, fileTree, matchesFilter, agentUpdated, threadsByFile, commentsByFile, stepTo }
+  const api = { tokenKind, lineRuns, formatText, inStepOrder, diffSquares, currentOf, positionOf, placeInGaps, placeThreads, inTreeOrder, sideBySide, gaps, gapView, GAP_STEP, fileTree, matchesFilter, agentUpdated, threadsByFile, commentsDigest, emptyCommentsDigest, stepTo }
   if (typeof module === 'object' && module.exports) module.exports = api
   else root.vibeReview = api
 })(this)

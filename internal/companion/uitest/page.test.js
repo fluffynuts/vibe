@@ -1833,7 +1833,7 @@ test('ticking a file as viewed folds it, dims it in the tree, and counts it', as
   try {
     assert.equal(tick(p, 'b.txt').checked, false)
     await p.click(tick(p, 'b.txt'))
-    assert.deepEqual(p.posted('/api/review/do'), [{ op: 'view', file: 'b.txt', code: 'fp-b.txt:1' }])
+    assert.deepEqual(p.posted('/api/review/do'), [{ op: 'view', file: 'b.txt', code: 'fp-b.txt:9f1fda36' }])
     assert.equal(tick(p, 'b.txt').checked, true)
     assert.ok(folded(p, 'b.txt'), 'its diff folded away')
     assert.ok(treeRow(p, 'b.txt').classList.contains('viewed'))
@@ -1850,7 +1850,7 @@ test('a new comment on a viewed file unticks and unfolds it, apart from a code c
   const p = await viewedPage()
   try {
     await p.click(tick(p, 'b.txt'))
-    assert.deepEqual(p.posted('/api/review/do'), [{ op: 'view', file: 'b.txt', code: 'fp-b.txt:1' }])
+    assert.deepEqual(p.posted('/api/review/do'), [{ op: 'view', file: 'b.txt', code: 'fp-b.txt:9f1fda36' }])
     assert.ok(folded(p, 'b.txt'))
     p.at.review = { ...p.at.review, threads: [{ ...p.at.review.threads[0], comments: [...p.at.review.threads[0].comments, { author: 'agent', body: 'and this', at: '2026-10-16T10:05:00Z' }] }] }
     await p.poll()
@@ -1861,7 +1861,7 @@ test('a new comment on a viewed file unticks and unfolds it, apart from a code c
     assert.doesNotMatch(text, /changed since you viewed it/, 'its code did not change, only what is said about it')
     assert.doesNotMatch(p.$('review-tree-count').textContent, /viewed/, 'none are, so nothing is counted as viewed')
     await p.click(tick(p, 'b.txt'))
-    assert.deepEqual(p.posted('/api/review/do')[1], { op: 'view', file: 'b.txt', code: 'fp-b.txt:2' }, 'ticked again, its new total is what is checked against next')
+    assert.deepEqual(p.posted('/api/review/do')[1], { op: 'view', file: 'b.txt', code: 'fp-b.txt:3741f10d' }, 'ticked again, its new digest is what is checked against next')
   } finally { p.close() }
 })
 
@@ -1877,10 +1877,31 @@ test('a file whose change has changed since it was ticked says so, unticked', as
 })
 
 test('the comment arrows pass over comments in viewed files, and say so', async () => {
-  const p = await viewedPage({ 'b.txt': 'fp-b.txt' })
+  const p = await viewedPage({ 'b.txt': 'fp-b.txt:9f1fda36' })
   try {
     assert.equal(p.$('review-count').textContent, '1 comment (1 in viewed files)')
     assert.equal(p.$('review-next-comment').disabled, true)
+  } finally { p.close() }
+})
+
+// A tick from before 'commented' existed (no ':' in it) is read as if it had nothing said about it yet: a comment
+// already there when ticked shows once, the same one-time nudge a code change would give (not left stuck as
+// 'viewed' forever, which would hide it); re-ticked, detection keeps working for whatever lands after that too.
+test('a file ticked viewed in the old, bare format is unfolded once for the comment it already had, and keeps catching new ones after that', async () => {
+  const p = await viewedPage({ 'b.txt': 'fp-b.txt' })
+  try {
+    assert.equal(tick(p, 'b.txt').checked, false, "its one comment predates the tick, but the bare format can't say so: a one-time nudge")
+    assert.equal(folded(p, 'b.txt'), false)
+    assert.match(p.$('review-files').querySelector('[data-path="b.txt"] header').textContent, /commented on since you viewed it/)
+
+    await p.click(tick(p, 'b.txt')) // re-ticked: stored in the new format, which can say so from here on
+    assert.equal(tick(p, 'b.txt').checked, true)
+
+    p.at.review = { ...p.at.review, threads: [{ ...p.at.review.threads[0], comments: [...p.at.review.threads[0].comments, { author: 'agent', body: 'and this', at: '2026-10-16T10:05:00Z' }] }] }
+    await p.poll()
+    assert.equal(tick(p, 'b.txt').checked, false, 'a comment landing after the re-tick really is new, and is still caught')
+    assert.equal(folded(p, 'b.txt'), false)
+    assert.match(p.$('review-files').querySelector('[data-path="b.txt"] header').textContent, /commented on since you viewed it/)
   } finally { p.close() }
 })
 

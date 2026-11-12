@@ -3231,30 +3231,33 @@
     goToWanted()
   }
 
-  // viewedCommentCount is how many comments file f has now: part of what ticking it as viewed stands for, so the
-  // agent commenting on a file folded away is as much a reason to look again as its code changing.
-  function viewedCommentCount(f) {
-    return R.commentsByFile(reviewView.review ? reviewView.review.threads : []).get(f.path) || 0
+  // commentsDigestFor is a short digest of file f's comments now (see review.js's commentsDigest): part of what
+  // ticking it as viewed stands for, so the agent commenting on a file folded away is as much a reason to look
+  // again as its code changing. Unlike a count, a comment undone (deleted, or an edit reverted) isn't mistaken for
+  // nothing having changed, except where that leaves the exact words there were when ticked.
+  function commentsDigestFor(f) {
+    return R.commentsDigest(reviewView.review ? reviewView.review.threads : []).get(f.path) || R.emptyCommentsDigest
   }
 
-  // viewedCode is what a tick of Viewed for file f is checked against later: its fingerprint and its comment count
-  // now, joined by a ':' (never in a fingerprint, which is hex).
+  // viewedCode is what a tick of Viewed for file f is checked against later: its fingerprint and its comments'
+  // digest now, joined by a ':' (never in a fingerprint or a digest, both hex).
   function viewedCode(f) {
-    return f.fingerprint + ':' + viewedCommentCount(f)
+    return f.fingerprint + ':' + commentsDigestFor(f)
   }
 
   // viewedState is whether file f is ticked as viewed: 'viewed', 'changed' (ticked, but its code has changed
   // since), 'commented' (ticked, its code the same, but there's more said about it since), or ''. A tick from
-  // before 'commented' existed (no ':' in it, just the code) is read as if it already had as many comments as it
-  // does now, so updating vibe doesn't itself unfold everything already ticked.
+  // before 'commented' existed (no ':' in it, just the code) is read as if it had none said about it at the time:
+  // what there may already be gets the same one-time nudge a code change would, and updating vibe doesn't itself
+  // unfold everything already ticked that truly has nothing new.
   function viewedState(f) {
     const seen = reviewView.review && reviewView.review.viewed ? reviewView.review.viewed[f.path] : undefined
     if (!seen) return ''
     const sep = seen.lastIndexOf(':')
     const seenCode = sep < 0 ? seen : seen.slice(0, sep)
-    const seenComments = sep < 0 ? String(viewedCommentCount(f)) : seen.slice(sep + 1)
+    const seenComments = sep < 0 ? R.emptyCommentsDigest : seen.slice(sep + 1)
     if (seenCode !== f.fingerprint) return 'changed'
-    if (seenComments !== String(viewedCommentCount(f))) return 'commented'
+    if (seenComments !== commentsDigestFor(f)) return 'commented'
     return 'viewed'
   }
 
