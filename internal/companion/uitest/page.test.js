@@ -1906,35 +1906,75 @@ test('a file ticked viewed in the old, bare format is unfolded once for the comm
 })
 
 // --- keeping a text selection to the side of a split diff it began on ---------------------------------------
+//
+// A native Range spanning several rows of a split diff can't itself skip the other side's cells between its two
+// ends (only its own two ends can be partial; everything strictly between them comes whole) — confirmed for real
+// in Firefox: dragging straight down one side still picked up the other side's text for rows merely passed over.
+// So every cell carries data-side, the browser's own highlight is turned off for them (app.css), and what the user
+// sees (an overlay painted from the selection's own client rects, kept to one side) and what Ctrl+C gives
+// (splitFilteredText) are both corrected instead of relying on the Range stopping itself. The overlay needs real
+// layout (getClientRects), which jsdom doesn't do, so only splitFilteredText — the part that decides what actually
+// gets copied — is tested here; the overlay was checked by hand in a real browser.
 
-const mouse = (node, type) => node.dispatchEvent(new node.ownerDocument.defaultView.MouseEvent(type, { bubbles: true }))
+// splitSelectionPage is a review of one file: an unchanged line (the same text both sides, with a thread on its
+// old side), then a line changed (different text each side) — real content on both sides of every row, so a
+// selection that leaks across sides, or a thread row swept in whole, would show.
+async function splitSelectionPage() {
+  const diff = [{ path: 'x.txt', status: 'modified', fingerprint: 'fp-x', hunks: [{ oldStart: 1, newStart: 1, header: '', lines: [
+    { kind: 'context', old: 1, new: 1, text: 'same both sides' },
+    { kind: 'del', old: 2, text: 'old only' },
+    { kind: 'add', new: 2, text: 'new only' },
+  ] }] }]
+  const review = { ...none, started: '2026-10-16T10:00:00Z', lastId: 1,
+    threads: [{ id: 1, file: 'x.txt', side: 'new', line: 1, endLine: 1, code: 'same both sides', status: 'open', comments: said('on the context line') }] }
+  return openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': () => ({ review, diff }),
+      '/api/review/do': () => ({ review }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+  })
+}
 
-test('starting a selection on one side of a split diff marks the table so the other side is unselectable, until the mouse is let go', async () => {
-  const p = await viewedPage()
+test('a selection spanning several rows of a split diff, including a thread row, copies as only the side it began on', async () => {
+  const p = await splitSelectionPage()
   try {
-    const table = p.$('review-files').querySelector('[data-path="b.txt"] table.review-lines')
+    const table = p.$('review-files').querySelector('[data-path="x.txt"] table.review-lines')
     assert.ok(table.classList.contains('split'), 'split is the default layout')
-    const row = Array.from(table.rows).find((r) => !r.classList.contains('hunk') && !r.classList.contains('threads') && r.cells.length === 6)
-    const thread = Array.from(table.rows).find((r) => r.classList.contains('threads'))
-    assert.ok(row && thread, 'both a line row and a thread row are there to test')
+    assert.ok(Array.from(table.querySelectorAll('[data-side]')).some((c) => c.dataset.side === 'old'))
+    assert.ok(Array.from(table.querySelectorAll('[data-side]')).some((c) => c.dataset.side === 'new'))
 
-    mouse(row.cells[0], 'mousedown') // the old side's line number
-    assert.ok(table.classList.contains('select-old'))
-    assert.ok(!table.classList.contains('select-new'))
-    mouse(p.window.document.body, 'mouseup')
-    assert.ok(!table.classList.contains('select-old'), 'let go, so the next drag decides afresh')
+    const rows = Array.from(table.rows).filter((r) => !r.classList.contains('hunk'))
+    const contextOld = rows.find((r) => r.cells.length === 6).querySelector('td.code[data-side="old"]')
+    const thread = rows.find((r) => r.classList.contains('threads'))
+    const delOld = rows.reverse().find((r) => r.cells.length === 6).querySelector('td.code[data-side="old"]')
+    assert.ok(contextOld && thread && delOld, 'a context row, a thread row and the changed row are all there to span')
+    assert.equal(contextOld.textContent, 'same both sides')
+    assert.equal(delOld.textContent, 'old only')
 
-    mouse(row.cells[5], 'mousedown') // the new side's code
-    assert.ok(table.classList.contains('select-new'))
-    assert.ok(!table.classList.contains('select-old'))
-    mouse(p.window.document.body, 'mouseup')
+    const range = p.window.document.createRange()
+    range.setStart(contextOld.firstChild, 0)
+    range.setEnd(delOld.firstChild, delOld.firstChild.length)
+    // The Range itself really does span both sides (this is the bug splitFilteredText works around): it reaches
+    // the thread row's new side, which only has "on the context line" written on its old side.
+    assert.match(range.cloneContents().textContent, /on the context line/)
 
-    mouse(thread.cells[0], 'mousedown') // the thread row's old side (colspan 3, one cell)
-    assert.ok(table.classList.contains('select-old'))
-    mouse(p.window.document.body, 'mouseup')
+    const sel = p.window.getSelection()
+    sel.removeAllRanges()
+    sel.addRange(range)
+    let copied = null
+    const fakeClipboard = { setData: (type, text) => { if (type === 'text/plain') copied = text } }
+    const ev = new p.window.Event('copy', { bubbles: true, cancelable: true })
+    Object.defineProperty(ev, 'clipboardData', { value: fakeClipboard })
+    p.window.document.dispatchEvent(ev)
 
-    mouse(thread.cells[1], 'mousedown') // its new side
-    assert.ok(table.classList.contains('select-new'))
+    assert.ok(copied !== null, 'the copy handler ran')
+    assert.match(copied, /same both sides/)
+    assert.match(copied, /old only/)
+    assert.doesNotMatch(copied, /new only/, "the changed row's new-side text leaked in")
+    assert.doesNotMatch(copied, /on the context line/, "the thread's text leaked in")
   } finally { p.close() }
 })
 

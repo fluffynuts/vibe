@@ -2196,30 +2196,71 @@
     })
   }
 
-  // splitSelectSide is which side of a split diff's table td belongs to: every row of it is built old side first,
-  // new side after, whether as three cells each (a line's number, its +/- and its code) or, on a row of threads or
-  // a comment being written, one cell each (colspan 3): td.cellIndex says which, the same way for every row.
-  function splitSelectSide(td) {
-    const inThreads = td.closest('tr').classList.contains('threads')
-    return td.cellIndex < (inThreads ? 1 : 3) ? 'old' : 'new'
+  // splitSide is which side of a split diff node (a text node or an element, anywhere under one of its cells) is
+  // on, from the data-side its nearest cell carries; null for a node that isn't under one.
+  function splitSide(node) {
+    const from = node.nodeType === 3 ? node.parentElement : node
+    const cell = from && from.closest && from.closest('[data-side]')
+    return cell ? cell.dataset.side : null
+  }
+
+  // splitFilteredText is range's text with every node on the side opposite side removed first: what copying a
+  // selection that began on one side of a split diff must give. A single Range can't itself skip the other side's
+  // cells that fall between its two ends — only its own two ends can be partial; everything strictly between them
+  // comes whole — so what it would naturally give is filtered after the fact instead.
+  function splitFilteredText(range, side) {
+    const frag = range.cloneContents()
+    const walker = document.createTreeWalker(frag, NodeFilter.SHOW_ELEMENT)
+    const strip = []
+    let node
+    while ((node = walker.nextNode())) {
+      if (node.dataset.side && node.dataset.side !== side) strip.push(node)
+    }
+    for (const node of strip) node.remove()
+    return frag.textContent
+  }
+
+  // splitSelectionOverlay is where setUpSplitSelection paints a selection begun on one side of a split diff, kept
+  // to it: the browser's own highlight is turned off for these cells (app.css), since, as splitFilteredText says,
+  // it can't be trusted to stay on one side by itself.
+  let splitSelectionOverlay = null
+
+  // repaintSplitSelection draws splitSelectionOverlay from the current selection's own (so line-wrap-aware) client
+  // rects, keeping only those that land on the side the selection began on (its anchor's).
+  function repaintSplitSelection() {
+    if (!splitSelectionOverlay) return
+    splitSelectionOverlay.replaceChildren()
+    const sel = window.getSelection()
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return
+    const side = splitSide(sel.anchorNode)
+    if (!side) return
+    for (const r of sel.getRangeAt(0).getClientRects()) {
+      const under = document.elementFromPoint(r.left + 1, r.top + r.height / 2)
+      if (splitSide(under) !== side) continue
+      const mark = el('div', { class: 'split-selection-mark' })
+      mark.style.left = r.left + 'px'
+      mark.style.top = r.top + 'px'
+      mark.style.width = r.width + 'px'
+      mark.style.height = r.height + 'px'
+      splitSelectionOverlay.append(mark)
+    }
   }
 
   // setUpSplitSelection keeps a text selection begun on one side of a split diff to it: dragging from code into a
-  // suggested edit must not carry the other side's lines in with it. The other side is made unselectable for as
-  // long as the drag lasts (a selection already under way isn't undone by it, only kept from growing into it), and
-  // let go again once the mouse is, so the next drag decides afresh.
+  // suggested edit must not carry the other side's lines in with it. The real selection is left alone (so
+  // double-click, shift-click and keyboard extension all still work); what the user sees, and what Ctrl+C gives,
+  // are both corrected instead.
   function setUpSplitSelection() {
-    document.addEventListener('mousedown', (ev) => {
-      const table = ev.target.closest && ev.target.closest('table.review-lines.split')
-      const td = table && ev.target.closest('td')
-      if (!td) return
-      table.classList.remove('select-old', 'select-new')
-      table.classList.add('select-' + splitSelectSide(td))
-    })
-    document.addEventListener('mouseup', () => {
-      for (const table of document.querySelectorAll('table.review-lines.split.select-old, table.review-lines.split.select-new')) {
-        table.classList.remove('select-old', 'select-new')
-      }
+    splitSelectionOverlay = el('div', { id: 'split-selection-overlay' })
+    document.body.append(splitSelectionOverlay)
+    document.addEventListener('selectionchange', repaintSplitSelection)
+    document.addEventListener('copy', (ev) => {
+      const sel = window.getSelection()
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return
+      const side = splitSide(sel.anchorNode)
+      if (!side || !ev.clipboardData) return
+      ev.clipboardData.setData('text/plain', splitFilteredText(sel.getRangeAt(0), side))
+      ev.preventDefault()
     })
   }
 
@@ -2260,8 +2301,8 @@
   function sideRow(columns, left, right) {
     if (columns !== '6') return el('tr', { class: 'threads' }, el('td', { colspan: columns }, ...left, ...right))
     return el('tr', { class: 'threads' },
-      el('td', { colspan: '3', class: 'side' + (left.length ? '' : ' empty') }, ...left),
-      el('td', { colspan: '3', class: 'side start' + (right.length ? '' : ' empty') }, ...right))
+      el('td', { colspan: '3', class: 'side' + (left.length ? '' : ' empty'), 'data-side': 'old' }, ...left),
+      el('td', { colspan: '3', class: 'side start' + (right.length ? '' : ' empty'), 'data-side': 'new' }, ...right))
   }
 
   const submitComposer = once(async () => {
@@ -3470,8 +3511,10 @@
       shownLine(f.path, 'new', n, text)
       const half = (number, side) => {
         const sel = inComposer(f.path, side, number) ? ' sel' : ''
-        return [el('td', { class: 'num context' + sel }, String(number), lineButton(f.path, side, number, text, { old, new: n })),
-          el('td', { class: 'sign' + sel }), codeCell('code context' + sel, f, 'new', n, text)]
+        const code = codeCell('code context' + sel, f, 'new', n, text)
+        code.dataset.side = side
+        return [el('td', { class: 'num context' + sel, 'data-side': side }, String(number), lineButton(f.path, side, number, text, { old, new: n })),
+          el('td', { class: 'sign' + sel, 'data-side': side }), code]
       }
       const classes = [gapped.marked.has(n) ? 'marked' : '', inComposer(f.path, 'old', old) || inComposer(f.path, 'new', n) ? 'selected' : ''].filter(Boolean).join(' ')
       const row = split
@@ -3515,14 +3558,16 @@
         if (split) {
           // Each side's line, or a blank where that side has none.
           const half = (index, number, start, row) => {
-            if (index === null) return ['num', 'sign', 'code'].map((c) => el('td', { class: c + ' blank' + (start ? ' start' : '') }))
+            if (index === null) return ['num', 'sign', 'code'].map((c) => el('td', { class: c + ' blank' + (start ? ' start' : ''), 'data-side': number }))
             const l = h.lines[index]
             const side = number === 'old' ? 'old' : 'new'
             shownLine(f.path, side, l[number], l.text)
             const sel = inComposer(f.path, side, l[number]) ? ' sel' : ''
-            return [el('td', { class: 'num ' + l.kind + (start ? ' start' : '') + sel }, String(l[number] || ''), lineButton(f.path, side, l[number], l.text, row)),
-              el('td', { class: 'sign ' + l.kind + sel, text: signOf(l.kind) }),
-              codeCell('code ' + l.kind + sel, f, side, l[number], l.text)]
+            const code = codeCell('code ' + l.kind + sel, f, side, l[number], l.text)
+            code.dataset.side = side
+            return [el('td', { class: 'num ' + l.kind + (start ? ' start' : '') + sel, 'data-side': side }, String(l[number] || ''), lineButton(f.path, side, l[number], l.text, row)),
+              el('td', { class: 'sign ' + l.kind + sel, text: signOf(l.kind), 'data-side': side }),
+              code]
           }
           for (const row of R.sideBySide(h)) {
             const keys = [...new Set([row.left, row.right].filter((i) => i !== null).map((i) => hi + ':' + i))]
