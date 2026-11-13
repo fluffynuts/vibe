@@ -272,11 +272,34 @@ func TestChangesRunTheScopedSbxCommandAndSayWhich(t *testing.T) {
 	do(t, s, post("/api/remove", `{"id":"r-1"}`))
 	want := [][]string{
 		{"policy", "allow", "network", "--sandbox", "vibe", "api.example.com"},
+		{"policy", "ls", "vibe", "--json", "--wide", "--type", "network"}, // a block looks at the rules first
 		{"policy", "deny", "network", "--sandbox", "vibe", "ads.example.com"},
 		{"policy", "rm", "network", "--sandbox", "vibe", "--id", "r-1", "--force"},
 	}
 	if !reflect.DeepEqual(sbx.called(), want) {
 		t.Errorf("calls = %v, want %v", sbx.called(), want)
+	}
+}
+
+func TestBlockRemovesTheShownRuleThatConflictsAndSaysSo(t *testing.T) {
+	sbx := &fakeSbx{out: map[string]string{
+		"ls-network": `{"rules": [{"id":"r-1","resources":["www.kernel.org:443"],"decision":"allow","origin":"local","scope":"sandbox:vibe","editable":true,"status":"active"}]}`,
+	}}
+	s := newServer(sbx)
+	w := do(t, s, post("/api/deny", `{"host":"www.kernel.org:443","remove":["r-1"]}`))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "--id r-1") {
+		t.Errorf("answer %s does not name the removal", w.Body)
+	}
+	last := sbx.called()[len(sbx.called())-1]
+	if !reflect.DeepEqual(last, []string{"policy", "rm", "network", "--sandbox", "vibe", "--id", "r-1", "--force"}) {
+		t.Errorf("last call = %v", last)
+	}
+	w = do(t, s, post("/api/deny", `{"host":"www.kernel.org:443","remove":[]}`))
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "changed") {
+		t.Errorf("a block of rules that are not the ones shown was done: %d %s", w.Code, w.Body)
 	}
 }
 

@@ -5,7 +5,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const { openPage } = require('./page.js')
 
-const rule = (over) => ({ id: 'r-exact', name: '', resources: ['www.kernel.org:443'], source: 'local', scope: 'sandbox:box', removable: true, wider: false, ...over })
+const rule = (over) => ({ id: 'r-exact', name: '', resources: ['www.kernel.org:443'], source: 'local', scope: 'sandbox:box', removable: true, wider: false, identical: true, ...over })
 const unblocked = (allowedBy) => ({ host: 'www.kernel.org:443', decision: 'unblocked', hits: 1, lastSeen: '2026-11-12T12:39:25Z', rule: '', ...(allowedBy ? { allowedBy } : {}) })
 
 async function logPage(entries, routes = {}) {
@@ -29,7 +29,7 @@ const posted = (p, path) => p.calls.filter((c) => c.path === path).map((c) => c.
 const ask = (p) => ({ title: p.$('confirm-title').textContent, text: p.$('confirm-text').textContent, list: p.$('confirm-list').textContent, command: p.$('confirm-command').textContent })
 const run = async (p) => { p.$('confirm').close('run'); await p.settle() }
 
-test('Block on an unblocked host asks to remove the rule that allows it, and runs the removal, not a deny', async () => {
+test("Block on a host the sandbox's own rule allows asks to remove that rule, and sends the removal with the block: nothing is added when nothing else allows it", async () => {
   const p = await logPage([unblocked([rule({ name: 'for kernel work' })])])
   try {
     await p.click(block(p))
@@ -39,50 +39,58 @@ test('Block on an unblocked host asks to remove the rule that allows it, and run
     assert.match(q.list, /for kernel work/)
     assert.match(q.list, /www\.kernel\.org:443/)
     assert.match(q.command, /sbx policy rm network --sandbox box --id r-exact --force/)
+    assert.doesNotMatch(q.command, /policy deny/, 'a block is announced beside nothing that needs one')
     assert.doesNotMatch(q.text, /also allows/, 'a rule for this host alone is not said to allow more')
     await run(p)
-    assert.deepEqual(posted(p, '/api/remove'), [{ id: 'r-exact' }])
-    assert.deepEqual(posted(p, '/api/deny'), [], 'a deny was sent beside the allow rule: sbx refuses it')
-    assert.match(p.$('toast').textContent, /blocked again/i)
+    assert.deepEqual(posted(p, '/api/deny'), [{ host: 'www.kernel.org:443', remove: ['r-exact'] }])
+    assert.deepEqual(posted(p, '/api/remove'), [], 'the removal is the server\'s, in the one request')
+    assert.match(p.$('toast').textContent, /blocked/i)
   } finally { p.close() }
 })
 
-test('a rule that allows more than the host says so, naming what else it allows', async () => {
-  const p = await logPage([unblocked([rule({ id: 'r-wild', resources: ['*.kernel.org', 'git.example.org'], wider: true })])])
+test('a rule that also allows other hosts says so, naming them', async () => {
+  const p = await logPage([unblocked([rule({ id: 'r-multi', resources: ['www.kernel.org:443', 'git.example.org'], wider: true })])])
   try {
     await p.click(block(p))
     const q = ask(p)
     assert.match(q.text, /also allows/)
-    assert.match(q.text, /\*\.kernel\.org/)
     assert.match(q.text, /git\.example\.org/)
-    assert.match(q.text, /blocked too/i)
+    assert.doesNotMatch(q.text, /www\.kernel\.org:443,/, 'the host itself is listed as something else it allows')
   } finally { p.close() }
 })
 
-test('every rule that allows the host is removed, one after another', async () => {
-  const p = await logPage([unblocked([rule({ id: 'one' }), rule({ id: 'two', resources: ['*.kernel.org'], wider: true })])])
+// A deny beats any allow, and sbx refuses it only beside an allow of the identical resource: so a wildcard stays, and a block is added.
+test("a wider rule that still allows the host is left alone, and a block is added beside it", async () => {
+  const p = await logPage([unblocked([rule({ id: 'exact' }), rule({ id: 'r-wild', resources: ['*.kernel.org'], wider: true, identical: false })])])
   try {
     await p.click(block(p))
-    assert.match(ask(p).command, /--id one --force[\s\S]*--id two --force/)
+    const q = ask(p)
+    assert.match(q.command, /sbx policy rm network --sandbox box --id exact --force/)
+    assert.doesNotMatch(q.command, /--id r-wild/, 'the wildcard is removed, blocking every host under it')
+    assert.match(q.command, /sbx policy deny network --sandbox box www\.kernel\.org:443/)
+    assert.match(q.text, /\*\.kernel\.org/)
+    assert.match(q.text, /still allow/)
     await run(p)
-    assert.deepEqual(posted(p, '/api/remove'), [{ id: 'one' }, { id: 'two' }])
+    assert.deepEqual(posted(p, '/api/deny'), [{ host: 'www.kernel.org:443', remove: ['exact'] }])
   } finally { p.close() }
 })
 
-test('when a removal fails the rest are not tried, and the failure is said', async () => {
-  let n = 0
-  const p = await logPage([unblocked([rule({ id: 'one' }), rule({ id: 'two' })])], {
-    '/api/remove': () => (n++ === 0 ? { status: 500, body: { error: 'sbx said no' } } : { command: 'x' }),
-  })
+test("a global rule that allows the host is never removed: a block is added for this sandbox, and the rule said to stay", async () => {
+  const p = await logPage([unblocked([rule({ id: 'g', scope: 'global', name: 'g', removable: true })])])
   try {
     await p.click(block(p))
+    assert.equal(p.$('confirm').open, true, 'refused what sbx accepts: a sandbox deny beside a global allow')
+    const q = ask(p)
+    assert.doesNotMatch(q.command, /policy rm/)
+    assert.match(q.command, /sbx policy deny network --sandbox box www\.kernel\.org:443/)
+    assert.match(q.text, /global/i)
+    assert.match(q.text, /not changed|left alone|stays/i)
     await run(p)
-    assert.deepEqual(posted(p, '/api/remove'), [{ id: 'one' }], 'went on after a failure')
-    assert.match(p.$('toast').textContent, /sbx said no/)
+    assert.deepEqual(posted(p, '/api/deny'), [{ host: 'www.kernel.org:443', remove: [] }])
   } finally { p.close() }
 })
 
-test('a rule that cannot be removed from here is explained, and nothing is sent', async () => {
+test("a rule of the sandbox's own that can't be removed from here, beside which sbx won't add a block, is explained, and nothing is sent", async () => {
   const p = await logPage([unblocked([rule({ id: 'ok-one' }), rule({ id: 'org-rule', name: 'company policy', removable: false, source: 'organisation' })])])
   try {
     await p.click(block(p))
@@ -90,8 +98,17 @@ test('a rule that cannot be removed from here is explained, and nothing is sent'
     assert.match(p.$('toast').textContent, /company policy/)
     assert.match(p.$('toast').textContent, /can't be removed here/)
     assert.match(p.$('toast').textContent, /organisation/)
-    assert.deepEqual(posted(p, '/api/remove'), [], 'removed the rule that could be, leaving the host half unblocked')
-    assert.deepEqual(posted(p, '/api/deny'), [])
+    assert.deepEqual(posted(p, '/api/deny'), [], 'removed the rule that could be, leaving the host half unblocked')
+    assert.deepEqual(posted(p, '/api/remove'), [])
+  } finally { p.close() }
+})
+
+test('when the server says it did not all happen, the page says that', async () => {
+  const p = await logPage([unblocked([rule()])], { '/api/deny': { status: 502, body: { error: 'removed r-exact, but the block could not be added' } } })
+  try {
+    await p.click(block(p))
+    await run(p)
+    assert.match(p.$('toast').textContent, /removed r-exact, but the block could not be added/)
   } finally { p.close() }
 })
 
@@ -106,14 +123,23 @@ test('an unblocked host the server named no rule for is blocked as it always was
   } finally { p.close() }
 })
 
-test('Block on an allowed host, one never blocked, is as it always was', async () => {
+test('Block on an allowed host, one never blocked, has the same dialog when a rule of the sandbox allows it', async () => {
+  const p = await logPage([{ host: 'www.kernel.org:443', decision: 'allowed', hits: 4, lastSeen: '2026-11-12T12:39:25Z', rule: '', allowedBy: [rule()] }])
+  try {
+    await p.click(block(p))
+    assert.match(ask(p).command, /sbx policy rm network --sandbox box --id r-exact --force/)
+    await run(p)
+    assert.deepEqual(posted(p, '/api/deny'), [{ host: 'www.kernel.org:443', remove: ['r-exact'] }])
+  } finally { p.close() }
+})
+
+test('Block on an allowed host with no rule named is a plain deny', async () => {
   const p = await logPage([{ host: 'www.kernel.org:443', decision: 'allowed', hits: 4, lastSeen: '2026-11-12T12:39:25Z', rule: '' }])
   try {
     await p.click(block(p))
     assert.match(ask(p).command, /sbx policy deny network/)
     await run(p)
     assert.deepEqual(posted(p, '/api/deny'), [{ host: 'www.kernel.org:443' }])
-    assert.deepEqual(posted(p, '/api/remove'), [])
   } finally { p.close() }
 })
 
@@ -171,31 +197,5 @@ test('an ordinary poll of the Network log does not show the sign at once', async
     const spinner = p.$('log-refreshing')
     assert.ok(spinner.classList.contains('on'))
     assert.equal(spinner.classList.contains('at-once'), false)
-  } finally { p.close() }
-})
-
-// sbx refuses `rm --sandbox X` for a rule of the global policy ("exists in the global policy, not in sandbox X"), so offering that is
-// offering what fails, after the user has confirmed it. The page says up front, with the command that does remove it.
-test('a global rule is not offered for removal here: it is explained, with the command that removes it for every sandbox', async () => {
-  const p = await logPage([unblocked([rule({ id: UUID, name: UUID, resources: ['www.kernel.org'], scope: 'global', source: 'local', removable: true })])])
-  try {
-    await p.click(block(p))
-    assert.equal(p.$('confirm').open, false, 'asked to confirm what sbx will refuse')
-    const said = p.$('toast').textContent
-    assert.match(said, /global rule/)
-    assert.match(said, /every sandbox/)
-    assert.ok(said.includes('sbx policy rm network --id ' + UUID), 'the command that removes it is not given: ' + said)
-    assert.doesNotMatch(said, /--sandbox/, 'the command is for the sandbox alone, which sbx refuses for a global rule')
-    assert.deepEqual(posted(p, '/api/remove'), [])
-    assert.deepEqual(posted(p, '/api/deny'), [])
-  } finally { p.close() }
-})
-
-test("a global rule beside one of the sandbox's own removes nothing: the host would be left unblocked", async () => {
-  const p = await logPage([unblocked([rule({ id: 'mine' }), rule({ id: UUID, name: UUID, scope: 'global', resources: ['www.kernel.org'] })])])
-  try {
-    await p.click(block(p))
-    assert.equal(p.$('confirm').open, false)
-    assert.deepEqual(posted(p, '/api/remove'), [], "removed the sandbox's own rule and left the global one")
   } finally { p.close() }
 })

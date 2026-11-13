@@ -100,6 +100,10 @@ type RuleRef struct {
 	// wildcard, or another host in the same rule), so removing it blocks
 	// those too.
 	Wider bool `json:"wider"`
+	// Identical says one of the rule's resources is exactly the host, port
+	// and all (case aside): if the rule is the sandbox's own, sbx refuses a
+	// deny of the host beside it.
+	Identical bool `json:"identical"`
 }
 
 // Rule is one policy rule that applies to the sandbox.
@@ -218,22 +222,43 @@ func (r Rule) implicitFallback() bool {
 	return true
 }
 
+// active says whether a rule counts: not one that is off, and not sbx's
+// own fallback (implicitFallback).
+func (r Rule) active() bool {
+	st := strings.ToLower(r.Status)
+	return !strings.Contains(st, "inactive") && !strings.Contains(st, "suppress") && !r.implicitFallback()
+}
+
+// sameResource says a rule's resource is exactly host, port and all.
+func sameResource(resource, host string) bool {
+	return strings.EqualFold(strings.TrimSpace(resource), strings.TrimSpace(host))
+}
+
+func identicalTo(resources []string, host string) bool {
+	for _, res := range resources {
+		if sameResource(res, host) {
+			return true
+		}
+	}
+	return false
+}
+
 // Resolve marks as Unblocked each blocked entry whose host is allowed by a
 // rule and denied by none: a deny wins over an allow. The fallback deny sbx
-// lists (implicitFallback) is none: it matches every host.
+// lists (implicitFallback) is none: it matches every host. Each entry that
+// is, or has become, allowed says which rules allow it (AllowedBy).
 func Resolve(log Log, rules Rules) Log {
 	out := log
 	out.Entries = make([]LogEntry, len(log.Entries))
 	copy(out.Entries, log.Entries)
 	for i, e := range out.Entries {
-		if e.Decision != Blocked {
+		if e.Decision != Blocked && e.Decision != Allowed {
 			continue
 		}
 		allowed, denied := false, false
 		var allowedBy []RuleRef
 		for _, r := range rules.Rules {
-			st := strings.ToLower(r.Status)
-			if strings.Contains(st, "inactive") || strings.Contains(st, "suppress") || r.implicitFallback() {
+			if !r.active() {
 				continue
 			}
 			listed := false
@@ -248,13 +273,15 @@ func Resolve(log Log, rules Rules) Log {
 					if !listed {
 						listed = true
 						allowedBy = append(allowedBy, RuleRef{ID: r.ID, Name: r.Name, Resources: r.Resources, Source: r.Source, Scope: r.Scope,
-							Removable: r.Removable, Wider: reachesFurther(r.Resources, e.Host)})
+							Removable: r.Removable, Wider: reachesFurther(r.Resources, e.Host), Identical: identicalTo(r.Resources, e.Host)})
 					}
 				}
 			}
 		}
 		if allowed && !denied {
-			out.Entries[i].Decision = Unblocked
+			if e.Decision == Blocked {
+				out.Entries[i].Decision = Unblocked
+			}
 			out.Entries[i].AllowedBy = allowedBy
 		}
 	}
@@ -360,6 +387,116 @@ func (c *Client) Deny(host string) error {
 	}
 	_, err := c.run(c.DenyCommand(host)...)
 	return err
+}
+
+// Block stops the sandbox reaching host, whatever allows it now. sbx refuses a deny beside an allow of the identical resource
+// in the same scope, and beside no other (a deny beats any allow, wider or global ones included), so:
+//   - the sandbox's own allow rules for exactly host are removed, and removing is the ids of those the user was shown: if the
+//     rules are not those now, nothing is done;
+//   - a deny is then added, unless the removal left nothing that allows host (a host no rule allowed is blocked already) or a
+//     deny already covers it.
+//
+// Global rules are never touched. It returns the last sbx command run, nil if none was needed. A removal made before a
+// failure is said in the error.
+func (c *Client) Block(host string, removing []string) ([]string, error) {
+	if err := c.check(host); err != nil {
+		return nil, err
+	}
+	for _, id := range removing {
+		if err := ValidRuleID(id); err != nil {
+			return nil, err
+		}
+	}
+	rules, err := c.NetworkRules()
+	if err != nil {
+		return nil, err
+	}
+	own := "sandbox:" + c.Sandbox
+	var conflicting []Rule
+	stillAllowed, denied := false, false
+	for _, r := range rules.Rules {
+		if !r.active() {
+			continue
+		}
+		covers := false
+		for _, res := range r.Resources {
+			covers = covers || hostMatches(res, host)
+		}
+		switch {
+		case r.Decision == Blocked && covers:
+			denied = true
+		case r.Decision == Allowed && covers && r.Scope == own && identicalTo(r.Resources, host):
+			conflicting = append(conflicting, r)
+		case r.Decision == Allowed && covers:
+			stillAllowed = true
+		}
+	}
+	found := make([]string, len(conflicting))
+	for i, r := range conflicting {
+		found[i] = r.ID
+	}
+	if !sameIDs(found, removing) {
+		return nil, Refused{"the rules for " + host + " have changed since you were shown them: look at the log again"}
+	}
+	for _, r := range conflicting {
+		if !r.Removable {
+			return nil, Refused{fmt.Sprintf("a rule that allows %s (%s) can't be removed from here, and sbx won't add a block beside it", host, ruleName(r))}
+		}
+	}
+	var last []string
+	var removed []string
+	for _, r := range conflicting {
+		last = c.RemoveCommand(r.ID)
+		if _, err := c.run(last...); err != nil {
+			if len(removed) > 0 {
+				return last, fmt.Errorf("removed %s, but removing %s failed: %w", strings.Join(removed, ", "), ruleName(r), err)
+			}
+			return last, err
+		}
+		removed = append(removed, ruleName(r))
+	}
+	if denied || (len(conflicting) > 0 && !stillAllowed) {
+		return last, nil
+	}
+	last = c.DenyCommand(host)
+	if _, err := c.run(last...); err != nil {
+		if len(removed) > 0 {
+			return last, fmt.Errorf("removed %s, but the block could not be added, so %s is still allowed by another rule: %w", strings.Join(removed, ", "), host, err)
+		}
+		return last, err
+	}
+	return last, nil
+}
+
+// Refused is a change vibe would not make, as opposed to one sbx failed to: nothing was run.
+type Refused struct{ Why string }
+
+func (r Refused) Error() string { return r.Why }
+
+func ruleName(r Rule) string {
+	if r.Name != "" && r.Name != r.ID {
+		return r.Name + " (" + r.ID + ")"
+	}
+	return r.ID
+}
+
+func sameIDs(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := map[string]int{}
+	for _, id := range a {
+		seen[id]++
+	}
+	for _, id := range b {
+		seen[id]--
+	}
+	for _, n := range seen {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // Remove removes one of the sandbox's own network rules.

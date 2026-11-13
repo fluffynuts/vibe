@@ -1365,13 +1365,9 @@
       return el('button', { type: 'button', class: 'small', text: 'Allow',
         onclick: () => confirmChange('allow', entry.host, [entry.host]) })
     }
-    if (entry.decision === 'unblocked') {
+    if (entry.decision === 'unblocked' || entry.decision === 'allowed') {
       return el('button', { type: 'button', class: 'small ghost', text: 'Block',
-        onclick: () => blockUnblocked(entry) })
-    }
-    if (entry.decision === 'allowed') {
-      return el('button', { type: 'button', class: 'small ghost', text: 'Block',
-        onclick: () => confirmChange('deny', entry.host, [entry.host]) })
+        onclick: () => blockCovered(entry) })
     }
     return null
   }
@@ -1479,43 +1475,54 @@
   // ruleLine says what a rule allows, and which it is by its short id (the whole one is in the command shown with it).
   const ruleLine = (r) => (ruleName(r) ? ruleName(r) + ': allows ' : 'Allows ') + (r.resources || []).join(', ') + (r.id ? ' (rule ' + shortId(r.id) + ')' : '')
 
-  // blockUnblocked blocks a host that was blocked and is allowed now by a rule. sbx refuses a deny beside an allow for the
-  // same host, so the rule(s) that allow it are removed instead, and the host goes back to being blocked: after saying what else
-  // they allow, which goes with them. A rule that can't be removed from here is said so, and nothing is removed: the
-  // host would be left half unblocked.
-  function blockUnblocked(entry) {
+  // blockCovered blocks a host that a rule allows (it was blocked and is let through now, or it never was blocked). sbx refuses a deny
+  // beside an allow of the identical resource for the same sandbox, and beside no other: a deny beats any allow, a wildcard's and a
+  // global rule's included. So the sandbox's own rules for exactly this host are removed (the server does it, the ones named here
+  // and no others), and a block is added if another rule still allows the host: that rule is left alone. A rule of the sandbox that
+  // can't be removed from here is said so, and nothing is done: the host would be left half unblocked.
+  function blockCovered(entry) {
     const rules = entry.allowedBy || []
     if (!rules.length) { confirmChange('deny', entry.host, [entry.host]); return }
-    const stuck = rules.filter((r) => !r.removable || !r.id || isGlobalRule(r))
+    const mine = (r) => r.identical && !isGlobalRule(r)
+    const conflicts = rules.filter(mine)
+    const staying = rules.filter((r) => !mine(r))
+    const stuck = conflicts.filter((r) => !r.removable || !r.id)
     if (stuck.length) {
       toast("Can't block " + entry.host + ' from here: ' +
-        stuck.map((r) => isGlobalRule(r)
-          ? globalRuleNote(r)
-          : ruleLabel(r) + " allows it, and can't be removed here" + (r.source ? ' (it comes from ' + r.source + ')' : '')).join('; ') +
-        '. Nothing was removed.', true)
+        stuck.map((r) => ruleLabel(r) + " allows it, and can't be removed here" + (r.source ? ' (it comes from ' + r.source + ')' : '')).join('; ') +
+        '. Nothing was changed.', true)
       return
     }
     const here = bareHost(entry.host)
-    const others = Array.from(new Set(rules.filter((r) => r.wider).flatMap((r) => (r.resources || []).filter((x) => bareHost(x) !== here))))
+    const others = Array.from(new Set(conflicts.filter((r) => r.wider).flatMap((r) => (r.resources || []).filter((x) => bareHost(x) !== here))))
+    const adds = staying.length > 0 || !conflicts.length
+    const some = (list, one, many) => (list.length === 1 ? one : many)
+    const text = []
+    if (conflicts.length) {
+      text.push("sbx won't add a block beside " + some(conflicts, 'a rule', 'rules') + ' that allow' + some(conflicts, 's', '') + ' exactly this host, so ' +
+        some(conflicts, 'it is', 'they are') + ' removed.')
+      if (others.length) text.push('What is removed also allows ' + others.join(', ') + ', which goes with it.')
+    }
+    if (staying.length) {
+      const global = staying.some(isGlobalRule)
+      text.push((conflicts.length ? 'Then a block is added' : 'A block is added') + ', because ' + staying.map(ruleLabel).join(', ') + ' still ' +
+        some(staying, 'allows', 'allow') + ' it' + (global ? ' (a global rule applies to every sandbox)' : '') + ': ' +
+        some(staying, 'that rule is', 'those rules are') + ' not changed, and a block wins over an allow.')
+    }
+    text.push('The change applies to this sandbox only.')
+    const commands = conflicts.map((r) => 'sbx policy rm network --sandbox ' + state.sandbox + ' --id ' + r.id + ' --force')
+    if (adds) commands.push('sbx policy deny network --sandbox ' + state.sandbox + ' ' + entry.host)
     confirmThen({
       title: 'Block ' + entry.host + '?',
-      text: "sbx won't add a block beside a rule that allows the host, so " + (rules.length === 1 ? 'the rule that allows it is' : 'the rules that allow it are') +
-        ' removed instead, and the host is blocked again. The change applies to this sandbox only.' +
-        (others.length ? ' What is removed also allows ' + others.join(', ') + ', which are blocked too.' : ''),
-      list: rules.map(ruleLine),
-      command: rules.map((r) => 'sbx policy rm network --sandbox ' + state.sandbox + ' --id ' + r.id + ' --force').join('\n'),
+      text: text.join(' '),
+      list: conflicts.map(ruleLine).concat(staying.map((r) => ruleLine(r) + ' (stays)')),
+      command: commands.join('\n'),
       danger: true,
       affects: [entry.host],
-      runLabel: rules.length === 1 ? 'Remove the rule' : 'Remove the rules',
-      started: 'Blocked again: ' + (rules.length === 1 ? 'the rule that allowed it is removed.' : 'the ' + rules.length + ' rules that allowed it are removed.'),
-      run: async () => {
-        let res
-        for (const r of rules) {
-          res = await post('/api/remove', { id: r.id })
-          if (!res.ok) return res
-        }
-        return res
-      },
+      runLabel: conflicts.length ? (adds ? 'Remove and block' : some(conflicts, 'Remove the rule', 'Remove the rules')) : 'Block',
+      started: !conflicts.length ? null : 'Blocked' + (adds ? ': ' : ' again: ') +
+        some(conflicts, 'the rule that allowed it is removed', 'the ' + conflicts.length + ' rules that allowed it are removed') + (adds ? ', and a block is added.' : '.'),
+      run: () => post('/api/deny', { host: entry.host, remove: conflicts.map((r) => r.id) }),
     })
   }
 
