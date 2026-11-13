@@ -40,7 +40,7 @@ allow rule for this sandbox" (it said "a allowed rule"). A rule with many resour
 
 ### 4. A sign that a list is being read, shown at once after a change
 
-The Network log, Network rules and Filesystem rules tabs each have the existing spinner beside their filters, in a slot of its own so nothing moves. It **fades in
+The Network log and Network rules tabs each have the existing spinner beside their filters, in a slot of its own so nothing moves. It **fades in
 only after 0.2 seconds** (a CSS transition delay, no timer), so the quick read of every poll does not flicker; and **at once** (`at-once`) for the read that follows a
 rule being changed, which waits for sbx for a second or two. Nothing is disabled while it shows: the user may be allowing a host.
 
@@ -65,7 +65,8 @@ again counts as new). The blocked-host notice and the tab's dot are as before; w
 
 ### 6. A filter on the rules tabs, like the log's
 
-Typing in **Filter rules** (right of the add-rule form on Network rules; a new bar on Filesystem rules) keeps each rule in which anything it says matches, ignoring case:
+Typing in **Filter rules** (right of the add-rule form on Network rules; **not** on Filesystem rules, which is a read-only list of the one or two rules of a sandbox that may read and write everything: a filter and
+a sign were put on it and taken off again, at the user's word) keeps each rule in which anything it says matches, ignoring case:
 its resources, name, source, scope, protocol, status, decision. A rule is kept **whole**. An open rule stays open as the same rule (it is named by its id, or its place
 in the full list). The input is **outside** the add-rule form, so Enter in it cannot try to allow a host.
 
@@ -108,9 +109,9 @@ until the user has spoken with the `sbx` people: more `sbx` processes in flight 
 - Tried by the user against a real `sbx`: an exact rule (Block then Remove, host blocked again); a wildcard (the warning, Cancel changing nothing, all four hosts blocked again);
   two rules at once (both listed, the commands one to a line, both removed); a global rule (the explanation, the old failing removal replaced); Block on an Allowed host
   (the old dialog, cancelled); the spinner immediately after Allow, Block and Remove; the per-row "Updating…" marker through a whole Allow and Block (one line, the other columns still, the button disabled,
-  and the real status when it ended); the filter, spinner and layout of the **Network rules** tab. The **Filesystem rules** tab's new bar was
-  not looked at.
+  and the real status when it ended); the filter, spinner and layout of the **Network rules** tab. 
 - **Not tried:** a rule `sbx` lists as editable that it then refuses to remove for a reason other than being global; a rule from an organisation policy.
 - One run of `TestARepositoryBuiltToExhaustMemoryCostsOnlyTheHelper` (`internal/review`) failed in a full uncached run, with the helper's last stderr line (a register dump) in
   place of "memory". It passed alone 8 times, under CPU load 12 times, and in the whole package 3 times, and nothing in this work touches that package. A likely cause,
-  unconfirmed, is `helperDied` reporting "out of memory" only when stderr has a `fatal error:` or `panic:` line, which a crash in a signal handler may not print.
+  unconfirmed, is `helperDied` reporting "out of memory" only when stderr has a `fatal error:` or `panic:` line, which a crash in a signal handler may not print. So that a
+  recurrence can be explained, the error now also says how the helper's output began and how it ended (`diedHow`), when there was no such line.

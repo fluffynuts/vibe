@@ -1,4 +1,5 @@
-// The Network rules and Filesystem rules tabs: a filter like the Network log's, and the sign that the rules are being read. In jsdom
+// The Network rules tab: a filter like the Network log's, and the sign that the rules are being read. (The Filesystem rules tab has neither:
+// it is read-only and has the two rules of a sandbox that may read and write everything.) In jsdom
 // (see page.js), run with page.test.js.
 'use strict'
 const test = require('node:test')
@@ -33,7 +34,7 @@ const TABLES = { rules: ['rules-table', 'rules-search', 'rules-refreshing'], fs:
 const rows = (p, tab) => [...p.$(TABLES[tab][0]).tBodies[0].querySelectorAll('tr.entry')].map((r) => r.textContent.replace(/\s+/g, ' ').trim())
 const filter = async (p, tab, text) => { await p.type(p.$(TABLES[tab][1]), text); await p.settle() }
 
-for (const tab of ['rules', 'fs']) {
+for (const tab of ['rules']) {
   const name = tab === 'rules' ? 'Network rules' : 'Filesystem rules'
 
   test(`${name}: typing in the filter keeps the rules with something that matches, whole, whatever the case`, async () => {
@@ -182,5 +183,14 @@ test('Network rules: going to another tab while sbx runs the command does not le
     release()
     await p.settle()
     assert.equal(sign.classList.contains('on'), false, 'a tab nobody is reading shows a sign for ever')
+  } finally { p.close() }
+})
+
+test('Filesystem rules has no filter and no sign: it is a read-only list of a rule or two', async () => {
+  const p = await rulesPage('fs')
+  try {
+    assert.equal(p.$('fs-search'), null)
+    assert.equal(p.$('fs-refreshing'), null)
+    assert.equal(rows(p, 'fs').length, 4, 'the rules are shown as they were')
   } finally { p.close() }
 })

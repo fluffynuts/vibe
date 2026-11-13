@@ -109,8 +109,8 @@
     tab: store.get('vibe-companion-tab') || 'conversation',
     filter: 'all',
     search: '',
-    // What is typed in the Network rules and Filesystem rules tabs' filters.
-    ruleSearch: { rules: '', fs: '' },
+    // What is typed in the Network rules tab's filter.
+    ruleSearch: { rules: '' },
     // The Network log's hosts whose rule was just changed, each with how many reads of the log had begun by then: the row says it
     // is updating until a read that began after the change has come back (see markUpdating).
     updating: new Map(),
@@ -901,7 +901,7 @@
   }
 
   // READ_SIGN is the sign on each tab that its list is being read.
-  const READ_SIGN = { log: 'log-refreshing', rules: 'rules-refreshing', fs: 'fs-refreshing' }
+  const READ_SIGN = { log: 'log-refreshing', rules: 'rules-refreshing' }
 
   // logReadAtOnce says the next read of a tab's list follows a change to a rule: see load.
   let logReadAtOnce = false
@@ -7930,7 +7930,6 @@
   }
   $('log-search').addEventListener('input', (ev) => { state.search = ev.target.value; renderLog() })
   $('rules-search').addEventListener('input', (ev) => { state.ruleSearch.rules = ev.target.value; render('rules') })
-  $('fs-search').addEventListener('input', (ev) => { state.ruleSearch.fs = ev.target.value; render('fs') })
 
   $('rule-form').addEventListener('submit', (ev) => {
     ev.preventDefault()
