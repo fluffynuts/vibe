@@ -1,42 +1,59 @@
-# The network tabs: blocking a host a rule allows, a filter, a sign that the rules are being read, and polls that change nothing
+# The network tabs: Block and Allow that work beside the rules there are, superseded log rows, a filter, a sign that the rules are being read, and polls that change nothing
 
-- **Status:** accepted, built 2026-11-12 on `fix/block-unblocked-host`, **not merged at the time of writing**: `5b9e4e6`, `97af2f9`, `27fd1cb`, `4bb40cd`, `14b8488`.
-  Three parts were built earlier the same day and merged in PR #22 (`bccd23b`): the Network log's background read (`703995c`), the rule that polls change nothing
+- **Status:** accepted, built 2026-11-12 and 2026-11-13 on `fix/block-unblocked-host`, **not merged at the time of writing**. The first design of Block (remove every rule that
+  allows the host, wildcards included) was built and tried on 2026-11-12, then replaced on 2026-11-13 by the one below after the sbx experiments in "What sbx does".
+  Three parts were built earlier and merged in PR #22 (`bccd23b`): the Network log's background read (`703995c`), the rule that polls change nothing
   (`6cad1fe`, `8d02d51`), and a fix to a test (`2a1734d`).
-- **Decided:** 2026-11-12, with the user, in play-testing against a real sandbox: each decision below came from something seen on the page.
-- **Came from:** no plan file: designed in the conversation. (A plan for the one thing here not built, Block on a host that was never blocked, is not written; see below.)
+- **Decided:** 2026-11-12 and 2026-11-13, with the user, in play-testing against a real sandbox: each decision below came from something seen on the page or from an experiment run by hand.
+- **Came from:** no plan file: designed in the conversation.
+
+## What sbx does (found by trying it, 2026-11-13, a sandbox-scoped rule unless said)
+
+- A deny beside an allow, or an allow beside a deny, is refused **only for the identical resource in the same scope** (`conflicts with existing allow rule`). A port makes another resource.
+- A **deny beats an allow always**, not by being more specific (a portless deny beat a ported allow, a ported deny a portless allow), and a sandbox's deny beats a **global** allow, exact or wildcard, without conflict.
+  So a block is added beside a wildcard or a global allow and wins for its host alone; but an allow can never be added over a deny: the deny has to go.
+- `rm --sandbox X` of a global rule fails (`exists in the global policy, not in sandbox X`).
+- The log is a history: one entry for each (host, decision).
 
 ## Context
 
-- **Block on an "Unblocked" host failed.** A host that was blocked and is now let through by a rule is "Unblocked" in the Network log (`policy.Resolve`). Its Block
-  button ran `sbx policy deny`, which `sbx` refuses: `deny … conflicts with existing allow rule <id>`.
-- **A rule of the global policy cannot be removed for one sandbox**: `sbx policy rm network --sandbox X --id …` fails with `rule … exists in the global policy, not in
-  sandbox "X"; run: sbx policy rm network --id …`. Found by trying it.
+- **Block failed on a host a rule allowed.** It ran `sbx policy deny`, which sbx refuses beside an allow of the identical resource. The first fix removed every covering rule: wildcards too, blocking everything under them.
+- **Allow failed, or did nothing, on a host a deny rule blocked.**
+- **The log showed the old row of a host beside its new one**, each with a button that offered what was no longer so.
 - **The Network log was not in the list when the user got there:** a newly blocked host was only read when its tab was open, on the next poll.
 - **Selecting text in a card on the Admin tab lost the selection** within a couple of seconds.
 
 ## Decision
 
-### 1. The log says which rules let a host through
+### 1. The log says which rules allow a host, and which block it
 
-`policy.Resolve` already matched each blocked entry against the allow rules to call it Unblocked; it now keeps them: `LogEntry.AllowedBy`, a list of `RuleRef` (id, name,
-resources, source, scope, `Removable`, and `Wider`: the rule allows something other than this host, a wildcard or another host in the same rule, ports and case
-ignored). Inactive and suppressed rules, and the implicit fallback, are not listed, and a rule that matches by two of its resources is listed once.
+`policy.Resolve` matched each blocked entry against the allow rules to call it Unblocked; it now keeps them, for an Unblocked **and an Allowed** entry that no deny covers: `LogEntry.AllowedBy`, a list of
+`RuleRef` (id, name, resources, source, scope, `Removable`, `Wider`: the rule reaches something other than this host, and `Identical`: one of its resources is exactly the host, port and all, case aside). A
+still-Blocked entry that a deny covers lists those in `BlockedBy`. Inactive and suppressed rules, and the implicit fallback, are not listed, and a rule that matches by two of its resources is listed once.
 
-### 2. Block on an Unblocked host removes the rule(s), after saying what else goes with them
+### 2. Block: remove only what sbx refuses beside, add a deny when anything else still allows the host
 
-The button opens the confirmation with each rule described by what it allows and a short id (`Allows www.kernel.org:443 (rule ac481252…)`; sbx names a rule vibe made
-with its own id, so a name equal to the id counts as no name), and the `sbx policy rm network --sandbox … --id … --force` command for each, one to a line
-(`#confirm-command { white-space: pre-wrap }`). If a rule is wider it says so: *What is removed also allows `*.kernel.org`, which are blocked too.* Confirmed, it
-removes each through the existing `/api/remove`, one after another, and stops at the first failure with sbx's own message. The host is blocked again; **no deny is
-ever added** beside an allow.
+`Client.Block(host, removing)`, behind `POST /api/deny {host, remove: [ids]}`, in one request: it reads the rules, takes the **sandbox's own** active allow rules with a resource **identical** to the host (the one
+conflict sbx has), and removes them; it then adds `sbx policy deny` **unless** the removal left nothing that allows the host, or a deny already covers it. A wildcard or a global allow is **left alone**:
+the deny wins over it for this host. Global rules are never touched, so the old explanation of global rules (and its "run this command yourself") is gone from Block.
+The dialog lists the rules to be removed and those that stay (with "a global rule applies to every sandbox"), says what a removed multi-host rule also allowed, and gives each command, one to a line.
 
-### 3. What cannot be removed from here is explained, and nothing is half done
+**What the user confirmed is what is done:** `remove` carries the ids the dialog showed; if the rules read now are not those, nothing is done (409, "the rules have changed since you were shown them"). A conflicting rule sbx says
+can't be edited stops it before anything is changed (the page says so up front, with its source). A failure after a removal says what was removed and that the rest failed (`removed X, but the block could not be added, so
+the host is still allowed by another rule`); a failed removal adds no deny. The page's toast says what was done (`Blocked again: the rule that allowed it is removed`).
 
-If **any** covering rule has no id, is not removable, or is **global** (its scope is not `sandbox:<this sandbox>`), **none** is removed (the host would be left
-half unblocked) and a toast says why. For a global rule it gives the command that does remove it, for every sandbox: `sbx policy rm network --id <id>`. The Network rules
-tab's **Remove** does the same for a global row, where it used to open a confirmation that sbx then refused; the dialog for the sandbox's own rules now reads "an
-allow rule for this sandbox" (it said "a allowed rule"). A rule with many resources is named by its first three and a count.
+### 3. Allow is the mirror: the deny rules that cover the host go, then the host is allowed
+
+An allow beside a deny does nothing, so `Client.AllowRemoving(host, removing)`, behind `POST /api/allow {host, remove}`, removes the deny rules that cover the host (ids confirmed as above), then adds the allow, unless one
+covers it already. A deny it **cannot remove** (one of the global policy, or one sbx says can't be edited) stops it before anything is changed: the page explains, and for a global one gives
+`sbx policy rm network --id <id>` for every sandbox. A removal that also blocked other hosts says they are allowed too. A host only the default blocks is allowed as it always was.
+
+### 3b. A log row a later entry contradicts is history
+
+The log has an entry for each (host, decision). For the same host (port included), an entry whose time is **earlier** than that of an entry deciding the other way is `Superseded` (`markSuperseded`, in `Resolve`, also when the rules could
+not be read). Allowed and Unblocked are one decision here (the host gets through). Equal times, or a time that is missing or unreadable, supersede nothing: nothing says which is later. The page draws such a row muted with its
+status struck through (title: "Superseded: a later entry for this host says otherwise"), **no button**, never "Updating…", and still under its own status's filter; the counts are of the current rows, with "N superseded" beside them;
+and the blocked-hosts notice leaves it out.
 
 ### 4. A sign that a list is being read, shown at once after a change
 
@@ -57,6 +74,8 @@ all the rules (a deny beats an allow; a wildcard may still cover the host), and 
 A read already on its way when the change was made may say the old thing, so it does **not** take the mark off (each read is numbered, and a mark records how many had begun
 when it was made); a change that failed is marked too, since part of it may have been made, and shows the truth when it is read. A rule added from the Network rules
 tab marks no row: the log is not being read there.
+The same holds on the **Network rules** tab for a **Remove**: the rule's row says **"Removing…"** in place of its button from the moment the user confirms, until a read of the rules that began
+after sbx finished has come back (`rulesReads`, `state.removing`, kept by rule id); the tab's sign stays on while any wait. Cancelling marks nothing, and a failed removal shows the rule as it is, with its button, when read.
 
 ### 5. A host seen blocked has the Network log read at once
 
@@ -92,25 +111,25 @@ until the user has spoken with the `sbx` people: more `sbx` processes in flight 
 
 ## Consequences
 
-- Blocking an unblocked host is one confirmation, with the rule it will remove shown; the host goes back to Blocked at the next read.
-- Removing a wildcard to block one host blocks every host under it: said in the dialog, not avoided (a deny cannot coexist with the allow).
+- Blocking or allowing a host is one confirmation, shows what is removed and what is left, and is done in one request that refuses if the rules moved.
+- A wildcard is never removed to block one host under it, and a global rule is never touched by Block.
+- Removing a rule from the Network rules tab says **"Removing…"** in its row from confirmation until a read that began after sbx finished has come back, as the log's rows do (4b).
 - The Firefox test of the comments pane measured a card in several steps and returned a detached element when the pane redrew between them, on a slow runner (CI's macOS
   and Windows): it now measures in one step in the page, with the same assertions (`2a1734d`).
 
 ## Not built, on purpose
 
 - **Parallel calls in `ResolvedLog`**: shelved, see 8.
-- **Block on an "Allowed" host** (never blocked) is as it was: `sbx policy deny`. Whether sbx refuses it when an allow rule covers it was not tried.
-- **Removing a global rule from the page.** It would change every sandbox, and `/api/remove` is always scoped to one; the command is given instead.
+- **Removing a global rule from the page.** It would change every sandbox, and `/api/remove` is always scoped to one; the command is given instead (Allow, Remove).
 - **Optimistic updating** of a row (assuming the change worked and showing the result): rejected for the reasons in 4b; the row says it is updating instead.
+- **Keeping the other resources of a removed multi-resource rule** (re-adding them): the dialog says what goes with it instead.
 
 ## Not verified
 
-- Tried by the user against a real `sbx`: an exact rule (Block then Remove, host blocked again); a wildcard (the warning, Cancel changing nothing, all four hosts blocked again);
-  two rules at once (both listed, the commands one to a line, both removed); a global rule (the explanation, the old failing removal replaced); Block on an Allowed host
-  (the old dialog, cancelled); the spinner immediately after Allow, Block and Remove; the per-row "Updating…" marker through a whole Allow and Block (one line, the other columns still, the button disabled,
-  and the real status when it ended); the filter, spinner and layout of the **Network rules** tab. 
-- **Not tried:** a rule `sbx` lists as editable that it then refuses to remove for a reason other than being global; a rule from an organisation policy.
+- Tried by the user against a real `sbx` on 2026-11-12, **of the first design of Block** (now replaced): an exact rule, a wildcard, two rules, a global rule, the spinner, the per-row "Updating…" marker through Allow and Block, the filter and layout of the Network rules tab.
+- The **sbx experiments** above were run by hand by the user, with `sbx policy ls --json` and a curl from the sandbox as the receipts.
+- **Not tried by hand against a real sbx, only by unit and page tests:** the new Block and Allow flows (`Client.Block`, `Client.AllowRemoving`), the "Removing…" marker on the rules tab, and the superseded rows. The tests fake sbx's answers from what the experiments showed.
+- **Not tried:** a rule from an organisation policy; a rule `sbx` lists as editable that it then refuses to remove.
 - One run of `TestARepositoryBuiltToExhaustMemoryCostsOnlyTheHelper` (`internal/review`) failed in a full uncached run, with the helper's last stderr line (a register dump) in
   place of "memory". It passed alone 8 times, under CPU load 12 times, and in the whole package 3 times, and nothing in this work touches that package. A likely cause,
   unconfirmed, is `helperDied` reporting "out of memory" only when stderr has a `fatal error:` or `panic:` line, which a crash in a signal handler may not print. So that a
