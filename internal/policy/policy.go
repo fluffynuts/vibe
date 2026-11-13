@@ -70,7 +70,7 @@ const (
 	// records requests, so a host blocked from the page after its last request still
 	// has an Allowed entry as its latest, and would say so.
 	BlockedNow = "blocked-now"
-	Unknown   = ""
+	Unknown    = ""
 )
 
 // LogEntry is one host the sandbox has tried to reach.
