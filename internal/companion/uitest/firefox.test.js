@@ -1156,3 +1156,30 @@ test('in the Network log a host stays on one line and a rule breaks between its 
     assert.deepEqual(measured.split, [], `words of the rule were broken in the middle (cell ${measured.cellWidth}px wide)`)
   } finally { await page.close() }
 })
+
+// "Removing…" is wider than the Remove button it replaces, and the columns of the Network rules moved to make room for it, as the log's did for
+// "Updating…": the last column keeps the width the words need.
+test('a Network rules row says it is removing without moving the columns', async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  try {
+    await page.goto(URL)
+    await page.click('#tab-rules')
+    await page.waitForSelector('#rules-table')
+    const measured = await page.evaluate(() => {
+      const body = document.querySelector('#rules-table tbody')
+      const row = document.createElement('tr')
+      row.className = 'entry'
+      const cell = (cls, html) => { const td = document.createElement('td'); if (cls) td.className = cls; td.innerHTML = html; return td }
+      const action = cell('', '<button type="button" class="small ghost">Remove</button>')
+      row.append(cell('', '<span class="status allowed">Allowed</span>'), cell('mono', 'test.example.org'), cell('', 'scoped'), cell('', 'sandbox:vibe'), cell('', ''), action)
+      body.append(row)
+      const widths = () => Array.from(document.querySelectorAll('#rules-table thead th')).map((th) => Math.round(th.getBoundingClientRect().width * 10) / 10)
+      const before = { height: row.getBoundingClientRect().height, widths: widths() }
+      action.innerHTML = '<span class="updating"><span class="spinner" aria-hidden="true"></span>Removing…</span>'
+      const during = { height: row.getBoundingClientRect().height, widths: widths() }
+      return { before, during }
+    })
+    assert.ok(measured.during.height <= measured.before.height + 1, `the row is ${measured.during.height}px tall while removing, ${measured.before.height}px otherwise`)
+    assert.deepEqual(measured.during.widths, measured.before.widths, `a column changed width when the row began to say it is removing: ${JSON.stringify(measured.before.widths)} then ${JSON.stringify(measured.during.widths)}`)
+  } finally { await page.close() }
+})
