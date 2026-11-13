@@ -230,3 +230,17 @@ func TestAnAllowedHostSaysWhichRulesAllowItToo(t *testing.T) {
 		t.Errorf("a host a deny now covers lists the rules that allow it: %+v", got[1].AllowedBy)
 	}
 }
+
+func TestBlockAddsTheDenyWhenTheOnlyDenyThereIsIsForAnotherPort(t *testing.T) {
+	s := &sbxWithRules{rules: rulesOf(
+		ruleJSON("exact", "sandbox:vibe", "allow", "www.kernel.org:443"),
+		ruleJSON("wild", "sandbox:vibe", "allow", "*.kernel.org"),
+		ruleJSON("d80", "sandbox:vibe", "deny", "www.kernel.org:80"),
+	)}
+	if _, err := block(t, s, "www.kernel.org:443", "exact"); err != nil {
+		t.Fatal(err)
+	}
+	if want := [][]string{rm("exact"), deny("www.kernel.org:443")}; !reflect.DeepEqual(s.calls, want) {
+		t.Errorf("ran %v, want %v: the deny of port 80 does not block 443, which the wildcard still allows", s.calls, want)
+	}
+}

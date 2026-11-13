@@ -31,6 +31,9 @@
 `RuleRef` (id, name, resources, source, scope, `Removable`, `Wider`: the rule reaches something other than this host, and `Identical`: one of its resources is exactly the host, port and all, case aside). A
 still-Blocked entry that a deny covers lists those in `BlockedBy`. Inactive and suppressed rules, and the implicit fallback, are not listed, and a rule that matches by two of its resources is listed once.
 
+**Matching by port (found in review):** a rule covers a host by name **and port**, as sbx does: a resource with a port covers that port only, one without covers every port (and a host named without a port is any port). It was by name alone at first, and
+a deny of `x:80` then made `x:443` "Blocked now", `Block` added no deny because of it, and `AllowRemoving` removed it and skipped an allow for it; the experiments only ever used one port.
+
 ### 2. Block: remove only what sbx refuses beside, add a deny when anything else still allows the host
 
 `Client.Block(host, removing)`, behind `POST /api/deny {host, remove: [ids]}`, in one request: it reads the rules, takes the **sandbox's own** active allow rules with a resource **identical** to the host (the one

@@ -363,11 +363,16 @@ func reachesFurther(resources []string, host string) bool {
 	return false
 }
 
-// hostMatches says whether a rule's resource covers host. Ports are ignored;
-// "*" stands for anything but a dot and "**" for anything at all.
+// hostMatches says whether a rule's resource covers host. A port is part of a resource, as sbx has it: one with a port covers that
+// port only, one without covers every port (and a host named without a port is any port). "*" stands for anything but a dot and
+// "**" for anything at all.
 func hostMatches(resource, host string) bool {
-	resource, host = stripPort(strings.ToLower(strings.TrimSpace(resource))), stripPort(strings.ToLower(strings.TrimSpace(host)))
+	resource, resourcePort := splitPort(strings.ToLower(strings.TrimSpace(resource)))
+	host, hostPort := splitPort(strings.ToLower(strings.TrimSpace(host)))
 	if resource == "" || host == "" {
+		return false
+	}
+	if resourcePort != "" && hostPort != "" && resourcePort != hostPort {
 		return false
 	}
 	var re strings.Builder
@@ -386,6 +391,15 @@ func hostMatches(resource, host string) bool {
 	re.WriteString("$")
 	ok, err := regexp.MatchString(re.String(), host)
 	return err == nil && ok
+}
+
+// splitPort is h's name and its port, "" when it has none.
+func splitPort(h string) (name, port string) {
+	name = stripPort(h)
+	if name == h {
+		return h, ""
+	}
+	return name, h[len(name)+1:]
 }
 
 func stripPort(h string) string {

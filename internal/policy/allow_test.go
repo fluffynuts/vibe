@@ -162,3 +162,23 @@ func TestAllowDoesNotSendTheUserToACommandThatCannotRemoveARuleSbxWillNotLetThem
 		})
 	}
 }
+
+func TestAllowLeavesADenyOfAnotherPortAlone(t *testing.T) {
+	s := &sbxWithRules{rules: rulesOf(ruleJSON("d80", "sandbox:vibe", "deny", "www.kernel.org:80"))}
+	if _, err := allowRemoving(t, s, "www.kernel.org:443"); err != nil {
+		t.Fatal(err)
+	}
+	if want := [][]string{allow("www.kernel.org:443")}; !reflect.DeepEqual(s.calls, want) {
+		t.Errorf("ran %v, want %v: the deny of port 80 does not block 443", s.calls, want)
+	}
+}
+
+func TestAllowAddsTheAllowWhenTheOnlyAllowThereIsIsForAnotherPort(t *testing.T) {
+	s := &sbxWithRules{rules: rulesOf(ruleJSON("d", "sandbox:vibe", "deny", "www.kernel.org:443"), ruleJSON("g80", "global", "allow", "www.kernel.org:80"))}
+	if _, err := allowRemoving(t, s, "www.kernel.org:443", "d"); err != nil {
+		t.Fatal(err)
+	}
+	if want := [][]string{rm("d"), allow("www.kernel.org:443")}; !reflect.DeepEqual(s.calls, want) {
+		t.Errorf("ran %v, want %v: an allow of port 80 does not allow 443", s.calls, want)
+	}
+}

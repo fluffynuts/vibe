@@ -588,3 +588,46 @@ func TestADenyOfEverythingThatIsNotTheFallbackStillStopsAnAllow(t *testing.T) {
 		}
 	}
 }
+
+// sbx treats a port as part of a resource: a resource with a port covers that port only, one without covers every port.
+func TestAPortedResourceCoversOnlyItsPortAndAPortlessOneEveryPort(t *testing.T) {
+	for _, tc := range []struct {
+		resource, host string
+		want           bool
+	}{
+		{"git.kernel.org:443", "git.kernel.org:443", true},
+		{"git.kernel.org:80", "git.kernel.org:443", false},
+		{"git.kernel.org", "git.kernel.org:443", true},
+		{"*.kernel.org", "git.kernel.org:443", true},
+		{"*.kernel.org:443", "git.kernel.org:80", false},
+		{"*.kernel.org:443", "git.kernel.org:443", true},
+		{"**.kernel.org:443", "a.b.kernel.org:80", false},
+		{"GIT.kernel.org:443", "git.Kernel.org:443", true},
+		{"git.kernel.org:443", "git.kernel.org", true}, // a host named without a port is any port
+		{"other.org:443", "git.kernel.org:443", false},
+		{"[::1]:80", "[::1]:443", false},
+		{"[::1]:443", "[::1]:443", true},
+	} {
+		if got := hostMatches(tc.resource, tc.host); got != tc.want {
+			t.Errorf("hostMatches(%q, %q) = %v, want %v", tc.resource, tc.host, got, tc.want)
+		}
+	}
+}
+
+func TestARuleOfAnotherPortNeitherUnblocksNorBlocksAHost(t *testing.T) {
+	log := Log{Entries: []LogEntry{
+		{Host: "blocked.org:443", Decision: Blocked, LastSeen: "2026-11-12T09:00:00Z"},
+		{Host: "allowed.org:443", Decision: Allowed, LastSeen: "2026-11-12T09:00:00Z"},
+	}}
+	rules := Rules{Rules: []Rule{
+		{ID: "a80", Resources: []string{"blocked.org:80"}, Decision: Allowed},
+		{ID: "d80", Resources: []string{"allowed.org:80"}, Decision: Blocked},
+	}}
+	got := Resolve(log, rules).Entries
+	if got[0].Decision != Blocked || got[0].AllowedBy != nil {
+		t.Errorf("a host blocked on 443 with an allow of port 80 = %+v", got[0])
+	}
+	if got[1].Decision != Allowed || got[1].BlockedBy != nil {
+		t.Errorf("a host allowed on 443 with a deny of port 80 = %+v", got[1])
+	}
+}
