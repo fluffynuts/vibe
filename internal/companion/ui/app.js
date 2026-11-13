@@ -114,6 +114,7 @@
     // The Network log's hosts whose rule was just changed, each with how many reads of the log had begun by then: the row says it
     // is updating until a read that began after the change has come back (see markUpdating).
     updating: new Map(),
+    removing: new Map(),
     log: null,
     rules: null,
     fs: null,
@@ -835,7 +836,7 @@
   async function load(kind) {
     const path = { log: '/api/log', rules: '/api/rules', fs: '/api/fs-rules' }[kind]
     // Not in the way of the table: the user may be in the act of allowing a host.
-    const began = kind === 'log' ? ++logReads : 0
+    const began = kind === 'log' ? ++logReads : kind === 'rules' ? ++rulesReads : 0
     const reading = $(READ_SIGN[kind])
     if (reading) {
       // Just after a rule was changed the read waits for sbx a second or two, and says so at once.
@@ -850,6 +851,7 @@
         banner(kind, res.body.unresolved || '')
         state[kind] = res.body
         if (kind === 'log') readDone(began)
+        if (kind === 'rules') ruleReadDone(began)
         render(kind)
       } else {
         problem(kind, res)
@@ -858,7 +860,7 @@
       reached(false)
     } finally {
       // Still on while the user's change is being made (the read that found the old state is not its answer), and while rows wait.
-      if (reading && !changesUnderWay && !(kind === 'log' && state.updating.size)) reading.classList.remove('on', 'at-once')
+      if (reading && !changesUnderWay && !(kind === 'log' && state.updating.size) && !(kind === 'rules' && state.removing.size)) reading.classList.remove('on', 'at-once')
     }
   }
 
@@ -898,6 +900,28 @@
       if (began > at) { state.updating.delete(host); cleared = true }
     }
     return cleared
+  }
+
+  // rulesReads counts the reads of the Network rules begun, as logReads does the log's.
+  let rulesReads = 0
+
+  // markRemoving, unmarkRemoving and ruleReadDone are markUpdating, unmark and readDone for the rules being removed, kept by id.
+  function markRemoving(ids, at) {
+    if (!ids.length) return
+    for (const id of ids) state.removing.set(id, at)
+    render('rules')
+  }
+
+  function unmarkRemoving(ids) {
+    if (!ids.length) return
+    for (const id of ids) state.removing.delete(id)
+    render('rules')
+  }
+
+  function ruleReadDone(began) {
+    for (const [id, at] of state.removing) {
+      if (began > at) state.removing.delete(id)
+    }
   }
 
   // READ_SIGN is the sign on each tab that its list is being read.
@@ -1364,7 +1388,7 @@
     const body = $(tableId).tBodies[0]
     const needle = (state.ruleSearch[kind] || '').trim().toLowerCase()
     // As the log is: drawn again only when what it shows has changed.
-    const drawnFor = JSON.stringify([allRules, needle, Array.from(state.open).sort()])
+    const drawnFor = JSON.stringify([allRules, needle, Array.from(state.open).sort(), Array.from(state.removing.keys()).sort()])
     if (drawnKeys.get(body) === drawnFor) return
     drawnKeys.set(body, drawnFor)
     body.textContent = ''
@@ -1385,7 +1409,9 @@
         el('td', { text: withActions ? (r.protocol || '') : (r.status || '') }),
       ]
       if (withActions) {
-        cells.push(el('td', {}, r.removable
+        cells.push(el('td', {}, state.removing.has(r.id)
+          ? el('span', { class: 'updating' }, el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Removing…')
+          : r.removable
           ? el('button', { type: 'button', class: 'small ghost', text: 'Remove',
               onclick: (ev) => { ev.stopPropagation(); confirmRemove(r) } })
           : null))
@@ -1501,6 +1527,7 @@
       text: shortList(rule.resources || []) + ' — ' + kind + ' for this sandbox.',
       command: 'sbx policy rm network --sandbox ' + state.sandbox + ' --id ' + rule.id + ' --force',
       danger: true,
+      removes: [rule.id],
       run: () => post('/api/remove', { id: rule.id }),
     })
   }
@@ -1544,10 +1571,12 @@
       // the list can even be read again, and people will wait longer for something that says it is happening. The rows it is
       // for say so, and the tab's sign is on (at once), until the read that follows the change has come back.
       const affects = opts.affects || []
+      const removes = opts.removes || []
       const tab = state.tab
       const sign = READ_SIGN[tab] ? $(READ_SIGN[tab]) : null
       changesUnderWay++
       markUpdating(affects, Infinity)
+      markRemoving(removes, Infinity)
       if (sign) sign.classList.add('on', 'at-once')
       // The change is over, however it ended: a sign on a tab that is no longer the one being read has nothing to end it.
       const over = () => {
@@ -1558,7 +1587,7 @@
         const res = await opts.run()
         reached(true)
         // asked: run asked something else instead, which says what's what.
-        if (res.asked) { over(); unmark(affects); return }
+        if (res.asked) { over(); unmark(affects); unmarkRemoving(removes); return }
         // warning: done, but not all of it (see the server's changing).
         if (res.ok && res.body.warning) {
           toast(res.body.warning, true)
@@ -1577,6 +1606,7 @@
       // flag that has the sign on at once is spent by then, on the list or on nothing.)
       over()
       markUpdating(affects, logReads)
+      markRemoving(removes, rulesReads)
       logReadAtOnce = true
       tick()
       logReadAtOnce = false
