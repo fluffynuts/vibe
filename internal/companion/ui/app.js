@@ -1281,9 +1281,10 @@
 
   // superseded: a later entry of the host decided otherwise, so this is what was so, not what is.
   function statusCell(decision, superseded) {
-    const word = decision === 'allowed' ? 'Allowed' : decision === 'blocked' ? 'Blocked' : decision === 'unblocked' ? 'Unblocked' : 'Unknown'
-    return el('span', Object.assign({ class: 'status ' + (decision || 'unknown') + (superseded ? ' superseded' : ''), text: word },
-      superseded ? { title: 'Superseded: a later entry for this host says otherwise' } : {}))
+    const word = decision === 'allowed' ? 'Allowed' : decision === 'blocked' ? 'Blocked' : decision === 'blocked-now' ? 'Blocked now' : decision === 'unblocked' ? 'Unblocked' : 'Unknown'
+    const title = superseded ? 'Superseded: a later entry for this host says otherwise'
+      : decision === 'blocked-now' ? 'Allowed when last seen, but a rule blocks it now' : ''
+    return el('span', Object.assign({ class: 'status ' + (decision || 'unknown') + (superseded ? ' superseded' : ''), text: word }, title ? { title } : {}))
   }
 
   function rawDetail(entry, extra, columns) {
@@ -1308,7 +1309,8 @@
     if (drawnKeys.get(logBody) === drawnFor) return
     drawnKeys.set(logBody, drawnFor)
     const current = entries.filter((e) => !e.superseded)
-    const blocked = current.filter((e) => e.decision === 'blocked').length
+    const isBlocked = (e) => e.decision === 'blocked' || e.decision === 'blocked-now'
+    const blocked = current.filter(isBlocked).length
     const allowed = current.filter((e) => e.decision === 'allowed').length
     const unblocked = current.filter((e) => e.decision === 'unblocked').length
     const superseded = entries.length - current.length
@@ -1324,7 +1326,7 @@
 
     const needle = state.search.trim().toLowerCase()
     const shown = entries.filter((e) =>
-      (state.filter === 'all' || e.decision === state.filter) &&
+      (state.filter === 'all' || e.decision === state.filter || (state.filter === 'blocked' && isBlocked(e))) &&
       (!needle || e.host.toLowerCase().includes(needle)))
 
     const body = $('log-table').tBodies[0]
@@ -1354,7 +1356,8 @@
       body.append(row)
       if (state.open.has(key)) {
         body.append(rawDetail(e, [['Note', e.decision === 'unblocked'
-          ? 'Blocked earlier, but a rule now allows it. Retry the request in the sandbox.' : ''], ['Reason', e.reason], ['Proxy', e.proxyType], ['Last seen', e.lastSeen]], 6))
+          ? 'Blocked earlier, but a rule now allows it. Retry the request in the sandbox.'
+          : e.decision === 'blocked-now' ? 'Allowed when last seen, but a rule blocks it now.' : ''], ['Reason', e.reason], ['Proxy', e.proxyType], ['Last seen', e.lastSeen]], 6))
       }
     }
   }
@@ -1367,7 +1370,7 @@
   }
 
   function actionFor(entry) {
-    if (entry.decision === 'blocked') {
+    if (entry.decision === 'blocked' || entry.decision === 'blocked-now') {
       if (!namesOneHost(entry.host)) return null
       return el('button', { type: 'button', class: 'small', text: 'Allow',
         onclick: () => allowBlocked(entry) })

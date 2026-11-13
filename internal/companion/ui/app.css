@@ -270,6 +270,7 @@ td.empty { text-align: center; color: var(--muted); padding: 28px; }
 .status::before { content: "●"; margin-right: 6px; }
 .status.allowed { color: var(--ok); }
 .status.blocked { color: var(--bad); }
+.status.blocked-now { color: var(--bad); }
 .status.unblocked { color: var(--amber); }
 .status.unknown { color: var(--muted); }
 tr.superseded { color: var(--muted); }

@@ -84,3 +84,28 @@ func TestAnEntryThatAgreesWithTheHostsLatestEntryIsNotSupersededBecauseOfAnInBet
 		}
 	}
 }
+
+// The log only records requests, so a host allowed when last seen and blocked by a deny rule since (a Block from the page) still has an
+// Allowed entry as its latest: the row has to say what is so now, as an Unblocked row does for a host a rule now lets through.
+func TestAnAllowedHostADenyRuleBlocksNowIsBlockedNowAndSaysWhichRules(t *testing.T) {
+	log := Log{Entries: []LogEntry{
+		{Host: "a.org:443", Decision: Blocked, LastSeen: "2026-11-12T08:00:00Z"},
+		{Host: "a.org:443", Decision: Allowed, LastSeen: "2026-11-12T09:00:00Z"},
+		{Host: "ok.org:443", Decision: Allowed, LastSeen: "2026-11-12T09:00:00Z"},
+	}}
+	rules := Rules{Rules: []Rule{
+		{ID: "deny", Resources: []string{"a.org:443"}, Decision: Blocked, Scope: "sandbox:vibe", Removable: true},
+		{ID: "allow", Resources: []string{"a.org:443"}, Decision: Allowed, Scope: "global"},
+	}}
+	got := Resolve(log, rules).Entries
+	if got[1].Decision != BlockedNow || len(got[1].BlockedBy) != 1 || got[1].BlockedBy[0].ID != "deny" || got[1].AllowedBy != nil {
+		t.Errorf("the allowed entry = %+v", got[1])
+	}
+	if got[2].Decision != Allowed || got[2].BlockedBy != nil {
+		t.Errorf("a host nothing blocks changed: %+v", got[2])
+	}
+	// The older blocked entry agrees with it: neither is history.
+	if got[0].Superseded || got[1].Superseded {
+		t.Errorf("superseded = %v, %v: both say the host is blocked", got[0].Superseded, got[1].Superseded)
+	}
+}

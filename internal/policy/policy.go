@@ -66,6 +66,10 @@ const (
 	// the request can't be re-issued from here, but doing it again in the
 	// sandbox would get through.
 	Unblocked = "unblocked"
+	// BlockedNow is an Allowed entry whose host a deny rule blocks now: the log only
+	// records requests, so a host blocked from the page after its last request still
+	// has an Allowed entry as its latest, and would say so.
+	BlockedNow = "blocked-now"
 	Unknown   = ""
 )
 
@@ -82,7 +86,7 @@ type LogEntry struct {
 	// its host: what Block says it removes (those for exactly the host, which
 	// sbx refuses a deny beside) and what it leaves.
 	AllowedBy []RuleRef `json:"allowedBy,omitempty"`
-	// BlockedBy is, for an entry that is still Blocked, the deny rules that cover its host: empty when only the default blocks it.
+	// BlockedBy is, for an entry that is Blocked or BlockedNow, the deny rules that cover its host: empty when only the default blocks it.
 	BlockedBy []RuleRef `json:"blockedBy,omitempty"`
 	// Superseded says a later entry of the same host decided otherwise (see markSuperseded): this one says what was so, not what is.
 	Superseded bool `json:"superseded,omitempty"`
@@ -293,7 +297,10 @@ func Resolve(log Log, rules Rules) Log {
 				out.Entries[i].Decision = Unblocked
 			}
 			out.Entries[i].AllowedBy = allowedBy
-		} else if e.Decision == Blocked && denied {
+		} else if denied {
+			if e.Decision == Allowed {
+				out.Entries[i].Decision = BlockedNow
+			}
 			out.Entries[i].BlockedBy = blockedBy
 		}
 	}
@@ -309,7 +316,7 @@ func Resolve(log Log, rules Rules) Log {
 func markSuperseded(entries []LogEntry) []LogEntry {
 	out := make([]LogEntry, len(entries))
 	copy(out, entries)
-	gets := func(e LogEntry) bool { return e.Decision != Blocked }
+	gets := func(e LogEntry) bool { return e.Decision != Blocked && e.Decision != BlockedNow }
 	type latest struct {
 		at           time.Time
 		gets, blocks bool

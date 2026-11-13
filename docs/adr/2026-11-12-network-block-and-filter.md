@@ -57,6 +57,13 @@ nothing: nothing says which is later. The page draws such a row muted with its
 status struck through (title: "Superseded: a later entry for this host says otherwise"), **no button**, never "Updating…", and still under its own status's filter; the counts are of the current rows, with "N superseded" beside them;
 and the blocked-hosts notice leaves it out.
 
+### 3c. An allowed host a deny now blocks is "Blocked now"
+
+The log only records requests, so after a Block from the page a host's latest entry is still its last (Allowed) request, and the row went on saying Allowed with a Block button (found in use, test 3 of the play-test: the earlier tests looked right
+only because a request made afterwards added a Blocked entry). `Resolve` now gives an Allowed entry that an active deny covers the decision `blocked-now` (the mirror of Unblocked) and its `BlockedBy`; the page says **Blocked now** (title:
+"Allowed when last seen, but a rule blocks it now"), counts it and shows it with the blocked, and offers **Allow**, which removes those rules (3). It counts as blocking for superseding (so the older Blocked rows of the host are not struck through), and is
+left out of the blocked-hosts notice: the user's own block is not news.
+
 ### 4. A sign that a list is being read, shown at once after a change
 
 The Network log and Network rules tabs each have the existing spinner beside their filters, in a slot of its own so nothing moves. It **fades in
