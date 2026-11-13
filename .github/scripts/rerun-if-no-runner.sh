@@ -7,12 +7,13 @@
 # someone's decision, and is left alone too: only one that waited MIN_QUEUED_SECONDS (600) counts as having been starved.
 #
 # Usage: rerun-if-no-runner.sh <run id> <attempt>
-# Needs gh and jq, with GH_REPO and GH_TOKEN set. MAX_ATTEMPTS (3) stops it going on for ever.
+# Needs gh and jq, with GH_REPO and GH_TOKEN set. MAX_ATTEMPTS (10) stops it going on for ever: each retry waits at least MIN_QUEUED_SECONDS for a runner first, so nine
+# of them are spaced out by the pool's own slowness, not made in a burst.
 set -euo pipefail
 
 run=${1:?usage: rerun-if-no-runner.sh <run id> <attempt>}
 attempt=${2:?usage: rerun-if-no-runner.sh <run id> <attempt>}
-max=${MAX_ATTEMPTS:-3}
+max=${MAX_ATTEMPTS:-10}
 min=${MIN_QUEUED_SECONDS:-600}
 
 if [ "$attempt" -ge "$max" ]; then

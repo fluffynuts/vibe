@@ -121,11 +121,14 @@ func TestAJobCancelledAfterItRanIsTheUsersAndIsLeftAlone(t *testing.T) {
 	}
 }
 
-func TestItGivesUpAfterTheThirdAttempt(t *testing.T) {
-	if got := rerunsFor(t, 3, fakeJob{id: 2, conclusion: "failure", runner: 0, steps: 0, waited: "15m"}); len(got) != 0 {
-		t.Errorf("re-ran %v on the third attempt: a runner that never comes is not to be waited for for ever", got)
+func TestItKeepsTryingUntilTheTenthAttemptAndThenGivesUp(t *testing.T) {
+	starved := fakeJob{id: 2, conclusion: "failure", runner: 0, steps: 0, waited: "15m"}
+	if got := rerunsFor(t, 10, starved); len(got) != 0 {
+		t.Errorf("re-ran %v on the tenth attempt: a runner that never comes is not to be waited for for ever", got)
 	}
-	if got := strings.Join(rerunsFor(t, 2, fakeJob{id: 2, conclusion: "failure", runner: 0, steps: 0, waited: "15m"}), " "); got != "run rerun --job 2" {
-		t.Errorf("re-ran %q on the second attempt, want job 2 re-run", got)
+	for _, attempt := range []int{2, 3, 9} {
+		if got := strings.Join(rerunsFor(t, attempt, starved), " "); got != "run rerun --job 2" {
+			t.Errorf("re-ran %q on attempt %d, want job 2 re-run", got, attempt)
+		}
 	}
 }

@@ -1,5 +1,5 @@
 # Re-runs a build job that never got a runner (see .github/scripts/rerun-if-no-runner.sh for what that is, and what is left alone), up to
-# twice, so that nobody has to press retry for the runner pool's sake.
+# nine times (ten attempts), so that nobody has to press retry for the runner pool's sake.
 #
 # A workflow_run workflow runs from the default branch's copy of this file, and with a token that can write: so it checks out only the
 # default branch (never the code of the run it is looking at), takes the run's id from the event and nothing else, and looks at this
