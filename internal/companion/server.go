@@ -806,40 +806,40 @@ func (s *Server) changing(do change) http.HandlerFunc {
 
 type invalid struct{ error }
 
+// allow lets the host through, removing the sandbox's deny rules that cover it that the page showed (see policy.Client.AllowRemoving).
 func (s *Server) allow(body []byte) ([]string, error) {
-	c := s.cfg.Policy
-	return forHost(body, c.AllowCommand, c.Allow)
+	host, remove, err := hostAndRemove(body)
+	if err != nil {
+		return nil, err
+	}
+	return s.cfg.Policy.AllowRemoving(host, remove)
 }
 
 // deny blocks the host, removing the sandbox's allow rules for exactly it that the page showed (see policy.Client.Block).
 func (s *Server) deny(body []byte) ([]string, error) {
-	var req struct {
-		Host   string   `json:"host"`
-		Remove []string `json:"remove"`
-	}
-	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, invalid{errors.New("expected {\"host\": ...}")}
-	}
-	host, err := hostIn(body)
+	host, remove, err := hostAndRemove(body)
 	if err != nil {
 		return nil, err
 	}
-	for _, id := range req.Remove {
-		if err := policy.ValidRuleID(id); err != nil {
-			return nil, invalid{err}
-		}
-	}
-	return s.cfg.Policy.Block(host, req.Remove)
+	return s.cfg.Policy.Block(host, remove)
 }
 
-// forHost runs a change to the host named in body, returning the sbx
-// command it stands for.
-func forHost(body []byte, command func(host string) []string, do func(host string) error) ([]string, error) {
+// hostAndRemove reads a change to a host along with the ids of the rules the page said would be removed for it.
+func hostAndRemove(body []byte) (string, []string, error) {
 	host, err := hostIn(body)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	return command(host), do(host)
+	var req struct {
+		Remove []string `json:"remove"`
+	}
+	json.Unmarshal(body, &req)
+	for _, id := range req.Remove {
+		if err := policy.ValidRuleID(id); err != nil {
+			return "", nil, invalid{err}
+		}
+	}
+	return host, req.Remove, nil
 }
 
 func (s *Server) remove(body []byte) ([]string, error) {

@@ -78,10 +78,12 @@ type LogEntry struct {
 	Rule      string `json:"rule,omitempty"`
 	ProxyType string `json:"proxyType,omitempty"`
 	Reason    string `json:"reason,omitempty"`
-	// AllowedBy is, for an Unblocked entry, the rules that let its host
-	// through: what has to go for the host to be blocked again, since sbx
-	// refuses a deny beside an allow for the same host.
+	// AllowedBy is, for an Unblocked or an Allowed entry, the rules that allow
+	// its host: what Block says it removes (those for exactly the host, which
+	// sbx refuses a deny beside) and what it leaves.
 	AllowedBy []RuleRef `json:"allowedBy,omitempty"`
+	// BlockedBy is, for an entry that is still Blocked, the deny rules that cover its host: empty when only the default blocks it.
+	BlockedBy []RuleRef `json:"blockedBy,omitempty"`
 	// Raw is the entry as sbx printed it.
 	Raw json.RawMessage `json:"raw"`
 }
@@ -256,7 +258,7 @@ func Resolve(log Log, rules Rules) Log {
 			continue
 		}
 		allowed, denied := false, false
-		var allowedBy []RuleRef
+		var allowedBy, blockedBy []RuleRef
 		for _, r := range rules.Rules {
 			if !r.active() {
 				continue
@@ -268,6 +270,11 @@ func Resolve(log Log, rules Rules) Log {
 				}
 				if r.Decision == Blocked {
 					denied = true
+					if !listed {
+						listed = true
+						blockedBy = append(blockedBy, RuleRef{ID: r.ID, Name: r.Name, Resources: r.Resources, Source: r.Source, Scope: r.Scope,
+							Removable: r.Removable, Wider: reachesFurther(r.Resources, e.Host), Identical: identicalTo(r.Resources, e.Host)})
+					}
 				} else if r.Decision == Allowed {
 					allowed = true
 					if !listed {
@@ -283,6 +290,8 @@ func Resolve(log Log, rules Rules) Log {
 				out.Entries[i].Decision = Unblocked
 			}
 			out.Entries[i].AllowedBy = allowedBy
+		} else if e.Decision == Blocked && denied {
+			out.Entries[i].BlockedBy = blockedBy
 		}
 	}
 	return out
@@ -497,6 +506,82 @@ func sameIDs(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// AllowRemoving lets the sandbox reach host, whatever blocks it now. A deny beats any allow, so adding an allow beside a deny does
+// nothing (and sbx refuses it beside a deny of the identical resource): the deny rules that cover host are removed first, and
+// removing is the ids of those the user was shown (if they are not those now, nothing is done). Then the allow is added, unless
+// one covers host already. A deny that can't be removed from here, one of the global policy or one sbx says can't be edited,
+// stops it all before anything is changed. It returns the last sbx command run.
+func (c *Client) AllowRemoving(host string, removing []string) ([]string, error) {
+	if err := c.check(host); err != nil {
+		return nil, err
+	}
+	for _, id := range removing {
+		if err := ValidRuleID(id); err != nil {
+			return nil, err
+		}
+	}
+	rules, err := c.NetworkRules()
+	if err != nil {
+		return nil, err
+	}
+	own := "sandbox:" + c.Sandbox
+	var denies []Rule
+	allowedAlready := false
+	for _, r := range rules.Rules {
+		if !r.active() {
+			continue
+		}
+		covers := false
+		for _, res := range r.Resources {
+			covers = covers || hostMatches(res, host)
+		}
+		switch {
+		case covers && r.Decision == Blocked:
+			denies = append(denies, r)
+		case covers && r.Decision == Allowed:
+			allowedAlready = true
+		}
+	}
+	found := make([]string, len(denies))
+	for i, r := range denies {
+		found[i] = r.ID
+	}
+	if !sameIDs(found, removing) {
+		return nil, Refused{"the rules for " + host + " have changed since you were shown them: look at the log again"}
+	}
+	for _, r := range denies {
+		switch {
+		case r.Scope != own && r.ID != "":
+			return nil, Refused{fmt.Sprintf("%s blocks %s for every sandbox, so it can't be removed from here (in a terminal, for every sandbox: sbx policy rm network --id %s)", ruleName(r), host, r.ID)}
+		case !r.Removable:
+			return nil, Refused{fmt.Sprintf("%s blocks %s and can't be removed from here, and while it stands an allow does nothing", ruleName(r), host)}
+		}
+	}
+	var last []string
+	var removed []string
+	for _, r := range denies {
+		last = c.RemoveCommand(r.ID)
+		if _, err := c.run(last...); err != nil {
+			if len(removed) > 0 {
+				return last, fmt.Errorf("removed %s, but removing %s failed: %w", strings.Join(removed, ", "), ruleName(r), err)
+			}
+			return last, err
+		}
+		removed = append(removed, ruleName(r))
+	}
+	if allowedAlready && len(denies) > 0 {
+		return last, nil
+	}
+	last = c.AllowCommand(host)
+	if _, err := c.run(last...); err != nil {
+		if len(removed) > 0 {
+			return last, fmt.Errorf("removed %s, but the allow could not be added, so %s is blocked as it was before: %w", strings.Join(removed, ", "), host, err)
+		}
+		return last, err
+	}
+	return last, nil
 }
 
 // Remove removes one of the sandbox's own network rules.
