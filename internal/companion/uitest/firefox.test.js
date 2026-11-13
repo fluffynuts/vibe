@@ -1122,3 +1122,37 @@ test('a Network log row says it is updating without growing, and without moving 
     assert.deepEqual(measured.during.widths, measured.before.widths, `a column changed width when the row began to say it is updating: ${JSON.stringify(measured.before.widths)} then ${JSON.stringify(measured.during.widths)}`)
   } finally { await page.close() }
 })
+
+// A host wrapped in the middle of its port ("kernel.org:44" then "3") and a rule's text broken in the middle of its words are hard to read,
+// and both were so whenever a long rule text squeezed the other columns. The host keeps its width; the rule breaks between its words.
+test('in the Network log a host stays on one line and a rule breaks between its words, not in them', async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 900 } })
+  try {
+    await page.goto(URL)
+    await page.click('#tab-log')
+    await page.waitForSelector('#log-table')
+    const measured = await page.evaluate(() => {
+      const body = document.querySelector('#log-table tbody')
+      const row = document.createElement('tr')
+      row.className = 'entry'
+      const cell = (cls, html) => { const td = document.createElement('td'); if (cls) td.className = cls; td.innerHTML = html; return td }
+      const rule = 'denied: rule "local:49b1b3fa-a378-47c1-a4bd-4b3dc7c0f3fb" matched op(action=net:connect:tcp, resource=net:domain:mirrors.kernel.org:443)'
+      const host = cell('host', 'mirrors.kernel.org:443')
+      const text = cell('mono', rule)
+      row.append(cell('when', '13 Nov, 15:14:21'), host, cell('num', '1'), cell('', '<span class="status blocked">Blocked</span>'), text, cell('', '<button type="button" class="small">Allow</button>'))
+      body.append(row)
+      // Lines a run of text sits on: more than one rectangle for it means it was broken.
+      const lines = (td, from, to) => { const r = document.createRange(); r.setStart(td.firstChild, from); r.setEnd(td.firstChild, to); return r.getClientRects().length }
+      const hostLines = lines(host, 0, host.textContent.length)
+      const split = []
+      let at = 0
+      for (const word of rule.split(' ')) {
+        if (word && lines(text, at, at + word.length) > 1 && word.length < 40) split.push(word)
+        at += word.length + 1
+      }
+      return { hostLines, split, ruleLines: lines(text, 0, rule.length), cellWidth: text.getBoundingClientRect().width, hostWidth: host.getBoundingClientRect().width, hostMin: getComputedStyle(host).minWidth, hostFont: getComputedStyle(host).fontFamily + ' ' + getComputedStyle(host).fontSize }
+    })
+    assert.equal(measured.hostLines, 1, 'the host is broken over lines: ' + JSON.stringify(measured))
+    assert.deepEqual(measured.split, [], `words of the rule were broken in the middle (cell ${measured.cellWidth}px wide)`)
+  } finally { await page.close() }
+})

@@ -855,3 +855,7 @@ ul.signins summary { cursor: pointer; color: var(--muted); }
    and a column that grew for them moved all the others as it came and went */
 .updating { color: var(--muted); white-space: nowrap; }
 #log-table th:nth-child(4), #log-table td:nth-child(4) { min-width: 9em; white-space: nowrap; }
+/* A host keeps its whole name on one line (a long rule text squeezed it until its port broke off), and a rule breaks between its words:
+   only a word too long for the cell is broken. */
+#log-table td.host { min-width: 16em; }
+#log-table td.mono { word-break: normal; overflow-wrap: break-word; }
