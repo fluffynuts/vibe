@@ -47,6 +47,13 @@ func jobsJSON(jobs ...fakeJob) string {
 // rerunsFor runs the script for a run on its attempt-th attempt, whose jobs are as given, and says which re-run commands it made.
 func rerunsFor(t *testing.T, attempt int, jobs ...fakeJob) []string {
 	t.Helper()
+	calls, _ := runScript(t, attempt, jobs...)
+	return calls
+}
+
+// runScript is rerunsFor, and says too what the script wrote to the run's summary page.
+func runScript(t *testing.T, attempt int, jobs ...fakeJob) (calls []string, summary string) {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("a bash script, run by Linux's and macOS's CI")
 	}
@@ -71,12 +78,14 @@ esac
 		t.Fatal(err)
 	}
 	cmd := exec.Command("bash", filepath.Join(repoRoot(t), ".github", "scripts", "rerun-if-no-runner.sh"), "42", fmt.Sprint(attempt))
-	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GH_REPO=o/r", "FAKE_JOBS="+fixture, "FAKE_LOG="+log)
+	summaryFile := filepath.Join(dir, "summary.md")
+	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GH_REPO=o/r", "FAKE_JOBS="+fixture, "FAKE_LOG="+log, "GITHUB_STEP_SUMMARY="+summaryFile)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("the script failed: %v\n%s", err, out)
 	}
 	data, _ := os.ReadFile(log)
-	return strings.Fields(strings.ReplaceAll(strings.TrimSpace(string(data)), "\n", " ; "))
+	written, _ := os.ReadFile(summaryFile)
+	return strings.Fields(strings.ReplaceAll(strings.TrimSpace(string(data)), "\n", " ; ")), string(written)
 }
 
 func TestAJobThatNeverGotARunnerAndWaitedIsRerunAloneWhateverItsConclusion(t *testing.T) {
@@ -130,5 +139,29 @@ func TestItKeepsTryingUntilTheTenthAttemptAndThenGivesUp(t *testing.T) {
 		if got := strings.Join(rerunsFor(t, attempt, starved), " "); got != "run rerun --job 2" {
 			t.Errorf("re-ran %q on attempt %d, want job 2 re-run", got, attempt)
 		}
+	}
+}
+
+// The run's summary page is where someone looking at the Actions tab sees that it happened, and how often.
+func TestTheRunsSummaryNamesTheJobHowLongItWaitedAndWhichAttemptItWas(t *testing.T) {
+	_, summary := runScript(t, 3,
+		fakeJob{id: 1, conclusion: "success", runner: 7, steps: 11},
+		fakeJob{id: 2, conclusion: "cancelled", runner: 0, steps: 0, waited: "15m"},
+	)
+	for _, want := range []string{"test (job 2)", "15 minutes", "attempt 3 of 10", "re-ran"} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("the summary does not say %q:\n%s", want, summary)
+		}
+	}
+}
+
+func TestTheRunsSummaryAlsoSaysWhyNothingWasRerun(t *testing.T) {
+	_, summary := runScript(t, 1, fakeJob{id: 1, conclusion: "failure", runner: 7, steps: 11})
+	if !strings.Contains(summary, "nothing") {
+		t.Errorf("the summary does not say that nothing was re-run:\n%s", summary)
+	}
+	_, summary = runScript(t, 10, fakeJob{id: 2, conclusion: "failure", runner: 0, steps: 0, waited: "15m"})
+	if !strings.Contains(summary, "attempt 10 of 10") {
+		t.Errorf("the summary does not say it gave up, and at which attempt:\n%s", summary)
 	}
 }
