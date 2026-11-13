@@ -232,6 +232,8 @@ func TestRefusedChangesNeverRunSbx(t *testing.T) {
 	for _, body := range []string{
 		`{"host":"*"}`, `{"host":"**"}`, `{"host":"-rf"}`, `{"host":"a.com,b.com"}`, `{"host":""}`, `{}`, `not json`,
 		`{"host":"a.com; rm -rf /"}`,
+		`{"host":"a.com","remove":"r-1"}`, // a string, not a list: not "remove nothing"
+		`{"host":"a.com","remove":[1]}`,
 	} {
 		w := do(t, s, post("/api/allow", body))
 		if w.Code != http.StatusBadRequest {

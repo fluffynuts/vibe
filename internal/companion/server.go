@@ -833,7 +833,9 @@ func hostAndRemove(body []byte) (string, []string, error) {
 	var req struct {
 		Remove []string `json:"remove"`
 	}
-	json.Unmarshal(body, &req)
+	if err := json.Unmarshal(body, &req); err != nil {
+		return "", nil, invalid{errors.New("expected {\"host\": ..., \"remove\": [rule ids]}")}
+	}
 	for _, id := range req.Remove {
 		if err := policy.ValidRuleID(id); err != nil {
 			return "", nil, invalid{err}
