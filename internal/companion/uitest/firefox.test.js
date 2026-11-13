@@ -16,6 +16,18 @@ let browser
 test.before(async () => { browser = await firefox.launch() })
 test.after(async () => { if (browser) await browser.close() })
 
+// stateWith serves /api/state as the server answers it, with patch merged in. A poll still being fetched when a test closes its page has the
+// response disposed under it ("Response has been disposed"): that is the end of the test, not a failure, and left to throw it was an unhandled
+// rejection that failed a whole CI run (Windows) in which every test had passed. Any other error is still the test's.
+const stateWith = (page, patch) => async (route) => {
+  try {
+    const state = await (await route.fetch()).json()
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(Object.assign(state, patch)) })
+  } catch (e) {
+    if (!page.isClosed()) throw e
+  }
+}
+
 // reviewPage opens the page on its Review tab, the diff drawn.
 async function reviewPage() {
   const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
@@ -418,7 +430,7 @@ test('the emoji list opens above the prompt, on the page, with each emoji drawn 
   for (const width of [1200, 700, 380]) {
     const page = await browser.newPage({ viewport: { width, height: 800 } })
     try {
-      await page.route(/\/api\/state$/, async (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(Object.assign(await (await route.fetch()).json(), { conversation: true })) }))
+      await page.route(/\/api\/state$/, stateWith(page, { conversation: true }))
       await page.route(/\/api\/conversation\?/, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ events: [], last: 0, running: false }) }))
       await page.goto(URL)
       await page.click('#tab-conversation')
@@ -442,7 +454,7 @@ test('the emoji list opens above the prompt, on the page, with each emoji drawn 
 // The emoji list opens at the colon: just above its line, left edge there, and never outside the prompt box.
 async function promptPage(width) {
   const page = await browser.newPage({ viewport: { width, height: 800 } })
-  await page.route(/\/api\/state$/, async (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(Object.assign(await (await route.fetch()).json(), { conversation: true })) }))
+  await page.route(/\/api\/state$/, stateWith(page, { conversation: true }))
   await page.route(/\/api\/conversation\?/, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ events: [], last: 0, running: false }) }))
   await page.goto(URL)
   await page.click('#tab-conversation')
@@ -628,7 +640,7 @@ async function viewerPage(files, width) {
   const events = [{ seq: 1, kind: 'user', text: 'hi' }, sayEv(2, 'See `' + first + '`.')]
   const json = (route, body) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) })
   const query = (route) => new (require('node:url').URL)(route.request().url()).searchParams
-  await page.route(/\/api\/state$/, async (route) => json(route, Object.assign(await (await route.fetch()).json(), { viewFiles: true })))
+  await page.route(/\/api\/state$/, stateWith(page, { viewFiles: true }))
   await page.route(/\/api\/conversation\?/, (route) => json(route, { events: events.filter((e) => e.seq > (Number(query(route).get('after')) || 0)), last: 2, running: false }))
   await page.route(/\/api\/workspace-files\?/, (route) => json(route, { files: query(route).getAll('path').filter((p) => p in files) }))
   await page.route(/\/api\/workspace-file\?/, (route) => json(route, { path: query(route).get('path'), text: files[query(route).get('path')] }))
@@ -1182,4 +1194,16 @@ test('a Network rules row says it is removing without moving the columns', async
     assert.ok(measured.during.height <= measured.before.height + 1, `the row is ${measured.during.height}px tall while removing, ${measured.before.height}px otherwise`)
     assert.deepEqual(measured.during.widths, measured.before.widths, `a column changed width when the row began to say it is removing: ${JSON.stringify(measured.before.widths)} then ${JSON.stringify(measured.during.widths)}`)
   } finally { await page.close() }
+})
+
+test('a state poll cut off by its page closing is not an error, and any other failure of one still is', async () => {
+  const gone = new Error('apiResponse.json: Response has been disposed')
+  const route = { fetch: async () => { throw gone }, fulfill: async () => {} }
+  const open = await browser.newPage()
+  try {
+    await assert.rejects(stateWith(open, {})(route), /disposed/, 'a failure while the page is open was swallowed')
+  } finally { await open.close() }
+  const closed = await browser.newPage()
+  await closed.close()
+  await stateWith(closed, {})(route)
 })
