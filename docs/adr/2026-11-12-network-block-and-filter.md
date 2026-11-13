@@ -50,7 +50,9 @@ rule being changed, which waits for sbx for a second or two. Nothing is disabled
 button is disabled, and the tab's sign is on (at once, 4): sbx takes a few seconds to run the command itself, before the list can even be read again, and a page that shows
 nothing for those seconds looks as though nothing was asked (found in use: the marker used to start when sbx had answered). It lasts until a read of the log that **began
 after sbx finished the command** has come back; while the command is still running no read can take it off (`at` is infinity until then), or a poll in those seconds would
-show the old status again. Cancelling the confirmation marks nothing. It claims nothing about the outcome: the status is derived on the server from the log and
+show the old status again. Cancelling the confirmation marks nothing. The status column has a minimum width (9em) and the updating cell does not wrap: "Updating…" with its
+spinner is wider than the words a status usually is (Unblocked), and the row was twice as tall, and the column grew and moved the others, while it showed (found in use;
+`firefox.test.js` measures a row's height and every column's width in a real Firefox, as the status cell is swapped). It claims nothing about the outcome: the status is derived on the server from the log and
 all the rules (a deny beats an allow; a wildcard may still cover the host), and a guess in the page would be a second copy of `Resolve`, and wrong where a user trusts it most.
 A read already on its way when the change was made may say the old thing, so it does **not** take the mark off (each read is numbered, and a mark records how many had begun
 when it was made); a change that failed is marked too, since part of it may have been made, and shows the truth when it is read. A rule added from the Network rules
@@ -105,7 +107,8 @@ until the user has spoken with the `sbx` people: more `sbx` processes in flight 
 
 - Tried by the user against a real `sbx`: an exact rule (Block then Remove, host blocked again); a wildcard (the warning, Cancel changing nothing, all four hosts blocked again);
   two rules at once (both listed, the commands one to a line, both removed); a global rule (the explanation, the old failing removal replaced); Block on an Allowed host
-  (the old dialog, cancelled); the spinner immediately after Allow, Block and Remove; the filter, spinner and layout of the **Network rules** tab. The **Filesystem rules** tab's new bar was
+  (the old dialog, cancelled); the spinner immediately after Allow, Block and Remove; the per-row "Updating…" marker through a whole Allow and Block (one line, the other columns still, the button disabled,
+  and the real status when it ended); the filter, spinner and layout of the **Network rules** tab. The **Filesystem rules** tab's new bar was
   not looked at.
 - **Not tried:** a rule `sbx` lists as editable that it then refuses to remove for a reason other than being global; a rule from an organisation policy.
 - One run of `TestARepositoryBuiltToExhaustMemoryCostsOnlyTheHelper` (`internal/review`) failed in a full uncached run, with the helper's last stderr line (a register dump) in
