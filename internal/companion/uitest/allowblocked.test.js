@@ -94,3 +94,18 @@ test('the row says it is updating while the removal and the allow are made', asy
     assert.match(p.$('log-table').textContent, /Updating…/)
   } finally { p.close() }
 })
+
+// The command that removes a global rule for every sandbox works for one sbx calls editable; for one it does not (an organisation's) it
+// would fail, so it is not given.
+test('a global deny sbx will not let anyone edit is explained without a command that cannot work', async () => {
+  const p = await logPage([blocked([deny({ id: 'org-1', name: 'company policy', scope: 'global', removable: false, source: 'organisation' })])])
+  try {
+    await p.click(allow(p))
+    assert.equal(p.$('confirm').open, false)
+    const said = p.$('toast').textContent
+    assert.match(said, /company policy/)
+    assert.match(said, /can't be removed here/)
+    assert.doesNotMatch(said, /sbx policy rm/, 'a command that cannot remove it is given: ' + said)
+    assert.deepEqual(posted(p, '/api/allow'), [])
+  } finally { p.close() }
+})

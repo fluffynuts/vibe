@@ -607,10 +607,14 @@ func (c *Client) AllowRemoving(host string, removing []string) ([]string, error)
 	}
 	for _, r := range denies {
 		switch {
-		case r.Scope != own && r.ID != "":
-			return nil, Refused{fmt.Sprintf("%s blocks %s for every sandbox, so it can't be removed from here (in a terminal, for every sandbox: sbx policy rm network --id %s)", ruleName(r), host, r.ID)}
 		case !r.Removable:
-			return nil, Refused{fmt.Sprintf("%s blocks %s and can't be removed from here, and while it stands an allow does nothing", ruleName(r), host)}
+			from := ""
+			if r.Source != "" {
+				from = " (it comes from " + r.Source + ")"
+			}
+			return nil, Refused{fmt.Sprintf("%s blocks %s and can't be removed from here%s, and while it stands an allow does nothing", ruleName(r), host, from)}
+		case r.Scope != own:
+			return nil, Refused{fmt.Sprintf("%s blocks %s for every sandbox, so it can't be removed from here (in a terminal, for every sandbox: sbx policy rm network --id %s)", ruleName(r), host, r.ID)}
 		}
 	}
 	var last []string

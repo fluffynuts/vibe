@@ -135,3 +135,30 @@ func TestABlockedHostSaysWhichDenyRulesBlockIt(t *testing.T) {
 		t.Errorf("a host only the default blocks lists rules: %+v", got[1].BlockedBy)
 	}
 }
+
+// sbx's own refusal for a rule of the global policy names `sbx policy rm network --id`, which works for one sbx calls editable. A rule it
+// does not (an organisation's) can't be removed that way by anyone here: the user is told so, not sent to a command that fails.
+func TestAllowDoesNotSendTheUserToACommandThatCannotRemoveARuleSbxWillNotLetThemEdit(t *testing.T) {
+	notEditable := func(scope string) string {
+		return strings.Replace(ruleJSON("org", scope, "deny", "www.kernel.org:443"), `"editable": true`, `"editable": false`, 1)
+	}
+	for name, rule := range map[string]string{"global": notEditable("global"), "of another sandbox": notEditable("sandbox:other")} {
+		t.Run(name, func(t *testing.T) {
+			s := &sbxWithRules{rules: rulesOf(rule)}
+			_, err := allowRemoving(t, s, "www.kernel.org:443", "org")
+			var refused Refused
+			if !errors.As(err, &refused) {
+				t.Fatalf("err = %v, want a refusal", err)
+			}
+			if strings.Contains(err.Error(), "sbx policy rm") {
+				t.Errorf("the refusal gives a command that cannot work: %v", err)
+			}
+			if !strings.Contains(err.Error(), "can't be removed") {
+				t.Errorf("the refusal does not say it can't be removed: %v", err)
+			}
+			if len(s.calls) != 0 {
+				t.Errorf("ran %v", s.calls)
+			}
+		})
+	}
+}

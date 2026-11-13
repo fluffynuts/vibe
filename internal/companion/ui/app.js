@@ -1545,9 +1545,9 @@
     const stuck = denies.filter((r) => isGlobalRule(r) || !r.removable || !r.id)
     if (stuck.length) {
       toast("Can't allow " + entry.host + ' from here: ' +
-        stuck.map((r) => isGlobalRule(r)
-          ? globalRuleNote(r)
-          : ruleLabel(r) + " blocks it, and can't be removed here" + (r.source ? ' (it comes from ' + r.source + ')' : '')).join('; ') +
+        stuck.map((r) => !r.removable || !r.id
+          ? ruleLabel(r) + " blocks it, and can't be removed here" + (r.source ? ' (it comes from ' + r.source + ')' : '')
+          : globalRuleNote(r)).join('; ') +
         '. A block beats an allow, so nothing was changed.', true)
       return
     }
