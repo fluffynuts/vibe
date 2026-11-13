@@ -51,7 +51,8 @@ func instructionsFor(lay layout.Layout, name string) (merged, agent string, err 
 	}
 	profileDir := lay.ProfileDir(inst.Profile)
 	project := read(filepath.Join(profileDir, instructions.File))
-	merged = instructions.WithCopyableBlocksRule(instructions.Merge(universal, project), read(filepath.Join(profileDir, instructions.KitFile)))
+	kit := read(filepath.Join(profileDir, instructions.KitFile))
+	merged = instructions.WithBackgroundWorkRule(instructions.WithCopyableBlocksRule(instructions.Merge(universal, project), kit), kit)
 	return merged, agent, nil
 }
 

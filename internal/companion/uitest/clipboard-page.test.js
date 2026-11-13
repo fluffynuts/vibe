@@ -38,6 +38,9 @@ function openClipboardPage(waiting, search = '') {
   }
   w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} })
   w.setInterval = (fn) => { poll = fn; return 0 }
+  const timeouts = []
+  const realSetTimeout = w.setTimeout.bind(w)
+  w.setTimeout = (fn, ms, ...rest) => { timeouts.push(ms); return realSetTimeout(fn, ms, ...rest) }
   w.eval(script)
   const settle = async () => {
     let quiet = 0
@@ -53,6 +56,9 @@ function openClipboardPage(waiting, search = '') {
     status: () => w.document.getElementById('status').textContent,
     link: () => { const el = w.document.getElementById('link'); return el.hidden ? '' : el.textContent },
     server,
+    timeouts,
+    toast: () => { const el = w.document.getElementById('toast'); return el.hidden ? '' : el.textContent },
+    toastIsError: () => w.document.getElementById('toast').classList.contains('error'),
     held: () => Array.from(w.document.querySelectorAll('#held .item')).map((n) => n.textContent),
     clickIn(selector) { w.document.querySelector(selector).click() },
     async poll() { poll(); await settle() },
@@ -334,4 +340,70 @@ test('dropping a held paste makes room for another', async () => {
     await p.poll()
     assert.deepEqual(p.server.uploads.sort(), ['b.png', 'c.png', 'd.png'])
   } finally { p.close() }
+})
+
+// A file of no bytes can't be added (the server says "nothing to add"), and that used to show as a small line under the list, where
+// a list with history in it hid that nothing had been added at all, and failed the whole drop when only one file was empty.
+test('an empty file is not sent, and a toast names it and says it is empty', async () => {
+  const page = openClipboardPage([])
+  try {
+    await page.pasteSized(['test.json', 0])
+    assert.deepEqual(page.server.uploads, [], 'an empty file went to the server')
+    assert.match(page.toast(), /test\.json/)
+    assert.match(page.toast(), /empty/i)
+    assert.match(page.toast(), /0 bytes/)
+    assert.ok(page.toastIsError(), 'it looks like what was just done, not like something that went wrong')
+    assert.equal(page.status(), '', 'the small line says it too')
+  } finally { page.close() }
+})
+
+test('of an empty file and others dropped together, the others are added and the empty one is named', async () => {
+  const page = openClipboardPage([])
+  try {
+    await page.pasteSized(['a.png', 5], ['empty.json', 0], ['b.png', 5])
+    assert.deepEqual(page.server.uploads, ['a.png', 'b.png'])
+    assert.match(page.toast(), /empty\.json/)
+    assert.doesNotMatch(page.toast(), /a\.png|b\.png/)
+    assert.doesNotMatch(page.status(), /Couldn't add/, 'the whole drop is said not to have been added')
+  } finally { page.close() }
+})
+
+test('several empty files are all named', async () => {
+  const page = openClipboardPage([])
+  try {
+    await page.pasteSized(['one.json', 0], ['two.json', 0])
+    assert.match(page.toast(), /one\.json/)
+    assert.match(page.toast(), /two\.json/)
+  } finally { page.close() }
+})
+
+test('an empty item with no name says what it is without one', async () => {
+  const page = openClipboardPage([])
+  try {
+    await page.pasteSized(['image.png', 0])
+    assert.match(page.toast(), /empty/i)
+    assert.deepEqual(page.server.uploads, [])
+  } finally { page.close() }
+})
+
+test('the toast about an empty file fades after eight seconds, longer than the three of one saying what was done', async () => {
+  const page = openClipboardPage([])
+  try {
+    await page.pasteSized(['test.json', 0])
+    assert.ok(page.timeouts.includes(8000), 'the toast was not set to fade after 8 seconds: ' + page.timeouts)
+    assert.equal(page.timeouts.includes(3000), false)
+  } finally { page.close() }
+})
+
+test('a file chosen with the picker is checked too', async () => {
+  const page = openClipboardPage([])
+  try {
+    const picker = page.window.document.getElementById('picker')
+    const f = new page.window.File([''], 'chosen.json', { type: 'application/json' })
+    Object.defineProperty(picker, 'files', { value: [f], configurable: true })
+    picker.dispatchEvent(new page.window.Event('change', { bubbles: true }))
+    await page.settle()
+    assert.deepEqual(page.server.uploads, [])
+    assert.match(page.toast(), /chosen\.json/)
+  } finally { page.close() }
 })

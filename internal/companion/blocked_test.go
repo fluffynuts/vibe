@@ -117,6 +117,17 @@ func TestAHostARuleNowAllowsIsNotCountedAsBlocked(t *testing.T) {
 	}
 }
 
+// A host blocked earlier and allowed since has an old blocked entry in the log: that is history, not news to tell the user of.
+func TestAHostBlockedEarlierAndAllowedSinceIsNotCountedAsBlocked(t *testing.T) {
+	rig := newBlockedRig(t, `{"blocked_hosts": [{"host":"was.example","vm_name":"box","count_since":1,"last_seen":"2026-10-19T12:00:00Z"},
+  {"host":"still.example","vm_name":"box","count_since":1,"last_seen":"2026-10-19T12:00:00Z"}],
+ "allowed_hosts": [{"host":"was.example","vm_name":"box","count_since":1,"last_seen":"2026-10-19T13:00:00Z"}]}`)
+	got := rig.untilKnown(t)
+	if strings.Join(got, ",") != "still.example" {
+		t.Errorf("blocked = %v, want only still.example: was.example was allowed after it was blocked", got)
+	}
+}
+
 func TestTheLogIsReadInTheBackgroundAndNoMoreOftenThanEveryFewSeconds(t *testing.T) {
 	rig := newBlockedRig(t, logOf)
 	rig.untilKnown(t)
@@ -189,5 +200,93 @@ func TestAPageWithNoPolicyHasNoBlockedHostsToSay(t *testing.T) {
 	rec := do(t, s, req{path: "/api/state", headers: authed(nil)})
 	if strings.Contains(rec.Body.String(), `"blockedHosts":["`) {
 		t.Errorf("body = %s", rec.Body)
+	}
+}
+
+// The page's Block on an unblocked host removes the rules that let it through (sbx won't add a deny beside an
+// allow), so the log has to say which they are.
+func TestTheLogNamesTheRulesThatLetAnUnblockedHostThrough(t *testing.T) {
+	sbx := &fakeSbx{out: map[string]string{
+		"log": `{"blocked": [{"host": "www.kernel.org:443", "count": 1, "last_seen": "2026-11-12T12:39:25Z"}]}`,
+		"ls-network": `{"rules": [` +
+			`{"id":"r-exact","resources":["www.kernel.org:443"],"decision":"allow","origin":"local","editable":true},` +
+			`{"id":"r-wild","resources":["*.kernel.org"],"decision":"allow","origin":"local","editable":false}]}`,
+	}}
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Policy: &policy.Client{Sandbox: "box", Run: sbx.run}})
+	rec := do(t, s, req{path: "/api/log", headers: authed(nil)})
+	var body struct {
+		Entries []struct {
+			Host      string `json:"host"`
+			Decision  string `json:"decision"`
+			AllowedBy []struct {
+				ID        string `json:"id"`
+				Removable bool   `json:"removable"`
+				Wider     bool   `json:"wider"`
+			} `json:"allowedBy"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("%v: %s", err, rec.Body)
+	}
+	if len(body.Entries) != 1 || body.Entries[0].Decision != "unblocked" {
+		t.Fatalf("entries = %+v", body.Entries)
+	}
+	by := body.Entries[0].AllowedBy
+	if len(by) != 2 || by[0].ID != "r-exact" || !by[0].Removable || by[0].Wider || by[1].ID != "r-wild" || by[1].Removable || !by[1].Wider {
+		t.Errorf("allowedBy = %+v, want the exact rule (removable) and the wildcard (not removable, wider)", by)
+	}
+}
+
+// getLog is the page reading the Network log.
+func (r *blockedRig) getLog(t *testing.T) {
+	t.Helper()
+	if rec := do(t, r.s, req{path: "/api/log", headers: authed(nil)}); rec.Code != 200 {
+		t.Fatalf("/api/log: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// Each reading of the log is two sbx calls, and sbx is slow (a couple of seconds each, and slower the more sandboxes there are
+// with a vibe each), so a page reading the log feeds the blocked-hosts state rather than the background read making the same
+// two calls beside it.
+func TestAPageReadingTheLogGivesTheBlockedHostsWithoutAnotherReading(t *testing.T) {
+	rig := newBlockedRig(t, logOf)
+	rig.sbx.out["ls-network"] = `{"rules": [{"id":"r-1","resources":["b.example"],"decision":"allow","origin":"local","editable":true}]}`
+	rig.getLog(t)
+	hosts, known := rig.hosts(t)
+	if !known || strings.Join(hosts, ",") != "evil.example" {
+		t.Fatalf("blocked = %v (known %v), want evil.example, from the log the page read", hosts, known)
+	}
+	rig.hosts(t)
+	if n := rig.logCalls(); n != 1 {
+		t.Errorf("the log was read %d times: the state asked for what the page's reading had just found", n)
+	}
+}
+
+func TestWhileThePageKeepsReadingTheLogTheBackgroundDoesNotReadItToo(t *testing.T) {
+	rig := newBlockedRig(t, logOf)
+	rig.getLog(t)
+	for i := 0; i < 3; i++ {
+		rig.advance(blockedEvery + 10*time.Millisecond) // long enough for the background to read, had it not just been read
+		rig.s.cache.clear()                             // and for the page's own cache to have gone stale, as two seconds do
+		rig.getLog(t)
+		rig.hosts(t)
+	}
+	time.Sleep(100 * time.Millisecond) // a background reading, if one was started, is under way by now
+	if n := rig.logCalls(); n != 4 {
+		t.Errorf("the log was read %d times for 4 readings by the page: the background reading went on beside them", n)
+	}
+}
+
+func TestOnceThePageStopsReadingTheLogTheBackgroundReadsItAgain(t *testing.T) {
+	rig := newBlockedRig(t, logOf)
+	rig.getLog(t)
+	rig.advance(blockedEvery + time.Millisecond)
+	rig.hosts(t)
+	deadline := time.Now().Add(10 * time.Second)
+	for rig.logCalls() < 2 {
+		if time.Now().After(deadline) {
+			t.Fatal("nothing read the log again once the page had stopped")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

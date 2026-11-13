@@ -1110,7 +1110,7 @@ defaults/             # tooling applied to every profile, regardless of tech sta
   agent-files/
 library/              # selectable features a guided profile is composed from
   <feature-name>/     # same shape as a profile — see "Library features"
-  base/               # features every guided profile always gets (clipboard-bridge, copyable-blocks, prerequisites, review, timezone)
+  base/               # features every guided profile always gets (background-work, clipboard-bridge, copyable-blocks, prerequisites, review, timezone)
 profiles/
   <profile-name>/
     config.yaml          # profile-specific kit fragment, merged over the base one
@@ -1350,6 +1350,7 @@ The other base features, which every guided profile has too:
   (apt installs nothing when it can't find one name), the tools and Node are asked for separately, Node falling back to
   Debian's own. Anything still missing is named in `/tmp/sbx-setup.log`. A feature still checks for the tools it uses
   itself, which costs nothing when they're there.
+- **`background-work`** tells the agent that the user's next prompt ends whatever the last run left running in the background (the page asks the user first), so it should finish work inside the turn, or start what must outlive it detached (`setsid nohup`) and look at it next turn. Like `copyable-blocks` it is only an instruction, and its short form is in what the agent always loads; a sandbox composed before it needs `vibe -C` to have it.
 - **`copyable-blocks`** tells the agent to put text you will paste elsewhere (a pull request description, a commit message) in one fenced block with nothing else inside it, tagged `markdown` when it is Markdown, so the page's copy button takes just that text, and the page shows it formatted. Its remarks go outside the block. It is only an instruction, so an agent may not follow it; a sandbox composed before it needs `vibe -C` to have it.
 - **`timezone`** installs `tzdata`, which the image lacks, so the sandbox can be set to your timezone at every session
   start (a project whose tests expect a timezone gets it).

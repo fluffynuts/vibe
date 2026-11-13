@@ -123,6 +123,33 @@ func WithCopyableBlocksRule(merged, kit string) string {
 	return rule + "\n" + merged
 }
 
+// BackgroundWorkHeading is the heading, in the kits' instructions, of what the
+// background-work feature tells an agent about work left running.
+const BackgroundWorkHeading = "Work left running in the background"
+
+// WithBackgroundWorkRule is merged with, ahead of it, the short form of what the
+// background-work feature tells an agent: a new prompt ends what the last run left
+// running. It is in what the agent always loads, for the reason the copyable-blocks
+// rule is (a kit's instructions are read when a kit seems relevant, and an agent about
+// to run something in the background doesn't think this one is), and only for a kit
+// that carries the feature.
+func WithBackgroundWorkRule(merged, kit string) string {
+	if !strings.Contains(kit, BackgroundWorkHeading) {
+		return merged
+	}
+	const heading = "Work left running in the background (from vibe)"
+	rule := heading + "\n" + strings.Repeat("-", len(heading)) + "\n\n" +
+		"The user's next prompt ends the run you are in, and everything it left going: a background task (run_in_background, a monitor, a loop) stops the moment they send it, " +
+		"even though the conversation looks idle to them, and you won't be told when it was stopped. " +
+		"So don't end your turn with background work pending: run it in the foreground, or wait for it inside the turn. " +
+		"Work that must outlive the next prompt can be started detached (`setsid nohup <command> > /tmp/<name>.log 2>&1 &`, its pid in `/tmp/<name>.pid`): say so, and look at it on your next turn. " +
+		"More is in the section \"" + BackgroundWorkHeading + "\" of your kit instructions.\n"
+	if merged == "" {
+		return rule
+	}
+	return rule + "\n" + merged
+}
+
 // normalise gives text Unix line endings, whatever it was edited with.
 func normalise(text string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")

@@ -78,6 +78,7 @@
     background: var(--panel); color: var(--text); border: 1px solid var(--accent);
     border-radius: 8px; padding: 8px 12px; font-size: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.3);
   }
+  #toast.error { border-color: var(--danger); }
   #items, #held { display: grid; gap: 12px; }
   #held:not(:empty) { margin-bottom: 12px; }
   #held .item { grid-template-columns: 1fr auto; align-items: center; padding: 8px 12px; border: 1px dashed var(--border); border-radius: 8px; }
@@ -195,13 +196,15 @@ function setStatus(message, isError) {
 var toastEl = document.getElementById("toast");
 var toastTimer = null;
 
-// toast says what was just done, for a few seconds.
-function toast(message) {
+// toast says what was just done, for a few seconds (ms): longer, and in the colour of a problem, for what the user needs to read
+// and might otherwise take for done (isError).
+function toast(message, ms, isError) {
   setStatus("");
   toastEl.textContent = message;
+  toastEl.classList.toggle("error", !!isError);
   toastEl.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(function () { toastEl.hidden = true; }, 3000);
+  toastTimer = setTimeout(function () { toastEl.hidden = true; }, ms || 3000);
 }
 
 function formatSize(n) {
@@ -483,7 +486,21 @@ window.addEventListener("beforeunload", function (e) {
   e.returnValue = "";
 });
 
+// emptyText says which of the entries had no bytes, and so were not added: the server would refuse them ("nothing to add"), and
+// a list with history in it hides that nothing was added at all.
+function emptyText(empty) {
+  var names = empty.filter(function (e) { return e.name; }).map(function (e) { return '"' + e.name + '"'; });
+  var shown = names.slice(0, 3).join(", ") + (names.length > 3 ? " and " + (names.length - 3) + " more" : "");
+  if (empty.length === 1) return (shown ? shown + " is empty (0 bytes), so it wasn't" : "An empty item (0 bytes) wasn't") + " added.";
+  return empty.length + " empty items (0 bytes) weren't added" + (shown ? ": " + shown : "") + ".";
+}
+
+var EMPTY_TOAST_MS = 8000;
+
 function uploadAll(entries) {
+  var empty = entries.filter(function (e) { return e.blob.size === 0; });
+  entries = entries.filter(function (e) { return e.blob.size > 0; });
+  if (empty.length) toast(emptyText(empty), EMPTY_TOAST_MS, true);
   if (!entries.length) return;
   setStatus("Sending " + entries.length + (entries.length === 1 ? " item…" : " items…"));
   var unreachable = [];

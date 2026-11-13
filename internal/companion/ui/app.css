@@ -270,8 +270,11 @@ td.empty { text-align: center; color: var(--muted); padding: 28px; }
 .status::before { content: "●"; margin-right: 6px; }
 .status.allowed { color: var(--ok); }
 .status.blocked { color: var(--bad); }
+.status.blocked-now { color: var(--bad); }
 .status.unblocked { color: var(--amber); }
 .status.unknown { color: var(--muted); }
+tr.superseded { color: var(--muted); }
+.status.superseded { color: var(--muted); text-decoration: line-through; }
 tr.detail td { background: var(--row-hover); }
 tr.detail dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; }
 tr.detail dt { color: var(--muted); }
@@ -629,8 +632,9 @@ html.themed .commands li[aria-selected="true"] {
 .choice.loading select { cursor: progress; }
 /* room of its own ahead of the filters, there whether it shows or not; it comes in only if the refresh is slow, so the quick ones every poll don't flicker */
 .log-spin { display: inline-flex; align-items: center; justify-content: center; width: 14px; }
-#log-refreshing { margin: 0; opacity: 0; }
-#log-refreshing.on { opacity: 1; transition: opacity .15s .2s; }
+.read-sign { margin: 0; opacity: 0; }
+.read-sign.on { opacity: 1; transition: opacity .15s .2s; }
+.read-sign.on.at-once { transition-delay: 0s; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .choice-info { position: relative; box-sizing: border-box; width: 22px; height: 22px; padding: 0; border-radius: 50%; font: italic 700 13px Georgia, serif; line-height: 1; color: var(--muted); }
 .choice-info.warn { color: var(--amber); border-color: var(--amber); }
@@ -720,6 +724,8 @@ dialog.glass::backdrop { background: rgba(250, 250, 250, .55); backdrop-filter: 
 .flag { font-size: 11px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 .flag.bad { color: var(--bad); border-color: var(--bad); }
 .flag.ok { color: var(--ok); border-color: var(--ok); }
+/* several commands (blocking a host that more than one rule allows) are one to a line */
+#confirm-command { white-space: pre-wrap; }
 .confirm-list { margin: 0 0 8px; padding-left: 18px; max-height: 40vh; overflow: auto; font-size: 13px; }
 
 /* Frosted glass over the page while vibe isn't there. */
@@ -843,3 +849,14 @@ ul.signins summary { cursor: pointer; color: var(--muted); }
 .commands.emoji { bottom: auto; }
 .commands.emoji li .glyph { display: inline-block; min-width: 1.6em; margin-right: 4px; text-align: center; }
 .commands.emoji li .alias { color: var(--muted); margin-left: 6px; font-size: 12px; }
+
+/* a Network log row whose host's rule is being changed: that it is, and nothing of the outcome */
+/* the status column is wide enough for "Updating…" and its spinner, which never wrap: a row that wrapped them was twice as tall while sbx ran,
+   and a column that grew for them moved all the others as it came and went */
+.updating { color: var(--muted); white-space: nowrap; }
+#log-table th:nth-child(4), #log-table td:nth-child(4) { min-width: 9em; white-space: nowrap; }
+#rules-table th:last-child, #rules-table td:last-child { min-width: 9em; white-space: nowrap; }
+/* A host keeps its whole name on one line (a long rule text squeezed it until its port broke off), and a rule breaks between its words:
+   only a word too long for the cell is broken. */
+#log-table td.host { min-width: 16em; }
+#log-table td.mono { word-break: normal; overflow-wrap: break-word; }

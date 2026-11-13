@@ -16,6 +16,18 @@ let browser
 test.before(async () => { browser = await firefox.launch() })
 test.after(async () => { if (browser) await browser.close() })
 
+// stateWith serves /api/state as the server answers it, with patch merged in. A poll still being fetched when a test closes its page has the
+// response disposed under it ("Response has been disposed"): that is the end of the test, not a failure, and left to throw it was an unhandled
+// rejection that failed a whole CI run (Windows) in which every test had passed. Any other error is still the test's.
+const stateWith = (page, patch) => async (route) => {
+  try {
+    const state = await (await route.fetch()).json()
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(Object.assign(state, patch)) })
+  } catch (e) {
+    if (!page.isClosed()) throw e
+  }
+}
+
 // reviewPage opens the page on its Review tab, the diff drawn.
 async function reviewPage() {
   const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
@@ -418,7 +430,7 @@ test('the emoji list opens above the prompt, on the page, with each emoji drawn 
   for (const width of [1200, 700, 380]) {
     const page = await browser.newPage({ viewport: { width, height: 800 } })
     try {
-      await page.route(/\/api\/state$/, async (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(Object.assign(await (await route.fetch()).json(), { conversation: true })) }))
+      await page.route(/\/api\/state$/, stateWith(page, { conversation: true }))
       await page.route(/\/api\/conversation\?/, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ events: [], last: 0, running: false }) }))
       await page.goto(URL)
       await page.click('#tab-conversation')
@@ -442,7 +454,7 @@ test('the emoji list opens above the prompt, on the page, with each emoji drawn 
 // The emoji list opens at the colon: just above its line, left edge there, and never outside the prompt box.
 async function promptPage(width) {
   const page = await browser.newPage({ viewport: { width, height: 800 } })
-  await page.route(/\/api\/state$/, async (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(Object.assign(await (await route.fetch()).json(), { conversation: true })) }))
+  await page.route(/\/api\/state$/, stateWith(page, { conversation: true }))
   await page.route(/\/api\/conversation\?/, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ events: [], last: 0, running: false }) }))
   await page.goto(URL)
   await page.click('#tab-conversation')
@@ -628,7 +640,7 @@ async function viewerPage(files, width) {
   const events = [{ seq: 1, kind: 'user', text: 'hi' }, sayEv(2, 'See `' + first + '`.')]
   const json = (route, body) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) })
   const query = (route) => new (require('node:url').URL)(route.request().url()).searchParams
-  await page.route(/\/api\/state$/, async (route) => json(route, Object.assign(await (await route.fetch()).json(), { viewFiles: true })))
+  await page.route(/\/api\/state$/, stateWith(page, { viewFiles: true }))
   await page.route(/\/api\/conversation\?/, (route) => json(route, { events: events.filter((e) => e.seq > (Number(query(route).get('after')) || 0)), last: 2, running: false }))
   await page.route(/\/api\/workspace-files\?/, (route) => json(route, { files: query(route).getAll('path').filter((p) => p in files) }))
   await page.route(/\/api\/workspace-file\?/, (route) => json(route, { path: query(route).get('path'), text: files[query(route).get('path')] }))
@@ -1091,4 +1103,107 @@ test('the note that the code has changed fits the Review bar beside Refresh, at 
       assert.ok(noteBox && noteBox.width > 0 && noteBox.x + noteBox.width <= width, `at ${width}px wide, the note isn't drawn inside the window: ${JSON.stringify(noteBox)}`)
     } finally { await page.close() }
   }
+})
+
+// A Network log row whose rule is being changed says "Updating…" in its status cell, with a spinner. Wider than the words a status
+// is usually (Unblocked), it wrapped, and the row was twice as tall for as long as sbx took; and a column that grows for it moves
+// every other column as it comes and goes. The row is made as the page makes one, and its status cell swapped for what the page
+// puts there, since the page's own log is empty here.
+test('a Network log row says it is updating without growing, and without moving its columns', async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  try {
+    await page.goto(URL)
+    await page.click('#tab-log')
+    await page.waitForSelector('#log-table')
+    const measured = await page.evaluate(() => {
+      const body = document.querySelector('#log-table tbody')
+      const row = document.createElement('tr')
+      row.className = 'entry'
+      const cell = (cls, html) => { const td = document.createElement('td'); if (cls) td.className = cls; td.innerHTML = html; return td }
+      const status = cell('', '<span class="status unblocked">Unblocked</span>')
+      row.append(cell('when', '13 Nov, 07:57:36'), cell('host', 'kernel.org:443'), cell('num', '1'), status,
+        cell('mono', 'no applicable policies for op(action=net:connect:tcp, resource=net:domain:kernel.org:443)'), cell('', '<button type="button" class="small">Allow</button>'))
+      body.append(row)
+      const widths = () => Array.from(document.querySelectorAll('#log-table thead th')).map((th) => Math.round(th.getBoundingClientRect().width * 10) / 10)
+      const before = { height: row.getBoundingClientRect().height, widths: widths() }
+      status.innerHTML = '<span class="updating"><span class="spinner" aria-hidden="true"></span>Updating…</span>'
+      const during = { height: row.getBoundingClientRect().height, widths: widths() }
+      return { before, during }
+    })
+    assert.ok(measured.during.height <= measured.before.height + 1, `the row is ${measured.during.height}px tall while updating, ${measured.before.height}px otherwise`)
+    assert.deepEqual(measured.during.widths, measured.before.widths, `a column changed width when the row began to say it is updating: ${JSON.stringify(measured.before.widths)} then ${JSON.stringify(measured.during.widths)}`)
+  } finally { await page.close() }
+})
+
+// A host wrapped in the middle of its port ("kernel.org:44" then "3") and a rule's text broken in the middle of its words are hard to read,
+// and both were so whenever a long rule text squeezed the other columns. The host keeps its width; the rule breaks between its words.
+test('in the Network log a host stays on one line and a rule breaks between its words, not in them', async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 900 } })
+  try {
+    await page.goto(URL)
+    await page.click('#tab-log')
+    await page.waitForSelector('#log-table')
+    const measured = await page.evaluate(() => {
+      const body = document.querySelector('#log-table tbody')
+      const row = document.createElement('tr')
+      row.className = 'entry'
+      const cell = (cls, html) => { const td = document.createElement('td'); if (cls) td.className = cls; td.innerHTML = html; return td }
+      const rule = 'denied: rule "local:49b1b3fa-a378-47c1-a4bd-4b3dc7c0f3fb" matched op(action=net:connect:tcp, resource=net:domain:mirrors.kernel.org:443)'
+      const host = cell('host', 'mirrors.kernel.org:443')
+      const text = cell('mono', rule)
+      row.append(cell('when', '13 Nov, 15:14:21'), host, cell('num', '1'), cell('', '<span class="status blocked">Blocked</span>'), text, cell('', '<button type="button" class="small">Allow</button>'))
+      body.append(row)
+      // Lines a run of text sits on: more than one rectangle for it means it was broken.
+      const lines = (td, from, to) => { const r = document.createRange(); r.setStart(td.firstChild, from); r.setEnd(td.firstChild, to); return r.getClientRects().length }
+      const hostLines = lines(host, 0, host.textContent.length)
+      const split = []
+      let at = 0
+      for (const word of rule.split(' ')) {
+        if (word && lines(text, at, at + word.length) > 1 && word.length < 40) split.push(word)
+        at += word.length + 1
+      }
+      return { hostLines, split, ruleLines: lines(text, 0, rule.length), cellWidth: text.getBoundingClientRect().width, hostWidth: host.getBoundingClientRect().width, hostMin: getComputedStyle(host).minWidth, hostFont: getComputedStyle(host).fontFamily + ' ' + getComputedStyle(host).fontSize }
+    })
+    assert.equal(measured.hostLines, 1, 'the host is broken over lines: ' + JSON.stringify(measured))
+    assert.deepEqual(measured.split, [], `words of the rule were broken in the middle (cell ${measured.cellWidth}px wide)`)
+  } finally { await page.close() }
+})
+
+// "Removing…" is wider than the Remove button it replaces, and the columns of the Network rules moved to make room for it, as the log's did for
+// "Updating…": the last column keeps the width the words need.
+test('a Network rules row says it is removing without moving the columns', async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  try {
+    await page.goto(URL)
+    await page.click('#tab-rules')
+    await page.waitForSelector('#rules-table')
+    const measured = await page.evaluate(() => {
+      const body = document.querySelector('#rules-table tbody')
+      const row = document.createElement('tr')
+      row.className = 'entry'
+      const cell = (cls, html) => { const td = document.createElement('td'); if (cls) td.className = cls; td.innerHTML = html; return td }
+      const action = cell('', '<button type="button" class="small ghost">Remove</button>')
+      row.append(cell('', '<span class="status allowed">Allowed</span>'), cell('mono', 'test.example.org'), cell('', 'scoped'), cell('', 'sandbox:vibe'), cell('', ''), action)
+      body.append(row)
+      const widths = () => Array.from(document.querySelectorAll('#rules-table thead th')).map((th) => Math.round(th.getBoundingClientRect().width * 10) / 10)
+      const before = { height: row.getBoundingClientRect().height, widths: widths() }
+      action.innerHTML = '<span class="updating"><span class="spinner" aria-hidden="true"></span>Removing…</span>'
+      const during = { height: row.getBoundingClientRect().height, widths: widths() }
+      return { before, during }
+    })
+    assert.ok(measured.during.height <= measured.before.height + 1, `the row is ${measured.during.height}px tall while removing, ${measured.before.height}px otherwise`)
+    assert.deepEqual(measured.during.widths, measured.before.widths, `a column changed width when the row began to say it is removing: ${JSON.stringify(measured.before.widths)} then ${JSON.stringify(measured.during.widths)}`)
+  } finally { await page.close() }
+})
+
+test('a state poll cut off by its page closing is not an error, and any other failure of one still is', async () => {
+  const gone = new Error('apiResponse.json: Response has been disposed')
+  const route = { fetch: async () => { throw gone }, fulfill: async () => {} }
+  const open = await browser.newPage()
+  try {
+    await assert.rejects(stateWith(open, {})(route), /disposed/, 'a failure while the page is open was swallowed')
+  } finally { await open.close() }
+  const closed = await browser.newPage()
+  await closed.close()
+  await stateWith(closed, {})(route)
 })

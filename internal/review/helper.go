@@ -194,10 +194,13 @@ func isolated(ctx context.Context, op string, args helperArgs, out any) error {
 		if why == "" && err != nil {
 			why = err.Error()
 		}
+		more := ""
 		if stdout.over {
 			why = "its answer was too large"
+		} else {
+			more = diedHow(stderr.String(), err)
 		}
-		return fmt.Errorf("vibe's helper failed reading the repository: %s", helperDied(why))
+		return fmt.Errorf("vibe's helper failed reading the repository: %s%s", helperDied(why), more)
 	}
 	if answer.Error != "" {
 		return errors.New(answer.Error)
@@ -231,6 +234,32 @@ func helperDied(stderr string) string {
 		}
 	}
 	return stderr
+}
+
+// diedHow is what helperDied cannot say when the helper's output has no fatal error or panic line to say it by (a crash in a signal
+// handler, say, which leaves a trace ending in a register dump): how its output began, and how the helper ended. Said once, "gs 0x0"
+// was all that was known of a helper that had died of something nobody could tell. It is "" when there was such a line, which is
+// the cause said, or no output, when how it ended is what is said.
+func diedHow(stderr string, waitErr error) string {
+	stderr = strings.TrimSpace(stderr)
+	if stderr == "" {
+		return ""
+	}
+	lines := strings.Split(stderr, "\n")
+	for _, l := range lines {
+		if strings.HasPrefix(l, "fatal error: ") || strings.HasPrefix(l, "panic: ") {
+			return ""
+		}
+	}
+	first := strings.TrimSpace(lines[0])
+	if len(first) > 160 {
+		first = first[:160] + "…"
+	}
+	ended := ""
+	if waitErr != nil {
+		ended = "; it ended: " + waitErr.Error()
+	}
+	return fmt.Sprintf(" (its output began %q%s)", first, ended)
 }
 
 // capped keeps up to max bytes written to it, and says when there were

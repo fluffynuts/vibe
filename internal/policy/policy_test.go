@@ -414,7 +414,7 @@ func TestResolveMarksBlockedHostsARuleNowAllows(t *testing.T) {
 		{Resources: []string{"denied.example.com:443"}, Decision: Blocked},
 		{Resources: []string{"ok.net"}, Decision: Allowed},
 	}}
-	got := Resolve(log, rules)
+	got := Resolve("vibe", log, rules)
 	want := []string{Unblocked, Blocked, Blocked, Allowed}
 	for i, e := range got.Entries {
 		if e.Decision != want[i] {
@@ -428,6 +428,60 @@ func TestResolveMarksBlockedHostsARuleNowAllows(t *testing.T) {
 
 // With the rules unreadable, the log is still what happened, but it says
 // that blocked hosts a rule now allows can't be marked.
+func TestAnUnblockedHostSaysWhichRulesAllowItAndWhetherTheyReachFurtherThanIt(t *testing.T) {
+	log := Log{Entries: []LogEntry{
+		{Host: "www.kernel.org:443", Decision: Blocked},
+		{Host: "other.org:443", Decision: Blocked},
+		{Host: "ok.net:443", Decision: Allowed},
+	}}
+	rules := Rules{Rules: []Rule{
+		{ID: "exact", Name: "the exact one", Resources: []string{"www.kernel.org:443"}, Decision: Allowed, Removable: true, Source: "local", Scope: "sandbox:vibe"},
+		{ID: "wild", Resources: []string{"*.kernel.org"}, Decision: Allowed, Removable: true},
+		{ID: "several", Resources: []string{"www.kernel.org", "git.example.org"}, Decision: Allowed, Removable: true},
+		{Resources: []string{"WWW.Kernel.org"}, Decision: Allowed, Source: "organisation"},
+		{ID: "off", Resources: []string{"www.kernel.org"}, Decision: Allowed, Removable: true, Status: "inactive"},
+		{ID: "elsewhere", Resources: []string{"unrelated.example"}, Decision: Allowed, Removable: true},
+	}}
+	got := Resolve("vibe", log, rules)
+
+	by := got.Entries[0].AllowedBy
+	var ids []string
+	for _, r := range by {
+		ids = append(ids, r.ID)
+	}
+	if want := []string{"exact", "wild", "several", ""}; !equalStrings(ids, want) {
+		t.Fatalf("allowed by %q, want %q (inactive and unrelated rules are not listed, and none that is removed twice)", ids, want)
+	}
+	wider := map[string]bool{}
+	for _, r := range by {
+		wider[r.ID] = r.Wider
+	}
+	if wider["exact"] || !wider["wild"] || !wider["several"] || wider[""] {
+		t.Errorf("wider = %v: only the wildcard and the rule with another host in it reach further than the host (ports and case don't count)", wider)
+	}
+	if by[0].Name != "the exact one" || by[0].Source != "local" || by[0].Scope != "sandbox:vibe" || !by[0].Removable {
+		t.Errorf("the rule is not described as it is: %+v", by[0])
+	}
+	if by[3].Removable {
+		t.Error("a rule sbx gave no id for, and says nothing of being editable, is said to be removable")
+	}
+	if got.Entries[1].AllowedBy != nil || got.Entries[2].AllowedBy != nil {
+		t.Error("a host that is blocked, or that was never blocked, lists the rules that allow it")
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestResolvedLogSaysWhenTheRulesCouldNotBeRead(t *testing.T) {
 	c := &Client{Sandbox: "vibe", Run: func(_ context.Context, args ...string) ([]byte, error) {
 		if args[1] == "ls" {
@@ -479,7 +533,7 @@ func TestAHostAllowedWhileTheImplicitDenyAllIsListedIsMarkedUnblocked(t *testing
 		{Host: "api.anthropic.com:443", Decision: Allowed},
 	}}
 	want := []string{Unblocked, Blocked, Blocked, Allowed}
-	for i, e := range Resolve(log, rules).Entries {
+	for i, e := range Resolve("vibe", log, rules).Entries {
 		if e.Decision != want[i] {
 			t.Errorf("%s: got %q, want %q", e.Host, e.Decision, want[i])
 		}
@@ -498,7 +552,7 @@ func resolveWithDenyEverything(t *testing.T, fields string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Resolve(Log{Entries: []LogEntry{{Host: "cdn.mysql.com:443", Decision: Blocked}}}, rules).Entries[0].Decision
+	return Resolve("vibe", Log{Entries: []LogEntry{{Host: "cdn.mysql.com:443", Decision: Blocked}}}, rules).Entries[0].Decision
 }
 
 // What sbx's own fallback is told by is what it is (a deny of everything that can't be edited, on the local layer), so
@@ -532,5 +586,48 @@ func TestADenyOfEverythingThatIsNotTheFallbackStillStopsAnAllow(t *testing.T) {
 		if got := resolveWithDenyEverything(t, fields); got != Blocked {
 			t.Errorf("%s: %q, want %q", name, got, Blocked)
 		}
+	}
+}
+
+// sbx treats a port as part of a resource: a resource with a port covers that port only, one without covers every port.
+func TestAPortedResourceCoversOnlyItsPortAndAPortlessOneEveryPort(t *testing.T) {
+	for _, tc := range []struct {
+		resource, host string
+		want           bool
+	}{
+		{"git.kernel.org:443", "git.kernel.org:443", true},
+		{"git.kernel.org:80", "git.kernel.org:443", false},
+		{"git.kernel.org", "git.kernel.org:443", true},
+		{"*.kernel.org", "git.kernel.org:443", true},
+		{"*.kernel.org:443", "git.kernel.org:80", false},
+		{"*.kernel.org:443", "git.kernel.org:443", true},
+		{"**.kernel.org:443", "a.b.kernel.org:80", false},
+		{"GIT.kernel.org:443", "git.Kernel.org:443", true},
+		{"git.kernel.org:443", "git.kernel.org", true}, // a host named without a port is any port
+		{"other.org:443", "git.kernel.org:443", false},
+		{"[::1]:80", "[::1]:443", false},
+		{"[::1]:443", "[::1]:443", true},
+	} {
+		if got := hostMatches(tc.resource, tc.host); got != tc.want {
+			t.Errorf("hostMatches(%q, %q) = %v, want %v", tc.resource, tc.host, got, tc.want)
+		}
+	}
+}
+
+func TestARuleOfAnotherPortNeitherUnblocksNorBlocksAHost(t *testing.T) {
+	log := Log{Entries: []LogEntry{
+		{Host: "blocked.org:443", Decision: Blocked, LastSeen: "2026-11-12T09:00:00Z"},
+		{Host: "allowed.org:443", Decision: Allowed, LastSeen: "2026-11-12T09:00:00Z"},
+	}}
+	rules := Rules{Rules: []Rule{
+		{ID: "a80", Resources: []string{"blocked.org:80"}, Decision: Allowed},
+		{ID: "d80", Resources: []string{"allowed.org:80"}, Decision: Blocked},
+	}}
+	got := Resolve("vibe", log, rules).Entries
+	if got[0].Decision != Blocked || got[0].AllowedBy != nil {
+		t.Errorf("a host blocked on 443 with an allow of port 80 = %+v", got[0])
+	}
+	if got[1].Decision != Allowed || got[1].BlockedBy != nil {
+		t.Errorf("a host allowed on 443 with a deny of port 80 = %+v", got[1])
 	}
 }

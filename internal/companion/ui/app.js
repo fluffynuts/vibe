@@ -109,6 +109,12 @@
     tab: store.get('vibe-companion-tab') || 'conversation',
     filter: 'all',
     search: '',
+    // What is typed in the Network rules tab's filter.
+    ruleSearch: { rules: '' },
+    // The Network log's hosts whose rule was just changed, each with how many reads of the log had begun by then: the row says it
+    // is updating until a read that began after the change has come back (see markUpdating).
+    updating: new Map(),
+    removing: new Map(),
     log: null,
     rules: null,
     fs: null,
@@ -830,13 +836,22 @@
   async function load(kind) {
     const path = { log: '/api/log', rules: '/api/rules', fs: '/api/fs-rules' }[kind]
     // Not in the way of the table: the user may be in the act of allowing a host.
-    if (kind === 'log') $('log-refreshing').classList.add('on')
+    const began = kind === 'log' ? ++logReads : kind === 'rules' ? ++rulesReads : 0
+    const reading = $(READ_SIGN[kind])
+    if (reading) {
+      // Just after a rule was changed the read waits for sbx a second or two, and says so at once.
+      reading.classList.add('on')
+      if (logReadAtOnce) reading.classList.add('at-once')
+      logReadAtOnce = false
+    }
     try {
       const res = await api(path)
       reached(true)
       if (res.ok) {
         banner(kind, res.body.unresolved || '')
         state[kind] = res.body
+        if (kind === 'log') readDone(began)
+        if (kind === 'rules') ruleReadDone(began)
         render(kind)
       } else {
         problem(kind, res)
@@ -844,9 +859,76 @@
     } catch (e) {
       reached(false)
     } finally {
-      if (kind === 'log') $('log-refreshing').classList.remove('on')
+      // Still on while the user's change is being made (the read that found the old state is not its answer), and while rows wait.
+      if (reading && !changesUnderWay && !(kind === 'log' && state.updating.size) && !(kind === 'rules' && state.removing.size)) reading.classList.remove('on', 'at-once')
     }
   }
+
+  // updatingCell is what a row's status says while its host's rule is being changed: that it is, and nothing of the outcome, which
+  // only sbx knows (a deny rule beats an allow; a wildcard may still cover the host).
+  function updatingCell() {
+    return el('span', { class: 'updating' }, el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Updating…')
+  }
+
+  // logReads counts the reads of the Network log begun, so a read can be told from one that began before a change.
+  let logReads = 0
+
+  // changesUnderWay counts the changes the user has confirmed that sbx has not yet finished: while there are any, a read finishing
+  // does not take a tab's sign off, whatever it found.
+  let changesUnderWay = 0
+
+  // markUpdating puts hosts' rows in the updating state, until a read of the log that began after `at` reads had begun has come
+  // back. A read already on its way began before the change and may say the old thing, so it doesn't take the mark off; and
+  // while sbx is still running the command nothing can have changed, so `at` is Infinity until it has answered.
+  function markUpdating(hosts, at) {
+    if (!hosts.length) return
+    for (const host of hosts) state.updating.set(host, at)
+    renderLog()
+  }
+
+  // unmark takes the mark off hosts that no change is being made to after all.
+  function unmark(hosts) {
+    if (!hosts.length) return
+    for (const host of hosts) state.updating.delete(host)
+    renderLog()
+  }
+
+  // readDone takes the mark off the hosts whose change the read that began as number began came after.
+  function readDone(began) {
+    let cleared = false
+    for (const [host, at] of state.updating) {
+      if (began > at) { state.updating.delete(host); cleared = true }
+    }
+    return cleared
+  }
+
+  // rulesReads counts the reads of the Network rules begun, as logReads does the log's.
+  let rulesReads = 0
+
+  // markRemoving, unmarkRemoving and ruleReadDone are markUpdating, unmark and readDone for the rules being removed, kept by id.
+  function markRemoving(ids, at) {
+    if (!ids.length) return
+    for (const id of ids) state.removing.set(id, at)
+    render('rules')
+  }
+
+  function unmarkRemoving(ids) {
+    if (!ids.length) return
+    for (const id of ids) state.removing.delete(id)
+    render('rules')
+  }
+
+  function ruleReadDone(began) {
+    for (const [id, at] of state.removing) {
+      if (began > at) state.removing.delete(id)
+    }
+  }
+
+  // READ_SIGN is the sign on each tab that its list is being read.
+  const READ_SIGN = { log: 'log-refreshing', rules: 'rules-refreshing' }
+
+  // logReadAtOnce says the next read of a tab's list follows a change to a rule: see load.
+  let logReadAtOnce = false
 
   // The hosts the Network log was refreshed for, as they were blocked: the log is only polled while its tab is open,
   // so a host seen blocked from another tab would not be in it when the user went there.
@@ -1197,9 +1279,12 @@
     return d.toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })
   }
 
-  function statusCell(decision) {
-    const word = decision === 'allowed' ? 'Allowed' : decision === 'blocked' ? 'Blocked' : decision === 'unblocked' ? 'Unblocked' : 'Unknown'
-    return el('span', { class: 'status ' + (decision || 'unknown'), text: word })
+  // superseded: a later entry of the host decided otherwise, so this is what was so, not what is.
+  function statusCell(decision, superseded) {
+    const word = decision === 'allowed' ? 'Allowed' : decision === 'blocked' ? 'Blocked' : decision === 'blocked-now' ? 'Blocked now' : decision === 'unblocked' ? 'Unblocked' : 'Unknown'
+    const title = superseded ? 'Superseded: a later entry for this host says otherwise'
+      : decision === 'blocked-now' ? 'Allowed when last seen, but a rule blocks it now' : ''
+    return el('span', Object.assign({ class: 'status ' + (decision || 'unknown') + (superseded ? ' superseded' : ''), text: word }, title ? { title } : {}))
   }
 
   function rawDetail(entry, extra, columns) {
@@ -1219,24 +1304,29 @@
     const entries = data.entries || []
     // Drawn again only when something it shows has changed: polls bring the same log most of the time, and drawing it afresh
     // clears the selection of anyone copying a host from it.
-    const drawnFor = JSON.stringify([entries, state.filter, state.search, Array.from(state.open).sort()])
+    const drawnFor = JSON.stringify([entries, state.filter, state.search, Array.from(state.open).sort(), Array.from(state.updating.keys()).sort()])
     const logBody = $('log-table').tBodies[0]
     if (drawnKeys.get(logBody) === drawnFor) return
     drawnKeys.set(logBody, drawnFor)
-    const blocked = entries.filter((e) => e.decision === 'blocked').length
-    const allowed = entries.filter((e) => e.decision === 'allowed').length
-    const unblocked = entries.filter((e) => e.decision === 'unblocked').length
+    const current = entries.filter((e) => !e.superseded)
+    const isBlocked = (e) => e.decision === 'blocked' || e.decision === 'blocked-now'
+    const blocked = current.filter(isBlocked).length
+    const allowed = current.filter((e) => e.decision === 'allowed').length
+    const unblocked = current.filter((e) => e.decision === 'unblocked').length
+    const superseded = entries.length - current.length
     const summary = $('log-summary')
     summary.textContent = ''
     summary.append(entries.length + ' total  ',
       el('span', { class: 'ok', text: '● ' + allowed + ' allowed' }), '  ',
       el('span', { class: 'bad', text: '● ' + blocked + ' blocked' }),
       unblocked ? '  ' : '',
-      unblocked ? el('span', { class: 'warn', text: '● ' + unblocked + ' unblocked' }) : '')
+      unblocked ? el('span', { class: 'warn', text: '● ' + unblocked + ' unblocked' }) : '',
+      superseded ? '  ' : '',
+      superseded ? el('span', { class: 'muted', text: superseded + ' superseded' }) : '')
 
     const needle = state.search.trim().toLowerCase()
     const shown = entries.filter((e) =>
-      (state.filter === 'all' || e.decision === state.filter) &&
+      (state.filter === 'all' || e.decision === state.filter || (state.filter === 'blocked' && isBlocked(e))) &&
       (!needle || e.host.toLowerCase().includes(needle)))
 
     const body = $('log-table').tBodies[0]
@@ -1247,13 +1337,14 @@
     }
     for (const e of shown) {
       const key = e.host
-      const row = el('tr', { class: 'entry', tabindex: '0', 'aria-expanded': String(state.open.has(key)) },
+      const waiting = !e.superseded && state.updating.has(e.host)
+      const row = el('tr', { class: 'entry' + (e.superseded ? ' superseded' : ''), tabindex: '0', 'aria-expanded': String(state.open.has(key)) },
         el('td', { class: 'when', text: when(e.lastSeen) }),
         el('td', { class: 'host', text: e.host }),
         el('td', { class: 'num', text: String(e.hits || '') }),
-        el('td', {}, statusCell(e.decision)),
+        el('td', {}, waiting ? updatingCell() : statusCell(e.decision, e.superseded)),
         el('td', { class: 'mono', text: e.rule || '' }),
-        el('td', {}, actionFor(e)))
+        el('td', {}, e.superseded ? null : ((act) => { if (act && waiting) act.disabled = true; return act })(actionFor(e))))
       const toggle = () => {
         if (state.open.has(key)) state.open.delete(key); else state.open.add(key)
         renderLog()
@@ -1265,7 +1356,8 @@
       body.append(row)
       if (state.open.has(key)) {
         body.append(rawDetail(e, [['Note', e.decision === 'unblocked'
-          ? 'Blocked earlier, but a rule now allows it. Retry the request in the sandbox.' : ''], ['Reason', e.reason], ['Proxy', e.proxyType], ['Last seen', e.lastSeen]], 6))
+          ? 'Blocked earlier, but a rule now allows it. Retry the request in the sandbox.'
+          : e.decision === 'blocked-now' ? 'Allowed when last seen, but a rule blocks it now.' : ''], ['Reason', e.reason], ['Proxy', e.proxyType], ['Last seen', e.lastSeen]], 6))
       }
     }
   }
@@ -1278,35 +1370,42 @@
   }
 
   function actionFor(entry) {
-    if (entry.decision === 'blocked') {
+    if (entry.decision === 'blocked' || entry.decision === 'blocked-now') {
       if (!namesOneHost(entry.host)) return null
       return el('button', { type: 'button', class: 'small', text: 'Allow',
-        onclick: () => confirmChange('allow', entry.host) })
+        onclick: () => allowBlocked(entry) })
     }
-    if (entry.decision === 'allowed' || entry.decision === 'unblocked') {
+    if (entry.decision === 'unblocked' || entry.decision === 'allowed') {
       return el('button', { type: 'button', class: 'small ghost', text: 'Block',
-        onclick: () => confirmChange('deny', entry.host) })
+        onclick: () => blockCovered(entry) })
     }
     return null
   }
 
   // --- rules ------------------------------------------------------------
 
+  // ruleWords is everything a rule says, for the filter to look in.
+  const ruleWords = (r) => [(r.resources || []).join(' '), r.name, r.source, r.scope, r.protocol, r.status, r.decision].filter(Boolean).join(' ').toLowerCase()
+
   function renderRules(kind, tableId, noteId, withActions) {
     const data = state[kind]
     if (!data) return
-    const rules = data.rules || []
+    const allRules = data.rules || []
     const body = $(tableId).tBodies[0]
+    const needle = (state.ruleSearch[kind] || '').trim().toLowerCase()
     // As the log is: drawn again only when what it shows has changed.
-    const drawnFor = JSON.stringify([rules, Array.from(state.open).sort()])
+    const drawnFor = JSON.stringify([allRules, needle, Array.from(state.open).sort(), Array.from(state.removing.keys()).sort()])
     if (drawnKeys.get(body) === drawnFor) return
     drawnKeys.set(body, drawnFor)
     body.textContent = ''
     const columns = withActions ? 6 : 5
-    if (!rules.length) {
-      body.append(el('tr', {}, el('td', { class: 'empty', colspan: String(columns), text: 'No rules.' })))
+    // A rule is kept, whole, when what is typed is in any of what it says. Its place in the full list is what names it when it
+    // has no id, so a filter doesn't make an open rule another.
+    const shown = allRules.map((r, i) => ({ r, i })).filter(({ r }) => !needle || ruleWords(r).includes(needle))
+    if (!shown.length) {
+      body.append(el('tr', {}, el('td', { class: 'empty', colspan: String(columns), text: allRules.length ? 'Nothing matches.' : 'No rules.' })))
     }
-    rules.forEach((r, i) => {
+    shown.forEach(({ r, i }) => {
       const key = kind + ':' + (r.id || i)
       const cells = [
         el('td', {}, statusCell(r.decision)),
@@ -1316,7 +1415,9 @@
         el('td', { text: withActions ? (r.protocol || '') : (r.status || '') }),
       ]
       if (withActions) {
-        cells.push(el('td', {}, r.removable
+        cells.push(el('td', {}, state.removing.has(r.id)
+          ? el('span', { class: 'updating' }, el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Removing…')
+          : r.removable
           ? el('button', { type: 'button', class: 'small ghost', text: 'Remove',
               onclick: (ev) => { ev.stopPropagation(); confirmRemove(r) } })
           : null))
@@ -1349,7 +1450,8 @@
 
   // --- changing rules ---------------------------------------------------
 
-  function confirmChange(decision, host) {
+  // affects are the Network log's hosts whose rows are waiting for this change: those of the row it was asked from.
+  function confirmChange(decision, host, affects = []) {
     const allow = decision === 'allow'
     confirmThen({
       title: (allow ? 'Allow ' : 'Block ') + host + '?',
@@ -1358,16 +1460,123 @@
         : 'The sandbox will be stopped from reaching this host. The rule applies to this sandbox only.',
       command: 'sbx policy ' + decision + ' network --sandbox ' + state.sandbox + ' ' + host,
       danger: !allow,
+      affects,
       run: () => post('/api/' + decision, { host }),
     })
   }
 
+  // bareHost is host without its port and case: what a rule's resource is compared to.
+  function bareHost(host) {
+    host = String(host).trim().toLowerCase()
+    return (host.match(/:/g) || []).length === 1 ? host.replace(/:[^:\]]*$/, '') : host
+  }
+
+  // sbx names a rule vibe made with its own id, which says nothing: a name is only one someone gave it.
+  const ruleName = (r) => (r.name && r.name !== r.id ? r.name : '')
+  const shortId = (id) => (id.length > 12 ? id.slice(0, 8) + '…' : id)
+  // shortList names a few of a rule's resources: some have dozens.
+  const shortList = (items) => (items.length > 3 ? items.slice(0, 3).join(', ') + ' and ' + (items.length - 3) + ' more' : items.join(', '))
+  const ruleLabel = (r) => ruleName(r) || shortList(r.resources || []) || r.id
+  // sbx refuses to remove a rule of the global policy for one sandbox ("exists in the global policy, not in sandbox X"), and says
+  // the command that does: it is for every sandbox, so it is given, not run from here.
+  const isGlobalRule = (r) => !!r.scope && r.scope !== 'sandbox:' + state.sandbox
+  const globalRuleNote = (r) => ruleLabel(r) + " is a global rule, for every sandbox, so it can't be removed from here" +
+    (r.id ? ' (in a terminal, for every sandbox: sbx policy rm network --id ' + r.id + ')' : '')
+  // ruleLine says what a rule allows or blocks (by verb), and which it is by its short id (the whole one is in the command shown with it).
+  const ruleLine = (r, verb = 'allows') => (ruleName(r) ? ruleName(r) + ': ' + verb + ' ' : verb[0].toUpperCase() + verb.slice(1) + ' ') + (r.resources || []).join(', ') + (r.id ? ' (rule ' + shortId(r.id) + ')' : '')
+
+  // blockCovered blocks a host that a rule allows (it was blocked and is let through now, or it never was blocked). sbx refuses a deny
+  // beside an allow of the identical resource for the same sandbox, and beside no other: a deny beats any allow, a wildcard's and a
+  // global rule's included. So the sandbox's own rules for exactly this host are removed (the server does it, the ones named here
+  // and no others), and a block is added if another rule still allows the host: that rule is left alone. A rule of the sandbox that
+  // can't be removed from here is said so, and nothing is done: the host would be left half unblocked.
+  function blockCovered(entry) {
+    const rules = entry.allowedBy || []
+    if (!rules.length) { confirmChange('deny', entry.host, [entry.host]); return }
+    const mine = (r) => r.conflicts
+    const conflicts = rules.filter(mine)
+    const staying = rules.filter((r) => !mine(r))
+    const stuck = conflicts.filter((r) => !r.removable || !r.id)
+    if (stuck.length) {
+      toast("Can't block " + entry.host + ' from here: ' +
+        stuck.map((r) => ruleLabel(r) + " allows it, and can't be removed here" + (r.source ? ' (it comes from ' + r.source + ')' : '')).join('; ') +
+        '. Nothing was changed.', true)
+      return
+    }
+    const here = bareHost(entry.host)
+    const others = Array.from(new Set(conflicts.filter((r) => r.wider).flatMap((r) => (r.resources || []).filter((x) => bareHost(x) !== here))))
+    const adds = staying.length > 0 || !conflicts.length
+    const some = (list, one, many) => (list.length === 1 ? one : many)
+    const text = []
+    if (conflicts.length) {
+      text.push("sbx won't add a block beside " + some(conflicts, 'a rule', 'rules') + ' that allow' + some(conflicts, 's', '') + ' exactly this host, so ' +
+        some(conflicts, 'it is', 'they are') + ' removed.')
+      if (others.length) text.push('What is removed also allows ' + others.join(', ') + ', which goes with it.')
+    }
+    if (staying.length) {
+      const global = staying.some(isGlobalRule)
+      text.push((conflicts.length ? 'Then a block is added' : 'A block is added') + ', because ' + staying.map(ruleLabel).join(', ') + ' still ' +
+        some(staying, 'allows', 'allow') + ' it' + (global ? ' (a global rule applies to every sandbox)' : '') + ': ' +
+        some(staying, 'that rule is', 'those rules are') + ' not changed, and a block wins over an allow.')
+    }
+    text.push('The change applies to this sandbox only.')
+    const commands = conflicts.map((r) => 'sbx policy rm network --sandbox ' + state.sandbox + ' --id ' + r.id + ' --force')
+    if (adds) commands.push('sbx policy deny network --sandbox ' + state.sandbox + ' ' + entry.host)
+    confirmThen({
+      title: 'Block ' + entry.host + '?',
+      text: text.join(' '),
+      list: conflicts.map((r) => ruleLine(r)).concat(staying.map((r) => ruleLine(r) + ' (stays)')),
+      command: commands.join('\n'),
+      danger: true,
+      affects: [entry.host],
+      runLabel: conflicts.length ? (adds ? 'Remove and block' : some(conflicts, 'Remove the rule', 'Remove the rules')) : 'Block',
+      started: !conflicts.length ? null : 'Blocked' + (adds ? ': ' : ' again: ') +
+        some(conflicts, 'the rule that allowed it is removed', 'the ' + conflicts.length + ' rules that allowed it are removed') + (adds ? ', and a block is added.' : '.'),
+      run: () => post('/api/deny', { host: entry.host, remove: conflicts.map((r) => r.id) }),
+    })
+  }
+
+  // allowBlocked allows a host a deny rule blocks. A deny beats any allow, so an allow beside it does nothing: the deny rules that
+  // cover the host are removed (the server does it, the ones named here and no others), and the host is allowed. A deny that can't
+  // be removed from here, one of the global policy included, is said so, and nothing is done.
+  function allowBlocked(entry) {
+    const denies = entry.blockedBy || []
+    if (!denies.length) { confirmChange('allow', entry.host, [entry.host]); return }
+    const stuck = denies.filter((r) => isGlobalRule(r) || !r.removable || !r.id)
+    if (stuck.length) {
+      toast("Can't allow " + entry.host + ' from here: ' +
+        stuck.map((r) => !r.removable || !r.id
+          ? ruleLabel(r) + " blocks it, and can't be removed here" + (r.source ? ' (it comes from ' + r.source + ')' : '')
+          : globalRuleNote(r)).join('; ') +
+        '. A block beats an allow, so nothing was changed.', true)
+      return
+    }
+    const here = bareHost(entry.host)
+    const others = Array.from(new Set(denies.filter((r) => r.wider).flatMap((r) => (r.resources || []).filter((x) => bareHost(x) !== here))))
+    const many = denies.length > 1
+    confirmThen({
+      title: 'Allow ' + entry.host + '?',
+      text: 'A block beats an allow, so ' + (many ? 'the rules that block' : 'the rule that blocks') + ' this host ' + (many ? 'are' : 'is') + ' removed, and then it is allowed.' +
+        (others.length ? ' What is removed also blocks ' + others.join(', ') + ', which are allowed too.' : '') + ' The change applies to this sandbox only.',
+      list: denies.map((r) => ruleLine(r, 'blocks')),
+      command: denies.map((r) => 'sbx policy rm network --sandbox ' + state.sandbox + ' --id ' + r.id + ' --force')
+        .concat('sbx policy allow network --sandbox ' + state.sandbox + ' ' + entry.host).join('\n'),
+      affects: [entry.host],
+      runLabel: 'Remove and allow',
+      started: 'Allowed: ' + (many ? 'the rules that blocked it are removed' : 'the rule that blocked it is removed') + ', and it is allowed.',
+      run: () => post('/api/allow', { host: entry.host, remove: denies.map((r) => r.id) }),
+    })
+  }
+
   function confirmRemove(rule) {
+    if (isGlobalRule(rule)) { toast(globalRuleNote(rule), true); return }
+    const kind = rule.decision === 'allowed' ? 'an allow rule' : rule.decision === 'blocked' ? 'a block rule' : 'a rule'
     confirmThen({
       title: 'Remove this rule?',
-      text: (rule.resources || []).join(', ') + ' — a ' + (rule.decision || 'rule') + ' rule for this sandbox.',
+      text: shortList(rule.resources || []) + ' — ' + kind + ' for this sandbox.',
       command: 'sbx policy rm network --sandbox ' + state.sandbox + ' --id ' + rule.id + ' --force',
       danger: true,
+      removes: [rule.id],
       run: () => post('/api/remove', { id: rule.id }),
     })
   }
@@ -1407,11 +1616,27 @@
         if (opts.cancelled) opts.cancelled()
         return
       }
+      // From the moment it is confirmed the page says a change is under way: sbx takes a few seconds to run the command itself, before
+      // the list can even be read again, and people will wait longer for something that says it is happening. The rows it is
+      // for say so, and the tab's sign is on (at once), until the read that follows the change has come back.
+      const affects = opts.affects || []
+      const removes = opts.removes || []
+      const tab = state.tab
+      const sign = READ_SIGN[tab] ? $(READ_SIGN[tab]) : null
+      changesUnderWay++
+      markUpdating(affects, Infinity)
+      markRemoving(removes, Infinity)
+      if (sign) sign.classList.add('on', 'at-once')
+      // The change is over, however it ended: a sign on a tab that is no longer the one being read has nothing to end it.
+      const over = () => {
+        changesUnderWay--
+        if (sign && state.tab !== tab) sign.classList.remove('on', 'at-once')
+      }
       try {
         const res = await opts.run()
         reached(true)
         // asked: run asked something else instead, which says what's what.
-        if (res.asked) return
+        if (res.asked) { over(); unmark(affects); unmarkRemoving(removes); return }
         // warning: done, but not all of it (see the server's changing).
         if (res.ok && res.body.warning) {
           toast(res.body.warning, true)
@@ -1425,7 +1650,15 @@
         reached(false)
         toast('Could not reach vibe.', true)
       }
+      // Whatever was asked changed, or failed after changing some: the list is read again. The rows of the hosts it was for wait
+      // for a read that begins after this: marked before tick begins one. (tick starts the read before it returns, so the
+      // flag that has the sign on at once is spent by then, on the list or on nothing.)
+      over()
+      markUpdating(affects, logReads)
+      markRemoving(removes, rulesReads)
+      logReadAtOnce = true
       tick()
+      logReadAtOnce = false
     }
     dialog.showModal()
     // A toast showing stays over the dialog.
@@ -5027,7 +5260,7 @@
 
   // news: the agent has said something since the Conversation tab was last
   // open (its dot); loaded: the conversation so far has been fetched once.
-  const convo = { last: 0, running: false, stopState: '', polling: false, behind: false, news: false, loaded: false, lastPrompt: '', ticks: new Map(), typing: null, group: null }
+  const convo = { last: 0, running: false, background: false, stopState: '', polling: false, behind: false, news: false, loaded: false, lastPrompt: '', ticks: new Map(), typing: null, group: null }
 
   // showTyping keeps the "typing" bubble below the agent's latest message
   // for as long as it is answering, and takes it away once it has. Its
@@ -5806,6 +6039,7 @@
     stopState = running ? stopState || '' : ''
     convo.stopState = stopState
     const ended = convo.running && !running
+    convo.background = !running && background
     drawAgentLight(running, background, quietMinutes, compacting)
     if (running) setFaviconDot('working')
     else if (convo.running) setFaviconDot(document.visibilityState === 'visible' && document.hasFocus() ? '' : 'done')
@@ -5821,7 +6055,7 @@
     $('convo-new').disabled = running
     // While it answers, the typing bubble says so.
     const status = $('convo-status')
-    status.classList.toggle('warn-text', !!(running && quietMinutes))
+    status.classList.toggle('warn-text', !!(running && quietMinutes) || (!running && background))
     status.textContent = stopState === 'stopping'
       ? 'Stopping the agent… you can send another prompt now: it goes to the agent once this has stopped.'
       : stopState === 'waiting'
@@ -5909,8 +6143,24 @@
     resolveTrailingEmoticon(input)
     const prompt = input.value.trim()
     if (!prompt || (convo.running && convo.stopState !== 'stopping') || gate.active) return
+    if (convo.background && await endBackgroundWork()) return
     if (await holdForPackages(prompt)) return
     await deliverPrompt(prompt)
+  }
+
+  // endBackgroundWork asks, when the agent has answered and left something running, whether to send the prompt anyway: the server
+  // ends that work for a new prompt, and it won't report back. A user who sees an idle conversation has no other way to know. It
+  // resolves true when the user would rather not (the prompt stays in the box, and the agent goes on), false to send.
+  function endBackgroundWork() {
+    return new Promise((resolve) => {
+      confirmThen({
+        title: "End the agent's background work?",
+        text: 'The agent has answered, and still has something running in the sandbox. Sending this prompt ends it: it won\'t report back, and you would have to ask for it again. Cancel keeps what you typed, and the agent keeps working.',
+        safe: true, commandNote: '', command: '', runLabel: 'Send and end it',
+        cancelled: () => resolve(true),
+        run: async () => { resolve(false); return { asked: true } },
+      })
+    })
   }
 
   async function deliverPrompt(prompt) {
@@ -7775,6 +8025,7 @@
     })
   }
   $('log-search').addEventListener('input', (ev) => { state.search = ev.target.value; renderLog() })
+  $('rules-search').addEventListener('input', (ev) => { state.ruleSearch.rules = ev.target.value; render('rules') })
 
   $('rule-form').addEventListener('submit', (ev) => {
     ev.preventDefault()

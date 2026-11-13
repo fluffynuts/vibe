@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -94,5 +95,33 @@ func TestAHelperTheRuntimeKilledForMemorySaysSo(t *testing.T) {
 	// A plain last word (watchMemory's own, say) is said as it is.
 	if got := helperDied("starting\nreading needed more memory\n"); got != "reading needed more memory" {
 		t.Errorf("helperDied = %q", got)
+	}
+}
+
+// Once, in a full run on a loaded machine, a helper killed for memory left a register dump's last line (`gs 0x0`) as all vibe said of
+// it, with nothing to say why. When its output has no fatal error or panic line to say it by, the error also says how the output
+// began and how the helper ended; when it has one, or said nothing, there is nothing to add.
+func TestAHelperThatLeftNoFatalErrorLineIsDescribedByHowItsOutputBeganAndEnded(t *testing.T) {
+	dump := "runtime: an early line\nSIGSEGV: segmentation violation\nPC=0x1 m=3 sigcode=1\n\nrax    0x0\ngs     0x0\n"
+	got := diedHow(dump, errors.New("signal: segmentation fault"))
+	for _, want := range []string{`its output began "runtime: an early line"`, "it ended: signal: segmentation fault"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("diedHow = %q, want it to say %q", got, want)
+		}
+	}
+	if got := diedHow(dump, nil); strings.Contains(got, "it ended") || !strings.Contains(got, "an early line") {
+		t.Errorf("a helper that ended without an error is said to have: %q", got)
+	}
+	long := strings.Repeat("x", 500) + "\ngs 0x0\n"
+	if got := diedHow(long, nil); len(got) > 300 {
+		t.Errorf("a long first line is said whole: %d bytes", len(got))
+	}
+	for _, said := range []string{"fatal error: runtime: out of memory\n\ngoroutine 1 [running]:\n", "panic: boom\n\ngoroutine 1 [running]:\n"} {
+		if got := diedHow(said, errors.New("exit status 2")); got != "" {
+			t.Errorf("a helper that said what killed it by a fatal error or panic line has more said of it: %q", got)
+		}
+	}
+	if got := diedHow("", errors.New("signal: killed")); got != "" {
+		t.Errorf("a helper that said nothing is said twice: %q", got)
 	}
 }

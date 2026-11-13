@@ -393,7 +393,7 @@ func (s *Server) apiRoutes() []apiRoute {
 	return []apiRoute{
 		{"GET /api/ping", s.ping},
 		{"GET /api/state", s.authed(s.state)},
-		{"GET /api/log", s.authed(s.reading("log", func() (interface{}, error) { return s.cfg.Policy.ResolvedLog() }))},
+		{"GET /api/log", s.authed(s.reading("log", s.readLog))},
 		{"GET /api/rules", s.authed(s.reading("rules", func() (interface{}, error) { return s.cfg.Policy.NetworkRules() }))},
 		{"GET /api/fs-rules", s.authed(s.reading("fs-rules", func() (interface{}, error) { return s.cfg.Policy.FilesystemRules() }))},
 		{"POST /api/allow", s.authed(s.changing(s.allow))},
@@ -791,9 +791,9 @@ func (s *Server) changing(do change) http.HandlerFunc {
 			writeSbxError(w, err)
 			return
 		}
-		answer := map[string]interface{}{
-			"ok":      true,
-			"command": "sbx " + strings.Join(command, " "),
+		answer := map[string]interface{}{"ok": true}
+		if len(command) > 0 {
+			answer["command"] = "sbx " + strings.Join(command, " ")
 		}
 		if s.cfg.RulesChanged != nil {
 			if err := s.cfg.RulesChanged(); err != nil {
@@ -806,24 +806,42 @@ func (s *Server) changing(do change) http.HandlerFunc {
 
 type invalid struct{ error }
 
+// allow lets the host through, removing the sandbox's deny rules that cover it that the page showed (see policy.Client.AllowRemoving).
 func (s *Server) allow(body []byte) ([]string, error) {
-	c := s.cfg.Policy
-	return forHost(body, c.AllowCommand, c.Allow)
-}
-
-func (s *Server) deny(body []byte) ([]string, error) {
-	c := s.cfg.Policy
-	return forHost(body, c.DenyCommand, c.Deny)
-}
-
-// forHost runs a change to the host named in body, returning the sbx
-// command it stands for.
-func forHost(body []byte, command func(host string) []string, do func(host string) error) ([]string, error) {
-	host, err := hostIn(body)
+	host, remove, err := hostAndRemove(body)
 	if err != nil {
 		return nil, err
 	}
-	return command(host), do(host)
+	return s.cfg.Policy.AllowRemoving(host, remove)
+}
+
+// deny blocks the host, removing the sandbox's allow rules for exactly it that the page showed (see policy.Client.Block).
+func (s *Server) deny(body []byte) ([]string, error) {
+	host, remove, err := hostAndRemove(body)
+	if err != nil {
+		return nil, err
+	}
+	return s.cfg.Policy.Block(host, remove)
+}
+
+// hostAndRemove reads a change to a host along with the ids of the rules the page said would be removed for it.
+func hostAndRemove(body []byte) (string, []string, error) {
+	host, err := hostIn(body)
+	if err != nil {
+		return "", nil, err
+	}
+	var req struct {
+		Remove []string `json:"remove"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return "", nil, invalid{errors.New("expected {\"host\": ..., \"remove\": [rule ids]}")}
+	}
+	for _, id := range req.Remove {
+		if err := policy.ValidRuleID(id); err != nil {
+			return "", nil, invalid{err}
+		}
+	}
+	return host, req.Remove, nil
 }
 
 func (s *Server) remove(body []byte) ([]string, error) {
@@ -856,9 +874,12 @@ func hostIn(body []byte) (string, error) {
 
 func writeSbxError(w http.ResponseWriter, err error) {
 	var bad invalid
+	var refused policy.Refused
 	switch {
 	case errors.As(err, &bad):
 		writeError(w, http.StatusBadRequest, bad.Error())
+	case errors.As(err, &refused):
+		writeError(w, http.StatusConflict, refused.Error())
 	case errors.Is(err, policy.ErrNotSignedIn):
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error(), "code": "not-signed-in"})
 	default:

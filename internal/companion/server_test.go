@@ -232,6 +232,8 @@ func TestRefusedChangesNeverRunSbx(t *testing.T) {
 	for _, body := range []string{
 		`{"host":"*"}`, `{"host":"**"}`, `{"host":"-rf"}`, `{"host":"a.com,b.com"}`, `{"host":""}`, `{}`, `not json`,
 		`{"host":"a.com; rm -rf /"}`,
+		`{"host":"a.com","remove":"r-1"}`, // a string, not a list: not "remove nothing"
+		`{"host":"a.com","remove":[1]}`,
 	} {
 		w := do(t, s, post("/api/allow", body))
 		if w.Code != http.StatusBadRequest {
@@ -271,12 +273,54 @@ func TestChangesRunTheScopedSbxCommandAndSayWhich(t *testing.T) {
 	do(t, s, post("/api/deny", `{"host":"ads.example.com"}`))
 	do(t, s, post("/api/remove", `{"id":"r-1"}`))
 	want := [][]string{
+		{"policy", "ls", "vibe", "--json", "--wide", "--type", "network"}, // an allow and a block look at the rules first
 		{"policy", "allow", "network", "--sandbox", "vibe", "api.example.com"},
+		{"policy", "ls", "vibe", "--json", "--wide", "--type", "network"},
 		{"policy", "deny", "network", "--sandbox", "vibe", "ads.example.com"},
 		{"policy", "rm", "network", "--sandbox", "vibe", "--id", "r-1", "--force"},
 	}
 	if !reflect.DeepEqual(sbx.called(), want) {
 		t.Errorf("calls = %v, want %v", sbx.called(), want)
+	}
+}
+
+func TestBlockRemovesTheShownRuleThatConflictsAndSaysSo(t *testing.T) {
+	sbx := &fakeSbx{out: map[string]string{
+		"ls-network": `{"rules": [{"id":"r-1","resources":["www.kernel.org:443"],"decision":"allow","origin":"local","scope":"sandbox:vibe","editable":true,"status":"active"}]}`,
+	}}
+	s := newServer(sbx)
+	w := do(t, s, post("/api/deny", `{"host":"www.kernel.org:443","remove":["r-1"]}`))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "--id r-1") {
+		t.Errorf("answer %s does not name the removal", w.Body)
+	}
+	last := sbx.called()[len(sbx.called())-1]
+	if !reflect.DeepEqual(last, []string{"policy", "rm", "network", "--sandbox", "vibe", "--id", "r-1", "--force"}) {
+		t.Errorf("last call = %v", last)
+	}
+	w = do(t, s, post("/api/deny", `{"host":"www.kernel.org:443","remove":[]}`))
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "changed") {
+		t.Errorf("a block of rules that are not the ones shown was done: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestAllowRemovesTheShownDenyThatBlocksTheHostAndThenAllowsIt(t *testing.T) {
+	sbx := &fakeSbx{out: map[string]string{
+		"ls-network": `{"rules": [{"id":"d-1","resources":["www.kernel.org:443"],"decision":"deny","origin":"local","scope":"sandbox:vibe","editable":true,"status":"active"}]}`,
+	}}
+	s := newServer(sbx)
+	if w := do(t, s, post("/api/allow", `{"host":"www.kernel.org:443","remove":[]}`)); w.Code != http.StatusConflict {
+		t.Errorf("an allow of a host a deny covers, without that deny named: %d %s", w.Code, w.Body)
+	}
+	w := do(t, s, post("/api/allow", `{"host":"www.kernel.org:443","remove":["d-1"]}`))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "policy allow network --sandbox vibe www.kernel.org:443") {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	calls := sbx.called()
+	if got := calls[len(calls)-2]; !reflect.DeepEqual(got, []string{"policy", "rm", "network", "--sandbox", "vibe", "--id", "d-1", "--force"}) {
+		t.Errorf("the removal did not come before the allow: %v", calls)
 	}
 }
 
