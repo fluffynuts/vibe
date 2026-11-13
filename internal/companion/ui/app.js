@@ -5257,7 +5257,7 @@
 
   // news: the agent has said something since the Conversation tab was last
   // open (its dot); loaded: the conversation so far has been fetched once.
-  const convo = { last: 0, running: false, stopState: '', polling: false, behind: false, news: false, loaded: false, lastPrompt: '', ticks: new Map(), typing: null, group: null }
+  const convo = { last: 0, running: false, background: false, stopState: '', polling: false, behind: false, news: false, loaded: false, lastPrompt: '', ticks: new Map(), typing: null, group: null }
 
   // showTyping keeps the "typing" bubble below the agent's latest message
   // for as long as it is answering, and takes it away once it has. Its
@@ -6036,6 +6036,7 @@
     stopState = running ? stopState || '' : ''
     convo.stopState = stopState
     const ended = convo.running && !running
+    convo.background = !running && background
     drawAgentLight(running, background, quietMinutes, compacting)
     if (running) setFaviconDot('working')
     else if (convo.running) setFaviconDot(document.visibilityState === 'visible' && document.hasFocus() ? '' : 'done')
@@ -6051,7 +6052,7 @@
     $('convo-new').disabled = running
     // While it answers, the typing bubble says so.
     const status = $('convo-status')
-    status.classList.toggle('warn-text', !!(running && quietMinutes))
+    status.classList.toggle('warn-text', !!(running && quietMinutes) || (!running && background))
     status.textContent = stopState === 'stopping'
       ? 'Stopping the agent… you can send another prompt now: it goes to the agent once this has stopped.'
       : stopState === 'waiting'
@@ -6139,8 +6140,24 @@
     resolveTrailingEmoticon(input)
     const prompt = input.value.trim()
     if (!prompt || (convo.running && convo.stopState !== 'stopping') || gate.active) return
+    if (convo.background && await endBackgroundWork()) return
     if (await holdForPackages(prompt)) return
     await deliverPrompt(prompt)
+  }
+
+  // endBackgroundWork asks, when the agent has answered and left something running, whether to send the prompt anyway: the server
+  // ends that work for a new prompt, and it won't report back. A user who sees an idle conversation has no other way to know. It
+  // resolves true when the user would rather not (the prompt stays in the box, and the agent goes on), false to send.
+  function endBackgroundWork() {
+    return new Promise((resolve) => {
+      confirmThen({
+        title: "End the agent's background work?",
+        text: 'The agent has answered, and still has something running in the sandbox. Sending this prompt ends it: it won\'t report back, and you would have to ask for it again. Cancel keeps what you typed, and the agent keeps working.',
+        safe: true, commandNote: '', command: '', runLabel: 'Send and end it',
+        cancelled: () => resolve(true),
+        run: async () => { resolve(false); return { asked: true } },
+      })
+    })
   }
 
   async function deliverPrompt(prompt) {
