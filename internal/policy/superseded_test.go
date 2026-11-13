@@ -69,3 +69,18 @@ func TestADifferentPortIsAnotherHostForSupersedingToo(t *testing.T) {
 		t.Error("an entry for port 443 was superseded by one for port 80")
 	}
 }
+
+// Blocked, then allowed, then blocked again: the host is blocked, so the first entry says what is so, and only the allowed one is history.
+func TestAnEntryThatAgreesWithTheHostsLatestEntryIsNotSupersededBecauseOfAnInBetweenOne(t *testing.T) {
+	log := Log{Entries: []LogEntry{
+		{Host: "a.org:443", Decision: Blocked, LastSeen: "2026-11-12T08:00:00Z", Rule: "first"},
+		{Host: "a.org:443", Decision: Allowed, LastSeen: "2026-11-12T09:00:00Z"},
+		{Host: "a.org:443", Decision: Blocked, LastSeen: "2026-11-12T10:00:00Z", Rule: "last"},
+	}}
+	want := []bool{false, true, false}
+	for i, e := range Resolve(log, Rules{}).Entries {
+		if e.Superseded != want[i] {
+			t.Errorf("entry %d (%s at %s): superseded = %v, want %v", i, e.Decision, e.LastSeen, e.Superseded, want[i])
+		}
+	}
+}

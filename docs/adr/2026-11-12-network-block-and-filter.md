@@ -50,8 +50,10 @@ covers it already. A deny it **cannot remove** (one of the global policy, or one
 
 ### 3b. A log row a later entry contradicts is history
 
-The log has an entry for each (host, decision). For the same host (port included), an entry whose time is **earlier** than that of an entry deciding the other way is `Superseded` (`markSuperseded`, in `Resolve`, also when the rules could
-not be read). Allowed and Unblocked are one decision here (the host gets through). Equal times, or a time that is missing or unreadable, supersede nothing: nothing says which is later. The page draws such a row muted with its
+The log has an entry for each (host, decision, rule text). For the same host (port included), what its **latest** entry says is so, and an older entry that decides the other way is `Superseded` (`markSuperseded`, in
+`Resolve`, also when the rules could not be read). Allowed and Unblocked are one decision here (the host gets through). An older entry that **agrees** with the latest is not superseded, however many entries of the other kind lie between
+(found in use: blocked, allowed, blocked again struck the first row through, though the host is blocked and that row says so). Latest entries at the same moment that disagree, or a time that is missing or unreadable, settle
+nothing: nothing says which is later. The page draws such a row muted with its
 status struck through (title: "Superseded: a later entry for this host says otherwise"), **no button**, never "Updating…", and still under its own status's filter; the counts are of the current rows, with "N superseded" beside them;
 and the blocked-hosts notice leaves it out.
 
