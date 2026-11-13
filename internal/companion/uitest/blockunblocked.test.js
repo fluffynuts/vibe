@@ -5,7 +5,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const { openPage } = require('./page.js')
 
-const rule = (over) => ({ id: 'r-exact', name: '', resources: ['www.kernel.org:443'], source: 'local', scope: 'sandbox:box', removable: true, wider: false, identical: true, ...over })
+const rule = (over) => ({ id: 'r-exact', name: '', resources: ['www.kernel.org:443'], source: 'local', scope: 'sandbox:box', removable: true, wider: false, conflicts: true, ...over })
 const unblocked = (allowedBy) => ({ host: 'www.kernel.org:443', decision: 'unblocked', hits: 1, lastSeen: '2026-11-12T12:39:25Z', rule: '', ...(allowedBy ? { allowedBy } : {}) })
 
 async function logPage(entries, routes = {}) {
@@ -61,7 +61,7 @@ test('a rule that also allows other hosts says so, naming them', async () => {
 
 // A deny beats any allow, and sbx refuses it only beside an allow of the identical resource: so a wildcard stays, and a block is added.
 test("a wider rule that still allows the host is left alone, and a block is added beside it", async () => {
-  const p = await logPage([unblocked([rule({ id: 'exact' }), rule({ id: 'r-wild', resources: ['*.kernel.org'], wider: true, identical: false })])])
+  const p = await logPage([unblocked([rule({ id: 'exact' }), rule({ id: 'r-wild', resources: ['*.kernel.org'], wider: true, conflicts: false })])])
   try {
     await p.click(block(p))
     const q = ask(p)
@@ -76,7 +76,7 @@ test("a wider rule that still allows the host is left alone, and a block is adde
 })
 
 test("a global rule that allows the host is never removed: a block is added for this sandbox, and the rule said to stay", async () => {
-  const p = await logPage([unblocked([rule({ id: 'g', scope: 'global', name: 'g', removable: true })])])
+  const p = await logPage([unblocked([rule({ id: 'g', scope: 'global', name: 'g', removable: true, conflicts: false })])])
   try {
     await p.click(block(p))
     assert.equal(p.$('confirm').open, true, 'refused what sbx accepts: a sandbox deny beside a global allow')
@@ -197,5 +197,18 @@ test('an ordinary poll of the Network log does not show the sign at once', async
     const spinner = p.$('log-refreshing')
     assert.ok(spinner.classList.contains('on'))
     assert.equal(spinner.classList.contains('at-once'), false)
+  } finally { p.close() }
+})
+
+// Which rules Block removes is the server's decision (Resolve, the same one Block makes): the page does not work it out again from a rule's
+// scope, which it and the server did not agree on for a rule that had none.
+test('a rule the server does not say conflicts is left alone, whatever its scope looks like to the page', async () => {
+  const p = await logPage([unblocked([rule({ id: 'noscope', scope: '', conflicts: false })])])
+  try {
+    await p.click(block(p))
+    assert.doesNotMatch(ask(p).command, /policy rm/)
+    assert.match(ask(p).command, /sbx policy deny network --sandbox box www\.kernel\.org:443/)
+    await run(p)
+    assert.deepEqual(posted(p, '/api/deny'), [{ host: 'www.kernel.org:443', remove: [] }])
   } finally { p.close() }
 })

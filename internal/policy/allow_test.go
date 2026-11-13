@@ -123,7 +123,7 @@ func TestABlockedHostSaysWhichDenyRulesBlockIt(t *testing.T) {
 		{ID: "off", Resources: []string{"www.kernel.org"}, Decision: Blocked, Status: "inactive"},
 		{ID: "other", Resources: []string{"other.org"}, Decision: Blocked},
 	}}
-	got := Resolve(log, rules).Entries
+	got := Resolve("vibe", log, rules).Entries
 	var ids []string
 	for _, r := range got[0].BlockedBy {
 		ids = append(ids, r.ID)

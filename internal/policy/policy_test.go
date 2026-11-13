@@ -414,7 +414,7 @@ func TestResolveMarksBlockedHostsARuleNowAllows(t *testing.T) {
 		{Resources: []string{"denied.example.com:443"}, Decision: Blocked},
 		{Resources: []string{"ok.net"}, Decision: Allowed},
 	}}
-	got := Resolve(log, rules)
+	got := Resolve("vibe", log, rules)
 	want := []string{Unblocked, Blocked, Blocked, Allowed}
 	for i, e := range got.Entries {
 		if e.Decision != want[i] {
@@ -442,7 +442,7 @@ func TestAnUnblockedHostSaysWhichRulesAllowItAndWhetherTheyReachFurtherThanIt(t 
 		{ID: "off", Resources: []string{"www.kernel.org"}, Decision: Allowed, Removable: true, Status: "inactive"},
 		{ID: "elsewhere", Resources: []string{"unrelated.example"}, Decision: Allowed, Removable: true},
 	}}
-	got := Resolve(log, rules)
+	got := Resolve("vibe", log, rules)
 
 	by := got.Entries[0].AllowedBy
 	var ids []string
@@ -533,7 +533,7 @@ func TestAHostAllowedWhileTheImplicitDenyAllIsListedIsMarkedUnblocked(t *testing
 		{Host: "api.anthropic.com:443", Decision: Allowed},
 	}}
 	want := []string{Unblocked, Blocked, Blocked, Allowed}
-	for i, e := range Resolve(log, rules).Entries {
+	for i, e := range Resolve("vibe", log, rules).Entries {
 		if e.Decision != want[i] {
 			t.Errorf("%s: got %q, want %q", e.Host, e.Decision, want[i])
 		}
@@ -552,7 +552,7 @@ func resolveWithDenyEverything(t *testing.T, fields string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Resolve(Log{Entries: []LogEntry{{Host: "cdn.mysql.com:443", Decision: Blocked}}}, rules).Entries[0].Decision
+	return Resolve("vibe", Log{Entries: []LogEntry{{Host: "cdn.mysql.com:443", Decision: Blocked}}}, rules).Entries[0].Decision
 }
 
 // What sbx's own fallback is told by is what it is (a deny of everything that can't be edited, on the local layer), so
@@ -623,7 +623,7 @@ func TestARuleOfAnotherPortNeitherUnblocksNorBlocksAHost(t *testing.T) {
 		{ID: "a80", Resources: []string{"blocked.org:80"}, Decision: Allowed},
 		{ID: "d80", Resources: []string{"allowed.org:80"}, Decision: Blocked},
 	}}
-	got := Resolve(log, rules).Entries
+	got := Resolve("vibe", log, rules).Entries
 	if got[0].Decision != Blocked || got[0].AllowedBy != nil {
 		t.Errorf("a host blocked on 443 with an allow of port 80 = %+v", got[0])
 	}

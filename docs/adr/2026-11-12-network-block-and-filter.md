@@ -28,7 +28,7 @@
 ### 1. The log says which rules allow a host, and which block it
 
 `policy.Resolve` matched each blocked entry against the allow rules to call it Unblocked; it now keeps them, for an Unblocked **and an Allowed** entry that no deny covers: `LogEntry.AllowedBy`, a list of
-`RuleRef` (id, name, resources, source, scope, `Removable`, `Wider`: the rule reaches something other than this host, and `Identical`: one of its resources is exactly the host, port and all, case aside). A
+`RuleRef` (id, name, resources, source, scope, `Removable`, `Wider`: the rule reaches something other than this host, and `Conflicts`: sbx refuses a deny of the host beside it, which is the sandbox's own allow with exactly this host, port and all, as a resource; one definition, `Rule.refusesDenyOf`, which `Block` uses too, so that the ids the page sends back are the ones `Block` finds). A
 still-Blocked entry that a deny covers lists those in `BlockedBy`. Inactive and suppressed rules, and the implicit fallback, are not listed, and a rule that matches by two of its resources is listed once.
 
 **Matching by port (found in review):** a rule covers a host by name **and port**, as sbx does: a resource with a port covers that port only, one without covers every port (and a host named without a port is any port). It was by name alone at first, and

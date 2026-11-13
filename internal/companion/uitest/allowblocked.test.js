@@ -5,7 +5,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const { openPage } = require('./page.js')
 
-const deny = (over) => ({ id: 'd-exact', name: '', resources: ['www.kernel.org:443'], source: 'local', scope: 'sandbox:box', removable: true, wider: false, identical: true, ...over })
+const deny = (over) => ({ id: 'd-exact', name: '', resources: ['www.kernel.org:443'], source: 'local', scope: 'sandbox:box', removable: true, wider: false, ...over })
 const blocked = (blockedBy) => ({ host: 'www.kernel.org:443', decision: 'blocked', hits: 1, lastSeen: '2026-11-12T12:39:25Z', rule: '', ...(blockedBy ? { blockedBy } : {}) })
 
 async function logPage(entries, routes = {}) {
@@ -43,7 +43,7 @@ test("Allow on a host the sandbox's own deny blocks removes that deny and adds t
 })
 
 test('a block that covers more hosts says which, and that they are allowed too', async () => {
-  const p = await logPage([blocked([deny({ id: 'd-wild', resources: ['*.kernel.org'], wider: true, identical: false })])])
+  const p = await logPage([blocked([deny({ id: 'd-wild', resources: ['*.kernel.org'], wider: true })])])
   try {
     await p.click(allow(p))
     assert.match(ask(p).text, /also blocks \*\.kernel\.org/)

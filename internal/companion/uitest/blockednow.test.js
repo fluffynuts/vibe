@@ -6,7 +6,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const { openPage } = require('./page.js')
 
-const deny = { id: 'd-1', name: '', resources: ['git.kernel.org:443'], source: 'local', scope: 'sandbox:box', removable: true, wider: false, identical: true }
+const deny = { id: 'd-1', name: '', resources: ['git.kernel.org:443'], source: 'local', scope: 'sandbox:box', removable: true, wider: false }
 const entries = () => [
   { host: 'git.kernel.org:443', decision: 'blocked-now', hits: 4, lastSeen: '2026-11-13T14:56:55Z', rule: '', blockedBy: [deny] },
   { host: 'a.org:443', decision: 'blocked', hits: 1, lastSeen: '2026-11-13T14:56:00Z', rule: '' },

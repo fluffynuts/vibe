@@ -1493,7 +1493,7 @@
   function blockCovered(entry) {
     const rules = entry.allowedBy || []
     if (!rules.length) { confirmChange('deny', entry.host, [entry.host]); return }
-    const mine = (r) => r.identical && !isGlobalRule(r)
+    const mine = (r) => r.conflicts
     const conflicts = rules.filter(mine)
     const staying = rules.filter((r) => !mine(r))
     const stuck = conflicts.filter((r) => !r.removable || !r.id)

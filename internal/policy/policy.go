@@ -108,10 +108,10 @@ type RuleRef struct {
 	// wildcard, or another host in the same rule), so removing it blocks
 	// those too.
 	Wider bool `json:"wider"`
-	// Identical says one of the rule's resources is exactly the host, port
-	// and all (case aside): if the rule is the sandbox's own, sbx refuses a
-	// deny of the host beside it.
-	Identical bool `json:"identical"`
+	// Conflicts says sbx refuses a deny of the host beside this rule (see
+	// Rule.refusesDenyOf), so Block removes it: the page shows it, and Block
+	// removes exactly the rules it is true of.
+	Conflicts bool `json:"conflicts"`
 }
 
 // Rule is one policy rule that applies to the sandbox.
@@ -199,7 +199,7 @@ func (c *Client) ResolvedLog() (Log, error) {
 		log.Entries = markSuperseded(log.Entries)
 		return log, nil
 	}
-	return Resolve(log, rules), nil
+	return Resolve(c.Sandbox, log, rules), nil
 }
 
 // implicitFallback says whether r is sbx's own rule denying whatever no policy
@@ -238,6 +238,13 @@ func (r Rule) active() bool {
 	return !strings.Contains(st, "inactive") && !strings.Contains(st, "suppress") && !r.implicitFallback()
 }
 
+// refusesDenyOf says sbx refuses a deny of host beside this rule: it is an allow of this sandbox's own, one of its resources
+// being exactly host, port and all (case aside). A rule of the global policy, another sandbox's, or one with no scope does not.
+// Resolve says so to the page, and Block removes the rules it is true of, so that what the user confirms is what is done.
+func (r Rule) refusesDenyOf(sandbox, host string) bool {
+	return r.Decision == Allowed && r.Scope == "sandbox:"+sandbox && identicalTo(r.Resources, host)
+}
+
 // sameResource says a rule's resource is exactly host, port and all.
 func sameResource(resource, host string) bool {
 	return strings.EqualFold(strings.TrimSpace(resource), strings.TrimSpace(host))
@@ -256,7 +263,7 @@ func identicalTo(resources []string, host string) bool {
 // rule and denied by none: a deny wins over an allow. The fallback deny sbx
 // lists (implicitFallback) is none: it matches every host. Each entry that
 // is, or has become, allowed says which rules allow it (AllowedBy).
-func Resolve(log Log, rules Rules) Log {
+func Resolve(sandbox string, log Log, rules Rules) Log {
 	out := log
 	out.Entries = make([]LogEntry, len(log.Entries))
 	copy(out.Entries, log.Entries)
@@ -280,14 +287,14 @@ func Resolve(log Log, rules Rules) Log {
 					if !listed {
 						listed = true
 						blockedBy = append(blockedBy, RuleRef{ID: r.ID, Name: r.Name, Resources: r.Resources, Source: r.Source, Scope: r.Scope,
-							Removable: r.Removable, Wider: reachesFurther(r.Resources, e.Host), Identical: identicalTo(r.Resources, e.Host)})
+							Removable: r.Removable, Wider: reachesFurther(r.Resources, e.Host)})
 					}
 				} else if r.Decision == Allowed {
 					allowed = true
 					if !listed {
 						listed = true
 						allowedBy = append(allowedBy, RuleRef{ID: r.ID, Name: r.Name, Resources: r.Resources, Source: r.Source, Scope: r.Scope,
-							Removable: r.Removable, Wider: reachesFurther(r.Resources, e.Host), Identical: identicalTo(r.Resources, e.Host)})
+							Removable: r.Removable, Wider: reachesFurther(r.Resources, e.Host), Conflicts: r.refusesDenyOf(sandbox, e.Host)})
 					}
 				}
 			}
@@ -488,7 +495,6 @@ func (c *Client) Block(host string, removing []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	own := "sandbox:" + c.Sandbox
 	var conflicting []Rule
 	stillAllowed, denied := false, false
 	for _, r := range rules.Rules {
@@ -502,7 +508,7 @@ func (c *Client) Block(host string, removing []string) ([]string, error) {
 		switch {
 		case r.Decision == Blocked && covers:
 			denied = true
-		case r.Decision == Allowed && covers && r.Scope == own && identicalTo(r.Resources, host):
+		case covers && r.refusesDenyOf(c.Sandbox, host):
 			conflicting = append(conflicting, r)
 		case r.Decision == Allowed && covers:
 			stillAllowed = true

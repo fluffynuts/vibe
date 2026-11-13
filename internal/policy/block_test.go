@@ -197,21 +197,65 @@ func TestBlockRefusesAHostSbxWouldNotAcceptBeforeReadingAnything(t *testing.T) {
 	}
 }
 
-func TestAnAllowRuleForTheHostIsMarkedIdenticalOnlyWhenOneOfItsResourcesIsTheHost(t *testing.T) {
+func TestAnAllowRuleIsMarkedAsConflictingOnlyWhenSbxWouldRefuseADenyBesideIt(t *testing.T) {
 	log := Log{Entries: []LogEntry{{Host: "www.kernel.org:443", Decision: Blocked}}}
 	rules := Rules{Rules: []Rule{
-		{ID: "exact", Resources: []string{"WWW.kernel.org:443"}, Decision: Allowed},
-		{ID: "several", Resources: []string{"other.org", "www.kernel.org:443"}, Decision: Allowed},
-		{ID: "portless", Resources: []string{"www.kernel.org"}, Decision: Allowed},
-		{ID: "wild", Resources: []string{"*.kernel.org"}, Decision: Allowed},
+		{ID: "exact", Resources: []string{"WWW.kernel.org:443"}, Decision: Allowed, Scope: "sandbox:vibe"},
+		{ID: "several", Resources: []string{"other.org", "www.kernel.org:443"}, Decision: Allowed, Scope: "sandbox:vibe"},
+		{ID: "global", Resources: []string{"www.kernel.org:443"}, Decision: Allowed, Scope: "global"},
+		{ID: "anothers", Resources: []string{"www.kernel.org:443"}, Decision: Allowed, Scope: "sandbox:other"},
+		{ID: "portless", Resources: []string{"www.kernel.org"}, Decision: Allowed, Scope: "sandbox:vibe"},
+		{ID: "wild", Resources: []string{"*.kernel.org"}, Decision: Allowed, Scope: "sandbox:vibe"},
+		{ID: "noscope", Resources: []string{"www.kernel.org:443"}, Decision: Allowed},
 	}}
 	got := map[string]bool{}
-	for _, r := range Resolve(log, rules).Entries[0].AllowedBy {
-		got[r.ID] = r.Identical
+	for _, r := range Resolve("vibe", log, rules).Entries[0].AllowedBy {
+		got[r.ID] = r.Conflicts
 	}
-	want := map[string]bool{"exact": true, "several": true, "portless": false, "wild": false}
+	want := map[string]bool{"exact": true, "several": true, "global": false, "anothers": false, "portless": false, "wild": false, "noscope": false}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("identical = %v, want %v", got, want)
+		t.Errorf("conflicts = %v, want %v", got, want)
+	}
+}
+
+// The page sends back the ids of the rules the log said Block would remove, and Block refuses if its own list differs: so the two have to be
+// one decision. Whatever Resolve marks as conflicting, Block removes, and nothing else.
+func TestBlockRemovesExactlyTheRulesTheLogSaidConflict(t *testing.T) {
+	rulesJSON := rulesOf(
+		ruleJSON("exact", "sandbox:vibe", "allow", "www.kernel.org:443"),
+		ruleJSON("several", "sandbox:vibe", "allow", "other.org", "www.kernel.org:443"),
+		ruleJSON("global", "global", "allow", "www.kernel.org:443"),
+		ruleJSON("anothers", "sandbox:other", "allow", "www.kernel.org:443"),
+		ruleJSON("portless", "sandbox:vibe", "allow", "www.kernel.org"),
+		ruleJSON("wild", "sandbox:vibe", "allow", "*.kernel.org"),
+		ruleJSON("noscope", "", "allow", "www.kernel.org:443"),
+		ruleJSON("off", "sandbox:vibe", "allow", "www.kernel.org:443"),
+	)
+	rulesJSON = strings.Replace(rulesJSON, `"id": "off", "name": "off", "scope": "sandbox:vibe", "decision": "allow", "resources": ["www.kernel.org:443"], "origin": "local", "layer": "local", "status": "active"`,
+		`"id": "off", "name": "off", "scope": "sandbox:vibe", "decision": "allow", "resources": ["www.kernel.org:443"], "origin": "local", "layer": "local", "status": "inactive"`, 1)
+	parsed, err := ParseRules([]byte(rulesJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := Log{Entries: []LogEntry{{Host: "www.kernel.org:443", Decision: Blocked}}}
+	var shown []string
+	for _, r := range Resolve("vibe", log, parsed).Entries[0].AllowedBy {
+		if r.Conflicts {
+			shown = append(shown, r.ID)
+		}
+	}
+	s := &sbxWithRules{rules: rulesJSON}
+	if _, err := block(t, s, "www.kernel.org:443", shown...); err != nil {
+		t.Fatalf("Block refused the very rules the log said conflict (%v): %v", shown, err)
+	}
+	var removed []string
+	for _, call := range s.calls {
+		if call[1] == "rm" {
+			removed = append(removed, call[6])
+		}
+	}
+	if !sameIDs(removed, shown) || len(shown) != 2 {
+		t.Errorf("the log said %v conflict, Block removed %v (want exact and several in both)", shown, removed)
 	}
 }
 
@@ -222,7 +266,7 @@ func TestAnAllowedHostSaysWhichRulesAllowItToo(t *testing.T) {
 		{ID: "a", Resources: []string{"denied.org:443"}, Decision: Allowed},
 		{ID: "d", Resources: []string{"denied.org:443"}, Decision: Blocked},
 	}}
-	got := Resolve(log, rules).Entries
+	got := Resolve("vibe", log, rules).Entries
 	if len(got[0].AllowedBy) != 1 || got[0].AllowedBy[0].ID != "exact" || got[0].Decision != Allowed {
 		t.Errorf("entry = %+v", got[0])
 	}
