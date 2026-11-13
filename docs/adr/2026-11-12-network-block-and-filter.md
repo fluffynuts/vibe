@@ -13,7 +13,7 @@
 - A **deny beats an allow always**, not by being more specific (a portless deny beat a ported allow, a ported deny a portless allow), and a sandbox's deny beats a **global** allow, exact or wildcard, without conflict.
   So a block is added beside a wildcard or a global allow and wins for its host alone; but an allow can never be added over a deny: the deny has to go.
 - `rm --sandbox X` of a global rule fails (`exists in the global policy, not in sandbox X`).
-- The log is a history: one entry for each (host, decision).
+- The log is a history: an entry for each (host, decision), and a blocked host shows one more for each different rule that blocked it (the rule text differs), as the screenshots of 2026-11-13 show (eight `cdn.kernel.org:443` Blocked rows, each naming another deny rule).
 
 ## Context
 

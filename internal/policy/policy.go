@@ -302,7 +302,7 @@ func Resolve(log Log, rules Rules) Log {
 }
 
 // markSuperseded marks, in a copy of entries, each entry of a host that has a later entry deciding the other way. The log is a
-// history with one entry for each (host, decision), so a host blocked and then allowed shows both: the blocked one is old news.
+// history with an entry for each (host, decision, rule text), so a host blocked and then allowed shows both: the blocked one is old news.
 // Allowed and Unblocked are the same decision here (the host gets through). Entries seen at the same moment, or whose time is
 // not known, supersede nothing and are superseded by nothing: nothing says which is later.
 func markSuperseded(entries []LogEntry) []LogEntry {
