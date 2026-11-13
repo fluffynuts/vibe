@@ -84,6 +84,8 @@ type LogEntry struct {
 	AllowedBy []RuleRef `json:"allowedBy,omitempty"`
 	// BlockedBy is, for an entry that is still Blocked, the deny rules that cover its host: empty when only the default blocks it.
 	BlockedBy []RuleRef `json:"blockedBy,omitempty"`
+	// Superseded says a later entry of the same host decided otherwise (see markSuperseded): this one says what was so, not what is.
+	Superseded bool `json:"superseded,omitempty"`
 	// Raw is the entry as sbx printed it.
 	Raw json.RawMessage `json:"raw"`
 }
@@ -190,6 +192,7 @@ func (c *Client) ResolvedLog() (Log, error) {
 	rules, err := c.NetworkRules()
 	if err != nil {
 		log.Unresolved = "The rules couldn't be read, so blocked hosts a rule now allows aren't marked: " + err.Error()
+		log.Entries = markSuperseded(log.Entries)
 		return log, nil
 	}
 	return Resolve(log, rules), nil
@@ -293,6 +296,49 @@ func Resolve(log Log, rules Rules) Log {
 		} else if e.Decision == Blocked && denied {
 			out.Entries[i].BlockedBy = blockedBy
 		}
+	}
+	out.Entries = markSuperseded(out.Entries)
+	return out
+}
+
+// markSuperseded marks, in a copy of entries, each entry of a host that has a later entry deciding the other way. The log is a
+// history with one entry for each (host, decision), so a host blocked and then allowed shows both: the blocked one is old news.
+// Allowed and Unblocked are the same decision here (the host gets through). Entries seen at the same moment, or whose time is
+// not known, supersede nothing and are superseded by nothing: nothing says which is later.
+func markSuperseded(entries []LogEntry) []LogEntry {
+	out := make([]LogEntry, len(entries))
+	copy(out, entries)
+	gets := func(e LogEntry) bool { return e.Decision != Blocked }
+	type seen struct{ gets, blocks time.Time }
+	latest := map[string]*seen{}
+	times := make([]time.Time, len(out))
+	for i, e := range out {
+		t, err := time.Parse(time.RFC3339Nano, e.LastSeen)
+		if err != nil {
+			continue
+		}
+		times[i] = t
+		l := latest[e.Host]
+		if l == nil {
+			l = &seen{}
+			latest[e.Host] = l
+		}
+		if gets(e) && t.After(l.gets) {
+			l.gets = t
+		} else if !gets(e) && t.After(l.blocks) {
+			l.blocks = t
+		}
+	}
+	for i, e := range out {
+		if times[i].IsZero() {
+			continue
+		}
+		l := latest[e.Host]
+		other := l.blocks
+		if !gets(e) {
+			other = l.gets
+		}
+		out[i].Superseded = other.After(times[i])
 	}
 	return out
 }

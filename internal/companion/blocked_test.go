@@ -117,6 +117,17 @@ func TestAHostARuleNowAllowsIsNotCountedAsBlocked(t *testing.T) {
 	}
 }
 
+// A host blocked earlier and allowed since has an old blocked entry in the log: that is history, not news to tell the user of.
+func TestAHostBlockedEarlierAndAllowedSinceIsNotCountedAsBlocked(t *testing.T) {
+	rig := newBlockedRig(t, `{"blocked_hosts": [{"host":"was.example","vm_name":"box","count_since":1,"last_seen":"2026-10-19T12:00:00Z"},
+  {"host":"still.example","vm_name":"box","count_since":1,"last_seen":"2026-10-19T12:00:00Z"}],
+ "allowed_hosts": [{"host":"was.example","vm_name":"box","count_since":1,"last_seen":"2026-10-19T13:00:00Z"}]}`)
+	got := rig.untilKnown(t)
+	if strings.Join(got, ",") != "still.example" {
+		t.Errorf("blocked = %v, want only still.example: was.example was allowed after it was blocked", got)
+	}
+}
+
 func TestTheLogIsReadInTheBackgroundAndNoMoreOftenThanEveryFewSeconds(t *testing.T) {
 	rig := newBlockedRig(t, logOf)
 	rig.untilKnown(t)

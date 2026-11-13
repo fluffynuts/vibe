@@ -1279,9 +1279,11 @@
     return d.toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })
   }
 
-  function statusCell(decision) {
+  // superseded: a later entry of the host decided otherwise, so this is what was so, not what is.
+  function statusCell(decision, superseded) {
     const word = decision === 'allowed' ? 'Allowed' : decision === 'blocked' ? 'Blocked' : decision === 'unblocked' ? 'Unblocked' : 'Unknown'
-    return el('span', { class: 'status ' + (decision || 'unknown'), text: word })
+    return el('span', Object.assign({ class: 'status ' + (decision || 'unknown') + (superseded ? ' superseded' : ''), text: word },
+      superseded ? { title: 'Superseded: a later entry for this host says otherwise' } : {}))
   }
 
   function rawDetail(entry, extra, columns) {
@@ -1305,16 +1307,20 @@
     const logBody = $('log-table').tBodies[0]
     if (drawnKeys.get(logBody) === drawnFor) return
     drawnKeys.set(logBody, drawnFor)
-    const blocked = entries.filter((e) => e.decision === 'blocked').length
-    const allowed = entries.filter((e) => e.decision === 'allowed').length
-    const unblocked = entries.filter((e) => e.decision === 'unblocked').length
+    const current = entries.filter((e) => !e.superseded)
+    const blocked = current.filter((e) => e.decision === 'blocked').length
+    const allowed = current.filter((e) => e.decision === 'allowed').length
+    const unblocked = current.filter((e) => e.decision === 'unblocked').length
+    const superseded = entries.length - current.length
     const summary = $('log-summary')
     summary.textContent = ''
     summary.append(entries.length + ' total  ',
       el('span', { class: 'ok', text: '● ' + allowed + ' allowed' }), '  ',
       el('span', { class: 'bad', text: '● ' + blocked + ' blocked' }),
       unblocked ? '  ' : '',
-      unblocked ? el('span', { class: 'warn', text: '● ' + unblocked + ' unblocked' }) : '')
+      unblocked ? el('span', { class: 'warn', text: '● ' + unblocked + ' unblocked' }) : '',
+      superseded ? '  ' : '',
+      superseded ? el('span', { class: 'muted', text: superseded + ' superseded' }) : '')
 
     const needle = state.search.trim().toLowerCase()
     const shown = entries.filter((e) =>
@@ -1329,13 +1335,14 @@
     }
     for (const e of shown) {
       const key = e.host
-      const row = el('tr', { class: 'entry', tabindex: '0', 'aria-expanded': String(state.open.has(key)) },
+      const waiting = !e.superseded && state.updating.has(e.host)
+      const row = el('tr', { class: 'entry' + (e.superseded ? ' superseded' : ''), tabindex: '0', 'aria-expanded': String(state.open.has(key)) },
         el('td', { class: 'when', text: when(e.lastSeen) }),
         el('td', { class: 'host', text: e.host }),
         el('td', { class: 'num', text: String(e.hits || '') }),
-        el('td', {}, state.updating.has(e.host) ? updatingCell() : statusCell(e.decision)),
+        el('td', {}, waiting ? updatingCell() : statusCell(e.decision, e.superseded)),
         el('td', { class: 'mono', text: e.rule || '' }),
-        el('td', {}, ((act) => { if (act && state.updating.has(e.host)) act.disabled = true; return act })(actionFor(e))))
+        el('td', {}, e.superseded ? null : ((act) => { if (act && waiting) act.disabled = true; return act })(actionFor(e))))
       const toggle = () => {
         if (state.open.has(key)) state.open.delete(key); else state.open.add(key)
         renderLog()

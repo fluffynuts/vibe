@@ -66,7 +66,7 @@ func blockedIn(log policy.Log) []string {
 	seen := map[string]bool{}
 	hosts := []string{}
 	for _, e := range log.Entries {
-		if e.Decision == policy.Blocked && !seen[e.Host] {
+		if e.Decision == policy.Blocked && !e.Superseded && !seen[e.Host] {
 			seen[e.Host] = true
 			hosts = append(hosts, e.Host)
 		}

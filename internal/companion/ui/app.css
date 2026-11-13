@@ -272,6 +272,8 @@ td.empty { text-align: center; color: var(--muted); padding: 28px; }
 .status.blocked { color: var(--bad); }
 .status.unblocked { color: var(--amber); }
 .status.unknown { color: var(--muted); }
+tr.superseded { color: var(--muted); }
+.status.superseded { color: var(--muted); text-decoration: line-through; }
 tr.detail td { background: var(--row-hover); }
 tr.detail dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; }
 tr.detail dt { color: var(--muted); }
