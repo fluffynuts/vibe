@@ -848,4 +848,7 @@ ul.signins summary { cursor: pointer; color: var(--muted); }
 .commands.emoji li .alias { color: var(--muted); margin-left: 6px; font-size: 12px; }
 
 /* a Network log row whose host's rule is being changed: that it is, and nothing of the outcome */
-.updating { color: var(--muted); }
+/* the status column is wide enough for "Updating…" and its spinner, which never wrap: a row that wrapped them was twice as tall while sbx ran,
+   and a column that grew for them moved all the others as it came and went */
+.updating { color: var(--muted); white-space: nowrap; }
+#log-table th:nth-child(4), #log-table td:nth-child(4) { min-width: 9em; white-space: nowrap; }

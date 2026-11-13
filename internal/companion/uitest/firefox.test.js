@@ -1092,3 +1092,33 @@ test('the note that the code has changed fits the Review bar beside Refresh, at 
     } finally { await page.close() }
   }
 })
+
+// A Network log row whose rule is being changed says "Updating…" in its status cell, with a spinner. Wider than the words a status
+// is usually (Unblocked), it wrapped, and the row was twice as tall for as long as sbx took; and a column that grows for it moves
+// every other column as it comes and goes. The row is made as the page makes one, and its status cell swapped for what the page
+// puts there, since the page's own log is empty here.
+test('a Network log row says it is updating without growing, and without moving its columns', async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  try {
+    await page.goto(URL)
+    await page.click('#tab-log')
+    await page.waitForSelector('#log-table')
+    const measured = await page.evaluate(() => {
+      const body = document.querySelector('#log-table tbody')
+      const row = document.createElement('tr')
+      row.className = 'entry'
+      const cell = (cls, html) => { const td = document.createElement('td'); if (cls) td.className = cls; td.innerHTML = html; return td }
+      const status = cell('', '<span class="status unblocked">Unblocked</span>')
+      row.append(cell('when', '13 Nov, 07:57:36'), cell('host', 'kernel.org:443'), cell('num', '1'), status,
+        cell('mono', 'no applicable policies for op(action=net:connect:tcp, resource=net:domain:kernel.org:443)'), cell('', '<button type="button" class="small">Allow</button>'))
+      body.append(row)
+      const widths = () => Array.from(document.querySelectorAll('#log-table thead th')).map((th) => Math.round(th.getBoundingClientRect().width * 10) / 10)
+      const before = { height: row.getBoundingClientRect().height, widths: widths() }
+      status.innerHTML = '<span class="updating"><span class="spinner" aria-hidden="true"></span>Updating…</span>'
+      const during = { height: row.getBoundingClientRect().height, widths: widths() }
+      return { before, during }
+    })
+    assert.ok(measured.during.height <= measured.before.height + 1, `the row is ${measured.during.height}px tall while updating, ${measured.before.height}px otherwise`)
+    assert.deepEqual(measured.during.widths, measured.before.widths, `a column changed width when the row began to say it is updating: ${JSON.stringify(measured.before.widths)} then ${JSON.stringify(measured.during.widths)}`)
+  } finally { await page.close() }
+})
