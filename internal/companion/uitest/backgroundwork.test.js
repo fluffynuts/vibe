@@ -66,7 +66,7 @@ test('a stop that has taken effect offers to stop what the agent still has runni
   try {
     await p.click('convo-stop')
     assert.deepEqual(p.at.stops, [{}])
-    p.at.agent = { running: false, background: true, tasks: tests }
+    p.at.agent = { running: false, background: true, tasks: tests, last: 1, events: [{ seq: 1, kind: 'done', text: 'stopped' }] }
     await p.every('pollConversation')
     const row = offer(p)
     assert.ok(row, 'nothing offered to stop the background work')
@@ -81,7 +81,7 @@ test('leaving the background work running stops nothing more', async () => {
   const p = await convoPage({ running: true })
   try {
     await p.click('convo-stop')
-    p.at.agent = { running: false, background: true, tasks: tests.slice(0, 1) }
+    p.at.agent = { running: false, background: true, tasks: tests.slice(0, 1), last: 1, events: [{ seq: 1, kind: 'done', text: 'stopped' }] }
     await p.every('pollConversation')
     const row = offer(p)
     assert.match(row.textContent, /still has a task running in the background: "npm test"/)
@@ -97,7 +97,7 @@ test('a stop with nothing left in the background offers nothing', async () => {
   const p = await convoPage({ running: true })
   try {
     await p.click('convo-stop')
-    p.at.agent = { running: false, background: false, tasks: [] }
+    p.at.agent = { running: false, background: false, tasks: [], last: 1, events: [{ seq: 1, kind: 'done', text: 'stopped' }] }
     await p.every('pollConversation')
     assert.equal(offer(p), null)
   } finally { p.close() }
@@ -160,5 +160,39 @@ test('a turn that failed on its own is still shown as an error', async () => {
   ] })
   try {
     assert.match(p.$('convo-log').textContent, /reported an error/)
+  } finally { p.close() }
+})
+
+// The agent can go from the stopped turn straight into the next prompt's between two polls: the offer comes with the stop, not
+// with the next time the page sees it idle, which may be after an unrelated turn.
+test('the offer comes with the stop, though the agent is answering again by the next poll', async () => {
+  const p = await convoPage({ running: true, last: 1, events: [{ seq: 1, kind: 'user', text: 'count', receipt: 'seen' }] })
+  try {
+    await p.click('convo-stop')
+    p.at.agent = { running: true, tasks: tests.slice(0, 1), last: 4, events: [
+      { seq: 2, kind: 'done', text: 'stopped' },
+      { seq: 3, kind: 'user', text: 'something else', receipt: 'seen' },
+      { seq: 4, kind: 'agent', agent: { type: 'assistant', message: { content: [{ type: 'text', text: 'on it' }] } } },
+    ] }
+    await p.every('pollConversation')
+    const row = offer(p)
+    assert.ok(row, 'no offer, though the stop has taken effect')
+    assert.match(row.textContent, /"npm test"/)
+    p.at.agent = { running: false, background: true, tasks: tests.slice(0, 1), last: 6, events: [
+      { seq: 5, kind: 'agent', agent: { type: 'result', subtype: 'success', is_error: false } },
+      { seq: 6, kind: 'done' },
+    ] }
+    await p.every('pollConversation')
+    assert.equal(p.window.document.querySelectorAll('#convo-log .tasks-offer').length, 1, 'offered again after the next turn')
+  } finally { p.close() }
+})
+
+test('a stop already in the conversation when the page opens offers nothing: it is not this page\'s stop', async () => {
+  const p = await convoPage({ running: false, background: true, tasks: tests, last: 2, events: [
+    { seq: 1, kind: 'user', text: 'count', receipt: 'seen' },
+    { seq: 2, kind: 'done', text: 'stopped' },
+  ] })
+  try {
+    assert.equal(offer(p), null)
   } finally { p.close() }
 })

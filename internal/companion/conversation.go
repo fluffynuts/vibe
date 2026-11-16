@@ -140,6 +140,11 @@ type conversation struct {
 	// idleAfter, when tests set it).
 	idle      *time.Timer
 	idleAfter time.Duration
+	// endAfter stands for endWithin, when tests set it.
+	endAfter time.Duration
+	// started counts the agents started: an agent being let go knows from it
+	// whether another has started since.
+	started int
 	// compacting says the agent is summarising its context to make room,
 	// which can take minutes with nothing else said.
 	compacting bool
@@ -173,6 +178,19 @@ type BackgroundTask struct {
 	Description string `json:"description,omitempty"`
 }
 
+// taskNames names tasks for a sentence: by what the agent said each is, quoted, or by its id.
+func taskNames(tasks []BackgroundTask) string {
+	names := make([]string, 0, len(tasks))
+	for _, t := range tasks {
+		name := t.Description
+		if name == "" {
+			name = t.ID
+		}
+		names = append(names, strconv.Quote(name))
+	}
+	return strings.Join(names, ", ")
+}
+
 // waitingPrompt is a prompt in the conversation (its user event is seq), not
 // yet given to the agent, which is being started.
 type waitingPrompt struct {
@@ -202,6 +220,9 @@ type saved struct {
 	CommandsSeq int      `json:"commandsSeq,omitempty"`
 	// Model is conversation.model.
 	Model string `json:"model,omitempty"`
+	// Tasks is what the agent had running in the background: kept by a vibe
+	// that died, the next says what it left.
+	Tasks []BackgroundTask `json:"tasks,omitempty"`
 }
 
 // load picks up the conversation file holds, if any. A turn that was
@@ -234,8 +255,13 @@ func (c *conversation) load(file string) error {
 			c.events[i].Receipt = receiptUndelivered
 		}
 	}
+	if len(was.Tasks) > 0 {
+		c.add("note", "vibe stopped while the agent had work running in the background: "+taskNames(was.Tasks)+". It is ended when the agent next starts, without reporting back.", nil)
+	}
 	if was.Running {
 		c.add("error", "vibe stopped before the agent had finished answering", nil)
+	}
+	if was.Running || len(was.Tasks) > 0 {
 		c.save()
 	}
 	return nil
@@ -250,7 +276,7 @@ func (c *conversation) save() {
 		return
 	}
 	data, err := json.Marshal(saved{Seq: c.seq, Session: c.session, Prompt: c.prompt, Running: c.busy(), Events: c.events,
-		Commands: c.commands, CommandsSeq: c.commandsSeq, Model: c.model})
+		Commands: c.commands, CommandsSeq: c.commandsSeq, Model: c.model, Tasks: c.tasks})
 	if err != nil {
 		return
 	}
@@ -279,6 +305,10 @@ func (c *conversation) close() {
 		c.add("error", "vibe stopped before the agent had finished answering", nil)
 		c.answering, c.starting, c.stopping = false, false, false
 	}
+	if c.agent != nil && len(c.tasks) > 0 {
+		c.add("note", "vibe stopped, and with it what the agent had running in the background: "+taskNames(c.tasks)+".", nil)
+	}
+	c.tasks = nil
 	c.save()
 	c.closed = true
 	agent := c.agent
@@ -358,6 +388,7 @@ func (c *conversation) give(seq int, prompt string, start StartAgent, prepare fu
 		return
 	default:
 		c.starting = true
+		c.started++
 		c.waiting = append(c.waiting, waitingPrompt{seq, prompt, id})
 		ctx, cancel := context.WithCancel(context.Background())
 		c.cancelStart = cancel
@@ -484,6 +515,9 @@ func (c *conversation) agentEnded(agent Agent) {
 	if c.agent != agent {
 		return
 	}
+	if len(c.tasks) > 0 {
+		c.add("note", "The agent ended, and with it what it had running in the background: "+taskNames(c.tasks)+".", nil)
+	}
 	c.agent, c.tasks = nil, nil
 	c.disarmIdle()
 	for id, seq := range c.pending {
@@ -524,6 +558,7 @@ func (c *conversation) armIdle() {
 			// starts another (which ends this one, if it is still ending).
 			c.agent = nil
 		}
+		generation := c.started
 		c.mu.Unlock()
 		if !still {
 			return
@@ -531,10 +566,26 @@ func (c *conversation) armIdle() {
 		agent.End()
 		select {
 		case <-agent.Done():
-		case <-time.After(endWithin):
-			agent.Kill()
+		case <-time.After(c.endWait()):
+			c.mu.Lock()
+			// The kill goes by the conversation's pid file, which names the
+			// agent started last: once another has started (and its start
+			// ended this one, as a leftover), it would end that one instead.
+			newer := c.started != generation
+			c.mu.Unlock()
+			if !newer {
+				agent.Kill()
+			}
 		}
 	})
+}
+
+// endWait is how long an agent asked to end has before it is killed.
+func (c *conversation) endWait() time.Duration {
+	if c.endAfter > 0 {
+		return c.endAfter
+	}
+	return endWithin
 }
 
 // disarmIdle keeps the agent: it has something to do. mu is held.
@@ -623,6 +674,8 @@ func (c *conversation) line(raw []byte) string {
 	case head.Type == "system" && head.Subtype == "background_tasks_changed":
 		c.tasks = head.Tasks
 		c.armIdle()
+		// Kept, so that a vibe that dies with work running has it said by the next.
+		c.save()
 		return head.Type
 	case head.Type == "result" && head.NumTurns != nil && *head.NumTurns == 0 && head.Result == "":
 		// A resumed agent's first word, before any turn: nothing answered.
@@ -769,6 +822,11 @@ func (c *conversation) supersede() bool {
 		return false
 	}
 	agent := c.agent
+	if agent != nil {
+		// What it has in the background ends with it quietly: the user chose
+		// the action it makes way for.
+		c.tasks = nil
+	}
 	c.mu.Unlock()
 	if agent == nil {
 		return true

@@ -25,6 +25,12 @@ type fakeAgent struct {
 	starts   int
 	// startGate, when set, holds each start until it is closed: an agent that takes a while to come up, as one through sbx does.
 	startGate chan struct{}
+	// crash, when closed, makes the processes end by themselves, as an agent that dies does.
+	crash chan struct{}
+	// ignoreEnd makes the processes carry on when their input is closed: an agent that will not end when asked.
+	ignoreEnd bool
+	// killedProcs is, for each process started, in order, whether it was killed.
+	killedProcs []bool
 	// interrupts, ends, kills count what was asked of the processes;
 	// stoppedTasks are the background tasks stopped.
 	interrupts, ends, kills int
@@ -53,6 +59,10 @@ func (f *fakeAgent) start(ctx context.Context, session string, onLine func([]byt
 	}
 	p := &fakeProc{f: f, session: session, onLine: onLine, prompts: make(chan [2]string, 16), interrupt: make(chan struct{}, 4),
 		stopTask: make(chan string, 4), end: make(chan struct{}), kill: make(chan struct{}), done: make(chan struct{})}
+	f.mu.Lock()
+	p.n = len(f.killedProcs)
+	f.killedProcs = append(f.killedProcs, false)
+	f.mu.Unlock()
 	go p.run()
 	return p, nil
 }
@@ -77,6 +87,7 @@ func (f *fakeAgent) count(n *int) int {
 
 type fakeProc struct {
 	f         *fakeAgent
+	n         int // its place in f.killedProcs
 	session   string
 	onLine    func([]byte)
 	prompts   chan [2]string
@@ -101,11 +112,19 @@ func (p *fakeProc) id() string {
 func (p *fakeProc) run() {
 	defer close(p.done)
 	task := false
+	end := p.end
 	for {
 		select {
 		case <-p.kill:
 			return
-		case <-p.end:
+		case <-p.f.crash:
+			p.err = errors.New("crashed")
+			return
+		case <-end:
+			if p.f.ignoreEnd {
+				end = nil
+				continue
+			}
 			if !task {
 				p.err = p.f.err
 				return
@@ -215,6 +234,7 @@ func (p *fakeProc) End() {
 func (p *fakeProc) Kill() error {
 	p.f.mu.Lock()
 	p.f.kills++
+	p.f.killedProcs[p.n] = true
 	err := p.f.killErr
 	p.f.mu.Unlock()
 	p.killOnce.Do(func() { close(p.kill) })
@@ -896,6 +916,37 @@ func TestAnAgentWithNothingToDoIsEndedAndTheNextPromptResumesTheConversation(t *
 	}
 }
 
+// An idle agent that does not end when its input is closed is killed. But the kill is aimed by the conversation's pid file, which
+// names whichever agent started last: once a newer one has started (whose start ended the old one, as a leftover), it is not
+// made, or it would end the newer agent instead.
+func TestAnIdleAgentThatWillNotEndIsKilled(t *testing.T) {
+	f := &fakeAgent{ignoreEnd: true}
+	s := converseServer(f)
+	s.convo.idleAfter, s.convo.endAfter = 10*time.Millisecond, 30*time.Millisecond
+	send(t, s, "/api/conversation/send", `{"prompt":"one"}`)
+	idle(t, s)
+	waitFor(t, "the idle agent to be asked to end", func() bool { return f.count(&f.ends) == 1 })
+	waitFor(t, "the agent that would not end to be killed", func() bool { return f.count(&f.kills) == 1 })
+}
+
+func TestAnIdleAgentThatWillNotEndIsNotKilledOnceANewerOneHasStarted(t *testing.T) {
+	f := &fakeAgent{ignoreEnd: true}
+	s := converseServer(f)
+	s.convo.idleAfter, s.convo.endAfter = 10*time.Millisecond, 100*time.Millisecond
+	send(t, s, "/api/conversation/send", `{"prompt":"one"}`)
+	idle(t, s)
+	waitFor(t, "the idle agent to be asked to end", func() bool { return f.count(&f.ends) == 1 })
+	send(t, s, "/api/conversation/send", `{"prompt":"two"}`)
+	waitFor(t, "a second agent to start", func() bool { return f.count(&f.starts) == 2 })
+	time.Sleep(200 * time.Millisecond) // past endAfter: the kill, if made, has been
+	f.mu.Lock()
+	first := f.killedProcs[0]
+	f.mu.Unlock()
+	if first {
+		t.Error("the first agent was killed after a newer one started: the kill goes by the pid file, which names the newer one")
+	}
+}
+
 func TestAnAgentWithBackgroundWorkIsNotEndedForBeingIdle(t *testing.T) {
 	f := &fakeAgent{linger: make(chan struct{})}
 	s := converseServer(f)
@@ -1221,5 +1272,73 @@ func TestATurnTheSandboxCantBeReadiedForIsntRun(t *testing.T) {
 	// The next prompt can go.
 	if code, _ := send(t, s, "/api/conversation/send", `{"prompt":"again"}`); code != http.StatusAccepted {
 		t.Errorf("the next prompt: %d", code)
+	}
+}
+
+// notes is the text of the conversation's notes.
+func notes(p pollResult) []string {
+	var out []string
+	for _, e := range p.Events {
+		if e.Kind == "note" {
+			out = append(out, e.Text)
+		}
+	}
+	return out
+}
+
+// Background work that ends with the agent is said to have, naming it: the status line that named it only clears.
+func TestAnAgentThatEndsWithBackgroundWorkSaysWhatWentWithIt(t *testing.T) {
+	f := &fakeAgent{linger: make(chan struct{}), crash: make(chan struct{})}
+	defer close(f.linger)
+	s := converseServer(f)
+	send(t, s, "/api/conversation/send", `{"prompt":"run the tests in the background"}`)
+	answered(t, s)
+	close(f.crash)
+	waitFor(t, "the agent's end to be said", func() bool { return len(notes(poll(t, s, 0))) > 0 })
+	if got := notes(poll(t, s, 0)); len(got) != 1 || !strings.Contains(got[0], `"Run the tests"`) || !strings.Contains(got[0], "background") {
+		t.Errorf("notes = %q, want one naming the background work that ended", got)
+	}
+}
+
+func TestAnAgentThatEndsWithNothingInTheBackgroundSaysNothingOfIt(t *testing.T) {
+	f := &fakeAgent{crash: make(chan struct{})}
+	s := converseServer(f)
+	send(t, s, "/api/conversation/send", `{"prompt":"one"}`)
+	idle(t, s)
+	close(f.crash)
+	waitFor(t, "the agent to end", func() bool { s.convo.mu.Lock(); defer s.convo.mu.Unlock(); return s.convo.agent == nil })
+	if got := notes(poll(t, s, 0)); len(got) != 0 {
+		t.Errorf("notes = %q", got)
+	}
+}
+
+func TestVibeStoppingWithBackgroundWorkSaysWhatWentWithItOnce(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "box.conversation.json")
+	f := &fakeAgent{linger: make(chan struct{})}
+	defer close(f.linger)
+	first := historyServer(t, f, file)
+	send(t, first, "/api/conversation/send", `{"prompt":"run the tests in the background"}`)
+	answered(t, first)
+	first.Close()
+	second := historyServer(t, f, file)
+	if got := notes(poll(t, second, 0)); len(got) != 1 || !strings.Contains(got[0], `"Run the tests"`) {
+		t.Errorf("notes = %q, want one naming the background work vibe's stopping ended", got)
+	}
+}
+
+// A vibe that dies can say nothing: the next one, finding the work it had in the background, says it.
+func TestAVibeThatDiedWithBackgroundWorkHasItSaidByTheNext(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "box.conversation.json")
+	f := &fakeAgent{linger: make(chan struct{})}
+	defer close(f.linger)
+	first := historyServer(t, f, file)
+	send(t, first, "/api/conversation/send", `{"prompt":"run the tests in the background"}`)
+	answered(t, first)
+	// No Close: it died. (Closed once the test is done with it, before its folder goes.)
+	t.Cleanup(func() { first.Close() })
+	second := historyServer(t, f, file)
+	got := notes(poll(t, second, 0))
+	if len(got) != 1 || !strings.Contains(got[0], `"Run the tests"`) || !strings.Contains(got[0], "next") {
+		t.Errorf("notes = %q, want one naming the work left running, and that it is ended when the agent next starts", got)
 	}
 }

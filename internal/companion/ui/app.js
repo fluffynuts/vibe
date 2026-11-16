@@ -5394,7 +5394,7 @@
 
   // news: the agent has said something since the Conversation tab was last
   // open (its dot); loaded: the conversation so far has been fetched once.
-  const convo = { last: 0, running: false, background: false, tasks: [], stopState: '', stoppingSince: 0, offerTasks: false, polling: false, behind: false, news: false, loaded: false, lastPrompt: '', ticks: new Map(), typing: null, group: null }
+  const convo = { last: 0, running: false, background: false, tasks: [], stopState: '', stoppingSince: 0, offerTasks: false, offerNow: false, polling: false, behind: false, news: false, loaded: false, lastPrompt: '', ticks: new Map(), typing: null, group: null }
 
   // showTyping keeps the "typing" bubble below the agent's latest message
   // for as long as it is answering, and takes it away once it has. Its
@@ -6138,7 +6138,12 @@
       // notice find out, if they haven't looked lately, rather than the page matching the words of the failure.
       if (state.signin && Date.now() - signInShown.lastCheck > SIGNIN_RECHECK_MS) loadSignIn()
     }
-    else if (ev.kind === 'done' && ev.text === 'stopped') convoNote('meta', 'Stopped.')
+    else if (ev.kind === 'done' && ev.text === 'stopped') {
+      convoNote('meta', 'Stopped.')
+      // This page's stop has taken effect: what it left in the background is offered with it (pollConversation), not at the
+      // next poll that finds the agent idle, which may be after a turn it went on to.
+      if (convo.offerTasks) { convo.offerTasks = false; convo.offerNow = true }
+    }
   }
 
   // running is the agent answering; background is it having answered, with
@@ -6275,8 +6280,8 @@
       // A turn that isn't running has no tools still being used, whatever the last thing said was.
       if (!res.body.running) endToolGroup()
       setConvoRunning(!!res.body.running, !!res.body.background, res.body.quietMinutes || 0, !!res.body.compacting, res.body.stopState, res.body.tasks)
-      if (convo.offerTasks && !res.body.running) {
-        convo.offerTasks = false
+      if (convo.offerNow) {
+        convo.offerNow = false
         offerToStopTasks(Array.isArray(res.body.tasks) ? res.body.tasks : [])
       }
       if ((res.body.events || []).length) {
