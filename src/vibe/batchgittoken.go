@@ -133,6 +133,8 @@ type batchProgress struct {
 	width  func() int
 	stop   chan struct{}
 	ended  chan struct{}
+	// spinning says begin started the goroutine that end has to wait for.
+	spinning bool
 }
 
 func newBatchProgress(total int, out io.Writer, live bool, width func() int) *batchProgress {
@@ -144,6 +146,7 @@ func (p *batchProgress) begin() {
 	if p == nil || !p.live {
 		return
 	}
+	p.spinning = true
 	go func() {
 		defer close(p.ended)
 		ticker := time.NewTicker(100 * time.Millisecond)
@@ -167,7 +170,8 @@ func (p *batchProgress) end() {
 	if p == nil {
 		return
 	}
-	if p.live {
+	if p.spinning {
+		p.spinning = false
 		close(p.stop)
 		<-p.ended
 	}

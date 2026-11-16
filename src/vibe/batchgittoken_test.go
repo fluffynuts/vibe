@@ -467,3 +467,33 @@ func TestBatchSaysSoWhenASandboxsRecordHasGoneSinceTheListWasRead(t *testing.T) 
 		t.Errorf("outcome = %+v: a record that has gone is not one to write a token into", outcomes[0])
 	}
 }
+
+// returnsSoon says whether f returns within a second: a hang is a failure, not a stuck test run.
+func returnsSoon(f func()) bool {
+	done := make(chan struct{})
+	go func() { f(); close(done) }()
+	select {
+	case <-done:
+		return true
+	case <-time.After(time.Second):
+		return false
+	}
+}
+
+func TestBatchProgressThatWasNeverBegunCanBeEnded(t *testing.T) {
+	var out strings.Builder
+	p := newBatchProgress(2, &out, true, func() int { return 80 })
+	if !returnsSoon(p.end) {
+		t.Fatal("end() waited for a spinner that was never started")
+	}
+}
+
+func TestBatchProgressCanBeEndedTwice(t *testing.T) {
+	var out strings.Builder
+	p := newBatchProgress(2, &out, true, func() int { return 80 })
+	p.begin()
+	p.end()
+	if !returnsSoon(p.end) {
+		t.Fatal("a second end() hung or panicked")
+	}
+}
