@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -825,10 +826,19 @@ func renewGitAccess(vibeHome string, inst *state.Instance, repo *gittoken.Repo) 
 }
 
 // shareDefaultToken stores token as the default, and offers it to every
-// sandbox that was given the default, but sandbox except: the token they
-// hold is the one it replaces, which — regenerated — no longer works. It
+// sandbox that was given the default, but the sandboxes in except: the token
+// they hold is the one it replaces, which — regenerated — no longer works. It
 // says whether the default was stored.
-func shareDefaultToken(vibeHome, token string, expires time.Time, except string) bool {
+func shareDefaultToken(vibeHome, token string, expires time.Time, except ...string) bool {
+	if !storeDefaultToken(vibeHome, token, expires) {
+		return false
+	}
+	offerDefaultToken(vibeHome, token, expires, except...)
+	return true
+}
+
+// storeDefaultToken makes token the default, with the expiry GitHub said.
+func storeDefaultToken(vibeHome, token string, expires time.Time) bool {
 	path := state.DefaultGitTokenPath(vibeHome)
 	if err := gittoken.Save(path, token); err != nil {
 		note("WARNING: %s", err)
@@ -837,25 +847,38 @@ func shareDefaultToken(vibeHome, token string, expires time.Time, except string)
 	if err := gittoken.SaveExpiry(path, expires); err != nil {
 		note("WARNING: %s", err)
 	}
+	return true
+}
+
+// askToShareDefault asks whether the sandboxes named, which use the default,
+// are given the new one; tests stand in for it.
+var askToShareDefault = func(names []string) bool {
+	return interactive() && confirmDefault(false, true, fmt.Sprintf("give the new default token to the sandboxes using the default too (%s)?", strings.Join(names, ", ")))
+}
+
+// offerDefaultToken offers the new default to every sandbox that uses the
+// default, but those in except, and gives it where it's taken, each keeping
+// its own rules.
+func offerDefaultToken(vibeHome, token string, expires time.Time, except ...string) {
 	instances, err := state.List(vibeHome)
 	if err != nil {
 		note("WARNING: %s", err)
-		return true
+		return
 	}
 	var sharing []state.Instance
 	var names []string
 	for _, inst := range instances {
-		if inst.GitToken == gitTokenDefault && inst.Name != except {
+		if inst.GitToken == gitTokenDefault && !slices.Contains(except, inst.Name) {
 			sharing = append(sharing, inst)
 			names = append(names, inst.Name)
 		}
 	}
 	if len(sharing) == 0 {
-		return true
+		return
 	}
-	if !interactive() || !confirmDefault(false, true, fmt.Sprintf("give the new default token to the sandboxes using the default too (%s)?", strings.Join(names, ", "))) {
+	if !askToShareDefault(names) {
 		note("  they keep the token they have: 'vibe --git-token' in each one's folder renews it")
-		return true
+		return
 	}
 	for i := range sharing {
 		inst := &sharing[i]
@@ -865,7 +888,6 @@ func shareDefaultToken(vibeHome, token string, expires time.Time, except string)
 			note("WARNING: %s", err)
 		}
 	}
-	return true
 }
 
 // doGitToken is --git-token: give the sandbox for target a token, renew or

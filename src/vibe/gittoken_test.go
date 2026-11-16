@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -487,5 +488,71 @@ func TestTheRealInstructionWritersLeaveAStoppedSandboxAlone(t *testing.T) {
 	}
 	if err := removeGitInstructions("box"); err != nil {
 		t.Errorf("removing from a stopped sandbox: %v", err)
+	}
+}
+
+// shareAnswer stands in for the question whether sandboxes using the default
+// are given the new one, recording who was asked about.
+func shareAnswer(t *testing.T, yes bool) *[]string {
+	t.Helper()
+	var asked []string
+	old := askToShareDefault
+	t.Cleanup(func() { askToShareDefault = old })
+	askToShareDefault = func(names []string) bool { asked = append(asked, names...); return yes }
+	return &asked
+}
+
+func TestANewDefaultIsOfferedToSandboxesOnTheOldOneButNotThosePicked(t *testing.T) {
+	f := stubGitAccess(t)
+	home := t.TempDir()
+	for _, inst := range []state.Instance{
+		{Name: "picked", GitToken: gitTokenDefault},
+		{Name: "bystander", GitToken: gitTokenDefault, GitRules: []string{gittoken.RuleFeatureBranch}},
+		{Name: "own", GitToken: gitTokenOwn},
+	} {
+		state.Save(home, inst)
+		f.secrets[inst.Name] = "old"
+	}
+	asked := shareAnswer(t, true)
+
+	offerDefaultToken(home, "new", fakeExpiry, "picked")
+
+	if !reflect.DeepEqual(*asked, []string{"bystander"}) {
+		t.Errorf("asked about %v, want only the sandbox on the old default that wasn't picked", *asked)
+	}
+	if f.secrets["bystander"] != "new" || f.secrets["picked"] != "old" || f.secrets["own"] != "old" {
+		t.Errorf("secrets = %v: only the bystander is given the new default", f.secrets)
+	}
+	got, _, _ := state.Load(home, "bystander")
+	if got.GitToken != gitTokenDefault || !reflect.DeepEqual(got.GitRules, []string{gittoken.RuleFeatureBranch}) {
+		t.Errorf("bystander = %+v: it stays on the default and keeps its own rules", got)
+	}
+}
+
+func TestANewDefaultIsLeftWithBystandersWhoAreNotToGetIt(t *testing.T) {
+	f := stubGitAccess(t)
+	home := t.TempDir()
+	state.Save(home, state.Instance{Name: "bystander", GitToken: gitTokenDefault})
+	f.secrets["bystander"] = "old"
+	shareAnswer(t, false)
+
+	offerDefaultToken(home, "new", fakeExpiry)
+
+	if f.secrets["bystander"] != "old" {
+		t.Errorf("secret = %q: declining leaves the sandbox as it was", f.secrets["bystander"])
+	}
+}
+
+func TestNobodyIsAskedWhenNoOtherSandboxUsesTheDefault(t *testing.T) {
+	stubGitAccess(t)
+	home := t.TempDir()
+	state.Save(home, state.Instance{Name: "picked", GitToken: gitTokenDefault})
+	state.Save(home, state.Instance{Name: "own", GitToken: gitTokenOwn})
+	asked := shareAnswer(t, true)
+
+	offerDefaultToken(home, "new", fakeExpiry, "picked")
+
+	if len(*asked) != 0 {
+		t.Errorf("asked about %v with no one to offer it to", *asked)
 	}
 }

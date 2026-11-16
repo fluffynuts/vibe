@@ -31,6 +31,9 @@ const batchJobs = 4
 type batchToken struct {
 	token, source string
 	expires       time.Time
+	// nowDefault says it was just stored as the default, so the sandboxes
+	// that use the default and weren't picked are holding the one it replaced.
+	nowDefault bool
 }
 
 // batchOutcome is what happened to one sandbox of a batch.
@@ -454,25 +457,26 @@ func askBatchToken(vibeHome string, picked []state.Instance) (batchToken, bool) 
 
 	if tok.source == gitTokenOwn && confirmDefault(false, false,
 		"keep it as your default token too, so a renewal through 'vibe --setup' reaches these sandboxes together?") {
-		if err := gittoken.Save(defaultPath, tok.token); err != nil {
-			note("WARNING: %s — they hold it as their own", err)
-		} else {
-			if err := gittoken.SaveExpiry(defaultPath, tok.expires); err != nil {
-				note("WARNING: %s", err)
-			}
+		if storeDefaultToken(vibeHome, tok.token, tok.expires) {
 			tok.source = gitTokenDefault
-			note("  sandboxes already using the default but not picked here keep the token they have")
+			tok.nowDefault = true
+		} else {
+			note("  they hold it as their own")
 		}
 	}
 	return tok, true
 }
 
-func sandboxNames(picked []state.Instance) string {
+func sandboxNamesOf(picked []state.Instance) []string {
 	names := make([]string, len(picked))
 	for i, inst := range picked {
 		names[i] = inst.Name
 	}
-	return strings.Join(names, ", ")
+	return names
+}
+
+func sandboxNames(picked []state.Instance) string {
+	return strings.Join(sandboxNamesOf(picked), ", ")
 }
 
 // doBatchGitToken is --batch-git-token: tick the sandboxes to give one token
@@ -523,6 +527,9 @@ func doBatchGitToken(vibeHome string, args cliargs.Args) error {
 	progress.begin()
 	outcomes := giveTokenToSandboxes(vibeHome, picked, tok, presetRules, jobs, progress)
 	progress.end()
+	if tok.nowDefault {
+		offerDefaultToken(vibeHome, tok.token, tok.expires, sandboxNamesOf(picked)...)
+	}
 	note("")
 	failed := 0
 	for _, o := range outcomes {
