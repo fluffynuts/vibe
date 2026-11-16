@@ -265,6 +265,20 @@ func (c *repoChecker) check(repo *gittoken.Repo) gittoken.Report {
 
 func giveTokenToSandbox(say func(string, ...interface{}), vibeHome string, inst state.Instance, tok batchToken, presetRules []string, checker *repoChecker) batchOutcome {
 	out := batchOutcome{name: inst.Name, folder: inst.Target, oldExpires: inst.GitTokenExpires}
+	// What was listed is minutes old by now (the token was chosen since), and
+	// the whole record is written back: a running vibe's changes to it, or a
+	// --git-token's, would be reverted.
+	current, found, err := state.Load(vibeHome, inst.Name)
+	switch {
+	case err != nil:
+		out.problem = err.Error()
+		return out
+	case !found:
+		out.problem = "vibe has no record of it any more"
+		return out
+	}
+	inst = current
+	out.oldExpires = inst.GitTokenExpires
 	repo := batchRepoOf(inst.Target)
 	expires := tok.expires
 	if repo == nil {
@@ -289,7 +303,7 @@ func giveTokenToSandbox(say func(string, ...interface{}), vibeHome string, inst 
 		rules = inst.GitRules
 	}
 	access := &gitAccess{token: tok.token, source: tok.source, rules: rules, expires: expires}
-	if err := setGitAccessSaying(say, vibeHome, &inst, access, repo); err != nil {
+	if err = setGitAccessSaying(say, vibeHome, &inst, access, repo); err != nil {
 		out.problem, out.pushCheck = err.Error(), ""
 		return out
 	}

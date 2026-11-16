@@ -427,3 +427,43 @@ func TestBatchStartsTheNextSandboxAsSoonAsAnyOneFinishesNotWhenAllDo(t *testing.
 	close(releaseA)
 	<-done
 }
+
+func TestBatchKeepsWhatARunningVibeChangedInASandboxsRecordSinceTheListWasRead(t *testing.T) {
+	stubGitAccess(t)
+	home := t.TempDir()
+	repositories(t, nil)
+	listed := state.Instance{Name: "one", Target: "/w/one", GitToken: gitTokenOwn, GitRules: []string{gittoken.RuleFeatureBranch}}
+	saveBatchRecord(t, home, listed)
+	// While the user chose a token, the sandbox's own vibe and a --git-token
+	// elsewhere changed its record.
+	meanwhile := listed
+	meanwhile.CompanionPort, meanwhile.KitHash = 4242, "newer-kit"
+	meanwhile.GitRules = []string{gittoken.RuleNoDefaultBranch}
+	saveBatchRecord(t, home, meanwhile)
+
+	outcomes := giveTokenToSandboxes(home, []state.Instance{listed}, batchToken{token: "good", source: gitTokenDefault}, nil, 1, nil)
+
+	got, _, _ := state.Load(home, "one")
+	if !outcomes[0].given || got.GitToken != gitTokenDefault {
+		t.Fatalf("not given: %+v %+v", outcomes[0], got)
+	}
+	if got.CompanionPort != 4242 || got.KitHash != "newer-kit" {
+		t.Errorf("record = %+v: what changed since the list was read was reverted", got)
+	}
+	if !reflect.DeepEqual(got.GitRules, []string{gittoken.RuleNoDefaultBranch}) {
+		t.Errorf("rules = %v, want the ones the sandbox has now, not the ones it had when listed", got.GitRules)
+	}
+}
+
+func TestBatchSaysSoWhenASandboxsRecordHasGoneSinceTheListWasRead(t *testing.T) {
+	stubGitAccess(t)
+	home := t.TempDir()
+	repositories(t, nil)
+	gone := state.Instance{Name: "gone", Target: "/w/gone"}
+
+	outcomes := giveTokenToSandboxes(home, []state.Instance{gone}, batchToken{token: "good", source: gitTokenOwn}, nil, 1, nil)
+
+	if outcomes[0].given || !strings.Contains(outcomes[0].problem, "no record") {
+		t.Errorf("outcome = %+v: a record that has gone is not one to write a token into", outcomes[0])
+	}
+}
