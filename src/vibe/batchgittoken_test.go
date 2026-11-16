@@ -497,3 +497,39 @@ func TestBatchProgressCountsAndForgetsWhoIsUnderWay(t *testing.T) {
 		t.Errorf("the spinner line should say so: %q", out.String())
 	}
 }
+
+func TestBatchStartsTheNextSandboxAsSoonAsAnyOneFinishesNotWhenAllDo(t *testing.T) {
+	stubGitAccess(t)
+	home := t.TempDir()
+	repositories(t, nil)
+	picked := fiveSandboxes(t, home)[:4]
+	releaseA := make(chan struct{})
+	reached := make(chan string, 10)
+	setGitHubSecret = func(name, token string) error {
+		reached <- name
+		if name == "a" {
+			<-releaseA
+		}
+		return nil
+	}
+	done := make(chan struct{})
+
+	go func() {
+		giveTokenToSandboxes(home, picked, batchToken{token: "good", source: gitTokenOwn}, nil, nil, 2, nil)
+		close(done)
+	}()
+
+	// a is held, b finishes at once: with two at a time, c and d follow
+	// while a is still going, not once a lets the "batch" end.
+	seen := map[string]bool{}
+	for len(seen) < 4 {
+		select {
+		case name := <-reached:
+			seen[name] = true
+		case <-time.After(5 * time.Second):
+			t.Fatalf("only %v were started while a was held: the next one waits for the whole group", seen)
+		}
+	}
+	close(releaseA)
+	<-done
+}
