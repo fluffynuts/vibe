@@ -2691,6 +2691,12 @@
       // Something done on the page since this set out gave a newer review.
       let otherReview = false
       if (reviewView.changed === changed) {
+        // The agent started a review from the terminal: the diff held is the last one's, and its comments would sit under
+        // "On files not in this diff" until Refresh. Someone typing in a box is not parted from it meanwhile: the next poll,
+        // once they have left it, finds the review still not the one the diff is for.
+        const incoming = res.body.review
+        otherReview = !withDiff && reviewView.files !== null && reviewIsOn(incoming) && reviewView.diffFor !== reviewIdentity(incoming)
+        if (otherReview && typingInABox()) return
         const wasOn = reviewView.review && reviewIsOn(reviewView.review)
         reviewView.review = res.body.review
         reviewView.ask = res.body.ask || null
@@ -2699,13 +2705,11 @@
         // What can be reviewed is asked when the start screen shows, not at
         // every poll: it's git, which polls keep clear of.
         if (!reviewIsOn(reviewView.review) && (wasOn || (!reviewView.options && !reviewView.optionsError))) loadOptions()
-        // The agent started a review from the terminal: the diff held is the last one's, and its comments would sit under
-        // "On files not in this diff" until Refresh, so the diff is worked out afresh, and nothing is drawn until it is.
-        otherReview = !withDiff && reviewView.files !== null && reviewIsOn(reviewView.review) && reviewView.diffFor !== reviewIdentity(reviewView.review)
       }
       showPastes(res.body.pastes)
       if (otherReview) {
         forgetFiles()
+        forgetWriting()
         reviewView.files = null
         reviewView.diffWanted = true
         // Not drawn (without its diff every comment would be bunched at the top), but the old review is not to be left looking
@@ -2845,9 +2849,7 @@
   function showReview(rv) {
     tookReview(rv)
     reviewView.files = null
-    // A comment being written, or edited, was on the review before.
-    reviewView.composer = null
-    reviewView.editing = null
+    forgetWriting()
     forgetFiles()
     drawReview()
     loadReview(true)
@@ -2871,6 +2873,16 @@
         if (res.ok) { showBroken(''); showReview(res.body.review) }
         return res
       } })
+  }
+
+  // forgetWriting forgets what was being written on the review that is replaced: a comment on a line, an edit, and replies half
+  // written. They belong to it, and a thread's number is only its own (the next review's start again from 1).
+  function forgetWriting() {
+    reviewView.composer = null
+    reviewView.editing = null
+    reviewView.drafts.clear()
+    // The boxes still on the page hold their text until the page is drawn again, and drawing saves what they hold as drafts.
+    for (const box of $('panel-review').querySelectorAll('textarea[data-thread]')) box.value = ''
   }
 
   // forgetFiles forgets what the page has of the diff's files (their
