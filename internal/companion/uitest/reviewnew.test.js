@@ -57,3 +57,19 @@ test('polls of the same review do not ask for its diff again', async () => {
     assert.equal(diffLoads(p), loads, 'a comment added to the review it holds is no reason to lose the place in the diff')
   } finally { p.close() }
 })
+
+test('a review started from the terminal while the tab showed no review at all gets its diff too', async () => {
+  // The tab was open on the start screen: no review, and a diff of nothing.
+  const world = { review: { threads: [], lastId: 0, started: '0001-01-01T00:00:00Z' }, diff: [] }
+  const p = await pageWith(world)
+  try {
+    const loads = diffLoads(p)
+    world.review = reviewOf('2026-11-16T11:00:00Z', 'master', [thread(1, 'b.go')])
+    world.diff = [lineOf('b.go')]
+    await p.poll()
+    await p.poll()
+    assert.ok(diffLoads(p) > loads, "the review's diff was asked for")
+    assert.equal(p.$('review-general').querySelectorAll('.review-thread').length, 0, 'no comment is bunched at the top')
+    assert.equal(p.$('review-files').querySelectorAll('.review-thread').length, 1)
+  } finally { p.close() }
+})
