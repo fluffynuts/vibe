@@ -30,6 +30,10 @@ type gitAccess struct {
 	// expires is when the token stops working; zero when it never does,
 	// or GitHub didn't say.
 	expires time.Time
+	// leaveStopped is for a sandbox that is stopped and is to stay so: its
+	// agent's instructions aren't written now, since that would start it,
+	// but at the next session start, which writes them afresh.
+	leaveStopped bool
 }
 
 const (
@@ -692,6 +696,10 @@ func giveGitAccessSaying(say func(string, ...interface{}), vibeHome, name string
 	}
 	if err := gittoken.Save(state.GitTokenPath(vibeHome, name), access.token); err != nil {
 		say("WARNING: %s — a rebuild of '%s' will start without its token", err, name)
+	}
+	if access.leaveStopped {
+		say("  github:    the agent can push (%s token%s); its instructions follow at its next start", access.source, prefixed(", ", gittoken.DescribeExpiry(access.expires, timeNow())))
+		return access
 	}
 	if err := writeGitInstructions(name, gittoken.Instructions(repo, access.rules, access.expires)); err != nil {
 		say("WARNING: could not tell the agent its rules for pushing (%s): %s", gittoken.SandboxFile, err)

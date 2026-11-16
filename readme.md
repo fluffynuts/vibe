@@ -307,7 +307,7 @@ vibe --git-token [path]    # give the sandbox for path a GitHub token to push
                            #    with, renew or change it, or take it away
 vibe --batch-git-token     # tick the sandboxes to give one GitHub token to (type to
                            #    narrow the list), and give it to them
-vibe --jobs N              # ...to N sandboxes at a time (default 1, one after another)
+vibe --jobs N              # ...to N sandboxes at a time (default 4)
 vibe --git-token-env VAR   # ...a new sandbox (or --git-token) the token in $VAR,
                            #    without asking
 vibe --git-rules R[,R]     # ...and these rules for pushing, without asking:
@@ -990,8 +990,11 @@ clears what is typed and then quits, and ticks stay when the filter hides them. 
 token once (your default, a new one, one you have, or the one another sandbox has), and it is given to
 each ticked sandbox, keeping that sandbox's own rules (`--git-rules` sets them for all). The token is
 checked with GitHub against each sandbox's repository: one it can't push to is skipped, and the rest go
-on. `--jobs N` gives it to N sandboxes at a time (each one's lines are shown together when it is done,
-and the run says how long it took, to compare with `--jobs 1`). The summary says which got it, with old and new expiry, and which didn't, and why. It needs a
+on. It is given to 4 sandboxes at a time (`--jobs N` says otherwise; 1 is one after another): a spinner says
+how many are done and which are under way, each one's lines are shown together when it is done, and the
+run says how long it took. A sandbox that wasn't running is stopped again as soon as it has its token
+(giving it one starts it, at 1 to 2 GB each), and its agent's instructions for pushing are written at its
+next start rather than by waking it now. The summary says which got it, with old and new expiry, and which didn't, and why. It needs a
 terminal: a token is never typed into the page.
 
 ### Choices kept for a profile

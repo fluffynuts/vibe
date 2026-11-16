@@ -71,7 +71,7 @@ type Args struct {
 	// anyone on the machine could read it).
 	GitTokenEnv string
 	// Jobs is --jobs: how many sandboxes --batch-git-token gives the token to
-	// at once; zero when not given.
+	// at once; zero when not given (vibe picks).
 	Jobs int
 	// NoGitToken is --no-git-token: no token for a new sandbox, without
 	// asking; with --git-token, take the sandbox's away.

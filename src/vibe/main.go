@@ -142,7 +142,7 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              push with, renew or change it, or take it away
   vibe --batch-git-token     tick the sandboxes to give one GitHub token to
                              (type to narrow the list), and give it to them
-  vibe --jobs N              ...to N sandboxes at a time (default 1)
+  vibe --jobs N              ...to N sandboxes at a time (default 4)
   vibe --git-token-env VAR   ...a new sandbox (or --git-token) the token in
                              $VAR, unasked
   vibe --git-rules R[,R]     ...and these rules for pushing, unasked:

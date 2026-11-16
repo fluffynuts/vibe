@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -10,6 +12,7 @@ import (
 
 	"vibe/internal/cliargs"
 	"vibe/internal/gittoken"
+	"vibe/internal/prompt"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
 )
@@ -17,8 +20,19 @@ import (
 // listSandboxes is what sbx knows of; tests stand in for it.
 var listSandboxes = sbxrun.List
 
+// batchSandboxRunning and stopSandboxQuietly are how the batch puts back a
+// sandbox that was stopped; tests stand in for them.
+var (
+	batchSandboxRunning = sbxrun.Running
+	stopSandboxQuietly  = sbxrun.StopQuiet
+)
+
 // batchRepoOf is repoOf for the batch; tests stand in for it.
 var batchRepoOf = repoOf
+
+// batchJobs is how many sandboxes a batch gives the token to at once unless
+// --jobs says: each one that has to be started costs gigabytes of memory.
+const batchJobs = 4
 
 // batchToken is the one token a batch gives, and where it came from.
 type batchToken struct {
@@ -36,20 +50,22 @@ type batchOutcome struct {
 }
 
 // batchCandidates are the sandboxes a batch can offer the token to: those
-// vibe has a record of and sbx still knows, by name. A record sbx has lost is
-// no sandbox to give anything to.
-func batchCandidates(vibeHome string) ([]state.Instance, error) {
+// vibe has a record of and sbx still knows, by name (a record sbx has lost is
+// no sandbox to give anything to), and which of the sbx knows are running.
+func batchCandidates(vibeHome string) (candidates []state.Instance, running map[string]bool, err error) {
 	statuses, err := listSandboxes(context.Background())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	known := map[string]bool{}
+	running = map[string]bool{}
 	for _, s := range statuses {
 		known[s.Name] = true
+		running[s.Name] = s.Running
 	}
 	records, err := state.List(vibeHome)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var out []state.Instance
 	for _, r := range records {
@@ -58,7 +74,7 @@ func batchCandidates(vibeHome string) ([]state.Instance, error) {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out, nil
+	return out, running, nil
 }
 
 // batchLabel is a sandbox's line in the checklist, with what its token is
@@ -80,14 +96,15 @@ func batchLabel(inst state.Instance, now time.Time) string {
 // the rules each has (or presetRules, when they were given). The token is
 // checked against each sandbox's own repository, once per repository: one it
 // can't push to is skipped, and the rest go on; one that fails stops none of
-// the others. Outcomes are in the order of picked. Each sandbox's lines are
-// kept together and shown whole when it is done, so they don't interleave.
-func giveTokenToSandboxes(vibeHome string, picked []state.Instance, tok batchToken, presetRules []string, jobs int) []batchOutcome {
+// the others. A sandbox that wasn't running (running says which were) is
+// stopped again as soon as it has its token, so at most jobs of them are up
+// at once and none stays so. Outcomes are in the order of picked. Each
+// sandbox's lines are kept together and shown whole when it is done, so they
+// don't interleave, and progress says what is under way meanwhile.
+func giveTokenToSandboxes(vibeHome string, picked []state.Instance, tok batchToken, presetRules []string, running map[string]bool, jobs int, progress *batchProgress) []batchOutcome {
 	jobs = max(1, min(jobs, len(picked)))
 	checker := &repoChecker{token: tok.token, reports: map[string]*repoReport{}}
 	outcomes := make([]batchOutcome, len(picked))
-	var show sync.Mutex
-	finished := 0
 	work := make(chan int)
 	var wg sync.WaitGroup
 	for w := 0; w < jobs; w++ {
@@ -97,14 +114,11 @@ func giveTokenToSandboxes(vibeHome string, picked []state.Instance, tok batchTok
 			for i := range work {
 				var lines []string
 				say := func(format string, a ...interface{}) { lines = append(lines, fmt.Sprintf(format, a...)) }
-				outcomes[i] = giveTokenToSandbox(say, vibeHome, picked[i], tok, presetRules, checker)
-				show.Lock()
-				finished++
-				note("'%s': done (%d of %d)", picked[i].Name, finished, len(picked))
-				for _, line := range lines {
-					note("%s", line)
-				}
-				show.Unlock()
+				name := picked[i].Name
+				progress.started(name)
+				stopped := running != nil && !running[name]
+				outcomes[i] = giveTokenToSandbox(say, vibeHome, picked[i], tok, presetRules, checker, stopped)
+				progress.finished(name, lines)
 			}
 		}()
 	}
@@ -114,6 +128,126 @@ func giveTokenToSandboxes(vibeHome string, picked []state.Instance, tok batchTok
 	close(work)
 	wg.Wait()
 	return outcomes
+}
+
+// batchProgress is what the user sees while a batch runs: on a terminal, a
+// spinner line saying how many are done and which are under way, which each
+// sandbox's lines are printed above as it finishes; elsewhere, just those
+// lines. A nil *batchProgress shows nothing.
+type batchProgress struct {
+	mu     sync.Mutex
+	total  int
+	done   int
+	active []string
+	frame  int
+	live   bool
+	out    io.Writer
+	width  func() int
+	stop   chan struct{}
+	ended  chan struct{}
+}
+
+func newBatchProgress(total int, out io.Writer, live bool, width func() int) *batchProgress {
+	return &batchProgress{total: total, out: out, live: live, width: width, stop: make(chan struct{}), ended: make(chan struct{})}
+}
+
+// begin starts the spinner turning.
+func (p *batchProgress) begin() {
+	if p == nil || !p.live {
+		return
+	}
+	go func() {
+		defer close(p.ended)
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-p.stop:
+				return
+			case <-ticker.C:
+				p.mu.Lock()
+				p.frame++
+				p.draw()
+				p.mu.Unlock()
+			}
+		}
+	}()
+}
+
+// end stops the spinner and wipes its line.
+func (p *batchProgress) end() {
+	if p == nil {
+		return
+	}
+	if p.live {
+		close(p.stop)
+		<-p.ended
+	}
+	p.mu.Lock()
+	p.wipe()
+	p.mu.Unlock()
+}
+
+func (p *batchProgress) started(name string) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	p.active = append(p.active, name)
+	p.draw()
+	p.mu.Unlock()
+}
+
+// finished prints name's lines, above the spinner.
+func (p *batchProgress) finished(name string, lines []string) {
+	if p == nil {
+		for _, line := range lines {
+			note("%s", line)
+		}
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i, a := range p.active {
+		if a == name {
+			p.active = append(p.active[:i], p.active[i+1:]...)
+			break
+		}
+	}
+	p.done++
+	p.wipe()
+	note("'%s': done (%d of %d)", name, p.done, p.total)
+	for _, line := range lines {
+		note("%s", line)
+	}
+	p.draw()
+}
+
+func (p *batchProgress) draw() {
+	if p.live {
+		fmt.Fprintf(p.out, "\r\x1b[K%s", progressLine(p.frame, p.done, p.total, p.active, p.width()))
+	}
+}
+
+func (p *batchProgress) wipe() {
+	if p.live {
+		fmt.Fprint(p.out, "\r\x1b[K")
+	}
+}
+
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// progressLine is the spinner line: how many are done, and which are under
+// way, cut to fit width.
+func progressLine(frame, done, total int, active []string, width int) string {
+	line := fmt.Sprintf("%s %d of %d done", spinnerFrames[frame%len(spinnerFrames)], done, total)
+	if len(active) > 0 {
+		line += " — working on " + strings.Join(active, ", ")
+	}
+	if r := []rune(line); width > 1 && len(r) > width-1 {
+		line = string(r[:width-2]) + "…"
+	}
+	return line
 }
 
 // repoChecker asks GitHub about a token once per repository, however many
@@ -141,7 +275,7 @@ func (c *repoChecker) check(repo *gittoken.Repo) gittoken.Report {
 	return entry.report
 }
 
-func giveTokenToSandbox(say func(string, ...interface{}), vibeHome string, inst state.Instance, tok batchToken, presetRules []string, checker *repoChecker) batchOutcome {
+func giveTokenToSandbox(say func(string, ...interface{}), vibeHome string, inst state.Instance, tok batchToken, presetRules []string, checker *repoChecker, wasStopped bool) batchOutcome {
 	out := batchOutcome{name: inst.Name, folder: inst.Target, oldExpires: inst.GitTokenExpires}
 	repo := batchRepoOf(inst.Target)
 	expires := tok.expires
@@ -166,13 +300,32 @@ func giveTokenToSandbox(say func(string, ...interface{}), vibeHome string, inst 
 	if len(rules) == 0 {
 		rules = inst.GitRules
 	}
-	access := &gitAccess{token: tok.token, source: tok.source, rules: rules, expires: expires}
-	if err := setGitAccessSaying(say, vibeHome, &inst, access, repo); err != nil {
+	access := &gitAccess{token: tok.token, source: tok.source, rules: rules, expires: expires, leaveStopped: wasStopped}
+	err := setGitAccessSaying(say, vibeHome, &inst, access, repo)
+	if wasStopped {
+		putBackStopped(say, inst.Name)
+	}
+	if err != nil {
 		out.problem, out.pushCheck = err.Error(), ""
 		return out
 	}
 	out.given, out.newExpires = true, inst.GitTokenExpires
 	return out
+}
+
+// putBackStopped stops sandbox name if giving it its token started it, so a
+// batch doesn't leave every sandbox in it running (each takes gigabytes).
+func putBackStopped(say func(string, ...interface{}), name string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if up, known := batchSandboxRunning(ctx, name); known && !up {
+		return
+	}
+	if err := stopSandboxQuietly(ctx, name); err != nil {
+		say("WARNING: '%s' was stopped, and is running now: couldn't stop it again (%s) — 'vibe --stop' in its folder does", name, err)
+		return
+	}
+	say("  it was stopped, and is stopped again")
 }
 
 // batchSummary says which sandboxes got the token and which didn't, and why,
@@ -346,7 +499,7 @@ func doBatchGitToken(vibeHome string, args cliargs.Args) error {
 	if err != nil {
 		return err
 	}
-	candidates, err := batchCandidates(vibeHome)
+	candidates, wasRunning, err := batchCandidates(vibeHome)
 	if err != nil {
 		return err
 	}
@@ -373,10 +526,16 @@ func doBatchGitToken(vibeHome string, args cliargs.Args) error {
 		note("no token chosen: nothing changed")
 		return nil
 	}
-	jobs := max(1, args.Jobs)
+	jobs := args.Jobs
+	if jobs == 0 {
+		jobs = batchJobs
+	}
 	started := timeNow()
 	note("giving the token to %d sandboxes, %d at a time...", len(picked), min(jobs, len(picked)))
-	outcomes := giveTokenToSandboxes(vibeHome, picked, tok, presetRules, jobs)
+	progress := newBatchProgress(len(picked), os.Stderr, prompt.IsTerminal(os.Stderr), func() int { return prompt.Width(os.Stderr, 80) })
+	progress.begin()
+	outcomes := giveTokenToSandboxes(vibeHome, picked, tok, presetRules, wasRunning, jobs, progress)
+	progress.end()
 	note("")
 	failed := 0
 	for _, o := range outcomes {
