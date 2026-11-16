@@ -75,6 +75,29 @@ The CLI also describes its own protocol in its binary (strings in `claude`): wha
 10. **`system/init` is not "the process started"**: it is sent at the start of every turn, prompted or not. The first `init` also lists
     `capabilities` (`interrupt_receipt_v1`, `interrupt_cancel_queued_v1`, `interrupt_send_now_v1`, `msg_lifecycle_v1`, …): feature-detect on them.
 
+### Through sbx, as vibe runs the agent (2026-11-16, the user's host, sandbox `vibe`)
+
+`run-through-sbx.sh vibe /tmp`: the agent started exactly as `conversationCommand` and `wrapTurn` start one (`sbx exec -i` → the login-shell
+script → the pid-file wrapper), vibe's flags, no `--strict-mcp-config`. Log and raw events in `tmp/persistent-agent-sbx/` (not kept in git).
+
+- **Nothing is held back by sbx** (`e10`). A prompt's `queued` frame came back 1–5 ms after it was written, for each of six; a 152,103-byte
+  prompt arrived whole (answered `ENDMARK`, the word at its very end). The first `init` came 1.6 s after the first prompt (0.4 s
+  without sbx): about a second more to start, once per process. Resident size 283–290 MB.
+- **Everything above holds unchanged through sbx**: the unprompted turn (`e1b`), the interrupt with the background task surviving and calling
+  back (`e2b`), the mid-turn prompt folded in (`e3`), `set_model` (`e5`).
+- **vibe dying leaves the agent running** (`e11`). The `sbx exec -i` client killed: 5 s later the agent's wrapper was still alive in the
+  sandbox, with its background task, its output going nowhere. vibe's hard stop (`stopTurnScript`, by the pid file) ended it, the
+  background command too. So a restarted vibe must find and end what the last one left (or it runs on, unseen, beside the new one).
+- **vibe's hard stop ends a persistent agent and its background work** (`e12`): the whole tree, the background `sleep` too, in 3.6 s; the
+  agent said `task_notification {status: stopped}` and exited by SIGTERM (143). Today's Stop script is fit for "end the conversation".
+
+### One more: a prompt that should be its own turn (`e3later`, outside vibe)
+
+The same as `e3` with `"priority": "later"` on the second prompt: it waited, `queued`, until the running turn ended (`result
+"first-done"`, first command `completed`), then `started` as **its own turn**, answered `second-done`. So the page can choose: by default a
+prompt sent mid-turn is folded into it (the console's behaviour: the agent sees it at the next step, and may answer only it); with `later`,
+every prompt gets its own turn and its own answer, in order.
+
 ## What the experiments settle, and what they leave (against the numbered list below)
 
 - **1, unprompted turns:** settled (1 above). The page treats a turn started after a `task_notification`, with none of our prompts
@@ -94,11 +117,14 @@ The CLI also describes its own protocol in its binary (strings in `claude`): wha
   the process is started with the first prompt and ended after a long quiet (it does not end itself).
 - **8, other agents:** not looked at.
 
-**Still to find out, before building:** whether the stream behaves the same through `sbx exec -i` and vibe's `asAgent` login-shell
-wrapper (buffering of stdin lines and of stdout is the risk), with vibe's real flags (`agentArgs`, `--resume`) and a larger model;
-what `cancel_queued` / `send_now` give a page that lets a queued prompt be taken back; `spare_background_tasks` with a background
-agent; permission prompts and questions in this mode (`bypassPermissions` makes them moot today); context compaction in a long-lived
-process; and that a prompt with a `uuid` is what vibe will send (a message without one gets no lifecycle frames).
+**Settled since:** the stream through `sbx exec -i` and the login-shell wrapper (no buffering; see "Through sbx"); what vibe dying
+leaves (the agent runs on: find it by its pid file and end it at the next start, which needs a pid file per *conversation*, not per turn as
+today); ending it (today's hard stop works).
+
+**Still to find out, while building (none blocks starting):** what `cancel_queued` / `send_now` give a page that lets a queued prompt be
+taken back or sent at once; `spare_background_tasks` with a background *agent* (a sub-agent, not a shell command); context compaction in a
+long-lived process; a larger model over a long conversation; and the OpenCode path. A prompt without a `uuid` gets no lifecycle frames:
+vibe always sends one.
 
 ## Design (settled where the experiments above say so; the rest to be tried)
 

@@ -12,6 +12,7 @@ through stdin, and prints every event with the second it arrived; the raw events
 | `e2b.py` | an interrupt during a foreground tool: what ends, what survives (the background task), what the stream says |
 | `e3.py` | a prompt sent while a turn runs: queued, folded in, or answered separately? What are the receipts? |
 | `e4.py` | the same with `priority: "now"` |
+| `e3later.py` | the same with `priority: "later"` |
 | `e5.py` | `set_model` mid-conversation |
 | `e6.py` | closing stdin with a background task running; resuming the session in a new process |
 | `e7.py` | what an idle process costs over three minutes, and whether it ends itself |
