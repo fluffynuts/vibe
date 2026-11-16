@@ -6085,7 +6085,8 @@
       el('pre', { text })))
   }
 
-  function showAgent(line, at) {
+  // stopped says the line is the result of a turn the user stopped: the agent marks that an error, and it is not one.
+  function showAgent(line, at, stopped) {
     if (!line || typeof line !== 'object') return
     const content = line.message && Array.isArray(line.message.content) ? line.message.content : []
     if (line.type === 'assistant') {
@@ -6110,7 +6111,7 @@
       for (const block of content) if (block.type === 'tool_result') showResult(block)
     } else if (line.type === 'result') {
       endToolGroup()
-      if (line.is_error) {
+      if (line.is_error && !stopped) {
         convoNote('error', typeof line.result === 'string' && line.result ? line.result : 'The agent reported an error.', at)
       }
       const bits = []
@@ -6127,7 +6128,7 @@
   function showEvent(ev) {
     if (ev.kind === 'reset') { $('convo-log').replaceChildren(); convo.ticks.clear(); convo.group = null }
     else if (ev.kind === 'user') { convo.lastPrompt = ev.text || ''; userNote(ev) }
-    else if (ev.kind === 'agent') showAgent(ev.agent, ev.at)
+    else if (ev.kind === 'agent') showAgent(ev.agent, ev.at, ev.text === 'stopped')
     else if (ev.kind === 'note') convoNote('meta', ev.text || '', undefined, ev.seq)
     // What vibe said it was doing, no longer so (the sandbox is up): gone, not left to be read as current.
     else if (ev.kind === 'retract') { convo.ticks.delete(Number(ev.of)); $('convo-log').querySelectorAll('[data-seq="' + Number(ev.of) + '"]').forEach((n) => n.remove()) }

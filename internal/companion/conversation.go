@@ -555,6 +555,16 @@ func (c *conversation) setReceipt(seq int, state string) {
 	}
 }
 
+// receiptOf is the receipt of the user event seq. mu is held.
+func (c *conversation) receiptOf(seq int) string {
+	for i := len(c.events) - 1; i >= 0; i-- {
+		if c.events[i].Seq == seq && c.events[i].Kind == "user" {
+			return c.events[i].Receipt
+		}
+	}
+	return ""
+}
+
 // advanceReceipt moves the receipt of the user event seq forward to state:
 // receipts only ever advance. mu is held.
 func (c *conversation) advanceReceipt(seq int, state string) {
@@ -594,6 +604,7 @@ func (c *conversation) line(raw []byte) string {
 		IsReplay      bool             `json:"isReplay"`
 		NumTurns      *int             `json:"num_turns"`
 		Result        string           `json:"result"`
+		IsError       bool             `json:"is_error"`
 	}
 	json.Unmarshal(raw, &head)
 	c.mu.Lock()
@@ -638,7 +649,13 @@ func (c *conversation) line(raw []byte) string {
 		c.compacting = head.Status != nil && *head.Status == "compacting"
 	}
 	c.heard = c.clock()
-	c.add("agent", "", append(json.RawMessage(nil), raw...))
+	// The agent ends a turn it was interrupted in with a result it marks as an error: it is the user's stop, not a failure, and
+	// is marked so for the page.
+	mark := ""
+	if head.Type == "result" && c.stopping && head.IsError {
+		mark = "stopped"
+	}
+	c.add("agent", mark, append(json.RawMessage(nil), raw...))
 	if head.Type == "result" {
 		if c.stopping {
 			c.add("done", "stopped", nil)
@@ -670,7 +687,10 @@ func (c *conversation) lifecycle(id, state string) {
 		c.advanceReceipt(seq, receiptSeen)
 		delete(c.pending, id)
 	case "cancelled":
-		c.setReceipt(seq, receiptUndelivered)
+		// A stop cancels the prompt the agent was answering as well as those it had not taken in: only those were never answered.
+		if c.receiptOf(seq) != receiptSeen {
+			c.setReceipt(seq, receiptUndelivered)
+		}
 		delete(c.pending, id)
 	}
 }

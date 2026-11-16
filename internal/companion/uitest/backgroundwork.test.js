@@ -138,3 +138,27 @@ test('a stop that has not taken effect after a while can be forced, which ends t
     assert.match(p.$('convo-stop').textContent, /^Stop/)
   } finally { p.close() }
 })
+
+test('the result of a turn the user stopped is not shown as the agent failing', async () => {
+  const p = await convoPage({ running: false, last: 3, events: [
+    { seq: 1, kind: 'user', text: 'count', receipt: 'seen' },
+    { seq: 2, kind: 'agent', text: 'stopped', agent: { type: 'result', subtype: 'error_during_execution', is_error: true, duration_ms: 4100 } },
+    { seq: 3, kind: 'done', text: 'stopped' },
+  ] })
+  try {
+    const log = p.$('convo-log').textContent
+    assert.doesNotMatch(log, /reported an error/)
+    assert.match(log, /Stopped\./)
+    assert.equal(p.window.document.querySelectorAll('#convo-log .error').length, 0, 'an error is shown for a stop')
+  } finally { p.close() }
+})
+
+test('a turn that failed on its own is still shown as an error', async () => {
+  const p = await convoPage({ running: false, last: 2, events: [
+    { seq: 1, kind: 'user', text: 'count', receipt: 'seen' },
+    { seq: 2, kind: 'agent', agent: { type: 'result', subtype: 'error_during_execution', is_error: true } },
+  ] })
+  try {
+    assert.match(p.$('convo-log').textContent, /reported an error/)
+  } finally { p.close() }
+})

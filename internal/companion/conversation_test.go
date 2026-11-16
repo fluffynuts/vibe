@@ -242,7 +242,7 @@ type pollResult struct {
 	Background bool                   `json:"background"`
 	Reset      bool                   `json:"reset"`
 	Receipt    map[string]interface{} `json:"receipt"`
-	// StopState is "stopping" while a stop is under way, "waiting" once a prompt waits behind it.
+	// StopState is "stopping" while a stop is under way.
 	StopState string `json:"stopState"`
 }
 
@@ -642,6 +642,53 @@ func TestAPromptsReceiptFollowsWhatTheAgentSaysOfIt(t *testing.T) {
 	for _, e := range c.events {
 		if e.Kind == "agent" {
 			t.Errorf("what the agent says of a prompt is shown: %s", e.Agent)
+		}
+	}
+}
+
+// A stop cancels the prompt the agent was answering: it was taken in and acted on, so it is not said to be undelivered.
+func TestAPromptTheAgentHadTakenInKeepsItsReceiptWhenAStopCancelsIt(t *testing.T) {
+	var c conversation
+	seq, _ := c.claim("count", true)
+	c.pending = map[string]int{"p-1": seq}
+	c.line([]byte(`{"type":"command_lifecycle","command_uuid":"p-1","state":"queued"}`))
+	c.line([]byte(`{"type":"command_lifecycle","command_uuid":"p-1","state":"started"}`))
+	c.line([]byte(`{"type":"command_lifecycle","command_uuid":"p-1","state":"cancelled"}`))
+	if got := c.latestReceipt()["state"]; got != receiptSeen {
+		t.Errorf("a prompt the agent was answering, stopped: %v", got)
+	}
+	if len(c.pending) != 0 {
+		t.Errorf("still waiting to hear of %v", c.pending)
+	}
+}
+
+// An interrupted turn ends with a result the agent marks as an error: it is the user's stop, and the page is told so rather than
+// showing a failure.
+func TestTheResultOfAStoppedTurnIsMarkedAsTheStop(t *testing.T) {
+	f := &fakeAgent{release: make(chan struct{})}
+	s := converseServer(f)
+	send(t, s, "/api/conversation/send", `{"prompt":"slow"}`)
+	waitFor(t, "the prompt to reach the agent", func() bool { return len(f.asked()) == 1 })
+	send(t, s, "/api/conversation/stop", `{}`)
+	p := idle(t, s)
+	var result *event
+	for i := range p.Events {
+		if e := &p.Events[i]; e.Kind == "agent" && strings.Contains(string(e.Agent), `"type":"result"`) {
+			result = e
+		}
+	}
+	if result == nil || result.Text != "stopped" {
+		t.Fatalf("the stopped turn's result = %+v, want it marked stopped", result)
+	}
+	if p.Events[0].Receipt != receiptSeen {
+		t.Errorf("the stopped prompt's receipt = %q: the agent had taken it in", p.Events[0].Receipt)
+	}
+	close(f.release)
+	send(t, s, "/api/conversation/send", `{"prompt":"next"}`)
+	p = idle(t, s)
+	for _, e := range p.Events {
+		if e.Kind == "agent" && strings.Contains(string(e.Agent), `"result":"ok"`) && e.Text != "" {
+			t.Errorf("a turn that was not stopped is marked %q", e.Text)
 		}
 	}
 }
