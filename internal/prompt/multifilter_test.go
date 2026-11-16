@@ -126,3 +126,120 @@ func TestMultiFilterEscapeHintSaysWhatEscapeWillDo(t *testing.T) {
 		t.Errorf("something typed: %s", got)
 	}
 }
+
+// pressed drives m with keys as the terminal would give them: an Esc is
+// followed by what is in escapes, in turn, as readEscape would read.
+type keyboard struct {
+	m       *multiFilterState
+	escapes []escKey
+	last    keyResult
+}
+
+func newKeyboard(labels []string, escapes ...escKey) *keyboard {
+	return &keyboard{m: newMultiFilterState(labels), escapes: escapes}
+}
+
+func (k *keyboard) press(keys ...byte) *keyboard {
+	for _, key := range keys {
+		k.last = k.m.press(key, func() escKey {
+			next := k.escapes[0]
+			k.escapes = k.escapes[1:]
+			return next
+		})
+	}
+	return k
+}
+
+func (k *keyboard) type_(s string) *keyboard { return k.press([]byte(s)...) }
+
+const (
+	keySpace = ' '
+	keyCtrlA = 0x01
+	keyCtrlU = 0x15
+	keyEsc   = 0x1b
+	keyEnter = '\r'
+)
+
+func TestMultiFilterKeysSpaceTicksAndIsNotTyped(t *testing.T) {
+	k := newKeyboard(sandboxes).press(keySpace)
+	if !reflect.DeepEqual(k.m.ticked(), []int{0}) || k.m.typed != "" {
+		t.Errorf("ticked %v, typed %q: space ticks the highlighted one and is not part of the filter", k.m.ticked(), k.m.typed)
+	}
+}
+
+func TestMultiFilterKeysLettersAreTypedNotCommands(t *testing.T) {
+	k := newKeyboard(sandboxes).type_("jkq")
+	if k.m.typed != "jkq" || k.last != keyChanged {
+		t.Errorf("typed %q, last %v: j, k and q are letters here, as in Filter", k.m.typed, k.last)
+	}
+}
+
+func TestMultiFilterKeysArrowsMoveTheHighlight(t *testing.T) {
+	k := newKeyboard(sandboxes, escDown, escDown, escUp).press(keyEsc, keyEsc, keyEsc)
+	if k.m.cursor != 1 {
+		t.Errorf("cursor %d, want 1 after down, down, up", k.m.cursor)
+	}
+	k.press(keySpace)
+	if !reflect.DeepEqual(k.m.ticked(), []int{1}) {
+		t.Errorf("ticked %v: space ticks where the arrows left the highlight", k.m.ticked())
+	}
+}
+
+func TestMultiFilterKeysCtrlATicksShownAndCtrlUClears(t *testing.T) {
+	k := newKeyboard(sandboxes).type_("yumbi").press(keyCtrlA)
+	if !reflect.DeepEqual(k.m.ticked(), []int{0, 1}) {
+		t.Errorf("ticked %v, want the two shown", k.m.ticked())
+	}
+	k.press(keyCtrlU)
+	if k.m.typed != "" || len(k.m.matches) != len(sandboxes) {
+		t.Errorf("ctrl-u left %q, %v", k.m.typed, k.m.matches)
+	}
+}
+
+func TestMultiFilterKeysBackspaceWidens(t *testing.T) {
+	k := newKeyboard(sandboxes).type_("yz").press(0x7f)
+	if k.m.typed != "y" || len(k.m.matches) != 2 {
+		t.Errorf("typed %q, matches %v", k.m.typed, k.m.matches)
+	}
+}
+
+func TestMultiFilterKeysEscapeClearsWhatIsTypedAndThenCancels(t *testing.T) {
+	k := newKeyboard(sandboxes, escBare, escBare).type_("ph").press(keyEsc)
+	if k.last != keyChanged || k.m.typed != "" {
+		t.Errorf("first escape: %v, typed %q: it should clear the filter and go on", k.last, k.m.typed)
+	}
+	k.press(keyEsc)
+	if k.last != keyCancel {
+		t.Errorf("second escape: %v, want it to cancel", k.last)
+	}
+}
+
+func TestMultiFilterKeysEnterAnswersWithEveryTickIncludingOnesTheFilterHides(t *testing.T) {
+	k := newKeyboard(sandboxes).type_("yumbi").press(keySpace)
+	k.press(keyCtrlU).type_("phoenix").press(keyCtrlA)
+	k.type_("zzz") // nothing matches now: the answer is still what was ticked
+	k.press(keyEnter)
+	if k.last != keyDone || !reflect.DeepEqual(k.m.ticked(), []int{0, 2}) {
+		t.Errorf("last %v, ticked %v, want done with [0 2]", k.last, k.m.ticked())
+	}
+}
+
+func TestMultiFilterKeysEnterWithNothingTickedIsAnAnswerOfNone(t *testing.T) {
+	if k := newKeyboard(sandboxes).press(keyEnter); k.last != keyDone || len(k.m.ticked()) != 0 {
+		t.Errorf("last %v, ticked %v", k.last, k.m.ticked())
+	}
+}
+
+func TestMultiFilterKeysCtrlCCancelsAndTabAndOtherKeysAreIgnored(t *testing.T) {
+	if k := newKeyboard(sandboxes).press(3); k.last != keyCancel {
+		t.Errorf("ctrl-c: %v", k.last)
+	}
+	for _, key := range []byte{'\t', 0x02} {
+		if k := newKeyboard(sandboxes).press(key); k.last != keyIgnored || len(k.m.ticked()) != 0 || k.m.typed != "" {
+			t.Errorf("key %#x: %v, ticked %v, typed %q: tab is no longer the tick key", key, k.last, k.m.ticked(), k.m.typed)
+		}
+	}
+	if k := newKeyboard(sandboxes, escKey(99)).press(keyEsc); k.last != keyIgnored {
+		t.Errorf("an escape sequence that is no arrow: %v, want it ignored", k.last)
+	}
+}

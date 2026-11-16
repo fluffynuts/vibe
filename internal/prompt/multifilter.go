@@ -27,46 +27,70 @@ func MultiFilter(rw *Terminal, labels []string) (selected []int, ok bool) {
 			f.clear()
 			return nil, false
 		}
-		switch {
-		case key == 3: // Ctrl-C, on a Terminal with no onInterrupt
+		switch m.press(key, func() escKey { return readEscape(rw) }) {
+		case keyCancel:
 			f.clear()
 			return nil, false
-		case key == '\r' || key == '\n':
+		case keyDone:
 			f.clear()
 			picked := m.ticked()
 			for _, i := range picked {
 				fmt.Fprintf(rw, "  \x1b[32m✔\x1b[0m %s\r\n", labels[i])
 			}
 			return picked, true
-		case key == 0x7f || key == 0x08:
-			m.backspace()
-		case key == 0x15:
-			m.clearTyped()
-		case key == ' ':
-			m.tickHighlighted()
-		case key == 0x01:
-			m.tickShown()
-		case key == 0x1b:
-			switch readEscape(rw) {
-			case escUp:
-				m.move(-1)
-			case escDown:
-				m.move(1)
-			case escBare:
-				if !m.clearTyped() {
-					f.clear()
-					return nil, false
-				}
-			default:
-				continue
-			}
-		case key >= 0x20 && key < 0x7f:
-			m.typeKey(key)
-		default:
+		case keyIgnored:
 			continue
 		}
 		f.draw(m.lines())
 	}
+}
+
+// keyResult is what pressing a key did to a MultiFilter.
+type keyResult int
+
+const (
+	keyChanged keyResult = iota
+	keyIgnored
+	keyDone
+	keyCancel
+)
+
+// press is a MultiFilter's reaction to one key; readEsc reads what follows an
+// Esc (an arrow's bytes, or nothing for the key alone), and is only called
+// then. Kept apart from the terminal so the keys can be driven by tests.
+func (m *multiFilterState) press(key byte, readEsc func() escKey) keyResult {
+	switch {
+	case key == 3: // Ctrl-C, on a Terminal with no onInterrupt
+		return keyCancel
+	case key == '\r' || key == '\n':
+		return keyDone
+	case key == 0x7f || key == 0x08:
+		m.backspace()
+	case key == 0x15:
+		m.clearTyped()
+	case key == ' ':
+		m.tickHighlighted()
+	case key == 0x01:
+		m.tickShown()
+	case key == 0x1b:
+		switch readEsc() {
+		case escUp:
+			m.move(-1)
+		case escDown:
+			m.move(1)
+		case escBare:
+			if !m.clearTyped() {
+				return keyCancel
+			}
+		default:
+			return keyIgnored
+		}
+	case key >= 0x20 && key < 0x7f:
+		m.typeKey(key)
+	default:
+		return keyIgnored
+	}
+	return keyChanged
 }
 
 // multiFilterState is what a MultiFilter has: kept apart from the terminal
