@@ -614,10 +614,12 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		attention["admin"] = append(attention["admin"], waiting)
 	}
 	// blockedHosts is what the network log says is blocked, for the page to
-	// tell the user of the ones they haven't seen; null until it's been read.
+	// tell the user of the ones they haven't seen, and blockedAt when each was
+	// last blocked; null until it's been read.
 	var blockedHosts []string
-	if hosts, known := s.blockedHosts(); known {
-		blockedHosts = hosts
+	var blockedAt map[string]string
+	if hosts, at, known := s.blockedHosts(); known {
+		blockedHosts, blockedAt = hosts, at
 	}
 	// reviewAt is when the agent last updated the review: the page marks the
 	// Review tab when it's later than the user has seen. Taken in here, as
@@ -638,6 +640,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"packagesStale":         s.packagesStale(),
 		"packagesStaleProjects": s.packagesStaleProjects(),
 		"blockedHosts":          blockedHosts,
+		"blockedAt":             blockedAt,
 		"reviewAt":              reviewAt,
 		"pageVersion":           s.pageVersion,
 		"boot":                  s.boot,

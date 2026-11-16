@@ -649,18 +649,29 @@
   }
 
   // BLOCKED_SEEN keeps the hosts the user has seen blocked and left that way,
-  // as a JSON list, per browser (and per sandbox: storage is per origin). It's
-  // what makes a dot on the Network log tab mean a host that's new: one the
-  // user has looked at and left blocked, or chose to block, isn't news.
+  // each with when it was last blocked as they saw it, as a JSON object, per
+  // browser (and per sandbox: storage is per origin). It's what makes a dot on
+  // the Network log tab mean a host that's news: one the user has looked at and
+  // left blocked, or chose to block, isn't, until it is blocked again after
+  // that. A browser from before blocks were dated kept a list: its hosts are
+  // seen, as of when they are next found blocked ('').
   const BLOCKED_SEEN = 'vibe-companion-blocked-seen'
 
   function seenBlocked() {
     const stored = store.get(BLOCKED_SEEN)
     if (stored === null || stored === undefined || stored === '') return null
     try {
-      const list = JSON.parse(stored)
-      return Array.isArray(list) ? list : null
+      const kept = JSON.parse(stored)
+      if (Array.isArray(kept)) return Object.fromEntries(kept.filter((h) => typeof h === 'string').map((h) => [h, '']))
+      return kept && typeof kept === 'object' ? kept : null
     } catch (e) { return null }
+  }
+
+  // blockedSince is whether a host was blocked after the time it was seen blocked; either not known is not.
+  function blockedSince(at, seenAt) {
+    const a = Date.parse(at || '')
+    const b = Date.parse(seenAt || '')
+    return !isNaN(a) && !isNaN(b) && a > b
   }
 
   // BLOCKED_DISMISSED keeps the hosts the user said not to be told of again, as a JSON list, per
@@ -676,28 +687,36 @@
     } catch (e) { return [] }
   }
 
-  // noteBlocked works out which of the hosts vibe says are blocked are new.
-  // Not known yet (null) is not "none are": nothing is taken as seen. With
-  // nothing kept (a browser's first visit), what's blocked now is taken as
-  // seen: a long history isn't news. A host that stops being blocked is
-  // forgotten, so being blocked again is news. And what's blocked while the
-  // Network log tab is open is being looked at.
-  function noteBlocked(hosts) {
+  // noteBlocked works out which of the hosts vibe says are blocked are news,
+  // from when each was last blocked (at). Not known yet (null) is not "none
+  // are": nothing is taken as seen. With nothing kept (a browser's first
+  // visit), what's blocked now is taken as seen: a long history isn't news. A
+  // host blocked after the user saw it is news again, as is one that stops
+  // being blocked (it is forgotten) and is blocked again. What's blocked while
+  // the Network log tab is open is being looked at. A host the user dismissed
+  // is never news again.
+  function noteBlocked(hosts, at) {
     state.newBlocked = []
     if (!Array.isArray(hosts)) return
+    const when = (h) => (at && typeof at[h] === 'string' ? at[h] : '')
+    const has = (o, h) => Object.prototype.hasOwnProperty.call(o, h)
     const seen = seenBlocked()
-    if (seen === null) { store.set(BLOCKED_SEEN, JSON.stringify(hosts)); return }
-    const kept = state.tab === 'log' ? hosts : seen.filter((h) => hosts.includes(h))
-    if (kept.length !== seen.length || kept.some((h, i) => h !== seen[i])) store.set(BLOCKED_SEEN, JSON.stringify(kept))
+    if (seen === null) { store.set(BLOCKED_SEEN, JSON.stringify(Object.fromEntries(hosts.map((h) => [h, when(h)])))); return }
+    const kept = {}
+    for (const h of hosts) {
+      if (state.tab === 'log') kept[h] = when(h)
+      else if (has(seen, h)) kept[h] = seen[h] || when(h)
+    }
+    if (JSON.stringify(kept) !== JSON.stringify(seen)) store.set(BLOCKED_SEEN, JSON.stringify(kept))
     const dismissed = dismissedBlocked()
-    state.newBlocked = hosts.filter((h) => !kept.includes(h) && !dismissed.includes(h))
+    state.newBlocked = hosts.filter((h) => !dismissed.includes(h) && (!has(kept, h) || blockedSince(when(h), kept[h])))
   }
 
   function dismissBlocked() {
     const hosts = state.newBlocked || []
     if (!hosts.length) return
     store.set(BLOCKED_DISMISSED, JSON.stringify(dismissedBlocked().concat(hosts).slice(-MAX_DISMISSED)))
-    noteBlocked(state.blockedHosts)
+    noteBlocked(state.blockedHosts, state.blockedAt)
     showAllAttention()
   }
 
@@ -726,7 +745,7 @@
   // what's blocked.
   function blockedSeen() {
     if (!(state.newBlocked || []).length) return
-    noteBlocked(state.blockedHosts)
+    noteBlocked(state.blockedHosts, state.blockedAt)
     showAllAttention()
   }
 
@@ -930,18 +949,20 @@
   // logReadAtOnce says the next read of a tab's list follows a change to a rule: see load.
   let logReadAtOnce = false
 
-  // The hosts the Network log was refreshed for, as they were blocked: the log is only polled while its tab is open,
-  // so a host seen blocked from another tab would not be in it when the user went there.
+  // The blocks the Network log was refreshed for, each a host and when it was blocked: the log is only polled while its tab is
+  // open, so a host seen blocked from another tab would not be in it when the user went there.
   let logRefreshedFor = new Set()
 
   // refreshLogForNewBlocks reads the Network log in the background when hosts are blocked that it has not been read for,
-  // so the blocked request is in it by the time the user gets there.
+  // or blocked again since, so the blocked request is in it by the time the user gets there.
   function refreshLogForNewBlocks() {
     const hosts = Array.isArray(state.blockedHosts) ? state.blockedHosts : []
-    logRefreshedFor = new Set([...logRefreshedFor].filter((h) => hosts.includes(h)))
-    const fresh = (state.newBlocked || []).filter((h) => !logRefreshedFor.has(h))
+    const block = (h) => h + '@' + ((state.blockedAt && state.blockedAt[h]) || '')
+    const current = new Set(hosts.map(block))
+    logRefreshedFor = new Set([...logRefreshedFor].filter((b) => current.has(b)))
+    const fresh = (state.newBlocked || []).map(block).filter((b) => !logRefreshedFor.has(b))
     if (!fresh.length) return
-    for (const h of fresh) logRefreshedFor.add(h)
+    for (const b of fresh) logRefreshedFor.add(b)
     unlessBusy('tab log', () => load('log'))
   }
 
@@ -1029,7 +1050,8 @@
       renderSyncWaiting(res.body.packagesToFetch || 0)
       renderStaleWaiting(res.body.packagesStale || 0, res.body.packagesStaleProjects || [])
       state.blockedHosts = res.body.blockedHosts
-      noteBlocked(state.blockedHosts)
+      state.blockedAt = res.body.blockedAt
+      noteBlocked(state.blockedHosts, state.blockedAt)
       refreshLogForNewBlocks()
       state.reviewAt = res.body.review ? res.body.reviewAt || '' : ''
       showAllAttention()
