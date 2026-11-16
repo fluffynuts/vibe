@@ -1,4 +1,4 @@
-# One agent process for the whole conversation, so background work can call back (planned; experiments run 2026-11-16; not built)
+# One agent process for the whole conversation, so background work can call back (built 2026-11-16 on `feat/persistent-agent`; not yet tried by the user)
 
 Raised 2026-11-13 by the user, who lost an agent's background work twice by sending a prompt while the conversation looked idle, and who
 remembers the console app letting an agent get the call-back later while still being talked to. The next highest-order priority after the
@@ -148,6 +148,33 @@ Not keeping the agent quick to answer: the process lives for as long as there is
 5. **One pid file per conversation**, not per turn, so a vibe started after one that died finds the agent it left (`e11`: it runs on) and
    ends it with the hard stop before starting its own.
 
+## Built (2026-11-16, `feat/persistent-agent`)
+
+As decided above. Commits `54cf4c3` (`sbxrun.ExecSession`: a command in the sandbox whose input stays open), `ad406e7` (the conversation
+and the host side), and the page and instructions after them.
+
+- **Host** (`src/vibe/conversation.go`): `startAgent` ends a leftover by the conversation's pid file (`/tmp/vibe-conversation.pid`), then
+  starts `claude -p --input-format stream-json --output-format stream-json`, `--resume`ing the session when there is one. `claudeAgent`
+  writes each prompt as a `user` line with a uuid, after `set_model` and `apply_flag_settings` (effort) for the choice on the page, so a
+  change of model or effort needs no new process. Interrupt (`spare_background_tasks`), `stop_task`, End (closes stdin) and Kill (the
+  hard stop, confirmed within 10 s or reported as unconfirmed).
+- **Conversation** (`internal/companion/conversation.go`): `Agent` and `StartAgent` replace `Converser`. A prompt is always accepted: it
+  starts the agent if there is none (prompts sent while it starts wait for it), or is written to it. Receipts follow `command_lifecycle`;
+  the poll carries one per prompt in flight (`receipts`) and the background tasks (`tasks`). A `system/init` with no prompt in flight is an
+  unprompted turn (a call-back). The agent is ended 30 s after it has no turn and no tasks, and killed if it has not gone 30 s later.
+  The review's turns (start, ask, submit) are prompts to the same agent, as they were turns of the same conversation before, and are
+  still refused while it is busy.
+- **Page**: Send is never locked by the agent; the background-work dialog and the "waiting for the agent to stop" state are gone; the
+  status names the background tasks; a stop that has taken effect offers **Stop them too** / **Leave them running** when tasks remain;
+  a stop that has not taken effect within 8 s turns Stop into **Force stop**.
+- **Agents are told** (`library/base/background-work`, and the short form every agent loads) that background work carries on and calls
+  them back, what a stop does, that the run ends once it has no work (taking scheduled wake-ups with it), and the detached form for work
+  that must outlive the run.
+
+Not done: a test against a real `claude` (the experiments in `tools/experiments/persistent-agent/` are the record of the stream's shape),
+and other agents: OpenCode's conversation is on the unmerged `feat/opencode` branch, written against `Converser`, and will need this shape when it is merged. Not verified by hand yet: everything on the page against
+a real agent through sbx.
+
 ## Design (settled where the experiments above say so; the rest to be tried)
 
 **One streaming `claude` per conversation**, started on the first prompt (`--input-format stream-json`), kept for as long as the conversation
@@ -197,8 +224,8 @@ On `fix/block-unblocked-host`, 2026-11-13, because a new prompt ends background 
 - **Agents are told** (feature `library/base/background-work`, and a short form in what they always load) that a new prompt ends background
   work, not to end a turn with some pending, and how to start work detached (`setsid nohup`) so that it survives.
 
-When this plan is built the dialog and most of the instruction go: a prompt no longer ends anything. The detached form stays useful for
-work that should outlive the conversation's process.
+Both are replaced now (see "Built"): the dialog is gone, and the instruction says what becomes of background work instead. The detached
+form stays, for work that should outlive the conversation's process.
 
 ## Tests
 
