@@ -5356,7 +5356,7 @@
 
   // news: the agent has said something since the Conversation tab was last
   // open (its dot); loaded: the conversation so far has been fetched once.
-  const convo = { last: 0, running: false, background: false, stopState: '', polling: false, behind: false, news: false, loaded: false, lastPrompt: '', ticks: new Map(), typing: null, group: null }
+  const convo = { last: 0, running: false, background: false, tasks: [], stopState: '', stoppingSince: 0, offerTasks: false, polling: false, behind: false, news: false, loaded: false, lastPrompt: '', ticks: new Map(), typing: null, group: null }
 
   // showTyping keeps the "typing" bubble below the agent's latest message
   // for as long as it is answering, and takes it away once it has. Its
@@ -5910,8 +5910,8 @@
   // The ticks on what the user said, as on a chat message: one when vibe has
   // it, two when the sandbox has it, two in blue once the agent has started
   // answering.
-  const RECEIPT_TICKS = { queued: '…', sent: '✓', delivered: '✓✓', seen: '✓✓', undelivered: '✕' }
-  const RECEIPT_WORDS = { queued: 'Waiting for the agent to stop', sent: 'Sent', delivered: 'Delivered', seen: 'The agent is answering', undelivered: 'Not given to the agent' }
+  const RECEIPT_TICKS = { sent: '✓', delivered: '✓✓', seen: '✓✓', undelivered: '✕' }
+  const RECEIPT_WORDS = { sent: 'Sent', delivered: 'Delivered', seen: 'The agent is answering', undelivered: 'Not given to the agent' }
 
   function showReceipt(seq, receipt) {
     const ticks = convo.ticks.get(seq)
@@ -6102,9 +6102,10 @@
     else if (ev.kind === 'done' && ev.text === 'stopped') convoNote('meta', 'Stopped.')
   }
 
-  // running is the agent answering; background is it having answered, but
-  // still waiting on something it left running (a review page, say). Then
-  // the page goes on as if it were done: sending ends that work.
+  // running is the agent answering; background is it having answered, with
+  // something it left running in the background (a test suite, a review
+  // page), which calls it back when it ends. A prompt can be sent meanwhile:
+  // the work goes on.
   // quietMinutes, when not 0, is how long the agent has been answering
   // without a word: long enough that it may be stuck. The turn isn't
   // stopped — that's the user's call. compacting is the agent making room
@@ -6124,16 +6125,18 @@
     const now = running && compacting ? 'The agent is compacting its context.'
       : running && quietMinutes ? 'The agent is working on a prompt, but there has been no output for ' + quietMinutes + ' minutes: it may be stuck.'
       : running ? 'The agent is working on a prompt.'
-      : background ? 'The agent has answered and left something running in the sandbox.'
+      : background ? 'The agent has answered, and has something running in the background: it carries on when that ends.'
       : 'The agent is idle.'
     light.title = now + ' ' + LIGHT_USE
     light.setAttribute('aria-label', light.title)
   }
 
-  // stopState is '' normally, 'stopping' while the agent is being stopped, and 'waiting' once a prompt waits behind that.
-  function setConvoRunning(running, background, quietMinutes, compacting, stopState) {
+  // stopState is '' normally, and 'stopping' while the agent is being stopped. tasks are what it has running in the background.
+  function setConvoRunning(running, background, quietMinutes, compacting, stopState, tasks) {
     stopState = running ? stopState || '' : ''
+    if (stopState && !convo.stopState) convo.stoppingSince = Date.now()
     convo.stopState = stopState
+    if (Array.isArray(tasks)) convo.tasks = tasks
     const ended = convo.running && !running
     convo.background = !running && background
     drawAgentLight(running, background, quietMinutes, compacting)
@@ -6143,24 +6146,68 @@
     // What the agent ran is known now, and what was chosen has been used.
     if (ended && state.choice) choiceTurnEnded()
     if (ended) reviewTurnEnded()
-    $('convo-send').disabled = running && stopState !== 'stopping'
-    // Only while it answers: what it has left running ends with the next
-    // prompt anyway.
+    // A prompt sent while the agent answers is taken into its turn, as the console does.
+    $('convo-send').disabled = false
+    // Only while it answers: what it has left running in the background is offered once the stop has taken effect (offerToStopTasks).
+    // A stop that has not taken effect after a while can be forced: the agent, and all it started, ended at once.
+    const stuck = !!stopState && Date.now() - convo.stoppingSince > FORCE_STOP_AFTER_MS
     $('convo-stop').hidden = !running
-    $('convo-stop').disabled = !!stopState
+    $('convo-stop').disabled = !!stopState && !stuck
+    $('convo-stop').textContent = stuck ? 'Force stop' : 'Stop (Escape)'
+    $('convo-stop').title = stuck ? 'The agent has not stopped: end it, and everything it started, at once' : 'Escape, in the prompt box'
     $('convo-new').disabled = running
     // While it answers, the typing bubble says so.
     const status = $('convo-status')
-    status.classList.toggle('warn-text', !!(running && quietMinutes) || (!running && background))
-    status.textContent = stopState === 'stopping'
-      ? 'Stopping the agent… you can send another prompt now: it goes to the agent once this has stopped.'
-      : stopState === 'waiting'
-      ? 'Waiting for the agent to stop… your prompt goes to it as soon as it has.'
+    status.classList.toggle('warn-text', !!(running && quietMinutes))
+    status.textContent = stuck
+      ? 'The agent has not stopped yet. Force stop ends it, and everything it started (anything in the background too).'
+      : stopState === 'stopping'
+      ? 'Stopping the agent…'
       : running && compacting
       ? 'The agent is compacting its context (summarising the conversation so far to make room). This can take a few minutes; it answers once it is done.'
       : running && quietMinutes
       ? 'No output from the agent for ' + quietMinutes + ' minutes — it may be stuck. Stop it, or check "sbx ls" in a terminal; it is still being waited for.'
-      : !running && background ? 'The agent has answered, and has something still running. Sending a prompt ends it.' : ''
+      : !running && background ? backgroundWords(convo.tasks) : ''
+  }
+
+  // FORCE_STOP_AFTER_MS is how long a stop may take before the page offers to force it.
+  const FORCE_STOP_AFTER_MS = 8000
+
+  // backgroundWords says what the agent has running in the background, naming it.
+  function backgroundWords(tasks) {
+    const named = tasks.map((t) => t && t.description).filter(Boolean)
+    const what = named.length ? ': ' + named.map((d) => '"' + d + '"').join(', ') : ''
+    const count = tasks.length === 1 ? 'something' : tasks.length + ' things'
+    return 'The agent has answered, and has ' + count + ' running in the background' + what + '. You can send a prompt meanwhile: the work carries on.'
+  }
+
+  // offerToStopTasks says, once a stop has taken effect, what the agent still has running in the background, and lets the user choose
+  // whether to stop that too: a stop interrupts the turn and leaves background work alone. Nothing is said when there is none.
+  function offerToStopTasks(tasks) {
+    if (!tasks.length) return
+    const named = tasks.map((t) => t && t.description).filter(Boolean)
+    const words = 'Stopped. The agent still has ' + (tasks.length === 1 ? 'a task' : tasks.length + ' tasks') + ' running in the background' +
+      (named.length ? ': ' + named.map((d) => '"' + d + '"').join(', ') : '') + '. '
+    const row = el('div', { class: 'msg meta tasks-offer' })
+    const done = (text) => row.replaceChildren(el('span', { text }))
+    const stopThem = el('button', { type: 'button', class: 'small danger', text: 'Stop them too', onclick: async () => {
+      stopThem.disabled = leave.disabled = true
+      try {
+        const res = await post('/api/conversation/stop', { tasks: true })
+        reached(true)
+        if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); stopThem.disabled = leave.disabled = false; return }
+        done('Stopped what the agent had running in the background.')
+        pollConversation()
+      } catch (e) {
+        reached(false)
+        toast('Could not reach vibe.', true)
+        stopThem.disabled = leave.disabled = false
+      }
+    } })
+    const leave = el('button', { type: 'button', class: 'small ghost', text: 'Leave them running', onclick: () => done('Left what the agent has running in the background to carry on.') })
+    row.append(el('span', { text: words }), stopThem, ' ', leave)
+    endToolGroup()
+    $('convo-log').append(row)
   }
 
   async function pollConversation() {
@@ -6183,10 +6230,16 @@
       }
       for (const ev of res.body.events || []) showEvent(ev)
       if (res.body.receipt) showReceipt(res.body.receipt.seq, res.body.receipt.state)
+      // Every prompt still in flight: one sent while the agent answered is taken into its turn, and moves on its own.
+      for (const r of res.body.receipts || []) if (r) showReceipt(r.seq, r.state)
       convo.last = res.body.last || 0
       // A turn that isn't running has no tools still being used, whatever the last thing said was.
       if (!res.body.running) endToolGroup()
-      setConvoRunning(!!res.body.running, !!res.body.background, res.body.quietMinutes || 0, !!res.body.compacting, res.body.stopState)
+      setConvoRunning(!!res.body.running, !!res.body.background, res.body.quietMinutes || 0, !!res.body.compacting, res.body.stopState, res.body.tasks)
+      if (convo.offerTasks && !res.body.running) {
+        convo.offerTasks = false
+        offerToStopTasks(Array.isArray(res.body.tasks) ? res.body.tasks : [])
+      }
       if ((res.body.events || []).length) {
         if ($('panel-conversation').hidden) {
           convo.behind = true
@@ -6238,25 +6291,9 @@
     const input = $('convo-input')
     resolveTrailingEmoticon(input)
     const prompt = input.value.trim()
-    if (!prompt || (convo.running && convo.stopState !== 'stopping') || gate.active) return
-    if (convo.background && await endBackgroundWork()) return
+    if (!prompt || gate.active) return
     if (await holdForPackages(prompt)) return
     await deliverPrompt(prompt)
-  }
-
-  // endBackgroundWork asks, when the agent has answered and left something running, whether to send the prompt anyway: the server
-  // ends that work for a new prompt, and it won't report back. A user who sees an idle conversation has no other way to know. It
-  // resolves true when the user would rather not (the prompt stays in the box, and the agent goes on), false to send.
-  function endBackgroundWork() {
-    return new Promise((resolve) => {
-      confirmThen({
-        title: "End the agent's background work?",
-        text: 'The agent has answered, and still has something running in the sandbox. Sending this prompt ends it: it won\'t report back, and you would have to ask for it again. Cancel keeps what you typed, and the agent keeps working.',
-        safe: true, commandNote: '', command: '', runLabel: 'Send and end it',
-        cancelled: () => resolve(true),
-        run: async () => { resolve(false); return { asked: true } },
-      })
-    })
   }
 
   async function deliverPrompt(prompt) {
@@ -6272,7 +6309,7 @@
       // would arrive below the fold. Being at the end also makes the renders that follow stick.
       const log = $('convo-log')
       log.scrollTop = log.scrollHeight
-      setConvoRunning(true, false, 0, false, res.body.queued ? 'waiting' : '')
+      setConvoRunning(true, false, 0, false, convo.stopState)
       showTyping()
       pollConversation()
     } catch (e) {
@@ -6382,16 +6419,22 @@
     renderGate(b)
   }
 
-  // stopAgent stops the agent's turn. While the agent is writing a review, that ends the review: vibe says so (409,
+  // stopAgent stops the agent's turn: it is interrupted, and what it has running in the background is left alone, to be offered
+  // once the stop has taken effect (offerToStopTasks). A stop that has not taken effect after a while is forced instead: the agent,
+  // and all it started, ended at once. While the agent is writing a review, a stop ends the review: vibe says so (409,
   // review-in-progress) and it is asked first, in the words closing the review uses; confirmed, the stop is sent again, saying so,
   // and the Review tab goes back to its start options. The Stop button and Escape both come here.
   async function stopAgent() {
+    const force = !!convo.stopState && Date.now() - convo.stoppingSince > FORCE_STOP_AFTER_MS
     try {
-      const res = await post('/api/conversation/stop', {})
+      const res = await post('/api/conversation/stop', force ? { force: true } : {})
       reached(true)
       if (res.status === 409 && res.body && res.body.code === 'review-in-progress') { askToStopWriting(); return }
       if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true)
-      else if (res.body.stopped) setConvoRunning(true, false, 0, false, 'stopping')
+      else if (res.body.stopped) {
+        convo.offerTasks = !force
+        setConvoRunning(true, false, 0, false, 'stopping')
+      }
       pollConversation()
     } catch (e) {
       reached(false)
