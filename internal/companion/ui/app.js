@@ -2708,6 +2708,10 @@
         forgetFiles()
         reviewView.files = null
         reviewView.diffWanted = true
+        // Not drawn (without its diff every comment would be bunched at the top), but the old review is not to be left looking
+        // like the current one while the diff is worked out, which takes seconds on a big one.
+        $('review-body').hidden = true
+        $('review-wait').hidden = false
         return
       }
       // A diff that set out before the review's files went stale (Refresh,
@@ -2759,9 +2763,6 @@
     return null
   }
 
-  // drawReview draws the review when it has changed; a poll's redraw waits
-  // while a box on the tab is being typed in (it would take the focus away),
-  // one the user asked for (force) doesn't.
   // reviewIdentity is what tells one review from the next, whatever is said in it: when it was started, and what it is of.
   function reviewIdentity(rv) {
     return [rv.started, rv.ref, rv.commit, rv.unpushed].join('|')
@@ -3033,6 +3034,9 @@
     }
   }
 
+  // drawReview draws the review when it has changed; a poll's redraw waits
+  // while a box on the tab is being typed in (it would take the focus away),
+  // one the user asked for (force) doesn't.
   function drawReview(force) {
     const rv = reviewView.review
     if (!rv) return

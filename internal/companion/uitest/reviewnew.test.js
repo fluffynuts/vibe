@@ -15,9 +15,11 @@ async function pageWith(world) {
   const p = await openPage({
     routes: {
       '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
-      '/api/review': (call) => (call.query.includes('diff=1')
-        ? { review: world.review, diff: world.diff, diffKey: 'k-' + world.review.started }
-        : { review: world.review }),
+      '/api/review': async (call) => {
+        if (!call.query.includes('diff=1')) return { review: world.review }
+        if (world.holdDiff) await world.holdDiff
+        return { review: world.review, diff: world.diff, diffKey: 'k-' + world.review.started }
+      },
       '/api/conversation': { events: [], last: 0, running: false },
       '/api/log': { entries: [] },
     },
@@ -71,5 +73,31 @@ test('a review started from the terminal while the tab showed no review at all g
     assert.ok(diffLoads(p) > loads, "the review's diff was asked for")
     assert.equal(p.$('review-general').querySelectorAll('.review-thread').length, 0, 'no comment is bunched at the top')
     assert.equal(p.$('review-files').querySelectorAll('.review-thread').length, 1)
+  } finally { p.close() }
+})
+
+test('while the new review\'s diff is worked out the old review is not left on show: the tab says it is working, then draws the new one', async () => {
+  const world = { review: reviewOf('2026-11-16T09:00:00Z', 'master', [thread(1, 'a.go')]), diff: [lineOf('a.go')] }
+  const p = await pageWith(world)
+  try {
+    assert.equal(p.$('review-body').hidden, false, 'the first review is shown')
+    assert.equal(p.$('review-wait').hidden, true)
+
+    let release
+    world.holdDiff = new Promise((resolve) => { release = resolve })
+    world.review = reviewOf('2026-11-16T11:00:00Z', 'master', [thread(1, 'b.go')])
+    world.diff = [lineOf('b.go')]
+    await p.kick('tick')
+    await p.kick('tick')
+
+    assert.equal(p.$('review-wait').hidden, false, 'it says the diff is being worked out')
+    assert.equal(p.$('review-body').hidden, true, 'and the old review, with the new one not yet drawable, is not shown')
+
+    release()
+    await p.poll()
+    assert.equal(p.$('review-wait').hidden, true)
+    assert.equal(p.$('review-body').hidden, false)
+    assert.equal(p.$('review-files').querySelectorAll('.review-thread').length, 1, 'the new review is drawn, its comment on its line')
+    assert.equal(p.$('review-general').querySelectorAll('.review-thread').length, 0)
   } finally { p.close() }
 })
