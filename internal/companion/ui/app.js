@@ -1949,9 +1949,32 @@
   // from the page goes this way, so a poll that set out before can't undo
   // it.
   async function changeReview(path, body) {
+    if (path !== '/api/review/start' && path !== '/api/review/afresh') body = Object.assign({ for: reviewShown() }, body)
     const res = await post(path, body)
     if (res.ok && res.body && res.body.review) tookReview(res.body.review)
+    tookRefusal(res)
     return res
+  }
+
+  // reviewShown is which review the page is showing, as the host names one (a Key), to be sent with every change to it: the
+  // agent can start another while this one is on show, and a change is then refused, not applied to a review nobody here has seen.
+  function reviewShown() {
+    const rv = reviewView.review
+    return rv ? { started: rv.started, ref: rv.ref, commit: rv.commit, unpushed: rv.unpushed } : undefined
+  }
+
+  // tookRefusal answers the host's refusal of a change for a review the agent has replaced: the new review is taken at once (what was
+  // written in the old goes with it), and the caller, which says why the change failed, says it.
+  function tookRefusal(res) {
+    if (res.ok || !res.body || res.body.code !== 'review-replaced') return
+    leaveBoxes()
+    loadReview(false)
+  }
+
+  // leaveBoxes takes the focus out of a box on the Review tab, which is what holds a new review back (see typingInABox).
+  function leaveBoxes() {
+    const a = document.activeElement
+    if (a && a.tagName === 'TEXTAREA' && $('panel-review').contains(a)) a.blur()
   }
 
   // doReview asks vibe to do req to the review (see changeReview).
@@ -2700,6 +2723,7 @@
         otherReview = !withDiff && reviewView.files !== null && reviewIsOn(incoming) && reviewView.diffFor !== reviewIdentity(incoming)
         if (otherReview && typingInABox()) {
           sayReviewIsHeld(reviewIdentity(incoming))
+          showHeld(true)
           return
         }
         const wasOn = reviewView.review && reviewIsOn(reviewView.review)
@@ -2886,11 +2910,18 @@
   function sayReviewIsHeld(identity) {
     if (reviewView.heldFor === identity) return
     reviewView.heldFor = identity
-    toast('The agent has started a new review. It replaces this one when you leave the comment box.', false, { label: 'Switch now', run() {
-      const a = document.activeElement
-      if (a && a.tagName === 'TEXTAREA' && $('panel-review').contains(a)) a.blur()
-      loadReview(false)
-    } })
+    toast('The agent has started a new review. It replaces this one when you leave the comment box.', false, { label: 'Switch now', run: switchNow })
+  }
+
+  // switchNow takes the review the agent started, leaving the box the user is in (what is written in it goes with the old review).
+  function switchNow() {
+    leaveBoxes()
+    loadReview(false)
+  }
+
+  // showHeld says, beside Refresh, for as long as it is so, that a newer review is waiting for the user to leave a box.
+  function showHeld(held) {
+    $('review-held').hidden = !held
   }
 
   // forgetWriting forgets what was being written on the review that is replaced: a comment on a line, an edit, and replies half
@@ -2915,6 +2946,7 @@
     reviewView.unfolded.clear()
     reviewView.key = null
     showStale(false)
+    showHeld(false)
   }
 
   // showStale says, beside Refresh, whether the code has changed under the diff the page holds.
@@ -3006,8 +3038,9 @@
     const writing = rv.state === 'in progress'
     const stop = writing || (reviewView.agentAtWork && open > 0)
     const close = async () => {
-      const res = await post('/api/review/close', { stop })
-      if (res.status === 409 && !again) {
+      const res = await post('/api/review/close', { stop, for: reviewShown() })
+      tookRefusal(res)
+      if (res.status === 409 && !again && !(res.body && res.body.code === 'review-replaced')) {
         // The agent began work on the review since the page last looked:
         // asked again, saying what closing now does.
         await loadReview(false)
@@ -4979,6 +5012,7 @@
     })
     $('manage-delete').addEventListener('click', deleteTicked)
     $('review-refresh').addEventListener('click', refreshReview)
+    $('review-switch').addEventListener('click', switchNow)
     $('review-afresh').addEventListener('click', startAfresh)
     $('review-whitespace').checked = reviewView.ignoreSpace
     $('review-whitespace').addEventListener('change', (ev) => {

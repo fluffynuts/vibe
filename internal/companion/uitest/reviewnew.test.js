@@ -16,10 +16,16 @@ async function pageWith(world) {
     routes: {
       '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
       '/api/review': async (call) => {
-        if (!call.query.includes('diff=1')) return { review: world.review }
+        if (!call.query.includes('diff=1')) {
+          if (world.holdReview) await world.holdReview
+          return { review: world.review }
+        }
         if (world.holdDiff) await world.holdDiff
         return { review: world.review, diff: world.diff, diffKey: 'k-' + world.review.started }
       },
+      '/api/review/do': (call) => (world.refuse ? { status: 409, body: world.refuse } : { review: world.review }),
+      '/api/review/close': (call) => (world.refuse ? { status: 409, body: world.refuse } : { review: Object.assign({}, world.review, { closed: 'Closed.' }) }),
+      '/api/review/submit': (call) => (world.refuse ? { status: 409, body: world.refuse } : { ok: true, review: world.review }),
       '/api/conversation': { events: [], last: 0, running: false },
       '/api/log': { entries: [] },
     },
@@ -216,5 +222,117 @@ test('a review nobody is typing against is replaced with no word said about hold
     await p.poll()
     await p.poll()
     assert.doesNotMatch(toastText(p), /leave the comment box/)
+  } finally { p.close() }
+})
+
+// The host refuses a change meant for a review the agent has replaced, and the page says which review it was showing.
+const replied = (p) => p.sent('/api/review/do')
+
+test('a change from the page names the review it was shown', async () => {
+  const world = { review: reviewOf('2026-11-16T09:00:00Z', 'master', [thread(1, 'a.go')]), diff: [lineOf('a.go')] }
+  const p = await pageWith(world)
+  try {
+    await p.type(replyBox(p), 'yes')
+    await p.click(p.button('Reply', p.$('review-files')))
+    assert.deepEqual(replied(p).pop().for, { started: '2026-11-16T09:00:00Z', ref: 'master' })
+  } finally { p.close() }
+})
+
+test('a change the host refuses because the agent has replaced the review is answered by taking the new review, with the reason said', async () => {
+  const world = { review: reviewOf('2026-11-16T09:00:00Z', 'master', [thread(1, 'a.go')]), diff: [lineOf('a.go')] }
+  const p = await pageWith(world)
+  try {
+    await p.type(replyBox(p), 'yes')
+    // The page has not polled since: the agent started the review meanwhile.
+    secondReview(world)
+    world.refuse = { error: 'the agent has replaced this review with another: what you did was not applied to it', code: 'review-replaced' }
+    await p.click(p.button('Reply', p.$('review-files')))
+
+    assert.match(toastText(p), /agent has replaced this review/, 'the reason is said')
+    assert.equal(p.$('review-general').querySelectorAll('.review-thread').length, 0, 'nothing is bunched at the top')
+    assert.equal(p.$('review-files').querySelectorAll('.review-thread').length, 1, 'the new review is drawn')
+    assert.equal(replyBox(p).value, '')
+  } finally { p.close() }
+})
+
+test('Submit refused for a replaced review is answered the same way', async () => {
+  const mine = { author: 'user', body: 'to send', at: '2026-11-16T10:05:00Z' }
+  const first = reviewOf('2026-11-16T09:00:00Z', 'master', [Object.assign(thread(1, 'a.go'), { comments: [thread(1, 'a.go').comments[0], mine] })])
+  const world = { review: first, diff: [lineOf('a.go')] }
+  const p = await pageWith(world)
+  try {
+    secondReview(world)
+    world.refuse = { error: 'the agent has replaced this review with another: what you did was not applied to it', code: 'review-replaced' }
+    const loads = diffLoads(p)
+    await p.click(p.$('review-submit'))
+    assert.deepEqual(p.sent('/api/review/submit').pop().for, { started: '2026-11-16T09:00:00Z', ref: 'master' })
+    assert.ok(diffLoads(p) > loads, 'the new review is taken')
+    assert.equal(p.$('review-files').querySelectorAll('.review-thread').length, 1)
+  } finally { p.close() }
+})
+
+// The reason a review is waiting stays on show after the toast has gone, until it is replaced.
+const heldNote = (p) => (p.$('review-held').hidden ? '' : p.$('review-held').textContent)
+
+test('while a new review is held back, a note beside Refresh says so for as long as it is, and goes when it is replaced', async () => {
+  const world = { review: reviewOf('2026-11-16T09:00:00Z', 'master', [thread(1, 'a.go')]), diff: [lineOf('a.go')] }
+  const p = await pageWith(world)
+  try {
+    assert.equal(heldNote(p), '')
+    const box = replyBox(p)
+    await p.type(box, 'mid-sentence')
+    box.focus()
+    secondReview(world)
+    await p.poll()
+    p.$('toast').hidden = true
+    await p.poll()
+    await p.poll()
+    assert.match(heldNote(p), /newer review is waiting/, 'still said, with the toast long gone')
+
+    box.blur()
+    await p.poll()
+    await p.poll()
+    assert.equal(heldNote(p), '', 'gone once the new review is shown')
+  } finally { p.close() }
+})
+
+test('Switch now during a load that is on its way takes the new review as that load ends, not a poll later', async () => {
+  const world = { review: reviewOf('2026-11-16T09:00:00Z', 'master', [thread(1, 'a.go')]), diff: [lineOf('a.go')] }
+  const p = await pageWith(world)
+  try {
+    const box = replyBox(p)
+    await p.type(box, 'mid-sentence')
+    box.focus()
+    secondReview(world)
+    await p.poll()
+    assert.match(toastText(p), /Switch now/)
+
+    let release
+    world.holdReview = new Promise((resolve) => { release = resolve })
+    await p.kick('tick')
+    const loads = diffLoads(p)
+    p.$('toast').querySelector('.toast-action').click()
+    release()
+    world.holdReview = null
+    await p.settle()
+
+    assert.ok(diffLoads(p) > loads, 'the new review was taken without waiting for another poll')
+    assert.equal(p.$('review-files').querySelectorAll('.review-thread').length, 1)
+  } finally { p.close() }
+})
+
+test('closing the review names the one shown, and is answered like the rest when the agent has replaced it', async () => {
+  const done = Object.assign(reviewOf('2026-11-16T09:00:00Z', 'master', [Object.assign(thread(1, 'a.go'), { status: 'resolved' })]), { state: 'done' })
+  const world = { review: done, diff: [lineOf('a.go')] }
+  const p = await pageWith(world)
+  try {
+    secondReview(world)
+    world.refuse = { error: 'the agent has replaced this review with another: what you did was not applied to it', code: 'review-replaced' }
+    const loads = diffLoads(p)
+    await p.click('review-close')
+    assert.deepEqual(p.sent('/api/review/close').pop().for, { started: '2026-11-16T09:00:00Z', ref: 'master' })
+    assert.ok(diffLoads(p) > loads, 'the new review is taken, and not asked about again as if the agent were at work')
+    assert.match(toastText(p), /agent has replaced this review/)
+    assert.equal(p.$('confirm').open, false, 'no "are you sure" for a close that was not done')
   } finally { p.close() }
 })
