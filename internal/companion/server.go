@@ -654,6 +654,8 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"conversation":          s.cfg.StartAgent != nil,
 		"choice":                choiceFeature.present(s),
 		"admin":                 s.cfg.Admin != nil,
+		"packages":              packagesFeature.present(s),
+		"packageSync":           packageSyncFeature.present(s),
 		"themes":                s.cfg.Themes != nil,
 		"manage":                s.cfg.Manage != nil,
 		"review":                s.cfg.ReviewTab != nil,

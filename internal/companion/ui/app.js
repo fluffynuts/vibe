@@ -1015,6 +1015,8 @@
       state.signin = !!res.body.signin
       state.signinStart = !!res.body.signinStart
       state.signinKey = !!res.body.signinKey
+      state.packages = res.body.packages
+      state.packageSync = res.body.packageSync
       $('admin-signin').hidden = !state.signin
       if (state.signin && !signInShown.asked) loadSignIn()
       $('usage').hidden = !state.usage
@@ -4114,6 +4116,7 @@
   const MAX_LISTED = 300
 
   async function loadSync() {
+    if (lacks('packageSync')) { noSuchCard('admin-sync-card', 'sync'); return }
     try {
       const res = await api('/api/packages/sync')
       reached(true)
@@ -4227,11 +4230,24 @@
 
   // --- package requests on the Admin tab -----------------------------------
 
+  // lacks is whether vibe has said this sandbox has no such feature: until it has (the state not yet read, or a vibe that doesn't say), the
+  // feature's own calls are made (a sandbox without it answers 404, and is taken as having none).
+  function lacks(feature) {
+    return state.loaded && state[feature] === false
+  }
+
+  function noSuchCard(id, card) {
+    $(id).hidden = true
+    showPackagesCard()
+    cardLoaded(card)
+  }
+
   // unticked is the keys of the requests the user has unticked: all are
   // ticked until then, and a poll doesn't undo it.
   const packagesView = { key: '', unticked: new Set(), config: '', byKey: new Map() }
 
   async function loadPackages() {
+    if (lacks('packages')) { noSuchCard('admin-packages-card', 'packages'); return }
     try {
       const res = await api('/api/packages')
       reached(true)
@@ -6329,8 +6345,8 @@
   const gate = { active: false, fetching: false, prompt: '', failed: '' }
 
   async function checkPackages() {
-    const sync = post('/api/packages/sync/check', {}).then((res) => (res.ok && res.body ? res.body : {})).catch(() => ({}))
-    const requests = api('/api/packages').then((res) => (res.ok && res.body && res.body.requests) || []).catch(() => [])
+    const sync = lacks('packageSync') ? Promise.resolve({}) : post('/api/packages/sync/check', {}).then((res) => (res.ok && res.body ? res.body : {})).catch(() => ({}))
+    const requests = lacks('packages') ? Promise.resolve([]) : api('/api/packages').then((res) => (res.ok && res.body && res.body.requests) || []).catch(() => [])
     const [b, asked] = await Promise.all([sync, requests])
     return Object.assign({}, b, { undecided: asked.filter((r) => !r.approved).length })
   }
