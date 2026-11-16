@@ -15,51 +15,216 @@ import (
 	"time"
 )
 
-// fakeAgent answers each prompt with an assistant line and a result, both
-// carrying the session id it was given — or a fresh one.
+// fakeAgent stands in for the agent: each start is a process (fakeProc) that
+// answers each prompt with an assistant line and a result, saying of each
+// prompt it was queued, started and completed, as claude does.
 type fakeAgent struct {
 	mu       sync.Mutex
 	prompts  []string
-	sessions []string
-	release  chan struct{} // when set, a turn waits for it (or for ctx)
-	// linger, when set, keeps a turn going after it has answered, as
-	// background work the agent waits on does, until it is closed (or ctx).
-	linger chan struct{}
-	err    error
+	sessions []string // the session each start resumed
+	starts   int
+	// interrupts, ends, kills count what was asked of the processes;
+	// stoppedTasks are the background tasks stopped.
+	interrupts, ends, kills int
+	stoppedTasks            []string
+	release                 chan struct{} // when set, a turn waits for it (or an interrupt) before its result
+	slowStop                chan struct{} // when set, an interrupted turn ends only once it is closed
+	// linger, when set, leaves a background task running after each answer,
+	// until it is closed (or the task is stopped, or the process killed).
+	linger   chan struct{}
+	err      error // what a process fails with, before it answers
+	startErr error // what a start fails with
+	killErr  error // what Kill says
 }
 
-func (f *fakeAgent) converse(ctx context.Context, prompt, session string, delivered func(), onLine func([]byte)) error {
-	delivered()
+func (f *fakeAgent) start(ctx context.Context, session string, onLine func([]byte)) (Agent, error) {
+	if f.startErr != nil {
+		return nil, f.startErr
+	}
 	f.mu.Lock()
-	f.prompts = append(f.prompts, prompt)
+	f.starts++
 	f.sessions = append(f.sessions, session)
-	release, linger := f.release, f.linger
 	f.mu.Unlock()
-	id := session
-	if id == "" {
-		id = "sess-1"
+	p := &fakeProc{f: f, session: session, onLine: onLine, prompts: make(chan [2]string, 16), interrupt: make(chan struct{}, 4),
+		stopTask: make(chan string, 4), end: make(chan struct{}), kill: make(chan struct{}), done: make(chan struct{})}
+	go p.run()
+	return p, nil
+}
+
+func (f *fakeAgent) asked() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.prompts...)
+}
+
+func (f *fakeAgent) sessionsSeen() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.sessions...)
+}
+
+func (f *fakeAgent) count(n *int) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return *n
+}
+
+type fakeProc struct {
+	f         *fakeAgent
+	session   string
+	onLine    func([]byte)
+	prompts   chan [2]string
+	interrupt chan struct{}
+	stopTask  chan string
+	end, kill chan struct{}
+	endOnce   sync.Once
+	killOnce  sync.Once
+	done      chan struct{}
+	err       error
+}
+
+func (p *fakeProc) say(line string) { p.onLine([]byte(line)) }
+
+func (p *fakeProc) id() string {
+	if p.session == "" {
+		return "sess-1"
 	}
-	onLine([]byte(`{"type":"assistant","session_id":"` + id + `","message":{"content":[{"type":"text","text":"echo: ` + prompt + `"}]}}`))
-	if release != nil {
+	return p.session
+}
+
+func (p *fakeProc) run() {
+	defer close(p.done)
+	task := false
+	for {
 		select {
-		case <-release:
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-p.kill:
+			return
+		case <-p.end:
+			if !task {
+				p.err = p.f.err
+				return
+			}
+			// Input closed, a task still running: it waits for it, as claude does.
+			select {
+			case <-p.kill:
+			case <-p.f.linger:
+			}
+			p.err = p.f.err
+			return
+		case id := <-p.stopTask:
+			if task && id == "t1" {
+				task = false
+				p.say(`{"type":"system","subtype":"background_tasks_changed","tasks":[]}`)
+			}
+		case <-p.f.linger:
+			if task {
+				task = false
+				p.say(`{"type":"system","subtype":"background_tasks_changed","tasks":[]}`)
+			}
+		case pr := <-p.prompts:
+			text, id := pr[0], pr[1]
+			p.say(`{"type":"command_lifecycle","command_uuid":"` + id + `","state":"queued"}`)
+			p.say(`{"type":"command_lifecycle","command_uuid":"` + id + `","state":"started"}`)
+			p.say(`{"type":"assistant","session_id":"` + p.id() + `","message":{"content":[{"type":"text","text":"echo: ` + text + `"}]}}`)
+			if p.f.err != nil {
+				// It fails before it has answered.
+				p.err = p.f.err
+				return
+			}
+			stopped := false
+			if p.f.release != nil {
+				select {
+				case <-p.f.release:
+				case <-p.interrupt:
+					stopped = true
+					if p.f.slowStop != nil {
+						select {
+						case <-p.f.slowStop:
+						case <-p.kill:
+							return
+						}
+					}
+				case <-p.kill:
+					return
+				}
+			}
+			if stopped {
+				p.say(`{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"` + p.id() + `"}`)
+				p.say(`{"type":"command_lifecycle","command_uuid":"` + id + `","state":"cancelled"}`)
+				continue
+			}
+			if p.f.linger != nil && !task {
+				// The task starts during the turn, as claude reports it: before the result.
+				select {
+				case <-p.f.linger:
+				default:
+					task = true
+					p.say(`{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"t1","task_type":"local_bash","description":"Run the tests"}]}`)
+				}
+			}
+			p.say(`{"type":"result","subtype":"success","num_turns":1,"result":"ok","session_id":"` + p.id() + `"}`)
+			p.say(`{"type":"command_lifecycle","command_uuid":"` + id + `","state":"completed"}`)
 		}
 	}
-	onLine([]byte(`{"type":"result","session_id":"` + id + `"}`))
-	if linger != nil {
-		select {
-		case <-linger:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+}
+
+func (p *fakeProc) Prompt(text, id string) error {
+	p.f.mu.Lock()
+	p.f.prompts = append(p.f.prompts, text)
+	p.f.mu.Unlock()
+	select {
+	case <-p.done:
+		return errors.New("the agent has ended")
+	case p.prompts <- [2]string{text, id}:
+		return nil
 	}
-	return f.err
+}
+
+func (p *fakeProc) Interrupt() error {
+	p.f.mu.Lock()
+	p.f.interrupts++
+	p.f.mu.Unlock()
+	select {
+	case p.interrupt <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+func (p *fakeProc) StopTask(id string) error {
+	p.f.mu.Lock()
+	p.f.stoppedTasks = append(p.f.stoppedTasks, id)
+	p.f.mu.Unlock()
+	p.stopTask <- id
+	return nil
+}
+
+func (p *fakeProc) End() {
+	p.f.mu.Lock()
+	p.f.ends++
+	p.f.mu.Unlock()
+	p.endOnce.Do(func() { close(p.end) })
+}
+
+func (p *fakeProc) Kill() error {
+	p.f.mu.Lock()
+	p.f.kills++
+	err := p.f.killErr
+	p.f.mu.Unlock()
+	p.killOnce.Do(func() { close(p.kill) })
+	<-p.done
+	return err
+}
+
+func (p *fakeProc) Done() <-chan struct{} { return p.done }
+
+func (p *fakeProc) Err() error {
+	<-p.done
+	return p.err
 }
 
 func converseServer(f *fakeAgent) *Server {
-	return New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: f.converse})
+	return New(Config{Sandbox: "box", Token: token, Port: testPort, StartAgent: f.start})
 }
 
 func send(t *testing.T, s *Server, path, body string) (code int, out map[string]interface{}) {
@@ -148,15 +313,17 @@ func TestEveryEventSaysWhenItHappened(t *testing.T) {
 	}
 }
 
-func TestTheNextPromptResumesTheSessionTheAgentReported(t *testing.T) {
+func TestAPromptAfterTheAgentHasEndedResumesTheSessionItReported(t *testing.T) {
 	f := &fakeAgent{}
 	s := converseServer(f)
+	s.convo.idleAfter = 10 * time.Millisecond
 	send(t, s, "/api/conversation/send", `{"prompt":"one"}`)
 	idle(t, s)
+	waitFor(t, "the idle agent to end", func() bool { return f.count(&f.ends) == 1 })
 	send(t, s, "/api/conversation/send", `{"prompt":"two"}`)
 	idle(t, s)
-	if want := []string{"", "sess-1"}; f.sessions[0] != want[0] || f.sessions[1] != want[1] {
-		t.Errorf("sessions = %q, want %q", f.sessions, want)
+	if got, want := f.sessionsSeen(), []string{"", "sess-1"}; len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("sessions = %q, want %q", got, want)
 	}
 }
 
@@ -172,22 +339,25 @@ func TestASessionThatIsNotAnIdIsNeverResumed(t *testing.T) {
 	}
 }
 
-func TestOnlyOneTurnRunsAtATime(t *testing.T) {
+func TestAPromptWhileTheAgentAnswersIsGivenToTheSameAgent(t *testing.T) {
 	f := &fakeAgent{release: make(chan struct{})}
 	s := converseServer(f)
 	send(t, s, "/api/conversation/send", `{"prompt":"slow"}`)
-	code, body := send(t, s, "/api/conversation/send", `{"prompt":"impatient"}`)
-	if code != http.StatusConflict {
-		t.Errorf("a second send while running: %d %v", code, body)
+	if code, body := send(t, s, "/api/conversation/send", `{"prompt":"and this"}`); code != http.StatusAccepted {
+		t.Fatalf("a second send while the agent answers: %d %v", code, body)
+	}
+	waitFor(t, "the second prompt to reach the agent", func() bool { return len(f.asked()) == 2 })
+	if got := f.asked(); got[1] != "and this" {
+		t.Errorf("the agent was given %q", got)
+	}
+	if n := f.count(&f.starts); n != 1 {
+		t.Errorf("%d agents were started: the prompt is for the one answering, as the console does", n)
 	}
 	close(f.release)
 	idle(t, s)
-	if len(f.prompts) != 1 {
-		t.Errorf("the agent was asked %q", f.prompts)
-	}
 }
 
-func TestStoppingEndsTheTurnAndSaysSo(t *testing.T) {
+func TestStoppingInterruptsTheTurnLeavingTheAgentAndSaysSo(t *testing.T) {
 	f := &fakeAgent{release: make(chan struct{})}
 	s := converseServer(f)
 	send(t, s, "/api/conversation/send", `{"prompt":"slow"}`)
@@ -199,159 +369,77 @@ func TestStoppingEndsTheTurnAndSaysSo(t *testing.T) {
 	if last.Kind != "done" || last.Text != "stopped" {
 		t.Errorf("last event = %+v", last)
 	}
+	if f.count(&f.interrupts) != 1 || f.count(&f.kills) != 0 {
+		t.Errorf("interrupts %d, kills %d: a stop interrupts the turn and leaves the agent", f.count(&f.interrupts), f.count(&f.kills))
+	}
 	if _, body := send(t, s, "/api/conversation/stop", `{}`); body["stopped"] != false {
 		t.Errorf("stopping nothing = %v", body)
 	}
+	close(f.release)
+	send(t, s, "/api/conversation/send", `{"prompt":"next"}`)
+	idle(t, s)
+	if n := f.count(&f.starts); n != 1 {
+		t.Errorf("%d agents started: the stopped one answers the next prompt", n)
+	}
 }
 
-// Stopping a turn in a sandbox takes a while (the agent is asked to end, and
-// killed if it hasn't within seconds), during which the turn is still running:
-// the page must be told a stop is under way, or Stop appears to do nothing.
+// Interrupting a turn takes a moment, during which it is still under way: the
+// page must be told a stop is under way, or Stop appears to do nothing.
 func TestAStopIsSaidToBeUnderWayUntilTheTurnHasEnded(t *testing.T) {
-	ended := make(chan struct{})
-	started := make(chan struct{})
-	slowToStop := func(ctx context.Context, prompt, session string, delivered func(), onLine func([]byte)) error {
-		delivered()
-		close(started)
-		<-ctx.Done()
-		<-ended
-		return ctx.Err()
-	}
-	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: slowToStop})
+	f := &fakeAgent{release: make(chan struct{}), slowStop: make(chan struct{})}
+	s := converseServer(f)
 	send(t, s, "/api/conversation/send", `{"prompt":"slow"}`)
-	<-started
+	waitFor(t, "the prompt to reach the agent", func() bool { return len(f.asked()) == 1 })
 	send(t, s, "/api/conversation/stop", `{}`)
 	if p := poll(t, s, 0); !p.Running || p.StopState != "stopping" {
 		t.Errorf("while the agent is still being stopped: running %v, stopState %q", p.Running, p.StopState)
 	}
-	close(ended)
+	close(f.slowStop)
 	if p := idle(t, s); p.StopState != "" {
 		t.Errorf("stopState %q after the turn ended", p.StopState)
 	}
+	close(f.release)
 }
 
-// slowStopper is an agent that takes its time to end once stopped, and
-// notes what it is asked.
-type slowStopper struct {
-	mu      sync.Mutex
-	prompts []string
-	started chan struct{}
-	ended   chan struct{}
-}
-
-func (f *slowStopper) converse(ctx context.Context, prompt, session string, delivered func(), onLine func([]byte)) error {
-	delivered()
-	f.mu.Lock()
-	f.prompts = append(f.prompts, prompt)
-	first := len(f.prompts) == 1
-	f.mu.Unlock()
-	if !first {
-		onLine([]byte(`{"type":"result","session_id":"s"}`))
-		return nil
-	}
-	close(f.started)
-	<-ctx.Done()
-	<-f.ended
-	return ctx.Err()
-}
-
-func (f *slowStopper) asked() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.prompts...)
-}
-
-func stoppingServer(t *testing.T) (*Server, *slowStopper) {
-	f := &slowStopper{started: make(chan struct{}), ended: make(chan struct{})}
-	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: f.converse})
-	send(t, s, "/api/conversation/send", `{"prompt":"slow"}`)
-	<-f.started
+func TestAnAgentThatWillNotStopCanBeEndedAtOnce(t *testing.T) {
+	f := &fakeAgent{release: make(chan struct{}), slowStop: make(chan struct{})}
+	defer close(f.slowStop)
+	s := converseServer(f)
+	send(t, s, "/api/conversation/send", `{"prompt":"stuck"}`)
+	waitFor(t, "the prompt to reach the agent", func() bool { return len(f.asked()) == 1 })
 	send(t, s, "/api/conversation/stop", `{}`)
-	return s, f
-}
-
-func TestAPromptSentWhileTheAgentIsBeingStoppedIsShownAtOnceAndGivenToItOnceItHasStopped(t *testing.T) {
-	s, f := stoppingServer(t)
-	if code, body := send(t, s, "/api/conversation/send", `{"prompt":"instead"}`); code != http.StatusAccepted || body["queued"] != true {
-		t.Fatalf("send while stopping: %d %v", code, body)
+	if _, body := send(t, s, "/api/conversation/stop", `{"force":true}`); body["stopped"] != true {
+		t.Fatalf("force = %v", body)
 	}
-	p := poll(t, s, 0)
-	last := p.Events[len(p.Events)-1]
-	if last.Kind != "user" || last.Text != "instead" || last.Receipt != "queued" {
-		t.Errorf("the page is shown %+v", last)
-	}
-	if p.StopState != "waiting" {
-		t.Errorf("stopState = %q, want waiting", p.StopState)
-	}
-	if got := f.asked(); len(got) != 1 {
-		t.Errorf("the agent was given %q before the stop had finished", got)
-	}
-	close(f.ended)
-	deadline := time.Now().Add(2 * time.Second)
-	for len(f.asked()) < 2 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
-	if got := f.asked(); len(got) != 2 || got[1] != "instead" {
-		t.Fatalf("the agent was given %q", got)
-	}
-	p = idle(t, s)
-	if p.StopState != "" {
-		t.Errorf("stopState = %q after it ran", p.StopState)
-	}
-	stoppedAt, promptAt, prompts := -1, -1, 0
-	for i, e := range p.Events {
-		if e.Kind == "done" && e.Text == "stopped" {
-			stoppedAt = i
-		}
-		if e.Kind == "user" && e.Text == "instead" {
-			promptAt, prompts = i, prompts+1
-			if e.Receipt == "queued" {
-				t.Error("the prompt is still said to be queued")
-			}
-		}
-	}
-	if prompts != 1 {
-		t.Errorf("the prompt is in the conversation %d times", prompts)
-	}
-	if stoppedAt < 0 || promptAt < stoppedAt {
-		t.Errorf("the prompt (at %d) comes before the stop it waited for (at %d): %s", promptAt, stoppedAt, kinds(p))
-	}
-}
-
-func TestOnlyOnePromptWaitsForAStopAndOneNotBeingStoppedIsRefused(t *testing.T) {
-	s, f := stoppingServer(t)
-	send(t, s, "/api/conversation/send", `{"prompt":"one"}`)
-	if code, _ := send(t, s, "/api/conversation/send", `{"prompt":"two"}`); code != http.StatusConflict {
-		t.Errorf("a second waiting prompt: %d", code)
-	}
-	close(f.ended)
-	idle(t, s)
-
-	g := &fakeAgent{release: make(chan struct{})}
-	s2 := converseServer(g)
-	send(t, s2, "/api/conversation/send", `{"prompt":"busy"}`)
-	if code, _ := send(t, s2, "/api/conversation/send", `{"prompt":"impatient"}`); code != http.StatusConflict {
-		t.Errorf("a prompt while the agent answers and is not being stopped: %d", code)
-	}
-	close(g.release)
-	idle(t, s2)
-}
-
-func TestAStopThatCouldNotBeConfirmedIsReportedBesideTheStop(t *testing.T) {
-	unconfirmed := func(ctx context.Context, prompt, session string, delivered func(), onLine func([]byte)) error {
-		delivered()
-		<-ctx.Done()
-		return fmt.Errorf("%w: sandbox unreachable", ErrStopUnconfirmed)
-	}
-	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: unconfirmed})
-	send(t, s, "/api/conversation/send", `{"prompt":"slow"}`)
-	send(t, s, "/api/conversation/stop", `{}`)
 	p := idle(t, s)
-	if got := kinds(p); !strings.HasSuffix(got, "error,done") {
-		t.Fatalf("events = %q, want the error before the stop", got)
+	if last := p.Events[len(p.Events)-1]; last.Kind != "done" || last.Text != "stopped" {
+		t.Errorf("last event = %+v", last)
 	}
-	if e := p.Events[len(p.Events)-2]; !strings.Contains(e.Text, "sandbox unreachable") {
-		t.Errorf("error = %q", e.Text)
+	if f.count(&f.kills) != 1 {
+		t.Errorf("kills = %d", f.count(&f.kills))
+	}
+	close(f.release)
+	send(t, s, "/api/conversation/send", `{"prompt":"again"}`)
+	idle(t, s)
+	if f.count(&f.starts) != 2 || f.sessionsSeen()[1] != "sess-1" {
+		t.Errorf("starts %d, sessions %q: the next prompt starts an agent resuming the conversation", f.count(&f.starts), f.sessionsSeen())
+	}
+}
+
+func TestAForceStopThatCouldNotBeConfirmedIsReported(t *testing.T) {
+	f := &fakeAgent{release: make(chan struct{}), killErr: fmt.Errorf("%w: sandbox unreachable", ErrStopUnconfirmed)}
+	defer close(f.release)
+	s := converseServer(f)
+	send(t, s, "/api/conversation/send", `{"prompt":"slow"}`)
+	waitFor(t, "the prompt to reach the agent", func() bool { return len(f.asked()) == 1 })
+	send(t, s, "/api/conversation/stop", `{"force":true}`)
+	p := idle(t, s)
+	found := false
+	for _, e := range p.Events {
+		found = found || (e.Kind == "error" && strings.Contains(e.Text, "sandbox unreachable"))
+	}
+	if !found {
+		t.Errorf("events %s: the unconfirmed stop is not said", kinds(p))
 	}
 }
 
@@ -522,24 +610,39 @@ func TestALongConversationKeepsNoMoreThanItsBytes(t *testing.T) {
 	}
 }
 
-func TestAPromptsReceiptAdvancesFromSentToDeliveredToSeen(t *testing.T) {
+func TestAPromptsReceiptFollowsWhatTheAgentSaysOfIt(t *testing.T) {
 	var c conversation
-	c.begin("hello")
-	if got := c.latestReceipt()["state"]; got != receiptSent {
-		t.Errorf("after begin: %v", got)
+	seq, _ := c.claim("hello", true)
+	c.pending = map[string]int{"p-1": seq}
+	state := func() interface{} { return c.latestReceipt()["state"] }
+	if got := state(); got != receiptSent {
+		t.Errorf("claimed: %v", got)
 	}
-	c.receipt(receiptDelivered)
-	if got := c.latestReceipt()["state"]; got != receiptDelivered {
-		t.Errorf("after delivery: %v", got)
+	c.line([]byte(`{"type":"command_lifecycle","command_uuid":"p-1","state":"queued"}`))
+	if got := state(); got != receiptDelivered {
+		t.Errorf("queued by the agent: %v", got)
 	}
-	c.line([]byte(`{"type":"system","subtype":"init"}`))
-	if got := c.latestReceipt()["state"]; got != receiptSeen {
-		t.Errorf("after the agent's first line: %v", got)
+	c.line([]byte(`{"type":"command_lifecycle","command_uuid":"p-1","state":"started"}`))
+	if got := state(); got != receiptSeen {
+		t.Errorf("started: %v", got)
 	}
 	// Never backwards, whatever order the news arrives in.
-	c.receipt(receiptDelivered)
-	if got := c.latestReceipt()["state"]; got != receiptSeen {
+	c.line([]byte(`{"type":"command_lifecycle","command_uuid":"p-1","state":"queued"}`))
+	if got := state(); got != receiptSeen {
 		t.Errorf("went back to %v", got)
+	}
+	// A prompt a stop dropped before the agent took it in was never answered.
+	other, _ := c.claim("and this", true)
+	c.pending["p-2"] = other
+	c.line([]byte(`{"type":"command_lifecycle","command_uuid":"p-2","state":"queued"}`))
+	c.line([]byte(`{"type":"command_lifecycle","command_uuid":"p-2","state":"cancelled"}`))
+	if got := state(); got != receiptUndelivered {
+		t.Errorf("cancelled: %v", got)
+	}
+	for _, e := range c.events {
+		if e.Kind == "agent" {
+			t.Errorf("what the agent says of a prompt is shown: %s", e.Agent)
+		}
 	}
 }
 
@@ -634,57 +737,115 @@ func answered(t *testing.T, s *Server) pollResult {
 	return pollResult{}
 }
 
-func TestAnAnsweredTurnLetsThePageGoOnWhileTheAgentWorksInTheBackground(t *testing.T) {
+func TestBackgroundWorkKeepsTheAgentAndAPromptMeanwhileGoesToItLeavingTheWorkRunning(t *testing.T) {
 	f := &fakeAgent{linger: make(chan struct{})}
 	defer close(f.linger)
 	s := converseServer(f)
-	send(t, s, "/api/conversation/send", `{"prompt":"review it"}`)
+	send(t, s, "/api/conversation/send", `{"prompt":"run the tests in the background"}`)
 	if p := answered(t, s); !p.Background {
-		t.Errorf("an answered turn still at work isn't said to be: %+v", p)
+		t.Errorf("an agent with work in the background isn't said to have it: %+v", p)
 	}
-
-	// The next prompt ends what was left running, without a "stopped".
-	f.mu.Lock()
-	f.linger = nil
-	f.mu.Unlock()
-	if code, out := send(t, s, "/api/conversation/send", `{"prompt":"next"}`); code != http.StatusAccepted {
+	if tasks := tasksOf(t, s); len(tasks) != 1 || tasks[0].Description != "Run the tests" {
+		t.Errorf("tasks = %+v", tasks)
+	}
+	if code, out := send(t, s, "/api/conversation/send", `{"prompt":"meanwhile"}`); code != http.StatusAccepted {
 		t.Fatalf("send while the agent worked in the background: %d %v", code, out)
 	}
-	p := idle(t, s)
+	answered(t, s)
+	if f.count(&f.starts) != 1 || f.count(&f.kills) != 0 || len(f.stoppedTasks) != 0 {
+		t.Errorf("starts %d, kills %d, tasks stopped %v: the prompt goes to the agent, and its work goes on", f.count(&f.starts), f.count(&f.kills), f.stoppedTasks)
+	}
+	p := poll(t, s, 0)
 	if got := kinds(p); got != "user,agent,agent,done,user,agent,agent,done" {
 		t.Errorf("events = %s", got)
 	}
-	for _, e := range p.Events {
-		if e.Kind == "done" && e.Text != "" {
-			t.Errorf("a superseded turn was said to be %q", e.Text)
-		}
+	if !p.Background {
+		t.Error("the background work isn't said to go on")
 	}
 }
 
-func TestAPromptWaitsWhileTheAgentIsStillAnswering(t *testing.T) {
-	f := &fakeAgent{release: make(chan struct{})}
+func tasksOf(t *testing.T, s *Server) []BackgroundTask {
+	t.Helper()
+	rec := do(t, s, req{path: "/api/conversation?after=0", headers: authed(nil)})
+	var body struct {
+		Tasks []BackgroundTask `json:"tasks"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	return body.Tasks
+}
+
+func TestStoppingTheBackgroundWorkLeavesTheAgent(t *testing.T) {
+	f := &fakeAgent{linger: make(chan struct{})}
+	defer close(f.linger)
 	s := converseServer(f)
-	send(t, s, "/api/conversation/send", `{"prompt":"one"}`)
-	if code, _ := send(t, s, "/api/conversation/send", `{"prompt":"two"}`); code != http.StatusConflict {
-		t.Errorf("a prompt mid-answer: %d, want 409", code)
+	send(t, s, "/api/conversation/send", `{"prompt":"run the tests in the background"}`)
+	answered(t, s)
+	if _, body := send(t, s, "/api/conversation/stop", `{"tasks":true}`); body["stopped"] != float64(1) {
+		t.Fatalf("stop tasks = %v", body)
 	}
-	close(f.release)
-	idle(t, s)
+	waitFor(t, "the background work to end", func() bool { return len(tasksOf(t, s)) == 0 })
+	if f.count(&f.kills) != 0 || f.count(&f.starts) != 1 {
+		t.Errorf("kills %d, starts %d: the agent is left", f.count(&f.kills), f.count(&f.starts))
+	}
 }
 
-func TestTheAgentAtWorkAgainIsAnsweringAgain(t *testing.T) {
-	s := converseServer(&fakeAgent{})
-	c := &s.convo
-	c.begin("go")
-	c.line([]byte(`{"type":"result"}`))
-	if _, _, running, background := c.since(0); running || !background {
-		t.Errorf("after a result: running %v, background %v", running, background)
+func TestAnAgentWithNothingToDoIsEndedAndTheNextPromptResumesTheConversation(t *testing.T) {
+	f := &fakeAgent{}
+	s := converseServer(f)
+	s.convo.idleAfter = 20 * time.Millisecond
+	send(t, s, "/api/conversation/send", `{"prompt":"one"}`)
+	idle(t, s)
+	waitFor(t, "the idle agent to be ended", func() bool { return f.count(&f.ends) == 1 })
+	send(t, s, "/api/conversation/send", `{"prompt":"two"}`)
+	idle(t, s)
+	if got := f.sessionsSeen(); len(got) != 2 || got[0] != "" || got[1] != "sess-1" {
+		t.Errorf("sessions started = %q: the second agent resumes the conversation", got)
 	}
-	c.line([]byte(`{"type":"assistant"}`))
+}
+
+func TestAnAgentWithBackgroundWorkIsNotEndedForBeingIdle(t *testing.T) {
+	f := &fakeAgent{linger: make(chan struct{})}
+	s := converseServer(f)
+	s.convo.idleAfter = 20 * time.Millisecond
+	send(t, s, "/api/conversation/send", `{"prompt":"run the tests in the background"}`)
+	answered(t, s)
+	time.Sleep(100 * time.Millisecond)
+	if f.count(&f.ends) != 0 {
+		t.Error("an agent with work in the background was ended")
+	}
+	close(f.linger)
+	waitFor(t, "the agent to be ended once its work is done", func() bool { return f.count(&f.ends) == 1 })
+}
+
+func TestTheAgentCalledBackByItsBackgroundWorkIsAnsweringAgain(t *testing.T) {
+	var c conversation
+	agent, _ := (&fakeAgent{}).start(context.Background(), "", func([]byte) {})
+	defer agent.Kill()
+	c.agent = agent
+	c.claim("go", true)
+	c.line([]byte(`{"type":"result","num_turns":1,"result":"ok"}`))
+	if _, _, running, _ := c.since(0); running {
+		t.Error("still answering after its result")
+	}
+	c.line([]byte(`{"type":"system","subtype":"task_notification","status":"completed"}`))
+	c.line([]byte(`{"type":"system","subtype":"init"}`))
 	if _, _, running, _ := c.since(0); !running {
-		t.Error("the agent woken again by its background work isn't answering")
+		t.Error("the agent called back by its background work isn't answering")
 	}
-	c.finish(nil, false)
+	c.line([]byte(`{"type":"result","num_turns":1,"result":"it finished"}`))
+	if _, _, running, _ := c.since(0); running {
+		t.Error("still answering after the turn it began by itself")
+	}
+}
+
+func TestAResumedAgentsEmptyFirstWordEndsNoTurn(t *testing.T) {
+	var c conversation
+	c.claim("go", true)
+	c.line([]byte(`{"type":"system","subtype":"task_notification","status":"stopped","summary":"Background shell command didn't finish before the previous session ended"}`))
+	c.line([]byte(`{"type":"result","subtype":"success","num_turns":0,"result":""}`))
+	if _, _, running, _ := c.since(0); !running {
+		t.Error("the prompt's turn ended before it began")
+	}
 }
 
 func pollCommands(t *testing.T, s *Server, known int) (commands []string, seq int, sent bool) {
@@ -731,9 +892,9 @@ func TestThePageLearnsTheSlashCommandsTheAgentHas(t *testing.T) {
 func TestTheSlashCommandsOutliveTheServer(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "box.conversation.json")
 	first := historyServer(t, &fakeAgent{}, file)
-	first.convo.begin("go")
+	first.convo.claim("go", true)
 	first.convo.line([]byte(`{"type":"system","subtype":"init","slash_commands":["deploy"]}`))
-	first.convo.finish(nil, false)
+	first.convo.line([]byte(`{"type":"result","num_turns":1,"result":"ok"}`))
 	first.Close()
 
 	second := historyServer(t, &fakeAgent{}, file)
@@ -757,7 +918,7 @@ func TestALongQuietTurnIsSaidToBeQuietButNotStopped(t *testing.T) {
 	s := converseServer(&fakeAgent{})
 	c := &s.convo
 	c.now = func() time.Time { return clock }
-	c.begin("long job")
+	c.claim("long job", true)
 
 	clock = clock.Add(59 * time.Minute)
 	if q := quietOf(t, s); q != 0 {
@@ -767,7 +928,7 @@ func TestALongQuietTurnIsSaidToBeQuietButNotStopped(t *testing.T) {
 	if q := quietOf(t, s); q != 61 {
 		t.Errorf("after 61 quiet minutes: %d", q)
 	}
-	if !c.running {
+	if !c.answering {
 		t.Error("the turn was stopped")
 	}
 	// Anything the agent says ends the quiet.
@@ -775,15 +936,11 @@ func TestALongQuietTurnIsSaidToBeQuietButNotStopped(t *testing.T) {
 	if q := quietOf(t, s); q != 0 {
 		t.Errorf("after the agent spoke: %d", q)
 	}
-	// Answered, with work left in the background: not the agent being quiet.
-	c.line([]byte(`{"type":"result"}`))
+	// Answered, perhaps with work left in the background: not the agent being quiet.
+	c.line([]byte(`{"type":"result","num_turns":1,"result":"ok"}`))
 	clock = clock.Add(3 * time.Hour)
 	if q := quietOf(t, s); q != 0 {
 		t.Errorf("answered, three hours on: %d", q)
-	}
-	c.finish(nil, false)
-	if q := quietOf(t, s); q != 0 {
-		t.Errorf("no turn at all: %d", q)
 	}
 }
 
@@ -801,7 +958,7 @@ func compactingOf(t *testing.T, s *Server) bool {
 func TestThePageIsToldWhileTheAgentCompactsItsContext(t *testing.T) {
 	s := converseServer(&fakeAgent{})
 	c := &s.convo
-	c.begin("a prompt to a full context")
+	c.claim("a prompt to a full context", true)
 	if compactingOf(t, s) {
 		t.Error("compacting before the agent said so")
 	}
@@ -822,13 +979,13 @@ func TestThePageIsToldWhileTheAgentCompactsItsContext(t *testing.T) {
 func TestATurnThatEndsWhileCompactingIsntStillCompacting(t *testing.T) {
 	s := converseServer(&fakeAgent{})
 	c := &s.convo
-	c.begin("go")
+	c.claim("go", true)
 	c.line([]byte(`{"type":"system","subtype":"status","status":"compacting"}`))
-	c.finish(nil, true)
+	c.line([]byte(`{"type":"result","subtype":"error_during_execution","num_turns":1}`))
 	if compactingOf(t, s) {
 		t.Error("compacting after the turn ended")
 	}
-	c.begin("again")
+	c.claim("again", true)
 	if compactingOf(t, s) {
 		t.Error("the next turn began compacting")
 	}
@@ -840,7 +997,7 @@ func TestATurnThatEndsWhileCompactingIsntStillCompacting(t *testing.T) {
 func TestATurnWaitsForTheSandboxToBeReadyAndSaysSoUntilItIs(t *testing.T) {
 	f := &fakeAgent{}
 	gate := make(chan struct{})
-	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: f.converse,
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, StartAgent: f.start,
 		Prepare: func(ctx context.Context, say func(string)) error {
 			say("starting the sandbox")
 			<-gate
@@ -878,7 +1035,7 @@ func TestATurnWaitsForTheSandboxToBeReadyAndSaysSoUntilItIs(t *testing.T) {
 
 func TestEveryThingSaidWhileWaitingIsTakenBackOnceTheSandboxIsReady(t *testing.T) {
 	f := &fakeAgent{}
-	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: f.converse,
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, StartAgent: f.start,
 		Prepare: func(ctx context.Context, say func(string)) error {
 			say("starting the sandbox")
 			say("still starting")
@@ -895,7 +1052,7 @@ func TestEveryThingSaidWhileWaitingIsTakenBackOnceTheSandboxIsReady(t *testing.T
 
 func TestWhatIsSaidWhileWaitingStaysWhenTheSandboxCantBeReadied(t *testing.T) {
 	f := &fakeAgent{}
-	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: f.converse,
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, StartAgent: f.start,
 		Prepare: func(ctx context.Context, say func(string)) error {
 			say("starting the sandbox")
 			return errors.New("sandbox 'box' didn't start")
@@ -909,7 +1066,7 @@ func TestWhatIsSaidWhileWaitingStaysWhenTheSandboxCantBeReadied(t *testing.T) {
 
 func TestNothingIsRetractedForATurnThatSaidNothing(t *testing.T) {
 	f := &fakeAgent{}
-	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: f.converse,
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, StartAgent: f.start,
 		Prepare: func(context.Context, func(string)) error { return nil }})
 	send(t, s, "/api/conversation/send", `{"prompt":"hello"}`)
 	if got := kinds(idle(t, s)); got != "user,agent,agent,done" {
@@ -920,7 +1077,7 @@ func TestNothingIsRetractedForATurnThatSaidNothing(t *testing.T) {
 func TestATakenBackNoteIsNotKeptForTheNextRunOfVibe(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "c.json")
 	f := &fakeAgent{}
-	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: f.converse, History: file,
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, StartAgent: f.start, History: file,
 		Prepare: func(ctx context.Context, say func(string)) error { say("starting the sandbox"); return nil }})
 	send(t, s, "/api/conversation/send", `{"prompt":"hello"}`)
 	idle(t, s)
@@ -953,7 +1110,7 @@ func TestAPageDoesNotGetATakingBackOfWhatItNeverHad(t *testing.T) {
 
 func TestATurnTheSandboxCantBeReadiedForIsntRun(t *testing.T) {
 	f := &fakeAgent{}
-	s := New(Config{Sandbox: "box", Token: token, Port: testPort, Converse: f.converse,
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort, StartAgent: f.start,
 		Prepare: func(context.Context, func(string)) error {
 			return errors.New("sandbox 'box' didn't start — 'sbx ls' says what state it is in")
 		}})

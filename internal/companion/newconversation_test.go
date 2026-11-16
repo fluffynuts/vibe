@@ -138,7 +138,7 @@ func freshServer(t *testing.T, f freshSetup) *Server {
 	if f.agent == nil {
 		f.agent = &fakeAgent{}
 	}
-	cfg := Config{Sandbox: "box", Token: token, Port: testPort, Converse: f.agent.converse}
+	cfg := Config{Sandbox: "box", Token: token, Port: testPort, StartAgent: f.agent.start}
 	if f.work != "" {
 		cfg.Workspace = f.work
 		cfg.SandboxGit = gitStandIn(f.work)

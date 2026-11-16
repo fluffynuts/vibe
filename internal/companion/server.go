@@ -88,10 +88,10 @@ type Config struct {
 	Workspace string
 	// Git reads dir's git status, nil when it has none; nil means readGit.
 	Git func(dir string) *GitInfo
-	// Converse runs a turn of the conversation tab's talk with the agent;
-	// nil means the sandbox's agent can't be talked to this way, and the
-	// page has no such tab.
-	Converse Converser
+	// StartAgent starts the agent the conversation tab talks with, which
+	// lives while it has work (see Agent); nil means the sandbox's agent
+	// can't be talked to this way, and the page has no such tab.
+	StartAgent StartAgent
 	// Choice lets the page choose the model and effort the conversation's
 	// agent is asked to use; nil means it can't, and the page has no
 	// drop-downs for them.
@@ -255,7 +255,6 @@ func New(cfg Config) *Server {
 	ui, _ := fs.Sub(uiFiles, "ui")
 	life, cancel := context.WithCancel(context.Background())
 	s := &Server{cfg: cfg, ui: ui, clock: time.Now, branchLookup: review.CurrentBranch, lifeCtx: life, lifeCancel: cancel, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer(colourAtOnce), boot: newBoot()}
-	s.convo.startQueued = s.startQueuedTurn
 	return s
 }
 
@@ -513,7 +512,7 @@ type feature struct {
 var (
 	usageFeature = feature{func(s *Server) bool { return s.cfg.Usage != nil },
 		"this page has no way to read the sandbox's load", 1 << 10}
-	conversationFeature = feature{func(s *Server) bool { return s.cfg.Converse != nil },
+	conversationFeature = feature{func(s *Server) bool { return s.cfg.StartAgent != nil },
 		"this sandbox has no conversation to have", maxPrompt}
 	adminFeature = feature{func(s *Server) bool { return s.cfg.Admin != nil },
 		"this page has no admin tab", 64 * 1024}
@@ -652,7 +651,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"clipboardReady":        ready,
 		"clipboardTrouble":      s.clipboardTrouble(clipboard, ready),
 		"clipboardCanStart":     clipboard != "" && s.cfg.StartClipboard != nil,
-		"conversation":          s.cfg.Converse != nil,
+		"conversation":          s.cfg.StartAgent != nil,
 		"choice":                choiceFeature.present(s),
 		"admin":                 s.cfg.Admin != nil,
 		"themes":                s.cfg.Themes != nil,

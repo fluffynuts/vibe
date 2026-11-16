@@ -752,15 +752,21 @@ func TestTheSandboxIsKeptAwakeWhileTheAgentWorks(t *testing.T) {
 	if wasAsked() {
 		t.Error("kept awake with no turn")
 	}
-	c.begin("go")
+	c.claim("go", true)
 	if !wasAsked() {
 		t.Error("not kept awake while the agent answers")
 	}
-	c.line([]byte(`{"type":"result"}`))
+	agent, _ := (&fakeAgent{}).start(context.Background(), "", func([]byte) {})
+	defer agent.Kill()
+	c.mu.Lock()
+	c.agent = agent
+	c.mu.Unlock()
+	c.line([]byte(`{"type":"result","num_turns":1,"result":"ok"}`))
+	c.line([]byte(`{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"t1"}]}`))
 	if !wasAsked() {
 		t.Error("not kept awake while something it left runs")
 	}
-	c.finish(nil, false)
+	c.line([]byte(`{"type":"system","subtype":"background_tasks_changed","tasks":[]}`))
 	if wasAsked() {
 		t.Error("kept awake after the agent was done")
 	}
@@ -790,11 +796,11 @@ func TestThePageIsToldWhichVersionOfItVibeServes(t *testing.T) {
 func TestEveryAPICallIsGuarded(t *testing.T) {
 	f := &fakeAgent{}
 	s := New(Config{Sandbox: "box", Token: token, Port: testPort,
-		Policy:    &policy.Client{Sandbox: "box", Run: (&fakeSbx{}).run},
-		Converse:  f.converse,
-		Admin:     &fakeInstructor{},
-		Manage:    &fakeManager{},
-		ReviewTab: &ReviewTab{Workspace: t.TempDir(), Store: review.NewStore(t.TempDir())}})
+		Policy:     &policy.Client{Sandbox: "box", Run: (&fakeSbx{}).run},
+		StartAgent: f.start,
+		Admin:      &fakeInstructor{},
+		Manage:     &fakeManager{},
+		ReviewTab:  &ReviewTab{Workspace: t.TempDir(), Store: review.NewStore(t.TempDir())}})
 	routes := s.apiRoutes()
 	if len(routes) < 30 {
 		t.Fatalf("only %d routes: are they all listed?", len(routes))

@@ -331,7 +331,7 @@ func (s *Server) conversationNew(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("clearing the clipboard is \"sent\" or \"all\", not %q", req.Clipboard))
 		return
 	}
-	if s.convo.answering() {
+	if s.convo.answeringNow() {
 		writeError(w, http.StatusConflict, "stop the agent first")
 		return
 	}

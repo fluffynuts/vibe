@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -16,11 +14,12 @@ import (
 	"vibe/internal/sbxrun"
 )
 
-// agentArgs is how the conversation tab runs claude: one prompt on its
-// stdin, its progress as stream-json on stdout. There is no terminal to
-// approve anything on, and the sandbox is the boundary the agent was given,
-// so it runs the way sbx itself runs it.
-var agentArgs = []string{"claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions"}
+// agentArgs is how the conversation tab runs claude: one process for as long
+// as it has work, prompts (and vibe's requests: a stop, a model) written to
+// its stdin as stream-json, its progress as stream-json on stdout. There is
+// no terminal to approve anything on, and the sandbox is the boundary the
+// agent was given, so it runs the way sbx itself runs it.
+var agentArgs = []string{"claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions"}
 
 // shellQuote makes s one word for a POSIX shell.
 func shellQuote(s string) string {
@@ -129,34 +128,171 @@ var stopTurn = func(name, pidFile string) error {
 	return nil
 }
 
-// converse is the companion page's conversation with the agent of sandbox
-// name, which works in workspace (the same path inside as out). A turn
-// ended early (stopped, or by the next prompt) is stopped in the sandbox
-// too, before it counts as ended, so a second can't start alongside it.
-func converse(name, workspace string, choose func() (turnChoice, error)) companion.Converser {
-	return func(ctx context.Context, prompt, session string, delivered func(), onLine func([]byte)) error {
-		// Read for each turn, so a change on the page is the next prompt's.
+// conversationPidFile is where the agent's wrapper records its process (see
+// wrapTurn): one for the conversation (a sandbox has one), not one per turn,
+// so that a vibe started after one that died finds the agent it left (it
+// runs on, unseen, its output going nowhere) and ends it.
+const conversationPidFile = "/tmp/vibe-conversation.pid"
+
+// agentSession is a command in the sandbox whose input stays open (see
+// sbxrun.Session).
+type agentSession interface {
+	WriteLine(line []byte) error
+	CloseInput() error
+	Done() <-chan struct{}
+	Err() error
+}
+
+// startSession starts args in sandbox name with its input kept open; a
+// variable for tests.
+var startSession = func(ctx context.Context, name string, onLine func([]byte), args ...string) (agentSession, error) {
+	return sbxrun.ExecSession(ctx, name, onLine, args...)
+}
+
+// endLeftover ends an agent a vibe that died left running in sandbox name,
+// if any, and clears the way for the next: the stop it leaves behind would
+// keep the next agent from starting (see wrapTurn). A variable for tests.
+var endLeftover = func(name, pidFile string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), stopTurnWithin)
+	defer cancel()
+	script := `sh -c "$1"; rm -f "$2"`
+	out, err := sbxrun.ExecStdout(ctx, name, "sh", "-c", script, "endleftover", stopTurnScript(pidFile), pidFile+".stop")
+	if err != nil {
+		return fmt.Errorf("couldn't end the agent a previous vibe left running in sandbox '%s': %w", name, err)
+	}
+	if said := strings.TrimSpace(out); said != "" {
+		note("ending the agent a previous vibe left running in sandbox '%s': %s", name, said)
+	}
+	return nil
+}
+
+// startAgent is the companion page's way of starting the agent of sandbox
+// name, which works in workspace (the same path inside as out), with the
+// model and effort chosen for it: what a previous vibe left running is ended
+// first, or two would answer.
+func startAgent(name, workspace string, choose func() (turnChoice, error)) companion.StartAgent {
+	return func(ctx context.Context, session string, onLine func([]byte)) (companion.Agent, error) {
 		choice, err := choose()
 		if err != nil {
-			return err
+			return nil, err
 		}
-		pidFile := "/tmp/vibe-turn-" + turnID() + ".pid"
-		err = sbxrun.ExecStream(ctx, name, prompt, delivered, onLine, conversationCommand(workspace, session, pidFile, choice)...)
-		if ctx.Err() != nil {
-			if stopErr := stopTurn(name, pidFile); stopErr != nil {
-				return fmt.Errorf("%w: %v", companion.ErrStopUnconfirmed, stopErr)
-			}
+		if err := endLeftover(name, conversationPidFile); err != nil {
+			return nil, err
 		}
-		return err
+		// Not ctx: that bounds the start, and the agent outlives it.
+		sess, err := startSession(context.Background(), name, onLine, conversationCommand(workspace, session, conversationPidFile, choice)...)
+		if err != nil {
+			return nil, err
+		}
+		return &claudeAgent{name: name, pidFile: conversationPidFile, sess: sess, choose: choose, applied: choice}, nil
 	}
 }
 
-// turnID names a turn's pidFile: random, so turns never share one.
-func turnID() string {
-	b := make([]byte, 8)
-	rand.Read(b)
-	return hex.EncodeToString(b)
+// claudeAgent is claude in the sandbox, with a stream-json input: what the
+// page asks of it is written there.
+type claudeAgent struct {
+	name, pidFile string
+	sess          agentSession
+	// choose is the model and effort the user chose, read for each prompt;
+	// applied is what the agent was last told.
+	choose  func() (turnChoice, error)
+	mu      sync.Mutex
+	applied turnChoice
+	sent    int
 }
+
+func (a *claudeAgent) write(v interface{}) error {
+	line, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return a.sess.WriteLine(line)
+}
+
+// control sends the agent a control request. mu is held.
+func (a *claudeAgent) control(request map[string]interface{}) error {
+	a.sent++
+	return a.write(map[string]interface{}{"type": "control_request", "request_id": fmt.Sprintf("vibe-%d", a.sent), "request": request})
+}
+
+// Prompt gives the agent text, after the model and effort chosen since it
+// was last told them: a choice that can't be used sends nothing.
+func (a *claudeAgent) Prompt(text, id string) error {
+	choice, err := a.choose()
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err := a.apply(choice); err != nil {
+		return err
+	}
+	return a.write(map[string]interface{}{"type": "user", "uuid": id, "message": map[string]interface{}{"role": "user", "content": text}})
+}
+
+// apply tells the agent the model and effort chosen, where they changed.
+// The agent's own default model can't be asked for by name: a choice back to
+// it holds from the next agent on. mu is held.
+func (a *claudeAgent) apply(choice turnChoice) error {
+	if choice.Model != a.applied.Model && choice.Model != "" {
+		if err := a.control(map[string]interface{}{"subtype": "set_model", "model": choice.Model}); err != nil {
+			return err
+		}
+		a.applied.Model = choice.Model
+	}
+	if choice.Effort != a.applied.Effort {
+		level := choice.Effort
+		if level == "" {
+			level = "auto"
+		}
+		if err := a.control(map[string]interface{}{"subtype": "apply_flag_settings", "settings": map[string]interface{}{"effortLevel": level}}); err != nil {
+			return err
+		}
+		a.applied.Effort = choice.Effort
+	}
+	return nil
+}
+
+// Interrupt stops the turn under way, sparing what runs in the background
+// (shell commands and background agents alike): stopping that is the user's
+// choice, made after (StopTask).
+func (a *claudeAgent) Interrupt() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.control(map[string]interface{}{"subtype": "interrupt", "spare_background_tasks": true})
+}
+
+// StopTask stops one thing the agent has running in the background.
+func (a *claudeAgent) StopTask(id string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.control(map[string]interface{}{"subtype": "stop_task", "task_id": id})
+}
+
+// End closes the agent's input: it ends once it has nothing left to do.
+func (a *claudeAgent) End() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.sess.CloseInput()
+}
+
+// agentEndsWithin is how long a killed agent's exec has to end.
+const agentEndsWithin = 10 * time.Second
+
+// Kill ends the agent and everything under it, in the sandbox, at once.
+func (a *claudeAgent) Kill() error {
+	if err := stopTurn(a.name, a.pidFile); err != nil {
+		return fmt.Errorf("%w: %v", companion.ErrStopUnconfirmed, err)
+	}
+	select {
+	case <-a.sess.Done():
+	case <-time.After(agentEndsWithin):
+	}
+	return nil
+}
+
+func (a *claudeAgent) Done() <-chan struct{} { return a.sess.Done() }
+func (a *claudeAgent) Err() error            { return a.sess.Err() }
 
 // transcripts is how the agent's own record of a session — what --resume
 // reads — is got out of a sandbox and put back into one.
@@ -178,14 +314,14 @@ const transcriptTimeout = 30 * time.Second
 // wait for it before their folders are cleaned away.
 var transcriptKept = func() {}
 
-// keepingTranscript is converse, keeping a copy of the agent's transcript
-// of the session in file on the host after every turn, and handing it back
-// to a sandbox that doesn't have it (one rebuilt by --re-compose, say)
-// before the turn that resumes it. Without that, the agent of a rebuilt
-// sandbox would have no idea what the page shows it was told. Nothing here
-// stops a turn: a transcript that can't be kept or put back leaves the
-// agent to say it can't find the session.
-func keepingTranscript(converse companion.Converser, t transcripts, file string) companion.Converser {
+// keepingTranscript is startAgent, keeping a copy of the agent's transcript
+// of the session in file on the host after every answer, and handing it back
+// to a sandbox that doesn't have it (one rebuilt by --re-compose, say) before
+// an agent resumes it. Without that, the agent of a rebuilt sandbox would
+// have no idea what the page shows it was told. Nothing here stops the
+// agent: a transcript that can't be kept or put back leaves it to say it
+// can't find the session.
+func keepingTranscript(start companion.StartAgent, t transcripts, file string) companion.StartAgent {
 	var (
 		mu sync.Mutex
 		// checked is the sessions known to be in the sandbox already.
@@ -205,7 +341,7 @@ func keepingTranscript(converse companion.Converser, t transcripts, file string)
 		}
 		fscopy.WriteWhole(file, tgz)
 	}
-	return func(ctx context.Context, prompt, session string, delivered func(), onLine func([]byte)) error {
+	return func(ctx context.Context, session string, onLine func([]byte)) (companion.Agent, error) {
 		if companion.SessionID.MatchString(session) {
 			mu.Lock()
 			known := checked[session]
@@ -224,23 +360,24 @@ func keepingTranscript(converse companion.Converser, t transcripts, file string)
 			}
 		}
 		latest := session
-		err := converse(ctx, prompt, session, delivered, func(line []byte) {
+		return start(ctx, session, func(line []byte) {
 			var head struct {
+				Type      string `json:"type"`
 				SessionID string `json:"session_id"`
 			}
-			if json.Unmarshal(line, &head) == nil && companion.SessionID.MatchString(head.SessionID) {
+			json.Unmarshal(line, &head)
+			if companion.SessionID.MatchString(head.SessionID) {
 				latest = head.SessionID
+				mu.Lock()
+				checked[latest] = true
+				mu.Unlock()
 			}
 			onLine(line)
+			if head.Type == "result" && companion.SessionID.MatchString(latest) {
+				// In the background, so the page hears the answer now.
+				go keep(latest)
+			}
 		})
-		if companion.SessionID.MatchString(latest) {
-			mu.Lock()
-			checked[latest] = true
-			mu.Unlock()
-			// In the background, so the page hears the turn is over now.
-			go keep(latest)
-		}
-		return err
 	}
 }
 

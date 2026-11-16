@@ -55,7 +55,7 @@ func (f *fakeAdmin) Do(ctx context.Context, action AdminAction, log func(string)
 func adminServer(f *fakeAdmin, agent *fakeAgent) *Server {
 	cfg := Config{Sandbox: "box", Token: token, Port: testPort, Admin: f}
 	if agent != nil {
-		cfg.Converse = agent.converse
+		cfg.StartAgent = agent.start
 	}
 	return New(cfg)
 }

@@ -121,7 +121,7 @@ func TestAPageWithNoReviewHasNoReviewTab(t *testing.T) {
 func TestAskingTheAgentAboutAThreadIsATurn(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	if _, err := store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "P2: why two?"}, review.Agent); err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestAskingTheAgentAboutAThreadIsATurn(t *testing.T) {
 func TestAskingWithoutAQuestionOrWhileTheAgentAnswersIsRefused(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "why?"}, review.Agent)
 	if rec := do(t, s, post("/api/review/ask", `{"thread":1,"body":"  "}`)); rec.Code != http.StatusBadRequest {
 		t.Errorf("no question: %d", rec.Code)
@@ -190,7 +190,7 @@ func TestTheTabGetsAFilesLinesForMoreContext(t *testing.T) {
 func TestSubmittingSendsTheUsersNewCommentsAsATurn(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "P2: why two?"}, review.Agent)
 	store.Do(review.Request{Op: "reply", Thread: 1, Body: "because of the cache"}, review.User)
 	store.Do(review.Request{Op: "comment", File: "a.txt", Side: "new", Line: 1, Code: "one", Body: "please fix the naming"}, review.User)
@@ -225,7 +225,7 @@ func TestSubmittingSendsTheUsersNewCommentsAsATurn(t *testing.T) {
 func TestSubmittingWhileTheAgentAnswersLeavesTheCommentsUnsent(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 1, Body: "hmm"}, review.User)
 	send(t, s, "/api/conversation/send", `{"prompt":"busy"}`)
 	if rec := do(t, s, post("/api/review/submit", `{}`)); rec.Code != http.StatusConflict {
@@ -241,7 +241,7 @@ func TestSubmittingWhileTheAgentAnswersLeavesTheCommentsUnsent(t *testing.T) {
 func TestAskingMarksTheQuestionSent(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "why?"}, review.Agent)
 	do(t, s, post("/api/review/ask", `{"thread":1,"body":"what about the cache?"}`))
 	idle(t, s)
@@ -280,7 +280,7 @@ func TestThePagesStatusSaysWhenTheAgentLastUpdatedTheReview(t *testing.T) {
 func TestAskingSendsTheThreadsEarlierReplies(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	if _, err := store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "P2: why two?"}, review.Agent); err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func TestAskingSendsTheThreadsEarlierReplies(t *testing.T) {
 func TestTheTabIsToldWhileTheAgentAnswersAnAsk(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	if _, err := store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "P2: why two?"}, review.Agent); err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +337,7 @@ func TestTheTabIsToldWhileTheAgentAnswersAnAsk(t *testing.T) {
 		t.Errorf("once the turn ended: %s", got)
 	}
 	// Another prompt and the Ask is over and done with.
-	if !s.startTurn("something else") {
+	if !startTurn(s, "something else") {
 		t.Fatal("the next turn didn't start")
 	}
 	idle(t, s)
@@ -366,7 +366,7 @@ func TestThePageIsToldWhatReviewsItCanStart(t *testing.T) {
 func TestThePageStartsJustTheDiff(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted"}`)); rec.Code != http.StatusOK {
 		t.Fatalf("start: %d %s", rec.Code, rec.Body)
 	}
@@ -383,7 +383,7 @@ func TestThePageStartsJustTheDiff(t *testing.T) {
 func TestThePageStartsAReviewByTheAgent(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted","agent":true}`)); rec.Code != http.StatusAccepted {
 		t.Fatalf("start: %d %s", rec.Code, rec.Body)
 	}
@@ -404,9 +404,9 @@ func TestThePageStartsAReviewByTheAgent(t *testing.T) {
 func TestABusyAgentStartsNoReview(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	defer close(f.release)
-	if !s.startTurn("busy") {
+	if !startTurn(s, "busy") {
 		t.Fatal("no first turn")
 	}
 	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted","agent":true}`)); rec.Code != http.StatusConflict {
@@ -489,7 +489,7 @@ func TestAReviewOfUncommittedChangesThereArentIsRefused(t *testing.T) {
 func TestAReviewTheAgentIsStillAtDoesntCloseItself(t *testing.T) {
 	s, _ := reviewTabServer(t)
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted","agent":true}`)); rec.Code != http.StatusAccepted {
 		t.Fatalf("start: %d %s", rec.Code, rec.Body)
 	}
@@ -513,9 +513,9 @@ func TestABusyAgentLeavesTheLastReviewAsItWas(t *testing.T) {
 	}
 	before, _ := store.Load()
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	defer close(f.release)
-	if !s.startTurn("busy") {
+	if !startTurn(s, "busy") {
 		t.Fatal("no first turn")
 	}
 	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted","agent":true}`)); rec.Code != http.StatusConflict {
@@ -552,7 +552,7 @@ func TestACommentFollowsItsCodeWhenTheDiffIsWorkedOut(t *testing.T) {
 func TestAnEditedCommentIsSentSayingWhatChanged(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "P2: why two?"}, review.Agent)
 	store.Do(review.Request{Op: "reply", Thread: 1, Body: "it is needed"}, review.User)
 	rv, _ := store.Load()
@@ -732,8 +732,8 @@ func TestAReviewJustShownDoesntCloseItselfWhileTheAgentAnswers(t *testing.T) {
 		t.Fatalf("start: %d %s", rec.Code, rec.Body)
 	}
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
-	if !s.startTurn("answering a Submit") {
+	s.cfg.StartAgent = f.start
+	if !startTurn(s, "answering a Submit") {
 		t.Fatal("no turn")
 	}
 	gitIn(t, s.cfg.ReviewTab.Workspace, "commit", "-q", "-am", "two")
@@ -858,7 +858,7 @@ func TestAServedPageTakesInTheInbox(t *testing.T) {
 func TestAReviewThatCantBeStartedGivesTheTurnUp(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	defer close(f.release)
 	// The review reads, but the last one can't be kept: the start fails
 	// once the turn is claimed.
@@ -905,7 +905,7 @@ func TestTheInboxFailingToBeTakenInIsSaid(t *testing.T) {
 func TestAnUnreadableReviewRefusesAStartBeforeClaimingTheTurn(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	defer close(f.release)
 	os.WriteFile(filepath.Join(filepath.Dir(store.Inbox()), "review.json"), []byte("{broken"), 0o600)
 	rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted","agent":true}`))
@@ -966,7 +966,7 @@ func lastDone(t *testing.T, s *Server) string {
 func TestClosingAReviewTheAgentIsStillWritingStopsItAndDropsTheReview(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	defer close(f.release)
 	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted","agent":true}`)); rec.Code != http.StatusAccepted {
 		t.Fatalf("start: %d %s", rec.Code, rec.Body)
@@ -998,7 +998,7 @@ func TestClosingAReviewTheAgentIsStillWritingStopsItAndDropsTheReview(t *testing
 func TestClosingAReviewTheAgentIsAtWithoutAgreeingToStopItIsRefused(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	defer close(f.release)
 	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted","agent":true}`)); rec.Code != http.StatusAccepted {
 		t.Fatalf("start: %d %s", rec.Code, rec.Body)
@@ -1040,7 +1040,7 @@ func doneWithOpenThread(t *testing.T, s *Server, store *review.Store) {
 func TestClosingAReviewWhileTheAgentFixesItsCommentsStopsItAndKeepsTheReview(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	defer close(f.release)
 	doneWithOpenThread(t, s, store)
 	if rec := do(t, s, post("/api/review/submit", `{}`)); rec.Code != http.StatusAccepted {
@@ -1064,7 +1064,7 @@ func TestClosingAReviewWhileTheAgentFixesItsCommentsStopsItAndKeepsTheReview(t *
 func TestClosingAReviewWithNothingOpenLetsTheAgentFinish(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	doneWithOpenThread(t, s, store)
 	if rec := do(t, s, post("/api/review/submit", `{}`)); rec.Code != http.StatusAccepted {
 		t.Fatalf("submit: %d %s", rec.Code, rec.Body)
@@ -1090,7 +1090,7 @@ func TestClosingAReviewWithNothingOpenLetsTheAgentFinish(t *testing.T) {
 func TestClosingAReviewLeavesATurnThatIsntItsAlone(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	doneWithOpenThread(t, s, store)
 	send(t, s, "/api/conversation/send", `{"prompt":"something else"}`)
 	if agentAtWork(t, s) {
@@ -1116,7 +1116,7 @@ func TestClosingAReviewLeavesATurnThatIsntItsAlone(t *testing.T) {
 func startWritingReview(t *testing.T, s *Server) *fakeAgent {
 	t.Helper()
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	if rec := do(t, s, post("/api/review/start", `{"kind":"uncommitted","agent":true}`)); rec.Code != http.StatusAccepted {
 		t.Fatalf("start: %d %s", rec.Code, rec.Body)
 	}
@@ -1177,7 +1177,7 @@ func TestConfirmingTheStopStopsTheAgentAndDropsTheReview(t *testing.T) {
 func TestAStopOfATurnTheReviewDidNotBeginIsNotAskedAbout(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	defer close(f.release)
 	send(t, s, "/api/conversation/send", `{"prompt":"something else"}`)
 	rec := do(t, s, post("/api/conversation/stop", `{}`))
@@ -1195,7 +1195,7 @@ func TestAStopOfATurnTheReviewDidNotBeginIsNotAskedAbout(t *testing.T) {
 func TestAStopWhileTheAgentFixesCommentsOfAFinishedReviewIsNotAskedAboutAndKeepsTheReview(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	defer close(f.release)
 	doneWithOpenThread(t, s, store)
 	if rec := do(t, s, post("/api/review/submit", `{}`)); rec.Code != http.StatusAccepted {
@@ -1212,7 +1212,7 @@ func TestAStopWhileTheAgentFixesCommentsOfAFinishedReviewIsNotAskedAboutAndKeeps
 func TestAStopWithNoReviewTabIsAsItWas(t *testing.T) {
 	s := newServer(&fakeSbx{})
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	defer close(f.release)
 	send(t, s, "/api/conversation/send", `{"prompt":"hi"}`)
 	if rec := do(t, s, post("/api/conversation/stop", `{}`)); rec.Code != http.StatusOK {
@@ -1264,7 +1264,7 @@ func agentStartedReview(t *testing.T) (*Server, *review.Store, *reviewClock, *fa
 	t.Helper()
 	s, store, clock := tabServerWithClock(t)
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	send(t, s, "/api/conversation/send", `{"prompt":"please review my changes"}`)
 	if _, err := store.Do(review.Request{Op: "start", Note: "x"}, review.Agent); err != nil {
 		t.Fatal(err)
@@ -1343,7 +1343,7 @@ func TestStoppingAnUnrelatedTurnIsNotAskedAboutBecauseAnOldReviewIsInProgress(t 
 	}
 	clock.advance(reviewQuiet + time.Hour)
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	defer close(f.release)
 	send(t, s, "/api/conversation/send", `{"prompt":"something else"}`)
 	if rec := do(t, s, post("/api/conversation/stop", `{}`)); rec.Code != http.StatusOK {
@@ -1378,7 +1378,7 @@ func TestAReviewTheAgentTouchedLatelyIsNotQuietEvenWithNoTurnRunning(t *testing.
 func TestAConfirmedStopAfterTheAgentHasFinishedTheReviewKeepsItAndSaysNothingWasStopped(t *testing.T) {
 	s, store, _ := tabServerWithClock(t)
 	f := &fakeAgent{release: make(chan struct{})}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	defer close(f.release)
 	doneWithOpenThread(t, s, store)
 	rec := do(t, s, post("/api/conversation/stop", `{"confirmed":true}`))
@@ -1747,7 +1747,7 @@ func TestAChangeFromThePageForAReplacedReviewIsRefusedWithACodeTheyCanAnswer(t *
 func TestAskingForAReplacedReviewLaunchesNoTurn(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	key := replacedKey(t, store)
 
 	replacedBody(t, do(t, s, post("/api/review/ask", `{"thread":2,"body":"what?","for":`+key+`}`)))
@@ -1761,7 +1761,7 @@ func TestAskingForAReplacedReviewLaunchesNoTurn(t *testing.T) {
 func TestSubmittingForAReplacedReviewSendsNothingAndMarksNothingSent(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	key := replacedKey(t, store)
 	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 1, Code: "one", Body: "unseen by the page"}, review.User)
 
@@ -1790,7 +1790,7 @@ func TestClosingAReplacedReviewClosesNothing(t *testing.T) {
 func TestChangesNamingTheReviewThereIsAreCarriedOut(t *testing.T) {
 	s, store := reviewTabServer(t)
 	f := &fakeAgent{}
-	s.cfg.Converse = f.converse
+	s.cfg.StartAgent = f.start
 	replacedKey(t, store)
 	current, _ := store.Load()
 	key, _ := json.Marshal(current.Key())
@@ -1810,4 +1810,13 @@ func TestChangesNamingTheReviewThereIsAreCarriedOut(t *testing.T) {
 	if rec := do(t, s, post("/api/review/close", `{"stop":true,"for":`+string(key)+`}`)); rec.Code != http.StatusOK {
 		t.Errorf("close: %d %s", rec.Code, rec.Body)
 	}
+}
+
+// startTurn gives the agent prompt as the conversation tab does.
+func startTurn(s *Server, prompt string) bool {
+	seq, ok := s.convo.claim(prompt, true)
+	if ok {
+		s.convo.give(seq, prompt, s.cfg.StartAgent, s.cfg.Prepare)
+	}
+	return ok
 }
