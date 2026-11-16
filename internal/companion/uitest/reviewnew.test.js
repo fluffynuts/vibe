@@ -82,27 +82,37 @@ test('a review started from the terminal while the tab showed no review at all g
   } finally { p.close() }
 })
 
-test('while the new review\'s diff is worked out the old review is not left on show: the tab says it is working, then draws the new one', async () => {
-  const world = { review: reviewOf('2026-11-16T09:00:00Z', 'master', [thread(1, 'a.go')]), diff: [lineOf('a.go')] }
+test('while the new review\'s diff is worked out the old review is not left on show, bar and all: the tab says it is working, then draws the new one', async () => {
+  const world = { review: Object.assign(reviewOf('2026-11-16T09:00:00Z', 'master', [thread(1, 'a.go')]), { note: 'the old one' }), diff: [lineOf('a.go')] }
   const p = await pageWith(world)
   try {
     assert.equal(p.$('review-body').hidden, false, 'the first review is shown')
     assert.equal(p.$('review-wait').hidden, true)
+    assert.match(p.$('review-title').textContent, /the old one/)
+    assert.equal(p.$('review-actions').hidden, false)
 
     let release
     world.holdDiff = new Promise((resolve) => { release = resolve })
-    world.review = reviewOf('2026-11-16T11:00:00Z', 'master', [thread(1, 'b.go')])
+    world.review = Object.assign(reviewOf('2026-11-16T11:00:00Z', 'master', [thread(1, 'b.go')]), { note: 'the new one' })
     world.diff = [lineOf('b.go')]
     await p.kick('tick')
     await p.kick('tick')
 
     assert.equal(p.$('review-wait').hidden, false, 'it says the diff is being worked out')
     assert.equal(p.$('review-body').hidden, true, 'and the old review, with the new one not yet drawable, is not shown')
+    assert.doesNotMatch(p.$('review-title').textContent, /the old one/, 'its title is not left on the bar')
+    assert.equal(p.$('review-state').hidden, true, 'nor its state')
+    assert.equal(p.$('review-of').textContent, '', 'nor what it is of')
+    assert.equal(p.$('review-actions').hidden, true, 'nor its buttons (Close, Submit, the comment count)')
+    assert.equal(p.$('review-comments-open').hidden, true, 'nor its comments pane')
 
     release()
     await p.poll()
     assert.equal(p.$('review-wait').hidden, true)
     assert.equal(p.$('review-body').hidden, false)
+    assert.match(p.$('review-title').textContent, /the new one/)
+    assert.equal(p.$('review-actions').hidden, false)
+    assert.equal(p.$('review-comments-open').hidden, false)
     assert.equal(p.$('review-files').querySelectorAll('.review-thread').length, 1, 'the new review is drawn, its comment on its line')
     assert.equal(p.$('review-general').querySelectorAll('.review-thread').length, 0)
   } finally { p.close() }

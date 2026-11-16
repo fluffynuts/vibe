@@ -2741,10 +2741,7 @@
         forgetWriting()
         reviewView.files = null
         reviewView.diffWanted = true
-        // Not drawn (without its diff every comment would be bunched at the top), but the old review is not to be left looking
-        // like the current one while the diff is worked out, which takes seconds on a big one.
-        $('review-body').hidden = true
-        $('review-wait').hidden = false
+        holdBackReview()
         return
       }
       // A diff that set out before the review's files went stale (Refresh,
@@ -2917,6 +2914,19 @@
   function switchNow() {
     leaveBoxes()
     loadReview(false)
+  }
+
+  // holdBackReview takes the old review off the tab while the diff of the new one is worked out, bar and all, and says so. It is not
+  // drawn (without its diff every comment would be bunched at the top), but the old review is not to be left looking like the
+  // current one, with its title, state and buttons, for the seconds a big diff takes. Drawing the new review puts it all back.
+  function holdBackReview() {
+    $('review-body').hidden = true
+    $('review-actions').hidden = true
+    $('review-comments-open').hidden = true
+    $('review-state').hidden = true
+    $('review-title').textContent = 'Review'
+    $('review-of').textContent = ''
+    $('review-wait').hidden = false
   }
 
   // showHeld says, beside Refresh, for as long as it is so, that a newer review is waiting for the user to leave a box.
