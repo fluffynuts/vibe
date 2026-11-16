@@ -1,4 +1,4 @@
-# One agent process for the whole conversation, so background work can call back (planned, not built)
+# One agent process for the whole conversation, so background work can call back (planned; experiments run 2026-11-16; not built)
 
 Raised 2026-11-13 by the user, who lost an agent's background work twice by sending a prompt while the conversation looked idle, and who
 remembers the console app letting an agent get the call-back later while still being talked to. The next highest-order priority after the
@@ -34,7 +34,73 @@ One `claude -p --input-format stream-json --output-format stream-json --verbose 
 
 So the console's behaviour is available headless: one long-lived process, prompts written to its stdin, unprompted turns on the same stream.
 
-## Design (to be settled by trying; not decided)
+## Experiments (2026-11-16: `claude` 2.1.323, `claude-haiku-5-5`, outside vibe, in a neutral folder)
+
+Scripts are in `tools/experiments/persistent-agent/` (see its README); each prints every event with the second it arrived. Raw event logs
+were not kept. All as `claude -p --input-format stream-json --output-format stream-json --verbose --permission-mode bypassPermissions`.
+The CLI also describes its own protocol in its binary (strings in `claude`): what is marked "stated, not tried" below comes from there.
+
+1. **An unprompted turn** (`e1b`). A prompt starts `sleep 12` in the background and the agent answers (`result` at 2.6 s). At 13.9 s, with
+   no prompt: `system/task_notification {status: completed}`, then `system/init`, the agent's text, `result` (15.2 s). No `user` event and
+   no `command_lifecycle` frame (those come only for a message that carried a `uuid`, see 3). So a turn is the agent's own when a
+   `task_notification` came and none of our prompts has `started`.
+2. **Stop** (`e2b`). A foreground tool running, a background task already going, then
+   `{"type":"control_request","request_id":…,"request":{"subtype":"interrupt"}}`: at once, `control_response success {still_queued: []}`,
+   the foreground tool's `task_notification {status: stopped}`, its `tool_result` "The user doesn't want to proceed", and
+   `result subtype=error_during_execution is_error=true` with no text. The process stayed alive (274 MB), and **the background task
+   survived and called back 33 s later**, as an unprompted turn in which the agent mentioned the interrupt. An interrupt with nothing
+   running answers `success` and does nothing. Stated, not tried: `spare_background_tasks: true` also spares background *agents and
+   workflows* (a Stop ends those by default); `send_now`, `for_user_message_uuids`, and `cancel_queued` exist.
+3. **A prompt while a turn runs** (`e3`, with a `uuid` on each prompt). `command_lifecycle` frames, keyed by the `uuid` we sent
+   (`command_uuid`): `queued` at once, `started` at the next safe point (here right after the tool finished), `completed` (or
+   `cancelled`). The second prompt was **folded into the running turn**: one `result` (`turns=2`) answered the second prompt only
+   ("second-done"), the first prompt's own request ("reply first-done") was never done, and both commands `completed` together. So
+   **one `result` is not one prompt**: receipts must come from `command_lifecycle`, not from results.
+4. **`priority: "now"` on a user message** (`e4`) is not an interrupt: the message waited ~10 s for the running tool to end (it was not
+   killed), the first turn then ended `terminal_reason: aborted_tools` with no text and its command `cancelled`, and the second
+   prompt started and was answered. Stop (2) is the immediate way; `priority: now` is "next boundary, and drop what the turn was doing".
+5. **Model** (`e5`). `{"subtype":"set_model","model":"claude-sonnet-5-5"}` → `control_response success {model}`; the next turn's
+   `system/init` and assistant message carry the new model; and back. No restart.
+6. **Effort** (`e8`, `e9`). A user message `/effort high` is answered by the CLI itself as a `result` (`turns=0`, text "Set effort level to
+   high (this session only)…"); `apply_flag_settings {settings:{effortLevel}}` is also accepted (`success`, no payload). The CLI says an
+   effort change this way keeps the prompt cache (`init.per_turn_effort_active`). No restart.
+7. **An idle process** (`e7`). 274 MB resident after the first turn, 249 MB three minutes later, 2 s of CPU in all; still alive at
+   three minutes (no self-exit seen). (No MCP servers, the small model; the real figure is the user's to measure with their sandbox.)
+8. **Ending it** (`e1b`, `e6`). Closing stdin with nothing running: exit 0 within a second. With a background task running, the
+   process was still alive 20 s after stdin closed (it waits for the task); SIGTERM ended it.
+9. **Resuming** (`e6`). A new process with `--resume <session id>` starts with `task_notification {status: stopped, summary:
+   "Background shell command didn't finish before the previous session ended"}`, an `init`, and **an empty `result` (`turns=0`)
+   before the first prompt's own `result`**; the resumed agent knew of the task from its transcript. (My test left the first process
+   running on the same session: don't.)
+10. **`system/init` is not "the process started"**: it is sent at the start of every turn, prompted or not. The first `init` also lists
+    `capabilities` (`interrupt_receipt_v1`, `interrupt_cancel_queued_v1`, `interrupt_send_now_v1`, `msg_lifecycle_v1`, …): feature-detect on them.
+
+## What the experiments settle, and what they leave (against the numbered list below)
+
+- **1, unprompted turns:** settled (1 above). The page treats a turn started after a `task_notification`, with none of our prompts
+  `started`, as the agent's own; the light and the typing bubble follow `init`…`result`, not prompts sent.
+- **2, Stop:** settled: the interrupt control request (2 above). Today's kill of the tree stays for a stuck process and for ending the
+  conversation. Open: `spare_background_tasks` for background agents (not tried), and whether the page wants a second, harder "end its
+  background work too" affordance.
+- **3, queued prompts:** settled in kind: the agent's queue folds prompts into the running turn (3), and `priority: now` is different (4).
+  The page's own queue and "Waiting for the agent to stop…" state go; a sent prompt is shown queued/started/completed from
+  `command_lifecycle`, and the page may need to say when a prompt was folded into a turn that answered the next one.
+- **4, model and effort:** settled, and simpler than planned: neither needs a restart (5, 6). Send `set_model` / `/effort <level>` as
+  the choice changes, before the next prompt. `turnChoice` stops being a command-line flag set per turn.
+- **5, review turns:** unchanged: their own short-lived processes.
+- **6, a vibe that stops and starts:** the resume behaviour is known (9): the page should tolerate the empty `result` and say once that
+  background work did not survive. Open: how the process is ended when vibe ends (stdin close waits on tasks; TERM ends it).
+- **7, cost and idle:** measured once (7): ~250 MB resident per conversation, idle. To decide: whether that is acceptable always, or
+  the process is started with the first prompt and ended after a long quiet (it does not end itself).
+- **8, other agents:** not looked at.
+
+**Still to find out, before building:** whether the stream behaves the same through `sbx exec -i` and vibe's `asAgent` login-shell
+wrapper (buffering of stdin lines and of stdout is the risk), with vibe's real flags (`agentArgs`, `--resume`) and a larger model;
+what `cancel_queued` / `send_now` give a page that lets a queued prompt be taken back; `spare_background_tasks` with a background
+agent; permission prompts and questions in this mode (`bypassPermissions` makes them moot today); context compaction in a long-lived
+process; and that a prompt with a `uuid` is what vibe will send (a message without one gets no lifecycle frames).
+
+## Design (settled where the experiments above say so; the rest to be tried)
 
 **One streaming `claude` per conversation**, started on the first prompt (`--input-format stream-json`), kept for as long as the conversation
 lives; every prompt is a `user` message written to its stdin. The conversation's "running" becomes "a turn is in progress" (from a `user`

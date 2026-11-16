@@ -1,0 +1,12 @@
+import os, sys, json; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from drive import *
+a = Agent("e9", extra=("--effort", "low"))
+a.prompt("Reply with just: one.")
+a.wait_results(1, 40)
+a.prompt("/effort high")
+a.wait_results(2, 20)
+a.prompt("/effort")
+time.sleep(3)
+a.prompt("Reply with just: two.")
+a.wait_results(3, 30)
+a.close()
