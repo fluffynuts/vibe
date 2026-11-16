@@ -356,3 +356,78 @@ func TestKeepingTheOldTokenWhenNoExpiryIsKnown(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// holdsToken records a sandbox as holding token, with vibe's copy of it kept
+// on the host as giveGitAccess does; a blank token records the sandbox with
+// no copy.
+func holdsToken(t *testing.T, home, name, source, token string) {
+	t.Helper()
+	inst := state.Instance{Name: name, Target: "/work/" + name, GitToken: source, GitTokenExpires: fakeExpiry}
+	if err := state.Save(home, inst); err != nil {
+		t.Fatal(err)
+	}
+	if token == "" {
+		return
+	}
+	if err := gittoken.Save(state.GitTokenPath(home, name), token); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTokenDonorsAreSandboxesWithACopyOfTheirTokenButNotTheOneAsking(t *testing.T) {
+	stubGitAccess(t)
+	home := t.TempDir()
+	holdsToken(t, home, "asking", gitTokenOwn, "good")
+	holdsToken(t, home, "donor", gitTokenOwn, "good")
+	holdsToken(t, home, "copy-lost", gitTokenOwn, "")
+	if err := state.Save(home, state.Instance{Name: "no-token"}); err != nil {
+		t.Fatal(err)
+	}
+
+	donors := tokenDonors(home, "asking")
+
+	if len(donors) != 1 || donors[0].name != "donor" || donors[0].token != "good" {
+		t.Fatalf("donors = %+v, want only 'donor'", donors)
+	}
+	if label := donors[0].label(fakeNow); !strings.Contains(label, "/work/donor") || !strings.Contains(label, gittoken.DescribeExpiry(fakeExpiry, fakeNow)) {
+		t.Errorf("the label should say the folder and when the token expires: %q", label)
+	}
+}
+
+func TestNoTokenDonorsWhenNoSandboxHasATokenCopy(t *testing.T) {
+	stubGitAccess(t)
+	home := t.TempDir()
+	holdsToken(t, home, "copy-lost", gitTokenOwn, "")
+	if donors := tokenDonors(home, "asking"); len(donors) != 0 {
+		t.Errorf("donors = %+v, want none", donors)
+	}
+}
+
+func TestATokenTakenFromAnotherSandboxKeepsItsSource(t *testing.T) {
+	stubGitAccess(t)
+	for _, source := range []string{gitTokenDefault, gitTokenOwn} {
+		access, ok := accessFromDonor(tokenDonor{name: "d", token: "good", source: source, expires: fakeExpiry}, &gittoken.Repo{Owner: "o", Name: "r"}, false, nil)
+		if !ok || access.token != "good" || access.source != source {
+			t.Errorf("from a %q donor: %+v, %v", source, access, ok)
+		}
+	}
+}
+
+func TestATokenTakenFromAnotherSandboxIsCheckedAgainstTheRecipientsRepository(t *testing.T) {
+	stubGitAccess(t)
+	var checkedFor *gittoken.Repo
+	checkGitToken = func(token string, repo *gittoken.Repo) gittoken.Report {
+		checkedFor = repo
+		return gittoken.Report{Rejected: true}
+	}
+	repo := &gittoken.Repo{Owner: "o", Name: "recipient"}
+
+	access, ok := accessFromDonor(tokenDonor{name: "d", token: "stale", source: gitTokenOwn}, repo, false, nil)
+
+	if checkedFor != repo {
+		t.Errorf("checked for %v, want the recipient's repository", checkedFor)
+	}
+	if ok || access != nil {
+		t.Errorf("a token GitHub turns down was taken: %+v", access)
+	}
+}

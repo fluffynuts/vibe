@@ -141,6 +141,7 @@ const (
 	gitDefault
 	gitGuided
 	gitPaste
+	gitDonor
 )
 
 // askGitAccess asks whether the agent in sandbox name may push, and with
@@ -197,6 +198,10 @@ func askGitAccess(vibeHome, name string, repo *gittoken.Repo, current *state.Ins
 		add(gitGuided, "yes, with a new token (opens GitHub to make one)")
 	}
 	add(gitPaste, "yes, with a token you already have")
+	donors := tokenDonors(vibeHome, name)
+	if len(donors) > 0 {
+		add(gitDonor, "yes, with the token another sandbox has")
+	}
 
 	question := fmt.Sprintf("should the agent in '%s' be able to push to GitHub? (optional)", name)
 	if repo == nil {
@@ -224,6 +229,15 @@ func askGitAccess(vibeHome, name string, repo *gittoken.Repo, current *state.Ins
 		if access.expires.IsZero() {
 			access.expires = defaultExpires
 		}
+	case gitDonor:
+		donor, picked := pickTokenDonor(donors)
+		if !picked {
+			return nil, keepOrNone(has), nil
+		}
+		var taken bool
+		if access, taken = accessFromDonor(donor, repo, true, skip); !taken {
+			return nil, keepOrNone(has), nil
+		}
 	case gitGuided, gitPaste:
 		if choices[idx] == gitGuided {
 			days := pickTokenDays(tokenDays)
@@ -240,6 +254,76 @@ func askGitAccess(vibeHome, name string, repo *gittoken.Repo, current *state.Ins
 	}
 	access.rules = pickGitRules(rules)
 	return access, choices[idx], nil
+}
+
+// tokenDonor is a sandbox whose token another may be given: vibe keeps a
+// copy of each sandbox's token on the host (see giveGitAccess), so nothing is
+// revealed by sbx and nothing is pasted.
+type tokenDonor struct {
+	name, folder, source, token string
+	expires                     time.Time
+}
+
+// tokenDonors are the sandboxes with a token vibe still has a copy of,
+// but except: the one being asked about. One whose copy is gone (the write
+// failed with a warning, or it was never given one) isn't offered.
+func tokenDonors(vibeHome, except string) []tokenDonor {
+	instances, err := state.List(vibeHome)
+	if err != nil {
+		note("WARNING: %s", err)
+		return nil
+	}
+	var donors []tokenDonor
+	for _, inst := range instances {
+		if inst.Name == except || inst.GitToken == "" {
+			continue
+		}
+		token, ok, err := gittoken.Load(state.GitTokenPath(vibeHome, inst.Name))
+		if err != nil || !ok {
+			continue
+		}
+		donors = append(donors, tokenDonor{
+			name: inst.Name, folder: inst.Target, source: inst.GitToken, token: token, expires: inst.GitTokenExpires,
+		})
+	}
+	return donors
+}
+
+func (d tokenDonor) label(now time.Time) string {
+	return fmt.Sprintf("%s — %s%s", d.name, d.folder, inParens(gittoken.DescribeExpiry(d.expires, now)))
+}
+
+// pickTokenDonor asks which sandbox's token to take; quitting picks none.
+func pickTokenDonor(donors []tokenDonor) (tokenDonor, bool) {
+	now := timeNow()
+	labels := make([]string, len(donors))
+	for i, d := range donors {
+		labels[i] = d.label(now)
+	}
+	idx, ok := filterFrom("which sandbox's token?", labels, 0)
+	if !ok {
+		return tokenDonor{}, false
+	}
+	return donors[idx], true
+}
+
+// accessFromDonor checks the donor's token with GitHub against repo — the
+// recipient's repository, which the token may never have been made for — and
+// gives it as the donor holds it: a default token stays the default, so a
+// renewal through --setup still reaches the recipient. It says whether the
+// token is to be used.
+func accessFromDonor(donor tokenDonor, repo *gittoken.Repo, ask bool, skip skipWording) (*gitAccess, bool) {
+	verdict, expires := vetGitToken(donor.token, repo, ask, skip)
+	for verdict == vetRetry {
+		verdict, expires = vetGitToken(donor.token, repo, ask, skip)
+	}
+	if verdict != vetUse {
+		return nil, false
+	}
+	if expires.IsZero() {
+		expires = donor.expires
+	}
+	return &gitAccess{token: donor.token, source: donor.source, expires: expires}, true
 }
 
 func inParens(s string) string {
