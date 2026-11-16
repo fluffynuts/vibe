@@ -37,7 +37,14 @@ def q(s):
     return "'" + s.replace("'", "'\\''") + "'"
 
 def sbx_exec(*args, input=None, timeout=60):
-    return subprocess.run(["sbx", "exec", SBX, "--", *args], capture_output=True, text=True, input=input, timeout=timeout)
+    """Runs a command in the sandbox and gives its output. Never reads this terminal (stdin is closed): a process in the background that
+    reads the terminal is stopped, silently, by the shell. A call that takes over `timeout` seconds says so and gives nothing."""
+    try:
+        return subprocess.run(["sbx", "exec", SBX, "--", *args], capture_output=True, text=True, input=input,
+                              stdin=None if input is not None else subprocess.DEVNULL, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        print(f"!!! `sbx exec {SBX} -- {' '.join(args)[:80]}` took over {timeout}s: gave up on it", flush=True)
+        return subprocess.CompletedProcess(args, 124, "", "timed out")
 
 def summarize(ev):
     t = ev.get("type")

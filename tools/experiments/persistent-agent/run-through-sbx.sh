@@ -15,6 +15,7 @@ echo "sandbox $SANDBOX, folder $EXP_WORKSPACE, results in $EXP_OUT" | tee -a "$L
 sbx exec "$SANDBOX" -- sh -c 'echo "sandbox reachable as $(id -un); claude is $(command -v claude || echo MISSING)"' 2>&1 | tee -a "$LOG"
 for s in e10 e1b e2b e3 e5 e11 e12; do
   echo "=== $s $(date +%T)" | tee -a "$LOG"
-  timeout 300 python3 "$HERE/$s.py" 2>&1 | grep -v "thinking_tokens\|rate_limit\|commands_changed" | cut -c1-330 | tee -a "$LOG"
+  # --foreground: a command `timeout` starts in the background is stopped the moment it reads this terminal. -u and --line-buffered: output as it happens.
+  timeout --foreground 300 python3 -u "$HERE/$s.py" < /dev/null 2>&1 | grep --line-buffered -v "thinking_tokens\|rate_limit\|commands_changed" | tee -a "$LOG"
 done
 echo "=== done $(date +%T)" | tee -a "$LOG"
