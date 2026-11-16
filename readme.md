@@ -992,9 +992,9 @@ each ticked sandbox, keeping that sandbox's own rules (`--git-rules` sets them f
 checked with GitHub against each sandbox's repository: one it can't push to is skipped, and the rest go
 on. It is given to 4 sandboxes at a time (`--jobs N` says otherwise; 1 is one after another): a spinner says
 how many are done and which are under way, each one's lines are shown together when it is done, and the
-run says how long it took. A sandbox that wasn't running is stopped again as soon as it has its token
-(giving it one starts it, at 1 to 2 GB each), and its agent's instructions for pushing are written at its
-next start rather than by waking it now. The summary says which got it, with old and new expiry, and which didn't, and why. It needs a
+run says how long it took. A sandbox that isn't running is not started to be given its token (nor by
+`--git-token`, which works the same way): its agent's instructions for pushing are written at its next
+start. The summary says which got it, with old and new expiry, and which didn't, and why. It needs a
 terminal: a token is never typed into the page.
 
 ### Choices kept for a profile

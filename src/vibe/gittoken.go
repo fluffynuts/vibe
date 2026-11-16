@@ -30,10 +30,6 @@ type gitAccess struct {
 	// expires is when the token stops working; zero when it never does,
 	// or GitHub didn't say.
 	expires time.Time
-	// leaveStopped is for a sandbox that is stopped and is to stay so: its
-	// agent's instructions aren't written now, since that would start it,
-	// but at the next session start, which writes them afresh.
-	leaveStopped bool
 }
 
 const (
@@ -64,21 +60,32 @@ var (
 	// running sandbox. A stopped one is left alone: every session start
 	// writes them afresh (see syncGitInstructions), so it gets them then.
 	writeGitInstructions = func(name, content string) error {
-		if !sbxrun.Reachable(context.Background(), name) {
-			return nil
-		}
-		return writeSandboxFile(name, gittoken.SandboxFile, content)
+		return ifRunning(name, func() error { return writeSandboxFile(name, gittoken.SandboxFile, content) })
 	}
 	removeGitInstructions = func(name string) error {
-		if !sbxrun.Reachable(context.Background(), name) {
+		return ifRunning(name, func() error {
+			if out, err := sbxrun.ExecCapture(context.Background(), name, "rm", "-f", gittoken.SandboxFile); err != nil {
+				return fmt.Errorf("%w: %s", err, strings.TrimSpace(out))
+			}
 			return nil
-		}
-		if out, err := sbxrun.ExecCapture(context.Background(), name, "rm", "-f", gittoken.SandboxFile); err != nil {
-			return fmt.Errorf("%w: %s", err, strings.TrimSpace(out))
-		}
-		return nil
+		})
 	}
 )
+
+// sandboxUp says whether sandbox name is running, as sbx lists it (see
+// sbxrun.Running); tests stand in for it.
+var sandboxUp = sbxrun.Running
+
+// ifRunning does act only when sandbox name is running. Asking it to run
+// something would start a stopped one, which takes gigabytes of memory, for a
+// file that is written (or removed) afresh at its next session start anyway;
+// and when sbx can't say, starting it is the greater risk.
+func ifRunning(name string, act func() error) error {
+	if up, known := sandboxUp(context.Background(), name); !known || !up {
+		return nil
+	}
+	return act()
+}
 
 // repoOf is the GitHub repository target's origin remote points at, or nil
 // when it has none (a new project, often, not pushed anywhere yet), or one
@@ -696,10 +703,6 @@ func giveGitAccessSaying(say func(string, ...interface{}), vibeHome, name string
 	}
 	if err := gittoken.Save(state.GitTokenPath(vibeHome, name), access.token); err != nil {
 		say("WARNING: %s — a rebuild of '%s' will start without its token", err, name)
-	}
-	if access.leaveStopped {
-		say("  github:    the agent can push (%s token%s); its instructions follow at its next start", access.source, prefixed(", ", gittoken.DescribeExpiry(access.expires, timeNow())))
-		return access
 	}
 	if err := writeGitInstructions(name, gittoken.Instructions(repo, access.rules, access.expires)); err != nil {
 		say("WARNING: could not tell the agent its rules for pushing (%s): %s", gittoken.SandboxFile, err)

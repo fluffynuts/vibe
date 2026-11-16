@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -440,5 +441,51 @@ func TestATokenTakenFromAnotherSandboxIsCheckedAgainstTheRecipientsRepository(t 
 	}
 	if ok || access != nil {
 		t.Errorf("a token GitHub turns down was taken: %+v", access)
+	}
+}
+
+// sandboxesUp stands in for sbx's list of which sandboxes are running.
+func sandboxesUp(t *testing.T, state map[string]bool, known bool) {
+	t.Helper()
+	old := sandboxUp
+	t.Cleanup(func() { sandboxUp = old })
+	sandboxUp = func(_ context.Context, name string) (bool, bool) { return state[name], known }
+}
+
+func TestAStoppedSandboxIsNeverAskedToRunAnything(t *testing.T) {
+	for name, tc := range map[string]struct {
+		up    map[string]bool
+		known bool
+	}{
+		"stopped":           {map[string]bool{"box": false}, true},
+		"sbx can't say":     {nil, false},
+		"not in sbx's list": {map[string]bool{}, true},
+	} {
+		sandboxesUp(t, tc.up, tc.known)
+		ran := false
+		if err := ifRunning("box", func() error { ran = true; return nil }); err != nil || ran {
+			t.Errorf("%s: ran = %v, err = %v: waking a sandbox to write a file it gets at its next start is the cost, not the gain", name, ran, err)
+		}
+	}
+}
+
+func TestARunningSandboxIsToldNow(t *testing.T) {
+	sandboxesUp(t, map[string]bool{"box": true}, true)
+	failure := errors.New("exec failed")
+	ran := false
+	if err := ifRunning("box", func() error { ran = true; return failure }); !ran || !errors.Is(err, failure) {
+		t.Errorf("ran = %v, err = %v: should run, and say what went wrong", ran, err)
+	}
+}
+
+func TestTheRealInstructionWritersLeaveAStoppedSandboxAlone(t *testing.T) {
+	// The ones tests stand in for: with the sandbox stopped they must touch
+	// nothing (there is no sbx here, so touching it would be an error).
+	sandboxesUp(t, map[string]bool{"box": false}, true)
+	if err := writeGitInstructions("box", "rules"); err != nil {
+		t.Errorf("writing to a stopped sandbox: %v", err)
+	}
+	if err := removeGitInstructions("box"); err != nil {
+		t.Errorf("removing from a stopped sandbox: %v", err)
 	}
 }
