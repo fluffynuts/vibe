@@ -163,3 +163,58 @@ test("someone typing in a box is not parted from it: the new review waits until 
     assert.equal(replyBox(p).value, '', 'and its comment starts empty')
   } finally { p.close() }
 })
+
+// Holding the new review back from someone typing is said, once, with a way out.
+const toastText = (p) => (p.$('toast').hidden ? '' : p.$('toast').textContent)
+
+test('the user is told why the review has not changed while they are in a box, once however many polls pass', async () => {
+  const world = { review: reviewOf('2026-11-16T09:00:00Z', 'master', [thread(1, 'a.go')]), diff: [lineOf('a.go')] }
+  const p = await pageWith(world)
+  try {
+    assert.equal(toastText(p), '', 'nothing to say yet')
+    const box = replyBox(p)
+    await p.type(box, 'mid-sentence')
+    box.focus()
+    secondReview(world)
+    await p.poll()
+    assert.match(toastText(p), /agent has started a new review.*leave the comment box/s)
+    assert.match(toastText(p), /Switch now/)
+
+    p.$('toast').hidden = true
+    await p.poll()
+    await p.poll()
+    assert.equal(toastText(p), '', 'it is not said again at every poll')
+  } finally { p.close() }
+})
+
+test('Switch now takes the new review at once, dropping what was written in the old', async () => {
+  const world = { review: reviewOf('2026-11-16T09:00:00Z', 'master', [thread(1, 'a.go')]), diff: [lineOf('a.go')] }
+  const p = await pageWith(world)
+  try {
+    const box = replyBox(p)
+    await p.type(box, 'mid-sentence')
+    box.focus()
+    secondReview(world)
+    await p.poll()
+    const loads = diffLoads(p)
+
+    await p.click(p.$('toast').querySelector('.toast-action'))
+    await p.poll()
+
+    assert.ok(diffLoads(p) > loads, 'the new review\'s diff was asked for')
+    assert.equal(p.$('review-general').querySelectorAll('.review-thread').length, 0)
+    assert.equal(p.$('review-files').querySelectorAll('.review-thread').length, 1, 'the new review is drawn')
+    assert.equal(replyBox(p).value, '', 'with nothing of the old one written in it')
+  } finally { p.close() }
+})
+
+test('a review nobody is typing against is replaced with no word said about holding it', async () => {
+  const world = { review: reviewOf('2026-11-16T09:00:00Z', 'master', [thread(1, 'a.go')]), diff: [lineOf('a.go')] }
+  const p = await pageWith(world)
+  try {
+    secondReview(world)
+    await p.poll()
+    await p.poll()
+    assert.doesNotMatch(toastText(p), /leave the comment box/)
+  } finally { p.close() }
+})

@@ -1940,7 +1940,9 @@
     // changed since, with the tab open; checking, that the question is on its way.
     diffKey: null, diffKeyIgnoresSpace: false, stale: false, checking: false,
     // diffFor says which review the diff the page holds was worked out for (see reviewIdentity).
-    diffFor: null }
+    diffFor: null,
+    // heldFor is the review a toast has said is waiting for the user to leave a box (see sayReviewIsHeld).
+    heldFor: null }
 
   // changeReview asks vibe for a change to the review (do, ask, submit,
   // start), taking the review it gives back (see tookReview): every change
@@ -2696,7 +2698,10 @@
         // once they have left it, finds the review still not the one the diff is for.
         const incoming = res.body.review
         otherReview = !withDiff && reviewView.files !== null && reviewIsOn(incoming) && reviewView.diffFor !== reviewIdentity(incoming)
-        if (otherReview && typingInABox()) return
+        if (otherReview && typingInABox()) {
+          sayReviewIsHeld(reviewIdentity(incoming))
+          return
+        }
         const wasOn = reviewView.review && reviewIsOn(reviewView.review)
         reviewView.review = res.body.review
         reviewView.ask = res.body.ask || null
@@ -2873,6 +2878,19 @@
         if (res.ok) { showBroken(''); showReview(res.body.review) }
         return res
       } })
+  }
+
+  // sayReviewIsHeld tells, once for each review, why the review on show has not been replaced by the one the agent started: the
+  // user is in a box with something written in it. "Switch now" leaves the box and takes the new review, dropping what was
+  // written in the old.
+  function sayReviewIsHeld(identity) {
+    if (reviewView.heldFor === identity) return
+    reviewView.heldFor = identity
+    toast('The agent has started a new review. It replaces this one when you leave the comment box.', false, { label: 'Switch now', run() {
+      const a = document.activeElement
+      if (a && a.tagName === 'TEXTAREA' && $('panel-review').contains(a)) a.blur()
+      loadReview(false)
+    } })
   }
 
   // forgetWriting forgets what was being written on the review that is replaced: a comment on a line, an edit, and replies half
