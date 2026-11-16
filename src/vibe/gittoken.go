@@ -124,7 +124,7 @@ func gitAccessFromEnv(variable string, repo *gittoken.Repo, rules []string) (*gi
 	if err := gittoken.Valid(token); err != nil {
 		return nil, fmt.Errorf("--git-token-env %s: %w", variable, err)
 	}
-	verdict, expires := vetGitToken(token, repo, false, "")
+	verdict, expires := vetGitToken(token, repo, false, nil)
 	if verdict != vetUse {
 		return nil, fmt.Errorf("--git-token-env %s: not using that token (see above) — fix it, or leave --git-token-env off", variable)
 	}
@@ -166,6 +166,10 @@ func askGitAccess(vibeHome, name string, repo *gittoken.Repo, current *state.Ins
 		haveDefault = false
 	}
 	has := current != nil && current.GitToken != ""
+	var skip skipWording = skipWithoutToken
+	if has {
+		skip = keepsToken(current.GitTokenExpires)
+	}
 
 	var labels []string
 	var choices []gitChoice
@@ -209,9 +213,9 @@ func askGitAccess(vibeHome, name string, repo *gittoken.Repo, current *state.Ins
 		return nil, choices[idx], nil
 	case gitDefault:
 		access.token, access.source = defaultToken, gitTokenDefault
-		verdict, expires := vetGitToken(access.token, repo, true, skipLabel(has))
+		verdict, expires := vetGitToken(access.token, repo, true, skip)
 		for verdict == vetRetry {
-			verdict, expires = vetGitToken(access.token, repo, true, skipLabel(has))
+			verdict, expires = vetGitToken(access.token, repo, true, skip)
 		}
 		if verdict == vetSkip {
 			return nil, keepOrNone(has), nil
@@ -225,7 +229,7 @@ func askGitAccess(vibeHome, name string, repo *gittoken.Repo, current *state.Ins
 			days := pickTokenDays(tokenDays)
 			openTokenPage(fmt.Sprintf("vibe %s", name), tokenDescription(name, repo), repoOwner(repo), days, repo)
 		}
-		if access.token, access.expires, ok = enterGitToken(repo, skipLabel(has)); !ok {
+		if access.token, access.expires, ok = enterGitToken(repo, skip); !ok {
 			return nil, keepOrNone(has), nil
 		}
 		access.source = gitTokenOwn
@@ -245,13 +249,29 @@ func inParens(s string) string {
 	return " (" + s + ")"
 }
 
-// skipLabel is how the choice to give up on a token with a problem is put:
-// it leaves the token the sandbox already had, or none.
-func skipLabel(has bool) string {
-	if has {
-		return "keep the token it has"
-	}
+// skipWording puts the choice to give up on a token with a problem, given
+// when the token being given up on expires (zero when it doesn't, or GitHub
+// didn't say).
+type skipWording func(newExpires time.Time) string
+
+func skipWithoutToken(time.Time) string {
 	return "continue without a GitHub token"
+}
+
+func fixedSkip(label string) skipWording {
+	return func(time.Time) string { return label }
+}
+
+// keepsToken is giving up in favour of the token the sandbox has, which
+// expires on oldExpires. Both expiries are said: someone who expects the new
+// token to be used must see that this leaves the old one, which — when the
+// new one is a regeneration of it — no longer works.
+func keepsToken(oldExpires time.Time) skipWording {
+	return func(newExpires time.Time) string {
+		now := timeNow()
+		return "keep the token it has" + inParens(gittoken.DescribeExpiry(oldExpires, now)) +
+			" — not the new one" + inParens(gittoken.DescribeExpiry(newExpires, now))
+	}
 }
 
 // keepOrNone is what giving up on a new token leaves: the token the sandbox
@@ -396,9 +416,9 @@ func openRenewPage(tokenName string) {
 // enterGitToken reads a token from the terminal, showing a * for each
 // character, then checks it with GitHub — asking again, when it has a
 // problem, for as long as the user wants to try again. ok is false when the
-// user gave up: an empty line, Ctrl-C, or skip (skipLabel says what that
+// user gave up: an empty line, Ctrl-C, or skip (skipWording says what that
 // leaves). expires is when GitHub says the token stops working.
-func enterGitToken(repo *gittoken.Repo, skip string) (token string, expires time.Time, ok bool) {
+func enterGitToken(repo *gittoken.Repo, skip skipWording) (token string, expires time.Time, ok bool) {
 	for {
 		tty, closeFn, opened := ttyRW()
 		if !opened {
@@ -447,7 +467,7 @@ const (
 // use it anyway, or skip (put as skip says); without, it isn't used —
 // except when GitHub couldn't be asked at all, which only warns, since that
 // says nothing against the token.
-func vetGitToken(token string, repo *gittoken.Repo, ask bool, skip string) (vetVerdict, time.Time) {
+func vetGitToken(token string, repo *gittoken.Repo, ask bool, skip skipWording) (vetVerdict, time.Time) {
 	kind := gittoken.KindOf(token)
 	if kind.AccountWide() {
 		note("  WARNING: that's a %s: it can reach every repository your account can,", kind)
@@ -491,7 +511,7 @@ func vetGitToken(token string, repo *gittoken.Repo, ask bool, skip string) (vetV
 				"I've narrowed it on GitHub: check it again",
 				"use it as it is",
 				"try a different token",
-				skip,
+				skip(rep.Expires),
 			}, 0)
 			switch {
 			case !ok || idx == 3:
@@ -511,7 +531,7 @@ func vetGitToken(token string, repo *gittoken.Repo, ask bool, skip string) (vetV
 		note("  %s", p)
 	}
 	if ask {
-		idx, ok := chooseFrom("what now?", []string{"try again", "use it anyway", skip}, 0)
+		idx, ok := chooseFrom("what now?", []string{"try again", "use it anyway", skip(rep.Expires)}, 0)
 		switch {
 		case !ok || idx == 2:
 			return vetSkip, rep.Expires
@@ -674,7 +694,7 @@ func renewGitAccess(vibeHome string, inst *state.Instance, repo *gittoken.Repo) 
 		tokenName = "vibe default"
 	}
 	openRenewPage(tokenName)
-	token, expires, ok := enterGitToken(repo, "keep the token it has")
+	token, expires, ok := enterGitToken(repo, keepsToken(inst.GitTokenExpires))
 	if !ok {
 		note("'%s' keeps the token it has", inst.Name)
 		return nil
@@ -884,7 +904,7 @@ func setUpDefaultGitToken(vibeHome string) {
 	case "guided":
 		openTokenPage("vibe default", "Lets the agents in vibe sandboxes push.", "", pickTokenDays(tokenDays), nil)
 	}
-	token, expires, ok := enterGitToken(nil, "go on without changing the default token")
+	token, expires, ok := enterGitToken(nil, fixedSkip("go on without changing the default token"))
 	if !ok {
 		return
 	}

@@ -108,7 +108,7 @@ func TestVetGitTokenWhenGitHubCantBeAsked(t *testing.T) {
 	checkGitToken = func(string, *gittoken.Repo) gittoken.Report {
 		return gittoken.Report{Unreachable: errors.New("offline")}
 	}
-	if verdict, _ := vetGitToken("github_pat_x", nil, false, ""); verdict != vetUse {
+	if verdict, _ := vetGitToken("github_pat_x", nil, false, nil); verdict != vetUse {
 		t.Error("not being able to ask GitHub should warn, not refuse the token")
 	}
 }
@@ -311,10 +311,10 @@ func TestShareDefaultToken(t *testing.T) {
 
 func TestVetGitTokenWithNoOneToAsk(t *testing.T) {
 	stubGitAccess(t)
-	if verdict, expires := vetGitToken("good", nil, false, ""); verdict != vetUse || !expires.Equal(fakeExpiry) {
+	if verdict, expires := vetGitToken("good", nil, false, nil); verdict != vetUse || !expires.Equal(fakeExpiry) {
 		t.Errorf("a good token: %v, %v", verdict, expires)
 	}
-	if verdict, _ := vetGitToken("bad", nil, false, ""); verdict != vetSkip {
+	if verdict, _ := vetGitToken("bad", nil, false, nil); verdict != vetSkip {
 		t.Errorf("a token GitHub turns down, with no one to ask: %v", verdict)
 	}
 }
@@ -323,5 +323,36 @@ func TestPaintLeavesNoColourAlone(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	if got := paint(colorRed, "All repositories"); got != "All repositories" {
 		t.Errorf("paint with NO_COLOR = %q", got)
+	}
+}
+
+func TestKeepingTheOldTokenSaysBothExpiries(t *testing.T) {
+	stubGitAccess(t)
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	timeNow = func() time.Time { return now }
+	oldExpiry := now.AddDate(0, 0, 359)
+	newExpiry := now.AddDate(0, 0, 30)
+
+	got := keepsToken(oldExpiry)(newExpiry)
+
+	for _, want := range []string{
+		"keep the token it has",
+		gittoken.DescribeExpiry(oldExpiry, now),
+		"not the new one",
+		gittoken.DescribeExpiry(newExpiry, now),
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%q should contain %q", got, want)
+		}
+	}
+	if strings.Index(got, gittoken.DescribeExpiry(oldExpiry, now)) > strings.Index(got, "not the new one") {
+		t.Errorf("the old expiry should come before the new one: %q", got)
+	}
+}
+
+func TestKeepingTheOldTokenWhenNoExpiryIsKnown(t *testing.T) {
+	stubGitAccess(t)
+	if got, want := keepsToken(time.Time{})(time.Time{}), "keep the token it has — not the new one"; got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
