@@ -23,6 +23,8 @@ type fakeAgent struct {
 	prompts  []string
 	sessions []string // the session each start resumed
 	starts   int
+	// startGate, when set, holds each start until it is closed: an agent that takes a while to come up, as one through sbx does.
+	startGate chan struct{}
 	// interrupts, ends, kills count what was asked of the processes;
 	// stoppedTasks are the background tasks stopped.
 	interrupts, ends, kills int
@@ -44,7 +46,11 @@ func (f *fakeAgent) start(ctx context.Context, session string, onLine func([]byt
 	f.mu.Lock()
 	f.starts++
 	f.sessions = append(f.sessions, session)
+	gate := f.startGate
 	f.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
 	p := &fakeProc{f: f, session: session, onLine: onLine, prompts: make(chan [2]string, 16), interrupt: make(chan struct{}, 4),
 		stopTask: make(chan string, 4), end: make(chan struct{}), kill: make(chan struct{}), done: make(chan struct{})}
 	go p.run()
@@ -361,6 +367,7 @@ func TestStoppingInterruptsTheTurnLeavingTheAgentAndSaysSo(t *testing.T) {
 	f := &fakeAgent{release: make(chan struct{})}
 	s := converseServer(f)
 	send(t, s, "/api/conversation/send", `{"prompt":"slow"}`)
+	waitFor(t, "the agent to be answering", func() bool { return len(f.asked()) == 1 })
 	if _, body := send(t, s, "/api/conversation/stop", `{}`); body["stopped"] != true {
 		t.Errorf("stop = %v", body)
 	}
@@ -380,6 +387,38 @@ func TestStoppingInterruptsTheTurnLeavingTheAgentAndSaysSo(t *testing.T) {
 	idle(t, s)
 	if n := f.count(&f.starts); n != 1 {
 		t.Errorf("%d agents started: the stopped one answers the next prompt", n)
+	}
+}
+
+// A stop before the agent has started (it takes a second or two through sbx) leaves nothing to interrupt: the agent being
+// started is ended as soon as it is up, the prompt is said not to have reached it, and the next prompt starts another.
+func TestStoppingWhileTheAgentStartsEndsItOnceItIsUpWithoutGivingItThePrompt(t *testing.T) {
+	gate := make(chan struct{})
+	f := &fakeAgent{startGate: gate}
+	s := converseServer(f)
+	send(t, s, "/api/conversation/send", `{"prompt":"hello"}`)
+	waitFor(t, "the agent to be starting", func() bool { return f.count(&f.starts) == 1 })
+	if _, body := send(t, s, "/api/conversation/stop", `{}`); body["stopped"] != true {
+		t.Errorf("stop = %v", body)
+	}
+	close(gate)
+	p := idle(t, s)
+	if f.count(&f.kills) != 1 || f.count(&f.interrupts) != 0 {
+		t.Errorf("kills %d, interrupts %d: an agent stopped while it started is ended once it is up", f.count(&f.kills), f.count(&f.interrupts))
+	}
+	if len(f.asked()) != 0 {
+		t.Errorf("the stopped prompt was given to the agent: %v", f.asked())
+	}
+	if p.Events[0].Receipt != receiptUndelivered {
+		t.Errorf("the prompt's receipt = %q, want it said not to have reached the agent", p.Events[0].Receipt)
+	}
+	send(t, s, "/api/conversation/send", `{"prompt":"again"}`)
+	idle(t, s)
+	if n := f.count(&f.starts); n != 2 {
+		t.Errorf("%d agents started: the next prompt starts another", n)
+	}
+	if got := f.asked(); len(got) != 1 || got[0] != "again" {
+		t.Errorf("asked %v", got)
 	}
 }
 
@@ -406,7 +445,14 @@ func TestAnAgentThatWillNotStopCanBeEndedAtOnce(t *testing.T) {
 	defer close(f.slowStop)
 	s := converseServer(f)
 	send(t, s, "/api/conversation/send", `{"prompt":"stuck"}`)
-	waitFor(t, "the prompt to reach the agent", func() bool { return len(f.asked()) == 1 })
+	waitFor(t, "the agent to say which session it is in", func() bool {
+		for _, e := range poll(t, s, 0).Events {
+			if e.Kind == "agent" {
+				return true
+			}
+		}
+		return false
+	})
 	send(t, s, "/api/conversation/stop", `{}`)
 	if _, body := send(t, s, "/api/conversation/stop", `{"force":true}`); body["stopped"] != true {
 		t.Fatalf("force = %v", body)
