@@ -126,6 +126,28 @@ taken back or sent at once; `spare_background_tasks` with a background *agent* (
 long-lived process; a larger model over a long conversation; and the OpenCode path. A prompt without a `uuid` gets no lifecycle frames:
 vibe always sends one.
 
+## Decided with the user (2026-11-16)
+
+The point of this work is that **background work is not lost when the user prompts while it runs**, and that it can call the agent back.
+Not keeping the agent quick to answer: the process lives for as long as there is work that can call back, and no longer.
+
+1. **A prompt sent while the agent works is folded into the running turn**, as the console does (the CLI's default: the agent takes it in at
+   its next step). The page shows it as taken in; its receipts come from `command_lifecycle`. Not `priority: later`.
+2. **Stop interrupts the turn at once and leaves background work running** (the interrupt carries `spare_background_tasks: true`, so
+   background agents are spared too, not only shell commands). Then, only if the stream's `background_tasks_changed` lists any, the page
+   says so inline, after the stop, and lets the user choose: "Stopped. The agent still has 2 tasks running in the background: "Run the test
+   suite", "Watch the build". **Stop them too** / **Leave them running**". Stop them too sends `stop_task` for each (`e13`). An agent that
+   gives no `result` within a few seconds of the interrupt is offered a force stop: today's hard kill, which ends everything.
+3. **The agent ends 30 s after it is idle**: its turn over and no background task running (the stream says both). vibe closes its stdin
+   and it exits by itself (`e6`). So the sandbox sleeps as it does today: an open `sbx exec -i` keeps a sandbox awake (tried by the user
+   2026-11-16 with `sbx exec -i vibe -- sleep 600`), and an idle agent must not. While the agent has work (a turn, or a background task),
+   vibe keeps the sandbox awake, as it does for a turn today, or sbx stopping it would end that work.
+4. **The next prompt after that starts a new process** that `--resume`s the conversation (a new pid; the same session): the start a prompt
+   pays today (about 1.6 s through sbx). A wakeup the agent scheduled with nothing running in the background dies with the idle agent, as
+   it does today.
+5. **One pid file per conversation**, not per turn, so a vibe started after one that died finds the agent it left (`e11`: it runs on) and
+   ends it with the hard stop before starting its own.
+
 ## Design (settled where the experiments above say so; the rest to be tried)
 
 **One streaming `claude` per conversation**, started on the first prompt (`--input-format stream-json`), kept for as long as the conversation
