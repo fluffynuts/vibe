@@ -1938,7 +1938,9 @@
     // diffKey stands for the diff the page holds (vibe says it with the diff), and diffKeyIgnoresSpace whether that diff left
     // whitespace out: what the code is asked about, once the agent's turn is over (see reviewTurnEnded). stale says it has
     // changed since, with the tab open; checking, that the question is on its way.
-    diffKey: null, diffKeyIgnoresSpace: false, stale: false, checking: false }
+    diffKey: null, diffKeyIgnoresSpace: false, stale: false, checking: false,
+    // diffFor says which review the diff the page holds was worked out for (see reviewIdentity).
+    diffFor: null }
 
   // changeReview asks vibe for a change to the review (do, ask, submit,
   // start), taking the review it gives back (see tookReview): every change
@@ -2687,6 +2689,7 @@
       banner('review', '')
       showBroken('')
       // Something done on the page since this set out gave a newer review.
+      let otherReview = false
       if (reviewView.changed === changed) {
         const wasOn = reviewView.review && reviewIsOn(reviewView.review)
         reviewView.review = res.body.review
@@ -2696,8 +2699,17 @@
         // What can be reviewed is asked when the start screen shows, not at
         // every poll: it's git, which polls keep clear of.
         if (!reviewIsOn(reviewView.review) && (wasOn || (!reviewView.options && !reviewView.optionsError))) loadOptions()
+        // The agent started a review from the terminal: the diff held is the last one's, and its comments would sit under
+        // "On files not in this diff" until Refresh, so the diff is worked out afresh, and nothing is drawn until it is.
+        otherReview = !withDiff && reviewView.files !== null && reviewIsOn(reviewView.review) && reviewView.diffFor !== reviewIdentity(reviewView.review)
       }
       showPastes(res.body.pastes)
+      if (otherReview) {
+        forgetFiles()
+        reviewView.files = null
+        reviewView.diffWanted = true
+        return
+      }
       // A diff that set out before the review's files went stale (Refresh,
       // a new review) isn't drawn: the one asked for since is on its way.
       if (withDiff && reviewView.loadingEpoch === reviewView.epoch) {
@@ -2705,6 +2717,7 @@
         reviewView.diffError = res.body.diffError || ''
         reviewView.diffKey = res.body.diffKey || null
         reviewView.diffKeyIgnoresSpace = reviewView.ignoreSpace
+        reviewView.diffFor = reviewIdentity(res.body.review)
         showStale(false)
         // The code may have changed with the same files: drawn afresh.
         reviewView.key = null
@@ -2749,6 +2762,11 @@
   // drawReview draws the review when it has changed; a poll's redraw waits
   // while a box on the tab is being typed in (it would take the focus away),
   // one the user asked for (force) doesn't.
+  // reviewIdentity is what tells one review from the next, whatever is said in it: when it was started, and what it is of.
+  function reviewIdentity(rv) {
+    return [rv.started, rv.ref, rv.commit, rv.unpushed].join('|')
+  }
+
   // reviewIsOn says rv is a review to show: started (or commented on) and
   // not closed. Else the tab offers to start one.
   function reviewIsOn(rv) {
