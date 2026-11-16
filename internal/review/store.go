@@ -186,7 +186,36 @@ type Request struct {
 	At    time.Time `json:"at,omitempty"`
 	Body  string    `json:"body,omitempty"`
 	Stops []Stop    `json:"stops,omitempty"`
+	// For is the review the page was showing when it asked: a change is
+	// carried out only on that one. The agent can start another review while
+	// the page shows the last, and a thread's number is only its own, so a
+	// reply to #3 would land on the new review's #3, unseen. Nil (the agent's
+	// requests, or a page that doesn't say) means whichever review there is.
+	For *Key `json:"for,omitempty"`
 }
+
+// Key says which review something is about: when it was started, and what it
+// is of. What is said in it changes all the time; this doesn't.
+type Key struct {
+	Started  time.Time `json:"started"`
+	Ref      string    `json:"ref,omitempty"`
+	Commit   string    `json:"commit,omitempty"`
+	Unpushed bool      `json:"unpushed,omitempty"`
+}
+
+// Key is the review's.
+func (r Review) Key() Key {
+	return Key{Started: r.Started, Ref: r.Ref, Commit: r.Commit, Unpushed: r.Unpushed}
+}
+
+// IsFor says the key is of review r.
+func (k Key) IsFor(r Review) bool {
+	return k.Started.Equal(r.Started) && k.Ref == r.Ref && k.Commit == r.Commit && k.Unpushed == r.Unpushed
+}
+
+// ErrReplaced is what a change for a review that has since been replaced by
+// another is refused with.
+var ErrReplaced = errors.New("the agent has replaced this review with another: what you did was not applied to it")
 
 // userOps are what the user can do from the page: the rest is the agent's.
 var userOps = map[string]bool{"view": true, "unview": true, "start": true, "close": true, "reopen-review": true, "comment": true, "reply": true, "resolve": true, "dismiss": true, "reopen": true, "edit": true, "delete": true}
@@ -403,6 +432,9 @@ func (s *Store) Do(req Request, author string) (Review, error) {
 	r, err := s.load()
 	if err != nil {
 		return r, err
+	}
+	if req.For != nil && req.Op != "start" && !req.For.IsFor(r) {
+		return r, Refused{ErrReplaced}
 	}
 	if err := s.apply(&r, req, author); err != nil {
 		var f failed

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"runtime"
 	"strings"
@@ -380,6 +381,10 @@ func (s *Server) reviewDo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rv, err := s.cfg.ReviewTab.Store.Do(req, review.User)
+	if errors.Is(err, review.ErrReplaced) {
+		writeReplaced(w)
+		return
+	}
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.As(err, &review.Refused{}) {
@@ -397,13 +402,20 @@ func (s *Server) reviewDo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"review": rv})
 }
 
+// writeReplaced refuses a change meant for a review the agent has since replaced with another: nothing was done, and the page, told by
+// the code, takes the review there is.
+func writeReplaced(w http.ResponseWriter) {
+	writeJSON(w, http.StatusConflict, map[string]string{"error": review.ErrReplaced.Error(), "code": "review-replaced"})
+}
+
 // reviewAsk is the user asking the agent about a thread: a turn, telling
 // the agent the thread and how to answer on it. The question is kept as the
 // user's reply once the turn has begun; refused, nothing is kept.
 func (s *Server) reviewAsk(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Thread int    `json:"thread"`
-		Body   string `json:"body"`
+		Thread int         `json:"thread"`
+		Body   string      `json:"body"`
+		For    *review.Key `json:"for"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "expected {\"thread\": n, \"body\": ...}")
@@ -421,6 +433,10 @@ func (s *Server) reviewAsk(w http.ResponseWriter, r *http.Request) {
 	rv, err := s.cfg.ReviewTab.Store.Load()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if req.For != nil && !req.For.IsFor(rv) {
+		writeReplaced(w)
 		return
 	}
 	var thread *review.Thread
@@ -477,6 +493,13 @@ func unsentOn(rv review.Review, id int) []review.Ref {
 // reviewSubmit sends the agent the user's comments it hasn't been given, as
 // a turn; they're sent once it has begun. Refused, they stay unsent.
 func (s *Server) reviewSubmit(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		For *review.Key `json:"for"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, `expected {} or {"for": the review shown}`)
+		return
+	}
 	if s.cfg.Converse == nil {
 		writeError(w, http.StatusNotFound, "this sandbox's agent can't be talked to from the page")
 		return
@@ -484,6 +507,10 @@ func (s *Server) reviewSubmit(w http.ResponseWriter, r *http.Request) {
 	rv, err := s.cfg.ReviewTab.Store.Load()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if req.For != nil && !req.For.IsFor(rv) {
+		writeReplaced(w)
 		return
 	}
 	refs := review.Unsent(rv)
@@ -869,7 +896,8 @@ func (s *Server) stopAndDropReview(why string) (rv review.Review, stopped, dropp
 // turn the review didn't begin is never stopped.
 func (s *Server) reviewClose(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Stop bool `json:"stop"`
+		Stop bool        `json:"stop"`
+		For  *review.Key `json:"for"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, `expected {"stop": true or false}`)
@@ -879,6 +907,10 @@ func (s *Server) reviewClose(w http.ResponseWriter, r *http.Request) {
 	rv, err := store.Load()
 	if err != nil {
 		writeStoreError(w, err)
+		return
+	}
+	if req.For != nil && !req.For.IsFor(rv) {
+		writeReplaced(w)
 		return
 	}
 	writing := rv.State == review.InProgress
