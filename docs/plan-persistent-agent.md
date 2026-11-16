@@ -1,4 +1,4 @@
-# One agent process for the whole conversation, so background work can call back (built 2026-11-16 on `feat/persistent-agent`; not yet tried by the user)
+# One agent process for the whole conversation, so background work can call back (built 2026-11-16 on `feat/persistent-agent`; tried by the user the same day)
 
 Raised 2026-11-13 by the user, who lost an agent's background work twice by sending a prompt while the conversation looked idle, and who
 remembers the console app letting an agent get the call-back later while still being talked to. The next highest-order priority after the
@@ -172,8 +172,12 @@ and the host side), and the page and instructions after them.
   that must outlive the run.
 
 Not done: a test against a real `claude` (the experiments in `tools/experiments/persistent-agent/` are the record of the stream's shape),
-and other agents: OpenCode's conversation is on the unmerged `feat/opencode` branch, written against `Converser`, and will need this shape when it is merged. Not verified by hand yet: everything on the page against
-a real agent through sbx.
+and other agents: OpenCode's conversation is on the unmerged `feat/opencode` branch, written against `Converser`, and will need this shape when it is merged. Tried by hand by the user (2026-11-16), through sbx: prompts sent mid-turn taken into the turn, Send open and the
+receipts throughout (recorded); background work going on through a prompt and calling the agent back; Stop leaving it running
+and the offer naming it, both ways (leave, and stop them too); the agent ended when idle and the next prompt resuming the
+conversation. Found and fixed on the way: a stopped turn shown as the agent failing, with a ✕ on the prompt it had taken in.
+Not tried by hand: the force stop (a real agent stops too quickly to need it), vibe dying with work running (the leftover ended
+at the next start), and the sandbox going to sleep once the agent has ended.
 
 ## Design (settled where the experiments above say so; the rest to be tried)
 
