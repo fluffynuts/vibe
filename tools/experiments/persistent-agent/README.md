@@ -16,6 +16,7 @@ through stdin, and prints every event with the second it arrived; the raw events
 | `e5.py` | `set_model` mid-conversation |
 | `e6.py` | closing stdin with a background task running; resuming the session in a new process |
 | `e7.py` | what an idle process costs over three minutes, and whether it ends itself |
+| `e13.py` | stopping the agent's background tasks one by one (`stop_task`, ids from `background_tasks_changed`) without ending the agent |
 | `e8.py`, `e9.py` | changing effort mid-conversation (`apply_flag_settings`, `/effort`) |
 | `e10.py` | through `sbx exec -i`: start-up time, the time from writing a prompt to its `queued` frame, bursts between events, a 150 KB prompt arriving whole |
 | `e11.py` | (sbx only) vibe dies while the agent runs: the sbx client is killed; does the agent in the sandbox end or carry on, and does vibe's hard stop still find it? |
