@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"vibe/internal/cliargs"
@@ -75,56 +76,103 @@ func batchLabel(inst state.Instance, now time.Time) string {
 	return fmt.Sprintf("%s — %s — %s", inst.Name, where, token)
 }
 
-// giveTokenToSandboxes gives tok to each of picked in turn, keeping the rules
-// each has (or presetRules, when they were given). The token is checked
-// against each sandbox's own repository, once per repository: one it can't
-// push to is skipped, and the rest go on; one that fails stops none of the
-// others.
-func giveTokenToSandboxes(vibeHome string, picked []state.Instance, tok batchToken, presetRules []string) []batchOutcome {
-	checks := map[string]gittoken.Report{}
-	var outcomes []batchOutcome
-	for _, inst := range picked {
-		out := batchOutcome{name: inst.Name, folder: inst.Target, oldExpires: inst.GitTokenExpires}
-		repo := batchRepoOf(inst.Target)
-		expires := tok.expires
-		switch {
-		case repo == nil:
-			out.pushCheck = "no GitHub remote, so not checked"
-		default:
-			rep, seen := checks[repo.String()]
-			if !seen {
-				rep = checkGitToken(tok.token, repo)
-				checks[repo.String()] = rep
+// giveTokenToSandboxes gives tok to each of picked, jobs at a time, keeping
+// the rules each has (or presetRules, when they were given). The token is
+// checked against each sandbox's own repository, once per repository: one it
+// can't push to is skipped, and the rest go on; one that fails stops none of
+// the others. Outcomes are in the order of picked. Each sandbox's lines are
+// kept together and shown whole when it is done, so they don't interleave.
+func giveTokenToSandboxes(vibeHome string, picked []state.Instance, tok batchToken, presetRules []string, jobs int) []batchOutcome {
+	jobs = max(1, min(jobs, len(picked)))
+	checker := &repoChecker{token: tok.token, reports: map[string]*repoReport{}}
+	outcomes := make([]batchOutcome, len(picked))
+	var show sync.Mutex
+	finished := 0
+	work := make(chan int)
+	var wg sync.WaitGroup
+	for w := 0; w < jobs; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range work {
+				var lines []string
+				say := func(format string, a ...interface{}) { lines = append(lines, fmt.Sprintf(format, a...)) }
+				outcomes[i] = giveTokenToSandbox(say, vibeHome, picked[i], tok, presetRules, checker)
+				show.Lock()
+				finished++
+				note("'%s': done (%d of %d)", picked[i].Name, finished, len(picked))
+				for _, line := range lines {
+					note("%s", line)
+				}
+				show.Unlock()
 			}
-			if problems := rep.Problems(); rep.Unreachable == nil && len(problems) > 0 {
-				out.problem = problems[0]
-				outcomes = append(outcomes, out)
-				continue
-			}
-			if rep.Unreachable != nil {
-				out.pushCheck = "GitHub couldn't be asked, so not checked"
-			} else {
-				out.pushCheck = "GitHub says it can push to " + repo.String()
-			}
-			if !rep.Expires.IsZero() {
-				expires = rep.Expires
-			}
-		}
-		rules := presetRules
-		if len(rules) == 0 {
-			rules = inst.GitRules
-		}
-		access := &gitAccess{token: tok.token, source: tok.source, rules: rules, expires: expires}
-		note("'%s':", inst.Name)
-		if err := setGitAccess(vibeHome, &inst, access, repo); err != nil {
-			out.problem = err.Error()
-			out.pushCheck = ""
-		} else {
-			out.given, out.newExpires = true, inst.GitTokenExpires
-		}
-		outcomes = append(outcomes, out)
+		}()
 	}
+	for i := range picked {
+		work <- i
+	}
+	close(work)
+	wg.Wait()
 	return outcomes
+}
+
+// repoChecker asks GitHub about a token once per repository, however many
+// sandboxes at once want the answer.
+type repoChecker struct {
+	token   string
+	mu      sync.Mutex
+	reports map[string]*repoReport
+}
+
+type repoReport struct {
+	once   sync.Once
+	report gittoken.Report
+}
+
+func (c *repoChecker) check(repo *gittoken.Repo) gittoken.Report {
+	c.mu.Lock()
+	entry, ok := c.reports[repo.String()]
+	if !ok {
+		entry = &repoReport{}
+		c.reports[repo.String()] = entry
+	}
+	c.mu.Unlock()
+	entry.once.Do(func() { entry.report = checkGitToken(c.token, repo) })
+	return entry.report
+}
+
+func giveTokenToSandbox(say func(string, ...interface{}), vibeHome string, inst state.Instance, tok batchToken, presetRules []string, checker *repoChecker) batchOutcome {
+	out := batchOutcome{name: inst.Name, folder: inst.Target, oldExpires: inst.GitTokenExpires}
+	repo := batchRepoOf(inst.Target)
+	expires := tok.expires
+	if repo == nil {
+		out.pushCheck = "no GitHub remote, so not checked"
+	} else {
+		rep := checker.check(repo)
+		if problems := rep.Problems(); rep.Unreachable == nil && len(problems) > 0 {
+			out.problem = problems[0]
+			return out
+		}
+		if rep.Unreachable != nil {
+			out.pushCheck = "GitHub couldn't be asked, so not checked"
+		} else {
+			out.pushCheck = "GitHub says it can push to " + repo.String()
+		}
+		if !rep.Expires.IsZero() {
+			expires = rep.Expires
+		}
+	}
+	rules := presetRules
+	if len(rules) == 0 {
+		rules = inst.GitRules
+	}
+	access := &gitAccess{token: tok.token, source: tok.source, rules: rules, expires: expires}
+	if err := setGitAccessSaying(say, vibeHome, &inst, access, repo); err != nil {
+		out.problem, out.pushCheck = err.Error(), ""
+		return out
+	}
+	out.given, out.newExpires = true, inst.GitTokenExpires
+	return out
 }
 
 // batchSummary says which sandboxes got the token and which didn't, and why,
@@ -325,7 +373,10 @@ func doBatchGitToken(vibeHome string, args cliargs.Args) error {
 		note("no token chosen: nothing changed")
 		return nil
 	}
-	outcomes := giveTokenToSandboxes(vibeHome, picked, tok, presetRules)
+	jobs := max(1, args.Jobs)
+	started := timeNow()
+	note("giving the token to %d sandboxes, %d at a time...", len(picked), min(jobs, len(picked)))
+	outcomes := giveTokenToSandboxes(vibeHome, picked, tok, presetRules, jobs)
 	note("")
 	failed := 0
 	for _, o := range outcomes {
@@ -336,6 +387,7 @@ func doBatchGitToken(vibeHome string, args cliargs.Args) error {
 	for _, line := range batchSummary(outcomes, timeNow()) {
 		note("%s", line)
 	}
+	note("took %s", timeNow().Sub(started).Round(time.Second))
 	if failed > 0 {
 		return fmt.Errorf("%d of %d sandboxes did not get the token", failed, len(outcomes))
 	}

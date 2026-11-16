@@ -142,6 +142,7 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              push with, renew or change it, or take it away
   vibe --batch-git-token     tick the sandboxes to give one GitHub token to
                              (type to narrow the list), and give it to them
+  vibe --jobs N              ...to N sandboxes at a time (default 1)
   vibe --git-token-env VAR   ...a new sandbox (or --git-token) the token in
                              $VAR, unasked
   vibe --git-rules R[,R]     ...and these rules for pushing, unasked:
@@ -259,6 +260,9 @@ func run(argv []string) error {
 
 	if (args.GitTokenEnv != "" || args.NoGitToken || args.GitRules != "") && args.ExclusiveActions() > 0 && !args.GitToken && !args.BatchGitToken {
 		return fmt.Errorf("--git-token-env, --no-git-token and --git-rules only apply to a new sandbox, or with --git-token")
+	}
+	if args.Jobs > 0 && !args.BatchGitToken {
+		return fmt.Errorf("--jobs only goes with --batch-git-token")
 	}
 	if args.BatchGitToken && (args.GitTokenEnv != "" || args.NoGitToken) {
 		return fmt.Errorf("--batch-git-token asks which token and which sandboxes: only --git-rules goes with it")

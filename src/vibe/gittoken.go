@@ -675,21 +675,28 @@ func pickGitRules(preset []string) []string {
 // (and a warning) when sbx wouldn't take the token, since a sandbox without
 // one is fine — just not what was asked for.
 func giveGitAccess(vibeHome, name string, access *gitAccess, repo *gittoken.Repo) *gitAccess {
+	return giveGitAccessSaying(note, vibeHome, name, access, repo)
+}
+
+// giveGitAccessSaying is giveGitAccess saying what it does through say, so
+// several sandboxes can be given tokens at once with each one's lines kept
+// together.
+func giveGitAccessSaying(say func(string, ...interface{}), vibeHome, name string, access *gitAccess, repo *gittoken.Repo) *gitAccess {
 	if access == nil {
 		return nil
 	}
 	if err := setGitHubSecret(name, access.token); err != nil {
-		note("WARNING: could not give the sandbox its GitHub token, so the agent can't push: %s", err)
-		note("  'vibe --git-token' tries again")
+		say("WARNING: could not give the sandbox its GitHub token, so the agent can't push: %s", err)
+		say("  'vibe --git-token' tries again")
 		return nil
 	}
 	if err := gittoken.Save(state.GitTokenPath(vibeHome, name), access.token); err != nil {
-		note("WARNING: %s — a rebuild of '%s' will start without its token", err, name)
+		say("WARNING: %s — a rebuild of '%s' will start without its token", err, name)
 	}
 	if err := writeGitInstructions(name, gittoken.Instructions(repo, access.rules, access.expires)); err != nil {
-		note("WARNING: could not tell the agent its rules for pushing (%s): %s", gittoken.SandboxFile, err)
+		say("WARNING: could not tell the agent its rules for pushing (%s): %s", gittoken.SandboxFile, err)
 	}
-	note("  github:    the agent can push (%s token%s)", access.source, prefixed(", ", gittoken.DescribeExpiry(access.expires, timeNow())))
+	say("  github:    the agent can push (%s token%s)", access.source, prefixed(", ", gittoken.DescribeExpiry(access.expires, timeNow())))
 	return access
 }
 
@@ -921,13 +928,19 @@ func doGitToken(vibeHome string, args cliargs.Args, name, target string) error {
 // setGitAccess gives an existing sandbox access (nil takes its token away)
 // and records it.
 func setGitAccess(vibeHome string, inst *state.Instance, access *gitAccess, repo *gittoken.Repo) error {
+	return setGitAccessSaying(note, vibeHome, inst, access, repo)
+}
+
+// setGitAccessSaying is setGitAccess saying what it does through say (taking
+// a token away still goes to the terminal: the batch never does).
+func setGitAccessSaying(say func(string, ...interface{}), vibeHome string, inst *state.Instance, access *gitAccess, repo *gittoken.Repo) error {
 	if access == nil {
 		takeGitAccess(vibeHome, inst.Name)
 		inst.GitToken, inst.GitRules, inst.GitTokenExpires = "", nil, time.Time{}
 		note("took '%s''s GitHub token away: you commit and push yourself", inst.Name)
 		return state.Save(vibeHome, *inst)
 	}
-	given := giveGitAccess(vibeHome, inst.Name, access, repo)
+	given := giveGitAccessSaying(say, vibeHome, inst.Name, access, repo)
 	if given == nil {
 		return fmt.Errorf("'%s' has no new GitHub token", inst.Name)
 	}

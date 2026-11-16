@@ -4,6 +4,7 @@ package cliargs
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -69,6 +70,9 @@ type Args struct {
 	// token to give a sandbox, so it needn't be typed (or be in argv, where
 	// anyone on the machine could read it).
 	GitTokenEnv string
+	// Jobs is --jobs: how many sandboxes --batch-git-token gives the token to
+	// at once; zero when not given.
+	Jobs int
 	// NoGitToken is --no-git-token: no token for a new sandbox, without
 	// asking; with --git-token, take the sandbox's away.
 	NoGitToken bool
@@ -202,6 +206,20 @@ func parse(argv []string) (a Args, paths []string, err error) {
 		case arg == "--batch-git-token":
 			a.BatchGitToken = true
 			i++
+		case arg == "--jobs" || strings.HasPrefix(arg, "--jobs="):
+			v, n := strings.TrimPrefix(arg, "--jobs="), 1
+			if arg == "--jobs" {
+				var err error
+				if v, n, err = valueArg(argv, i); err != nil {
+					return a, paths, err
+				}
+			}
+			jobs, err := strconv.Atoi(v)
+			if err != nil || jobs < 1 {
+				return a, paths, fmt.Errorf("--jobs takes a number of at least 1, not %q", v)
+			}
+			a.Jobs = jobs
+			i += n
 		case arg == "--no-git-token":
 			a.NoGitToken = true
 			i++

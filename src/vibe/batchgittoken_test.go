@@ -5,7 +5,10 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"vibe/internal/gittoken"
 	"vibe/internal/sbxrun"
@@ -79,7 +82,7 @@ func TestBatchGivesTheTokenToThePickedSandboxesAndNoOtherKeepingTheirRules(t *te
 		saveBatchRecord(t, home, inst)
 	}
 
-	outcomes := giveTokenToSandboxes(home, []state.Instance{one, two}, batchToken{token: "good", source: gitTokenDefault, expires: fakeExpiry}, nil)
+	outcomes := giveTokenToSandboxes(home, []state.Instance{one, two}, batchToken{token: "good", source: gitTokenDefault, expires: fakeExpiry}, nil, 1)
 
 	if f.secrets["one"] != "good" || f.secrets["two"] != "good" {
 		t.Errorf("secrets = %v, want both picked given the token", f.secrets)
@@ -103,7 +106,7 @@ func TestBatchPresetRulesReplaceEachSandboxsOwn(t *testing.T) {
 	one := state.Instance{Name: "one", Target: "/w/one", GitToken: gitTokenOwn, GitRules: []string{gittoken.RuleFeatureBranch}}
 	saveBatchRecord(t, home, one)
 
-	giveTokenToSandboxes(home, []state.Instance{one}, batchToken{token: "good", source: gitTokenOwn}, []string{gittoken.RuleNoDefaultBranch})
+	giveTokenToSandboxes(home, []state.Instance{one}, batchToken{token: "good", source: gitTokenOwn}, []string{gittoken.RuleNoDefaultBranch}, 1)
 
 	if got, _, _ := state.Load(home, "one"); !reflect.DeepEqual(got.GitRules, []string{gittoken.RuleNoDefaultBranch}) {
 		t.Errorf("rules = %v, want the preset", got.GitRules)
@@ -122,7 +125,7 @@ func TestBatchSkipsASandboxWhoseRepositoryTheTokenCantPushToAndGoesOn(t *testing
 	saveBatchRecord(t, home, no)
 	saveBatchRecord(t, home, ok)
 
-	outcomes := giveTokenToSandboxes(home, []state.Instance{no, ok}, batchToken{token: "good", source: gitTokenOwn}, nil)
+	outcomes := giveTokenToSandboxes(home, []state.Instance{no, ok}, batchToken{token: "good", source: gitTokenOwn}, nil, 1)
 
 	if _, has := f.secrets["no"]; has || f.secrets["ok"] != "good" {
 		t.Errorf("secrets = %v, want only 'ok' given the token", f.secrets)
@@ -145,7 +148,7 @@ func TestBatchChecksEachRepositoryOnce(t *testing.T) {
 	saveBatchRecord(t, home, a)
 	saveBatchRecord(t, home, b)
 
-	giveTokenToSandboxes(home, []state.Instance{a, b}, batchToken{token: "good", source: gitTokenOwn}, nil)
+	giveTokenToSandboxes(home, []state.Instance{a, b}, batchToken{token: "good", source: gitTokenOwn}, nil, 1)
 
 	if checks != 1 {
 		t.Errorf("GitHub was asked %d times about one repository, want 1", checks)
@@ -167,7 +170,7 @@ func TestBatchAFailureToSetOneSecretStopsNoOther(t *testing.T) {
 	saveBatchRecord(t, home, broken)
 	saveBatchRecord(t, home, fine)
 
-	outcomes := giveTokenToSandboxes(home, []state.Instance{broken, fine}, batchToken{token: "good", source: gitTokenOwn}, nil)
+	outcomes := giveTokenToSandboxes(home, []state.Instance{broken, fine}, batchToken{token: "good", source: gitTokenOwn}, nil, 1)
 
 	if outcomes[0].given || !outcomes[1].given || f.secrets["fine"] != "good" {
 		t.Errorf("outcomes = %+v, secrets = %v", outcomes, f.secrets)
@@ -202,10 +205,141 @@ func TestBatchOutputNeverHasTheToken(t *testing.T) {
 	inst := state.Instance{Name: "one", Target: "/w/one"}
 	saveBatchRecord(t, home, inst)
 	secret := "good"
-	outcomes := giveTokenToSandboxes(home, []state.Instance{inst}, batchToken{token: secret, source: gitTokenOwn}, nil)
+	outcomes := giveTokenToSandboxes(home, []state.Instance{inst}, batchToken{token: secret, source: gitTokenOwn}, nil, 1)
 	for _, line := range batchSummary(outcomes, fakeNow) {
 		if strings.Contains(line, secret) {
 			t.Errorf("the summary has the token: %q", line)
+		}
+	}
+}
+
+// slowSecrets makes giving a secret wait until release is closed, counting
+// how many are being given at once.
+type slowSecrets struct {
+	mu                  sync.Mutex
+	inFlight, mostAtOne int
+	reached             chan struct{}
+	release             chan struct{}
+}
+
+func holdSecrets(t *testing.T) *slowSecrets {
+	t.Helper()
+	s := &slowSecrets{reached: make(chan struct{}, 100), release: make(chan struct{})}
+	setGitHubSecret = func(name, token string) error {
+		s.mu.Lock()
+		s.inFlight++
+		s.mostAtOne = max(s.mostAtOne, s.inFlight)
+		s.mu.Unlock()
+		s.reached <- struct{}{}
+		<-s.release
+		s.mu.Lock()
+		s.inFlight--
+		s.mu.Unlock()
+		return nil
+	}
+	return s
+}
+
+func fiveSandboxes(t *testing.T, home string) []state.Instance {
+	t.Helper()
+	var picked []state.Instance
+	for _, name := range []string{"a", "b", "c", "d", "e"} {
+		inst := state.Instance{Name: name, Target: "/w/" + name}
+		saveBatchRecord(t, home, inst)
+		picked = append(picked, inst)
+	}
+	return picked
+}
+
+func TestBatchGivesToNoMoreSandboxesAtOnceThanJobsSays(t *testing.T) {
+	stubGitAccess(t)
+	home := t.TempDir()
+	repositories(t, nil)
+	picked := fiveSandboxes(t, home)
+	held := holdSecrets(t)
+	done := make(chan []batchOutcome)
+
+	go func() {
+		done <- giveTokenToSandboxes(home, picked, batchToken{token: "good", source: gitTokenOwn}, nil, 2)
+	}()
+	<-held.reached
+	<-held.reached
+	select {
+	case <-held.reached:
+		t.Fatal("a third sandbox was started while two were being given the token")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(held.release)
+	outcomes := <-done
+
+	if held.mostAtOne != 2 {
+		t.Errorf("most at once = %d, want 2", held.mostAtOne)
+	}
+	for i, o := range outcomes {
+		if !o.given || o.name != picked[i].Name {
+			t.Errorf("outcome %d = %+v: all should be given, in the order picked", i, o)
+		}
+	}
+}
+
+func TestBatchOneAtATimeIsTheDefaultBehaviour(t *testing.T) {
+	stubGitAccess(t)
+	home := t.TempDir()
+	repositories(t, nil)
+	picked := fiveSandboxes(t, home)
+	held := holdSecrets(t)
+	close(held.release)
+
+	giveTokenToSandboxes(home, picked, batchToken{token: "good", source: gitTokenOwn}, nil, 1)
+
+	if held.mostAtOne != 1 {
+		t.Errorf("most at once = %d, want 1", held.mostAtOne)
+	}
+}
+
+func TestBatchAsksGitHubOncePerRepositoryEvenWhenSandboxesRunTogether(t *testing.T) {
+	stubGitAccess(t)
+	home := t.TempDir()
+	byTarget := map[string]*gittoken.Repo{}
+	picked := fiveSandboxes(t, home)
+	for _, inst := range picked {
+		byTarget[inst.Target] = &gittoken.Repo{Owner: "o", Name: "shared"}
+	}
+	repositories(t, byTarget)
+	var checks atomic.Int32
+	checkGitToken = func(token string, repo *gittoken.Repo) gittoken.Report {
+		checks.Add(1)
+		return gittoken.Report{Repo: repo, SeesRepo: true, CanPush: true}
+	}
+
+	giveTokenToSandboxes(home, picked, batchToken{token: "good", source: gitTokenOwn}, nil, 5)
+
+	if checks.Load() != 1 {
+		t.Errorf("GitHub was asked %d times about one repository, want 1", checks.Load())
+	}
+}
+
+func TestBatchAFailureAmongSandboxesGivenTogetherStopsNoOther(t *testing.T) {
+	f := stubGitAccess(t)
+	home := t.TempDir()
+	repositories(t, nil)
+	picked := fiveSandboxes(t, home)
+	var mu sync.Mutex
+	setGitHubSecret = func(name, token string) error {
+		if name == "c" {
+			return errors.New("sbx refused")
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		f.secrets[name] = token
+		return nil
+	}
+
+	outcomes := giveTokenToSandboxes(home, picked, batchToken{token: "good", source: gitTokenOwn}, nil, 5)
+
+	for _, o := range outcomes {
+		if o.given == (o.name == "c") {
+			t.Errorf("%s: given = %v", o.name, o.given)
 		}
 	}
 }

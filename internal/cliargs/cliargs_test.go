@@ -479,3 +479,16 @@ func TestBatchGitTokenIsAnExclusiveAction(t *testing.T) {
 		t.Errorf("--batch-git-token with --git-token should be two actions, got %d", a.ExclusiveActions())
 	}
 }
+
+func TestJobsTakesAPositiveNumber(t *testing.T) {
+	for _, argv := range [][]string{{"--jobs", "4"}, {"--jobs=4"}} {
+		if a, err := Parse(argv); err != nil || a.Jobs != 4 {
+			t.Errorf("%v: Jobs = %d, %v", argv, a.Jobs, err)
+		}
+	}
+	for _, argv := range [][]string{{"--jobs", "0"}, {"--jobs=x"}, {"--jobs"}} {
+		if _, err := Parse(argv); err == nil {
+			t.Errorf("%v should be refused", argv)
+		}
+	}
+}

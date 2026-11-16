@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 // was asked of them. GitHub accepts the token "good" and can push to any
 // repository with it.
 type fakeGitAccess struct {
+	// mu guards the maps: the batch gives tokens to several sandboxes at once.
+	mu           sync.Mutex
 	secrets      map[string]string
 	instructions map[string]string
 	setErr       error
@@ -42,6 +45,8 @@ func stubGitAccess(t *testing.T) *fakeGitAccess {
 		return gittoken.Report{Login: "someone", Repo: repo, SeesRepo: repo != nil, CanPush: repo != nil, Expires: fakeExpiry}
 	}
 	setGitHubSecret = func(name, token string) error {
+		f.mu.Lock()
+		defer f.mu.Unlock()
 		if f.setErr != nil {
 			return f.setErr
 		}
@@ -49,14 +54,20 @@ func stubGitAccess(t *testing.T) *fakeGitAccess {
 		return nil
 	}
 	removeGitHubSecret = func(name string) error {
+		f.mu.Lock()
+		defer f.mu.Unlock()
 		delete(f.secrets, name)
 		return nil
 	}
 	writeGitInstructions = func(name, content string) error {
+		f.mu.Lock()
+		defer f.mu.Unlock()
 		f.instructions[name] = content
 		return nil
 	}
 	removeGitInstructions = func(name string) error {
+		f.mu.Lock()
+		defer f.mu.Unlock()
 		delete(f.instructions, name)
 		return nil
 	}
