@@ -320,6 +320,24 @@ func (a Args) ExclusiveActions() int {
 	return n
 }
 
+// BatchGitTokenConflict says what is wrong with the flags that go with
+// --batch-git-token, or that go with it alone: nil when they are fine. The
+// batch asks which sandboxes and which token itself, so it takes no path and
+// neither --git-token-env nor --no-git-token; --jobs means nothing without it.
+func (a Args) BatchGitTokenConflict() error {
+	switch {
+	case a.Jobs > 0 && !a.BatchGitToken:
+		return fmt.Errorf("--jobs only goes with --batch-git-token")
+	case !a.BatchGitToken:
+		return nil
+	case a.Path != "":
+		return fmt.Errorf("--batch-git-token takes no path argument")
+	case a.GitTokenEnv != "" || a.NoGitToken:
+		return fmt.Errorf("--batch-git-token asks which token and which sandboxes: only --git-rules goes with it")
+	}
+	return nil
+}
+
 // Rebuilds says one of the rebuilds is asked for: --re-init, --re-create or
 // --re-compose.
 func (a Args) Rebuilds() bool { return a.ReInit || a.ReCreate || a.ReCompose }

@@ -261,11 +261,8 @@ func run(argv []string) error {
 	if (args.GitTokenEnv != "" || args.NoGitToken || args.GitRules != "") && args.ExclusiveActions() > 0 && !args.GitToken && !args.BatchGitToken {
 		return fmt.Errorf("--git-token-env, --no-git-token and --git-rules only apply to a new sandbox, or with --git-token")
 	}
-	if args.Jobs > 0 && !args.BatchGitToken {
-		return fmt.Errorf("--jobs only goes with --batch-git-token")
-	}
-	if args.BatchGitToken && (args.GitTokenEnv != "" || args.NoGitToken) {
-		return fmt.Errorf("--batch-git-token asks which token and which sandboxes: only --git-rules goes with it")
+	if err := args.BatchGitTokenConflict(); err != nil {
+		return err
 	}
 
 	vibeHome := vibeHomeDir()
@@ -374,9 +371,6 @@ func run(argv []string) error {
 	}
 
 	if args.BatchGitToken {
-		if args.Path != "" {
-			return fmt.Errorf("--batch-git-token takes no path argument")
-		}
 		return doBatchGitToken(vibeHome, args)
 	}
 
