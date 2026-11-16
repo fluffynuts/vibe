@@ -465,3 +465,17 @@ func TestTerminalAndHeadlessAreOpposites(t *testing.T) {
 		}
 	}
 }
+
+func TestBatchGitTokenIsAnExclusiveAction(t *testing.T) {
+	a, err := Parse([]string{"--batch-git-token"})
+	if err != nil || !a.BatchGitToken {
+		t.Fatalf("--batch-git-token: %+v, %v", a, err)
+	}
+	if a.ExclusiveActions() != 1 {
+		t.Errorf("expected 1 exclusive action, got %d", a.ExclusiveActions())
+	}
+	a, _ = Parse([]string{"--batch-git-token", "--git-token"})
+	if a.ExclusiveActions() != 2 {
+		t.Errorf("--batch-git-token with --git-token should be two actions, got %d", a.ExclusiveActions())
+	}
+}

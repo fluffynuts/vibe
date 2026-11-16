@@ -62,6 +62,9 @@ type Args struct {
 	// GitToken is --git-token: give the sandbox for the folder a GitHub
 	// token to push with, change the one it has, or take it away.
 	GitToken bool
+	// BatchGitToken is --batch-git-token: tick several sandboxes and give
+	// them all one GitHub token.
+	BatchGitToken bool
 	// GitTokenEnv is --git-token-env: the environment variable holding the
 	// token to give a sandbox, so it needn't be typed (or be in argv, where
 	// anyone on the machine could read it).
@@ -196,6 +199,9 @@ func parse(argv []string) (a Args, paths []string, err error) {
 		case arg == "--git-token":
 			a.GitToken = true
 			i++
+		case arg == "--batch-git-token":
+			a.BatchGitToken = true
+			i++
 		case arg == "--no-git-token":
 			a.NoGitToken = true
 			i++
@@ -282,13 +288,13 @@ func valueArg(argv []string, i int) (string, int, error) {
 
 // ExclusiveActions counts how many of the mutually-exclusive action flags
 // (migrate/stop/stop-all/ssh/re-init/re-create/re-compose/restore/list/install/upgrade/install-sbx/setup/
-// cleanup/delete/info/git-token/update-sandboxes/manage/headless) are set.
+// cleanup/delete/info/git-token/batch-git-token/update-sandboxes/manage/headless) are set.
 // --headless with one of the rebuilds (re-init, re-create, re-compose) isn't
 // a second: it says what to do when the rebuild is done, instead of attaching
 // a terminal, as 'vibe -r --no-start && vibe --headless' does.
 func (a Args) ExclusiveActions() int {
 	n := 0
-	for _, b := range []bool{a.Migrate, a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info, a.Setup, a.GitToken, a.UpdateSandboxes, a.Manage, a.Headless && !a.Rebuilds()} {
+	for _, b := range []bool{a.Migrate, a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info, a.Setup, a.GitToken, a.BatchGitToken, a.UpdateSandboxes, a.Manage, a.Headless && !a.Rebuilds()} {
 		if b {
 			n++
 		}

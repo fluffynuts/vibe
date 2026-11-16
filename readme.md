@@ -305,6 +305,8 @@ vibe --no-start            # ...doing the setup (create, -r, -R, -C) but not sta
                            # prints "type vibe to get started" unless -f is given (handy for cron)
 vibe --git-token [path]    # give the sandbox for path a GitHub token to push
                            #    with, renew or change it, or take it away
+vibe --batch-git-token     # tick the sandboxes to give one GitHub token to (type to
+                           #    narrow the list), and give it to them
 vibe --git-token-env VAR   # ...a new sandbox (or --git-token) the token in $VAR,
                            #    without asking
 vibe --git-rules R[,R]     # ...and these rules for pushing, without asking:
@@ -978,6 +980,17 @@ about to. A rebuild
 sandbox gets no token unless `--git-token-env VAR` names an environment variable holding one (never
 the token itself on the command line, where anyone on the machine can read it). That token is
 checked the same way, and turned down if GitHub won't let it push. `--git-rules` picks the rules.
+
+`vibe --batch-git-token` is for when several sandboxes push with the same token and it has been
+regenerated, which kills the old one in every sandbox holding it. It lists the sandboxes vibe knows
+(each with what its token is now, from vibe's own records: GitHub isn't asked), with none ticked: type
+to narrow the list, Tab ticks the highlighted one, Ctrl-A ticks everything shown (or unticks it), Esc
+clears what is typed and then quits, and ticks stay when the filter hides them. Then you choose the
+token once (your default, a new one, one you have, or the one another sandbox has), and it is given to
+each ticked sandbox, keeping that sandbox's own rules (`--git-rules` sets them for all). The token is
+checked with GitHub against each sandbox's repository: one it can't push to is skipped, and the rest go
+on. The summary says which got it, with old and new expiry, and which didn't, and why. It needs a
+terminal: a token is never typed into the page.
 
 ### Choices kept for a profile
 

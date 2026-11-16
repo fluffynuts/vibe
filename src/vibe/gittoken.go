@@ -406,12 +406,25 @@ func pickTokenDays(def int) int {
 // "All repositories", and a token left on it passes every check vibe makes
 // of whether it can push.
 func openTokenPage(tokenName, description, owner string, days int, repo *gittoken.Repo) {
+	var repos []string
+	if repo != nil {
+		repos = []string{repo.String()}
+	}
+	openTokenPageFor(tokenName, description, owner, days, repos)
+}
+
+// openTokenPageFor is openTokenPage for the repositories named in repos: one,
+// several (a token for a batch of sandboxes), or none known.
+func openTokenPageFor(tokenName, description, owner string, days int, repos []string) {
 	note("on GitHub's page for the new token:")
 	note("  1. under Repository access, change %s to %s,", paint(colorRed, `"All repositories"`), paint(colorGreen, `"Only select repositories"`))
-	if repo != nil {
-		note("     and choose %s — GitHub won't let vibe pick it for you", paint(colorYellow, repo.String()))
-	} else {
+	switch len(repos) {
+	case 0:
 		note("     and choose %s — GitHub won't let vibe pick them for you", paint(colorYellow, "the repositories the agent may push to"))
+	case 1:
+		note("     and choose %s — GitHub won't let vibe pick it for you", paint(colorYellow, repos[0]))
+	default:
+		note("     and choose %s — GitHub won't let vibe pick them for you", paint(colorYellow, strings.Join(repos, ", ")))
 	}
 	note("  2. check the permissions: %s", paint(colorPink, "Contents, Pull requests and Workflows, read and write"))
 	note("  3. %s", paint(colorCyan, "Generate token, copy it, and paste it here"))
