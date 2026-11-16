@@ -4,6 +4,7 @@ package cliargs
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -62,10 +63,16 @@ type Args struct {
 	// GitToken is --git-token: give the sandbox for the folder a GitHub
 	// token to push with, change the one it has, or take it away.
 	GitToken bool
+	// BatchGitToken is --batch-git-token: tick several sandboxes and give
+	// them all one GitHub token.
+	BatchGitToken bool
 	// GitTokenEnv is --git-token-env: the environment variable holding the
 	// token to give a sandbox, so it needn't be typed (or be in argv, where
 	// anyone on the machine could read it).
 	GitTokenEnv string
+	// Jobs is --jobs: how many sandboxes --batch-git-token gives the token to
+	// at once; zero when not given (vibe picks).
+	Jobs int
 	// NoGitToken is --no-git-token: no token for a new sandbox, without
 	// asking; with --git-token, take the sandbox's away.
 	NoGitToken bool
@@ -196,6 +203,23 @@ func parse(argv []string) (a Args, paths []string, err error) {
 		case arg == "--git-token":
 			a.GitToken = true
 			i++
+		case arg == "--batch-git-token":
+			a.BatchGitToken = true
+			i++
+		case arg == "--jobs" || strings.HasPrefix(arg, "--jobs="):
+			v, n := strings.TrimPrefix(arg, "--jobs="), 1
+			if arg == "--jobs" {
+				var err error
+				if v, n, err = valueArg(argv, i); err != nil {
+					return a, paths, err
+				}
+			}
+			jobs, err := strconv.Atoi(v)
+			if err != nil || jobs < 1 {
+				return a, paths, fmt.Errorf("--jobs takes a number of at least 1, not %q", v)
+			}
+			a.Jobs = jobs
+			i += n
 		case arg == "--no-git-token":
 			a.NoGitToken = true
 			i++
@@ -282,18 +306,36 @@ func valueArg(argv []string, i int) (string, int, error) {
 
 // ExclusiveActions counts how many of the mutually-exclusive action flags
 // (migrate/stop/stop-all/ssh/re-init/re-create/re-compose/restore/list/install/upgrade/install-sbx/setup/
-// cleanup/delete/info/git-token/update-sandboxes/manage/headless) are set.
+// cleanup/delete/info/git-token/batch-git-token/update-sandboxes/manage/headless) are set.
 // --headless with one of the rebuilds (re-init, re-create, re-compose) isn't
 // a second: it says what to do when the rebuild is done, instead of attaching
 // a terminal, as 'vibe -r --no-start && vibe --headless' does.
 func (a Args) ExclusiveActions() int {
 	n := 0
-	for _, b := range []bool{a.Migrate, a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info, a.Setup, a.GitToken, a.UpdateSandboxes, a.Manage, a.Headless && !a.Rebuilds()} {
+	for _, b := range []bool{a.Migrate, a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info, a.Setup, a.GitToken, a.BatchGitToken, a.UpdateSandboxes, a.Manage, a.Headless && !a.Rebuilds()} {
 		if b {
 			n++
 		}
 	}
 	return n
+}
+
+// BatchGitTokenConflict says what is wrong with the flags that go with
+// --batch-git-token, or that go with it alone: nil when they are fine. The
+// batch asks which sandboxes and which token itself, so it takes no path and
+// neither --git-token-env nor --no-git-token; --jobs means nothing without it.
+func (a Args) BatchGitTokenConflict() error {
+	switch {
+	case a.Jobs > 0 && !a.BatchGitToken:
+		return fmt.Errorf("--jobs only goes with --batch-git-token")
+	case !a.BatchGitToken:
+		return nil
+	case a.Path != "":
+		return fmt.Errorf("--batch-git-token takes no path argument")
+	case a.GitTokenEnv != "" || a.NoGitToken:
+		return fmt.Errorf("--batch-git-token asks which token and which sandboxes: only --git-rules goes with it")
+	}
+	return nil
 }
 
 // Rebuilds says one of the rebuilds is asked for: --re-init, --re-create or

@@ -465,3 +465,77 @@ func TestTerminalAndHeadlessAreOpposites(t *testing.T) {
 		}
 	}
 }
+
+func TestBatchGitTokenIsAnExclusiveAction(t *testing.T) {
+	a, err := Parse([]string{"--batch-git-token"})
+	if err != nil || !a.BatchGitToken {
+		t.Fatalf("--batch-git-token: %+v, %v", a, err)
+	}
+	if a.ExclusiveActions() != 1 {
+		t.Errorf("expected 1 exclusive action, got %d", a.ExclusiveActions())
+	}
+	a, _ = Parse([]string{"--batch-git-token", "--git-token"})
+	if a.ExclusiveActions() != 2 {
+		t.Errorf("--batch-git-token with --git-token should be two actions, got %d", a.ExclusiveActions())
+	}
+}
+
+func TestJobsTakesAPositiveNumber(t *testing.T) {
+	for _, argv := range [][]string{{"--jobs", "4"}, {"--jobs=4"}} {
+		if a, err := Parse(argv); err != nil || a.Jobs != 4 {
+			t.Errorf("%v: Jobs = %d, %v", argv, a.Jobs, err)
+		}
+	}
+	for _, argv := range [][]string{{"--jobs", "0"}, {"--jobs=x"}, {"--jobs"}} {
+		if _, err := Parse(argv); err == nil {
+			t.Errorf("%v should be refused", argv)
+		}
+	}
+}
+
+func TestBatchGitTokenGoesWithGitRulesAndJobsAlone(t *testing.T) {
+	for _, argv := range [][]string{
+		{"--batch-git-token"},
+		{"--batch-git-token", "--jobs", "8"},
+		{"--batch-git-token", "--git-rules", "feature-branch"},
+		{"--batch-git-token", "--jobs=2", "--git-rules", "no-default-branch,feature-branch"},
+	} {
+		a, err := Parse(argv)
+		if err != nil {
+			t.Fatalf("Parse(%v): %v", argv, err)
+		}
+		if err := a.BatchGitTokenConflict(); err != nil {
+			t.Errorf("Parse(%v): %v, want it accepted", argv, err)
+		}
+	}
+}
+
+func TestBatchGitTokenRefusesWhatItAsksForItself(t *testing.T) {
+	for argv, want := range map[string]string{
+		"--batch-git-token ~/code/x":                     "takes no path argument",
+		"--batch-git-token --git-token-env GITHUB_TOKEN": "only --git-rules goes with it",
+		"--batch-git-token --no-git-token":               "only --git-rules goes with it",
+		"--jobs 4":                                       "--jobs only goes with --batch-git-token",
+		"--jobs 4 --git-token":                           "--jobs only goes with --batch-git-token",
+	} {
+		a, err := Parse(strings.Fields(argv))
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", argv, err)
+		}
+		if err := a.BatchGitTokenConflict(); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: got %v, want an error saying %q", argv, err, want)
+		}
+	}
+}
+
+func TestOtherCommandsHaveNoBatchGitTokenConflict(t *testing.T) {
+	for _, argv := range [][]string{{}, {"--git-token", "--git-token-env", "X"}, {"--no-git-token"}, {"~/code/x"}, {"--info"}} {
+		a, err := Parse(argv)
+		if err != nil {
+			t.Fatalf("Parse(%v): %v", argv, err)
+		}
+		if err := a.BatchGitTokenConflict(); err != nil {
+			t.Errorf("Parse(%v): %v", argv, err)
+		}
+	}
+}

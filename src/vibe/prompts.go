@@ -108,6 +108,15 @@ func filterFrom(question string, labels []string, def int) (int, bool) {
 	})
 }
 
+// multiFilterFrom is filterFrom for ticking several (see prompt.MultiFilter):
+// the ticked indices, in ascending order, none when nothing was ticked;
+// ok=false when the user quit or there is no terminal to ask on.
+func multiFilterFrom(question string, labels []string) ([]int, bool) {
+	return asking(question, func(tty *prompt.Terminal) ([]int, bool) {
+		return prompt.MultiFilter(tty, labels)
+	})
+}
+
 // asking prints question, then lets ask drive an interactive prompt on the
 // terminal; ok is false when there is no terminal to ask on.
 func asking[T any](question string, ask func(tty *prompt.Terminal) (T, bool)) (answer T, ok bool) {

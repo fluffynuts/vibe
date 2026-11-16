@@ -140,6 +140,9 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              default GitHub token for sandboxes to push with
   vibe --git-token [path]    give the sandbox for path a GitHub token to
                              push with, renew or change it, or take it away
+  vibe --batch-git-token     tick the sandboxes to give one GitHub token to
+                             (type to narrow the list), and give it to them
+  vibe --jobs N              ...to N sandboxes at a time (default 4)
   vibe --git-token-env VAR   ...a new sandbox (or --git-token) the token in
                              $VAR, unasked
   vibe --git-rules R[,R]     ...and these rules for pushing, unasked:
@@ -248,15 +251,18 @@ func run(argv []string) error {
 		return fmt.Errorf("--update-strategy only applies to --install and --upgrade")
 	}
 	if args.ExclusiveActions() > 1 {
-		return fmt.Errorf("--migrate, --stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info, --setup, --git-token, --update-sandboxes, --manage and --headless are mutually exclusive (--headless goes with --re-init, --re-create and --re-compose alone: the rebuild, then headless)")
+		return fmt.Errorf("--migrate, --stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info, --setup, --git-token, --batch-git-token, --update-sandboxes, --manage and --headless are mutually exclusive (--headless goes with --re-init, --re-create and --re-compose alone: the rebuild, then headless)")
 	}
 
 	if args.Terminal && args.ExclusiveActions() > 0 && !args.Rebuilds() {
 		return fmt.Errorf("--terminal only goes with starting vibe: on its own, with --restart, or with a rebuild (--re-init, --re-create, --re-compose)")
 	}
 
-	if (args.GitTokenEnv != "" || args.NoGitToken || args.GitRules != "") && args.ExclusiveActions() > 0 && !args.GitToken {
+	if (args.GitTokenEnv != "" || args.NoGitToken || args.GitRules != "") && args.ExclusiveActions() > 0 && !args.GitToken && !args.BatchGitToken {
 		return fmt.Errorf("--git-token-env, --no-git-token and --git-rules only apply to a new sandbox, or with --git-token")
+	}
+	if err := args.BatchGitTokenConflict(); err != nil {
+		return err
 	}
 
 	vibeHome := vibeHomeDir()
@@ -362,6 +368,10 @@ func run(argv []string) error {
 			return fmt.Errorf("--manage takes no path argument")
 		}
 		return doManage(lay)
+	}
+
+	if args.BatchGitToken {
+		return doBatchGitToken(vibeHome, args)
 	}
 
 	if args.UpdateSandboxes {

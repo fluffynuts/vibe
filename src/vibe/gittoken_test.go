@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +18,8 @@ import (
 // was asked of them. GitHub accepts the token "good" and can push to any
 // repository with it.
 type fakeGitAccess struct {
+	// mu guards the maps: the batch gives tokens to several sandboxes at once.
+	mu           sync.Mutex
 	secrets      map[string]string
 	instructions map[string]string
 	setErr       error
@@ -42,6 +47,8 @@ func stubGitAccess(t *testing.T) *fakeGitAccess {
 		return gittoken.Report{Login: "someone", Repo: repo, SeesRepo: repo != nil, CanPush: repo != nil, Expires: fakeExpiry}
 	}
 	setGitHubSecret = func(name, token string) error {
+		f.mu.Lock()
+		defer f.mu.Unlock()
 		if f.setErr != nil {
 			return f.setErr
 		}
@@ -49,14 +56,20 @@ func stubGitAccess(t *testing.T) *fakeGitAccess {
 		return nil
 	}
 	removeGitHubSecret = func(name string) error {
+		f.mu.Lock()
+		defer f.mu.Unlock()
 		delete(f.secrets, name)
 		return nil
 	}
 	writeGitInstructions = func(name, content string) error {
+		f.mu.Lock()
+		defer f.mu.Unlock()
 		f.instructions[name] = content
 		return nil
 	}
 	removeGitInstructions = func(name string) error {
+		f.mu.Lock()
+		defer f.mu.Unlock()
 		delete(f.instructions, name)
 		return nil
 	}
@@ -108,7 +121,7 @@ func TestVetGitTokenWhenGitHubCantBeAsked(t *testing.T) {
 	checkGitToken = func(string, *gittoken.Repo) gittoken.Report {
 		return gittoken.Report{Unreachable: errors.New("offline")}
 	}
-	if verdict, _ := vetGitToken("github_pat_x", nil, false, ""); verdict != vetUse {
+	if verdict, _ := vetGitToken("github_pat_x", nil, false, nil); verdict != vetUse {
 		t.Error("not being able to ask GitHub should warn, not refuse the token")
 	}
 }
@@ -311,10 +324,10 @@ func TestShareDefaultToken(t *testing.T) {
 
 func TestVetGitTokenWithNoOneToAsk(t *testing.T) {
 	stubGitAccess(t)
-	if verdict, expires := vetGitToken("good", nil, false, ""); verdict != vetUse || !expires.Equal(fakeExpiry) {
+	if verdict, expires := vetGitToken("good", nil, false, nil); verdict != vetUse || !expires.Equal(fakeExpiry) {
 		t.Errorf("a good token: %v, %v", verdict, expires)
 	}
-	if verdict, _ := vetGitToken("bad", nil, false, ""); verdict != vetSkip {
+	if verdict, _ := vetGitToken("bad", nil, false, nil); verdict != vetSkip {
 		t.Errorf("a token GitHub turns down, with no one to ask: %v", verdict)
 	}
 }
@@ -323,5 +336,223 @@ func TestPaintLeavesNoColourAlone(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	if got := paint(colorRed, "All repositories"); got != "All repositories" {
 		t.Errorf("paint with NO_COLOR = %q", got)
+	}
+}
+
+func TestKeepingTheOldTokenSaysBothExpiries(t *testing.T) {
+	stubGitAccess(t)
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	timeNow = func() time.Time { return now }
+	oldExpiry := now.AddDate(0, 0, 359)
+	newExpiry := now.AddDate(0, 0, 30)
+
+	got := keepsToken(oldExpiry)(newExpiry)
+
+	for _, want := range []string{
+		"keep the token it has",
+		gittoken.DescribeExpiry(oldExpiry, now),
+		"not the new one",
+		gittoken.DescribeExpiry(newExpiry, now),
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%q should contain %q", got, want)
+		}
+	}
+	if strings.Index(got, gittoken.DescribeExpiry(oldExpiry, now)) > strings.Index(got, "not the new one") {
+		t.Errorf("the old expiry should come before the new one: %q", got)
+	}
+}
+
+func TestKeepingTheOldTokenWhenNoExpiryIsKnown(t *testing.T) {
+	stubGitAccess(t)
+	if got, want := keepsToken(time.Time{})(time.Time{}), "keep the token it has — not the new one"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// holdsToken records a sandbox as holding token, with vibe's copy of it kept
+// on the host as giveGitAccess does; a blank token records the sandbox with
+// no copy.
+func holdsToken(t *testing.T, home, name, source, token string) {
+	t.Helper()
+	inst := state.Instance{Name: name, Target: "/work/" + name, GitToken: source, GitTokenExpires: fakeExpiry}
+	if err := state.Save(home, inst); err != nil {
+		t.Fatal(err)
+	}
+	if token == "" {
+		return
+	}
+	if err := gittoken.Save(state.GitTokenPath(home, name), token); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTokenDonorsAreSandboxesWithACopyOfTheirTokenButNotTheOneAsking(t *testing.T) {
+	stubGitAccess(t)
+	home := t.TempDir()
+	holdsToken(t, home, "asking", gitTokenOwn, "good")
+	holdsToken(t, home, "donor", gitTokenOwn, "good")
+	holdsToken(t, home, "copy-lost", gitTokenOwn, "")
+	if err := state.Save(home, state.Instance{Name: "no-token"}); err != nil {
+		t.Fatal(err)
+	}
+
+	donors := tokenDonors(home, "asking")
+
+	if len(donors) != 1 || donors[0].name != "donor" || donors[0].token != "good" {
+		t.Fatalf("donors = %+v, want only 'donor'", donors)
+	}
+	if label := donors[0].label(fakeNow); !strings.Contains(label, "/work/donor") || !strings.Contains(label, gittoken.DescribeExpiry(fakeExpiry, fakeNow)) {
+		t.Errorf("the label should say the folder and when the token expires: %q", label)
+	}
+}
+
+func TestNoTokenDonorsWhenNoSandboxHasATokenCopy(t *testing.T) {
+	stubGitAccess(t)
+	home := t.TempDir()
+	holdsToken(t, home, "copy-lost", gitTokenOwn, "")
+	if donors := tokenDonors(home, "asking"); len(donors) != 0 {
+		t.Errorf("donors = %+v, want none", donors)
+	}
+}
+
+func TestATokenTakenFromAnotherSandboxKeepsItsSource(t *testing.T) {
+	stubGitAccess(t)
+	for _, source := range []string{gitTokenDefault, gitTokenOwn} {
+		access, ok := accessFromDonor(tokenDonor{name: "d", token: "good", source: source, expires: fakeExpiry}, &gittoken.Repo{Owner: "o", Name: "r"}, false, nil)
+		if !ok || access.token != "good" || access.source != source {
+			t.Errorf("from a %q donor: %+v, %v", source, access, ok)
+		}
+	}
+}
+
+func TestATokenTakenFromAnotherSandboxIsCheckedAgainstTheRecipientsRepository(t *testing.T) {
+	stubGitAccess(t)
+	var checkedFor *gittoken.Repo
+	checkGitToken = func(token string, repo *gittoken.Repo) gittoken.Report {
+		checkedFor = repo
+		return gittoken.Report{Rejected: true}
+	}
+	repo := &gittoken.Repo{Owner: "o", Name: "recipient"}
+
+	access, ok := accessFromDonor(tokenDonor{name: "d", token: "stale", source: gitTokenOwn}, repo, false, nil)
+
+	if checkedFor != repo {
+		t.Errorf("checked for %v, want the recipient's repository", checkedFor)
+	}
+	if ok || access != nil {
+		t.Errorf("a token GitHub turns down was taken: %+v", access)
+	}
+}
+
+// sandboxesUp stands in for sbx's list of which sandboxes are running.
+func sandboxesUp(t *testing.T, state map[string]bool, known bool) {
+	t.Helper()
+	old := sandboxUp
+	t.Cleanup(func() { sandboxUp = old })
+	sandboxUp = func(_ context.Context, name string) (bool, bool) { return state[name], known }
+}
+
+func TestAStoppedSandboxIsNeverAskedToRunAnything(t *testing.T) {
+	for name, tc := range map[string]struct {
+		up    map[string]bool
+		known bool
+	}{
+		"stopped":           {map[string]bool{"box": false}, true},
+		"sbx can't say":     {nil, false},
+		"not in sbx's list": {map[string]bool{}, true},
+	} {
+		sandboxesUp(t, tc.up, tc.known)
+		ran := false
+		if err := ifRunning("box", func() error { ran = true; return nil }); err != nil || ran {
+			t.Errorf("%s: ran = %v, err = %v: waking a sandbox to write a file it gets at its next start is the cost, not the gain", name, ran, err)
+		}
+	}
+}
+
+func TestARunningSandboxIsToldNow(t *testing.T) {
+	sandboxesUp(t, map[string]bool{"box": true}, true)
+	failure := errors.New("exec failed")
+	ran := false
+	if err := ifRunning("box", func() error { ran = true; return failure }); !ran || !errors.Is(err, failure) {
+		t.Errorf("ran = %v, err = %v: should run, and say what went wrong", ran, err)
+	}
+}
+
+func TestTheRealInstructionWritersLeaveAStoppedSandboxAlone(t *testing.T) {
+	// The ones tests stand in for: with the sandbox stopped they must touch
+	// nothing (there is no sbx here, so touching it would be an error).
+	sandboxesUp(t, map[string]bool{"box": false}, true)
+	if err := writeGitInstructions("box", "rules"); err != nil {
+		t.Errorf("writing to a stopped sandbox: %v", err)
+	}
+	if err := removeGitInstructions("box"); err != nil {
+		t.Errorf("removing from a stopped sandbox: %v", err)
+	}
+}
+
+// shareAnswer stands in for the question whether sandboxes using the default
+// are given the new one, recording who was asked about.
+func shareAnswer(t *testing.T, yes bool) *[]string {
+	t.Helper()
+	var asked []string
+	old := askToShareDefault
+	t.Cleanup(func() { askToShareDefault = old })
+	askToShareDefault = func(names []string) bool { asked = append(asked, names...); return yes }
+	return &asked
+}
+
+func TestANewDefaultIsOfferedToSandboxesOnTheOldOneButNotThosePicked(t *testing.T) {
+	f := stubGitAccess(t)
+	home := t.TempDir()
+	for _, inst := range []state.Instance{
+		{Name: "picked", GitToken: gitTokenDefault},
+		{Name: "bystander", GitToken: gitTokenDefault, GitRules: []string{gittoken.RuleFeatureBranch}},
+		{Name: "own", GitToken: gitTokenOwn},
+	} {
+		state.Save(home, inst)
+		f.secrets[inst.Name] = "old"
+	}
+	asked := shareAnswer(t, true)
+
+	offerDefaultToken(home, "new", fakeExpiry, "picked")
+
+	if !reflect.DeepEqual(*asked, []string{"bystander"}) {
+		t.Errorf("asked about %v, want only the sandbox on the old default that wasn't picked", *asked)
+	}
+	if f.secrets["bystander"] != "new" || f.secrets["picked"] != "old" || f.secrets["own"] != "old" {
+		t.Errorf("secrets = %v: only the bystander is given the new default", f.secrets)
+	}
+	got, _, _ := state.Load(home, "bystander")
+	if got.GitToken != gitTokenDefault || !reflect.DeepEqual(got.GitRules, []string{gittoken.RuleFeatureBranch}) {
+		t.Errorf("bystander = %+v: it stays on the default and keeps its own rules", got)
+	}
+}
+
+func TestANewDefaultIsLeftWithBystandersWhoAreNotToGetIt(t *testing.T) {
+	f := stubGitAccess(t)
+	home := t.TempDir()
+	state.Save(home, state.Instance{Name: "bystander", GitToken: gitTokenDefault})
+	f.secrets["bystander"] = "old"
+	shareAnswer(t, false)
+
+	offerDefaultToken(home, "new", fakeExpiry)
+
+	if f.secrets["bystander"] != "old" {
+		t.Errorf("secret = %q: declining leaves the sandbox as it was", f.secrets["bystander"])
+	}
+}
+
+func TestNobodyIsAskedWhenNoOtherSandboxUsesTheDefault(t *testing.T) {
+	stubGitAccess(t)
+	home := t.TempDir()
+	state.Save(home, state.Instance{Name: "picked", GitToken: gitTokenDefault})
+	state.Save(home, state.Instance{Name: "own", GitToken: gitTokenOwn})
+	asked := shareAnswer(t, true)
+
+	offerDefaultToken(home, "new", fakeExpiry, "picked")
+
+	if len(*asked) != 0 {
+		t.Errorf("asked about %v with no one to offer it to", *asked)
 	}
 }

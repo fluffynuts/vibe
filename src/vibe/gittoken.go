@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -60,21 +61,32 @@ var (
 	// running sandbox. A stopped one is left alone: every session start
 	// writes them afresh (see syncGitInstructions), so it gets them then.
 	writeGitInstructions = func(name, content string) error {
-		if !sbxrun.Reachable(context.Background(), name) {
-			return nil
-		}
-		return writeSandboxFile(name, gittoken.SandboxFile, content)
+		return ifRunning(name, func() error { return writeSandboxFile(name, gittoken.SandboxFile, content) })
 	}
 	removeGitInstructions = func(name string) error {
-		if !sbxrun.Reachable(context.Background(), name) {
+		return ifRunning(name, func() error {
+			if out, err := sbxrun.ExecCapture(context.Background(), name, "rm", "-f", gittoken.SandboxFile); err != nil {
+				return fmt.Errorf("%w: %s", err, strings.TrimSpace(out))
+			}
 			return nil
-		}
-		if out, err := sbxrun.ExecCapture(context.Background(), name, "rm", "-f", gittoken.SandboxFile); err != nil {
-			return fmt.Errorf("%w: %s", err, strings.TrimSpace(out))
-		}
-		return nil
+		})
 	}
 )
+
+// sandboxUp says whether sandbox name is running, as sbx lists it (see
+// sbxrun.Running); tests stand in for it.
+var sandboxUp = sbxrun.Running
+
+// ifRunning does act only when sandbox name is running. Asking it to run
+// something would start a stopped one, which takes gigabytes of memory, for a
+// file that is written (or removed) afresh at its next session start anyway;
+// and when sbx can't say, starting it is the greater risk.
+func ifRunning(name string, act func() error) error {
+	if up, known := sandboxUp(context.Background(), name); !known || !up {
+		return nil
+	}
+	return act()
+}
 
 // repoOf is the GitHub repository target's origin remote points at, or nil
 // when it has none (a new project, often, not pushed anywhere yet), or one
@@ -124,7 +136,7 @@ func gitAccessFromEnv(variable string, repo *gittoken.Repo, rules []string) (*gi
 	if err := gittoken.Valid(token); err != nil {
 		return nil, fmt.Errorf("--git-token-env %s: %w", variable, err)
 	}
-	verdict, expires := vetGitToken(token, repo, false, "")
+	verdict, expires := vetGitToken(token, repo, false, nil)
 	if verdict != vetUse {
 		return nil, fmt.Errorf("--git-token-env %s: not using that token (see above) — fix it, or leave --git-token-env off", variable)
 	}
@@ -141,6 +153,7 @@ const (
 	gitDefault
 	gitGuided
 	gitPaste
+	gitDonor
 )
 
 // askGitAccess asks whether the agent in sandbox name may push, and with
@@ -166,6 +179,10 @@ func askGitAccess(vibeHome, name string, repo *gittoken.Repo, current *state.Ins
 		haveDefault = false
 	}
 	has := current != nil && current.GitToken != ""
+	var skip skipWording = skipWithoutToken
+	if has {
+		skip = keepsToken(current.GitTokenExpires)
+	}
 
 	var labels []string
 	var choices []gitChoice
@@ -193,6 +210,10 @@ func askGitAccess(vibeHome, name string, repo *gittoken.Repo, current *state.Ins
 		add(gitGuided, "yes, with a new token (opens GitHub to make one)")
 	}
 	add(gitPaste, "yes, with a token you already have")
+	donors := tokenDonors(vibeHome, name)
+	if len(donors) > 0 {
+		add(gitDonor, "yes, with the token another sandbox has")
+	}
 
 	question := fmt.Sprintf("should the agent in '%s' be able to push to GitHub? (optional)", name)
 	if repo == nil {
@@ -209,9 +230,9 @@ func askGitAccess(vibeHome, name string, repo *gittoken.Repo, current *state.Ins
 		return nil, choices[idx], nil
 	case gitDefault:
 		access.token, access.source = defaultToken, gitTokenDefault
-		verdict, expires := vetGitToken(access.token, repo, true, skipLabel(has))
+		verdict, expires := vetGitToken(access.token, repo, true, skip)
 		for verdict == vetRetry {
-			verdict, expires = vetGitToken(access.token, repo, true, skipLabel(has))
+			verdict, expires = vetGitToken(access.token, repo, true, skip)
 		}
 		if verdict == vetSkip {
 			return nil, keepOrNone(has), nil
@@ -220,12 +241,21 @@ func askGitAccess(vibeHome, name string, repo *gittoken.Repo, current *state.Ins
 		if access.expires.IsZero() {
 			access.expires = defaultExpires
 		}
+	case gitDonor:
+		donor, picked := pickTokenDonor(donors)
+		if !picked {
+			return nil, keepOrNone(has), nil
+		}
+		var taken bool
+		if access, taken = accessFromDonor(donor, repo, true, skip); !taken {
+			return nil, keepOrNone(has), nil
+		}
 	case gitGuided, gitPaste:
 		if choices[idx] == gitGuided {
 			days := pickTokenDays(tokenDays)
 			openTokenPage(fmt.Sprintf("vibe %s", name), tokenDescription(name, repo), repoOwner(repo), days, repo)
 		}
-		if access.token, access.expires, ok = enterGitToken(repo, skipLabel(has)); !ok {
+		if access.token, access.expires, ok = enterGitToken(repo, skip); !ok {
 			return nil, keepOrNone(has), nil
 		}
 		access.source = gitTokenOwn
@@ -238,6 +268,76 @@ func askGitAccess(vibeHome, name string, repo *gittoken.Repo, current *state.Ins
 	return access, choices[idx], nil
 }
 
+// tokenDonor is a sandbox whose token another may be given: vibe keeps a
+// copy of each sandbox's token on the host (see giveGitAccess), so nothing is
+// revealed by sbx and nothing is pasted.
+type tokenDonor struct {
+	name, folder, source, token string
+	expires                     time.Time
+}
+
+// tokenDonors are the sandboxes with a token vibe still has a copy of,
+// but except: the one being asked about. One whose copy is gone (the write
+// failed with a warning, or it was never given one) isn't offered.
+func tokenDonors(vibeHome, except string) []tokenDonor {
+	instances, err := state.List(vibeHome)
+	if err != nil {
+		note("WARNING: %s", err)
+		return nil
+	}
+	var donors []tokenDonor
+	for _, inst := range instances {
+		if inst.Name == except || inst.GitToken == "" {
+			continue
+		}
+		token, ok, err := gittoken.Load(state.GitTokenPath(vibeHome, inst.Name))
+		if err != nil || !ok {
+			continue
+		}
+		donors = append(donors, tokenDonor{
+			name: inst.Name, folder: inst.Target, source: inst.GitToken, token: token, expires: inst.GitTokenExpires,
+		})
+	}
+	return donors
+}
+
+func (d tokenDonor) label(now time.Time) string {
+	return fmt.Sprintf("%s — %s%s", d.name, d.folder, inParens(gittoken.DescribeExpiry(d.expires, now)))
+}
+
+// pickTokenDonor asks which sandbox's token to take; quitting picks none.
+func pickTokenDonor(donors []tokenDonor) (tokenDonor, bool) {
+	now := timeNow()
+	labels := make([]string, len(donors))
+	for i, d := range donors {
+		labels[i] = d.label(now)
+	}
+	idx, ok := filterFrom("which sandbox's token?", labels, 0)
+	if !ok {
+		return tokenDonor{}, false
+	}
+	return donors[idx], true
+}
+
+// accessFromDonor checks the donor's token with GitHub against repo — the
+// recipient's repository, which the token may never have been made for — and
+// gives it as the donor holds it: a default token stays the default, so a
+// renewal through --setup still reaches the recipient. It says whether the
+// token is to be used.
+func accessFromDonor(donor tokenDonor, repo *gittoken.Repo, ask bool, skip skipWording) (*gitAccess, bool) {
+	verdict, expires := vetGitToken(donor.token, repo, ask, skip)
+	for verdict == vetRetry {
+		verdict, expires = vetGitToken(donor.token, repo, ask, skip)
+	}
+	if verdict != vetUse {
+		return nil, false
+	}
+	if expires.IsZero() {
+		expires = donor.expires
+	}
+	return &gitAccess{token: donor.token, source: donor.source, expires: expires}, true
+}
+
 func inParens(s string) string {
 	if s == "" {
 		return ""
@@ -245,13 +345,29 @@ func inParens(s string) string {
 	return " (" + s + ")"
 }
 
-// skipLabel is how the choice to give up on a token with a problem is put:
-// it leaves the token the sandbox already had, or none.
-func skipLabel(has bool) string {
-	if has {
-		return "keep the token it has"
-	}
+// skipWording puts the choice to give up on a token with a problem, given
+// when the token being given up on expires (zero when it doesn't, or GitHub
+// didn't say).
+type skipWording func(newExpires time.Time) string
+
+func skipWithoutToken(time.Time) string {
 	return "continue without a GitHub token"
+}
+
+func fixedSkip(label string) skipWording {
+	return func(time.Time) string { return label }
+}
+
+// keepsToken is giving up in favour of the token the sandbox has, which
+// expires on oldExpires. Both expiries are said: someone who expects the new
+// token to be used must see that this leaves the old one, which — when the
+// new one is a regeneration of it — no longer works.
+func keepsToken(oldExpires time.Time) skipWording {
+	return func(newExpires time.Time) string {
+		now := timeNow()
+		return "keep the token it has" + inParens(gittoken.DescribeExpiry(oldExpires, now)) +
+			" — not the new one" + inParens(gittoken.DescribeExpiry(newExpires, now))
+	}
 }
 
 // keepOrNone is what giving up on a new token leaves: the token the sandbox
@@ -302,12 +418,25 @@ func pickTokenDays(def int) int {
 // "All repositories", and a token left on it passes every check vibe makes
 // of whether it can push.
 func openTokenPage(tokenName, description, owner string, days int, repo *gittoken.Repo) {
+	var repos []string
+	if repo != nil {
+		repos = []string{repo.String()}
+	}
+	openTokenPageFor(tokenName, description, owner, days, repos)
+}
+
+// openTokenPageFor is openTokenPage for the repositories named in repos: one,
+// several (a token for a batch of sandboxes), or none known.
+func openTokenPageFor(tokenName, description, owner string, days int, repos []string) {
 	note("on GitHub's page for the new token:")
 	note("  1. under Repository access, change %s to %s,", paint(colorRed, `"All repositories"`), paint(colorGreen, `"Only select repositories"`))
-	if repo != nil {
-		note("     and choose %s — GitHub won't let vibe pick it for you", paint(colorYellow, repo.String()))
-	} else {
+	switch len(repos) {
+	case 0:
 		note("     and choose %s — GitHub won't let vibe pick them for you", paint(colorYellow, "the repositories the agent may push to"))
+	case 1:
+		note("     and choose %s — GitHub won't let vibe pick it for you", paint(colorYellow, repos[0]))
+	default:
+		note("     and choose %s — GitHub won't let vibe pick them for you", paint(colorYellow, strings.Join(repos, ", ")))
 	}
 	note("  2. check the permissions: %s", paint(colorPink, "Contents, Pull requests and Workflows, read and write"))
 	note("  3. %s", paint(colorCyan, "Generate token, copy it, and paste it here"))
@@ -396,9 +525,9 @@ func openRenewPage(tokenName string) {
 // enterGitToken reads a token from the terminal, showing a * for each
 // character, then checks it with GitHub — asking again, when it has a
 // problem, for as long as the user wants to try again. ok is false when the
-// user gave up: an empty line, Ctrl-C, or skip (skipLabel says what that
+// user gave up: an empty line, Ctrl-C, or skip (skipWording says what that
 // leaves). expires is when GitHub says the token stops working.
-func enterGitToken(repo *gittoken.Repo, skip string) (token string, expires time.Time, ok bool) {
+func enterGitToken(repo *gittoken.Repo, skip skipWording) (token string, expires time.Time, ok bool) {
 	for {
 		tty, closeFn, opened := ttyRW()
 		if !opened {
@@ -447,7 +576,7 @@ const (
 // use it anyway, or skip (put as skip says); without, it isn't used —
 // except when GitHub couldn't be asked at all, which only warns, since that
 // says nothing against the token.
-func vetGitToken(token string, repo *gittoken.Repo, ask bool, skip string) (vetVerdict, time.Time) {
+func vetGitToken(token string, repo *gittoken.Repo, ask bool, skip skipWording) (vetVerdict, time.Time) {
 	kind := gittoken.KindOf(token)
 	if kind.AccountWide() {
 		note("  WARNING: that's a %s: it can reach every repository your account can,", kind)
@@ -491,7 +620,7 @@ func vetGitToken(token string, repo *gittoken.Repo, ask bool, skip string) (vetV
 				"I've narrowed it on GitHub: check it again",
 				"use it as it is",
 				"try a different token",
-				skip,
+				skip(rep.Expires),
 			}, 0)
 			switch {
 			case !ok || idx == 3:
@@ -511,7 +640,7 @@ func vetGitToken(token string, repo *gittoken.Repo, ask bool, skip string) (vetV
 		note("  %s", p)
 	}
 	if ask {
-		idx, ok := chooseFrom("what now?", []string{"try again", "use it anyway", skip}, 0)
+		idx, ok := chooseFrom("what now?", []string{"try again", "use it anyway", skip(rep.Expires)}, 0)
 		switch {
 		case !ok || idx == 2:
 			return vetSkip, rep.Expires
@@ -558,21 +687,28 @@ func pickGitRules(preset []string) []string {
 // (and a warning) when sbx wouldn't take the token, since a sandbox without
 // one is fine — just not what was asked for.
 func giveGitAccess(vibeHome, name string, access *gitAccess, repo *gittoken.Repo) *gitAccess {
+	return giveGitAccessSaying(note, vibeHome, name, access, repo)
+}
+
+// giveGitAccessSaying is giveGitAccess saying what it does through say, so
+// several sandboxes can be given tokens at once with each one's lines kept
+// together.
+func giveGitAccessSaying(say func(string, ...interface{}), vibeHome, name string, access *gitAccess, repo *gittoken.Repo) *gitAccess {
 	if access == nil {
 		return nil
 	}
 	if err := setGitHubSecret(name, access.token); err != nil {
-		note("WARNING: could not give the sandbox its GitHub token, so the agent can't push: %s", err)
-		note("  'vibe --git-token' tries again")
+		say("WARNING: could not give the sandbox its GitHub token, so the agent can't push: %s", err)
+		say("  'vibe --git-token' tries again")
 		return nil
 	}
 	if err := gittoken.Save(state.GitTokenPath(vibeHome, name), access.token); err != nil {
-		note("WARNING: %s — a rebuild of '%s' will start without its token", err, name)
+		say("WARNING: %s — a rebuild of '%s' will start without its token", err, name)
 	}
 	if err := writeGitInstructions(name, gittoken.Instructions(repo, access.rules, access.expires)); err != nil {
-		note("WARNING: could not tell the agent its rules for pushing (%s): %s", gittoken.SandboxFile, err)
+		say("WARNING: could not tell the agent its rules for pushing (%s): %s", gittoken.SandboxFile, err)
 	}
-	note("  github:    the agent can push (%s token%s)", access.source, prefixed(", ", gittoken.DescribeExpiry(access.expires, timeNow())))
+	say("  github:    the agent can push (%s token%s)", access.source, prefixed(", ", gittoken.DescribeExpiry(access.expires, timeNow())))
 	return access
 }
 
@@ -674,7 +810,7 @@ func renewGitAccess(vibeHome string, inst *state.Instance, repo *gittoken.Repo) 
 		tokenName = "vibe default"
 	}
 	openRenewPage(tokenName)
-	token, expires, ok := enterGitToken(repo, "keep the token it has")
+	token, expires, ok := enterGitToken(repo, keepsToken(inst.GitTokenExpires))
 	if !ok {
 		note("'%s' keeps the token it has", inst.Name)
 		return nil
@@ -690,10 +826,19 @@ func renewGitAccess(vibeHome string, inst *state.Instance, repo *gittoken.Repo) 
 }
 
 // shareDefaultToken stores token as the default, and offers it to every
-// sandbox that was given the default, but sandbox except: the token they
-// hold is the one it replaces, which — regenerated — no longer works. It
+// sandbox that was given the default, but the sandboxes in except: the token
+// they hold is the one it replaces, which — regenerated — no longer works. It
 // says whether the default was stored.
-func shareDefaultToken(vibeHome, token string, expires time.Time, except string) bool {
+func shareDefaultToken(vibeHome, token string, expires time.Time, except ...string) bool {
+	if !storeDefaultToken(vibeHome, token, expires) {
+		return false
+	}
+	offerDefaultToken(vibeHome, token, expires, except...)
+	return true
+}
+
+// storeDefaultToken makes token the default, with the expiry GitHub said.
+func storeDefaultToken(vibeHome, token string, expires time.Time) bool {
 	path := state.DefaultGitTokenPath(vibeHome)
 	if err := gittoken.Save(path, token); err != nil {
 		note("WARNING: %s", err)
@@ -702,25 +847,38 @@ func shareDefaultToken(vibeHome, token string, expires time.Time, except string)
 	if err := gittoken.SaveExpiry(path, expires); err != nil {
 		note("WARNING: %s", err)
 	}
+	return true
+}
+
+// askToShareDefault asks whether the sandboxes named, which use the default,
+// are given the new one; tests stand in for it.
+var askToShareDefault = func(names []string) bool {
+	return interactive() && confirmDefault(false, true, fmt.Sprintf("give the new default token to the sandboxes using the default too (%s)?", strings.Join(names, ", ")))
+}
+
+// offerDefaultToken offers the new default to every sandbox that uses the
+// default, but those in except, and gives it where it's taken, each keeping
+// its own rules.
+func offerDefaultToken(vibeHome, token string, expires time.Time, except ...string) {
 	instances, err := state.List(vibeHome)
 	if err != nil {
 		note("WARNING: %s", err)
-		return true
+		return
 	}
 	var sharing []state.Instance
 	var names []string
 	for _, inst := range instances {
-		if inst.GitToken == gitTokenDefault && inst.Name != except {
+		if inst.GitToken == gitTokenDefault && !slices.Contains(except, inst.Name) {
 			sharing = append(sharing, inst)
 			names = append(names, inst.Name)
 		}
 	}
 	if len(sharing) == 0 {
-		return true
+		return
 	}
-	if !interactive() || !confirmDefault(false, true, fmt.Sprintf("give the new default token to the sandboxes using the default too (%s)?", strings.Join(names, ", "))) {
+	if !askToShareDefault(names) {
 		note("  they keep the token they have: 'vibe --git-token' in each one's folder renews it")
-		return true
+		return
 	}
 	for i := range sharing {
 		inst := &sharing[i]
@@ -730,7 +888,6 @@ func shareDefaultToken(vibeHome, token string, expires time.Time, except string)
 			note("WARNING: %s", err)
 		}
 	}
-	return true
 }
 
 // doGitToken is --git-token: give the sandbox for target a token, renew or
@@ -804,13 +961,19 @@ func doGitToken(vibeHome string, args cliargs.Args, name, target string) error {
 // setGitAccess gives an existing sandbox access (nil takes its token away)
 // and records it.
 func setGitAccess(vibeHome string, inst *state.Instance, access *gitAccess, repo *gittoken.Repo) error {
+	return setGitAccessSaying(note, vibeHome, inst, access, repo)
+}
+
+// setGitAccessSaying is setGitAccess saying what it does through say (taking
+// a token away still goes to the terminal: the batch never does).
+func setGitAccessSaying(say func(string, ...interface{}), vibeHome string, inst *state.Instance, access *gitAccess, repo *gittoken.Repo) error {
 	if access == nil {
 		takeGitAccess(vibeHome, inst.Name)
 		inst.GitToken, inst.GitRules, inst.GitTokenExpires = "", nil, time.Time{}
 		note("took '%s''s GitHub token away: you commit and push yourself", inst.Name)
 		return state.Save(vibeHome, *inst)
 	}
-	given := giveGitAccess(vibeHome, inst.Name, access, repo)
+	given := giveGitAccessSaying(say, vibeHome, inst.Name, access, repo)
 	if given == nil {
 		return fmt.Errorf("'%s' has no new GitHub token", inst.Name)
 	}
@@ -884,7 +1047,7 @@ func setUpDefaultGitToken(vibeHome string) {
 	case "guided":
 		openTokenPage("vibe default", "Lets the agents in vibe sandboxes push.", "", pickTokenDays(tokenDays), nil)
 	}
-	token, expires, ok := enterGitToken(nil, "go on without changing the default token")
+	token, expires, ok := enterGitToken(nil, fixedSkip("go on without changing the default token"))
 	if !ok {
 		return
 	}
