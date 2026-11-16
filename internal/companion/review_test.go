@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -1683,5 +1685,129 @@ func TestClosingAReviewStillInProgressAfterItsTurnEndedDropsIt(t *testing.T) {
 	}
 	if r, _ := store.Load(); !r.Started.IsZero() {
 		t.Errorf("kept half written: %+v", r)
+	}
+}
+
+// replacedKey has the agent start a review with a comment (#1), then another
+// with one (#2), and gives the first's key as the page names it in "for":
+// what the page that was showing the first would send.
+func replacedKey(t *testing.T, store *review.Store) string {
+	t.Helper()
+	for _, req := range []review.Request{
+		{Op: "start", Note: "first"},
+		{Op: "comment", File: "a.txt", Line: 2, Body: "on the first"},
+	} {
+		if _, err := store.Do(req, review.Agent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, _ := store.Load()
+	key, err := json.Marshal(first.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	for _, req := range []review.Request{
+		{Op: "start", Note: "second"},
+		{Op: "comment", File: "a.txt", Line: 1, Body: "on the second"},
+	} {
+		if _, err := store.Do(req, review.Agent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return string(key)
+}
+
+func replacedBody(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"code":"review-replaced"`) {
+		t.Fatalf("got %d %s, want 409 with the code review-replaced, which the page answers by taking the new review", rec.Code, rec.Body)
+	}
+}
+
+func TestAChangeFromThePageForAReplacedReviewIsRefusedWithACodeTheyCanAnswer(t *testing.T) {
+	for name, body := range map[string]string{
+		"a comment":   `{"op":"comment","file":"a.txt","line":2,"body":"for the old lines","for":%s}`,
+		"a view tick": `{"op":"view","file":"a.txt","code":"x","for":%s}`,
+		"closing":     `{"op":"close","for":%s}`,
+	} {
+		s, store := reviewTabServer(t)
+		key := replacedKey(t, store)
+		before, _ := store.Load()
+
+		replacedBody(t, do(t, s, post("/api/review/do", fmt.Sprintf(body, key))))
+
+		after, _ := store.Load()
+		if !reflect.DeepEqual(before, after) {
+			t.Errorf("%s changed the review that replaced it:\n%+v\n%+v", name, before, after)
+		}
+	}
+}
+
+func TestAskingForAReplacedReviewLaunchesNoTurn(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{}
+	s.cfg.Converse = f.converse
+	key := replacedKey(t, store)
+
+	replacedBody(t, do(t, s, post("/api/review/ask", `{"thread":2,"body":"what?","for":`+key+`}`)))
+
+	idle(t, s)
+	if len(f.prompts) != 0 {
+		t.Errorf("the agent was asked about a review it has replaced: %v", f.prompts)
+	}
+}
+
+func TestSubmittingForAReplacedReviewSendsNothingAndMarksNothingSent(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{}
+	s.cfg.Converse = f.converse
+	key := replacedKey(t, store)
+	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 1, Code: "one", Body: "unseen by the page"}, review.User)
+
+	replacedBody(t, do(t, s, post("/api/review/submit", `{"for":`+key+`}`)))
+
+	idle(t, s)
+	if len(f.prompts) != 0 {
+		t.Errorf("comments the page never showed were sent: %v", f.prompts)
+	}
+	if rv, _ := store.Load(); len(review.Unsent(rv)) != 1 {
+		t.Errorf("they were marked sent: %+v", review.Unsent(rv))
+	}
+}
+
+func TestClosingAReplacedReviewClosesNothing(t *testing.T) {
+	s, store := reviewTabServer(t)
+	key := replacedKey(t, store)
+
+	replacedBody(t, do(t, s, post("/api/review/close", `{"stop":true,"for":`+key+`}`)))
+
+	if rv, _ := store.Load(); rv.Closed != "" {
+		t.Errorf("the review that replaced it was closed: %q", rv.Closed)
+	}
+}
+
+func TestChangesNamingTheReviewThereIsAreCarriedOut(t *testing.T) {
+	s, store := reviewTabServer(t)
+	f := &fakeAgent{}
+	s.cfg.Converse = f.converse
+	replacedKey(t, store)
+	current, _ := store.Load()
+	key, _ := json.Marshal(current.Key())
+
+	if rec := do(t, s, post("/api/review/do", `{"op":"reply","thread":2,"body":"yes","for":`+string(key)+`}`)); rec.Code != http.StatusOK {
+		t.Errorf("reply: %d %s", rec.Code, rec.Body)
+	}
+	if rec := do(t, s, post("/api/review/ask", `{"thread":2,"body":"why?","for":`+string(key)+`}`)); rec.Code != http.StatusAccepted {
+		t.Errorf("ask: %d %s", rec.Code, rec.Body)
+	}
+	idle(t, s)
+	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 1, Code: "one", Body: "new"}, review.User)
+	if rec := do(t, s, post("/api/review/submit", `{"for":`+string(key)+`}`)); rec.Code != http.StatusAccepted {
+		t.Errorf("submit: %d %s", rec.Code, rec.Body)
+	}
+	idle(t, s)
+	if rec := do(t, s, post("/api/review/close", `{"stop":true,"for":`+string(key)+`}`)); rec.Code != http.StatusOK {
+		t.Errorf("close: %d %s", rec.Code, rec.Body)
 	}
 }

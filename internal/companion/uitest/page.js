@@ -164,7 +164,16 @@ async function openPage({ routes = {}, storage = {}, settled = true, seeing = fa
     button(text, within) {
       return Array.from((within || w.document).querySelectorAll('button')).find((b) => b.textContent === text)
     },
-    posted(p) { return calls.filter((c) => c.method === 'POST' && c.path === p).map((c) => c.body) },
+    // posted is what was posted to p, without the review a change to the review names ("for": see reviewnew.test.js, which looks at
+    // it with sent): the tests of what a change says are not about which review it is for.
+    posted(p) {
+      return this.sent(p).map((b) => {
+        if (!b || typeof b !== 'object' || !('for' in b)) return b
+        const { for: _, ...rest } = b
+        return rest
+      })
+    },
+    sent(p) { return calls.filter((c) => c.method === 'POST' && c.path === p).map((c) => c.body) },
     close() { w.close() },
   }
 }

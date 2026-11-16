@@ -2,9 +2,11 @@ package review
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -782,5 +784,99 @@ func TestTheUserCantWithdraw(t *testing.T) {
 	s.Take()
 	if _, err := s.Do(Request{Op: "withdraw", Thread: 1}, User); err == nil {
 		t.Error("the user could withdraw the agent's comment")
+	}
+}
+
+// replacedReviews has the store hold a review (with a thread, #1) that the
+// agent then replaces by another (with one, #2: a thread's number is never
+// used twice), and gives the first's key.
+func replacedReviews(t *testing.T) (*Store, Key) {
+	t.Helper()
+	s := NewStore(t.TempDir())
+	now := clockAt(s)
+	if _, err := s.Do(Request{Op: "start", Note: "first"}, Agent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Do(Request{Op: "comment", File: "a.go", Line: 1, Body: "about the first"}, Agent); err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	*now = now.Add(time.Hour)
+	if _, err := s.Do(Request{Op: "start", Note: "second"}, Agent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Do(Request{Op: "comment", File: "b.go", Line: 1, Body: "about the second"}, Agent); err != nil {
+		t.Fatal(err)
+	}
+	return s, first.Key()
+}
+
+func TestAChangeForAReviewThatHasBeenReplacedIsRefusedAndAppliedToNothing(t *testing.T) {
+	for _, req := range []Request{
+		{Op: "reply", Thread: 1, Body: "to the first's #1"},
+		{Op: "resolve", Thread: 1},
+		{Op: "comment", File: "b.go", Line: 1, Body: "on the first's lines"},
+		{Op: "view", File: "b.go", Code: "x"},
+		{Op: "close"},
+	} {
+		s, firstKey := replacedReviews(t)
+		before, _ := s.Load()
+		req.For = &firstKey
+
+		_, err := s.Do(req, User)
+
+		if !errors.Is(err, ErrReplaced) {
+			t.Errorf("%s: err = %v, want ErrReplaced", req.Op, err)
+		}
+		var refused Refused
+		if !errors.As(err, &refused) {
+			t.Errorf("%s: it is the asker's to put right, so it is Refused", req.Op)
+		}
+		after, _ := s.Load()
+		if !reflect.DeepEqual(before, after) {
+			t.Errorf("%s changed the new review:\nbefore %+v\nafter  %+v", req.Op, before, after)
+		}
+	}
+}
+
+func TestAChangeForTheReviewThereIsIsApplied(t *testing.T) {
+	s, _ := replacedReviews(t)
+	current, _ := s.Load()
+	key := current.Key()
+
+	r, err := s.Do(Request{Op: "reply", Thread: 2, Body: "to the second's #2", For: &key}, User)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Threads[0].Comments; len(got) != 2 || got[1].Body != "to the second's #2" {
+		t.Errorf("comments = %+v", got)
+	}
+}
+
+func TestARequestThatNamesNoReviewIsAppliedToWhicheverThereIs(t *testing.T) {
+	s, _ := replacedReviews(t)
+	if _, err := s.Do(Request{Op: "reply", Thread: 2, Body: "from the agent"}, Agent); err != nil {
+		t.Errorf("the agent's requests name no review: %v", err)
+	}
+}
+
+func TestStartingAReviewIsNotForAReview(t *testing.T) {
+	s, firstKey := replacedReviews(t)
+	later := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return later }
+	if _, err := s.Do(Request{Op: "start", Note: "third", For: &firstKey}, User); err != nil {
+		t.Errorf("a start replaces whatever there is: %v", err)
+	}
+}
+
+func TestTwoReviewsStartedAtTheSameMomentOfDifferentThingsAreTold(t *testing.T) {
+	a := Review{Started: time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC), Ref: "master"}
+	b := Review{Started: a.Started, Ref: "main"}
+	if a.Key().IsFor(b) || !a.Key().IsFor(a) {
+		t.Error("the key tells what a review is of as well as when it was started")
 	}
 }

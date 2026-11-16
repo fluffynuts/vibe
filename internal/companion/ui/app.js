@@ -1938,16 +1938,43 @@
     // diffKey stands for the diff the page holds (vibe says it with the diff), and diffKeyIgnoresSpace whether that diff left
     // whitespace out: what the code is asked about, once the agent's turn is over (see reviewTurnEnded). stale says it has
     // changed since, with the tab open; checking, that the question is on its way.
-    diffKey: null, diffKeyIgnoresSpace: false, stale: false, checking: false }
+    diffKey: null, diffKeyIgnoresSpace: false, stale: false, checking: false,
+    // diffFor says which review the diff the page holds was worked out for (see reviewIdentity).
+    diffFor: null,
+    // heldFor is the review a toast has said is waiting for the user to leave a box (see sayReviewIsHeld).
+    heldFor: null }
 
   // changeReview asks vibe for a change to the review (do, ask, submit,
   // start), taking the review it gives back (see tookReview): every change
   // from the page goes this way, so a poll that set out before can't undo
   // it.
   async function changeReview(path, body) {
+    if (path !== '/api/review/start' && path !== '/api/review/afresh') body = Object.assign({ for: reviewShown() }, body)
     const res = await post(path, body)
     if (res.ok && res.body && res.body.review) tookReview(res.body.review)
+    tookRefusal(res)
     return res
+  }
+
+  // reviewShown is which review the page is showing, as the host names one (a Key), to be sent with every change to it: the
+  // agent can start another while this one is on show, and a change is then refused, not applied to a review nobody here has seen.
+  function reviewShown() {
+    const rv = reviewView.review
+    return rv ? { started: rv.started, ref: rv.ref, commit: rv.commit, unpushed: rv.unpushed } : undefined
+  }
+
+  // tookRefusal answers the host's refusal of a change for a review the agent has replaced: the new review is taken at once (what was
+  // written in the old goes with it), and the caller, which says why the change failed, says it.
+  function tookRefusal(res) {
+    if (res.ok || !res.body || res.body.code !== 'review-replaced') return
+    leaveBoxes()
+    loadReview(false)
+  }
+
+  // leaveBoxes takes the focus out of a box on the Review tab, which is what holds a new review back (see typingInABox).
+  function leaveBoxes() {
+    const a = document.activeElement
+    if (a && a.tagName === 'TEXTAREA' && $('panel-review').contains(a)) a.blur()
   }
 
   // doReview asks vibe to do req to the review (see changeReview).
@@ -2687,7 +2714,18 @@
       banner('review', '')
       showBroken('')
       // Something done on the page since this set out gave a newer review.
+      let otherReview = false
       if (reviewView.changed === changed) {
+        // The agent started a review from the terminal: the diff held is the last one's, and its comments would sit under
+        // "On files not in this diff" until Refresh. Someone typing in a box is not parted from it meanwhile: the next poll,
+        // once they have left it, finds the review still not the one the diff is for.
+        const incoming = res.body.review
+        otherReview = !withDiff && reviewView.files !== null && reviewIsOn(incoming) && reviewView.diffFor !== reviewIdentity(incoming)
+        if (otherReview && typingInABox()) {
+          sayReviewIsHeld(reviewIdentity(incoming))
+          showHeld(true)
+          return
+        }
         const wasOn = reviewView.review && reviewIsOn(reviewView.review)
         reviewView.review = res.body.review
         reviewView.ask = res.body.ask || null
@@ -2698,6 +2736,14 @@
         if (!reviewIsOn(reviewView.review) && (wasOn || (!reviewView.options && !reviewView.optionsError))) loadOptions()
       }
       showPastes(res.body.pastes)
+      if (otherReview) {
+        forgetFiles()
+        forgetWriting()
+        reviewView.files = null
+        reviewView.diffWanted = true
+        holdBackReview()
+        return
+      }
       // A diff that set out before the review's files went stale (Refresh,
       // a new review) isn't drawn: the one asked for since is on its way.
       if (withDiff && reviewView.loadingEpoch === reviewView.epoch) {
@@ -2705,6 +2751,7 @@
         reviewView.diffError = res.body.diffError || ''
         reviewView.diffKey = res.body.diffKey || null
         reviewView.diffKeyIgnoresSpace = reviewView.ignoreSpace
+        reviewView.diffFor = reviewIdentity(res.body.review)
         showStale(false)
         // The code may have changed with the same files: drawn afresh.
         reviewView.key = null
@@ -2746,9 +2793,11 @@
     return null
   }
 
-  // drawReview draws the review when it has changed; a poll's redraw waits
-  // while a box on the tab is being typed in (it would take the focus away),
-  // one the user asked for (force) doesn't.
+  // reviewIdentity is what tells one review from the next, whatever is said in it: when it was started, and what it is of.
+  function reviewIdentity(rv) {
+    return [rv.started, rv.ref, rv.commit, rv.unpushed].join('|')
+  }
+
   // reviewIsOn says rv is a review to show: started (or commented on) and
   // not closed. Else the tab offers to start one.
   function reviewIsOn(rv) {
@@ -2826,9 +2875,7 @@
   function showReview(rv) {
     tookReview(rv)
     reviewView.files = null
-    // A comment being written, or edited, was on the review before.
-    reviewView.composer = null
-    reviewView.editing = null
+    forgetWriting()
     forgetFiles()
     drawReview()
     loadReview(true)
@@ -2854,6 +2901,49 @@
       } })
   }
 
+  // sayReviewIsHeld tells, once for each review, why the review on show has not been replaced by the one the agent started: the
+  // user is in a box with something written in it. "Switch now" leaves the box and takes the new review, dropping what was
+  // written in the old.
+  function sayReviewIsHeld(identity) {
+    if (reviewView.heldFor === identity) return
+    reviewView.heldFor = identity
+    toast('The agent has started a new review. It replaces this one when you leave the comment box.', false, { label: 'Switch now', run: switchNow })
+  }
+
+  // switchNow takes the review the agent started, leaving the box the user is in (what is written in it goes with the old review).
+  function switchNow() {
+    leaveBoxes()
+    loadReview(false)
+  }
+
+  // holdBackReview takes the old review off the tab while the diff of the new one is worked out, bar and all, and says so. It is not
+  // drawn (without its diff every comment would be bunched at the top), but the old review is not to be left looking like the
+  // current one, with its title, state and buttons, for the seconds a big diff takes. Drawing the new review puts it all back.
+  function holdBackReview() {
+    $('review-body').hidden = true
+    $('review-actions').hidden = true
+    $('review-comments-open').hidden = true
+    $('review-state').hidden = true
+    $('review-title').textContent = 'Review'
+    $('review-of').textContent = ''
+    $('review-wait').hidden = false
+  }
+
+  // showHeld says, beside Refresh, for as long as it is so, that a newer review is waiting for the user to leave a box.
+  function showHeld(held) {
+    $('review-held').hidden = !held
+  }
+
+  // forgetWriting forgets what was being written on the review that is replaced: a comment on a line, an edit, and replies half
+  // written. They belong to it, and a thread's number is only its own (the next review's start again from 1).
+  function forgetWriting() {
+    reviewView.composer = null
+    reviewView.editing = null
+    reviewView.drafts.clear()
+    // The boxes still on the page hold their text until the page is drawn again, and drawing saves what they hold as drafts.
+    for (const box of $('panel-review').querySelectorAll('textarea[data-thread]')) box.value = ''
+  }
+
   // forgetFiles forgets what the page has of the diff's files (their
   // lines, the gaps opened in them, their colours, which long ones are
   // shown): the code may have changed under it.
@@ -2866,6 +2956,7 @@
     reviewView.unfolded.clear()
     reviewView.key = null
     showStale(false)
+    showHeld(false)
   }
 
   // showStale says, beside Refresh, whether the code has changed under the diff the page holds.
@@ -2957,8 +3048,9 @@
     const writing = rv.state === 'in progress'
     const stop = writing || (reviewView.agentAtWork && open > 0)
     const close = async () => {
-      const res = await post('/api/review/close', { stop })
-      if (res.status === 409 && !again) {
+      const res = await post('/api/review/close', { stop, for: reviewShown() })
+      tookRefusal(res)
+      if (res.status === 409 && !again && !(res.body && res.body.code === 'review-replaced')) {
         // The agent began work on the review since the page last looked:
         // asked again, saying what closing now does.
         await loadReview(false)
@@ -3015,6 +3107,9 @@
     }
   }
 
+  // drawReview draws the review when it has changed; a poll's redraw waits
+  // while a box on the tab is being typed in (it would take the focus away),
+  // one the user asked for (force) doesn't.
   function drawReview(force) {
     const rv = reviewView.review
     if (!rv) return
@@ -4927,6 +5022,7 @@
     })
     $('manage-delete').addEventListener('click', deleteTicked)
     $('review-refresh').addEventListener('click', refreshReview)
+    $('review-switch').addEventListener('click', switchNow)
     $('review-afresh').addEventListener('click', startAfresh)
     $('review-whitespace').checked = reviewView.ignoreSpace
     $('review-whitespace').addEventListener('change', (ev) => {
