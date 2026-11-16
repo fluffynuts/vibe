@@ -34,16 +34,14 @@ func TestMultiFilterNothingIsTickedToBeginWith(t *testing.T) {
 	}
 }
 
-func TestMultiFilterTabTicksTheHighlightedOneAndMovesDown(t *testing.T) {
+func TestMultiFilterSpaceTicksTheHighlightedOneAndStaysPut(t *testing.T) {
 	m := newMultiFilterState(sandboxes)
 	m.tickHighlighted()
-	m.tickHighlighted()
-	if got := m.ticked(); !reflect.DeepEqual(got, []int{0, 1}) || m.cursor != 2 {
-		t.Errorf("ticked %v, cursor %d; want [0 1], 2", got, m.cursor)
+	if got := m.ticked(); !reflect.DeepEqual(got, []int{0}) || m.cursor != 0 {
+		t.Errorf("ticked %v, cursor %d; want [0], 0: as in every checklist, the highlight stays", got, m.cursor)
 	}
-	m.move(-1)
 	m.tickHighlighted()
-	if got := m.ticked(); !reflect.DeepEqual(got, []int{0}) {
+	if got := m.ticked(); len(got) != 0 {
 		t.Errorf("ticking a ticked one should untick it: %v", got)
 	}
 }
@@ -96,14 +94,6 @@ func TestMultiFilterClearTypedSaysWhetherThereWasAnything(t *testing.T) {
 	}
 }
 
-func TestMultiFilterSpaceIsTypedNotATick(t *testing.T) {
-	m := newMultiFilterState([]string{"a b", "ab"})
-	typing(m, "a b")
-	if !reflect.DeepEqual(m.matches, []int{0}) || len(m.ticked()) != 0 {
-		t.Errorf("matches %v, ticked %v", m.matches, m.ticked())
-	}
-}
-
 func TestMultiFilterWithNothingMatchingTicksNothingAndSaysSo(t *testing.T) {
 	m := newMultiFilterState(sandboxes)
 	typing(m, "zzz")
@@ -117,6 +107,7 @@ func TestMultiFilterWithNothingMatchingTicksNothingAndSaysSo(t *testing.T) {
 func TestMultiFilterShowsEachLabelWithItsBoxAndTheHighlight(t *testing.T) {
 	m := newMultiFilterState(sandboxes)
 	m.tickHighlighted()
+	m.move(1)
 	got := plain(m.lines())
 	for _, want := range []string{"[x] yumbi-api", "❯ [ ] yumbi-web", "[ ] phoenix"} {
 		if !strings.Contains(got, want) {

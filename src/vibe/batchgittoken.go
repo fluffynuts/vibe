@@ -311,7 +311,7 @@ func doBatchGitToken(vibeHome string, args cliargs.Args) error {
 	for i, c := range candidates {
 		labels[i] = batchLabel(c, now)
 	}
-	ticked, ok := multiFilterFrom("which sandboxes should get the token? (none are ticked to begin with)", labels)
+	ticked, ok := multiFilterFrom("which sandboxes should get the token? (none are ticked to begin with; typing matches the folder and profile too)", labels)
 	if !ok || len(ticked) == 0 {
 		note("no sandbox picked: nothing changed")
 		return nil

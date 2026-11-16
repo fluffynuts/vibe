@@ -31,9 +31,10 @@ matches, Enter answers, Ctrl-C ends vibe. Letters are typed, so `j`, `k` and `q`
 and `Filter` picks:
 
 - **Escape clears what is typed** when anything is; with nothing typed it cancels, as it does in `Filter`. Cancelling changes nothing.
-- **Tab ticks** the highlighted one (and moves down), and **Ctrl-A ticks everything now shown** (or unticks it, if it was all ticked). Space is
-  typed, as in `Filter`, so it can't be the tick key; if Space should tick instead, that is a one-line change and the filter then can't contain a
-  space, which a label (name, folder) rarely needs.
+- **Space ticks** the highlighted one (and stays put), as in every other checklist, and **Ctrl-A ticks everything now shown** (or unticks it, if it
+  was all ticked). So the filter can't contain a space, which a label (name, folder) rarely needs. (Tab was the first choice, to keep Space for
+  the filter; the user found Space the natural key after trying it.) The label has the folder and profile, so typing matches them too: the
+  question says so.
 - **Ticks are kept for the sandboxes the filter hides**: filter for `yumbi`, tick those, clear it, filter for `phoenix`, tick those. The answer
   is every ticked one, shown or not, and the header says how many are ticked in all.
 
@@ -116,7 +117,7 @@ Unit, with the stand-ins `gittoken.go` already has (`checkGitToken`, the secret 
   like any other; the recipient records the donor's source;
 - `--git-rules` presets all; the flag parses and is exclusive (`cliargs`);
 - the filter (in `internal/prompt`, driven as `Filter`'s tests drive it): typing narrows with no key to start it, backspace widens, Escape clears
-  what is typed and then cancels, Tab ticks, ticks survive a filter that hides them, Ctrl-A ticks only what is shown, and cancelling returns
+  what is typed and then cancels, Space ticks, ticks survive a filter that hides them, Ctrl-A ticks only what is shown, and cancelling returns
   nothing;
 - the prompt's labels carry both expiries; the single-sandbox `--git-token` tests otherwise pass unchanged, which pins the extraction of the
   shared flow.

@@ -984,7 +984,7 @@ checked the same way, and turned down if GitHub won't let it push. `--git-rules`
 `vibe --batch-git-token` is for when several sandboxes push with the same token and it has been
 regenerated, which kills the old one in every sandbox holding it. It lists the sandboxes vibe knows
 (each with what its token is now, from vibe's own records: GitHub isn't asked), with none ticked: type
-to narrow the list, Tab ticks the highlighted one, Ctrl-A ticks everything shown (or unticks it), Esc
+to narrow the list (it matches the folder too, not just the name), Space ticks the highlighted one, Ctrl-A ticks everything shown (or unticks it), Esc
 clears what is typed and then quits, and ticks stay when the filter hides them. Then you choose the
 token once (your default, a new one, one you have, or the one another sandbox has), and it is given to
 each ticked sandbox, keeping that sandbox's own rules (`--git-rules` sets them for all). The token is

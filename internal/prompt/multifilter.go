@@ -3,12 +3,12 @@ package prompt
 import "fmt"
 
 // MultiFilter is Filter for ticking several: typing narrows the list as it
-// does there, Tab ticks the highlighted one (and moves down), Ctrl-A ticks
-// everything shown (or unticks it, when it was all ticked), enter answers
-// with every ticked one — shown or not — in ascending order. Esc clears what
-// is typed, when anything is; with nothing typed it cancels (ok=false), as
-// Ctrl-C ends vibe. Space is typed, as in Filter, so it is not the tick key.
-// Nothing is ticked to begin with, and ticking nothing is an answer.
+// does there, Space ticks the highlighted one, as in every checklist (so a
+// filter can't contain a space), Ctrl-A ticks everything shown (or unticks
+// it, when it was all ticked), enter answers with every ticked one — shown or
+// not — in ascending order. Esc clears what is typed, when anything is; with
+// nothing typed it cancels (ok=false), as Ctrl-C ends vibe. Nothing is ticked
+// to begin with, and ticking nothing is an answer.
 func MultiFilter(rw *Terminal, labels []string) (selected []int, ok bool) {
 	if len(labels) == 0 {
 		return nil, false
@@ -42,7 +42,7 @@ func MultiFilter(rw *Terminal, labels []string) (selected []int, ok bool) {
 			m.backspace()
 		case key == 0x15:
 			m.clearTyped()
-		case key == '\t':
+		case key == ' ':
 			m.tickHighlighted()
 		case key == 0x01:
 			m.tickShown()
@@ -136,7 +136,6 @@ func (m *multiFilterState) tickHighlighted() {
 	}
 	i := m.matches[m.cursor]
 	m.marks[i] = !m.marks[i]
-	m.move(1)
 }
 
 // tickShown ticks everything the filter shows, or unticks it when it was all
@@ -180,6 +179,6 @@ func (m *multiFilterState) lines() []string {
 	if m.typed != "" {
 		escDoes = "clear the filter"
 	}
-	hint := "(type to filter, ↑/↓ to move, tab to tick, ctrl-a to tick all shown, enter when done, esc to " + escDoes + ")"
+	hint := "(type to filter, ↑/↓ to move, space to tick, ctrl-a to tick all shown, enter when done, esc to " + escDoes + ")"
 	return append(lines, "\x1b[2m"+hint+"\x1b[0m")
 }
