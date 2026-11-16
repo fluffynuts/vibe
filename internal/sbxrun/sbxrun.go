@@ -701,12 +701,19 @@ func stream(cmd *exec.Cmd, input string, delivered func(), onLine func(line []by
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	r := bufio.NewReaderSize(out, 64*1024)
+	streamLines(out, onLine)
+	return waited(cmd, &errs)
+}
+
+// streamLines hands over what r says a line at a time, until it ends; what is
+// past maxStreamLine on one line is dropped.
+func streamLines(r io.Reader, onLine func(line []byte)) {
+	br := bufio.NewReaderSize(r, 64*1024)
 	var line []byte
 	for {
-		chunk, prefix, err := r.ReadLine()
+		chunk, prefix, err := br.ReadLine()
 		if err != nil {
-			break
+			return
 		}
 		if len(line)+len(chunk) <= maxStreamLine {
 			line = append(line, chunk...)
@@ -717,6 +724,10 @@ func stream(cmd *exec.Cmd, input string, delivered func(), onLine func(line []by
 		onLine(line)
 		line = line[:0]
 	}
+}
+
+// waited waits for cmd, and says what it said on stderr when it failed.
+func waited(cmd *exec.Cmd, errs *tail) error {
 	if err := cmd.Wait(); err != nil {
 		if said := strings.TrimSpace(errs.String()); said != "" {
 			return fmt.Errorf("%w: %s", err, said)
@@ -724,6 +735,77 @@ func stream(cmd *exec.Cmd, input string, delivered func(), onLine func(line []by
 		return err
 	}
 	return nil
+}
+
+// Session is a command running in the sandbox with its stdin kept open: lines
+// are written to it whenever there is something to say, and what it prints is
+// handed over a line at a time, until it ends. It ends by itself, when its
+// input is closed and it has finished, or when its context is cancelled.
+type Session struct {
+	cmd  *exec.Cmd
+	in   io.WriteCloser
+	mu   sync.Mutex
+	done chan struct{}
+	err  error
+}
+
+// ExecSession starts args in sandbox name as a Session, calling onLine with
+// each line it prints (from a goroutine of its own, in order).
+func ExecSession(ctx context.Context, name string, onLine func(line []byte), args ...string) (*Session, error) {
+	full := append([]string{"exec", "-i", name, "--"}, args...)
+	return startSession(exec.CommandContext(ctx, sbxfind.Path(), full...), onLine)
+}
+
+func startSession(cmd *exec.Cmd, onLine func(line []byte)) (*Session, error) {
+	if cmd.Cancel != nil {
+		ignoreTerminalInterrupt(cmd)
+		cmd.WaitDelay = time.Second
+	}
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	var errs tail
+	cmd.Stderr = &errs
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	s := &Session{cmd: cmd, in: in, done: make(chan struct{})}
+	go func() {
+		streamLines(out, onLine)
+		s.err = waited(cmd, &errs)
+		close(s.done)
+	}()
+	return s, nil
+}
+
+// WriteLine writes line, and a newline, to the command's input.
+func (s *Session) WriteLine(line []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.in.Write(append(append([]byte(nil), line...), '\n'))
+	return err
+}
+
+// CloseInput closes the command's input: one that reads it to its end then
+// finishes in its own time.
+func (s *Session) CloseInput() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.in.Close()
+}
+
+// Done is closed once the command has ended and all it printed is handed over.
+func (s *Session) Done() <-chan struct{} { return s.done }
+
+// Err is how the command ended, once Done is closed: nil when it succeeded.
+func (s *Session) Err() error {
+	<-s.done
+	return s.err
 }
 
 // tail keeps the last few kilobytes written to it.
