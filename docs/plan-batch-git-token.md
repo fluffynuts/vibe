@@ -1,7 +1,30 @@
-# `vibe --batch-git-token`: one GitHub token for several sandboxes at once (planned, not built)
+# `vibe --batch-git-token`: one GitHub token for several sandboxes at once (built on `feat/batch-git-token`, not merged: see "What was built")
 
 How a sandbox's token works today is `src/vibe/gittoken.go` (`askGitAccess`, `setGitAccess`, `giveGitAccess`, `renewGitAccess`,
 `shareDefaultToken`, `vetGitToken`); the page only shows its state ("Giving vibe the token stays in the terminal", Admin tab).
+
+## What was built, and where it departed (2026-11-16)
+
+All of it is built and was tried by the user on their own sandboxes, except as noted. Where the code differs from what is written below, the code
+(`src/vibe/batchgittoken.go`, `internal/prompt/multifilter.go`) is right, and this says how:
+
+- **Space ticks**, not Tab (the user found Space the natural key; so a filter can't contain a space). It stays where it is, as in every checklist.
+  Typing also matches the folder and profile, not just the name, and the question says so.
+- **The check "afterwards" is the one check before giving**, once per repository: a second look at the same token a moment later would say
+  nothing new. The summary's tick comes from it. A sandbox the token can't push to is skipped, with the reason, and the rest go on.
+- **Stopped sandboxes are not skipped and not started.** What started them was vibe's own `sbx exec … /bin/true` (what `Reachable` runs), to write
+  the agent's instructions; `sbx secret set` does not start one (the user checked, with `sbx` alone). The instructions are now written only when
+  `sbx ls` says the sandbox is running (`ifRunning`), for `--git-token` as much as the batch: a stopped one gets them at its next session start.
+- **"Also keep it as the default?"** is asked right after the token is chosen, since the source it is recorded with depends on it. Saying yes stores
+  it, and then offers it to the sandboxes still on the *old* default that weren't picked (`offerDefaultToken`), each keeping its rules.
+- **`--jobs N`** gives it to N sandboxes at a time, 4 unless said (the user measured 4 against 1 and 16: much faster, and 4 keeps memory down when
+  sandboxes have to be started). GitHub is asked once per repository however many sandboxes share it. Each sandbox's lines are shown together when it
+  is done, above a spinner (`⠋ 3 of 10 done — working on a, b, c`) on a terminal; the run says how long it took.
+- **The record is reloaded** when a sandbox is given its token: the list was read minutes before, and a running vibe may have changed the record.
+- The two preparatory changes to `--git-token` (both expiries in "keep the token it has", and "the token another sandbox has") are built as written.
+- **Not built:** `--sandboxes a,b,c` for scripts (still "a later addition"), a check from inside the sandbox, and the Admin tab saying which tokens
+  are near expiry.
+- **Not verified by the author** (the user has run it on their sandboxes): the real prompts and spinner, GitHub's token page with several repositories.
 
 ## What is wanted (raised 2026-11-12)
 
@@ -18,8 +41,8 @@ regenerating a token, and a regenerated token kills the old one, so every other 
 3. The token is got by the flow `--git-token` already has, once: a new one (GitHub's form is opened, with the repositories of every ticked
    sandbox listed, since no URL can pick them), one the user already has, the default, or **the token another sandbox has** (below); checked
    with GitHub as it is now.
-4. It is given to each ticked sandbox in turn, each is **checked afterwards** (below), and a summary says which got it and which didn't, and why,
-   with each one's old expiry and new expiry.
+4. It is given to each ticked sandbox (4 at a time: see "What was built"), each is **checked** (below), and a summary says which got it and which
+   didn't, and why, with each one's old expiry and new expiry.
 
 Terminal-only, as `--git-token` is: a token is never typed into the page.
 
@@ -64,7 +87,7 @@ warning, or it was never given a token) isn't offered, and if none is the answer
 against **this** sandbox's repository: a copy gone stale, or one that can't push here, says so before anything is given. The recipient records
 the same `source` as the donor (`default` stays `default`, so a later renewal through `--setup` still reaches it; `own` stays `own`).
 
-## The check afterwards
+## The check afterwards (built as one check, before giving: see "What was built")
 
 Once given, each sandbox's token is **checked with GitHub for that sandbox's repository** (`checkGitToken(token, repoOf(inst.Target))`, which
 already says whether it can push), and the summary shows a tick or a cross per sandbox, so a sandbox the update missed is seen at once, not when
@@ -92,11 +115,12 @@ own, and `--git-token` alone gets better before the batch exists.
   is the user's to fix on GitHub (add the repository to the token). The ask-or-skip prompt of `vetGitToken` is asked once, not once per sandbox.
 - **No network at list time, and nothing ticked.** (Decided: an earlier idea of ticking the sandboxes whose token "no longer works" is dropped.)
 - **After the batch: also keep it as the default?** If yes, those sandboxes are given it as `default`, and the next renewal through `--setup`
-  reaches them together (`shareDefaultToken`). If no, they hold it as `own`. Asked once, at the end, default no.
+  reaches them together (`shareDefaultToken`). If no, they hold it as `own`. Asked once, default no (built: right after the token is chosen).
 - **Not interactive yet.** `--batch-git-token --git-token-env VAR` would still need the sandboxes ticked, so it needs a terminal; naming them
   (`--sandboxes a,b,c`) for scripts is a later addition, not this.
-- **A sandbox that is gone, stopped or unreachable.** One `sbx` doesn't know is dropped from the list. One that is stopped: `setGitAccess`
-  writes into the sandbox, so it is reported as not done, with the command that tries it again for that sandbox, not started behind the user's back.
+- **A sandbox that is gone, stopped or unreachable.** One `sbx` doesn't know is dropped from the list. One that is stopped is given its token
+  without being started (its instructions follow at its next start: see "What was built"); one that can't be given it is reported as not done, with
+  the command that tries it again for that sandbox.
 
 ## What must stay true
 
