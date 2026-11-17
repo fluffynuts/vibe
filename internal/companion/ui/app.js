@@ -6828,7 +6828,7 @@
   // A colon and the start of a name in the prompt (:roc) offers the emoji it could be, as the slash commands are offered; the
   // pick puts the character itself in the prompt, and typing the closing colon of a whole name (:tada:) does too. The
   // names, and what is a name being typed, are ui/emoji.js's. It can be turned off (Settings), and is remembered.
-  const emojiState = { on: store.get('vibe-emoji-complete') !== 'off', shown: [], at: 0, open: false }
+  const emojiState = { on: store.get('vibe-emoji-complete') !== 'off', shown: [], at: 0, open: false, start: 0 }
   const EMOJI_SHOWN = 8
 
   function closeEmoji() {
@@ -6874,6 +6874,7 @@
     input.setAttribute('aria-controls', 'convo-emoji')
     input.setAttribute('aria-expanded', 'true')
     input.setAttribute('aria-activedescendant', 'convo-emoji-' + emojiState.at)
+    emojiState.start = word.start
     placeEmoji(word.start)
     const picked = $('convo-emoji-' + emojiState.at)
     if (picked) picked.scrollIntoView({ block: 'nearest' })
@@ -7017,6 +7018,9 @@
       updateEmoji(true)
     })
     input.addEventListener('click', () => updateEmoji(false))
+    // The list is placed at the caret as the prompt shows it, and the browser may scroll the prompt to the caret after the
+    // input that showed the list (Firefox on Windows does): it follows.
+    input.addEventListener('scroll', () => { if (emojiState.open) placeEmoji(emojiState.start) })
     input.addEventListener('keyup', (ev) => {
       if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) updateEmoji(false)
     })

@@ -545,6 +545,29 @@ test('a prompt that has scrolled puts the emoji list at the visible caret', asyn
   } finally { await page.close() }
 })
 
+// The browser may scroll the prompt to the caret after the input that showed the list (Firefox on Windows CI did): the list
+// follows the prompt's scrolling, or it is left where the caret was before, below the prompt.
+test('the emoji list follows the prompt as it scrolls', async () => {
+  const page = await promptPage(1200)
+  try {
+    const lines = Array.from({ length: 20 }, (_, i) => 'line ' + (i + 1)).join('\n')
+    await page.fill('#convo-input', lines + '\nlast')
+    await page.focus('#convo-input')
+    await page.keyboard.press('Control+End')
+    await page.keyboard.type(' :roc')
+    await page.waitForSelector('#convo-emoji:not([hidden]) li')
+    const before = await listBox(page)
+    await page.evaluate(() => {
+      const ta = document.getElementById('convo-input')
+      ta.scrollTop = ta.scrollTop - 3 * parseFloat(getComputedStyle(ta).lineHeight)
+    })
+    await page.waitForFunction((was) => document.getElementById('convo-emoji').getBoundingClientRect().bottom > was + 10, before.list.bottom, { timeout: 5000 })
+    const after = await listBox(page)
+    const moved = after.list.bottom - before.list.bottom
+    assert.ok(Math.abs(moved - 3 * after.line) < 10, `scrolled three lines up, the list moved ${moved}px; a line is ${after.line}px`)
+  } finally { await page.close() }
+})
+
 // The browser's own undo, which the page leaves alone: Ctrl+Z, but Cmd+Z on a Mac (where Control+z does nothing: macOS CI failed all four).
 const undo = 'ControlOrMeta'
 
