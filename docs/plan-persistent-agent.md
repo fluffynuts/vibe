@@ -176,8 +176,10 @@ and other agents: OpenCode's conversation is on the unmerged `feat/opencode` bra
 receipts throughout (recorded); background work going on through a prompt and calling the agent back; Stop leaving it running
 and the offer naming it, both ways (leave, and stop them too); the agent ended when idle and the next prompt resuming the
 conversation. Found and fixed on the way: a stopped turn shown as the agent failing, with a ✕ on the prompt it had taken in.
-Not tried by hand: the force stop (a real agent stops too quickly to need it), vibe dying with work running (the leftover ended
-at the next start), and the sandbox going to sleep once the agent has ended.
+Also tried by hand: vibe killed with SIGKILL while work ran (the leftover agent and its work outlived it, and were ended by the
+next vibe as it started an agent: the same stop-by-pid-file a force stop uses), and the sandbox going to sleep once the agent
+had ended, several times over a day and overnight. Not tried by hand: the page's own Force stop (Stop turning into it after 8 s,
+and the server ending an agent mid-turn), as a real agent stops well within 8 s; it has unit and page tests.
 
 ## Design (settled where the experiments above say so; the rest to be tried)
 
