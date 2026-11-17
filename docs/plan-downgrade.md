@@ -1,6 +1,28 @@
-# `vibe --downgrade`: go back to an earlier vibe or sbx when an update breaks things (planned, not built)
+# `vibe --downgrade`: go back to an earlier vibe or sbx when an update breaks things (planned, not built; first version decided 2026-11-17, below)
 
 Raised 2026-11-04, the day an sbx update (v0.51.0, which moved its claude agent to a schemaVersion 3 kit) stopped every vibe sandbox from starting, and there was no way back except doing it by hand. The want: an escape hatch for a broken sbx update, or a broken vibe release, so the user can carry on working. `vibe --upgrade` is unchanged and still offers the latest when run again.
+
+## Decided with the user (2026-11-17): the first version
+
+Narrower than "Proposed" below, which stays as the record of the wider idea. The want now: try a new sbx (v0.54.0 was waiting)
+without worrying about being unable to work if it breaks vibe.
+
+1. **`vibe --downgrade` is a checklist like `vibe --upgrade`'s**: one row for vibe, one for sbx, each offering only **the latest
+   release before the installed one** (for sbx, the latest *stable* one before it: no RCs or nightlies). No list of five, no
+   naming a version, no single-choice picker.
+2. **Both rows start unchecked: it is opt-in**, unlike the upgrade, which is opt-out (its rows start ticked).
+3. **Out of the first version** (kept below for later): the release cache, the `COMPAT` asset and skew warnings, the installer's
+   `--release`, naming a version on the command line, more than one version back.
+
+Still to settle when building (raise with the user, don't decide alone):
+- whether the backup of `~/.vibe` and the refusal while a session runs (see "Before it changes anything") are in the first version;
+- how the version before the installed one is found: `releases/latest` gives only the newest, so a list is needed (the Atom
+  feed or the REST API: see "Where the upstream list comes from"); vibe's releases are `v0.1.<run>`, sbx's are mixed with RCs;
+- a row with nothing older to offer (a development build, or the oldest release) says so rather than offering nothing;
+- `-f` / no terminal: what an opt-in checklist means without one (probably: nothing is chosen, so it says how to choose).
+
+Start from `src/vibe/selfupgrade.go` (the `--upgrade` checklist, `upgradeVibe`, the sbx install path, `installedSbxMethod`),
+`internal/selfupdate` (`LatestTag`, `Download`, `Newer`) and `internal/sbxinstall` (`LatestStableTag`, `Stable`).
 
 ## What there is
 
