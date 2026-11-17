@@ -4,6 +4,9 @@ import (
 	"archive/zip"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
+	"sort"
 	"testing"
 	"time"
 )
@@ -89,5 +92,68 @@ func TestRestoreRefusesAnEntryOutsideTheProfile(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "escaped.txt")); err == nil {
 		t.Error("an entry was written outside the profile")
+	}
+}
+
+func TestCreateLeavingOutSkipsThoseTopLevelFoldersOnly(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, ".vibe")
+	for _, f := range []string{"settings.yaml", "profiles/a/config.yaml", "logs/a.log", "running/1.lock", "library/logs/kept.txt"} {
+		os.MkdirAll(filepath.Dir(filepath.Join(home, f)), 0o755)
+		os.WriteFile(filepath.Join(home, f), []byte(f), 0o644)
+	}
+	p, err := CreateLeavingOut(root, ".vibe-backup", home, time.Date(2026, 11, 17, 9, 5, 0, 0, time.Local), []string{"logs", "running"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(root, ".vibe-backup-2026-11-17_090500.zip"); p != want {
+		t.Errorf("backup at %s, want %s", p, want)
+	}
+	r, err := zip.OpenReader(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	var got []string
+	for _, f := range r.File {
+		got = append(got, f.Name)
+	}
+	want := []string{"library/logs/kept.txt", "profiles/a/config.yaml", "settings.yaml"}
+	if !reflect.DeepEqual(sorted(got), want) {
+		t.Errorf("backup holds %v, want %v", got, want)
+	}
+}
+
+func sorted(s []string) []string {
+	out := append([]string{}, s...)
+	sort.Strings(out)
+	return out
+}
+
+// A backup can hold what its folder keeps private (~/.vibe's GitHub tokens
+// are 0600), so it is readable by its owner alone, whatever the umask.
+func TestBackupsAreReadableByTheirOwnerAlone(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no Unix file modes")
+	}
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	os.MkdirAll(src, 0o755)
+	os.WriteFile(filepath.Join(src, "default.token"), []byte("secret"), 0o600)
+	for name, create := range map[string]func() (string, error){
+		"Create":           func() (string, error) { return Create(root, "vibe", src, time.Now()) },
+		"CreateLeavingOut": func() (string, error) { return CreateLeavingOut(root, ".vibe-backup", src, time.Now(), nil) },
+	} {
+		p, err := create()
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mode := info.Mode().Perm(); mode != 0o600 {
+			t.Errorf("%s made %s with mode %o, want 600", name, p, mode)
+		}
 	}
 }

@@ -108,6 +108,16 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              selected), and install them; -f upgrades them all
                              without asking (-f and -u are passed on to
                              vibe's --install)
+  vibe --downgrade           the way back from a vibe or Docker SBX release
+                             that broke something: offers the release before
+                             the installed one of each (sbx: the stable one
+                             before it), none selected, and installs those
+                             picked; going back on vibe backs ~/.vibe up
+                             beside itself first (~/.vibe-backup-*.zip),
+                             going back on sbx alone doesn't. Refuses while
+                             any vibe session runs; always asks (-f is
+                             ignored), so does nothing with no terminal; -u
+                             is passed on to vibe's --install
   vibe -I/--install-sbx      download the latest stable Docker Sandboxes (sbx)
                              release and install it: on Linux into
                              ~/.docker/sbx; on macOS (Apple Silicon) and
@@ -247,11 +257,11 @@ func run(argv []string) error {
 		fmt.Println(vibe.String())
 		return nil
 	}
-	if args.UpdateStrategy != "" && !args.Install && !args.Upgrade {
-		return fmt.Errorf("--update-strategy only applies to --install and --upgrade")
+	if args.UpdateStrategy != "" && !args.Install && !args.Upgrade && !args.Downgrade {
+		return fmt.Errorf("--update-strategy only applies to --install, --upgrade and --downgrade")
 	}
 	if args.ExclusiveActions() > 1 {
-		return fmt.Errorf("--migrate, --stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --install-sbx, --cleanup, --delete, --info, --setup, --git-token, --batch-git-token, --update-sandboxes, --manage and --headless are mutually exclusive (--headless goes with --re-init, --re-create and --re-compose alone: the rebuild, then headless)")
+		return fmt.Errorf("--migrate, --stop, --stop-all, --ssh, --re-init, --re-create, --re-compose, --restore, --list, --install, --upgrade, --downgrade, --install-sbx, --cleanup, --delete, --info, --setup, --git-token, --batch-git-token, --update-sandboxes, --manage and --headless are mutually exclusive (--headless goes with --re-init, --re-create and --re-compose alone: the rebuild, then headless)")
 	}
 
 	if args.Terminal && args.ExclusiveActions() > 0 && !args.Rebuilds() {
@@ -279,6 +289,16 @@ func run(argv []string) error {
 			return fmt.Errorf("--upgrade takes no path argument")
 		}
 		return doUpgrade(args.Force, args.UpdateStrategy)
+	}
+
+	if args.Downgrade {
+		if args.Path != "" {
+			return fmt.Errorf("--downgrade takes no path argument")
+		}
+		if args.Force {
+			note("-f is ignored by --downgrade: it always asks what to go back on")
+		}
+		return doDowngrade(vibeHome, args.UpdateStrategy)
 	}
 
 	if args.InstallSbx {

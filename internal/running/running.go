@@ -329,12 +329,32 @@ func AllClaims(vibeHome, target string) []Claim {
 }
 
 func claims(vibeHome, target string, withSelf bool) []Claim {
+	var found []Claim
+	for _, c := range scan(vibeHome, withSelf, func(folder string) bool { return folder == target }) {
+		found = append(found, c.Claim)
+	}
+	return found
+}
+
+// FolderClaim is a claim with the folder it is on.
+type FolderClaim struct {
+	Folder string
+	Claim
+}
+
+// Anywhere returns every other live vibe process's claims, on any folder,
+// by folder, then as Claims orders them.
+func Anywhere(vibeHome string) []FolderClaim {
+	return scan(vibeHome, false, func(string) bool { return true })
+}
+
+func scan(vibeHome string, withSelf bool, wanted func(folder string) bool) []FolderClaim {
 	entries, err := os.ReadDir(Dir(vibeHome))
 	if err != nil {
 		return nil
 	}
 	self := os.Getpid()
-	var found []Claim
+	var found []FolderClaim
 	for _, e := range entries {
 		// A session's claim is <pid>.lock; a hold's, <pid>-<n>.lock.
 		owner, _, _ := strings.Cut(strings.TrimSuffix(e.Name(), ".lock"), "-")
@@ -348,7 +368,7 @@ func claims(vibeHome, target string, withSelf bool) []Claim {
 			continue
 		}
 		folder, work, _ := strings.Cut(strings.TrimRight(string(data), "\n"), "\n")
-		if folder != target {
+		if !wanted(folder) {
 			continue
 		}
 		if held(path) {
@@ -356,10 +376,13 @@ func claims(vibeHome, target string, withSelf bool) []Claim {
 			if c.Work == headlessMark {
 				c.Work, c.Headless = "", true
 			}
-			found = append(found, c)
+			found = append(found, FolderClaim{Folder: folder, Claim: c})
 		}
 	}
 	sort.Slice(found, func(i, j int) bool {
+		if found[i].Folder != found[j].Folder {
+			return found[i].Folder < found[j].Folder
+		}
 		if found[i].PID != found[j].PID {
 			return found[i].PID < found[j].PID
 		}

@@ -351,3 +351,28 @@ func TestAllClaimsIncludesThisProcessWhereClaimsLeavesItOut(t *testing.T) {
 		t.Errorf("AllClaims for another folder = %v", other)
 	}
 }
+
+func TestAnywhereFindsLiveClaimsOnEveryFolderButThisProcess(t *testing.T) {
+	home := t.TempDir()
+	a, err := register(home, "/work/a", 111)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Release()
+	b, err := register(home, "/work/b", 112)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Release()
+	self, err := Register(home, "/work/c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer self.Release()
+	os.WriteFile(lockPath(home, 113), []byte("/work/d\n"), 0o644) // stale
+
+	want := []FolderClaim{{Folder: "/work/a", Claim: Claim{PID: 111}}, {Folder: "/work/b", Claim: Claim{PID: 112}}}
+	if got := Anywhere(home); !reflect.DeepEqual(got, want) {
+		t.Errorf("Anywhere = %v, want %v", got, want)
+	}
+}

@@ -235,6 +235,19 @@ func TestParseUpgrade(t *testing.T) {
 	}
 }
 
+func TestParseDowngrade(t *testing.T) {
+	got, err := Parse([]string{"--downgrade", "-u", "merge,keep"})
+	if err != nil || !got.Downgrade || got.UpdateStrategy != "merge,keep" {
+		t.Errorf("Parse(--downgrade -u merge,keep) = %+v, %v", got, err)
+	}
+	if got.ExclusiveActions() != 1 {
+		t.Errorf("--downgrade counts as %d actions, want 1", got.ExclusiveActions())
+	}
+	if both, _ := Parse([]string{"--downgrade", "-U"}); both.ExclusiveActions() != 2 {
+		t.Error("--downgrade with --upgrade should be rejected as two actions")
+	}
+}
+
 func TestParseInstallSbx(t *testing.T) {
 	for _, arg := range []string{"-I", "--install-sbx"} {
 		got, err := Parse([]string{arg})

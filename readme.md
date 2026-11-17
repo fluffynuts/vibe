@@ -122,6 +122,32 @@ While a sandbox session runs, vibe makes the same checks in the background. When
 it lists anything newer it found and suggests `vibe --upgrade`. It says nothing when everything is up
 to date, when a check fails, or when the checks haven't finished by the time you exit.
 
+### Going back a release
+
+`vibe --downgrade` is the way back when a new vibe or Docker SBX breaks something: it lists the
+release before the installed one of each (for sbx, the stable release before it: no RCs or
+nightlies) with **nothing selected**, for you to pick what to go back on. Run it again to go back
+another; `vibe --upgrade` offers the newest again whenever you want it.
+
+- It refuses while any vibe session is running, naming them: end them first (`vibe --stop-all`).
+- It downloads everything you picked first, then checks again that no vibe session has started,
+  and only then installs. When vibe is one of those picked, it first backs `~/.vibe` up *beside*
+  it, as `~/.vibe-backup-<date>_<time>.zip` (the last three are kept; logs and caches are left
+  out). Going back on sbx alone leaves `~/.vibe` as it is, so it isn't backed up. A failed
+  download, a session started meanwhile, or a backup that can't be made, stops it with nothing
+  changed.
+- It always asks: `-f` is ignored, and with no terminal it changes nothing.
+- **vibe** goes back the way `--upgrade` goes forward: the older release's zip, checked against its
+  `SHA256SUMS`, runs its own `vibe --install` (`--update-strategy` is passed on). A development build
+  has no release before it. A sandbox built by the newer vibe may need `vibe -C`.
+- **Docker SBX** goes back the way `--install-sbx` installed it, on Linux and on macOS (tarball or
+  `.dmg`). Installed by Homebrew or by the Windows MSI, it says how to go back by hand instead.
+  A sandbox made under the newer sbx may need `vibe -r`.
+
+The list comes from each project's releases feed on GitHub, which needs no sign-in; only when the
+installed release is older than the feed's newest ten is GitHub's API asked (60 calls an hour
+without sign-in).
+
 The first `vibe --install` (and vibe's first run, if you skip `--install`) also sets up
 `~/.vibe/settings.yaml` for your machine. It asks how much memory each sandbox gets, in 4g steps
 up to half your machine's memory, and how many CPUs, any number from 1 to one less than your machine
@@ -344,6 +370,9 @@ vibe -i -u/--update-strategy merge,keep
                            #    asking: keep, update, merge,keep, merge,update
 vibe -U/--upgrade          # check for newer vibe and sbx releases, pick which
                            #    to install (-f: all of them, without asking)
+vibe --downgrade           # go back to the release before the installed vibe
+                           #    or sbx (none picked to start; going back on
+                           #    vibe backs ~/.vibe up first)
 vibe --update-sandboxes    # bring every profile and sandbox up to date with the
                            #    library, starting no session (see "Keeping
                            #    sandboxes up to date"); asks first, unless -f

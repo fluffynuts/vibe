@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -34,15 +35,21 @@ func (b Backup) Label() string {
 // Create zips profileDir into dir as <sandbox>-<date>_<time>.zip, then
 // removes all but the newest Keep backups of that sandbox.
 func Create(dir, sandbox, profileDir string, now time.Time) (string, error) {
+	return CreateLeavingOut(dir, sandbox, profileDir, now, nil)
+}
+
+// CreateLeavingOut is Create for any folder src, as <name>-<date>_<time>.zip,
+// leaving out the entries at its top level named in leaveOut.
+func CreateLeavingOut(dir, name, src string, now time.Time, leaveOut []string) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, sandbox+"-"+now.Format(stamp)+".zip")
-	if err := zipDir(profileDir, path); err != nil {
+	path := filepath.Join(dir, name+"-"+now.Format(stamp)+".zip")
+	if err := zipDir(src, path, leaveOut); err != nil {
 		os.Remove(path)
 		return "", err
 	}
-	all, err := List(dir, sandbox)
+	all, err := List(dir, name)
 	if err != nil {
 		return path, err
 	}
@@ -94,8 +101,10 @@ func Restore(zipPath, profileDir string) error {
 	return os.Rename(tmp, profileDir)
 }
 
-func zipDir(src, dest string) (err error) {
-	f, err := os.Create(dest)
+func zipDir(src, dest string, leaveOut []string) (err error) {
+	// Owner-only: what is zipped may be private (~/.vibe's GitHub tokens are
+	// 0600), and the zip needn't sit in a private folder.
+	f, err := os.OpenFile(dest, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
@@ -110,8 +119,14 @@ func zipDir(src, dest string) (err error) {
 			return werr
 		}
 		rel, err := filepath.Rel(src, p)
-		if err != nil || rel == "." || !d.Type().IsRegular() {
+		if err != nil || rel == "." {
 			return err
+		}
+		if d.IsDir() && slices.Contains(leaveOut, rel) {
+			return filepath.SkipDir
+		}
+		if !d.Type().IsRegular() {
+			return nil
 		}
 		info, err := d.Info()
 		if err != nil {

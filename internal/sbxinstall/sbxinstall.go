@@ -35,6 +35,17 @@ import (
 // a stand-in server.
 var Releases = "https://github.com/docker/sbx-releases/releases"
 
+// API is GitHub's REST API listing of sbx's releases, for when its feed
+// doesn't reach back far enough (see selfupdate.PreviousTagAt). A variable
+// so tests can point it at a stand-in server.
+var API = "https://api.github.com/repos/docker/sbx-releases/releases"
+
+// PreviousStableTag returns the tag of the newest stable release older than
+// installed ("v0.54.0", or an RC of it), or "" when there is none.
+func PreviousStableTag(installed string) (string, error) {
+	return selfupdate.PreviousTagAt(Releases, API, installed)
+}
+
 // Installer is the install script inside the release tarball's folder.
 const Installer = "install.sh"
 
