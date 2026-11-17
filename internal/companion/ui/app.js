@@ -1237,6 +1237,7 @@
       : state.tab === 'manage' ? [unlessBusy('state', loadState), unlessBusy('manage', loadManage)]
       : state.tab === 'review' ? [unlessBusy('state', loadState), unlessBusy('review', () => loadReview(reviewView.files === null))]
       : [unlessBusy('state', loadState), unlessBusy('tab ' + state.tab, () => load(state.tab))]
+    if (state.tab === 'admin' && state.themes) loads.push(unlessBusy('theme', loadTheme))
     if (state.usage) loads.push(unlessBusy('usage', loadUsage))
     if (gate.active && gate.fetching) loads.push(unlessBusy('gate', refreshGate))
     Promise.allSettled(loads).then(startedIfReady)
@@ -3985,10 +3986,16 @@
 
   // The drop-down shows the theme the agent has; choosing one sets it at once, and the page's accent
   // takes its colour without waiting for the next state.
-  const themeChoice = { shown: '' }
+  // drawn is what was drawn last, as vibe said it: vibe answers at once with what it last knew, and the tab asks again as it
+  // polls, so the theme the sandbox is found to have shows; drawn again only when that changes, and not while the drop-down
+  // has the focus (it may be open).
+  const themeChoice = { shown: '', drawn: '' }
 
   function drawTheme(t) {
     const select = $('settings-theme')
+    const drawn = JSON.stringify(t)
+    if (drawn === themeChoice.drawn || document.activeElement === select) return
+    themeChoice.drawn = drawn
     select.replaceChildren(...t.options.map((name) => {
       const option = el('option', { text: name === 'default' ? 'Default' : name })
       option.value = name
@@ -3996,7 +4003,8 @@
     }))
     select.value = t.current
     themeChoice.shown = t.current
-    $('settings-theme-note').textContent = t.live ? '' : "This sandbox isn't running: a choice is kept for the next time it is built."
+    // Not said while vibe is still asking the sandbox: it may well be running.
+    $('settings-theme-note').textContent = t.live || t.checking ? '' : "This sandbox isn't running: a choice is kept for the next time it is built."
   }
 
   async function loadTheme() {

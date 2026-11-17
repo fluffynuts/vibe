@@ -209,8 +209,9 @@ func fakeSandbox(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	// The reachability check execs /bin/true, which macOS doesn't have (only
-	// /usr/bin/true), so the fake answers it itself.
-	sbxtest.OnPath(t, "[ \"$1\" = exec ] || exit 1\nshift 3\n"+
+	// /usr/bin/true), so the fake answers it itself. Each call is counted in
+	// root/.sbx-calls (see sbxCalls).
+	sbxtest.OnPath(t, "echo >> '"+root+"/.sbx-calls'\n[ \"$1\" = exec ] || exit 1\nshift 3\n"+
 		"[ \"$1\" = /bin/true ] && exit 0\n"+
 		"echo 'A new version of sbx is available' >&2\n"+
 		"for a; do shift; set -- \"$@\" \"$(printf %s \"$a\" | sed \"s#^/home/agent#"+root+"#\")\"; done\n"+
@@ -242,6 +243,35 @@ func TestFromSandboxReadsWhateverTheAgentIsSetTo(t *testing.T) {
 	if _, ok := FromSandbox(context.Background(), "any"); ok {
 		t.Error("an unreadable settings.json was taken as an answer")
 	}
+}
+
+// sbxCalls is how many times the fake sbx of fakeSandbox(root) was called.
+func sbxCalls(t *testing.T, root string) int {
+	t.Helper()
+	data, _ := os.ReadFile(filepath.Join(root, ".sbx-calls"))
+	return strings.Count(string(data), "\n")
+}
+
+// sbx can be slow (each call signs in, on some machines through a slow keyring): reading the theme asks the sandbox once,
+// whatever it finds.
+func TestFromSandboxAsksTheSandboxOnce(t *testing.T) {
+	home := fakeSandbox(t)
+	settings := filepath.Join(home, ".claude", "settings.json")
+	legacy := filepath.Join(home, ".claude.json")
+	os.MkdirAll(filepath.Dir(settings), 0o755)
+	read := func(label string) {
+		t.Helper()
+		before := sbxCalls(t, home)
+		FromSandbox(context.Background(), "any")
+		if n := sbxCalls(t, home) - before; n != 1 {
+			t.Errorf("%s: %d calls to sbx, want 1", label, n)
+		}
+	}
+	read("no settings at all")
+	os.WriteFile(legacy, []byte(`{"theme":"light"}`), 0o644)
+	read("only the old global config")
+	os.WriteFile(settings, []byte(`{"theme":"custom:amber"}`), 0o644)
+	read("settings with a theme")
 }
 
 func files(doc kitspec.Doc) []kitspec.Doc {

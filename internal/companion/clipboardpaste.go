@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -25,7 +26,49 @@ func (s *Server) clipboardAt() string {
 	if s.cfg.ClipboardURL == nil {
 		return ""
 	}
-	return cached(s.cache, "clipboard-url", 5*time.Second, s.cfg.ClipboardURL)
+	a := &s.clip
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.known {
+		// The first time, there is nothing to give meanwhile: those who ask meanwhile wait for the same answer.
+		a.url, a.known, a.asked = s.cfg.ClipboardURL(), true, s.clock()
+	}
+	return a.url
+}
+
+// clipboardAddress is where the clipboard page was last found to be published. Finding out asks sbx, which can be slow:
+// it is asked again only when the page has stopped answering there (clipboardMoved), and never while a page waits.
+type clipboardAddress struct {
+	mu     sync.Mutex
+	url    string
+	known  bool
+	asked  time.Time
+	asking bool
+}
+
+// clipboardRecheck is how often, at most, sbx is asked again where the page is, while it doesn't answer where it was (it may
+// still be starting).
+const clipboardRecheck = 5 * time.Second
+
+// clipboardMoved asks sbx again, in the background, where the clipboard page is published: it doesn't answer where it was.
+func (s *Server) clipboardMoved() {
+	if s.cfg.ClipboardURL == nil {
+		return
+	}
+	a := &s.clip
+	a.mu.Lock()
+	if !a.known || a.asking || s.clock().Sub(a.asked) < clipboardRecheck {
+		a.mu.Unlock()
+		return
+	}
+	a.asking, a.asked = true, s.clock()
+	a.mu.Unlock()
+	go func() {
+		url := s.cfg.ClipboardURL()
+		a.mu.Lock()
+		a.url, a.asking = url, false
+		a.mu.Unlock()
+	}()
 }
 
 // clipboardPaste hands what was pasted on the page (an image, a file) to

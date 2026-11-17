@@ -27,6 +27,9 @@ type ThemeState struct {
 	// Live says the sandbox is running, so a change reaches its agent now: else it is only recorded, for
 	// the next time the sandbox is built.
 	Live bool `json:"live"`
+	// Checking says the sandbox hasn't yet said which theme it has: Current is the one last known (or recorded in the
+	// profile), and Live isn't known.
+	Checking bool `json:"checking,omitempty"`
 }
 
 // ThemeSet is what a change of theme came to.

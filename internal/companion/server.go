@@ -27,6 +27,7 @@
 package companion
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -217,7 +218,9 @@ type Server struct {
 	// signInJob is the sign-in the card started, or the last that was.
 	signInJob signInJob
 	blocked   blockedCache
-	clock     func() time.Time
+	// clip is where the clipboard page was last found to be published.
+	clip  clipboardAddress
+	clock func() time.Time
 	// branchLookup reads the branch the review's folder is on (a variable for tests), and branchSeen is the last answer and when it
 	// was asked: the Review tab's polls look at most every branchLookEvery, sharing a look under way (flight).
 	branchLookup func(ctx context.Context, dir string) (string, error)
@@ -373,10 +376,25 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /review.js", static)
 
 	for _, r := range s.apiRoutes() {
-		mux.HandleFunc(r.pattern, r.handler)
+		mux.HandleFunc(r.pattern, s.timed(r.pattern, r.handler))
 	}
 
 	return s.guarded(mux)
+}
+
+// slowRequest is how long a page request may take before it is said in vibe's log.
+const slowRequest = 2 * time.Second
+
+// timed says in vibe's log when a request to pattern takes longer than slowRequest: the page should never wait on sbx, which
+// can be slow, and a request that does shows here.
+func (s *Server) timed(pattern string, handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		began := s.clock()
+		handler(w, r)
+		if took := s.clock().Sub(began); took > slowRequest && s.cfg.Log != nil {
+			s.cfg.Log(fmt.Sprintf("companion page: %s took %s", pattern, took.Round(100*time.Millisecond)))
+		}
+	}
 }
 
 // apiRoute is one of the API's calls: its method and path, and what
@@ -582,6 +600,10 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 			return probe(clipboard)
 		})
 	}
+	if !ready {
+		// Not (or no longer) answering where it was: it may have been published again elsewhere.
+		s.clipboardMoved()
+	}
 	var git *GitInfo
 	if s.cfg.Workspace != "" {
 		read := s.cfg.Git
@@ -701,9 +723,11 @@ func probeClipboard(url string) bool {
 	if err != nil {
 		return false
 	}
-	io.Copy(io.Discard, io.LimitReader(res.Body, 64*1024))
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 64*1024))
 	res.Body.Close()
-	return res.StatusCode == http.StatusOK
+	// The page's own title: the address is kept for as long as the probe passes, so a port another program has taken since
+	// must not pass for it.
+	return res.StatusCode == http.StatusOK && bytes.Contains(body, []byte("<title>vibe clipboard</title>"))
 }
 
 // workingAwakeEvery is how often the sandbox is kept awake while the agent
