@@ -51,6 +51,9 @@ test('Shift-click makes a range on one side', async () => {
   const page = await reviewPage()
   try {
     await (await hoverPlus(page, 'R20')).click()
+    // Said apart from the range: macOS CI once ended with a comment on R22 alone, so either this click opened nothing or what
+    // it opened was gone by the Shift-click.
+    assert.equal(await composerSays(page), 'Add a comment on line R20', 'the first click opened no comment on R20')
     await (await hoverPlus(page, 'R22')).click({ modifiers: ['Shift'] })
     assert.equal(await composerSays(page), 'Add a comment on lines R20–R22')
   } finally { await page.close() }
