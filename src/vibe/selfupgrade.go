@@ -30,6 +30,9 @@ type pendingUpgrade struct {
 	// changesVibeHome says installing it changes what is in ~/.vibe, as
 	// installing a vibe release does: --downgrade backs ~/.vibe up first.
 	changesVibeHome bool
+	// changesSbx says installing it changes Docker SBX, whose daemon is
+	// restarted: what runs is stopped first (see clearToChange).
+	changesSbx bool
 }
 
 // downloadAndInstall makes u's change, downloading it into a temporary
@@ -51,7 +54,9 @@ func downloadAndInstall(u pendingUpgrade) error {
 // offers whichever there are in a checklist (all ticked), and installs the
 // ones picked. With -f, or no terminal to ask on, it installs them all; -f
 // and --update-strategy are passed on to the --install that upgrades vibe.
-func doUpgrade(force bool, strategyValue string) error {
+// Docker SBX is only upgraded once nothing runs (see clearToChange): with -f,
+// what runs is stopped unasked.
+func doUpgrade(vibeHome string, force bool, strategyValue string) error {
 	if strategyValue != "" {
 		if _, err := upgrade.ParseStrategy(strategyValue); err != nil {
 			return err // before downloading anything
@@ -95,9 +100,32 @@ func doUpgrade(force bool, strategyValue string) error {
 	if err != nil {
 		return err
 	}
+	return installUpgrades(chosen, func() (bool, error) {
+		return clearToChange(realRunningWork(vibeHome), "Docker SBX", force, interactive())
+	})
+}
+
+// installUpgrades downloads and installs each of chosen in turn, going on
+// past one that fails. One that changes Docker SBX is downloaded, then only
+// installed once clear says sbx is clear to change; left as it is otherwise.
+func installUpgrades(chosen []pendingUpgrade, clear func() (bool, error)) error {
 	var errs []error
 	for _, u := range chosen {
-		if err := downloadAndInstall(u); err != nil {
+		err := downloadAndInstall(pendingUpgrade{label: u.label, download: func(dir string) (func() error, error) {
+			install, err := u.download(dir)
+			if err != nil || !u.changesSbx {
+				return install, err
+			}
+			ok, err := clear()
+			switch {
+			case err != nil:
+				return nil, fmt.Errorf("Docker SBX left as it is: %w", err)
+			case !ok:
+				return func() error { return nil }, nil
+			}
+			return install, nil
+		}})
+		if err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -252,7 +280,8 @@ func checkSbxUpgrade() (*pendingUpgrade, string, error) {
 		return nil, fmt.Sprintf("Docker SBX %s is the latest", installed), nil
 	}
 	return &pendingUpgrade{
-		label: fmt.Sprintf("Docker SBX %s → %s", installed, tag),
+		label:      fmt.Sprintf("Docker SBX %s → %s", installed, tag),
+		changesSbx: true,
 		download: func(dir string) (func() error, error) {
 			note("upgrading Docker SBX %s to %s", installed, tag)
 			return downloadSbxRelease(m, tag, dir, false)

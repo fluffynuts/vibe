@@ -117,6 +117,11 @@ it found without asking.
 - **Docker SBX:** it's upgraded to its latest stable release, the same way `--install-sbx` installed
   it (on macOS and Windows, whichever way you picked). An sbx that `--install-sbx` didn't
   install, such as one from a `.deb`, is left for you to upgrade the way you installed it.
+  Upgrading sbx restarts its daemon, which pulls running sandboxes out from under their vibes
+  (and has been seen to hang while they run), so once it is downloaded, vibe lists what is
+  running and offers to stop it all first, as `vibe --stop-all` does. Say no, or run with no
+  terminal, and sbx is left as it is (vibe is still upgraded); with `-f`, they are stopped
+  without asking, but only when there is an sbx upgrade to install.
 
 While a sandbox session runs, vibe makes the same checks in the background. When the session ends,
 it lists anything newer it found and suggests `vibe --upgrade`. It says nothing when everything is up
@@ -129,13 +134,13 @@ release before the installed one of each (for sbx, the stable release before it:
 nightlies) with **nothing selected**, for you to pick what to go back on. Run it again to go back
 another; `vibe --upgrade` offers the newest again whenever you want it.
 
-- It refuses while any vibe session is running, naming them: end them first (`vibe --stop-all`).
-- It downloads everything you picked first, then checks again that no vibe session has started,
-  and only then installs. When vibe is one of those picked, it first backs `~/.vibe` up *beside*
+- It downloads everything you picked first. Then, if any sandbox is running or any vibe is
+  attached to one, it lists them and offers to stop them all, as `vibe --stop-all` does. Say no
+  and sbx is left as it is; vibe is still gone back on, unless a vibe is still running.
+  Then it installs. When vibe is one of those picked, it first backs `~/.vibe` up *beside*
   it, as `~/.vibe-backup-<date>_<time>.zip` (the last three are kept; logs and caches are left
   out). Going back on sbx alone leaves `~/.vibe` as it is, so it isn't backed up. A failed
-  download, a session started meanwhile, or a backup that can't be made, stops it with nothing
-  changed.
+  download, a vibe still running, or a backup that can't be made, stops it with nothing changed.
 - It always asks: `-f` is ignored, and with no terminal it changes nothing.
 - **vibe** goes back the way `--upgrade` goes forward: the older release's zip, checked against its
   `SHA256SUMS`, runs its own `vibe --install` (`--update-strategy` is passed on). A development build

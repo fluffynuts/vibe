@@ -86,7 +86,7 @@ func TestUpgradeWhenEverythingIsUpToDate(t *testing.T) {
 	onReleases(t, "v"+vibe.Version+".50", "v0.46.0")
 	withSbx(t, "v0.46.0")
 	var err error
-	out := captureStdout(t, func() { err = doUpgrade(false, "") })
+	out := captureStdout(t, func() { err = doUpgrade(t.TempDir(), false, "") })
 	if err != nil || out != "vibe and sbx are up to date\n" {
 		t.Errorf("doUpgrade = %v, printing %q", err, out)
 	}
@@ -98,7 +98,7 @@ func TestUpgradeDoesntClaimUpToDateWhenItCouldntCheck(t *testing.T) {
 	withSbx(t, "v0.46.0")
 	selfupdate.Releases = "http://127.0.0.1:1/releases" // nothing listens there
 	var err error
-	out := captureStdout(t, func() { err = doUpgrade(false, "") })
+	out := captureStdout(t, func() { err = doUpgrade(t.TempDir(), false, "") })
 	if err == nil || !strings.Contains(err.Error(), "vibe") || out != "" {
 		t.Errorf("doUpgrade = %v, printing %q; want it to say vibe couldn't be checked", err, out)
 	}
@@ -281,5 +281,41 @@ func TestReportUpgrades(t *testing.T) {
 		"vibe: run 'vibe --upgrade' to install them\n"
 	if out.String() != want {
 		t.Errorf("reportUpgrades printed %q, want %q", out.String(), want)
+	}
+}
+
+// installUpgrades gets sbx clear only for an sbx upgrade (and once it is downloaded); left unclear, sbx is left as it
+// is and vibe still goes ahead.
+func TestInstallUpgradesClearsSbxOnlyForAnSbxUpgrade(t *testing.T) {
+	var steps []string
+	cleared := 0
+	clear := func(ok bool) func() (bool, error) {
+		return func() (bool, error) { cleared++; steps = append(steps, "clear"); return ok, nil }
+	}
+	row := func(name string, sbx bool) pendingUpgrade {
+		return pendingUpgrade{label: name, changesSbx: sbx, download: func(string) (func() error, error) {
+			steps = append(steps, "download "+name)
+			return func() error { steps = append(steps, "install "+name); return nil }, nil
+		}}
+	}
+
+	if err := installUpgrades([]pendingUpgrade{row("vibe", false)}, clear(true)); err != nil || cleared != 0 {
+		t.Errorf("installUpgrades of vibe alone = %v, clearing %d times; want sbx never cleared", err, cleared)
+	}
+
+	steps = nil
+	if err := installUpgrades([]pendingUpgrade{row("vibe", false), row("sbx", true)}, clear(false)); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"download vibe", "install vibe", "download sbx", "clear"}; !reflect.DeepEqual(steps, want) {
+		t.Errorf("steps = %q, want %q: vibe installed, sbx downloaded but left, as it isn't clear", steps, want)
+	}
+
+	steps = nil
+	if err := installUpgrades([]pendingUpgrade{row("sbx", true)}, clear(true)); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"download sbx", "clear", "install sbx"}; !reflect.DeepEqual(steps, want) {
+		t.Errorf("steps = %q, want %q", steps, want)
 	}
 }
