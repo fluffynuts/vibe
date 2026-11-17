@@ -383,8 +383,10 @@ ul.plain li .spacer { flex: 1; }
 .review-lines.split td.start { border-left: 1px solid var(--line); }
 /* A native Range spanning a split diff can't itself skip the other side's cells between its two ends (see
    splitFilteredText): the browser's own highlight is turned off for these cells, and setUpSplitSelection paints
-   split-selection-mark rects instead, kept to the side the selection began on. */
-.review-lines.split [data-side] ::selection { background: transparent; }
+   split-selection-mark rects instead, kept to the side the selection began on. The class is on while a selection
+   begins in a line's code (not in a comment, whose own highlight is left as it is); as #review-files' class, so
+   that it covers text standing straight in a cell (which takes the cell's own ::selection) too. */
+#review-files.code-selection .review-lines.split ::selection { background: transparent; }
 #split-selection-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 1; }
 .split-selection-mark { position: fixed; background: color-mix(in srgb, var(--accent) 28%, transparent); }
 .review-lines tr.hunk td { color: var(--muted); background: color-mix(in srgb, var(--accent) 10%, transparent); padding: 4px 10px; }

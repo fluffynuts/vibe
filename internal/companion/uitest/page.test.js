@@ -1971,10 +1971,9 @@ test('a selection spanning several rows of a split diff, including a thread row,
     p.window.document.dispatchEvent(ev)
 
     assert.ok(copied !== null, 'the copy handler ran')
-    assert.match(copied, /same both sides/)
-    assert.match(copied, /old only/)
-    assert.doesNotMatch(copied, /new only/, "the changed row's new-side text leaked in")
-    assert.doesNotMatch(copied, /on the context line/, "the thread's text leaked in")
+    // Each line on a line of its own, as it reads: no line numbers or +/- signs (which can't be selected), nothing of
+    // the other side, nor of the thread between them.
+    assert.equal(copied, 'same both sides\nold only')
   } finally { p.close() }
 })
 

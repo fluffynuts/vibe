@@ -159,7 +159,7 @@ const paintedSelection = (page) => page.evaluate(() => new Promise((resolve) => 
     const under = document.elementFromPoint(x, y)
     marks.style.display = ''
     const cell = under && under.closest('[data-side]')
-    return cell ? cell.dataset.side : null
+    return cell ? cell.dataset.side + (cell.classList.contains('code') ? '' : ' ' + cell.className) : null
   }
   const marks = Array.from(document.querySelectorAll('.split-selection-mark')).map((m) => {
     const r = m.getBoundingClientRect()
@@ -179,7 +179,15 @@ test('a selection begun on one side of a split diff is painted on that side alon
     // The selection as it was is said with a failure, as the browser's state is all there is to go on afterwards.
     const selection = await page.evaluate(() => { const s = window.getSelection(); return { ranges: s.rangeCount, collapsed: s.isCollapsed, onThePage: !!(s.anchorNode && s.anchorNode.isConnected) } })
     assert.ok(marks.length >= 7, `the seven new lines are painted (${marks.length} marks; the selection: ${JSON.stringify(selection)})`)
-    assert.deepEqual(marks.filter((m) => m.side !== 'new'), [], 'no mark is on the old side')
+    assert.deepEqual(marks.filter((m) => m.side !== 'new'), [], "every mark is on the new side's code: none on the old side, nor on a line number or sign")
+    // The browser's own highlight is off for the diff's cells, and what is in them, on both sides: only the marks show.
+    const nativeHighlights = await page.evaluate(() => {
+      const code = (side, n) => document.querySelector(`[aria-label="Comment on line ${side}${n}"]`).closest('td').nextElementSibling.nextElementSibling
+      return [code('R', 20), code('L', 20), code('R', 18)].flatMap((cell) => [cell, ...cell.querySelectorAll('*')])
+        .map((el) => getComputedStyle(el, '::selection').backgroundColor)
+        .filter((colour) => colour !== 'rgba(0, 0, 0, 0)' && colour !== 'transparent')
+    })
+    assert.deepEqual(nativeHighlights, [], "the browser's own highlight shows in the diff's cells")
     assert.deepEqual(marks.map(({ top, left }) => ({ top, left })), text, 'the marks are where the selected new-side text is')
   } finally { await page.close() }
 })

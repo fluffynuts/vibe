@@ -2204,20 +2204,24 @@
     return cell ? cell.dataset.side : null
   }
 
-  // splitFilteredText is range's text with every node on the side opposite side removed first: what copying a
-  // selection that began on one side of a split diff must give. A single Range can't itself skip the other side's
-  // cells that fall between its two ends — only its own two ends can be partial; everything strictly between them
-  // comes whole — so what it would naturally give is filtered after the fact instead.
+  // splitCode is whether node is in a line's code on side of a split diff (a filler cell, standing where the
+  // other side has a line, has none).
+  function splitCode(node, side) {
+    const from = node && (node.nodeType === 3 ? node.parentElement : node)
+    const cell = from && from.closest && from.closest('td.code[data-side]')
+    return !!cell && cell.dataset.side === side && !cell.classList.contains('blank')
+  }
+
+  // splitFilteredText is what copying range, a selection begun in a line's code on side of a split diff, must
+  // give: that side's code alone, a line to a line. A single Range can't itself skip the other side's cells that
+  // fall between its two ends — only its own two ends can be partial; everything strictly between them comes whole
+  // — and its text has the line numbers and signs too (which can't be selected) and no line breaks between rows,
+  // so the lines are picked out of it instead. A range within one cell has none to pick: its text is the line's.
   function splitFilteredText(range, side) {
     const frag = range.cloneContents()
-    const walker = document.createTreeWalker(frag, NodeFilter.SHOW_ELEMENT)
-    const strip = []
-    let node
-    while ((node = walker.nextNode())) {
-      if (node.dataset.side && node.dataset.side !== side) strip.push(node)
-    }
-    for (const node of strip) node.remove()
-    return frag.textContent
+    const cells = Array.from(frag.querySelectorAll('td.code[data-side]')).filter((c) => splitCode(c, side))
+    if (!frag.querySelector('td')) return frag.textContent
+    return cells.map((c) => c.textContent).join('\n')
   }
 
   // splitSelectionOverlay is where setUpSplitSelection paints a selection begun on one side of a split diff, kept
@@ -2231,12 +2235,13 @@
     if (!splitSelectionOverlay) return
     splitSelectionOverlay.replaceChildren()
     const sel = window.getSelection()
-    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return
-    const side = splitSide(sel.anchorNode)
-    if (!side) return
+    const side = sel && !sel.isCollapsed && sel.rangeCount ? splitSide(sel.anchorNode) : null
+    const fromCode = !!side && splitCode(sel.anchorNode, side)
+    $('review-files').classList.toggle('code-selection', fromCode)
+    if (!fromCode) return
     for (const r of sel.getRangeAt(0).getClientRects()) {
       const under = document.elementFromPoint(r.left + 1, r.top + r.height / 2)
-      if (splitSide(under) !== side) continue
+      if (!splitCode(under, side)) continue
       const mark = el('div', { class: 'split-selection-mark' })
       mark.style.left = r.left + 'px'
       mark.style.top = r.top + 'px'
@@ -2262,7 +2267,7 @@
       const sel = window.getSelection()
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) return
       const side = splitSide(sel.anchorNode)
-      if (!side || !ev.clipboardData) return
+      if (!side || !splitCode(sel.anchorNode, side) || !ev.clipboardData) return
       ev.clipboardData.setData('text/plain', splitFilteredText(sel.getRangeAt(0), side))
       ev.preventDefault()
     })
