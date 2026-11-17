@@ -17,6 +17,15 @@ function adminPage(upgrades) {
 
 const versions = (p) => p.$('admin-versions').textContent
 
+// With nothing newer, a bare "vibe 0.1.236 · Docker SBX v0.54.0" under "Upgrades" reads as what is on offer.
+test('the versions are said to be the ones in use, not ones on offer', async () => {
+  const p = await adminPage({ vibe: '0.1.236', checked: true, found: [], sbx: 'v0.54.0' })
+  try {
+    assert.equal(p.$('admin-versions-label').textContent, 'Current versions:')
+    assert.equal(p.$('admin-versions').previousElementSibling, p.$('admin-versions-label'), 'the label is just above them')
+  } finally { p.close() }
+})
+
 test("this vibe's version is said at once; Docker SBX's while it is being found out", async () => {
   const p = await adminPage({ vibe: '0.1.236', checking: true })
   try {

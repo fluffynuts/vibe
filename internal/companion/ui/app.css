@@ -304,6 +304,9 @@ dialog .actions.safe { justify-content: space-between; }
 /* the Admin tab */
 .panel-admin { overflow: auto; }
 .admin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; align-items: start; }
+/* The Upgrades card's versions in use, set in under their label, so that they don't read as the releases on offer. */
+.admin-versions-label { margin-bottom: 2px; }
+.admin-versions { margin-top: 0; padding-left: 1.5em; }
 .card { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 /* A card that is why the Admin tab has a dot: ringed in the page's colour (the
    agent's theme, or the accent where it has none, see --theme), so it stands out
