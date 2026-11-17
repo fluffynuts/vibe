@@ -2254,6 +2254,10 @@
     splitSelectionOverlay = el('div', { id: 'split-selection-overlay' })
     document.body.append(splitSelectionOverlay)
     document.addEventListener('selectionchange', repaintSplitSelection)
+    // The marks are placed where the text is on screen, so they are placed again whenever it moves: a scroll of any
+    // element (scroll events don't bubble, so it is caught on its way down) or the window changing size.
+    document.addEventListener('scroll', repaintSplitSelection, { capture: true, passive: true })
+    window.addEventListener('resize', repaintSplitSelection)
     document.addEventListener('copy', (ev) => {
       const sel = window.getSelection()
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) return
