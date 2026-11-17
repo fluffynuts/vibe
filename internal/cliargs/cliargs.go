@@ -10,21 +10,24 @@ import (
 
 // Args holds the parsed command line.
 type Args struct {
-	Name       string
-	Profile    string
-	Path       string
-	Stop       bool
-	Cancel     bool
-	StopAll    bool
-	Ssh        bool
-	ReInit     bool
-	ReCreate   bool
-	ReCompose  bool
-	Restore    bool
-	Force      bool
-	List       bool
-	Install    bool
-	Upgrade    bool
+	Name      string
+	Profile   string
+	Path      string
+	Stop      bool
+	Cancel    bool
+	StopAll   bool
+	Ssh       bool
+	ReInit    bool
+	ReCreate  bool
+	ReCompose bool
+	Restore   bool
+	Force     bool
+	List      bool
+	Install   bool
+	Upgrade   bool
+	// Downgrade is --downgrade, which has no short form: nothing anyone
+	// should run by a slip of the finger.
+	Downgrade  bool
 	InstallSbx bool
 	Cleanup    bool
 	Delete     bool
@@ -154,6 +157,9 @@ func parse(argv []string) (a Args, paths []string, err error) {
 			i++
 		case arg == "-U" || arg == "--upgrade":
 			a.Upgrade = true
+			i++
+		case arg == "--downgrade":
+			a.Downgrade = true
 			i++
 		case arg == "-I" || arg == "--install-sbx":
 			a.InstallSbx = true
@@ -305,14 +311,14 @@ func valueArg(argv []string, i int) (string, int, error) {
 }
 
 // ExclusiveActions counts how many of the mutually-exclusive action flags
-// (migrate/stop/stop-all/ssh/re-init/re-create/re-compose/restore/list/install/upgrade/install-sbx/setup/
+// (migrate/stop/stop-all/ssh/re-init/re-create/re-compose/restore/list/install/upgrade/downgrade/install-sbx/setup/
 // cleanup/delete/info/git-token/batch-git-token/update-sandboxes/manage/headless) are set.
 // --headless with one of the rebuilds (re-init, re-create, re-compose) isn't
 // a second: it says what to do when the rebuild is done, instead of attaching
 // a terminal, as 'vibe -r --no-start && vibe --headless' does.
 func (a Args) ExclusiveActions() int {
 	n := 0
-	for _, b := range []bool{a.Migrate, a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info, a.Setup, a.GitToken, a.BatchGitToken, a.UpdateSandboxes, a.Manage, a.Headless && !a.Rebuilds()} {
+	for _, b := range []bool{a.Migrate, a.Stop, a.StopAll, a.Ssh, a.ReInit, a.ReCreate, a.ReCompose, a.Restore, a.List, a.Install, a.Upgrade, a.Downgrade, a.InstallSbx, a.Cleanup, a.Delete, a.Info, a.Setup, a.GitToken, a.BatchGitToken, a.UpdateSandboxes, a.Manage, a.Headless && !a.Rebuilds()} {
 		if b {
 			n++
 		}

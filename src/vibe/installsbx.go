@@ -28,6 +28,9 @@ type sbxMethod struct {
 	install func(tag, file string, reinstall bool) error
 	// installed reports whether sbx is installed this way.
 	installed func() bool
+	// goBackByHand, for a way vibe can't put an older release over a newer
+	// one, says how to go back to release tag by hand.
+	goBackByHand func(tag string) string
 }
 
 // doInstallSbx installs the latest stable release of Docker Sandboxes (sbx).
@@ -181,6 +184,9 @@ func sbxMethods() ([]sbxMethod, error) {
 				installed: func() bool {
 					return exec.Command(brew, "list", "--cask", sbxinstall.BrewCask).Run() == nil
 				},
+				goBackByHand: func(tag string) string {
+					return fmt.Sprintf("Docker SBX came from Homebrew, which installs only the cask's current release: to go back to %s, 'brew uninstall --cask %s', then 'vibe --install-sbx' and pick the tarball, then 'vibe --downgrade'", tag, sbxinstall.BrewCask)
+				},
 			})
 		}
 		return methods, nil
@@ -192,18 +198,30 @@ func sbxMethods() ([]sbxMethod, error) {
 			{
 				label: "just for you, in " + user + " (no admin rights needed)",
 				asset: sbxinstall.WindowsMSI, sbx: filepath.Join(user, "sbx.exe"), binDir: user,
-				install:   func(_, file string, reinstall bool) error { return installSbxMSI(file, false, reinstall) },
-				installed: func() bool { return exists(filepath.Join(user, "sbx.exe")) },
+				install:      func(_, file string, reinstall bool) error { return installSbxMSI(file, false, reinstall) },
+				installed:    func() bool { return exists(filepath.Join(user, "sbx.exe")) },
+				goBackByHand: msiByHand(sbxinstall.WindowsMSI),
 			},
 			{
 				label: "for every user, in " + machine + " (Windows asks for admin rights)",
 				asset: sbxinstall.WindowsMachineMSI, sbx: filepath.Join(machine, "sbx.exe"), binDir: machine,
-				install:   func(_, file string, reinstall bool) error { return installSbxMSI(file, true, reinstall) },
-				installed: func() bool { return exists(filepath.Join(machine, "sbx.exe")) },
+				install:      func(_, file string, reinstall bool) error { return installSbxMSI(file, true, reinstall) },
+				installed:    func() bool { return exists(filepath.Join(machine, "sbx.exe")) },
+				goBackByHand: msiByHand(sbxinstall.WindowsMachineMSI),
 			},
 		}, nil
 	}
 	return nil, fmt.Errorf("--install-sbx doesn't support %s", runtime.GOOS)
+}
+
+// msiByHand says how to go back to an older sbx installed by an MSI, which
+// vibe doesn't do: Windows Installer won't put an older release over a newer
+// one, so the newer has to be uninstalled first, and whether that keeps the
+// user's sandboxes hasn't been checked yet.
+func msiByHand(msi string) func(tag string) string {
+	return func(tag string) string {
+		return fmt.Sprintf("Docker SBX came from its MSI, and Windows won't install an older release over a newer one: to go back to %s, uninstall Docker Sandboxes (Settings → Apps), then install %s from %s/tag/%s", tag, msi, sbxinstall.Releases, tag)
+	}
 }
 
 // installSbxLinux unpacks the Linux release tarball into a temporary

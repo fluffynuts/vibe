@@ -1,4 +1,4 @@
-# `vibe --downgrade`: go back to an earlier vibe or sbx when an update breaks things (planned, not built; first version decided 2026-11-17, below)
+# `vibe --downgrade`: go back to an earlier vibe or sbx when an update breaks things (first version built 2026-11-17 on feat/downgrade, as decided below; the rest planned, not built)
 
 Raised 2026-11-04, the day an sbx update (v0.51.0, which moved its claude agent to a schemaVersion 3 kit) stopped every vibe sandbox from starting, and there was no way back except doing it by hand. The want: an escape hatch for a broken sbx update, or a broken vibe release, so the user can carry on working. `vibe --upgrade` is unchanged and still offers the latest when run again.
 
@@ -31,7 +31,8 @@ Settled with the user the same day:
   build one that passes for a release: `go build -ldflags "-X vibe.Build=235" -o vibe ./src/vibe` is 0.1.235 (Version is
   VERSION plus Build; see version.go), and offers 0.1.228.
 
-Still to settle (asked 2026-11-17, answer pending): sbx installed by MSI (Windows) or Homebrew. Proposed: the first version
+Still to settle (asked 2026-11-17, answer pending; **built as proposed**, so either answer is a small change): sbx installed by
+MSI (Windows) or Homebrew. Proposed: the first version
 downgrades only where it is a plain install of the older release (the Linux release script; macOS tarball or .dmg), and for
 MSI and Homebrew says how to do it by hand: MSI needs an uninstall first (to be checked that it loses no sandboxes), and
 Homebrew can only install its current version.

@@ -287,11 +287,11 @@ func upgradeVibe(tag string, force bool, strategyValue string) error {
 	if strategyValue != "" {
 		args = append(args, "--update-strategy", strategyValue)
 	}
-	note("running %s from the new release", strings.Join(args, " "))
+	note("running %s from release %s", strings.Join(args, " "), tag)
 	cmd := exec.Command(exe, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("the new release's --install didn't finish cleanly (see above): %w", err)
+		return fmt.Errorf("release %s's --install didn't finish cleanly (see above): %w", tag, err)
 	}
 	return nil
 }
