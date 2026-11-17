@@ -2179,6 +2179,49 @@ test("a file's colours redraw its own card, not the others'", async () => {
   } finally { p.close() }
 })
 
+// A card drawn afresh takes a selection in it away, mid-drag: one being made when a file's colours come keeps its card
+// as it is, and the colours are drawn once it is let go.
+test("a file's colours wait for a selection in its card to be let go", async () => {
+  let release
+  const held = new Promise((resolve) => { release = resolve })
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': { review: { ...none, started: '2026-10-16T10:00:00Z' }, diff: goDiff },
+      '/api/review/highlight': async (call) => {
+        await held
+        const q = new URLSearchParams(call.query)
+        return goColours[q.get('path') + '|' + q.get('side')] || {}
+      },
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+    settled: false,
+  })
+  try {
+    const card = () => p.$('review-files').querySelector('.review-file[data-path="main.go"]')
+    for (let i = 0; i < 200 && !card(); i++) await new Promise((resolve) => setImmediate(resolve))
+    const before = card()
+    assert.ok(before, 'main.go is drawn')
+    const cells = Array.from(before.querySelectorAll('td.code[data-side="new"]')).filter((c) => c.textContent)
+    assert.ok(cells.length >= 2, 'two lines of code on the new side to select across')
+    const sel = p.window.getSelection()
+    sel.setBaseAndExtent(cells[0].firstChild, 0, cells[1].firstChild, 1)
+
+    release()
+    await p.settle()
+    assert.equal(card(), before, 'the card was not drawn afresh under the selection')
+    assert.ok(!sel.isCollapsed && before.contains(sel.anchorNode), 'the selection is as it was')
+    assert.equal(before.querySelector('.hl-kw'), null, 'not coloured yet')
+
+    sel.removeAllRanges()
+    p.window.document.dispatchEvent(new p.window.Event('selectionchange'))
+    await p.settle()
+    assert.notEqual(card(), before, 'drawn afresh once the selection was let go')
+    assert.ok(card().querySelector('.hl-kw'), 'and coloured')
+  } finally { p.close() }
+})
+
 // A file is coloured when it comes near the screen. Scrolled past before
 // its colours come, it's given up on (vibe stops colouring it), and asked
 // for again if it comes back.

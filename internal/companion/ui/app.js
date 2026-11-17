@@ -3384,6 +3384,28 @@
     }
   }
 
+  // cardsAfterSelection are the files whose cards wait to be drawn afresh until the selection in them is let go: a
+  // card drawn afresh takes a selection in it away, mid-drag, and its colours can come just then (as the file first
+  // nears the screen).
+  const cardsAfterSelection = new Set()
+
+  // selectionTouches is whether there is a selection (not just a caret) with any of it in el.
+  function selectionTouches(el) {
+    const sel = window.getSelection()
+    return !!sel && !sel.isCollapsed && sel.rangeCount > 0 && sel.getRangeAt(0).intersectsNode(el)
+  }
+
+  document.addEventListener('selectionchange', () => {
+    for (const f of cardsAfterSelection) {
+      // The review drawn afresh since, from another diff, drew its cards with what colours there were.
+      if (!(reviewView.files || []).includes(f)) { cardsAfterSelection.delete(f); continue }
+      const card = Array.from($('review-files').querySelectorAll('.review-file')).find((c) => c.dataset.path === f.path)
+      if (card && selectionTouches(card)) continue
+      cardsAfterSelection.delete(f)
+      redrawCard(f)
+    }
+  })
+
   // redrawCard draws file f's card afresh, alone, as its colours come: a
   // whole redraw for each would take time growing with the square of the
   // review's size. Where the card can't be (a reply being written in it, the
@@ -3392,6 +3414,7 @@
     const d = reviewView.drawn
     const o = d && d.files === reviewView.files ? d.ordered.find((x) => x.file === f) : null
     const old = o && Array.from($('review-files').querySelectorAll('.review-file')).find((c) => c.dataset.path === f.path)
+    if (old && selectionTouches(old)) { cardsAfterSelection.add(f); return }
     if (!old || old.querySelector('textarea')) { reviewView.key = null; drawReview(); return }
     if (colourWatch) colourWatch.unobserve(old)
     old.replaceWith(foldIfViewed(f, fileCard(f, o.stop, o.step, d.files.indexOf(f), d.placed, d.threads)))
