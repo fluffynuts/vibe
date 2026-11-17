@@ -294,3 +294,63 @@ func TestExistsSaysWhenSbxCannotTell(t *testing.T) {
 		t.Errorf("Exists error = %v, want sbx's reason", err)
 	}
 }
+
+func TestASessionTakesLinesWhileItRunsAndHandsOverWhatItSays(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("wants sh")
+	}
+	got := make(chan string, 10)
+	s, err := startSession(exec.Command("sh", "-c", `while read l; do echo "got $l"; done; echo bye`), func(l []byte) { got <- string(l) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, say := range []string{"one", "two"} {
+		if err := s.WriteLine([]byte(say)); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case line := <-got:
+			if line != "got "+say {
+				t.Fatalf("line = %q, want %q", line, "got "+say)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("no answer to %q while the input was still open", say)
+		}
+	}
+	if err := s.CloseInput(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if line := <-got; line != "bye" {
+		t.Errorf("after the input closed: %q", line)
+	}
+}
+
+func TestASessionEndsWithItsContextAndSaysWhatAFailedCommandSaid(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("wants sh")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := startSession(exec.CommandContext(ctx, "sh", "-c", "echo up; sleep 30"), func([]byte) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case <-s.Done():
+	case <-time.After(10 * time.Second):
+		t.Fatal("a cancelled session did not end")
+	}
+	if s.Err() == nil {
+		t.Error("a session ended by its context should say so")
+	}
+	failed, err := startSession(exec.Command("sh", "-c", "echo oops >&2; exit 4"), func([]byte) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := failed.Err(); err == nil || !strings.Contains(err.Error(), "oops") {
+		t.Errorf("err = %v", err)
+	}
+}

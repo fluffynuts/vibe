@@ -1,0 +1,15 @@
+import os, sys, uuid; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from drive import *
+a = Agent("e4")
+ua, ub = str(uuid.uuid4()), str(uuid.uuid4())
+a.prompt("Use the Bash tool in the foreground to run exactly: python3 -c \"import time; time.sleep(14); print('A-DONE')\"  Then reply with just: first-done.", uuid=ua)
+time.sleep(5)
+a.prompt("Reply with just: second-done.", uuid=ub, priority="now")
+print(f"-- A={ua[:8]} B={ub[:8]} (B sent with priority now at ~5s)")
+a.wait_results(2, 40)
+print(f"-- results so far: {len(a.results())}; alive={a.alive()}; now waiting for any call-back of the sleeping command")
+a.wait_results(3, 25)
+print(f"-- results: {len(a.results())}")
+for r in a.results():
+    print(f"   result @ {r['_t']}s subtype={r.get('subtype')} terminal={r.get('terminal_reason')} -> {str(r.get('result'))[:70]!r}")
+a.close()

@@ -5,8 +5,8 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const { openPage } = require('./page.js')
 
-async function pageWith({ themes = true, current = 'default', live = true, set = null } = {}) {
-  const at = { current }
+async function pageWith({ themes = true, current = 'default', live = true, checking = false, set = null } = {}) {
+  const at = { current, live, checking, gets: 0 }
   const p = await openPage({
     routes: {
       '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, admin: true, themes, themeColor: '', attention: {} },
@@ -14,7 +14,7 @@ async function pageWith({ themes = true, current = 'default', live = true, set =
       '/api/admin': { instructions: {} },
       '/api/log': { entries: [] },
       '/api/theme': (call) => {
-        if (call.method === 'GET') return { current: at.current, options: ['default', 'amber', 'teal'], live }
+        if (call.method === 'GET') { at.gets++; return { current: at.current, options: ['default', 'amber', 'teal'], live: at.live, checking: at.checking } }
         if (set) return set(call, at)
         at.current = call.body.choice
         return { live, color: call.body.choice === 'teal' ? '#00aaaa' : '#ffaa00' }
@@ -103,5 +103,36 @@ test('a theme that could not be set is said, and the drop-down goes back to what
     assert.equal(p.$('settings-theme').value, 'amber')
     assert.match(p.$('settings-theme-note').textContent, /isn't readable/)
     assert.ok(!p.$('settings-theme').disabled)
+  } finally { p.close() }
+})
+
+// vibe answers at once with the theme it last knew, and asks the sandbox in the background (it can be slow): the page asks again
+// while the tab is open, and shows what the sandbox said once it has.
+test('the theme the sandbox is found to have replaces the one last known, while the tab is open', async () => {
+  const p = await pageWith({ current: 'teal', live: false, checking: true })
+  try {
+    assert.equal(p.$('settings-theme').value, 'teal')
+    p.at.current = 'amber'
+    p.at.live = true
+    p.at.checking = false
+    await p.poll()
+    assert.equal(p.$('settings-theme').value, 'amber', 'the drop-down kept the theme last known')
+  } finally { p.close() }
+})
+
+test('while vibe is still asking the sandbox, the page does not say it is not running', async () => {
+  const p = await pageWith({ live: false, checking: true })
+  try {
+    assert.doesNotMatch(p.$('settings-theme-note').textContent, /isn't running/)
+  } finally { p.close() }
+})
+
+test('the drop-down is not drawn again while nothing has changed, so an open one is not closed under the user', async () => {
+  const p = await pageWith({ current: 'teal' })
+  try {
+    const first = p.$('settings-theme').firstElementChild
+    await p.poll()
+    assert.ok(p.at.gets >= 2, 'the theme was not asked again')
+    assert.equal(p.$('settings-theme').firstElementChild, first, 'the options were drawn again with nothing changed')
   } finally { p.close() }
 })

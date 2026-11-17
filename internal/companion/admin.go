@@ -222,11 +222,13 @@ func (s *Server) beginAdmin(action AdminAction, destructive bool) error {
 	if s.admin.job != nil && s.admin.job.Running {
 		return errors.New("something is already being done: wait for it to finish")
 	}
-	if destructive && s.convo.answering() {
+	if destructive && s.convo.answeringNow() {
 		return errors.New("the agent is answering: stop it first")
 	}
-	if destructive && !s.convo.supersede() {
-		return errors.New("the agent is answering: stop it first")
+	if destructive {
+		if _, ok := s.convo.supersede(); !ok {
+			return errors.New("the agent is answering: stop it first")
+		}
 	}
 	s.startJob(action.Kind, adminWords[action.Kind], adminSlow[action.Kind], func(ctx context.Context, log func(string)) error {
 		return s.cfg.Admin.Do(ctx, action, log)

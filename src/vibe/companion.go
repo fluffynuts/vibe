@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -203,30 +204,34 @@ func startClipboard(name string) ([]string, error) {
 // it reads is the agent's to make, and could be made never to end.
 const themeReadTimeout = 15 * time.Second
 
-// themeColorFor reads the colour of the theme the sandbox's agent uses, for
-// the companion page: as the agent has it now (it may have been changed with
-// /theme), else as its profile recorded it. Only claude has themes.
-func themeColorFor(lay layout.Layout, name string, inst state.Instance, agent string) func() string {
+// themeDeskFor is the agent's theme for the companion page: its colour, and the picker. Only claude has themes.
+func themeDeskFor(lay layout.Layout, name string, inst state.Instance, agent string) *themeDesk {
 	if agent != "" && agent != "claude" {
 		return nil
 	}
-	return func() string {
-		profileDir := lay.ProfileDir(inst.Profile)
-		choice, ok := "", false
-		// Asking the sandbox would start a stopped one again, every
-		// minute the page is open: the profile's record stands in.
-		if runningNow(context.Background(), name) {
-			ctx, cancel := context.WithTimeout(context.Background(), themeReadTimeout)
-			choice, ok = claudetheme.FromSandbox(ctx, name)
-			cancel()
-		}
-		if !ok {
-			if choice, ok = claudetheme.FromProfile(profileDir); !ok {
-				return ""
-			}
-		}
-		return themeAccent(lay, profileDir, choice)
+	return &themeDesk{lay: lay, name: name, inst: inst}
+}
+
+// themeColorOf is desk's colour for the page, nil without a desk.
+func themeColorOf(desk *themeDesk) func() string {
+	if desk == nil {
+		return nil
 	}
+	return desk.color
+}
+
+// themePickerOf is desk as the page's picker: a nil interface without one.
+func themePickerOf(desk *themeDesk) companion.ThemePicker {
+	if desk == nil {
+		return nil
+	}
+	return desk
+}
+
+// themeColorFor reads the colour of the theme the sandbox's agent uses, for
+// the companion page (see themeDesk.color).
+func themeColorFor(lay layout.Layout, name string, inst state.Instance, agent string) func() string {
+	return themeColorOf(themeDeskFor(lay, name, inst, agent))
 }
 
 // themeAccent is the accent colour of a theme, from the kit's themes or one the profile adds; "" for none.
@@ -239,41 +244,105 @@ func themeAccent(lay layout.Layout, profileDir, choice string) string {
 	return ""
 }
 
-// themePickerFor is the page's way of changing the theme of the sandbox's agent: only claude has themes.
-func themePickerFor(lay layout.Layout, name string, inst state.Instance, agent string) companion.ThemePicker {
-	if agent != "" && agent != "claude" {
-		return nil
-	}
-	return &themeDesk{lay: lay, name: name, inst: inst}
-}
+// themeFromSandbox reads the theme the sandbox's agent has; a variable for tests.
+var themeFromSandbox = claudetheme.FromSandbox
 
-// themeDesk changes the theme of one sandbox's agent: in the sandbox while it runs, and in its profile, which
-// the next build of it starts from.
+// themeCheckEvery is how often, at most, the sandbox is asked which theme its agent has: /theme can change it at any time,
+// but seldom does, and asking can be slow.
+const themeCheckEvery = 30 * time.Second
+
+// themeDesk is one sandbox's agent's theme, for the companion page: the colour the page takes, and the picker that changes
+// it, in the sandbox while it runs and in its profile, which the next build of it starts from. Both answer at once, from
+// what was last found (or the profile's record, before anything was): asking the sandbox can be slow, so it is done in the
+// background, one at a time, at most every themeCheckEvery.
 type themeDesk struct {
 	lay  layout.Layout
 	name string
 	inst state.Instance
+
+	mu sync.Mutex
+	// seen is what the last check found: the theme, and whether the sandbox was running. found says there was one.
+	seen     themeSeen
+	found    bool
+	checking bool
+	checked  time.Time
+}
+
+type themeSeen struct {
+	choice string
+	live   bool
 }
 
 func (d *themeDesk) known() []string { return claudetheme.Available(d.lay.DefaultsDir()) }
 
-func (d *themeDesk) Themes(ctx context.Context) companion.ThemeState {
-	known := d.known()
-	running := runningNow(ctx, d.name)
+// now is what is known of the theme, a check of the sandbox being started if one is due; checking says none has been
+// made yet.
+func (d *themeDesk) now() (seen themeSeen, checking bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.checking && (d.checked.IsZero() || time.Since(d.checked) >= themeCheckEvery) {
+		d.checking = true
+		go d.check()
+	}
+	if d.found {
+		return d.seen, false
+	}
+	// Asking a stopped sandbox would start it again: until the sandbox has been asked, the profile's record stands in.
+	choice, _ := claudetheme.FromProfile(d.lay.ProfileDir(d.inst.Profile))
+	return themeSeen{choice: choice}, true
+}
+
+// check asks the sandbox which theme its agent has, if it is running (asking would start a stopped one), else takes the
+// profile's record.
+func (d *themeDesk) check() {
+	running := runningNow(context.Background(), d.name)
 	choice, ok := "", false
 	if running {
-		choice, ok = claudetheme.FromSandbox(ctx, d.name)
+		ctx, cancel := context.WithTimeout(context.Background(), themeReadTimeout)
+		choice, ok = themeFromSandbox(ctx, d.name)
+		cancel()
 	}
 	if !ok {
 		choice, _ = claudetheme.FromProfile(d.lay.ProfileDir(d.inst.Profile))
 	}
-	current, _ := claudetheme.Resolve(choice, known)
+	d.mu.Lock()
+	d.seen, d.found, d.checking, d.checked = themeSeen{choice: choice, live: running}, true, false, time.Now()
+	d.mu.Unlock()
+}
+
+// isChecking says a check of the sandbox is under way.
+func (d *themeDesk) isChecking() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.checking
+}
+
+// hasChecked says the sandbox has been checked at least once.
+func (d *themeDesk) hasChecked() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.found
+}
+
+// color is the accent colour of the agent's theme, for the page: "" for none.
+func (d *themeDesk) color() string {
+	seen, _ := d.now()
+	if seen.choice == "" {
+		return ""
+	}
+	return themeAccent(d.lay, d.lay.ProfileDir(d.inst.Profile), seen.choice)
+}
+
+func (d *themeDesk) Themes(ctx context.Context) companion.ThemeState {
+	known := d.known()
+	seen, checking := d.now()
+	current, _ := claudetheme.Resolve(seen.choice, known)
 	options := claudetheme.Choices(known)
 	// A theme Claude has built in (picked with /theme) is not the kit's to offer, but it is the one in force.
 	if !slices.Contains(options, current) {
 		options = append(options, current)
 	}
-	return companion.ThemeState{Current: current, Options: options, Live: running}
+	return companion.ThemeState{Current: current, Options: options, Live: seen.live, Checking: checking}
 }
 
 func (d *themeDesk) SetTheme(ctx context.Context, choice string) (companion.ThemeSet, error) {
@@ -294,6 +363,10 @@ func (d *themeDesk) SetTheme(ctx context.Context, choice string) (companion.Them
 	if err := claudetheme.SaveToProfile(profileDir, choice); err != nil {
 		return companion.ThemeSet{}, fmt.Errorf("the theme was set, but couldn't be recorded in the profile (a rebuild would lose it): %w", err)
 	}
+	// Known now, without asking the sandbox again.
+	d.mu.Lock()
+	d.seen, d.found, d.checked = themeSeen{choice: choice, live: running}, true, time.Now()
+	d.mu.Unlock()
 	return companion.ThemeSet{Live: running, Color: themeAccent(d.lay, profileDir, choice)}, nil
 }
 
@@ -305,11 +378,11 @@ func hasConversation(inst state.Instance) bool {
 
 // conversationFor is the companion page's way of talking to the sandbox's
 // agent, or nil when it has none: only claude can be driven this way so far.
-func conversationFor(vibeHome, name string, inst state.Instance, choice profileChoice) companion.Converser {
+func conversationFor(vibeHome, name string, inst state.Instance, choice profileChoice) companion.StartAgent {
 	if !hasConversation(inst) {
 		return nil
 	}
-	return keepingTranscript(converse(name, inst.Target, choice.forTurn), sandboxTranscripts(name), state.TranscriptPath(vibeHome, name))
+	return keepingTranscript(startAgent(name, inst.Target, choice.forTurn), sandboxTranscripts(name), state.TranscriptPath(vibeHome, name))
 }
 
 // choiceFor is the page's way of choosing the model and effort of sandbox
@@ -404,6 +477,8 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 	if authors != nil {
 		gitAuthor = &companion.GitAuthor{State: authors.State, Decide: authors.Decide}
 	}
+	// One for the page's colour and its picker: they share what was last found of the theme.
+	theme := themeDeskFor(lay, name, inst, agent)
 	srv, err := companion.Start(companion.Config{
 		Sandbox:                name,
 		Agent:                  agent,
@@ -415,7 +490,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		StartClipboard:         func() ([]string, error) { return startClipboard(name) },
 		ClipboardTrouble:       func() string { return clipboardTrouble(name) },
 		Workspace:              inst.Target,
-		Converse:               conversationFor(vibeHome, name, inst, profileChoice{lay: lay, profile: inst.Profile}),
+		StartAgent:             conversationFor(vibeHome, name, inst, profileChoice{lay: lay, profile: inst.Profile}),
 		Choice:                 choiceFor(vibeHome, name, inst, profileChoice{lay: lay, profile: inst.Profile}),
 		Prepare:                readyForTurn(name),
 		SandboxGit:             sandboxGitFor(name, inst.Target),
@@ -436,8 +511,8 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		Usage:                  usageFor(vibeHome, name),
 		Manage:                 &companionManager{lay: lay, own: name},
 		Power:                  &powerDesk{lay: lay, own: name},
-		ThemeColor:             themeColorFor(lay, name, inst, agent),
-		Themes:                 themePickerFor(lay, name, inst, agent),
+		ThemeColor:             themeColorOf(theme),
+		Themes:                 themePickerOf(theme),
 		KeepAwake:              keepAwakeFor(name),
 		SbxSignedOut:           sbxrun.NotSignedInSeen,
 		Log:                    func(line string) { note("%s", line) },

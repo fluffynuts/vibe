@@ -194,7 +194,7 @@ func TestAgentsWithTheCopyableBlocksFeatureAreToldItsRuleUpFront(t *testing.T) {
 func TestAgentsWithTheBackgroundWorkFeatureAreToldItsRuleUpFront(t *testing.T) {
 	kit := "## " + BackgroundWorkHeading + "\n\nFinish it in the turn.\n"
 	got := WithBackgroundWorkRule("Universal instructions\n---\n\nBe kind.\n", kit)
-	for _, want := range []string{"Be kind.", BackgroundWorkHeading, "next prompt ends", "setsid", "won't be told"} {
+	for _, want := range []string{"Be kind.", BackgroundWorkHeading, "keeps running when they send the next one", "called back", "setsid", "did not finish"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q:\n%s", want, got)
 		}

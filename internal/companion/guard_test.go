@@ -30,7 +30,7 @@ func TestEveryChangeNeedsItsFeature(t *testing.T) {
 
 func TestEveryChangeNeedsTheTokenAndASameOriginJSONRequest(t *testing.T) {
 	s, _ := reviewTabServer(t)
-	s.cfg.Converse = (&fakeAgent{}).converse
+	s.cfg.StartAgent = (&fakeAgent{}).start
 	s.cfg.Choice = (&choosing{}).config()
 	s.cfg.Admin = &fakeAdmin{}
 	s.cfg.Manage = &fakeManager{}

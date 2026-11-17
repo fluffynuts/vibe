@@ -144,7 +144,7 @@ func (s *Server) optionsBody() map[string]interface{} {
 
 // choiceFeature is the page's call on the model and effort, which needs a
 // conversation to apply to.
-var choiceFeature = feature{func(s *Server) bool { return s.cfg.Choice != nil && s.cfg.Converse != nil },
+var choiceFeature = feature{func(s *Server) bool { return s.cfg.Choice != nil && s.cfg.StartAgent != nil },
 	"this sandbox has no model or effort to choose", 1 << 10}
 
 // choiceBody is what the page is told of the choice.

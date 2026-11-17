@@ -27,6 +27,7 @@
 package companion
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -88,10 +89,10 @@ type Config struct {
 	Workspace string
 	// Git reads dir's git status, nil when it has none; nil means readGit.
 	Git func(dir string) *GitInfo
-	// Converse runs a turn of the conversation tab's talk with the agent;
-	// nil means the sandbox's agent can't be talked to this way, and the
-	// page has no such tab.
-	Converse Converser
+	// StartAgent starts the agent the conversation tab talks with, which
+	// lives while it has work (see Agent); nil means the sandbox's agent
+	// can't be talked to this way, and the page has no such tab.
+	StartAgent StartAgent
 	// Choice lets the page choose the model and effort the conversation's
 	// agent is asked to use; nil means it can't, and the page has no
 	// drop-downs for them.
@@ -217,7 +218,9 @@ type Server struct {
 	// signInJob is the sign-in the card started, or the last that was.
 	signInJob signInJob
 	blocked   blockedCache
-	clock     func() time.Time
+	// clip is where the clipboard page was last found to be published.
+	clip  clipboardAddress
+	clock func() time.Time
 	// branchLookup reads the branch the review's folder is on (a variable for tests), and branchSeen is the last answer and when it
 	// was asked: the Review tab's polls look at most every branchLookEvery, sharing a look under way (flight).
 	branchLookup func(ctx context.Context, dir string) (string, error)
@@ -255,7 +258,6 @@ func New(cfg Config) *Server {
 	ui, _ := fs.Sub(uiFiles, "ui")
 	life, cancel := context.WithCancel(context.Background())
 	s := &Server{cfg: cfg, ui: ui, clock: time.Now, branchLookup: review.CurrentBranch, lifeCtx: life, lifeCancel: cancel, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer(colourAtOnce), boot: newBoot()}
-	s.convo.startQueued = s.startQueuedTurn
 	return s
 }
 
@@ -374,10 +376,25 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /review.js", static)
 
 	for _, r := range s.apiRoutes() {
-		mux.HandleFunc(r.pattern, r.handler)
+		mux.HandleFunc(r.pattern, s.timed(r.pattern, r.handler))
 	}
 
 	return s.guarded(mux)
+}
+
+// slowRequest is how long a page request may take before it is said in vibe's log.
+const slowRequest = 2 * time.Second
+
+// timed says in vibe's log when a request to pattern takes longer than slowRequest: the page should never wait on sbx, which
+// can be slow, and a request that does shows here.
+func (s *Server) timed(pattern string, handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		began := s.clock()
+		handler(w, r)
+		if took := s.clock().Sub(began); took > slowRequest && s.cfg.Log != nil {
+			s.cfg.Log(fmt.Sprintf("companion page: %s took %s", pattern, took.Round(100*time.Millisecond)))
+		}
+	}
 }
 
 // apiRoute is one of the API's calls: its method and path, and what
@@ -513,7 +530,7 @@ type feature struct {
 var (
 	usageFeature = feature{func(s *Server) bool { return s.cfg.Usage != nil },
 		"this page has no way to read the sandbox's load", 1 << 10}
-	conversationFeature = feature{func(s *Server) bool { return s.cfg.Converse != nil },
+	conversationFeature = feature{func(s *Server) bool { return s.cfg.StartAgent != nil },
 		"this sandbox has no conversation to have", maxPrompt}
 	adminFeature = feature{func(s *Server) bool { return s.cfg.Admin != nil },
 		"this page has no admin tab", 64 * 1024}
@@ -583,6 +600,10 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 			return probe(clipboard)
 		})
 	}
+	if !ready {
+		// Not (or no longer) answering where it was: it may have been published again elsewhere.
+		s.clipboardMoved()
+	}
 	var git *GitInfo
 	if s.cfg.Workspace != "" {
 		read := s.cfg.Git
@@ -615,10 +636,12 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		attention["admin"] = append(attention["admin"], waiting)
 	}
 	// blockedHosts is what the network log says is blocked, for the page to
-	// tell the user of the ones they haven't seen; null until it's been read.
+	// tell the user of the ones they haven't seen, and blockedAt when each was
+	// last blocked; null until it's been read.
 	var blockedHosts []string
-	if hosts, known := s.blockedHosts(); known {
-		blockedHosts = hosts
+	var blockedAt map[string]string
+	if hosts, at, known := s.blockedHosts(); known {
+		blockedHosts, blockedAt = hosts, at
 	}
 	// reviewAt is when the agent last updated the review: the page marks the
 	// Review tab when it's later than the user has seen. Taken in here, as
@@ -639,6 +662,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"packagesStale":         s.packagesStale(),
 		"packagesStaleProjects": s.packagesStaleProjects(),
 		"blockedHosts":          blockedHosts,
+		"blockedAt":             blockedAt,
 		"reviewAt":              reviewAt,
 		"pageVersion":           s.pageVersion,
 		"boot":                  s.boot,
@@ -652,9 +676,11 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"clipboardReady":        ready,
 		"clipboardTrouble":      s.clipboardTrouble(clipboard, ready),
 		"clipboardCanStart":     clipboard != "" && s.cfg.StartClipboard != nil,
-		"conversation":          s.cfg.Converse != nil,
+		"conversation":          s.cfg.StartAgent != nil,
 		"choice":                choiceFeature.present(s),
 		"admin":                 s.cfg.Admin != nil,
+		"packages":              packagesFeature.present(s),
+		"packageSync":           packageSyncFeature.present(s),
 		"themes":                s.cfg.Themes != nil,
 		"manage":                s.cfg.Manage != nil,
 		"review":                s.cfg.ReviewTab != nil,
@@ -697,9 +723,11 @@ func probeClipboard(url string) bool {
 	if err != nil {
 		return false
 	}
-	io.Copy(io.Discard, io.LimitReader(res.Body, 64*1024))
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 64*1024))
 	res.Body.Close()
-	return res.StatusCode == http.StatusOK
+	// The page's own title: the address is kept for as long as the probe passes, so a port another program has taken since
+	// must not pass for it.
+	return res.StatusCode == http.StatusOK && bytes.Contains(body, []byte("<title>vibe clipboard</title>"))
 }
 
 // workingAwakeEvery is how often the sandbox is kept awake while the agent

@@ -3925,7 +3925,7 @@ test('a stop with no review being written is not asked about', async () => {
   } finally { p.close() }
 })
 
-test('a stop with no review being written says at once that the agent is being stopped, and Send stays open for a prompt to wait', async () => {
+test('a stop with no review being written says at once that the agent is being stopped, and Send stays open', async () => {
   let stopped = false
   const p = await startPage({ extra: (setCurrent) => ({ '/api/conversation': () => ({ events: [], last: 0, running: true, stopState: stopped ? 'stopping' : '' }), '/api/conversation/stop': () => { stopped = true; return { stopped: true } } }) })
   try {
@@ -3937,23 +3937,13 @@ test('a stop with no review being written says at once that the agent is being s
   } finally { p.close() }
 })
 
-test('the page says it is waiting for the agent to stop, not that it is stopping it, once a prompt waits behind the stop', async () => {
-  const p = await startPage({ extra: (setCurrent) => ({ '/api/conversation': { events: [], last: 0, running: true, stopState: 'waiting' } }) })
-  try {
-    await p.every('pollConversation')
-    assert.match(p.$('convo-status').textContent, /Waiting for the agent to stop/)
-    assert.doesNotMatch(p.$('convo-status').textContent, /Stopping the agent/)
-    assert.equal(p.$('convo-send').disabled, true, 'a second prompt can be sent while one waits')
-  } finally { p.close() }
-})
-
 test('a prompt that waited for a stop is shown once, below the stop, when it is moved there', async () => {
-  let body = { events: [{ seq: 1, kind: 'user', text: 'count', receipt: 'delivered' }, { seq: 2, kind: 'user', text: 'instead', receipt: 'queued' }], last: 2, running: true, stopState: 'waiting' }
+  let body = { events: [{ seq: 1, kind: 'user', text: 'count', receipt: 'delivered' }, { seq: 2, kind: 'user', text: 'instead', receipt: 'sent' }], last: 2, running: true, stopState: 'stopping' }
   const p = await startPage({ extra: (setCurrent) => ({ '/api/conversation': () => body }) })
   try {
     await p.every('pollConversation')
     assert.equal(p.window.document.querySelectorAll('.msg.user').length, 2)
-    body = { events: [{ seq: 3, kind: 'done', text: 'stopped' }, { seq: 4, kind: 'retract', of: 2 }, { seq: 5, kind: 'user', text: 'instead', receipt: 'queued' }], last: 5, running: true }
+    body = { events: [{ seq: 3, kind: 'done', text: 'stopped' }, { seq: 4, kind: 'retract', of: 2 }, { seq: 5, kind: 'user', text: 'instead', receipt: 'sent' }], last: 5, running: true }
     await p.every('pollConversation')
     const log = p.$('convo-log')
     const texts = [...log.children].map((n) => n.textContent.trim())

@@ -116,31 +116,66 @@ func choiceFromSetting(value string) string {
 // FromSandbox reads the theme a running sandbox's agent is set to, however
 // it was set — at creation, or by /theme since. ok is false when the
 // sandbox can't be asked, or its settings can't be read before ctx ends.
+// It asks the sandbox once, for both files: sbx can be slow.
 func FromSandbox(ctx context.Context, name string) (choice string, ok bool) {
-	if value, found, ok := themeIn(ctx, name, settingsPath); !ok {
+	out, err := sbxrun.ExecStdout(ctx, name, "sh", "-c", readFilesScript, "fromsandbox", settingsPath, legacyConfigPath)
+	if err != nil {
+		return "", false
+	}
+	files, ok := splitFiles(out, 2)
+	if !ok {
+		return "", false
+	}
+	if value, found, ok := themeOf(files[0]); !ok {
 		return "", false
 	} else if found {
 		return choiceFromSetting(value), true
 	}
-	if value, found, _ := themeIn(ctx, name, legacyConfigPath); found {
+	if value, found, _ := themeOf(files[1]); found {
 		return choiceFromSetting(value), true
 	}
 	return Default, true
 }
 
-// themeIn reads the "theme" key of a JSON file in the sandbox. A file that
-// isn't there reads as having no theme; one that can't be read or parsed
-// is not ok.
-func themeIn(ctx context.Context, name, file string) (value string, found, ok bool) {
-	if !sbxrun.ExecSilent(ctx, name, "test", "-e", file) {
-		return "", false, sbxrun.Reachable(ctx, name)
+// readFilesScript prints each file it is given: "-" and a newline for one that isn't there, else "+", a newline, what it
+// holds, and a NUL (which no JSON file holds). A file that is there but can't be read fails it.
+const readFilesScript = `for f; do if [ -e "$f" ]; then printf '+\n'; cat "$f" || exit 3; printf '\0'; else printf -- '-\n'; fi; done`
+
+// sandboxFile is a file read by readFilesScript: absent when it isn't there.
+type sandboxFile struct {
+	absent  bool
+	content string
+}
+
+// splitFiles takes what readFilesScript printed for n files apart; ok is false for anything else.
+func splitFiles(out string, n int) (files []sandboxFile, ok bool) {
+	for i := 0; i < n; i++ {
+		switch {
+		case strings.HasPrefix(out, "-\n"):
+			files = append(files, sandboxFile{absent: true})
+			out = out[2:]
+		case strings.HasPrefix(out, "+\n"):
+			end := strings.IndexByte(out[2:], 0)
+			if end < 0 {
+				return nil, false
+			}
+			files = append(files, sandboxFile{content: out[2 : 2+end]})
+			out = out[2+end+1:]
+		default:
+			return nil, false
+		}
 	}
-	out, err := sbxrun.ExecStdout(ctx, name, "cat", file)
-	if err != nil {
-		return "", false, false
+	return files, true
+}
+
+// themeOf reads the "theme" key of a JSON file read from the sandbox. A file
+// that isn't there reads as having no theme; one that can't be parsed is not ok.
+func themeOf(f sandboxFile) (value string, found, ok bool) {
+	if f.absent {
+		return "", false, true
 	}
 	var doc map[string]interface{}
-	if json.Unmarshal([]byte(out), &doc) != nil {
+	if json.Unmarshal([]byte(f.content), &doc) != nil {
 		return "", false, false
 	}
 	value, found = doc["theme"].(string)

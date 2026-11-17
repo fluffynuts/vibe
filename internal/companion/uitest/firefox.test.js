@@ -51,6 +51,9 @@ test('Shift-click makes a range on one side', async () => {
   const page = await reviewPage()
   try {
     await (await hoverPlus(page, 'R20')).click()
+    // Said apart from the range: macOS CI once ended with a comment on R22 alone, so either this click opened nothing or what
+    // it opened was gone by the Shift-click.
+    assert.equal(await composerSays(page), 'Add a comment on line R20', 'the first click opened no comment on R20')
     await (await hoverPlus(page, 'R22')).click({ modifiers: ['Shift'] })
     assert.equal(await composerSays(page), 'Add a comment on lines R20–R22')
   } finally { await page.close() }
@@ -542,6 +545,34 @@ test('a prompt that has scrolled puts the emoji list at the visible caret', asyn
     assert.ok(await page.evaluate(() => document.getElementById('convo-input').scrollTop > 0), 'the prompt did not scroll, so this tests nothing')
     const b = await listBox(page)
     assert.ok(b.list.bottom <= b.ta.bottom + 1 && b.list.bottom >= b.ta.top, `the list ends at ${b.list.bottom}, the prompt spans ${b.ta.top}..${b.ta.bottom}: not at the caret in view`)
+  } finally { await page.close() }
+})
+
+// The browser may scroll the prompt to the caret after the input that showed the list (Firefox on Windows CI did): the list
+// follows the prompt's scrolling, or it is left where the caret was before, below the prompt.
+test('the emoji list follows the prompt as it scrolls', async () => {
+  const page = await promptPage(1200)
+  try {
+    const lines = Array.from({ length: 20 }, (_, i) => 'line ' + (i + 1)).join('\n')
+    await page.fill('#convo-input', lines + '\nlast')
+    await page.focus('#convo-input')
+    await page.keyboard.press('Control+End')
+    await page.keyboard.type(' :roc')
+    await page.waitForSelector('#convo-emoji:not([hidden]) li')
+    const before = await listBox(page)
+    // The line as listBox measures it: a computed line-height can be "normal" (macOS CI), which is no number to scroll by.
+    const scrolled = await page.evaluate((line) => {
+      const ta = document.getElementById('convo-input')
+      const was = ta.scrollTop
+      ta.scrollTop = was - 3 * line
+      return { was, now: ta.scrollTop }
+    }, before.line)
+    assert.ok(scrolled.now < scrolled.was, `the prompt did not scroll (scrollTop ${scrolled.was} → ${scrolled.now}), so this tests nothing`)
+    await page.waitForFunction((was) => document.getElementById('convo-emoji').getBoundingClientRect().bottom > was + 10, before.list.bottom, { timeout: 5000 })
+    const after = await listBox(page)
+    const moved = after.list.bottom - before.list.bottom
+    const by = scrolled.was - scrolled.now
+    assert.ok(Math.abs(moved - by) < 10, `the prompt scrolled ${by}px, the list moved ${moved}px`)
   } finally { await page.close() }
 })
 

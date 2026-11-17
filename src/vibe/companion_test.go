@@ -306,7 +306,9 @@ func TestTheThemeOfAStoppedSandboxDoesntStartIt(t *testing.T) {
 	lay := layout.New(t.TempDir(), t.TempDir())
 	writeFile(t, lay.HomePath("profiles", "p", "config.yaml"), "name: p\n")
 	calls := loggingSbx(t, "box stopped\\n")
-	themeColorFor(lay, "box", state.Instance{Name: "box", Profile: "p"}, "claude")()
+	desk := themeDeskFor(lay, "box", state.Instance{Name: "box", Profile: "p"}, "claude")
+	desk.color()
+	checked(t, desk)
 	if data, _ := os.ReadFile(calls); strings.Contains(string(data), "exec") {
 		t.Errorf("a stopped sandbox was asked for its theme:\n%s", data)
 	}

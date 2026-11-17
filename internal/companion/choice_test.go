@@ -117,7 +117,7 @@ var claudeOptions = Options{
 func choiceServer(t *testing.T, c *choosing) *Server {
 	t.Helper()
 	s := newServer(&fakeSbx{})
-	s.cfg.Converse = (&fakeAgent{}).converse
+	s.cfg.StartAgent = (&fakeAgent{}).start
 	s.cfg.Choice = c.config()
 	s.cfg.Wake = func(ctx context.Context, say func(string)) error {
 		c.mu.Lock()
@@ -319,7 +319,7 @@ func TestAFailureToAskForTheListsIsSaidAndNotKeptSoTheNextTryAsksAgain(t *testin
 
 func TestWithNothingToChooseFromTheRoutesAreNotThere(t *testing.T) {
 	s := newServer(&fakeSbx{})
-	s.cfg.Converse = (&fakeAgent{}).converse
+	s.cfg.StartAgent = (&fakeAgent{}).start
 	for _, path := range []string{"/api/conversation/choice", "/api/conversation/choice/options"} {
 		method := "POST"
 		if path == "/api/conversation/choice" {

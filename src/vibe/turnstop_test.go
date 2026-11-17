@@ -3,7 +3,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -146,19 +145,18 @@ func TestATurnStoppedBeforeItsShellRecordedItselfNeverStartsTheAgent(t *testing.
 	}
 }
 
-// When vibe can't confirm in the sandbox that a stopped turn's agent has
-// ended, it says so: the page would otherwise report a clean stop of an
-// agent that may still be running.
-func TestAStopThatCouldNotBeConfirmedInTheSandboxSaysSo(t *testing.T) {
+// When vibe can't confirm in the sandbox that the agent it ended has ended,
+// it says so: the page would otherwise report a clean stop of an agent that
+// may still be running.
+func TestAKillThatCouldNotBeConfirmedInTheSandboxSaysSo(t *testing.T) {
 	dir := t.TempDir()
-	fake := "#!/bin/sh\nfor a; do [ \"$a\" = -i ] && exec sleep 30; done\necho 'sandbox unreachable' >&2\nexit 1\n"
+	fake := "#!/bin/sh\necho 'sandbox unreachable' >&2\nexit 1\n"
 	if err := os.WriteFile(filepath.Join(dir, "sbx"), []byte(fake), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(300*time.Millisecond, cancel)
-	err := converse("box", "/work", func() (turnChoice, error) { return turnChoice{}, nil })(ctx, "hi", "", func() {}, func([]byte) {})
+	a := &claudeAgent{name: "box", pidFile: "/tmp/vibe-conversation.pid", sess: newFakeSession()}
+	err := a.Kill()
 	if !errors.Is(err, companion.ErrStopUnconfirmed) {
 		t.Fatalf("error = %v, want one saying the stop could not be confirmed", err)
 	}

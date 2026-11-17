@@ -290,3 +290,21 @@ func TestOnceThePageStopsReadingTheLogTheBackgroundReadsItAgain(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// A host blocked long ago and blocked again is news again: the state says when each was last blocked, for the page to tell
+// a fresh block from the one the user saw.
+func TestTheStateSaysWhenEachBlockedHostWasLastBlocked(t *testing.T) {
+	rig := newBlockedRig(t, logOf)
+	rig.untilKnown(t)
+	rec := do(t, rig.s, req{path: "/api/state", headers: authed(nil)})
+	var st struct {
+		At map[string]string `json:"blockedAt"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"evil.example": "2026-10-19T12:00:02Z", "b.example": "2026-10-19T12:00:01Z"}
+	if len(st.At) != len(want) || st.At["evil.example"] != want["evil.example"] || st.At["b.example"] != want["b.example"] {
+		t.Errorf("blockedAt = %v, want %v: each host's latest block, and only the blocked hosts", st.At, want)
+	}
+}

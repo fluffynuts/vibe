@@ -9,9 +9,9 @@ const { openPage } = require('./page.js')
 // not read yet), on the tab given. storage is the browser's, which a test can
 // keep across pages.
 function blockedPage(blocked, { storage = {}, tab = 'rules' } = {}) {
-  const at = { blocked, log: { entries: [] } }
+  const at = { blocked, blockedAt: undefined, log: { entries: [] } }
   const routes = {
-    '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, conversation: true, attention: {}, blockedHosts: at.blocked }),
+    '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, conversation: true, attention: {}, blockedHosts: at.blocked, blockedAt: at.blockedAt }),
     '/api/conversation': { events: [], last: 0, running: false },
     '/api/log': () => at.log,
     '/api/rules': { rules: [] },
@@ -283,5 +283,90 @@ test('the Network log says it is refreshing for as long as it is, and nothing is
     release()
     await p.settle()
     assert.equal(p.$('log-refreshing').classList.contains('on'), false, 'still refreshing after it was done')
+  } finally { p.close() }
+})
+
+// A host stays in the network log's blocked list for as long as the log keeps it, however often it is blocked again: so a host
+// the user saw blocked days ago, and the agent is blocked from again now, is news by when it was blocked, not by being listed.
+test('a host seen blocked before, and blocked again since, is news again', async () => {
+  const p = await blockedPage(['a.example', 'kernel.example'])
+  p.at.blockedAt = { 'a.example': '2026-11-13T09:00:00Z', 'kernel.example': '2026-11-13T09:00:00Z' }
+  try {
+    await p.poll()
+    assert.equal(dot(p), null, 'the first visit is not news')
+    p.at.blockedAt = { 'a.example': '2026-11-13T09:00:00Z', 'kernel.example': '2026-11-16T13:15:10Z' }
+    await p.poll()
+    assert.match(notice(p), /kernel\.example/)
+    assert.doesNotMatch(notice(p), /a\.example/)
+    await p.click('tab-log')
+    await p.click('tab-conversation')
+    assert.equal(notice(p), null, 'seen on the Network log, and still news')
+  } finally { p.close() }
+})
+
+test('a host blocked again after it was seen is news to the next page load too', async () => {
+  const first = await blockedPage(['kernel.example'])
+  first.at.blockedAt = { 'kernel.example': '2026-11-13T09:00:00Z' }
+  let kept
+  try {
+    await first.poll()
+    kept = { 'vibe-companion-blocked-seen': first.window.localStorage.getItem('vibe-companion-blocked-seen') }
+  } finally { first.close() }
+  const second = await blockedPage(['kernel.example'], { storage: kept })
+  second.at.blockedAt = { 'kernel.example': '2026-11-16T13:15:10Z' }
+  try {
+    await second.poll()
+    assert.match(notice(second), /kernel\.example/)
+  } finally { second.close() }
+})
+
+test('a dismissed host is not news however often it is blocked again, in this page or the next', async () => {
+  const first = await blockedPage(['a.example'])
+  first.at.blockedAt = { 'a.example': '2026-11-16T09:00:00Z' }
+  let kept
+  try {
+    await first.poll()
+    first.at.blocked = ['a.example', 'noisy.example']
+    first.at.blockedAt = { 'a.example': '2026-11-16T09:00:00Z', 'noisy.example': '2026-11-16T10:00:00Z' }
+    await first.poll()
+    await first.click('convo-blocked-dismiss')
+    first.at.blockedAt = { 'a.example': '2026-11-16T09:00:00Z', 'noisy.example': '2026-11-16T10:05:00Z' }
+    await first.poll()
+    assert.equal(notice(first), null, 'a dismissed host came back when it was blocked again')
+    kept = {
+      'vibe-companion-blocked-seen': first.window.localStorage.getItem('vibe-companion-blocked-seen'),
+      'vibe-companion-blocked-dismissed': first.window.localStorage.getItem('vibe-companion-blocked-dismissed'),
+    }
+  } finally { first.close() }
+  const second = await blockedPage(['a.example', 'noisy.example'], { storage: kept })
+  second.at.blockedAt = { 'a.example': '2026-11-16T09:00:00Z', 'noisy.example': '2026-11-16T11:00:00Z' }
+  try {
+    await second.poll()
+    assert.equal(notice(second), null)
+    assert.equal(dot(second), null)
+  } finally { second.close() }
+})
+
+test('what a browser kept before blocks were dated is taken as seen as they are now, not as a burst of news', async () => {
+  const p = await blockedPage(['a.example', 'b.example'], { storage: { 'vibe-companion-blocked-seen': JSON.stringify(['a.example', 'b.example']) } })
+  p.at.blockedAt = { 'a.example': '2026-11-13T09:00:00Z', 'b.example': '2026-11-14T09:00:00Z' }
+  try {
+    await p.poll()
+    assert.equal(dot(p), null)
+    p.at.blockedAt = { 'a.example': '2026-11-13T09:00:00Z', 'b.example': '2026-11-16T09:00:00Z' }
+    await p.poll()
+    assert.match(dot(p), /1 new blocked host: b\.example/)
+  } finally { p.close() }
+})
+
+test('a host blocked again has the Network log read again, for its new block to be there', async () => {
+  const p = await blockedPage(['kernel.example'])
+  p.at.blockedAt = { 'kernel.example': '2026-11-13T09:00:00Z' }
+  try {
+    await p.poll()
+    const before = logReads(p)
+    p.at.blockedAt = { 'kernel.example': '2026-11-16T13:15:10Z' }
+    await p.poll()
+    assert.equal(logReads(p), before + 1)
   } finally { p.close() }
 })

@@ -2,6 +2,7 @@ package companion
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,16 +18,38 @@ import (
 	"vibe/internal/fscopy"
 )
 
-// Converser runs one turn of the conversation: it sends prompt to the agent
-// in the sandbox (resuming session when there is one) and calls onLine with
-// each line of the agent's stream-json output, until the agent is done or
-// ctx is cancelled. delivered is called once the whole prompt has been
-// handed to the sandbox.
-type Converser func(ctx context.Context, prompt, session string, delivered func(), onLine func(line []byte)) error
+// Agent is the agent's process for the conversation. It lives while it has
+// work: a turn under way, or something it left running in the background,
+// which calls it back when it ends (an unprompted turn). Once it has been idle
+// for idleFor it is asked to end, so that the sandbox can sleep; the next
+// prompt starts another, resuming the conversation.
+type Agent interface {
+	// Prompt gives the agent a user message. id names it in the agent's
+	// command_lifecycle lines. A prompt sent while it is answering is taken
+	// into the turn under way, as the console does.
+	Prompt(text, id string) error
+	// Interrupt stops the turn under way, leaving what runs in the
+	// background alone.
+	Interrupt() error
+	// StopTask stops one thing the agent has running in the background.
+	StopTask(id string) error
+	// End closes the agent's input: it ends once it has nothing left to do.
+	End()
+	// Kill ends the agent, and all it started, at once. An error says it
+	// could not be confirmed that it has ended.
+	Kill() error
+	// Done is closed once the agent has ended; Err is how.
+	Done() <-chan struct{}
+	Err() error
+}
 
-// ErrStopUnconfirmed is what a Converser returns, after its context was
-// cancelled, when it couldn't confirm that the agent has really ended: the
-// turn is over, but the agent may still be running in the sandbox.
+// StartAgent starts the agent for the conversation, resuming session when
+// there is one, calling onLine with each line of its stream-json output. ctx
+// bounds the start, not the agent's life: Kill and End end that.
+type StartAgent func(ctx context.Context, session string, onLine func(line []byte)) (Agent, error)
+
+// ErrStopUnconfirmed is what Kill returns when it couldn't confirm that the
+// agent has really ended: it may still be running in the sandbox.
 var ErrStopUnconfirmed = errors.New("the agent may not have stopped")
 
 // What the user is told about their latest prompt, like the ticks of a
@@ -91,31 +114,41 @@ type conversation struct {
 	events  []event
 	seq     int
 	session string
-	running bool
-	cancel  context.CancelFunc
-	// prompt is the seq of the user event of the turn running or last run.
+	// agent is the agent's process, while it lives; starting says one is
+	// being started (the sandbox made ready first), cancelStart stops that.
+	agent       Agent
+	starting    bool
+	cancelStart context.CancelFunc
+	// waiting are prompts given while the agent was being started: they go
+	// to it, in order, once it has.
+	waiting []waitingPrompt
+	// pending are the prompts given to the agent and not yet done with, by
+	// the id the agent's command_lifecycle lines name them by.
+	pending map[string]int
+	// prompt is the seq of the latest user event.
 	prompt int
-	// answered says the agent has given its answer to the running turn's
-	// prompt (its result line came), though it may still be at work in the
-	// background: it can have commands running that it waits on. The page
-	// may then send another prompt, which ends that (superseded) quietly.
-	answered   bool
-	superseded bool
+	// answering says a turn is under way: from a prompt (or the agent
+	// starting one by itself, called back by its background work) to its
+	// result.
+	answering bool
+	// stopping says an interrupt was sent and the turn has not yet ended.
+	stopping bool
+	// tasks is what the agent has running in the background, as it last
+	// said (background_tasks_changed).
+	tasks []BackgroundTask
+	// idle ends an agent that has had nothing to do for idleFor (or
+	// idleAfter, when tests set it).
+	idle      *time.Timer
+	idleAfter time.Duration
+	// endAfter stands for endWithin, when tests set it.
+	endAfter time.Duration
+	// started counts the agents started: an agent being let go knows from it
+	// whether another has started since.
+	started int
 	// compacting says the agent is summarising its context to make room,
 	// which can take minutes with nothing else said.
 	compacting bool
-	// stopping says a stop was asked for and the turn has not yet ended: the
-	// agent is being stopped in the sandbox, which takes a while.
-	stopping bool
-	// queued is a prompt sent while the agent was being stopped, waiting for
-	// the turn to end: the one slot is all a person types in that time.
-	queued *queuedPrompt
-	// startQueued gives the queued prompt to the agent, once the turn it
-	// waited on has ended. Set by the server, which knows how to run a turn.
-	startQueued func(seq int, prompt string)
-	// ended is closed when the running turn has finished.
-	ended chan struct{}
-	// heard is when the agent last said anything in the running turn (or
+	// heard is when the agent last said anything in the turn under way (or
 	// the turn began): long quiet while it answers may mean it is stuck.
 	heard time.Time
 	// now is the clock (time.Now when nil), for tests to stand in for.
@@ -132,14 +165,48 @@ type conversation struct {
 	// page that outlives one carries on where it was; "" keeps it only in
 	// memory.
 	file string
+	// closed says vibe has closed the conversation: nothing more is
+	// recorded in it (the next vibe takes it from there).
+	closed bool
 }
 
-// queuedPrompt is a prompt in the conversation (its user event is seq) that
-// the agent has not yet been given.
-type queuedPrompt struct {
+// BackgroundTask is one thing the agent has running in the background, as
+// it says in its background_tasks_changed lines.
+type BackgroundTask struct {
+	ID          string `json:"task_id"`
+	Type        string `json:"task_type,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// taskNames names tasks for a sentence: by what the agent said each is, quoted, or by its id.
+func taskNames(tasks []BackgroundTask) string {
+	names := make([]string, 0, len(tasks))
+	for _, t := range tasks {
+		name := t.Description
+		if name == "" {
+			name = t.ID
+		}
+		names = append(names, strconv.Quote(name))
+	}
+	return strings.Join(names, ", ")
+}
+
+// waitingPrompt is a prompt in the conversation (its user event is seq), not
+// yet given to the agent, which is being started.
+type waitingPrompt struct {
 	seq    int
 	prompt string
+	id     string
 }
+
+// idleFor is how long the agent is kept with nothing to do (no turn, nothing
+// in the background) before it is asked to end: an open agent keeps the
+// sandbox awake. endWithin is how long it then has to end before it is
+// killed.
+const (
+	idleFor   = 30 * time.Second
+	endWithin = 30 * time.Second
+)
 
 // saved is what file holds.
 type saved struct {
@@ -153,6 +220,9 @@ type saved struct {
 	CommandsSeq int      `json:"commandsSeq,omitempty"`
 	// Model is conversation.model.
 	Model string `json:"model,omitempty"`
+	// Tasks is what the agent had running in the background: kept by a vibe
+	// that died, the next says what it left.
+	Tasks []BackgroundTask `json:"tasks,omitempty"`
 }
 
 // load picks up the conversation file holds, if any. A turn that was
@@ -185,8 +255,13 @@ func (c *conversation) load(file string) error {
 			c.events[i].Receipt = receiptUndelivered
 		}
 	}
+	if len(was.Tasks) > 0 {
+		c.add("note", "vibe stopped while the agent had work running in the background: "+taskNames(was.Tasks)+". It is ended when the agent next starts, without reporting back.", nil)
+	}
 	if was.Running {
 		c.add("error", "vibe stopped before the agent had finished answering", nil)
+	}
+	if was.Running || len(was.Tasks) > 0 {
 		c.save()
 	}
 	return nil
@@ -197,11 +272,11 @@ func (c *conversation) load(file string) error {
 // vibe that stops mid-turn loses what the agent said of it, not what came
 // before.
 func (c *conversation) save() {
-	if c.file == "" {
+	if c.file == "" || c.closed {
 		return
 	}
-	data, err := json.Marshal(saved{Seq: c.seq, Session: c.session, Prompt: c.prompt, Running: c.running, Events: c.events,
-		Commands: c.commands, CommandsSeq: c.commandsSeq, Model: c.model})
+	data, err := json.Marshal(saved{Seq: c.seq, Session: c.session, Prompt: c.prompt, Running: c.busy(), Events: c.events,
+		Commands: c.commands, CommandsSeq: c.commandsSeq, Model: c.model, Tasks: c.tasks})
 	if err != nil {
 		return
 	}
@@ -222,11 +297,32 @@ func (c *conversation) hasSession() bool {
 	return c.session != ""
 }
 
-// close saves the conversation as it is, for the next vibe to pick up.
+// close saves the conversation as it is, for the next vibe to pick up, and
+// ends the agent.
 func (c *conversation) close() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	if c.busy() {
+		c.add("error", "vibe stopped before the agent had finished answering", nil)
+		c.answering, c.starting, c.stopping = false, false, false
+	}
+	if c.agent != nil && len(c.tasks) > 0 {
+		c.add("note", "vibe stopped, and with it what the agent had running in the background: "+taskNames(c.tasks)+".", nil)
+	}
+	c.tasks = nil
 	c.save()
+	c.closed = true
+	agent := c.agent
+	c.agent = nil
+	c.disarmIdle()
+	if c.cancelStart != nil {
+		c.cancelStart()
+	}
+	c.mu.Unlock()
+	// The agent goes with the vibe that ran it: left, it would carry on
+	// unseen in the sandbox, its output going nowhere.
+	if agent != nil {
+		agent.Kill()
+	}
 }
 
 func (c *conversation) add(kind, text string, agent json.RawMessage) {
@@ -245,110 +341,299 @@ func (c *conversation) add(kind, text string, agent json.RawMessage) {
 	}
 }
 
-// begin starts a turn, or says one is already running.
-func (c *conversation) begin(prompt string) (session string, ctx context.Context, ok bool) {
+// busy says a turn is under way or the agent is being started for one.
+// mu is held.
+func (c *conversation) busy() bool {
+	return c.answering || c.starting
+}
+
+// claim makes prompt the next turn, unless one is under way (when force,
+// it is taken into the one under way, as the console does): its user event
+// is added, and the turn is held for it until give or abandon. It gives
+// the event's seq, or false.
+func (c *conversation) claim(prompt string, force bool) (int, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.running {
-		return "", nil, false
+	if c.busy() && !force {
+		return 0, false
 	}
-	ctx, c.cancel = context.WithCancel(context.Background())
 	c.add("user", prompt, nil)
 	c.events[len(c.events)-1].Receipt = receiptSent
-	return c.starting(c.seq, ctx)
-}
-
-// starting makes the turn for the user event seq the running one.
-func (c *conversation) starting(seq int, ctx context.Context) (session string, _ context.Context, ok bool) {
-	c.running = true
-	c.stopping = false
-	c.answered, c.superseded, c.compacting = false, false, false
-	c.ended = make(chan struct{})
-	c.heard = c.clock()
-	c.prompt = seq
+	c.prompt = c.seq
+	if !c.answering {
+		c.answering, c.stopping, c.compacting = true, false, false
+		c.heard = c.clock()
+	}
+	c.disarmIdle()
 	c.save()
-	return c.session, ctx, true
+	return c.seq, true
 }
 
-// beginQueued starts the turn for the queued prompt, whose user event is
-// already in the conversation.
-func (c *conversation) beginQueued(seq int) (session string, ctx context.Context, ok bool) {
+// give gives the claimed prompt (its user event is seq) to the agent,
+// starting one with start when there is none, the sandbox made ready first
+// with prepare (it may be stopped).
+func (c *conversation) give(seq int, prompt string, start StartAgent, prepare func(context.Context, func(string)) error) {
+	id := newPromptID()
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.running {
-		return "", nil, false
+	if c.pending == nil {
+		c.pending = map[string]int{}
 	}
-	ctx, c.cancel = context.WithCancel(context.Background())
-	for i := range c.events {
-		if c.events[i].Seq == seq {
-			c.events[i].Receipt = receiptSent
-		}
-	}
-	return c.starting(seq, ctx)
-}
-
-// queue puts prompt in the conversation to be given to the agent once the
-// turn being stopped has ended; false when no stop is under way, or a prompt
-// is already waiting.
-func (c *conversation) queue(prompt string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.running || !c.stopping || c.queued != nil {
-		return false
-	}
-	c.add("user", prompt, nil)
-	c.events[len(c.events)-1].Receipt = receiptQueued
-	c.queued = &queuedPrompt{seq: c.seq, prompt: prompt}
-	c.save()
-	return true
-}
-
-// stopState is what the page says of a stop under way: "stopping" the agent,
-// or "waiting" for it to be stopped, when a prompt is queued behind it.
-func (c *conversation) stopState() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.pending[id] = seq
+	agent := c.agent
 	switch {
-	case !c.running || !c.stopping:
-		return ""
-	case c.queued != nil:
-		return "waiting"
+	case agent != nil:
+	case c.starting:
+		c.waiting = append(c.waiting, waitingPrompt{seq, prompt, id})
+		c.mu.Unlock()
+		return
+	default:
+		c.starting = true
+		c.started++
+		c.waiting = append(c.waiting, waitingPrompt{seq, prompt, id})
+		ctx, cancel := context.WithCancel(context.Background())
+		c.cancelStart = cancel
+		session := c.session
+		c.mu.Unlock()
+		go c.startAgent(ctx, session, start, prepare)
+		return
 	}
-	return "stopping"
+	c.mu.Unlock()
+	c.deliver(agent, waitingPrompt{seq, prompt, id})
 }
 
-// undeliver marks the latest prompt as never given to the agent: a turn
-// claimed for it was given up (see claimTurn).
-func (c *conversation) undeliver() {
+// abandon gives up the claimed prompt seq, saying why: nothing was given to
+// the agent.
+func (c *conversation) abandon(seq int, why error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for i := range c.events {
-		if c.events[i].Seq == c.prompt && c.events[i].Kind == "user" {
-			c.events[i].Receipt = receiptUndelivered
+	c.setReceipt(seq, receiptUndelivered)
+	c.answering = false
+	if why != nil {
+		c.add("error", why.Error(), nil)
+	} else {
+		c.add("done", "", nil)
+	}
+	c.armIdle()
+	c.save()
+}
+
+// deliver writes prompt to agent.
+func (c *conversation) deliver(agent Agent, w waitingPrompt) {
+	err := agent.Prompt(w.prompt, w.id)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err != nil {
+		delete(c.pending, w.id)
+		c.setReceipt(w.seq, receiptUndelivered)
+		c.add("error", "the prompt couldn't be given to the agent: "+err.Error(), nil)
+		c.save()
+		return
+	}
+	c.advanceReceipt(w.seq, receiptDelivered)
+}
+
+// startAgent makes the sandbox ready and starts the agent, then gives it
+// the prompts that waited.
+func (c *conversation) startAgent(ctx context.Context, session string, start StartAgent, prepare func(context.Context, func(string)) error) {
+	if prepare != nil {
+		// What is said while the sandbox is made ready is true only until it is:
+		// once it is, it's taken back, so it doesn't sit in the conversation
+		// saying "starting the sandbox" over what then runs. Left, when it can't be
+		// made ready: it says what the error that follows is about.
+		var said []int
+		var mu sync.Mutex
+		err := prepare(ctx, func(text string) {
+			seq := c.noteSaid(text)
+			mu.Lock()
+			said = append(said, seq)
+			mu.Unlock()
+		})
+		if err != nil {
+			c.startFailed(err, ctx.Err() != nil)
+			return
 		}
+		mu.Lock()
+		c.retract(said)
+		mu.Unlock()
+	}
+	agent, err := start(ctx, session, func(raw []byte) { c.line(raw) })
+	if err != nil {
+		c.startFailed(err, ctx.Err() != nil)
+		return
+	}
+	c.mu.Lock()
+	if ctx.Err() != nil || c.closed {
+		// Stopped while it started (or vibe closed): what it was started for is
+		// not given to it.
+		c.mu.Unlock()
+		agent.Kill()
+		c.startFailed(ctx.Err(), true)
+		return
+	}
+	c.agent, c.starting, c.cancelStart = agent, false, nil
+	waiting := c.waiting
+	c.waiting = nil
+	c.mu.Unlock()
+	go func() {
+		<-agent.Done()
+		c.agentEnded(agent)
+	}()
+	for _, w := range waiting {
+		c.deliver(agent, w)
+	}
+}
+
+// startFailed ends the turn the agent was being started for: the prompts
+// that waited were never given to it.
+func (c *conversation) startFailed(err error, stopped bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
+	for _, w := range c.waiting {
+		delete(c.pending, w.id)
+		c.setReceipt(w.seq, receiptUndelivered)
+	}
+	c.waiting, c.starting, c.cancelStart = nil, false, nil
+	c.answering, c.stopping = false, false
+	if stopped {
+		c.add("done", "stopped", nil)
+	} else {
+		// An error ends the turn on the page, as a done would.
+		c.add("error", err.Error(), nil)
 	}
 	c.save()
 }
 
-// receipt moves the latest prompt's receipt forward to state.
-func (c *conversation) receipt(state string) {
+// agentEnded is the agent having ended: a turn it was at is over, and so is
+// what it had running in the background.
+func (c *conversation) agentEnded(agent Agent) {
+	err := agent.Err()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.advance(state)
+	if c.agent != agent {
+		return
+	}
+	if len(c.tasks) > 0 {
+		c.add("note", "The agent ended, and with it what it had running in the background: "+taskNames(c.tasks)+".", nil)
+	}
+	c.agent, c.tasks = nil, nil
+	c.disarmIdle()
+	for id, seq := range c.pending {
+		c.setReceipt(seq, receiptUndelivered)
+		delete(c.pending, id)
+	}
+	if c.answering {
+		switch {
+		case c.stopping:
+			c.add("done", "stopped", nil)
+		case err != nil:
+			c.add("error", "the agent ended before it had answered: "+err.Error(), nil)
+		default:
+			c.add("error", "the agent ended before it had answered", nil)
+		}
+	}
+	c.answering, c.stopping, c.compacting = false, false, false
+	c.save()
 }
 
-func (c *conversation) advance(state string) {
-	for i := len(c.events) - 1; i >= 0 && c.events[i].Seq >= c.prompt; i-- {
-		if e := &c.events[i]; e.Seq == c.prompt && receiptRank[state] > receiptRank[e.Receipt] {
-			e.Receipt = state
+// armIdle sets the agent to be ended once it has had nothing to do for
+// idleFor. mu is held.
+func (c *conversation) armIdle() {
+	c.disarmIdle()
+	agent := c.agent
+	if agent == nil || c.busy() || len(c.tasks) > 0 {
+		return
+	}
+	wait := idleFor
+	if c.idleAfter > 0 {
+		wait = c.idleAfter
+	}
+	c.idle = time.AfterFunc(wait, func() {
+		c.mu.Lock()
+		still := c.agent == agent && !c.busy() && len(c.tasks) == 0
+		if still {
+			// Let go of it now: its input is closing, so the next prompt
+			// starts another (which ends this one, if it is still ending).
+			c.agent = nil
+		}
+		generation := c.started
+		c.mu.Unlock()
+		if !still {
+			return
+		}
+		agent.End()
+		select {
+		case <-agent.Done():
+		case <-time.After(c.endWait()):
+			c.mu.Lock()
+			// The kill goes by the conversation's pid file, which names the
+			// agent started last: once another has started (and its start
+			// ended this one, as a leftover), it would end that one instead.
+			newer := c.started != generation
+			c.mu.Unlock()
+			if !newer {
+				agent.Kill()
+			}
+		}
+	})
+}
+
+// endWait is how long an agent asked to end has before it is killed.
+func (c *conversation) endWait() time.Duration {
+	if c.endAfter > 0 {
+		return c.endAfter
+	}
+	return endWithin
+}
+
+// disarmIdle keeps the agent: it has something to do. mu is held.
+func (c *conversation) disarmIdle() {
+	if c.idle != nil {
+		c.idle.Stop()
+		c.idle = nil
+	}
+}
+
+// setReceipt sets the receipt of the user event seq. mu is held.
+func (c *conversation) setReceipt(seq int, state string) {
+	for i := len(c.events) - 1; i >= 0; i-- {
+		if c.events[i].Seq == seq && c.events[i].Kind == "user" {
+			c.events[i].Receipt = state
+			return
 		}
 	}
 }
 
-// line takes a line of the agent's output, learning the session from it,
-// and says what type of line it was. A result is the agent's answer given;
-// anything more it says after that (woken by something it left running)
-// is it at work again.
+// receiptOf is the receipt of the user event seq. mu is held.
+func (c *conversation) receiptOf(seq int) string {
+	for i := len(c.events) - 1; i >= 0; i-- {
+		if c.events[i].Seq == seq && c.events[i].Kind == "user" {
+			return c.events[i].Receipt
+		}
+	}
+	return ""
+}
+
+// advanceReceipt moves the receipt of the user event seq forward to state:
+// receipts only ever advance. mu is held.
+func (c *conversation) advanceReceipt(seq int, state string) {
+	for i := len(c.events) - 1; i >= 0; i-- {
+		if e := &c.events[i]; e.Seq == seq && e.Kind == "user" {
+			if receiptRank[state] > receiptRank[e.Receipt] {
+				e.Receipt = state
+			}
+			return
+		}
+	}
+}
+
+// line takes a line of the agent's output: what it says of a prompt
+// (command_lifecycle) moves that prompt's receipt; a turn begins (init: one
+// it was given, or one it started by itself) and ends (result); what it has
+// running in the background is kept; the rest is shown. It says what type of
+// line it was.
 func (c *conversation) line(raw []byte) string {
 	raw = []byte(strings.TrimSpace(string(raw)))
 	if len(raw) == 0 {
@@ -358,12 +643,19 @@ func (c *conversation) line(raw []byte) string {
 		raw = []byte(`{"type":"truncated"}`)
 	}
 	var head struct {
-		Type          string   `json:"type"`
-		Subtype       string   `json:"subtype"`
-		SessionID     string   `json:"session_id"`
-		SlashCommands []string `json:"slash_commands"`
-		Model         string   `json:"model"`
-		Status        *string  `json:"status"`
+		Type          string           `json:"type"`
+		Subtype       string           `json:"subtype"`
+		SessionID     string           `json:"session_id"`
+		SlashCommands []string         `json:"slash_commands"`
+		Model         string           `json:"model"`
+		Status        *string          `json:"status"`
+		CommandUUID   string           `json:"command_uuid"`
+		State         string           `json:"state"`
+		Tasks         []BackgroundTask `json:"tasks"`
+		IsReplay      bool             `json:"isReplay"`
+		NumTurns      *int             `json:"num_turns"`
+		Result        string           `json:"result"`
+		IsError       bool             `json:"is_error"`
 	}
 	json.Unmarshal(raw, &head)
 	c.mu.Lock()
@@ -371,135 +663,208 @@ func (c *conversation) line(raw []byte) string {
 	if SessionID.MatchString(head.SessionID) {
 		c.session = head.SessionID
 	}
-	if head.Type == "system" && head.Subtype == "init" && head.Model != "" {
-		c.model = head.Model
+	switch {
+	case head.Type == "command_lifecycle":
+		c.lifecycle(head.CommandUUID, head.State)
+		return head.Type
+	case head.Type == "control_response", head.Type == "rate_limit_event", head.IsReplay:
+		// Answers to vibe's own requests, and what the agent says back of a
+		// setting vibe changed: nothing for the page.
+		return head.Type
+	case head.Type == "system" && head.Subtype == "background_tasks_changed":
+		c.tasks = head.Tasks
+		c.armIdle()
+		// Kept, so that a vibe that dies with work running has it said by the next.
+		c.save()
+		return head.Type
+	case head.Type == "result" && head.NumTurns != nil && *head.NumTurns == 0 && head.Result == "":
+		// A resumed agent's first word, before any turn: nothing answered.
+		return head.Type
 	}
-	if head.Type == "system" && head.Subtype == "init" && head.SlashCommands != nil {
-		if commands := slashCommands(head.SlashCommands); !slices.Equal(commands, c.commands) {
-			c.commands = commands
-			c.commandsSeq++
+	if head.Type == "system" && head.Subtype == "init" {
+		if head.Model != "" {
+			c.model = head.Model
 		}
+		if head.SlashCommands != nil {
+			if commands := slashCommands(head.SlashCommands); !slices.Equal(commands, c.commands) {
+				c.commands = commands
+				c.commandsSeq++
+			}
+		}
+		if !c.answering && c.agent != nil {
+			// A turn the agent began by itself: something it left running
+			// has called it back.
+			c.answering, c.stopping, c.compacting = true, false, false
+		}
+		c.disarmIdle()
 	}
 	if head.Type == "system" && head.Subtype == "status" {
 		c.compacting = head.Status != nil && *head.Status == "compacting"
 	}
-	c.advance(receiptSeen)
 	c.heard = c.clock()
-	c.add("agent", "", append(json.RawMessage(nil), raw...))
-	switch head.Type {
-	case "result":
-		c.answered = true
-		// The process may go on for a long while yet: what it has said
-		// so far is kept now, not only when it ends.
+	// The agent ends a turn it was interrupted in with a result it marks as an error: it is the user's stop, not a failure, and
+	// is marked so for the page.
+	mark := ""
+	if head.Type == "result" && c.stopping && head.IsError {
+		mark = "stopped"
+	}
+	c.add("agent", mark, append(json.RawMessage(nil), raw...))
+	if head.Type == "result" {
+		if c.stopping {
+			c.add("done", "stopped", nil)
+		} else {
+			c.add("done", "", nil)
+		}
+		c.answering, c.stopping, c.compacting = false, false, false
+		c.armIdle()
+		// The agent goes on: what it has said so far is kept now.
 		c.save()
-	case "assistant":
-		c.answered = false
 	}
 	return head.Type
 }
 
-func (c *conversation) finish(err error, stopped bool) {
-	c.mu.Lock()
-	next := c.queued
-	c.queued = nil
-	defer func() {
-		c.mu.Unlock()
-		if next != nil && c.startQueued != nil {
-			c.startQueued(next.seq, next.prompt)
+// lifecycle is what the agent says of the prompt it names id: queued (it has
+// it), started (it is answering it), completed, or cancelled (dropped
+// unanswered, by a stop). mu is held.
+func (c *conversation) lifecycle(id, state string) {
+	seq, ok := c.pending[id]
+	if !ok {
+		return
+	}
+	switch state {
+	case "queued":
+		c.advanceReceipt(seq, receiptDelivered)
+	case "started":
+		c.advanceReceipt(seq, receiptSeen)
+	case "completed":
+		c.advanceReceipt(seq, receiptSeen)
+		delete(c.pending, id)
+	case "cancelled":
+		// A stop cancels the prompt the agent was answering as well as those it had not taken in: only those were never answered.
+		if c.receiptOf(seq) != receiptSeen {
+			c.setReceipt(seq, receiptUndelivered)
 		}
-	}()
-	switch {
-	case c.superseded:
-		// Ended for the next prompt, after it had answered: nothing to say.
-		c.add("done", "", nil)
-	case stopped:
-		if errors.Is(err, ErrStopUnconfirmed) {
-			c.add("error", err.Error(), nil)
-		}
-		c.add("done", "stopped", nil)
-	case err != nil:
-		c.add("error", err.Error(), nil)
-	default:
-		c.add("done", "", nil)
-	}
-	if next != nil {
-		next.seq = c.moveBelowEnd(next.seq, next.prompt)
-	}
-	c.running, c.stopping = false, false
-	c.answered, c.superseded, c.compacting = false, false, false
-	c.cancel = nil
-	c.save()
-	close(c.ended)
-}
-
-// moveBelowEnd puts the queued prompt (whose user event is seq) after how
-// the turn it waited on ended, as it is when the agent is given it: shown
-// at once it sat above "stopped", as though that were its own end. The page
-// is told to drop the event it has, and to show the prompt anew; it gives
-// the new event's Seq.
-func (c *conversation) moveBelowEnd(seq int, prompt string) int {
-	c.events = slices.DeleteFunc(c.events, func(e event) bool { return e.Seq == seq })
-	c.add("retract", "", nil)
-	c.events[len(c.events)-1].Of = seq
-	c.add("user", prompt, nil)
-	c.events[len(c.events)-1].Receipt = receiptQueued
-	return c.seq
-}
-
-// answering says the agent is answering a prompt: running, and not yet
-// answered.
-func (c *conversation) answering() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.running && !c.answered
-}
-
-// supersede makes way for a new prompt: a turn the agent has answered but
-// is still at work on in the background is ended (quietly), and waited
-// for. It says whether the way is clear — not while the agent is still
-// answering.
-func (c *conversation) supersede() bool {
-	c.mu.Lock()
-	if !c.running {
-		c.mu.Unlock()
-		return true
-	}
-	if !c.answered || c.cancel == nil {
-		c.mu.Unlock()
-		return false
-	}
-	c.superseded = true
-	c.cancel()
-	ended := c.ended
-	c.mu.Unlock()
-	select {
-	case <-ended:
-		return true
-	case <-time.After(15 * time.Second):
-		return false
+		delete(c.pending, id)
 	}
 }
 
+// stop stops the turn under way: the agent is interrupted, and what it runs
+// in the background is left alone (stopTasks ends that). A turn whose
+// agent is still being started is not started. It says whether there was a
+// turn to stop.
 func (c *conversation) stop() bool {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.running || c.cancel == nil {
+	if c.starting && c.cancelStart != nil {
+		c.stopping = true
+		c.cancelStart()
+		c.mu.Unlock()
+		return true
+	}
+	if !c.answering || c.agent == nil {
+		c.mu.Unlock()
 		return false
 	}
-	c.cancel()
 	c.stopping = true
+	agent := c.agent
+	c.mu.Unlock()
+	if err := agent.Interrupt(); err != nil {
+		c.mu.Lock()
+		c.add("error", "the agent couldn't be asked to stop: "+err.Error(), nil)
+		c.mu.Unlock()
+	}
 	return true
 }
 
-// afresh forgets the conversation, unless a turn is running, and begins
-// the new one saying what was done for it, and what failed, if anything.
+// stopTasks stops what the agent has running in the background, leaving
+// the agent; it says how many it asked it to stop.
+func (c *conversation) stopTasks() int {
+	c.mu.Lock()
+	agent, tasks := c.agent, append([]BackgroundTask(nil), c.tasks...)
+	c.mu.Unlock()
+	if agent == nil {
+		return 0
+	}
+	n := 0
+	for _, t := range tasks {
+		if agent.StopTask(t.ID) == nil {
+			n++
+		}
+	}
+	return n
+}
+
+// forceStop ends the agent, and all it started, at once: for one that does
+// not stop when asked. It says whether there was one.
+func (c *conversation) forceStop() bool {
+	c.mu.Lock()
+	agent := c.agent
+	if agent == nil {
+		c.mu.Unlock()
+		return c.stop()
+	}
+	c.stopping = c.answering
+	c.mu.Unlock()
+	if err := agent.Kill(); err != nil {
+		c.mu.Lock()
+		c.add("error", err.Error(), nil)
+		c.mu.Unlock()
+	}
+	return true
+}
+
+// supersede makes way for something that takes the sandbox away (an Admin
+// action, a new conversation): an agent with only background work, or none,
+// is ended, and waited for. It says whether the way is clear (not while it is
+// answering), and what background work was ended, which the conversation says.
+func (c *conversation) supersede() (ended []BackgroundTask, ok bool) {
+	c.mu.Lock()
+	if c.busy() {
+		c.mu.Unlock()
+		return nil, false
+	}
+	agent := c.agent
+	if agent != nil && len(c.tasks) > 0 {
+		// The user chose the action, but may not know the agent had work
+		// going, now that it can be left running through any number of prompts.
+		ended = c.tasks
+		c.add("note", endedWords(ended), nil)
+		c.tasks = nil
+		c.save()
+	}
+	c.mu.Unlock()
+	if agent == nil {
+		return nil, true
+	}
+	agent.Kill()
+	select {
+	case <-agent.Done():
+		return ended, true
+	case <-time.After(15 * time.Second):
+		return ended, false
+	}
+}
+
+// endedWords says that tasks, which the agent had running in the background, were ended to make way.
+func endedWords(tasks []BackgroundTask) string {
+	return "Ended what the agent had running in the background, to make way: " + taskNames(tasks) + "."
+}
+
+// afresh forgets the conversation, unless a turn is under way, and begins
+// the new one saying what was done for it, and what failed, if anything. An
+// agent still alive (with background work) belongs to the old one, and is
+// ended.
 func (c *conversation) afresh(done string, failed []string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.running {
+	if c.busy() {
 		return false
 	}
-	c.events, c.session, c.prompt, c.model = nil, "", 0, ""
+	if agent := c.agent; agent != nil {
+		c.agent, c.tasks = nil, nil
+		c.disarmIdle()
+		go agent.Kill()
+	}
+	c.events, c.session, c.prompt, c.model, c.pending = nil, "", 0, "", nil
 	// Pages showing the old events are told to clear them.
 	c.add("reset", "", nil)
 	if done != "" {
@@ -510,6 +875,16 @@ func (c *conversation) afresh(done string, failed []string) bool {
 	}
 	c.save()
 	return true
+}
+
+// newPromptID is the id a prompt is given, for the agent's lifecycle lines to
+// name it by: a random UUID.
+func newPromptID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
 // latestReceipt is how far the latest prompt got, for a page that already
@@ -543,37 +918,63 @@ func (c *conversation) clock() time.Time {
 func (c *conversation) quiet() time.Duration {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.running || c.answered {
+	if !c.answering || c.starting {
 		return 0
 	}
 	return c.clock().Sub(c.heard)
 }
 
-// working says a turn is running: the agent answering, or having answered,
-// still at work on something it left running.
+// working says the agent has work: a turn under way (or being started), or
+// something running in the background, which calls it back.
 func (c *conversation) working() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.running
+	return c.busy() || (c.agent != nil && len(c.tasks) > 0)
 }
 
-// turn is the latest prompt's seq, and whether the agent is still at its
-// answer to it.
+// answeringNow says a turn is under way, or being started.
+func (c *conversation) answeringNow() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.busy()
+}
+
+// turn is the latest prompt's seq, and whether a turn is under way.
 func (c *conversation) turn() (prompt int, answering bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.prompt, c.running && !c.answered
+	return c.prompt, c.busy()
 }
 
-// isCompacting says the running turn's agent is compacting its context.
+// isCompacting says the agent is compacting its context.
 func (c *conversation) isCompacting() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.running && c.compacting
+	return c.answering && c.compacting
 }
 
-// since is the events after seq, whether the agent is answering, and
-// whether, having answered, it is still at work in the background.
+// backgroundTasks is what the agent has running in the background.
+func (c *conversation) backgroundTasks() []BackgroundTask {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.agent == nil {
+		return []BackgroundTask{}
+	}
+	return append([]BackgroundTask{}, c.tasks...)
+}
+
+// stopState is "stopping" while a stop is under way.
+func (c *conversation) stopState() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.busy() && c.stopping {
+		return "stopping"
+	}
+	return ""
+}
+
+// since is the events after seq, whether a turn is under way, and whether,
+// with none, the agent has work running in the background.
 func (c *conversation) since(after int) (events []event, last int, running, background bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -584,7 +985,28 @@ func (c *conversation) since(after int) (events []event, last int, running, back
 			events = append(events, e)
 		}
 	}
-	return events, c.seq, c.running && !c.answered, c.running && c.answered
+	return events, c.seq, c.busy(), !c.busy() && c.agent != nil && len(c.tasks) > 0
+}
+
+// receipts are how far the prompts still in flight have got (and the
+// latest's), for a page that already shows them to catch up with.
+func (c *conversation) receipts() []map[string]interface{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	open := map[int]bool{c.prompt: true}
+	for _, seq := range c.pending {
+		open[seq] = true
+	}
+	for _, w := range c.waiting {
+		open[w.seq] = true
+	}
+	out := []map[string]interface{}{}
+	for _, e := range c.events {
+		if e.Kind == "user" && open[e.Seq] {
+			out = append(out, map[string]interface{}{"seq": e.Seq, "state": e.Receipt})
+		}
+	}
+	return out
 }
 
 // noteSaid says something of vibe's own in the conversation: what it's doing
@@ -608,34 +1030,6 @@ func (c *conversation) retract(seqs []int) {
 		c.add("retract", "", nil)
 		c.events[len(c.events)-1].Of = seq
 	}
-}
-
-// run is a turn, in the background: prepare first, when there's one to do.
-func (c *conversation) run(ctx context.Context, prepare func(context.Context, func(string)) error, converse Converser, prompt, session string) {
-	if prepare != nil {
-		// What is said while the sandbox is made ready is true only until it is:
-		// once it is, it's taken back, so it doesn't sit in the conversation
-		// saying "starting the sandbox" over what then runs. Left, when it can't be
-		// made ready: it says what the error that follows is about.
-		var said []int
-		var mu sync.Mutex
-		err := prepare(ctx, func(text string) {
-			seq := c.noteSaid(text)
-			mu.Lock()
-			said = append(said, seq)
-			mu.Unlock()
-		})
-		if err != nil {
-			c.finish(err, ctx.Err() != nil)
-			return
-		}
-		mu.Lock()
-		c.retract(said)
-		mu.Unlock()
-	}
-	onLine := func(raw []byte) { c.line(raw) }
-	err := converse(ctx, prompt, session, func() { c.receipt(receiptDelivered) }, onLine)
-	c.finish(err, ctx.Err() != nil)
 }
 
 // maxCommands bounds how many slash commands are kept for the page.
@@ -686,6 +1080,10 @@ func (s *Server) conversationEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	body := map[string]interface{}{
 		"events": events, "last": last, "running": running, "background": background, "reset": reset, "receipt": receipt,
+		"receipts": s.convo.receipts(),
+		// What the agent has running in the background, for the page to name
+		// (and, after a stop, to offer to stop too).
+		"tasks": s.convo.backgroundTasks(),
 		// Minutes the agent has been answering with nothing new, once that
 		// is long enough to say so.
 		"quietMinutes": quietMinutes(s.convo.quiet()),
@@ -704,6 +1102,8 @@ func (s *Server) conversationEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, body)
 }
 
+// conversationSend gives the agent a prompt. One sent while the agent is
+// answering is taken into the turn under way, as the console does.
 func (s *Server) conversationSend(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Prompt string `json:"prompt"`
@@ -721,65 +1121,50 @@ func (s *Server) conversationSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "there is nothing to send")
 		return
 	}
-	if s.startTurn(req.Prompt) {
-		writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
-		return
-	}
-	if s.convo.queue(req.Prompt) {
-		writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true, "queued": true})
-		return
-	}
-	writeError(w, http.StatusConflict, "the agent is still answering the last prompt")
+	seq, _ := s.convo.claim(req.Prompt, true)
+	s.convo.give(seq, req.Prompt, s.cfg.StartAgent, s.cfg.Prepare)
+	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
 }
 
-// startTurn sends prompt to the agent as a turn, in the background; false
-// when it can't, the agent still answering the last one.
-func (s *Server) startTurn(prompt string) bool {
-	launch, _, ok := s.claimTurn(prompt)
-	if ok {
-		launch()
-	}
-	return ok
-}
-
-// startQueuedTurn gives the agent the prompt that waited for a stopped turn
-// to end.
-func (s *Server) startQueuedTurn(seq int, prompt string) {
-	if session, ctx, ok := s.convo.beginQueued(seq); ok {
-		go s.convo.run(ctx, s.cfg.Prepare, s.cfg.Converse, prompt, session)
-	}
-}
-
-// claimTurn makes prompt the next turn, unless the agent is still at the
-// last, without yet giving it to the agent: launch does, or abandon ends
-// it, saying why. Something the turn needs (a review to start) is made in
+// claimTurn makes prompt the next turn, unless the agent is answering,
+// without yet giving it to the agent: launch does, or abandon ends it,
+// saying why. Something the turn needs (a review to start) is made in
 // between, so the agent never hears of one that isn't there, and nothing
-// made is undone because the agent was busy.
+// made is undone because the agent was busy. A review's prompts are never
+// taken into a turn under way: they are turns of their own.
 func (s *Server) claimTurn(prompt string) (launch func(), abandon func(error), ok bool) {
-	session, ctx, ok := "", context.Context(nil), s.convo.supersede()
-	if ok {
-		session, ctx, ok = s.convo.begin(prompt)
-	}
+	seq, ok := s.convo.claim(prompt, false)
 	if !ok {
 		return nil, nil, false
 	}
-	launch = func() { go s.convo.run(ctx, s.cfg.Prepare, s.cfg.Converse, prompt, session) }
-	abandon = func(why error) {
-		s.convo.undeliver()
-		s.convo.finish(why, false)
-	}
+	launch = func() { s.convo.give(seq, prompt, s.cfg.StartAgent, s.cfg.Prepare) }
+	abandon = func(why error) { s.convo.abandon(seq, why) }
 	return launch, abandon, true
 }
 
-// conversationStop stops the agent's turn. While the agent is writing a review, that ends the review (it would be left saying the
-// agent is reviewing, with nothing at work on it): so it asks first, with a 409 and the code "review-in-progress", unless the
-// request says confirmed; confirmed, the turn is stopped and the review dropped, as closing the review does. A turn the review didn't
-// begin, and a review that is finished, are stopped as they always were.
+// conversationStop stops the agent's turn: it is interrupted, and what it
+// runs in the background is left alone; the page then offers to stop that
+// too ({"tasks": true}). {"force": true} ends the agent and all it started, for
+// one that does not stop when asked. While the agent is writing a review, a
+// stop ends the review (it would be left saying the agent is reviewing, with
+// nothing at work on it): so it asks first, with a 409 and the code
+// "review-in-progress", unless the request says confirmed; confirmed, the turn
+// is stopped and the review dropped, as closing the review does.
 func (s *Server) conversationStop(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Confirmed bool `json:"confirmed"`
+		Tasks     bool `json:"tasks"`
+		Force     bool `json:"force"`
 	}
 	json.NewDecoder(r.Body).Decode(&req) // the body is optional: a stop from before it had one
+	if req.Tasks {
+		writeJSON(w, http.StatusOK, map[string]int{"stopped": s.convo.stopTasks()})
+		return
+	}
+	if req.Force {
+		writeJSON(w, http.StatusOK, map[string]bool{"stopped": s.convo.forceStop()})
+		return
+	}
 	if tab := s.cfg.ReviewTab; tab != nil {
 		if rv, err := tab.Store.Load(); err == nil && s.reviewWriting(rv) {
 			if !req.Confirmed {

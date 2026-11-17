@@ -282,3 +282,27 @@ test('a prompt held for packages scrolls to the end once it is sent anyway', asy
     assert.equal(log.scrollTop, 1000)
   } finally { p.close() }
 })
+
+test('a sandbox with no package features is not asked about packages when a prompt is sent, nor on the Admin tab', async () => {
+  const at = { sent: [] }
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, admin: true, conversation: true, packages: false, packageSync: false, attention: {} },
+      '/api/conversation': { events: [], last: 0, running: false },
+      '/api/conversation/send': (call) => { at.sent.push(call.body.prompt); return { ok: true } },
+      '/api/admin': {},
+      '/api/instructions': {},
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+  })
+  try {
+    await press(p, 'please build')
+    assert.deepEqual(at.sent, ['please build'])
+    await p.click('tab-admin')
+    await p.poll()
+    const asked = p.calls.filter((c) => c.path.startsWith('/api/packages')).map((c) => c.method + ' ' + c.path)
+    assert.deepEqual(asked, [], 'asked a sandbox with no package features about packages')
+    assert.equal(p.$('admin-packages-card').hidden, true)
+    assert.equal(p.$('admin-sync-card').hidden, true)
+  } finally { p.close() }
+})

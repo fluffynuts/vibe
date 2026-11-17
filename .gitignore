@@ -8,3 +8,7 @@
 tmp
 # the companion page tests' jsdom: npm ci in internal/companion/uitest
 node_modules/
+__pycache__/
+
+# editor swap files
+*.swp

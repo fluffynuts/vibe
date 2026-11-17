@@ -649,18 +649,29 @@
   }
 
   // BLOCKED_SEEN keeps the hosts the user has seen blocked and left that way,
-  // as a JSON list, per browser (and per sandbox: storage is per origin). It's
-  // what makes a dot on the Network log tab mean a host that's new: one the
-  // user has looked at and left blocked, or chose to block, isn't news.
+  // each with when it was last blocked as they saw it, as a JSON object, per
+  // browser (and per sandbox: storage is per origin). It's what makes a dot on
+  // the Network log tab mean a host that's news: one the user has looked at and
+  // left blocked, or chose to block, isn't, until it is blocked again after
+  // that. A browser from before blocks were dated kept a list: its hosts are
+  // seen, as of when they are next found blocked ('').
   const BLOCKED_SEEN = 'vibe-companion-blocked-seen'
 
   function seenBlocked() {
     const stored = store.get(BLOCKED_SEEN)
     if (stored === null || stored === undefined || stored === '') return null
     try {
-      const list = JSON.parse(stored)
-      return Array.isArray(list) ? list : null
+      const kept = JSON.parse(stored)
+      if (Array.isArray(kept)) return Object.fromEntries(kept.filter((h) => typeof h === 'string').map((h) => [h, '']))
+      return kept && typeof kept === 'object' ? kept : null
     } catch (e) { return null }
+  }
+
+  // blockedSince is whether a host was blocked after the time it was seen blocked; either not known is not.
+  function blockedSince(at, seenAt) {
+    const a = Date.parse(at || '')
+    const b = Date.parse(seenAt || '')
+    return !isNaN(a) && !isNaN(b) && a > b
   }
 
   // BLOCKED_DISMISSED keeps the hosts the user said not to be told of again, as a JSON list, per
@@ -676,28 +687,36 @@
     } catch (e) { return [] }
   }
 
-  // noteBlocked works out which of the hosts vibe says are blocked are new.
-  // Not known yet (null) is not "none are": nothing is taken as seen. With
-  // nothing kept (a browser's first visit), what's blocked now is taken as
-  // seen: a long history isn't news. A host that stops being blocked is
-  // forgotten, so being blocked again is news. And what's blocked while the
-  // Network log tab is open is being looked at.
-  function noteBlocked(hosts) {
+  // noteBlocked works out which of the hosts vibe says are blocked are news,
+  // from when each was last blocked (at). Not known yet (null) is not "none
+  // are": nothing is taken as seen. With nothing kept (a browser's first
+  // visit), what's blocked now is taken as seen: a long history isn't news. A
+  // host blocked after the user saw it is news again, as is one that stops
+  // being blocked (it is forgotten) and is blocked again. What's blocked while
+  // the Network log tab is open is being looked at. A host the user dismissed
+  // is never news again.
+  function noteBlocked(hosts, at) {
     state.newBlocked = []
     if (!Array.isArray(hosts)) return
+    const when = (h) => (at && typeof at[h] === 'string' ? at[h] : '')
+    const has = (o, h) => Object.prototype.hasOwnProperty.call(o, h)
     const seen = seenBlocked()
-    if (seen === null) { store.set(BLOCKED_SEEN, JSON.stringify(hosts)); return }
-    const kept = state.tab === 'log' ? hosts : seen.filter((h) => hosts.includes(h))
-    if (kept.length !== seen.length || kept.some((h, i) => h !== seen[i])) store.set(BLOCKED_SEEN, JSON.stringify(kept))
+    if (seen === null) { store.set(BLOCKED_SEEN, JSON.stringify(Object.fromEntries(hosts.map((h) => [h, when(h)])))); return }
+    const kept = {}
+    for (const h of hosts) {
+      if (state.tab === 'log') kept[h] = when(h)
+      else if (has(seen, h)) kept[h] = seen[h] || when(h)
+    }
+    if (JSON.stringify(kept) !== JSON.stringify(seen)) store.set(BLOCKED_SEEN, JSON.stringify(kept))
     const dismissed = dismissedBlocked()
-    state.newBlocked = hosts.filter((h) => !kept.includes(h) && !dismissed.includes(h))
+    state.newBlocked = hosts.filter((h) => !dismissed.includes(h) && (!has(kept, h) || blockedSince(when(h), kept[h])))
   }
 
   function dismissBlocked() {
     const hosts = state.newBlocked || []
     if (!hosts.length) return
     store.set(BLOCKED_DISMISSED, JSON.stringify(dismissedBlocked().concat(hosts).slice(-MAX_DISMISSED)))
-    noteBlocked(state.blockedHosts)
+    noteBlocked(state.blockedHosts, state.blockedAt)
     showAllAttention()
   }
 
@@ -726,7 +745,7 @@
   // what's blocked.
   function blockedSeen() {
     if (!(state.newBlocked || []).length) return
-    noteBlocked(state.blockedHosts)
+    noteBlocked(state.blockedHosts, state.blockedAt)
     showAllAttention()
   }
 
@@ -930,18 +949,20 @@
   // logReadAtOnce says the next read of a tab's list follows a change to a rule: see load.
   let logReadAtOnce = false
 
-  // The hosts the Network log was refreshed for, as they were blocked: the log is only polled while its tab is open,
-  // so a host seen blocked from another tab would not be in it when the user went there.
+  // The blocks the Network log was refreshed for, each a host and when it was blocked: the log is only polled while its tab is
+  // open, so a host seen blocked from another tab would not be in it when the user went there.
   let logRefreshedFor = new Set()
 
   // refreshLogForNewBlocks reads the Network log in the background when hosts are blocked that it has not been read for,
-  // so the blocked request is in it by the time the user gets there.
+  // or blocked again since, so the blocked request is in it by the time the user gets there.
   function refreshLogForNewBlocks() {
     const hosts = Array.isArray(state.blockedHosts) ? state.blockedHosts : []
-    logRefreshedFor = new Set([...logRefreshedFor].filter((h) => hosts.includes(h)))
-    const fresh = (state.newBlocked || []).filter((h) => !logRefreshedFor.has(h))
+    const block = (h) => h + '@' + ((state.blockedAt && state.blockedAt[h]) || '')
+    const current = new Set(hosts.map(block))
+    logRefreshedFor = new Set([...logRefreshedFor].filter((b) => current.has(b)))
+    const fresh = (state.newBlocked || []).map(block).filter((b) => !logRefreshedFor.has(b))
     if (!fresh.length) return
-    for (const h of fresh) logRefreshedFor.add(h)
+    for (const b of fresh) logRefreshedFor.add(b)
     unlessBusy('tab log', () => load('log'))
   }
 
@@ -1015,6 +1036,8 @@
       state.signin = !!res.body.signin
       state.signinStart = !!res.body.signinStart
       state.signinKey = !!res.body.signinKey
+      state.packages = res.body.packages
+      state.packageSync = res.body.packageSync
       $('admin-signin').hidden = !state.signin
       if (state.signin && !signInShown.asked) loadSignIn()
       $('usage').hidden = !state.usage
@@ -1027,7 +1050,8 @@
       renderSyncWaiting(res.body.packagesToFetch || 0)
       renderStaleWaiting(res.body.packagesStale || 0, res.body.packagesStaleProjects || [])
       state.blockedHosts = res.body.blockedHosts
-      noteBlocked(state.blockedHosts)
+      state.blockedAt = res.body.blockedAt
+      noteBlocked(state.blockedHosts, state.blockedAt)
       refreshLogForNewBlocks()
       state.reviewAt = res.body.review ? res.body.reviewAt || '' : ''
       showAllAttention()
@@ -1213,6 +1237,7 @@
       : state.tab === 'manage' ? [unlessBusy('state', loadState), unlessBusy('manage', loadManage)]
       : state.tab === 'review' ? [unlessBusy('state', loadState), unlessBusy('review', () => loadReview(reviewView.files === null))]
       : [unlessBusy('state', loadState), unlessBusy('tab ' + state.tab, () => load(state.tab))]
+    if (state.tab === 'admin' && state.themes) loads.push(unlessBusy('theme', loadTheme))
     if (state.usage) loads.push(unlessBusy('usage', loadUsage))
     if (gate.active && gate.fetching) loads.push(unlessBusy('gate', refreshGate))
     Promise.allSettled(loads).then(startedIfReady)
@@ -3961,10 +3986,16 @@
 
   // The drop-down shows the theme the agent has; choosing one sets it at once, and the page's accent
   // takes its colour without waiting for the next state.
-  const themeChoice = { shown: '' }
+  // drawn is what was drawn last, as vibe said it: vibe answers at once with what it last knew, and the tab asks again as it
+  // polls, so the theme the sandbox is found to have shows; drawn again only when that changes, and not while the drop-down
+  // has the focus (it may be open).
+  const themeChoice = { shown: '', drawn: '' }
 
   function drawTheme(t) {
     const select = $('settings-theme')
+    const drawn = JSON.stringify(t)
+    if (drawn === themeChoice.drawn || document.activeElement === select) return
+    themeChoice.drawn = drawn
     select.replaceChildren(...t.options.map((name) => {
       const option = el('option', { text: name === 'default' ? 'Default' : name })
       option.value = name
@@ -3972,7 +4003,8 @@
     }))
     select.value = t.current
     themeChoice.shown = t.current
-    $('settings-theme-note').textContent = t.live ? '' : "This sandbox isn't running: a choice is kept for the next time it is built."
+    // Not said while vibe is still asking the sandbox: it may well be running.
+    $('settings-theme-note').textContent = t.live || t.checking ? '' : "This sandbox isn't running: a choice is kept for the next time it is built."
   }
 
   async function loadTheme() {
@@ -4114,6 +4146,7 @@
   const MAX_LISTED = 300
 
   async function loadSync() {
+    if (lacks('packageSync')) { noSuchCard('admin-sync-card', 'sync'); return }
     try {
       const res = await api('/api/packages/sync')
       reached(true)
@@ -4227,11 +4260,24 @@
 
   // --- package requests on the Admin tab -----------------------------------
 
+  // lacks is whether vibe has said this sandbox has no such feature: until it has (the state not yet read, or a vibe that doesn't say), the
+  // feature's own calls are made (a sandbox without it answers 404, and is taken as having none).
+  function lacks(feature) {
+    return state.loaded && state[feature] === false
+  }
+
+  function noSuchCard(id, card) {
+    $(id).hidden = true
+    showPackagesCard()
+    cardLoaded(card)
+  }
+
   // unticked is the keys of the requests the user has unticked: all are
   // ticked until then, and a poll doesn't undo it.
   const packagesView = { key: '', unticked: new Set(), config: '', byKey: new Map() }
 
   async function loadPackages() {
+    if (lacks('packages')) { noSuchCard('admin-packages-card', 'packages'); return }
     try {
       const res = await api('/api/packages')
       reached(true)
@@ -5356,7 +5402,7 @@
 
   // news: the agent has said something since the Conversation tab was last
   // open (its dot); loaded: the conversation so far has been fetched once.
-  const convo = { last: 0, running: false, background: false, stopState: '', polling: false, behind: false, news: false, loaded: false, lastPrompt: '', ticks: new Map(), typing: null, group: null }
+  const convo = { last: 0, running: false, background: false, tasks: [], stopState: '', stoppingSince: 0, offerTasks: false, offerNow: false, polling: false, behind: false, news: false, loaded: false, lastPrompt: '', ticks: new Map(), typing: null, group: null }
 
   // showTyping keeps the "typing" bubble below the agent's latest message
   // for as long as it is answering, and takes it away once it has. Its
@@ -5910,8 +5956,8 @@
   // The ticks on what the user said, as on a chat message: one when vibe has
   // it, two when the sandbox has it, two in blue once the agent has started
   // answering.
-  const RECEIPT_TICKS = { queued: '…', sent: '✓', delivered: '✓✓', seen: '✓✓', undelivered: '✕' }
-  const RECEIPT_WORDS = { queued: 'Waiting for the agent to stop', sent: 'Sent', delivered: 'Delivered', seen: 'The agent is answering', undelivered: 'Not given to the agent' }
+  const RECEIPT_TICKS = { sent: '✓', delivered: '✓✓', seen: '✓✓', undelivered: '✕' }
+  const RECEIPT_WORDS = { sent: 'Sent', delivered: 'Delivered', seen: 'The agent is answering', undelivered: 'Not given to the agent' }
 
   function showReceipt(seq, receipt) {
     const ticks = convo.ticks.get(seq)
@@ -6047,7 +6093,8 @@
       el('pre', { text })))
   }
 
-  function showAgent(line, at) {
+  // stopped says the line is the result of a turn the user stopped: the agent marks that an error, and it is not one.
+  function showAgent(line, at, stopped) {
     if (!line || typeof line !== 'object') return
     const content = line.message && Array.isArray(line.message.content) ? line.message.content : []
     if (line.type === 'assistant') {
@@ -6072,7 +6119,7 @@
       for (const block of content) if (block.type === 'tool_result') showResult(block)
     } else if (line.type === 'result') {
       endToolGroup()
-      if (line.is_error) {
+      if (line.is_error && !stopped) {
         convoNote('error', typeof line.result === 'string' && line.result ? line.result : 'The agent reported an error.', at)
       }
       const bits = []
@@ -6089,7 +6136,7 @@
   function showEvent(ev) {
     if (ev.kind === 'reset') { $('convo-log').replaceChildren(); convo.ticks.clear(); convo.group = null }
     else if (ev.kind === 'user') { convo.lastPrompt = ev.text || ''; userNote(ev) }
-    else if (ev.kind === 'agent') showAgent(ev.agent, ev.at)
+    else if (ev.kind === 'agent') showAgent(ev.agent, ev.at, ev.text === 'stopped')
     else if (ev.kind === 'note') convoNote('meta', ev.text || '', undefined, ev.seq)
     // What vibe said it was doing, no longer so (the sandbox is up): gone, not left to be read as current.
     else if (ev.kind === 'retract') { convo.ticks.delete(Number(ev.of)); $('convo-log').querySelectorAll('[data-seq="' + Number(ev.of) + '"]').forEach((n) => n.remove()) }
@@ -6099,12 +6146,18 @@
       // notice find out, if they haven't looked lately, rather than the page matching the words of the failure.
       if (state.signin && Date.now() - signInShown.lastCheck > SIGNIN_RECHECK_MS) loadSignIn()
     }
-    else if (ev.kind === 'done' && ev.text === 'stopped') convoNote('meta', 'Stopped.')
+    else if (ev.kind === 'done' && ev.text === 'stopped') {
+      convoNote('meta', 'Stopped.')
+      // This page's stop has taken effect: what it left in the background is offered with it (pollConversation), not at the
+      // next poll that finds the agent idle, which may be after a turn it went on to.
+      if (convo.offerTasks) { convo.offerTasks = false; convo.offerNow = true }
+    }
   }
 
-  // running is the agent answering; background is it having answered, but
-  // still waiting on something it left running (a review page, say). Then
-  // the page goes on as if it were done: sending ends that work.
+  // running is the agent answering; background is it having answered, with
+  // something it left running in the background (a test suite, a review
+  // page), which calls it back when it ends. A prompt can be sent meanwhile:
+  // the work goes on.
   // quietMinutes, when not 0, is how long the agent has been answering
   // without a word: long enough that it may be stuck. The turn isn't
   // stopped — that's the user's call. compacting is the agent making room
@@ -6124,16 +6177,18 @@
     const now = running && compacting ? 'The agent is compacting its context.'
       : running && quietMinutes ? 'The agent is working on a prompt, but there has been no output for ' + quietMinutes + ' minutes: it may be stuck.'
       : running ? 'The agent is working on a prompt.'
-      : background ? 'The agent has answered and left something running in the sandbox.'
+      : background ? 'The agent has answered, and has something running in the background: it carries on when that ends.'
       : 'The agent is idle.'
     light.title = now + ' ' + LIGHT_USE
     light.setAttribute('aria-label', light.title)
   }
 
-  // stopState is '' normally, 'stopping' while the agent is being stopped, and 'waiting' once a prompt waits behind that.
-  function setConvoRunning(running, background, quietMinutes, compacting, stopState) {
+  // stopState is '' normally, and 'stopping' while the agent is being stopped. tasks are what it has running in the background.
+  function setConvoRunning(running, background, quietMinutes, compacting, stopState, tasks) {
     stopState = running ? stopState || '' : ''
+    if (stopState && !convo.stopState) convo.stoppingSince = Date.now()
     convo.stopState = stopState
+    if (Array.isArray(tasks)) convo.tasks = tasks
     const ended = convo.running && !running
     convo.background = !running && background
     drawAgentLight(running, background, quietMinutes, compacting)
@@ -6143,24 +6198,68 @@
     // What the agent ran is known now, and what was chosen has been used.
     if (ended && state.choice) choiceTurnEnded()
     if (ended) reviewTurnEnded()
-    $('convo-send').disabled = running && stopState !== 'stopping'
-    // Only while it answers: what it has left running ends with the next
-    // prompt anyway.
+    // A prompt sent while the agent answers is taken into its turn, as the console does.
+    $('convo-send').disabled = false
+    // Only while it answers: what it has left running in the background is offered once the stop has taken effect (offerToStopTasks).
+    // A stop that has not taken effect after a while can be forced: the agent, and all it started, ended at once.
+    const stuck = !!stopState && Date.now() - convo.stoppingSince > FORCE_STOP_AFTER_MS
     $('convo-stop').hidden = !running
-    $('convo-stop').disabled = !!stopState
+    $('convo-stop').disabled = !!stopState && !stuck
+    $('convo-stop').textContent = stuck ? 'Force stop' : 'Stop (Escape)'
+    $('convo-stop').title = stuck ? 'The agent has not stopped: end it, and everything it started, at once' : 'Escape, in the prompt box'
     $('convo-new').disabled = running
     // While it answers, the typing bubble says so.
     const status = $('convo-status')
-    status.classList.toggle('warn-text', !!(running && quietMinutes) || (!running && background))
-    status.textContent = stopState === 'stopping'
-      ? 'Stopping the agent… you can send another prompt now: it goes to the agent once this has stopped.'
-      : stopState === 'waiting'
-      ? 'Waiting for the agent to stop… your prompt goes to it as soon as it has.'
+    status.classList.toggle('warn-text', !!(running && quietMinutes))
+    status.textContent = stuck
+      ? 'The agent has not stopped yet. Force stop ends it, and everything it started (anything in the background too).'
+      : stopState === 'stopping'
+      ? 'Stopping the agent…'
       : running && compacting
       ? 'The agent is compacting its context (summarising the conversation so far to make room). This can take a few minutes; it answers once it is done.'
       : running && quietMinutes
       ? 'No output from the agent for ' + quietMinutes + ' minutes — it may be stuck. Stop it, or check "sbx ls" in a terminal; it is still being waited for.'
-      : !running && background ? 'The agent has answered, and has something still running. Sending a prompt ends it.' : ''
+      : !running && background ? backgroundWords(convo.tasks) : ''
+  }
+
+  // FORCE_STOP_AFTER_MS is how long a stop may take before the page offers to force it.
+  const FORCE_STOP_AFTER_MS = 8000
+
+  // backgroundWords says what the agent has running in the background, naming it.
+  function backgroundWords(tasks) {
+    const named = tasks.map((t) => t && t.description).filter(Boolean)
+    const what = named.length ? ': ' + named.map((d) => '"' + d + '"').join(', ') : ''
+    const count = tasks.length === 1 ? 'something' : tasks.length + ' things'
+    return 'The agent has answered, and has ' + count + ' running in the background' + what + '. You can send a prompt meanwhile: the work carries on.'
+  }
+
+  // offerToStopTasks says, once a stop has taken effect, what the agent still has running in the background, and lets the user choose
+  // whether to stop that too: a stop interrupts the turn and leaves background work alone. Nothing is said when there is none.
+  function offerToStopTasks(tasks) {
+    if (!tasks.length) return
+    const named = tasks.map((t) => t && t.description).filter(Boolean)
+    const words = 'Stopped. The agent still has ' + (tasks.length === 1 ? 'a task' : tasks.length + ' tasks') + ' running in the background' +
+      (named.length ? ': ' + named.map((d) => '"' + d + '"').join(', ') : '') + '. '
+    const row = el('div', { class: 'msg meta tasks-offer' })
+    const done = (text) => row.replaceChildren(el('span', { text }))
+    const stopThem = el('button', { type: 'button', class: 'small danger', text: 'Stop them too', onclick: async () => {
+      stopThem.disabled = leave.disabled = true
+      try {
+        const res = await post('/api/conversation/stop', { tasks: true })
+        reached(true)
+        if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); stopThem.disabled = leave.disabled = false; return }
+        done('Stopped what the agent had running in the background.')
+        pollConversation()
+      } catch (e) {
+        reached(false)
+        toast('Could not reach vibe.', true)
+        stopThem.disabled = leave.disabled = false
+      }
+    } })
+    const leave = el('button', { type: 'button', class: 'small ghost', text: 'Leave them running', onclick: () => done('Left what the agent has running in the background to carry on.') })
+    row.append(el('span', { text: words }), stopThem, ' ', leave)
+    endToolGroup()
+    $('convo-log').append(row)
   }
 
   async function pollConversation() {
@@ -6183,10 +6282,16 @@
       }
       for (const ev of res.body.events || []) showEvent(ev)
       if (res.body.receipt) showReceipt(res.body.receipt.seq, res.body.receipt.state)
+      // Every prompt still in flight: one sent while the agent answered is taken into its turn, and moves on its own.
+      for (const r of res.body.receipts || []) if (r) showReceipt(r.seq, r.state)
       convo.last = res.body.last || 0
       // A turn that isn't running has no tools still being used, whatever the last thing said was.
       if (!res.body.running) endToolGroup()
-      setConvoRunning(!!res.body.running, !!res.body.background, res.body.quietMinutes || 0, !!res.body.compacting, res.body.stopState)
+      setConvoRunning(!!res.body.running, !!res.body.background, res.body.quietMinutes || 0, !!res.body.compacting, res.body.stopState, res.body.tasks)
+      if (convo.offerNow) {
+        convo.offerNow = false
+        offerToStopTasks(Array.isArray(res.body.tasks) ? res.body.tasks : [])
+      }
       if ((res.body.events || []).length) {
         if ($('panel-conversation').hidden) {
           convo.behind = true
@@ -6238,25 +6343,9 @@
     const input = $('convo-input')
     resolveTrailingEmoticon(input)
     const prompt = input.value.trim()
-    if (!prompt || (convo.running && convo.stopState !== 'stopping') || gate.active) return
-    if (convo.background && await endBackgroundWork()) return
+    if (!prompt || gate.active) return
     if (await holdForPackages(prompt)) return
     await deliverPrompt(prompt)
-  }
-
-  // endBackgroundWork asks, when the agent has answered and left something running, whether to send the prompt anyway: the server
-  // ends that work for a new prompt, and it won't report back. A user who sees an idle conversation has no other way to know. It
-  // resolves true when the user would rather not (the prompt stays in the box, and the agent goes on), false to send.
-  function endBackgroundWork() {
-    return new Promise((resolve) => {
-      confirmThen({
-        title: "End the agent's background work?",
-        text: 'The agent has answered, and still has something running in the sandbox. Sending this prompt ends it: it won\'t report back, and you would have to ask for it again. Cancel keeps what you typed, and the agent keeps working.',
-        safe: true, commandNote: '', command: '', runLabel: 'Send and end it',
-        cancelled: () => resolve(true),
-        run: async () => { resolve(false); return { asked: true } },
-      })
-    })
   }
 
   async function deliverPrompt(prompt) {
@@ -6272,7 +6361,7 @@
       // would arrive below the fold. Being at the end also makes the renders that follow stick.
       const log = $('convo-log')
       log.scrollTop = log.scrollHeight
-      setConvoRunning(true, false, 0, false, res.body.queued ? 'waiting' : '')
+      setConvoRunning(true, false, 0, false, convo.stopState)
       showTyping()
       pollConversation()
     } catch (e) {
@@ -6292,8 +6381,8 @@
   const gate = { active: false, fetching: false, prompt: '', failed: '' }
 
   async function checkPackages() {
-    const sync = post('/api/packages/sync/check', {}).then((res) => (res.ok && res.body ? res.body : {})).catch(() => ({}))
-    const requests = api('/api/packages').then((res) => (res.ok && res.body && res.body.requests) || []).catch(() => [])
+    const sync = lacks('packageSync') ? Promise.resolve({}) : post('/api/packages/sync/check', {}).then((res) => (res.ok && res.body ? res.body : {})).catch(() => ({}))
+    const requests = lacks('packages') ? Promise.resolve([]) : api('/api/packages').then((res) => (res.ok && res.body && res.body.requests) || []).catch(() => [])
     const [b, asked] = await Promise.all([sync, requests])
     return Object.assign({}, b, { undecided: asked.filter((r) => !r.approved).length })
   }
@@ -6382,16 +6471,22 @@
     renderGate(b)
   }
 
-  // stopAgent stops the agent's turn. While the agent is writing a review, that ends the review: vibe says so (409,
+  // stopAgent stops the agent's turn: it is interrupted, and what it has running in the background is left alone, to be offered
+  // once the stop has taken effect (offerToStopTasks). A stop that has not taken effect after a while is forced instead: the agent,
+  // and all it started, ended at once. While the agent is writing a review, a stop ends the review: vibe says so (409,
   // review-in-progress) and it is asked first, in the words closing the review uses; confirmed, the stop is sent again, saying so,
   // and the Review tab goes back to its start options. The Stop button and Escape both come here.
   async function stopAgent() {
+    const force = !!convo.stopState && Date.now() - convo.stoppingSince > FORCE_STOP_AFTER_MS
     try {
-      const res = await post('/api/conversation/stop', {})
+      const res = await post('/api/conversation/stop', force ? { force: true } : {})
       reached(true)
       if (res.status === 409 && res.body && res.body.code === 'review-in-progress') { askToStopWriting(); return }
       if (!res.ok) toast((res.body && res.body.error) || 'That failed.', true)
-      else if (res.body.stopped) setConvoRunning(true, false, 0, false, 'stopping')
+      else if (res.body.stopped) {
+        convo.offerTasks = !force
+        setConvoRunning(true, false, 0, false, 'stopping')
+      }
       pollConversation()
     } catch (e) {
       reached(false)
@@ -6741,7 +6836,7 @@
   // A colon and the start of a name in the prompt (:roc) offers the emoji it could be, as the slash commands are offered; the
   // pick puts the character itself in the prompt, and typing the closing colon of a whole name (:tada:) does too. The
   // names, and what is a name being typed, are ui/emoji.js's. It can be turned off (Settings), and is remembered.
-  const emojiState = { on: store.get('vibe-emoji-complete') !== 'off', shown: [], at: 0, open: false }
+  const emojiState = { on: store.get('vibe-emoji-complete') !== 'off', shown: [], at: 0, open: false, start: 0 }
   const EMOJI_SHOWN = 8
 
   function closeEmoji() {
@@ -6787,6 +6882,7 @@
     input.setAttribute('aria-controls', 'convo-emoji')
     input.setAttribute('aria-expanded', 'true')
     input.setAttribute('aria-activedescendant', 'convo-emoji-' + emojiState.at)
+    emojiState.start = word.start
     placeEmoji(word.start)
     const picked = $('convo-emoji-' + emojiState.at)
     if (picked) picked.scrollIntoView({ block: 'nearest' })
@@ -6930,6 +7026,9 @@
       updateEmoji(true)
     })
     input.addEventListener('click', () => updateEmoji(false))
+    // The list is placed at the caret as the prompt shows it, and the browser may scroll the prompt to the caret after the
+    // input that showed the list (Firefox on Windows does): it follows.
+    input.addEventListener('scroll', () => { if (emojiState.open) placeEmoji(emojiState.start) })
     input.addEventListener('keyup', (ev) => {
       if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) updateEmoji(false)
     })

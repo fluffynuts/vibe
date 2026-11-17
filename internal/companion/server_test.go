@@ -512,11 +512,16 @@ func clipboardState(t *testing.T, s *Server) (ready, canStart bool) {
 	return got.Ready, got.CanStart
 }
 
+// The address is kept while the page answers there (see TestTheClipboardAddressIsKeptWhileItsPageAnswers), so the answer must be
+// the clipboard page's, not any program's that has the port since: its title says so.
 func TestTheClipboardIsReadyOnlyOnceItsPageAnswers200(t *testing.T) {
 	var status atomic.Int32
+	var body atomic.Value
 	status.Store(http.StatusBadGateway)
+	body.Store(`<!doctype html><html><head><title>vibe clipboard</title></head></html>`)
 	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(int(status.Load()))
+		io.WriteString(w, body.Load().(string))
 	}))
 	defer page.Close()
 	if probeClipboard(page.URL) {
@@ -526,10 +531,86 @@ func TestTheClipboardIsReadyOnlyOnceItsPageAnswers200(t *testing.T) {
 	if !probeClipboard(page.URL) {
 		t.Error("a 200 didn't count as ready")
 	}
+	body.Store(`<!doctype html><html><head><title>something else</title></head></html>`)
+	if probeClipboard(page.URL) {
+		t.Error("another program's page on the port counted as the clipboard")
+	}
 	page.Close()
 	if probeClipboard(page.URL) {
 		t.Error("nothing listening counted as ready")
 	}
+}
+
+// Where the clipboard page is published is asked of sbx, which can be slow: it is asked once, and again only when the page
+// stops answering where it was.
+func TestTheClipboardAddressIsKeptWhileItsPageAnswers(t *testing.T) {
+	var asked atomic.Int32
+	now := time.Unix(1_800_000_000, 0)
+	s := New(Config{Sandbox: "vibe", Token: token, Port: testPort, ClipboardURL: func() string {
+		asked.Add(1)
+		return "http://localhost:5390"
+	}, ClipboardReady: func(string) bool { return true }})
+	s.clock = func() time.Time { return now }
+	for i := 0; i < 5; i++ {
+		do(t, s, req{path: "/api/state", headers: authed(nil)})
+		now = now.Add(time.Minute)
+		s.cache.clear()
+	}
+	if n := asked.Load(); n != 1 {
+		t.Errorf("asked %d times over five minutes of the page answering, want 1", n)
+	}
+}
+
+func TestAClipboardPageThatStopsAnsweringHasItsAddressAskedAgainWithoutTheStateWaiting(t *testing.T) {
+	var asked atomic.Int32
+	var up atomic.Bool
+	up.Store(true)
+	release := make(chan struct{})
+	now := time.Unix(1_800_000_000, 0)
+	var nowMu sync.Mutex
+	s := New(Config{Sandbox: "vibe", Token: token, Port: testPort, ClipboardURL: func() string {
+		if asked.Add(1) == 1 {
+			return "http://localhost:5390"
+		}
+		<-release // sbx, slow
+		return "http://localhost:5391"
+	}, ClipboardReady: func(url string) bool {
+		return up.Load() && url == "http://localhost:5391" || url == "http://localhost:5390" && up.Load()
+	}})
+	s.clock = func() time.Time { nowMu.Lock(); defer nowMu.Unlock(); return now }
+	url := func() string {
+		var got struct {
+			URL string `json:"clipboardUrl"`
+		}
+		json.Unmarshal(do(t, s, req{path: "/api/state", headers: authed(nil)}).Body.Bytes(), &got)
+		return got.URL
+	}
+	if got := url(); got != "http://localhost:5390" {
+		t.Fatalf("first: %q", got)
+	}
+	up.Store(false) // the sandbox came back on another port
+	nowMu.Lock()
+	now = now.Add(time.Minute)
+	nowMu.Unlock()
+	s.cache.clear()
+	began := time.Now()
+	if got := url(); got != "http://localhost:5390" {
+		t.Errorf("while the address is being asked again: %q, want the one held", got)
+	}
+	if took := time.Since(began); took > 500*time.Millisecond {
+		t.Errorf("the state waited %s for sbx", took)
+	}
+	waitFor(t, "the address to be asked again", func() bool { return asked.Load() == 2 })
+	for i := 0; i < 3; i++ {
+		s.cache.clear()
+		url()
+	}
+	if n := asked.Load(); n != 2 {
+		t.Errorf("asked %d times while one asking was under way, want 2", n)
+	}
+	up.Store(true)
+	close(release)
+	waitFor(t, "the new address to be taken", func() bool { s.cache.clear(); return url() == "http://localhost:5391" })
 }
 
 func TestStateSaysWhetherTheClipboardIsReady(t *testing.T) {
@@ -752,15 +833,21 @@ func TestTheSandboxIsKeptAwakeWhileTheAgentWorks(t *testing.T) {
 	if wasAsked() {
 		t.Error("kept awake with no turn")
 	}
-	c.begin("go")
+	c.claim("go", true)
 	if !wasAsked() {
 		t.Error("not kept awake while the agent answers")
 	}
-	c.line([]byte(`{"type":"result"}`))
+	agent, _ := (&fakeAgent{}).start(context.Background(), "", func([]byte) {})
+	defer agent.Kill()
+	c.mu.Lock()
+	c.agent = agent
+	c.mu.Unlock()
+	c.line([]byte(`{"type":"result","num_turns":1,"result":"ok"}`))
+	c.line([]byte(`{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"t1"}]}`))
 	if !wasAsked() {
 		t.Error("not kept awake while something it left runs")
 	}
-	c.finish(nil, false)
+	c.line([]byte(`{"type":"system","subtype":"background_tasks_changed","tasks":[]}`))
 	if wasAsked() {
 		t.Error("kept awake after the agent was done")
 	}
@@ -790,11 +877,11 @@ func TestThePageIsToldWhichVersionOfItVibeServes(t *testing.T) {
 func TestEveryAPICallIsGuarded(t *testing.T) {
 	f := &fakeAgent{}
 	s := New(Config{Sandbox: "box", Token: token, Port: testPort,
-		Policy:    &policy.Client{Sandbox: "box", Run: (&fakeSbx{}).run},
-		Converse:  f.converse,
-		Admin:     &fakeInstructor{},
-		Manage:    &fakeManager{},
-		ReviewTab: &ReviewTab{Workspace: t.TempDir(), Store: review.NewStore(t.TempDir())}})
+		Policy:     &policy.Client{Sandbox: "box", Run: (&fakeSbx{}).run},
+		StartAgent: f.start,
+		Admin:      &fakeInstructor{},
+		Manage:     &fakeManager{},
+		ReviewTab:  &ReviewTab{Workspace: t.TempDir(), Store: review.NewStore(t.TempDir())}})
 	routes := s.apiRoutes()
 	if len(routes) < 30 {
 		t.Fatalf("only %d routes: are they all listed?", len(routes))
@@ -931,5 +1018,23 @@ func TestTheStateSaysNothingOfSbxBeingSignedOutWhenNobodyIsAsked(t *testing.T) {
 	json.Unmarshal(do(t, s, req{path: "/api/state", headers: authed(nil)}).Body.Bytes(), &got)
 	if string(got["sbxSignedOut"]) != "false" {
 		t.Errorf("sbxSignedOut = %s", got["sbxSignedOut"])
+	}
+}
+
+// A page request that takes seconds is said in vibe's log, naming it: what it waited on (sbx, mostly) is then known from the
+// next slow one, not guessed at.
+func TestASlowPageRequestIsLogged(t *testing.T) {
+	var logged []string
+	var mu sync.Mutex
+	now := time.Unix(1_800_000_000, 0)
+	s := New(Config{Sandbox: "vibe", Token: token, Port: testPort, Log: func(line string) { mu.Lock(); logged = append(logged, line); mu.Unlock() },
+		ClipboardURL: func() string { now = now.Add(3 * time.Second); return "http://localhost:5390" }})
+	s.clock = func() time.Time { return now }
+	do(t, s, req{path: "/api/state", headers: authed(nil)})
+	do(t, s, req{path: "/api/state", headers: authed(nil)}) // the address is held: quick
+	mu.Lock()
+	defer mu.Unlock()
+	if len(logged) != 1 || !strings.Contains(logged[0], "GET /api/state") || !strings.Contains(logged[0], "3s") {
+		t.Errorf("logged %q, want one line naming GET /api/state and its 3s", logged)
 	}
 }

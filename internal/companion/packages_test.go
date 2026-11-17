@@ -280,3 +280,18 @@ func TestTheStateSaysHowManyPackageRequestsAreWaitingForApproval(t *testing.T) {
 		t.Errorf("waiting = %d, want 1: one approved and queued, not yet fetching, is decided too", got)
 	}
 }
+
+// The page is told which of the package features this sandbox has, so it doesn't ask for what the server would refuse.
+func TestThePageIsToldWhetherTheSandboxHasPackagesToAskForOrFetch(t *testing.T) {
+	s := New(Config{Sandbox: "box", Token: token, Port: testPort})
+	if statusFlag(t, s, "packages") || statusFlag(t, s, "packageSync") {
+		t.Error("a sandbox with no package features is said to have them")
+	}
+	s = New(Config{Sandbox: "box", Token: token, Port: testPort, Packages: &fakeDesk{}, PackageSync: &fakeSync{}})
+	if !statusFlag(t, s, "packages") {
+		t.Error("a sandbox that can ask for packages is said not to")
+	}
+	if !statusFlag(t, s, "packageSync") {
+		t.Error("a sandbox with packages to fetch for an IDE is said not to have")
+	}
+}

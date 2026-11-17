@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -134,17 +136,35 @@ func keptCopies(t *testing.T) <-chan struct{} {
 	return kept
 }
 
-// agentSaying is a converser whose agent reports being in session.
-func agentSaying(session string) companion.Converser {
-	return func(_ context.Context, _, _ string, _ func(), onLine func([]byte)) error {
+// agentSaying starts an agent that reports, at once, having answered in
+// session.
+func agentSaying(session string) companion.StartAgent {
+	return func(_ context.Context, _ string, onLine func([]byte)) (companion.Agent, error) {
 		onLine([]byte(`{"type":"result","session_id":"` + session + `"}`))
-		return nil
+		return &endedAgent{done: closedChan()}, nil
 	}
 }
 
-func turn(t *testing.T, c companion.Converser, session string) {
+func closedChan() chan struct{} {
+	c := make(chan struct{})
+	close(c)
+	return c
+}
+
+// endedAgent is an agent that has already ended.
+type endedAgent struct{ done chan struct{} }
+
+func (endedAgent) Prompt(string, string) error { return nil }
+func (endedAgent) Interrupt() error            { return nil }
+func (endedAgent) StopTask(string) error       { return nil }
+func (endedAgent) End()                        {}
+func (endedAgent) Kill() error                 { return nil }
+func (a endedAgent) Done() <-chan struct{}     { return a.done }
+func (endedAgent) Err() error                  { return nil }
+
+func turn(t *testing.T, start companion.StartAgent, session string) {
 	t.Helper()
-	if err := c(context.Background(), "hi", session, func() {}, func([]byte) {}); err != nil {
+	if _, err := start(context.Background(), session, func([]byte) {}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -190,5 +210,164 @@ func TestASandboxThatHasTheTranscriptIsLeftAlone(t *testing.T) {
 	<-kept
 	if len(box.puts) != 0 {
 		t.Errorf("puts = %q", box.puts)
+	}
+}
+
+// fakeSession is the agent's stdin and output, as startSession gives them: what
+// was written to it, as lines.
+type fakeSession struct {
+	mu     sync.Mutex
+	lines  []string
+	closed bool
+	done   chan struct{}
+}
+
+func newFakeSession() *fakeSession { return &fakeSession{done: make(chan struct{})} }
+
+func (f *fakeSession) WriteLine(line []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lines = append(f.lines, string(line))
+	return nil
+}
+
+func (f *fakeSession) CloseInput() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.closed {
+		f.closed = true
+		close(f.done)
+	}
+	return nil
+}
+
+func (f *fakeSession) Done() <-chan struct{} { return f.done }
+func (f *fakeSession) Err() error            { return nil }
+
+func (f *fakeSession) written() []map[string]interface{} {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []map[string]interface{}
+	for _, l := range f.lines {
+		var m map[string]interface{}
+		json.Unmarshal([]byte(l), &m)
+		out = append(out, m)
+	}
+	return out
+}
+
+// startedAgent starts an agent for session as the page does, with a fake
+// session, no leftover to end, and choice as the user's choice; it gives the
+// agent, its session and the command it was started with.
+func startedAgent(t *testing.T, choice *turnChoice) (companion.Agent, *fakeSession, []string, *[]string) {
+	t.Helper()
+	sess := newFakeSession()
+	var args []string
+	var ended []string
+	wasStart, wasEnd := startSession, endLeftover
+	t.Cleanup(func() { startSession, endLeftover = wasStart, wasEnd })
+	startSession = func(_ context.Context, name string, _ func([]byte), a ...string) (agentSession, error) {
+		args = a
+		return sess, nil
+	}
+	endLeftover = func(name, pidFile string) error {
+		ended = append(ended, name+" "+pidFile)
+		return nil
+	}
+	agent, err := startAgent("box", "/w", func() (turnChoice, error) { return *choice, nil })(context.Background(), "sess-1", func([]byte) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return agent, sess, args, &ended
+}
+
+func TestTheAgentIsStartedOnceForTheConversationAfterWhatAVibeThatDiedLeftIsEnded(t *testing.T) {
+	_, _, args, ended := startedAgent(t, &turnChoice{})
+	if len(*ended) != 1 || (*ended)[0] != "box "+conversationPidFile {
+		t.Errorf("ended %q before starting, want the conversation's pid file", *ended)
+	}
+	inner := args[len(args)-1]
+	for _, want := range []string{"'--input-format' 'stream-json'", conversationPidFile, "--resume 'sess-1'"} {
+		if !strings.Contains(inner, want) {
+			t.Errorf("the agent's command lacks %s: %s", want, inner)
+		}
+	}
+}
+
+func TestAPromptIsAUserMessageNamedForTheAgentsReceipts(t *testing.T) {
+	agent, sess, _, _ := startedAgent(t, &turnChoice{})
+	if err := agent.Prompt("hello", "id-1"); err != nil {
+		t.Fatal(err)
+	}
+	w := sess.written()
+	if len(w) != 1 || w[0]["type"] != "user" || w[0]["uuid"] != "id-1" {
+		t.Fatalf("written %v", w)
+	}
+	if msg := w[0]["message"].(map[string]interface{}); msg["role"] != "user" || msg["content"] != "hello" {
+		t.Errorf("message %v", msg)
+	}
+}
+
+func TestAChangedChoiceIsToldTheAgentBeforeThePromptWithoutARestart(t *testing.T) {
+	choice := turnChoice{Model: "haiku", Effort: "low"}
+	agent, sess, _, _ := startedAgent(t, &choice)
+	agent.Prompt("one", "id-1")
+	if n := len(sess.written()); n != 1 {
+		t.Fatalf("an unchanged choice was sent again: %v", sess.written())
+	}
+	choice = turnChoice{Model: "sonnet", Effort: "high"}
+	agent.Prompt("two", "id-2")
+	w := sess.written()[1:]
+	if len(w) != 3 {
+		t.Fatalf("written %v", w)
+	}
+	model, effort, prompt := w[0]["request"].(map[string]interface{}), w[1]["request"].(map[string]interface{}), w[2]
+	if model["subtype"] != "set_model" || model["model"] != "sonnet" {
+		t.Errorf("model request %v", model)
+	}
+	if effort["subtype"] != "apply_flag_settings" || effort["settings"].(map[string]interface{})["effortLevel"] != "high" {
+		t.Errorf("effort request %v", effort)
+	}
+	if prompt["uuid"] != "id-2" {
+		t.Errorf("then the prompt: %v", prompt)
+	}
+}
+
+func TestAChoiceThatCantBeUsedSendsNothing(t *testing.T) {
+	agent, sess, _, _ := startedAgent(t, &turnChoice{})
+	bad := agent.(*claudeAgent)
+	bad.choose = func() (turnChoice, error) { return turnChoice{}, errors.New("the model chosen can't be used") }
+	if err := agent.Prompt("hello", "id-1"); err == nil {
+		t.Error("a prompt with a choice that can't be used was sent")
+	}
+	if len(sess.written()) != 0 {
+		t.Errorf("written %v", sess.written())
+	}
+}
+
+func TestAStopSparesTheBackgroundWorkAndATaskCanBeStoppedAlone(t *testing.T) {
+	agent, sess, _, _ := startedAgent(t, &turnChoice{})
+	agent.Interrupt()
+	agent.StopTask("t1")
+	w := sess.written()
+	interrupt, stop := w[0]["request"].(map[string]interface{}), w[1]["request"].(map[string]interface{})
+	if w[0]["type"] != "control_request" || interrupt["subtype"] != "interrupt" || interrupt["spare_background_tasks"] != true {
+		t.Errorf("interrupt %v", w[0])
+	}
+	if stop["subtype"] != "stop_task" || stop["task_id"] != "t1" {
+		t.Errorf("stop_task %v", w[1])
+	}
+	if w[0]["request_id"] == w[1]["request_id"] {
+		t.Error("two requests with one id")
+	}
+}
+
+func TestEndingTheAgentClosesItsInput(t *testing.T) {
+	agent, sess, _, _ := startedAgent(t, &turnChoice{})
+	agent.End()
+	select {
+	case <-sess.Done():
+	default:
+		t.Error("the agent's input is still open")
 	}
 }

@@ -426,7 +426,7 @@ func (s *Server) reviewAsk(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "type what you want to ask first")
 		return
 	}
-	if s.cfg.Converse == nil {
+	if s.cfg.StartAgent == nil {
 		writeError(w, http.StatusNotFound, "this sandbox's agent can't be talked to from the page")
 		return
 	}
@@ -500,7 +500,7 @@ func (s *Server) reviewSubmit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, `expected {} or {"for": the review shown}`)
 		return
 	}
-	if s.cfg.Converse == nil {
+	if s.cfg.StartAgent == nil {
 		writeError(w, http.StatusNotFound, "this sandbox's agent can't be talked to from the page")
 		return
 	}
@@ -748,7 +748,7 @@ func (s *Server) reviewStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, `expected {"kind": "uncommitted", "branch" or "unpushed", "agent": true or false}`)
 		return
 	}
-	if req.Agent && s.cfg.Converse == nil {
+	if req.Agent && s.cfg.StartAgent == nil {
 		writeError(w, http.StatusNotFound, "this sandbox's agent can't be talked to from the page: show the diff instead")
 		return
 	}

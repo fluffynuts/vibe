@@ -25,15 +25,17 @@ type blockedCache struct {
 	refreshing bool
 	checked    time.Time
 	hosts      []string
+	at         map[string]string
 	known      bool
 }
 
 // blockedHosts is the hosts the log says are blocked (not those a rule now
-// allows), sorted, and whether that's known yet: it isn't until the first
-// reading is back, which isn't the same as there being none.
-func (s *Server) blockedHosts() (hosts []string, known bool) {
+// allows), sorted, with when each was last blocked, and whether that's known
+// yet: it isn't until the first reading is back, which isn't the same as there
+// being none.
+func (s *Server) blockedHosts() (hosts []string, at map[string]string, known bool) {
 	if s.cfg.Policy == nil {
-		return nil, false
+		return nil, nil, false
 	}
 	b := &s.blocked
 	now := s.clock()
@@ -44,7 +46,7 @@ func (s *Server) blockedHosts() (hosts []string, known bool) {
 		b.checked = now
 		go s.readBlocked()
 	}
-	return b.hosts, b.known
+	return b.hosts, b.at, b.known
 }
 
 func (s *Server) readBlocked() {
@@ -58,24 +60,46 @@ func (s *Server) readBlocked() {
 		// would drop the page's dot, and raise it again after.
 		return
 	}
-	b.hosts, b.known = blockedIn(log), true
+	b.hosts, b.at = blockedIn(log)
+	b.known = true
 }
 
-// blockedIn is the hosts a resolved log says are blocked: once each, sorted, and not more than maxBlockedHosts.
-func blockedIn(log policy.Log) []string {
-	seen := map[string]bool{}
-	hosts := []string{}
+// blockedIn is the hosts a resolved log says are blocked: once each, sorted, and not more than maxBlockedHosts; with when each
+// was last blocked. A host stays in the log for as long as sbx keeps it, so being listed says it was blocked once, not that it
+// was blocked since the user saw it: when says that.
+func blockedIn(log policy.Log) (hosts []string, at map[string]string) {
+	at = map[string]string{}
+	hosts = []string{}
 	for _, e := range log.Entries {
-		if e.Decision == policy.Blocked && !e.Superseded && !seen[e.Host] {
-			seen[e.Host] = true
+		if e.Decision != policy.Blocked || e.Superseded {
+			continue
+		}
+		last, listed := at[e.Host]
+		if !listed {
 			hosts = append(hosts, e.Host)
+		}
+		if !listed || later(e.LastSeen, last) {
+			at[e.Host] = e.LastSeen
 		}
 	}
 	sort.Strings(hosts)
 	if len(hosts) > maxBlockedHosts {
+		for _, h := range hosts[maxBlockedHosts:] {
+			delete(at, h)
+		}
 		hosts = hosts[:maxBlockedHosts]
 	}
-	return hosts
+	return hosts, at
+}
+
+// later is whether a time sbx printed is after another; one that can't be read is never later.
+func later(a, b string) bool {
+	ta, errA := time.Parse(time.RFC3339Nano, a)
+	tb, errB := time.Parse(time.RFC3339Nano, b)
+	if errA != nil {
+		return false
+	}
+	return errB != nil || ta.After(tb)
 }
 
 // readingLog is what the network log's own reading calls as it begins: that is a reading of what the background one is for,
@@ -99,7 +123,8 @@ func (s *Server) readLog() (interface{}, error) {
 	b := &s.blocked
 	b.mu.Lock()
 	b.checked = s.clock()
-	b.hosts, b.known = blockedIn(log), true
+	b.hosts, b.at = blockedIn(log)
+	b.known = true
 	b.mu.Unlock()
 	return log, nil
 }

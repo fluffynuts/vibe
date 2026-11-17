@@ -97,10 +97,10 @@ func servePage(t *testing.T, dir string, store *review.Store) string {
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 	srv := &http.Server{Handler: New(Config{Sandbox: "box", Token: pageToken, Port: port,
-		Policy:    &policy.Client{Sandbox: "box", Run: (&fakeSbx{}).run},
-		ReviewTab: &ReviewTab{Workspace: dir, Store: store},
-		Converse:  (&fakeAgent{}).converse,
-		Choice:    (&choosing{model: "opus", options: claudeOptions}).config()}).Handler()}
+		Policy:     &policy.Client{Sandbox: "box", Run: (&fakeSbx{}).run},
+		ReviewTab:  &ReviewTab{Workspace: dir, Store: store},
+		StartAgent: (&fakeAgent{}).start,
+		Choice:     (&choosing{model: "opus", options: claudeOptions}).config()}).Handler()}
 	go srv.Serve(ln)
 	t.Cleanup(func() { srv.Close() })
 
