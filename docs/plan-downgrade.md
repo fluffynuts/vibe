@@ -14,12 +14,25 @@ without worrying about being unable to work if it breaks vibe.
 3. **Out of the first version** (kept below for later): the release cache, the `COMPAT` asset and skew warnings, the installer's
    `--release`, naming a version on the command line, more than one version back.
 
-Still to settle when building (raise with the user, don't decide alone):
-- whether the backup of `~/.vibe` and the refusal while a session runs (see "Before it changes anything") are in the first version;
-- how the version before the installed one is found: `releases/latest` gives only the newest, so a list is needed (the Atom
-  feed or the REST API: see "Where the upstream list comes from"); vibe's releases are `v0.1.<run>`, sbx's are mixed with RCs;
-- a row with nothing older to offer (a development build, or the oldest release) says so rather than offering nothing;
-- `-f` / no terminal: what an opt-in checklist means without one (probably: nothing is chosen, so it says how to choose).
+Settled with the user the same day:
+- **Back up `~/.vibe` first** (beside it, not in it: see "Before it changes anything"), and **refuse while any vibe session is
+  running**, for either row: sbx under a running sandbox is the obvious risk, and a vibe downgrade changes what is deployed to
+  sandboxes that wouldn't see it.
+- **`-f` is ignored by `--downgrade`**: the user always chooses (both rows start unchecked); with no terminal it says so and
+  changes nothing. The user has wanted sbx back often (by hand, annoyingly) and vibe never yet, but the vibe row stays, for a
+  bad release, and to mirror `--upgrade`.
+- **The list of releases comes from the Atom feed** (`<repo>/releases.atom`: public, no API, no sign-in). Tried 2026-11-17: it
+  has the 10 newest (vibe 0.1.235, 0.1.228, ...; sbx v0.54.0, its RCs, v0.53.0, ...), and `?page=2` gives the same page, so it
+  does not page. Only when the installed version is older than all ten, fall back to the REST API
+  (`api.github.com/repos/<repo>/releases`, 60 anonymous calls an hour), saying so if it is refused.
+- **A development build** has no build number: its vibe row says there is nothing to go back to. To hand-test the real flow,
+  build one that passes for a release: `go build -ldflags "-X vibe.Build=235" -o vibe ./src/vibe` is 0.1.235 (Version is
+  VERSION plus Build; see version.go), and offers 0.1.228.
+
+Still to settle (asked 2026-11-17, answer pending): sbx installed by MSI (Windows) or Homebrew. Proposed: the first version
+downgrades only where it is a plain install of the older release (the Linux release script; macOS tarball or .dmg), and for
+MSI and Homebrew says how to do it by hand: MSI needs an uninstall first (to be checked that it loses no sandboxes), and
+Homebrew can only install its current version.
 
 Start from `src/vibe/selfupgrade.go` (the `--upgrade` checklist, `upgradeVibe`, the sbx install path, `installedSbxMethod`),
 `internal/selfupdate` (`LatestTag`, `Download`, `Newer`) and `internal/sbxinstall` (`LatestStableTag`, `Stable`).
