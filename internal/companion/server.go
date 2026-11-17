@@ -624,8 +624,8 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	attention := map[string][]string{}
 	if s.cfg.Admin != nil {
 		s.admin.mu.Lock()
-		if len(s.admin.upgrades) > 0 {
-			attention["admin"] = []string{"Upgrades available: " + strings.Join(s.admin.upgrades, ", ") + " — this tab says how to get them"}
+		if len(s.admin.upgrades.Found) > 0 {
+			attention["admin"] = []string{"Upgrades available: " + strings.Join(s.admin.upgrades.Found, ", ") + " — this tab says how to get them"}
 		}
 		s.admin.mu.Unlock()
 	}

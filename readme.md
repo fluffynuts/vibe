@@ -750,7 +750,9 @@ restarts, as for files). Colours follow the theme, and what is copied is the cod
 - **Admin** — what `vibe --info` shows of the sandbox, and what you'd otherwise go to a terminal for:
   start or stop it, rebuild it from its profile (`-r`), re-compose it with features added or taken away
   (`-C`), restore a backup of its profile (`--restore`), and save the agent's memories now. It also says
-  whether newer releases of vibe or Docker SBX are out (with a dot on the tab when they are; hovering over the tab says which), and shows
+  which vibe and Docker SBX are in use (and, after an `--upgrade` or `--downgrade`, that the vibe installed
+  is used once this sandbox's vibe is restarted), whether newer releases of either are out (with a dot on
+  the tab when they are; hovering over the tab says which), and shows
   the sandbox's GitHub token, read-only, with a link to make or renew one on GitHub. Each action shows the
   command it matches and asks first, and nothing that takes the sandbox away runs while the agent is
   answering. An action taking far longer than it should (3 minutes for start, stop or saving memories,

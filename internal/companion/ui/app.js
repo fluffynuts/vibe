@@ -4752,8 +4752,24 @@
     $('admin-check').disabled = !!up.checking
     const cmd = $('admin-upgrade-command')
     cmd.hidden = !found.length
-    // --upgrade asks which to install; -f installs them all, unasked.
-    setText(cmd, (commands['upgrade'] || 'vibe --upgrade') + '  ·  all of them, unasked: ' + (commands['upgrade-all'] || 'vibe --upgrade -f'))
+    // --upgrade asks which to install; -f installs them all, unasked, and for an sbx upgrade stops every running
+    // sandbox first, unasked too (its daemon is restarted).
+    setText(cmd, (commands['upgrade'] || 'vibe --upgrade') + '  ·  all of them, unasked' +
+      (up.sbxUpgrade ? ' (stops every running sandbox first, this one too)' : '') + ': ' + (commands['upgrade-all'] || 'vibe --upgrade -f'))
+    setText($('admin-versions'), adminVersions(up))
+  }
+
+  // adminVersions says which vibe and Docker SBX are in use: this vibe's at once, as vibe says it; the installed
+  // vibe's and Docker SBX's once a check has found them (sbx is never waited on). A vibe installed since this one
+  // started (an --upgrade or --downgrade) is only used once this sandbox's vibe is restarted.
+  function adminVersions(up) {
+    let vibe = 'vibe ' + (up.vibe || '?')
+    if (up.vibeInstalled && up.vibe && up.vibeInstalled !== up.vibe) {
+      vibe += ' (' + up.vibeInstalled + " installed: restart this sandbox's vibe to use it)"
+    }
+    const sbx = up.sbx ? 'Docker SBX ' + up.sbx
+      : up.checking ? 'Docker SBX: checking…' : up.checked ? "Docker SBX: couldn't tell" : 'Docker SBX: not checked yet'
+    return vibe + ' · ' + sbx
   }
 
   function link(href, text) {

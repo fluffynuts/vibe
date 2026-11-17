@@ -431,7 +431,7 @@ func TestOnlyTheSbxRowsChangeSbx(t *testing.T) {
 	if u, _, err := checkVibeUpgrade(false, ""); err != nil || u == nil || u.changesSbx {
 		t.Errorf("checkVibeUpgrade = %+v, %v; want it to leave sbx alone", u, err)
 	}
-	if u, _, err := checkSbxUpgrade(); err != nil || u == nil || !u.changesSbx {
+	if u, _, _, err := checkSbxUpgrade(); err != nil || u == nil || !u.changesSbx {
 		t.Errorf("checkSbxUpgrade = %+v, %v; want it to say it changes sbx", u, err)
 	}
 }
