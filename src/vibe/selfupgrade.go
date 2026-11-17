@@ -19,11 +19,29 @@ import (
 	"vibe/internal/upgrade"
 )
 
-// pendingUpgrade is something --upgrade found a newer release of, and how to
-// install it.
+// pendingUpgrade is a release --upgrade or --downgrade found to change to,
+// and how: download fetches it into dir, a folder the caller made and
+// removes afterwards, returning how to install what it fetched. They are
+// apart so that --downgrade can fetch everything picked, then check that no
+// vibe has started meanwhile, before changing anything.
 type pendingUpgrade struct {
-	label string
-	run   func() error
+	label    string
+	download func(dir string) (install func() error, err error)
+}
+
+// downloadAndInstall makes u's change, downloading it into a temporary
+// folder and then installing from there.
+func downloadAndInstall(u pendingUpgrade) error {
+	dir, err := os.MkdirTemp("", "vibe-download-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	install, err := u.download(dir)
+	if err != nil {
+		return err
+	}
+	return install()
 }
 
 // doUpgrade checks GitHub for newer releases of vibe and of Docker SBX,
@@ -76,7 +94,7 @@ func doUpgrade(force bool, strategyValue string) error {
 	}
 	var errs []error
 	for _, u := range chosen {
-		if err := u.run(); err != nil {
+		if err := downloadAndInstall(u); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -193,9 +211,9 @@ func checkVibeUpgrade(force bool, strategyValue string) (*pendingUpgrade, string
 	}
 	return &pendingUpgrade{
 		label: label,
-		run: func() error {
+		download: func(dir string) (func() error, error) {
 			note("upgrading vibe %s to %s", running, latest)
-			return upgradeVibe(tag, force, strategyValue)
+			return downloadVibe(tag, dir, force, strategyValue)
 		},
 	}, summary, nil
 }
@@ -232,40 +250,34 @@ func checkSbxUpgrade() (*pendingUpgrade, string, error) {
 	}
 	return &pendingUpgrade{
 		label: fmt.Sprintf("Docker SBX %s → %s", installed, tag),
-		run: func() error {
+		download: func(dir string) (func() error, error) {
 			note("upgrading Docker SBX %s to %s", installed, tag)
-			if m.asset == "" {
-				if err := m.install("", "", false); err != nil {
-					return err
-				}
-				return finishSbxInstall(m)
-			}
-			return installSbxRelease(m, tag, false)
+			return downloadSbxRelease(m, tag, dir, false)
 		},
 	}, fmt.Sprintf("Docker SBX %s is available (you have %s)", tag, installed), nil
 }
 
-// upgradeVibe fetches release tag for this machine from GitHub into a
-// temporary folder, checks it against the release's checksums, unpacks it
-// into another, and runs --install from there — which replaces this vibe
-// and upgrades ~/.vibe. -f and --update-strategy are passed on to that
-// --install.
-func upgradeVibe(tag string, force bool, strategyValue string) error {
-	downloads, err := os.MkdirTemp("", "vibe-download-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(downloads)
+// downloadVibe fetches release tag for this machine from GitHub into dir,
+// and checks it against the release's checksums, returning how to install
+// it: unpack it into a temporary folder and run --install from there, which
+// replaces this vibe and changes ~/.vibe to match the release. -f and
+// --update-strategy are passed on to that --install.
+func downloadVibe(tag, dir string, force bool, strategyValue string) (func() error, error) {
 	asset := selfupdate.AssetName(runtime.GOOS, runtime.GOARCH)
 	status := newStatusLine()
 	status.show("Downloading %s", asset)
-	zipPath, err := selfupdate.Download(tag, asset, downloads)
+	zipPath, err := selfupdate.Download(tag, asset, dir)
 	if err != nil {
 		status.done("Downloading %s failed", asset)
-		return err
+		return nil, err
 	}
-	status.done("Downloaded %s and checked it against %s", asset, selfupdate.SumsFile)
+	status.done("Downloaded %s of %s and checked it against %s", asset, tag, selfupdate.SumsFile)
+	return func() error { return installVibeRelease(tag, zipPath, force, strategyValue) }, nil
+}
 
+// installVibeRelease unpacks release tag's zip into a temporary folder, and
+// runs --install from there.
+func installVibeRelease(tag, zipPath string, force bool, strategyValue string) error {
 	unpacked, err := os.MkdirTemp("", "vibe-upgrade-")
 	if err != nil {
 		return err

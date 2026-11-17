@@ -198,23 +198,70 @@ func TestDowngradeRefusesWhileAVibeSessionRuns(t *testing.T) {
 	}
 }
 
-func TestApplyDowngradesBacksUpVibesHomeFirst(t *testing.T) {
+// fetchedThen is a pending change whose download does whatever downloading
+// does (nothing, when nil), and then installs with install.
+func fetchedThen(label string, downloading func() error, install func() error) pendingUpgrade {
+	return pendingUpgrade{label: label, download: func(dir string) (func() error, error) {
+		if _, err := os.Stat(dir); err != nil {
+			return nil, fmt.Errorf("not given a folder to download into: %w", err)
+		}
+		if downloading != nil {
+			if err := downloading(); err != nil {
+				return nil, err
+			}
+		}
+		return install, nil
+	}}
+}
+
+func TestApplyDowngradesDownloadsThenBacksUpThenInstalls(t *testing.T) {
 	root := t.TempDir()
 	vibeHome := filepath.Join(root, ".vibe")
 	writeFile(t, filepath.Join(vibeHome, "settings.yaml"), "memory: 8g\n")
-	writeFile(t, filepath.Join(vibeHome, "logs", "x.log"), "noise\n")
-	var backups []string
-	ran := 0
-	chosen := []pendingUpgrade{{label: "a", run: func() error {
-		ran++
-		backups, _ = filepath.Glob(filepath.Join(root, ".vibe-backup-*.zip"))
-		return nil
-	}}}
+	backups := func() []string {
+		found, _ := filepath.Glob(filepath.Join(root, ".vibe-backup-*.zip"))
+		return found
+	}
+	var steps []string
+	chosen := []pendingUpgrade{
+		fetchedThen("a", func() error {
+			steps = append(steps, fmt.Sprintf("download a (%d backups)", len(backups())))
+			return nil
+		}, func() error {
+			steps = append(steps, fmt.Sprintf("install a (%d backups)", len(backups())))
+			return nil
+		}),
+		fetchedThen("b", func() error { steps = append(steps, "download b"); return nil },
+			func() error { steps = append(steps, "install b"); return nil }),
+	}
 	if err := applyDowngrades(vibeHome, chosen, time.Date(2026, 11, 17, 9, 0, 0, 0, time.Local)); err != nil {
 		t.Fatal(err)
 	}
-	if ran != 1 || len(backups) != 1 || filepath.Base(backups[0]) != ".vibe-backup-2026-11-17_090000.zip" {
-		t.Errorf("ran %d times, with backups %v beside ~/.vibe when it did; want one, made first", ran, backups)
+	if want := []string{"download a (0 backups)", "download b", "install a (1 backups)", "install b"}; !reflect.DeepEqual(steps, want) {
+		t.Errorf("steps = %q, want %q: every download, then the backup, then every install", steps, want)
+	}
+	if got := backups(); len(got) != 1 || filepath.Base(got[0]) != ".vibe-backup-2026-11-17_090000.zip" {
+		t.Errorf("backups beside ~/.vibe = %v", got)
+	}
+}
+
+// A download that fails stops them all before anything has changed: no
+// backup, no install.
+func TestApplyDowngradesStopsWhenADownloadFails(t *testing.T) {
+	root := t.TempDir()
+	vibeHome := filepath.Join(root, ".vibe")
+	writeFile(t, filepath.Join(vibeHome, "settings.yaml"), "memory: 8g\n")
+	installed := func() error { t.Error("installed though a download failed"); return nil }
+	chosen := []pendingUpgrade{
+		fetchedThen("a", nil, installed),
+		fetchedThen("b", func() error { return errors.New("b's download broke") }, installed),
+	}
+	err := applyDowngrades(vibeHome, chosen, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "b's download broke") || !strings.Contains(err.Error(), "nothing changed") {
+		t.Errorf("applyDowngrades with a download failing = %v", err)
+	}
+	if found, _ := filepath.Glob(filepath.Join(root, ".vibe-backup-*.zip")); len(found) != 0 {
+		t.Errorf("backed up %v though nothing was to change", found)
 	}
 }
 
@@ -228,38 +275,48 @@ func TestApplyDowngradesStopsWhenTheBackupFails(t *testing.T) {
 		f.Close()
 		t.Skip("running as a user who can write anywhere")
 	}
-	chosen := []pendingUpgrade{{label: "a", run: func() error {
+	chosen := []pendingUpgrade{fetchedThen("a", nil, func() error {
 		t.Error("downgraded with no backup made")
 		return nil
-	}}}
+	})}
 	err := applyDowngrades(vibeHome, chosen, time.Now())
 	if err == nil || !strings.Contains(err.Error(), "back up") || !strings.Contains(err.Error(), "nothing changed") {
 		t.Errorf("applyDowngrades with the backup failing = %v", err)
 	}
 }
 
-// A session started while the user was choosing still stops it.
-func TestApplyDowngradesRefusesASessionStartedSinceAsking(t *testing.T) {
-	vibeHome := t.TempDir()
-	heldElsewhere(t, vibeHome, "/work/b")
-	chosen := []pendingUpgrade{{label: "a", run: func() error {
+// A session started while the user was choosing, or while the downloads ran
+// (which, for sbx, take a while), stops it before the backup and before any
+// install.
+func TestApplyDowngradesRefusesASessionStartedWhileDownloading(t *testing.T) {
+	root := t.TempDir()
+	vibeHome := filepath.Join(root, ".vibe")
+	writeFile(t, filepath.Join(vibeHome, "settings.yaml"), "memory: 8g\n")
+	chosen := []pendingUpgrade{fetchedThen("a", func() error {
+		heldElsewhere(t, vibeHome, "/work/b")
+		return nil
+	}, func() error {
 		t.Error("downgraded while a session runs")
 		return nil
-	}}}
-	if err := applyDowngrades(vibeHome, chosen, time.Now()); err == nil || !strings.Contains(err.Error(), "/work/b") {
-		t.Errorf("applyDowngrades while a session runs = %v", err)
+	})}
+	err := applyDowngrades(vibeHome, chosen, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "/work/b") || !strings.Contains(err.Error(), "nothing changed") {
+		t.Errorf("applyDowngrades with a session started while downloading = %v", err)
+	}
+	if found, _ := filepath.Glob(filepath.Join(root, ".vibe-backup-*.zip")); len(found) != 0 {
+		t.Errorf("backed up %v though nothing was to change", found)
 	}
 }
 
-func TestApplyDowngradesGoesOnPastOneThatFails(t *testing.T) {
+func TestApplyDowngradesGoesOnPastAnInstallThatFails(t *testing.T) {
 	vibeHome := filepath.Join(t.TempDir(), ".vibe")
 	ran := 0
 	chosen := []pendingUpgrade{
-		{label: "a", run: func() error { ran++; return errors.New("a broke") }},
-		{label: "b", run: func() error { ran++; return nil }},
+		fetchedThen("a", nil, func() error { ran++; return errors.New("a broke") }),
+		fetchedThen("b", nil, func() error { ran++; return nil }),
 	}
 	err := applyDowngrades(vibeHome, chosen, time.Now())
 	if ran != 2 || err == nil || !strings.Contains(err.Error(), "a broke") {
-		t.Errorf("applyDowngrades = %v after running %d; want both run, and a's error", err, ran)
+		t.Errorf("applyDowngrades = %v after installing %d; want both installed, and a's error", err, ran)
 	}
 }

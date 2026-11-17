@@ -130,8 +130,10 @@ nightlies) with **nothing selected**, for you to pick what to go back on. Run it
 another; `vibe --upgrade` offers the newest again whenever you want it.
 
 - It refuses while any vibe session is running, naming them: end them first (`vibe --stop-all`).
-- Before changing anything it backs `~/.vibe` up *beside* it, as `~/.vibe-backup-<date>_<time>.zip`
-  (the last three are kept; logs and caches are left out). If that fails, nothing changes.
+- It downloads everything you picked first, then checks again that no vibe session has started,
+  then backs `~/.vibe` up *beside* it, as `~/.vibe-backup-<date>_<time>.zip` (the last three are
+  kept; logs and caches are left out), and only then installs. A failed download, a session
+  started meanwhile, or a backup that can't be made, stops it with nothing changed.
 - It always asks: `-f` is ignored, and with no terminal it changes nothing.
 - **vibe** goes back the way `--upgrade` goes forward: the older release's zip, checked against its
   `SHA256SUMS`, runs its own `vibe --install` (`--update-strategy` is passed on). A development build

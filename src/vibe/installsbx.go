@@ -61,10 +61,7 @@ func doInstallSbx(force bool) error {
 	}
 
 	if m.asset == "" {
-		if err := m.install("", "", force); err != nil {
-			return err
-		}
-		return finishSbxInstall(m)
+		return installSbxRelease(m, "", force)
 	}
 
 	tag, err := sbxinstall.LatestStableTag()
@@ -89,24 +86,33 @@ func doInstallSbx(force bool) error {
 // installSbxRelease downloads m's asset of release tag into a temporary
 // folder, installs sbx from it, and reports on the result.
 func installSbxRelease(m sbxMethod, tag string, reinstall bool) error {
-	downloads, err := os.MkdirTemp("", "vibe-sbx-download-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(downloads)
-	status := newStatusLine()
-	status.show("Downloading %s", m.asset)
-	file, err := sbxinstall.Download(tag, m.asset, downloads)
-	if err != nil {
-		status.done("Downloading %s failed", m.asset)
-		return err
-	}
-	status.done("Downloaded %s", m.asset)
+	return downloadAndInstall(pendingUpgrade{download: func(dir string) (func() error, error) {
+		return downloadSbxRelease(m, tag, dir, reinstall)
+	}})
+}
 
-	if err := m.install(tag, file, reinstall); err != nil {
-		return err
+// downloadSbxRelease fetches m's asset of release tag into dir, returning
+// how to install sbx from it and report on the result. A method with no
+// asset (Homebrew) fetches sbx itself as it installs, so has nothing to
+// download first.
+func downloadSbxRelease(m sbxMethod, tag, dir string, reinstall bool) (func() error, error) {
+	file := ""
+	if m.asset != "" {
+		status := newStatusLine()
+		status.show("Downloading %s", m.asset)
+		var err error
+		if file, err = sbxinstall.Download(tag, m.asset, dir); err != nil {
+			status.done("Downloading %s failed", m.asset)
+			return nil, err
+		}
+		status.done("Downloaded %s of %s", m.asset, tag)
 	}
-	return finishSbxInstall(m)
+	return func() error {
+		if err := m.install(tag, file, reinstall); err != nil {
+			return err
+		}
+		return finishSbxInstall(m)
+	}, nil
 }
 
 // installedSbxMethod finds which of methods sbx is installed by: the one

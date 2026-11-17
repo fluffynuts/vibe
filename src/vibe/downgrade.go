@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -136,11 +137,29 @@ func chooseDowngrades(found []pendingUpgrade) ([]pendingUpgrade, error) {
 // the moment (which vibes are running, logs) or a cache.
 var backupLeavesOut = []string{"running", "logs", "nuget-fetch"}
 
-// applyDowngrades backs ~/.vibe up beside itself, then installs each of
-// chosen, going on past one that fails. A vibe session started while the
-// user was choosing stops it, as one running before did; so does a backup
-// that can't be made.
+// applyDowngrades downloads every one of chosen, then backs ~/.vibe up
+// beside itself, then installs each, going on past one that fails. Until
+// the installs start nothing has changed, so a download that fails stops
+// them all; so does a vibe session started while the user chose or the
+// downloads ran (sbx's take a while), as one running before did; and so does
+// a backup that can't be made.
 func applyDowngrades(vibeHome string, chosen []pendingUpgrade, now time.Time) error {
+	downloads, err := os.MkdirTemp("", "vibe-downgrade-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(downloads)
+	installs := make([]func() error, len(chosen))
+	for i, d := range chosen {
+		dir := filepath.Join(downloads, strconv.Itoa(i))
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			return err
+		}
+		if installs[i], err = d.download(dir); err != nil {
+			return fmt.Errorf("%s: %w — nothing changed", d.label, err)
+		}
+	}
+
 	if err := refuseWhileVibesRun(vibeHome); err != nil {
 		return err
 	}
@@ -157,8 +176,8 @@ func applyDowngrades(vibeHome string, chosen []pendingUpgrade, now time.Time) er
 	}
 
 	var errs []error
-	for _, d := range chosen {
-		if err := d.run(); err != nil {
+	for _, install := range installs {
+		if err := install(); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -186,13 +205,19 @@ func checkVibeDowngrade(strategyValue string) (*pendingUpgrade, string, error) {
 	previous := strings.TrimPrefix(tag, "v")
 	return &pendingUpgrade{
 		label: fmt.Sprintf("vibe %s → %s", installed, previous),
-		run: func() error {
-			note("going back from vibe %s to %s", installed, previous)
-			if err := upgradeVibe(tag, false, strategyValue); err != nil {
-				return err
+		download: func(dir string) (func() error, error) {
+			install, err := downloadVibe(tag, dir, false, strategyValue)
+			if err != nil {
+				return nil, err
 			}
-			note("a sandbox built by vibe %s may need rebuilding by this one: 'vibe -C' in its folder", installed)
-			return nil
+			return func() error {
+				note("going back from vibe %s to %s", installed, previous)
+				if err := install(); err != nil {
+					return err
+				}
+				note("a sandbox built by vibe %s may need rebuilding by this one: 'vibe -C' in its folder", installed)
+				return nil
+			}, nil
 		},
 	}, fmt.Sprintf("vibe %s is the release before yours (%s)", previous, installed), nil
 }
@@ -231,13 +256,19 @@ func checkSbxDowngrade() (*pendingUpgrade, string, error) {
 	}
 	return &pendingUpgrade{
 		label: fmt.Sprintf("Docker SBX %s → %s", installed, tag),
-		run: func() error {
-			note("going back from Docker SBX %s to %s", installed, tag)
-			if err := installSbxRelease(m, tag, false); err != nil {
-				return err
+		download: func(dir string) (func() error, error) {
+			install, err := downloadSbxRelease(m, tag, dir, false)
+			if err != nil {
+				return nil, err
 			}
-			note("a sandbox made under Docker SBX %s may not start under %s: 'vibe -r' in its folder rebuilds it", installed, tag)
-			return nil
+			return func() error {
+				note("going back from Docker SBX %s to %s", installed, tag)
+				if err := install(); err != nil {
+					return err
+				}
+				note("a sandbox made under Docker SBX %s may not start under %s: 'vibe -r' in its folder rebuilds it", installed, tag)
+				return nil
+			}, nil
 		},
 	}, fmt.Sprintf("Docker SBX %s is the stable release before yours (%s)", tag, installed), nil
 }
