@@ -813,31 +813,40 @@ func (c *conversation) forceStop() bool {
 }
 
 // supersede makes way for something that takes the sandbox away (an Admin
-// action): an agent with only background work, or none, is ended, and
-// waited for. It says whether the way is clear: not while it is answering.
-func (c *conversation) supersede() bool {
+// action, a new conversation): an agent with only background work, or none,
+// is ended, and waited for. It says whether the way is clear (not while it is
+// answering), and what background work was ended, which the conversation says.
+func (c *conversation) supersede() (ended []BackgroundTask, ok bool) {
 	c.mu.Lock()
 	if c.busy() {
 		c.mu.Unlock()
-		return false
+		return nil, false
 	}
 	agent := c.agent
-	if agent != nil {
-		// What it has in the background ends with it quietly: the user chose
-		// the action it makes way for.
+	if agent != nil && len(c.tasks) > 0 {
+		// The user chose the action, but may not know the agent had work
+		// going, now that it can be left running through any number of prompts.
+		ended = c.tasks
+		c.add("note", endedWords(ended), nil)
 		c.tasks = nil
+		c.save()
 	}
 	c.mu.Unlock()
 	if agent == nil {
-		return true
+		return nil, true
 	}
 	agent.Kill()
 	select {
 	case <-agent.Done():
-		return true
+		return ended, true
 	case <-time.After(15 * time.Second):
-		return false
+		return ended, false
 	}
+}
+
+// endedWords says that tasks, which the agent had running in the background, were ended to make way.
+func endedWords(tasks []BackgroundTask) string {
+	return "Ended what the agent had running in the background, to make way: " + taskNames(tasks) + "."
 }
 
 // afresh forgets the conversation, unless a turn is under way, and begins

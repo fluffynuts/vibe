@@ -191,7 +191,9 @@ func TestTheSandboxIsNotTakenFromUnderAnAnsweringAgent(t *testing.T) {
 	idle(t, s)
 }
 
-func TestWhatTheAgentLeftRunningEndsQuietlyForAnAction(t *testing.T) {
+// What the agent left running ends with an action that takes the sandbox away, and is said to have, naming it: the turn that
+// started it had ended well, and is not said to have been stopped or to have failed.
+func TestWhatTheAgentLeftRunningEndsForAnActionSayingSo(t *testing.T) {
 	agent := &fakeAgent{linger: make(chan struct{})}
 	defer close(agent.linger)
 	s := adminServer(&fakeAdmin{}, agent)
@@ -202,8 +204,12 @@ func TestWhatTheAgentLeftRunningEndsQuietlyForAnAction(t *testing.T) {
 	}
 	adminDone(t, s)
 	p := idle(t, s)
-	if last := p.Events[len(p.Events)-1]; last.Kind != "done" || last.Text != "" {
-		t.Errorf("the turn ended with %+v", last)
+	got := kinds(p)
+	if !strings.HasSuffix(got, "done,note") {
+		t.Errorf("events %s: the turn's done, then a note of what the action ended", got)
+	}
+	if last := p.Events[len(p.Events)-1]; !strings.Contains(last.Text, `"Run the tests"`) {
+		t.Errorf("the note = %q, want it to name the background work", last.Text)
 	}
 }
 

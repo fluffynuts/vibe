@@ -543,6 +543,23 @@ func TestBeginningAnewForgetsTheSessionAndTellsPages(t *testing.T) {
 	}
 }
 
+// A new conversation ends what the agent had running in the background for the old one: the new one begins saying so, as the
+// old one, with what it said, is gone from the page.
+func TestBeginningAnewSaysWhatBackgroundWorkItEnded(t *testing.T) {
+	f := &fakeAgent{linger: make(chan struct{})}
+	defer close(f.linger)
+	s := converseServer(f)
+	send(t, s, "/api/conversation/send", `{"prompt":"run the tests in the background"}`)
+	answered(t, s)
+	if code, _ := send(t, s, "/api/conversation/new", `{}`); code != http.StatusOK {
+		t.Fatalf("new: %d", code)
+	}
+	got := notes(poll(t, s, 0))
+	if len(got) != 1 || !strings.Contains(got[0], `"Run the tests"`) {
+		t.Errorf("the new conversation's notes = %q, want one naming the background work ended for it", got)
+	}
+}
+
 func TestBeginningAnewWaitsForTheAgent(t *testing.T) {
 	f := &fakeAgent{release: make(chan struct{})}
 	s := converseServer(f)

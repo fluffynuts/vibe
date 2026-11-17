@@ -377,7 +377,12 @@ func (s *Server) conversationNew(w http.ResponseWriter, r *http.Request) {
 			done = append(done, fmt.Sprintf("Cleared the clipboard (%s).", items(n)))
 		}
 	}
-	if !s.convo.supersede() || !s.convo.afresh(strings.Join(done, " "), failed) {
+	ended, ok := s.convo.supersede()
+	if len(ended) > 0 {
+		// Said in the new conversation: the old one, where supersede said it, is gone from the page.
+		done = append(done, endedWords(ended))
+	}
+	if !ok || !s.convo.afresh(strings.Join(done, " "), failed) {
 		msg := "stop the agent first"
 		if len(done) > 0 {
 			msg += " (already done: " + strings.Join(done, " ") + ")"
