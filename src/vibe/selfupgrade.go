@@ -27,6 +27,9 @@ import (
 type pendingUpgrade struct {
 	label    string
 	download func(dir string) (install func() error, err error)
+	// changesVibeHome says installing it changes what is in ~/.vibe, as
+	// installing a vibe release does: --downgrade backs ~/.vibe up first.
+	changesVibeHome bool
 }
 
 // downloadAndInstall makes u's change, downloading it into a temporary

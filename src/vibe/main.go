@@ -112,11 +112,12 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              that broke something: offers the release before
                              the installed one of each (sbx: the stable one
                              before it), none selected, and installs those
-                             picked, once ~/.vibe is backed up beside itself
-                             (~/.vibe-backup-*.zip). Refuses while any vibe
-                             session runs; always asks (-f is ignored), so
-                             does nothing with no terminal; -u is passed on
-                             to vibe's --install
+                             picked; going back on vibe backs ~/.vibe up
+                             beside itself first (~/.vibe-backup-*.zip),
+                             going back on sbx alone doesn't. Refuses while
+                             any vibe session runs; always asks (-f is
+                             ignored), so does nothing with no terminal; -u
+                             is passed on to vibe's --install
   vibe -I/--install-sbx      download the latest stable Docker Sandboxes (sbx)
                              release and install it: on Linux into
                              ~/.docker/sbx; on macOS (Apple Silicon) and

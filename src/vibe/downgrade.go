@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -137,7 +138,8 @@ func chooseDowngrades(found []pendingUpgrade) ([]pendingUpgrade, error) {
 // the moment (which vibes are running, logs) or a cache.
 var backupLeavesOut = []string{"running", "logs", "nuget-fetch"}
 
-// applyDowngrades downloads every one of chosen, then backs ~/.vibe up
+// applyDowngrades downloads every one of chosen, then, when one of them
+// changes ~/.vibe (going back on vibe; sbx leaves it alone), backs ~/.vibe up
 // beside itself, then installs each, going on past one that fails. Until
 // the installs start nothing has changed, so a download that fails stops
 // them all; so does a vibe session started while the user chose or the
@@ -163,6 +165,28 @@ func applyDowngrades(vibeHome string, chosen []pendingUpgrade, now time.Time) er
 	if err := refuseWhileVibesRun(vibeHome); err != nil {
 		return err
 	}
+	if slices.ContainsFunc(chosen, func(d pendingUpgrade) bool { return d.changesVibeHome }) {
+		if err := backUpVibeHome(vibeHome, now); err != nil {
+			return err
+		}
+	}
+
+	var errs []error
+	for _, install := range installs {
+		if err := install(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		return err
+	}
+	note("'vibe --upgrade' offers the newest releases again, whenever you want them")
+	return nil
+}
+
+// backUpVibeHome zips ~/.vibe beside itself, saying where, while a spinner
+// turns. With no ~/.vibe there is nothing to back up.
+func backUpVibeHome(vibeHome string, now time.Time) error {
 	if _, err := os.Stat(vibeHome); err == nil {
 		// Beside ~/.vibe, not in it: whatever goes wrong with ~/.vibe mustn't
 		// take its backup with it.
@@ -178,17 +202,6 @@ func applyDowngrades(vibeHome string, chosen []pendingUpgrade, now time.Time) er
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("couldn't back up %s first: %w — nothing changed", pathresolve.Tilde(vibeHome), err)
 	}
-
-	var errs []error
-	for _, install := range installs {
-		if err := install(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	if err := errors.Join(errs...); err != nil {
-		return err
-	}
-	note("'vibe --upgrade' offers the newest releases again, whenever you want them")
 	return nil
 }
 
@@ -208,7 +221,8 @@ func checkVibeDowngrade(strategyValue string) (*pendingUpgrade, string, error) {
 	}
 	previous := strings.TrimPrefix(tag, "v")
 	return &pendingUpgrade{
-		label: fmt.Sprintf("vibe %s → %s", installed, previous),
+		label:           fmt.Sprintf("vibe %s → %s", installed, previous),
+		changesVibeHome: true,
 		download: func(dir string) (func() error, error) {
 			install, err := downloadVibe(tag, dir, false, strategyValue)
 			if err != nil {

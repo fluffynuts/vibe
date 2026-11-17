@@ -214,6 +214,13 @@ func fetchedThen(label string, downloading func() error, install func() error) p
 	}}
 }
 
+// changingVibeHome is u marked as changing ~/.vibe, as going back on vibe
+// does, so that ~/.vibe is backed up first.
+func changingVibeHome(u pendingUpgrade) pendingUpgrade {
+	u.changesVibeHome = true
+	return u
+}
+
 func TestApplyDowngradesDownloadsThenBacksUpThenInstalls(t *testing.T) {
 	root := t.TempDir()
 	vibeHome := filepath.Join(root, ".vibe")
@@ -224,13 +231,13 @@ func TestApplyDowngradesDownloadsThenBacksUpThenInstalls(t *testing.T) {
 	}
 	var steps []string
 	chosen := []pendingUpgrade{
-		fetchedThen("a", func() error {
+		changingVibeHome(fetchedThen("a", func() error {
 			steps = append(steps, fmt.Sprintf("download a (%d backups)", len(backups())))
 			return nil
 		}, func() error {
 			steps = append(steps, fmt.Sprintf("install a (%d backups)", len(backups())))
 			return nil
-		}),
+		})),
 		fetchedThen("b", func() error { steps = append(steps, "download b"); return nil },
 			func() error { steps = append(steps, "install b"); return nil }),
 	}
@@ -258,7 +265,7 @@ func TestApplyDowngradesStopsWhenADownloadFails(t *testing.T) {
 	writeFile(t, filepath.Join(vibeHome, "settings.yaml"), "memory: 8g\n")
 	installed := func() error { t.Error("installed though a download failed"); return nil }
 	chosen := []pendingUpgrade{
-		fetchedThen("a", nil, installed),
+		changingVibeHome(fetchedThen("a", nil, installed)),
 		fetchedThen("b", func() error { return errors.New("b's download broke") }, installed),
 	}
 	err := applyDowngrades(vibeHome, chosen, time.Now())
@@ -280,10 +287,10 @@ func TestApplyDowngradesStopsWhenTheBackupFails(t *testing.T) {
 		f.Close()
 		t.Skip("running as a user who can write anywhere")
 	}
-	chosen := []pendingUpgrade{fetchedThen("a", nil, func() error {
+	chosen := []pendingUpgrade{changingVibeHome(fetchedThen("a", nil, func() error {
 		t.Error("downgraded with no backup made")
 		return nil
-	})}
+	}))}
 	err := applyDowngrades(vibeHome, chosen, time.Now())
 	if err == nil || !strings.Contains(err.Error(), "back up") || !strings.Contains(err.Error(), "nothing changed") {
 		t.Errorf("applyDowngrades with the backup failing = %v", err)
@@ -297,13 +304,13 @@ func TestApplyDowngradesRefusesASessionStartedWhileDownloading(t *testing.T) {
 	root := t.TempDir()
 	vibeHome := filepath.Join(root, ".vibe")
 	writeFile(t, filepath.Join(vibeHome, "settings.yaml"), "memory: 8g\n")
-	chosen := []pendingUpgrade{fetchedThen("a", func() error {
+	chosen := []pendingUpgrade{changingVibeHome(fetchedThen("a", func() error {
 		heldElsewhere(t, vibeHome, "/work/b")
 		return nil
 	}, func() error {
 		t.Error("downgraded while a session runs")
 		return nil
-	})}
+	}))}
 	err := applyDowngrades(vibeHome, chosen, time.Now())
 	if err == nil || !strings.Contains(err.Error(), "/work/b") || !strings.Contains(err.Error(), "nothing changed") {
 		t.Errorf("applyDowngrades with a session started while downloading = %v", err)
@@ -323,5 +330,42 @@ func TestApplyDowngradesGoesOnPastAnInstallThatFails(t *testing.T) {
 	err := applyDowngrades(vibeHome, chosen, time.Now())
 	if ran != 2 || err == nil || !strings.Contains(err.Error(), "a broke") {
 		t.Errorf("applyDowngrades = %v after installing %d; want both installed, and a's error", err, ran)
+	}
+}
+
+// Going back on sbx alone leaves ~/.vibe as it is, so it isn't backed up:
+// sbx is the one more often gone back on, and each backup made for nothing
+// would push out one of the three kept that mattered.
+func TestApplyDowngradesBacksUpOnlyForAChangeToVibeHome(t *testing.T) {
+	root := t.TempDir()
+	vibeHome := filepath.Join(root, ".vibe")
+	writeFile(t, filepath.Join(vibeHome, "settings.yaml"), "memory: 8g\n")
+	installed := false
+	chosen := []pendingUpgrade{fetchedThen("sbx", nil, func() error { installed = true; return nil })}
+	var err error
+	said := stderrOf(t, func() { err = applyDowngrades(vibeHome, chosen, time.Now()) })
+	if err != nil || !installed {
+		t.Fatalf("applyDowngrades = %v, installed = %v", err, installed)
+	}
+	if found, _ := filepath.Glob(filepath.Join(root, ".vibe-backup-*.zip")); len(found) != 0 {
+		t.Errorf("backed up %v for a change that leaves ~/.vibe alone", found)
+	}
+	if strings.Contains(said, "Backing up") || strings.Contains(said, "backed up") {
+		t.Errorf("said %q; want nothing of a backup", said)
+	}
+}
+
+func TestOnlyGoingBackOnVibeChangesVibeHome(t *testing.T) {
+	v := vibe.Version
+	onReleaseFeeds(t, []string{"v" + v + ".235", "v" + v + ".228"}, []string{"v0.54.0", "v0.53.0"})
+	asBuild(t, "235")
+	withSbx(t, "v0.54.0")
+	d, _, err := checkVibeDowngrade("")
+	if err != nil || d == nil || !d.changesVibeHome {
+		t.Errorf("checkVibeDowngrade = %+v, %v; want it to say it changes ~/.vibe", d, err)
+	}
+	d, _, err = checkSbxDowngrade()
+	if err != nil || d == nil || d.changesVibeHome {
+		t.Errorf("checkSbxDowngrade = %+v, %v; want it to leave ~/.vibe alone", d, err)
 	}
 }

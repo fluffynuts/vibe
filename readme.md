@@ -131,9 +131,11 @@ another; `vibe --upgrade` offers the newest again whenever you want it.
 
 - It refuses while any vibe session is running, naming them: end them first (`vibe --stop-all`).
 - It downloads everything you picked first, then checks again that no vibe session has started,
-  then backs `~/.vibe` up *beside* it, as `~/.vibe-backup-<date>_<time>.zip` (the last three are
-  kept; logs and caches are left out), and only then installs. A failed download, a session
-  started meanwhile, or a backup that can't be made, stops it with nothing changed.
+  and only then installs. When vibe is one of those picked, it first backs `~/.vibe` up *beside*
+  it, as `~/.vibe-backup-<date>_<time>.zip` (the last three are kept; logs and caches are left
+  out). Going back on sbx alone leaves `~/.vibe` as it is, so it isn't backed up. A failed
+  download, a session started meanwhile, or a backup that can't be made, stops it with nothing
+  changed.
 - It always asks: `-f` is ignored, and with no terminal it changes nothing.
 - **vibe** goes back the way `--upgrade` goes forward: the older release's zip, checked against its
   `SHA256SUMS`, runs its own `vibe --install` (`--update-strategy` is passed on). A development build
@@ -369,7 +371,8 @@ vibe -i -u/--update-strategy merge,keep
 vibe -U/--upgrade          # check for newer vibe and sbx releases, pick which
                            #    to install (-f: all of them, without asking)
 vibe --downgrade           # go back to the release before the installed vibe
-                           #    or sbx (none picked to start; backs ~/.vibe up)
+                           #    or sbx (none picked to start; going back on
+                           #    vibe backs ~/.vibe up first)
 vibe --update-sandboxes    # bring every profile and sandbox up to date with the
                            #    library, starting no session (see "Keeping
                            #    sandboxes up to date"); asks first, unless -f
