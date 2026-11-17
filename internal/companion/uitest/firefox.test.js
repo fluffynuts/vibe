@@ -560,14 +560,19 @@ test('the emoji list follows the prompt as it scrolls', async () => {
     await page.keyboard.type(' :roc')
     await page.waitForSelector('#convo-emoji:not([hidden]) li')
     const before = await listBox(page)
-    await page.evaluate(() => {
+    // The line as listBox measures it: a computed line-height can be "normal" (macOS CI), which is no number to scroll by.
+    const scrolled = await page.evaluate((line) => {
       const ta = document.getElementById('convo-input')
-      ta.scrollTop = ta.scrollTop - 3 * parseFloat(getComputedStyle(ta).lineHeight)
-    })
+      const was = ta.scrollTop
+      ta.scrollTop = was - 3 * line
+      return { was, now: ta.scrollTop }
+    }, before.line)
+    assert.ok(scrolled.now < scrolled.was, `the prompt did not scroll (scrollTop ${scrolled.was} → ${scrolled.now}), so this tests nothing`)
     await page.waitForFunction((was) => document.getElementById('convo-emoji').getBoundingClientRect().bottom > was + 10, before.list.bottom, { timeout: 5000 })
     const after = await listBox(page)
     const moved = after.list.bottom - before.list.bottom
-    assert.ok(Math.abs(moved - 3 * after.line) < 10, `scrolled three lines up, the list moved ${moved}px; a line is ${after.line}px`)
+    const by = scrolled.was - scrolled.now
+    assert.ok(Math.abs(moved - by) < 10, `the prompt scrolled ${by}px, the list moved ${moved}px`)
   } finally { await page.close() }
 })
 
