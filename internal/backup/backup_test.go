@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"testing"
 	"time"
@@ -127,4 +128,32 @@ func sorted(s []string) []string {
 	out := append([]string{}, s...)
 	sort.Strings(out)
 	return out
+}
+
+// A backup can hold what its folder keeps private (~/.vibe's GitHub tokens
+// are 0600), so it is readable by its owner alone, whatever the umask.
+func TestBackupsAreReadableByTheirOwnerAlone(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no Unix file modes")
+	}
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	os.MkdirAll(src, 0o755)
+	os.WriteFile(filepath.Join(src, "default.token"), []byte("secret"), 0o600)
+	for name, create := range map[string]func() (string, error){
+		"Create":           func() (string, error) { return Create(root, "vibe", src, time.Now()) },
+		"CreateLeavingOut": func() (string, error) { return CreateLeavingOut(root, ".vibe-backup", src, time.Now(), nil) },
+	} {
+		p, err := create()
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mode := info.Mode().Perm(); mode != 0o600 {
+			t.Errorf("%s made %s with mode %o, want 600", name, p, mode)
+		}
+	}
 }

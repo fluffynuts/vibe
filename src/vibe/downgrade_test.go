@@ -234,8 +234,13 @@ func TestApplyDowngradesDownloadsThenBacksUpThenInstalls(t *testing.T) {
 		fetchedThen("b", func() error { steps = append(steps, "download b"); return nil },
 			func() error { steps = append(steps, "install b"); return nil }),
 	}
-	if err := applyDowngrades(vibeHome, chosen, time.Date(2026, 11, 17, 9, 0, 0, 0, time.Local)); err != nil {
+	var err error
+	said := stderrOf(t, func() { err = applyDowngrades(vibeHome, chosen, time.Date(2026, 11, 17, 9, 0, 0, 0, time.Local)) })
+	if err != nil {
 		t.Fatal(err)
+	}
+	if want := "backed up " + vibeHome + " to " + filepath.Join(root, ".vibe-backup-2026-11-17_090000.zip"); !strings.Contains(said, want) {
+		t.Errorf("said %q; want it to say %q", said, want)
 	}
 	if want := []string{"download a (0 backups)", "download b", "install a (1 backups)", "install b"}; !reflect.DeepEqual(steps, want) {
 		t.Errorf("steps = %q, want %q: every download, then the backup, then every install", steps, want)

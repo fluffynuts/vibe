@@ -166,7 +166,11 @@ func applyDowngrades(vibeHome string, chosen []pendingUpgrade, now time.Time) er
 	if _, err := os.Stat(vibeHome); err == nil {
 		// Beside ~/.vibe, not in it: whatever goes wrong with ~/.vibe mustn't
 		// take its backup with it.
-		zip, err := backup.CreateLeavingOut(filepath.Dir(vibeHome), filepath.Base(vibeHome)+"-backup", vibeHome, now, backupLeavesOut)
+		var zip string
+		err := spinning("Backing up "+pathresolve.Tilde(vibeHome)+": this can take a while", func() (err error) {
+			zip, err = backup.CreateLeavingOut(filepath.Dir(vibeHome), filepath.Base(vibeHome)+"-backup", vibeHome, now, backupLeavesOut)
+			return err
+		})
 		if err != nil {
 			return fmt.Errorf("couldn't back up %s first: %w — nothing changed", pathresolve.Tilde(vibeHome), err)
 		}

@@ -102,7 +102,9 @@ func Restore(zipPath, profileDir string) error {
 }
 
 func zipDir(src, dest string, leaveOut []string) (err error) {
-	f, err := os.Create(dest)
+	// Owner-only: what is zipped may be private (~/.vibe's GitHub tokens are
+	// 0600), and the zip needn't sit in a private folder.
+	f, err := os.OpenFile(dest, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
