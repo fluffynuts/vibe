@@ -915,6 +915,14 @@ nothing new to show; its tooltip says what it is for. It follows the conversatio
 the agent: work in an attached terminal session isn't seen, and agents the page can't talk to have
 no light.
 
+On the Conversation tab, the round **i** button left of **New conversation** says what the agent has going on, in a balloon,
+so it takes no room above the conversation. What resolves itself (work left running in the background, a context being
+compacted) pops up and closes itself after 5 seconds, and the button keeps a pulsing blue dot while background work runs.
+What needs you ("no output for at least N minutes", a stop that hasn't taken effect) pops up and stays until it is no
+longer true or you close it, with a steady amber dot. Clicking the button shows the list at any time (or that there is
+nothing); it then stays open until you close it (the button again, its ✕, or Escape). Anything that changed while you were
+on another tab, or in another window, pops up when you come back.
+
 ### CPU and memory bars
 
 At the far right of the companion page's tab bar, whichever tab is showing, two small bars say how busy

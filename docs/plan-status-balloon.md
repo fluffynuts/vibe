@@ -29,7 +29,8 @@ banners stay as they are. The "Stopped… Stop them too / Leave them running" of
 - **Opened by the user** (clicking the button), it stays until closed: the button again, the ✕, or Escape.
 - **A warning closed while still true** leaves the amber dot on the button until it clears. A warning that clears by itself leaves the
   list, and closes the balloon if it was all there was.
-- **Amber outranks the blue pulse** when both kinds are current.
+- **Amber outranks the blue pulse** when both kinds are current. (Today they can't be: both warnings are while the agent answers,
+  and its background work is listed once it has answered. The rule stands for when they can.)
 - **With nothing current**, the button has no dot, and opening it says: "Work the agent is doing in the background will appear here."
 - **Coming back:** if the list changed while the Conversation tab wasn't showing, or the browser tab or window didn't have focus, the
   balloon pops up when it is back (once).

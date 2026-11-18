@@ -1268,6 +1268,7 @@
     // A comment asked for, not yet gone to, isn't gone to once you're elsewhere.
     else reviewView.goTo = null
     if (tab === 'conversation' && convo.news) { convo.news = false; showAllAttention() }
+    if (tab === 'conversation') statusSeenAgain()
     // Opening the conversation is to say something: the cursor goes in the
     // prompt box. (Arrowing along the tabs keeps focus on the tabs.)
     if (tab === 'conversation') $('convo-input').focus({ preventScroll: true })
@@ -6353,29 +6354,117 @@
     $('convo-stop').textContent = stuck ? 'Force stop' : 'Stop (Escape)'
     $('convo-stop').title = stuck ? 'The agent has not stopped: end it, and everything it started, at once' : 'Escape, in the prompt box'
     $('convo-new').disabled = running
-    // While it answers, the typing bubble says so.
-    const status = $('convo-status')
-    status.classList.toggle('warn-text', !!(running && quietMinutes))
-    status.textContent = stuck
-      ? 'The agent has not stopped yet. Force stop ends it, and everything it started (anything in the background too).'
-      : stopState === 'stopping'
-      ? 'Stopping the agent…'
-      : running && compacting
-      ? 'The agent is compacting its context (summarising the conversation so far to make room). This can take a few minutes; it answers once it is done.'
-      : running && quietMinutes
-      ? 'No output from the agent for ' + quietMinutes + ' minutes — it may be stuck. Stop it, or check "sbx ls" in a terminal; it is still being waited for.'
-      : !running && background ? backgroundWords(convo.tasks) : ''
+    // While it answers, the typing bubble says so; the rest is in the status balloon.
+    const items = []
+    if (stuck) items.push({ key: 'stuck', warn: true, text: 'The agent has not stopped yet. Force stop ends it, and everything it started (anything in the background too).' })
+    if (running && quietMinutes) {
+      items.push({ key: 'quiet', warn: true,
+        text: 'No output from the agent for at least ' + quietMinutes + ' minutes — it may be stuck. Stop it, or check "sbx ls" in a terminal; it is still being waited for.' })
+    }
+    if (stopState === 'stopping' && !stuck) items.push({ key: 'stopping', quiet: true, text: 'Stopping the agent…' })
+    if (running && compacting) {
+      items.push({ key: 'compacting',
+        text: 'The agent is compacting its context (summarising the conversation so far to make room). This can take a few minutes; it answers once it is done.' })
+    }
+    if (!running && background) {
+      convo.tasks.forEach((t, i) => items.push({ key: 'task:' + ((t && t.task_id) || i), task: true, text: (t && t.description) || 'something' }))
+      if (!convo.tasks.length) items.push({ key: 'task:?', task: true, text: 'something' })
+    }
+    setStatusItems(items)
   }
 
   // FORCE_STOP_AFTER_MS is how long a stop may take before the page offers to force it.
   const FORCE_STOP_AFTER_MS = 8000
 
-  // backgroundWords says what the agent has running in the background, naming it.
-  function backgroundWords(tasks) {
-    const named = tasks.map((t) => t && t.description).filter(Boolean)
-    const what = named.length ? ': ' + named.map((d) => '"' + d + '"').join(', ') : ''
-    const count = tasks.length === 1 ? 'something' : tasks.length + ' things'
-    return 'The agent has answered, and has ' + count + ' running in the background' + what + '. You can send a prompt meanwhile: the work carries on.'
+  // --- the status balloon (docs/plan-status-balloon.md) ---------------------------------------------------------------------------
+  // What the agent has going on, in a balloon from its own info button: what resolves itself (background work, compacting) pops up and
+  // closes itself after STATUS_CLOSE_MS; a warning that needs the user stays until it is no longer true, or is closed. Opened by the
+  // user, it stays until closed. items are what is current; token makes a close timer that has been overtaken do nothing.
+  const STATUS_CLOSE_MS = 5000
+  const statusView = { items: [], open: false, byUser: false, pending: false, token: 0 }
+
+  // statusSeen is whether the status balloon can be seen popping up: the Conversation tab showing, in a window being looked at.
+  function statusSeen() {
+    return !$('panel-conversation').hidden && document.visibilityState !== 'hidden' && document.hasFocus()
+  }
+
+  // setStatusItems takes what is current, popping the balloon up when that gained something (not "Stopping…", the answer to the
+  // user's own click), or a task finished while others run; a count changing in a message's text is no news.
+  function setStatusItems(items) {
+    const before = statusView.items
+    const had = new Set(before.map((i) => i.key))
+    const has = new Set(items.map((i) => i.key))
+    const news = items.some((i) => !had.has(i.key) && !i.quiet) ||
+      (items.some((i) => i.task) && before.some((i) => i.task && !has.has(i.key)))
+    const warnCleared = before.some((i) => i.warn) && !items.some((i) => i.warn)
+    statusView.items = items
+    if (news) {
+      if (statusSeen()) popStatus()
+      else statusView.pending = true
+    } else if (statusView.open && !statusView.byUser) {
+      // Nothing left worth saying closes it; a warning gone, with something else still to say, leaves it to close itself.
+      if (!items.some((i) => !i.quiet)) statusView.open = false
+      else if (warnCleared) closeStatusLater()
+    }
+    drawStatus()
+  }
+
+  // popStatus shows the balloon of itself: it closes itself unless it has a warning to say.
+  function popStatus() {
+    statusView.pending = false
+    statusView.open = true
+    statusView.byUser = false
+    statusView.token++
+    if (!statusView.items.some((i) => i.warn)) closeStatusLater()
+    drawStatus()
+  }
+
+  function closeStatusLater() {
+    const token = ++statusView.token
+    setTimeout(() => {
+      if (token !== statusView.token || statusView.byUser) return
+      statusView.open = false
+      drawStatus()
+    }, STATUS_CLOSE_MS)
+  }
+
+  // setStatusOpen is the user opening or closing the balloon: opened so, it stays until they close it.
+  function setStatusOpen(open) {
+    statusView.token++
+    statusView.open = open
+    statusView.byUser = open
+    drawStatus()
+  }
+
+  // statusSeenAgain pops up, once, what changed while the balloon could not be seen.
+  function statusSeenAgain() {
+    if (statusView.pending && statusSeen()) popStatus()
+  }
+
+  function drawStatus() {
+    const items = statusView.items
+    const warns = items.filter((i) => i.warn)
+    const tasks = items.filter((i) => i.task)
+    const others = items.filter((i) => !i.warn && !i.task)
+    $('status-balloon-alerts').replaceChildren(...warns.map((i) => el('p', { class: 'warn-text', text: i.text })))
+    const list = others.map((i) => el('p', { text: i.text }))
+    if (tasks.length) {
+      const count = tasks.length === 1 ? 'something' : tasks.length + ' things'
+      list.push(el('p', { text: 'The agent has answered, and has ' + count + ' running in the background:' }),
+        el('ul', {}, ...tasks.map((i) => el('li', { text: i.text }))),
+        el('p', { class: 'muted', text: 'You can send a prompt meanwhile: the work carries on.' }))
+    }
+    if (!items.length) list.push(el('p', { class: 'muted', text: 'Work the agent is doing in the background will appear here.' }))
+    $('status-balloon-list').replaceChildren(...list)
+    $('status-balloon').hidden = !statusView.open
+    const button = $('status-info')
+    button.classList.toggle('warn', warns.length > 0)
+    button.classList.toggle('busy', !warns.length && tasks.length > 0)
+    button.setAttribute('aria-expanded', String(statusView.open))
+    const now = warns.length ? 'needs you: ' + warns[0].text
+      : tasks.length ? (tasks.length === 1 ? 'something' : tasks.length + ' things') + ' running in the background'
+      : others.length ? others[0].text : 'nothing running in the background'
+    button.setAttribute('aria-label', 'Agent status: ' + now)
   }
 
   // offerToStopTasks says, once a stop has taken effect, what the agent still has running in the background, and lets the user choose
@@ -8266,6 +8355,16 @@
 
   function setUpFresh() {
     $('convo-new').addEventListener('click', openFresh)
+    $('status-info').addEventListener('click', () => setStatusOpen(!statusView.open))
+    $('status-balloon-close').addEventListener('click', () => { setStatusOpen(false); $('status-info').focus() })
+    $('status-balloon').addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); setStatusOpen(false); $('status-info').focus() }
+    })
+    $('status-info').addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && statusView.open) { e.stopPropagation(); setStatusOpen(false) }
+    })
+    window.addEventListener('focus', statusSeenAgain)
+    document.addEventListener('visibilitychange', statusSeenAgain)
     $('choice-model').addEventListener('change', modelPicked)
     $('choice-effort').addEventListener('change', () => saveChoice(choice.model, $('choice-effort').value))
     $('choice-model').addEventListener('blur', drawChoice)

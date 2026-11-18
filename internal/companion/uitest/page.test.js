@@ -4089,7 +4089,8 @@ test('a stop with no review being written says at once that the agent is being s
   try {
     await p.every('pollConversation')
     await p.click('convo-stop')
-    assert.match(p.$('convo-status').textContent, /Stopping the agent/)
+    await p.click('status-info')
+    assert.match(p.$('status-balloon').textContent, /Stopping the agent/)
     assert.equal(p.$('convo-stop').disabled, true, 'Stop can be pressed again while it is being stopped')
     assert.equal(p.$('convo-send').disabled, false, 'a prompt cannot be sent while it is being stopped')
   } finally { p.close() }

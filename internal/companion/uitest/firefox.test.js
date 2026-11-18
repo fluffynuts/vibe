@@ -1195,22 +1195,31 @@ test('a coloured block in the conversation has the syntax colours, in the light 
   }
 })
 
-test('New conversation stays at the right of the conversation bar, whatever the status beside it', async () => {
-  const page = await conversationPage(1000)
-  try {
-    // A status that nearly fills the bar: it fits on the line, the button does not fit beside it, so the button wraps onto a line of its own.
-    const measure = (nearlyFull) => page.evaluate((nearlyFull) => {
-      const button = document.getElementById('convo-new')
-      const status = document.getElementById('convo-status')
-      const bar = button.parentElement
-      status.textContent = nearlyFull ? 'The agent is compacting its context.' : ''
-      status.style.flex = 'none'
-      status.style.width = nearlyFull ? (bar.getBoundingClientRect().width - 10) + 'px' : ''
-      return Math.round(bar.getBoundingClientRect().right - button.getBoundingClientRect().right)
-    }, nearlyFull)
-    assert.ok(Math.abs(await measure(false)) <= 1, 'with no status, the button is not at the right edge')
-    assert.ok(Math.abs(await measure(true)) <= 1, 'with a status that fills the line, the button is not at the right edge')
-  } finally { await page.close() }
+test('the status button sits just left of New conversation at the right of the bar, and its balloon moves nothing and stays on the page', async () => {
+  for (const width of [1000, 420]) {
+    const page = await conversationPage(width)
+    try {
+      // Opened from the button, the balloon stays (until closed) whatever the page's polls do meanwhile, so every box is read with it open.
+      const measure = () => page.evaluate(() => {
+        const r = (id) => document.getElementById(id).getBoundingClientRect()
+        const bar = document.getElementById('convo-new').parentElement.getBoundingClientRect()
+        return { info: r('status-info'), fresh: r('convo-new'), log: r('convo-log'), balloon: r('status-balloon'), bar,
+          open: !document.getElementById('status-balloon').hidden, viewport: document.documentElement.clientWidth }
+      })
+      const closed = await measure()
+      assert.ok(Math.abs(closed.bar.right - closed.fresh.right) <= 1, `${width}px: New conversation is not at the right edge`)
+      assert.ok(closed.info.right <= closed.fresh.left && closed.fresh.left - closed.info.right < 16, `${width}px: the button is not just left of New conversation`)
+      await page.click('#status-info')
+      const open = await measure()
+      assert.ok(open.open, `${width}px: the balloon did not open`)
+      for (const key of ['info', 'fresh', 'log']) {
+        assert.equal(Math.round(open[key].top), Math.round(closed[key].top), `${width}px: opening the balloon moved ${key}`)
+        assert.equal(Math.round(open[key].left), Math.round(closed[key].left), `${width}px: opening the balloon moved ${key}`)
+      }
+      assert.ok(open.balloon.left >= 0 && open.balloon.right <= open.viewport, `${width}px: the balloon runs off the page (${Math.round(open.balloon.left)}–${Math.round(open.balloon.right)})`)
+      assert.ok(open.balloon.top >= open.info.bottom, `${width}px: the balloon is not below its button`)
+    } finally { await page.close() }
+  }
 })
 
 // The note beside Refresh that the code has changed under the diff (see reviewstale.test.js) is one more thing in the Review bar
