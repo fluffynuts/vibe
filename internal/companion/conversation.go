@@ -389,14 +389,9 @@ func (c *conversation) give(seq int, prompt string, start StartAgent, prepare fu
 		return
 	case agent != nil:
 	default:
-		c.starting = true
-		c.started++
 		c.waiting = append(c.waiting, waitingPrompt{seq, prompt, id})
-		ctx, cancel := context.WithCancel(context.Background())
-		c.cancelStart = cancel
-		session := c.session
+		c.beginStart(start, prepare)
 		c.mu.Unlock()
-		go c.startAgent(ctx, session, start, prepare)
 		return
 	}
 	c.mu.Unlock()
@@ -432,6 +427,15 @@ func (c *conversation) deliver(agent Agent, w waitingPrompt) {
 		return
 	}
 	c.advanceReceipt(w.seq, receiptDelivered)
+}
+
+// beginStart starts an agent for the prompts waiting, c.mu held.
+func (c *conversation) beginStart(start StartAgent, prepare func(context.Context, func(string)) error) {
+	c.starting = true
+	c.started++
+	ctx, cancel := context.WithCancel(context.Background())
+	c.cancelStart = cancel
+	go c.startAgent(ctx, c.session, start, prepare)
 }
 
 // startAgent makes the sandbox ready and starts the agent, then gives it
@@ -482,8 +486,15 @@ func (c *conversation) startAgent(ctx context.Context, session string, start Sta
 		c.mu.Lock()
 		waiting := c.waiting
 		c.waiting = nil
-		if len(waiting) == 0 {
+		if len(waiting) == 0 || c.agent != agent {
 			c.handingOver = false
+			// The agent ended while the prompts were handed to it. Those it was
+			// given were marked undelivered as it ended; any given meanwhile have
+			// not been tried, and start a new agent, as with no agent there.
+			if len(waiting) > 0 {
+				c.waiting = waiting
+				c.beginStart(start, prepare)
+			}
 			c.mu.Unlock()
 			return
 		}

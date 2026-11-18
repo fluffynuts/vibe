@@ -25,8 +25,8 @@ type fakeAgent struct {
 	starts   int
 	// startGate, when set, holds each start until it is closed: an agent that takes a while to come up, as one through sbx does.
 	startGate chan struct{}
-	// crash, when closed, makes the processes end by themselves, as an agent that dies does.
-	crash chan struct{}
+	// crash, when closed, makes the processes end by themselves, as an agent that dies does; crashFirst, the first one alone.
+	crash, crashFirst chan struct{}
 	// ignoreEnd makes the processes carry on when their input is closed: an agent that will not end when asked.
 	ignoreEnd bool
 	// killedProcs is, for each process started, in order, whether it was killed.
@@ -117,11 +117,18 @@ func (p *fakeProc) run() {
 	defer close(p.done)
 	task := false
 	end := p.end
+	var crashFirst chan struct{}
+	if p.n == 0 {
+		crashFirst = p.f.crashFirst
+	}
 	for {
 		select {
 		case <-p.kill:
 			return
 		case <-p.f.crash:
+			p.err = errors.New("crashed")
+			return
+		case <-crashFirst:
 			p.err = errors.New("crashed")
 			return
 		case <-end:
@@ -398,6 +405,32 @@ func TestAPromptSentAsTheAgentStartsGoesAfterThoseThatWaited(t *testing.T) {
 	if got := f.asked(); got[0] != "first" || got[1] != "second" {
 		t.Errorf("the agent was given %q, want first then second", got)
 	}
+	close(f.release)
+	idle(t, s)
+}
+
+// An agent that ends while the prompts that waited for it are handed over takes none given meanwhile with it: such a prompt
+// starts a new agent, as it would have with no agent there.
+func TestAPromptGivenAsTheNewAgentEndsStartsAnother(t *testing.T) {
+	f := &fakeAgent{release: make(chan struct{}), startGate: make(chan struct{}), crashFirst: make(chan struct{}),
+		firstPromptReached: make(chan struct{}), firstPromptGate: make(chan struct{})}
+	s := converseServer(f)
+	send(t, s, "/api/conversation/send", `{"prompt":"first"}`)
+	close(f.startGate)
+	select {
+	case <-f.firstPromptReached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first prompt was never given to the agent")
+	}
+	close(f.crashFirst)
+	waitFor(t, "the agent to end", func() bool { s.convo.mu.Lock(); defer s.convo.mu.Unlock(); return s.convo.agent == nil })
+	if code, body := send(t, s, "/api/conversation/send", `{"prompt":"second"}`); code != http.StatusAccepted {
+		t.Fatalf("the second send: %d %v", code, body)
+	}
+	close(f.firstPromptGate)
+	waitFor(t, "a second agent to be given the second prompt", func() bool {
+		return f.count(&f.starts) == 2 && len(f.asked()) == 2 && f.asked()[1] == "second"
+	})
 	close(f.release)
 	idle(t, s)
 }
