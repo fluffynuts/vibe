@@ -135,7 +135,8 @@ async function colouredReviewPage() {
   await page.waitForSelector(plusSel('R20'), { state: 'attached' })
   let redrawn = 0
   for (let i = 0; i < 100 && (redrawn = await page.evaluate(() => window.vibeTestRedrawn['a.txt'] || 0)) < 2; i++) await page.waitForTimeout(50)
-  assert.equal(redrawn, 2, "a.txt's card was drawn afresh for each side's colours within 5s")
+  // At least: a whole-diff redraw (a poll whose answer changed) also takes the card away, and is no failure.
+  assert.ok(redrawn >= 2, `a.txt's card was drawn afresh for each side's colours within 5s (${redrawn} times)`)
   return page
 }
 

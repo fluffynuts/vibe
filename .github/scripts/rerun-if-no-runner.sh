@@ -49,5 +49,6 @@ fi
 
 while IFS=$'\t' read -r id name minutes; do
   say "Run $run, attempt $attempt of $max: re-ran \"$name\" (job $id), which waited $minutes minutes and never got a runner."
-  gh run rerun --job "$id"
+  # Not given the loop's stdin, which is the jobs still to read.
+  gh run rerun --job "$id" </dev/null
 done <<<"$starved"

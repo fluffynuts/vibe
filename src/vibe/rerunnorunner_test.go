@@ -70,7 +70,8 @@ func runScript(t *testing.T, attempt int, jobs ...fakeJob) (calls []string, summ
 	writeFile(t, filepath.Join(bin, "gh"), `#!/usr/bin/env bash
 case "$1 $2" in
   "api repos/o/r/actions/runs/42/attempts/`+fmt.Sprint(attempt)+`/jobs"*) cat "$FAKE_JOBS" ;;
-  "run rerun") echo "$*" >> "$FAKE_LOG" ;;
+  # Reads its stdin, as gh may: the script must not hand it what it is still reading from.
+  "run rerun") cat >/dev/null; echo "$*" >> "$FAKE_LOG" ;;
   *) echo "unexpected: $*" >&2; exit 1 ;;
 esac
 `)
@@ -163,5 +164,16 @@ func TestTheRunsSummaryAlsoSaysWhyNothingWasRerun(t *testing.T) {
 	_, summary = runScript(t, 10, fakeJob{id: 2, conclusion: "failure", runner: 0, steps: 0, waited: "15m"})
 	if !strings.Contains(summary, "attempt 10 of 10") {
 		t.Errorf("the summary does not say it gave up, and at which attempt:\n%s", summary)
+	}
+}
+
+// Two jobs left without a runner are both re-run, whatever gh does with its stdin.
+func TestEveryJobLeftWithoutARunnerIsRerun(t *testing.T) {
+	got := rerunsFor(t, 1,
+		fakeJob{id: 1, conclusion: "cancelled", runner: 0, steps: 0, waited: "15m"},
+		fakeJob{id: 2, conclusion: "cancelled", runner: 0, steps: 0, waited: "15m"},
+	)
+	if want := "run rerun --job 1 ; run rerun --job 2"; strings.Join(got, " ") != want {
+		t.Errorf("re-ran %q, want %q", strings.Join(got, " "), want)
 	}
 }
