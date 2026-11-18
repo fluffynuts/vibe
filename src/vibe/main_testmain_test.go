@@ -25,6 +25,8 @@ func TestMain(m *testing.M) {
 		time.Sleep(30 * time.Second)
 		os.Exit(0)
 	}
+	// The test binary run with --version would run the tests, not say a version.
+	installedVibeVersion = func() string { return "" }
 	openTerminal = func() (*prompt.Terminal, bool) { return nil, false }
 	openTerminalInput = func() (*os.File, func(), bool) { return nil, func() {}, false }
 	// And on the same machine, whatever it really is: one big enough for

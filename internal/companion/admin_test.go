@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"vibe"
 )
 
 // fakeAdmin is the vibe side of the Admin tab: it records what it was asked
@@ -29,11 +31,11 @@ func (f *fakeAdmin) Status() AdminStatus {
 	return AdminStatus{Exists: true, Running: true, Profile: "p", Info: "name      box\n"}
 }
 
-func (f *fakeAdmin) Upgrades(fresh bool) []string {
+func (f *fakeAdmin) Upgrades(fresh bool) UpgradeCheck {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.checks = append(f.checks, fresh)
-	return []string{"vibe 1.2.3"}
+	return UpgradeCheck{Found: []string{"vibe 1.2.3", "Docker SBX v0.54.0 → v0.55.0"}, Sbx: "v0.54.0", VibeInstalled: "1.2.4", SbxUpgrade: true}
 }
 
 func (f *fakeAdmin) Do(ctx context.Context, action AdminAction, log func(string)) error {
@@ -64,9 +66,13 @@ type adminResult struct {
 	Status   AdminStatus `json:"status"`
 	Job      *adminJob   `json:"job"`
 	Upgrades struct {
-		Found    []string `json:"found"`
-		Checked  bool     `json:"checked"`
-		Checking bool     `json:"checking"`
+		Found         []string `json:"found"`
+		Checked       bool     `json:"checked"`
+		Checking      bool     `json:"checking"`
+		Vibe          string   `json:"vibe"`
+		VibeInstalled string   `json:"vibeInstalled"`
+		Sbx           string   `json:"sbx"`
+		SbxUpgrade    bool     `json:"sbxUpgrade"`
 	} `json:"upgrades"`
 }
 
@@ -213,6 +219,25 @@ func TestWhatTheAgentLeftRunningEndsForAnActionSayingSo(t *testing.T) {
 	}
 }
 
+// The versions in use are always shown: this vibe's at once, as it knows it; the installed vibe's and Docker SBX's
+// once a check has asked (sbx is never waited on for the page).
+func TestTheVersionsAreSaidWithTheUpgrades(t *testing.T) {
+	f := &fakeAdmin{}
+	s := adminServer(f, nil)
+	if r := adminPoll(t, s); r.Upgrades.Vibe != vibe.FullVersion() || r.Upgrades.Sbx != "" || r.Upgrades.VibeInstalled != "" {
+		t.Errorf("before a check: vibe %q, installed %q, sbx %q; want this vibe's version alone", r.Upgrades.Vibe, r.Upgrades.VibeInstalled, r.Upgrades.Sbx)
+	}
+	do(t, s, post("/api/admin/upgrades", `{}`))
+	deadline := time.Now().Add(2 * time.Second)
+	r := adminPoll(t, s)
+	for ; !r.Upgrades.Checked && time.Now().Before(deadline); r = adminPoll(t, s) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if r.Upgrades.Vibe != vibe.FullVersion() || r.Upgrades.VibeInstalled != "1.2.4" || r.Upgrades.Sbx != "v0.54.0" || !r.Upgrades.SbxUpgrade {
+		t.Errorf("after a check: %+v", r.Upgrades)
+	}
+}
+
 func TestUpgradesAreCheckedOnRequest(t *testing.T) {
 	f := &fakeAdmin{}
 	s := adminServer(f, nil)
@@ -226,7 +251,7 @@ func TestUpgradesAreCheckedOnRequest(t *testing.T) {
 	for {
 		r := adminPoll(t, s)
 		if r.Upgrades.Checked {
-			if strings.Join(r.Upgrades.Found, ",") != "vibe 1.2.3" {
+			if strings.Join(r.Upgrades.Found, ",") != "vibe 1.2.3,Docker SBX v0.54.0 → v0.55.0" {
 				t.Errorf("found %v", r.Upgrades.Found)
 			}
 			break
@@ -336,7 +361,7 @@ func TestTheAdminTabSaysWhyItWantsAttention(t *testing.T) {
 		t.Errorf("before any upgrade was found: %v", got)
 	}
 	s.admin.mu.Lock()
-	s.admin.upgrades = []string{"vibe 1.2.3", "Docker SBX 0.48.0 → 0.49.0"}
+	s.admin.upgrades = UpgradeCheck{Found: []string{"vibe 1.2.3", "Docker SBX 0.48.0 → 0.49.0"}}
 	s.admin.mu.Unlock()
 	got := attention(s)["admin"]
 	if len(got) != 1 || !strings.Contains(got[0], "vibe 1.2.3") || !strings.Contains(got[0], "Docker SBX 0.48.0 → 0.49.0") {

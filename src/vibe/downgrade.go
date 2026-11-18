@@ -28,9 +28,10 @@ import (
 // --upgrade installs, once ~/.vibe is backed up beside itself.
 //
 // It always asks, so with no terminal it changes nothing (-f doesn't skip
-// the question); and it refuses while any vibe session runs, as sbx under a
-// running sandbox, or vibe's files under a running vibe, would be pulled
-// out from under it. --update-strategy is passed on to vibe's --install.
+// the question); and once what was picked is downloaded, it offers to stop
+// what runs (see clearToChange), as sbx under a running sandbox, or vibe's
+// files under a running vibe, would be pulled out from under it.
+// --update-strategy is passed on to vibe's --install.
 func doDowngrade(vibeHome, strategyValue string) error {
 	if strategyValue != "" {
 		if _, err := upgrade.ParseStrategy(strategyValue); err != nil {
@@ -39,9 +40,6 @@ func doDowngrade(vibeHome, strategyValue string) error {
 	}
 	if !interactive() {
 		return errors.New("--downgrade asks what to go back on, and there is no terminal to ask on: nothing changed")
-	}
-	if err := refuseWhileVibesRun(vibeHome); err != nil {
-		return err
 	}
 
 	var found []pendingUpgrade
@@ -82,7 +80,7 @@ func doDowngrade(vibeHome, strategyValue string) error {
 	if err != nil {
 		return err
 	}
-	return applyDowngrades(vibeHome, chosen, time.Now())
+	return applyDowngrades(vibeHome, chosen, time.Now(), realRunningWork(vibeHome))
 }
 
 // otherVibes lists the vibe sessions running, and the work other vibes hold
@@ -138,14 +136,15 @@ func chooseDowngrades(found []pendingUpgrade) ([]pendingUpgrade, error) {
 // the moment (which vibes are running, logs) or a cache.
 var backupLeavesOut = []string{"running", "logs", "nuget-fetch"}
 
-// applyDowngrades downloads every one of chosen, then, when one of them
-// changes ~/.vibe (going back on vibe; sbx leaves it alone), backs ~/.vibe up
-// beside itself, then installs each, going on past one that fails. Until
-// the installs start nothing has changed, so a download that fails stops
-// them all; so does a vibe session started while the user chose or the
-// downloads ran (sbx's take a while), as one running before did; and so does
-// a backup that can't be made.
-func applyDowngrades(vibeHome string, chosen []pendingUpgrade, now time.Time) error {
+// applyDowngrades downloads every one of chosen, then gets them clear to
+// change (w: stopping what runs, once the user says so; said no to, sbx is
+// left as it is), then, when one of them changes ~/.vibe (going back on vibe;
+// sbx leaves it alone), backs ~/.vibe up beside itself, then installs each,
+// going on past one that fails. Until the installs start nothing has
+// changed, so a download that fails stops them all; so does a vibe still
+// running (one left running, or started meanwhile); and so does a backup
+// that can't be made.
+func applyDowngrades(vibeHome string, chosen []pendingUpgrade, now time.Time, w runningWork) error {
 	downloads, err := os.MkdirTemp("", "vibe-downgrade-")
 	if err != nil {
 		return err
@@ -162,6 +161,23 @@ func applyDowngrades(vibeHome string, chosen []pendingUpgrade, now time.Time) er
 		}
 	}
 
+	clear, err := clearToChange(w, productsIn(chosen), false, true)
+	if err != nil {
+		return fmt.Errorf("%w — nothing changed", err)
+	}
+	if !clear {
+		var kept []pendingUpgrade
+		var keptInstalls []func() error
+		for i, d := range chosen {
+			if !d.changesSbx {
+				kept, keptInstalls = append(kept, d), append(keptInstalls, installs[i])
+			}
+		}
+		if len(kept) == 0 {
+			return nil
+		}
+		chosen, installs = kept, keptInstalls
+	}
 	if err := refuseWhileVibesRun(vibeHome); err != nil {
 		return err
 	}
@@ -182,6 +198,18 @@ func applyDowngrades(vibeHome string, chosen []pendingUpgrade, now time.Time) er
 	}
 	note("'vibe --upgrade' offers the newest releases again, whenever you want them")
 	return nil
+}
+
+// productsIn names what chosen changes: "vibe", "Docker SBX", or both.
+func productsIn(chosen []pendingUpgrade) string {
+	var names []string
+	if slices.ContainsFunc(chosen, func(d pendingUpgrade) bool { return !d.changesSbx }) {
+		names = append(names, "vibe")
+	}
+	if slices.ContainsFunc(chosen, func(d pendingUpgrade) bool { return d.changesSbx }) {
+		names = append(names, "Docker SBX")
+	}
+	return strings.Join(names, " and ")
 }
 
 // backUpVibeHome zips ~/.vibe beside itself, saying where, while a spinner
@@ -273,7 +301,8 @@ func checkSbxDowngrade() (*pendingUpgrade, string, error) {
 		return nil, m.goBackByHand(tag), nil
 	}
 	return &pendingUpgrade{
-		label: fmt.Sprintf("Docker SBX %s → %s", installed, tag),
+		label:      fmt.Sprintf("Docker SBX %s → %s", installed, tag),
+		changesSbx: true,
 		download: func(dir string) (func() error, error) {
 			install, err := downloadSbxRelease(m, tag, dir, false)
 			if err != nil {

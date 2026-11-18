@@ -112,6 +112,109 @@ test("a range's lines are marked on their side, over the colour of changed lines
   } finally { await page.close() }
 })
 
+// colouredReviewPage is reviewPage once a.txt's card has had both its sides' colours: each side's arriving draws the card
+// afresh (redrawCard), even for plain text that gains none, and a card drawn afresh takes a selection in it away. The
+// redraws are counted from the page's first moment, as they can come before the diff is first seen here; polled, as
+// the page's policy forbids the eval Playwright's own waiting uses.
+async function colouredReviewPage() {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
+  await page.addInitScript(() => {
+    window.vibeTestRedrawn = {}
+    new MutationObserver((changes) => {
+      for (const change of changes) {
+        for (const node of change.removedNodes) {
+          if (node.classList && node.classList.contains('review-file')) {
+            window.vibeTestRedrawn[node.dataset.path] = (window.vibeTestRedrawn[node.dataset.path] || 0) + 1
+          }
+        }
+      }
+    }).observe(document, { childList: true, subtree: true })
+  })
+  await page.goto(URL)
+  await page.click('#tab-review')
+  await page.waitForSelector(plusSel('R20'), { state: 'attached' })
+  let redrawn = 0
+  for (let i = 0; i < 100 && (redrawn = await page.evaluate(() => window.vibeTestRedrawn['a.txt'] || 0)) < 2; i++) await page.waitForTimeout(50)
+  // At least: a whole-diff redraw (a poll whose answer changed) also takes the card away, and is no failure.
+  assert.ok(redrawn >= 2, `a.txt's card was drawn afresh for each side's colours within 5s (${redrawn} times)`)
+  return page
+}
+
+// selectNewSide selects, in the split diff of a.txt, from the start of new line `from`'s code to the end of new line
+// `to`'s: the rows between hold old-side cells too, which a native Range takes in whole.
+const selectNewSide = (page, from, to) => page.evaluate(([from, to]) => {
+  const code = (n) => document.querySelector(`[aria-label="Comment on line R${n}"]`).closest('td').nextElementSibling.nextElementSibling
+  const start = code(from)
+  const end = code(to)
+  start.scrollIntoView({ block: 'center' })
+  window.getSelection().setBaseAndExtent(start, 0, end, end.childNodes.length)
+}, [from, to])
+
+// paintedSelection gives, once a frame has been drawn, where the selection's painted marks are, each with the side
+// of the diff under its middle, and where the new side's own text of the selection is: the rects of the Range that
+// land on a new-side cell.
+const paintedSelection = (page) => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => {
+  const sideAt = (x, y) => {
+    const marks = document.getElementById('split-selection-overlay')
+    marks.style.display = 'none' // its marks don't take the pointer, but are looked through anyway, to be sure
+    const under = document.elementFromPoint(x, y)
+    marks.style.display = ''
+    const cell = under && under.closest('[data-side]')
+    return cell ? cell.dataset.side + (cell.classList.contains('code') ? '' : ' ' + cell.className) : null
+  }
+  const marks = Array.from(document.querySelectorAll('.split-selection-mark')).map((m) => {
+    const r = m.getBoundingClientRect()
+    return { top: Math.round(r.top), left: Math.round(r.left), side: sideAt(r.left + 1, r.top + r.height / 2) }
+  })
+  const text = Array.from(window.getSelection().getRangeAt(0).getClientRects())
+    .filter((r) => sideAt(r.left + 1, r.top + r.height / 2) === 'new')
+    .map((r) => ({ top: Math.round(r.top), left: Math.round(r.left) }))
+  resolve({ marks, text })
+}))))
+
+test('a selection begun on one side of a split diff is painted on that side alone', async () => {
+  const page = await colouredReviewPage()
+  try {
+    await selectNewSide(page, 18, 24)
+    const { marks, text } = await paintedSelection(page)
+    // The selection as it was is said with a failure, as the browser's state is all there is to go on afterwards.
+    const selection = await page.evaluate(() => { const s = window.getSelection(); return { ranges: s.rangeCount, collapsed: s.isCollapsed, onThePage: !!(s.anchorNode && s.anchorNode.isConnected) } })
+    assert.ok(marks.length >= 7, `the seven new lines are painted (${marks.length} marks; the selection: ${JSON.stringify(selection)})`)
+    assert.deepEqual(marks.filter((m) => m.side !== 'new'), [], "every mark is on the new side's code: none on the old side, nor on a line number or sign")
+    // The browser's own highlight is off for the diff's cells, and what is in them, on both sides: only the marks show.
+    const nativeHighlights = await page.evaluate(() => {
+      const code = (side, n) => document.querySelector(`[aria-label="Comment on line ${side}${n}"]`).closest('td').nextElementSibling.nextElementSibling
+      return [code('R', 20), code('L', 20), code('R', 18)].flatMap((cell) => [cell, ...cell.querySelectorAll('*')])
+        .map((el) => getComputedStyle(el, '::selection').backgroundColor)
+        .filter((colour) => colour !== 'rgba(0, 0, 0, 0)' && colour !== 'transparent')
+    })
+    assert.deepEqual(nativeHighlights, [], "the browser's own highlight shows in the diff's cells")
+    assert.deepEqual(marks.map(({ top, left }) => ({ top, left })), text, 'the marks are where the selected new-side text is')
+  } finally { await page.close() }
+})
+
+test('the painted selection moves with the diff as it scrolls', async () => {
+  const page = await colouredReviewPage()
+  try {
+    await page.setViewportSize({ width: 1400, height: 360 }) // short enough that the diff scrolls
+    await selectNewSide(page, 18, 24)
+    const before = await paintedSelection(page)
+    // The diff's own scroller, whichever element that is, scrolled as a wheel would.
+    const scrolled = await page.evaluate(() => {
+      let el = document.querySelector('[aria-label="Comment on line R20"]').closest('td')
+      while (el && !(el.scrollHeight > el.clientHeight && /auto|scroll/.test(getComputedStyle(el).overflowY))) el = el.parentElement
+      const scroller = el || document.scrollingElement
+      const was = scroller.scrollTop
+      scroller.scrollTop += 60
+      return { by: scroller.scrollTop - was, what: scroller.id || scroller.className || scroller.tagName }
+    })
+    assert.ok(scrolled.by > 0, `the diff scrolled (${scrolled.what} moved ${scrolled.by}px)`)
+    const after = await paintedSelection(page)
+    assert.notDeepEqual(after.text, before.text, 'the diff scrolled')
+    assert.deepEqual(after.marks.map(({ top, left }) => ({ top, left })), after.text, 'the marks are still where the selected text is')
+  } finally { await page.close() }
+})
+
 // Code is coloured once its file is near the screen, and the colours show.
 // Colours arrive a file at a time, each redrawing the diff: so each step
 // here is one call into the page, finding what it needs as it then is.

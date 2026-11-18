@@ -37,7 +37,7 @@ type companionAdmin struct {
 	listSandboxes func(ctx context.Context) ([]sbxrun.Status, error)
 
 	mu       sync.Mutex
-	upgrades []string
+	upgrades companion.UpgradeCheck
 	checked  bool
 }
 
@@ -143,14 +143,14 @@ func shellWord(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-func (a *companionAdmin) Upgrades(fresh bool) []string {
+func (a *companionAdmin) Upgrades(fresh bool) companion.UpgradeCheck {
 	a.mu.Lock()
 	if a.checked && !fresh {
 		defer a.mu.Unlock()
 		return a.upgrades
 	}
 	a.mu.Unlock()
-	found := availableUpgrades()
+	found := checkUpgrades()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.upgrades, a.checked = found, true

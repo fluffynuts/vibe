@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"vibe"
+	"vibe/internal/companion"
 	"vibe/internal/sbxinstall"
 	"vibe/internal/selfupdate"
 )
@@ -86,7 +87,7 @@ func TestUpgradeWhenEverythingIsUpToDate(t *testing.T) {
 	onReleases(t, "v"+vibe.Version+".50", "v0.46.0")
 	withSbx(t, "v0.46.0")
 	var err error
-	out := captureStdout(t, func() { err = doUpgrade(false, "") })
+	out := captureStdout(t, func() { err = doUpgrade(t.TempDir(), false, "") })
 	if err != nil || out != "vibe and sbx are up to date\n" {
 		t.Errorf("doUpgrade = %v, printing %q", err, out)
 	}
@@ -98,7 +99,7 @@ func TestUpgradeDoesntClaimUpToDateWhenItCouldntCheck(t *testing.T) {
 	withSbx(t, "v0.46.0")
 	selfupdate.Releases = "http://127.0.0.1:1/releases" // nothing listens there
 	var err error
-	out := captureStdout(t, func() { err = doUpgrade(false, "") })
+	out := captureStdout(t, func() { err = doUpgrade(t.TempDir(), false, "") })
 	if err == nil || !strings.Contains(err.Error(), "vibe") || out != "" {
 		t.Errorf("doUpgrade = %v, printing %q; want it to say vibe couldn't be checked", err, out)
 	}
@@ -148,7 +149,7 @@ func TestCheckSbxUpgrade(t *testing.T) {
 		{"", "", "Docker SBX isn't installed — vibe --install-sbx installs it"},
 	} {
 		withSbx(t, tt.installed)
-		u, summary, err := checkSbxUpgrade()
+		u, summary, _, err := checkSbxUpgrade()
 		if err != nil {
 			t.Fatalf("checkSbxUpgrade with %q installed: %v", tt.installed, err)
 		}
@@ -169,7 +170,7 @@ func TestCheckSbxUpgradeLeavesAnSbxItDidntInstall(t *testing.T) {
 	writeFile(t, filepath.Join(elsewhere, "sbx"), "#!/bin/sh\necho 'sbx version: v0.45.1'\n")
 	os.Chmod(filepath.Join(elsewhere, "sbx"), 0o755)
 	t.Setenv("PATH", elsewhere)
-	u, summary, err := checkSbxUpgrade()
+	u, summary, _, err := checkSbxUpgrade()
 	if err != nil || u != nil || !strings.Contains(summary, "wasn't installed by vibe --install-sbx") {
 		t.Errorf("checkSbxUpgrade = %v, %q, %v", u, summary, err)
 	}
@@ -281,5 +282,99 @@ func TestReportUpgrades(t *testing.T) {
 		"vibe: run 'vibe --upgrade' to install them\n"
 	if out.String() != want {
 		t.Errorf("reportUpgrades printed %q, want %q", out.String(), want)
+	}
+}
+
+// installUpgrades gets sbx clear only for an sbx upgrade (and once it is downloaded); left unclear, sbx is left as it
+// is and vibe still goes ahead.
+func TestInstallUpgradesClearsSbxOnlyForAnSbxUpgrade(t *testing.T) {
+	var steps []string
+	cleared := 0
+	clear := func(ok bool) func() (bool, error) {
+		return func() (bool, error) { cleared++; steps = append(steps, "clear"); return ok, nil }
+	}
+	row := func(name string, sbx bool) pendingUpgrade {
+		return pendingUpgrade{label: name, changesSbx: sbx, download: func(string) (func() error, error) {
+			steps = append(steps, "download "+name)
+			return func() error { steps = append(steps, "install "+name); return nil }, nil
+		}}
+	}
+
+	if err := installUpgrades([]pendingUpgrade{row("vibe", false)}, clear(true)); err != nil || cleared != 0 {
+		t.Errorf("installUpgrades of vibe alone = %v, clearing %d times; want sbx never cleared", err, cleared)
+	}
+
+	steps = nil
+	if err := installUpgrades([]pendingUpgrade{row("vibe", false), row("sbx", true)}, clear(false)); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"download vibe", "install vibe", "download sbx", "clear"}; !reflect.DeepEqual(steps, want) {
+		t.Errorf("steps = %q, want %q: vibe installed, sbx downloaded but left, as it isn't clear", steps, want)
+	}
+
+	steps = nil
+	if err := installUpgrades([]pendingUpgrade{row("sbx", true)}, clear(true)); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"download sbx", "clear", "install sbx"}; !reflect.DeepEqual(steps, want) {
+		t.Errorf("steps = %q, want %q", steps, want)
+	}
+}
+
+// withInstalledVibe makes the vibe installed say it is version, for the rest of the test.
+func withInstalledVibe(t *testing.T, version string) {
+	t.Helper()
+	old := installedVibeVersion
+	installedVibeVersion = func() string { return version }
+	t.Cleanup(func() { installedVibeVersion = old })
+}
+
+func TestCheckUpgradesSaysTheVersionsInstalled(t *testing.T) {
+	asBuild(t, "50")
+	onReleases(t, "v"+vibe.Version+".51", "v0.46.0")
+	withSbx(t, "v0.45.1")
+	withInstalledVibe(t, vibe.Version+".51")
+	got := checkUpgrades()
+	want := companion.UpgradeCheck{
+		Found:         []string{"vibe " + vibe.Version + ".50 → " + vibe.Version + ".51", "Docker SBX v0.45.1 → v0.46.0"},
+		SbxUpgrade:    true,
+		Sbx:           "v0.45.1",
+		VibeInstalled: vibe.Version + ".51",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("checkUpgrades = %+v, want %+v", got, want)
+	}
+
+	withSbx(t, "v0.46.0")
+	if got := checkUpgrades(); got.Sbx != "v0.46.0" || got.SbxUpgrade {
+		t.Errorf("with sbx up to date: %+v; want its version, and no sbx upgrade", got)
+	}
+}
+
+// An sbx vibe didn't install is still said, though vibe leaves upgrading it to the user.
+func TestCheckUpgradesSaysTheVersionOfAnSbxVibeDidntInstall(t *testing.T) {
+	asBuild(t, "50")
+	onReleases(t, "v"+vibe.Version+".50", "v0.46.0")
+	withSbx(t, "")
+	withInstalledVibe(t, "")
+	elsewhere := t.TempDir()
+	writeFile(t, filepath.Join(elsewhere, "sbx"), "#!/bin/sh\necho 'sbx version v0.45.1 abc'\n")
+	os.Chmod(filepath.Join(elsewhere, "sbx"), 0o755)
+	t.Setenv("PATH", elsewhere)
+	if got := checkUpgrades(); got.Sbx != "v0.45.1" || got.SbxUpgrade || len(got.Found) != 0 {
+		t.Errorf("checkUpgrades = %+v; want sbx's version said, and nothing offered", got)
+	}
+}
+
+func TestVersionFromVibeVersion(t *testing.T) {
+	for out, want := range map[string]string{
+		"vibe 0.1.236 (a1b2c3d4e5f6, built 2026-11-17T09:00:00Z)\n": "0.1.236",
+		"vibe 0.1\n":       "0.1",
+		"":                 "",
+		"something else\n": "",
+	} {
+		if got := versionFromVibeVersion(out); got != want {
+			t.Errorf("versionFromVibeVersion(%q) = %q, want %q", out, got, want)
+		}
 	}
 }

@@ -183,18 +183,56 @@ func heldElsewhere(t *testing.T, vibeHome, folder string) {
 	t.Cleanup(func() { otherVibes = old })
 }
 
-func TestDowngradeRefusesWhileAVibeSessionRuns(t *testing.T) {
-	onReleaseFeeds(t, nil, nil)
-	selfupdate.Releases = "http://127.0.0.1:1/releases" // never asked
-	withDowngradePicks(t, func([]string, []bool) ([]int, bool) {
-		t.Error("asked what to downgrade while a session runs")
-		return nil, false
-	})
-	vibeHome := t.TempDir()
+// nothingRunning is a machine with no sandbox running and no vibe attached to one.
+func nothingRunning() runningWork { return (&fakeRunning{}).work() }
+
+// Running sandboxes are offered to be stopped once what was picked has been downloaded, and stopped when the user
+// says so; then everything picked goes ahead.
+func TestApplyDowngradesStopsWhatRunsOnceAskedFirst(t *testing.T) {
+	vibeHome := filepath.Join(t.TempDir(), ".vibe")
+	f := &fakeRunning{plan: runningPlan("a"), answer: true}
+	var steps []string
+	chosen := []pendingUpgrade{
+		fetchedThen("vibe", func() error { steps = append(steps, "download vibe"); return nil }, func() error { steps = append(steps, "install vibe"); return nil }),
+		changingSbx(fetchedThen("sbx", nil, func() error { steps = append(steps, "install sbx"); return nil })),
+	}
+	if err := applyDowngrades(vibeHome, chosen, time.Now(), f.work()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(f.stopped, []string{"a"}) || !reflect.DeepEqual(steps, []string{"download vibe", "install vibe", "install sbx"}) {
+		t.Errorf("stopped %q, steps %q; want a stopped, then both installed", f.stopped, steps)
+	}
+	if len(f.asked) != 1 || !strings.Contains(f.asked[0], "Stop them all") {
+		t.Errorf("asked %q", f.asked)
+	}
+}
+
+// Said no to, Docker SBX is left as it is; going back on vibe goes ahead when no vibe is running.
+func TestApplyDowngradesLeavesSbxWhenTheUserWontStopWhatRuns(t *testing.T) {
+	vibeHome := filepath.Join(t.TempDir(), ".vibe")
+	f := &fakeRunning{plan: runningPlan("a"), answer: false}
+	var installed []string
+	chosen := []pendingUpgrade{
+		fetchedThen("vibe", nil, func() error { installed = append(installed, "vibe"); return nil }),
+		changingSbx(fetchedThen("sbx", nil, func() error { installed = append(installed, "sbx"); return nil })),
+	}
+	if err := applyDowngrades(vibeHome, chosen, time.Now(), f.work()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.stopped) != 0 || !reflect.DeepEqual(installed, []string{"vibe"}) {
+		t.Errorf("stopped %q, installed %q; want nothing stopped, vibe alone installed", f.stopped, installed)
+	}
+}
+
+// A vibe still running, left so by the user, still keeps vibe from being gone back on: its files would change under it.
+func TestApplyDowngradesRefusesVibeWhileAVibeIsLeftRunning(t *testing.T) {
+	vibeHome := filepath.Join(t.TempDir(), ".vibe")
 	heldElsewhere(t, vibeHome, "/work/a")
-	err := doDowngrade(vibeHome, "")
+	f := &fakeRunning{plan: runningPlan("a"), answer: false}
+	chosen := []pendingUpgrade{fetchedThen("vibe", nil, func() error { t.Error("went back on vibe while a vibe runs"); return nil })}
+	err := applyDowngrades(vibeHome, chosen, time.Now(), f.work())
 	if err == nil || !strings.Contains(err.Error(), "/work/a") || !strings.Contains(err.Error(), "nothing changed") {
-		t.Errorf("doDowngrade while a session runs = %v; want a refusal naming the folder", err)
+		t.Errorf("applyDowngrades = %v; want a refusal naming the folder", err)
 	}
 }
 
@@ -212,6 +250,12 @@ func fetchedThen(label string, downloading func() error, install func() error) p
 		}
 		return install, nil
 	}}
+}
+
+// changingSbx is u marked as changing Docker SBX, which needs what runs stopped first.
+func changingSbx(u pendingUpgrade) pendingUpgrade {
+	u.changesSbx = true
+	return u
 }
 
 // changingVibeHome is u marked as changing ~/.vibe, as going back on vibe
@@ -242,7 +286,9 @@ func TestApplyDowngradesDownloadsThenBacksUpThenInstalls(t *testing.T) {
 			func() error { steps = append(steps, "install b"); return nil }),
 	}
 	var err error
-	said := stderrOf(t, func() { err = applyDowngrades(vibeHome, chosen, time.Date(2026, 11, 17, 9, 0, 0, 0, time.Local)) })
+	said := stderrOf(t, func() {
+		err = applyDowngrades(vibeHome, chosen, time.Date(2026, 11, 17, 9, 0, 0, 0, time.Local), nothingRunning())
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +314,7 @@ func TestApplyDowngradesStopsWhenADownloadFails(t *testing.T) {
 		changingVibeHome(fetchedThen("a", nil, installed)),
 		fetchedThen("b", func() error { return errors.New("b's download broke") }, installed),
 	}
-	err := applyDowngrades(vibeHome, chosen, time.Now())
+	err := applyDowngrades(vibeHome, chosen, time.Now(), nothingRunning())
 	if err == nil || !strings.Contains(err.Error(), "b's download broke") || !strings.Contains(err.Error(), "nothing changed") {
 		t.Errorf("applyDowngrades with a download failing = %v", err)
 	}
@@ -291,7 +337,7 @@ func TestApplyDowngradesStopsWhenTheBackupFails(t *testing.T) {
 		t.Error("downgraded with no backup made")
 		return nil
 	}))}
-	err := applyDowngrades(vibeHome, chosen, time.Now())
+	err := applyDowngrades(vibeHome, chosen, time.Now(), nothingRunning())
 	if err == nil || !strings.Contains(err.Error(), "back up") || !strings.Contains(err.Error(), "nothing changed") {
 		t.Errorf("applyDowngrades with the backup failing = %v", err)
 	}
@@ -311,7 +357,7 @@ func TestApplyDowngradesRefusesASessionStartedWhileDownloading(t *testing.T) {
 		t.Error("downgraded while a session runs")
 		return nil
 	}))}
-	err := applyDowngrades(vibeHome, chosen, time.Now())
+	err := applyDowngrades(vibeHome, chosen, time.Now(), nothingRunning())
 	if err == nil || !strings.Contains(err.Error(), "/work/b") || !strings.Contains(err.Error(), "nothing changed") {
 		t.Errorf("applyDowngrades with a session started while downloading = %v", err)
 	}
@@ -327,7 +373,7 @@ func TestApplyDowngradesGoesOnPastAnInstallThatFails(t *testing.T) {
 		fetchedThen("a", nil, func() error { ran++; return errors.New("a broke") }),
 		fetchedThen("b", nil, func() error { ran++; return nil }),
 	}
-	err := applyDowngrades(vibeHome, chosen, time.Now())
+	err := applyDowngrades(vibeHome, chosen, time.Now(), nothingRunning())
 	if ran != 2 || err == nil || !strings.Contains(err.Error(), "a broke") {
 		t.Errorf("applyDowngrades = %v after installing %d; want both installed, and a's error", err, ran)
 	}
@@ -343,7 +389,7 @@ func TestApplyDowngradesBacksUpOnlyForAChangeToVibeHome(t *testing.T) {
 	installed := false
 	chosen := []pendingUpgrade{fetchedThen("sbx", nil, func() error { installed = true; return nil })}
 	var err error
-	said := stderrOf(t, func() { err = applyDowngrades(vibeHome, chosen, time.Now()) })
+	said := stderrOf(t, func() { err = applyDowngrades(vibeHome, chosen, time.Now(), nothingRunning()) })
 	if err != nil || !installed {
 		t.Fatalf("applyDowngrades = %v, installed = %v", err, installed)
 	}
@@ -367,5 +413,25 @@ func TestOnlyGoingBackOnVibeChangesVibeHome(t *testing.T) {
 	d, _, err = checkSbxDowngrade()
 	if err != nil || d == nil || d.changesVibeHome {
 		t.Errorf("checkSbxDowngrade = %+v, %v; want it to leave ~/.vibe alone", d, err)
+	}
+}
+
+func TestOnlyTheSbxRowsChangeSbx(t *testing.T) {
+	v := vibe.Version
+	onReleaseFeeds(t, []string{"v" + v + ".235", "v" + v + ".228"}, []string{"v0.54.0", "v0.53.0"})
+	asBuild(t, "235")
+	withSbx(t, "v0.54.0")
+	if d, _, err := checkVibeDowngrade(""); err != nil || d == nil || d.changesSbx {
+		t.Errorf("checkVibeDowngrade = %+v, %v; want it to leave sbx alone", d, err)
+	}
+	if d, _, err := checkSbxDowngrade(); err != nil || d == nil || !d.changesSbx {
+		t.Errorf("checkSbxDowngrade = %+v, %v; want it to say it changes sbx", d, err)
+	}
+	onReleases(t, "v"+v+".236", "v0.55.0")
+	if u, _, err := checkVibeUpgrade(false, ""); err != nil || u == nil || u.changesSbx {
+		t.Errorf("checkVibeUpgrade = %+v, %v; want it to leave sbx alone", u, err)
+	}
+	if u, _, _, err := checkSbxUpgrade(); err != nil || u == nil || !u.changesSbx {
+		t.Errorf("checkSbxUpgrade = %+v, %v; want it to say it changes sbx", u, err)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"vibe"
+	"vibe/internal/companion"
 	"vibe/internal/pathresolve"
 	"vibe/internal/prompt"
 	"vibe/internal/sbxinstall"
@@ -30,6 +31,9 @@ type pendingUpgrade struct {
 	// changesVibeHome says installing it changes what is in ~/.vibe, as
 	// installing a vibe release does: --downgrade backs ~/.vibe up first.
 	changesVibeHome bool
+	// changesSbx says installing it changes Docker SBX, whose daemon is
+	// restarted: what runs is stopped first (see clearToChange).
+	changesSbx bool
 }
 
 // downloadAndInstall makes u's change, downloading it into a temporary
@@ -51,7 +55,9 @@ func downloadAndInstall(u pendingUpgrade) error {
 // offers whichever there are in a checklist (all ticked), and installs the
 // ones picked. With -f, or no terminal to ask on, it installs them all; -f
 // and --update-strategy are passed on to the --install that upgrades vibe.
-func doUpgrade(force bool, strategyValue string) error {
+// Docker SBX is only upgraded once nothing runs (see clearToChange): with -f,
+// what runs is stopped unasked.
+func doUpgrade(vibeHome string, force bool, strategyValue string) error {
 	if strategyValue != "" {
 		if _, err := upgrade.ParseStrategy(strategyValue); err != nil {
 			return err // before downloading anything
@@ -73,7 +79,7 @@ func doUpgrade(force bool, strategyValue string) error {
 	}
 
 	status.show("Checking for a newer Docker SBX")
-	if u, summary, err := checkSbxUpgrade(); err != nil {
+	if u, summary, _, err := checkSbxUpgrade(); err != nil {
 		status.done("Checking for a newer Docker SBX failed: %s", err)
 		unchecked = append(unchecked, "sbx")
 	} else {
@@ -95,9 +101,32 @@ func doUpgrade(force bool, strategyValue string) error {
 	if err != nil {
 		return err
 	}
+	return installUpgrades(chosen, func() (bool, error) {
+		return clearToChange(realRunningWork(vibeHome), "Docker SBX", force, interactive())
+	})
+}
+
+// installUpgrades downloads and installs each of chosen in turn, going on
+// past one that fails. One that changes Docker SBX is downloaded, then only
+// installed once clear says sbx is clear to change; left as it is otherwise.
+func installUpgrades(chosen []pendingUpgrade, clear func() (bool, error)) error {
 	var errs []error
 	for _, u := range chosen {
-		if err := downloadAndInstall(u); err != nil {
+		err := downloadAndInstall(pendingUpgrade{label: u.label, download: func(dir string) (func() error, error) {
+			install, err := u.download(dir)
+			if err != nil || !u.changesSbx {
+				return install, err
+			}
+			ok, err := clear()
+			switch {
+			case err != nil:
+				return nil, fmt.Errorf("Docker SBX left as it is: %w", err)
+			case !ok:
+				return func() error { return nil }, nil
+			}
+			return install, nil
+		}})
+		if err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -108,20 +137,57 @@ func doUpgrade(force bool, strategyValue string) error {
 // Docker SBX, returning the labels of those found. A check that fails finds
 // nothing: this only ever offers a hint, so it never complains.
 func availableUpgrades() []string {
-	var labels []string
+	return checkUpgrades().Found
+}
+
+// checkUpgrades is availableUpgrades with the versions installed, which the
+// Admin tab shows: Docker SBX's, which the check has to ask for anyway, and
+// the installed vibe's, which this one isn't after an --upgrade or
+// --downgrade until it is restarted.
+func checkUpgrades() companion.UpgradeCheck {
+	var check companion.UpgradeCheck
 	// A build with no build number was made from source, not released: any
 	// release of the same version counts as newer than it (which is right
 	// for an explicit --upgrade), so suggesting one would be noise to anyone
 	// building vibe themselves — very likely of the commit just released.
 	if vibe.Build != "" {
 		if u, _, err := checkVibeUpgrade(false, ""); err == nil && u != nil {
-			labels = append(labels, u.label)
+			check.Found = append(check.Found, u.label)
 		}
 	}
-	if u, _, err := checkSbxUpgrade(); err == nil && u != nil {
-		labels = append(labels, u.label)
+	u, _, installed, err := checkSbxUpgrade()
+	if err == nil && u != nil {
+		check.Found = append(check.Found, u.label)
+		check.SbxUpgrade = true
 	}
-	return labels
+	check.Sbx = installed
+	check.VibeInstalled = installedVibeVersion()
+	return check
+}
+
+// installedVibeVersion is the version of the vibe installed where this one
+// was run from, "" when it couldn't be told. A variable so tests can stand
+// in for it: the test binary run with --version would run the tests.
+var installedVibeVersion = func() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	out, err := exec.Command(exe, "--version").Output()
+	if err != nil {
+		return ""
+	}
+	return versionFromVibeVersion(string(out))
+}
+
+// versionFromVibeVersion reads the version from what vibe --version printed:
+// "vibe 0.1.236 (a1b2c3d4e5f6, built …)".
+func versionFromVibeVersion(out string) string {
+	fields := strings.Fields(out)
+	if len(fields) < 2 || fields[0] != "vibe" {
+		return ""
+	}
+	return fields[1]
 }
 
 // checkUpgradesInBackground starts availableUpgrades while a session runs,
@@ -223,41 +289,44 @@ func checkVibeUpgrade(force bool, strategyValue string) (*pendingUpgrade, string
 
 // checkSbxUpgrade checks for a newer stable release of Docker SBX than the
 // one installed, returning how to upgrade to it — the same way it was
-// installed — (nil when there's none, or vibe can't) and a line saying
-// what was found.
-func checkSbxUpgrade() (*pendingUpgrade, string, error) {
+// installed — (nil when there's none, or vibe can't), a line saying what was
+// found, and the version installed ("" when there's none, or it couldn't be
+// told).
+func checkSbxUpgrade() (*pendingUpgrade, string, string, error) {
 	if !sbxinstall.Supported(runtime.GOOS, runtime.GOARCH) {
-		return nil, fmt.Sprintf("Docker SBX has no release for %s/%s to upgrade to", runtime.GOOS, runtime.GOARCH), nil
+		return nil, fmt.Sprintf("Docker SBX has no release for %s/%s to upgrade to", runtime.GOOS, runtime.GOARCH), "", nil
 	}
 	methods, err := sbxMethods()
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 	m, ok := installedSbxMethod(methods)
 	if !ok {
 		if p, err := exec.LookPath("sbx"); err == nil {
-			return nil, fmt.Sprintf("Docker SBX at %s wasn't installed by vibe --install-sbx — upgrade it the way it was installed", p), nil
+			installed, _ := sbxinstall.Version(p) // only to show: one that can't be told is left blank
+			return nil, fmt.Sprintf("Docker SBX at %s wasn't installed by vibe --install-sbx — upgrade it the way it was installed", p), installed, nil
 		}
-		return nil, "Docker SBX isn't installed — vibe --install-sbx installs it", nil
+		return nil, "Docker SBX isn't installed — vibe --install-sbx installs it", "", nil
 	}
 	installed, err := sbxinstall.Version(m.sbx)
 	if err != nil {
-		return nil, "", fmt.Errorf("'%s version' failed: %w", m.sbx, err)
+		return nil, "", "", fmt.Errorf("'%s version' failed: %w", m.sbx, err)
 	}
 	tag, err := sbxinstall.LatestStableTag()
 	if err != nil {
-		return nil, "", err
+		return nil, "", installed, err
 	}
 	if !selfupdate.Newer(tag, installed) {
-		return nil, fmt.Sprintf("Docker SBX %s is the latest", installed), nil
+		return nil, fmt.Sprintf("Docker SBX %s is the latest", installed), installed, nil
 	}
 	return &pendingUpgrade{
-		label: fmt.Sprintf("Docker SBX %s → %s", installed, tag),
+		label:      fmt.Sprintf("Docker SBX %s → %s", installed, tag),
+		changesSbx: true,
 		download: func(dir string) (func() error, error) {
 			note("upgrading Docker SBX %s to %s", installed, tag)
 			return downloadSbxRelease(m, tag, dir, false)
 		},
-	}, fmt.Sprintf("Docker SBX %s is available (you have %s)", tag, installed), nil
+	}, fmt.Sprintf("Docker SBX %s is available (you have %s)", tag, installed), installed, nil
 }
 
 // downloadVibe fetches release tag for this machine from GitHub into dir,

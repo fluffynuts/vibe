@@ -107,17 +107,20 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
                              Docker SBX, pick which to upgrade (all are
                              selected), and install them; -f upgrades them all
                              without asking (-f and -u are passed on to
-                             vibe's --install)
+                             vibe's --install). Before upgrading sbx, offers
+                             to stop running sandboxes (as --stop-all does);
+                             -f stops them unasked
   vibe --downgrade           the way back from a vibe or Docker SBX release
                              that broke something: offers the release before
                              the installed one of each (sbx: the stable one
                              before it), none selected, and installs those
                              picked; going back on vibe backs ~/.vibe up
                              beside itself first (~/.vibe-backup-*.zip),
-                             going back on sbx alone doesn't. Refuses while
-                             any vibe session runs; always asks (-f is
-                             ignored), so does nothing with no terminal; -u
-                             is passed on to vibe's --install
+                             going back on sbx alone doesn't. Offers to stop
+                             running sandboxes first (as --stop-all does);
+                             always asks (-f is ignored), so does nothing
+                             with no terminal; -u is passed on to vibe's
+                             --install
   vibe -I/--install-sbx      download the latest stable Docker Sandboxes (sbx)
                              release and install it: on Linux into
                              ~/.docker/sbx; on macOS (Apple Silicon) and
@@ -288,7 +291,7 @@ func run(argv []string) error {
 		if args.Path != "" {
 			return fmt.Errorf("--upgrade takes no path argument")
 		}
-		return doUpgrade(args.Force, args.UpdateStrategy)
+		return doUpgrade(vibeHome, args.Force, args.UpdateStrategy)
 	}
 
 	if args.Downgrade {

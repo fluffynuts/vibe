@@ -1805,23 +1805,24 @@ test('a comment that has followed its code says where it was made', async () => 
 // vibe keeps the ticks the page asks for.
 async function viewedPage(viewed = {}) {
   const one = (path) => ({ path, status: 'modified', fingerprint: 'fp-' + path, hunks: [{ oldStart: 1, newStart: 1, header: '', lines: [{ kind: 'add', new: 1, text: 'x' }] }] })
-  let review = { ...none, started: '2026-10-16T10:00:00Z', lastId: 1, viewed,
-    threads: [{ id: 1, file: 'b.txt', side: 'new', line: 1, endLine: 1, code: 'x', status: 'open', comments: said('on b') }] }
-  return openPage({
+  const at = { review: { ...none, started: '2026-10-16T10:00:00Z', lastId: 1, viewed,
+    threads: [{ id: 1, file: 'b.txt', side: 'new', line: 1, endLine: 1, code: 'x', status: 'open', comments: said('on b') }] } }
+  const p = await openPage({
     routes: {
       '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
-      '/api/review': () => ({ review, diff: ['a.txt', 'b.txt', 'c.txt'].map(one) }),
+      '/api/review': () => ({ review: at.review, diff: ['a.txt', 'b.txt', 'c.txt'].map(one) }),
       '/api/review/do': (call) => {
-        const v = { ...review.viewed }
+        const v = { ...at.review.viewed }
         if (call.body.op === 'view') v[call.body.file] = call.body.code
         if (call.body.op === 'unview') delete v[call.body.file]
-        review = { ...review, viewed: v }
-        return { review }
+        at.review = { ...at.review, viewed: v }
+        return { review: at.review }
       },
       '/api/log': { entries: [] },
     },
     storage: { 'vibe-companion-tab': 'review' },
   })
+  return Object.assign(p, { at })
 }
 
 const tick = (p, path) => p.$('review-files').querySelector('[data-path="' + path + '"] header .review-viewed input')
@@ -1832,7 +1833,7 @@ test('ticking a file as viewed folds it, dims it in the tree, and counts it', as
   try {
     assert.equal(tick(p, 'b.txt').checked, false)
     await p.click(tick(p, 'b.txt'))
-    assert.deepEqual(p.posted('/api/review/do'), [{ op: 'view', file: 'b.txt', code: 'fp-b.txt' }])
+    assert.deepEqual(p.posted('/api/review/do'), [{ op: 'view', file: 'b.txt', code: 'fp-b.txt:9f1fda36' }])
     assert.equal(tick(p, 'b.txt').checked, true)
     assert.ok(folded(p, 'b.txt'), 'its diff folded away')
     assert.ok(treeRow(p, 'b.txt').classList.contains('viewed'))
@@ -1840,6 +1841,27 @@ test('ticking a file as viewed folds it, dims it in the tree, and counts it', as
     await p.click(tick(p, 'b.txt'))
     assert.deepEqual(p.posted('/api/review/do')[1], { op: 'unview', file: 'b.txt' })
     assert.equal(folded(p, 'b.txt'), false, 'shown again')
+  } finally { p.close() }
+})
+
+// A reply landing in a file already ticked viewed is as much a reason to look again as its code changing, so it
+// unticks and unfolds the same way, with its own words for it.
+test('a new comment on a viewed file unticks and unfolds it, apart from a code change', async () => {
+  const p = await viewedPage()
+  try {
+    await p.click(tick(p, 'b.txt'))
+    assert.deepEqual(p.posted('/api/review/do'), [{ op: 'view', file: 'b.txt', code: 'fp-b.txt:9f1fda36' }])
+    assert.ok(folded(p, 'b.txt'))
+    p.at.review = { ...p.at.review, threads: [{ ...p.at.review.threads[0], comments: [...p.at.review.threads[0].comments, { author: 'agent', body: 'and this', at: '2026-10-16T10:05:00Z' }] }] }
+    await p.poll()
+    assert.equal(tick(p, 'b.txt').checked, false)
+    assert.equal(folded(p, 'b.txt'), false, 'unfolded so the new comment can be seen')
+    const text = p.$('review-files').querySelector('[data-path="b.txt"] header').textContent
+    assert.match(text, /commented on since you viewed it/)
+    assert.doesNotMatch(text, /changed since you viewed it/, 'its code did not change, only what is said about it')
+    assert.doesNotMatch(p.$('review-tree-count').textContent, /viewed/, 'none are, so nothing is counted as viewed')
+    await p.click(tick(p, 'b.txt'))
+    assert.deepEqual(p.posted('/api/review/do')[1], { op: 'view', file: 'b.txt', code: 'fp-b.txt:3741f10d' }, 'ticked again, its new digest is what is checked against next')
   } finally { p.close() }
 })
 
@@ -1855,10 +1877,103 @@ test('a file whose change has changed since it was ticked says so, unticked', as
 })
 
 test('the comment arrows pass over comments in viewed files, and say so', async () => {
-  const p = await viewedPage({ 'b.txt': 'fp-b.txt' })
+  const p = await viewedPage({ 'b.txt': 'fp-b.txt:9f1fda36' })
   try {
     assert.equal(p.$('review-count').textContent, '1 comment (1 in viewed files)')
     assert.equal(p.$('review-next-comment').disabled, true)
+  } finally { p.close() }
+})
+
+// A tick from before 'commented' existed (no ':' in it) is read as if it had nothing said about it yet: a comment
+// already there when ticked shows once, the same one-time nudge a code change would give (not left stuck as
+// 'viewed' forever, which would hide it); re-ticked, detection keeps working for whatever lands after that too.
+test('a file ticked viewed in the old, bare format is unfolded once for the comment it already had, and keeps catching new ones after that', async () => {
+  const p = await viewedPage({ 'b.txt': 'fp-b.txt' })
+  try {
+    assert.equal(tick(p, 'b.txt').checked, false, "its one comment predates the tick, but the bare format can't say so: a one-time nudge")
+    assert.equal(folded(p, 'b.txt'), false)
+    assert.match(p.$('review-files').querySelector('[data-path="b.txt"] header').textContent, /commented on since you viewed it/)
+
+    await p.click(tick(p, 'b.txt')) // re-ticked: stored in the new format, which can say so from here on
+    assert.equal(tick(p, 'b.txt').checked, true)
+
+    p.at.review = { ...p.at.review, threads: [{ ...p.at.review.threads[0], comments: [...p.at.review.threads[0].comments, { author: 'agent', body: 'and this', at: '2026-10-16T10:05:00Z' }] }] }
+    await p.poll()
+    assert.equal(tick(p, 'b.txt').checked, false, 'a comment landing after the re-tick really is new, and is still caught')
+    assert.equal(folded(p, 'b.txt'), false)
+    assert.match(p.$('review-files').querySelector('[data-path="b.txt"] header').textContent, /commented on since you viewed it/)
+  } finally { p.close() }
+})
+
+// --- keeping a text selection to the side of a split diff it began on ---------------------------------------
+//
+// A native Range spanning several rows of a split diff can't itself skip the other side's cells between its two
+// ends (only its own two ends can be partial; everything strictly between them comes whole) — confirmed for real
+// in Firefox: dragging straight down one side still picked up the other side's text for rows merely passed over.
+// So every cell carries data-side, the browser's own highlight is turned off for them (app.css), and what the user
+// sees (an overlay painted from the selection's own client rects, kept to one side) and what Ctrl+C gives
+// (splitFilteredText) are both corrected instead of relying on the Range stopping itself. The overlay needs real
+// layout (getClientRects), which jsdom doesn't do, so only splitFilteredText — the part that decides what actually
+// gets copied — is tested here; the overlay was checked by hand in a real browser.
+
+// splitSelectionPage is a review of one file: an unchanged line (the same text both sides, with a thread on its
+// old side), then a line changed (different text each side) — real content on both sides of every row, so a
+// selection that leaks across sides, or a thread row swept in whole, would show.
+async function splitSelectionPage() {
+  const diff = [{ path: 'x.txt', status: 'modified', fingerprint: 'fp-x', hunks: [{ oldStart: 1, newStart: 1, header: '', lines: [
+    { kind: 'context', old: 1, new: 1, text: 'same both sides' },
+    { kind: 'del', old: 2, text: 'old only' },
+    { kind: 'add', new: 2, text: 'new only' },
+  ] }] }]
+  const review = { ...none, started: '2026-10-16T10:00:00Z', lastId: 1,
+    threads: [{ id: 1, file: 'x.txt', side: 'new', line: 1, endLine: 1, code: 'same both sides', status: 'open', comments: said('on the context line') }] }
+  return openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': () => ({ review, diff }),
+      '/api/review/do': () => ({ review }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+  })
+}
+
+test('a selection spanning several rows of a split diff, including a thread row, copies as only the side it began on', async () => {
+  const p = await splitSelectionPage()
+  try {
+    const table = p.$('review-files').querySelector('[data-path="x.txt"] table.review-lines')
+    assert.ok(table.classList.contains('split'), 'split is the default layout')
+    assert.ok(Array.from(table.querySelectorAll('[data-side]')).some((c) => c.dataset.side === 'old'))
+    assert.ok(Array.from(table.querySelectorAll('[data-side]')).some((c) => c.dataset.side === 'new'))
+
+    const rows = Array.from(table.rows).filter((r) => !r.classList.contains('hunk'))
+    const contextOld = rows.find((r) => r.cells.length === 6).querySelector('td.code[data-side="old"]')
+    const thread = rows.find((r) => r.classList.contains('threads'))
+    const delOld = rows.reverse().find((r) => r.cells.length === 6).querySelector('td.code[data-side="old"]')
+    assert.ok(contextOld && thread && delOld, 'a context row, a thread row and the changed row are all there to span')
+    assert.equal(contextOld.textContent, 'same both sides')
+    assert.equal(delOld.textContent, 'old only')
+
+    const range = p.window.document.createRange()
+    range.setStart(contextOld.firstChild, 0)
+    range.setEnd(delOld.firstChild, delOld.firstChild.length)
+    // The Range itself really does span both sides (this is the bug splitFilteredText works around): it reaches
+    // the thread row's new side, which only has "on the context line" written on its old side.
+    assert.match(range.cloneContents().textContent, /on the context line/)
+
+    const sel = p.window.getSelection()
+    sel.removeAllRanges()
+    sel.addRange(range)
+    let copied = null
+    const fakeClipboard = { setData: (type, text) => { if (type === 'text/plain') copied = text } }
+    const ev = new p.window.Event('copy', { bubbles: true, cancelable: true })
+    Object.defineProperty(ev, 'clipboardData', { value: fakeClipboard })
+    p.window.document.dispatchEvent(ev)
+
+    assert.ok(copied !== null, 'the copy handler ran')
+    // Each line on a line of its own, as it reads: no line numbers or +/- signs (which can't be selected), nothing of
+    // the other side, nor of the thread between them.
+    assert.equal(copied, 'same both sides\nold only')
   } finally { p.close() }
 })
 
@@ -2061,6 +2176,49 @@ test("a file's colours redraw its own card, not the others'", async () => {
     await p.settle()
     assert.ok(coloured('other.go'), 'other.go coloured when its colours came')
     assert.equal(card('main.go'), mainCard, "main.go's card wasn't drawn again for other.go's colours")
+  } finally { p.close() }
+})
+
+// A card drawn afresh takes a selection in it away, mid-drag: one being made when a file's colours come keeps its card
+// as it is, and the colours are drawn once it is let go.
+test("a file's colours wait for a selection in its card to be let go", async () => {
+  let release
+  const held = new Promise((resolve) => { release = resolve })
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': { review: { ...none, started: '2026-10-16T10:00:00Z' }, diff: goDiff },
+      '/api/review/highlight': async (call) => {
+        await held
+        const q = new URLSearchParams(call.query)
+        return goColours[q.get('path') + '|' + q.get('side')] || {}
+      },
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+    settled: false,
+  })
+  try {
+    const card = () => p.$('review-files').querySelector('.review-file[data-path="main.go"]')
+    for (let i = 0; i < 200 && !card(); i++) await new Promise((resolve) => setImmediate(resolve))
+    const before = card()
+    assert.ok(before, 'main.go is drawn')
+    const cells = Array.from(before.querySelectorAll('td.code[data-side="new"]')).filter((c) => c.textContent)
+    assert.ok(cells.length >= 2, 'two lines of code on the new side to select across')
+    const sel = p.window.getSelection()
+    sel.setBaseAndExtent(cells[0].firstChild, 0, cells[1].firstChild, 1)
+
+    release()
+    await p.settle()
+    assert.equal(card(), before, 'the card was not drawn afresh under the selection')
+    assert.ok(!sel.isCollapsed && before.contains(sel.anchorNode), 'the selection is as it was')
+    assert.equal(before.querySelector('.hl-kw'), null, 'not coloured yet')
+
+    sel.removeAllRanges()
+    p.window.document.dispatchEvent(new p.window.Event('selectionchange'))
+    await p.settle()
+    assert.notEqual(card(), before, 'drawn afresh once the selection was let go')
+    assert.ok(card().querySelector('.hl-kw'), 'and coloured')
   } finally { p.close() }
 })
 

@@ -304,6 +304,9 @@ dialog .actions.safe { justify-content: space-between; }
 /* the Admin tab */
 .panel-admin { overflow: auto; }
 .admin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; align-items: start; }
+/* The Upgrades card's versions in use, set in under their label, so that they don't read as the releases on offer. */
+.admin-versions-label { margin-bottom: 2px; }
+.admin-versions { margin-top: 0; padding-left: 1.5em; }
 .card { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 /* A card that is why the Admin tab has a dot: ringed in the page's colour (the
    agent's theme, or the accent where it has none, see --theme), so it stands out
@@ -381,6 +384,14 @@ ul.plain li .spacer { flex: 1; }
 .review-lines td.sign.blank { background-position: -4.5em 0; }
 .review-lines td.code.blank { background-position: -6em 0; }
 .review-lines.split td.start { border-left: 1px solid var(--line); }
+/* A native Range spanning a split diff can't itself skip the other side's cells between its two ends (see
+   splitFilteredText): the browser's own highlight is turned off for these cells, and setUpSplitSelection paints
+   split-selection-mark rects instead, kept to the side the selection began on. The class is on while a selection
+   begins in a line's code (not in a comment, whose own highlight is left as it is); as #review-files' class, so
+   that it covers text standing straight in a cell (which takes the cell's own ::selection) too. */
+#review-files.code-selection .review-lines.split ::selection { background: transparent; }
+#split-selection-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 1; }
+.split-selection-mark { position: fixed; background: color-mix(in srgb, var(--accent) 28%, transparent); }
 .review-lines tr.hunk td { color: var(--muted); background: color-mix(in srgb, var(--accent) 10%, transparent); padding: 4px 10px; }
 /* A gap's buttons, stacked in the line-number column, as GitHub has them. */
 .review-lines td.gap-buttons { padding: 0; text-align: center; vertical-align: middle; background: color-mix(in srgb, var(--accent) 25%, transparent); }

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"vibe"
 )
 
 // Admin is what the page's Admin tab can do to the sandbox; nil means the
@@ -18,13 +20,28 @@ type Admin interface {
 	// Status is the sandbox as the tab shows it. It may be slow (it asks
 	// sbx, and a running sandbox for its memory and disk use).
 	Status() AdminStatus
-	// Upgrades lists newer releases of vibe and Docker SBX, checking
-	// GitHub afresh when fresh, and otherwise saying what the last check
-	// found. It may be slow.
-	Upgrades(fresh bool) []string
+	// Upgrades says what newer releases of vibe and Docker SBX there are,
+	// and the versions installed, checking afresh when fresh, and otherwise
+	// saying what the last check found. It may be slow.
+	Upgrades(fresh bool) UpgradeCheck
 	// Do carries out an action, saying what it does as it goes through log.
 	// ctx ending (the tab's Cancel, or 'vibe --cancel') ends it.
 	Do(ctx context.Context, action AdminAction, log func(string)) error
+}
+
+// UpgradeCheck is what a check for upgrades found.
+type UpgradeCheck struct {
+	// Found are the newer releases there are, as lines to show.
+	Found []string `json:"found"`
+	// SbxUpgrade says one of Found is Docker SBX's, which --upgrade -f stops
+	// every running sandbox for (this one too).
+	SbxUpgrade bool `json:"sbxUpgrade"`
+	// Sbx is the version of Docker SBX installed ("v0.54.0"), and
+	// VibeInstalled that of the vibe installed: newer or older than the one
+	// serving the page after an --upgrade or --downgrade, until it restarts.
+	// Each is "" when it couldn't be told.
+	Sbx           string `json:"sbx"`
+	VibeInstalled string `json:"vibeInstalled"`
 }
 
 // What the tab can ask for.
@@ -144,7 +161,7 @@ type admin struct {
 	mu       sync.Mutex
 	job      *adminJob
 	cancel   context.CancelFunc // ends job, while it runs
-	upgrades []string
+	upgrades UpgradeCheck
 	checked  bool
 	checking bool
 }
@@ -182,8 +199,11 @@ func (s *Server) adminState(w http.ResponseWriter, r *http.Request) {
 		copied.Lines = append([]string{}, s.admin.job.Lines...)
 		job = &copied
 	}
+	// This vibe's version is known without asking anything: shown at once.
 	upgrades := map[string]interface{}{
-		"found": append([]string{}, s.admin.upgrades...), "checked": s.admin.checked, "checking": s.admin.checking,
+		"found": append([]string{}, s.admin.upgrades.Found...), "checked": s.admin.checked, "checking": s.admin.checking,
+		"sbxUpgrade": s.admin.upgrades.SbxUpgrade, "sbx": s.admin.upgrades.Sbx, "vibeInstalled": s.admin.upgrades.VibeInstalled,
+		"vibe": vibe.FullVersion(),
 	}
 	s.admin.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": status, "job": job, "upgrades": upgrades})

@@ -16,29 +16,39 @@ attempt=${2:?usage: rerun-if-no-runner.sh <run id> <attempt>}
 max=${MAX_ATTEMPTS:-10}
 min=${MIN_QUEUED_SECONDS:-600}
 
+# Said in the log, and on the run's summary page (GITHUB_STEP_SUMMARY, when GitHub gives one), where it is seen without opening a log.
+say() {
+  echo "$1"
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then echo "$1" >> "$GITHUB_STEP_SUMMARY"; fi
+}
+
 if [ "$attempt" -ge "$max" ]; then
-  echo "attempt $attempt of at most $max: not trying again"
+  say "Run $run, attempt $attempt of $max: not trying again."
   exit 0
 fi
 
 jobs=$(gh api "repos/$GH_REPO/actions/runs/$run/attempts/$attempt/jobs?per_page=100")
 
-# The ids of the jobs to re-run: those of the run that never got a runner, if every job that did not succeed was one of them.
-ids=$(jq -r --argjson min "$min" '
+# The jobs to re-run, one to a line (id, name, minutes it waited): those of the run that never got a runner, if every job that did not
+# succeed was one of them.
+starved=$(jq -r --argjson min "$min" '
   def unsuccessful: .conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out";
   def never_ran: (.runner_id // 0) == 0 and (.steps | length) == 0;
   def queued_for: (.completed_at | fromdateiso8601) - (.created_at | fromdateiso8601);
   [.jobs[] | select(unsuccessful)] as $bad
   | [$bad[] | select(never_ran and queued_for >= $min)] as $starved
-  | if ($starved | length) > 0 and ($starved | length) == ($bad | length) then $starved[].id else empty end
+  | if ($starved | length) > 0 and ($starved | length) == ($bad | length)
+    then $starved[] | [.id, .name, (queued_for / 60 | floor)] | @tsv
+    else empty end
 ' <<<"$jobs")
 
-if [ -z "$ids" ]; then
-  echo "run $run, attempt $attempt: no job of it was left without a runner, or a job that ran did not succeed: nothing to re-run"
+if [ -z "$starved" ]; then
+  say "Run $run, attempt $attempt of $max: nothing to re-run (no job was left without a runner, or a job that ran did not succeed)."
   exit 0
 fi
 
-for id in $ids; do
-  echo "run $run, attempt $attempt: job $id never got a runner: re-running it"
-  gh run rerun --job "$id"
-done
+while IFS=$'\t' read -r id name minutes; do
+  say "Run $run, attempt $attempt of $max: re-ran \"$name\" (job $id), which waited $minutes minutes and never got a runner."
+  # Not given the loop's stdin, which is the jobs still to read.
+  gh run rerun --job "$id" </dev/null
+done <<<"$starved"

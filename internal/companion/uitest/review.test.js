@@ -173,6 +173,32 @@ test('the file tree counts each file’s comment threads, open or not', () => {
   assert.deepEqual(Object.fromEntries(counts), { 'a.go': 3, 'b.go': 1 })
 })
 
+const said = (body) => ({ body })
+
+test('a file’s comments digest the same when nothing about them has, and differently when something has, even where a count alone would miss it', () => {
+  const { commentsDigest, emptyCommentsDigest } = require('../ui/review.js')
+  const base = [
+    { id: 1, file: 'a.go', status: 'open', comments: [said('x'), said('y')] },
+    { id: 2, file: 'a.go', status: 'resolved', comments: [said('z')] },
+    { id: 3, file: 'b.go', status: 'open', comments: [said('w')] },
+    { id: 4, status: 'open', comments: [said('on the whole review')] },
+    { id: 5, file: 'c.go', status: 'open', comments: [] },
+  ]
+  const digests = commentsDigest(base)
+  assert.notEqual(digests.get('a.go'), digests.get('b.go'), 'different comments digest differently')
+  assert.equal(digests.get('a.go'), commentsDigest(JSON.parse(JSON.stringify(base))).get('a.go'), 'the same comments digest the same')
+  assert.equal(digests.get('c.go'), emptyCommentsDigest, 'a thread with none digests as nothing said')
+  assert.equal(digests.get('d.go'), undefined, 'a file with no thread at all is not a key: its caller supplies "nothing"')
+
+  // Deleting a.go's thread 1 and adding a different one in its place leaves the count where it was, but not what was said.
+  const swapped = [
+    { id: 2, file: 'a.go', status: 'resolved', comments: [said('z')] },
+    { id: 6, file: 'a.go', status: 'open', comments: [said('not x or y')] },
+    { id: 3, file: 'b.go', status: 'open', comments: [said('w')] },
+  ]
+  assert.notEqual(digests.get('a.go'), commentsDigest(swapped).get('a.go'), 'a comment swapped for another of the same count still changes it')
+})
+
 test('the comment arrows go to the thread after or before where the page is, round at the ends', () => {
   const { stepTo } = require('../ui/review.js')
   const tops = [-300, 40, 500, 900] // where each thread is; 40 is just under the bar

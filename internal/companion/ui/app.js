@@ -2196,6 +2196,83 @@
     })
   }
 
+  // splitSide is which side of a split diff node (a text node or an element, anywhere under one of its cells) is
+  // on, from the data-side its nearest cell carries; null for a node that isn't under one.
+  function splitSide(node) {
+    const from = node.nodeType === 3 ? node.parentElement : node
+    const cell = from && from.closest && from.closest('[data-side]')
+    return cell ? cell.dataset.side : null
+  }
+
+  // splitCode is whether node is in a line's code on side of a split diff (a filler cell, standing where the
+  // other side has a line, has none).
+  function splitCode(node, side) {
+    const from = node && (node.nodeType === 3 ? node.parentElement : node)
+    const cell = from && from.closest && from.closest('td.code[data-side]')
+    return !!cell && cell.dataset.side === side && !cell.classList.contains('blank')
+  }
+
+  // splitFilteredText is what copying range, a selection begun in a line's code on side of a split diff, must
+  // give: that side's code alone, a line to a line. A single Range can't itself skip the other side's cells that
+  // fall between its two ends — only its own two ends can be partial; everything strictly between them comes whole
+  // — and its text has the line numbers and signs too (which can't be selected) and no line breaks between rows,
+  // so the lines are picked out of it instead. A range within one cell has none to pick: its text is the line's.
+  function splitFilteredText(range, side) {
+    const frag = range.cloneContents()
+    const cells = Array.from(frag.querySelectorAll('td.code[data-side]')).filter((c) => splitCode(c, side))
+    if (!frag.querySelector('td')) return frag.textContent
+    return cells.map((c) => c.textContent).join('\n')
+  }
+
+  // splitSelectionOverlay is where setUpSplitSelection paints a selection begun on one side of a split diff, kept
+  // to it: the browser's own highlight is turned off for these cells (app.css), since, as splitFilteredText says,
+  // it can't be trusted to stay on one side by itself.
+  let splitSelectionOverlay = null
+
+  // repaintSplitSelection draws splitSelectionOverlay from the current selection's own (so line-wrap-aware) client
+  // rects, keeping only those that land on the side the selection began on (its anchor's).
+  function repaintSplitSelection() {
+    if (!splitSelectionOverlay) return
+    splitSelectionOverlay.replaceChildren()
+    const sel = window.getSelection()
+    const side = sel && !sel.isCollapsed && sel.rangeCount ? splitSide(sel.anchorNode) : null
+    const fromCode = !!side && splitCode(sel.anchorNode, side)
+    $('review-files').classList.toggle('code-selection', fromCode)
+    if (!fromCode) return
+    for (const r of sel.getRangeAt(0).getClientRects()) {
+      const under = document.elementFromPoint(r.left + 1, r.top + r.height / 2)
+      if (!splitCode(under, side)) continue
+      const mark = el('div', { class: 'split-selection-mark' })
+      mark.style.left = r.left + 'px'
+      mark.style.top = r.top + 'px'
+      mark.style.width = r.width + 'px'
+      mark.style.height = r.height + 'px'
+      splitSelectionOverlay.append(mark)
+    }
+  }
+
+  // setUpSplitSelection keeps a text selection begun on one side of a split diff to it: dragging from code into a
+  // suggested edit must not carry the other side's lines in with it. The real selection is left alone (so
+  // double-click, shift-click and keyboard extension all still work); what the user sees, and what Ctrl+C gives,
+  // are both corrected instead.
+  function setUpSplitSelection() {
+    splitSelectionOverlay = el('div', { id: 'split-selection-overlay' })
+    document.body.append(splitSelectionOverlay)
+    document.addEventListener('selectionchange', repaintSplitSelection)
+    // The marks are placed where the text is on screen, so they are placed again whenever it moves: a scroll of any
+    // element (scroll events don't bubble, so it is caught on its way down) or the window changing size.
+    document.addEventListener('scroll', repaintSplitSelection, { capture: true, passive: true })
+    window.addEventListener('resize', repaintSplitSelection)
+    document.addEventListener('copy', (ev) => {
+      const sel = window.getSelection()
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return
+      const side = splitSide(sel.anchorNode)
+      if (!side || !splitCode(sel.anchorNode, side) || !ev.clipboardData) return
+      ev.clipboardData.setData('text/plain', splitFilteredText(sel.getRangeAt(0), side))
+      ev.preventDefault()
+    })
+  }
+
   // composerRow is the comment being written, as a row of a file's table:
   // Write (Markdown, as typed) and Preview (as it will show).
   function composerRow(columns) {
@@ -2233,8 +2310,8 @@
   function sideRow(columns, left, right) {
     if (columns !== '6') return el('tr', { class: 'threads' }, el('td', { colspan: columns }, ...left, ...right))
     return el('tr', { class: 'threads' },
-      el('td', { colspan: '3', class: 'side' + (left.length ? '' : ' empty') }, ...left),
-      el('td', { colspan: '3', class: 'side start' + (right.length ? '' : ' empty') }, ...right))
+      el('td', { colspan: '3', class: 'side' + (left.length ? '' : ' empty'), 'data-side': 'old' }, ...left),
+      el('td', { colspan: '3', class: 'side start' + (right.length ? '' : ' empty'), 'data-side': 'new' }, ...right))
   }
 
   const submitComposer = once(async () => {
@@ -3204,27 +3281,51 @@
     goToWanted()
   }
 
-  // viewedState is whether file f is ticked as viewed: 'viewed', 'changed'
-  // (ticked, but its change has changed since), or ''.
-  function viewedState(f) {
-    const seen = reviewView.review && reviewView.review.viewed ? reviewView.review.viewed[f.path] : undefined
-    return !seen ? '' : seen === f.fingerprint ? 'viewed' : 'changed'
+  // commentsDigestFor is a short digest of file f's comments now (see review.js's commentsDigest): part of what
+  // ticking it as viewed stands for, so the agent commenting on a file folded away is as much a reason to look
+  // again as its code changing. Unlike a count, a comment undone (deleted, or an edit reverted) isn't mistaken for
+  // nothing having changed, except where that leaves the exact words there were when ticked.
+  function commentsDigestFor(f) {
+    return R.commentsDigest(reviewView.review ? reviewView.review.threads : []).get(f.path) || R.emptyCommentsDigest
   }
 
-  // viewedTick is the Viewed tick in file f's header, saying when its
-  // change has changed since it was ticked.
+  // viewedCode is what a tick of Viewed for file f is checked against later: its fingerprint and its comments'
+  // digest now, joined by a ':' (never in a fingerprint or a digest, both hex).
+  function viewedCode(f) {
+    return f.fingerprint + ':' + commentsDigestFor(f)
+  }
+
+  // viewedState is whether file f is ticked as viewed: 'viewed', 'changed' (ticked, but its code has changed
+  // since), 'commented' (ticked, its code the same, but there's more said about it since), or ''. A tick from
+  // before 'commented' existed (no ':' in it, just the code) is read as if it had none said about it at the time:
+  // what there may already be gets the same one-time nudge a code change would, and updating vibe doesn't itself
+  // unfold everything already ticked that truly has nothing new.
+  function viewedState(f) {
+    const seen = reviewView.review && reviewView.review.viewed ? reviewView.review.viewed[f.path] : undefined
+    if (!seen) return ''
+    const sep = seen.lastIndexOf(':')
+    const seenCode = sep < 0 ? seen : seen.slice(0, sep)
+    const seenComments = sep < 0 ? R.emptyCommentsDigest : seen.slice(sep + 1)
+    if (seenCode !== f.fingerprint) return 'changed'
+    if (seenComments !== commentsDigestFor(f)) return 'commented'
+    return 'viewed'
+  }
+
+  // viewedTick is the Viewed tick in file f's header, saying when its code, or what is said about it, has changed
+  // since it was ticked.
   function viewedTick(f) {
     const was = viewedState(f)
     const box = el('input', { type: 'checkbox' })
     box.checked = was === 'viewed'
     box.addEventListener('change', () => tickViewed(f, box.checked))
+    const since = was === 'changed' ? 'changed since you viewed it' : was === 'commented' ? 'commented on since you viewed it' : ''
     return el('label', { class: 'review-viewed', title: 'Ticked, its diff is folded away until you untick it' },
-      was === 'changed' ? el('span', { class: 'review-changed', text: 'changed since you viewed it' }) : null, box, ' Viewed')
+      since ? el('span', { class: 'review-changed', text: since }) : null, box, ' Viewed')
   }
 
   async function tickViewed(f, on) {
     try {
-      const res = await doReview(on ? { op: 'view', file: f.path, code: f.fingerprint } : { op: 'unview', file: f.path })
+      const res = await doReview(on ? { op: 'view', file: f.path, code: viewedCode(f) } : { op: 'unview', file: f.path })
       reached(true)
       if (!res.ok) { toast((res.body && res.body.error) || 'That failed.', true); redrawReview(); return }
       redrawReview()
@@ -3283,6 +3384,28 @@
     }
   }
 
+  // cardsAfterSelection are the files whose cards wait to be drawn afresh until the selection in them is let go: a
+  // card drawn afresh takes a selection in it away, mid-drag, and its colours can come just then (as the file first
+  // nears the screen).
+  const cardsAfterSelection = new Set()
+
+  // selectionTouches is whether there is a selection (not just a caret) with any of it in el.
+  function selectionTouches(el) {
+    const sel = window.getSelection()
+    return !!sel && !sel.isCollapsed && sel.rangeCount > 0 && sel.getRangeAt(0).intersectsNode(el)
+  }
+
+  document.addEventListener('selectionchange', () => {
+    for (const f of cardsAfterSelection) {
+      // The review drawn afresh since, from another diff, drew its cards with what colours there were.
+      if (!(reviewView.files || []).includes(f)) { cardsAfterSelection.delete(f); continue }
+      const card = Array.from($('review-files').querySelectorAll('.review-file')).find((c) => c.dataset.path === f.path)
+      if (card && selectionTouches(card)) continue
+      cardsAfterSelection.delete(f)
+      redrawCard(f)
+    }
+  })
+
   // redrawCard draws file f's card afresh, alone, as its colours come: a
   // whole redraw for each would take time growing with the square of the
   // review's size. Where the card can't be (a reply being written in it, the
@@ -3291,6 +3414,7 @@
     const d = reviewView.drawn
     const o = d && d.files === reviewView.files ? d.ordered.find((x) => x.file === f) : null
     const old = o && Array.from($('review-files').querySelectorAll('.review-file')).find((c) => c.dataset.path === f.path)
+    if (old && selectionTouches(old)) { cardsAfterSelection.add(f); return }
     if (!old || old.querySelector('textarea')) { reviewView.key = null; drawReview(); return }
     if (colourWatch) colourWatch.unobserve(old)
     old.replaceWith(foldIfViewed(f, fileCard(f, o.stop, o.step, d.files.indexOf(f), d.placed, d.threads)))
@@ -3419,8 +3543,10 @@
       shownLine(f.path, 'new', n, text)
       const half = (number, side) => {
         const sel = inComposer(f.path, side, number) ? ' sel' : ''
-        return [el('td', { class: 'num context' + sel }, String(number), lineButton(f.path, side, number, text, { old, new: n })),
-          el('td', { class: 'sign' + sel }), codeCell('code context' + sel, f, 'new', n, text)]
+        const code = codeCell('code context' + sel, f, 'new', n, text)
+        code.dataset.side = side
+        return [el('td', { class: 'num context' + sel, 'data-side': side }, String(number), lineButton(f.path, side, number, text, { old, new: n })),
+          el('td', { class: 'sign' + sel, 'data-side': side }), code]
       }
       const classes = [gapped.marked.has(n) ? 'marked' : '', inComposer(f.path, 'old', old) || inComposer(f.path, 'new', n) ? 'selected' : ''].filter(Boolean).join(' ')
       const row = split
@@ -3464,14 +3590,16 @@
         if (split) {
           // Each side's line, or a blank where that side has none.
           const half = (index, number, start, row) => {
-            if (index === null) return ['num', 'sign', 'code'].map((c) => el('td', { class: c + ' blank' + (start ? ' start' : '') }))
+            if (index === null) return ['num', 'sign', 'code'].map((c) => el('td', { class: c + ' blank' + (start ? ' start' : ''), 'data-side': number }))
             const l = h.lines[index]
             const side = number === 'old' ? 'old' : 'new'
             shownLine(f.path, side, l[number], l.text)
             const sel = inComposer(f.path, side, l[number]) ? ' sel' : ''
-            return [el('td', { class: 'num ' + l.kind + (start ? ' start' : '') + sel }, String(l[number] || ''), lineButton(f.path, side, l[number], l.text, row)),
-              el('td', { class: 'sign ' + l.kind + sel, text: signOf(l.kind) }),
-              codeCell('code ' + l.kind + sel, f, side, l[number], l.text)]
+            const code = codeCell('code ' + l.kind + sel, f, side, l[number], l.text)
+            code.dataset.side = side
+            return [el('td', { class: 'num ' + l.kind + (start ? ' start' : '') + sel, 'data-side': side }, String(l[number] || ''), lineButton(f.path, side, l[number], l.text, row)),
+              el('td', { class: 'sign ' + l.kind + sel, text: signOf(l.kind), 'data-side': side }),
+              code]
           }
           for (const row of R.sideBySide(h)) {
             const keys = [...new Set([row.left, row.right].filter((i) => i !== null).map((i) => hi + ':' + i))]
@@ -4652,8 +4780,24 @@
     $('admin-check').disabled = !!up.checking
     const cmd = $('admin-upgrade-command')
     cmd.hidden = !found.length
-    // --upgrade asks which to install; -f installs them all, unasked.
-    setText(cmd, (commands['upgrade'] || 'vibe --upgrade') + '  ·  all of them, unasked: ' + (commands['upgrade-all'] || 'vibe --upgrade -f'))
+    // --upgrade asks which to install; -f installs them all, unasked, and for an sbx upgrade stops every running
+    // sandbox first, unasked too (its daemon is restarted).
+    setText(cmd, (commands['upgrade'] || 'vibe --upgrade') + '  ·  all of them, unasked' +
+      (up.sbxUpgrade ? ' (stops every running sandbox first, this one too)' : '') + ': ' + (commands['upgrade-all'] || 'vibe --upgrade -f'))
+    setText($('admin-versions'), adminVersions(up))
+  }
+
+  // adminVersions says which vibe and Docker SBX are in use: this vibe's at once, as vibe says it; the installed
+  // vibe's and Docker SBX's once a check has found them (sbx is never waited on). A vibe installed since this one
+  // started (an --upgrade or --downgrade) is only used once this sandbox's vibe is restarted.
+  function adminVersions(up) {
+    let vibe = 'vibe ' + (up.vibe || '?')
+    if (up.vibeInstalled && up.vibe && up.vibeInstalled !== up.vibe) {
+      vibe += ' (' + up.vibeInstalled + " installed: restart this sandbox's vibe to use it)"
+    }
+    const sbx = up.sbx ? 'Docker SBX ' + up.sbx
+      : up.checking ? 'Docker SBX: checking…' : up.checked ? "Docker SBX: couldn't tell" : 'Docker SBX: not checked yet'
+    return vibe + ' · ' + sbx
   }
 
   function link(href, text) {
@@ -5082,6 +5226,7 @@
     $('review-close').addEventListener('click', () => closeReview())
     setUpCommentsPane()
     setUpLineDrag()
+    setUpSplitSelection()
     setUpOrderMenu()
     $('panel-review').addEventListener('paste', reviewPaste)
     // Scrolling by hand (not the arrows' scrolling) says where the page is.

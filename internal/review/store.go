@@ -87,9 +87,12 @@ type Review struct {
 	// as nobody saw them fail.
 	Problems []string  `json:"problems,omitempty"`
 	Started  time.Time `json:"started,omitempty"`
-	// Viewed is the files the user has ticked as viewed: path to the
-	// fingerprint of the change they saw (a File's), so one changed since
-	// can be told.
+	// Viewed is the files the user has ticked as viewed: path to what the
+	// page ticked it against, kept as it was given. The page gives the
+	// change's fingerprint (a File's) and a digest of the comments on it,
+	// as "fingerprint:digest" (an older tick, the fingerprint alone), so a
+	// file changed, or commented on, since can be told (see viewedCode in
+	// ui/app.js).
 	Viewed map[string]string `json:"viewed,omitempty"`
 	// AgentAt is when the agent's requests were last taken in: the page
 	// marks the tab when it's later than the user has seen.
@@ -492,7 +495,7 @@ func (s *Store) apply(r *Review, req Request, author string) error {
 			break
 		}
 		if req.Code == "" {
-			return fmt.Errorf("a file ticked as viewed needs the fingerprint of the change seen")
+			return fmt.Errorf("a file ticked as viewed needs what it was ticked against (the change's fingerprint, and its comments' digest)")
 		}
 		if r.Viewed == nil {
 			r.Viewed = map[string]string{}
