@@ -1,7 +1,7 @@
 # GitHub tokens kept in the OS credential store, not in plain files (planned, not built)
 
-Independent of `docs/plan-batch-git-token.md`: that plan only adds a reader of what is stored (copy a token from another sandbox), and reads
-through whatever stores them, so it works unchanged either way. Do whichever first.
+`--batch-git-token` is built (`docs/adr/2026-11-12-batch-git-token.md`): it only adds a reader of what is stored (copy a token from
+another sandbox), which must go through the store this plan brings in, as `--git-token`'s does.
 
 ## What is wanted (raised 2026-11-12)
 
