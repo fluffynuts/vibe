@@ -120,8 +120,10 @@ type conversation struct {
 	starting    bool
 	cancelStart context.CancelFunc
 	// waiting are prompts given while the agent was being started: they go
-	// to it, in order, once it has.
-	waiting []waitingPrompt
+	// to it, in order, once it has. handingOver says they are being given to
+	// it now: a prompt given meanwhile joins them rather than overtake them.
+	waiting     []waitingPrompt
+	handingOver bool
 	// pending are the prompts given to the agent and not yet done with, by
 	// the id the agent's command_lifecycle lines name them by.
 	pending map[string]int
@@ -381,11 +383,11 @@ func (c *conversation) give(seq int, prompt string, start StartAgent, prepare fu
 	c.pending[id] = seq
 	agent := c.agent
 	switch {
-	case agent != nil:
-	case c.starting:
+	case c.starting || c.handingOver:
 		c.waiting = append(c.waiting, waitingPrompt{seq, prompt, id})
 		c.mu.Unlock()
 		return
+	case agent != nil:
 	default:
 		c.starting = true
 		c.started++
@@ -470,16 +472,25 @@ func (c *conversation) startAgent(ctx context.Context, session string, start Sta
 		c.startFailed(ctx.Err(), true)
 		return
 	}
-	c.agent, c.starting, c.cancelStart = agent, false, nil
-	waiting := c.waiting
-	c.waiting = nil
+	c.agent, c.starting, c.cancelStart, c.handingOver = agent, false, nil, true
 	c.mu.Unlock()
 	go func() {
 		<-agent.Done()
 		c.agentEnded(agent)
 	}()
-	for _, w := range waiting {
-		c.deliver(agent, w)
+	for {
+		c.mu.Lock()
+		waiting := c.waiting
+		c.waiting = nil
+		if len(waiting) == 0 {
+			c.handingOver = false
+			c.mu.Unlock()
+			return
+		}
+		c.mu.Unlock()
+		for _, w := range waiting {
+			c.deliver(agent, w)
+		}
 	}
 }
 

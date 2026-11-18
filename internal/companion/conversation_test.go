@@ -42,7 +42,11 @@ type fakeAgent struct {
 	linger   chan struct{}
 	err      error // what a process fails with, before it answers
 	startErr error // what a start fails with
-	killErr  error // what Kill says
+	// firstPromptReached, when set, is closed as the first prompt is being given, which then waits for firstPromptGate to
+	// be closed before it is taken: a write to the agent that takes a moment, caught in the act.
+	firstPromptReached, firstPromptGate chan struct{}
+	promptsGiven                        int
+	killErr                             error // what Kill says
 }
 
 func (f *fakeAgent) start(ctx context.Context, session string, onLine func([]byte)) (Agent, error) {
@@ -194,6 +198,14 @@ func (p *fakeProc) run() {
 }
 
 func (p *fakeProc) Prompt(text, id string) error {
+	p.f.mu.Lock()
+	p.f.promptsGiven++
+	first := p.f.promptsGiven == 1
+	p.f.mu.Unlock()
+	if first && p.f.firstPromptReached != nil {
+		close(p.f.firstPromptReached)
+		<-p.f.firstPromptGate
+	}
 	p.f.mu.Lock()
 	p.f.prompts = append(p.f.prompts, text)
 	p.f.mu.Unlock()
@@ -363,6 +375,31 @@ func TestASessionThatIsNotAnIdIsNeverResumed(t *testing.T) {
 	if c.session != "abc-123_DEF" {
 		t.Errorf("session = %q", c.session)
 	}
+}
+
+// A prompt sent just as the agent has started, while the prompts that waited for it are still being given to it, goes
+// after them: it must not overtake them, as it did when it was given straight to the new agent.
+func TestAPromptSentAsTheAgentStartsGoesAfterThoseThatWaited(t *testing.T) {
+	f := &fakeAgent{release: make(chan struct{}), startGate: make(chan struct{}),
+		firstPromptReached: make(chan struct{}), firstPromptGate: make(chan struct{})}
+	s := converseServer(f)
+	send(t, s, "/api/conversation/send", `{"prompt":"first"}`)
+	close(f.startGate)
+	select {
+	case <-f.firstPromptReached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first prompt was never given to the agent")
+	}
+	if code, body := send(t, s, "/api/conversation/send", `{"prompt":"second"}`); code != http.StatusAccepted {
+		t.Fatalf("the second send: %d %v", code, body)
+	}
+	close(f.firstPromptGate)
+	waitFor(t, "both prompts to reach the agent", func() bool { return len(f.asked()) == 2 })
+	if got := f.asked(); got[0] != "first" || got[1] != "second" {
+		t.Errorf("the agent was given %q, want first then second", got)
+	}
+	close(f.release)
+	idle(t, s)
 }
 
 func TestAPromptWhileTheAgentAnswersIsGivenToTheSameAgent(t *testing.T) {
