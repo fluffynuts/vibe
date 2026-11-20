@@ -6381,7 +6381,8 @@
   // closes itself after STATUS_CLOSE_MS; a warning that needs the user stays until it is no longer true, or is closed. Opened by the
   // user, it stays until closed. items are what is current; token makes a close timer that has been overtaken do nothing.
   const STATUS_CLOSE_MS = 5000
-  const statusView = { items: [], open: false, byUser: false, pending: false, token: 0 }
+  // stoppingTasks is a stop of the background work asked for and not yet seen through: its button waits until the tasks have gone.
+  const statusView = { items: [], open: false, byUser: false, pending: false, token: 0, stoppingTasks: false }
 
   // statusSeen is whether the status balloon can be seen popping up: the Conversation tab showing, in a window being looked at.
   function statusSeen() {
@@ -6398,6 +6399,7 @@
       (items.some((i) => i.task) && before.some((i) => i.task && !has.has(i.key)))
     const warnCleared = before.some((i) => i.warn) && !items.some((i) => i.warn)
     statusView.items = items
+    if (!items.some((i) => i.task)) statusView.stoppingTasks = false
     if (news) {
       if (statusSeen()) popStatus()
       else statusView.pending = true
@@ -6452,7 +6454,9 @@
       const count = tasks.length === 1 ? 'something' : tasks.length + ' things'
       list.push(el('p', { text: 'The agent has answered, and has ' + count + ' running in the background:' }),
         el('ul', {}, ...tasks.map((i) => el('li', { text: i.text }))),
-        el('p', { class: 'muted', text: 'You can send a prompt meanwhile: the work carries on.' }))
+        el('p', { class: 'muted', text: 'You can send a prompt meanwhile: the work carries on.' }),
+        el('p', {}, el('button', { type: 'button', class: 'small danger', disabled: statusView.stoppingTasks,
+          text: statusView.stoppingTasks ? 'Stopping…' : tasks.length === 1 ? 'Stop it' : 'Stop them all', onclick: stopBackgroundWork })))
     }
     if (!items.length) list.push(el('p', { class: 'muted', text: 'Work the agent is doing in the background will appear here.' }))
     $('status-balloon-list').replaceChildren(...list)
@@ -6465,6 +6469,23 @@
       : tasks.length ? (tasks.length === 1 ? 'something' : tasks.length + ' things') + ' running in the background'
       : others.length ? others[0].text : 'nothing running in the background'
     button.setAttribute('aria-label', 'Agent status: ' + now)
+  }
+
+  // stopBackgroundWork stops what the agent has running in the background, from the status balloon: between turns, there is no
+  // Stop button to begin from.
+  async function stopBackgroundWork() {
+    const failed = (text) => { toast(text, true); statusView.stoppingTasks = false; drawStatus() }
+    statusView.stoppingTasks = true
+    drawStatus()
+    try {
+      const res = await post('/api/conversation/stop', { tasks: true })
+      reached(true)
+      if (!res.ok) { failed((res.body && res.body.error) || 'That failed.'); return }
+      pollConversation()
+    } catch (e) {
+      reached(false)
+      failed('Could not reach vibe.')
+    }
   }
 
   // offerToStopTasks says, once a stop has taken effect, what the agent still has running in the background, and lets the user choose

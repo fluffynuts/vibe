@@ -14,6 +14,11 @@ messages move into a **balloon** that opens from it, as the model/effort bubble 
 **Which messages:** the status line's texts only. The banners with buttons (sign-in, stale, git author, sync) and the network and packages
 banners stay as they are. The "Stopped… Stop them too / Leave them running" offer after a stop stays in the conversation.
 
+**Stopping background work from the balloon** (added 2026-11-20, while hand-testing: between turns the page had no way to stop it, the
+Stop button showing only while the agent answers): while tasks are listed, the balloon has **Stop it** / **Stop them all**, which stops
+them all as "Stop them too" does (`/api/conversation/stop` with `tasks`). It says **Stopping…** until the tasks have gone; a failure is
+a toast, and the button can be pressed again. One for each task would need the server to stop a task by its id: not done.
+
 **Two kinds of message:**
 
 | Kind | Which | The balloon | The button |

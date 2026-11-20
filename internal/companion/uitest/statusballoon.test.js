@@ -9,7 +9,7 @@ const { openPage } = require('./page.js')
 const CLOSE_AFTER_MS = 5000
 
 // convoPage opens the Conversation tab on a conversation answering agent (changed through at.agent), with the page's 5 s timers held
-// back until the test runs them (at.closeTimers()).
+// back until the test runs them (at.closeTimers()). at.stopAnswer, when set, is how vibe answers a stop.
 async function convoPage(agent) {
   const at = { agent, held: [] }
   at.closeTimers = () => { const fns = at.held.splice(0); for (const fn of fns) fn() }
@@ -17,7 +17,7 @@ async function convoPage(agent) {
     routes: {
       '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, attention: {} },
       '/api/conversation': () => Object.assign({ events: [], last: 0 }, at.agent),
-      '/api/conversation/stop': () => ({ stopped: true }),
+      '/api/conversation/stop': () => at.stopAnswer || { stopped: true },
       '/api/packages': { requests: [], config: null },
       '/api/packages/sync/check': { count: 0, actionable: 0, running: false, auto: false, missing: [] },
       '/api/log': { entries: [] },
@@ -168,5 +168,38 @@ test('what changed while the window had no focus pops up when it has it again', 
     focused = true
     p.window.dispatchEvent(new p.window.Event('focus'))
     assert.ok(shown(p), 'focus coming back did not show what changed')
+  } finally { p.close() }
+})
+
+const stopButton = (p) => [...balloon(p).querySelectorAll('button')].find((b) => /Stop/.test(b.textContent))
+
+test('the balloon stops what runs in the background, there being no other way between turns', async () => {
+  const p = await convoPage({ running: false })
+  try {
+    await p.click('status-info')
+    assert.equal(stopButton(p), undefined, 'offered to stop with nothing running')
+    await poll(p, { running: false, background: true, tasks: [npmTest, watch] })
+    assert.ok(stopButton(p), 'nothing in the balloon stops the background work')
+    await p.click(stopButton(p))
+    assert.deepEqual(p.sent('/api/conversation/stop'), [{ tasks: true }])
+    assert.ok(shown(p), 'stopping closed the balloon before the work had gone')
+    await poll(p, { running: false, background: true, tasks: [npmTest, watch] })
+    assert.equal(stopButton(p).textContent, 'Stopping…')
+    assert.equal(stopButton(p).disabled, true, 'a stop on its way can be asked for again')
+    await poll(p, { running: false, background: false, tasks: [] })
+    assert.equal(stopButton(p), undefined, 'still offered to stop once nothing runs')
+    assert.equal(dot(p), '')
+  } finally { p.close() }
+})
+
+test('a stop of the background work that fails says so, and can be tried again', async () => {
+  const p = await convoPage({ running: false })
+  try {
+    p.at.stopAnswer = { status: 500, body: { error: 'the agent did not answer' } }
+    await p.click('status-info')
+    await poll(p, { running: false, background: true, tasks: [npmTest] })
+    await p.click(stopButton(p))
+    assert.match(p.$('toast').textContent, /the agent did not answer/)
+    assert.equal(stopButton(p).disabled, false, 'it cannot be tried again')
   } finally { p.close() }
 })

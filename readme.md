@@ -920,8 +920,9 @@ so it takes no room above the conversation. What resolves itself (work left runn
 compacted) pops up and closes itself after 5 seconds, and the button keeps a pulsing blue dot while background work runs.
 What needs you ("no output for at least N minutes", a stop that hasn't taken effect) pops up and stays until it is no
 longer true or you close it, with a steady amber dot. Clicking the button shows the list at any time (or that there is
-nothing); it then stays open until you close it (the button again, its ✕, or Escape). Anything that changed while you were
-on another tab, or in another window, pops up when you come back.
+nothing); it then stays open until you close it (the button again, its ✕, or Escape). While background work runs, the
+balloon has a **Stop it** (or **Stop them all**) button: between the agent's answers it is the way to stop that work.
+Anything that changed while you were on another tab, or in another window, pops up when you come back.
 
 ### CPU and memory bars
 
