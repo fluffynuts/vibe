@@ -2922,6 +2922,33 @@
     return !rv.closed && (started || rv.threads.length > 0)
   }
 
+  // reviewWhat is what review rv is of, as a phrase: "the changes against master", "commit 1a2b3c4", "the commits not pushed to
+  // origin/x", "the uncommitted changes".
+  function reviewWhat(rv) {
+    return rv.commit ? 'commit ' + rv.commit : rv.unpushed ? 'the commits not pushed to ' + rv.ref : rv.ref ? 'the changes against ' + rv.ref
+      : 'the uncommitted changes'
+  }
+
+  // closedReviewWas says what a closed review was: what it was of, with the agent's note, when it started, and its comments by
+  // status, open ones first and said plainly, as they are what makes it worth reopening.
+  function closedReviewWas(rv) {
+    const started = !!rv.started && !String(rv.started).startsWith('0001-')
+    const parts = ['It was of ' + reviewWhat(rv) + (rv.note ? ' ("' + rv.note + '")' : '')]
+    const nodes = []
+    if (started) nodes.push(parts.join('') + ', started ', stamp(rv.started))
+    else nodes.push(parts.join(''))
+    const n = rv.threads.length
+    if (n) {
+      const count = (status) => rv.threads.filter((t) => t.status === status).length
+      const by = [[count('open'), 'still open'], [count('resolved'), 'resolved'], [count('dismissed'), 'dismissed']]
+        .filter(([k]) => k > 0).map(([k, what]) => (n === 1 ? what : k + ' ' + what))
+      // A status none of these (none today) is counted, not named.
+      nodes.push(n === 1 ? ': 1 comment' + (by.length ? ', ' + by[0] : '') : ': ' + n + ' comments' + (by.length ? ': ' + by.join(', ') : ''))
+    }
+    nodes.push('.')
+    return nodes
+  }
+
   // drawStart draws the ways to start a review: each kind there is to
   // review, by the agent (when the page can talk to it), or just its diff.
   function drawStart(rv) {
@@ -2929,7 +2956,12 @@
     // A reason that is already the whole sentence (a branch switch's) is shown as it is.
     $('review-closed').textContent = !rv.closed ? '' : rv.closed.startsWith('The last review was closed') ? rv.closed : 'The last review was closed. ' + rv.closed
     // A dropped review left nothing behind to reopen.
-    $('review-reopen').hidden = !rv.closed || (!rv.threads.length && (!rv.started || String(rv.started).startsWith('0001-')))
+    const reopenable = !!rv.closed && (rv.threads.length > 0 || (!!rv.started && !String(rv.started).startsWith('0001-')))
+    $('review-reopen').hidden = !reopenable
+    // What it was, so Reopen says what it reopens.
+    $('review-closed-what').hidden = !reopenable
+    drawnAs($('review-closed-what'), reopenable ? JSON.stringify([rv.ref, rv.commit, rv.unpushed, rv.note, rv.started, rv.threads.map((t) => t.status)]) : '',
+      () => reopenable ? closedReviewWas(rv) : [])
     const o = reviewView.options
     if (!o) {
       $('review-start-options').replaceChildren(el('p', { class: reviewView.optionsError ? 'bad-text' : 'muted',

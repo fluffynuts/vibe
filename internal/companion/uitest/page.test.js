@@ -659,6 +659,54 @@ test("the agent's failed requests are listed with its review, and not once the r
   } finally { open.close(); closed.close() }
 })
 
+// What a closed review was, under why it was closed, so "Reopen" says what it reopens: what it was of (as the bar says it), the
+// agent's note, when it started, and its comments, saying plainly when any are still open, as that is what makes it worth reopening.
+const closedAs = (fields) => ({ ...none, started: '2026-10-22T13:04:00Z', closed: 'You closed it.', ...fields })
+const thread = (id, status) => ({ id, file: 'a.go', side: 'new', line: id, status, comments: [{ author: 'agent', body: 'x', at: '2026-10-22T13:05:00Z' }] })
+
+test('a closed review says what it was of, with its note, when it started, and its comments, under why it was closed', async () => {
+  for (const [review, what] of [
+    [closedAs({ ref: 'master', note: 'git author fix' }), /of the changes against master \("git author fix"\)/],
+    [closedAs({ commit: '1a2b3c4' }), /of commit 1a2b3c4/],
+    [closedAs({ ref: 'origin/feat', unpushed: true }), /of the commits not pushed to origin\/feat/],
+    [closedAs({}), /of the uncommitted changes/],
+  ]) {
+    const p = await startPage({ review })
+    try {
+      const line = p.$('review-closed-what')
+      assert.equal(line.hidden, false)
+      assert.match(line.textContent, what)
+      assert.ok(line.querySelector('time.stamp'), 'when it started is not shown as the page shows times')
+      assert.match(p.$('review-reopen').textContent, /Reopen that review/)
+    } finally { p.close() }
+  }
+})
+
+test("a closed review's comments are counted by status, and open ones are said plainly", async () => {
+  const p = await startPage({ review: closedAs({ ref: 'master', threads: [thread(1, 'resolved'), thread(2, 'open'), thread(3, 'open'), thread(4, 'dismissed')] }) })
+  try {
+    const said = p.$('review-closed-what').textContent
+    assert.match(said, /4 comments: 2 still open, 1 resolved, 1 dismissed/)
+  } finally { p.close() }
+  const done = await startPage({ review: closedAs({ ref: 'master', threads: [thread(1, 'resolved')] }) })
+  try {
+    assert.match(done.$('review-closed-what').textContent, /1 comment, resolved/)
+    assert.doesNotMatch(done.$('review-closed-what').textContent, /open/)
+  } finally { done.close() }
+  const none_ = await startPage({ review: closedAs({ ref: 'master' }) })
+  try {
+    assert.doesNotMatch(none_.$('review-closed-what').textContent, /comment/, 'a review with no comments counts them')
+  } finally { none_.close() }
+})
+
+test('a dropped review, with nothing to reopen, says nothing of what it was', async () => {
+  const p = await startPage({ review: { ...none, closed: 'The agent stopped before finishing this review, so it was dropped.', threads: [] } })
+  try {
+    assert.equal(p.$('review-closed-what').hidden, true)
+    assert.equal(p.$('review-reopen').hidden, true)
+  } finally { p.close() }
+})
+
 test('a closed review whose reason is a sentence of its own is shown as it is, not after "The last review was closed."', async () => {
   const closed = { ...none, started: '2026-10-16T10:00:00Z', closed: "The last review was closed when the branch for this workspace switched to 'master'. The review was of 'feat/x'. It is kept: reopen it whenever you like." }
   const p = await startPage({ review: closed })

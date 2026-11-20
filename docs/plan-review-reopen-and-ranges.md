@@ -2,7 +2,7 @@
 
 Raised 2026-10-23, while asking whether a review that could be re-opened was this branch's (it was another's: the git author fix).
 
-## 1. "Reopen it" doesn't say what it reopens
+## 1. "Reopen it" doesn't say what it reopens (built 2026-11-20 on `feat/git-token-next-steps`: see below)
 
 Now (`drawStart` in `app.js`, `review-closed` and `review-reopen` in `index.html`): a closed review shows "The last review was closed. <why>" over a bare **Reopen it**. Nothing says what the review was of, when it was raised, or whether its comments were dealt with, so the user has to open it to find out whether it's the one they mean.
 
