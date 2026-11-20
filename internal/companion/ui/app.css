@@ -663,7 +663,7 @@ html.themed .commands li[aria-selected="true"] {
 /* something to know: a dot on the button */
 .choice-info.news::after { content: ""; position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
 .choice-info.warn::after { background: var(--amber); }
-/* The Conversation tab's status: its own info button left of New conversation, and a balloon below it (docs/plan-status-balloon.md).
+/* The Conversation tab's status: its own info button left of New conversation, and a balloon below it (docs/adr/2026-11-18-status-balloon.md).
    A dot pulsing between blue and grey while background work runs (steady for those who ask for less motion), a steady amber one while a warning stands. */
 .convo-bar { position: relative; }
 .status-info.busy::after { content: ""; position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent);

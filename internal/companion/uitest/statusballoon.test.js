@@ -1,4 +1,4 @@
-// The Conversation tab's status, in a balloon from its own info button left of New conversation (docs/plan-status-balloon.md): what
+// The Conversation tab's status, in a balloon from its own info button left of New conversation (docs/adr/2026-11-18-status-balloon.md): what
 // resolves itself pops up and closes itself after 5 s, with a pulsing dot while background work runs; what needs the user stays, with a
 // steady amber dot. In jsdom (see page.js), run with page.test.js.
 'use strict'

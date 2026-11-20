@@ -6403,7 +6403,7 @@
   // FORCE_STOP_AFTER_MS is how long a stop may take before the page offers to force it.
   const FORCE_STOP_AFTER_MS = 8000
 
-  // --- the status balloon (docs/plan-status-balloon.md) ---------------------------------------------------------------------------
+  // --- the status balloon (docs/adr/2026-11-18-status-balloon.md) ---------------------------------------------------------------------------
   // What the agent has going on, in a balloon from its own info button: what resolves itself (background work, compacting) pops up and
   // closes itself after STATUS_CLOSE_MS; a warning that needs the user stays until it is no longer true, or is closed. Opened by the
   // user, it stays until closed. items are what is current; token makes a close timer that has been overtaken do nothing.
