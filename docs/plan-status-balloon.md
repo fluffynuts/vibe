@@ -51,3 +51,15 @@ Page tests (jsdom), with the clock injected so the 5 s close is not waited for: 
 order and removal; a count update doesn't re-open; Stopping doesn't pop; the user-opened balloon stays; closing a live warning keeps the
 amber dot; the empty text; coming back to the tab, and focus, re-pops only after a change; the dot's states and accessible names.
 Firefox: the balloon on the page at every width, beside its button, moving nothing else.
+
+## Also on this branch: the clipboard page's status line becomes toasts (decided with the user 2026-11-20)
+
+The clipboard page had a line under its drop area (`#status`) for what was just done: mostly empty, it still took its height above the
+list, and what it said stayed until something replaced it ("Copied to your clipboard." lingered). It was not given a balloon: the balloon
+is for what is going on (work running), and these are outcomes of one action. Instead the line is gone and the page's toast says them:
+- what was just done ("Copied…", "Already pasted…"): 3 s, as "Deleted." was already;
+- a problem ("Couldn't add that…", "Not kept…", "The clipboard had nothing…"): 8 s, in the problem colour, announced as an alert;
+- one to act on (open the page as `localhost`, not by IP address): stays until clicked away;
+- "Sending N items…": while the paste is on its way, gone when it lands (not over the empty-file warning, which needs reading);
+- any toast goes when clicked.
+The held box (pastes waiting for the server to come back) is state, not an outcome, and stays as it is.

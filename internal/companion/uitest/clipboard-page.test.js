@@ -19,7 +19,8 @@ function openClipboardPage(waiting, search = '') {
   const w = dom.window
   let inFlight = 0
   let poll = () => {}
-  const server = { down: false, refuse: null, uploads: [] }
+  // gate, when set, is a promise an upload waits on, for a test to see the page while it is on its way.
+  const server = { down: false, refuse: null, uploads: [], gate: null }
   w.fetch = async (url, options = {}) => {
     inFlight++
     try {
@@ -27,6 +28,7 @@ function openClipboardPage(waiting, search = '') {
       let body = { items: [] }
       if (options.method === 'POST' && String(url) === '/api/items') {
         const name = decodeURIComponent(options.headers['X-Filename'] || '')
+        if (server.gate) await server.gate
         if (server.refuse) return new Response(JSON.stringify({ error: server.refuse }), { status: 413, headers: { 'Content-Type': 'application/json' } })
         server.uploads.push(name)
         body = waiting.includes(name) ? { duplicate: true, id: 1 } : { id: 2 }
@@ -53,12 +55,12 @@ function openClipboardPage(waiting, search = '') {
   }
   return {
     window: w,
-    status: () => w.document.getElementById('status').textContent,
     link: () => { const el = w.document.getElementById('link'); return el.hidden ? '' : el.textContent },
     server,
     timeouts,
     toast: () => { const el = w.document.getElementById('toast'); return el.hidden ? '' : el.textContent },
     toastIsError: () => w.document.getElementById('toast').classList.contains('error'),
+    toastRole: () => w.document.getElementById('toast').getAttribute('role'),
     held: () => Array.from(w.document.querySelectorAll('#held .item')).map((n) => n.textContent),
     clickIn(selector) { w.document.querySelector(selector).click() },
     async poll() { poll(); await settle() },
@@ -105,7 +107,7 @@ test('a paste added says nothing: the item shows where it is', async () => {
   const p = openClipboardPage([])
   try {
     await p.paste('a.png')
-    assert.equal(p.status(), '')
+    assert.equal(p.toast(), '')
   } finally { p.close() }
 })
 
@@ -113,7 +115,8 @@ test('a paste already waiting to go says so, and isn’t added again', async () 
   const p = openClipboardPage(['a.png'])
   try {
     await p.paste('a.png')
-    assert.equal(p.status(), "Already pasted: it's waiting to go with your next message.")
+    assert.equal(p.toast(), "Already pasted: it's waiting to go with your next message.")
+    assert.equal(p.toastIsError(), false)
   } finally { p.close() }
 })
 
@@ -121,12 +124,12 @@ test('of several pasted at once, those already waiting are said apart', async ()
   const p = openClipboardPage(['a.png'])
   try {
     await p.paste('a.png', 'b.png', 'c.png')
-    assert.equal(p.status(), '1 already pasted.')
+    assert.equal(p.toast(), '1 already pasted.')
   } finally { p.close() }
   const all = openClipboardPage(['a.png', 'b.png'])
   try {
     await all.paste('a.png', 'b.png')
-    assert.equal(all.status(), 'Already pasted, all 2.')
+    assert.equal(all.toast(), 'Already pasted, all 2.')
   } finally { all.close() }
 })
 
@@ -142,7 +145,7 @@ test('one failed look at the server says nothing: it may be waking up', async ()
   } finally { p.close() }
 })
 
-test('three failed looks in a row say the server can’t be reached, apart from the status line', async () => {
+test('three failed looks in a row say the server can’t be reached, apart from the toast', async () => {
   const p = openClipboardPage([])
   try {
     await p.settle()
@@ -152,7 +155,7 @@ test('three failed looks in a row say the server can’t be reached, apart from 
     assert.equal(p.link(), '')
     await p.poll()
     assert.equal(p.link(), NOT_REACHED)
-    assert.equal(p.status(), '', 'the status line, which would shift the page, is left alone')
+    assert.equal(p.toast(), '', 'the toast, which says what was just done, is left alone')
   } finally { p.close() }
 })
 
@@ -198,7 +201,7 @@ test('a paste while the server can’t be reached is held, not refused', async (
     assert.equal(p.held().length, 1)
     assert.match(p.held()[0], /a\.png/)
     assert.match(p.held()[0], /waiting for the server/)
-    assert.doesNotMatch(p.status(), /Couldn.t add/)
+    assert.doesNotMatch(p.toast(), /Couldn.t add/)
   } finally { p.close() }
 })
 
@@ -214,7 +217,7 @@ test('what is held is added once the server answers again', async () => {
     await p.poll()
     assert.deepEqual(p.server.uploads.sort(), ['a.png', 'b.png'])
     assert.deepEqual(p.held(), [])
-    assert.equal(p.status(), '')
+    assert.equal(p.toast(), '')
   } finally { p.close() }
 })
 
@@ -239,7 +242,9 @@ test('what the server refuses is said, not held: it would be refused again', asy
     p.server.refuse = 'too big'
     await p.paste('a.png')
     assert.deepEqual(p.held(), [])
-    assert.match(p.status(), /Couldn.t add that: too big/)
+    assert.match(p.toast(), /Couldn.t add that: too big/)
+    assert.ok(p.toastIsError(), 'a refusal looks like what was done')
+    assert.equal(p.toastRole(), 'alert')
   } finally { p.close() }
 })
 
@@ -286,8 +291,9 @@ test('only three pastes are held while the server is away, and the rest are said
     assert.equal(p.held().length, 3)
     await p.paste('d.png')
     assert.equal(p.held().length, 3)
-    assert.match(p.status(), /not kept/i)
-    assert.match(p.status(), /d\.png|1 item/)
+    assert.match(p.toast(), /not kept/i)
+    assert.match(p.toast(), /d\.png|1 item/)
+    assert.ok(p.toastIsError())
     p.server.down = false
     await p.poll()
     assert.deepEqual(p.server.uploads.sort(), ['a.png', 'b.png', 'c.png'], 'what was kept goes, and only that')
@@ -300,7 +306,7 @@ test('of five pasted at once while it is away, three are kept and two are said n
     await serverDownFor(p)
     await p.paste('a.png', 'b.png', 'c.png', 'd.png', 'e.png')
     assert.equal(p.held().length, 3)
-    assert.match(p.status(), /2 items/)
+    assert.match(p.toast(), /2 items/)
   } finally { p.close() }
 })
 
@@ -312,7 +318,7 @@ test('no more than 150 MB is held, in all', async () => {
     assert.equal(p.held().length, 1)
     await p.pasteSized(['more.png', 60 * MB])
     assert.equal(p.held().length, 1, '160 MB is over')
-    assert.match(p.status(), /not kept/i)
+    assert.match(p.toast(), /not kept/i)
     await p.pasteSized(['fits.png', 50 * MB])
     assert.equal(p.held().length, 2, '150 MB exactly is allowed')
   } finally { p.close() }
@@ -324,7 +330,7 @@ test('a single paste over the limit is not kept, and is said not to be', async (
     await serverDownFor(p)
     await p.pasteSized(['huge.png', 151 * MB])
     assert.equal(p.held().length, 0)
-    assert.match(p.status(), /not kept/i)
+    assert.match(p.toast(), /not kept/i)
   } finally { p.close() }
 })
 
@@ -353,7 +359,7 @@ test('an empty file is not sent, and a toast names it and says it is empty', asy
     assert.match(page.toast(), /empty/i)
     assert.match(page.toast(), /0 bytes/)
     assert.ok(page.toastIsError(), 'it looks like what was just done, not like something that went wrong')
-    assert.equal(page.status(), '', 'the small line says it too')
+
   } finally { page.close() }
 })
 
@@ -364,7 +370,7 @@ test('of an empty file and others dropped together, the others are added and the
     assert.deepEqual(page.server.uploads, ['a.png', 'b.png'])
     assert.match(page.toast(), /empty\.json/)
     assert.doesNotMatch(page.toast(), /a\.png|b\.png/)
-    assert.doesNotMatch(page.status(), /Couldn't add/, 'the whole drop is said not to have been added')
+    assert.doesNotMatch(page.toast(), /Couldn't add/, 'the whole drop is said not to have been added')
   } finally { page.close() }
 })
 
@@ -406,4 +412,42 @@ test('a file chosen with the picker is checked too', async () => {
     assert.deepEqual(page.server.uploads, [])
     assert.match(page.toast(), /chosen\.json/)
   } finally { page.close() }
+})
+
+// The page had a line under the drop area for what was just done, mostly empty, taking room above the list: what it said is in the
+// toast now, which takes none.
+test('there is no status line taking room above the list', async () => {
+  const p = openClipboardPage([])
+  try {
+    await p.settle()
+    assert.equal(p.window.document.getElementById('status'), null)
+  } finally { p.close() }
+})
+
+test('a paste on its way says so until it has landed', async () => {
+  const p = openClipboardPage([])
+  try {
+    await p.settle()
+    let release
+    p.server.gate = new Promise((resolve) => { release = resolve })
+    const ev = new p.window.Event('paste', { bubbles: true, cancelable: true })
+    ev.clipboardData = { files: [new p.window.File(['x'], 'a.png', { type: 'image/png' })], getData: () => '' }
+    p.window.document.dispatchEvent(ev)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(p.toast(), 'Sending 1 item…')
+    assert.equal(p.timeouts.includes(3000), false, 'it would go before the paste had landed')
+    release()
+    await p.settle()
+    assert.equal(p.toast(), '', 'it stayed once the paste had landed')
+  } finally { p.close() }
+})
+
+test('a toast goes when clicked', async () => {
+  const p = openClipboardPage(['a.png'])
+  try {
+    await p.paste('a.png')
+    assert.notEqual(p.toast(), '')
+    p.clickIn('#toast')
+    assert.equal(p.toast(), '')
+  } finally { p.close() }
 })
