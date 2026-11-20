@@ -158,6 +158,17 @@ test('what changed while the Conversation tab was away pops up on coming back to
   } finally { p.close() }
 })
 
+test('work that started and ended while the Conversation tab was away pops nothing up on coming back: there is nothing left to say', async () => {
+  const p = await convoPage({ running: false })
+  try {
+    await p.click('tab-log')
+    await poll(p, { running: false, background: true, tasks: [npmTest] })
+    await poll(p, { running: false, background: false, tasks: [] })
+    await p.click('tab-conversation')
+    assert.equal(shown(p), false, 'coming back popped up a balloon with nothing in it')
+  } finally { p.close() }
+})
+
 test('what changed while the window had no focus pops up when it has it again', async () => {
   const p = await convoPage({ running: false })
   try {

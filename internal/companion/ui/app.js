@@ -6410,6 +6410,8 @@
         if (!focus || focus === document.body || $('status-balloon').contains(focus)) $('status-info').focus()
       }
     }
+    // News that has since gone (work started and ended out of sight) is not kept for coming back to: it would pop up empty.
+    if (!items.length) statusView.pending = false
     if (news) {
       if (statusSeen()) popStatus()
       else statusView.pending = true

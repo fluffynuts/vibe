@@ -39,7 +39,8 @@ for), and keyboard focus goes back to its button. One for each task would need t
   and its background work is listed once it has answered. The rule stands for when they can.)
 - **With nothing current**, the button has no dot, and opening it says: "Work the agent is doing in the background will appear here."
 - **Coming back:** if the list changed while the Conversation tab wasn't showing, or the browser tab or window didn't have focus, the
-  balloon pops up when it is back (once).
+  balloon pops up when it is back (once), unless nothing is left in it: work that started and ended out of sight pops nothing up (seen
+  by hand 2026-11-20: it popped up only to say what it is for).
 - **Wording:** "No output from the agent for at least N minutes" (the count is a lower bound, polled).
 - **Accessibility:** the pulse stops under `prefers-reduced-motion` (a steady dot); the button's accessible name says what the dot means;
   routine messages are announced politely (`role="status"`), warnings at once (`role="alert"`).
