@@ -1,7 +1,7 @@
 # The Review tab: reviews live on the host, in the companion page
 
 - **Status:** accepted, built 2026-10-15/16, and grown in real use; the stale-diff note 2026-11-09. What was left over is in
-  `docs/plan-review-tab-enhancements.md`; stopping the agent while it writes a review is still its own plan, `docs/plan-stop-ends-review.md`.
+  `docs/plan-review-tab-enhancements.md`; stopping the agent while it writes a review is `docs/adr/2026-10-29-stop-ends-review.md`.
 - **Decided:** 2026-10-15, with the user, who has used it for real reviews since.
 - **Came from:** `docs/plan-review-tab.md` (`git show a7461ba:docs/plan-review-tab.md`) and the built part of
   `docs/plan-review-stale-diff.md` (`git show 10924fd:docs/plan-review-stale-diff.md`), both now deleted.

@@ -4088,7 +4088,7 @@ test('Submit to agent waits while the agent is still writing the review, and say
 })
 
 
-// --- stopping the agent while it writes a review (docs/plan-stop-ends-review.md) ------------
+// --- stopping the agent while it writes a review (docs/adr/2026-10-29-stop-ends-review.md) ------------
 
 const writingReview = { ...none, started: '2026-10-16T10:00:00Z', state: 'in progress', threads: [], lastId: 0 }
 

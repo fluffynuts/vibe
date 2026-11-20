@@ -1111,7 +1111,7 @@ func TestClosingAReviewLeavesATurnThatIsntItsAlone(t *testing.T) {
 	}
 }
 
-// --- stopping the agent while it writes a review (docs/plan-stop-ends-review.md) --------
+// --- stopping the agent while it writes a review (docs/adr/2026-10-29-stop-ends-review.md) --------
 
 func startWritingReview(t *testing.T, s *Server) *fakeAgent {
 	t.Helper()
