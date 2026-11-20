@@ -755,7 +755,7 @@ restarts, as for files). Colours follow the theme, and what is copied is the cod
   which vibe and Docker SBX are in use (and, after an `--upgrade` or `--downgrade`, that the vibe installed
   is used once this sandbox's vibe is restarted), whether newer releases of either are out (with a dot on
   the tab when they are; hovering over the tab says which), and shows
-  the sandbox's GitHub token, read-only, with a link to make or renew one on GitHub. Each action shows the
+  the sandbox's GitHub token, read-only, with a link to make or renew one on GitHub, and the other sandboxes whose token has expired or expires within 3 days (from vibe's records; `vibe --batch-git-token` renews several at once). An expired one, here or in another sandbox, puts a dot on the tab. Each action shows the
   command it matches and asks first, and nothing that takes the sandbox away runs while the agent is
   answering. An action taking far longer than it should (3 minutes for start, stop or saving memories,
   15 for a rebuild) is flagged as possibly stuck, with what to check, while vibe keeps waiting for it;

@@ -78,6 +78,7 @@ func (a *companionAdmin) Status() companion.AdminStatus {
 		}
 	}
 	st.GitToken = adminGitToken(a.name, a.target, info)
+	st.GitToken.Others = gitTokensRunningOut(a.lay.Home, a.name, timeNow())
 	return st
 }
 

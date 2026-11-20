@@ -4880,6 +4880,19 @@
     }
     steps.hidden = !list.length
     drawnAs(steps, JSON.stringify(git), () => list)
+    renderOtherTokens(git.others || [])
+  }
+
+  // renderOtherTokens lists the other sandboxes whose token has expired or is about to (vibe's records, not GitHub's), with what
+  // renews several at once: here, as this is where tokens are, and nothing else on the page says it.
+  function renderOtherTokens(others) {
+    const box = $('admin-git-others')
+    box.hidden = !others.length
+    drawnAs(box, JSON.stringify(others), () => [
+      el('p', { text: 'Other sandboxes whose token has expired or is about to:' }),
+      el('ul', {}, ...others.map((o) => el('li', { class: o.expired ? 'bad-text' : '', text: o.name + ': ' + o.expiry }))),
+      el('p', {}, 'In a terminal, ', el('code', { text: 'vibe --batch-git-token' }), ' renews several at once.'),
+    ])
   }
 
   function renderAdminBackups(backups, busy) {

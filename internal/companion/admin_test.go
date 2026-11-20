@@ -368,3 +368,26 @@ func TestTheAdminTabSaysWhyItWantsAttention(t *testing.T) {
 		t.Errorf("the Admin tab's reasons: %v", got)
 	}
 }
+
+// An expired GitHub token, this sandbox's or another's, is a reason for the Admin tab's dot, saying which and what renews them; a
+// token only about to expire is not (the tab lists those, but a dot for days before each expiry would be noise).
+func TestTheAdminTabWantsAttentionForExpiredGitTokensNamingThem(t *testing.T) {
+	reasons := func(expired []string) []string {
+		s := New(Config{Sandbox: "box", Token: token, Port: testPort, Admin: &fakeAdmin{}, ExpiredGitTokens: func() []string { return expired }})
+		rec := do(t, s, req{path: "/api/state", headers: authed(nil)})
+		var body struct {
+			Attention map[string][]string `json:"attention"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body.Attention["admin"]
+	}
+	if got := reasons(nil); len(got) != 0 {
+		t.Errorf("with no token expired: %v", got)
+	}
+	got := reasons([]string{"api", "web"})
+	if len(got) != 1 || !strings.Contains(got[0], "api, web") || !strings.Contains(got[0], "vibe --batch-git-token") {
+		t.Errorf("the Admin tab's reasons: %v", got)
+	}
+}

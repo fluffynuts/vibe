@@ -112,15 +112,25 @@ type AdminBackup struct {
 	Label string `json:"label"`
 }
 
+// AdminTokenSoon is another sandbox whose GitHub token has expired, or is about to.
+type AdminTokenSoon struct {
+	Name    string `json:"name"`
+	Expiry  string `json:"expiry"`
+	Expired bool   `json:"expired,omitempty"`
+}
+
 // AdminGitToken is what the tab shows of the sandbox's GitHub token. It is
 // only ever shown: a token is given to vibe in the terminal, not here.
 type AdminGitToken struct {
-	Has      bool     `json:"has"`
-	Source   string   `json:"source,omitempty"`
-	Rules    []string `json:"rules,omitempty"`
-	Expiry   string   `json:"expiry,omitempty"`
-	Expired  bool     `json:"expired,omitempty"`
-	Expiring bool     `json:"expiring,omitempty"`
+	// Others are the other sandboxes whose token has expired or is about to, from vibe's records: 'vibe --batch-git-token'
+	// renews several at once.
+	Others   []AdminTokenSoon `json:"others,omitempty"`
+	Has      bool             `json:"has"`
+	Source   string           `json:"source,omitempty"`
+	Rules    []string         `json:"rules,omitempty"`
+	Expiry   string           `json:"expiry,omitempty"`
+	Expired  bool             `json:"expired,omitempty"`
+	Expiring bool             `json:"expiring,omitempty"`
 	// NewTokenURL is GitHub's form for a new token, filled in as far as a
 	// URL can; RenewURL the page of tokens to regenerate one on.
 	NewTokenURL string `json:"newTokenUrl,omitempty"`
