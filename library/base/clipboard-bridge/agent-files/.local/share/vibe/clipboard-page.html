@@ -72,11 +72,13 @@
     border-radius: 8px; padding: 3px 10px; font-size: 13px;
   }
   #link[hidden] { display: none; }
-  /* Says what was just done, or what went wrong, then goes (sooner when clicked): it takes no room from the list. */
+  /* Says what was just done, or what went wrong, then goes (sooner when clicked): it takes no room from the list. A button, so that the
+     one that stays until dismissed can be dismissed from the keyboard too. */
   #toast {
     position: fixed; right: 12px; bottom: 12px; max-width: calc(100% - 24px);
     background: var(--panel); color: var(--text); border: 1px solid var(--accent);
     border-radius: 8px; padding: 8px 12px; font-size: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.3); cursor: pointer;
+    text-align: left;
   }
   #toast.error { border-color: var(--danger); }
   /* For a screen reader only: the toast's words are announced from these, which are always there (see toast). */
@@ -177,7 +179,7 @@
 </main>
 <div id="zoom"><img alt=""></div>
 <div id="link" role="status" hidden></div>
-<div id="toast" hidden></div>
+<button type="button" id="toast" title="Click to dismiss" hidden></button>
 <div id="toast-status" class="sr-only" role="status"></div>
 <div id="toast-alert" class="sr-only" role="alert"></div>
 

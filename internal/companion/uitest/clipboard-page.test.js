@@ -490,3 +490,16 @@ test('of two pastes on their way at once, the first to land leaves "Sending…" 
     assert.equal(p.toast(), '')
   } finally { p.close() }
 })
+
+// One toast stays until it is dismissed: from the keyboard too, so the toast is a button (Escape would reach it only with focus in the
+// clipboard's frame, which is seldom where it is).
+test('a toast is a button, so it can be dismissed from the keyboard, and says that it can be', async () => {
+  const p = openClipboardPage([])
+  try {
+    await p.settle()
+    const t = p.window.document.getElementById('toast')
+    assert.equal(t.tagName, 'BUTTON')
+    assert.equal(t.type, 'button')
+    assert.match(t.title, /dismiss/i)
+  } finally { p.close() }
+})
