@@ -40,6 +40,10 @@ func stubGitAccess(t *testing.T) *fakeGitAccess {
 		checkGitToken, setGitHubSecret, removeGitHubSecret, writeGitInstructions, removeGitInstructions, timeNow = oldCheck, oldSet, oldRemove, oldWrite, oldRemoveInstr, oldNow
 	})
 	timeNow = func() time.Time { return fakeNow }
+	// No sbx in a test: the check from inside a sandbox has tests of its own (pushcheck_test.go).
+	oldInside := pushFromInside
+	t.Cleanup(func() { pushFromInside = oldInside })
+	pushFromInside = func(string, string, *gittoken.Repo) insideCheck { return insideCheck{} }
 	checkGitToken = func(token string, repo *gittoken.Repo) gittoken.Report {
 		if token != "good" {
 			return gittoken.Report{Rejected: true}

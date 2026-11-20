@@ -1041,7 +1041,11 @@ on. It is given to 4 sandboxes at a time (`--jobs N` says otherwise; 1 is one af
 how many are done and which are under way, each one's lines are shown together when it is done, and the
 run says how long it took. A sandbox that isn't running is not started to be given its token (nor by
 `--git-token`, which works the same way): its agent's instructions for pushing are written at its next
-start. The summary says which got it, with old and new expiry, and which didn't, and why. On a terminal
+start. Each running sandbox that got the token is then checked from inside: a dry-run push (it sends nothing) from its workspace
+to its repository, as the agent would push, which GitHub refuses when the token the sandbox has may not push. (GitHub's own API
+can't say: it answers with your account's access, not the token's.) A sandbox that isn't running isn't started for it. `--git-token`
+does the same check. The summary says which got it, with old and new expiry, what the check found (a sandbox GitHub refused is
+marked ⚠, with how to try again), and which didn't get it, and why. On a terminal
 it asks; a token is never typed into the page.
 
 For a script, name the sandboxes instead of ticking them, and give the token in a variable:

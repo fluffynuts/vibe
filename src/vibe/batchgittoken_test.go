@@ -589,3 +589,28 @@ func TestBatchForAScriptFailsWhenASandboxDidntGetTheTokenAndStillGivesTheOthers(
 		t.Errorf("secrets = %v, want one given the token all the same", f.secrets)
 	}
 }
+
+// The summary says what the check from inside each sandbox found; one that has the token but that GitHub won't let push is marked,
+// with how to try again, and counts as not done.
+func TestBatchSummarySaysWhatEachSandboxFoundFromInsideAndMarksOneThatCantPush(t *testing.T) {
+	stubGitAccess(t)
+	outcomes := []batchOutcome{
+		{name: "fine", given: true, newExpires: fakeExpiry, inside: insideCheck{said: "the sandbox can push"}},
+		{name: "stopped", given: true, newExpires: fakeExpiry, inside: insideCheck{said: "not checked from inside: it isn't running (it isn't started for this)"}},
+		{name: "refused", folder: "/w/refused", given: true, newExpires: fakeExpiry,
+			inside: insideCheck{said: "GitHub refused the sandbox a push: remote: Permission to o/r.git denied", refused: true}},
+	}
+	lines := strings.Join(batchSummary(outcomes, fakeNow), "\n")
+	for _, want := range []string{
+		"✔ fine", "the sandbox can push",
+		"✔ stopped", "it isn't running",
+		"⚠ refused", "GitHub refused the sandbox a push", "'vibe --git-token' in /w/refused tries again",
+	} {
+		if !strings.Contains(lines, want) {
+			t.Errorf("summary lacks %q:\n%s", want, lines)
+		}
+	}
+	if n := batchFailures(outcomes); n != 1 {
+		t.Errorf("batchFailures = %d, want 1 (the one that can't push)", n)
+	}
+}

@@ -38,10 +38,12 @@ type batchToken struct {
 
 // batchOutcome is what happened to one sandbox of a batch.
 type batchOutcome struct {
-	name, folder           string
-	given                  bool
-	problem                string
-	pushCheck              string
+	name, folder string
+	given        bool
+	problem      string
+	pushCheck    string
+	// inside is what a push checked from inside the sandbox found.
+	inside                 insideCheck
 	oldExpires, newExpires time.Time
 }
 
@@ -310,7 +312,7 @@ func giveTokenToSandbox(say func(string, ...interface{}), vibeHome string, inst 
 		rules = inst.GitRules
 	}
 	access := &gitAccess{token: tok.token, source: tok.source, rules: rules, expires: expires}
-	if err = setGitAccessSaying(say, vibeHome, &inst, access, repo); err != nil {
+	if out.inside, err = setGitAccessSaying(say, vibeHome, &inst, access, repo); err != nil {
 		out.problem, out.pushCheck = err.Error(), ""
 		return out
 	}
@@ -325,9 +327,16 @@ func batchSummary(outcomes []batchOutcome, now time.Time) []string {
 	var lines []string
 	for _, o := range outcomes {
 		if o.given {
-			lines = append(lines, fmt.Sprintf("  ✔ %s: %s → %s%s", o.name,
+			mark := "✔"
+			if o.refusedInside() {
+				mark = "⚠"
+			}
+			lines = append(lines, fmt.Sprintf("  %s %s: %s → %s%s%s", mark, o.name,
 				orNone(gittoken.DescribeExpiry(o.oldExpires, now)), orNone(gittoken.DescribeExpiry(o.newExpires, now)),
-				prefixed(" — ", o.pushCheck)))
+				prefixed(" — ", o.pushCheck), prefixed(" — ", o.inside.said)))
+			if o.refusedInside() {
+				lines = append(lines, fmt.Sprintf("      'vibe --git-token' in %s tries again", o.folder))
+			}
 			continue
 		}
 		lines = append(lines,
@@ -335,6 +344,22 @@ func batchSummary(outcomes []batchOutcome, now time.Time) []string {
 			fmt.Sprintf("      'vibe --git-token' in %s tries again", o.folder))
 	}
 	return lines
+}
+
+// refusedInside says the sandbox got the token but GitHub wouldn't let it push, checked from inside.
+func (o batchOutcome) refusedInside() bool {
+	return o.inside.refused
+}
+
+// batchFailures is how many sandboxes a batch left unable to push: not given the token, or given it and refused from inside.
+func batchFailures(outcomes []batchOutcome) int {
+	n := 0
+	for _, o := range outcomes {
+		if !o.given || o.refusedInside() {
+			n++
+		}
+	}
+	return n
 }
 
 func orNone(s string) string {
@@ -589,18 +614,13 @@ func doBatchGitToken(vibeHome string, args cliargs.Args) error {
 		offerDefaultToken(vibeHome, tok.token, tok.expires, sandboxNamesOf(picked)...)
 	}
 	note("")
-	failed := 0
-	for _, o := range outcomes {
-		if !o.given {
-			failed++
-		}
-	}
+	failed := batchFailures(outcomes)
 	for _, line := range batchSummary(outcomes, timeNow()) {
 		note("%s", line)
 	}
 	note("took %s", timeNow().Sub(started).Round(time.Second))
 	if failed > 0 {
-		return fmt.Errorf("%d of %d sandboxes did not get the token", failed, len(outcomes))
+		return fmt.Errorf("%d of %d sandboxes did not get the token, or can't push with it", failed, len(outcomes))
 	}
 	return nil
 }

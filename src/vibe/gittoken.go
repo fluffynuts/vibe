@@ -961,24 +961,34 @@ func doGitToken(vibeHome string, args cliargs.Args, name, target string) error {
 // setGitAccess gives an existing sandbox access (nil takes its token away)
 // and records it.
 func setGitAccess(vibeHome string, inst *state.Instance, access *gitAccess, repo *gittoken.Repo) error {
-	return setGitAccessSaying(note, vibeHome, inst, access, repo)
+	_, err := setGitAccessSaying(note, vibeHome, inst, access, repo)
+	return err
 }
 
 // setGitAccessSaying is setGitAccess saying what it does through say (taking
 // a token away still goes to the terminal: the batch never does).
-func setGitAccessSaying(say func(string, ...interface{}), vibeHome string, inst *state.Instance, access *gitAccess, repo *gittoken.Repo) error {
+// Given a token, it says (and gives back) what a push checked from inside the sandbox found: that it has the token is not the same
+// as GitHub's saying the token can push.
+func setGitAccessSaying(say func(string, ...interface{}), vibeHome string, inst *state.Instance, access *gitAccess, repo *gittoken.Repo) (insideCheck, error) {
 	if access == nil {
 		takeGitAccess(vibeHome, inst.Name)
 		inst.GitToken, inst.GitRules, inst.GitTokenExpires = "", nil, time.Time{}
 		note("took '%s''s GitHub token away: you commit and push yourself", inst.Name)
-		return state.Save(vibeHome, *inst)
+		return insideCheck{}, state.Save(vibeHome, *inst)
 	}
 	given := giveGitAccessSaying(say, vibeHome, inst.Name, access, repo)
 	if given == nil {
-		return fmt.Errorf("'%s' has no new GitHub token", inst.Name)
+		return insideCheck{}, fmt.Errorf("'%s' has no new GitHub token", inst.Name)
 	}
 	inst.GitToken, inst.GitRules, inst.GitTokenExpires = given.source, given.rules, given.expires
-	return state.Save(vibeHome, *inst)
+	if err := state.Save(vibeHome, *inst); err != nil {
+		return insideCheck{}, err
+	}
+	inside := pushFromInside(inst.Name, inst.Target, repo)
+	if inside.said != "" {
+		say("  checked:   %s", inside.said)
+	}
+	return inside, nil
 }
 
 func rulesSuffix(rules []string) string {
