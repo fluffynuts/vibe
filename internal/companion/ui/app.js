@@ -3504,7 +3504,7 @@
         el('span', { class: 'name', title: whole, text: path.slice(cut) })]
     }
     return el('code', { class: 'review-path', title: whole },
-      ...(f.status === 'renamed' ? [...parts(f.oldPath), el('span', { class: 'arrow', text: '→' }), ...parts(f.path)] : parts(f.path)))
+      ...(f.status === 'renamed' ? [...parts(f.oldPath), el('span', { class: 'arrow', text: ' → ' }), ...parts(f.path)] : parts(f.path)))
   }
 
   function fileCard(f, stop, step, index, placed, threads) {
@@ -6106,9 +6106,9 @@
   }
 
   // setRepoWeb takes the repository's address on GitHub from the page's state, linking what was drawn before it was known. Only a
-  // plain github.com address is taken: the links are made of it.
+  // plain github.com address is taken, its name not of dots only (github.com/a/.. is github.com): the links are made of it.
   function setRepoWeb(git) {
-    const web = git && /^https:\/\/github\.com\/[\w-]+\/[\w.-]+$/.test(git.web || '') ? git.web : ''
+    const web = git && /^https:\/\/github\.com\/[\w-]+\/(?!\.+$)[\w.-]+$/.test(git.web || '') ? git.web : ''
     if (web === state.repoWeb) return
     state.repoWeb = web
     for (const a of document.querySelectorAll('a.repo-ref')) linkRepoRef(a)

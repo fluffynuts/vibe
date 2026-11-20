@@ -1544,7 +1544,7 @@ test("a file's header shows its path as folders and name, whole in the title, an
     assert.equal(path(head('top.go')).querySelector('.name').textContent, 'top.go')
     assert.equal(path(head('top.go')).querySelector('.dir'), null, 'a file at the top has no folders to give way')
     const renamed = path(head('new/name.go'))
-    assert.equal(renamed.textContent, 'old/name.go→new/name.go', 'the arrow is spaced by the header, as its other items are')
+    assert.equal(renamed.textContent, 'old/name.go → new/name.go', 'a rename copies as it reads')
     assert.equal(renamed.title, 'old/name.go → new/name.go')
     assert.deepEqual([...renamed.querySelectorAll('.name')].map((n) => n.textContent), ['name.go', 'name.go'])
     assert.equal(long.querySelector('.review-stop').title, label)
@@ -2830,6 +2830,16 @@ test('a pull request named before the page knew the repository was on GitHub is 
     await p.every('tick')
     assert.equal(repoRefs(p)[0].getAttribute('href'), 'https://github.com/me/vibe/pull/110')
   } finally { p.close() }
+})
+
+// A name of dots only would make an address a browser takes to somewhere else (github.com/a/.. is github.com): no link is made of it.
+test('a GitHub address whose repository name is only dots is not linked to', async () => {
+  for (const web of ['https://github.com/a/..', 'https://github.com/a/.']) {
+    const p = await talkPage('PR #110 is up.', { branch: 'main', web })
+    try {
+      assert.deepEqual(repoRefs(p).map((a) => a.hasAttribute('href')), [false], web + ' was linked to')
+    } finally { p.close() }
+  }
 })
 
 test("a pull request named where the repository isn't on GitHub is plain text, not a link to a Review comment", async () => {

@@ -36,7 +36,8 @@ func gitHubWeb(url string) string {
 		rest = path
 	}
 	m := gitHubRepo.FindStringSubmatch(rest)
-	if m == nil {
+	// A name of dots only (GitHub allows none) would be an address a browser takes elsewhere: github.com/a/.. is github.com.
+	if m == nil || strings.Trim(m[2], ".") == "" {
 		return ""
 	}
 	return "https://github.com/" + m[1] + "/" + m[2]

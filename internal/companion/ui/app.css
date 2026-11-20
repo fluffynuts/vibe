@@ -354,6 +354,8 @@ ul.plain li .spacer { flex: 1; }
 /* Right against its name: the header's gap is between items, and these two read as one path. */
 .review-file > header .review-path .dir { direction: rtl; margin-right: -8px; }
 .review-file > header .review-path .name { flex: none; white-space: nowrap; }
+/* Spaced as it reads, so that a rename copies as "old → new": its spaces stand in for the header's gaps either side. */
+.review-file > header .review-path .arrow { flex: none; white-space: pre; margin: 0 -8px; }
 .review-path .arrow { flex: none; white-space: pre; }
 /* a file's number in the reading order, in its header and in the tree */
 .review-step { display: inline-block; min-width: 1.4em; padding: 0 4px; border-radius: 9px; background: var(--accent); color: var(--accent-text); font: 600 11px/1.5 system-ui, sans-serif; text-align: center; }

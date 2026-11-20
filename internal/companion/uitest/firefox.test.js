@@ -192,6 +192,36 @@ test("a long path gives way from the left, keeping its name, and a long label fr
   } finally { await page.close() }
 })
 
+// A rename's paths are the header's items, as a path's are: however little room the new path's folders have, its name keeps its
+// distance from the arrow.
+test("a renamed file's new name keeps its distance from the arrow at every width", async () => {
+  const from = 'library/base/clipboard-bridge/agent-files/.local/share/vibe/old-clipboard-page.html'
+  const to = 'library/base/clipboard-bridge/agent-files/.local/share/vibe/clipboard-page.html'
+  const page = await reviewPage((p) => withReview(p, (body) => {
+    if (!body.diff) return
+    const main = body.diff.find((f) => f.path === 'main.go')
+    if (main && !body.diff.some((f) => f.path === to)) body.diff.push(Object.assign({}, main, { path: to, oldPath: from, status: 'renamed' }))
+  }))
+  try {
+    // At every width, down to where the new folders have no room at all: the name never comes against the arrow.
+    for (let width = 900; width >= 420; width -= 40) {
+      await page.setViewportSize({ width, height: 1000 })
+      const seen = await page.evaluate((to) => {
+        const head = document.querySelector(`.review-file[data-path="${to}"] > header`)
+        // The arrow itself, not its box, which holds the spaces either side of it.
+        const text = head.querySelector('.review-path .arrow').firstChild
+        const range = document.createRange()
+        range.setStart(text, text.data.indexOf('→'))
+        range.setEnd(text, text.data.indexOf('→') + 1)
+        const arrow = range.getBoundingClientRect()
+        const name = head.querySelectorAll('.review-path .name')[1].getBoundingClientRect()
+        return { gap: name.left - arrow.right, sameLine: Math.abs(name.top - arrow.top) < 2 }
+      }, to)
+      if (seen.sameLine) assert.ok(seen.gap >= 4, `${width}px: the new name is ${Math.round(seen.gap)}px from the arrow`)
+    }
+  } finally { await page.close() }
+})
+
 // Going to a comment puts it just under its file's header, pinned below the bar: that file's header, however tall, not the first's.
 test("going to a comment puts it below its own file's header, taller than the first file's", async () => {
   const page = await reviewPage((p) => withReview(p, (body) => {

@@ -23,6 +23,9 @@ func TestGitHubWebIsTheRepositorysAddressFromAnyFormOfItsURL(t *testing.T) {
 		"https://github.com/a/b/c":                          "",
 		"https://github.com/a/b\"onclick=x":                 "",
 		"/home/me/repos/vibe":                               "",
+		"https://github.com/a/..":                           "",
+		"https://github.com/a/.":                            "",
+		"git@github.com:a/...git":                           "",
 		"":                                                  "",
 	} {
 		if got := gitHubWeb(url); got != want {
