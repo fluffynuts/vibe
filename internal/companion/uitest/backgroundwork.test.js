@@ -30,9 +30,12 @@ const button = (row, name) => [...row.querySelectorAll('button')].find((b) => b.
 test('while the agent has work in the background a prompt goes without asking, and the status says the work carries on', async () => {
   const p = await convoPage({ running: false, background: true, tasks: tests })
   try {
-    assert.match(p.$('convo-status').textContent, /2 things running in the background: "npm test", "watch the build"/)
-    assert.match(p.$('convo-status').textContent, /carries on/)
-    assert.doesNotMatch(p.$('convo-status').textContent, /ends it/)
+    const said = p.$('status-balloon').textContent
+    assert.equal(p.$('status-balloon').hidden, false, 'the background work did not pop the status balloon up')
+    assert.match(said, /2 things running in the background:/)
+    assert.deepEqual([...p.$('status-balloon').querySelectorAll('li')].map((li) => li.textContent), ['npm test', 'watch the build'])
+    assert.match(said, /carries on/)
+    assert.doesNotMatch(said, /ends it/)
     await p.type(p.$('convo-input'), 'something else, meanwhile')
     await p.click('convo-send')
     assert.equal(p.$('confirm').open, false, 'asked before sending a prompt that no longer ends anything')
@@ -129,7 +132,8 @@ test('a stop that has not taken effect after a while can be forced, which ends t
     await p.every('pollConversation')
     assert.equal(p.$('convo-stop').disabled, false, 'a stuck stop cannot be forced')
     assert.match(p.$('convo-stop').textContent, /Force stop/)
-    assert.match(p.$('convo-status').textContent, /has not stopped/)
+    assert.match(p.$('status-balloon').textContent, /has not stopped/)
+    assert.equal(p.$('status-balloon').hidden, false, 'the warning that a stop has not taken effect did not pop up')
     await p.click('convo-stop')
     assert.deepEqual(p.at.stops, [{}, { force: true }])
     p.at.agent = { running: false, background: false, tasks: [] }

@@ -344,6 +344,19 @@ ul.plain li .spacer { flex: 1; }
 /* the file's header stays pinned under the bar while the page is in it */
 .review-file > header { position: sticky; top: var(--review-bar-h, 48px); z-index: 2; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--row-hover); }
 .review-file > header code { font-weight: 600; }
+/* One line, however long the path, the reading order's label, or why it isn't coloured. The path's folders and name are the header's own
+   items (display: contents): the folders, the label and the note share what the rest leaves, taking no more than they need, and give
+   way when there isn't enough, the folders from the left (so the folder nearest the name stays), the others from their ends. The file's
+   name never gives way: the header wraps first, on a window too narrow for it. All are whole in their titles. */
+.review-file > header .review-path { display: contents; }
+.review-file > header .review-path .dir, .review-file > header .review-stop, .review-file > header .review-uncoloured {
+  flex: 1 1 0; max-width: max-content; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Right against its name: the header's gap is between items, and these two read as one path. */
+.review-file > header .review-path .dir { direction: rtl; margin-right: -8px; }
+.review-file > header .review-path .name { flex: none; white-space: nowrap; }
+/* Spaced as it reads, so that a rename copies as "old → new": its spaces stand in for the header's gaps either side. */
+.review-file > header .review-path .arrow { flex: none; white-space: pre; margin: 0 -8px; }
+.review-path .arrow { flex: none; white-space: pre; }
 /* a file's number in the reading order, in its header and in the tree */
 .review-step { display: inline-block; min-width: 1.4em; padding: 0 4px; border-radius: 9px; background: var(--accent); color: var(--accent-text); font: 600 11px/1.5 system-ui, sans-serif; text-align: center; }
 .review-tree .review-step { margin-left: 6px; flex: none; }
@@ -652,6 +665,20 @@ html.themed .commands li[aria-selected="true"] {
 /* something to know: a dot on the button */
 .choice-info.news::after { content: ""; position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
 .choice-info.warn::after { background: var(--amber); }
+/* The Conversation tab's status: its own info button left of New conversation, and a balloon below it (docs/adr/2026-11-18-status-balloon.md).
+   A dot pulsing between blue and grey while background work runs (steady for those who ask for less motion), a steady amber one while a warning stands. */
+.convo-bar { position: relative; }
+.status-info.busy::after { content: ""; position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+  animation: status-pulse 2s ease-in-out infinite; }
+.status-info.warn::after { content: ""; position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); }
+/* As the favicon's dot pulses: the same size throughout, its colour between the accent and grey, a second each way. */
+@keyframes status-pulse { 0%, 100% { background: var(--accent); } 50% { background: var(--muted); } }
+@media (prefers-reduced-motion: reduce) { .status-info.busy::after { animation: none; } }
+.status-balloon { position: absolute; z-index: 20; top: calc(100% + 6px); right: 0; box-sizing: border-box; width: min(32rem, 100%);
+  padding: 10px 30px 4px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: 0 4px 16px rgba(0, 0, 0, .18); }
+.status-balloon[hidden] { display: none; }
+.status-balloon p { margin: 0 0 6px; }
+.status-balloon ul { margin: 0 0 6px; padding-left: 1.2em; }
 .choice-bubble { position: absolute; z-index: 20; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%); box-sizing: border-box;
   width: min(26em, 92vw); padding: 10px 34px 10px 12px; text-align: left; font-size: 13px; background: var(--panel); color: var(--text);
   border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 0, 0, .28); }
@@ -871,3 +898,5 @@ ul.signins summary { cursor: pointer; color: var(--muted); }
    only a word too long for the cell is broken. */
 #log-table td.host { min-width: 16em; }
 #log-table td.mono { word-break: normal; overflow-wrap: break-word; }
+/* A pull request or issue named in the conversation: a link to it on GitHub, or plain text where the repository isn't there. */
+a.repo-ref:not([href]) { color: inherit; text-decoration: none; cursor: text; }

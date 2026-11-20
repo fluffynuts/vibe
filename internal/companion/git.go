@@ -23,6 +23,8 @@ type GitInfo struct {
 	Detached   bool   `json:"detached,omitempty"`
 	NoUpstream bool   `json:"noUpstream,omitempty"`
 	Operation  string `json:"operation,omitempty"`
+	// Web is the repository's address on GitHub, which the page links pull requests and issues to: "" when it isn't there.
+	Web string `json:"web,omitempty"`
 }
 
 // readGit is the workspace's git status, or nil when dir isn't in a

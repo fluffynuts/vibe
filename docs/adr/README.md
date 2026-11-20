@@ -26,3 +26,6 @@ where there is something to say. A decision that is later changed gets a note in
 | [2026-11-12-batch-git-token](2026-11-12-batch-git-token.md) | One GitHub token for several sandboxes at once; "the token another sandbox has" |
 | [2026-11-16-persistent-agent](2026-11-16-persistent-agent.md) | One agent process for the conversation: background work survives a prompt and calls back |
 | [2026-11-17-downgrade](2026-11-17-downgrade.md) | One step back for vibe or Docker SBX; what runs is stopped before sbx changes |
+| [2026-11-18-status-balloon](2026-11-18-status-balloon.md) | The Conversation tab's status in a balloon from an info button; Stop for background work |
+| [2026-11-20-clipboard-toasts-and-review-headers](2026-11-20-clipboard-toasts-and-review-headers.md) | The clipboard page's status line becomes toasts; a Review file's header stays one line |
+| [2026-11-20-pr-and-issue-links](2026-11-20-pr-and-issue-links.md) | A pull request or issue the agent names links to it on GitHub, not to a Review comment |

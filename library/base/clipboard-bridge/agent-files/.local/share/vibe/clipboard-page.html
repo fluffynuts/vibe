@@ -31,12 +31,14 @@
   /* The page itself never scrolls: the instructions stay put and only the
      list scrolls (beneath them here, beside them in the split layout). */
   html, body { height: 100%; overflow: hidden; }
+  /* Its top gap is the gap between cards, as below the drop area. */
   main {
-    max-width: 960px; margin: 0 auto; padding: 24px 16px 0; height: 100vh; height: 100dvh;
+    max-width: 960px; margin: 0 auto; padding: 12px 16px 0; height: 100vh; height: 100dvh;
     display: flex; flex-direction: column;
   }
   #top { flex: none; }
-  #list { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 24px; }
+  /* Apart from the drop area above it by the gap between cards, and no more. */
+  #list { flex: 1; min-height: 0; overflow-y: auto; padding-top: 12px; padding-bottom: 24px; }
   header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
   h1 { font-size: 20px; margin: 0; }
   .host { color: var(--muted); font-size: 14px; }
@@ -59,9 +61,7 @@
   button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
   button.danger { color: var(--danger); }
   .actions .ask { align-self: center; color: var(--danger); }
-  #status { min-height: 1.5em; margin: 10px 2px; color: var(--muted); font-size: 14px; }
-  #status.error { color: var(--danger); }
-  #clearbar { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; margin: 0 2px 10px; }
+  #clearbar { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; margin: 0 2px 12px; }
   #clearbar:empty { display: none; }
   #clearbar .ask { color: var(--danger); font-size: 14px; }
   /* Fixed, so that it appearing and going never moves the page: it can come up while someone is
@@ -72,13 +72,17 @@
     border-radius: 8px; padding: 3px 10px; font-size: 13px;
   }
   #link[hidden] { display: none; }
-  /* Says what was just done, then goes: what needs reading stays in #status. */
+  /* Says what was just done, or what went wrong, then goes (sooner when clicked): it takes no room from the list. A button, so that the
+     one that stays until dismissed can be dismissed from the keyboard too. */
   #toast {
     position: fixed; right: 12px; bottom: 12px; max-width: calc(100% - 24px);
     background: var(--panel); color: var(--text); border: 1px solid var(--accent);
-    border-radius: 8px; padding: 8px 12px; font-size: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.3);
+    border-radius: 8px; padding: 8px 12px; font-size: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.3); cursor: pointer;
+    text-align: left;
   }
   #toast.error { border-color: var(--danger); }
+  /* For a screen reader only: the toast's words are announced from these, which are always there (see toast). */
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   #items, #held { display: grid; gap: 12px; }
   #held:not(:empty) { margin-bottom: 12px; }
   #held .item { grid-template-columns: 1fr auto; align-items: center; padding: 8px 12px; border: 1px dashed var(--border); border-radius: 8px; }
@@ -148,8 +152,7 @@
   html.split .host { font-size: 12px; }
   html.split #drop { padding: 14px 10px; flex: 1; display: flex; flex-direction: column; justify-content: center; }
   html.split #drop strong { font-size: 15px; }
-  html.split #status { font-size: 13px; margin: 6px 2px; }
-  html.split #list { grid-column: 2; padding-top: 12px; min-width: 0; }
+  html.split #list { grid-column: 2; min-width: 0; }
 </style>
 </head>
 <body>
@@ -167,7 +170,6 @@
     <p><label class="button">Choose files<input id="picker" type="file" multiple hidden></label></p>
   </section>
 
-  <div id="status" role="status"></div>
   </div>
   <div id="list">
   <div id="clearbar"></div>
@@ -177,35 +179,59 @@
 </main>
 <div id="zoom"><img alt=""></div>
 <div id="link" role="status" hidden></div>
-<div id="toast" role="status" hidden></div>
+<button type="button" id="toast" title="Click to dismiss" hidden></button>
+<div id="toast-status" class="sr-only" role="status"></div>
+<div id="toast-alert" class="sr-only" role="alert"></div>
 
 <script>
 "use strict";
 var itemsEl = document.getElementById("items");
-var statusEl = document.getElementById("status");
 var dropEl = document.getElementById("drop");
 var zoomEl = document.getElementById("zoom");
 var lastRendered = "";
 var textCache = {};
 
-function setStatus(message, isError) {
-  statusEl.textContent = message || "";
-  statusEl.className = isError ? "error" : "";
-}
-
 var toastEl = document.getElementById("toast");
 var toastTimer = null;
+// How long a toast shows: what was just done, briefly; a problem, long enough to read; one to act on, until it is clicked away.
+var DONE_TOAST_MS = 3000;
+var PROBLEM_TOAST_MS = 8000;
+var TOAST_STAYS = Infinity;
+var SENDING = "sending";
 
 // toast says what was just done, for a few seconds (ms): longer, and in the colour of a problem, for what the user needs to read
-// and might otherwise take for done (isError).
-function toast(message, ms, isError) {
-  setStatus("");
+// and might otherwise take for done (isError). kind names a toast that something else ends (see endToast). It is announced from one
+// of two live regions that are always there, politely or as an alert: a screen reader follows a live region from when it appears, so
+// changing the toast's own role as its words change was heard unreliably.
+function toast(message, ms, isError, kind) {
   toastEl.textContent = message;
   toastEl.classList.toggle("error", !!isError);
+  document.getElementById(isError ? "toast-status" : "toast-alert").textContent = "";
+  document.getElementById(isError ? "toast-alert" : "toast-status").textContent = message;
+  toastEl.dataset.kind = kind || "";
   toastEl.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(function () { toastEl.hidden = true; }, ms || 3000);
+  ms = ms || DONE_TOAST_MS;
+  if (ms !== TOAST_STAYS) toastTimer = setTimeout(hideToast, ms);
 }
+
+function problem(message, ms) {
+  toast(message, ms || PROBLEM_TOAST_MS, true);
+}
+
+function hideToast() {
+  clearTimeout(toastTimer);
+  toastEl.hidden = true;
+  document.getElementById("toast-status").textContent = "";
+  document.getElementById("toast-alert").textContent = "";
+}
+
+// endToast takes away the toast of that kind, if it is still the one showing: not one that has said something else since.
+function endToast(kind) {
+  if (!toastEl.hidden && toastEl.dataset.kind === kind) hideToast();
+}
+
+toastEl.addEventListener("click", hideToast);
 
 function formatSize(n) {
   if (n < 1024) return n + " B";
@@ -282,7 +308,7 @@ function saveTitle(item, value) {
   }).then(function (r) {
     if (!r.ok) throw new Error(r.statusText);
   }).catch(function (err) {
-    setStatus("Couldn't save that title: " + err.message, true);
+    problem("Couldn't save that title: " + err.message);
   });
 }
 
@@ -495,14 +521,30 @@ function emptyText(empty) {
   return empty.length + " empty items (0 bytes) weren't added" + (shown ? ": " + shown : "") + ".";
 }
 
-var EMPTY_TOAST_MS = 8000;
+
+// sending is how many pasted items are on their way to the server, from every paste: "Sending…" says them all, and goes when the
+// last has landed, not when one paste's have.
+var sending = 0;
+
+function saySending() {
+  toast("Sending " + sending + (sending === 1 ? " item…" : " items…"), TOAST_STAYS, false, SENDING);
+}
+
+// landed counts n items as no longer on their way: "Sending…" goes with the last, or says how many are left.
+function landed(n) {
+  sending -= n;
+  if (!sending) endToast(SENDING);
+  else if (!toastEl.hidden && toastEl.dataset.kind === SENDING) saySending();
+}
 
 function uploadAll(entries) {
   var empty = entries.filter(function (e) { return e.blob.size === 0; });
   entries = entries.filter(function (e) { return e.blob.size > 0; });
-  if (empty.length) toast(emptyText(empty), EMPTY_TOAST_MS, true);
+  if (empty.length) problem(emptyText(empty));
   if (!entries.length) return;
-  setStatus("Sending " + entries.length + (entries.length === 1 ? " item…" : " items…"));
+  sending += entries.length;
+  // Not over what was said of the empty ones: that needs reading, and this is over in a moment.
+  if (!empty.length) saySending();
   var unreachable = [];
   Promise.all(entries.map(function (e) {
     return upload(e.blob, e.name).catch(function (err) {
@@ -511,18 +553,23 @@ function uploadAll(entries) {
       return null;
     });
   })).then(function (added) {
+    landed(entries.length);
     var notKept = unreachable.length ? hold(unreachable) : 0;
     var extra = notKept ? " " + notKeptText(notKept) : "";
     added = added.filter(Boolean);
-    if (!added.length) { setStatus(notKept ? notKeptText(notKept) : "", notKept > 0); return; }
     // One already waiting to go to the agent isn't added again.
     var already = added.filter(function (a) { return a.duplicate; }).length;
     var fresh = added.length - already;
-    if (!fresh) setStatus((already === 1 ? "Already pasted: it's waiting to go with your next message." : "Already pasted, all " + already + ".") + extra, notKept > 0);
-    else setStatus(((already ? already + " already pasted." : "") + extra).trim(), notKept > 0);
-    return refresh();
-  }).catch(function (err) {
-    setStatus("Couldn't add that: " + err.message, true);
+    var said = !added.length ? "" : !fresh ? (already === 1 ? "Already pasted: it's waiting to go with your next message." : "Already pasted, all " + already + ".")
+      : already ? already + " already pasted." : "";
+    said = (said + extra).trim();
+    if (notKept) problem(said);
+    else if (said) toast(said);
+    if (added.length) return refresh();
+  // Only for the uploads: what goes wrong showing the list after is not "couldn't add", and the items were counted landed already.
+  }, function (err) {
+    landed(entries.length);
+    problem("Couldn't add that: " + err.message);
   });
 }
 
@@ -548,7 +595,7 @@ function entriesFrom(files, text) {
 
 document.addEventListener("paste", function (e) {
   var entries = fromTransfer(e.clipboardData);
-  if (!entries.length) { setStatus("The clipboard had nothing this page can take.", true); return; }
+  if (!entries.length) { problem("The clipboard had nothing this page can take."); return; }
   e.preventDefault();
   uploadAll(entries);
 });
@@ -582,7 +629,7 @@ window.addEventListener("message", function (e) {
   if (!d || d.type !== "vibe-clipboard-paste") return;
   var files = Array.prototype.filter.call(d.files || [], function (f) { return f instanceof Blob; });
   var entries = entriesFrom(files, typeof d.text === "string" ? d.text : "");
-  if (!entries.length) { setStatus("The clipboard had nothing this page can take.", true); return; }
+  if (!entries.length) { problem("The clipboard had nothing this page can take."); return; }
   uploadAll(entries);
 });
 
@@ -639,7 +686,7 @@ function asPNG(blob) {
 function copy(item) {
   fetch("/api/items/" + item.id + "/current", { method: "POST" }).then(refresh);
   if (!navigator.clipboard || !window.ClipboardItem) {
-    setStatus("This browser won't let the page write to the clipboard here — open it as http://localhost:… rather than by IP address.", true);
+    toast("This browser won't let the page write to the clipboard here — open it as http://localhost:… rather than by IP address.", TOAST_STAYS, true);
     return;
   }
   var done;
@@ -654,11 +701,11 @@ function copy(item) {
     });
     done = navigator.clipboard.write([new ClipboardItem({ "text/plain": text })]);
   } else {
-    setStatus("Only images and text can go on the clipboard — this one is at " + item.path + " in the sandbox.", true);
+    problem("Only images and text can go on the clipboard — this one is at " + item.path + " in the sandbox.");
     return;
   }
-  done.then(function () { setStatus("Copied to your clipboard."); }).catch(function (err) {
-    setStatus("Couldn't copy: " + err.message, true);
+  done.then(function () { toast("Copied to your clipboard."); }).catch(function (err) {
+    problem("Couldn't copy: " + err.message);
   });
 }
 
@@ -669,7 +716,7 @@ function remove(item) {
     toast("Deleted.");
     return refresh();
   }).catch(function (err) {
-    setStatus("Couldn't delete that: " + err.message, true);
+    problem("Couldn't delete that: " + err.message);
   });
 }
 
@@ -682,7 +729,7 @@ function clearAll() {
     toast(body.deleted === 1 ? "Deleted 1 item." : "Deleted " + body.deleted + " items.");
     return refresh();
   }).catch(function (err) {
-    setStatus("Couldn't clear the clipboard: " + err.message, true);
+    problem("Couldn't clear the clipboard: " + err.message);
   });
 }
 

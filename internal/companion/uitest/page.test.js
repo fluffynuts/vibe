@@ -1523,6 +1523,34 @@ test("each file's header says how much changed, and how long it is", async () =>
   } finally { p.close() }
 })
 
+// A file's header is one line: its path gives way from the left (app.css), the name last, so the path is shown as its folders and its
+// name, the whole of it in the title; the reading order's label gives way from its end, the whole of it in its title.
+test("a file's header shows its path as folders and name, whole in the title, and the reading order's label whole in its title", async () => {
+  const one = (path, extra) => Object.assign({ path, status: 'modified', hunks: [{ oldStart: 1, newStart: 1, header: '', lines: [{ kind: 'add', new: 1, text: 'x' }] }] }, extra)
+  const label = 'clipboard: toasts replace the status line'
+  const p = await reviewPage({
+    review: { ...none, started: '2026-10-16T10:00:00Z', order: [{ file: 'lib/base/.local/share/page.html', label }] },
+    diff: [one('lib/base/.local/share/page.html'), one('top.go'), one('new/name.go', { status: 'renamed', oldPath: 'old/name.go' })],
+  })
+  try {
+    await p.click('tab-review')
+    const head = (path) => p.$('review-files').querySelector(`[data-path="${path}"] header`)
+    const path = (h) => h.querySelector('.review-path')
+    const long = head('lib/base/.local/share/page.html')
+    assert.equal(path(long).textContent, 'lib/base/.local/share/page.html', 'the path reads whole, to select or find')
+    assert.equal(path(long).title, 'lib/base/.local/share/page.html')
+    assert.equal(path(long).querySelector('.dir').textContent, 'lib/base/.local/share/')
+    assert.equal(path(long).querySelector('.name').textContent, 'page.html')
+    assert.equal(path(head('top.go')).querySelector('.name').textContent, 'top.go')
+    assert.equal(path(head('top.go')).querySelector('.dir'), null, 'a file at the top has no folders to give way')
+    const renamed = path(head('new/name.go'))
+    assert.equal(renamed.textContent, 'old/name.go → new/name.go', 'a rename copies as it reads')
+    assert.equal(renamed.title, 'old/name.go → new/name.go')
+    assert.deepEqual([...renamed.querySelectorAll('.name')].map((n) => n.textContent), ['name.go', 'name.go'])
+    assert.equal(long.querySelector('.review-stop').title, label)
+  } finally { p.close() }
+})
+
 // --- one order: the tree's -----------------------------------------------------------------------
 
 test('files are shown as the tree lists them, the reading order numbered on them', async () => {
@@ -2735,10 +2763,10 @@ test("an untracked file that couldn't be read says so", async () => {
 
 // talkPage is the Conversation tab open on what the agent said, with a
 // review whose threads are commented's.
-async function talkPage(text) {
+async function talkPage(text, git) {
   const p = await openPage({
     routes: {
-      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, git },
       '/api/review': { review: { ...commented, started: '2026-10-16T10:00:00Z' }, diff: twoFiles },
       '/api/conversation': () => ({ events: [{ seq: 1, kind: 'user', text: 'please fix' }, agentSaid(2, text)], last: 2, running: false }),
       '/api/log': { entries: [] },
@@ -2760,6 +2788,65 @@ test('a comment the agent names, #2, takes you to it on the Review tab', async (
     assert.equal(p.$('tab-review').getAttribute('aria-selected'), 'true')
     assert.deepEqual(shown, ['review-thread-2'])
     assert.equal(p.window.document.activeElement.dataset.thread, '2', 'its reply box ready')
+  } finally { p.close() }
+})
+
+// "PR #110" is a pull request, not comment #110: on GitHub, when the repository is there (state.git.web), else plain text, never a
+// link to a comment. "issue #12" likewise, to the issue; a bare #5 is still a comment.
+const onGitHub = { branch: 'main', web: 'https://github.com/me/vibe' }
+const repoRefs = (p) => Array.from(p.$('convo-log').querySelectorAll('.repo-ref'))
+
+test("a pull request or issue the agent names links to it on GitHub, not to a Review comment", async () => {
+  const p = await talkPage('PR #110 is up; pull request #111 too, and issue #12 (and PR#113). See #2.', onGitHub)
+  try {
+    assert.deepEqual(refsIn(p).map((r) => r.textContent), ['#2'], 'a pull request or issue was taken for a Review comment')
+    assert.deepEqual(repoRefs(p).map((a) => [a.textContent, a.getAttribute('href')]), [
+      ['#110', 'https://github.com/me/vibe/pull/110'],
+      ['#111', 'https://github.com/me/vibe/pull/111'],
+      ['#12', 'https://github.com/me/vibe/issues/12'],
+      ['#113', 'https://github.com/me/vibe/pull/113'],
+    ])
+    for (const a of repoRefs(p)) {
+      assert.equal(a.target, '_blank')
+      assert.match(a.rel, /noopener/)
+    }
+  } finally { p.close() }
+})
+
+test('a pull request named before the page knew the repository was on GitHub is linked once it knows', async () => {
+  const at = { git: { branch: 'main' } }
+  const p = await openPage({
+    routes: {
+      '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, git: at.git }),
+      '/api/conversation': () => ({ events: [{ seq: 1, kind: 'user', text: 'is it up?' }, agentSaid(2, 'PR #110 is up.')], last: 2, running: false }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+  })
+  try {
+    await p.every('pollConversation')
+    assert.equal(repoRefs(p)[0].hasAttribute('href'), false)
+    at.git = onGitHub
+    await p.every('tick')
+    assert.equal(repoRefs(p)[0].getAttribute('href'), 'https://github.com/me/vibe/pull/110')
+  } finally { p.close() }
+})
+
+// A name of dots only would make an address a browser takes to somewhere else (github.com/a/.. is github.com): no link is made of it.
+test('a GitHub address whose repository name is only dots is not linked to', async () => {
+  for (const web of ['https://github.com/a/..', 'https://github.com/a/.']) {
+    const p = await talkPage('PR #110 is up.', { branch: 'main', web })
+    try {
+      assert.deepEqual(repoRefs(p).map((a) => a.hasAttribute('href')), [false], web + ' was linked to')
+    } finally { p.close() }
+  }
+})
+
+test("a pull request named where the repository isn't on GitHub is plain text, not a link to a Review comment", async () => {
+  const p = await talkPage('PR #110 is up.', { branch: 'main' })
+  try {
+    assert.deepEqual(refsIn(p), [], 'it was taken for a Review comment')
+    assert.deepEqual(repoRefs(p).map((a) => [a.textContent, a.hasAttribute('href')]), [['#110', false]])
   } finally { p.close() }
 })
 
@@ -4089,7 +4176,8 @@ test('a stop with no review being written says at once that the agent is being s
   try {
     await p.every('pollConversation')
     await p.click('convo-stop')
-    assert.match(p.$('convo-status').textContent, /Stopping the agent/)
+    await p.click('status-info')
+    assert.match(p.$('status-balloon').textContent, /Stopping the agent/)
     assert.equal(p.$('convo-stop').disabled, true, 'Stop can be pressed again while it is being stopped')
     assert.equal(p.$('convo-send').disabled, false, 'a prompt cannot be sent while it is being stopped')
   } finally { p.close() }

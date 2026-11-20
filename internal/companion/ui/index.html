@@ -70,10 +70,16 @@
     <section id="panel-conversation" class="panel panel-conversation" hidden>
       <div class="convo-layout">
         <div class="convo">
-          <div class="bar">
-            <span id="convo-status" class="muted"></span>
+          <div class="bar convo-bar">
             <span class="spacer"></span>
+            <button type="button" id="status-info" class="choice-info status-info" aria-expanded="false" aria-controls="status-balloon"
+              aria-label="Agent status: nothing running in the background" title="What the agent has going on">i</button>
             <button type="button" id="convo-new" class="ghost">New conversation</button>
+            <div id="status-balloon" class="status-balloon" hidden>
+              <button type="button" id="status-balloon-close" class="choice-bubble-close ghost" aria-label="Close" title="Close (Escape)">&#10005;</button>
+              <div id="status-balloon-alerts" role="alert"></div>
+              <div id="status-balloon-list" role="status"></div>
+            </div>
           </div>
           <div id="convo-signin" class="notice" role="status" hidden>
             <span id="convo-signin-text"></span>

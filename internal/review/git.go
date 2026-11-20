@@ -545,6 +545,8 @@ type FolderStatus struct {
 	// Operation is what git is part-way through, as git status says it: "merge",
 	// "rebase 2/5", "cherry-pick", "revert" or "bisect"; "" when nothing is.
 	Operation string
+	// Web is the repository's address on GitHub (see web), "" when it isn't there.
+	Web string
 }
 
 // statusOf is the git status of the folder dir; an error when it's in no
@@ -581,6 +583,7 @@ func statusOf(ctx context.Context, dir string) (*FolderStatus, error) {
 	s.NoUpstream = !s.Detached && !r.tracks(r.branch())
 	s.Operation = r.operation()
 	s.Stashed = r.stashes()
+	s.Web = r.web()
 	return s, nil
 }
 

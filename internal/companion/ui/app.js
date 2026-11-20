@@ -96,6 +96,8 @@
 
   const state = {
     sandbox: '',
+    // repoWeb is the repository's address on GitHub, that pull requests and issues named in the conversation link to ('' if not there).
+    repoWeb: '',
     // attention is the tabs vibe last said want looking at, and why;
     // reviewAt when the agent last updated the review ("" if never).
     attention: {},
@@ -1010,6 +1012,7 @@
       if (res.body.sbxSignedOut && state.signin && Date.now() - signInShown.lastCheck > SIGNIN_RECHECK_MS) loadSignIn()
       $('sandbox').textContent = state.sandbox || 'all profiles and sandboxes'
       renderWhere(res.body.folder || '', res.body.git || null)
+      setRepoWeb(res.body.git)
       // What can be reviewed depends on the branch, so the start screen's answer is asked again when it changes.
       const branchNow = res.body.git ? res.body.git.branch : ''
       if (reviewView.branch !== undefined && reviewView.branch !== branchNow && reviewView.review && !reviewIsOn(reviewView.review)) loadOptions()
@@ -1268,6 +1271,7 @@
     // A comment asked for, not yet gone to, isn't gone to once you're elsewhere.
     else reviewView.goTo = null
     if (tab === 'conversation' && convo.news) { convo.news = false; showAllAttention() }
+    if (tab === 'conversation') statusSeenAgain()
     // Opening the conversation is to say something: the cursor goes in the
     // prompt box. (Arrowing along the tabs keeps focus on the tabs.)
     if (tab === 'conversation') $('convo-input').focus({ preventScroll: true })
@@ -1863,7 +1867,7 @@
     if (card.closest('[hidden]')) { toast("That comment is in a file you've ticked as viewed: untick it to see it."); return }
     const i = arrowCards().indexOf(card)
     if (i >= 0) { reviewView.at = i; reviewView.steering = true; countComments() }
-    card.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    scrollToThread(card)
     ;(card.querySelector('textarea[data-thread]') || card).focus({ preventScroll: true })
   }
 
@@ -2462,18 +2466,29 @@
     return svg
   }
 
-  // threadLine is where a thread is scrolled to, on the screen: just under
+  // threadLine is how far down the screen a thread goes to: just under
   // the bar and the file header pinned below it, by its scroll-margin-top
-  // (8px more, in app.css).
+  // (8px more, in app.css). Under the tallest header, so that a thread gone
+  // to in any file is at it or above it.
   function threadLine() {
     return $('panel-review').querySelector(':scope > .bar').getBoundingClientRect().bottom + fileHeadHeight() + 8
   }
 
-  // fileHeadHeight is how tall a file's header is, pinned under the bar
-  // while the page is in its file; 0 with no files.
+  // fileHeadHeight is how tall the tallest file header is (pinned under the
+  // bar while the page is in its file); 0 with no files. They differ where
+  // one wraps.
   function fileHeadHeight() {
-    const head = $('review-files').querySelector('.review-file > header')
-    return head ? head.getBoundingClientRect().height : 0
+    const heads = $('review-files').querySelectorAll('.review-file > header')
+    return Math.max(0, ...Array.from(heads, (head) => head.getBoundingClientRect().height))
+  }
+
+  // scrollToThread scrolls to a thread, just under its own file's header:
+  // the scroll margin is set from that header, as headers differ in height.
+  function scrollToThread(card) {
+    const file = card.closest('.review-file')
+    const head = file && file.querySelector(':scope > header')
+    if (head) file.style.setProperty('--review-file-head-h', head.getBoundingClientRect().height + 'px')
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
   // setCommentOrder sets the order the comment arrows go in, 'path' or
@@ -2603,7 +2618,7 @@
     reviewView.at = i
     reviewView.steering = true
     countComments()
-    cards[i].scrollIntoView({ behavior: 'smooth', block: 'start' })
+    scrollToThread(cards[i])
     // Its reply box, to type in at once.
     ;(cards[i].querySelector('textarea[data-thread]') || cards[i]).focus({ preventScroll: true })
   }
@@ -3453,7 +3468,8 @@
   // said why.
   function uncoloured(f) {
     const why = colourSides(f).map(({ side }) => reviewView.colours.get(f.path + '|' + side)).find((c) => c && (c.skipped || c.error))
-    return why ? el('span', { class: 'muted review-uncoloured', text: 'not coloured: ' + (why.skipped || why.error) }) : null
+    const said = why && 'not coloured: ' + (why.skipped || why.error)
+    return why ? el('span', { class: 'muted review-uncoloured', text: said, title: said }) : null
   }
 
   // diffStat is a file's figures, on the right of its header, as GitHub
@@ -3477,14 +3493,29 @@
     return el('span', { class: 'review-step', text: String(step), title: 'Step ' + step + ' of the reading order' + (stop.label ? ': ' + stop.label : '') })
   }
 
+  // reviewPath is a file's path in its header, as its folders and its name, so that the header stays one line: the folders give way,
+  // from the left, and the name doesn't (app.css). All of it is still there to select or find, and in the titles.
+  function reviewPath(f) {
+    const whole = f.status === 'renamed' ? f.oldPath + ' → ' + f.path : f.path
+    const parts = (path) => {
+      const cut = path.lastIndexOf('/') + 1
+      // bdi: in the folders' right-to-left box (which puts the "…" at the left), the path still reads left to right.
+      return [cut ? el('span', { class: 'dir', title: whole }, el('bdi', { text: path.slice(0, cut) })) : null,
+        el('span', { class: 'name', title: whole, text: path.slice(cut) })]
+    }
+    return el('code', { class: 'review-path', title: whole },
+      ...(f.status === 'renamed' ? [...parts(f.oldPath), el('span', { class: 'arrow', text: ' → ' }), ...parts(f.path)] : parts(f.path)))
+  }
+
   function fileCard(f, stop, step, index, placed, threads) {
     const after = placed.after[f.path] || {}
     const marked = placed.lines[f.path] || {}
     const total = (f.hunks || []).reduce((n, h) => n + h.lines.length, 0)
-    const head = el('header', {}, el('code', { text: f.status === 'renamed' ? f.oldPath + ' → ' + f.path : f.path }),
+    const said = stop ? stop.label || 'in the reading order' : ''
+    const head = el('header', {}, reviewPath(f),
       el('span', { class: 'muted', text: f.status }),
       stepBadge(step, stop), uncoloured(f),
-      stop ? el('span', { class: 'review-stop', text: stop.label || 'in the reading order' }) : null,
+      stop ? el('span', { class: 'review-stop', text: said, title: said }) : null,
       diffStat(f), viewedTick(f))
     const card = el('section', { class: 'review-file', id: 'review-file-' + index, 'data-path': f.path }, head)
     colourWhenNear(f, card)
@@ -6038,9 +6069,54 @@
     return svg
   }
 
-  // withThreadRefs is text as nodes, each review comment it names (#24, not
-  // in a word: issue#3, C#4 aren't) a link to that comment on the Review tab.
+  // REPO_REF is a pull request or issue named in text: "PR #110", "PR#110", "pull request #110", "issue #12" (not a Review comment).
+  const REPO_REF = /\b(PRs?|pull requests?|issues?)( ?)#(\d+)\b/gi
+
+  // withThreadRefs is text as nodes: each pull request or issue it names a link to it on GitHub (repoRef), and each review comment
+  // it names (#24, not in a word: C#4 isn't) a link to that comment on the Review tab.
   function withThreadRefs(text) {
+    const nodes = []
+    let at = 0
+    for (const m of text.matchAll(REPO_REF)) {
+      const start = m.index + m[1].length + m[2].length
+      if (start > at) nodes.push(...withCommentRefs(text.slice(at, start)))
+      nodes.push(repoRef(/^issue/i.test(m[1]) ? 'issues' : 'pull', Number(m[3]), '#' + m[3]))
+      at = m.index + m[0].length
+    }
+    if (at < text.length) nodes.push(...withCommentRefs(text.slice(at)))
+    return nodes
+  }
+
+  // repoRef is a pull request's or issue's number as a link to it on GitHub (kind is 'pull' or 'issues'): a link only once the
+  // repository is known to be there (linkRepoRefs gives it its address when the page's state says so); until then, or never, text.
+  function repoRef(kind, number, text) {
+    const a = el('a', { class: 'repo-ref', 'data-kind': kind, 'data-number': String(number), target: '_blank', rel: 'noopener noreferrer', text })
+    linkRepoRef(a)
+    return a
+  }
+
+  function linkRepoRef(a) {
+    if (state.repoWeb) {
+      a.href = state.repoWeb + '/' + a.dataset.kind + '/' + a.dataset.number
+      a.title = (a.dataset.kind === 'issues' ? 'Issue #' : 'Pull request #') + a.dataset.number + ' on GitHub'
+    } else {
+      a.removeAttribute('href')
+      a.removeAttribute('title')
+    }
+  }
+
+  // setRepoWeb takes the repository's address on GitHub from the page's state, linking what was drawn before it was known. Only a
+  // plain github.com address is taken, its name not of dots only (github.com/a/.. is github.com): the links are made of it.
+  function setRepoWeb(git) {
+    const web = git && /^https:\/\/github\.com\/[\w-]+\/(?!\.+$)[\w.-]+$/.test(git.web || '') ? git.web : ''
+    if (web === state.repoWeb) return
+    state.repoWeb = web
+    for (const a of document.querySelectorAll('a.repo-ref')) linkRepoRef(a)
+  }
+
+  // withCommentRefs is text as nodes, each review comment it names (#24, not in a word: issue#3, C#4 aren't) a link to that comment
+  // on the Review tab.
+  function withCommentRefs(text) {
     const nodes = []
     let at = 0
     // Not in a word (issue#3), a path or address (example.com/#4), nor a
@@ -6353,29 +6429,190 @@
     $('convo-stop').textContent = stuck ? 'Force stop' : 'Stop (Escape)'
     $('convo-stop').title = stuck ? 'The agent has not stopped: end it, and everything it started, at once' : 'Escape, in the prompt box'
     $('convo-new').disabled = running
-    // While it answers, the typing bubble says so.
-    const status = $('convo-status')
-    status.classList.toggle('warn-text', !!(running && quietMinutes))
-    status.textContent = stuck
-      ? 'The agent has not stopped yet. Force stop ends it, and everything it started (anything in the background too).'
-      : stopState === 'stopping'
-      ? 'Stopping the agent…'
-      : running && compacting
-      ? 'The agent is compacting its context (summarising the conversation so far to make room). This can take a few minutes; it answers once it is done.'
-      : running && quietMinutes
-      ? 'No output from the agent for ' + quietMinutes + ' minutes — it may be stuck. Stop it, or check "sbx ls" in a terminal; it is still being waited for.'
-      : !running && background ? backgroundWords(convo.tasks) : ''
+    // While it answers, the typing bubble says so; the rest is in the status balloon.
+    const items = []
+    if (stuck) items.push({ key: 'stuck', warn: true, text: 'The agent has not stopped yet. Force stop ends it, and everything it started (anything in the background too).' })
+    if (running && quietMinutes) {
+      items.push({ key: 'quiet', warn: true,
+        text: 'No output from the agent for at least ' + quietMinutes + ' minutes — it may be stuck. Stop it, or check "sbx ls" in a terminal; it is still being waited for.' })
+    }
+    if (stopState === 'stopping' && !stuck) items.push({ key: 'stopping', quiet: true, text: 'Stopping the agent…' })
+    if (running && compacting) {
+      items.push({ key: 'compacting',
+        text: 'The agent is compacting its context (summarising the conversation so far to make room). This can take a few minutes; it answers once it is done.' })
+    }
+    if (!running && background) {
+      convo.tasks.forEach((t, i) => items.push({ key: 'task:' + ((t && t.task_id) || i), task: true, text: (t && t.description) || 'something' }))
+      if (!convo.tasks.length) items.push({ key: 'task:?', task: true, text: 'something' })
+    }
+    setStatusItems(items)
   }
 
   // FORCE_STOP_AFTER_MS is how long a stop may take before the page offers to force it.
   const FORCE_STOP_AFTER_MS = 8000
 
-  // backgroundWords says what the agent has running in the background, naming it.
-  function backgroundWords(tasks) {
-    const named = tasks.map((t) => t && t.description).filter(Boolean)
-    const what = named.length ? ': ' + named.map((d) => '"' + d + '"').join(', ') : ''
-    const count = tasks.length === 1 ? 'something' : tasks.length + ' things'
-    return 'The agent has answered, and has ' + count + ' running in the background' + what + '. You can send a prompt meanwhile: the work carries on.'
+  // --- the status balloon (docs/adr/2026-11-18-status-balloon.md) ---------------------------------------------------------------------------
+  // What the agent has going on, in a balloon from its own info button: what resolves itself (background work, compacting) pops up and
+  // closes itself after STATUS_CLOSE_MS; a warning that needs the user stays until it is no longer true, or is closed. Opened by the
+  // user, it stays until closed. items are what is current; token makes a close timer that has been overtaken do nothing.
+  const STATUS_CLOSE_MS = 5000
+  // stoppingTasks is a stop of the background work asked for and not yet seen through: its button waits until the tasks have gone, or
+  // until FORCE_STOP_AFTER_MS, when stopStuck offers to force it (stopToken makes the wait of a stop already over do nothing).
+  // drawn is what the balloon was last written to say (drawStatus).
+  const statusView = { items: [], open: false, byUser: false, pending: false, token: 0, stoppingTasks: false, stopStuck: false, stopToken: 0,
+    drawn: '' }
+
+  // statusSeen is whether the status balloon can be seen popping up: the Conversation tab showing, in a window being looked at.
+  function statusSeen() {
+    return !$('panel-conversation').hidden && document.visibilityState !== 'hidden' && document.hasFocus()
+  }
+
+  // setStatusItems takes what is current, popping the balloon up when that gained something (not "Stopping…", the answer to the
+  // user's own click), or a task finished while others run; a count changing in a message's text is no news.
+  function setStatusItems(items) {
+    const before = statusView.items
+    const had = new Set(before.map((i) => i.key))
+    const has = new Set(items.map((i) => i.key))
+    const news = items.some((i) => !had.has(i.key) && !i.quiet) ||
+      (items.some((i) => i.task) && before.some((i) => i.task && !has.has(i.key)))
+    const warnCleared = before.some((i) => i.warn) && !items.some((i) => i.warn)
+    statusView.items = items
+    if (statusView.stoppingTasks && !items.some((i) => i.task)) {
+      statusView.stoppingTasks = false
+      statusView.stopStuck = false
+      statusView.stopToken++
+      // The stop has done what it was opened for: left empty, the balloon would only say what it is for.
+      if (!items.length && statusView.open) {
+        statusView.open = false
+        statusView.byUser = false
+        // Keyboard focus was on the stop button, gone with the balloon: it goes back to the button the balloon opens from.
+        const focus = document.activeElement
+        if (!focus || focus === document.body || $('status-balloon').contains(focus)) $('status-info').focus()
+      }
+    }
+    // News that has since gone (work started and ended out of sight) is not kept for coming back to: it would pop up empty.
+    if (!items.length) statusView.pending = false
+    if (news) {
+      if (statusSeen()) popStatus()
+      else statusView.pending = true
+    } else if (statusView.open && !statusView.byUser) {
+      // Nothing left worth saying closes it; a warning gone, with something else still to say, leaves it to close itself.
+      if (!items.some((i) => !i.quiet)) statusView.open = false
+      else if (warnCleared) closeStatusLater()
+    }
+    drawStatus()
+  }
+
+  // popStatus shows the balloon of itself: it closes itself unless it has a warning to say.
+  function popStatus() {
+    statusView.pending = false
+    statusView.open = true
+    statusView.byUser = false
+    statusView.token++
+    if (!statusView.items.some((i) => i.warn)) closeStatusLater()
+    drawStatus()
+  }
+
+  function closeStatusLater() {
+    const token = ++statusView.token
+    setTimeout(() => {
+      if (token !== statusView.token || statusView.byUser) return
+      statusView.open = false
+      drawStatus()
+    }, STATUS_CLOSE_MS)
+  }
+
+  // setStatusOpen is the user opening or closing the balloon: opened so, it stays until they close it.
+  function setStatusOpen(open) {
+    statusView.token++
+    statusView.open = open
+    statusView.byUser = open
+    drawStatus()
+  }
+
+  // statusSeenAgain pops up, once, what changed while the balloon could not be seen.
+  function statusSeenAgain() {
+    if (statusView.pending && statusSeen()) popStatus()
+  }
+
+  // drawStatus shows statusView. What the balloon says is written only when it changes: it is drawn on every poll, and writing it
+  // afresh would take keyboard focus off its Stop button (a new element) and have a screen reader say its live regions again.
+  function drawStatus() {
+    const items = statusView.items
+    const warns = items.filter((i) => i.warn)
+    const tasks = items.filter((i) => i.task)
+    const others = items.filter((i) => !i.warn && !i.task)
+    const says = JSON.stringify([items.map((i) => [i.key, i.text]), statusView.stoppingTasks, statusView.stopStuck])
+    if (says !== statusView.drawn) {
+      statusView.drawn = says
+      drawStatusWords(warns, tasks, others)
+    }
+    $('status-balloon').hidden = !statusView.open
+    const button = $('status-info')
+    button.classList.toggle('warn', warns.length > 0)
+    button.classList.toggle('busy', !warns.length && tasks.length > 0)
+    button.setAttribute('aria-expanded', String(statusView.open))
+    const now = warns.length ? 'needs you: ' + warns[0].text
+      : tasks.length ? (tasks.length === 1 ? 'something' : tasks.length + ' things') + ' running in the background'
+      : others.length ? others[0].text : 'nothing running in the background'
+    button.setAttribute('aria-label', 'Agent status: ' + now)
+  }
+
+  function drawStatusWords(warns, tasks, others) {
+    const items = statusView.items
+    $('status-balloon-alerts').replaceChildren(...warns.map((i) => el('p', { class: 'warn-text', text: i.text })))
+    const list = others.map((i) => el('p', { text: i.text }))
+    if (tasks.length) {
+      const count = tasks.length === 1 ? 'something' : tasks.length + ' things'
+      list.push(el('p', { text: 'The agent has answered, and has ' + count + ' running in the background:' }),
+        el('ul', {}, ...tasks.map((i) => el('li', { text: i.text }))),
+        el('p', { class: 'muted', text: 'You can send a prompt meanwhile: the work carries on.' }),
+        statusView.stopStuck ? el('p', { class: 'warn-text', text: 'It has not stopped. Force stop ends the agent, and everything it started.' }) : null,
+        el('p', {}, statusView.stopStuck
+          ? el('button', { type: 'button', class: 'small danger', text: 'Force stop', onclick: forceStopBackgroundWork })
+          : el('button', { type: 'button', class: 'small danger', disabled: statusView.stoppingTasks,
+            text: statusView.stoppingTasks ? 'Stopping…' : tasks.length === 1 ? 'Stop it' : 'Stop them all', onclick: stopBackgroundWork })))
+    }
+    if (!items.length) list.push(el('p', { class: 'muted', text: 'Work the agent is doing in the background will appear here.' }))
+    $('status-balloon-list').replaceChildren(...list)
+  }
+
+  // stopBackgroundWork stops what the agent has running in the background, from the status balloon: between turns, there is no
+  // Stop button to begin from.
+  async function stopBackgroundWork() {
+    statusView.stoppingTasks = true
+    statusView.stopStuck = false
+    drawStatus()
+    if (!await sendStop({ tasks: true })) return
+    // As with the turn's own Stop: one that hasn't taken effect a while later can be forced.
+    const token = ++statusView.stopToken
+    setTimeout(() => {
+      if (token !== statusView.stopToken || !statusView.stoppingTasks) return
+      statusView.stopStuck = true
+      drawStatus()
+    }, FORCE_STOP_AFTER_MS)
+  }
+
+  // forceStopBackgroundWork ends the agent and all it started, for background work that a stop hasn't ended.
+  async function forceStopBackgroundWork() {
+    statusView.stopStuck = false
+    drawStatus()
+    await sendStop({ force: true })
+  }
+
+  // sendStop asks vibe to stop what req says, saying whether it took it: if not, it says why, and the balloon's button is pressable again.
+  async function sendStop(req) {
+    const failed = (text) => { toast(text, true); statusView.stoppingTasks = false; statusView.stopStuck = false; drawStatus(); return false }
+    try {
+      const res = await post('/api/conversation/stop', req)
+      reached(true)
+      if (!res.ok) return failed((res.body && res.body.error) || 'That failed.')
+      pollConversation()
+      return true
+    } catch (e) {
+      reached(false)
+      return failed('Could not reach vibe.')
+    }
   }
 
   // offerToStopTasks says, once a stop has taken effect, what the agent still has running in the background, and lets the user choose
@@ -8266,6 +8503,16 @@
 
   function setUpFresh() {
     $('convo-new').addEventListener('click', openFresh)
+    $('status-info').addEventListener('click', () => setStatusOpen(!statusView.open))
+    $('status-balloon-close').addEventListener('click', () => { setStatusOpen(false); $('status-info').focus() })
+    $('status-balloon').addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); setStatusOpen(false); $('status-info').focus() }
+    })
+    $('status-info').addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && statusView.open) { e.stopPropagation(); setStatusOpen(false) }
+    })
+    window.addEventListener('focus', statusSeenAgain)
+    document.addEventListener('visibilitychange', statusSeenAgain)
     $('choice-model').addEventListener('change', modelPicked)
     $('choice-effort').addEventListener('change', () => saveChoice(choice.model, $('choice-effort').value))
     $('choice-model').addEventListener('blur', drawChoice)

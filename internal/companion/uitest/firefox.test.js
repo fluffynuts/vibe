@@ -28,7 +28,7 @@ const stateWith = (page, patch) => async (route) => {
   }
 }
 
-// reviewPage opens the page on its Review tab, the diff drawn, and a.txt's card coloured: each side's colours arriving
+// reviewPage opens the page on its Review tab (before, if given, gets the page first: to route its calls, say), the diff drawn, and a.txt's card coloured: each side's colours arriving
 // draws the card afresh (redrawCard), even for plain text that gains none, which takes away a selection in it, the
 // hover that shows a line's +, and a drag under way. Not waited for, they landed in the middle of a test on a slow runner
 // (a drag between two +s found the second not shown, on macOS CI). Counting the card's redraws can't tell: a whole
@@ -37,8 +37,9 @@ const stateWith = (page, patch) => async (route) => {
 // promises, so nothing else can be drawn in between), and the card that replaces that one has them. Watched from the
 // page's first moment, as the colours can come before the diff is seen here; polled, as the page's policy forbids the
 // eval Playwright's own waiting uses.
-async function reviewPage() {
+async function reviewPage(before) {
   const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
+  if (before) await before(page)
   await page.addInitScript(() => {
     const card = () => document.querySelector('.review-file[data-path="a.txt"]')
     const json = Response.prototype.json
@@ -138,6 +139,119 @@ test("a range's lines are marked on their side, over the colour of changed lines
   } finally { await page.close() }
 })
 
+
+// withReview serves /api/review as the server answers it, changed by patch(body) (body: { review, diff }).
+const withReview = (page, patch) => page.route(/\/api\/review(\?|$)/, async (route) => {
+  try {
+    const body = await (await route.fetch()).json()
+    patch(body)
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) })
+  } catch (e) {
+    if (!page.isClosed()) throw e
+  }
+})
+
+// A long path and a long label would wrap a file's header onto two lines: the path gives way from the left instead, its name last,
+// and the label from its end, so the header stays one line. (The file added here can't be coloured, being made up: the long note that
+// says so gives way too.)
+test("a long path gives way from the left, keeping its name, and a long label from its end: the header stays one line", async () => {
+  const long = 'library/base/clipboard-bridge/agent-files/.local/share/vibe/clipboard-page.html'
+  const page = await reviewPage((p) => withReview(p, (body) => {
+    if (body.diff) {
+      const main = body.diff.find((f) => f.path === 'main.go')
+      if (main && !body.diff.some((f) => f.path === long)) body.diff.push(Object.assign({}, main, { path: long }))
+    }
+    body.review.order = [{ file: long, label: 'clipboard: toasts replace the status line, and the gaps on the page are all the same' }]
+  }))
+  try {
+    await page.setViewportSize({ width: 900, height: 1000 })
+    const seen = await page.evaluate((long) => {
+      const head = document.querySelector(`.review-file[data-path="${long}"] > header`)
+      const short = document.querySelector('.review-file[data-path="a.txt"] > header')
+      const dir = head.querySelector('.review-path .dir')
+      const name = head.querySelector('.review-path .name')
+      const stop = head.querySelector('.review-stop')
+      const text = dir.querySelector('bdi').firstChild
+      const charBox = (i) => { const r = document.createRange(); r.setStart(text, i); r.setEnd(text, i + 1); return r.getBoundingClientRect() }
+      const box = dir.getBoundingClientRect()
+      return {
+        tall: head.getBoundingClientRect().height, short: short.getBoundingClientRect().height,
+        nameWhole: name.scrollWidth <= name.clientWidth + 1,
+        dirCut: dir.scrollWidth > dir.clientWidth + 1,
+        lastShown: charBox(text.length - 1).right <= box.right + 1 && charBox(text.length - 1).left >= box.left - 1,
+        firstHidden: charBox(0).right <= box.left + 1,
+        stopCut: stop.scrollWidth > stop.clientWidth + 1,
+      }
+    }, long)
+    assert.ok(seen.tall < seen.short * 1.5, `the long header is ${seen.tall}px tall, a one-line one ${seen.short}px: it wrapped`)
+    assert.ok(seen.nameWhole, "the file's name was cut")
+    assert.ok(seen.dirCut, 'the folders were not cut, at 900px')
+    assert.ok(seen.lastShown, 'the folder nearest the name is not in sight: the path was cut from the wrong end')
+    assert.ok(seen.firstHidden, 'the start of the path is in sight: the path was cut from the wrong end')
+    assert.ok(seen.stopCut, 'the long label was not cut')
+  } finally { await page.close() }
+})
+
+// A rename's paths are the header's items, as a path's are: however little room the new path's folders have, its name keeps its
+// distance from the arrow.
+test("a renamed file's new name keeps its distance from the arrow at every width", async () => {
+  const from = 'library/base/clipboard-bridge/agent-files/.local/share/vibe/old-clipboard-page.html'
+  const to = 'library/base/clipboard-bridge/agent-files/.local/share/vibe/clipboard-page.html'
+  const page = await reviewPage((p) => withReview(p, (body) => {
+    if (!body.diff) return
+    const main = body.diff.find((f) => f.path === 'main.go')
+    if (main && !body.diff.some((f) => f.path === to)) body.diff.push(Object.assign({}, main, { path: to, oldPath: from, status: 'renamed' }))
+  }))
+  try {
+    // At every width, down to where the new folders have no room at all: the name never comes against the arrow.
+    for (let width = 900; width >= 420; width -= 40) {
+      await page.setViewportSize({ width, height: 1000 })
+      const seen = await page.evaluate((to) => {
+        const head = document.querySelector(`.review-file[data-path="${to}"] > header`)
+        // The arrow itself, not its box, which holds the spaces either side of it.
+        const text = head.querySelector('.review-path .arrow').firstChild
+        const range = document.createRange()
+        range.setStart(text, text.data.indexOf('→'))
+        range.setEnd(text, text.data.indexOf('→') + 1)
+        const arrow = range.getBoundingClientRect()
+        const name = head.querySelectorAll('.review-path .name')[1].getBoundingClientRect()
+        return { gap: name.left - arrow.right, sameLine: Math.abs(name.top - arrow.top) < 2 }
+      }, to)
+      if (seen.sameLine) assert.ok(seen.gap >= 4, `${width}px: the new name is ${Math.round(seen.gap)}px from the arrow`)
+    }
+  } finally { await page.close() }
+})
+
+// Going to a comment puts it just under its file's header, pinned below the bar: that file's header, however tall, not the first's.
+test("going to a comment puts it below its own file's header, taller than the first file's", async () => {
+  const page = await reviewPage((p) => withReview(p, (body) => {
+    body.review.threads = (body.review.threads || []).concat([{ id: 900, file: 'main.go', side: 'new', line: 4, status: 'open',
+      comments: [{ author: 'agent', body: 'a comment on main.go', at: '2026-11-20T10:00:00Z' }] }])
+    body.review.lastId = Math.max(body.review.lastId || 0, 900)
+  }))
+  try {
+    await page.waitForSelector('#review-thread-900', { state: 'attached' })
+    // Short enough that the comment can be scrolled right up under the header.
+    await page.setViewportSize({ width: 1400, height: 400 })
+    // As a header wrapped onto more lines is (set from script: the page's policy refuses a style sheet of the test's own).
+    await page.evaluate(() => { document.querySelector('.review-file[data-path="main.go"] > header').style.paddingBottom = '40px' })
+    await page.click('#review-next-comment')
+    let last = null
+    let pos = null
+    for (let i = 0; i < 100; i++) {
+      pos = await page.evaluate(() => ({
+        thread: document.getElementById('review-thread-900').getBoundingClientRect().top,
+        head: document.querySelector('.review-file[data-path="main.go"] > header').getBoundingClientRect().bottom,
+        bar: document.querySelector('#panel-review > .bar').getBoundingClientRect().bottom,
+      }))
+      if (last && Math.abs(last.thread - pos.thread) < 0.5) break
+      last = pos
+      await page.waitForTimeout(50)
+    }
+    assert.ok(pos.thread - pos.bar < 150, `the comment was not scrolled up under the bar (it is ${Math.round(pos.thread - pos.bar)}px below it)`)
+    assert.ok(pos.thread >= pos.head, `the comment (top ${Math.round(pos.thread)}) is under its file's header (bottom ${Math.round(pos.head)})`)
+  } finally { await page.close() }
+})
 
 // selectNewSide selects, in the split diff of a.txt, from the start of new line `from`'s code to the end of new line
 // `to`'s: the rows between hold old-side cells too, which a native Range takes in whole.
@@ -670,7 +784,18 @@ test('the emoji list follows the prompt as it scrolls', async () => {
       return { was, now: ta.scrollTop }
     }, before.line)
     assert.ok(scrolled.now < scrolled.was, `the prompt did not scroll (scrollTop ${scrolled.was} → ${scrolled.now}), so this tests nothing`)
-    await page.waitForFunction((was) => document.getElementById('convo-emoji').getBoundingClientRect().bottom > was + 10, before.list.bottom, { timeout: 5000 })
+    // Polled, saying where things were if the list never moves: it timed out once on macOS CI with nothing to go on.
+    let seen = null
+    for (let i = 0; i < 100; i++) {
+      seen = await page.evaluate(() => {
+        const list = document.getElementById('convo-emoji')
+        return { bottom: list.getBoundingClientRect().bottom, hidden: list.hidden, top: list.style.top, scrollTop: document.getElementById('convo-input').scrollTop }
+      })
+      if (seen.bottom > before.list.bottom + 10) break
+      await page.waitForTimeout(50)
+    }
+    assert.ok(seen.bottom > before.list.bottom + 10, `the list did not move down with the prompt within 5s: before ${JSON.stringify(before.list)}, ` +
+      `scrolled ${JSON.stringify(scrolled)}, then ${JSON.stringify(seen)}`)
     const after = await listBox(page)
     const moved = after.list.bottom - before.list.bottom
     const by = scrolled.was - scrolled.now
@@ -1195,22 +1320,31 @@ test('a coloured block in the conversation has the syntax colours, in the light 
   }
 })
 
-test('New conversation stays at the right of the conversation bar, whatever the status beside it', async () => {
-  const page = await conversationPage(1000)
-  try {
-    // A status that nearly fills the bar: it fits on the line, the button does not fit beside it, so the button wraps onto a line of its own.
-    const measure = (nearlyFull) => page.evaluate((nearlyFull) => {
-      const button = document.getElementById('convo-new')
-      const status = document.getElementById('convo-status')
-      const bar = button.parentElement
-      status.textContent = nearlyFull ? 'The agent is compacting its context.' : ''
-      status.style.flex = 'none'
-      status.style.width = nearlyFull ? (bar.getBoundingClientRect().width - 10) + 'px' : ''
-      return Math.round(bar.getBoundingClientRect().right - button.getBoundingClientRect().right)
-    }, nearlyFull)
-    assert.ok(Math.abs(await measure(false)) <= 1, 'with no status, the button is not at the right edge')
-    assert.ok(Math.abs(await measure(true)) <= 1, 'with a status that fills the line, the button is not at the right edge')
-  } finally { await page.close() }
+test('the status button sits just left of New conversation at the right of the bar, and its balloon moves nothing and stays on the page', async () => {
+  for (const width of [1000, 420]) {
+    const page = await conversationPage(width)
+    try {
+      // Opened from the button, the balloon stays (until closed) whatever the page's polls do meanwhile, so every box is read with it open.
+      const measure = () => page.evaluate(() => {
+        const r = (id) => document.getElementById(id).getBoundingClientRect()
+        const bar = document.getElementById('convo-new').parentElement.getBoundingClientRect()
+        return { info: r('status-info'), fresh: r('convo-new'), log: r('convo-log'), balloon: r('status-balloon'), bar,
+          open: !document.getElementById('status-balloon').hidden, viewport: document.documentElement.clientWidth }
+      })
+      const closed = await measure()
+      assert.ok(Math.abs(closed.bar.right - closed.fresh.right) <= 1, `${width}px: New conversation is not at the right edge`)
+      assert.ok(closed.info.right <= closed.fresh.left && closed.fresh.left - closed.info.right < 16, `${width}px: the button is not just left of New conversation`)
+      await page.click('#status-info')
+      const open = await measure()
+      assert.ok(open.open, `${width}px: the balloon did not open`)
+      for (const key of ['info', 'fresh', 'log']) {
+        assert.equal(Math.round(open[key].top), Math.round(closed[key].top), `${width}px: opening the balloon moved ${key}`)
+        assert.equal(Math.round(open[key].left), Math.round(closed[key].left), `${width}px: opening the balloon moved ${key}`)
+      }
+      assert.ok(open.balloon.left >= 0 && open.balloon.right <= open.viewport, `${width}px: the balloon runs off the page (${Math.round(open.balloon.left)}–${Math.round(open.balloon.right)})`)
+      assert.ok(open.balloon.top >= open.info.bottom, `${width}px: the balloon is not below its button`)
+    } finally { await page.close() }
+  }
 })
 
 // The note beside Refresh that the code has changed under the diff (see reviewstale.test.js) is one more thing in the Review bar
