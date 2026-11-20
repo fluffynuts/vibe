@@ -173,6 +173,8 @@ func runPlaywrightInstallWith(t *testing.T, setup playwrightSetup, env ...string
 		"PATH="+bin,
 		"FAKE_BIN="+bin, "FAKE_CALLS="+run.calls, "FAKE_MARKS="+filepath.Join(dir, "marks"), "FAKE_PREFIX="+run.prefix, "FAKE_PLAYWRIGHT="+filepath.Join(bin, "playwright-source"),
 		"PW_BROWSERS_PATH="+run.browsers, "PW_LOG="+logFile,
+		// Where the stand-in npm puts Playwright, as the feature's NODE_PATH points where the real one does (a test may say otherwise).
+		"PW_NODE_PATH="+run.prefix+"/lib/node_modules",
 		// Its own, so that what the script does to ~/.npm never depends on the machine the tests run on.
 		"HOME="+filepath.Join(dir, "home"))
 	cmd.Env = append(cmd.Env, env...)
@@ -490,5 +492,34 @@ func TestNpmKeepsItsOwnDefaultCacheWhenTheScriptIsNotRoot(t *testing.T) {
 	}
 	if !run.called("npm-cache []") || run.called("/root/.cache/npm") {
 		t.Errorf("npm was given a cache of the script's choosing when it isn't root; calls:\n%s", run.calls)
+	}
+}
+
+func TestWhereTheScriptExpectsPlaywrightIsWhereTheEnvironmentsNodePathPoints(t *testing.T) {
+	// Two files that would drift: where the script checks Playwright went, and where every script's require() is told to look.
+	config, _ := os.ReadFile(filepath.Join(repoRoot(t), "library", "playwright", "config.yaml"))
+	script, _ := os.ReadFile(playwrightScriptPath(t))
+	if !strings.Contains(string(script), "PW_NODE_PATH:-/usr/lib/node_modules") || !strings.Contains(string(config), "NODE_PATH: /usr/lib/node_modules") {
+		t.Error("the folder the script expects Playwright in and the NODE_PATH the environment sets differ")
+	}
+}
+
+// A require('playwright') in a script finds it through NODE_PATH, which the feature sets to where npm puts global packages for
+// root today. If npm put it elsewhere, every script would fail to find it: the build log says so, and where it is.
+func TestPlaywrightInstalledWhereNodePathDoesntPointIsSaid(t *testing.T) {
+	r := runPlaywrightInstall(t, false, "PW_NODE_PATH=/usr/lib/node_modules")
+	if !strings.Contains(r.log, "WARN") || !strings.Contains(r.log, "NODE_PATH") || !strings.Contains(r.log, r.prefix+"/lib/node_modules") {
+		t.Errorf("an install NODE_PATH can't find isn't said, with where it is:\n%s", r.log)
+	}
+}
+
+func TestPlaywrightInstalledWhereNodePathPointsSaysNothingOfIt(t *testing.T) {
+	prefix := t.TempDir() // npm's global prefix, chosen here (the last FAKE_PREFIX given is the one used)
+	r := runPlaywrightInstall(t, false, "FAKE_PREFIX="+prefix, "PW_NODE_PATH="+prefix+"/lib/node_modules")
+	if !strings.Contains(r.log, "installed Playwright") {
+		t.Fatalf("the install didn't get as far as the check:\n%s", r.log)
+	}
+	if strings.Contains(r.log, "NODE_PATH") {
+		t.Errorf("an install where NODE_PATH points was warned of:\n%s", r.log)
 	}
 }

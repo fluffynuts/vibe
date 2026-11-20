@@ -28,20 +28,46 @@ const stateWith = (page, patch) => async (route) => {
   }
 }
 
-// reviewPage opens the page on its Review tab, the diff drawn.
+// reviewPage opens the page on its Review tab, the diff drawn, and a.txt's card coloured: each side's colours arriving
+// draws the card afresh (redrawCard), even for plain text that gains none, which takes away a selection in it, the
+// hover that shows a line's +, and a drag under way. Not waited for, they landed in the middle of a test on a slow runner
+// (a drag between two +s found the second not shown, on macOS CI). Counting the card's redraws can't tell: a whole
+// review's redraw (its options arriving, say) takes the card away too. So the page notes the card as it is when the last
+// side's colours are read, which is before they are drawn (the page's own handling of them follows in the same chain of
+// promises, so nothing else can be drawn in between), and the card that replaces that one has them. Watched from the
+// page's first moment, as the colours can come before the diff is seen here; polled, as the page's policy forbids the
+// eval Playwright's own waiting uses.
 async function reviewPage() {
   const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
+  await page.addInitScript(() => {
+    const card = () => document.querySelector('.review-file[data-path="a.txt"]')
+    const json = Response.prototype.json
+    let landed = 0
+    Response.prototype.json = function () {
+      const url = new URL(this.url || 'about:blank')
+      const ours = url.pathname === '/api/review/highlight' && url.searchParams.get('path') === 'a.txt'
+      return json.call(this).then((body) => {
+        if (ours && ++landed === 2) window.vibeTestCardBeforeColours = card()
+        return body
+      })
+    }
+    window.vibeTestColoured = () => landed >= 2 && card() !== null && card() !== window.vibeTestCardBeforeColours
+  })
   await page.goto(URL)
   await page.click('#tab-review')
   await page.waitForSelector(plusSel('R20'), { state: 'attached' })
+  let coloured = false
+  for (let i = 0; i < 100 && !(coloured = await page.evaluate(() => window.vibeTestColoured())); i++) await page.waitForTimeout(50)
+  assert.ok(coloured, "a.txt's card was drawn with both sides' colours within 5s")
   return page
 }
 
-// hoverPlus hovers a line's number, where its + shows, and gives the +.
+// hoverPlus hovers a line's number, where its + shows, and gives the + once it shows: a box read of one not shown is null.
 async function hoverPlus(page, label) {
   const plus = page.locator(plusSel(label))
   await plus.evaluate((el) => el.closest('td').scrollIntoView({ block: 'center' }))
   await page.hover(`td:has(> ${plusSel(label)})`)
+  await plus.waitFor({ state: 'visible', timeout: 5000 })
   return plus
 }
 
@@ -112,33 +138,6 @@ test("a range's lines are marked on their side, over the colour of changed lines
   } finally { await page.close() }
 })
 
-// colouredReviewPage is reviewPage once a.txt's card has had both its sides' colours: each side's arriving draws the card
-// afresh (redrawCard), even for plain text that gains none, and a card drawn afresh takes a selection in it away. The
-// redraws are counted from the page's first moment, as they can come before the diff is first seen here; polled, as
-// the page's policy forbids the eval Playwright's own waiting uses.
-async function colouredReviewPage() {
-  const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
-  await page.addInitScript(() => {
-    window.vibeTestRedrawn = {}
-    new MutationObserver((changes) => {
-      for (const change of changes) {
-        for (const node of change.removedNodes) {
-          if (node.classList && node.classList.contains('review-file')) {
-            window.vibeTestRedrawn[node.dataset.path] = (window.vibeTestRedrawn[node.dataset.path] || 0) + 1
-          }
-        }
-      }
-    }).observe(document, { childList: true, subtree: true })
-  })
-  await page.goto(URL)
-  await page.click('#tab-review')
-  await page.waitForSelector(plusSel('R20'), { state: 'attached' })
-  let redrawn = 0
-  for (let i = 0; i < 100 && (redrawn = await page.evaluate(() => window.vibeTestRedrawn['a.txt'] || 0)) < 2; i++) await page.waitForTimeout(50)
-  // At least: a whole-diff redraw (a poll whose answer changed) also takes the card away, and is no failure.
-  assert.ok(redrawn >= 2, `a.txt's card was drawn afresh for each side's colours within 5s (${redrawn} times)`)
-  return page
-}
 
 // selectNewSide selects, in the split diff of a.txt, from the start of new line `from`'s code to the end of new line
 // `to`'s: the rows between hold old-side cells too, which a native Range takes in whole.
@@ -173,7 +172,7 @@ const paintedSelection = (page) => page.evaluate(() => new Promise((resolve) => 
 }))))
 
 test('a selection begun on one side of a split diff is painted on that side alone', async () => {
-  const page = await colouredReviewPage()
+  const page = await reviewPage()
   try {
     await selectNewSide(page, 18, 24)
     const { marks, text } = await paintedSelection(page)
@@ -194,7 +193,7 @@ test('a selection begun on one side of a split diff is painted on that side alon
 })
 
 test('the painted selection moves with the diff as it scrolls', async () => {
-  const page = await colouredReviewPage()
+  const page = await reviewPage()
   try {
     await page.setViewportSize({ width: 1400, height: 360 }) // short enough that the diff scrolls
     await selectNewSide(page, 18, 24)

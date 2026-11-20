@@ -1399,10 +1399,11 @@ The other base features, which every guided profile has too:
 
 - **`prerequisites`** makes sure the image has what the features and vibe's own scripts assume: `curl`, the
   certificates, `gpg`, `tar`, `gzip`, `xz`, `flock` and Node.js (the clipboard page's server and `vibe-review` are written
-  in it). The image promises none of them, and its Debian one has neither Node nor `xz`. It asks apt for only what is
+  in it), with `npm` beside it (the Docker Hardened Images Node is `node` alone, and an agent finding `node` expects
+  `npm`). The image promises none of them, and its Debian one has neither Node nor `xz`. It asks apt for only what is
   missing, in one run, or for nothing when it's all there; if that run fails because the image lacks one of the packages
-  (apt installs nothing when it can't find one name), the tools and Node are asked for separately, Node falling back to
-  Debian's own. Anything still missing is named in `/tmp/sbx-setup.log`. A feature still checks for the tools it uses
+  (apt installs nothing when it can't find one name), the tools, Node and `npm` are asked for separately, Node falling
+  back to Debian's own. Anything still missing is named in `/tmp/sbx-setup.log`. A feature still checks for the tools it uses
   itself, which costs nothing when they're there.
 - **`background-work`** tells the agent that the user's next prompt ends whatever the last run left running in the background (the page asks the user first), so it should finish work inside the turn, or start what must outlive it detached (`setsid nohup`) and look at it next turn. Like `copyable-blocks` it is only an instruction, and its short form is in what the agent always loads; a sandbox composed before it needs `vibe -C` to have it.
 - **`copyable-blocks`** tells the agent to put text you will paste elsewhere (a pull request description, a commit message) in one fenced block with nothing else inside it, tagged `markdown` when it is Markdown, so the page's copy button takes just that text, and the page shows it formatted. Its remarks go outside the block. It is only an instruction, so an agent may not follow it; a sandbox composed before it needs `vibe -C` to have it.
@@ -1545,6 +1546,10 @@ download one". It **adds time to building the sandbox**: a few minutes, the syst
   system libraries they need, from apt. About 233 MB is downloaded and 588 MB used. The libraries are fetched while the
   browsers are. `PLAYWRIGHT_BROWSERS_PATH` is set to the folder for every Playwright in the sandbox, whichever version a
   project uses, and the folder belongs to the agent's user.
+- **From a script:** `NODE_PATH` points at the global packages (`/usr/lib/node_modules`), so `require('playwright')` works
+  in any throwaway script (an ES module uses `createRequire`); a project's own `node_modules` still comes first. The build
+  log warns if Playwright was installed anywhere else. There are no Python bindings: the agent is told how to install the
+  ones matching the installed version, so they use the browsers already there, if it wants Python.
 - **What isn't:** WebKit, and the full Chromium that a headed run (or `channel: 'chromium'`) wants, which is a larger
   download (about 190 MB more): `npx playwright install chromium` (or `webkit`) adds them. There is no display in a
   sandbox, so tests run headless, as Playwright does by default.

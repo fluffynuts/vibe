@@ -18,3 +18,7 @@ environment:
   variables:
     # Where the browsers are, for Playwright of any version in any project.
     PLAYWRIGHT_BROWSERS_PATH: /opt/ms-playwright
+    # Where npm puts root's global packages, Playwright among them: Node never looks there by itself, so a script's
+    # require('playwright') finds it only through this (a project's own node_modules still comes first). ES modules
+    # ignore it: they use createRequire. The install script warns when Playwright went anywhere else.
+    NODE_PATH: /usr/lib/node_modules

@@ -55,6 +55,12 @@ the agent; a project pinning 1.48.2 (this repo's Firefox tests) added its Firefo
   calls, that libraries and browsers are fetched together (each stand-in waits, boundedly, for the other, so it is the meeting that is
   tested, not speed), each failure, ownership and permissions in both cases, and that the check runs as the agent. The real run is by hand.
 - Since this was written, install steps that run npm as root use `npm_config_cache=/root/.cache/npm`, and a guard test requires it.
+- Since this was written (2026-11-20): an agent wanting a Python script found no Playwright to import, and a Node script's
+  `require('playwright')` failed too, since Node never looks in its global folder. The feature now sets `NODE_PATH` to it
+  (`/usr/lib/node_modules`, where root's npm puts it; the build log warns if it went elsewhere), and the agent's
+  instructions say how to load it from CommonJS and ES modules, and how to install the matching Python bindings if it
+  must. The Python bindings aren't installed: about 160 MB for every sandbox with the feature, for agents that can as
+  well use Node.
 - **Accepted risk:** "latest" means a release that renames a browser target would show as a warning and a sandbox without browsers.
 
 ## Not verified
