@@ -19,7 +19,7 @@ type prereqRun struct {
 
 var prereqPackageCommand = map[string]string{
 	"curl": "curl", "gnupg": "gpg", "tar": "tar", "gzip": "gzip", "xz-utils": "xz", "util-linux": "flock", "file": "file",
-	"nodejs-24": "node", "nodejs": "node",
+	"nodejs-24": "node", "nodejs": "node", "npm": "npm",
 }
 
 func runPrerequisites(t *testing.T, have []string, haveCerts bool, failing string) prereqRun {
@@ -75,7 +75,7 @@ exit 0
 	return run
 }
 
-var allPrereqTools = []string{"curl", "gpg", "tar", "gzip", "xz", "flock", "file", "node"}
+var allPrereqTools = []string{"curl", "gpg", "tar", "gzip", "xz", "flock", "file", "node", "npm"}
 
 func TestPrerequisitesAreNotInstalledWhenTheyAreAllThere(t *testing.T) {
 	run := runPrerequisites(t, allPrereqTools, true, "never-matches")
@@ -89,7 +89,7 @@ func TestPrerequisitesTheImageLacksAreInstalledInOneAptRun(t *testing.T) {
 	if len(run.calls) != 1 {
 		t.Fatalf("expected one apt run, got %d: %v", len(run.calls), run.calls)
 	}
-	for _, want := range []string{"curl", "ca-certificates", "gnupg", "tar", "gzip", "xz-utils", "util-linux", "file", "nodejs-24"} {
+	for _, want := range []string{"curl", "ca-certificates", "gnupg", "tar", "gzip", "xz-utils", "util-linux", "file", "nodejs-24", "npm"} {
 		if !strings.Contains(run.calls[0], " "+want) {
 			t.Errorf("%s isn't in the one apt run: %s", want, run.calls[0])
 		}
@@ -100,22 +100,37 @@ func TestPrerequisitesTheImageLacksAreInstalledInOneAptRun(t *testing.T) {
 }
 
 func TestOnlyWhatIsMissingIsAskedFor(t *testing.T) {
-	run := runPrerequisites(t, []string{"curl", "gpg", "tar", "gzip", "flock", "file", "node"}, true, "never-matches")
+	run := runPrerequisites(t, []string{"curl", "gpg", "tar", "gzip", "flock", "file", "node", "npm"}, true, "never-matches")
 	if len(run.calls) != 1 || !strings.HasSuffix(run.calls[0], "install -y xz-utils") {
 		t.Errorf("expected xz-utils alone: %v", run.calls)
 	}
 	run = runPrerequisites(t, []string{"curl", "gpg", "tar", "gzip", "xz", "flock", "file"}, true, "never-matches")
-	if len(run.calls) != 1 || !strings.HasSuffix(run.calls[0], "install -y nodejs-24") {
-		t.Errorf("expected Node alone: %v", run.calls)
+	if len(run.calls) != 1 || !strings.HasSuffix(run.calls[0], "install -y nodejs-24 npm") {
+		t.Errorf("expected Node and npm alone: %v", run.calls)
+	}
+}
+
+// The Docker Hardened Images Node is node alone: an agent finding node expects npm beside it.
+func TestNpmIsInstalledWhereNodeIsThereWithoutIt(t *testing.T) {
+	run := runPrerequisites(t, []string{"curl", "gpg", "tar", "gzip", "xz", "flock", "file", "node"}, true, "never-matches")
+	if len(run.calls) != 1 || !strings.HasSuffix(run.calls[0], "install -y npm") {
+		t.Errorf("expected npm alone: %v", run.calls)
+	}
+}
+
+func TestNpmThatCannotBeInstalledIsSaidByName(t *testing.T) {
+	run := runPrerequisites(t, []string{"curl", "gpg", "tar", "gzip", "xz", "flock", "file", "node"}, true, " npm")
+	if !strings.Contains(run.log, "WARN: npm is still missing") {
+		t.Errorf("the log doesn't name npm as still missing:\n%s", run.log)
 	}
 }
 
 // apt installs nothing when one name in the command is unknown, so one the image hasn't got (nodejs-24 is a Docker
 // Hardened Images name) must not stop the tools being installed: they are asked for on their own, and Node falls back
-// to Debian's.
+// to Debian's, npm after it.
 func TestAPackageTheImageLacksDoesNotKeepTheOthersFromBeingInstalled(t *testing.T) {
 	run := runPrerequisites(t, nil, false, "nodejs-24")
-	var toolsAlone, debiansNode bool
+	var toolsAlone, debiansNode, npmAfter bool
 	for _, call := range run.calls {
 		if strings.HasSuffix(call, "install -y curl ca-certificates gnupg tar gzip xz-utils util-linux file") {
 			toolsAlone = true
@@ -123,9 +138,12 @@ func TestAPackageTheImageLacksDoesNotKeepTheOthersFromBeingInstalled(t *testing.
 		if strings.HasSuffix(call, "install -y nodejs") {
 			debiansNode = true
 		}
+		if strings.HasSuffix(call, "install -y npm") {
+			npmAfter = debiansNode
+		}
 	}
-	if !toolsAlone || !debiansNode {
-		t.Errorf("the tools weren't installed on their own, or Node didn't fall back to nodejs: %v", run.calls)
+	if !toolsAlone || !debiansNode || !npmAfter {
+		t.Errorf("the tools weren't installed on their own, or Node didn't fall back to nodejs with npm after it: %v", run.calls)
 	}
 	if strings.Contains(run.log, "WARN") {
 		t.Errorf("warned although everything ended up installed:\n%s", run.log)
