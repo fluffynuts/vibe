@@ -178,8 +178,13 @@ test('the balloon stops what runs in the background, there being no other way be
   try {
     await p.click('status-info')
     assert.equal(stopButton(p), undefined, 'offered to stop with nothing running')
+    await p.click('status-info')
     await poll(p, { running: false, background: true, tasks: [npmTest, watch] })
+    p.at.closeTimers()
+    await p.click('status-info')
+    assert.ok(shown(p), 'the user could not open it to stop the work')
     assert.ok(stopButton(p), 'nothing in the balloon stops the background work')
+    stopButton(p).focus() // as a browser's click does
     await p.click(stopButton(p))
     assert.deepEqual(p.sent('/api/conversation/stop'), [{ tasks: true }])
     assert.ok(shown(p), 'stopping closed the balloon before the work had gone')
@@ -187,8 +192,11 @@ test('the balloon stops what runs in the background, there being no other way be
     assert.equal(stopButton(p).textContent, 'Stopping…')
     assert.equal(stopButton(p).disabled, true, 'a stop on its way can be asked for again')
     await poll(p, { running: false, background: false, tasks: [] })
-    assert.equal(stopButton(p), undefined, 'still offered to stop once nothing runs')
+    assert.equal(shown(p), false, 'the balloon the stop emptied stayed open, saying what it is for')
+    assert.equal(p.window.document.activeElement, button(p), 'keyboard focus was left nowhere')
     assert.equal(dot(p), '')
+    await p.click('status-info')
+    assert.equal(stopButton(p), undefined, 'still offered to stop once nothing runs')
   } finally { p.close() }
 })
 

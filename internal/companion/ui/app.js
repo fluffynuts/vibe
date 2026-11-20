@@ -6399,7 +6399,17 @@
       (items.some((i) => i.task) && before.some((i) => i.task && !has.has(i.key)))
     const warnCleared = before.some((i) => i.warn) && !items.some((i) => i.warn)
     statusView.items = items
-    if (!items.some((i) => i.task)) statusView.stoppingTasks = false
+    if (statusView.stoppingTasks && !items.some((i) => i.task)) {
+      statusView.stoppingTasks = false
+      // The stop has done what it was opened for: left empty, the balloon would only say what it is for.
+      if (!items.length && statusView.open) {
+        statusView.open = false
+        statusView.byUser = false
+        // Keyboard focus was on the stop button, gone with the balloon: it goes back to the button the balloon opens from.
+        const focus = document.activeElement
+        if (!focus || focus === document.body || $('status-balloon').contains(focus)) $('status-info').focus()
+      }
+    }
     if (news) {
       if (statusSeen()) popStatus()
       else statusView.pending = true
