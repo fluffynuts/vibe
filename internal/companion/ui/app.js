@@ -6574,7 +6574,8 @@
             text: statusView.stoppingTasks ? 'Stopping…' : tasks.length === 1 ? 'Stop it' : 'Stop them all', onclick: stopBackgroundWork })))
     }
     if (!items.length) list.push(el('p', { class: 'muted', text: 'Work the agent is doing in the background will appear here.' }))
-    $('status-balloon-list').replaceChildren(...list)
+    // Lines left out are null: replaceChildren would write them as the word "null".
+    $('status-balloon-list').replaceChildren(...list.filter(Boolean))
   }
 
   // stopBackgroundWork stops what the agent has running in the background, from the status balloon: between turns, there is no

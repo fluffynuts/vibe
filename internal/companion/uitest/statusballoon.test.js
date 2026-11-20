@@ -285,3 +285,18 @@ test('a stop of the background work that takes effect in time offers no forced s
     assert.equal(stopButton(p).textContent, 'Stop it', 'the next work was offered a forced stop it was never asked to stop')
   } finally { p.close() }
 })
+
+// Seen by hand after a release: the balloon said "null" under its background work, where the "has not stopped" warning goes when
+// there is none.
+test('the balloon says nothing but what it means: no "null" or "undefined" where a line is left out', async () => {
+  const p = await convoPage({ running: false })
+  try {
+    await poll(p, { running: false, background: true, tasks: [npmTest] })
+    assert.doesNotMatch(said(p), /null|undefined/)
+    await p.click(stopButton(p))
+    await poll(p, { running: false, background: true, tasks: [npmTest] })
+    assert.doesNotMatch(said(p), /null|undefined/, 'while stopping')
+    p.at.forceTimers()
+    assert.doesNotMatch(said(p), /null|undefined/, 'offering to force it')
+  } finally { p.close() }
+})
