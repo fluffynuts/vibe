@@ -339,6 +339,8 @@ vibe --git-token [path]    # give the sandbox for path a GitHub token to push
 vibe --batch-git-token     # tick the sandboxes to give one GitHub token to (type to
                            #    narrow the list), and give it to them
 vibe --jobs N              # ...to N sandboxes at a time (default 4)
+vibe --sandboxes a,b,c     # ...naming them instead of ticking (for a script, with
+                           #    --git-token-env VAR)
 vibe --git-token-env VAR   # ...a new sandbox (or --git-token) the token in $VAR,
                            #    without asking
 vibe --git-rules R[,R]     # ...and these rules for pushing, without asking:
@@ -1039,8 +1041,14 @@ on. It is given to 4 sandboxes at a time (`--jobs N` says otherwise; 1 is one af
 how many are done and which are under way, each one's lines are shown together when it is done, and the
 run says how long it took. A sandbox that isn't running is not started to be given its token (nor by
 `--git-token`, which works the same way): its agent's instructions for pushing are written at its next
-start. The summary says which got it, with old and new expiry, and which didn't, and why. It needs a
-terminal: a token is never typed into the page.
+start. The summary says which got it, with old and new expiry, and which didn't, and why. On a terminal
+it asks; a token is never typed into the page.
+
+For a script, name the sandboxes instead of ticking them, and give the token in a variable:
+`vibe --batch-git-token --sandboxes a,b,c --git-token-env GITHUB_TOKEN`. A name vibe doesn't know is refused
+(saying which) before anything is given; the token is checked and given as above, never made your default
+token; and it exits with an error if any sandbox didn't get it. `--sandboxes` on a terminal without
+`--git-token-env` names the sandboxes and asks only which token.
 
 ### Choices kept for a profile
 

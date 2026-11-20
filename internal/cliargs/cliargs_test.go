@@ -1,6 +1,7 @@
 package cliargs
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -512,6 +513,8 @@ func TestBatchGitTokenGoesWithGitRulesAndJobsAlone(t *testing.T) {
 		{"--batch-git-token", "--jobs", "8"},
 		{"--batch-git-token", "--git-rules", "feature-branch"},
 		{"--batch-git-token", "--jobs=2", "--git-rules", "no-default-branch,feature-branch"},
+		{"--batch-git-token", "--sandboxes", "a,b"},
+		{"--batch-git-token", "--sandboxes=a", "--git-token-env", "GITHUB_TOKEN", "--jobs", "2"},
 	} {
 		a, err := Parse(argv)
 		if err != nil {
@@ -526,10 +529,13 @@ func TestBatchGitTokenGoesWithGitRulesAndJobsAlone(t *testing.T) {
 func TestBatchGitTokenRefusesWhatItAsksForItself(t *testing.T) {
 	for argv, want := range map[string]string{
 		"--batch-git-token ~/code/x":                     "takes no path argument",
-		"--batch-git-token --git-token-env GITHUB_TOKEN": "only --git-rules goes with it",
-		"--batch-git-token --no-git-token":               "only --git-rules goes with it",
+		"--batch-git-token --git-token-env GITHUB_TOKEN": "--git-token-env goes with --sandboxes",
+		"--batch-git-token --no-git-token":               "--no-git-token doesn't go with it",
 		"--jobs 4":                                       "--jobs only goes with --batch-git-token",
 		"--jobs 4 --git-token":                           "--jobs only goes with --batch-git-token",
+		"--sandboxes a,b":                                "--sandboxes only goes with --batch-git-token",
+		"--git-token --sandboxes a":                      "--sandboxes only goes with --batch-git-token",
+		"--batch-git-token --sandboxes a --no-git-token": "--no-git-token doesn't go with it",
 	} {
 		a, err := Parse(strings.Fields(argv))
 		if err != nil {
@@ -549,6 +555,23 @@ func TestOtherCommandsHaveNoBatchGitTokenConflict(t *testing.T) {
 		}
 		if err := a.BatchGitTokenConflict(); err != nil {
 			t.Errorf("Parse(%v): %v", argv, err)
+		}
+	}
+}
+
+// --sandboxes names the sandboxes for a script, as a list: spaces round a name and empty entries don't count, and a name given twice
+// is one sandbox.
+func TestSandboxesIsAListOfNames(t *testing.T) {
+	a, err := Parse([]string{"--batch-git-token", "--sandboxes", " a, b,,a ,c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(a.Sandboxes, []string{"a", "b", "c"}) {
+		t.Errorf("Sandboxes = %q", a.Sandboxes)
+	}
+	for _, argv := range [][]string{{"--batch-git-token", "--sandboxes", ","}, {"--batch-git-token", "--sandboxes="}} {
+		if _, err := Parse(argv); err == nil || !strings.Contains(err.Error(), "names no sandbox") {
+			t.Errorf("Parse(%q) = %v, want it to say it names no sandbox", argv, err)
 		}
 	}
 }

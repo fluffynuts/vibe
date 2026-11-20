@@ -467,6 +467,43 @@ func askBatchToken(vibeHome string, picked []state.Instance) (batchToken, bool) 
 	return tok, true
 }
 
+// namedSandboxes are the candidates --sandboxes names, in the order named. A name that isn't one of them is refused, with any
+// others, before anything is given: a script that names a sandbox vibe doesn't have wants telling, not a partial batch.
+func namedSandboxes(candidates []state.Instance, names []string) ([]state.Instance, error) {
+	byName := map[string]state.Instance{}
+	for _, c := range candidates {
+		byName[c.Name] = c
+	}
+	var picked []state.Instance
+	var unknown []string
+	for _, name := range names {
+		if inst, ok := byName[name]; ok {
+			picked = append(picked, inst)
+		} else {
+			unknown = append(unknown, name)
+		}
+	}
+	if len(unknown) > 0 {
+		return nil, fmt.Errorf("--sandboxes: no sandbox called %s (vibe --list shows them): nothing was given", strings.Join(unknown, ", "))
+	}
+	return picked, nil
+}
+
+// batchTokenFromEnv is the token in the environment variable named, checked with GitHub against the first of the picked
+// sandboxes' repositories, as a token typed in is (giveTokenToSandboxes checks it against the others).
+func batchTokenFromEnv(variable string, picked []state.Instance) (batchToken, error) {
+	repos, _, _ := batchRepositories(picked)
+	var first *gittoken.Repo
+	if len(repos) > 0 {
+		first = &repos[0]
+	}
+	access, err := gitAccessFromEnv(variable, first, nil)
+	if err != nil {
+		return batchToken{}, err
+	}
+	return batchToken{token: access.token, source: access.source, expires: access.expires}, nil
+}
+
 func sandboxNamesOf(picked []state.Instance) []string {
 	names := make([]string, len(picked))
 	for i, inst := range picked {
@@ -480,11 +517,18 @@ func sandboxNames(picked []state.Instance) string {
 }
 
 // doBatchGitToken is --batch-git-token: tick the sandboxes to give one token
-// to, say which, and give it to them. Terminal only: a token is never typed
-// into the page, and a script can't tick.
+// to, say which, and give it to them. A token is never typed into the page:
+// on a terminal the sandboxes are ticked and the token asked for; a script
+// names them (--sandboxes) and gives the token in a variable (--git-token-env),
+// which never makes it the default.
 func doBatchGitToken(vibeHome string, args cliargs.Args) error {
-	if args.Force || !interactive() {
-		return fmt.Errorf("--batch-git-token asks which sandboxes to give the token to, so it needs a terminal")
+	named := len(args.Sandboxes) > 0
+	asking := !args.Force && interactive()
+	switch {
+	case !named && !asking:
+		return fmt.Errorf("--batch-git-token asks which sandboxes to give the token to, so it needs a terminal: a script names them with --sandboxes a,b,c (and gives the token with --git-token-env VAR)")
+	case args.GitTokenEnv == "" && !asking:
+		return fmt.Errorf("--batch-git-token asks which token to give, which needs a terminal: with none, give it in a variable with --git-token-env VAR")
 	}
 	presetRules, err := gittoken.ValidRules(strings.Split(args.GitRules, ","))
 	if err != nil {
@@ -498,24 +542,38 @@ func doBatchGitToken(vibeHome string, args cliargs.Args) error {
 		note("no sandboxes to give a token to")
 		return nil
 	}
-	now := timeNow()
-	labels := make([]string, len(candidates))
-	for i, c := range candidates {
-		labels[i] = batchLabel(c, now)
+	var picked []state.Instance
+	if named {
+		if picked, err = namedSandboxes(candidates, args.Sandboxes); err != nil {
+			return err
+		}
+	} else {
+		now := timeNow()
+		labels := make([]string, len(candidates))
+		for i, c := range candidates {
+			labels[i] = batchLabel(c, now)
+		}
+		ticked, ok := multiFilterFrom("which sandboxes should get the token? (none are ticked to begin with; typing matches the folder and profile too)", labels)
+		if !ok || len(ticked) == 0 {
+			note("no sandbox picked: nothing changed")
+			return nil
+		}
+		picked = make([]state.Instance, len(ticked))
+		for i, idx := range ticked {
+			picked[i] = candidates[idx]
+		}
 	}
-	ticked, ok := multiFilterFrom("which sandboxes should get the token? (none are ticked to begin with; typing matches the folder and profile too)", labels)
-	if !ok || len(ticked) == 0 {
-		note("no sandbox picked: nothing changed")
-		return nil
-	}
-	picked := make([]state.Instance, len(ticked))
-	for i, idx := range ticked {
-		picked[i] = candidates[idx]
-	}
-	tok, ok := askBatchToken(vibeHome, picked)
-	if !ok {
-		note("no token chosen: nothing changed")
-		return nil
+	var tok batchToken
+	if args.GitTokenEnv != "" {
+		if tok, err = batchTokenFromEnv(args.GitTokenEnv, picked); err != nil {
+			return err
+		}
+	} else {
+		var ok bool
+		if tok, ok = askBatchToken(vibeHome, picked); !ok {
+			note("no token chosen: nothing changed")
+			return nil
+		}
 	}
 	jobs := args.Jobs
 	if jobs == 0 {

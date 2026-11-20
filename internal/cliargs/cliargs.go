@@ -76,6 +76,9 @@ type Args struct {
 	// Jobs is --jobs: how many sandboxes --batch-git-token gives the token to
 	// at once; zero when not given (vibe picks).
 	Jobs int
+	// Sandboxes is --sandboxes a,b,c: the sandboxes --batch-git-token gives
+	// the token to, named instead of ticked, so a script can run it.
+	Sandboxes []string
 	// NoGitToken is --no-git-token: no token for a new sandbox, without
 	// asking; with --git-token, take the sandbox's away.
 	NoGitToken bool
@@ -226,6 +229,18 @@ func parse(argv []string) (a Args, paths []string, err error) {
 			}
 			a.Jobs = jobs
 			i += n
+		case arg == "--sandboxes" || strings.HasPrefix(arg, "--sandboxes="):
+			v, n := strings.TrimPrefix(arg, "--sandboxes="), 1
+			if arg == "--sandboxes" {
+				var err error
+				if v, n, err = valueArg(argv, i); err != nil {
+					return a, paths, err
+				}
+			}
+			if a.Sandboxes = sandboxList(v); len(a.Sandboxes) == 0 {
+				return a, paths, fmt.Errorf("--sandboxes %q names no sandbox: give their names, with commas between", v)
+			}
+			i += n
 		case arg == "--no-git-token":
 			a.NoGitToken = true
 			i++
@@ -328,20 +343,39 @@ func (a Args) ExclusiveActions() int {
 
 // BatchGitTokenConflict says what is wrong with the flags that go with
 // --batch-git-token, or that go with it alone: nil when they are fine. The
-// batch asks which sandboxes and which token itself, so it takes no path and
-// neither --git-token-env nor --no-git-token; --jobs means nothing without it.
+// batch asks which sandboxes and which token, so it takes no path; named
+// with --sandboxes, a script can run it, with the token from --git-token-env.
+// --jobs and --sandboxes mean nothing without it.
 func (a Args) BatchGitTokenConflict() error {
 	switch {
 	case a.Jobs > 0 && !a.BatchGitToken:
 		return fmt.Errorf("--jobs only goes with --batch-git-token")
+	case len(a.Sandboxes) > 0 && !a.BatchGitToken:
+		return fmt.Errorf("--sandboxes only goes with --batch-git-token")
 	case !a.BatchGitToken:
 		return nil
 	case a.Path != "":
 		return fmt.Errorf("--batch-git-token takes no path argument")
-	case a.GitTokenEnv != "" || a.NoGitToken:
-		return fmt.Errorf("--batch-git-token asks which token and which sandboxes: only --git-rules goes with it")
+	case a.NoGitToken:
+		return fmt.Errorf("--batch-git-token gives a token: --no-git-token doesn't go with it")
+	case a.GitTokenEnv != "" && len(a.Sandboxes) == 0:
+		return fmt.Errorf("--batch-git-token: --git-token-env goes with --sandboxes (name the sandboxes too, for a script), or leave it off to be asked")
 	}
 	return nil
+}
+
+// sandboxList is --sandboxes' names: commas between, spaces round them and
+// empty entries dropped, each once, in the order given.
+func sandboxList(v string) []string {
+	var names []string
+	seen := map[string]bool{}
+	for _, name := range strings.Split(v, ",") {
+		if name = strings.TrimSpace(name); name != "" && !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // Rebuilds says one of the rebuilds is asked for: --re-init, --re-create or
