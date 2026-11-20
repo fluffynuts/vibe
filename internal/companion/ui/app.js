@@ -6408,8 +6408,11 @@
   // closes itself after STATUS_CLOSE_MS; a warning that needs the user stays until it is no longer true, or is closed. Opened by the
   // user, it stays until closed. items are what is current; token makes a close timer that has been overtaken do nothing.
   const STATUS_CLOSE_MS = 5000
-  // stoppingTasks is a stop of the background work asked for and not yet seen through: its button waits until the tasks have gone.
-  const statusView = { items: [], open: false, byUser: false, pending: false, token: 0, stoppingTasks: false }
+  // stoppingTasks is a stop of the background work asked for and not yet seen through: its button waits until the tasks have gone, or
+  // until FORCE_STOP_AFTER_MS, when stopStuck offers to force it (stopToken makes the wait of a stop already over do nothing).
+  // drawn is what the balloon was last written to say (drawStatus).
+  const statusView = { items: [], open: false, byUser: false, pending: false, token: 0, stoppingTasks: false, stopStuck: false, stopToken: 0,
+    drawn: '' }
 
   // statusSeen is whether the status balloon can be seen popping up: the Conversation tab showing, in a window being looked at.
   function statusSeen() {
@@ -6428,6 +6431,8 @@
     statusView.items = items
     if (statusView.stoppingTasks && !items.some((i) => i.task)) {
       statusView.stoppingTasks = false
+      statusView.stopStuck = false
+      statusView.stopToken++
       // The stop has done what it was opened for: left empty, the balloon would only say what it is for.
       if (!items.length && statusView.open) {
         statusView.open = false
@@ -6482,23 +6487,18 @@
     if (statusView.pending && statusSeen()) popStatus()
   }
 
+  // drawStatus shows statusView. What the balloon says is written only when it changes: it is drawn on every poll, and writing it
+  // afresh would take keyboard focus off its Stop button (a new element) and have a screen reader say its live regions again.
   function drawStatus() {
     const items = statusView.items
     const warns = items.filter((i) => i.warn)
     const tasks = items.filter((i) => i.task)
     const others = items.filter((i) => !i.warn && !i.task)
-    $('status-balloon-alerts').replaceChildren(...warns.map((i) => el('p', { class: 'warn-text', text: i.text })))
-    const list = others.map((i) => el('p', { text: i.text }))
-    if (tasks.length) {
-      const count = tasks.length === 1 ? 'something' : tasks.length + ' things'
-      list.push(el('p', { text: 'The agent has answered, and has ' + count + ' running in the background:' }),
-        el('ul', {}, ...tasks.map((i) => el('li', { text: i.text }))),
-        el('p', { class: 'muted', text: 'You can send a prompt meanwhile: the work carries on.' }),
-        el('p', {}, el('button', { type: 'button', class: 'small danger', disabled: statusView.stoppingTasks,
-          text: statusView.stoppingTasks ? 'Stopping…' : tasks.length === 1 ? 'Stop it' : 'Stop them all', onclick: stopBackgroundWork })))
+    const says = JSON.stringify([items.map((i) => [i.key, i.text]), statusView.stoppingTasks, statusView.stopStuck])
+    if (says !== statusView.drawn) {
+      statusView.drawn = says
+      drawStatusWords(warns, tasks, others)
     }
-    if (!items.length) list.push(el('p', { class: 'muted', text: 'Work the agent is doing in the background will appear here.' }))
-    $('status-balloon-list').replaceChildren(...list)
     $('status-balloon').hidden = !statusView.open
     const button = $('status-info')
     button.classList.toggle('warn', warns.length > 0)
@@ -6510,20 +6510,60 @@
     button.setAttribute('aria-label', 'Agent status: ' + now)
   }
 
+  function drawStatusWords(warns, tasks, others) {
+    const items = statusView.items
+    $('status-balloon-alerts').replaceChildren(...warns.map((i) => el('p', { class: 'warn-text', text: i.text })))
+    const list = others.map((i) => el('p', { text: i.text }))
+    if (tasks.length) {
+      const count = tasks.length === 1 ? 'something' : tasks.length + ' things'
+      list.push(el('p', { text: 'The agent has answered, and has ' + count + ' running in the background:' }),
+        el('ul', {}, ...tasks.map((i) => el('li', { text: i.text }))),
+        el('p', { class: 'muted', text: 'You can send a prompt meanwhile: the work carries on.' }),
+        statusView.stopStuck ? el('p', { class: 'warn-text', text: 'It has not stopped. Force stop ends the agent, and everything it started.' }) : null,
+        el('p', {}, statusView.stopStuck
+          ? el('button', { type: 'button', class: 'small danger', text: 'Force stop', onclick: forceStopBackgroundWork })
+          : el('button', { type: 'button', class: 'small danger', disabled: statusView.stoppingTasks,
+            text: statusView.stoppingTasks ? 'Stopping…' : tasks.length === 1 ? 'Stop it' : 'Stop them all', onclick: stopBackgroundWork })))
+    }
+    if (!items.length) list.push(el('p', { class: 'muted', text: 'Work the agent is doing in the background will appear here.' }))
+    $('status-balloon-list').replaceChildren(...list)
+  }
+
   // stopBackgroundWork stops what the agent has running in the background, from the status balloon: between turns, there is no
   // Stop button to begin from.
   async function stopBackgroundWork() {
-    const failed = (text) => { toast(text, true); statusView.stoppingTasks = false; drawStatus() }
     statusView.stoppingTasks = true
+    statusView.stopStuck = false
     drawStatus()
+    if (!await sendStop({ tasks: true })) return
+    // As with the turn's own Stop: one that hasn't taken effect a while later can be forced.
+    const token = ++statusView.stopToken
+    setTimeout(() => {
+      if (token !== statusView.stopToken || !statusView.stoppingTasks) return
+      statusView.stopStuck = true
+      drawStatus()
+    }, FORCE_STOP_AFTER_MS)
+  }
+
+  // forceStopBackgroundWork ends the agent and all it started, for background work that a stop hasn't ended.
+  async function forceStopBackgroundWork() {
+    statusView.stopStuck = false
+    drawStatus()
+    await sendStop({ force: true })
+  }
+
+  // sendStop asks vibe to stop what req says, saying whether it took it: if not, it says why, and the balloon's button is pressable again.
+  async function sendStop(req) {
+    const failed = (text) => { toast(text, true); statusView.stoppingTasks = false; statusView.stopStuck = false; drawStatus(); return false }
     try {
-      const res = await post('/api/conversation/stop', { tasks: true })
+      const res = await post('/api/conversation/stop', req)
       reached(true)
-      if (!res.ok) { failed((res.body && res.body.error) || 'That failed.'); return }
+      if (!res.ok) return failed((res.body && res.body.error) || 'That failed.')
       pollConversation()
+      return true
     } catch (e) {
       reached(false)
-      failed('Could not reach vibe.')
+      return failed('Could not reach vibe.')
     }
   }
 

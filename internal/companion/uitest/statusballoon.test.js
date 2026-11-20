@@ -7,17 +7,19 @@ const assert = require('node:assert/strict')
 const { openPage } = require('./page.js')
 
 const CLOSE_AFTER_MS = 5000
+const FORCE_STOP_AFTER_MS = 8000
 
 // convoPage opens the Conversation tab on a conversation answering agent (changed through at.agent), with the page's 5 s timers held
 // back until the test runs them (at.closeTimers()). at.stopAnswer, when set, is how vibe answers a stop.
 async function convoPage(agent) {
-  const at = { agent, held: [] }
+  const at = { agent, held: [], heldForce: [], stops: [] }
   at.closeTimers = () => { const fns = at.held.splice(0); for (const fn of fns) fn() }
+  at.forceTimers = () => { const fns = at.heldForce.splice(0); for (const fn of fns) fn() }
   const p = await openPage({
     routes: {
       '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, attention: {} },
       '/api/conversation': () => Object.assign({ events: [], last: 0 }, at.agent),
-      '/api/conversation/stop': () => at.stopAnswer || { stopped: true },
+      '/api/conversation/stop': (call) => { at.stops.push(call.body); return at.stopAnswer || { stopped: true } },
       '/api/packages': { requests: [], config: null },
       '/api/packages/sync/check': { count: 0, actionable: 0, running: false, auto: false, missing: [] },
       '/api/log': { entries: [] },
@@ -25,7 +27,8 @@ async function convoPage(agent) {
     storage: { 'vibe-companion-tab': 'conversation' },
     before: (w) => {
       const real = w.setTimeout
-      w.setTimeout = (fn, ms, ...rest) => ms === CLOSE_AFTER_MS ? (at.held.push(() => fn(...rest)), 0) : real(fn, ms, ...rest)
+      w.setTimeout = (fn, ms, ...rest) => ms === CLOSE_AFTER_MS ? (at.held.push(() => fn(...rest)), 0)
+        : ms === FORCE_STOP_AFTER_MS ? (at.heldForce.push(() => fn(...rest)), 0) : real(fn, ms, ...rest)
     },
   })
   await p.every('pollConversation')
@@ -182,7 +185,7 @@ test('what changed while the window had no focus pops up when it has it again', 
   } finally { p.close() }
 })
 
-const stopButton = (p) => [...balloon(p).querySelectorAll('button')].find((b) => /Stop/.test(b.textContent))
+const stopButton = (p) => [...balloon(p).querySelectorAll('button')].find((b) => /stop/i.test(b.textContent))
 
 test('the balloon stops what runs in the background, there being no other way between turns', async () => {
   const p = await convoPage({ running: false })
@@ -220,5 +223,65 @@ test('a stop of the background work that fails says so, and can be tried again',
     await p.click(stopButton(p))
     assert.match(p.$('toast').textContent, /the agent did not answer/)
     assert.equal(stopButton(p).disabled, false, 'it cannot be tried again')
+  } finally { p.close() }
+})
+
+// The conversation is polled every second or two: a balloon redrawn each time takes keyboard focus off its Stop button (a new
+// element), and has a screen reader say its live regions again. It is drawn only when what it shows changes.
+test('a poll that changes nothing leaves the balloon as it is: focus stays on Stop, and nothing is said again', async () => {
+  const p = await convoPage({ running: false })
+  try {
+    await poll(p, { running: false, background: true, tasks: [npmTest] })
+    p.at.closeTimers()
+    await p.click('status-info')
+    const stop = stopButton(p)
+    stop.focus()
+    let rewritten = 0
+    const watch = new p.window.MutationObserver((changes) => { rewritten += changes.length })
+    watch.observe(balloon(p), { childList: true, subtree: true, characterData: true })
+    await poll(p, { running: false, background: true, tasks: [npmTest] })
+    await poll(p, { running: false, background: true, tasks: [npmTest] })
+    watch.disconnect()
+    assert.equal(stopButton(p), stop, 'the Stop button was drawn afresh')
+    assert.equal(p.window.document.activeElement, stop, 'keyboard focus left the Stop button')
+    assert.equal(rewritten, 0, 'what the balloon says was written again')
+  } finally { p.close() }
+})
+
+// A stop the server took, but that hasn't taken effect a while later (a task that ignores being stopped), would leave Stopping… for as
+// long as the task lives: as with the turn's own Stop, it can then be forced, ending the agent and all it started.
+test('a stop of the background work that has not taken effect after a while can be forced', async () => {
+  const p = await convoPage({ running: false })
+  try {
+    await poll(p, { running: false, background: true, tasks: [npmTest] })
+    p.at.closeTimers()
+    await p.click('status-info')
+    await p.click(stopButton(p))
+    assert.deepEqual(p.at.stops, [{ tasks: true }])
+    await poll(p, { running: false, background: true, tasks: [npmTest] })
+    assert.equal(stopButton(p).textContent, 'Stopping…')
+    assert.equal(p.at.heldForce.length, 1, 'nothing waits to offer a forced stop')
+    p.at.forceTimers()
+    assert.equal(stopButton(p).textContent, 'Force stop')
+    assert.equal(stopButton(p).disabled, false)
+    assert.match(said(p), /has not stopped/)
+    await p.click(stopButton(p))
+    assert.deepEqual(p.at.stops, [{ tasks: true }, { force: true }])
+    await poll(p, { running: false, background: false, tasks: [] })
+    assert.equal(stopButton(p), undefined)
+  } finally { p.close() }
+})
+
+test('a stop of the background work that takes effect in time offers no forced stop', async () => {
+  const p = await convoPage({ running: false })
+  try {
+    await poll(p, { running: false, background: true, tasks: [npmTest] })
+    p.at.closeTimers()
+    await p.click('status-info')
+    await p.click(stopButton(p))
+    await poll(p, { running: false, background: false, tasks: [] })
+    p.at.forceTimers()
+    await poll(p, { running: false, background: true, tasks: [watch] })
+    assert.equal(stopButton(p).textContent, 'Stop it', 'the next work was offered a forced stop it was never asked to stop')
   } finally { p.close() }
 })

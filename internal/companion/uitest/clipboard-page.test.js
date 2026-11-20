@@ -19,8 +19,9 @@ function openClipboardPage(waiting, search = '') {
   const w = dom.window
   let inFlight = 0
   let poll = () => {}
-  // gate, when set, is a promise an upload waits on, for a test to see the page while it is on its way.
-  const server = { down: false, refuse: null, uploads: [], gate: null }
+  // hold, when set, keeps each upload waiting until the test lets it go (waiting holds their releases, in the order they came), so a
+  // test can see the page while they are on their way.
+  const server = { down: false, refuse: null, uploads: [], hold: false, waiting: [] }
   w.fetch = async (url, options = {}) => {
     inFlight++
     try {
@@ -28,7 +29,7 @@ function openClipboardPage(waiting, search = '') {
       let body = { items: [] }
       if (options.method === 'POST' && String(url) === '/api/items') {
         const name = decodeURIComponent(options.headers['X-Filename'] || '')
-        if (server.gate) await server.gate
+        if (server.hold) await new Promise((resolve) => server.waiting.push(resolve))
         if (server.refuse) return new Response(JSON.stringify({ error: server.refuse }), { status: 413, headers: { 'Content-Type': 'application/json' } })
         server.uploads.push(name)
         body = waiting.includes(name) ? { duplicate: true, id: 1 } : { id: 2 }
@@ -60,7 +61,8 @@ function openClipboardPage(waiting, search = '') {
     timeouts,
     toast: () => { const el = w.document.getElementById('toast'); return el.hidden ? '' : el.textContent },
     toastIsError: () => w.document.getElementById('toast').classList.contains('error'),
-    toastRole: () => w.document.getElementById('toast').getAttribute('role'),
+    // announced is what each of the page's two live regions says: they are always there, so a screen reader hears what is put in them.
+    announced: () => ({ status: w.document.getElementById('toast-status').textContent, alert: w.document.getElementById('toast-alert').textContent }),
     held: () => Array.from(w.document.querySelectorAll('#held .item')).map((n) => n.textContent),
     clickIn(selector) { w.document.querySelector(selector).click() },
     async poll() { poll(); await settle() },
@@ -244,7 +246,7 @@ test('what the server refuses is said, not held: it would be refused again', asy
     assert.deepEqual(p.held(), [])
     assert.match(p.toast(), /Couldn.t add that: too big/)
     assert.ok(p.toastIsError(), 'a refusal looks like what was done')
-    assert.equal(p.toastRole(), 'alert')
+    assert.deepEqual(p.announced(), { status: '', alert: "Couldn't add that: too big" }, 'a refusal is not announced as an alert')
   } finally { p.close() }
 })
 
@@ -424,19 +426,23 @@ test('there is no status line taking room above the list', async () => {
   } finally { p.close() }
 })
 
+// pasteHeld pastes files while the server holds uploads: the page can't settle until they are let go.
+async function pasteHeld(p, ...names) {
+  const ev = new p.window.Event('paste', { bubbles: true, cancelable: true })
+  ev.clipboardData = { files: names.map((n) => new p.window.File(['x'], n, { type: 'image/png' })), getData: () => '' }
+  p.window.document.dispatchEvent(ev)
+  for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve))
+}
+
 test('a paste on its way says so until it has landed', async () => {
   const p = openClipboardPage([])
   try {
     await p.settle()
-    let release
-    p.server.gate = new Promise((resolve) => { release = resolve })
-    const ev = new p.window.Event('paste', { bubbles: true, cancelable: true })
-    ev.clipboardData = { files: [new p.window.File(['x'], 'a.png', { type: 'image/png' })], getData: () => '' }
-    p.window.document.dispatchEvent(ev)
-    await new Promise((resolve) => setImmediate(resolve))
+    p.server.hold = true
+    await pasteHeld(p, 'a.png')
     assert.equal(p.toast(), 'Sending 1 item…')
     assert.equal(p.timeouts.includes(3000), false, 'it would go before the paste had landed')
-    release()
+    p.server.waiting.shift()()
     await p.settle()
     assert.equal(p.toast(), '', 'it stayed once the paste had landed')
   } finally { p.close() }
@@ -448,6 +454,39 @@ test('a toast goes when clicked', async () => {
     await p.paste('a.png')
     assert.notEqual(p.toast(), '')
     p.clickIn('#toast')
+    assert.equal(p.toast(), '')
+    assert.deepEqual(p.announced(), { status: '', alert: '' }, 'what it said is left for a screen reader to find')
+  } finally { p.close() }
+})
+
+// Switching one element's role between status and alert as its words change is unreliably announced: a screen reader follows a live
+// region from when it appears. The words go into one of two that are always there, and the toast itself is no live region.
+test('what a toast says is announced from live regions that are always there: an outcome politely, a problem as an alert', async () => {
+  const p = openClipboardPage(['a.png'])
+  try {
+    await p.settle()
+    const doc = p.window.document
+    assert.equal(doc.getElementById('toast-status').getAttribute('role'), 'status')
+    assert.equal(doc.getElementById('toast-alert').getAttribute('role'), 'alert')
+    assert.equal(doc.getElementById('toast').getAttribute('role'), null, 'the toast is a live region too: it would be heard twice')
+    await p.paste('a.png')
+    assert.deepEqual(p.announced(), { status: "Already pasted: it's waiting to go with your next message.", alert: '' })
+  } finally { p.close() }
+})
+
+test('of two pastes on their way at once, the first to land leaves "Sending…" up for the other, until it lands too', async () => {
+  const p = openClipboardPage([])
+  try {
+    await p.settle()
+    p.server.hold = true
+    await pasteHeld(p, 'a.png')
+    await pasteHeld(p, 'b.png')
+    assert.equal(p.toast(), 'Sending 2 items…')
+    p.server.waiting.shift()()
+    for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(p.toast(), 'Sending 1 item…', 'the first to land took "Sending…" away from the other')
+    p.server.waiting.shift()()
+    await p.settle()
     assert.equal(p.toast(), '')
   } finally { p.close() }
 })

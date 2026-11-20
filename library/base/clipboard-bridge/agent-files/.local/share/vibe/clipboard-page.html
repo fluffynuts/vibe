@@ -79,6 +79,8 @@
     border-radius: 8px; padding: 8px 12px; font-size: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.3); cursor: pointer;
   }
   #toast.error { border-color: var(--danger); }
+  /* For a screen reader only: the toast's words are announced from these, which are always there (see toast). */
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   #items, #held { display: grid; gap: 12px; }
   #held:not(:empty) { margin-bottom: 12px; }
   #held .item { grid-template-columns: 1fr auto; align-items: center; padding: 8px 12px; border: 1px dashed var(--border); border-radius: 8px; }
@@ -175,7 +177,9 @@
 </main>
 <div id="zoom"><img alt=""></div>
 <div id="link" role="status" hidden></div>
-<div id="toast" role="status" hidden></div>
+<div id="toast" hidden></div>
+<div id="toast-status" class="sr-only" role="status"></div>
+<div id="toast-alert" class="sr-only" role="alert"></div>
 
 <script>
 "use strict";
@@ -194,11 +198,14 @@ var TOAST_STAYS = Infinity;
 var SENDING = "sending";
 
 // toast says what was just done, for a few seconds (ms): longer, and in the colour of a problem, for what the user needs to read
-// and might otherwise take for done (isError). kind names a toast that something else ends (see endToast).
+// and might otherwise take for done (isError). kind names a toast that something else ends (see endToast). It is announced from one
+// of two live regions that are always there, politely or as an alert: a screen reader follows a live region from when it appears, so
+// changing the toast's own role as its words change was heard unreliably.
 function toast(message, ms, isError, kind) {
   toastEl.textContent = message;
   toastEl.classList.toggle("error", !!isError);
-  toastEl.setAttribute("role", isError ? "alert" : "status");
+  document.getElementById(isError ? "toast-status" : "toast-alert").textContent = "";
+  document.getElementById(isError ? "toast-alert" : "toast-status").textContent = message;
   toastEl.dataset.kind = kind || "";
   toastEl.hidden = false;
   clearTimeout(toastTimer);
@@ -213,6 +220,8 @@ function problem(message, ms) {
 function hideToast() {
   clearTimeout(toastTimer);
   toastEl.hidden = true;
+  document.getElementById("toast-status").textContent = "";
+  document.getElementById("toast-alert").textContent = "";
 }
 
 // endToast takes away the toast of that kind, if it is still the one showing: not one that has said something else since.
@@ -511,13 +520,29 @@ function emptyText(empty) {
 }
 
 
+// sending is how many pasted items are on their way to the server, from every paste: "Sending…" says them all, and goes when the
+// last has landed, not when one paste's have.
+var sending = 0;
+
+function saySending() {
+  toast("Sending " + sending + (sending === 1 ? " item…" : " items…"), TOAST_STAYS, false, SENDING);
+}
+
+// landed counts n items as no longer on their way: "Sending…" goes with the last, or says how many are left.
+function landed(n) {
+  sending -= n;
+  if (!sending) endToast(SENDING);
+  else if (!toastEl.hidden && toastEl.dataset.kind === SENDING) saySending();
+}
+
 function uploadAll(entries) {
   var empty = entries.filter(function (e) { return e.blob.size === 0; });
   entries = entries.filter(function (e) { return e.blob.size > 0; });
   if (empty.length) problem(emptyText(empty));
   if (!entries.length) return;
+  sending += entries.length;
   // Not over what was said of the empty ones: that needs reading, and this is over in a moment.
-  if (!empty.length) toast("Sending " + entries.length + (entries.length === 1 ? " item…" : " items…"), TOAST_STAYS, false, SENDING);
+  if (!empty.length) saySending();
   var unreachable = [];
   Promise.all(entries.map(function (e) {
     return upload(e.blob, e.name).catch(function (err) {
@@ -526,7 +551,7 @@ function uploadAll(entries) {
       return null;
     });
   })).then(function (added) {
-    endToast(SENDING);
+    landed(entries.length);
     var notKept = unreachable.length ? hold(unreachable) : 0;
     var extra = notKept ? " " + notKeptText(notKept) : "";
     added = added.filter(Boolean);
@@ -539,8 +564,9 @@ function uploadAll(entries) {
     if (notKept) problem(said);
     else if (said) toast(said);
     if (added.length) return refresh();
-  }).catch(function (err) {
-    endToast(SENDING);
+  // Only for the uploads: what goes wrong showing the list after is not "couldn't add", and the items were counted landed already.
+  }, function (err) {
+    landed(entries.length);
     problem("Couldn't add that: " + err.message);
   });
 }
