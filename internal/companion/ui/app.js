@@ -1864,7 +1864,7 @@
     if (card.closest('[hidden]')) { toast("That comment is in a file you've ticked as viewed: untick it to see it."); return }
     const i = arrowCards().indexOf(card)
     if (i >= 0) { reviewView.at = i; reviewView.steering = true; countComments() }
-    card.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    scrollToThread(card)
     ;(card.querySelector('textarea[data-thread]') || card).focus({ preventScroll: true })
   }
 
@@ -2463,18 +2463,29 @@
     return svg
   }
 
-  // threadLine is where a thread is scrolled to, on the screen: just under
+  // threadLine is how far down the screen a thread goes to: just under
   // the bar and the file header pinned below it, by its scroll-margin-top
-  // (8px more, in app.css).
+  // (8px more, in app.css). Under the tallest header, so that a thread gone
+  // to in any file is at it or above it.
   function threadLine() {
     return $('panel-review').querySelector(':scope > .bar').getBoundingClientRect().bottom + fileHeadHeight() + 8
   }
 
-  // fileHeadHeight is how tall a file's header is, pinned under the bar
-  // while the page is in its file; 0 with no files.
+  // fileHeadHeight is how tall the tallest file header is (pinned under the
+  // bar while the page is in its file); 0 with no files. They differ where
+  // one wraps.
   function fileHeadHeight() {
-    const head = $('review-files').querySelector('.review-file > header')
-    return head ? head.getBoundingClientRect().height : 0
+    const heads = $('review-files').querySelectorAll('.review-file > header')
+    return Math.max(0, ...Array.from(heads, (head) => head.getBoundingClientRect().height))
+  }
+
+  // scrollToThread scrolls to a thread, just under its own file's header:
+  // the scroll margin is set from that header, as headers differ in height.
+  function scrollToThread(card) {
+    const file = card.closest('.review-file')
+    const head = file && file.querySelector(':scope > header')
+    if (head) file.style.setProperty('--review-file-head-h', head.getBoundingClientRect().height + 'px')
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
   // setCommentOrder sets the order the comment arrows go in, 'path' or
@@ -2604,7 +2615,7 @@
     reviewView.at = i
     reviewView.steering = true
     countComments()
-    cards[i].scrollIntoView({ behavior: 'smooth', block: 'start' })
+    scrollToThread(cards[i])
     // Its reply box, to type in at once.
     ;(cards[i].querySelector('textarea[data-thread]') || cards[i]).focus({ preventScroll: true })
   }
@@ -3454,7 +3465,8 @@
   // said why.
   function uncoloured(f) {
     const why = colourSides(f).map(({ side }) => reviewView.colours.get(f.path + '|' + side)).find((c) => c && (c.skipped || c.error))
-    return why ? el('span', { class: 'muted review-uncoloured', text: 'not coloured: ' + (why.skipped || why.error) }) : null
+    const said = why && 'not coloured: ' + (why.skipped || why.error)
+    return why ? el('span', { class: 'muted review-uncoloured', text: said, title: said }) : null
   }
 
   // diffStat is a file's figures, on the right of its header, as GitHub
@@ -3478,14 +3490,29 @@
     return el('span', { class: 'review-step', text: String(step), title: 'Step ' + step + ' of the reading order' + (stop.label ? ': ' + stop.label : '') })
   }
 
+  // reviewPath is a file's path in its header, as its folders and its name, so that the header stays one line: the folders give way,
+  // from the left, and the name doesn't (app.css). All of it is still there to select or find, and in the titles.
+  function reviewPath(f) {
+    const whole = f.status === 'renamed' ? f.oldPath + ' → ' + f.path : f.path
+    const parts = (path) => {
+      const cut = path.lastIndexOf('/') + 1
+      // bdi: in the folders' right-to-left box (which puts the "…" at the left), the path still reads left to right.
+      return [cut ? el('span', { class: 'dir', title: whole }, el('bdi', { text: path.slice(0, cut) })) : null,
+        el('span', { class: 'name', title: whole, text: path.slice(cut) })]
+    }
+    return el('code', { class: 'review-path', title: whole },
+      ...(f.status === 'renamed' ? [...parts(f.oldPath), el('span', { class: 'arrow', text: '→' }), ...parts(f.path)] : parts(f.path)))
+  }
+
   function fileCard(f, stop, step, index, placed, threads) {
     const after = placed.after[f.path] || {}
     const marked = placed.lines[f.path] || {}
     const total = (f.hunks || []).reduce((n, h) => n + h.lines.length, 0)
-    const head = el('header', {}, el('code', { text: f.status === 'renamed' ? f.oldPath + ' → ' + f.path : f.path }),
+    const said = stop ? stop.label || 'in the reading order' : ''
+    const head = el('header', {}, reviewPath(f),
       el('span', { class: 'muted', text: f.status }),
       stepBadge(step, stop), uncoloured(f),
-      stop ? el('span', { class: 'review-stop', text: stop.label || 'in the reading order' }) : null,
+      stop ? el('span', { class: 'review-stop', text: said, title: said }) : null,
       diffStat(f), viewedTick(f))
     const card = el('section', { class: 'review-file', id: 'review-file-' + index, 'data-path': f.path }, head)
     colourWhenNear(f, card)

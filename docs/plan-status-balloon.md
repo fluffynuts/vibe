@@ -63,3 +63,14 @@ is for what is going on (work running), and these are outcomes of one action. In
 - "Sending N items…": while the paste is on its way, gone when it lands (not over the empty-file warning, which needs reading);
 - any toast goes when clicked.
 The held box (pastes waiting for the server to come back) is state, not an outcome, and stays as it is.
+
+## Also on this branch: a Review file's header stays one line, and a comment gone to clears its own header (2026-11-20)
+
+Seen by hand: a long path, with the reading order's label, wrapped a file's header onto two lines, and going to a comment in that file
+(Ctrl+Enter, the arrows) left the comment's top under the header. Decided with the user:
+- **The header stays one line.** The path is its folders and its name, each the header's own item: the folders, the label and the
+  "not coloured" note share what the rest leaves and give way when there isn't enough (the folders from the left, `…vibe/name.html`,
+  the others from their ends); the file's name never does (the header wraps first, on a window too narrow even for that). The whole
+  path and label are in their titles, and the path is still all there to select or find. The tree shows where the file is.
+- **Going to a comment allows for its own file's header**, not the first file's (which was all that was measured): a header can still
+  wrap on a narrow window. Which comment the page is at counts from under the tallest header, for the same reason.

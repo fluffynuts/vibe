@@ -1523,6 +1523,34 @@ test("each file's header says how much changed, and how long it is", async () =>
   } finally { p.close() }
 })
 
+// A file's header is one line: its path gives way from the left (app.css), the name last, so the path is shown as its folders and its
+// name, the whole of it in the title; the reading order's label gives way from its end, the whole of it in its title.
+test("a file's header shows its path as folders and name, whole in the title, and the reading order's label whole in its title", async () => {
+  const one = (path, extra) => Object.assign({ path, status: 'modified', hunks: [{ oldStart: 1, newStart: 1, header: '', lines: [{ kind: 'add', new: 1, text: 'x' }] }] }, extra)
+  const label = 'clipboard: toasts replace the status line'
+  const p = await reviewPage({
+    review: { ...none, started: '2026-10-16T10:00:00Z', order: [{ file: 'lib/base/.local/share/page.html', label }] },
+    diff: [one('lib/base/.local/share/page.html'), one('top.go'), one('new/name.go', { status: 'renamed', oldPath: 'old/name.go' })],
+  })
+  try {
+    await p.click('tab-review')
+    const head = (path) => p.$('review-files').querySelector(`[data-path="${path}"] header`)
+    const path = (h) => h.querySelector('.review-path')
+    const long = head('lib/base/.local/share/page.html')
+    assert.equal(path(long).textContent, 'lib/base/.local/share/page.html', 'the path reads whole, to select or find')
+    assert.equal(path(long).title, 'lib/base/.local/share/page.html')
+    assert.equal(path(long).querySelector('.dir').textContent, 'lib/base/.local/share/')
+    assert.equal(path(long).querySelector('.name').textContent, 'page.html')
+    assert.equal(path(head('top.go')).querySelector('.name').textContent, 'top.go')
+    assert.equal(path(head('top.go')).querySelector('.dir'), null, 'a file at the top has no folders to give way')
+    const renamed = path(head('new/name.go'))
+    assert.equal(renamed.textContent, 'old/name.go→new/name.go', 'the arrow is spaced by the header, as its other items are')
+    assert.equal(renamed.title, 'old/name.go → new/name.go')
+    assert.deepEqual([...renamed.querySelectorAll('.name')].map((n) => n.textContent), ['name.go', 'name.go'])
+    assert.equal(long.querySelector('.review-stop').title, label)
+  } finally { p.close() }
+})
+
 // --- one order: the tree's -----------------------------------------------------------------------
 
 test('files are shown as the tree lists them, the reading order numbered on them', async () => {
