@@ -96,6 +96,8 @@
 
   const state = {
     sandbox: '',
+    // repoWeb is the repository's address on GitHub, that pull requests and issues named in the conversation link to ('' if not there).
+    repoWeb: '',
     // attention is the tabs vibe last said want looking at, and why;
     // reviewAt when the agent last updated the review ("" if never).
     attention: {},
@@ -1010,6 +1012,7 @@
       if (res.body.sbxSignedOut && state.signin && Date.now() - signInShown.lastCheck > SIGNIN_RECHECK_MS) loadSignIn()
       $('sandbox').textContent = state.sandbox || 'all profiles and sandboxes'
       renderWhere(res.body.folder || '', res.body.git || null)
+      setRepoWeb(res.body.git)
       // What can be reviewed depends on the branch, so the start screen's answer is asked again when it changes.
       const branchNow = res.body.git ? res.body.git.branch : ''
       if (reviewView.branch !== undefined && reviewView.branch !== branchNow && reviewView.review && !reviewIsOn(reviewView.review)) loadOptions()
@@ -6066,9 +6069,54 @@
     return svg
   }
 
-  // withThreadRefs is text as nodes, each review comment it names (#24, not
-  // in a word: issue#3, C#4 aren't) a link to that comment on the Review tab.
+  // REPO_REF is a pull request or issue named in text: "PR #110", "PR#110", "pull request #110", "issue #12" (not a Review comment).
+  const REPO_REF = /\b(PRs?|pull requests?|issues?)( ?)#(\d+)\b/gi
+
+  // withThreadRefs is text as nodes: each pull request or issue it names a link to it on GitHub (repoRef), and each review comment
+  // it names (#24, not in a word: C#4 isn't) a link to that comment on the Review tab.
   function withThreadRefs(text) {
+    const nodes = []
+    let at = 0
+    for (const m of text.matchAll(REPO_REF)) {
+      const start = m.index + m[1].length + m[2].length
+      if (start > at) nodes.push(...withCommentRefs(text.slice(at, start)))
+      nodes.push(repoRef(/^issue/i.test(m[1]) ? 'issues' : 'pull', Number(m[3]), '#' + m[3]))
+      at = m.index + m[0].length
+    }
+    if (at < text.length) nodes.push(...withCommentRefs(text.slice(at)))
+    return nodes
+  }
+
+  // repoRef is a pull request's or issue's number as a link to it on GitHub (kind is 'pull' or 'issues'): a link only once the
+  // repository is known to be there (linkRepoRefs gives it its address when the page's state says so); until then, or never, text.
+  function repoRef(kind, number, text) {
+    const a = el('a', { class: 'repo-ref', 'data-kind': kind, 'data-number': String(number), target: '_blank', rel: 'noopener noreferrer', text })
+    linkRepoRef(a)
+    return a
+  }
+
+  function linkRepoRef(a) {
+    if (state.repoWeb) {
+      a.href = state.repoWeb + '/' + a.dataset.kind + '/' + a.dataset.number
+      a.title = (a.dataset.kind === 'issues' ? 'Issue #' : 'Pull request #') + a.dataset.number + ' on GitHub'
+    } else {
+      a.removeAttribute('href')
+      a.removeAttribute('title')
+    }
+  }
+
+  // setRepoWeb takes the repository's address on GitHub from the page's state, linking what was drawn before it was known. Only a
+  // plain github.com address is taken: the links are made of it.
+  function setRepoWeb(git) {
+    const web = git && /^https:\/\/github\.com\/[\w-]+\/[\w.-]+$/.test(git.web || '') ? git.web : ''
+    if (web === state.repoWeb) return
+    state.repoWeb = web
+    for (const a of document.querySelectorAll('a.repo-ref')) linkRepoRef(a)
+  }
+
+  // withCommentRefs is text as nodes, each review comment it names (#24, not in a word: issue#3, C#4 aren't) a link to that comment
+  // on the Review tab.
+  function withCommentRefs(text) {
     const nodes = []
     let at = 0
     // Not in a word (issue#3), a path or address (example.com/#4), nor a

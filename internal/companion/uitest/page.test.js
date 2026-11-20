@@ -2763,10 +2763,10 @@ test("an untracked file that couldn't be read says so", async () => {
 
 // talkPage is the Conversation tab open on what the agent said, with a
 // review whose threads are commented's.
-async function talkPage(text) {
+async function talkPage(text, git) {
   const p = await openPage({
     routes: {
-      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, git },
       '/api/review': { review: { ...commented, started: '2026-10-16T10:00:00Z' }, diff: twoFiles },
       '/api/conversation': () => ({ events: [{ seq: 1, kind: 'user', text: 'please fix' }, agentSaid(2, text)], last: 2, running: false }),
       '/api/log': { entries: [] },
@@ -2788,6 +2788,55 @@ test('a comment the agent names, #2, takes you to it on the Review tab', async (
     assert.equal(p.$('tab-review').getAttribute('aria-selected'), 'true')
     assert.deepEqual(shown, ['review-thread-2'])
     assert.equal(p.window.document.activeElement.dataset.thread, '2', 'its reply box ready')
+  } finally { p.close() }
+})
+
+// "PR #110" is a pull request, not comment #110: on GitHub, when the repository is there (state.git.web), else plain text, never a
+// link to a comment. "issue #12" likewise, to the issue; a bare #5 is still a comment.
+const onGitHub = { branch: 'main', web: 'https://github.com/me/vibe' }
+const repoRefs = (p) => Array.from(p.$('convo-log').querySelectorAll('.repo-ref'))
+
+test("a pull request or issue the agent names links to it on GitHub, not to a Review comment", async () => {
+  const p = await talkPage('PR #110 is up; pull request #111 too, and issue #12 (and PR#113). See #2.', onGitHub)
+  try {
+    assert.deepEqual(refsIn(p).map((r) => r.textContent), ['#2'], 'a pull request or issue was taken for a Review comment')
+    assert.deepEqual(repoRefs(p).map((a) => [a.textContent, a.getAttribute('href')]), [
+      ['#110', 'https://github.com/me/vibe/pull/110'],
+      ['#111', 'https://github.com/me/vibe/pull/111'],
+      ['#12', 'https://github.com/me/vibe/issues/12'],
+      ['#113', 'https://github.com/me/vibe/pull/113'],
+    ])
+    for (const a of repoRefs(p)) {
+      assert.equal(a.target, '_blank')
+      assert.match(a.rel, /noopener/)
+    }
+  } finally { p.close() }
+})
+
+test('a pull request named before the page knew the repository was on GitHub is linked once it knows', async () => {
+  const at = { git: { branch: 'main' } }
+  const p = await openPage({
+    routes: {
+      '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, git: at.git }),
+      '/api/conversation': () => ({ events: [{ seq: 1, kind: 'user', text: 'is it up?' }, agentSaid(2, 'PR #110 is up.')], last: 2, running: false }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+  })
+  try {
+    await p.every('pollConversation')
+    assert.equal(repoRefs(p)[0].hasAttribute('href'), false)
+    at.git = onGitHub
+    await p.every('tick')
+    assert.equal(repoRefs(p)[0].getAttribute('href'), 'https://github.com/me/vibe/pull/110')
+  } finally { p.close() }
+})
+
+test("a pull request named where the repository isn't on GitHub is plain text, not a link to a Review comment", async () => {
+  const p = await talkPage('PR #110 is up.', { branch: 'main' })
+  try {
+    assert.deepEqual(refsIn(p), [], 'it was taken for a Review comment')
+    assert.deepEqual(repoRefs(p).map((a) => [a.textContent, a.hasAttribute('href')]), [['#110', false]])
   } finally { p.close() }
 })
 

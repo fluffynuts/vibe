@@ -896,3 +896,5 @@ ul.signins summary { cursor: pointer; color: var(--muted); }
    only a word too long for the cell is broken. */
 #log-table td.host { min-width: 16em; }
 #log-table td.mono { word-break: normal; overflow-wrap: break-word; }
+/* A pull request or issue named in the conversation: a link to it on GitHub, or plain text where the repository isn't there. */
+a.repo-ref:not([href]) { color: inherit; text-decoration: none; cursor: text; }
