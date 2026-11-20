@@ -1545,6 +1545,10 @@ download one". It **adds time to building the sandbox**: a few minutes, the syst
   system libraries they need, from apt. About 233 MB is downloaded and 588 MB used. The libraries are fetched while the
   browsers are. `PLAYWRIGHT_BROWSERS_PATH` is set to the folder for every Playwright in the sandbox, whichever version a
   project uses, and the folder belongs to the agent's user.
+- **From a script:** `NODE_PATH` points at the global packages (`/usr/lib/node_modules`), so `require('playwright')` works
+  in any throwaway script (an ES module uses `createRequire`); a project's own `node_modules` still comes first. The build
+  log warns if Playwright was installed anywhere else. There are no Python bindings: the agent is told how to install the
+  ones matching the installed version, so they use the browsers already there, if it wants Python.
 - **What isn't:** WebKit, and the full Chromium that a headed run (or `channel: 'chromium'`) wants, which is a larger
   download (about 190 MB more): `npx playwright install chromium` (or `webkit`) adds them. There is no display in a
   sandbox, so tests run headless, as Playwright does by default.

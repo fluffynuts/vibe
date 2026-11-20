@@ -15,6 +15,8 @@ BROWSERS="chromium-headless-shell firefox"
 
 # Where to: set only to try this script.
 FOLDER="${PW_BROWSERS_PATH:-/opt/ms-playwright}"
+# Where the feature's NODE_PATH (config.yaml) says global packages are: set only to try this script.
+NODE_PATH_SET="${PW_NODE_PATH:-/usr/lib/node_modules}"
 LOG="${PW_LOG:-/tmp/sbx-setup.log}"
 
 echo "--- installing Playwright $(date -Is)" >>"$LOG"
@@ -50,6 +52,11 @@ install_playwright() {
     return
   fi
   version=$("$playwright" --version | sed 's/^Version //')
+  # A script finds Playwright with require() only through the NODE_PATH the feature sets: if npm put it elsewhere, say where.
+  root=$(npm root -g)
+  if [ "$root" != "$NODE_PATH_SET" ]; then
+    echo "WARN: Playwright is in $root, but NODE_PATH (the feature's environment) is $NODE_PATH_SET: a script's require('playwright') won't find it; set NODE_PATH=$root" >>"$LOG"
+  fi
   if ! mkdir -p "$FOLDER"; then
     echo "WARN: couldn't make $FOLDER for the browsers: not installed" >>"$LOG"
     return
