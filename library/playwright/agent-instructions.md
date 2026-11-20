@@ -8,7 +8,7 @@ says so). There is no display: run headless, as Playwright does by default.
   points to (Node never looks in its global folder by itself). Then `const { chromium, firefox } = require('playwright')`
   and `await chromium.launch()`. An **ES module** (`.mjs`, or `"type": "module"`) ignores `NODE_PATH`: use
   `import { createRequire } from 'node:module'; const { chromium } = createRequire(import.meta.url)('playwright')`, or
-  write the script as CommonJS (`.js` or `.cjs`).
+  write the script as CommonJS (`.cjs`, or `.js` outside a `"type": "module"` package).
 - **In a project**, `npm i -D playwright` (or `@playwright/test`) and `npx playwright test`: the project's own copy is the
   one used. At the latest version the browsers above are used as they are. A project that pins another version needs
   its own revision of a browser: `npx playwright install firefox` downloads it into the same folder, and the network

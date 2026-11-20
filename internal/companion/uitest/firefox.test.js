@@ -31,29 +31,34 @@ const stateWith = (page, patch) => async (route) => {
 // reviewPage opens the page on its Review tab, the diff drawn, and a.txt's card coloured: each side's colours arriving
 // draws the card afresh (redrawCard), even for plain text that gains none, which takes away a selection in it, the
 // hover that shows a line's +, and a drag under way. Not waited for, they landed in the middle of a test on a slow runner
-// (a drag between two +s found the second not shown, on macOS CI). The redraws are counted from the page's first moment,
-// as they can come before the diff is first seen here; polled, as the page's policy forbids the eval Playwright's own
-// waiting uses.
+// (a drag between two +s found the second not shown, on macOS CI). Counting the card's redraws can't tell: a whole
+// review's redraw (its options arriving, say) takes the card away too. So the page notes the card as it is when the last
+// side's colours are read, which is before they are drawn (the page's own handling of them follows in the same chain of
+// promises, so nothing else can be drawn in between), and the card that replaces that one has them. Watched from the
+// page's first moment, as the colours can come before the diff is seen here; polled, as the page's policy forbids the
+// eval Playwright's own waiting uses.
 async function reviewPage() {
   const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
   await page.addInitScript(() => {
-    window.vibeTestRedrawn = {}
-    new MutationObserver((changes) => {
-      for (const change of changes) {
-        for (const node of change.removedNodes) {
-          if (node.classList && node.classList.contains('review-file')) {
-            window.vibeTestRedrawn[node.dataset.path] = (window.vibeTestRedrawn[node.dataset.path] || 0) + 1
-          }
-        }
-      }
-    }).observe(document, { childList: true, subtree: true })
+    const card = () => document.querySelector('.review-file[data-path="a.txt"]')
+    const json = Response.prototype.json
+    let landed = 0
+    Response.prototype.json = function () {
+      const url = new URL(this.url || 'about:blank')
+      const ours = url.pathname === '/api/review/highlight' && url.searchParams.get('path') === 'a.txt'
+      return json.call(this).then((body) => {
+        if (ours && ++landed === 2) window.vibeTestCardBeforeColours = card()
+        return body
+      })
+    }
+    window.vibeTestColoured = () => landed >= 2 && card() !== null && card() !== window.vibeTestCardBeforeColours
   })
   await page.goto(URL)
   await page.click('#tab-review')
   await page.waitForSelector(plusSel('R20'), { state: 'attached' })
-  let redrawn = 0
-  for (let i = 0; i < 100 && (redrawn = await page.evaluate(() => window.vibeTestRedrawn['a.txt'] || 0)) < 2; i++) await page.waitForTimeout(50)
-  assert.ok(redrawn >= 2, `a.txt's card was drawn afresh for each side's colours within 5s (${redrawn} times)`)
+  let coloured = false
+  for (let i = 0; i < 100 && !(coloured = await page.evaluate(() => window.vibeTestColoured())); i++) await page.waitForTimeout(50)
+  assert.ok(coloured, "a.txt's card was drawn with both sides' colours within 5s")
   return page
 }
 
