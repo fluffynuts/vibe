@@ -3,8 +3,8 @@
 Run by hand against a real `claude` (a few cents of the small model each; they are not part of `go test`). Each starts one
 `claude -p --input-format stream-json --output-format stream-json` in a neutral folder (`EXP_CWD`, default `/tmp/exp-cwd`), drives it
 through stdin, and prints every event with the second it arrived; the raw events go to `EXP_OUT` (default `/tmp/exp-out`) as JSON lines.
-`EXP_MODEL` picks the model (default `claude-haiku-5-5`). Results, and what they mean for the design, are in
-`docs/plan-persistent-agent.md`. Only the process each script starts is ever ended, by its own handle: never end `claude` by name.
+`EXP_MODEL` picks the model (default `claude-haiku-5-5`). Results, and what they mean for the design, are in the plan they were run for,
+`git show 7b56280:docs/plan-persistent-agent.md`; what was decided is `docs/adr/2026-11-16-persistent-agent.md`. Only the process each script starts is ever ended, by its own handle: never end `claude` by name.
 
 | script | asks |
 |---|---|

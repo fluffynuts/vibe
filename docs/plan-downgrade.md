@@ -1,53 +1,12 @@
-# `vibe --downgrade`: go back to an earlier vibe or sbx when an update breaks things (first version built 2026-11-17 on feat/downgrade, as decided below; the rest planned, not built)
+# `vibe --downgrade`: what is left (planned, not built)
 
-Raised 2026-11-04, the day an sbx update (v0.51.0, which moved its claude agent to a schemaVersion 3 kit) stopped every vibe sandbox from starting, and there was no way back except doing it by hand. The want: an escape hatch for a broken sbx update, or a broken vibe release, so the user can carry on working. `vibe --upgrade` is unchanged and still offers the latest when run again.
+The first version is built: one step back for vibe or sbx, opt-in, `~/.vibe` backed up first, what runs stopped first once the user says so
+(`docs/adr/2026-11-17-downgrade.md`). What follows is the wider plan it was cut from, kept for later: more than one step back, naming a
+version, a cache of downloaded releases, which sbx a vibe release works with, the installer taking a release, and going back for Homebrew
+and MSI installs. Raised 2026-11-04, the day an sbx update (v0.51.0) stopped every vibe sandbox from starting. The whole plan as it was is
+`git show 7b56280:docs/plan-downgrade.md`.
 
-## Decided with the user (2026-11-17): the first version
-
-Narrower than "Proposed" below, which stays as the record of the wider idea. The want now: try a new sbx (v0.54.0 was waiting)
-without worrying about being unable to work if it breaks vibe.
-
-1. **`vibe --downgrade` is a checklist like `vibe --upgrade`'s**: one row for vibe, one for sbx, each offering only **the latest
-   release before the installed one** (for sbx, the latest *stable* one before it: no RCs or nightlies). No list of five, no
-   naming a version, no single-choice picker.
-2. **Both rows start unchecked: it is opt-in**, unlike the upgrade, which is opt-out (its rows start ticked).
-3. **Out of the first version** (kept below for later): the release cache, the `COMPAT` asset and skew warnings, the installer's
-   `--release`, naming a version on the command line, more than one version back.
-
-Settled with the user the same day:
-- **Back up `~/.vibe` first** (beside it, not in it: see "Before it changes anything"), and **refuse while any vibe session is
-  running**, for either row: sbx under a running sandbox is the obvious risk, and a vibe downgrade changes what is deployed to
-  sandboxes that wouldn't see it.
-- **`-f` is ignored by `--downgrade`**: the user always chooses (both rows start unchecked); with no terminal it says so and
-  changes nothing. The user has wanted sbx back often (by hand, annoyingly) and vibe never yet, but the vibe row stays, for a
-  bad release, and to mirror `--upgrade`.
-- **The list of releases comes from the Atom feed** (`<repo>/releases.atom`: public, no API, no sign-in). Tried 2026-11-17: it
-  has the 10 newest (vibe 0.1.235, 0.1.228, ...; sbx v0.54.0, its RCs, v0.53.0, ...), and `?page=2` gives the same page, so it
-  does not page. Only when the installed version is older than all ten, fall back to the REST API
-  (`api.github.com/repos/<repo>/releases?per_page=100`, paging on with `&page=N` only if still not found), saying so if it is
-  refused. Confirmed by the user from the host with no token, 2026-11-17: the feed as above; the API answers anonymously
-  (`x-ratelimit-limit: 60`), and pages (30 a page by default: `page=2` of vibe's starts at 0.1.135).
-- **A development build** has no build number: its vibe row says there is nothing to go back to. To hand-test the real flow,
-  build one that passes for a release: `go build -ldflags "-X vibe.Build=235" -o vibe ./src/vibe` is 0.1.235 (Version is
-  VERSION plus Build; see version.go), and offers 0.1.228.
-
-Still to settle (asked 2026-11-17, answer pending; **built as proposed**, so either answer is a small change): sbx installed by
-MSI (Windows) or Homebrew. Proposed: the first version
-downgrades only where it is a plain install of the older release (the Linux release script; macOS tarball or .dmg), and for
-MSI and Homebrew says how to do it by hand: MSI needs an uninstall first (to be checked that it loses no sandboxes), and
-Homebrew can only install its current version.
-
-Start from `src/vibe/selfupgrade.go` (the `--upgrade` checklist, `upgradeVibe`, the sbx install path, `installedSbxMethod`),
-`internal/selfupdate` (`LatestTag`, `Download`, `Newer`) and `internal/sbxinstall` (`LatestStableTag`, `Stable`).
-
-## What there is
-
-- `vibe --upgrade` (`src/vibe/selfupgrade.go`) finds the latest vibe (`selfupdate.LatestTag`: it reads where `releases/latest` redirects to, which needs no GitHub login and no API) and the latest stable sbx (`sbxinstall.LatestStableTag`, the same trick, refusing an RC), offers them in a pick list, and installs. vibe's way: `selfupdate.Download` (checked against the tag's `SHA256SUMS`) → `Unzip` → run `--install` from the unpacked release, which replaces the binary and the package files in `~/.vibe`. sbx's way: `installSbxRelease` / the install method that put it there (`installedSbxMethod`).
-- Releases are kept: every push to master is a release `v0.1.<run>`, with fixed asset names (`vibe-linux-amd64.zip`, ... plus `SHA256SUMS`), so `https://github.com/fluffynuts/vibe/releases/download/v0.1.57/vibe-linux-amd64.zip` is a stable URL for any release. (No step in the workflow prunes old ones.)
-- `--install` already works from "the package's version from the last install" (`~/.vibe/package-files`, a three-way merge base: `internal/upgrade`). Going to an older package is the same operation in the other direction: a file only the package changed goes back to the older version; one the user edited is a conflict settled by `--update-strategy` or by asking.
-- `selfupdate.Newer` compares versions numerically, so `0.1.9` sorts below `0.1.10`.
-
-## Proposed
+## Further than one step back
 
 `vibe --downgrade [vibe|sbx] [VERSION]` (no short form: a flag nobody should hit by accident).
 
@@ -71,12 +30,6 @@ Raised the same day: keep the release zips vibe downloads, so most rollbacks nee
 - **sbx.** Its release downloads are much larger and differ by method (tarball, .dmg, .msi), so they are **not** cached in the first version: an sbx downgrade comes from upstream. The size is to be measured before deciding whether to keep just the one before the installed.
 - **`--upgrade` can use it too:** when the latest is already cached (say, after a downgrade from it), it installs from the cache after verifying, rather than download it again.
 
-## Before it changes anything
-
-- **A backup, outside `~/.vibe`.** Zip `~/.vibe` (as `--re-compose` zips a profile into `~/.vibe/backup/`) to a file *beside* it, such as `~/.vibe-backup-<date>_<time>.zip`, so losing `~/.vibe` doesn't lose its backup (the very thing that went wrong today). Keep the last three; say where it is.
-- **Refuse while a vibe session is running** for a sandbox (`internal/running` knows), as `--restore` does, or ask to end it, rather than replace files under it. (`--upgrade` today replaces the binary under a running vibe; a downgrade is more likely to be done because something is wrong, so it is stricter.)
-- **Say what will happen, then ask** (`-f` skips the question, not the backup): "will replace vibe 0.1.60 with 0.1.57; your ~/.vibe is backed up to ...".
-
 ## Skew: the part that needs care
 
 A downgrade is only coherent if the other pieces still fit, and today's incident was exactly such a mismatch.
@@ -89,19 +42,10 @@ A downgrade is only coherent if the other pieces still fit, and today's incident
 
 ## sbx, by how it was installed
 
-`vibe --downgrade sbx` goes by the method vibe installed it with, as the upgrade does; an sbx vibe didn't install is left alone and said so.
+Built: the Linux release script and the macOS tarball or `.dmg` go back as they go forward. Left: the two that today only say how to do it by hand.
 
-- **Linux** (release script) and **macOS tarball / .dmg**: the same code as the upgrade with an older tag; replacing the files is what they do already.
 - **Windows MSI**: Windows Installer refuses to install an older version over a newer one, so the newer is uninstalled first (the user's or the machine's, whichever it was), then the older installed. **Check first** that this loses nothing the user keeps (their sandboxes live in sbx's data folder, which an uninstall should leave).
 - **Homebrew cask**: the cask installs whatever version it currently has, so it can't go back. Say so, and offer the tarball method (which leaves the brew install in place or replaces it: to be decided with the macOS code in front of us).
-
-## Where the upstream list comes from
-
-With the cache above, this list only adds versions the user never had, and its failure is no longer fatal. `releases/latest` gives one tag; five need a list. Candidates, to settle in a spike:
-
-- **The Atom feed** (`<releases>.atom`): no API, no rate limit that matters. Pages are short (about ten entries), and sbx's feed is mostly RCs and nightlies, so five *stable* ones may be past the first page. **Check** whether it pages (`?page=2` or `?after=`).
-- **The REST API** (`api.github.com/repos/<repo>/releases?per_page=100`): simple and complete, but anonymous calls are limited to 60 an hour per address (a shared office address can hit that). Acceptable for a command that is run in a crisis, if the feed doesn't do. If it is used, a failure says it was the limit and how to name a version directly (`vibe --downgrade vibe 0.1.57` needs no list).
-- Naming a version directly never needs a list: it goes straight to `releases/download/v<version>/...`.
 
 ## The installer, for when vibe itself is broken
 
@@ -115,7 +59,6 @@ If the installed vibe can't run, `vibe --downgrade` can't help. So:
 - **The cache:** a download is cached under its versioned name with its checksum line, and a failure to cache doesn't fail the upgrade; a cached file whose checksum no longer matches is refused and not installed; the merged list shows a cached version when the network list fails (with the note), shows a version once when both have it, and still stops at five; pruning keeps the newest six, never the installed one's removal, and ignores files that don't match the pattern; `--install` with `VIBE_RELEASE_ZIP` set caches that zip, and without it caches nothing.
 - **Listing:** from a stand-in server (as `selfupdate`'s tests point `Releases` at one): ordered numerically (0.1.9 before 0.1.10), the installed one excluded, only the five before it, sbx's RCs and nightlies skipped, fewer than five when that's all there is, a feed that fails says why.
 - **Choosing:** the single choice; Esc changes nothing; `-f` without a version fails and prints the list; a version that isn't in the list, or isn't older, or has no release, is refused with the reason.
-- **Doing it:** a release with a missing or wrong checksum is refused and nothing is replaced; the backup is made first and its failure stops the downgrade; a running session stops it.
 - **The data:** run `--install` from an older package over a `~/.vibe` a newer one wrote (fixture folders): files the user never edited go back, edited ones are conflicts settled by the strategy, the state files are untouched.
 - **sbx:** the per-method paths with stubs for the install scripts and `msiexec` (the MSI's uninstall-then-install order; the brew refusal); the daemon stopped and started around it.
 - **The installer scripts:** `--release` picks the right URL (the scripts already take `VIBE_RELEASES` for a stand-in server).

@@ -23,3 +23,6 @@ where there is something to say. A decision that is later changed gets a note in
 | [2026-10-29-signing-in](2026-10-29-signing-in.md) | Signing in to sbx and the agent; the network policy; a start while signed out |
 | [2026-11-12-stop-feedback](2026-11-12-stop-feedback.md) | Stopping the agent says so at once; a prompt sent meanwhile waits for the stop |
 | [2026-11-12-network-block-and-filter](2026-11-12-network-block-and-filter.md) | The network tabs: Block and Allow beside the rules there are, superseded log rows, a filter, a read sign, polls that change nothing |
+| [2026-11-12-batch-git-token](2026-11-12-batch-git-token.md) | One GitHub token for several sandboxes at once; "the token another sandbox has" |
+| [2026-11-16-persistent-agent](2026-11-16-persistent-agent.md) | One agent process for the conversation: background work survives a prompt and calls back |
+| [2026-11-17-downgrade](2026-11-17-downgrade.md) | One step back for vibe or Docker SBX; what runs is stopped before sbx changes |
