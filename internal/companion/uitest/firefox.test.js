@@ -754,7 +754,18 @@ test('the emoji list follows the prompt as it scrolls', async () => {
       return { was, now: ta.scrollTop }
     }, before.line)
     assert.ok(scrolled.now < scrolled.was, `the prompt did not scroll (scrollTop ${scrolled.was} → ${scrolled.now}), so this tests nothing`)
-    await page.waitForFunction((was) => document.getElementById('convo-emoji').getBoundingClientRect().bottom > was + 10, before.list.bottom, { timeout: 5000 })
+    // Polled, saying where things were if the list never moves: it timed out once on macOS CI with nothing to go on.
+    let seen = null
+    for (let i = 0; i < 100; i++) {
+      seen = await page.evaluate(() => {
+        const list = document.getElementById('convo-emoji')
+        return { bottom: list.getBoundingClientRect().bottom, hidden: list.hidden, top: list.style.top, scrollTop: document.getElementById('convo-input').scrollTop }
+      })
+      if (seen.bottom > before.list.bottom + 10) break
+      await page.waitForTimeout(50)
+    }
+    assert.ok(seen.bottom > before.list.bottom + 10, `the list did not move down with the prompt within 5s: before ${JSON.stringify(before.list)}, ` +
+      `scrolled ${JSON.stringify(scrolled)}, then ${JSON.stringify(seen)}`)
     const after = await listBox(page)
     const moved = after.list.bottom - before.list.bottom
     const by = scrolled.was - scrolled.now
