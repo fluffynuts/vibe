@@ -105,6 +105,7 @@ func gatherInfo(ctx context.Context, lay layout.Layout, args cliargs.Args, name,
 	if err != nil {
 		return info, false, err
 	}
+	sbxKnows.noteList(statuses)
 	for _, s := range statuses {
 		if s.Name == name {
 			info.exists, info.running = true, s.Running

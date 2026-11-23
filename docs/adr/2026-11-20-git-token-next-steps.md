@@ -29,6 +29,11 @@ sandbox holding it; and nothing said, across sandboxes, whose token was about to
   `gittoken.WarnWithin` (3 days, the session start's warning), from vibe's records (GitHub isn't asked), expired first; and that
   `vibe --batch-git-token` renews several at once. An expired token, this sandbox's or another's, is a reason for the tab's dot, naming
   them; one only about to expire isn't (the dot would be there for days before each expiry).
+  Only sandboxes sbx knows count, in both (found in review, #111): vibe's records can outlive their sandbox (`sbx rm`, a reset), the
+  batch can't renew those, and a lost one's expired token would have kept the dot on for good. The names come from the last `sbx ls`
+  vibe made (the Admin tab's status, the batch, `--info`), kept for the dot, which comes from the page's state poll and never waits on
+  sbx: missing or over 10 minutes old, it asks sbx again in the background, one ask at a time, and until sbx has answered once the dot
+  leaves expired tokens out rather than guess.
 
 ## Consequences
 

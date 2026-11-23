@@ -11,15 +11,16 @@ import (
 
 // gitTokensRunningOut are the other sandboxes whose GitHub token has expired or expires within gittoken.WarnWithin, from vibe's
 // records alone (GitHub isn't asked): expired first, then the soonest. except, the sandbox the Admin tab is for, is left out: its
-// own token has a box of its own. A record that can't be read is passed over: this is a reminder, not a check.
-func gitTokensRunningOut(vibeHome, except string, now time.Time) []companion.AdminTokenSoon {
+// own token has a box of its own; so is a record of a sandbox sbx doesn't know (known), which the batch couldn't renew. A record
+// that can't be read is passed over: this is a reminder, not a check.
+func gitTokensRunningOut(vibeHome, except string, now time.Time, known map[string]bool) []companion.AdminTokenSoon {
 	records, err := state.List(vibeHome)
 	if err != nil {
 		return nil
 	}
 	var soon []state.Instance
 	for _, r := range records {
-		if r.Name != except && r.GitToken != "" && gittoken.Expiring(r.GitTokenExpires, now) {
+		if r.Name != except && known[r.Name] && r.GitToken != "" && gittoken.Expiring(r.GitTokenExpires, now) {
 			soon = append(soon, r)
 		}
 	}
@@ -32,16 +33,16 @@ func gitTokensRunningOut(vibeHome, except string, now time.Time) []companion.Adm
 	return out
 }
 
-// expiredGitTokens are the sandboxes, of all vibe has records of, whose GitHub token has expired: what the Admin tab's dot is for
+// expiredGitTokens are the sandboxes, of those sbx knows (known), whose GitHub token has expired: what the Admin tab's dot is for
 // (a token only expiring soon gets no dot, or it would be there for days before each expiry).
-func expiredGitTokens(vibeHome string, now time.Time) []string {
+func expiredGitTokens(vibeHome string, now time.Time, known map[string]bool) []string {
 	records, err := state.List(vibeHome)
 	if err != nil {
 		return nil
 	}
 	var names []string
 	for _, r := range records {
-		if r.GitToken != "" && gittoken.Expired(r.GitTokenExpires, now) {
+		if known[r.Name] && r.GitToken != "" && gittoken.Expired(r.GitTokenExpires, now) {
 			names = append(names, r.Name)
 		}
 	}

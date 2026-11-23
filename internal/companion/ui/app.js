@@ -2923,7 +2923,7 @@
   }
 
   // reviewWhat is what review rv is of, as a phrase: "the changes against master", "commit 1a2b3c4", "the commits not pushed to
-  // origin/x", "the uncommitted changes".
+  // origin/x", "the uncommitted changes". The bar of an open review and the line of a closed one both say it, so they agree.
   function reviewWhat(rv) {
     return rv.commit ? 'commit ' + rv.commit : rv.unpushed ? 'the commits not pushed to ' + rv.ref : rv.ref ? 'the changes against ' + rv.ref
       : 'the uncommitted changes'
@@ -3289,7 +3289,7 @@
       : rv.state || ''
     $('review-state').classList.toggle('reviewing', on && rv.state === 'in progress')
     if (on) announceReview(rv)
-    $('review-of').textContent = !on ? '' : rv.commit ? 'of commit ' + rv.commit : rv.unpushed ? 'of the commits not pushed to ' + rv.ref : rv.ref ? 'against ' + rv.ref : 'of the uncommitted changes'
+    $('review-of').textContent = !on ? '' : 'of ' + reviewWhat(rv)
     const unsent = unsentCount(rv)
     const stillWriting = rv.state === 'in progress'
     $('review-submit').disabled = !unsent || !state.conversation || stillWriting

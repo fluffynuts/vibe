@@ -78,7 +78,9 @@ func (a *companionAdmin) Status() companion.AdminStatus {
 		}
 	}
 	st.GitToken = adminGitToken(a.name, a.target, info)
-	st.GitToken.Others = gitTokensRunningOut(a.lay.Home, a.name, timeNow())
+	// gatherInfo, above, has just listed sbx: what it knows is fresh.
+	known, _ := sbxKnows.known(knownSandboxesFresh)
+	st.GitToken.Others = gitTokensRunningOut(a.lay.Home, a.name, timeNow(), known)
 	return st
 }
 
@@ -177,6 +179,7 @@ func (a *companionAdmin) sandboxState() string {
 	if err != nil {
 		return "and sbx can't say what state the sandbox is in (" + err.Error() + ")"
 	}
+	sbxKnows.noteList(statuses)
 	for _, st := range statuses {
 		if st.Name == a.name {
 			if st.Running {

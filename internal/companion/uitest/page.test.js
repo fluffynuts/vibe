@@ -682,6 +682,27 @@ test('a closed review says what it was of, with its note, when it started, and i
   }
 })
 
+// The bar of an open review and the line of a closed one say what a review is of in the same words, from one function, so a new
+// kind of review (a range of commits, planned) is said the same in both.
+test('the bar says what an open review is of in the same words a closed review is described in', async () => {
+  for (const [fields, phrase] of [
+    [{ ref: 'master' }, 'the changes against master'],
+    [{ commit: '1a2b3c4' }, 'commit 1a2b3c4'],
+    [{ ref: 'origin/feat', unpushed: true }, 'the commits not pushed to origin/feat'],
+    [{}, 'the uncommitted changes'],
+  ]) {
+    const open = await reviewPage({ review: { ...none, started: '2026-10-22T13:04:00Z', ...fields } })
+    try {
+      await open.click('tab-review')
+      assert.equal(open.$('review-of').textContent, 'of ' + phrase)
+    } finally { open.close() }
+    const closed = await startPage({ review: closedAs(fields) })
+    try {
+      assert.match(closed.$('review-closed-what').textContent, new RegExp('It was of ' + phrase.replace(/[/.]/g, '\\$&')))
+    } finally { closed.close() }
+  }
+})
+
 test("a closed review's comments are counted by status, and open ones are said plainly", async () => {
   const p = await startPage({ review: closedAs({ ref: 'master', threads: [thread(1, 'resolved'), thread(2, 'open'), thread(3, 'open'), thread(4, 'dismissed')] }) })
   try {

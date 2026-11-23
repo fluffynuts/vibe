@@ -494,7 +494,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		Choice:                 choiceFor(vibeHome, name, inst, profileChoice{lay: lay, profile: inst.Profile}),
 		Prepare:                readyForTurn(name),
 		SandboxGit:             sandboxGitFor(name, inst.Target),
-		ExpiredGitTokens:       func() []string { return expiredGitTokens(vibeHome, timeNow()) },
+		ExpiredGitTokens:       func() []string { return expiredForDot(vibeHome, timeNow(), sbxKnows) },
 		PreferredDefaultBranch: preferredDefaultBranch(lay.HomePath("settings.yaml")),
 		RememberDefaultBranch:  rememberDefaultBranch(lay.HomePath("settings.yaml")),
 		Wake:                   readyForTurn(name),

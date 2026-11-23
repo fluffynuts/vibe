@@ -55,6 +55,7 @@ func batchCandidates(vibeHome string) ([]state.Instance, error) {
 	if err != nil {
 		return nil, err
 	}
+	sbxKnows.noteList(statuses)
 	known := map[string]bool{}
 	for _, s := range statuses {
 		known[s.Name] = true
