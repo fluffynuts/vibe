@@ -6644,7 +6644,10 @@
     }
     // News that has since gone (work started and ended out of sight) is not kept for coming back to: it would pop up empty.
     if (!items.length) statusView.pending = false
-    if (news) {
+    // Opened by the user, it is already showing the news, and stays until they close it: popping it up again would make it close itself.
+    if (news && statusView.open && statusView.byUser) {
+      statusView.pending = false
+    } else if (news) {
       if (statusSeen()) popStatus()
       else statusView.pending = true
     } else if (statusView.open && !statusView.byUser) {

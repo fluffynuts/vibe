@@ -156,6 +156,23 @@ test('a balloon that popped up of itself is held open while hovered or focused, 
   } finally { p.close() }
 })
 
+test('opened from the button, the balloon stays open when what it lists changes without emptying, with no countdown', async () => {
+  const p = await convoPage({ running: false, background: true, tasks: [npmTest, watch] })
+  try {
+    p.at.closeTimers()
+    await p.click('status-info')
+    await poll(p, { running: false, background: true, tasks: [watch] })
+    await poll(p, { running: false, background: true, tasks: [watch, npmTest] })
+    await poll(p, { running: true, quietMinutes: 5, background: true, tasks: [watch] })
+    assert.ok(shown(p))
+    assert.equal(p.at.held.length, 0, 'a close timer was set on a balloon the user opened')
+    assert.equal(balloon(p).querySelector(':scope > .countdown'), null, 'it has a countdown bar')
+    assert.equal(button(p).getAttribute('aria-expanded'), 'true')
+    await p.click('status-info')
+    assert.equal(shown(p), false, 'the button no longer closes it: it took itself for popped up')
+  } finally { p.close() }
+})
+
 test('a warning pops up and stays, says "at least", and its count updating changes the text without opening it again', async () => {
   const p = await convoPage({ running: true })
   try {

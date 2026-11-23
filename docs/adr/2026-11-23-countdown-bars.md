@@ -23,7 +23,8 @@ Amends `2026-11-18-status-balloon.md`: opened by the user, it stayed open once i
 the background will appear here." Now, whenever the list goes from something to nothing, it closes however it was opened, focus inside it
 going back to its button (as after Stop). Opened while already empty, it still says what it is for.
 
-## Not changed (found on the way)
+## A balloon the user opened stays open through news
 
-A balloon the user opened turns into one that closes itself when its list changes but doesn't empty (a task ending while another runs pops
-it up again, as news). The status-balloon ADR says one the user opened stays until closed; this was left for the user to decide.
+Found on the way, fixed with the user's go-ahead: a balloon the user opened turned into one that closes itself when its list changed without
+emptying (a task ending while another runs is news, which popped it up again, as if of itself). As `2026-11-18-status-balloon.md` says, one
+the user opened now stays until they close it, or its list empties; news shows in it, with no countdown.
