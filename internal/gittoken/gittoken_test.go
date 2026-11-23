@@ -497,3 +497,13 @@ func TestReadOnlyInstructionsSayTheAgentCanReadButNotPush(t *testing.T) {
 		}
 	}
 }
+
+// The sandbox's own instructions say to push from inside it; for a read-only sandbox that is wrong, and an agent answered from them
+// without reading vibe's file (seen 2026-11-23).
+func TestTheKitsInstructionsSayVibesFileWinsAndWhenToReadIt(t *testing.T) {
+	for _, want := range []string{"asked about", "overrides", "the user's choice"} {
+		if !strings.Contains(KitInstructions, want) {
+			t.Errorf("the kit's instructions should say %q:\n%s", want, KitInstructions)
+		}
+	}
+}

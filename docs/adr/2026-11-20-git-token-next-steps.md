@@ -48,7 +48,12 @@ sandbox holding it; and nothing said, across sandboxes, whose token was about to
     (only with `--git-token-env`); without it, it is refused as before, so a script never ends up read-only by surprise.
   - It is recorded per sandbox (`gitReadOnly` in its record): `--info`, the Admin tab and the batch's list say "read-only".
   - The agent's instructions become "Reading from GitHub in this sandbox": it fetches, pulls and reads with `gh`, can't push,
-    commits and tells the user what is ready. The rules for pushing stay recorded, not shown, for when it can push.
+    commits and tells the user what is ready. The rules for pushing stay recorded, not shown, for when it can push, and aren't asked
+    for when read-only is chosen (asking would only puzzle).
+  - The kit's pointer to that file says to read it also when asked about GitHub access, and that it overrides anything else about
+    pushing: the sandbox's own instructions say to push from inside it, and an agent asked about its GitHub access answered from
+    those without reading the file (seen 2026-11-23, while hand-testing). The pointer is in the kit, so every sandbox shows as out
+    of date until it is updated.
   - The check from inside expects a refusal ("read-only, as chosen"); a push GitHub would take is a warning, since the token
     can do more than vibe recorded.
   - A batch makes read-only only the sandboxes whose repository the token can only read, and only when read-only was

@@ -180,3 +180,17 @@ func TestANewDefaultTokenKeepsTheSandboxesUsingItReadOnly(t *testing.T) {
 		t.Errorf("a sandbox given read-only should stay so with the new default: %+v", inst)
 	}
 }
+
+func TestTheRulesForPushingArentAskedForAReadOnlyTokenAndAreKept(t *testing.T) {
+	was := askGitRules
+	t.Cleanup(func() { askGitRules = was })
+	asked := 0
+	askGitRules = func(preset []string) []string { asked++; return []string{gittoken.RuleNoDefaultBranch} }
+	kept := []string{gittoken.RuleFeatureBranch}
+	if got := gitRulesFor(&gitAccess{readOnly: true}, kept); asked != 0 || len(got) != 1 || got[0] != gittoken.RuleFeatureBranch {
+		t.Errorf("read-only: asked %d times, rules %v; want not asked, %v kept", asked, got, kept)
+	}
+	if got := gitRulesFor(&gitAccess{}, kept); asked != 1 || got[0] != gittoken.RuleNoDefaultBranch {
+		t.Errorf("a token that can push: asked %d times, rules %v; want asked once", asked, got)
+	}
+}

@@ -269,9 +269,21 @@ func askGitAccess(vibeHome, name string, repo *gittoken.Repo, current *state.Ins
 	if has && len(rules) == 0 {
 		rules = current.GitRules
 	}
-	access.rules = pickGitRules(rules)
+	access.rules = gitRulesFor(access, rules)
 	return access, choices[idx], nil
 }
+
+// gitRulesFor are the rules for pushing access is given: asked for, starting from preset, unless the token is read-only, when there is
+// nothing to push and asking would only puzzle; preset are kept then, for a token that can push later.
+func gitRulesFor(access *gitAccess, preset []string) []string {
+	if access.readOnly {
+		return preset
+	}
+	return askGitRules(preset)
+}
+
+// askGitRules asks which rules the agent is given for pushing (pickGitRules); tests stand in for it.
+var askGitRules = pickGitRules
 
 // tokenDonor is a sandbox whose token another may be given: vibe keeps a
 // copy of each sandbox's token on the host (see giveGitAccess), so nothing is

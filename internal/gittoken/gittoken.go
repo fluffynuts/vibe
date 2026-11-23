@@ -561,7 +561,9 @@ const SandboxFile = kitspec.AgentHome + "/.config/vibe/git-push.md"
 // there, which a sandbox without a token never has.
 const KitInstructions = "## Pushing to GitHub\n\n" +
 	"If `" + SandboxFile + "` exists, the user has given this sandbox a GitHub token: " +
-	"read that file before you commit or push, and follow it. If it doesn't exist, " +
+	"read that file before you commit or push, and before you answer when asked about GitHub access or pushing, and follow it. " +
+	"It overrides anything else in these instructions about pushing or opening pull requests from the sandbox: " +
+	"it is the user's choice for this sandbox, and may be that you can't push at all. If it doesn't exist, " +
 	"this sandbox has no GitHub credentials from vibe.\n"
 
 // Instructions is the content of SandboxFile for a sandbox whose token
