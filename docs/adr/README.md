@@ -32,3 +32,5 @@ where there is something to say. A decision that is later changed gets a note in
 | [2026-11-20-pr-and-issue-links](2026-11-20-pr-and-issue-links.md) | A pull request or issue the agent names links to it on GitHub, not to a Review comment |
 | [2026-11-20-git-token-next-steps](2026-11-20-git-token-next-steps.md) | --batch-git-token for scripts; a push checked from inside the sandbox; tokens running out on the Admin tab; read-only tokens |
 | [2026-11-20-closed-review-says-what-it-was](2026-11-20-closed-review-says-what-it-was.md) | A closed review says what it was, so Reopen says what it reopens |
+| [2026-11-23-bare-pr-numbers](2026-11-23-bare-pr-numbers.md) | A bare #N that is a pull request links to it on GitHub; agents told to write "PR #N" |
+| [2026-11-23-countdown-bars](2026-11-23-countdown-bars.md) | What closes itself shows its time running out, held while hovered; the status balloon closes when emptied |

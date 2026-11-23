@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"vibe/internal/review"
@@ -66,21 +67,62 @@ type branchOffer struct {
 // conversationNewOptions is what the dialog can offer: a POST, as it may
 // wake the sandbox to find out.
 func (s *Server) conversationNewOptions(w http.ResponseWriter, r *http.Request) {
+	steps := s.newSteps()
+	ctx := context.WithValue(r.Context(), gitRunsKey{}, &steps.gitRuns)
 	body := map[string]interface{}{"review": s.reviewOpen()}
 	hasClipboard, hasRepository := s.clipboardAt() != "", s.repositoryHere()
+	steps.done("the review and the folder's git status on the host")
 	if hasClipboard || hasRepository {
 		asleep := ""
-		if err := s.wake(r.Context()); err != nil {
+		if err := s.wake(ctx); err != nil {
 			asleep = err.Error()
 		}
+		steps.done("waking the sandbox")
 		if hasClipboard {
-			body["clipboard"] = s.clipboardOffer(r.Context(), asleep)
+			body["clipboard"] = s.clipboardOffer(ctx, asleep)
+			steps.done("the clipboard page")
 		}
 		if hasRepository {
-			body["branch"] = s.branchOffer(r.Context(), asleep)
+			body["branch"] = s.branchOffer(ctx, asleep)
+			steps.done("git in the sandbox")
 		}
 	}
+	steps.logIfSlow("New conversation's options")
 	writeJSON(w, http.StatusOK, body)
+}
+
+// gitRunsKey is the context key of a count of the times sandboxGit ran git in the sandbox, for steps.
+type gitRunsKey struct{}
+
+// steps times what a request does, step by step, for vibe's log when the whole takes longer than slowRequest: the request's own
+// line (see timed) says that it was slow, this says where the time went.
+type steps struct {
+	s       *Server
+	began   time.Time
+	last    time.Time
+	took    []string
+	gitRuns atomic.Int32
+}
+
+func (s *Server) newSteps() *steps {
+	now := s.clock()
+	return &steps{s: s, began: now, last: now}
+}
+
+func (st *steps) done(what string) {
+	now := st.s.clock()
+	line := what + " " + now.Sub(st.last).Round(100*time.Millisecond).String()
+	if what == "git in the sandbox" {
+		line += fmt.Sprintf(" (%d runs)", st.gitRuns.Load())
+	}
+	st.took = append(st.took, line)
+	st.last = now
+}
+
+func (st *steps) logIfSlow(what string) {
+	if took := st.s.clock().Sub(st.began); took > slowRequest && st.s.cfg.Log != nil {
+		st.s.cfg.Log(fmt.Sprintf("companion page: %s took %s: %s", what, took.Round(100*time.Millisecond), strings.Join(st.took, ", ")))
+	}
 }
 
 func (s *Server) wake(ctx context.Context) error {
@@ -191,6 +233,9 @@ func (s *Server) hasLocalBranch(ctx context.Context, name string) bool {
 // sandboxGit runs git in the sandbox's folder, within limit; one it gave up
 // on says what it waited for.
 func (s *Server) sandboxGit(ctx context.Context, limit time.Duration, args ...string) (string, error) {
+	if runs, ok := ctx.Value(gitRunsKey{}).(*atomic.Int32); ok {
+		runs.Add(1)
+	}
 	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	out, err := s.cfg.SandboxGit(ctx, args...)

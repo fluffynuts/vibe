@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"vibe/internal/review"
 )
@@ -675,6 +676,47 @@ func TestTheClipboardOfferAsksAgainOnlyWhereAMomentMayCureIt(t *testing.T) {
 		s.cfg.ClipboardURL = func() string { return c.url }
 		if got := s.clipboardOffer(context.Background(), c.asleep); got.Retry != c.retry {
 			t.Errorf("%s: Retry is %v, want %v (%+v)", c.name, got.Retry, c.retry, got)
+		}
+	}
+}
+
+// Opening the New conversation dialog was slow to offer its button, saying nothing of why: when its options take long, vibe's log
+// says how long each step took, and how many times git was run in the sandbox, to tell which to make faster.
+func TestSlowNewConversationOptionsSayWhereTheTimeWent(t *testing.T) {
+	work, _ := repoWithOrigin(t)
+	s := freshServer(t, freshSetup{work: work, clipboard: &clipboardItemsStandIn{}})
+	var logged []string
+	s.cfg.Log = func(m string) { logged = append(logged, m) }
+	var mu sync.Mutex
+	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	advance := func(d time.Duration) { mu.Lock(); now = now.Add(d); mu.Unlock() }
+	s.clock = func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	s.cfg.Wake = func(context.Context, func(string)) error { advance(3 * time.Second); return nil }
+	git := s.cfg.SandboxGit
+	s.cfg.SandboxGit = func(ctx context.Context, args ...string) (string, error) {
+		advance(time.Second)
+		return git(ctx, args...)
+	}
+	options(t, s)
+	var line string
+	for _, m := range logged {
+		if strings.Contains(m, "New conversation") {
+			line = m
+		}
+	}
+	for _, want := range []string{"waking the sandbox 3s", "git in the sandbox 3s (3 runs)", "the clipboard page 0s"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the log line lacks %q: %q", want, line)
+		}
+	}
+
+	logged = nil
+	s.cfg.Wake = func(context.Context, func(string)) error { return nil }
+	s.cfg.SandboxGit = git
+	options(t, s)
+	for _, m := range logged {
+		if strings.Contains(m, "New conversation") {
+			t.Errorf("a quick one was logged: %q", m)
 		}
 	}
 }
