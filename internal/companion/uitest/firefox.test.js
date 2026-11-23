@@ -1474,3 +1474,47 @@ test('a state poll cut off by its page closing is not an error, and any other fa
   await closed.close()
   await stateWith(closed, {})(route)
 })
+
+// A countdown bar (see the countdown tests in page.test.js) runs for as long as its --countdown-ms says, inside the top edge of what it
+// is in, and stands still when held: jsdom runs no animations.
+test('a countdown bar shrinks over its time inside the top edge of its toast, and is full and still when held', async () => {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 700 } })
+  try {
+    await page.goto(URL)
+    const read = await page.evaluate(() => {
+      const t = document.getElementById('toast')
+      t.textContent = 'Copied'
+      t.hidden = false
+      t.showPopover()
+      const bar = document.createElement('span')
+      bar.className = 'countdown'
+      bar.style.setProperty('--countdown-ms', '4000ms')
+      t.append(bar)
+      const held = document.createElement('span')
+      held.className = 'countdown held'
+      document.getElementById('status-balloon').append(held)
+      const s = getComputedStyle(bar)
+      const tr = t.getBoundingClientRect()
+      const br = bar.getBoundingClientRect()
+      return { name: s.animationName, duration: s.animationDuration, timing: s.animationTimingFunction, height: br.height,
+        topInside: br.top - tr.top, leftInside: br.left - tr.left, rightInside: tr.right - br.right,
+        heldName: getComputedStyle(held).animationName }
+    })
+    assert.equal(read.name, 'countdown')
+    assert.equal(read.duration, '4s')
+    assert.equal(read.timing, 'linear')
+    assert.equal(read.height, 2)
+    assert.ok(read.topInside >= 0 && read.topInside <= 2, `not along the top edge: ${read.topInside}px down`)
+    assert.ok(read.leftInside > 0 && read.rightInside > 0, 'it runs into the rounded corners')
+    assert.equal(read.heldName, 'none', 'a held bar moves')
+    // Set to its middle, not waited for: a busy runner's clock would make the reading anything.
+    const scale = await page.evaluate(() => {
+      const bar = document.querySelector('#toast .countdown')
+      const run = bar.getAnimations()[0]
+      run.pause()
+      run.currentTime = 2000
+      return new DOMMatrix(getComputedStyle(bar).transform).a
+    })
+    assert.ok(Math.abs(scale - 0.5) < 0.01, `halfway through, it is at ${scale} of its width`)
+  } finally { await page.close() }
+})

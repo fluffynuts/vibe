@@ -503,3 +503,48 @@ test('a toast is a button, so it can be dismissed from the keyboard, and says th
     assert.match(t.title, /dismiss/i)
   } finally { p.close() }
 })
+
+test('a toast that closes itself has a countdown bar as long as its timer; one that stays has none', async () => {
+  const p = openClipboardPage(['a.png'])
+  try {
+    await p.settle()
+    await p.paste('a.png')
+    const t = p.window.document.getElementById('toast')
+    const bar = () => t.querySelector(':scope > .countdown')
+    assert.ok(bar(), 'no countdown bar')
+    assert.equal(bar().getAttribute('aria-hidden'), 'true')
+    assert.equal(bar().style.getPropertyValue('--countdown-ms'), p.timeouts.at(-1) + 'ms')
+    assert.equal(p.toast(), "Already pasted: it's waiting to go with your next message.", 'the bar changed what it says')
+    p.server.hold = true
+    await pasteHeld(p, 'b.png')
+    assert.equal(p.toast(), 'Sending 1 item…')
+    assert.equal(bar(), null, 'a toast that stays has a bar')
+    p.server.waiting.shift()()
+    await p.settle()
+  } finally { p.close() }
+})
+
+test('a toast is held while hovered or focused, its bar full, and counts down afresh from full when let go', async () => {
+  const p = openClipboardPage(['a.png'])
+  try {
+    await p.settle()
+    await p.paste('a.png')
+    const t = p.window.document.getElementById('toast')
+    const bar = () => t.querySelector(':scope > .countdown')
+    const ms = p.timeouts.at(-1)
+    const first = bar()
+    let cleared = 0
+    const realClear = p.window.clearTimeout
+    p.window.clearTimeout = (id) => { cleared++; realClear(id) }
+    t.dispatchEvent(new p.window.MouseEvent('mouseenter'))
+    assert.ok(cleared > 0, 'its timer ran on while hovered')
+    assert.ok(bar().classList.contains('held'))
+    const before = p.timeouts.length
+    t.dispatchEvent(new p.window.MouseEvent('mouseleave'))
+    assert.deepEqual(p.timeouts.slice(before), [ms], 'the timer did not start again, as long')
+    assert.notEqual(bar(), first)
+    assert.equal(bar().classList.contains('held'), false)
+    t.dispatchEvent(new p.window.FocusEvent('focusin'))
+    assert.ok(bar().classList.contains('held'), 'focus does not hold it')
+  } finally { p.close() }
+})

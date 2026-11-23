@@ -81,6 +81,14 @@
     text-align: left;
   }
   #toast.error { border-color: var(--danger); }
+  /* A toast that closes itself shows its time running out: a line inside its top edge, clear of the rounded corners, shrinking to
+     nothing over --countdown-ms (set from the number its timer uses); held open, full and still. Kept with reduced motion: a slow,
+     steady shrink that says something. */
+  .countdown { position: absolute; top: 0; left: 6px; right: 6px; height: 2px; background: var(--accent); transform-origin: left;
+    animation: countdown var(--countdown-ms, 3s) linear forwards; pointer-events: none; }
+  #toast.error .countdown { background: var(--danger); }
+  .countdown.held { animation: none; }
+  @keyframes countdown { from { transform: scaleX(1); } to { transform: scaleX(0); } }
   /* For a screen reader only: the toast's words are announced from these, which are always there (see toast). */
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   #items, #held { display: grid; gap: 12px; }
@@ -193,6 +201,9 @@ var textCache = {};
 
 var toastEl = document.getElementById("toast");
 var toastTimer = null;
+// toastMs is how long the toast showing lasts; toastHeld says the pointer or focus is on it, which holds it until let go.
+var toastMs = 0;
+var toastHeld = false;
 // How long a toast shows: what was just done, briefly; a problem, long enough to read; one to act on, until it is clicked away.
 var DONE_TOAST_MS = 3000;
 var PROBLEM_TOAST_MS = 8000;
@@ -210,9 +221,29 @@ function toast(message, ms, isError, kind) {
   document.getElementById(isError ? "toast-alert" : "toast-status").textContent = message;
   toastEl.dataset.kind = kind || "";
   toastEl.hidden = false;
+  toastMs = ms || DONE_TOAST_MS;
+  toastHeld = false;
+  countDownToast();
+}
+
+// countDownToast starts the toast's time afresh, from full, with its countdown bar; held, or one that stays, it has no timer.
+function countDownToast() {
   clearTimeout(toastTimer);
-  ms = ms || DONE_TOAST_MS;
-  if (ms !== TOAST_STAYS) toastTimer = setTimeout(hideToast, ms);
+  var old = toastEl.querySelector(":scope > .countdown");
+  if (old) old.remove();
+  if (toastMs === TOAST_STAYS) return;
+  var bar = document.createElement("span");
+  bar.className = "countdown" + (toastHeld ? " held" : "");
+  bar.setAttribute("aria-hidden", "true");
+  bar.style.setProperty("--countdown-ms", toastMs + "ms");
+  toastEl.appendChild(bar);
+  if (!toastHeld) toastTimer = setTimeout(hideToast, toastMs);
+}
+
+function holdToast(held) {
+  if (held === toastHeld || toastEl.hidden) return;
+  toastHeld = held;
+  countDownToast();
 }
 
 function problem(message, ms) {
@@ -232,6 +263,9 @@ function endToast(kind) {
 }
 
 toastEl.addEventListener("click", hideToast);
+[["mouseenter", true], ["mouseleave", false], ["focusin", true], ["focusout", false]].forEach(function (pair) {
+  toastEl.addEventListener(pair[0], function () { holdToast(pair[1]); });
+});
 
 function formatSize(n) {
   if (n < 1024) return n + " B";

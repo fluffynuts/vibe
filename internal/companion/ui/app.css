@@ -297,6 +297,14 @@ dialog .actions.safe { justify-content: space-between; }
    undo what browsers give a popover (centred, framed); z-index for one without them */
 .toast[popover] { inset: auto 16px 16px auto; margin: 0; }
 .toast.bad { background: var(--bad); color: #fff; border-color: var(--bad); }
+/* What closes itself shows its time running out: a line inside its top edge (clear of the rounded corners) shrinking to nothing over
+   --countdown-ms, which the page sets from the number its timer uses; held open, it is full and still. Still shown with reduced
+   motion: a slow, steady shrink that says something, not decoration. */
+.countdown { position: absolute; top: 0; left: 6px; right: 6px; height: 2px; background: var(--accent); transform-origin: left;
+  animation: countdown var(--countdown-ms, 4s) linear forwards; pointer-events: none; }
+.countdown.held { animation: none; }
+@keyframes countdown { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+.toast.bad .countdown { background: currentColor; }
 .toast-action { margin-left: 8px; padding: 2px 10px; background: transparent; color: inherit; border: 1px solid currentColor; border-radius: 6px; font: inherit; cursor: pointer; }
 
 @media (max-width: 640px) {

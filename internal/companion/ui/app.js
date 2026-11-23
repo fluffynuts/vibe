@@ -569,6 +569,18 @@
     toast.held = false
     clearTimeout(toast.timer)
     toast.timer = setTimeout(hideToast, toast.lasts)
+    showCountdown(t, toast.lasts, false)
+  }
+
+  // showCountdown puts a bar along the top of box that shrinks to nothing over ms, as box's timer to close itself runs out; held, it
+  // is full and still (box is held open). ms 0 takes it away. A new bar each time, so its shrinking starts again from full.
+  function showCountdown(box, ms, held) {
+    const old = box.querySelector(':scope > .countdown')
+    if (old) old.remove()
+    if (!ms) return
+    const bar = el('span', { class: 'countdown' + (held ? ' held' : ''), 'aria-hidden': 'true' })
+    bar.style.setProperty('--countdown-ms', ms + 'ms')
+    box.append(bar)
   }
 
   function hideToast() {
@@ -593,6 +605,7 @@
     toast.held = held
     clearTimeout(toast.timer)
     if (!held) toast.timer = setTimeout(hideToast, toast.lasts)
+    showCountdown($('toast'), toast.lasts, held)
   }
 
   // showProgress brings the Last action box with id card into view, with
@@ -6592,13 +6605,14 @@
   // --- the status balloon (docs/adr/2026-11-18-status-balloon.md) ---------------------------------------------------------------------------
   // What the agent has going on, in a balloon from its own info button: what resolves itself (background work, compacting) pops up and
   // closes itself after STATUS_CLOSE_MS; a warning that needs the user stays until it is no longer true, or is closed. Opened by the
-  // user, it stays until closed. items are what is current; token makes a close timer that has been overtaken do nothing.
+  // user, it stays until closed. items are what is current; token makes a close timer that has been overtaken do nothing. closing says
+  // a close timer is set (its countdown bar showing), and held that the pointer or focus is on the balloon, which holds it open.
   const STATUS_CLOSE_MS = 5000
   // stoppingTasks is a stop of the background work asked for and not yet seen through: its button waits until the tasks have gone, or
   // until FORCE_STOP_AFTER_MS, when stopStuck offers to force it (stopToken makes the wait of a stop already over do nothing).
   // drawn is what the balloon was last written to say (drawStatus).
   const statusView = { items: [], open: false, byUser: false, pending: false, token: 0, stoppingTasks: false, stopStuck: false, stopToken: 0,
-    drawn: '' }
+    drawn: '', closing: false, held: false }
 
   // statusSeen is whether the status balloon can be seen popping up: the Conversation tab showing, in a window being looked at.
   function statusSeen() {
@@ -6647,12 +6661,17 @@
     statusView.open = true
     statusView.byUser = false
     statusView.token++
+    statusView.closing = false
     if (!statusView.items.some((i) => i.warn)) closeStatusLater()
     drawStatus()
   }
 
+  // closeStatusLater closes the balloon after STATUS_CLOSE_MS, its bar counting down; held, it waits until let go, and starts again.
   function closeStatusLater() {
     const token = ++statusView.token
+    statusView.closing = true
+    showCountdown($('status-balloon'), STATUS_CLOSE_MS, statusView.held)
+    if (statusView.held) return
     setTimeout(() => {
       if (token !== statusView.token || statusView.byUser) return
       statusView.open = false
@@ -6663,9 +6682,16 @@
   // setStatusOpen is the user opening or closing the balloon: opened so, it stays until they close it.
   function setStatusOpen(open) {
     statusView.token++
+    statusView.closing = false
     statusView.open = open
     statusView.byUser = open
     drawStatus()
+  }
+
+  function holdStatus(held) {
+    if (held === statusView.held) return
+    statusView.held = held
+    if (statusView.closing && statusView.open && !statusView.byUser) closeStatusLater()
   }
 
   // statusSeenAgain pops up, once, what changed while the balloon could not be seen.
@@ -6686,6 +6712,12 @@
       drawStatusWords(warns, tasks, others)
     }
     $('status-balloon').hidden = !statusView.open
+    if (!statusView.open || statusView.byUser || !statusView.closing) {
+      statusView.closing = false
+      showCountdown($('status-balloon'), 0)
+    }
+    // Hidden under the pointer, it may never hear the pointer leave.
+    if (!statusView.open) statusView.held = false
     const button = $('status-info')
     button.classList.toggle('warn', warns.length > 0)
     button.classList.toggle('busy', !warns.length && tasks.length > 0)
@@ -8767,6 +8799,7 @@
   setUpAdmin()
   for (const [on, held] of [['mouseenter', true], ['mouseleave', false], ['focusin', true], ['focusout', false]]) {
     $('toast').addEventListener(on, () => holdToast(held))
+    $('status-balloon').addEventListener(on, () => holdStatus(held))
   }
   setUpManage()
 

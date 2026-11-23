@@ -4468,3 +4468,60 @@ test('the bar of an open review reads "Review of <what>:", then the note, whole 
     assert.deepEqual(order, ['review-title', 'review-note', 'review-state'])
   } finally { open.close() }
 })
+
+// --- a countdown bar on a toast ------------------------------------------------------------------------------------------------
+
+// toastPage is the page with a toast that says a comment is on a closed review (one that closes itself after 4 s), its timers kept
+// in timers (ms) and cleared ones in cleared.
+async function toastPage() {
+  const timers = []
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, reviewThreads: [1, 2, 3, 4], reviewClosed: true },
+      '/api/review': { review: { ...commented, started: '2026-10-16T10:00:00Z', closed: 'You closed it.' }, diff: twoFiles },
+      '/api/conversation': () => ({ events: [agentSaid(1, 'Fixed #2.')], last: 1, running: false }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+    before: (w) => {
+      const real = w.setTimeout
+      w.setTimeout = (fn, ms, ...rest) => { if (ms >= 1000) timers.push(ms); return real(fn, ms, ...rest) }
+    },
+  })
+  await p.every('pollConversation')
+  await p.click(p.$('convo-log').querySelector('.thread-ref'))
+  return Object.assign(p, { timers })
+}
+const countdownOf = (box) => box.querySelector(':scope > .countdown')
+
+test('a toast that closes itself has a countdown bar along its top, as long as its timer', async () => {
+  const p = await toastPage()
+  try {
+    assert.match(p.$('toast').textContent, /closed/)
+    const bar = countdownOf(p.$('toast'))
+    assert.ok(bar, 'no countdown bar')
+    assert.equal(bar.getAttribute('aria-hidden'), 'true')
+    assert.equal(p.timers.at(-1), 4000)
+    assert.equal(bar.style.getPropertyValue('--countdown-ms'), '4000ms')
+    assert.equal(bar.classList.contains('held'), false)
+  } finally { p.close() }
+})
+
+test("a toast held by the pointer or focus shows its bar full and still, and starts again from full when let go", async () => {
+  const p = await toastPage()
+  try {
+    const t = p.$('toast')
+    const first = countdownOf(t)
+    t.dispatchEvent(new p.window.MouseEvent('mouseenter'))
+    assert.ok(countdownOf(t).classList.contains('held'), 'not held full')
+    const timersHeld = p.timers.length
+    t.dispatchEvent(new p.window.MouseEvent('mouseleave'))
+    const again = countdownOf(t)
+    assert.notEqual(again, first, 'the bar was not started again')
+    assert.equal(again.classList.contains('held'), false)
+    assert.equal(again.style.getPropertyValue('--countdown-ms'), '4000ms')
+    assert.deepEqual(p.timers.slice(timersHeld), [4000], 'the timer was not started again')
+    t.dispatchEvent(new p.window.FocusEvent('focusin'))
+    assert.ok(countdownOf(t).classList.contains('held'), 'focus does not hold it')
+  } finally { p.close() }
+})
