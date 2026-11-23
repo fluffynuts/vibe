@@ -6619,14 +6619,14 @@
       statusView.stoppingTasks = false
       statusView.stopStuck = false
       statusView.stopToken++
-      // The stop has done what it was opened for: left empty, the balloon would only say what it is for.
-      if (!items.length && statusView.open) {
-        statusView.open = false
-        statusView.byUser = false
-        // Keyboard focus was on the stop button, gone with the balloon: it goes back to the button the balloon opens from.
-        const focus = document.activeElement
-        if (!focus || focus === document.body || $('status-balloon').contains(focus)) $('status-info').focus()
-      }
+    }
+    // What it listed has gone, however it was opened: left empty, the balloon would only say what it is for.
+    if (before.length && !items.length && statusView.open) {
+      statusView.open = false
+      statusView.byUser = false
+      // Keyboard focus inside it (on Stop, say) goes with the balloon: it goes back to the button the balloon opens from.
+      const focus = document.activeElement
+      if (!focus || focus === document.body || $('status-balloon').contains(focus)) $('status-info').focus()
     }
     // News that has since gone (work started and ended out of sight) is not kept for coming back to: it would pop up empty.
     if (!items.length) statusView.pending = false

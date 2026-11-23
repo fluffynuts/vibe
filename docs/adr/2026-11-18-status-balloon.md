@@ -27,7 +27,8 @@ author, sync), the network and packages banners, and the "Stopped… Stop them t
 - **One running list:** warnings first, then background tasks one to a line; each leaves when it is no longer true.
 - **It pops up** when the list gains something (a new task, a task finishing while others run, a new warning). A warning's minute count
   updating changes the text in place, without re-opening it; "Stopping the agent…" (the answer to the user's own click) is listed, never
-  popped. **Opened by the user**, it stays until closed (the button, the ✕, Escape).
+  popped. **Opened by the user**, it stays until closed (the button, the ✕, Escape), or until what it listed has all gone: then it
+  closes, however it was opened, focus inside it going back to its button (amended 2026-11-23: left open, it said only what it is for).
 - **A warning closed while still true** leaves the amber dot; one that clears by itself leaves the list, and closes the balloon if it was
   all there was. Amber outranks the pulse.
 - **With nothing current**, the button has no dot, and opening it says "Work the agent is doing in the background will appear here."

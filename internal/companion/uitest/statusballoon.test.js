@@ -102,6 +102,20 @@ test('opened from the button, the balloon stays until closed by the button, its 
   } finally { p.close() }
 })
 
+test('opened from the button, the balloon closes when the work it lists ends, and the focus goes back to the button', async () => {
+  const p = await convoPage({ running: false, background: true, tasks: [npmTest] })
+  try {
+    p.at.closeTimers()
+    assert.equal(shown(p), false)
+    await p.click('status-info')
+    p.$('status-balloon-close').focus()
+    await poll(p, { running: false, background: false, tasks: [] })
+    assert.equal(shown(p), false, 'it stayed open, saying only what it is for')
+    assert.equal(button(p).getAttribute('aria-expanded'), 'false')
+    assert.equal(p.window.document.activeElement, button(p), 'the focus was lost with the balloon')
+  } finally { p.close() }
+})
+
 test('a warning pops up and stays, says "at least", and its count updating changes the text without opening it again', async () => {
   const p = await convoPage({ running: true })
   try {
