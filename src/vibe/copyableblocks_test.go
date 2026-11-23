@@ -72,3 +72,25 @@ func TestTheInstructionsAnAgentAlwaysLoadsCarryTheCopyableBlocksRule(t *testing.
 		t.Errorf("a profile without the feature is given its rule:\n%s", merged)
 	}
 }
+
+// The page draws a bare #N as Review comment N when there is one: an agent with reviews is told, in what it always loads, to write
+// pull requests as "PR #N".
+func TestTheInstructionsAnAgentWithReviewsAlwaysLoadsSayToWritePRN(t *testing.T) {
+	feature, err := os.ReadFile(filepath.Join(repoRoot(t), "library", "base", "review", "agent-instructions.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lay := layout.New(t.TempDir(), t.TempDir())
+	if err := state.Save(lay.Home, state.Instance{Name: "box", Profile: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, lay.HomePath("profiles", "p", "config.yaml"), "name: p\n")
+	writeFile(t, lay.HomePath("profiles", "p", "kit-instructions.md"), "## Other\n\nThings.\n\n"+string(feature))
+	merged, _, err := instructionsFor(lay, "box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(merged, `"PR #12"`) {
+		t.Errorf("the always-loaded instructions lack the rule:\n%s", merged)
+	}
+}

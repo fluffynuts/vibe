@@ -73,7 +73,8 @@ One comment per finding, on the lines it's about:
   in. Post the comment you refer to first, and take its number from
   `vibe-review list`; a bare `#9`
   after a word or letter (`issue#9`) is not a link. This goes for replies
-  and the general comment too.
+  and the general comment too. A pull request or issue is "PR #12" or
+  "issue #12", never a bare `#12`, which is a comment's number.
 - A pattern rather than a one-off: comment on its first occurrence, say
   it's a pattern, and suggest a mechanical fix (a lint rule, a type, a
   test) rather than listing every instance.

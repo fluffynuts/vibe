@@ -2831,11 +2831,14 @@ test("an untracked file that couldn't be read says so", async () => {
 // --- comments named in the conversation -----------------------------------------------
 
 // talkPage is the Conversation tab open on what the agent said, with a
-// review whose threads are commented's.
-async function talkPage(text, git) {
+// review whose threads are commented's, and the repository's pull requests
+// prs (none known, by default).
+async function talkPage(text, git, prs = []) {
   const p = await openPage({
     routes: {
-      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, git },
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, git,
+        reviewThreads: commented.threads.map((t) => t.id), reviewClosed: false, pullRequests: prs.length ? 1 : 0 },
+      '/api/pull-requests': { numbers: prs, version: prs.length ? 1 : 0, unavailable: '' },
       '/api/review': { review: { ...commented, started: '2026-10-16T10:00:00Z' }, diff: twoFiles },
       '/api/conversation': () => ({ events: [{ seq: 1, kind: 'user', text: 'please fix' }, agentSaid(2, text)], last: 2, running: false }),
       '/api/log': { entries: [] },
@@ -2919,11 +2922,130 @@ test("a pull request named where the repository isn't on GitHub is plain text, n
   } finally { p.close() }
 })
 
-test("a comment that isn't on the review says so", async () => {
-  const p = await talkPage('Fixed #9.')
+// A bare #N is a Review comment when the review has one, else a pull request when the repository has one, else plain text.
+test("a bare number no comment or pull request has is plain text", async () => {
+  const p = await talkPage('Fixed #9.', onGitHub)
   try {
-    await p.click(refsIn(p)[0])
-    assert.match(p.$('toast').textContent, /no comment #9/)
+    assert.deepEqual(refsIn(p), [])
+    assert.deepEqual(repoRefs(p), [])
+    assert.match(p.$('convo-log').textContent, /Fixed #9\./)
+  } finally { p.close() }
+})
+
+test('a bare number that is a pull request, and no comment, links to it on GitHub', async () => {
+  const p = await talkPage('#37 is open, MERGEABLE. You merge #37; see #2.', onGitHub, [37])
+  try {
+    assert.deepEqual(refsIn(p).map((r) => r.textContent), ['#2'])
+    assert.deepEqual(repoRefs(p).map((a) => [a.textContent, a.getAttribute('href'), a.title]), [
+      ['#37', 'https://github.com/me/vibe/pull/37', 'Pull request #37 on GitHub'],
+      ['#37', 'https://github.com/me/vibe/pull/37', 'Pull request #37 on GitHub'],
+    ])
+    assert.equal(repoRefs(p)[0].target, '_blank')
+  } finally { p.close() }
+})
+
+test('a bare number that is both a comment and a pull request is the comment, its title naming the pull request', async () => {
+  const p = await talkPage('See #2.', onGitHub, [2])
+  try {
+    assert.deepEqual(repoRefs(p), [])
+    assert.deepEqual(refsIn(p).map((r) => r.textContent), ['#2'])
+    assert.match(refsIn(p)[0].title, /comment #2/)
+    assert.match(refsIn(p)[0].title, /pull request #2/i)
+  } finally { p.close() }
+})
+
+test("a pull request's number is plain text where the repository isn't on GitHub", async () => {
+  const p = await talkPage('#37 is open.', { branch: 'main' }, [37])
+  try {
+    assert.deepEqual(repoRefs(p), [])
+    assert.deepEqual(refsIn(p), [])
+  } finally { p.close() }
+})
+
+test('the page asks which pull requests there are for the bare numbers no comment has, and only those', async () => {
+  const p = await talkPage('#37 and #38 are open; see #2.', onGitHub)
+  try {
+    const asks = p.calls.filter((c) => c.path === '/api/pull-requests')
+    assert.ok(asks.length >= 1, 'not asked')
+    const wanted = asks.flatMap((c) => new URLSearchParams(c.query).get('want') || '').join(',').split(',').filter(Boolean)
+    assert.deepEqual([...new Set(wanted)].sort(), ['37', '38'])
+  } finally { p.close() }
+})
+
+test("a page whose vibe can't list pull requests doesn't ask", async () => {
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, git: onGitHub, reviewThreads: [] },
+      '/api/conversation': () => ({ events: [agentSaid(1, '#37 is open.')], last: 1, running: false }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+  })
+  try {
+    await p.every('pollConversation')
+    assert.deepEqual(p.calls.filter((c) => c.path === '/api/pull-requests'), [])
+  } finally { p.close() }
+})
+
+test('a bare number drawn before its pull request was known links to it once the list says so', async () => {
+  const at = { version: 0, numbers: [] }
+  const p = await openPage({
+    routes: {
+      '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, git: onGitHub,
+        reviewThreads: [], pullRequests: at.version }),
+      '/api/pull-requests': () => ({ numbers: at.numbers, version: at.version, unavailable: '' }),
+      '/api/conversation': () => ({ events: [agentSaid(1, '#37 is open.')], last: 1, running: false }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+  })
+  try {
+    await p.every('pollConversation')
+    assert.deepEqual(repoRefs(p), [])
+    at.version = 1
+    at.numbers = [37]
+    await p.every('tick')
+    assert.deepEqual(repoRefs(p).map((a) => a.getAttribute('href')), ['https://github.com/me/vibe/pull/37'])
+  } finally { p.close() }
+})
+
+test('a bare number becomes a link to a comment once the review has one, and stops being one when it goes', async () => {
+  const at = { threads: [] }
+  const p = await openPage({
+    routes: {
+      '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, reviewThreads: at.threads }),
+      '/api/conversation': () => ({ events: [agentSaid(1, 'See #2.')], last: 1, running: false }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+  })
+  try {
+    await p.every('pollConversation')
+    assert.deepEqual(refsIn(p), [])
+    at.threads = [2]
+    await p.every('tick')
+    assert.deepEqual(refsIn(p).map((r) => r.textContent), ['#2'])
+    at.threads = []
+    await p.every('tick')
+    assert.deepEqual(refsIn(p), [])
+  } finally { p.close() }
+})
+
+test('on a closed review, a pull request wins over its comment', async () => {
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, git: onGitHub,
+        reviewThreads: [2, 3], reviewClosed: true, pullRequests: 1 },
+      '/api/pull-requests': { numbers: [2], version: 1, unavailable: '' },
+      '/api/conversation': () => ({ events: [agentSaid(1, 'See #2 and #3.')], last: 1, running: false }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+  })
+  try {
+    await p.every('pollConversation')
+    assert.deepEqual(repoRefs(p).map((a) => a.textContent), ['#2'])
+    assert.deepEqual(refsIn(p).map((r) => r.textContent), ['#3'], "a closed review's comment is still one, when no pull request has its number")
   } finally { p.close() }
 })
 
@@ -3017,7 +3139,7 @@ test('Refresh while the diff is on its way loads it again once that one is in', 
 test("a comment named on a closed review says the review's closed", async () => {
   const p = await openPage({
     routes: {
-      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, reviewThreads: [1, 2, 3, 4], reviewClosed: true },
       '/api/review': { review: { ...commented, started: '2026-10-16T10:00:00Z', closed: 'You closed it.' }, diff: twoFiles },
       '/api/conversation': () => ({ events: [agentSaid(1, 'Fixed #2.')], last: 1, running: false }),
       '/api/log': { entries: [] },
@@ -3076,9 +3198,9 @@ test('a deleted comment stays deleted when a poll set out before it lands', asyn
 })
 
 test('a comment named as the agent wrote it is shown so, and only a plain #N', async () => {
-  const p = await talkPage('See #007, not #1.5; [see #3](http://localhost:1/x); and example.com/#4.')
+  const p = await talkPage('See #004, not #1.5; [see #3](http://localhost:1/x); and example.com/#4.')
   try {
-    assert.deepEqual(refsIn(p).map((r) => r.textContent), ['#007'])
+    assert.deepEqual(refsIn(p).map((r) => r.textContent), ['#004'])
     assert.equal(p.$('convo-log').querySelector('a .thread-ref'), null, 'none inside a link')
   } finally { p.close() }
 })

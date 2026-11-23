@@ -494,6 +494,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		Choice:                 choiceFor(vibeHome, name, inst, profileChoice{lay: lay, profile: inst.Profile}),
 		Prepare:                readyForTurn(name),
 		SandboxGit:             sandboxGitFor(name, inst.Target),
+		PullRequests:           pullRequestsFor(name, inst.Target),
 		ExpiredGitTokens:       func() []string { return expiredForDot(vibeHome, timeNow(), sbxKnows) },
 		PreferredDefaultBranch: preferredDefaultBranch(lay.HomePath("settings.yaml")),
 		RememberDefaultBranch:  rememberDefaultBranch(lay.HomePath("settings.yaml")),
@@ -693,6 +694,16 @@ func sandboxGitFor(name, target string) func(ctx context.Context, args ...string
 		full := append([]string{"env", "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -o BatchMode=yes", "git", "-C", target}, args...)
 		return sbxrun.ExecStdout(ctx, name, full...)
 	}
+}
+
+// pullRequestsFor lists a repository's pull requests with sandbox name's git (its access: a public repository needs none), never
+// starting it to ask; nil for a sandbox with no folder on record.
+func pullRequestsFor(name, target string) func(ctx context.Context, repo string) ([]int, error) {
+	run := sandboxGitFor(name, target)
+	if run == nil {
+		return nil
+	}
+	return companion.PullRequestsFrom(func(ctx context.Context) bool { return runningNow(ctx, name) }, run)
 }
 
 // startFailure is why a sandbox couldn't be started, for the page: sbx being signed out is said as that, and where to put

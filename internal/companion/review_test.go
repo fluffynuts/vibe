@@ -1820,3 +1820,35 @@ func startTurn(s *Server, prompt string) bool {
 	}
 	return ok
 }
+
+// The page's status poll names the review's comments, and whether it is closed, so a bare #N in the conversation is a link to a
+// comment only when there is one (else it may be a pull request).
+func TestThePagesStatusNamesTheReviewsComments(t *testing.T) {
+	s, store := reviewTabServer(t)
+	comments := func() ([]int, bool) {
+		t.Helper()
+		rec := do(t, s, req{path: "/api/state", headers: authed(nil)})
+		var body struct {
+			ReviewThreads []int `json:"reviewThreads"`
+			ReviewClosed  bool  `json:"reviewClosed"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body.ReviewThreads, body.ReviewClosed
+	}
+	if ids, _ := comments(); ids == nil || len(ids) != 0 {
+		t.Errorf("before any comment: %v", ids)
+	}
+	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 2, Body: "why?"}, review.Agent)
+	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 1, Body: "and?"}, review.Agent)
+	if ids, closed := comments(); !reflect.DeepEqual(ids, []int{1, 2}) || closed {
+		t.Errorf("got %v, closed %v", ids, closed)
+	}
+	if _, err := store.Do(review.Request{Op: "close", Body: "You closed it."}, review.User); err != nil {
+		t.Fatal(err)
+	}
+	if ids, closed := comments(); !reflect.DeepEqual(ids, []int{1, 2}) || !closed {
+		t.Errorf("closed: got %v, closed %v", ids, closed)
+	}
+}

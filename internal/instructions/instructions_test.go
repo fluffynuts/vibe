@@ -211,3 +211,21 @@ func TestAgentsWithTheBackgroundWorkFeatureAreToldItsRuleUpFront(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentsWithReviewsAreToldToWritePullRequestsAsPRN(t *testing.T) {
+	kit := "## Text for the user to copy\n\nOne block.\n\n" + ReviewsHeading + "\n\nUse vibe-review.\n"
+	got := WithPullRequestRule("Universal instructions\n---\n\nBe kind.\n", kit)
+	for _, want := range []string{"Be kind.", `"PR #`, "Review comment", `"issue #`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+	if rule, mine := strings.Index(got, `"PR #`), strings.Index(got, "Be kind."); rule < 0 || mine < rule {
+		t.Errorf("the rule isn't ahead of the user's instructions:\n%s", got)
+	}
+	for what, kit := range map[string]string{"no kit text": "", "kit text without reviews": "## Reviewing things\n\nLook.\n", "a later heading": "## Reviews of films\n"} {
+		if got := WithPullRequestRule("Be kind.", kit); got != "Be kind." {
+			t.Errorf("%s: the text changed to %q", what, got)
+		}
+	}
+}

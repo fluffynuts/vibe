@@ -98,6 +98,10 @@
     sandbox: '',
     // repoWeb is the repository's address on GitHub, that pull requests and issues named in the conversation link to ('' if not there).
     repoWeb: '',
+    // reviewThreads are the numbers of the review's comments, and reviewClosed says it is closed (from vibe's state): a bare #N
+    // is a link to a comment only when there is one.
+    reviewThreads: new Set(),
+    reviewClosed: false,
     // attention is the tabs vibe last said want looking at, and why;
     // reviewAt when the agent last updated the review ("" if never).
     attention: {},
@@ -1013,6 +1017,8 @@
       $('sandbox').textContent = state.sandbox || 'all profiles and sandboxes'
       renderWhere(res.body.folder || '', res.body.git || null)
       setRepoWeb(res.body.git)
+      setReviewThreads(res.body.reviewThreads, !!res.body.reviewClosed)
+      pullRequestsVersion(res.body.pullRequests)
       // What can be reviewed depends on the branch, so the start screen's answer is asked again when it changes.
       const branchNow = res.body.git ? res.body.git.branch : ''
       if (reviewView.branch !== undefined && reviewView.branch !== branchNow && reviewView.review && !reviewIsOn(reviewView.review)) loadOptions()
@@ -6163,10 +6169,90 @@
     if (web === state.repoWeb) return
     state.repoWeb = web
     for (const a of document.querySelectorAll('a.repo-ref')) linkRepoRef(a)
+    relinkBareRefs()
   }
 
-  // withCommentRefs is text as nodes, each review comment it names (#24, not in a word: issue#3, C#4 aren't) a link to that comment
-  // on the Review tab.
+  // pulls is what the page knows of the repository's pull requests, for a bare #N no comment has: numbers (null until vibe has
+  // said), the version of the list they are (vibe's state says when there's a newer one), and the numbers drawn that the list
+  // doesn't have (wanted), to be asked about: each at once when first drawn, then again at most every PULLS_RECHECK_MS.
+  const pulls = { numbers: null, version: 0, canAsk: false, wanted: new Set(), asked: new Set(), askedAt: 0, loading: false, again: false }
+  const PULLS_RECHECK_MS = 60000
+
+  // pullRequestsVersion takes what vibe's state says of the list: null when vibe can't list them, else the list's version.
+  function pullRequestsVersion(version) {
+    pulls.canAsk = typeof version === 'number'
+    if (!pulls.canAsk) return
+    const recheck = pulls.wanted.size > 0 && Date.now() - pulls.askedAt >= PULLS_RECHECK_MS
+    if (recheck) pulls.asked.clear()
+    if (version !== pulls.version || recheck) loadPullRequests()
+  }
+
+  // wantPullRequest asks vibe whether n is a pull request, unless it has been asked already.
+  function wantPullRequest(n) {
+    pulls.wanted.add(n)
+    if (!pulls.canAsk || !state.repoWeb || pulls.asked.has(n)) return
+    // Several drawn together are asked about in one go.
+    if (!pulls.queued) {
+      pulls.queued = true
+      Promise.resolve().then(() => { pulls.queued = false; loadPullRequests() })
+    }
+  }
+
+  async function loadPullRequests() {
+    if (pulls.loading) { pulls.again = true; return }
+    pulls.loading = true
+    const want = state.repoWeb ? [...pulls.wanted].filter((n) => !pulls.asked.has(n)).slice(0, 200) : []
+    for (const n of want) pulls.asked.add(n)
+    if (want.length) pulls.askedAt = Date.now()
+    try {
+      const res = await api('/api/pull-requests' + (want.length ? '?want=' + want.join(',') : ''))
+      if (!res.ok) return
+      pulls.version = res.body.version || 0
+      pulls.numbers = new Set(res.body.numbers || [])
+      for (const n of pulls.numbers) pulls.wanted.delete(n)
+      relinkBareRefs()
+    } catch (e) {
+      // The next state poll asks again, when vibe answers.
+    } finally {
+      pulls.loading = false
+      if (pulls.again) { pulls.again = false; loadPullRequests() }
+    }
+  }
+
+  // setReviewThreads takes the review's comments from vibe's state, relinking the bare numbers drawn when they change.
+  function setReviewThreads(ids, closed) {
+    const was = [...state.reviewThreads].join(',') + '|' + state.reviewClosed
+    state.reviewThreads = new Set(ids || [])
+    state.reviewClosed = closed
+    if ([...state.reviewThreads].join(',') + '|' + closed !== was) relinkBareRefs()
+  }
+
+  function relinkBareRefs() {
+    for (const span of document.querySelectorAll('span.bare-ref')) drawBareRef(span)
+  }
+
+  // drawBareRef draws a bare #N (in span) as what it names: a comment on the open review, else a pull request on GitHub, else a
+  // comment on the closed review (which says it's closed), else plain text. Drawn again only when that changes: a redraw would
+  // take the focus from it.
+  function drawBareRef(span) {
+    const id = Number(span.dataset.number)
+    const text = span.dataset.text
+    const comment = state.reviewThreads.has(id)
+    const pull = !!state.repoWeb && !!pulls.numbers && pulls.numbers.has(id)
+    const as = comment && (!state.reviewClosed || !pull) ? (pull ? 'comment+pull' : 'comment') : pull ? 'pull' : 'plain'
+    if (!comment && !pull) wantPullRequest(id)
+    if (span.dataset.as === as) return
+    span.dataset.as = as
+    if (as === 'plain') span.replaceChildren(document.createTextNode(text))
+    else if (as === 'pull') span.replaceChildren(repoRef('pull', id, text))
+    else {
+      const title = 'Go to comment #' + id + ' on the Review tab' + (as === 'comment+pull' ? ' (there is a pull request #' + id + ' too)' : '')
+      span.replaceChildren(el('button', { type: 'button', class: 'thread-ref', 'data-thread': String(id), title, text, onclick: () => openThread(id) }))
+    }
+  }
+
+  // withCommentRefs is text as nodes, each bare number in it (#24, not in a word: issue#3, C#4 aren't) drawn as what it names
+  // (drawBareRef): a review comment, a pull request, or plain text.
   function withCommentRefs(text) {
     const nodes = []
     let at = 0
@@ -6176,8 +6262,9 @@
       const start = m.index + m[1].length
       const id = Number(m[2])
       if (start > at) nodes.push(document.createTextNode(text.slice(at, start)))
-      nodes.push(el('button', { type: 'button', class: 'thread-ref', 'data-thread': String(id), title: 'Go to comment #' + id + ' on the Review tab',
-        text: '#' + m[2], onclick: () => openThread(id) }))
+      const span = el('span', { class: 'bare-ref', 'data-number': String(id), 'data-text': '#' + m[2] })
+      drawBareRef(span)
+      nodes.push(span)
       at = start + 1 + m[2].length
     }
     if (at < text.length) nodes.push(document.createTextNode(text.slice(at)))
