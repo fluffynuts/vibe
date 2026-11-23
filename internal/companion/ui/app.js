@@ -3074,7 +3074,8 @@
     $('review-comments-open').hidden = true
     $('review-state').hidden = true
     $('review-title').textContent = 'Review'
-    $('review-of').textContent = ''
+    $('review-note').textContent = ''
+    $('review-note').title = ''
     $('review-wait').hidden = false
   }
 
@@ -3278,7 +3279,10 @@
     $('review-comments-open').hidden = !on
     $('review-wait').hidden = reviewView.files !== null || !on
     if (!on) drawStart(rv)
-    $('review-title').textContent = on && rv.note ? 'Review: ' + rv.note : 'Review'
+    // What it is of comes straight after "Review", the agent's note after it: a long note can't push the first out of sight.
+    $('review-title').textContent = on ? 'Review of ' + reviewWhat(rv) + (rv.note ? ':' : '') : 'Review'
+    $('review-note').textContent = on ? rv.note || '' : ''
+    $('review-note').title = on ? rv.note || '' : ''
     $('review-state').hidden = !on || !rv.state
     // In progress and left alone by the agent for a while, with no turn running: said as it is, without claiming it stopped, which
     // vibe can't know (it may be writing from a terminal session).
@@ -3289,7 +3293,6 @@
       : rv.state || ''
     $('review-state').classList.toggle('reviewing', on && rv.state === 'in progress')
     if (on) announceReview(rv)
-    $('review-of').textContent = !on ? '' : 'of ' + reviewWhat(rv)
     const unsent = unsentCount(rv)
     const stillWriting = rv.state === 'in progress'
     $('review-submit').disabled = !unsent || !state.conversation || stillWriting

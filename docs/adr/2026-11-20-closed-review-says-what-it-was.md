@@ -16,7 +16,9 @@ Under why it was closed (left as it is: a branch switch's reason is a sentence o
 changes against master", "commit 1a2b3c4", "the commits not pushed to origin/x", "the uncommitted changes"), the agent's note in quotes,
 when it started (as the page shows times), and its comments by status, open ones first and said plainly ("4 comments: 2 still open, 1
 resolved, 1 dismissed"; "1 comment, resolved"; nothing when it had none). The button says **Reopen that review**. The bar of an open review says what it is of from the same function (`reviewWhat`), so the two
-agree: "of the changes against master", where it used to say "against master" (found in review, #114). A dropped review, with
+agree: "of the changes against master", where it used to say "against master" (found in review, #114). It reads "Review of the
+changes against master:", then the agent's note on one line (cut with "…", whole in its tooltip), then the review's state: the "of…"
+had come after the note and the state, cut off from "Review" and pushed out of sight by a long note (found reviewing the branch). A dropped review, with
 nothing to reopen, shows neither. The line is drawn only when what it says changes (the start screen is redrawn on polls).
 
 ## Not built

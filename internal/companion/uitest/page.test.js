@@ -694,7 +694,7 @@ test('the bar says what an open review is of in the same words a closed review i
     const open = await reviewPage({ review: { ...none, started: '2026-10-22T13:04:00Z', ...fields } })
     try {
       await open.click('tab-review')
-      assert.equal(open.$('review-of').textContent, 'of ' + phrase)
+      assert.equal(open.$('review-title').textContent, 'Review of ' + phrase)
     } finally { open.close() }
     const closed = await startPage({ review: closedAs(fields) })
     try {
@@ -4330,4 +4330,19 @@ test('Submit to agent waits for a review still being written, however its turn b
   try {
     assert.equal(p.$('review-submit').disabled, true)
   } finally { p.close() }
+})
+
+// The bar says what the review is of straight after "Review", then the agent's note, then its state: a long note can't push what it
+// is of out of sight, nor come between it and "Review" (found reviewing this branch: "Review: <note> [state] of the changes…").
+test('the bar of an open review reads "Review of <what>:", then the note, whole in its tooltip, then the state', async () => {
+  const note = 'a long note about what this review covers, longer than any bar is wide, '.repeat(3)
+  const open = await reviewPage({ review: { ...none, started: '2026-10-22T13:04:00Z', ref: 'master', note, state: 'in progress' } })
+  try {
+    await open.click('tab-review')
+    assert.equal(open.$('review-title').textContent, 'Review of the changes against master:')
+    assert.equal(open.$('review-note').textContent, note)
+    assert.equal(open.$('review-note').title, note)
+    const order = [...open.$('review-title').parentElement.children].filter((e) => !e.hidden).map((e) => e.id)
+    assert.deepEqual(order, ['review-title', 'review-note', 'review-state'])
+  } finally { open.close() }
 })
