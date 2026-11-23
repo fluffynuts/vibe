@@ -1,6 +1,7 @@
 package gittoken
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -456,5 +457,43 @@ func TestTooBroadForABatchLeavesOutItsOwnRepositoriesAndNamesThemAll(t *testing.
 	}
 	if got := (Report{Repo: &Repo{Owner: "o", Name: "one"}, OtherRepos: []string{"o/two"}}).TooBroad("o/two"); got != "" {
 		t.Errorf("TooBroad = %q, want nothing: it reaches only what it's meant to", got)
+	}
+}
+
+// A token that can see the repository but not push to it is read-only: usable, if the user chooses, for an agent that fetches and
+// reads while the user pushes. Anything else wrong with it is not read-only, but a problem.
+func TestAReportIsReadOnlyWhenTheTokenSeesTheRepositoryButCantPush(t *testing.T) {
+	repo := &Repo{Owner: "o", Name: "r"}
+	for name, tc := range map[string]struct {
+		rep  Report
+		want bool
+	}{
+		"sees, can't push":   {Report{Repo: repo, SeesRepo: true}, true},
+		"can push":           {Report{Repo: repo, SeesRepo: true, CanPush: true}, false},
+		"can't see":          {Report{Repo: repo}, false},
+		"rejected":           {Report{Repo: repo, Rejected: true, SeesRepo: true}, false},
+		"GitHub unreachable": {Report{Repo: repo, SeesRepo: true, Unreachable: errors.New("down")}, false},
+		"no repository":      {Report{}, false},
+	} {
+		if got := tc.rep.ReadOnly(); got != tc.want {
+			t.Errorf("%s: ReadOnly = %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+// The agent's instructions for a read-only token say what it can do (fetch, pull, read with gh), that it can't push, and what to
+// do instead; the push rules (kept for a token that can push later) aren't there.
+func TestReadOnlyInstructionsSayTheAgentCanReadButNotPush(t *testing.T) {
+	got := ReadOnlyInstructions(&Repo{Owner: "o", Name: "r"}, time.Date(2027, 11, 24, 8, 50, 0, 0, time.UTC))
+	for _, want := range []string{"# Reading from GitHub in this sandbox", "read-only", "fetch", "pull", "`gh`", "o/r", "can't push",
+		"commit", "tell the user", "2027-11-24", "Don't look for other credentials"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("instructions lack %q:\n%s", want, got)
+		}
+	}
+	for _, not := range []string{"feature branch", "force-push", "gh pr create"} {
+		if strings.Contains(got, not) {
+			t.Errorf("instructions have %q, a rule for pushing:\n%s", not, got)
+		}
 	}
 }

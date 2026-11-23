@@ -34,6 +34,9 @@ type batchToken struct {
 	// nowDefault says it was just stored as the default, so the sandboxes
 	// that use the default and weren't picked are holding the one it replaced.
 	nowDefault bool
+	// readOnlyOK says read-only was accepted (asked, or --git-read-only): a sandbox whose repository the token can read but not
+	// push to is given it read-only, not skipped.
+	readOnlyOK bool
 }
 
 // batchOutcome is what happened to one sandbox of a batch.
@@ -42,6 +45,7 @@ type batchOutcome struct {
 	given        bool
 	problem      string
 	pushCheck    string
+	readOnly     bool
 	// inside is what a push checked from inside the sandbox found.
 	inside                 insideCheck
 	oldExpires, newExpires time.Time
@@ -81,6 +85,9 @@ func batchLabel(inst state.Instance, now time.Time) string {
 	token := "no token"
 	if inst.GitToken != "" {
 		token = inst.GitToken + inParens(gittoken.DescribeExpiry(inst.GitTokenExpires, now))
+		if inst.GitReadOnly {
+			token += ", read-only"
+		}
 	}
 	where := inst.Target
 	if inst.Profile != "" {
@@ -291,17 +298,22 @@ func giveTokenToSandbox(say func(string, ...interface{}), vibeHome string, inst 
 	out.oldExpires = inst.GitTokenExpires
 	repo := batchRepoOf(inst.Target)
 	expires := tok.expires
+	readOnly := false
 	if repo == nil {
 		out.pushCheck = "no GitHub remote, so not checked"
 	} else {
 		rep := checker.check(repo)
-		if problems := rep.Problems(); rep.Unreachable == nil && len(problems) > 0 {
+		readOnly = rep.ReadOnly() && tok.readOnlyOK
+		if problems := rep.Problems(); rep.Unreachable == nil && len(problems) > 0 && !readOnly {
 			out.problem = problems[0]
 			return out
 		}
-		if rep.Unreachable != nil {
+		switch {
+		case rep.Unreachable != nil:
 			out.pushCheck = "GitHub couldn't be asked, so not checked"
-		} else {
+		case readOnly:
+			out.pushCheck = "read-only: GitHub says it can read " + repo.String() + ", not push"
+		default:
 			out.pushCheck = "GitHub says it can push to " + repo.String()
 		}
 		if !rep.Expires.IsZero() {
@@ -312,7 +324,8 @@ func giveTokenToSandbox(say func(string, ...interface{}), vibeHome string, inst 
 	if len(rules) == 0 {
 		rules = inst.GitRules
 	}
-	access := &gitAccess{token: tok.token, source: tok.source, rules: rules, expires: expires}
+	access := &gitAccess{token: tok.token, source: tok.source, rules: rules, expires: expires, readOnly: readOnly}
+	out.readOnly = readOnly
 	if out.inside, err = setGitAccessSaying(say, vibeHome, &inst, access, repo); err != nil {
 		out.problem, out.pushCheck = err.Error(), ""
 		return out
@@ -451,13 +464,14 @@ func askBatchToken(vibeHome string, picked []state.Instance) (batchToken, bool) 
 	switch choices[idx] {
 	case useDefault:
 		tok = batchToken{token: defaultToken, source: gitTokenDefault, expires: defaultExpires}
-		verdict, expires := vetGitToken(tok.token, first, true, skip, also...)
+		verdict, expires := vetGitToken(tok.token, first, true, false, skip, also...)
 		for verdict == vetRetry {
-			verdict, expires = vetGitToken(tok.token, first, true, skip, also...)
+			verdict, expires = vetGitToken(tok.token, first, true, false, skip, also...)
 		}
-		if verdict != vetUse {
+		if verdict != vetUse && verdict != vetReadOnly {
 			return batchToken{}, false
 		}
+		tok.readOnlyOK = verdict == vetReadOnly
 		if !expires.IsZero() {
 			tok.expires = expires
 		}
@@ -470,17 +484,17 @@ func askBatchToken(vibeHome string, picked []state.Instance) (batchToken, bool) 
 		if !taken {
 			return batchToken{}, false
 		}
-		tok = batchToken{token: access.token, source: access.source, expires: access.expires}
+		tok = batchToken{token: access.token, source: access.source, expires: access.expires, readOnlyOK: access.readOnly}
 	default:
 		if choices[idx] == guided {
 			description := "Lets the agents in the vibe sandboxes " + sandboxNames(picked) + " push."
 			openTokenPageFor("vibe sandboxes", description, owner, pickTokenDays(tokenDays), names)
 		}
-		token, expires, entered := enterGitToken(first, skip, also...)
+		token, expires, readOnly, entered := enterGitToken(first, skip, also...)
 		if !entered {
 			return batchToken{}, false
 		}
-		tok = batchToken{token: token, source: gitTokenOwn, expires: expires}
+		tok = batchToken{token: token, source: gitTokenOwn, expires: expires, readOnlyOK: readOnly}
 	}
 
 	if tok.source == gitTokenOwn && confirmDefault(false, false,
@@ -519,17 +533,18 @@ func namedSandboxes(candidates []state.Instance, names []string) ([]state.Instan
 
 // batchTokenFromEnv is the token in the environment variable named, checked with GitHub against the first of the picked
 // sandboxes' repositories, as a token typed in is (giveTokenToSandboxes checks it against the others).
-func batchTokenFromEnv(variable string, picked []state.Instance) (batchToken, error) {
+// readOnlyOK is --git-read-only: the sandboxes whose repository the token can only read are given it read-only.
+func batchTokenFromEnv(variable string, picked []state.Instance, readOnlyOK bool) (batchToken, error) {
 	repos, names, _ := batchRepositories(picked)
 	var first *gittoken.Repo
 	if len(repos) > 0 {
 		first = &repos[0]
 	}
-	access, err := gitAccessFromEnv(variable, first, nil, names...)
+	access, err := gitAccessFromEnv(variable, first, nil, readOnlyOK, names...)
 	if err != nil {
 		return batchToken{}, err
 	}
-	return batchToken{token: access.token, source: access.source, expires: access.expires}, nil
+	return batchToken{token: access.token, source: access.source, expires: access.expires, readOnlyOK: readOnlyOK}, nil
 }
 
 func sandboxNamesOf(picked []state.Instance) []string {
@@ -593,7 +608,7 @@ func doBatchGitToken(vibeHome string, args cliargs.Args) error {
 	}
 	var tok batchToken
 	if args.GitTokenEnv != "" {
-		if tok, err = batchTokenFromEnv(args.GitTokenEnv, picked); err != nil {
+		if tok, err = batchTokenFromEnv(args.GitTokenEnv, picked, args.GitReadOnly); err != nil {
 			return err
 		}
 	} else {

@@ -349,7 +349,7 @@ func createSandbox(ctx context.Context, lay layout.Layout, name, target, profile
 		note("WARNING: couldn't record what sandbox '%s' was built from, so it will be taken as out of date: %s", name, err)
 	}
 	if git = giveGitAccess(vibeHome, name, git, repoOf(target)); git != nil {
-		inst.GitToken, inst.GitRules, inst.GitTokenExpires = git.source, git.rules, git.expires
+		inst.GitToken, inst.GitRules, inst.GitTokenExpires, inst.GitReadOnly = git.source, git.rules, git.expires, git.readOnly
 	}
 	if err := state.Save(vibeHome, inst); err != nil {
 		return err

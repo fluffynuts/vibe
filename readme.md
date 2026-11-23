@@ -343,6 +343,8 @@ vibe --sandboxes a,b,c     # ...naming them instead of ticking (for a script, wi
                            #    --git-token-env VAR)
 vibe --git-token-env VAR   # ...a new sandbox (or --git-token) the token in $VAR,
                            #    without asking
+vibe --git-read-only       # ...a token from $VAR that can read but not push,
+                           #    read-only (the agent fetches; you push)
 vibe --git-rules R[,R]     # ...and these rules for pushing, without asking:
                            #    feature-branch, no-default-branch
 vibe --no-git-token        # ...no token for a new sandbox, without asking;
@@ -1027,7 +1029,18 @@ about to. A rebuild
 `vibe --info` shows whether a sandbox has one. With no one to ask (`-f`, or no terminal), a new
 sandbox gets no token unless `--git-token-env VAR` names an environment variable holding one (never
 the token itself on the command line, where anyone on the machine can read it). That token is
-checked the same way, and turned down if GitHub won't let it push. `--git-rules` picks the rules.
+checked the same way, and turned down if GitHub won't let it push, unless `--git-read-only` says read-only is what you
+want. `--git-rules` picks the rules.
+
+**Read-only.** A token that can see the repository but not push can still be useful: the agent fetches, pulls and reads
+with `gh`, commits, and tells you what is ready for you to push. On a terminal, vibe offers it as a choice beside *try
+again* and skipping; a script says so with `--git-read-only` (with `--git-token-env`), and without it such a token is
+turned down as before. The sandbox is recorded as read-only: `--info`, the Admin tab and the batch's list say so, and the
+agent's instructions are about reading from GitHub, not pushing (its rules for pushing are kept, for when it can push).
+The check from inside expects GitHub to refuse a push ("read-only, as chosen"), and says plainly if it doesn't. In a
+batch, a sandbox whose repository the token can only read is given it read-only only if that was accepted (on the
+terminal or with the flag), and the summary says which; otherwise it is skipped. Renewing keeps a sandbox read-only
+unless the new token can push, when it says that the sandbox isn't read-only any more.
 
 `vibe --batch-git-token` is for when several sandboxes push with the same token and it has been
 regenerated, which kills the old one in every sandbox holding it. It lists the sandboxes vibe knows

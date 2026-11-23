@@ -30,5 +30,5 @@ where there is something to say. A decision that is later changed gets a note in
 | [2026-11-18-status-balloon](2026-11-18-status-balloon.md) | The Conversation tab's status in a balloon from an info button; Stop for background work |
 | [2026-11-20-clipboard-toasts-and-review-headers](2026-11-20-clipboard-toasts-and-review-headers.md) | The clipboard page's status line becomes toasts; a Review file's header stays one line |
 | [2026-11-20-pr-and-issue-links](2026-11-20-pr-and-issue-links.md) | A pull request or issue the agent names links to it on GitHub, not to a Review comment |
-| [2026-11-20-git-token-next-steps](2026-11-20-git-token-next-steps.md) | --batch-git-token for scripts; a push checked from inside the sandbox; tokens running out on the Admin tab |
+| [2026-11-20-git-token-next-steps](2026-11-20-git-token-next-steps.md) | --batch-git-token for scripts; a push checked from inside the sandbox; tokens running out on the Admin tab; read-only tokens |
 | [2026-11-20-closed-review-says-what-it-was](2026-11-20-closed-review-says-what-it-was.md) | A closed review says what it was, so Reopen says what it reopens |

@@ -4881,9 +4881,12 @@
 
     const status = []
     if (git.has) {
-      status.push('The agent can push, with ' + (git.source === 'default' ? 'the default token' : 'its own token'))
+      const which = git.source === 'default' ? 'the default token' : 'its own token'
+      status.push(git.readOnly
+        ? 'Read-only: the agent can fetch and read from GitHub, not push (you push), with ' + which
+        : 'The agent can push, with ' + which)
       status.push(git.expiry ? ', which ' + git.expiry + '.' : '.')
-      if (git.rules && git.rules.length) status.push(' Its rules: ' + git.rules.join(', ') + '.')
+      if (!git.readOnly && git.rules && git.rules.length) status.push(' Its rules: ' + git.rules.join(', ') + '.')
     } else {
       status.push("There's no token, so the agent can't push. To give it one:")
     }

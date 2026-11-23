@@ -79,6 +79,10 @@ type Args struct {
 	// Sandboxes is --sandboxes a,b,c: the sandboxes --batch-git-token gives
 	// the token to, named instead of ticked, so a script can run it.
 	Sandboxes []string
+	// GitReadOnly is --git-read-only: a token from --git-token-env that can
+	// read the repository but not push is given read-only (the agent fetches
+	// and reads; the user pushes), not turned down. On a terminal, vibe asks.
+	GitReadOnly bool
 	// NoGitToken is --no-git-token: no token for a new sandbox, without
 	// asking; with --git-token, take the sandbox's away.
 	NoGitToken bool
@@ -241,6 +245,9 @@ func parse(argv []string) (a Args, paths []string, err error) {
 				return a, paths, fmt.Errorf("--sandboxes %q names no sandbox: give their names, with commas between", v)
 			}
 			i += n
+		case arg == "--git-read-only":
+			a.GitReadOnly = true
+			i++
 		case arg == "--no-git-token":
 			a.NoGitToken = true
 			i++
@@ -360,6 +367,20 @@ func (a Args) BatchGitTokenConflict() error {
 		return fmt.Errorf("--batch-git-token gives a token: --no-git-token doesn't go with it")
 	case a.GitTokenEnv != "" && len(a.Sandboxes) == 0:
 		return fmt.Errorf("--batch-git-token: --git-token-env goes with --sandboxes (name the sandboxes too, for a script), or leave it off to be asked")
+	}
+	return nil
+}
+
+// GitReadOnlyConflict says what is wrong with --git-read-only's company: nil when it is fine. It is a script's answer to the
+// question a terminal asks, so it goes with --git-token-env.
+func (a Args) GitReadOnlyConflict() error {
+	switch {
+	case !a.GitReadOnly:
+		return nil
+	case a.NoGitToken:
+		return fmt.Errorf("--git-read-only gives a token: --no-git-token doesn't go with it")
+	case a.GitTokenEnv == "":
+		return fmt.Errorf("--git-read-only goes with --git-token-env VAR (it answers, for a script, what vibe asks on a terminal)")
 	}
 	return nil
 }

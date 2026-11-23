@@ -99,3 +99,16 @@ func trimExitStatus(line string) string {
 	}
 	return line
 }
+
+// forReadOnly is what a check from inside means for a sandbox given its token read-only: GitHub refusing the push is what was
+// chosen, not a problem; GitHub letting it push means the token can do more than vibe recorded, which is said plainly. A check that
+// didn't happen is left as it is.
+func forReadOnly(c insideCheck) insideCheck {
+	switch {
+	case c.refused:
+		return insideCheck{said: "read-only, as chosen: GitHub refuses the sandbox a push"}
+	case c.said == "the sandbox can push":
+		return insideCheck{said: "WARNING: given read-only, but the sandbox can push: the token can do more than vibe recorded"}
+	}
+	return c
+}

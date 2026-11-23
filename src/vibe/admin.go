@@ -90,10 +90,11 @@ func (a *companionAdmin) Status() companion.AdminStatus {
 func adminGitToken(name, target string, info sandboxInfo) companion.AdminGitToken {
 	now := timeNow()
 	t := companion.AdminGitToken{
-		Has:     info.gitToken != "",
-		Source:  info.gitToken,
-		Rules:   info.gitRules,
-		Command: "vibe --git-token " + shellWord(target),
+		Has:      info.gitToken != "",
+		ReadOnly: info.gitToken != "" && info.gitReadOnly,
+		Source:   info.gitToken,
+		Rules:    info.gitRules,
+		Command:  "vibe --git-token " + shellWord(target),
 	}
 	if !info.gitTokenExpires.IsZero() {
 		t.Expiry = gittoken.DescribeExpiry(info.gitTokenExpires, now)

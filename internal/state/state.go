@@ -67,6 +67,10 @@ type Instance struct {
 	// it was given; zero when it never does, or GitHub didn't say. vibe
 	// warns as it nears, at every session start.
 	GitTokenExpires time.Time `yaml:"gitTokenExpires,omitempty"`
+	// GitReadOnly says the user chose to give a token that can read the
+	// repository but not push to it: the agent fetches and reads, the user
+	// pushes. GitRules are kept, for a token that can push later.
+	GitReadOnly bool `yaml:"gitReadOnly,omitempty"`
 	// KitHash fingerprints what the sandbox was built from (see
 	// kitFingerprint), to tell when it's out of date. Empty in records from
 	// before it was kept, which are.

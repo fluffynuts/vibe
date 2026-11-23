@@ -466,6 +466,12 @@ func contains(list []string, s string) bool {
 	return false
 }
 
+// ReadOnly says the token can see the repository but not push to it: nothing else wrong with it. The user may choose to give it as
+// it is, for an agent that fetches and reads while they push.
+func (r Report) ReadOnly() bool {
+	return r.Unreachable == nil && !r.Rejected && r.Repo != nil && r.RepoUnreachable == nil && r.SeesRepo && !r.CanPush
+}
+
 // Problems are what's wrong with the token for pushing, as sentences; none
 // means it's good to use. Warnings that don't stop it being used (an
 // account-wide token, one that never expires) aren't among them.
@@ -594,6 +600,33 @@ func Instructions(repo *Repo, rules []string, expires time.Time) string {
 	if has[RuleNoDefaultBranch] {
 		b.WriteString("- Never push the default branch (main/master): push your branch and open a pull request with `gh pr create` instead.\n")
 	}
+	return b.String()
+}
+
+// ReadOnlyInstructions are the agent's instructions when the user chose to give the sandbox a token that can read the repository
+// but not push to it: what it can do, and that pushing is the user's. The rules for pushing aren't there: they're kept, for a token
+// that can push later, but mean nothing to this one.
+func ReadOnlyInstructions(repo *Repo, expires time.Time) string {
+	var b strings.Builder
+	b.WriteString("# Reading from GitHub in this sandbox\n\n")
+	b.WriteString("The user has given this sandbox a read-only GitHub token: you can fetch and pull, and read with `gh` " +
+		"(pull requests, issues, CI runs), but you can't push. The token never enters the sandbox: the sandbox's proxy adds it " +
+		"to requests to GitHub, so `git fetch` over HTTPS and `gh` both work, though `gh auth status` says you aren't logged in.\n\n")
+	if repo != nil {
+		fmt.Fprintf(&b, "The token is for %s.", repo)
+		if repo.SSH {
+			fmt.Fprintf(&b, " This folder's `origin` remote is an SSH URL, which the token doesn't cover: "+
+				"fetch over HTTPS instead, with `git fetch %s`, and leave the remote as it is.", repo.HTTPSURL())
+		}
+		b.WriteString("\n\n")
+	}
+	if !expires.IsZero() {
+		fmt.Fprintf(&b, "The token expires %s.\n\n", expires.UTC().Format("2006-01-02 15:04 MST"))
+	}
+	b.WriteString("You can't push: commit your work, and tell the user what is ready for them to push. " +
+		"If a fetch or `gh` fails because GitHub won't accept the credentials, the token has most likely expired or been revoked: " +
+		"tell the user to run `vibe --git-token` on their machine to renew it. " +
+		"Don't look for other credentials, or other ways to push.\n")
 	return b.String()
 }
 

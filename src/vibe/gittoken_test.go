@@ -45,6 +45,10 @@ func stubGitAccess(t *testing.T) *fakeGitAccess {
 	t.Cleanup(func() { pushFromInside = oldInside })
 	pushFromInside = func(string, string, *gittoken.Repo) insideCheck { return insideCheck{} }
 	checkGitToken = func(token string, repo *gittoken.Repo) gittoken.Report {
+		if token == "readonly" {
+			// Sees the repository, can't push to it: a read-only token.
+			return gittoken.Report{Login: "someone", Repo: repo, SeesRepo: repo != nil, Expires: fakeExpiry}
+		}
 		if token != "good" {
 			return gittoken.Report{Rejected: true}
 		}
@@ -125,7 +129,7 @@ func TestVetGitTokenWhenGitHubCantBeAsked(t *testing.T) {
 	checkGitToken = func(string, *gittoken.Repo) gittoken.Report {
 		return gittoken.Report{Unreachable: errors.New("offline")}
 	}
-	if verdict, _ := vetGitToken("github_pat_x", nil, false, nil); verdict != vetUse {
+	if verdict, _ := vetGitToken("github_pat_x", nil, false, false, nil); verdict != vetUse {
 		t.Error("not being able to ask GitHub should warn, not refuse the token")
 	}
 }
@@ -328,10 +332,10 @@ func TestShareDefaultToken(t *testing.T) {
 
 func TestVetGitTokenWithNoOneToAsk(t *testing.T) {
 	stubGitAccess(t)
-	if verdict, expires := vetGitToken("good", nil, false, nil); verdict != vetUse || !expires.Equal(fakeExpiry) {
+	if verdict, expires := vetGitToken("good", nil, false, false, nil); verdict != vetUse || !expires.Equal(fakeExpiry) {
 		t.Errorf("a good token: %v, %v", verdict, expires)
 	}
-	if verdict, _ := vetGitToken("bad", nil, false, nil); verdict != vetSkip {
+	if verdict, _ := vetGitToken("bad", nil, false, false, nil); verdict != vetSkip {
 		t.Errorf("a token GitHub turns down, with no one to ask: %v", verdict)
 	}
 }

@@ -7,8 +7,8 @@ const { openPage } = require('./page.js')
 
 const turns = async () => { for (let i = 0; i < 30; i++) await new Promise((resolve) => setImmediate(resolve)) }
 
-async function adminWith(others) {
-  const gitToken = { has: true, source: 'own', expiry: 'expires 2026-12-20 (in 30 days)', command: 'vibe --git-token /w/box', others }
+async function adminWith(others, more = {}) {
+  const gitToken = { has: true, source: 'own', expiry: 'expires 2026-12-20 (in 30 days)', command: 'vibe --git-token /w/box', others, ...more }
   const p = await openPage({
     settled: false,
     routes: {
@@ -47,5 +47,15 @@ test('with no other token running out, the card says nothing of others', async (
   const p = await adminWith(undefined)
   try {
     assert.equal(p.$('admin-git-others').hidden, true)
+  } finally { p.close() }
+})
+
+test("a read-only token's card says the agent can read from GitHub but not push, without push rules it isn't told", async () => {
+  const p = await adminWith(undefined, { readOnly: true, rules: ['feature-branch'] })
+  try {
+    const said = p.$('admin-git').textContent
+    assert.match(said, /read-only/i)
+    assert.doesNotMatch(said, /can push/)
+    assert.doesNotMatch(said, /feature-branch/)
   } finally { p.close() }
 })

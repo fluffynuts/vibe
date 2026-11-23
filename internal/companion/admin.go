@@ -124,13 +124,15 @@ type AdminTokenSoon struct {
 type AdminGitToken struct {
 	// Others are the other sandboxes whose token has expired or is about to, from vibe's records: 'vibe --batch-git-token'
 	// renews several at once.
-	Others   []AdminTokenSoon `json:"others,omitempty"`
-	Has      bool             `json:"has"`
-	Source   string           `json:"source,omitempty"`
-	Rules    []string         `json:"rules,omitempty"`
-	Expiry   string           `json:"expiry,omitempty"`
-	Expired  bool             `json:"expired,omitempty"`
-	Expiring bool             `json:"expiring,omitempty"`
+	Others []AdminTokenSoon `json:"others,omitempty"`
+	Has    bool             `json:"has"`
+	// ReadOnly says the token can read the repository but not push.
+	ReadOnly bool     `json:"readOnly,omitempty"`
+	Source   string   `json:"source,omitempty"`
+	Rules    []string `json:"rules,omitempty"`
+	Expiry   string   `json:"expiry,omitempty"`
+	Expired  bool     `json:"expired,omitempty"`
+	Expiring bool     `json:"expiring,omitempty"`
 	// NewTokenURL is GitHub's form for a new token, filled in as far as a
 	// URL can; RenewURL the page of tokens to regenerate one on.
 	NewTokenURL string `json:"newTokenUrl,omitempty"`

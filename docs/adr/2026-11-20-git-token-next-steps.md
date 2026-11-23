@@ -1,4 +1,4 @@
-# GitHub tokens: a batch for scripts, a check from inside the sandbox, and tokens running out on the Admin tab
+# GitHub tokens: a batch for scripts, a check from inside the sandbox, tokens running out on the Admin tab, and read-only tokens
 
 - **Status:** accepted, built 2026-11-20 on `feat/git-token-next-steps`.
 - **Decided:** 2026-11-20, with the user; the check from inside changed the same day, once a real token showed GitHub's API couldn't tell
@@ -41,6 +41,20 @@ sandbox holding it; and nothing said, across sandboxes, whose token was about to
   token is checked against the first sandbox's repository, and the warning that it reaches others said "only <that one> should be
   selected", which would have left every other sandbox unable to push. The check now knows all the batch's repositories (asked for or
   scripted alike): reaching those isn't too broad, and the advice names them all.
+
+- **Read-only tokens** (decided 2026-11-23, with the user, after giving a sandbox a token that could see its repository but
+  not push): such a token is still worth having (fetch, pull, `gh`), so it is no longer only refused.
+  - On a terminal, vibe offers "use it read-only" beside "try again" and skipping. A script says yes with `--git-read-only`
+    (only with `--git-token-env`); without it, it is refused as before, so a script never ends up read-only by surprise.
+  - It is recorded per sandbox (`gitReadOnly` in its record): `--info`, the Admin tab and the batch's list say "read-only".
+  - The agent's instructions become "Reading from GitHub in this sandbox": it fetches, pulls and reads with `gh`, can't push,
+    commits and tells the user what is ready. The rules for pushing stay recorded, not shown, for when it can push.
+  - The check from inside expects a refusal ("read-only, as chosen"); a push GitHub would take is a warning, since the token
+    can do more than vibe recorded.
+  - A batch makes read-only only the sandboxes whose repository the token can only read, and only when read-only was
+    accepted; the summary says which. Otherwise they are skipped, as before.
+  - Renewal keeps read-only unless the new token can push, when the sandbox becomes read-write, saying so. The default token
+    (`--setup`) may be read-only; whether a sandbox is, is recorded when it is given one.
 
 ## Consequences
 

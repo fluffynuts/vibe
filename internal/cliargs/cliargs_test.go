@@ -575,3 +575,35 @@ func TestSandboxesIsAListOfNames(t *testing.T) {
 		}
 	}
 }
+
+// --git-read-only accepts a token that can read but not push, for a script: it goes with --git-token-env (on a terminal, vibe asks).
+func TestGitReadOnlyGoesWithGitTokenEnv(t *testing.T) {
+	for _, argv := range [][]string{
+		{"--git-token", "--git-token-env", "T", "--git-read-only"},
+		{"--batch-git-token", "--sandboxes", "a", "--git-token-env", "T", "--git-read-only"},
+		{"--git-token-env", "T", "--git-read-only"},
+	} {
+		a, err := Parse(argv)
+		if err != nil {
+			t.Fatalf("Parse(%v): %v", argv, err)
+		}
+		if !a.GitReadOnly {
+			t.Errorf("Parse(%v): GitReadOnly not set", argv)
+		}
+		if err := a.GitReadOnlyConflict(); err != nil {
+			t.Errorf("Parse(%v): %v, want it accepted", argv, err)
+		}
+	}
+	for argv, want := range map[string]string{
+		"--git-token --git-read-only":                      "goes with --git-token-env",
+		"--git-token-env T --no-git-token --git-read-only": "--no-git-token",
+	} {
+		a, err := Parse(strings.Fields(argv))
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", argv, err)
+		}
+		if err := a.GitReadOnlyConflict(); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: got %v, want an error saying %q", argv, err, want)
+		}
+	}
+}
