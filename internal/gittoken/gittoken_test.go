@@ -445,3 +445,16 @@ func TestTooBroadListsAFew(t *testing.T) {
 		t.Errorf("TooBroad = %q, want %q", got, want)
 	}
 }
+
+// A token given to several sandboxes at once (a batch) is meant to reach each of their repositories: those aren't too broad, and
+// the advice names them all, not just the one it was checked against.
+func TestTooBroadForABatchLeavesOutItsOwnRepositoriesAndNamesThemAll(t *testing.T) {
+	rep := Report{Repo: &Repo{Owner: "o", Name: "one"}, OtherRepos: []string{"o/extra", "o/three", "o/two"}}
+	got := rep.TooBroad("o/two", "o/three")
+	if want := "the token reaches other repositories of o too (o/extra): only o/one, o/three, o/two should be selected"; got != want {
+		t.Errorf("TooBroad = %q, want %q", got, want)
+	}
+	if got := (Report{Repo: &Repo{Owner: "o", Name: "one"}, OtherRepos: []string{"o/two"}}).TooBroad("o/two"); got != "" {
+		t.Errorf("TooBroad = %q, want nothing: it reaches only what it's meant to", got)
+	}
+}

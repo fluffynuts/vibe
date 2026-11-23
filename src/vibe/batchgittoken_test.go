@@ -614,3 +614,33 @@ func TestBatchSummarySaysWhatEachSandboxFoundFromInsideAndMarksOneThatCantPush(t
 		t.Errorf("batchFailures = %d, want 1 (the one that can't push)", n)
 	}
 }
+
+// Seen with a real token: a batch over three repositories warned that only the first should be selected on GitHub, which would
+// have left the other sandboxes unable to push. Only what is beyond the batch's own repositories is too broad.
+func TestABatchsTokenIsTooBroadOnlyBeyondTheBatchsOwnRepositories(t *testing.T) {
+	_, home := scriptBatch(t)
+	t.Setenv("VIBE_TEST_TOKEN", "good")
+	check := checkGitToken
+	checkGitToken = func(token string, repo *gittoken.Repo) gittoken.Report {
+		rep := check(token, repo)
+		if repo != nil {
+			for _, o := range []string{"o/one", "o/two", "o/other", "o/extra"} {
+				if o != repo.String() {
+					rep.OtherRepos = append(rep.OtherRepos, o)
+				}
+			}
+		}
+		return rep
+	}
+	said := stderrOf(t, func() {
+		if err := doBatchGitToken(home, cliargs.Args{BatchGitToken: true, Sandboxes: []string{"one", "two", "other"}, GitTokenEnv: "VIBE_TEST_TOKEN"}); err != nil {
+			t.Errorf("doBatchGitToken: %v", err)
+		}
+	})
+	if strings.Contains(said, "only o/one should be selected") || strings.Contains(said, "only o/other should be selected") {
+		t.Errorf("it said to select one repository of the three:\n%s", said)
+	}
+	if !strings.Contains(said, "(o/extra)") || !strings.Contains(said, "should be selected") || !strings.Contains(said, "o/one, o/other, o/two") {
+		t.Errorf("it didn't name the one beyond the batch, and the three to select:\n%s", said)
+	}
+}

@@ -35,6 +35,11 @@ sandbox holding it; and nothing said, across sandboxes, whose token was about to
   sbx: missing or over 10 minutes old, it asks sbx again in the background, one ask at a time, and until sbx has answered once the dot
   leaves expired tokens out rather than guess.
 
+- **A batch's token is too broad only beyond the batch's own repositories** (found by the user's first real run, 2026-11-23): the
+  token is checked against the first sandbox's repository, and the warning that it reaches others said "only <that one> should be
+  selected", which would have left every other sandbox unable to push. The check now knows all the batch's repositories (asked for or
+  scripted alike): reaching those isn't too broad, and the advice names them all.
+
 ## Consequences
 
 - A batch can be scheduled (cron, CI) with the token in a secret variable, never on the command line.

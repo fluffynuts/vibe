@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -422,19 +423,47 @@ func (c Checker) receivePack(token string, repo Repo) (int, error) {
 }
 
 // TooBroad says, when the token was given repositories besides the one it
-// was checked against, which, as a sentence; "" when it wasn't.
-func (r Report) TooBroad() string {
-	if len(r.OtherRepos) == 0 {
+// was checked against and those it is meant for too (also: a batch's other
+// sandboxes' repositories, as owner/name), which, as a sentence; "" when it
+// wasn't.
+func (r Report) TooBroad(also ...string) string {
+	meant := map[string]bool{}
+	for _, a := range also {
+		meant[a] = true
+	}
+	var beyond []string
+	for _, o := range r.OtherRepos {
+		if !meant[o] {
+			beyond = append(beyond, o)
+		}
+	}
+	if len(beyond) == 0 {
 		return ""
 	}
-	shown := r.OtherRepos
+	shown := beyond
 	more := ""
 	if len(shown) > 5 {
 		more = fmt.Sprintf(" and %d more", len(shown)-5)
 		shown = shown[:5]
 	}
+	selected := []string{r.Repo.String()}
+	for _, a := range also {
+		if a != r.Repo.String() && !contains(selected, a) {
+			selected = append(selected, a)
+		}
+	}
+	sort.Strings(selected[1:])
 	return fmt.Sprintf("the token reaches other repositories of %s too (%s%s): only %s should be selected",
-		r.Repo.Owner, strings.Join(shown, ", "), more, r.Repo)
+		r.Repo.Owner, strings.Join(shown, ", "), more, strings.Join(selected, ", "))
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 // Problems are what's wrong with the token for pushing, as sentences; none

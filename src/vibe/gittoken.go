@@ -131,12 +131,13 @@ func pickGitAccess(vibeHome string, args cliargs.Args, name, target string) (*gi
 // gitAccessFromEnv is --git-token-env: the token in the named variable,
 // checked with GitHub, with the rules --git-rules gave. There's no one to
 // ask whether to use a token GitHub turns down, so that's an error.
-func gitAccessFromEnv(variable string, repo *gittoken.Repo, rules []string) (*gitAccess, error) {
+// also are the repositories, besides repo, the token is meant to reach (a batch's other sandboxes'): see vetGitToken.
+func gitAccessFromEnv(variable string, repo *gittoken.Repo, rules []string, also ...string) (*gitAccess, error) {
 	token := strings.TrimSpace(os.Getenv(variable))
 	if err := gittoken.Valid(token); err != nil {
 		return nil, fmt.Errorf("--git-token-env %s: %w", variable, err)
 	}
-	verdict, expires := vetGitToken(token, repo, false, nil)
+	verdict, expires := vetGitToken(token, repo, false, nil, also...)
 	if verdict != vetUse {
 		return nil, fmt.Errorf("--git-token-env %s: not using that token (see above) — fix it, or leave --git-token-env off", variable)
 	}
@@ -324,10 +325,10 @@ func pickTokenDonor(donors []tokenDonor) (tokenDonor, bool) {
 // gives it as the donor holds it: a default token stays the default, so a
 // renewal through --setup still reaches the recipient. It says whether the
 // token is to be used.
-func accessFromDonor(donor tokenDonor, repo *gittoken.Repo, ask bool, skip skipWording) (*gitAccess, bool) {
-	verdict, expires := vetGitToken(donor.token, repo, ask, skip)
+func accessFromDonor(donor tokenDonor, repo *gittoken.Repo, ask bool, skip skipWording, also ...string) (*gitAccess, bool) {
+	verdict, expires := vetGitToken(donor.token, repo, ask, skip, also...)
 	for verdict == vetRetry {
-		verdict, expires = vetGitToken(donor.token, repo, ask, skip)
+		verdict, expires = vetGitToken(donor.token, repo, ask, skip, also...)
 	}
 	if verdict != vetUse {
 		return nil, false
@@ -527,7 +528,7 @@ func openRenewPage(tokenName string) {
 // problem, for as long as the user wants to try again. ok is false when the
 // user gave up: an empty line, Ctrl-C, or skip (skipWording says what that
 // leaves). expires is when GitHub says the token stops working.
-func enterGitToken(repo *gittoken.Repo, skip skipWording) (token string, expires time.Time, ok bool) {
+func enterGitToken(repo *gittoken.Repo, skip skipWording, also ...string) (token string, expires time.Time, ok bool) {
 	for {
 		tty, closeFn, opened := ttyRW()
 		if !opened {
@@ -549,7 +550,7 @@ func enterGitToken(repo *gittoken.Repo, skip skipWording) (token string, expires
 			note("  that's the same token twice over (pasted twice?) — try again")
 			continue
 		}
-		verdict, expires := vetGitToken(token, repo, true, skip)
+		verdict, expires := vetGitToken(token, repo, true, skip, also...)
 		switch verdict {
 		case vetUse:
 			return token, expires, true
@@ -576,7 +577,10 @@ const (
 // use it anyway, or skip (put as skip says); without, it isn't used —
 // except when GitHub couldn't be asked at all, which only warns, since that
 // says nothing against the token.
-func vetGitToken(token string, repo *gittoken.Repo, ask bool, skip skipWording) (vetVerdict, time.Time) {
+//
+// also are the repositories, besides repo, the token is meant to reach: a batch's other sandboxes', as owner/name. Reaching those
+// isn't too broad, and the advice to narrow it names them all.
+func vetGitToken(token string, repo *gittoken.Repo, ask bool, skip skipWording, also ...string) (vetVerdict, time.Time) {
 	kind := gittoken.KindOf(token)
 	if kind.AccountWide() {
 		note("  WARNING: that's a %s: it can reach every repository your account can,", kind)
@@ -611,7 +615,7 @@ func vetGitToken(token string, repo *gittoken.Repo, ask bool, skip skipWording) 
 	}
 	// A token that can push, but to more than this repository, is turned
 	// down only by the user: it works, it's just broader than it should be.
-	if broad := rep.TooBroad(); broad != "" {
+	if broad := rep.TooBroad(also...); broad != "" {
 		note("  WARNING: %s", broad)
 		note("  on GitHub, edit the token and change Repository access to %s:", paint(colorGreen, `"Only select repositories"`))
 		note("  that changes what it can reach without changing the token itself")
@@ -626,7 +630,7 @@ func vetGitToken(token string, repo *gittoken.Repo, ask bool, skip skipWording) 
 			case !ok || idx == 3:
 				return vetSkip, rep.Expires
 			case idx == 0:
-				return vetGitToken(token, repo, ask, skip)
+				return vetGitToken(token, repo, ask, skip, also...)
 			case idx == 2:
 				return vetRetry, rep.Expires
 			}

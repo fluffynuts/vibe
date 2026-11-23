@@ -406,6 +406,8 @@ func askBatchToken(vibeHome string, picked []state.Instance) (batchToken, bool) 
 	if len(repos) > 0 {
 		first = &repos[0]
 	}
+	// The token is checked against the first; it is meant to reach them all, which isn't too broad.
+	also := names
 	skip := fixedSkip("give up: change nothing")
 
 	defaultPath := state.DefaultGitTokenPath(vibeHome)
@@ -449,9 +451,9 @@ func askBatchToken(vibeHome string, picked []state.Instance) (batchToken, bool) 
 	switch choices[idx] {
 	case useDefault:
 		tok = batchToken{token: defaultToken, source: gitTokenDefault, expires: defaultExpires}
-		verdict, expires := vetGitToken(tok.token, first, true, skip)
+		verdict, expires := vetGitToken(tok.token, first, true, skip, also...)
 		for verdict == vetRetry {
-			verdict, expires = vetGitToken(tok.token, first, true, skip)
+			verdict, expires = vetGitToken(tok.token, first, true, skip, also...)
 		}
 		if verdict != vetUse {
 			return batchToken{}, false
@@ -464,7 +466,7 @@ func askBatchToken(vibeHome string, picked []state.Instance) (batchToken, bool) 
 		if !chosen {
 			return batchToken{}, false
 		}
-		access, taken := accessFromDonor(donor, first, true, skip)
+		access, taken := accessFromDonor(donor, first, true, skip, also...)
 		if !taken {
 			return batchToken{}, false
 		}
@@ -474,7 +476,7 @@ func askBatchToken(vibeHome string, picked []state.Instance) (batchToken, bool) 
 			description := "Lets the agents in the vibe sandboxes " + sandboxNames(picked) + " push."
 			openTokenPageFor("vibe sandboxes", description, owner, pickTokenDays(tokenDays), names)
 		}
-		token, expires, entered := enterGitToken(first, skip)
+		token, expires, entered := enterGitToken(first, skip, also...)
 		if !entered {
 			return batchToken{}, false
 		}
@@ -518,12 +520,12 @@ func namedSandboxes(candidates []state.Instance, names []string) ([]state.Instan
 // batchTokenFromEnv is the token in the environment variable named, checked with GitHub against the first of the picked
 // sandboxes' repositories, as a token typed in is (giveTokenToSandboxes checks it against the others).
 func batchTokenFromEnv(variable string, picked []state.Instance) (batchToken, error) {
-	repos, _, _ := batchRepositories(picked)
+	repos, names, _ := batchRepositories(picked)
 	var first *gittoken.Repo
 	if len(repos) > 0 {
 		first = &repos[0]
 	}
-	access, err := gitAccessFromEnv(variable, first, nil)
+	access, err := gitAccessFromEnv(variable, first, nil, names...)
 	if err != nil {
 		return batchToken{}, err
 	}
