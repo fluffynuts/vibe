@@ -135,8 +135,26 @@ function waitingLike(body) {
   });
 }
 
-function addItem(body, contentType, name) {
+// typeOf is what a paste is: the type it was sent with, unless that says nothing (a browser types a file by its extension, and
+// .zarro-defaults has none), when content that reads as text is text.
+function typeOf(contentType, body) {
   const type = baseType(contentType);
+  return type === "application/octet-stream" && readsAsText(body) ? "text/plain" : type;
+}
+
+// readsAsText says body is UTF-8 with no NUL: what a text file is, and what binary formats almost never are.
+function readsAsText(body) {
+  if (!body.length || body.includes(0)) return false;
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(body);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function addItem(body, contentType, name) {
+  const type = typeOf(contentType, body);
   const id = state.nextId++;
   const item = {
     id: id,
