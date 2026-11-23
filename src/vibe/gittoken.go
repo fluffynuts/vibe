@@ -808,7 +808,7 @@ func recordedGitAccess(vibeHome, name string) *gitAccess {
 		note("WARNING: '%s' had a GitHub token, but vibe's copy of it is gone — the rebuilt sandbox won't have one ('vibe --git-token' gives it one)", name)
 		return nil
 	}
-	return &gitAccess{token: token, source: inst.GitToken, rules: inst.GitRules, expires: inst.GitTokenExpires}
+	return &gitAccess{token: token, source: inst.GitToken, rules: inst.GitRules, expires: inst.GitTokenExpires, readOnly: inst.GitReadOnly}
 }
 
 // forgetGitSecret takes away the sbx secret of a sandbox being deleted,
@@ -932,7 +932,7 @@ func offerDefaultToken(vibeHome, token string, expires time.Time, except ...stri
 	}
 	for i := range sharing {
 		inst := &sharing[i]
-		access := &gitAccess{token: token, source: gitTokenDefault, rules: inst.GitRules, expires: expires}
+		access := &gitAccess{token: token, source: gitTokenDefault, rules: inst.GitRules, expires: expires, readOnly: inst.GitReadOnly}
 		note("'%s':", inst.Name)
 		if err := setGitAccess(vibeHome, inst, access, repoOf(inst.Target)); err != nil {
 			note("WARNING: %s", err)

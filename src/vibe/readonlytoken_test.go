@@ -152,3 +152,31 @@ func TestInfoTheAdminTabAndTheBatchChecklistSayASandboxIsReadOnly(t *testing.T) 
 		t.Errorf("only a read-only sandbox is said to be: %q", label)
 	}
 }
+
+func TestARebuildKeepsASandboxReadOnly(t *testing.T) {
+	stubGitAccess(t)
+	home := t.TempDir()
+	repo := &gittoken.Repo{Owner: "o", Name: "r"}
+	inst := state.Instance{Name: "proj"}
+	if err := setGitAccess(home, &inst, &gitAccess{token: "readonly", source: gitTokenOwn, readOnly: true}, repo); err != nil {
+		t.Fatal(err)
+	}
+	if got := recordedGitAccess(home, "proj"); got == nil || !got.readOnly {
+		t.Errorf("a rebuild should hand on that the sandbox is read-only: %+v", got)
+	}
+}
+
+func TestANewDefaultTokenKeepsTheSandboxesUsingItReadOnly(t *testing.T) {
+	stubGitAccess(t)
+	home := t.TempDir()
+	ask := askToShareDefault
+	askToShareDefault = func([]string) bool { return true }
+	t.Cleanup(func() { askToShareDefault = ask })
+	if err := state.Save(home, state.Instance{Name: "proj", GitToken: gitTokenDefault, GitReadOnly: true}); err != nil {
+		t.Fatal(err)
+	}
+	offerDefaultToken(home, "good", fakeExpiry)
+	if inst, _, _ := state.Load(home, "proj"); !inst.GitReadOnly {
+		t.Errorf("a sandbox given read-only should stay so with the new default: %+v", inst)
+	}
+}
