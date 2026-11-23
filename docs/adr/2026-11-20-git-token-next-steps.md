@@ -60,7 +60,9 @@ sandbox holding it; and nothing said, across sandboxes, whose token was about to
     can do more than vibe recorded.
   - A batch makes read-only only the sandboxes whose repository the token can only read, and only when read-only was
     accepted; the summary says which. Otherwise they are skipped, as before.
-  - Renewal keeps read-only unless the new token can push, when the sandbox becomes read-write, saying so. The default token
+  - Renewal keeps read-only unless the new token can push, when the sandbox becomes read-write, saying so: said wherever a
+    read-only sandbox is given a token that can push (renewing, a new token, a batch), as the user's hand-test came by a new
+    token and was told nothing. The default token
     (`--setup`) may be read-only; whether a sandbox is, is recorded when it is given one.
 
 ## Consequences

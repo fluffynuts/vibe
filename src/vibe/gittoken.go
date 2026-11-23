@@ -873,10 +873,6 @@ func renewGitAccess(vibeHome string, inst *state.Instance, repo *gittoken.Repo) 
 		note("'%s' keeps the token it has", inst.Name)
 		return nil
 	}
-	// Read-only stays so unless the new token can push; then it says so.
-	if inst.GitReadOnly && !readOnly {
-		note("the new token can push: '%s' isn't read-only any more", inst.Name)
-	}
 	access := &gitAccess{token: token, source: inst.GitToken, rules: inst.GitRules, expires: expires, readOnly: readOnly}
 	if err := setGitAccess(vibeHome, inst, access, repo); err != nil {
 		return err
@@ -1041,6 +1037,9 @@ func setGitAccessSaying(say func(string, ...interface{}), vibeHome string, inst 
 	given := giveGitAccessSaying(say, vibeHome, inst.Name, access, repo)
 	if given == nil {
 		return insideCheck{}, fmt.Errorf("'%s' has no new GitHub token", inst.Name)
+	}
+	if inst.GitReadOnly && !given.readOnly {
+		say("  '%s' isn't read-only any more: the new token can push", inst.Name)
 	}
 	inst.GitToken, inst.GitRules, inst.GitTokenExpires, inst.GitReadOnly = given.source, given.rules, given.expires, given.readOnly
 	if err := state.Save(vibeHome, *inst); err != nil {

@@ -1040,7 +1040,8 @@ agent's instructions are about reading from GitHub, not pushing (its rules for p
 The check from inside expects GitHub to refuse a push ("read-only, as chosen"), and says plainly if it doesn't. In a
 batch, a sandbox whose repository the token can only read is given it read-only only if that was accepted (on the
 terminal or with the flag), and the summary says which; otherwise it is skipped. Renewing keeps a sandbox read-only
-unless the new token can push, when it says that the sandbox isn't read-only any more.
+unless the new token can push; whenever a read-only sandbox is given a token that can push, by any way, vibe says it isn't
+read-only any more.
 
 `vibe --batch-git-token` is for when several sandboxes push with the same token and it has been
 regenerated, which kills the old one in every sandbox holding it. It lists the sandboxes vibe knows

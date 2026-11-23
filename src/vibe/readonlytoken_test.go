@@ -55,13 +55,25 @@ func TestASandboxGivenAReadOnlyTokenIsRecordedAndToldSo(t *testing.T) {
 	if all := strings.Join(said, "\n"); !strings.Contains(all, "read-only") || strings.Contains(all, "the agent can push") {
 		t.Errorf("said:\n%s", all)
 	}
-	// Given a token that can push later, it isn't read-only any more.
+	// Given a token that can push later, by whichever way (a new token here, not a renewal), it isn't read-only any more, and says so.
+	said = nil
 	if _, err := setGitAccessSaying(say, home, &saved, &gitAccess{token: "good", source: gitTokenOwn, rules: saved.GitRules, expires: fakeExpiry}, &gittoken.Repo{Owner: "o", Name: "r"}); err != nil {
 		t.Fatal(err)
 	}
 	again, _, _ := state.Load(home, "box")
 	if again.GitReadOnly || !strings.HasPrefix(f.instructions["box"], "# Pushing to GitHub") {
 		t.Errorf("a token that can push left it read-only: %+v\n%s", again, f.instructions["box"])
+	}
+	if all := strings.Join(said, "\n"); !strings.Contains(all, "isn't read-only any more") {
+		t.Errorf("becoming able to push wasn't said:\n%s", all)
+	}
+	// Given another that can push, there is nothing to say.
+	said = nil
+	if _, err := setGitAccessSaying(say, home, &again, &gitAccess{token: "good", source: gitTokenOwn, expires: fakeExpiry}, &gittoken.Repo{Owner: "o", Name: "r"}); err != nil {
+		t.Fatal(err)
+	}
+	if all := strings.Join(said, "\n"); strings.Contains(all, "read-only") {
+		t.Errorf("a sandbox that could already push was said to change:\n%s", all)
 	}
 }
 
