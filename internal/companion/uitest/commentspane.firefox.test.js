@@ -62,3 +62,25 @@ test("a card's state is one line, above the path, and not squeezed by a long one
     assert.equal(m.stateLinesOnCardsWithNothingToSay, 0)
   } finally { await page.close() }
 })
+
+// The bar's note is one line, cut with an ellipsis, however long: it widened the whole tab, sideways scrolling and all, when
+// nothing held it to the bar's width (seen 2026-11-23).
+test("a long note on the review bar is cut on one line, and doesn't widen the tab", async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  try {
+    await page.goto(URL)
+    await page.click('#tab-review')
+    await page.waitForSelector('#review-note', { state: 'visible' })
+    const m = await page.evaluate(() => {
+      const panel = document.getElementById('panel-review')
+      const note = document.getElementById('review-note')
+      const title = document.getElementById('review-title').getBoundingClientRect()
+      const box = note.getBoundingClientRect()
+      return { panelScroll: panel.scrollWidth, panelWidth: panel.clientWidth, noteScroll: note.scrollWidth, noteWidth: note.clientWidth,
+        noteHeight: box.height, lineHeight: parseFloat(getComputedStyle(note).lineHeight) || 20, titleTop: title.top, noteTop: box.top }
+    })
+    assert.ok(m.panelScroll <= m.panelWidth, `the tab is ${m.panelScroll}px wide inside ${m.panelWidth}px: the note widened it`)
+    assert.ok(m.noteScroll > m.noteWidth, `the note shows whole (${m.noteScroll}px in ${m.noteWidth}px): it should be cut`)
+    assert.ok(m.noteHeight < m.lineHeight * 1.5, `the note is ${m.noteHeight}px high: it should be one line`)
+  } finally { await page.close() }
+})

@@ -221,7 +221,8 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #convo-new { margin-left: auto; }
 /* The title (with its state and what it is of) always has a line to itself, wrapping if it must;
    the buttons sit under it, to the right, nearer the middle of the screen than the edge. */
-.review-bar { flex-direction: column; align-items: stretch; gap: 6px; }
+/* nowrap, against .bar's wrap: a wrapping column's lines are as wide as their content, so the note's one line widened the tab. */
+.review-bar { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 6px; }
 .review-bar-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 #review-note { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .review-bar-buttons { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
