@@ -45,7 +45,6 @@ type batchOutcome struct {
 	given        bool
 	problem      string
 	pushCheck    string
-	readOnly     bool
 	// inside is what a push checked from inside the sandbox found.
 	inside                 insideCheck
 	oldExpires, newExpires time.Time
@@ -306,6 +305,10 @@ func giveTokenToSandbox(say func(string, ...interface{}), vibeHome string, inst 
 		readOnly = rep.ReadOnly() && tok.readOnlyOK
 		if problems := rep.Problems(); rep.Unreachable == nil && len(problems) > 0 && !readOnly {
 			out.problem = problems[0]
+			// Read-only is offered only for the first sandbox's repository (decided in review, #117): the rest are told how.
+			if rep.ReadOnly() {
+				out.problem += " (or, to give it read-only: 'vibe --git-token' in its folder, or --git-read-only)"
+			}
 			return out
 		}
 		switch {
@@ -325,7 +328,6 @@ func giveTokenToSandbox(say func(string, ...interface{}), vibeHome string, inst 
 		rules = inst.GitRules
 	}
 	access := &gitAccess{token: tok.token, source: tok.source, rules: rules, expires: expires, readOnly: readOnly}
-	out.readOnly = readOnly
 	if out.inside, err = setGitAccessSaying(say, vibeHome, &inst, access, repo); err != nil {
 		out.problem, out.pushCheck = err.Error(), ""
 		return out
@@ -490,7 +492,7 @@ func askBatchToken(vibeHome string, picked []state.Instance) (batchToken, bool) 
 			description := "Lets the agents in the vibe sandboxes " + sandboxNames(picked) + " push."
 			openTokenPageFor("vibe sandboxes", description, owner, pickTokenDays(tokenDays), names)
 		}
-		token, expires, readOnly, entered := enterGitToken(first, skip, also...)
+		token, expires, readOnly, entered := enterGitToken(first, skip, false, also...)
 		if !entered {
 			return batchToken{}, false
 		}

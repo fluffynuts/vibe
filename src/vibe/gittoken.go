@@ -260,7 +260,7 @@ func askGitAccess(vibeHome, name string, repo *gittoken.Repo, current *state.Ins
 			days := pickTokenDays(tokenDays)
 			openTokenPage(fmt.Sprintf("vibe %s", name), tokenDescription(name, repo), repoOwner(repo), days, repo)
 		}
-		if access.token, access.expires, access.readOnly, ok = enterGitToken(repo, skip); !ok {
+		if access.token, access.expires, access.readOnly, ok = enterGitToken(repo, skip, false); !ok {
 			return nil, keepOrNone(has), nil
 		}
 		access.source = gitTokenOwn
@@ -284,6 +284,9 @@ func gitRulesFor(access *gitAccess, preset []string) []string {
 
 // askGitRules asks which rules the agent is given for pushing (pickGitRules); tests stand in for it.
 var askGitRules = pickGitRules
+
+// enterGitTokenFor is enterGitToken for a renewal; tests stand in for it.
+var enterGitTokenFor = enterGitToken
 
 // tokenDonor is a sandbox whose token another may be given: vibe keeps a
 // copy of each sandbox's token on the host (see giveGitAccess), so nothing is
@@ -544,7 +547,7 @@ func openRenewPage(tokenName string) {
 // problem, for as long as the user wants to try again. ok is false when the
 // user gave up: an empty line, Ctrl-C, or skip (skipWording says what that
 // leaves). expires is when GitHub says the token stops working.
-func enterGitToken(repo *gittoken.Repo, skip skipWording, also ...string) (token string, expires time.Time, readOnly, ok bool) {
+func enterGitToken(repo *gittoken.Repo, skip skipWording, readOnlyOK bool, also ...string) (token string, expires time.Time, readOnly, ok bool) {
 	for {
 		tty, closeFn, opened := ttyRW()
 		if !opened {
@@ -566,7 +569,7 @@ func enterGitToken(repo *gittoken.Repo, skip skipWording, also ...string) (token
 			note("  that's the same token twice over (pasted twice?) — try again")
 			continue
 		}
-		verdict, expires := vetGitToken(token, repo, true, false, skip, also...)
+		verdict, expires := vetGitToken(token, repo, true, readOnlyOK, skip, also...)
 		switch verdict {
 		case vetUse, vetReadOnly:
 			return token, expires, verdict == vetReadOnly, true
@@ -599,8 +602,9 @@ const (
 // also are the repositories, besides repo, the token is meant to reach: a batch's other sandboxes', as owner/name. Reaching those
 // isn't too broad, and the advice to narrow it names them all.
 //
-// A token that can see repo but not push to it is read-only (vetReadOnly): asked, the user may choose to give it so; unasked,
-// readOnlyOK (--git-read-only) says whether it is.
+// A token that can see repo but not push to it is read-only (vetReadOnly). readOnlyOK says read-only is already accepted: by
+// --git-read-only, unasked, or, asked, by the sandbox being read-only already (a renewal keeps it so, without asking again).
+// Otherwise, asked, the user may choose it.
 func vetGitToken(token string, repo *gittoken.Repo, ask, readOnlyOK bool, skip skipWording, also ...string) (vetVerdict, time.Time) {
 	kind := gittoken.KindOf(token)
 	if kind.AccountWide() {
@@ -660,6 +664,10 @@ func vetGitToken(token string, repo *gittoken.Repo, ask, readOnlyOK bool, skip s
 	problems := rep.Problems()
 	if len(problems) == 0 {
 		return vetUse, rep.Expires
+	}
+	if rep.ReadOnly() && readOnlyOK && ask {
+		note("  it can read %s, not push: kept read-only, as chosen before (the agent fetches and reads; you push)", rep.Repo)
+		return vetReadOnly, rep.Expires
 	}
 	for _, p := range problems {
 		note("  %s", p)
@@ -868,7 +876,7 @@ func renewGitAccess(vibeHome string, inst *state.Instance, repo *gittoken.Repo) 
 		tokenName = "vibe default"
 	}
 	openRenewPage(tokenName)
-	token, expires, readOnly, ok := enterGitToken(repo, keepsToken(inst.GitTokenExpires))
+	token, expires, readOnly, ok := enterGitTokenFor(repo, keepsToken(inst.GitTokenExpires), inst.GitReadOnly)
 	if !ok {
 		note("'%s' keeps the token it has", inst.Name)
 		return nil
@@ -1121,7 +1129,7 @@ func setUpDefaultGitToken(vibeHome string) {
 	case "guided":
 		openTokenPage("vibe default", "Lets the agents in vibe sandboxes push.", "", pickTokenDays(tokenDays), nil)
 	}
-	token, expires, _, ok := enterGitToken(nil, fixedSkip("go on without changing the default token"))
+	token, expires, _, ok := enterGitToken(nil, fixedSkip("go on without changing the default token"), false)
 	if !ok {
 		return
 	}

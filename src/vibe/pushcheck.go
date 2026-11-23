@@ -25,6 +25,8 @@ var pushFromInside = checkPushFromInside
 type insideCheck struct {
 	said    string
 	refused bool
+	// canPush says GitHub would have taken the push.
+	canPush bool
 }
 
 // checkPushFromInside says whether sandbox name can push to repo with the token sbx gives it, as the agent would: GitHub is asked,
@@ -58,7 +60,7 @@ func checkPushFromInside(name, target string, repo *gittoken.Repo) insideCheck {
 // pushCheckVerdict is what the dry-run push's outcome means.
 func pushCheckVerdict(err error) insideCheck {
 	if err == nil {
-		return insideCheck{said: "the sandbox can push"}
+		return insideCheck{said: "the sandbox can push", canPush: true}
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return insideCheck{said: "not checked from inside: it didn't answer"}
@@ -107,7 +109,7 @@ func forReadOnly(c insideCheck) insideCheck {
 	switch {
 	case c.refused:
 		return insideCheck{said: "read-only, as chosen: GitHub refuses the sandbox a push"}
-	case c.said == "the sandbox can push":
+	case c.canPush:
 		return insideCheck{said: "WARNING: given read-only, but the sandbox can push: the token can do more than vibe recorded"}
 	}
 	return c

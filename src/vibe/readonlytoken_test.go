@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"vibe/internal/cliargs"
 	"vibe/internal/gittoken"
@@ -121,11 +122,19 @@ func TestABatchGivesReadOnlyWhereTheTokenCantPushOnlyWhenAccepted(t *testing.T) 
 		t.Errorf("the summary doesn't say two is read-only:\n%s", said)
 	}
 
+	// Without read-only accepted (the flag here; on a terminal, read-only is offered only for the first sandbox's repository, as
+	// decided in #117), the one it can only read is skipped, and the summary says how it could have it read-only.
 	f2, home2 := scriptBatch(t)
 	twoReadOnly()
-	err := doBatchGitToken(home2, cliargs.Args{BatchGitToken: true, Sandboxes: []string{"one", "two"}, GitTokenEnv: "VIBE_TEST_TOKEN"})
+	var err error
+	said = stderrOf(t, func() {
+		err = doBatchGitToken(home2, cliargs.Args{BatchGitToken: true, Sandboxes: []string{"one", "two"}, GitTokenEnv: "VIBE_TEST_TOKEN"})
+	})
 	if err == nil || f2.secrets["two"] != "" {
 		t.Errorf("without --git-read-only, two was given the token (%v) or nothing failed (%v)", f2.secrets, err)
+	}
+	if !strings.Contains(said, "✘ two") || !strings.Contains(said, "--git-read-only") {
+		t.Errorf("the summary doesn't say how two could have the token read-only:\n%s", said)
 	}
 }
 
@@ -137,6 +146,13 @@ func TestTheCheckFromInsideOfAReadOnlySandboxExpectsARefusal(t *testing.T) {
 	}
 	if got := forReadOnly(pushCheckVerdict(nil)); got.refused || !strings.Contains(got.said, "can push") || !strings.Contains(got.said, "read-only") {
 		t.Errorf("a read-only sandbox that can push: %+v", got)
+	}
+	// Whether it could push is a fact of the check, not its wording (found in review, #118).
+	if got := forReadOnly(insideCheck{said: "pushed, in other words", canPush: true}); !strings.Contains(got.said, "WARNING") {
+		t.Errorf("a check that could push, however worded, should warn for a read-only sandbox: %+v", got)
+	}
+	if !pushCheckVerdict(nil).canPush || pushCheckVerdict(fmt.Errorf("exit status 128: error: 403")).canPush {
+		t.Error("canPush should be set only by a check that could push")
 	}
 	other := insideCheck{said: "not checked from inside: it isn't running (it isn't started for this)"}
 	if got := forReadOnly(other); got != other {
@@ -225,5 +241,38 @@ func TestTheInstructionsAnAgentAlwaysLoadsPointAtVibesGitHubFile(t *testing.T) {
 		if !strings.Contains(merged, want) {
 			t.Errorf("the always-loaded instructions lack %q:\n%s", want, merged)
 		}
+	}
+}
+
+// A read-only sandbox's token renewed with another that can only read stays read-only without asking again, nor telling the user to
+// widen a token they chose to keep narrow (found in review, #116). Asking, here, with no terminal, would be a skip.
+func TestATokenThatCanOnlyReadIsKeptReadOnlyWithoutAskingWhenReadOnlyWasAlreadyChosen(t *testing.T) {
+	stubGitAccess(t)
+	repo := &gittoken.Repo{Owner: "o", Name: "r"}
+	var verdict vetVerdict
+	said := notesOf(func() { verdict, _ = vetGitToken("readonly", repo, true, true, fixedSkip("leave it")) })
+	if verdict != vetReadOnly {
+		t.Errorf("verdict %v, want read-only, unasked", verdict)
+	}
+	if all := strings.Join(said, "\n"); strings.Contains(all, "read and write") || !strings.Contains(all, "read-only") {
+		t.Errorf("said:\n%s", all)
+	}
+}
+
+func TestRenewingAReadOnlySandboxsTokenAcceptsReadOnlyAsItWas(t *testing.T) {
+	stubGitAccess(t)
+	was := enterGitTokenFor
+	t.Cleanup(func() { enterGitTokenFor = was })
+	var accepted []bool
+	enterGitTokenFor = func(_ *gittoken.Repo, _ skipWording, readOnlyOK bool, _ ...string) (string, time.Time, bool, bool) {
+		accepted = append(accepted, readOnlyOK)
+		return "", time.Time{}, false, false
+	}
+	home := t.TempDir()
+	repo := &gittoken.Repo{Owner: "o", Name: "r"}
+	renewGitAccess(home, &state.Instance{Name: "ro", GitToken: gitTokenOwn, GitReadOnly: true}, repo)
+	renewGitAccess(home, &state.Instance{Name: "rw", GitToken: gitTokenOwn}, repo)
+	if len(accepted) != 2 || !accepted[0] || accepted[1] {
+		t.Errorf("read-only accepted for [read-only, read-write] sandboxes: %v, want [true false]", accepted)
 	}
 }
