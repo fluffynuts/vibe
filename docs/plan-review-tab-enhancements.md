@@ -2,7 +2,7 @@
 
 What is left of the Review tab after `docs/adr/2026-10-15-review-tab.md`: two feedback changes planned 2026-10-22 and never built, and the loose ends
 of the first build. None is urgent. `docs/plan-review-reopen-and-ranges.md` is a separate plan for the same tab, and
-`docs/plan-stop-ends-review.md` for stopping the agent while it writes a review.
+`docs/adr/2026-10-29-stop-ends-review.md` for stopping the agent while it writes a review (built).
 
 ## Loose ends of the first build
 

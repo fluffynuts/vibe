@@ -122,6 +122,9 @@ type Config struct {
 	// Admin is what the page's Admin tab does to the sandbox; nil means the
 	// page has no such tab.
 	Admin Admin
+	// ExpiredGitTokens names the sandboxes whose GitHub token has expired, of all vibe has records of: a reason for the Admin tab's
+	// dot. nil when not known.
+	ExpiredGitTokens func() []string
 	// SignIn reads whether sbx, and the sandbox's agent, are signed in, for the
 	// Admin tab's Sign-in card; it reads and changes nothing. Nil means the
 	// page has no such card.
@@ -631,6 +634,13 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	}
 	if waiting := s.packagesWaiting(); waiting != "" {
 		attention["admin"] = append(attention["admin"], waiting)
+	}
+	if s.cfg.ExpiredGitTokens != nil {
+		// Records on disk, read once a minute at most: a token expires on a day, not a second.
+		if expired := cachedStale(s.cache, "expired git tokens", time.Minute, s.cfg.ExpiredGitTokens); len(expired) > 0 {
+			attention["admin"] = append(attention["admin"], "GitHub token expired for "+strings.Join(expired, ", ")+
+				": the agent there can't push — 'vibe --batch-git-token' renews several at once")
+		}
 	}
 	if waiting := s.packageSyncWaiting(); waiting != "" {
 		attention["admin"] = append(attention["admin"], waiting)

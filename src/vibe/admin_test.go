@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"vibe/internal/gittoken"
 )
 
 func TestAHeldSessionWaitsForTheSandboxToComeBack(t *testing.T) {
@@ -70,6 +72,9 @@ func TestTheAdminTabOnlyShowsTheGitToken(t *testing.T) {
 	}
 	if none.Days != 30 || none.TokenName != "vibe box" || !strings.Contains(none.NewTokenURL, "expires_in=30") {
 		t.Errorf("the link's token: %+v", none)
+	}
+	if none.Permissions != gittoken.PermissionsLabel {
+		t.Errorf("the steps should name the permissions the form is filled with: %q", none.Permissions)
 	}
 	if none.Command != "vibe --git-token /w" {
 		t.Errorf("command = %q", none.Command)

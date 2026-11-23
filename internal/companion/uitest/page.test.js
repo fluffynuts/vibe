@@ -659,6 +659,75 @@ test("the agent's failed requests are listed with its review, and not once the r
   } finally { open.close(); closed.close() }
 })
 
+// What a closed review was, under why it was closed, so "Reopen" says what it reopens: what it was of (as the bar says it), the
+// agent's note, when it started, and its comments, saying plainly when any are still open, as that is what makes it worth reopening.
+const closedAs = (fields) => ({ ...none, started: '2026-10-22T13:04:00Z', closed: 'You closed it.', ...fields })
+const thread = (id, status) => ({ id, file: 'a.go', side: 'new', line: id, status, comments: [{ author: 'agent', body: 'x', at: '2026-10-22T13:05:00Z' }] })
+
+test('a closed review says what it was of, with its note, when it started, and its comments, under why it was closed', async () => {
+  for (const [review, what] of [
+    [closedAs({ ref: 'master', note: 'git author fix' }), /of the changes against master \("git author fix"\)/],
+    [closedAs({ commit: '1a2b3c4' }), /of commit 1a2b3c4/],
+    [closedAs({ ref: 'origin/feat', unpushed: true }), /of the commits not pushed to origin\/feat/],
+    [closedAs({}), /of the uncommitted changes/],
+  ]) {
+    const p = await startPage({ review })
+    try {
+      const line = p.$('review-closed-what')
+      assert.equal(line.hidden, false)
+      assert.match(line.textContent, what)
+      assert.ok(line.querySelector('time.stamp'), 'when it started is not shown as the page shows times')
+      assert.match(p.$('review-reopen').textContent, /Reopen that review/)
+    } finally { p.close() }
+  }
+})
+
+// The bar of an open review and the line of a closed one say what a review is of in the same words, from one function, so a new
+// kind of review (a range of commits, planned) is said the same in both.
+test('the bar says what an open review is of in the same words a closed review is described in', async () => {
+  for (const [fields, phrase] of [
+    [{ ref: 'master' }, 'the changes against master'],
+    [{ commit: '1a2b3c4' }, 'commit 1a2b3c4'],
+    [{ ref: 'origin/feat', unpushed: true }, 'the commits not pushed to origin/feat'],
+    [{}, 'the uncommitted changes'],
+  ]) {
+    const open = await reviewPage({ review: { ...none, started: '2026-10-22T13:04:00Z', ...fields } })
+    try {
+      await open.click('tab-review')
+      assert.equal(open.$('review-title').textContent, 'Review of ' + phrase)
+    } finally { open.close() }
+    const closed = await startPage({ review: closedAs(fields) })
+    try {
+      assert.match(closed.$('review-closed-what').textContent, new RegExp('It was of ' + phrase.replace(/[/.]/g, '\\$&')))
+    } finally { closed.close() }
+  }
+})
+
+test("a closed review's comments are counted by status, and open ones are said plainly", async () => {
+  const p = await startPage({ review: closedAs({ ref: 'master', threads: [thread(1, 'resolved'), thread(2, 'open'), thread(3, 'open'), thread(4, 'dismissed')] }) })
+  try {
+    const said = p.$('review-closed-what').textContent
+    assert.match(said, /4 comments: 2 still open, 1 resolved, 1 dismissed/)
+  } finally { p.close() }
+  const done = await startPage({ review: closedAs({ ref: 'master', threads: [thread(1, 'resolved')] }) })
+  try {
+    assert.match(done.$('review-closed-what').textContent, /1 comment, resolved/)
+    assert.doesNotMatch(done.$('review-closed-what').textContent, /open/)
+  } finally { done.close() }
+  const none_ = await startPage({ review: closedAs({ ref: 'master' }) })
+  try {
+    assert.doesNotMatch(none_.$('review-closed-what').textContent, /comment/, 'a review with no comments counts them')
+  } finally { none_.close() }
+})
+
+test('a dropped review, with nothing to reopen, says nothing of what it was', async () => {
+  const p = await startPage({ review: { ...none, closed: 'The agent stopped before finishing this review, so it was dropped.', threads: [] } })
+  try {
+    assert.equal(p.$('review-closed-what').hidden, true)
+    assert.equal(p.$('review-reopen').hidden, true)
+  } finally { p.close() }
+})
+
 test('a closed review whose reason is a sentence of its own is shown as it is, not after "The last review was closed."', async () => {
   const closed = { ...none, started: '2026-10-16T10:00:00Z', closed: "The last review was closed when the branch for this workspace switched to 'master'. The review was of 'feat/x'. It is kept: reopen it whenever you like." }
   const p = await startPage({ review: closed })
@@ -4088,7 +4157,7 @@ test('Submit to agent waits while the agent is still writing the review, and say
 })
 
 
-// --- stopping the agent while it writes a review (docs/plan-stop-ends-review.md) ------------
+// --- stopping the agent while it writes a review (docs/adr/2026-10-29-stop-ends-review.md) ------------
 
 const writingReview = { ...none, started: '2026-10-16T10:00:00Z', state: 'in progress', threads: [], lastId: 0 }
 
@@ -4261,4 +4330,19 @@ test('Submit to agent waits for a review still being written, however its turn b
   try {
     assert.equal(p.$('review-submit').disabled, true)
   } finally { p.close() }
+})
+
+// The bar says what the review is of straight after "Review", then the agent's note, then its state: a long note can't push what it
+// is of out of sight, nor come between it and "Review" (found reviewing this branch: "Review: <note> [state] of the changes…").
+test('the bar of an open review reads "Review of <what>:", then the note, whole in its tooltip, then the state', async () => {
+  const note = 'a long note about what this review covers, longer than any bar is wide, '.repeat(3)
+  const open = await reviewPage({ review: { ...none, started: '2026-10-22T13:04:00Z', ref: 'master', note, state: 'in progress' } })
+  try {
+    await open.click('tab-review')
+    assert.equal(open.$('review-title').textContent, 'Review of the changes against master:')
+    assert.equal(open.$('review-note').textContent, note)
+    assert.equal(open.$('review-note').title, note)
+    const order = [...open.$('review-title').parentElement.children].filter((e) => !e.hidden).map((e) => e.id)
+    assert.deepEqual(order, ['review-title', 'review-note', 'review-state'])
+  } finally { open.close() }
 })

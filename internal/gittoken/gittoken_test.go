@@ -1,6 +1,7 @@
 package gittoken
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -84,6 +85,7 @@ func TestNewTokenURL(t *testing.T) {
 	for k, want := range map[string]string{
 		"description": "Lets the agent push & more.", "target_name": "fluffynuts", "expires_in": "7",
 		"contents": "write", "pull_requests": "write", "workflows": "write",
+		"actions": "read", "statuses": "read", "issues": "read",
 	} {
 		if got := q.Get(k); got != want {
 			t.Errorf("%s = %q, want %q", k, got, want)
@@ -443,5 +445,79 @@ func TestTooBroadListsAFew(t *testing.T) {
 	rep := Report{Repo: &Repo{Owner: "o", Name: "r"}, OtherRepos: []string{"o/a", "o/b", "o/c", "o/d", "o/e", "o/f", "o/g"}}
 	if got, want := rep.TooBroad(), "the token reaches other repositories of o too (o/a, o/b, o/c, o/d, o/e and 2 more): only o/r should be selected"; got != want {
 		t.Errorf("TooBroad = %q, want %q", got, want)
+	}
+}
+
+// A token given to several sandboxes at once (a batch) is meant to reach each of their repositories: those aren't too broad, and
+// the advice names them all, not just the one it was checked against.
+func TestTooBroadForABatchLeavesOutItsOwnRepositoriesAndNamesThemAll(t *testing.T) {
+	rep := Report{Repo: &Repo{Owner: "o", Name: "one"}, OtherRepos: []string{"o/extra", "o/three", "o/two"}}
+	got := rep.TooBroad("o/two", "o/three")
+	if want := "the token reaches other repositories of o too (o/extra): only o/one, o/three, o/two should be selected"; got != want {
+		t.Errorf("TooBroad = %q, want %q", got, want)
+	}
+	if got := (Report{Repo: &Repo{Owner: "o", Name: "one"}, OtherRepos: []string{"o/two"}}).TooBroad("o/two"); got != "" {
+		t.Errorf("TooBroad = %q, want nothing: it reaches only what it's meant to", got)
+	}
+}
+
+// A token that can see the repository but not push to it is read-only: usable, if the user chooses, for an agent that fetches and
+// reads while the user pushes. Anything else wrong with it is not read-only, but a problem.
+func TestAReportIsReadOnlyWhenTheTokenSeesTheRepositoryButCantPush(t *testing.T) {
+	repo := &Repo{Owner: "o", Name: "r"}
+	for name, tc := range map[string]struct {
+		rep  Report
+		want bool
+	}{
+		"sees, can't push":   {Report{Repo: repo, SeesRepo: true}, true},
+		"can push":           {Report{Repo: repo, SeesRepo: true, CanPush: true}, false},
+		"can't see":          {Report{Repo: repo}, false},
+		"rejected":           {Report{Repo: repo, Rejected: true, SeesRepo: true}, false},
+		"GitHub unreachable": {Report{Repo: repo, SeesRepo: true, Unreachable: errors.New("down")}, false},
+		"no repository":      {Report{}, false},
+	} {
+		if got := tc.rep.ReadOnly(); got != tc.want {
+			t.Errorf("%s: ReadOnly = %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+// The agent's instructions for a read-only token say what it can do (fetch, pull, read with gh), that it can't push, and what to
+// do instead; the push rules (kept for a token that can push later) aren't there.
+func TestReadOnlyInstructionsSayTheAgentCanReadButNotPush(t *testing.T) {
+	got := ReadOnlyInstructions(&Repo{Owner: "o", Name: "r"}, time.Date(2027, 11, 24, 8, 50, 0, 0, time.UTC))
+	for _, want := range []string{"# Reading from GitHub in this sandbox", "read-only", "fetch", "pull", "`gh`", "o/r", "can't push",
+		"commit", "tell the user", "2027-11-24", "Don't look for other credentials"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("instructions lack %q:\n%s", want, got)
+		}
+	}
+	for _, not := range []string{"feature branch", "force-push", "gh pr create"} {
+		if strings.Contains(got, not) {
+			t.Errorf("instructions have %q, a rule for pushing:\n%s", not, got)
+		}
+	}
+}
+
+// The sandbox's own instructions say to push from inside it; for a read-only sandbox that is wrong, and an agent answered from them
+// without reading vibe's file (seen 2026-11-23).
+func TestTheKitsInstructionsSayVibesFileWinsAndWhenToReadIt(t *testing.T) {
+	for _, want := range []string{"asked about", "overrides", "the user's choice"} {
+		if !strings.Contains(KitInstructions, want) {
+			t.Errorf("the kit's instructions should say %q:\n%s", want, KitInstructions)
+		}
+	}
+}
+
+// What the user is told to check on GitHub's form is what the form is filled with: an agent without Actions read couldn't watch CI
+// (gh run watch, gh run view --log-failed: 403), seen 2026-11-23.
+func TestThePermissionsSaidAreThoseAskedFor(t *testing.T) {
+	for _, want := range []string{"Contents", "Pull requests", "Workflows", "Actions", "Commit statuses", "Issues"} {
+		if !strings.Contains(PermissionsLabel, want) {
+			t.Errorf("PermissionsLabel %q doesn't name %s", PermissionsLabel, want)
+		}
+	}
+	if len(Permissions) != 6 {
+		t.Errorf("%d permissions asked for, but the label names 6: %v", len(Permissions), Permissions)
 	}
 }

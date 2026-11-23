@@ -32,6 +32,7 @@ type sandboxInfo struct {
 	gitToken              string    // where its GitHub token came from; empty for none
 	gitRules              []string  // its agent's rules for pushing
 	gitTokenExpires       time.Time // when its GitHub token expires; zero when never, or not known
+	gitReadOnly           bool      // its GitHub token can read the repository, not push
 	features              []string  // what a guided profile was composed from, base features aside
 	guided                bool      // the profile records what it was composed from
 	usage                 *sandboxUsage
@@ -89,7 +90,7 @@ func gatherInfo(ctx context.Context, lay layout.Layout, args cliargs.Args, name,
 	}
 	info := sandboxInfo{name: name, target: target, profile: profile, timezone: recordedTimezone(lay.Home, name)}
 	if inst, found, err := state.Load(lay.Home, name); err == nil && found {
-		info.gitToken, info.gitRules, info.gitTokenExpires = inst.GitToken, inst.GitRules, inst.GitTokenExpires
+		info.gitToken, info.gitRules, info.gitTokenExpires, info.gitReadOnly = inst.GitToken, inst.GitRules, inst.GitTokenExpires, inst.GitReadOnly
 	}
 	if lay.ProfileExists(profile) {
 		_, merged, err := loadKit(lay, profile)
@@ -105,6 +106,7 @@ func gatherInfo(ctx context.Context, lay layout.Layout, args cliargs.Args, name,
 	if err != nil {
 		return info, false, err
 	}
+	sbxKnows.noteList(statuses)
 	for _, s := range statuses {
 		if s.Name == name {
 			info.exists, info.running = true, s.Running
@@ -220,9 +222,13 @@ func printInfo(w io.Writer, info sandboxInfo, profileKnown bool) {
 			row("memory", "%s", info.memory)
 		}
 		row("timezone", "%s", info.timezone)
-		if info.gitToken == "" {
+		switch {
+		case info.gitToken == "":
 			row("github", "no token: you commit and push yourself")
-		} else {
+		case info.gitReadOnly:
+			row("github", "read-only: the agent can fetch and read, not push; you push (%s token%s)", info.gitToken,
+				prefixed(", ", gittoken.DescribeExpiry(info.gitTokenExpires, timeNow())))
+		default:
 			row("github", "the agent can push (%s token%s); it's told never to force-push%s", info.gitToken,
 				prefixed(", ", gittoken.DescribeExpiry(info.gitTokenExpires, timeNow())), rulesSuffix(info.gitRules))
 		}

@@ -156,6 +156,9 @@ const usage = `vibe — open (creating if needed) a sandbox for a project folder
   vibe --batch-git-token     tick the sandboxes to give one GitHub token to
                              (type to narrow the list), and give it to them
   vibe --jobs N              ...to N sandboxes at a time (default 4)
+  vibe --sandboxes a,b,c     ...naming them instead (for a script, with --git-token-env VAR)
+  vibe --git-read-only       ...a token from $VAR that can read but not push,
+                             read-only (the agent fetches; you push)
   vibe --git-token-env VAR   ...a new sandbox (or --git-token) the token in
                              $VAR, unasked
   vibe --git-rules R[,R]     ...and these rules for pushing, unasked:
@@ -275,6 +278,9 @@ func run(argv []string) error {
 		return fmt.Errorf("--git-token-env, --no-git-token and --git-rules only apply to a new sandbox, or with --git-token")
 	}
 	if err := args.BatchGitTokenConflict(); err != nil {
+		return err
+	}
+	if err := args.GitReadOnlyConflict(); err != nil {
 		return err
 	}
 

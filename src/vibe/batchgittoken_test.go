@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"vibe/internal/cliargs"
 	"vibe/internal/gittoken"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
@@ -495,5 +496,151 @@ func TestBatchProgressCanBeEndedTwice(t *testing.T) {
 	p.end()
 	if !returnsSoon(p.end) {
 		t.Fatal("a second end() hung or panicked")
+	}
+}
+
+// --- --sandboxes, for a script -------------------------------------------------------------------------------------------------
+
+// scriptBatch is a home with three sandboxes sbx knows (one, two, other), each in its own GitHub repository.
+func scriptBatch(t *testing.T) (*fakeGitAccess, string) {
+	t.Helper()
+	f := stubGitAccess(t)
+	home := t.TempDir()
+	repositories(t, map[string]*gittoken.Repo{"/w/one": {Owner: "o", Name: "one"}, "/w/two": {Owner: "o", Name: "two"}, "/w/other": {Owner: "o", Name: "other"}})
+	for _, name := range []string{"one", "two", "other"} {
+		saveBatchRecord(t, home, state.Instance{Name: name, Target: "/w/" + name})
+	}
+	old := listSandboxes
+	t.Cleanup(func() { listSandboxes = old })
+	listSandboxes = func(context.Context) ([]sbxrun.Status, error) {
+		return []sbxrun.Status{{Name: "one"}, {Name: "two"}, {Name: "other"}}, nil
+	}
+	return f, home
+}
+
+func TestBatchForAScriptGivesTheNamedSandboxesTheTokenFromTheEnvironmentAndAsksNothing(t *testing.T) {
+	f, home := scriptBatch(t)
+	t.Setenv("VIBE_TEST_TOKEN", "good")
+	err := doBatchGitToken(home, cliargs.Args{BatchGitToken: true, Sandboxes: []string{"one", "two"}, GitTokenEnv: "VIBE_TEST_TOKEN"})
+	if err != nil {
+		t.Fatalf("doBatchGitToken: %v", err)
+	}
+	if f.secrets["one"] != "good" || f.secrets["two"] != "good" {
+		t.Errorf("secrets = %v, want one and two given the token", f.secrets)
+	}
+	if _, has := f.secrets["other"]; has {
+		t.Error("a sandbox that wasn't named was given the token")
+	}
+	if _, has, _ := gittoken.Load(state.DefaultGitTokenPath(home)); has {
+		t.Error("a script's batch made the token the default: it never does")
+	}
+}
+
+func TestBatchForAScriptRefusesNamesItDoesntKnowSayingWhichBeforeGivingAnything(t *testing.T) {
+	f, home := scriptBatch(t)
+	t.Setenv("VIBE_TEST_TOKEN", "good")
+	err := doBatchGitToken(home, cliargs.Args{BatchGitToken: true, Sandboxes: []string{"one", "ghost", "nope"}, GitTokenEnv: "VIBE_TEST_TOKEN"})
+	if err == nil || !strings.Contains(err.Error(), "ghost, nope") {
+		t.Fatalf("doBatchGitToken = %v, want it to name ghost and nope", err)
+	}
+	if len(f.secrets) != 0 {
+		t.Errorf("secrets = %v, want nothing given when a name is unknown", f.secrets)
+	}
+}
+
+func TestBatchForAScriptWithNoTerminalNeedsTheTokenFromTheEnvironment(t *testing.T) {
+	f, home := scriptBatch(t)
+	err := doBatchGitToken(home, cliargs.Args{BatchGitToken: true, Sandboxes: []string{"one"}})
+	if err == nil || !strings.Contains(err.Error(), "--git-token-env") {
+		t.Fatalf("doBatchGitToken = %v, want it to say --git-token-env is needed with no terminal", err)
+	}
+	if len(f.secrets) != 0 {
+		t.Errorf("secrets = %v, want nothing given", f.secrets)
+	}
+}
+
+func TestBatchForAScriptRefusesATokenTheEnvironmentDoesntHave(t *testing.T) {
+	f, home := scriptBatch(t)
+	err := doBatchGitToken(home, cliargs.Args{BatchGitToken: true, Sandboxes: []string{"one"}, GitTokenEnv: "VIBE_TEST_NO_SUCH_VAR"})
+	if err == nil || !strings.Contains(err.Error(), "VIBE_TEST_NO_SUCH_VAR") {
+		t.Fatalf("doBatchGitToken = %v, want it to name the variable", err)
+	}
+	if len(f.secrets) != 0 {
+		t.Errorf("secrets = %v, want nothing given", f.secrets)
+	}
+}
+
+// A sandbox whose repository the token can't push to is skipped, as in the asked-for batch, and the script is told it didn't all go.
+func TestBatchForAScriptFailsWhenASandboxDidntGetTheTokenAndStillGivesTheOthers(t *testing.T) {
+	f, home := scriptBatch(t)
+	t.Setenv("VIBE_TEST_TOKEN", "good")
+	check := checkGitToken
+	checkGitToken = func(token string, repo *gittoken.Repo) gittoken.Report {
+		if repo != nil && repo.Name == "two" {
+			return gittoken.Report{Login: "someone", Repo: repo, SeesRepo: true, CanPush: false}
+		}
+		return check(token, repo)
+	}
+	err := doBatchGitToken(home, cliargs.Args{BatchGitToken: true, Sandboxes: []string{"one", "two"}, GitTokenEnv: "VIBE_TEST_TOKEN"})
+	if err == nil || !strings.Contains(err.Error(), "1 of 2") {
+		t.Fatalf("doBatchGitToken = %v, want it to say 1 of 2 didn't get it", err)
+	}
+	if f.secrets["one"] != "good" {
+		t.Errorf("secrets = %v, want one given the token all the same", f.secrets)
+	}
+}
+
+// The summary says what the check from inside each sandbox found; one that has the token but that GitHub won't let push is marked,
+// with how to try again, and counts as not done.
+func TestBatchSummarySaysWhatEachSandboxFoundFromInsideAndMarksOneThatCantPush(t *testing.T) {
+	stubGitAccess(t)
+	outcomes := []batchOutcome{
+		{name: "fine", given: true, newExpires: fakeExpiry, inside: insideCheck{said: "the sandbox can push"}},
+		{name: "stopped", given: true, newExpires: fakeExpiry, inside: insideCheck{said: "not checked from inside: it isn't running (it isn't started for this)"}},
+		{name: "refused", folder: "/w/refused", given: true, newExpires: fakeExpiry,
+			inside: insideCheck{said: "GitHub refused the sandbox a push: remote: Permission to o/r.git denied", refused: true}},
+	}
+	lines := strings.Join(batchSummary(outcomes, fakeNow), "\n")
+	for _, want := range []string{
+		"✔ fine", "the sandbox can push",
+		"✔ stopped", "it isn't running",
+		"⚠ refused", "GitHub refused the sandbox a push", "'vibe --git-token' in /w/refused tries again",
+	} {
+		if !strings.Contains(lines, want) {
+			t.Errorf("summary lacks %q:\n%s", want, lines)
+		}
+	}
+	if n := batchFailures(outcomes); n != 1 {
+		t.Errorf("batchFailures = %d, want 1 (the one that can't push)", n)
+	}
+}
+
+// Seen with a real token: a batch over three repositories warned that only the first should be selected on GitHub, which would
+// have left the other sandboxes unable to push. Only what is beyond the batch's own repositories is too broad.
+func TestABatchsTokenIsTooBroadOnlyBeyondTheBatchsOwnRepositories(t *testing.T) {
+	_, home := scriptBatch(t)
+	t.Setenv("VIBE_TEST_TOKEN", "good")
+	check := checkGitToken
+	checkGitToken = func(token string, repo *gittoken.Repo) gittoken.Report {
+		rep := check(token, repo)
+		if repo != nil {
+			for _, o := range []string{"o/one", "o/two", "o/other", "o/extra"} {
+				if o != repo.String() {
+					rep.OtherRepos = append(rep.OtherRepos, o)
+				}
+			}
+		}
+		return rep
+	}
+	said := stderrOf(t, func() {
+		if err := doBatchGitToken(home, cliargs.Args{BatchGitToken: true, Sandboxes: []string{"one", "two", "other"}, GitTokenEnv: "VIBE_TEST_TOKEN"}); err != nil {
+			t.Errorf("doBatchGitToken: %v", err)
+		}
+	})
+	if strings.Contains(said, "only o/one should be selected") || strings.Contains(said, "only o/other should be selected") {
+		t.Errorf("it said to select one repository of the three:\n%s", said)
+	}
+	if !strings.Contains(said, "(o/extra)") || !strings.Contains(said, "should be selected") || !strings.Contains(said, "o/one, o/other, o/two") {
+		t.Errorf("it didn't name the one beyond the batch, and the three to select:\n%s", said)
 	}
 }

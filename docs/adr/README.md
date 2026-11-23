@@ -21,6 +21,7 @@ where there is something to say. A decision that is later changed gets a note in
 | [2026-10-23-page-ergonomics](2026-10-23-page-ergonomics.md) | Questions that stand out, a power menu, reporting an issue |
 | [2026-10-28-playwright-feature](2026-10-28-playwright-feature.md) | Browsers installed at build time |
 | [2026-10-29-signing-in](2026-10-29-signing-in.md) | Signing in to sbx and the agent; the network policy; a start while signed out |
+| [2026-10-29-stop-ends-review](2026-10-29-stop-ends-review.md) | Stopping the agent while it writes a review asks first; a quiet review; closing on a branch switch |
 | [2026-11-12-stop-feedback](2026-11-12-stop-feedback.md) | Stopping the agent says so at once; a prompt sent meanwhile waits for the stop |
 | [2026-11-12-network-block-and-filter](2026-11-12-network-block-and-filter.md) | The network tabs: Block and Allow beside the rules there are, superseded log rows, a filter, a read sign, polls that change nothing |
 | [2026-11-12-batch-git-token](2026-11-12-batch-git-token.md) | One GitHub token for several sandboxes at once; "the token another sandbox has" |
@@ -29,3 +30,5 @@ where there is something to say. A decision that is later changed gets a note in
 | [2026-11-18-status-balloon](2026-11-18-status-balloon.md) | The Conversation tab's status in a balloon from an info button; Stop for background work |
 | [2026-11-20-clipboard-toasts-and-review-headers](2026-11-20-clipboard-toasts-and-review-headers.md) | The clipboard page's status line becomes toasts; a Review file's header stays one line |
 | [2026-11-20-pr-and-issue-links](2026-11-20-pr-and-issue-links.md) | A pull request or issue the agent names links to it on GitHub, not to a Review comment |
+| [2026-11-20-git-token-next-steps](2026-11-20-git-token-next-steps.md) | --batch-git-token for scripts; a push checked from inside the sandbox; tokens running out on the Admin tab; read-only tokens |
+| [2026-11-20-closed-review-says-what-it-was](2026-11-20-closed-review-says-what-it-was.md) | A closed review says what it was, so Reopen says what it reopens |

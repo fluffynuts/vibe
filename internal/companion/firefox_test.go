@@ -108,8 +108,8 @@ func servePage(t *testing.T, dir string, store *review.Store) string {
 }
 
 // TestTheCommentsPaneInFirefox runs uitest/commentspane.firefox.test.js: the comments pane's cards in a real Firefox,
-// for their layout (a card's state is on a line of its own above a long path, and not squeezed beside it), which
-// jsdom can't show. The repository has a file with a long path, with a comment from the agent on it, so that its
+// for their layout (a card's state is on a line of its own above a long path, and not squeezed beside it), and the bar's
+// long note (cut on one line, not widening the tab), which jsdom can't show. The repository has a file with a long path, with a comment from the agent on it, so that its
 // thread waits on the user's answer.
 func TestTheCommentsPaneInFirefox(t *testing.T) {
 	node := needFirefox(t)
@@ -157,7 +157,8 @@ func commentsPaneFixture(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	do(review.Request{Op: "start"}, review.User)
+	// A note far longer than the bar is wide: it is cut, not let widen the page (seen 2026-11-23).
+	do(review.Request{Op: "start", Note: strings.Repeat("a note longer than any bar is wide, about what this review is of; ", 8)}, review.User)
 	do(review.Request{Op: "comment", File: long, Line: 2030, EndLine: 2032, Body: "P2: Image form controls now resize through a blocking HTTP POST while the view renders, followed by EnsureSuccessStatusCode(). If the service is slow the whole page waits."}, review.Agent)
 	do(review.Request{Op: "comment", File: "short.txt", Line: 2, Body: "a short one, nothing waiting on you"}, review.User)
 	return servePage(t, dir, store)

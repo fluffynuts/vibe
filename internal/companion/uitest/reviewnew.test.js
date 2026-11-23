@@ -88,7 +88,7 @@ test('while the new review\'s diff is worked out the old review is not left on s
   try {
     assert.equal(p.$('review-body').hidden, false, 'the first review is shown')
     assert.equal(p.$('review-wait').hidden, true)
-    assert.match(p.$('review-title').textContent, /the old one/)
+    assert.match(p.$('review-note').textContent, /the old one/)
     assert.equal(p.$('review-actions').hidden, false)
 
     let release
@@ -100,9 +100,9 @@ test('while the new review\'s diff is worked out the old review is not left on s
 
     assert.equal(p.$('review-wait').hidden, false, 'it says the diff is being worked out')
     assert.equal(p.$('review-body').hidden, true, 'and the old review, with the new one not yet drawable, is not shown')
-    assert.doesNotMatch(p.$('review-title').textContent, /the old one/, 'its title is not left on the bar')
+    assert.doesNotMatch(p.$('review-note').textContent, /the old one/, 'its note is not left on the bar')
     assert.equal(p.$('review-state').hidden, true, 'nor its state')
-    assert.equal(p.$('review-of').textContent, '', 'nor what it is of')
+    assert.equal(p.$('review-title').textContent, 'Review', 'nor what it is of')
     assert.equal(p.$('review-actions').hidden, true, 'nor its buttons (Close, Submit, the comment count)')
     assert.equal(p.$('review-comments-open').hidden, true, 'nor its comments pane')
 
@@ -110,7 +110,7 @@ test('while the new review\'s diff is worked out the old review is not left on s
     await p.poll()
     assert.equal(p.$('review-wait').hidden, true)
     assert.equal(p.$('review-body').hidden, false)
-    assert.match(p.$('review-title').textContent, /the new one/)
+    assert.match(p.$('review-note').textContent, /the new one/)
     assert.equal(p.$('review-actions').hidden, false)
     assert.equal(p.$('review-comments-open').hidden, false)
     assert.equal(p.$('review-files').querySelectorAll('.review-thread').length, 1, 'the new review is drawn, its comment on its line')

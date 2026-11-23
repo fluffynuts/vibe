@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -124,8 +125,13 @@ const tokenNameLimit = 40
 // Permissions are what a token vibe asks for may do: push commits (contents),
 // open pull requests, and push changes to .github/workflows — without which
 // GitHub turns away any push that touches a workflow, which is a confusing
-// way for a first CI file to fail.
-var Permissions = []string{"contents=write", "pull_requests=write", "workflows=write"}
+// way for a first CI file to fail; and read CI runs and their logs (actions),
+// commit statuses and issues, so the agent can watch CI and read what failed.
+// GitHub doesn't let a fine-grained token use the Checks API at all.
+var Permissions = []string{"contents=write", "pull_requests=write", "workflows=write", "actions=read", "statuses=read", "issues=read"}
+
+// PermissionsLabel is Permissions as GitHub's form names them, for the user to check there.
+const PermissionsLabel = "Contents, Pull requests and Workflows, read and write; Actions, Commit statuses and Issues, read"
 
 // NewTokenURL is GitHub's form for a new fine-grained token, filled in from
 // the URL (https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens):
@@ -422,19 +428,53 @@ func (c Checker) receivePack(token string, repo Repo) (int, error) {
 }
 
 // TooBroad says, when the token was given repositories besides the one it
-// was checked against, which, as a sentence; "" when it wasn't.
-func (r Report) TooBroad() string {
-	if len(r.OtherRepos) == 0 {
+// was checked against and those it is meant for too (also: a batch's other
+// sandboxes' repositories, as owner/name), which, as a sentence; "" when it
+// wasn't.
+func (r Report) TooBroad(also ...string) string {
+	meant := map[string]bool{}
+	for _, a := range also {
+		meant[a] = true
+	}
+	var beyond []string
+	for _, o := range r.OtherRepos {
+		if !meant[o] {
+			beyond = append(beyond, o)
+		}
+	}
+	if len(beyond) == 0 {
 		return ""
 	}
-	shown := r.OtherRepos
+	shown := beyond
 	more := ""
 	if len(shown) > 5 {
 		more = fmt.Sprintf(" and %d more", len(shown)-5)
 		shown = shown[:5]
 	}
+	selected := []string{r.Repo.String()}
+	for _, a := range also {
+		if a != r.Repo.String() && !contains(selected, a) {
+			selected = append(selected, a)
+		}
+	}
+	sort.Strings(selected[1:])
 	return fmt.Sprintf("the token reaches other repositories of %s too (%s%s): only %s should be selected",
-		r.Repo.Owner, strings.Join(shown, ", "), more, r.Repo)
+		r.Repo.Owner, strings.Join(shown, ", "), more, strings.Join(selected, ", "))
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// ReadOnly says the token can see the repository but not push to it: nothing else wrong with it. The user may choose to give it as
+// it is, for an agent that fetches and reads while they push.
+func (r Report) ReadOnly() bool {
+	return r.Unreachable == nil && !r.Rejected && r.Repo != nil && r.RepoUnreachable == nil && r.SeesRepo && !r.CanPush
 }
 
 // Problems are what's wrong with the token for pushing, as sentences; none
@@ -524,9 +564,16 @@ const SandboxFile = kitspec.AgentHome + "/.config/vibe/git-push.md"
 // KitInstructions is the part of every sandbox's agent instructions about
 // pushing: whether the agent may push is settled by SandboxFile being
 // there, which a sandbox without a token never has.
-const KitInstructions = "## Pushing to GitHub\n\n" +
-	"If `" + SandboxFile + "` exists, the user has given this sandbox a GitHub token: " +
-	"read that file before you commit or push, and follow it. If it doesn't exist, " +
+const KitInstructions = "## Pushing to GitHub\n\n" + pointer
+
+// AlwaysLoaded is KitInstructions for the instructions an agent always loads: the kit's are read only when the agent thinks a kit is
+// relevant, and one asked about its GitHub access doesn't, answering from the sandbox's own "push from inside" text instead.
+const AlwaysLoaded = "Pushing to GitHub (from vibe)\n-----------------------------\n\n" + pointer
+
+const pointer = "If `" + SandboxFile + "` exists, the user has given this sandbox a GitHub token: " +
+	"read that file before you commit or push, and before you answer when asked about GitHub access or pushing, and follow it. " +
+	"It overrides anything else in these instructions about pushing or opening pull requests from the sandbox: " +
+	"it is the user's choice for this sandbox, and may be that you can't push at all. If it doesn't exist, " +
 	"this sandbox has no GitHub credentials from vibe.\n"
 
 // Instructions is the content of SandboxFile for a sandbox whose token
@@ -565,6 +612,33 @@ func Instructions(repo *Repo, rules []string, expires time.Time) string {
 	if has[RuleNoDefaultBranch] {
 		b.WriteString("- Never push the default branch (main/master): push your branch and open a pull request with `gh pr create` instead.\n")
 	}
+	return b.String()
+}
+
+// ReadOnlyInstructions are the agent's instructions when the user chose to give the sandbox a token that can read the repository
+// but not push to it: what it can do, and that pushing is the user's. The rules for pushing aren't there: they're kept, for a token
+// that can push later, but mean nothing to this one.
+func ReadOnlyInstructions(repo *Repo, expires time.Time) string {
+	var b strings.Builder
+	b.WriteString("# Reading from GitHub in this sandbox\n\n")
+	b.WriteString("The user has given this sandbox a read-only GitHub token: you can fetch and pull, and read with `gh` " +
+		"(pull requests, issues, CI runs), but you can't push. The token never enters the sandbox: the sandbox's proxy adds it " +
+		"to requests to GitHub, so `git fetch` over HTTPS and `gh` both work, though `gh auth status` says you aren't logged in.\n\n")
+	if repo != nil {
+		fmt.Fprintf(&b, "The token is for %s.", repo)
+		if repo.SSH {
+			fmt.Fprintf(&b, " This folder's `origin` remote is an SSH URL, which the token doesn't cover: "+
+				"fetch over HTTPS instead, with `git fetch %s`, and leave the remote as it is.", repo.HTTPSURL())
+		}
+		b.WriteString("\n\n")
+	}
+	if !expires.IsZero() {
+		fmt.Fprintf(&b, "The token expires %s.\n\n", expires.UTC().Format("2006-01-02 15:04 MST"))
+	}
+	b.WriteString("You can't push: commit your work, and tell the user what is ready for them to push. " +
+		"If a fetch or `gh` fails because GitHub won't accept the credentials, the token has most likely expired or been revoked: " +
+		"tell the user to run `vibe --git-token` on their machine to renew it. " +
+		"Don't look for other credentials, or other ways to push.\n")
 	return b.String()
 }
 

@@ -2922,6 +2922,33 @@
     return !rv.closed && (started || rv.threads.length > 0)
   }
 
+  // reviewWhat is what review rv is of, as a phrase: "the changes against master", "commit 1a2b3c4", "the commits not pushed to
+  // origin/x", "the uncommitted changes". The bar of an open review and the line of a closed one both say it, so they agree.
+  function reviewWhat(rv) {
+    return rv.commit ? 'commit ' + rv.commit : rv.unpushed ? 'the commits not pushed to ' + rv.ref : rv.ref ? 'the changes against ' + rv.ref
+      : 'the uncommitted changes'
+  }
+
+  // closedReviewWas says what a closed review was: what it was of, with the agent's note, when it started, and its comments by
+  // status, open ones first and said plainly, as they are what makes it worth reopening.
+  function closedReviewWas(rv) {
+    const started = !!rv.started && !String(rv.started).startsWith('0001-')
+    const parts = ['It was of ' + reviewWhat(rv) + (rv.note ? ' ("' + rv.note + '")' : '')]
+    const nodes = []
+    if (started) nodes.push(parts.join('') + ', started ', stamp(rv.started))
+    else nodes.push(parts.join(''))
+    const n = rv.threads.length
+    if (n) {
+      const count = (status) => rv.threads.filter((t) => t.status === status).length
+      const by = [[count('open'), 'still open'], [count('resolved'), 'resolved'], [count('dismissed'), 'dismissed']]
+        .filter(([k]) => k > 0).map(([k, what]) => (n === 1 ? what : k + ' ' + what))
+      // A status none of these (none today) is counted, not named.
+      nodes.push(n === 1 ? ': 1 comment' + (by.length ? ', ' + by[0] : '') : ': ' + n + ' comments' + (by.length ? ': ' + by.join(', ') : ''))
+    }
+    nodes.push('.')
+    return nodes
+  }
+
   // drawStart draws the ways to start a review: each kind there is to
   // review, by the agent (when the page can talk to it), or just its diff.
   function drawStart(rv) {
@@ -2929,7 +2956,12 @@
     // A reason that is already the whole sentence (a branch switch's) is shown as it is.
     $('review-closed').textContent = !rv.closed ? '' : rv.closed.startsWith('The last review was closed') ? rv.closed : 'The last review was closed. ' + rv.closed
     // A dropped review left nothing behind to reopen.
-    $('review-reopen').hidden = !rv.closed || (!rv.threads.length && (!rv.started || String(rv.started).startsWith('0001-')))
+    const reopenable = !!rv.closed && (rv.threads.length > 0 || (!!rv.started && !String(rv.started).startsWith('0001-')))
+    $('review-reopen').hidden = !reopenable
+    // What it was, so Reopen says what it reopens.
+    $('review-closed-what').hidden = !reopenable
+    drawnAs($('review-closed-what'), reopenable ? JSON.stringify([rv.ref, rv.commit, rv.unpushed, rv.note, rv.started, rv.threads.map((t) => t.status)]) : '',
+      () => reopenable ? closedReviewWas(rv) : [])
     const o = reviewView.options
     if (!o) {
       $('review-start-options').replaceChildren(el('p', { class: reviewView.optionsError ? 'bad-text' : 'muted',
@@ -3042,7 +3074,8 @@
     $('review-comments-open').hidden = true
     $('review-state').hidden = true
     $('review-title').textContent = 'Review'
-    $('review-of').textContent = ''
+    $('review-note').textContent = ''
+    $('review-note').title = ''
     $('review-wait').hidden = false
   }
 
@@ -3246,7 +3279,10 @@
     $('review-comments-open').hidden = !on
     $('review-wait').hidden = reviewView.files !== null || !on
     if (!on) drawStart(rv)
-    $('review-title').textContent = on && rv.note ? 'Review: ' + rv.note : 'Review'
+    // What it is of comes straight after "Review", the agent's note after it: a long note can't push the first out of sight.
+    $('review-title').textContent = on ? 'Review of ' + reviewWhat(rv) + (rv.note ? ':' : '') : 'Review'
+    $('review-note').textContent = on ? rv.note || '' : ''
+    $('review-note').title = on ? rv.note || '' : ''
     $('review-state').hidden = !on || !rv.state
     // In progress and left alone by the agent for a while, with no turn running: said as it is, without claiming it stopped, which
     // vibe can't know (it may be writing from a terminal session).
@@ -3257,7 +3293,6 @@
       : rv.state || ''
     $('review-state').classList.toggle('reviewing', on && rv.state === 'in progress')
     if (on) announceReview(rv)
-    $('review-of').textContent = !on ? '' : rv.commit ? 'of commit ' + rv.commit : rv.unpushed ? 'of the commits not pushed to ' + rv.ref : rv.ref ? 'against ' + rv.ref : 'of the uncommitted changes'
     const unsent = unsentCount(rv)
     const stillWriting = rv.state === 'in progress'
     $('review-submit').disabled = !unsent || !state.conversation || stillWriting
@@ -4849,9 +4884,12 @@
 
     const status = []
     if (git.has) {
-      status.push('The agent can push, with ' + (git.source === 'default' ? 'the default token' : 'its own token'))
+      const which = git.source === 'default' ? 'the default token' : 'its own token'
+      status.push(git.readOnly
+        ? 'Read-only: the agent can fetch and read from GitHub, not push (you push), with ' + which
+        : 'The agent can push, with ' + which)
       status.push(git.expiry ? ', which ' + git.expiry + '.' : '.')
-      if (git.rules && git.rules.length) status.push(' Its rules: ' + git.rules.join(', ') + '.')
+      if (!git.readOnly && git.rules && git.rules.length) status.push(' Its rules: ' + git.rules.join(', ') + '.')
     } else {
       status.push("There's no token, so the agent can't push. To give it one:")
     }
@@ -4867,7 +4905,7 @@
           code(git.tokenName || 'vibe'), ', lasting ' + (git.days || 30) + ' days.'),
         step('Under Repository access, change ', strong('gh-leave', '"All repositories"'), ' to ',
           strong('gh-pick', '"Only select repositories"'), ', and choose ', repo, " — GitHub won't let vibe pick it for you."),
-        step('Check the permissions: ', strong('gh-perms', 'Contents, Pull requests and Workflows, read and write'), '.'),
+        step('Check the permissions: ', strong('gh-perms', git.permissions), '.'),
         step(strong('gh-last', 'Generate token'), ', and copy it.'),
         step('In a terminal, run ', code(command), ' and paste the token when it asks.'),
       ]
@@ -4880,6 +4918,19 @@
     }
     steps.hidden = !list.length
     drawnAs(steps, JSON.stringify(git), () => list)
+    renderOtherTokens(git.others || [])
+  }
+
+  // renderOtherTokens lists the other sandboxes whose token has expired or is about to (vibe's records, not GitHub's), with what
+  // renews several at once: here, as this is where tokens are, and nothing else on the page says it.
+  function renderOtherTokens(others) {
+    const box = $('admin-git-others')
+    box.hidden = !others.length
+    drawnAs(box, JSON.stringify(others), () => [
+      el('p', { text: 'Other sandboxes whose token has expired or is about to:' }),
+      el('ul', {}, ...others.map((o) => el('li', { class: o.expired ? 'bad-text' : '', text: o.name + ': ' + o.expiry }))),
+      el('p', {}, 'In a terminal, ', el('code', { text: 'vibe --batch-git-token' }), ' renews several at once.'),
+    ])
   }
 
   function renderAdminBackups(backups, busy) {

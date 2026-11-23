@@ -232,3 +232,40 @@ func clipboardCurrent(t *testing.T, base string) int {
 	}
 	return got.Current
 }
+
+// A browser types a file by its extension, and a name like .zarro-defaults has none: it sends no type, and a text file was kept as
+// binary (seen 2026-11-23). Content with no type of its own is looked at instead.
+func TestAFileSentWithoutAUsefulTypeIsTextWhenItReadsAsText(t *testing.T) {
+	base, _ := clipboardServer(t)
+	post := func(body, contentType string) (kind, typ, path string) {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodPost, base+"/api/items", strings.NewReader(body))
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		req.Header.Set("X-Filename", ".zarro-defaults")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var got struct{ Kind, Type, Path string }
+		json.NewDecoder(res.Body).Decode(&got)
+		return got.Kind, got.Type, got.Path
+	}
+	if kind, typ, path := post("# defaults\nFOO=\"this is foo – ok\"\n", "application/octet-stream"); kind != "text" || typ != "text/plain" || !strings.HasSuffix(path, ".txt") {
+		t.Errorf("a text file sent as octet-stream: kind %q, type %q, at %s; want text, text/plain, .txt", kind, typ, path)
+	}
+	if kind, typ, _ := post("FOO=1\n", ""); kind != "text" || typ != "text/plain" {
+		t.Errorf("a text file sent without a type: kind %q, type %q", kind, typ)
+	}
+	if kind, typ, _ := post("PK\x03\x04\x00\x00binary", "application/octet-stream"); kind != "file" || typ != "application/octet-stream" {
+		t.Errorf("binary content: kind %q, type %q; want file, application/octet-stream", kind, typ)
+	}
+	if kind, _, _ := post("\xff\xfe not UTF-8", "application/octet-stream"); kind != "file" {
+		t.Errorf("content that isn't UTF-8 is kept as a file, got kind %q", kind)
+	}
+	if _, typ, _ := post("%PDF-1.7 text-looking", "application/pdf"); typ != "application/pdf" {
+		t.Errorf("a type the browser did give is kept, got %q", typ)
+	}
+}

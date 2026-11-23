@@ -31,6 +31,9 @@ type gitAccess struct {
 	// expires is when the token stops working; zero when it never does,
 	// or GitHub didn't say.
 	expires time.Time
+	// readOnly says the token can read the repository but not push, and the
+	// user chose to give it so: the agent fetches and reads, the user pushes.
+	readOnly bool
 }
 
 const (
@@ -119,7 +122,7 @@ func pickGitAccess(vibeHome string, args cliargs.Args, name, target string) (*gi
 	}
 	repo := repoOf(target)
 	if args.GitTokenEnv != "" {
-		return gitAccessFromEnv(args.GitTokenEnv, repo, presetRules)
+		return gitAccessFromEnv(args.GitTokenEnv, repo, presetRules, args.GitReadOnly)
 	}
 	if args.Force || !interactive() {
 		return nil, nil
@@ -131,16 +134,18 @@ func pickGitAccess(vibeHome string, args cliargs.Args, name, target string) (*gi
 // gitAccessFromEnv is --git-token-env: the token in the named variable,
 // checked with GitHub, with the rules --git-rules gave. There's no one to
 // ask whether to use a token GitHub turns down, so that's an error.
-func gitAccessFromEnv(variable string, repo *gittoken.Repo, rules []string) (*gitAccess, error) {
+// also are the repositories, besides repo, the token is meant to reach (a batch's other sandboxes'): see vetGitToken.
+// readOnlyOK is --git-read-only: a token that can read repo but not push is given read-only, not turned down.
+func gitAccessFromEnv(variable string, repo *gittoken.Repo, rules []string, readOnlyOK bool, also ...string) (*gitAccess, error) {
 	token := strings.TrimSpace(os.Getenv(variable))
 	if err := gittoken.Valid(token); err != nil {
 		return nil, fmt.Errorf("--git-token-env %s: %w", variable, err)
 	}
-	verdict, expires := vetGitToken(token, repo, false, nil)
-	if verdict != vetUse {
+	verdict, expires := vetGitToken(token, repo, false, readOnlyOK, nil, also...)
+	if verdict != vetUse && verdict != vetReadOnly {
 		return nil, fmt.Errorf("--git-token-env %s: not using that token (see above) — fix it, or leave --git-token-env off", variable)
 	}
-	return &gitAccess{token: token, source: gitTokenOwn, rules: rules, expires: expires}, nil
+	return &gitAccess{token: token, source: gitTokenOwn, rules: rules, expires: expires, readOnly: verdict == vetReadOnly}, nil
 }
 
 // gitChoice is what the user picked for a sandbox's token.
@@ -230,14 +235,14 @@ func askGitAccess(vibeHome, name string, repo *gittoken.Repo, current *state.Ins
 		return nil, choices[idx], nil
 	case gitDefault:
 		access.token, access.source = defaultToken, gitTokenDefault
-		verdict, expires := vetGitToken(access.token, repo, true, skip)
+		verdict, expires := vetGitToken(access.token, repo, true, false, skip)
 		for verdict == vetRetry {
-			verdict, expires = vetGitToken(access.token, repo, true, skip)
+			verdict, expires = vetGitToken(access.token, repo, true, false, skip)
 		}
 		if verdict == vetSkip {
 			return nil, keepOrNone(has), nil
 		}
-		access.expires = expires
+		access.expires, access.readOnly = expires, verdict == vetReadOnly
 		if access.expires.IsZero() {
 			access.expires = defaultExpires
 		}
@@ -255,7 +260,7 @@ func askGitAccess(vibeHome, name string, repo *gittoken.Repo, current *state.Ins
 			days := pickTokenDays(tokenDays)
 			openTokenPage(fmt.Sprintf("vibe %s", name), tokenDescription(name, repo), repoOwner(repo), days, repo)
 		}
-		if access.token, access.expires, ok = enterGitToken(repo, skip); !ok {
+		if access.token, access.expires, access.readOnly, ok = enterGitToken(repo, skip, false); !ok {
 			return nil, keepOrNone(has), nil
 		}
 		access.source = gitTokenOwn
@@ -264,9 +269,24 @@ func askGitAccess(vibeHome, name string, repo *gittoken.Repo, current *state.Ins
 	if has && len(rules) == 0 {
 		rules = current.GitRules
 	}
-	access.rules = pickGitRules(rules)
+	access.rules = gitRulesFor(access, rules)
 	return access, choices[idx], nil
 }
+
+// gitRulesFor are the rules for pushing access is given: asked for, starting from preset, unless the token is read-only, when there is
+// nothing to push and asking would only puzzle; preset are kept then, for a token that can push later.
+func gitRulesFor(access *gitAccess, preset []string) []string {
+	if access.readOnly {
+		return preset
+	}
+	return askGitRules(preset)
+}
+
+// askGitRules asks which rules the agent is given for pushing (pickGitRules); tests stand in for it.
+var askGitRules = pickGitRules
+
+// enterGitTokenFor is enterGitToken for a renewal; tests stand in for it.
+var enterGitTokenFor = enterGitToken
 
 // tokenDonor is a sandbox whose token another may be given: vibe keeps a
 // copy of each sandbox's token on the host (see giveGitAccess), so nothing is
@@ -324,18 +344,18 @@ func pickTokenDonor(donors []tokenDonor) (tokenDonor, bool) {
 // gives it as the donor holds it: a default token stays the default, so a
 // renewal through --setup still reaches the recipient. It says whether the
 // token is to be used.
-func accessFromDonor(donor tokenDonor, repo *gittoken.Repo, ask bool, skip skipWording) (*gitAccess, bool) {
-	verdict, expires := vetGitToken(donor.token, repo, ask, skip)
+func accessFromDonor(donor tokenDonor, repo *gittoken.Repo, ask bool, skip skipWording, also ...string) (*gitAccess, bool) {
+	verdict, expires := vetGitToken(donor.token, repo, ask, false, skip, also...)
 	for verdict == vetRetry {
-		verdict, expires = vetGitToken(donor.token, repo, ask, skip)
+		verdict, expires = vetGitToken(donor.token, repo, ask, false, skip, also...)
 	}
-	if verdict != vetUse {
+	if verdict != vetUse && verdict != vetReadOnly {
 		return nil, false
 	}
 	if expires.IsZero() {
 		expires = donor.expires
 	}
-	return &gitAccess{token: donor.token, source: donor.source, expires: expires}, true
+	return &gitAccess{token: donor.token, source: donor.source, expires: expires, readOnly: verdict == vetReadOnly}, true
 }
 
 func inParens(s string) string {
@@ -438,7 +458,7 @@ func openTokenPageFor(tokenName, description, owner string, days int, repos []st
 	default:
 		note("     and choose %s — GitHub won't let vibe pick them for you", paint(colorYellow, strings.Join(repos, ", ")))
 	}
-	note("  2. check the permissions: %s", paint(colorPink, "Contents, Pull requests and Workflows, read and write"))
+	note("  2. check the permissions: %s", paint(colorPink, gittoken.PermissionsLabel))
 	note("  3. %s", paint(colorCyan, "Generate token, copy it, and paste it here"))
 	waitForEnter("press enter to open the page")
 	u := gittoken.NewTokenURL(tokenName, description, owner, days)
@@ -527,11 +547,11 @@ func openRenewPage(tokenName string) {
 // problem, for as long as the user wants to try again. ok is false when the
 // user gave up: an empty line, Ctrl-C, or skip (skipWording says what that
 // leaves). expires is when GitHub says the token stops working.
-func enterGitToken(repo *gittoken.Repo, skip skipWording) (token string, expires time.Time, ok bool) {
+func enterGitToken(repo *gittoken.Repo, skip skipWording, readOnlyOK bool, also ...string) (token string, expires time.Time, readOnly, ok bool) {
 	for {
 		tty, closeFn, opened := ttyRW()
 		if !opened {
-			return "", time.Time{}, false
+			return "", time.Time{}, false, false
 		}
 		fmt.Fprintf(os.Stderr, "vibe: %s ", askText("paste the token (just enter to give up):"))
 		token, read := tty.ReadMasked()
@@ -539,7 +559,7 @@ func enterGitToken(repo *gittoken.Repo, skip skipWording) (token string, expires
 		token = strings.TrimSpace(token)
 		if !read || token == "" {
 			note("  no token given — leaving it")
-			return "", time.Time{}, false
+			return "", time.Time{}, false, false
 		}
 		if err := gittoken.Valid(token); err != nil {
 			note("  %s — try again", err)
@@ -549,12 +569,12 @@ func enterGitToken(repo *gittoken.Repo, skip skipWording) (token string, expires
 			note("  that's the same token twice over (pasted twice?) — try again")
 			continue
 		}
-		verdict, expires := vetGitToken(token, repo, true, skip)
+		verdict, expires := vetGitToken(token, repo, true, readOnlyOK, skip, also...)
 		switch verdict {
-		case vetUse:
-			return token, expires, true
+		case vetUse, vetReadOnly:
+			return token, expires, verdict == vetReadOnly, true
 		case vetSkip:
-			return "", time.Time{}, false
+			return "", time.Time{}, false, false
 		}
 	}
 }
@@ -567,6 +587,8 @@ const (
 	vetUse vetVerdict = iota
 	vetRetry
 	vetSkip
+	// vetReadOnly: the token can read the repository but not push, and is to be given so.
+	vetReadOnly
 )
 
 // vetGitToken checks a token with GitHub, says what it found, and returns
@@ -576,7 +598,14 @@ const (
 // use it anyway, or skip (put as skip says); without, it isn't used —
 // except when GitHub couldn't be asked at all, which only warns, since that
 // says nothing against the token.
-func vetGitToken(token string, repo *gittoken.Repo, ask bool, skip skipWording) (vetVerdict, time.Time) {
+//
+// also are the repositories, besides repo, the token is meant to reach: a batch's other sandboxes', as owner/name. Reaching those
+// isn't too broad, and the advice to narrow it names them all.
+//
+// A token that can see repo but not push to it is read-only (vetReadOnly). readOnlyOK says read-only is already accepted: by
+// --git-read-only, unasked, or, asked, by the sandbox being read-only already (a renewal keeps it so, without asking again).
+// Otherwise, asked, the user may choose it.
+func vetGitToken(token string, repo *gittoken.Repo, ask, readOnlyOK bool, skip skipWording, also ...string) (vetVerdict, time.Time) {
 	kind := gittoken.KindOf(token)
 	if kind.AccountWide() {
 		note("  WARNING: that's a %s: it can reach every repository your account can,", kind)
@@ -611,7 +640,7 @@ func vetGitToken(token string, repo *gittoken.Repo, ask bool, skip skipWording) 
 	}
 	// A token that can push, but to more than this repository, is turned
 	// down only by the user: it works, it's just broader than it should be.
-	if broad := rep.TooBroad(); broad != "" {
+	if broad := rep.TooBroad(also...); broad != "" {
 		note("  WARNING: %s", broad)
 		note("  on GitHub, edit the token and change Repository access to %s:", paint(colorGreen, `"Only select repositories"`))
 		note("  that changes what it can reach without changing the token itself")
@@ -626,7 +655,7 @@ func vetGitToken(token string, repo *gittoken.Repo, ask bool, skip skipWording) 
 			case !ok || idx == 3:
 				return vetSkip, rep.Expires
 			case idx == 0:
-				return vetGitToken(token, repo, ask, skip)
+				return vetGitToken(token, repo, ask, readOnlyOK, skip, also...)
 			case idx == 2:
 				return vetRetry, rep.Expires
 			}
@@ -636,8 +665,31 @@ func vetGitToken(token string, repo *gittoken.Repo, ask bool, skip skipWording) 
 	if len(problems) == 0 {
 		return vetUse, rep.Expires
 	}
+	if rep.ReadOnly() && readOnlyOK && ask {
+		note("  it can read %s, not push: kept read-only, as chosen before (the agent fetches and reads; you push)", rep.Repo)
+		return vetReadOnly, rep.Expires
+	}
 	for _, p := range problems {
 		note("  %s", p)
+	}
+	if rep.ReadOnly() {
+		const readOnly = "use it read-only (the agent can fetch, pull and read with gh; you push)"
+		if !ask {
+			if !readOnlyOK {
+				note("  --git-read-only would give it read-only (the agent fetches and reads; you push)")
+				return vetSkip, rep.Expires
+			}
+			note("  given read-only, as --git-read-only says: the agent can fetch, pull and read with gh; you push")
+			return vetReadOnly, rep.Expires
+		}
+		idx, ok := chooseFrom("what now?", []string{readOnly, "try again", skip(rep.Expires)}, 0)
+		switch {
+		case !ok || idx == 2:
+			return vetSkip, rep.Expires
+		case idx == 0:
+			return vetReadOnly, rep.Expires
+		}
+		return vetRetry, rep.Expires
 	}
 	if ask {
 		idx, ok := chooseFrom("what now?", []string{"try again", "use it anyway", skip(rep.Expires)}, 0)
@@ -705,10 +757,15 @@ func giveGitAccessSaying(say func(string, ...interface{}), vibeHome, name string
 	if err := gittoken.Save(state.GitTokenPath(vibeHome, name), access.token); err != nil {
 		say("WARNING: %s — a rebuild of '%s' will start without its token", err, name)
 	}
-	if err := writeGitInstructions(name, gittoken.Instructions(repo, access.rules, access.expires)); err != nil {
+	if err := writeGitInstructions(name, agentGitInstructions(repo, access.rules, access.expires, access.readOnly)); err != nil {
 		say("WARNING: could not tell the agent its rules for pushing (%s): %s", gittoken.SandboxFile, err)
 	}
-	say("  github:    the agent can push (%s token%s)", access.source, prefixed(", ", gittoken.DescribeExpiry(access.expires, timeNow())))
+	if access.readOnly {
+		say("  github:    read-only: the agent can fetch and read, not push; you push (%s token%s)", access.source,
+			prefixed(", ", gittoken.DescribeExpiry(access.expires, timeNow())))
+	} else {
+		say("  github:    the agent can push (%s token%s)", access.source, prefixed(", ", gittoken.DescribeExpiry(access.expires, timeNow())))
+	}
 	return access
 }
 
@@ -745,7 +802,16 @@ func syncGitInstructions(vibeHome, name string) error {
 	if !found || inst.GitToken == "" {
 		return removeGitInstructions(name)
 	}
-	return writeGitInstructions(name, gittoken.Instructions(repoOf(inst.Target), inst.GitRules, inst.GitTokenExpires))
+	return writeGitInstructions(name, agentGitInstructions(repoOf(inst.Target), inst.GitRules, inst.GitTokenExpires, inst.GitReadOnly))
+}
+
+// agentGitInstructions are what the agent is told about its GitHub token: how to push and the rules for it, or, read-only, that it
+// can fetch and read and that pushing is the user's.
+func agentGitInstructions(repo *gittoken.Repo, rules []string, expires time.Time, readOnly bool) string {
+	if readOnly {
+		return gittoken.ReadOnlyInstructions(repo, expires)
+	}
+	return gittoken.Instructions(repo, rules, expires)
 }
 
 // recordedGitAccess is the token and rules sandbox name was given, for a
@@ -762,7 +828,7 @@ func recordedGitAccess(vibeHome, name string) *gitAccess {
 		note("WARNING: '%s' had a GitHub token, but vibe's copy of it is gone — the rebuilt sandbox won't have one ('vibe --git-token' gives it one)", name)
 		return nil
 	}
-	return &gitAccess{token: token, source: inst.GitToken, rules: inst.GitRules, expires: inst.GitTokenExpires}
+	return &gitAccess{token: token, source: inst.GitToken, rules: inst.GitRules, expires: inst.GitTokenExpires, readOnly: inst.GitReadOnly}
 }
 
 // forgetGitSecret takes away the sbx secret of a sandbox being deleted,
@@ -810,12 +876,12 @@ func renewGitAccess(vibeHome string, inst *state.Instance, repo *gittoken.Repo) 
 		tokenName = "vibe default"
 	}
 	openRenewPage(tokenName)
-	token, expires, ok := enterGitToken(repo, keepsToken(inst.GitTokenExpires))
+	token, expires, readOnly, ok := enterGitTokenFor(repo, keepsToken(inst.GitTokenExpires), inst.GitReadOnly)
 	if !ok {
 		note("'%s' keeps the token it has", inst.Name)
 		return nil
 	}
-	access := &gitAccess{token: token, source: inst.GitToken, rules: inst.GitRules, expires: expires}
+	access := &gitAccess{token: token, source: inst.GitToken, rules: inst.GitRules, expires: expires, readOnly: readOnly}
 	if err := setGitAccess(vibeHome, inst, access, repo); err != nil {
 		return err
 	}
@@ -882,7 +948,7 @@ func offerDefaultToken(vibeHome, token string, expires time.Time, except ...stri
 	}
 	for i := range sharing {
 		inst := &sharing[i]
-		access := &gitAccess{token: token, source: gitTokenDefault, rules: inst.GitRules, expires: expires}
+		access := &gitAccess{token: token, source: gitTokenDefault, rules: inst.GitRules, expires: expires, readOnly: inst.GitReadOnly}
 		note("'%s':", inst.Name)
 		if err := setGitAccess(vibeHome, inst, access, repoOf(inst.Target)); err != nil {
 			note("WARNING: %s", err)
@@ -922,7 +988,7 @@ func doGitToken(vibeHome string, args cliargs.Args, name, target string) error {
 		if len(presetRules) == 0 {
 			presetRules = inst.GitRules
 		}
-		access, err := gitAccessFromEnv(args.GitTokenEnv, repo, presetRules)
+		access, err := gitAccessFromEnv(args.GitTokenEnv, repo, presetRules, args.GitReadOnly)
 		if err != nil {
 			return err
 		}
@@ -961,24 +1027,40 @@ func doGitToken(vibeHome string, args cliargs.Args, name, target string) error {
 // setGitAccess gives an existing sandbox access (nil takes its token away)
 // and records it.
 func setGitAccess(vibeHome string, inst *state.Instance, access *gitAccess, repo *gittoken.Repo) error {
-	return setGitAccessSaying(note, vibeHome, inst, access, repo)
+	_, err := setGitAccessSaying(note, vibeHome, inst, access, repo)
+	return err
 }
 
 // setGitAccessSaying is setGitAccess saying what it does through say (taking
 // a token away still goes to the terminal: the batch never does).
-func setGitAccessSaying(say func(string, ...interface{}), vibeHome string, inst *state.Instance, access *gitAccess, repo *gittoken.Repo) error {
+// Given a token, it says (and gives back) what a push checked from inside the sandbox found: that it has the token is not the same
+// as GitHub's saying the token can push.
+func setGitAccessSaying(say func(string, ...interface{}), vibeHome string, inst *state.Instance, access *gitAccess, repo *gittoken.Repo) (insideCheck, error) {
 	if access == nil {
 		takeGitAccess(vibeHome, inst.Name)
-		inst.GitToken, inst.GitRules, inst.GitTokenExpires = "", nil, time.Time{}
+		inst.GitToken, inst.GitRules, inst.GitTokenExpires, inst.GitReadOnly = "", nil, time.Time{}, false
 		note("took '%s''s GitHub token away: you commit and push yourself", inst.Name)
-		return state.Save(vibeHome, *inst)
+		return insideCheck{}, state.Save(vibeHome, *inst)
 	}
 	given := giveGitAccessSaying(say, vibeHome, inst.Name, access, repo)
 	if given == nil {
-		return fmt.Errorf("'%s' has no new GitHub token", inst.Name)
+		return insideCheck{}, fmt.Errorf("'%s' has no new GitHub token", inst.Name)
 	}
-	inst.GitToken, inst.GitRules, inst.GitTokenExpires = given.source, given.rules, given.expires
-	return state.Save(vibeHome, *inst)
+	if inst.GitReadOnly && !given.readOnly {
+		say("  '%s' isn't read-only any more: the new token can push", inst.Name)
+	}
+	inst.GitToken, inst.GitRules, inst.GitTokenExpires, inst.GitReadOnly = given.source, given.rules, given.expires, given.readOnly
+	if err := state.Save(vibeHome, *inst); err != nil {
+		return insideCheck{}, err
+	}
+	inside := pushFromInside(inst.Name, inst.Target, repo)
+	if given.readOnly {
+		inside = forReadOnly(inside)
+	}
+	if inside.said != "" {
+		say("  checked:   %s", inside.said)
+	}
+	return inside, nil
 }
 
 func rulesSuffix(rules []string) string {
@@ -1047,7 +1129,7 @@ func setUpDefaultGitToken(vibeHome string) {
 	case "guided":
 		openTokenPage("vibe default", "Lets the agents in vibe sandboxes push.", "", pickTokenDays(tokenDays), nil)
 	}
-	token, expires, ok := enterGitToken(nil, fixedSkip("go on without changing the default token"))
+	token, expires, _, ok := enterGitToken(nil, fixedSkip("go on without changing the default token"), false)
 	if !ok {
 		return
 	}

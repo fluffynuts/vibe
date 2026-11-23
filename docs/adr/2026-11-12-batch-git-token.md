@@ -1,7 +1,7 @@
 # `vibe --batch-git-token`: one GitHub token for several sandboxes at once
 
 - **Status:** accepted, built 2026-11-16 on `feat/batch-git-token`, merged (PR #26). Tried by the user on their own sandboxes. What is not
-  built is in `docs/plan-git-token-next-steps.md`.
+  built was in `docs/plan-git-token-next-steps.md`, built since: `docs/adr/2026-11-20-git-token-next-steps.md`.
 - **Decided:** 2026-11-12, with the user; refined while building (2026-11-16), as the user tried it.
 - **Came from:** `docs/plan-batch-git-token.md`, now deleted: `git show 7b56280:docs/plan-batch-git-token.md`.
 
@@ -49,8 +49,8 @@ Also in `--git-token`: when a token reaches more repositories than the sandbox's
 
 ## Not built
 
-`--sandboxes a,b,c` for scripts, a check from inside the sandbox, and the Admin tab saying which tokens are near expiry:
-`docs/plan-git-token-next-steps.md`.
+`--sandboxes a,b,c` for scripts, a check from inside the sandbox, and the Admin tab saying which tokens are near expiry: all built since,
+in `docs/adr/2026-11-20-git-token-next-steps.md`.
 
 ## Not verified
 

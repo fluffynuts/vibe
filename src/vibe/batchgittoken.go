@@ -34,14 +34,19 @@ type batchToken struct {
 	// nowDefault says it was just stored as the default, so the sandboxes
 	// that use the default and weren't picked are holding the one it replaced.
 	nowDefault bool
+	// readOnlyOK says read-only was accepted (asked, or --git-read-only): a sandbox whose repository the token can read but not
+	// push to is given it read-only, not skipped.
+	readOnlyOK bool
 }
 
 // batchOutcome is what happened to one sandbox of a batch.
 type batchOutcome struct {
-	name, folder           string
-	given                  bool
-	problem                string
-	pushCheck              string
+	name, folder string
+	given        bool
+	problem      string
+	pushCheck    string
+	// inside is what a push checked from inside the sandbox found.
+	inside                 insideCheck
 	oldExpires, newExpires time.Time
 }
 
@@ -53,6 +58,7 @@ func batchCandidates(vibeHome string) ([]state.Instance, error) {
 	if err != nil {
 		return nil, err
 	}
+	sbxKnows.noteList(statuses)
 	known := map[string]bool{}
 	for _, s := range statuses {
 		known[s.Name] = true
@@ -78,6 +84,9 @@ func batchLabel(inst state.Instance, now time.Time) string {
 	token := "no token"
 	if inst.GitToken != "" {
 		token = inst.GitToken + inParens(gittoken.DescribeExpiry(inst.GitTokenExpires, now))
+		if inst.GitReadOnly {
+			token += ", read-only"
+		}
 	}
 	where := inst.Target
 	if inst.Profile != "" {
@@ -288,17 +297,26 @@ func giveTokenToSandbox(say func(string, ...interface{}), vibeHome string, inst 
 	out.oldExpires = inst.GitTokenExpires
 	repo := batchRepoOf(inst.Target)
 	expires := tok.expires
+	readOnly := false
 	if repo == nil {
 		out.pushCheck = "no GitHub remote, so not checked"
 	} else {
 		rep := checker.check(repo)
-		if problems := rep.Problems(); rep.Unreachable == nil && len(problems) > 0 {
+		readOnly = rep.ReadOnly() && tok.readOnlyOK
+		if problems := rep.Problems(); rep.Unreachable == nil && len(problems) > 0 && !readOnly {
 			out.problem = problems[0]
+			// Read-only is offered only for the first sandbox's repository (decided in review, #117): the rest are told how.
+			if rep.ReadOnly() {
+				out.problem += " (or, to give it read-only: 'vibe --git-token' in its folder, or --git-read-only)"
+			}
 			return out
 		}
-		if rep.Unreachable != nil {
+		switch {
+		case rep.Unreachable != nil:
 			out.pushCheck = "GitHub couldn't be asked, so not checked"
-		} else {
+		case readOnly:
+			out.pushCheck = "read-only: GitHub says it can read " + repo.String() + ", not push"
+		default:
 			out.pushCheck = "GitHub says it can push to " + repo.String()
 		}
 		if !rep.Expires.IsZero() {
@@ -309,8 +327,8 @@ func giveTokenToSandbox(say func(string, ...interface{}), vibeHome string, inst 
 	if len(rules) == 0 {
 		rules = inst.GitRules
 	}
-	access := &gitAccess{token: tok.token, source: tok.source, rules: rules, expires: expires}
-	if err = setGitAccessSaying(say, vibeHome, &inst, access, repo); err != nil {
+	access := &gitAccess{token: tok.token, source: tok.source, rules: rules, expires: expires, readOnly: readOnly}
+	if out.inside, err = setGitAccessSaying(say, vibeHome, &inst, access, repo); err != nil {
 		out.problem, out.pushCheck = err.Error(), ""
 		return out
 	}
@@ -325,9 +343,16 @@ func batchSummary(outcomes []batchOutcome, now time.Time) []string {
 	var lines []string
 	for _, o := range outcomes {
 		if o.given {
-			lines = append(lines, fmt.Sprintf("  ✔ %s: %s → %s%s", o.name,
+			mark := "✔"
+			if o.refusedInside() {
+				mark = "⚠"
+			}
+			lines = append(lines, fmt.Sprintf("  %s %s: %s → %s%s%s", mark, o.name,
 				orNone(gittoken.DescribeExpiry(o.oldExpires, now)), orNone(gittoken.DescribeExpiry(o.newExpires, now)),
-				prefixed(" — ", o.pushCheck)))
+				prefixed(" — ", o.pushCheck), prefixed(" — ", o.inside.said)))
+			if o.refusedInside() {
+				lines = append(lines, fmt.Sprintf("      'vibe --git-token' in %s tries again", o.folder))
+			}
 			continue
 		}
 		lines = append(lines,
@@ -335,6 +360,22 @@ func batchSummary(outcomes []batchOutcome, now time.Time) []string {
 			fmt.Sprintf("      'vibe --git-token' in %s tries again", o.folder))
 	}
 	return lines
+}
+
+// refusedInside says the sandbox got the token but GitHub wouldn't let it push, checked from inside.
+func (o batchOutcome) refusedInside() bool {
+	return o.inside.refused
+}
+
+// batchFailures is how many sandboxes a batch left unable to push: not given the token, or given it and refused from inside.
+func batchFailures(outcomes []batchOutcome) int {
+	n := 0
+	for _, o := range outcomes {
+		if !o.given || o.refusedInside() {
+			n++
+		}
+	}
+	return n
 }
 
 func orNone(s string) string {
@@ -380,6 +421,8 @@ func askBatchToken(vibeHome string, picked []state.Instance) (batchToken, bool) 
 	if len(repos) > 0 {
 		first = &repos[0]
 	}
+	// The token is checked against the first; it is meant to reach them all, which isn't too broad.
+	also := names
 	skip := fixedSkip("give up: change nothing")
 
 	defaultPath := state.DefaultGitTokenPath(vibeHome)
@@ -423,13 +466,14 @@ func askBatchToken(vibeHome string, picked []state.Instance) (batchToken, bool) 
 	switch choices[idx] {
 	case useDefault:
 		tok = batchToken{token: defaultToken, source: gitTokenDefault, expires: defaultExpires}
-		verdict, expires := vetGitToken(tok.token, first, true, skip)
+		verdict, expires := vetGitToken(tok.token, first, true, false, skip, also...)
 		for verdict == vetRetry {
-			verdict, expires = vetGitToken(tok.token, first, true, skip)
+			verdict, expires = vetGitToken(tok.token, first, true, false, skip, also...)
 		}
-		if verdict != vetUse {
+		if verdict != vetUse && verdict != vetReadOnly {
 			return batchToken{}, false
 		}
+		tok.readOnlyOK = verdict == vetReadOnly
 		if !expires.IsZero() {
 			tok.expires = expires
 		}
@@ -438,21 +482,21 @@ func askBatchToken(vibeHome string, picked []state.Instance) (batchToken, bool) 
 		if !chosen {
 			return batchToken{}, false
 		}
-		access, taken := accessFromDonor(donor, first, true, skip)
+		access, taken := accessFromDonor(donor, first, true, skip, also...)
 		if !taken {
 			return batchToken{}, false
 		}
-		tok = batchToken{token: access.token, source: access.source, expires: access.expires}
+		tok = batchToken{token: access.token, source: access.source, expires: access.expires, readOnlyOK: access.readOnly}
 	default:
 		if choices[idx] == guided {
 			description := "Lets the agents in the vibe sandboxes " + sandboxNames(picked) + " push."
 			openTokenPageFor("vibe sandboxes", description, owner, pickTokenDays(tokenDays), names)
 		}
-		token, expires, entered := enterGitToken(first, skip)
+		token, expires, readOnly, entered := enterGitToken(first, skip, false, also...)
 		if !entered {
 			return batchToken{}, false
 		}
-		tok = batchToken{token: token, source: gitTokenOwn, expires: expires}
+		tok = batchToken{token: token, source: gitTokenOwn, expires: expires, readOnlyOK: readOnly}
 	}
 
 	if tok.source == gitTokenOwn && confirmDefault(false, false,
@@ -465,6 +509,44 @@ func askBatchToken(vibeHome string, picked []state.Instance) (batchToken, bool) 
 		}
 	}
 	return tok, true
+}
+
+// namedSandboxes are the candidates --sandboxes names, in the order named. A name that isn't one of them is refused, with any
+// others, before anything is given: a script that names a sandbox vibe doesn't have wants telling, not a partial batch.
+func namedSandboxes(candidates []state.Instance, names []string) ([]state.Instance, error) {
+	byName := map[string]state.Instance{}
+	for _, c := range candidates {
+		byName[c.Name] = c
+	}
+	var picked []state.Instance
+	var unknown []string
+	for _, name := range names {
+		if inst, ok := byName[name]; ok {
+			picked = append(picked, inst)
+		} else {
+			unknown = append(unknown, name)
+		}
+	}
+	if len(unknown) > 0 {
+		return nil, fmt.Errorf("--sandboxes: no sandbox called %s (vibe --list shows them): nothing was given", strings.Join(unknown, ", "))
+	}
+	return picked, nil
+}
+
+// batchTokenFromEnv is the token in the environment variable named, checked with GitHub against the first of the picked
+// sandboxes' repositories, as a token typed in is (giveTokenToSandboxes checks it against the others).
+// readOnlyOK is --git-read-only: the sandboxes whose repository the token can only read are given it read-only.
+func batchTokenFromEnv(variable string, picked []state.Instance, readOnlyOK bool) (batchToken, error) {
+	repos, names, _ := batchRepositories(picked)
+	var first *gittoken.Repo
+	if len(repos) > 0 {
+		first = &repos[0]
+	}
+	access, err := gitAccessFromEnv(variable, first, nil, readOnlyOK, names...)
+	if err != nil {
+		return batchToken{}, err
+	}
+	return batchToken{token: access.token, source: access.source, expires: access.expires, readOnlyOK: readOnlyOK}, nil
 }
 
 func sandboxNamesOf(picked []state.Instance) []string {
@@ -480,11 +562,18 @@ func sandboxNames(picked []state.Instance) string {
 }
 
 // doBatchGitToken is --batch-git-token: tick the sandboxes to give one token
-// to, say which, and give it to them. Terminal only: a token is never typed
-// into the page, and a script can't tick.
+// to, say which, and give it to them. A token is never typed into the page:
+// on a terminal the sandboxes are ticked and the token asked for; a script
+// names them (--sandboxes) and gives the token in a variable (--git-token-env),
+// which never makes it the default.
 func doBatchGitToken(vibeHome string, args cliargs.Args) error {
-	if args.Force || !interactive() {
-		return fmt.Errorf("--batch-git-token asks which sandboxes to give the token to, so it needs a terminal")
+	named := len(args.Sandboxes) > 0
+	asking := !args.Force && interactive()
+	switch {
+	case !named && !asking:
+		return fmt.Errorf("--batch-git-token asks which sandboxes to give the token to, so it needs a terminal: a script names them with --sandboxes a,b,c (and gives the token with --git-token-env VAR)")
+	case args.GitTokenEnv == "" && !asking:
+		return fmt.Errorf("--batch-git-token asks which token to give, which needs a terminal: with none, give it in a variable with --git-token-env VAR")
 	}
 	presetRules, err := gittoken.ValidRules(strings.Split(args.GitRules, ","))
 	if err != nil {
@@ -498,24 +587,38 @@ func doBatchGitToken(vibeHome string, args cliargs.Args) error {
 		note("no sandboxes to give a token to")
 		return nil
 	}
-	now := timeNow()
-	labels := make([]string, len(candidates))
-	for i, c := range candidates {
-		labels[i] = batchLabel(c, now)
+	var picked []state.Instance
+	if named {
+		if picked, err = namedSandboxes(candidates, args.Sandboxes); err != nil {
+			return err
+		}
+	} else {
+		now := timeNow()
+		labels := make([]string, len(candidates))
+		for i, c := range candidates {
+			labels[i] = batchLabel(c, now)
+		}
+		ticked, ok := multiFilterFrom("which sandboxes should get the token? (none are ticked to begin with; typing matches the folder and profile too)", labels)
+		if !ok || len(ticked) == 0 {
+			note("no sandbox picked: nothing changed")
+			return nil
+		}
+		picked = make([]state.Instance, len(ticked))
+		for i, idx := range ticked {
+			picked[i] = candidates[idx]
+		}
 	}
-	ticked, ok := multiFilterFrom("which sandboxes should get the token? (none are ticked to begin with; typing matches the folder and profile too)", labels)
-	if !ok || len(ticked) == 0 {
-		note("no sandbox picked: nothing changed")
-		return nil
-	}
-	picked := make([]state.Instance, len(ticked))
-	for i, idx := range ticked {
-		picked[i] = candidates[idx]
-	}
-	tok, ok := askBatchToken(vibeHome, picked)
-	if !ok {
-		note("no token chosen: nothing changed")
-		return nil
+	var tok batchToken
+	if args.GitTokenEnv != "" {
+		if tok, err = batchTokenFromEnv(args.GitTokenEnv, picked, args.GitReadOnly); err != nil {
+			return err
+		}
+	} else {
+		var ok bool
+		if tok, ok = askBatchToken(vibeHome, picked); !ok {
+			note("no token chosen: nothing changed")
+			return nil
+		}
 	}
 	jobs := args.Jobs
 	if jobs == 0 {
@@ -531,18 +634,13 @@ func doBatchGitToken(vibeHome string, args cliargs.Args) error {
 		offerDefaultToken(vibeHome, tok.token, tok.expires, sandboxNamesOf(picked)...)
 	}
 	note("")
-	failed := 0
-	for _, o := range outcomes {
-		if !o.given {
-			failed++
-		}
-	}
+	failed := batchFailures(outcomes)
 	for _, line := range batchSummary(outcomes, timeNow()) {
 		note("%s", line)
 	}
 	note("took %s", timeNow().Sub(started).Round(time.Second))
 	if failed > 0 {
-		return fmt.Errorf("%d of %d sandboxes did not get the token", failed, len(outcomes))
+		return fmt.Errorf("%d of %d sandboxes did not get the token, or can't push with it", failed, len(outcomes))
 	}
 	return nil
 }

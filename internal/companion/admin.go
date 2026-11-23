@@ -112,10 +112,22 @@ type AdminBackup struct {
 	Label string `json:"label"`
 }
 
+// AdminTokenSoon is another sandbox whose GitHub token has expired, or is about to.
+type AdminTokenSoon struct {
+	Name    string `json:"name"`
+	Expiry  string `json:"expiry"`
+	Expired bool   `json:"expired,omitempty"`
+}
+
 // AdminGitToken is what the tab shows of the sandbox's GitHub token. It is
 // only ever shown: a token is given to vibe in the terminal, not here.
 type AdminGitToken struct {
-	Has      bool     `json:"has"`
+	// Others are the other sandboxes whose token has expired or is about to, from vibe's records: 'vibe --batch-git-token'
+	// renews several at once.
+	Others []AdminTokenSoon `json:"others,omitempty"`
+	Has    bool             `json:"has"`
+	// ReadOnly says the token can read the repository but not push.
+	ReadOnly bool     `json:"readOnly,omitempty"`
 	Source   string   `json:"source,omitempty"`
 	Rules    []string `json:"rules,omitempty"`
 	Expiry   string   `json:"expiry,omitempty"`
@@ -130,9 +142,11 @@ type AdminGitToken struct {
 	// the folder's remote isn't on GitHub): what the steps the tab gives
 	// name.
 	TokenName string `json:"tokenName,omitempty"`
-	Days      int    `json:"days,omitempty"`
-	Repo      string `json:"repo,omitempty"`
-	Command   string `json:"command"`
+	// Permissions are those the form is filled with, as GitHub names them, for the user to check there.
+	Permissions string `json:"permissions,omitempty"`
+	Days        int    `json:"days,omitempty"`
+	Repo        string `json:"repo,omitempty"`
+	Command     string `json:"command"`
 }
 
 // maxJobLines bounds what an action's log keeps.

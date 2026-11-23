@@ -231,8 +231,8 @@
       <div class="bar review-bar">
         <div class="review-bar-title">
           <strong id="review-title">Review</strong>
+          <span id="review-note" class="muted"></span>
           <span id="review-state" class="pill" hidden></span>
-          <span id="review-of" class="muted"></span>
         </div>
         <div class="review-bar-buttons">
         <span id="review-actions" class="review-actions">
@@ -284,7 +284,8 @@
       <p id="review-wait" class="note muted">Working out the diff…</p>
       <div id="review-start" class="review-start" hidden>
         <p id="review-closed" class="muted" hidden></p>
-        <p><button type="button" id="review-reopen" class="ghost" hidden>Reopen it</button></p>
+        <p id="review-closed-what" class="muted" hidden></p>
+        <p><button type="button" id="review-reopen" class="ghost" hidden>Reopen that review</button></p>
         <div id="review-start-options" class="review-start-options"></div>
       </div>
       <div class="review-body" id="review-body">
@@ -427,6 +428,7 @@
           <h2 id="admin-git-h">GitHub token</h2>
           <p id="admin-git" class="note"></p>
           <ol id="admin-git-steps" class="steps" hidden></ol>
+          <div id="admin-git-others" class="note" hidden></div>
         </section>
       </div>
     </section>

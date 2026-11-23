@@ -78,6 +78,9 @@ func (a *companionAdmin) Status() companion.AdminStatus {
 		}
 	}
 	st.GitToken = adminGitToken(a.name, a.target, info)
+	// gatherInfo, above, has just listed sbx: what it knows is fresh.
+	known, _ := sbxKnows.known(knownSandboxesFresh)
+	st.GitToken.Others = gitTokensRunningOut(a.lay.Home, a.name, timeNow(), known)
 	return st
 }
 
@@ -87,10 +90,11 @@ func (a *companionAdmin) Status() companion.AdminStatus {
 func adminGitToken(name, target string, info sandboxInfo) companion.AdminGitToken {
 	now := timeNow()
 	t := companion.AdminGitToken{
-		Has:     info.gitToken != "",
-		Source:  info.gitToken,
-		Rules:   info.gitRules,
-		Command: "vibe --git-token " + shellWord(target),
+		Has:      info.gitToken != "",
+		ReadOnly: info.gitToken != "" && info.gitReadOnly,
+		Source:   info.gitToken,
+		Rules:    info.gitRules,
+		Command:  "vibe --git-token " + shellWord(target),
 	}
 	if !info.gitTokenExpires.IsZero() {
 		t.Expiry = gittoken.DescribeExpiry(info.gitTokenExpires, now)
@@ -105,7 +109,7 @@ func adminGitToken(name, target string, info sandboxInfo) companion.AdminGitToke
 	case !t.Has:
 		// There's no asking how long here: the link makes one for as
 		// long as the terminal first offers.
-		t.TokenName, t.Days = "vibe "+name, tokenDays
+		t.TokenName, t.Days, t.Permissions = "vibe "+name, tokenDays, gittoken.PermissionsLabel
 		t.NewTokenURL = gittoken.NewTokenURL(t.TokenName, tokenDescription(name, repo), repoOwner(repo), t.Days)
 	case t.Expired || t.Expiring:
 		// As renewGitAccess names it: the default token is shared.
@@ -176,6 +180,7 @@ func (a *companionAdmin) sandboxState() string {
 	if err != nil {
 		return "and sbx can't say what state the sandbox is in (" + err.Error() + ")"
 	}
+	sbxKnows.noteList(statuses)
 	for _, st := range statuses {
 		if st.Name == a.name {
 			if st.Running {
