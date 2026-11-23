@@ -15,6 +15,7 @@ import (
 
 	"vibe/internal/companion"
 	"vibe/internal/fscopy"
+	"vibe/internal/gittoken"
 	"vibe/internal/instructions"
 	"vibe/internal/kitspec"
 	"vibe/internal/layout"
@@ -53,6 +54,7 @@ func instructionsFor(lay layout.Layout, name string) (merged, agent string, err 
 	project := read(filepath.Join(profileDir, instructions.File))
 	kit := read(filepath.Join(profileDir, instructions.KitFile))
 	merged = instructions.WithBackgroundWorkRule(instructions.WithCopyableBlocksRule(instructions.Merge(universal, project), kit), kit)
+	merged = gittoken.AlwaysLoaded + "\n" + merged
 	return merged, agent, nil
 }
 

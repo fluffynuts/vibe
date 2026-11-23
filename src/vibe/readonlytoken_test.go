@@ -7,6 +7,7 @@ import (
 
 	"vibe/internal/cliargs"
 	"vibe/internal/gittoken"
+	"vibe/internal/layout"
 	"vibe/internal/state"
 )
 
@@ -192,5 +193,25 @@ func TestTheRulesForPushingArentAskedForAReadOnlyTokenAndAreKept(t *testing.T) {
 	}
 	if got := gitRulesFor(&gitAccess{}, kept); asked != 1 || got[0] != gittoken.RuleNoDefaultBranch {
 		t.Errorf("a token that can push: asked %d times, rules %v; want asked once", asked, got)
+	}
+}
+
+// The kit's pointer to vibe's GitHub file is in the kit's instructions, which an agent reads only when it thinks a kit is relevant:
+// asked about its GitHub access, a fresh agent answered from the sandbox's own "push from inside" text, the pointer unread (seen
+// twice 2026-11-23, the second time with the firmer pointer). The pointer has to be in what the agent always loads.
+func TestTheInstructionsAnAgentAlwaysLoadsPointAtVibesGitHubFile(t *testing.T) {
+	lay := layout.New(t.TempDir(), t.TempDir())
+	if err := state.Save(lay.Home, state.Instance{Name: "box", Profile: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, lay.HomePath("profiles", "p", "config.yaml"), "name: p\n")
+	merged, _, err := instructionsFor(lay, "box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{gittoken.SandboxFile, "overrides"} {
+		if !strings.Contains(merged, want) {
+			t.Errorf("the always-loaded instructions lack %q:\n%s", want, merged)
+		}
 	}
 }

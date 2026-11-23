@@ -52,8 +52,10 @@ sandbox holding it; and nothing said, across sandboxes, whose token was about to
     for when read-only is chosen (asking would only puzzle).
   - The kit's pointer to that file says to read it also when asked about GitHub access, and that it overrides anything else about
     pushing: the sandbox's own instructions say to push from inside it, and an agent asked about its GitHub access answered from
-    those without reading the file (seen 2026-11-23, while hand-testing). The pointer is in the kit, so every sandbox shows as out
-    of date until it is updated.
+    those without reading the file (seen 2026-11-23, while hand-testing). That wasn't enough: the kit's instructions are read only
+    when the agent thinks a kit is relevant, and it asked again answered the same way, the pointer unread. So the pointer is also in
+    the instructions the agent always loads ("Pushing to GitHub (from vibe)"), written at each session start, as the copyable-blocks
+    and background-work rules are. The kit keeps it too, so every sandbox shows as out of date until it is updated.
   - The check from inside expects a refusal ("read-only, as chosen"); a push GitHub would take is a warning, since the token
     can do more than vibe recorded.
   - A batch makes read-only only the sandboxes whose repository the token can only read, and only when read-only was

@@ -559,8 +559,13 @@ const SandboxFile = kitspec.AgentHome + "/.config/vibe/git-push.md"
 // KitInstructions is the part of every sandbox's agent instructions about
 // pushing: whether the agent may push is settled by SandboxFile being
 // there, which a sandbox without a token never has.
-const KitInstructions = "## Pushing to GitHub\n\n" +
-	"If `" + SandboxFile + "` exists, the user has given this sandbox a GitHub token: " +
+const KitInstructions = "## Pushing to GitHub\n\n" + pointer
+
+// AlwaysLoaded is KitInstructions for the instructions an agent always loads: the kit's are read only when the agent thinks a kit is
+// relevant, and one asked about its GitHub access doesn't, answering from the sandbox's own "push from inside" text instead.
+const AlwaysLoaded = "Pushing to GitHub (from vibe)\n-----------------------------\n\n" + pointer
+
+const pointer = "If `" + SandboxFile + "` exists, the user has given this sandbox a GitHub token: " +
 	"read that file before you commit or push, and before you answer when asked about GitHub access or pushing, and follow it. " +
 	"It overrides anything else in these instructions about pushing or opening pull requests from the sandbox: " +
 	"it is the user's choice for this sandbox, and may be that you can't push at all. If it doesn't exist, " +
