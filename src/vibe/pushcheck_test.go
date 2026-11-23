@@ -58,7 +58,9 @@ func TestTheCheckFromInsideIsADryRunPushOverHTTPSFromTheWorkspaceToABranchNameTh
 		t.Fatalf("asked sbx %d times, want once: %q", len(*asked), *asked)
 	}
 	cmd := strings.Join((*asked)[0], " ")
-	for _, want := range []string{"box ", "git -C /w/box push --dry-run", "https://github.com/o/r.git", "HEAD:refs/heads/vibe-push-check-", "GIT_TERMINAL_PROMPT=0"} {
+	// --no-verify: the repository's pre-push hook (seen: one requiring a clean tree, failing on a .pnpm-store folder) has no say
+	// in whether GitHub lets the token push, and can be slow, fail, or ask.
+	for _, want := range []string{"box ", "git -C /w/box push --dry-run", "--no-verify", "https://github.com/o/r.git", "HEAD:refs/heads/vibe-push-check-", "GIT_TERMINAL_PROMPT=0"} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("ran %q, want it to have %q", cmd, want)
 		}

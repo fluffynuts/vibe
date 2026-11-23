@@ -23,7 +23,9 @@ sandbox holding it; and nothing said, across sandboxes, whose token was about to
   when the token may not push; when it may, `--dry-run` sends nothing. **GitHub's API can't be the check:** `gh api repos/O/R` answered
   `permissions.push: true` for a read-only token, as it reports the account's access, not the token's (seen 2026-11-20, a real push
   refused moments later). Only a running sandbox is asked (running anything in a stopped one would start it); a repository with no commit
-  has nothing to name, and says so. `--git-token` says what it found; the batch's summary marks a sandbox GitHub refused (⚠, with how to
+  has nothing to name, and says so. It runs with `--no-verify`: a dry run still runs the repository's pre-push hook, which has no say
+  in what GitHub allows (seen 2026-11-23: a hook requiring a clean tree, failing on a `.pnpm-store` folder, until the check ran out of
+  time). `--git-token` says what it found; the batch's summary marks a sandbox GitHub refused (⚠, with how to
   try again) and counts it as not done.
 - **Tokens running out, on the Admin tab:** under this sandbox's token, the other sandboxes whose token has expired or expires within
   `gittoken.WarnWithin` (3 days, the session start's warning), from vibe's records (GitHub isn't asked), expired first; and that

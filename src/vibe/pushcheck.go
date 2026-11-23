@@ -45,7 +45,9 @@ func checkPushFromInside(name, target string, repo *gittoken.Repo) insideCheck {
 	ctx, cancel := context.WithTimeout(context.Background(), pushCheckWithin)
 	defer cancel()
 	ref := fmt.Sprintf("HEAD:refs/heads/vibe-push-check-%d", timeNow().UnixNano())
-	_, err := sandboxExec(ctx, name, "env", "GIT_TERMINAL_PROMPT=0", "git", "-C", target, "push", "--dry-run", "--quiet",
+	// --no-verify: the repository's pre-push hook has no say in whether GitHub lets the token push, and can be slow, fail on
+	// something else (seen: one requiring a clean tree, failing on a .pnpm-store folder, until the check ran out of time), or ask.
+	_, err := sandboxExec(ctx, name, "env", "GIT_TERMINAL_PROMPT=0", "git", "-C", target, "push", "--dry-run", "--no-verify", "--quiet",
 		"https://github.com/"+repo.String()+".git", ref)
 	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		err = context.DeadlineExceeded
