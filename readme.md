@@ -959,7 +959,8 @@ sandbox asks, and no is the default answer.
 - **a new token just for this repository** — vibe asks how long it should last (7, 30 or 90 days;
   7 to start with), then opens GitHub's page for a new fine-grained token, filled in with a name
   (`vibe <sandbox>`), the repository's owner, that expiry and the permissions the agent needs
-  (Contents, Pull requests and Workflows: read and write). GitHub doesn't let a link choose the
+  (Contents, Pull requests and Workflows: read and write; Actions, Commit statuses and Issues: read, so the agent can
+  watch CI and read what failed). GitHub doesn't let a link choose the
   repository, and its form starts on *All repositories*, so vibe lists what's left for you to do there
   first, and waits for enter before opening it: change *Repository access* to *Only select
   repositories* and choose the repository, check the permissions, generate the token, and paste it

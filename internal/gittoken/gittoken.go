@@ -125,8 +125,13 @@ const tokenNameLimit = 40
 // Permissions are what a token vibe asks for may do: push commits (contents),
 // open pull requests, and push changes to .github/workflows — without which
 // GitHub turns away any push that touches a workflow, which is a confusing
-// way for a first CI file to fail.
-var Permissions = []string{"contents=write", "pull_requests=write", "workflows=write"}
+// way for a first CI file to fail; and read CI runs and their logs (actions),
+// commit statuses and issues, so the agent can watch CI and read what failed.
+// GitHub doesn't let a fine-grained token use the Checks API at all.
+var Permissions = []string{"contents=write", "pull_requests=write", "workflows=write", "actions=read", "statuses=read", "issues=read"}
+
+// PermissionsLabel is Permissions as GitHub's form names them, for the user to check there.
+const PermissionsLabel = "Contents, Pull requests and Workflows, read and write; Actions, Commit statuses and Issues, read"
 
 // NewTokenURL is GitHub's form for a new fine-grained token, filled in from
 // the URL (https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens):

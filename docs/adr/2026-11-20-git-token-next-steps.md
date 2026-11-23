@@ -65,6 +65,12 @@ sandbox holding it; and nothing said, across sandboxes, whose token was about to
     token and was told nothing. The default token
     (`--setup`) may be read-only; whether a sandbox is, is recorded when it is given one.
 
+- **A new token also reads CI** (found 2026-11-23: an agent couldn't watch a run, `gh run watch`/`gh run view --log-failed`
+  answering 403): GitHub's form is filled with Actions, Commit statuses and Issues, read, beside Contents, Pull requests and
+  Workflows (`actions=read`, `statuses=read`, `issues=read`, checked against GitHub's list of the form's parameters). The steps the
+  terminal and the Admin tab give name them from one label (`gittoken.PermissionsLabel`). Fine-grained tokens can't use the Checks
+  API at all, so check runs stay out of reach. Tokens made before keep what they had: the user adds the permissions on GitHub.
+
 ## Consequences
 
 - A batch can be scheduled (cron, CI) with the token in a secret variable, never on the command line.

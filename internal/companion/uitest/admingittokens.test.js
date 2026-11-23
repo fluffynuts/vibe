@@ -59,3 +59,11 @@ test("a read-only token's card says the agent can read from GitHub but not push,
     assert.doesNotMatch(said, /feature-branch/)
   } finally { p.close() }
 })
+
+test("the steps for a new token name the permissions vibe asks for, as the host says them", async () => {
+  const p = await adminWith(undefined, { has: false, newTokenUrl: 'https://github.com/settings/personal-access-tokens/new?x', tokenName: 'vibe box', days: 30,
+    permissions: 'Contents, read and write; Actions, read' })
+  try {
+    assert.match(p.$('admin-git-steps').textContent, /Check the permissions: Contents, read and write; Actions, read\./)
+  } finally { p.close() }
+})

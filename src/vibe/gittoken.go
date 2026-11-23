@@ -455,7 +455,7 @@ func openTokenPageFor(tokenName, description, owner string, days int, repos []st
 	default:
 		note("     and choose %s — GitHub won't let vibe pick them for you", paint(colorYellow, strings.Join(repos, ", ")))
 	}
-	note("  2. check the permissions: %s", paint(colorPink, "Contents, Pull requests and Workflows, read and write"))
+	note("  2. check the permissions: %s", paint(colorPink, gittoken.PermissionsLabel))
 	note("  3. %s", paint(colorCyan, "Generate token, copy it, and paste it here"))
 	waitForEnter("press enter to open the page")
 	u := gittoken.NewTokenURL(tokenName, description, owner, days)

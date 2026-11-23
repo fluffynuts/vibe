@@ -109,7 +109,7 @@ func adminGitToken(name, target string, info sandboxInfo) companion.AdminGitToke
 	case !t.Has:
 		// There's no asking how long here: the link makes one for as
 		// long as the terminal first offers.
-		t.TokenName, t.Days = "vibe "+name, tokenDays
+		t.TokenName, t.Days, t.Permissions = "vibe "+name, tokenDays, gittoken.PermissionsLabel
 		t.NewTokenURL = gittoken.NewTokenURL(t.TokenName, tokenDescription(name, repo), repoOwner(repo), t.Days)
 	case t.Expired || t.Expiring:
 		// As renewGitAccess names it: the default token is shared.

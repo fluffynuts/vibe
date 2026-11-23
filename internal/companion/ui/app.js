@@ -4902,7 +4902,7 @@
           code(git.tokenName || 'vibe'), ', lasting ' + (git.days || 30) + ' days.'),
         step('Under Repository access, change ', strong('gh-leave', '"All repositories"'), ' to ',
           strong('gh-pick', '"Only select repositories"'), ', and choose ', repo, " — GitHub won't let vibe pick it for you."),
-        step('Check the permissions: ', strong('gh-perms', 'Contents, Pull requests and Workflows, read and write'), '.'),
+        step('Check the permissions: ', strong('gh-perms', git.permissions), '.'),
         step(strong('gh-last', 'Generate token'), ', and copy it.'),
         step('In a terminal, run ', code(command), ' and paste the token when it asks.'),
       ]

@@ -85,6 +85,7 @@ func TestNewTokenURL(t *testing.T) {
 	for k, want := range map[string]string{
 		"description": "Lets the agent push & more.", "target_name": "fluffynuts", "expires_in": "7",
 		"contents": "write", "pull_requests": "write", "workflows": "write",
+		"actions": "read", "statuses": "read", "issues": "read",
 	} {
 		if got := q.Get(k); got != want {
 			t.Errorf("%s = %q, want %q", k, got, want)
@@ -505,5 +506,18 @@ func TestTheKitsInstructionsSayVibesFileWinsAndWhenToReadIt(t *testing.T) {
 		if !strings.Contains(KitInstructions, want) {
 			t.Errorf("the kit's instructions should say %q:\n%s", want, KitInstructions)
 		}
+	}
+}
+
+// What the user is told to check on GitHub's form is what the form is filled with: an agent without Actions read couldn't watch CI
+// (gh run watch, gh run view --log-failed: 403), seen 2026-11-23.
+func TestThePermissionsSaidAreThoseAskedFor(t *testing.T) {
+	for _, want := range []string{"Contents", "Pull requests", "Workflows", "Actions", "Commit statuses", "Issues"} {
+		if !strings.Contains(PermissionsLabel, want) {
+			t.Errorf("PermissionsLabel %q doesn't name %s", PermissionsLabel, want)
+		}
+	}
+	if len(Permissions) != 6 {
+		t.Errorf("%d permissions asked for, but the label names 6: %v", len(Permissions), Permissions)
 	}
 }

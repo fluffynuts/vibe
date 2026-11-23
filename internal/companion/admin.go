@@ -142,9 +142,11 @@ type AdminGitToken struct {
 	// the folder's remote isn't on GitHub): what the steps the tab gives
 	// name.
 	TokenName string `json:"tokenName,omitempty"`
-	Days      int    `json:"days,omitempty"`
-	Repo      string `json:"repo,omitempty"`
-	Command   string `json:"command"`
+	// Permissions are those the form is filled with, as GitHub names them, for the user to check there.
+	Permissions string `json:"permissions,omitempty"`
+	Days        int    `json:"days,omitempty"`
+	Repo        string `json:"repo,omitempty"`
+	Command     string `json:"command"`
 }
 
 // maxJobLines bounds what an action's log keeps.
