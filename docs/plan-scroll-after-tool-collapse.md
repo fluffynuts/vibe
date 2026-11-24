@@ -6,7 +6,9 @@ designed), and the log is left scrolled a little up, the "talking" dots below th
 ## Wanted
 
 While the dots show and the user hasn't scrolled up on purpose, they stay in view at the bottom of the log. The check: if the
-dots (or the bottom of the log) were in view before the collapse, they are after it.
+dots were in view before the collapse, they are after it. Only while the dots are still in the log: once the turn has
+ended and they're gone, nothing is held in view (holding the last place would pin the log to the agent's last tool use, the
+user's point). Whatever is written last decides, as now.
 
 ## Where to look (read from the code 2026-11-24, not yet reproduced)
 
@@ -22,5 +24,5 @@ dots (or the bottom of the log) were in view before the collapse, they are after
 
 - jsdom can't lay out: give the log a stand-in `scrollHeight`/`clientHeight` (as the other scroll tests in `page.test.js` do)
   and pin that the log is scrolled to its end after a group collapses when it was at the end before, and left alone when the
-  user had scrolled up.
+  user had scrolled up, and nothing held once the dots are gone.
 - Firefox: a real collapse of a tall group with the dots showing leaves the dots in view.
