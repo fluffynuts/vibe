@@ -161,3 +161,42 @@ func TestClipboardFeatureStartsOnStart(t *testing.T) {
 		t.Errorf("the profile's settings.yaml doesn't publish the clipboard page:\n%s", settings)
 	}
 }
+
+// The clipboard feature's hook reaches the agent as a plugin of vibe's: the kit built from a profile with the feature puts it
+// in the plugins folder, and names that folder for Claude Code to load (as vibe-band's is).
+func TestTheClipboardFeaturesKitLoadsItsHookAsAPlugin(t *testing.T) {
+	lay := layout.New(t.TempDir(), repoRoot(t))
+	profile := filepath.Join(t.TempDir(), "demo")
+	if err := library.Compose([]string{"clipboard-bridge"}, lay.FeatureDir, profile); err != nil {
+		t.Fatalf("composing the clipboard feature: %v", err)
+	}
+	base, err := kitspec.LoadDoc(lay.File("config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, err := kitspec.LoadDoc(filepath.Join(profile, "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := kitspec.Build(base, own, lay.DefaultsDir(), profile, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kit, err := kitspec.MarshalV3(doc, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		kitspec.AgentHome + "/.local/share/vibe/plugins/vibe-clipboard/hooks/hooks.json",
+		kitspec.AgentHome + "/.local/share/vibe/plugins/vibe-clipboard/.claude-plugin/plugin.json",
+		kitspec.AgentHome + "/.local/share/vibe/plugins/vibe-clipboard",
+		"CLAUDE_CODE_PLUGIN_DIRS",
+	} {
+		if !strings.Contains(string(kit), want) {
+			t.Errorf("the kit lacks %s", want)
+		}
+	}
+	if strings.Contains(string(kit), "/.claude/skills/vibe-clipboard/") {
+		t.Error("the plugin was left in the read-only skills folder")
+	}
+}

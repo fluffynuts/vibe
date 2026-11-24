@@ -1,9 +1,11 @@
 "use strict";
 // vibe: description: Claude Code hook logic behind clipboard-hook
 // Claude Code hook (UserPromptSubmit), run through
-// ~/.local/bin/clipboard-hook and registered for every session in
-// /etc/claude-code/managed-settings.d by the clipboard feature's install
-// step.
+// ~/.local/bin/clipboard-hook and registered for every session by the
+// vibe-clipboard plugin (.claude/skills/vibe-clipboard in this feature,
+// which vibe moves into its plugins folder). Not a managed-settings
+// drop-in: Claude Code 2.1.331 ran nothing from those where an
+// organisation's managed settings came from its servers.
 //
 // What the user pastes on the clipboard page goes with their next prompt:
 // the hook claims everything not yet delivered from the clipboard server

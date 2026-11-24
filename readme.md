@@ -1434,8 +1434,8 @@ image into the agent's terminal goes through sbx's clipboard bridge, which comes
 Linux hosts, so the feature gives you a page in your browser instead (the agent gives you its URL
 via `clipboard-url`, or open `$VIBE_CLIPBOARD_URL`). Paste on it, drop files on it, or pick them,
 and each item reaches the agent with your next message (not part-way through a turn, so there's time to
-give it a title): a Claude Code hook (`UserPromptSubmit`, in
-`/etc/claude-code/managed-settings.d/`) hands over anything not yet delivered, with short text
+give it a title): a Claude Code hook (`UserPromptSubmit`, registered by vibe's `vibe-clipboard` plugin, as
+`vibe-band`'s are) hands over anything not yet delivered, with short text
 inline and images as paths for the agent to read. Every item on the page shows whether it has
 been sent yet, and has **Copy** (to put it back on your own clipboard) and **Delete** buttons; **Clear all** empties the
 history at once (asking first).

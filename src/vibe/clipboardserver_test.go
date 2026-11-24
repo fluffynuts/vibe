@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"vibe/internal/kitspec"
 )
 
 // clipboardServer runs the clipboard feature's real server, with its
@@ -139,32 +140,64 @@ func TestAPasteWaitsForTheUsersNextMessage(t *testing.T) {
 	}
 }
 
-func TestTheClipboardHookIsRegisteredForPromptsAlone(t *testing.T) {
-	script, err := os.ReadFile(filepath.Join("..", "..", "library", "base", "clipboard-bridge", "install-scripts", "01-add-clipboard-hooks"))
+// The hook is registered by a plugin of vibe's (as vibe-band's are), not a managed-settings drop-in: Claude Code 2.1.331 ran
+// nothing from /etc/claude-code/managed-settings.d where an organisation's managed settings came from its servers, and pastes
+// were never handed over.
+func TestTheClipboardHookIsRegisteredByAPluginForPromptsAlone(t *testing.T) {
+	dir := filepath.Join("..", "..", "library", "base", "clipboard-bridge", "agent-files", ".claude", "skills", "vibe-clipboard")
+	var manifest struct {
+		Name string `json:"name"`
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".claude-plugin", "plugin.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The settings are the heredoc's body: the line after <<'JSON', up to
-	// the line JSON. Git on Windows checks the script out with CRLF.
-	text := strings.ReplaceAll(string(script), "\r\n", "\n")
-	marker := strings.Index(text, "<<'JSON'")
-	if marker < 0 {
-		t.Fatal("no settings found in the install script")
+	if err := json.Unmarshal(data, &manifest); err != nil || manifest.Name != "vibe-clipboard" {
+		t.Errorf("plugin.json: %q, %v", manifest.Name, err)
 	}
-	body := text[marker:]
-	body = body[strings.Index(body, "\n")+1:]
-	end := strings.Index(body, "\nJSON\n")
-	if end < 0 {
-		t.Fatal("the install script's settings don't end")
-	}
-	var settings struct {
-		Hooks map[string]json.RawMessage `json:"hooks"`
-	}
-	if err := json.Unmarshal([]byte(body[:end]), &settings); err != nil {
+	data, err = os.ReadFile(filepath.Join(dir, "hooks", "hooks.json"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(settings.Hooks) != 1 || settings.Hooks["UserPromptSubmit"] == nil {
-		t.Errorf("hooks registered: %v, want UserPromptSubmit alone", keysOf(settings.Hooks))
+	var settings struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Type, Command string
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	if len(settings.Hooks) != 1 || len(settings.Hooks["UserPromptSubmit"]) != 1 {
+		t.Fatalf("hooks registered: %+v, want UserPromptSubmit alone", settings.Hooks)
+	}
+	if h := settings.Hooks["UserPromptSubmit"][0].Hooks; len(h) != 1 || h[0].Type != "command" || h[0].Command != kitspec.AgentHome+"/.local/bin/clipboard-hook" {
+		t.Errorf("the hook: %+v", h)
+	}
+}
+
+// Where Claude Code does read managed-settings drop-ins, the old registration would run the hook a second time: the install step
+// takes it away.
+func TestTheOldManagedSettingsRegistrationIsTakenAway(t *testing.T) {
+	scripts, err := os.ReadDir(filepath.Join("..", "..", "library", "base", "clipboard-bridge", "install-scripts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed := false
+	for _, e := range scripts {
+		data, err := os.ReadFile(filepath.Join("..", "..", "library", "base", "clipboard-bridge", "install-scripts", e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		if strings.Contains(text, "<<'JSON'") {
+			t.Errorf("%s still writes a managed-settings drop-in", e.Name())
+		}
+		removed = removed || strings.Contains(text, "rm -f /etc/claude-code/managed-settings.d/50-vibe-clipboard.json")
+	}
+	if !removed {
+		t.Error("no install step takes the old drop-in away")
 	}
 }
 
