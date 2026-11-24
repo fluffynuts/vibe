@@ -7,7 +7,10 @@
 ## Context
 
 The organisation's remote managed settings (fetched by Claude Code from Anthropic at each start, cached in the sandbox's
-`~/.claude/remote-settings.json`) gained `"disableBypassPermissionsMode": "disable"` on 2026-11-24. With bypass disabled, Claude Code
+`~/.claude/remote-settings.json`) had `"disableBypassPermissionsMode": "disable"`, first seen on 2026-11-24: the cached file was first
+written at 07:44 that day (the sandbox had been re-composed overnight), and the day before the same Claude Code (2.1.330) still ran
+the agent in bypass. When the organisation set it isn't known; it was lifted at 10:06 the same day (the cached file was rewritten
+without it). With bypass disabled, Claude Code
 doesn't refuse `--permission-mode bypassPermissions` or say so: it falls back to the settings' `defaultMode`. That was Manual once the
 user had picked it in `/status` (which writes `defaultMode` into `~/.claude/settings.json`), and in `-p` there is nobody to approve
 anything. The session's transcript records the mode each turn actually ran in (`"permissionMode"`): `bypassPermissions` until that
@@ -25,7 +28,8 @@ What was checked (a throwaway `CLAUDE_CONFIG_DIR` with `defaultMode: default`; t
 - **`auto` by default** (`defaultPermissionMode` in `src/vibe/conversation.go`): allowed under that policy, it wins over a Manual
   `defaultMode`, and nothing waits on an answer nobody can give. Its classifier refuses an action now and then that bypass would have
   run; the agent then says so.
-- **`permissionMode` in `settings.yaml`** chooses another (the profile's over `~/.vibe/settings.yaml`, as `model` and `effort` are),
+- **`permissionMode`** chooses another: in the profile's `user-preferences.yaml`, over its `settings.yaml`, over `~/.vibe/settings.yaml`,
+  as `model` and `effort` are (a generated profile's `settings.yaml` is what composing wrote: editing it stops its automatic updates),
   for an organisation that allows bypass, or to try it again. It is read when the agent next starts; a value Claude Code doesn't take is
   refused before anything runs, saying which file to fix.
 

@@ -41,6 +41,9 @@ type Prefs struct {
 	// Mode is how vibe starts for this profile when nothing typed decides it:
 	// "headless" or "terminal"; unset, the settings' say.
 	Mode string `yaml:"mode,omitempty"`
+	// PermissionMode is the --permission-mode the conversation runs the agent with (see settings.Settings.PermissionMode);
+	// unset, the settings' say.
+	PermissionMode string `yaml:"permissionMode,omitempty"`
 
 	Others map[string]interface{} `yaml:",inline"`
 }

@@ -1317,7 +1317,12 @@ nuget: fallback       # fallback (default): packages read-only, nothing else; ov
 packages: ask         # ask (default): packages the agent asks for wait for you on the Admin tab; allow: fetched at once
 model: sonnet         # the model the Conversation tab asks claude for, as a default; what is chosen in the drop-down there is kept in the profile's user-preferences.yaml, and wins over this. Unset: claude's own default
 effort: high          # the effort the Conversation tab asks claude for (low, medium, high, xhigh or max, as claude's --effort takes). Unset: claude's own default
-permissionMode: auto  # the --permission-mode the Conversation tab runs claude with: auto (default), bypassPermissions, acceptEdits, manual, dontAsk or plan. Not bypass by default: an organisation's managed settings can disable it, and claude then falls back, silently, to its settings' defaultMode. Read when the agent next starts; the profile's settings.yaml wins over this one
+permissionMode: auto  # the --permission-mode the Conversation tab runs claude with: auto (the default),
+                      #    bypassPermissions, acceptEdits, manual, dontAsk or plan. Not bypass by default: an
+                      #    organisation's managed settings can disable it, and claude then falls back, without a
+                      #    word, to its own settings' defaultMode. For one profile, put it in that profile's
+                      #    user-preferences.yaml (safe there: it never makes a generated profile look edited by
+                      #    hand), which wins over this. Read when the agent next starts
 memoryRoot: ~/.vibe/memories   # where per-sandbox agent memories are backed up
 defaultFeatures:      # library features a guided profile starts with selected
   - dotnet

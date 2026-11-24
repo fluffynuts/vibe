@@ -44,7 +44,8 @@ const asAgentScript = `if [ "$(id -u)" = 0 ]; then exec su - "$(id -un 1000 2>/d
 // chose on the page, empty where they left the agent's own default.
 type turnChoice struct {
 	Model, Effort string
-	// PermissionMode is the agent's --permission-mode from settings.yaml; "" is defaultPermissionMode.
+	// PermissionMode is the agent's --permission-mode, as the profile's preferences or settings choose it; "" is
+	// defaultPermissionMode.
 	PermissionMode string
 }
 

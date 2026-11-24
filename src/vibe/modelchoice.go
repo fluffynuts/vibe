@@ -42,7 +42,7 @@ func (p profileChoice) settingsPath() string { return filepath.Join(p.dir(), set
 type chosen struct {
 	turnChoice
 	modelFrom, effortFrom string
-	// permissionMode is set in settings.yaml only (the page doesn't choose it), and permissionFrom is the file it came from.
+	// permissionMode is the agent's --permission-mode, and permissionFrom the file it came from.
 	permissionMode, permissionFrom string
 }
 
@@ -73,7 +73,7 @@ func (p profileChoice) resolve() (chosen, error) {
 	var out chosen
 	out.Model, out.modelFrom = pick(prefs.Model, own.Model, global.Model)
 	out.Effort, out.effortFrom = pick(prefs.Effort, own.Effort, global.Effort)
-	out.permissionMode, out.permissionFrom = pick("", own.PermissionMode, global.PermissionMode)
+	out.permissionMode, out.permissionFrom = pick(prefs.PermissionMode, own.PermissionMode, global.PermissionMode)
 	return out, nil
 }
 

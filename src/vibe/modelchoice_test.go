@@ -639,3 +639,21 @@ func TestAPermissionModeClaudeDoesntKnowIsRefusedSayingWhereToFixIt(t *testing.T
 		}
 	}
 }
+
+// A generated profile's settings.yaml is part of what composing wrote: a permissionMode put there makes the profile look edited
+// by hand, out of the automatic updates. Its user-preferences.yaml isn't, so a per-profile choice goes there, and wins.
+func TestThePermissionModeInTheProfilesPreferencesWinsOverItsSettings(t *testing.T) {
+	c, _ := choiceHome(t, "permissionMode: acceptEdits\n")
+	if err := os.WriteFile(userprefs.Path(c.dir()), []byte("permissionMode: bypassPermissions\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := c.forTurn(); err != nil || got.PermissionMode != "bypassPermissions" {
+		t.Errorf("got %+v, %v", got, err)
+	}
+	if err := os.WriteFile(userprefs.Path(c.dir()), []byte("permissionMode: nonsense\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.forTurn(); err == nil || !strings.Contains(err.Error(), "user-preferences.yaml") {
+		t.Errorf("a bad value in the preferences: %v", err)
+	}
+}
