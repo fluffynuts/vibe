@@ -1,6 +1,8 @@
 # The conversation's agent runs in auto mode, unless settings.yaml chooses another
 
-- **Status:** accepted, built 2026-11-24 on `fix/agent-permission-mode` (a hotfix).
+- **Status:** accepted, built 2026-11-24 on `fix/agent-permission-mode` (a hotfix, PR #38, closed unmerged: it ships with
+  `feat/agent-permission-mode-choice`). Superseded in part the same day: the default is bypass again, now that the page warns when
+  it isn't in force (`2026-11-24-agent-permission-mode-choice.md`); `permissionMode` stands.
 - **Decided:** 2026-11-24, with the user, after the agent in two sandboxes refused nearly every command (a write to `/tmp`, a compound
   command, a `for` loop with a variable) with "needs approval", though vibe started it with `--permission-mode bypassPermissions`.
 

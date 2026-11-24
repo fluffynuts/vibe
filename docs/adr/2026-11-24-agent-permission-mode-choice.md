@@ -20,9 +20,21 @@ So vibe never reads the policy: what Claude Code says is enough.
 
 ## Decision
 
-- **The Admin tab's Agent permissions card** (changed rarely, about risk, per sandbox) has a drop-down of the six modes, Auto
-  marked as the default. Choosing writes `permissionMode` in the profile's `user-preferences.yaml` (never a `settings.yaml`: a
-  generated profile's is what composing wrote). Choosing Auto writes `auto` rather than taking the key away: under it a
+- **Bypass permissions is the default again** (decided with the user, after PR #38 was closed): the sandbox is the boundary, Auto's
+  classifier refuses things now and then, and in older Claude Code (2.1.291) Auto didn't work at all while bypass did. Where an
+  organisation disables bypass, the agent falls back to Claude Code's `defaultMode`, which the page now says, offering Auto.
+- **Use Auto:** when it was bypass that was asked for and isn't in force, the card's and the balloon's warnings have a button that
+  chooses Auto (allowed under such a policy, and it wins over a Manual `defaultMode`). vibe doesn't switch by itself: the mode the
+  agent runs in is the user's to choose.
+- **Each refusal is said:** a `system`/`permission_denied` event (`tool_name`, `message`) becomes a line of its own in the
+  conversation, kind `denied`: "Claude Code didn't let the agent use Bash: Output redirection to … needs approval. (the agent is in
+  Manual)", with **Agent permissions…** to the card. The agent may not mention it; the page did nothing with these events before.
+  Seen from Manual's refusals; whether Auto's classifier refusals come as the same event isn't known (two tries to provoke one
+  were let through).
+
+- **The Admin tab's Agent permissions card** (changed rarely, about risk, per sandbox) has a drop-down of the six modes, Bypass
+  permissions marked as the default. Choosing writes `permissionMode` in the profile's `user-preferences.yaml` (never a `settings.yaml`: a
+  generated profile's is what composing wrote). Choosing the default writes it rather than taking the key away: under it a
   `settings.yaml` could otherwise choose again, and the page can't see that. A mode a `settings.yaml` chose is shown with the file.
 - **Applied before the next prompt**, as the model and effort are: the agent sends `set_permission_mode` when the choice differs
   from what it was last asked for, with a `request_id` the page knows (`vibe-mode-N`) so the answer is read. The card says a change

@@ -11,7 +11,7 @@ const MODES = ['auto', 'bypassPermissions', 'acceptEdits', 'manual', 'dontAsk', 
 // pageWith opens a tab on a page whose vibe answers the permission mode with at (changed by the test), and the conversation's poll
 // with poll.
 async function pageWith({ tab = 'admin', choice = true, at = {}, poll = {} } = {}) {
-  const now = Object.assign({ mode: '', from: '', default: 'auto', modes: MODES }, at)
+  const now = Object.assign({ mode: '', from: '', default: 'bypassPermissions', modes: MODES }, at)
   const p = await openPage({
     routes: {
       '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, admin: true, permissionModeChoice: choice, attention: {} },
@@ -39,7 +39,7 @@ test('the Admin tab has a labelled drop-down of the modes, showing the default w
     assert.match(card(p).querySelector('h2').textContent, /permission/i)
     assert.match(p.window.document.querySelector('label[for="admin-permission-mode"]').textContent, /mode/i)
     assert.deepEqual(Array.from(select(p).options).map((o) => o.value), MODES)
-    assert.equal(select(p).value, 'auto')
+    assert.equal(select(p).value, 'bypassPermissions')
     assert.match(select(p).selectedOptions[0].textContent, /default/i)
   } finally { p.close() }
 })
@@ -69,7 +69,7 @@ test('a choice vibe refused puts the drop-down back and says why', async () => {
     select(p).value = 'plan'
     select(p).dispatchEvent(new p.window.Event('change', { bubbles: true }))
     await p.settle()
-    assert.equal(select(p).value, 'auto')
+    assert.equal(select(p).value, 'bypassPermissions')
     assert.match(card(p).textContent, /vibe's own/)
   } finally { p.close() }
 })
@@ -120,5 +120,53 @@ test('no balloon warning when the poll says nothing of the mode', async () => {
   try {
     await p.every('pollConversation')
     assert.ok(!p.$('status-info').classList.contains('warn'))
+  } finally { p.close() }
+})
+
+// Bypass refused (an organisation's settings disable it): the warning offers the fix, one click, rather than vibe choosing a mode
+// by itself.
+test('when bypass is not in force, the card offers Use Auto, which chooses Auto', async () => {
+  const p = await pageWith({ at: { asked: 'bypassPermissions', inForce: 'manual' } })
+  try {
+    const use = p.button('Use Auto', card(p))
+    assert.ok(use, 'no Use Auto')
+    await p.click(use)
+    assert.deepEqual(p.posted('/api/permission-mode'), [{ mode: 'auto' }])
+    assert.match(card(p).textContent, /next prompt/i)
+  } finally { p.close() }
+})
+
+test('Use Auto is offered only when it was bypass that was refused', async () => {
+  const p = await pageWith({ at: { mode: 'acceptEdits', asked: 'acceptEdits', inForce: 'manual' } })
+  try {
+    assert.ok(!p.$('admin-permission-warning').hidden)
+    assert.equal(p.button('Use Auto', card(p)), undefined)
+  } finally { p.close() }
+})
+
+test('the balloon offers Use Auto too, when bypass is not in force', async () => {
+  const p = await pageWith({ tab: 'conversation', poll: { running: true, permissionMode: { asked: 'bypassPermissions', inForce: 'manual' } } })
+  try {
+    await p.every('pollConversation')
+    const use = p.button('Use Auto', p.$('status-balloon'))
+    assert.ok(use, 'no Use Auto in the balloon')
+    await p.click(use)
+    assert.deepEqual(p.posted('/api/permission-mode'), [{ mode: 'auto' }])
+  } finally { p.close() }
+})
+
+const agentSaid = (seq, text) => ({ seq, kind: 'agent', agent: { type: 'assistant', message: { content: [{ type: 'text', text }] } } })
+
+test('a permission Claude Code refused is a line in the conversation, with a way to the Admin tab\'s choice', async () => {
+  const said = "Claude Code didn't let the agent use Bash: Output redirection to '/tmp/x' needs approval. (the agent is in Manual)"
+  const p = await pageWith({ tab: 'conversation', poll: { events: [agentSaid(1, 'Writing it.'), { seq: 2, kind: 'denied', text: said }], last: 2 } })
+  try {
+    await p.every('pollConversation')
+    const line = p.$('convo-log').querySelector('.msg.denied')
+    assert.ok(line, 'no line for the refusal')
+    assert.ok(line.textContent.includes(said))
+    await p.click(p.button('Agent permissions…', line))
+    assert.equal(p.$('tab-admin').getAttribute('aria-selected'), 'true')
+    assert.equal(p.window.document.activeElement, select(p))
   } finally { p.close() }
 })

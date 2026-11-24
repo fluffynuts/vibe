@@ -765,12 +765,15 @@ restarts, as for files). Colours follow the theme, and what is copied is the cod
   and the card then says what state the sandbox is in. `vibe --cancel` does the same from a terminal.
   When the sandbox is stopped or rebuilt, from here or with `vibe --stop` or sbx, vibe keeps
   serving the page; the terminal session attaches again once the sandbox is back (Ctrl-C ends vibe).
-  Its **Agent permissions** card chooses the `--permission-mode` the Conversation tab's agent runs in (Auto, the default;
-  Bypass permissions; Accept edits; Manual; Don't ask; Plan), kept as `permissionMode:` in the profile's
-  `user-preferences.yaml` and told a running agent before your next prompt. It says the mode the agent reports being in,
-  and warns, there and in the Conversation tab's status balloon, when that isn't the one chosen, with Claude Code's own
-  words when it refused the change: an organisation's managed settings can disable bypass, and Claude Code then runs in
-  another mode without saying so (in Manual nothing that needs approval can run, as nobody can approve it here).
+  Its **Agent permissions** card chooses the `--permission-mode` the Conversation tab's agent runs in (Bypass permissions,
+  the default, as the sandbox is the boundary; Auto; Accept edits; Manual; Don't ask; Plan), kept as `permissionMode:` in
+  the profile's `user-preferences.yaml` and told a running agent before your next prompt. It says the mode the agent
+  reports being in, and warns, there and in the Conversation tab's status balloon, when that isn't the one chosen, with
+  Claude Code's own words when it refused the change: an organisation's managed settings can disable bypass, and Claude
+  Code then runs in another mode without saying so (in Manual nothing that needs approval can run, as nobody can approve
+  it here). When it's bypass that was refused, the warning has **Use Auto**, which such a policy allows. Each time Claude
+  Code refuses the agent something, the conversation says so in a line of its own, with why, the mode it was in, and
+  **Agent permissions…** to change it.
   It also edits your [instructions to the agent](#your-instructions-to-the-agent): **Save** asks what to do when the file has
   changed on disk since (merge, overwrite, or reload), and **Optimise** asks the agent for a tidier
   version, leaving out what's repeated or already in the universal file, for you to **Accept** or
@@ -1323,10 +1326,10 @@ nuget: fallback       # fallback (default): packages read-only, nothing else; ov
 packages: ask         # ask (default): packages the agent asks for wait for you on the Admin tab; allow: fetched at once
 model: sonnet         # the model the Conversation tab asks claude for, as a default; what is chosen in the drop-down there is kept in the profile's user-preferences.yaml, and wins over this. Unset: claude's own default
 effort: high          # the effort the Conversation tab asks claude for (low, medium, high, xhigh or max, as claude's --effort takes). Unset: claude's own default
-permissionMode: auto  # the --permission-mode the Conversation tab runs claude with: auto (the default),
-                      #    bypassPermissions, acceptEdits, manual, dontAsk or plan. Not bypass by default: an
-                      #    organisation's managed settings can disable it, and claude then falls back, without a
-                      #    word, to its own settings' defaultMode. For one profile, put it in that profile's
+permissionMode: auto  # the --permission-mode the Conversation tab runs claude with: bypassPermissions (the
+                      #    default), auto, acceptEdits, manual, dontAsk or plan. auto where an organisation's
+                      #    managed settings disable bypass: claude then falls back to its own settings'
+                      #    defaultMode, which the page warns of. For one profile, put it in that profile's
                       #    user-preferences.yaml (safe there: it never makes a generated profile look edited by
                       #    hand), which wins over this, and is what the Admin tab's Agent permissions card
                       #    writes. A change is told a running agent before your next prompt

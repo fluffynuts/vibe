@@ -4245,8 +4245,18 @@
     if (permissionView.saidNext) lines.push('Applies from your next prompt.')
     $('admin-permission-note').textContent = lines.join(' ')
     const differs = !!m.inForce && !!m.asked && m.inForce !== m.asked
-    $('admin-permission-warning').hidden = !differs
-    $('admin-permission-warning').textContent = differs ? modeNotInForce(m.asked, m.inForce, m.refused) : ''
+    const warning = $('admin-permission-warning')
+    warning.hidden = !differs
+    warning.replaceChildren(differs ? modeNotInForce(m.asked, m.inForce, m.refused) : '')
+    if (differs && bypassRefused(m.asked, m.inForce)) {
+      warning.append(' ', el('button', { type: 'button', class: 'small', text: 'Use Auto', onclick: () => setPermissionMode('auto') }))
+    }
+  }
+
+  // bypassRefused says it was bypass that was asked for and isn't in force: the page then offers Auto, which such a policy allows.
+  // vibe doesn't switch by itself: which mode the agent runs in is the user's to choose.
+  function bypassRefused(asked, inForce) {
+    return asked === 'bypassPermissions' && inForce !== 'bypassPermissions'
   }
 
   async function loadPermissionMode() {
@@ -4261,9 +4271,14 @@
     }
   }
 
-  async function choosePermissionMode() {
+  function choosePermissionMode() {
+    return setPermissionMode($('admin-permission-mode').value)
+  }
+
+  // setPermissionMode keeps mode as the profile's choice (from the drop-down, or a warning's Use Auto), told the agent before
+  // the next prompt.
+  async function setPermissionMode(mode) {
     const select = $('admin-permission-mode')
-    const mode = select.value
     select.disabled = true
     try {
       const res = await post('/api/permission-mode', { mode })
@@ -4276,7 +4291,9 @@
       permissionView.shown = mode
       permissionView.saidNext = true
       permissionView.drawn = ''
+      select.value = mode
       drawPermissionMode(res.body)
+      if (!$('panel-conversation').hidden) toast('The agent runs in ' + permissionModeName(mode) + ' from your next prompt.')
     } catch (e) {
       select.value = permissionView.shown
       reached(false)
@@ -6293,6 +6310,17 @@
     goToThread(id)
   }
 
+  // deniedNote is a permission Claude Code refused the agent, as vibe said it: with the way to the Admin tab's choice of mode, where
+  // the page has one.
+  function deniedNote(ev) {
+    endToolGroup()
+    const go = state.permissionModeChoice
+      ? el('button', { type: 'button', class: 'small ghost', text: 'Agent permissions…', onclick: () => { select('admin'); $('admin-permission-mode').focus() } })
+      : null
+    $('convo-log').append(el('div', { class: 'msg denied', 'data-seq': String(ev.seq) }, el('span', { text: ev.text || '' }), go ? ' ' : null, go,
+      el('span', { class: 'foot' }, stamp(ev.at))))
+  }
+
   // seq, when given, marks the line as that event of the conversation, so vibe
   // can take it back (see the retract event).
   function convoNote(cls, text, at, seq) {
@@ -6494,6 +6522,7 @@
     else if (ev.kind === 'user') { convo.lastPrompt = ev.text || ''; userNote(ev) }
     else if (ev.kind === 'agent') showAgent(ev.agent, ev.at, ev.text === 'stopped')
     else if (ev.kind === 'note') convoNote('meta', ev.text || '', undefined, ev.seq)
+    else if (ev.kind === 'denied') deniedNote(ev)
     // What vibe said it was doing, no longer so (the sandbox is up): gone, not left to be read as current.
     else if (ev.kind === 'retract') { convo.ticks.delete(Number(ev.of)); $('convo-log').querySelectorAll('[data-seq="' + Number(ev.of) + '"]').forEach((n) => n.remove()) }
     else if (ev.kind === 'error') {
@@ -6570,7 +6599,8 @@
     const mode = convo.permission
     if (mode && mode.asked && mode.inForce) {
       items.push({ key: 'mode:' + mode.asked + ':' + mode.inForce, warn: true, text: modeNotInForce(mode.asked, mode.inForce, mode.refused) +
-        (state.admin ? ' The Admin tab chooses the mode.' : '') })
+        (state.admin ? ' The Admin tab chooses the mode.' : ''),
+      action: bypassRefused(mode.asked, mode.inForce) && state.permissionModeChoice ? { label: 'Use Auto', run: () => setPermissionMode('auto') } : null })
     }
     if (running && quietMinutes) {
       items.push({ key: 'quiet', warn: true,
@@ -6700,7 +6730,8 @@
 
   function drawStatusWords(warns, tasks, others) {
     const items = statusView.items
-    $('status-balloon-alerts').replaceChildren(...warns.map((i) => el('p', { class: 'warn-text', text: i.text })))
+    $('status-balloon-alerts').replaceChildren(...warns.map((i) => el('p', { class: 'warn-text' }, i.text,
+      i.action ? ' ' : null, i.action ? el('button', { type: 'button', class: 'small', text: i.action.label, onclick: i.action.run }) : null)))
     const list = others.map((i) => el('p', { text: i.text }))
     if (tasks.length) {
       const count = tasks.length === 1 ? 'something' : tasks.length + ' things'

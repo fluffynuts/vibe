@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -125,7 +126,7 @@ func TestTheAdminTabReadsTheChosenModeWhereFromAndWhatIsInForce(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("status %d", code)
 	}
-	want := modeBody{Mode: "acceptEdits", From: "~/.vibe/settings.yaml", Default: "auto",
+	want := modeBody{Mode: "acceptEdits", From: "~/.vibe/settings.yaml", Default: "bypassPermissions",
 		Modes: []string{"auto", "bypassPermissions", "acceptEdits", "manual", "dontAsk", "plan"}, Asked: "acceptEdits", InForce: "manual"}
 	if !reflect.DeepEqual(b, want) {
 		t.Errorf("got %+v\nwant %+v", b, want)
@@ -183,5 +184,31 @@ func TestTheConversationsPollSaysWhenTheModeInForceIsntTheOneAskedFor(t *testing
 	json.Unmarshal(rec.Body.Bytes(), &body)
 	if body.PermissionMode == nil || body.PermissionMode.Asked != "bypassPermissions" || body.PermissionMode.InForce != "auto" {
 		t.Errorf("got %+v", body.PermissionMode)
+	}
+}
+
+// A permission Claude Code refused is said in the conversation, with its reason and the mode the agent was in: the agent may not
+// say it, and a page that showed nothing left the user wondering why nothing worked.
+func TestARefusedPermissionIsSaidInTheConversationWithTheModeInForce(t *testing.T) {
+	c := convoWith("bypassPermissions")
+	c.line([]byte(`{"type":"system","subtype":"init","permissionMode":"default"}`))
+	c.line([]byte(`{"type":"system","subtype":"permission_denied","tool_name":"Bash","tool_use_id":"toolu_1","message":"Output redirection to '/tmp/x' needs approval."}`))
+	last := c.events[len(c.events)-1]
+	if last.Kind != "denied" || last.Agent != nil {
+		t.Fatalf("got %+v", last)
+	}
+	for _, want := range []string{"Bash", "Output redirection to '/tmp/x' needs approval.", "Manual"} {
+		if !strings.Contains(last.Text, want) {
+			t.Errorf("%q lacks %q", last.Text, want)
+		}
+	}
+}
+
+func TestARefusedPermissionBeforeTheModeIsKnownDoesntGuessIt(t *testing.T) {
+	c := &conversation{}
+	c.line([]byte(`{"type":"system","subtype":"permission_denied","tool_name":"Write","message":"Writing outside the folder needs approval."}`))
+	last := c.events[len(c.events)-1]
+	if last.Kind != "denied" || !strings.Contains(last.Text, "Write") || strings.Contains(last.Text, "the agent is in") {
+		t.Errorf("got %+v", last)
 	}
 }

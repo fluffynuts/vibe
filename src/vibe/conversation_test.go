@@ -37,7 +37,7 @@ func TestConversationCommandRunsClaudeInTheWorkspace(t *testing.T) {
 	if !strings.HasPrefix(inner, wrapTurn("", "/tmp/t.pid")+`cd '/home/me/my project' && 'claude' '-p'`) {
 		t.Errorf("inner = %s", inner)
 	}
-	for _, want := range []string{"'stream-json'", "'--permission-mode' 'auto'"} {
+	for _, want := range []string{"'stream-json'", "'--permission-mode' 'bypassPermissions'"} {
 		if !strings.Contains(inner, want) {
 			t.Errorf("inner lacks %s: %s", want, inner)
 		}
@@ -79,7 +79,7 @@ func TestConversationCommandAsksForAModelAndEffortOnlyWhenChosen(t *testing.T) {
 		}
 	}
 	inner = conversationCommand("/w", "abc-123", "/tmp/t.pid", turnChoice{Model: "opus", Effort: "high"})[4]
-	if !strings.HasSuffix(inner, "'auto' --model 'opus' --effort 'high' --resume 'abc-123'") {
+	if !strings.HasSuffix(inner, "'bypassPermissions' --model 'opus' --effort 'high' --resume 'abc-123'") {
 		t.Errorf("inner = %s", inner)
 	}
 	inner = conversationCommand("/w", "", "/tmp/t.pid", turnChoice{Model: "sonnet[1m]"})[4]
@@ -372,16 +372,15 @@ func TestEndingTheAgentClosesItsInput(t *testing.T) {
 	}
 }
 
-// Bypass can be disabled for a whole organisation by its managed settings (disableBypassPermissionsMode), and Claude Code then
-// falls back, silently, to the settings' defaultMode: a Manual one refused nearly everything. Auto is allowed under that policy,
-// and wins over a Manual defaultMode, so it is the default; the user can choose another in settings.yaml.
-func TestTheAgentRunsInTheChosenPermissionModeElseAuto(t *testing.T) {
-	if inner := conversationCommand("/w", "", "/tmp/t.pid", turnChoice{})[4]; !strings.Contains(inner, "'--permission-mode' 'auto'") {
+// The sandbox is the boundary the agent was given, so it runs in bypass unless another mode is chosen (Auto, where an
+// organisation's managed settings disable bypass: the page says so when they do).
+func TestTheAgentRunsInTheChosenPermissionModeElseBypass(t *testing.T) {
+	if inner := conversationCommand("/w", "", "/tmp/t.pid", turnChoice{})[4]; !strings.Contains(inner, "'--permission-mode' 'bypassPermissions'") {
 		t.Errorf("unchosen: %s", inner)
 	}
-	inner := conversationCommand("/w", "", "/tmp/t.pid", turnChoice{PermissionMode: "bypassPermissions"})[4]
-	if !strings.Contains(inner, "'--permission-mode' 'bypassPermissions'") || strings.Contains(inner, "'auto'") {
-		t.Errorf("chosen bypassPermissions: %s", inner)
+	inner := conversationCommand("/w", "", "/tmp/t.pid", turnChoice{PermissionMode: "auto"})[4]
+	if !strings.Contains(inner, "'--permission-mode' 'auto'") || strings.Contains(inner, "'bypassPermissions'") {
+		t.Errorf("chosen auto: %s", inner)
 	}
 	if n := strings.Count(inner, "--permission-mode"); n != 1 {
 		t.Errorf("--permission-mode given %d times: %s", n, inner)
@@ -397,31 +396,31 @@ func TestAChangedPermissionModeIsToldTheAgentBeforeThePrompt(t *testing.T) {
 	if !ok {
 		t.Fatal("the agent doesn't say which mode it was asked for")
 	}
-	if got := asker.AskedPermissionMode(); got != "auto" {
+	if got := asker.AskedPermissionMode(); got != "bypassPermissions" {
 		t.Errorf("asked at the start: %q", got)
 	}
 	agent.Prompt("one", "id-1")
 	if n := len(sess.written()); n != 1 {
 		t.Fatalf("the mode it started in was sent again: %v", sess.written())
 	}
-	choice = turnChoice{PermissionMode: "bypassPermissions"}
+	choice = turnChoice{PermissionMode: "auto"}
 	agent.Prompt("two", "id-2")
 	w := sess.written()[1:]
 	if len(w) != 2 {
 		t.Fatalf("written %v", w)
 	}
-	if req := w[0]["request"].(map[string]interface{}); req["subtype"] != "set_permission_mode" || req["mode"] != "bypassPermissions" {
+	if req := w[0]["request"].(map[string]interface{}); req["subtype"] != "set_permission_mode" || req["mode"] != "auto" {
 		t.Errorf("mode request %v", req)
 	}
 	if id, _ := w[0]["request_id"].(string); !strings.HasPrefix(id, "vibe-mode-") {
 		t.Errorf("request_id %q isn't one the page knows as a mode change", id)
 	}
-	if got := asker.AskedPermissionMode(); got != "bypassPermissions" {
+	if got := asker.AskedPermissionMode(); got != "auto" {
 		t.Errorf("asked after the change: %q", got)
 	}
 	choice = turnChoice{}
 	agent.Prompt("three", "id-3")
-	if req := sess.written()[3]["request"].(map[string]interface{}); req["mode"] != "auto" {
+	if req := sess.written()[3]["request"].(map[string]interface{}); req["mode"] != "bypassPermissions" {
 		t.Errorf("back to the default: %v", req)
 	}
 }

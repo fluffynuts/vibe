@@ -20,12 +20,11 @@ import (
 // --permission-mode is added by conversationCommand.
 var agentArgs = []string{"claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"}
 
-// defaultPermissionMode is how the agent runs unless settings.yaml says otherwise. There is no terminal to approve anything on,
-// and the sandbox is the boundary the agent was given, so nothing should wait for an answer. Not bypassPermissions: an
-// organisation's managed settings can disable it (disableBypassPermissionsMode), and Claude Code then falls back, without a
-// word, to the settings' defaultMode, where a Manual one refused nearly everything. Auto is allowed under that policy, and wins
-// over a Manual defaultMode (checked with Claude Code 2.1.305 to 2.1.331).
-const defaultPermissionMode = "auto"
+// defaultPermissionMode is how the agent runs unless the profile chooses otherwise: the sandbox is the boundary the agent was
+// given, and there is no terminal to approve anything on. An organisation's managed settings can disable bypass
+// (disableBypassPermissionsMode); Claude Code then runs in its settings' defaultMode without a word, which the page says, offering
+// Auto (allowed under that policy, and it wins over a Manual defaultMode).
+const defaultPermissionMode = companion.DefaultPermissionMode
 
 // effectiveMode is the mode the agent is asked for when mode is chosen ("" for nothing chosen).
 func effectiveMode(mode string) string {

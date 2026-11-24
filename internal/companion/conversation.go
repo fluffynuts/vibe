@@ -93,7 +93,7 @@ var SessionID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,100}$`)
 // agent's output, how a turn ended, or that the conversation began anew.
 type event struct {
 	Seq   int             `json:"seq"`
-	Kind  string          `json:"kind"` // user, agent, note, error, done, reset, review, retract
+	Kind  string          `json:"kind"` // user, agent, note, error, done, reset, review, retract, denied
 	Text  string          `json:"text,omitempty"`
 	Agent json.RawMessage `json:"agent,omitempty"`
 	// Receipt is how far a user event got: see receiptSent.
@@ -684,6 +684,8 @@ func (c *conversation) line(raw []byte) string {
 		Result        string           `json:"result"`
 		IsError       bool             `json:"is_error"`
 		Mode          string           `json:"permissionMode"`
+		ToolName      string           `json:"tool_name"`
+		Message       string           `json:"message"`
 	}
 	json.Unmarshal(raw, &head)
 	c.mu.Lock()
@@ -708,6 +710,11 @@ func (c *conversation) line(raw []byte) string {
 		return head.Type
 	case head.Type == "result" && head.NumTurns != nil && *head.NumTurns == 0 && head.Result == "":
 		// A resumed agent's first word, before any turn: nothing answered.
+		return head.Type
+	case head.Type == "system" && head.Subtype == "permission_denied":
+		// The agent may not say it was refused: the page does, with why, and the mode it was in.
+		c.add("denied", refusal(head.ToolName, head.Message, c.modeInForce), nil)
+		c.heard = c.clock()
 		return head.Type
 	}
 	if head.Type == "system" && head.Subtype == "init" {

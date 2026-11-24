@@ -16,7 +16,7 @@ import (
 var PermissionModes = []string{"auto", "bypassPermissions", "acceptEdits", "manual", "dontAsk", "plan"}
 
 // DefaultPermissionMode is the mode the agent runs in when nothing chooses another.
-const DefaultPermissionMode = "auto"
+const DefaultPermissionMode = "bypassPermissions"
 
 // modeRequestPrefix starts the request_id of a control request that changes the agent's mode, so that its answer is known.
 const modeRequestPrefix = "vibe-mode-"
@@ -43,6 +43,28 @@ type permissionState struct {
 	Asked   string `json:"asked"`
 	InForce string `json:"inForce"`
 	Refused string `json:"refused,omitempty"`
+}
+
+// permissionModeNames are the modes as the page names them.
+var permissionModeNames = map[string]string{"auto": "Auto", "bypassPermissions": "Bypass permissions", "acceptEdits": "Accept edits",
+	"manual": "Manual", "dontAsk": "Don't ask", "plan": "Plan"}
+
+// refusal is what the conversation says of a permission Claude Code refused: the tool, its reason, and the mode the agent was in
+// ("" when it hasn't said).
+func refusal(tool, reason, mode string) string {
+	if tool == "" {
+		tool = "a tool"
+	}
+	text := "Claude Code didn't let the agent use " + tool
+	if reason = strings.TrimSpace(reason); reason != "" {
+		text += ": " + reason
+	} else {
+		text += "."
+	}
+	if name, ok := permissionModeNames[mode]; ok {
+		text += " (the agent is in " + name + ")"
+	}
+	return text
 }
 
 // canonicalMode is mode as --permission-mode names it: the agent reports Manual as "default".
