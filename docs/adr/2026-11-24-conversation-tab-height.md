@@ -1,7 +1,7 @@
 # The Conversation tab uses the height under the tab bar
 
-- **Status:** accepted, built 2026-11-24 on `feat/agent-permission-mode-choice` (with the user: it changes the clipboard page too,
-  which needs a sandbox rebuild, and this branch already needs one for the clipboard hook). Not yet tried by hand.
+- **Status:** accepted, built 2026-11-24 on `feat/agent-permission-mode-choice`. Tried by hand the same day: all but the icon
+  (see below), since moved.
 - **Decided:** 2026-11-24, with the user: a bar above the conversation held only the status button and New conversation, and one
   above the clipboard only a "Clipboard" heading and "Open on its own" (never used): height the conversation and the clipboard's
   history want.
@@ -15,14 +15,18 @@
   scrolls, it would be cut off. Everything the balloon says and does is unchanged (`2026-11-18-status-balloon.md`).
 - **The bar above the conversation goes.** The sign-in and packages notices stay where they were: shown only when there is
   something to say, and then the room is used.
-- **The clipboard's bar goes:** the heading (the frame says what it is), and Open on its own, which becomes a small icon in the
-  clipboard page's drop area, shown only when framed (it opens the page in a tab of its own). The "not answering just now" note
+- **The clipboard's bar goes:** the heading (the frame says what it is), and Open on its own, which becomes a small icon at the
+  frame's top right corner, on the companion page. It was first put in the clipboard page itself, and clicking it did nothing,
+  without an error: the frame is sandboxed without `allow-popups` (the page in it is the sandbox's), and a sandboxed frame opens no
+  tab. Letting it would let the sandbox's page open any address; on the companion page, the link opens only the address vibe
+  knows. The "not answering just now" note
   becomes a slim banner over the top of the frame, shown only while the page isn't answering.
 
 ## Tests
 
 Page tests: the buttons in the tab bar, on the Conversation tab alone; the balloon opening from its button and closing with
 Escape back to it; no bar above the conversation, no heading or Open on its own above the clipboard; the banner while the page
-isn't answering. Clipboard page: the icon when framed, opening it on its own, and not on its own. Firefox, at 1500, 1000 and
+isn't answering. The icon over the frame, opening the clipboard on its own (no `?framed`), with the frame still
+not let open popups; no icon while there is no clipboard page. Firefox, at 1500, 1000 and
 420 px: the buttons in the tab bar and in reach, the conversation (and the clipboard, side by side) starting under the tab bar,
 the balloon below it, under its button, on the page, moving nothing.

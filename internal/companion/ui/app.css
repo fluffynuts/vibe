@@ -212,6 +212,12 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .clip-banner { position: absolute; top: 0; left: 0; right: 0; z-index: 1; margin: 0; padding: 4px 10px; font-size: 12px;
   background: var(--warn-bg); color: var(--amber); border: 1px solid var(--warn-line); border-radius: 8px 8px 0 0; }
 .clip-banner[hidden] { display: none; }
+/* Opens the clipboard in a tab of its own, from the frame's top right corner (above the banner, which leaves it room). */
+.clip-banner { padding-right: 36px; }
+.clip-open { position: absolute; top: 6px; right: 6px; z-index: 2; display: inline-flex; padding: 4px; border-radius: 6px; color: var(--muted); }
+.clip-open:hover, .clip-open:focus-visible { color: var(--text); background: var(--line); }
+.clip-open[hidden] { display: none; }
+.clip-open svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .convo-clip iframe { flex: 1; width: 100%; min-height: 240px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
 @media (max-width: 900px) {
   .convo-layout { grid-template-columns: 1fr; }

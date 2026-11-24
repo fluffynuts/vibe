@@ -60,7 +60,7 @@
   // The clipboard page, shown beside the conversation: its frame, waiting
   // notice and the controls that go with them.
   const CLIPBOARD_VIEWS = [
-    { frame: 'convo-clipboard-frame', wait: 'convo-clipboard-wait', text: 'convo-clipboard-wait-text', help: 'convo-clipboard-wait-help', start: 'convo-clipboard-start', note: 'convo-clipboard-note' },
+    { frame: 'convo-clipboard-frame', wait: 'convo-clipboard-wait', text: 'convo-clipboard-wait-text', help: 'convo-clipboard-wait-help', start: 'convo-clipboard-start', note: 'convo-clipboard-note', open: 'convo-clipboard-open' },
   ]
 
   const $ = (id) => document.getElementById(id)
@@ -1163,6 +1163,9 @@
     const late = Date.now() - state.clipboardWaitingSince >= CLIPBOARD_PATIENCE_MS
     for (const view of CLIPBOARD_VIEWS) {
       $(view.frame).hidden = waiting || !state.clipboardUrl
+      // On this page, not the clipboard page's: the frame may not open a tab (it is sandboxed without allow-popups).
+      $(view.open).hidden = $(view.frame).hidden
+      if (state.clipboardUrl) $(view.open).href = state.clipboardUrl
       $(view.wait).hidden = !waiting && !!state.clipboardUrl
       if (!state.clipboardUrl) {
         // The sandbox has no clipboard page at all: say so beside the

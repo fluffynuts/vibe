@@ -503,24 +503,3 @@ test('a toast is a button, so it can be dismissed from the keyboard, and says th
     assert.match(t.title, /dismiss/i)
   } finally { p.close() }
 })
-
-// Framed beside the conversation, the page has a small button to open it in a tab of its own (the companion page's "Open on its
-// own" bar is gone, for the room); on its own, it hasn't.
-test('framed, the page offers to open itself in a new tab; on its own, it does not', async () => {
-  const framed = openClipboardPage([], '?framed=1')
-  const alone = openClipboardPage([])
-  try {
-    await framed.settle()
-    await alone.settle()
-    const link = framed.window.document.getElementById('open-alone')
-    assert.ok(link && !link.hidden, 'no button when framed')
-    assert.equal(link.getAttribute('href'), 'http://localhost:5390/')
-    assert.equal(link.target, '_blank')
-    assert.match(link.rel, /noopener/)
-    assert.ok(link.getAttribute('aria-label'), 'an icon with no name')
-    assert.ok(alone.window.document.getElementById('open-alone').hidden, 'shown on its own')
-  } finally {
-    framed.close()
-    alone.close()
-  }
-})

@@ -53,7 +53,6 @@ test('the Conversation tab has no bar of its own above the conversation, nor the
   try {
     const panel = p.$('panel-conversation')
     assert.equal(panel.querySelector('.convo-bar'), null, 'the bar above the conversation is still there')
-    assert.equal(p.$('convo-clipboard-open'), null, 'Open on its own is still on the companion page')
     const clip = panel.querySelector('.convo-clip')
     assert.ok(![...clip.querySelectorAll('*')].some((n) => n.children.length === 0 && n.textContent.trim() === 'Clipboard'), 'the Clipboard heading is still there')
   } finally { p.close() }
@@ -74,5 +73,31 @@ test('a clipboard page that stops answering is said in a banner over its frame, 
     p.now.clipboardReady = true
     await p.poll()
     assert.equal(note.hidden, true)
+  } finally { p.close() }
+})
+
+// The clipboard opens in a tab of its own from an icon at its frame's corner. On the companion page, not in the clipboard page:
+// the frame is sandboxed without allow-popups (the page in it is the sandbox's), so a link in it opened nothing, without a word.
+test('an icon at the clipboard frame\'s corner opens the clipboard in a tab of its own', async () => {
+  const p = await convoPage()
+  try {
+    await p.poll()
+    const link = p.$('convo-clipboard-open')
+    assert.ok(link, 'no icon')
+    assert.equal(link.parentElement, p.$('convo-clipboard-frame').parentElement, 'not over the frame')
+    assert.equal(link.hidden, false)
+    assert.equal(link.getAttribute('href'), 'http://localhost:5390/', 'not the page on its own (no ?framed)')
+    assert.equal(link.target, '_blank')
+    assert.match(link.rel, /noopener/)
+    assert.ok(link.getAttribute('aria-label'), 'an icon with no name')
+    assert.ok(!/allow-popups/.test(p.$('convo-clipboard-frame').getAttribute('sandbox')), 'the frame was let open popups')
+  } finally { p.close() }
+})
+
+test('the icon is not shown while there is no clipboard page to open', async () => {
+  const p = await convoPage({ clipboardUrl: '' })
+  try {
+    await p.poll()
+    assert.equal(p.$('convo-clipboard-open').hidden, true)
   } finally { p.close() }
 })
