@@ -397,16 +397,6 @@
           </div>
         </section>
 
-        <section class="card" id="admin-permission-card" data-loads="permission" aria-labelledby="admin-permission-h" hidden>
-          <h2 id="admin-permission-h">Agent permissions</h2>
-          <p class="note muted">How the agent on the Conversation tab is let run things. Nobody can approve a request there, so a mode that asks refuses it instead.</p>
-          <div class="settings-theme">
-            <label for="admin-permission-mode">Permission mode</label>
-            <select id="admin-permission-mode"></select>
-          </div>
-          <p id="admin-permission-note" class="note muted" role="status"></p>
-          <p id="admin-permission-warning" class="warn-text" role="alert" hidden></p>
-        </section>
 
         <section class="card card-wide" data-loads="instructions" aria-labelledby="admin-instructions-h">
           <h2 id="admin-instructions-h">Agent instructions</h2>
@@ -439,6 +429,17 @@
           <p id="admin-git" class="note"></p>
           <ol id="admin-git-steps" class="steps" hidden></ol>
           <div id="admin-git-others" class="note" hidden></div>
+        </section>
+
+        <section class="card" id="admin-permission-card" data-loads="permission" aria-labelledby="admin-permission-h" hidden>
+          <h2 id="admin-permission-h">Agent permissions</h2>
+          <p class="note muted">How the agent on the Conversation tab is let run things. Nobody can approve a request there, so a mode that asks refuses it instead.</p>
+          <div class="settings-theme">
+            <label for="admin-permission-mode">Permission mode</label>
+            <select id="admin-permission-mode"></select>
+          </div>
+          <p id="admin-permission-note" class="note muted" role="status"></p>
+          <p id="admin-permission-warning" class="warn-text" role="alert" hidden></p>
         </section>
       </div>
     </section>
