@@ -17,8 +17,9 @@ import (
 // agentArgs is how the conversation tab runs claude: one process for as long
 // as it has work, prompts (and vibe's requests: a stop, a model) written to
 // its stdin as stream-json, its progress as stream-json on stdout. Its
-// --permission-mode is added by conversationCommand.
-var agentArgs = []string{"claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"}
+// --permission-mode is added by conversationCommand. Bypass is allowed whatever the mode, so the page can switch a running agent
+// into it: Claude Code refuses that switch to an agent started without (bypass_not_launched).
+var agentArgs = []string{"claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--allow-dangerously-skip-permissions"}
 
 // defaultPermissionMode is how the agent runs unless the profile chooses otherwise: the sandbox is the boundary the agent was
 // given, and there is no terminal to approve anything on. An organisation's managed settings can disable bypass

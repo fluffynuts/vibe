@@ -54,6 +54,12 @@ So vibe never reads the policy: what Claude Code says is enough.
   ends: it vanished with the agent at first. It took two lines in the wide layout (sharing Send's column, both wrapped): both stay on
   one line, and a Firefox test holds the bar to its height, nothing out of it, at three widths.
 
+- **Bypass always allowed at start-up** (found in the hand-test): Claude Code refuses to switch a running agent into bypass unless it
+  was started with bypass allowed (`"Cannot set permission mode to bypassPermissions because the session was not launched with
+  --dangerously-skip-permissions"`, `error_code: "bypass_not_launched"`). The agent chosen into Manual and then given Use Bypass
+  permissions stayed in Manual. vibe now starts it with `--allow-dangerously-skip-permissions` whatever the mode: bypass becomes
+  available, not on (checked: the switch then succeeds; 2.1.291 and 2.1.305 know the flag too).
+
 ## Not built
 
 - The mode shown is the one the agent last reported: after it ends (~30 s after its last work), a mode chosen since shows only once

@@ -424,3 +424,18 @@ func TestAChangedPermissionModeIsToldTheAgentBeforeThePrompt(t *testing.T) {
 		t.Errorf("back to the default: %v", req)
 	}
 }
+
+// A running agent can be switched into bypass (the Admin card, a refusal's Use Bypass permissions) only when it was started
+// with bypass allowed: started in another mode without it, Claude Code refused the switch ("the session was not launched with
+// --dangerously-skip-permissions", bypass_not_launched). The flag allows bypass without turning it on.
+func TestTheAgentIsAlwaysStartedWithBypassAllowed(t *testing.T) {
+	for _, mode := range []string{"", "manual", "auto", "bypassPermissions"} {
+		inner := conversationCommand("/w", "", "/tmp/t.pid", turnChoice{PermissionMode: mode})[4]
+		if !strings.Contains(inner, "'--allow-dangerously-skip-permissions'") {
+			t.Errorf("mode %q: started without bypass allowed: %s", mode, inner)
+		}
+		if strings.Contains(inner, "'--dangerously-skip-permissions'") {
+			t.Errorf("mode %q: started in bypass whatever was chosen: %s", mode, inner)
+		}
+	}
+}
