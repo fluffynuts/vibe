@@ -6,7 +6,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const { openPage } = require('./page.js')
 
-const STATE = { sandbox: 'box', sandboxTabs: true, conversation: true, admin: true, signin: true, attention: {} }
+const STATE = { sandbox: 'box', sandboxTabs: true, conversation: true, admin: true, signin: true, permissionModeChoice: true, attention: {} }
 const ADMIN = { status: { exists: true, running: true, profile: 'p', guided: true, features: ['go'], availableFeatures: ['go', 'redis'] }, job: null, upgrades: {} }
 const SIGNED_IN = { state: 'signed-in' }
 
@@ -43,6 +43,7 @@ async function adminPage(routes = {}) {
       '/api/packages': { requests: [] },
       '/api/packages/sync': { count: 0 },
       '/api/theme': { choices: [] },
+      '/api/permission-mode': { mode: '', from: '', default: 'bypassPermissions', modes: ['auto', 'bypassPermissions'] },
       '/api/log': { entries: [] },
       ...routes,
     },
@@ -200,4 +201,21 @@ test('the sign-in card is busy until its check has answered, and not left so whe
     await turns()
     assert.equal(busy(p.$('admin-signin')), false, "the card's own message says what went wrong")
   } finally { check.release({ agent: 'claude', docker: SIGNED_IN, agentSignIn: SIGNED_IN }); await turns(); p.close() }
+})
+
+// A card names (data-loads) the requests that fill it, and waits for each to report in: one whose loader never did stayed
+// dimmed and unusable for good (the Agent permissions card's did). Every card the tab shows comes out of waiting once its
+// requests have answered.
+test('every card on the Admin tab is usable once its requests have answered', async () => {
+  const p = await adminPage()
+  try {
+    await p.settle()
+    const cards = [...p.$('panel-admin').querySelectorAll('.card[data-loads]')].filter((c) => !c.hidden)
+    assert.ok(cards.some((c) => c.id === 'admin-permission-card'), 'the Agent permissions card is not shown')
+    for (const card of cards) {
+      const name = (card.querySelector('h2') || {}).textContent || card.id
+      assert.ok(!busy(card), name + ' is still busy, waiting on ' + card.dataset.loads)
+      assert.equal(card.querySelector('[inert]'), null, name + ' is still unusable')
+    }
+  } finally { p.close() }
 })

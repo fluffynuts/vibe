@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -42,6 +43,8 @@ func (p profileChoice) settingsPath() string { return filepath.Join(p.dir(), set
 type chosen struct {
 	turnChoice
 	modelFrom, effortFrom string
+	// permissionMode is the agent's --permission-mode, and permissionFrom the file it came from.
+	permissionMode, permissionFrom string
 }
 
 // resolve works out the choice that applies, from the profile's preferences,
@@ -71,6 +74,7 @@ func (p profileChoice) resolve() (chosen, error) {
 	var out chosen
 	out.Model, out.modelFrom = pick(prefs.Model, own.Model, global.Model)
 	out.Effort, out.effortFrom = pick(prefs.Effort, own.Effort, global.Effort)
+	out.permissionMode, out.permissionFrom = pick(prefs.PermissionMode, own.PermissionMode, global.PermissionMode)
 	return out, nil
 }
 
@@ -115,7 +119,13 @@ func (p profileChoice) forTurn() (turnChoice, error) {
 	if err := modelchoice.CheckEffortName(c.Effort); err != nil {
 		return turnChoice{}, fmt.Errorf("the effort chosen in %s can't be used (nothing was sent): %w", pathresolve.Tilde(c.effortFrom), err)
 	}
-	return c.turnChoice, nil
+	if c.permissionMode != "" && !slices.Contains(companion.PermissionModes, c.permissionMode) {
+		return turnChoice{}, fmt.Errorf("the permissionMode %q in %s isn't one Claude Code knows (nothing was sent): use one of %s, or leave it out for %s",
+			c.permissionMode, pathresolve.Tilde(c.permissionFrom), strings.Join(companion.PermissionModes, ", "), companion.DefaultPermissionMode)
+	}
+	out := c.turnChoice
+	out.PermissionMode = c.permissionMode
+	return out, nil
 }
 
 // set keeps model and effort in the profile's user preferences, as it takes
@@ -125,11 +135,8 @@ func (p profileChoice) forTurn() (turnChoice, error) {
 // moved first. It never makes a profile: a directory for one that isn't there
 // would hide the real one, wherever it is.
 func (p profileChoice) set(model, effort string) error {
-	if !p.lay.ProfileExists(p.profile) {
-		return fmt.Errorf("profile '%s' isn't there to keep the choice in", p.profile)
-	}
-	if dir := p.lay.HomePath("profiles", p.profile); dir == "" || !fileExists(dir) {
-		return fmt.Errorf("profile '%s' is vibe's own, which can't be written to: make a profile of your own (--profile) to keep the choice in", p.profile)
+	if err := p.writable(); err != nil {
+		return err
 	}
 	// First, so that a settings.yaml that can't be changed leaves the choice as
 	// it was, as the failure says, and not half made.
@@ -137,6 +144,38 @@ func (p profileChoice) set(model, effort string) error {
 		return err
 	}
 	return userprefs.Update(p.dir(), func(u *userprefs.Prefs) { u.Model, u.Effort = model, effort })
+}
+
+// permissionModeChoice is the Admin tab's way to the agent's permission mode: what's chosen, and the file it comes from (the
+// profile's preferences, its settings.yaml or the global one); a choice is kept in the preferences, never in a settings.yaml
+// (a generated profile's is what composing wrote: editing it would stop the profile's automatic updates).
+func (p profileChoice) permissionModeChoice() *companion.PermissionModeChoice {
+	return &companion.PermissionModeChoice{
+		Get: func() (string, string, error) {
+			c, err := p.resolve()
+			if err != nil || c.permissionMode == "" {
+				return "", "", err
+			}
+			return c.permissionMode, pathresolve.Tilde(c.permissionFrom), nil
+		},
+		Set: func(mode string) error {
+			if err := p.writable(); err != nil {
+				return err
+			}
+			return userprefs.Update(p.dir(), func(u *userprefs.Prefs) { u.PermissionMode = mode })
+		},
+	}
+}
+
+// writable says why a choice can't be kept in the profile, if it can't.
+func (p profileChoice) writable() error {
+	if !p.lay.ProfileExists(p.profile) {
+		return fmt.Errorf("profile '%s' isn't there to keep the choice in", p.profile)
+	}
+	if dir := p.lay.HomePath("profiles", p.profile); dir == "" || !fileExists(dir) {
+		return fmt.Errorf("profile '%s' is vibe's own, which can't be written to: make a profile of your own (--profile) to keep the choice in", p.profile)
+	}
+	return nil
 }
 
 // dropFromSettings takes the keys out of the profile's settings.yaml that the

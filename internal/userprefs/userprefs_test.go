@@ -3,6 +3,7 @@ package userprefs
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -244,6 +245,26 @@ func TestTheFilesEarlierVibesKeptChoicesInAreNeitherReadNorTouched(t *testing.T)
 	for _, name := range []string{"claude-theme", "git-author"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Errorf("%s was removed: %v", name, err)
+		}
+	}
+}
+
+// Update writes the keys it lists: a field added to Prefs without its key there was silently never written (permissionMode was).
+// Every string field is set through Update and read back.
+func TestEveryPreferenceIsWrittenByUpdate(t *testing.T) {
+	typ := reflect.TypeOf(Prefs{})
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if field.Type.Kind() != reflect.String {
+			continue
+		}
+		dir := t.TempDir()
+		if err := Update(dir, func(p *Prefs) { reflect.ValueOf(p).Elem().Field(i).SetString("x") }); err != nil {
+			t.Fatalf("%s: %v", field.Name, err)
+		}
+		got, err := Load(dir)
+		if err != nil || reflect.ValueOf(got).Field(i).String() != "x" {
+			t.Errorf("%s was set through Update, and read back as %q (%v)", field.Name, reflect.ValueOf(got).Field(i).String(), err)
 		}
 	}
 }

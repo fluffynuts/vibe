@@ -645,7 +645,9 @@ you're looking at:
 
 - **Conversation** — talk to the agent from the page, with the sandbox's clipboard page (see
   `clipboard-bridge` below) embedded beside it: paste images and files anywhere on the tab and they go
-  to the clipboard. The prompt box grows as you type, up to half the column. The agent's replies, and your prompts, are shown as Markdown — headings, lists, tables, code — built
+  to the clipboard. Both start right under the tab bar: the status button and **New conversation** sit at the tab bar's
+  end, beside the CPU and memory meters (on the Conversation tab alone), the clipboard has no bar of its own (its corner
+  icon opens it in a tab of its own, and a slim banner over it says when it isn't answering). The prompt box grows as you type, up to half the column. The agent's replies, and your prompts, are shown as Markdown — headings, lists, tables, code — built
   as text, so nothing in them can become markup on the page; links open only to this machine's own pages. A block of code has a copy button (two pages) at its top right. A block the agent tagged `markdown` is drawn as the Markdown it is (formatted, as text: no markup, no links followed), and its button copies the Markdown source it was written in, so a pull request description can be read formatted and pasted raw; a block with another tag is code, coloured by that language (see next), and one with none is code as it was. A fenced block tagged with a language
 (`go`, `js`, `csharp`, `sh`, `diff` ... whatever Chroma, the highlighter the Review tab uses, knows by name, alias or file extension) is
 coloured by the host as the Review tab's files are: the page asks for each block that comes into view, two at a time, and keeps the
@@ -765,6 +767,18 @@ restarts, as for files). Colours follow the theme, and what is copied is the cod
   and the card then says what state the sandbox is in. `vibe --cancel` does the same from a terminal.
   When the sandbox is stopped or rebuilt, from here or with `vibe --stop` or sbx, vibe keeps
   serving the page; the terminal session attaches again once the sandbox is back (Ctrl-C ends vibe).
+  Its **Agent permissions** card chooses the `--permission-mode` the Conversation tab's agent runs in (Bypass permissions,
+  the default, as the sandbox is the boundary; Auto; Accept edits; Manual; Don't ask; Plan), kept as `permissionMode:` in
+  the profile's `user-preferences.yaml` and told a running agent before your next prompt. It says the mode the agent
+  reports being in, and warns, there and in the Conversation tab's status balloon, when that isn't the one chosen, with
+  Claude Code's own words when it refused the change: an organisation's managed settings can disable bypass, and Claude
+  Code then runs in another mode without saying so (in Manual nothing that needs approval can run, as nobody can approve
+  it here). When it's bypass that was refused, the warning has **Use Auto**, which such a policy allows. Each time Claude
+  Code refuses the agent something, the conversation says so in a line of its own, with why and the mode it was in, a
+  button for the mode that would have let it through (**Use Bypass permissions**, or **Use Auto** where bypass is what
+  was refused; none in bypass itself, where Claude Code still refuses a few things), and **Agent permissions…** to the
+  card. When the mode the agent is in, as Claude Code reports it, isn't the one chosen, an amber label beside Send says
+  so (as chosen, there's nothing to say, and nothing is shown); pressing it opens the card.
   It also edits your [instructions to the agent](#your-instructions-to-the-agent): **Save** asks what to do when the file has
   changed on disk since (merge, overwrite, or reload), and **Optimise** asks the agent for a tidier
   version, leaving out what's repeated or already in the universal file, for you to **Accept** or
@@ -919,8 +933,8 @@ nothing new to show; its tooltip says what it is for. It follows the conversatio
 the agent: work in an attached terminal session isn't seen, and agents the page can't talk to have
 no light.
 
-On the Conversation tab, the round **i** button left of **New conversation** says what the agent has going on, in a balloon,
-so it takes no room above the conversation. What resolves itself (work left running in the background, a context being
+On the Conversation tab, the round **i** button left of **New conversation**, at the tab bar's end, says what the agent has
+going on, in a balloon below it, so it takes no room above the conversation. What resolves itself (work left running in the background, a context being
 compacted) pops up and closes itself after 5 seconds, and the button keeps a pulsing blue dot while background work runs.
 What needs you ("no output for at least N minutes", a stop that hasn't taken effect) pops up and stays until it is no
 longer true or you close it, with a steady amber dot. Clicking the button shows the list at any time (or that there is
@@ -1317,6 +1331,13 @@ nuget: fallback       # fallback (default): packages read-only, nothing else; ov
 packages: ask         # ask (default): packages the agent asks for wait for you on the Admin tab; allow: fetched at once
 model: sonnet         # the model the Conversation tab asks claude for, as a default; what is chosen in the drop-down there is kept in the profile's user-preferences.yaml, and wins over this. Unset: claude's own default
 effort: high          # the effort the Conversation tab asks claude for (low, medium, high, xhigh or max, as claude's --effort takes). Unset: claude's own default
+permissionMode: auto  # the --permission-mode the Conversation tab runs claude with: bypassPermissions (the
+                      #    default), auto, acceptEdits, manual, dontAsk or plan. auto where an organisation's
+                      #    managed settings disable bypass: claude then falls back to its own settings'
+                      #    defaultMode, which the page warns of. For one profile, put it in that profile's
+                      #    user-preferences.yaml (safe there: it never makes a generated profile look edited by
+                      #    hand), which wins over this, and is what the Admin tab's Agent permissions card
+                      #    writes. A change is told a running agent before your next prompt
 memoryRoot: ~/.vibe/memories   # where per-sandbox agent memories are backed up
 defaultFeatures:      # library features a guided profile starts with selected
   - dotnet
@@ -1415,8 +1436,8 @@ image into the agent's terminal goes through sbx's clipboard bridge, which comes
 Linux hosts, so the feature gives you a page in your browser instead (the agent gives you its URL
 via `clipboard-url`, or open `$VIBE_CLIPBOARD_URL`). Paste on it, drop files on it, or pick them,
 and each item reaches the agent with your next message (not part-way through a turn, so there's time to
-give it a title): a Claude Code hook (`UserPromptSubmit`, in
-`/etc/claude-code/managed-settings.d/`) hands over anything not yet delivered, with short text
+give it a title): a Claude Code hook (`UserPromptSubmit`, registered by vibe's `vibe-clipboard` plugin, as
+`vibe-band`'s are) hands over anything not yet delivered, with short text
 inline and images as paths for the agent to read. Every item on the page shows whether it has
 been sent yet, and has **Copy** (to put it back on your own clipboard) and **Delete** buttons; **Clear all** empties the
 history at once (asking first).

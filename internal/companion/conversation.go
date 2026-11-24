@@ -93,7 +93,7 @@ var SessionID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,100}$`)
 // agent's output, how a turn ended, or that the conversation began anew.
 type event struct {
 	Seq   int             `json:"seq"`
-	Kind  string          `json:"kind"` // user, agent, note, error, done, reset, review, retract
+	Kind  string          `json:"kind"` // user, agent, note, error, done, reset, review, retract, denied
 	Text  string          `json:"text,omitempty"`
 	Agent json.RawMessage `json:"agent,omitempty"`
 	// Receipt is how far a user event got: see receiptSent.
@@ -104,6 +104,9 @@ type event struct {
 	// Of is, for a retract, the Seq of the event it takes back: a page that
 	// has that event shows it no longer.
 	Of int `json:"of,omitempty"`
+	// Suggest is, for a denied, the permission mode that would have let it
+	// through, for the page to offer ("" for none).
+	Suggest string `json:"suggest,omitempty"`
 }
 
 // conversation is the one conversation the page has with the agent. It
@@ -116,8 +119,13 @@ type conversation struct {
 	session string
 	// agent is the agent's process, while it lives; starting says one is
 	// being started (the sandbox made ready first), cancelStart stops that.
-	agent       Agent
-	starting    bool
+	agent    Agent
+	starting bool
+	// modeInForce is the permission mode the agent last said it is in (as --permission-mode names it), and modeRefused Claude
+	// Code's words when it refused vibe's last change of it ("" when it took it). See permissionmode.go.
+	modeInForce, modeRefused string
+	// modeAsked is the mode that agent had been asked for when it said it was in modeInForce.
+	modeAsked   string
 	cancelStart context.CancelFunc
 	// waiting are prompts given while the agent was being started: they go
 	// to it, in order, once it has. handingOver says they are being given to
@@ -477,6 +485,8 @@ func (c *conversation) startAgent(ctx context.Context, session string, start Sta
 		return
 	}
 	c.agent, c.starting, c.cancelStart, c.handingOver = agent, false, nil, true
+	// A refusal was the last agent's; the mode it was in is still shown until this one says its own.
+	c.modeRefused = ""
 	c.mu.Unlock()
 	go func() {
 		<-agent.Done()
@@ -678,10 +688,14 @@ func (c *conversation) line(raw []byte) string {
 		NumTurns      *int             `json:"num_turns"`
 		Result        string           `json:"result"`
 		IsError       bool             `json:"is_error"`
+		Mode          string           `json:"permissionMode"`
+		ToolName      string           `json:"tool_name"`
+		Message       string           `json:"message"`
 	}
 	json.Unmarshal(raw, &head)
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.noteMode(raw, head.Type, head.Subtype, head.Mode)
 	if SessionID.MatchString(head.SessionID) {
 		c.session = head.SessionID
 	}
@@ -701,6 +715,12 @@ func (c *conversation) line(raw []byte) string {
 		return head.Type
 	case head.Type == "result" && head.NumTurns != nil && *head.NumTurns == 0 && head.Result == "":
 		// A resumed agent's first word, before any turn: nothing answered.
+		return head.Type
+	case head.Type == "system" && head.Subtype == "permission_denied":
+		// The agent may not say it was refused: the page does, with why, and the mode it was in.
+		c.add("denied", refusal(head.ToolName, head.Message, c.modeInForce), nil)
+		c.events[len(c.events)-1].Suggest = c.modeToSuggest()
+		c.heard = c.clock()
 		return head.Type
 	}
 	if head.Type == "system" && head.Subtype == "init" {
@@ -1111,6 +1131,10 @@ func (s *Server) conversationEvents(w http.ResponseWriter, r *http.Request) {
 		"quietMinutes": quietMinutes(s.convo.quiet()),
 		"compacting":   s.convo.isCompacting(),
 		"stopState":    s.convo.stopState(),
+		// The agent's permission mode, when the one it says it is in isn't the one it was asked for (else null).
+		"permissionMode": s.convo.permission(),
+		// The agent's permission mode, as asked for and as it says it is in, whenever that is known (else null).
+		"agentMode": s.convo.modeNow(),
 	}
 	// The slash commands go only to a page without the latest (it says
 	// which it has), not with every poll.

@@ -4346,3 +4346,25 @@ test('the bar of an open review reads "Review of <what>:", then the note, whole 
     assert.deepEqual(order, ['review-title', 'review-note', 'review-state'])
   } finally { open.close() }
 })
+
+// Shown before the review was drawn, the comments button said 0 and stood where it wouldn't stay: the review's title and note, drawn
+// with it, moved it down, and a click on its first place (a test's, on a slow machine) landed on the note.
+test("the comments button isn't shown until the review it opens the comments of is drawn", async () => {
+  let answer
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/review': () => new Promise((resolve) => { answer = resolve }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+    settled: false,
+  })
+  try {
+    for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(p.$('review-comments-open').hidden, true, 'shown before the review was drawn')
+    answer({ review: { ...commented, started: '2026-10-16T10:00:00Z' }, diff: twoFiles })
+    await p.settle()
+    assert.equal(p.$('review-comments-open').hidden, false)
+  } finally { p.close() }
+})

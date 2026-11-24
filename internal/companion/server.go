@@ -106,6 +106,8 @@ type Config struct {
 	// same path as Workspace), giving what it wrote to stdout; a failure
 	// carries what it said. Nil means the page can't start a new branch.
 	SandboxGit func(ctx context.Context, args ...string) (string, error)
+	// PermissionMode is the agent's permission mode as the Admin tab chooses it; nil means the tab can't.
+	PermissionMode *PermissionModeChoice
 	// Wake gets the sandbox running for something the user asked of it,
 	// starting it if it's stopped, and saying what it does through say; an
 	// error says why it can't. Nil means nothing is done first.
@@ -460,6 +462,8 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"POST /api/admin/instructions/optimise", s.serving(instructionsFeature, s.instructionsOptimise)},
 		{"POST /api/awake", s.authed(s.changing(s.keepAwake))},
 		{"GET /api/review", s.serving(reviewFeature, s.reviewState)},
+		{"GET /api/permission-mode", s.serving(permissionModeFeature, s.permissionModeState)},
+		{"POST /api/permission-mode", s.serving(permissionModeFeature, s.permissionModeSet)},
 		{"GET /api/review/changed", s.serving(reviewFeature, s.reviewChanged)},
 		{"POST /api/git-author", s.serving(gitAuthorFeature, s.gitAuthorAnswer)},
 		{"GET /api/review/file", s.serving(reviewFeature, s.reviewFile)},
@@ -688,6 +692,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"clipboardCanStart":     clipboard != "" && s.cfg.StartClipboard != nil,
 		"conversation":          s.cfg.StartAgent != nil,
 		"choice":                choiceFeature.present(s),
+		"permissionModeChoice":  permissionModeFeature.present(s),
 		"admin":                 s.cfg.Admin != nil,
 		"packages":              packagesFeature.present(s),
 		"packageSync":           packageSyncFeature.present(s),
