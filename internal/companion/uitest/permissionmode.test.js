@@ -171,15 +171,23 @@ test('a permission Claude Code refused is a line in the conversation, with a way
   } finally { p.close() }
 })
 
-// The Conversation tab says the mode the agent is in, as Claude Code reports it, beside the model and effort.
-test('the Conversation tab says the permission mode the agent is in, and opens its card when pressed', async () => {
+// Beside Send, the Conversation tab says the mode the agent is in only when it isn't the one chosen: with things as chosen,
+// there's nothing to say, and the room is the prompt bar's (decided with the user).
+test('the Conversation tab says nothing of the permission mode when it is the one chosen', async () => {
   const p = await pageWith({ tab: 'conversation', poll: { running: true, agentMode: { asked: 'manual', inForce: 'manual' } } })
+  try {
+    await p.every('pollConversation')
+    assert.ok(p.$('agent-mode').hidden, 'shown, with nothing to say')
+  } finally { p.close() }
+})
+
+test('when the mode in force is not the one chosen, the label says so, and opens its card when pressed', async () => {
+  const p = await pageWith({ tab: 'conversation', poll: { running: true, agentMode: { asked: 'bypassPermissions', inForce: 'manual' } } })
   try {
     await p.every('pollConversation')
     const label = p.$('agent-mode')
     assert.ok(!label.hidden, 'not shown')
     assert.match(label.textContent, /Permissions: Manual/)
-    assert.ok(!label.classList.contains('differs'))
     await p.click(label)
     assert.equal(p.$('tab-admin').getAttribute('aria-selected'), 'true')
     assert.equal(p.window.document.activeElement, select(p))

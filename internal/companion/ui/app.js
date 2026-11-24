@@ -6328,15 +6328,16 @@
   }
 
   // drawAgentMode shows, beside Send, the permission mode the agent says it is in (m: asked, inForce; null until it has said),
-  // amber when that isn't the one asked for; pressing it opens the Admin tab's card. Written only when it changes.
+  // only when that isn't the one asked for: as chosen, there's nothing to say. Pressing it opens the Admin tab's card. Written
+  // only when it changes.
   function drawAgentMode(m) {
     const label = $('agent-mode')
     const drawn = JSON.stringify(m)
     if (drawn === label.dataset.drawn) return
     label.dataset.drawn = drawn
-    label.hidden = !m || !m.inForce
+    const differs = !!m && !!m.inForce && !!m.asked && m.asked !== m.inForce
+    label.hidden = !differs
     if (label.hidden) return
-    const differs = !!m.asked && m.asked !== m.inForce
     label.textContent = 'Permissions: ' + permissionModeName(m.inForce)
     label.classList.toggle('differs', differs)
     label.title = (differs ? 'The agent is in ' + permissionModeName(m.inForce) + ', not ' + permissionModeName(m.asked) + ' as chosen. '

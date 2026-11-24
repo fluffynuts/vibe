@@ -777,8 +777,8 @@ restarts, as for files). Colours follow the theme, and what is copied is the cod
   Code refuses the agent something, the conversation says so in a line of its own, with why and the mode it was in, a
   button for the mode that would have let it through (**Use Bypass permissions**, or **Use Auto** where bypass is what
   was refused; none in bypass itself, where Claude Code still refuses a few things), and **Agent permissions…** to the
-  card. Beside Send, the Conversation tab says the mode the agent is in, as Claude Code reports it (amber when it isn't
-  the one chosen); pressing it opens the card.
+  card. When the mode the agent is in, as Claude Code reports it, isn't the one chosen, an amber label beside Send says
+  so (as chosen, there's nothing to say, and nothing is shown); pressing it opens the card.
   It also edits your [instructions to the agent](#your-instructions-to-the-agent): **Save** asks what to do when the file has
   changed on disk since (merge, overwrite, or reload), and **Optimise** asks the agent for a tidier
   version, leaving out what's repeated or already in the universal file, for you to **Accept** or

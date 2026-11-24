@@ -49,8 +49,8 @@ So vibe never reads the policy: what Claude Code says is enough.
   agent isn't in bypass, **Use Auto** when bypass is what was refused, and nothing in bypass itself (Claude Code still refuses a few
   things there, and no mode helps). vibe works it out when the refusal comes (`suggest` on the event).
 - **The mode in force, where the user works:** the conversation's poll carries the agent's mode whenever it is known
-  (`agentMode`: asked, in force), and a label beside Send says it ("Permissions: Manual"), amber when it isn't the one chosen;
-  pressing it opens the card. It keeps the mode the agent last reported, with the one it had been asked for then, after the agent
+  (`agentMode`: asked, in force), and a label beside Send says it ("Permissions: Manual"), amber, only when it isn't the one
+  chosen (decided with the user after trying it: shown always, it said nothing worth the room); pressing it opens the card. It keeps the mode the agent last reported, with the one it had been asked for then, after the agent
   ends: it vanished with the agent at first. It took two lines in the wide layout (sharing Send's column, both wrapped): both stay on
   one line, and a Firefox test holds the bar to its height, nothing out of it, at three widths.
 

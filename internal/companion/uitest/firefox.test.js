@@ -776,6 +776,29 @@ test('the emoji list follows the prompt as it scrolls', async () => {
     await page.keyboard.type(' :roc')
     await page.waitForSelector('#convo-emoji:not([hidden]) li')
     const before = await listBox(page)
+    // Recorded from here on, and said if the list never moves: on macOS CI the prompt was seen scrolled back to its caret
+    // (scrollTop 94.65 → 33.75 → 94.65) with no clue what did it. Every scroll of the prompt, any script setting its scrollTop
+    // (with where from), its height being set (which can reset its scroll), its focus, input and selection, and the window's
+    // size and visibility.
+    await page.evaluate(() => {
+      const ta = document.getElementById('convo-input')
+      const log = window.vibeTestPromptLog = []
+      const t0 = performance.now()
+      const note = (what, extra) => log.push(Object.assign({ t: Math.round(performance.now() - t0), what, scrollTop: Math.round(ta.scrollTop),
+        height: ta.style.height, focused: document.activeElement === ta, caret: ta.selectionStart }, extra))
+      const scrollTop = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop')
+      Object.defineProperty(ta, 'scrollTop', {
+        configurable: true,
+        get() { return scrollTop.get.call(this) },
+        set(v) { note('scrollTop set', { to: Math.round(v), by: (new Error().stack || '').split('\n').slice(1, 4).join(' | ') }); scrollTop.set.call(this, v) },
+      })
+      ta.addEventListener('scroll', () => note('scroll'))
+      for (const e of ['focus', 'blur', 'input', 'select', 'keydown']) ta.addEventListener(e, () => note(e))
+      document.addEventListener('selectionchange', () => note('selectionchange'))
+      window.addEventListener('resize', () => note('resize', { w: innerWidth, h: innerHeight }))
+      document.addEventListener('visibilitychange', () => note('visibility ' + document.visibilityState))
+      new MutationObserver(() => note('style set')).observe(ta, { attributes: true, attributeFilter: ['style'] })
+    })
     // The line as listBox measures it: a computed line-height can be "normal" (macOS CI), which is no number to scroll by.
     const scrolled = await page.evaluate((line) => {
       const ta = document.getElementById('convo-input')
@@ -794,8 +817,12 @@ test('the emoji list follows the prompt as it scrolls', async () => {
       if (seen.bottom > before.list.bottom + 10) break
       await page.waitForTimeout(50)
     }
-    assert.ok(seen.bottom > before.list.bottom + 10, `the list did not move down with the prompt within 5s: before ${JSON.stringify(before.list)}, ` +
-      `scrolled ${JSON.stringify(scrolled)}, then ${JSON.stringify(seen)}`)
+    if (!(seen.bottom > before.list.bottom + 10)) {
+      const log = await page.evaluate(() => window.vibeTestPromptLog.slice(-40))
+      assert.fail(`the list did not move down with the prompt within 5s: before ${JSON.stringify(before.list)}, ` +
+        `scrolled ${JSON.stringify(scrolled)}, then ${JSON.stringify(seen)}; what the prompt saw since (last 40):\n` +
+        log.map((e) => JSON.stringify(e)).join('\n'))
+    }
     const after = await listBox(page)
     const moved = after.list.bottom - before.list.bottom
     const by = scrolled.was - scrolled.now
