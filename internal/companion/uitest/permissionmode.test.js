@@ -200,8 +200,7 @@ test('the label is amber, and says so, when the mode in force is not the one cho
     await p.every('pollConversation')
     const label = p.$('agent-mode')
     assert.match(label.textContent, /Permissions: Auto/)
-    assert.ok(label.classList.contains('differs'))
-    assert.match(label.title, /Bypass permissions/)
+    assert.equal(label.title, 'The agent is in Auto, not Bypass permissions as chosen. Press to choose it.')
   } finally { p.close() }
 })
 

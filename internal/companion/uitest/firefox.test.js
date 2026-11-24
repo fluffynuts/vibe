@@ -1540,3 +1540,23 @@ test('the permission mode beside Send leaves the bar under the prompt no taller,
     } finally { await page.close() }
   }
 })
+
+// The permission mode beside Send shows only when it isn't the one chosen (see permissionmode.test.js), and then always in amber,
+// the colour the page warns in.
+test('the permission mode beside Send is amber whenever it shows', async () => {
+  const page = await conversationPage(1500)
+  try {
+    const m = await page.evaluate(() => {
+      const label = document.getElementById('agent-mode')
+      label.textContent = 'Permissions: Manual'
+      label.hidden = false
+      const probe = document.createElement('span')
+      probe.style.color = 'var(--amber)'
+      document.body.append(probe)
+      const amber = getComputedStyle(probe).color
+      probe.remove()
+      return { label: getComputedStyle(label).color, amber }
+    })
+    assert.equal(m.label, m.amber)
+  } finally { await page.close() }
+})

@@ -6339,9 +6339,8 @@
     label.hidden = !differs
     if (label.hidden) return
     label.textContent = 'Permissions: ' + permissionModeName(m.inForce)
-    label.classList.toggle('differs', differs)
-    label.title = (differs ? 'The agent is in ' + permissionModeName(m.inForce) + ', not ' + permissionModeName(m.asked) + ' as chosen. '
-      : 'The permission mode the agent is in, as Claude Code says. ') + (state.permissionModeChoice ? 'Press to choose it.' : '')
+    label.title = 'The agent is in ' + permissionModeName(m.inForce) + ', not ' + permissionModeName(m.asked) + ' as chosen. ' +
+      (state.permissionModeChoice ? 'Press to choose it.' : '')
     label.disabled = !state.permissionModeChoice
   }
 
