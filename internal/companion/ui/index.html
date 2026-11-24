@@ -398,6 +398,17 @@
           </div>
         </section>
 
+        <section class="card" id="admin-permission-card" data-loads="permission" aria-labelledby="admin-permission-h" hidden>
+          <h2 id="admin-permission-h">Agent permissions</h2>
+          <p class="note muted">How the agent on the Conversation tab is let run things. Nobody can approve a request there, so a mode that asks refuses it instead.</p>
+          <div class="settings-theme">
+            <label for="admin-permission-mode">Permission mode</label>
+            <select id="admin-permission-mode"></select>
+          </div>
+          <p id="admin-permission-note" class="note muted" role="status"></p>
+          <p id="admin-permission-warning" class="warn-text" role="alert" hidden></p>
+        </section>
+
         <section class="card card-wide" data-loads="instructions" aria-labelledby="admin-instructions-h">
           <h2 id="admin-instructions-h">Agent instructions</h2>
           <p id="admin-instructions-note" class="note muted"></p>

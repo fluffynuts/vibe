@@ -33,7 +33,7 @@ What was checked (a throwaway `CLAUDE_CONFIG_DIR` with `defaultMode: default`; t
   for an organisation that allows bypass, or to try it again. It is read when the agent next starts; a value Claude Code doesn't take is
   refused before anything runs, saying which file to fix.
 
-## Not built
+## Since
 
-- The page doesn't choose the mode (as it does the model and effort), and doesn't say when the agent runs in another mode than was asked
-  for: the stream-json init event says which mode it is in, so it could.
+- The Admin tab chooses the mode, a change is told a running agent before the next prompt (no longer only when the agent next
+  starts), and the page warns when the mode in force isn't the one chosen: `2026-11-24-agent-permission-mode-choice.md`.

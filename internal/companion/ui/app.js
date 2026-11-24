@@ -1032,6 +1032,8 @@
       if (state.choice) initChoice()
       state.admin = !!res.body.admin
       state.themes = !!res.body.themes
+      state.permissionModeChoice = state.conversation && !!res.body.permissionModeChoice
+      $('admin-permission-card').hidden = !state.permissionModeChoice
       state.power = !!res.body.power
       state.manage = !!res.body.manage
       state.boot = res.body.boot || ''
@@ -1236,7 +1238,7 @@
       post('/api/awake', {}).catch(() => {})
     }
     const loads = state.tab === 'conversation' ? [unlessBusy('state', loadState)]
-      : state.tab === 'admin' ? [unlessBusy('state', loadState), unlessBusy('admin', loadAdmin), unlessBusy('packages', loadPackages), unlessBusy('sync', loadSync), unlessBusy('instructions', () => loadInstructions(false))]
+      : state.tab === 'admin' ? [unlessBusy('state', loadState), unlessBusy('admin', loadAdmin), unlessBusy('permission', loadPermissionMode), unlessBusy('packages', loadPackages), unlessBusy('sync', loadSync), unlessBusy('instructions', () => loadInstructions(false))]
       : state.tab === 'manage' ? [unlessBusy('state', loadState), unlessBusy('manage', loadManage)]
       : state.tab === 'review' ? [unlessBusy('state', loadState), unlessBusy('review', () => loadReview(reviewView.files === null))]
       : [unlessBusy('state', loadState), unlessBusy('tab ' + state.tab, () => load(state.tab))]
@@ -1267,6 +1269,7 @@
     if (tab === 'log') blockedSeen()
     if (tab === 'admin' && state.signin) loadSignIn()
     if (tab === 'admin' && state.themes) loadTheme()
+    if (tab === 'admin' && state.permissionModeChoice) loadPermissionMode()
     if (tab === 'review') reviewSeen()
     // A comment asked for, not yet gone to, isn't gone to once you're elsewhere.
     else reviewView.goTo = null
@@ -4201,6 +4204,87 @@
     $('settings-theme-note').textContent = t.live || t.checking ? '' : "This sandbox isn't running: a choice is kept for the next time it is built."
   }
 
+  // --- the agent's permission mode (docs/plan-agent-permission-mode.md) ---------------------------------------------------------------
+  // The Admin tab's drop-down keeps the mode the conversation's agent is asked for; what the agent says it is in is shown beside it,
+  // with a warning when that isn't the mode asked for (an organisation's settings can disable bypass, and Claude Code then runs in
+  // another mode without a word). drawn is what was drawn last: drawn again only when that changes, and not while the drop-down has
+  // the focus (it may be open).
+  const PERMISSION_MODE_NAMES = { auto: 'Auto', bypassPermissions: 'Bypass permissions', acceptEdits: 'Accept edits', manual: 'Manual',
+    dontAsk: "Don't ask", plan: 'Plan' }
+  const permissionView = { shown: '', drawn: '', saidNext: false }
+
+  function permissionModeName(mode) {
+    return PERMISSION_MODE_NAMES[mode] || mode
+  }
+
+  // modeNotInForce is the sentence that says the agent runs in inForce, not asked, and why when Claude Code said.
+  function modeNotInForce(asked, inForce, refused) {
+    return 'The agent is running in ' + permissionModeName(inForce) + ', not ' + permissionModeName(asked) + ' as chosen: ' +
+      (refused ? 'Claude Code said "' + refused + '"' : "Claude Code's settings (your organisation's, perhaps) didn't allow it") + '.' +
+      (inForce === 'manual' ? ' In Manual, what needs approval is refused: nobody can approve it here.' : '')
+  }
+
+  function drawPermissionMode(m) {
+    const select = $('admin-permission-mode')
+    const drawn = JSON.stringify(m)
+    if (drawn === permissionView.drawn) return
+    permissionView.drawn = drawn
+    const current = m.mode || m.default
+    if (document.activeElement !== select) {
+      select.replaceChildren(...(m.modes || []).map((mode) => {
+        const option = el('option', { text: permissionModeName(mode) + (mode === m.default ? ' (the default)' : '') })
+        option.value = mode
+        return option
+      }))
+      select.value = current
+      permissionView.shown = current
+    }
+    const lines = []
+    if (m.mode && m.from && !/user-preferences\.yaml$/.test(m.from)) lines.push('Set in ' + m.from + '.')
+    if (m.inForce) lines.push('In force: ' + permissionModeName(m.inForce) + '.')
+    if (permissionView.saidNext) lines.push('Applies from your next prompt.')
+    $('admin-permission-note').textContent = lines.join(' ')
+    const differs = !!m.inForce && !!m.asked && m.inForce !== m.asked
+    $('admin-permission-warning').hidden = !differs
+    $('admin-permission-warning').textContent = differs ? modeNotInForce(m.asked, m.inForce, m.refused) : ''
+  }
+
+  async function loadPermissionMode() {
+    if (!state.permissionModeChoice) return
+    try {
+      const res = await api('/api/permission-mode')
+      reached(true)
+      if (res.ok) drawPermissionMode(res.body)
+      else $('admin-permission-note').textContent = res.body.error || "vibe couldn't say what the permission mode is."
+    } catch (e) {
+      reached(false)
+    }
+  }
+
+  async function choosePermissionMode() {
+    const select = $('admin-permission-mode')
+    const mode = select.value
+    select.disabled = true
+    try {
+      const res = await post('/api/permission-mode', { mode })
+      reached(true)
+      if (!res.ok) {
+        select.value = permissionView.shown
+        $('admin-permission-note').textContent = res.body.error || "vibe couldn't keep the permission mode."
+        return
+      }
+      permissionView.shown = mode
+      permissionView.saidNext = true
+      permissionView.drawn = ''
+      drawPermissionMode(res.body)
+    } catch (e) {
+      select.value = permissionView.shown
+      reached(false)
+    } finally {
+      select.disabled = false
+    }
+  }
+
   async function loadTheme() {
     $('settings-theme-row').hidden = !state.themes
     try {
@@ -6483,6 +6567,11 @@
     // While it answers, the typing bubble says so; the rest is in the status balloon.
     const items = []
     if (stuck) items.push({ key: 'stuck', warn: true, text: 'The agent has not stopped yet. Force stop ends it, and everything it started (anything in the background too).' })
+    const mode = convo.permission
+    if (mode && mode.asked && mode.inForce) {
+      items.push({ key: 'mode:' + mode.asked + ':' + mode.inForce, warn: true, text: modeNotInForce(mode.asked, mode.inForce, mode.refused) +
+        (state.admin ? ' The Admin tab chooses the mode.' : '') })
+    }
     if (running && quietMinutes) {
       items.push({ key: 'quiet', warn: true,
         text: 'No output from the agent for at least ' + quietMinutes + ' minutes — it may be stuck. Stop it, or check "sbx ls" in a terminal; it is still being waited for.' })
@@ -6721,6 +6810,7 @@
       convo.last = res.body.last || 0
       // A turn that isn't running has no tools still being used, whatever the last thing said was.
       if (!res.body.running) endToolGroup()
+      convo.permission = res.body.permissionMode || null
       setConvoRunning(!!res.body.running, !!res.body.background, res.body.quietMinutes || 0, !!res.body.compacting, res.body.stopState, res.body.tasks)
       if (convo.offerNow) {
         convo.offerNow = false
@@ -8636,6 +8726,7 @@
     $('settings-prompts-markdown').checked = promptsAsMarkdown.on
     $('settings-prompts-markdown').addEventListener('change', () => setPromptsAsMarkdown($('settings-prompts-markdown').checked))
     $('settings-theme').addEventListener('change', chooseTheme)
+    $('admin-permission-mode').addEventListener('change', choosePermissionMode)
     $('settings-emoji').checked = emojiState.on
     $('settings-emoji').addEventListener('change', () => setEmojiComplete($('settings-emoji').checked))
     document.addEventListener('paste', onPaste)

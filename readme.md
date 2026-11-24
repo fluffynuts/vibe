@@ -765,6 +765,12 @@ restarts, as for files). Colours follow the theme, and what is copied is the cod
   and the card then says what state the sandbox is in. `vibe --cancel` does the same from a terminal.
   When the sandbox is stopped or rebuilt, from here or with `vibe --stop` or sbx, vibe keeps
   serving the page; the terminal session attaches again once the sandbox is back (Ctrl-C ends vibe).
+  Its **Agent permissions** card chooses the `--permission-mode` the Conversation tab's agent runs in (Auto, the default;
+  Bypass permissions; Accept edits; Manual; Don't ask; Plan), kept as `permissionMode:` in the profile's
+  `user-preferences.yaml` and told a running agent before your next prompt. It says the mode the agent reports being in,
+  and warns, there and in the Conversation tab's status balloon, when that isn't the one chosen, with Claude Code's own
+  words when it refused the change: an organisation's managed settings can disable bypass, and Claude Code then runs in
+  another mode without saying so (in Manual nothing that needs approval can run, as nobody can approve it here).
   It also edits your [instructions to the agent](#your-instructions-to-the-agent): **Save** asks what to do when the file has
   changed on disk since (merge, overwrite, or reload), and **Optimise** asks the agent for a tidier
   version, leaving out what's repeated or already in the universal file, for you to **Accept** or
@@ -1322,7 +1328,8 @@ permissionMode: auto  # the --permission-mode the Conversation tab runs claude w
                       #    organisation's managed settings can disable it, and claude then falls back, without a
                       #    word, to its own settings' defaultMode. For one profile, put it in that profile's
                       #    user-preferences.yaml (safe there: it never makes a generated profile look edited by
-                      #    hand), which wins over this. Read when the agent next starts
+                      #    hand), which wins over this, and is what the Admin tab's Agent permissions card
+                      #    writes. A change is told a running agent before your next prompt
 memoryRoot: ~/.vibe/memories   # where per-sandbox agent memories are backed up
 defaultFeatures:      # library features a guided profile starts with selected
   - dotnet

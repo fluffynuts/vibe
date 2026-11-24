@@ -33,3 +33,4 @@ where there is something to say. A decision that is later changed gets a note in
 | [2026-11-20-git-token-next-steps](2026-11-20-git-token-next-steps.md) | --batch-git-token for scripts; a push checked from inside the sandbox; tokens running out on the Admin tab; read-only tokens |
 | [2026-11-20-closed-review-says-what-it-was](2026-11-20-closed-review-says-what-it-was.md) | A closed review says what it was, so Reopen says what it reopens |
 | [2026-11-24-agent-permission-mode](2026-11-24-agent-permission-mode.md) | The conversation's agent runs in auto mode (bypass can be disabled by an organisation), or the permissionMode settings.yaml chooses |
+| [2026-11-24-agent-permission-mode-choice](2026-11-24-agent-permission-mode-choice.md) | The Admin tab chooses the agent's permission mode, applied before the next prompt; the page warns when the mode in force isn't the one chosen |
