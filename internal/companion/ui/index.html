@@ -50,6 +50,11 @@
       <button role="tab" data-tab="manage" id="tab-manage" hidden>Profiles</button>
     </nav>
     <div class="tabbar-end">
+      <div id="convo-actions" class="convo-actions" hidden>
+        <button type="button" id="status-info" class="choice-info status-info" aria-expanded="false" aria-controls="status-balloon"
+          aria-label="Agent status: nothing running in the background" title="What the agent has going on">i</button>
+        <button type="button" id="convo-new" class="ghost">New conversation</button>
+      </div>
       <span id="agent-light" class="agent-light" role="img" hidden></span>
       <div id="usage" class="usage" hidden>
         <div class="usage-row">
@@ -68,19 +73,13 @@
 
   <main>
     <section id="panel-conversation" class="panel panel-conversation" hidden>
+      <div id="status-balloon" class="status-balloon" hidden>
+        <button type="button" id="status-balloon-close" class="choice-bubble-close ghost" aria-label="Close" title="Close (Escape)">&#10005;</button>
+        <div id="status-balloon-alerts" role="alert"></div>
+        <div id="status-balloon-list" role="status"></div>
+      </div>
       <div class="convo-layout">
         <div class="convo">
-          <div class="bar convo-bar">
-            <span class="spacer"></span>
-            <button type="button" id="status-info" class="choice-info status-info" aria-expanded="false" aria-controls="status-balloon"
-              aria-label="Agent status: nothing running in the background" title="What the agent has going on">i</button>
-            <button type="button" id="convo-new" class="ghost">New conversation</button>
-            <div id="status-balloon" class="status-balloon" hidden>
-              <button type="button" id="status-balloon-close" class="choice-bubble-close ghost" aria-label="Close" title="Close (Escape)">&#10005;</button>
-              <div id="status-balloon-alerts" role="alert"></div>
-              <div id="status-balloon-list" role="status"></div>
-            </div>
-          </div>
           <div id="convo-signin" class="notice" role="status" hidden>
             <span id="convo-signin-text"></span>
             <button type="button" id="convo-signin-open">Open Sign-in</button>
@@ -168,17 +167,12 @@
           </form>
         </div>
         <div class="convo-clip">
-          <div class="bar">
-            <span class="muted">Clipboard</span>
-            <span id="convo-clipboard-note" class="muted" hidden></span>
-            <span class="spacer"></span>
-            <a id="convo-clipboard-open" class="button ghost" target="_blank" rel="noopener noreferrer">Open on its own</a>
-          </div>
           <div id="convo-clipboard-wait" class="wait" role="status">
             <p id="convo-clipboard-wait-text">Starting the clipboard page…</p>
             <p id="convo-clipboard-wait-help" class="muted" hidden></p>
             <button type="button" id="convo-clipboard-start" hidden>Start it</button>
           </div>
+          <p id="convo-clipboard-note" class="clip-banner" role="status" hidden></p>
           <iframe id="convo-clipboard-frame" title="Clipboard" allow="clipboard-write" sandbox="allow-scripts allow-same-origin" hidden></iframe>
         </div>
       </div>

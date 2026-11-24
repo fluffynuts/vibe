@@ -1320,20 +1320,32 @@ test('a coloured block in the conversation has the syntax colours, in the light 
   }
 })
 
-test('the status button sits just left of New conversation at the right of the bar, and its balloon moves nothing and stays on the page', async () => {
-  for (const width of [1000, 420]) {
+// The status button and New conversation sit at the tab bar's end (see layout.test.js), kept in reach when the tabs need the
+// width; their balloon hangs below the tab bar, under the button, and moves nothing; the conversation and the clipboard start
+// right under the tab bar, with no bar of their own taking the height.
+test('the status button and New conversation sit in the tab bar, in reach at every width, and the conversation starts under it', async () => {
+  for (const width of [1500, 1000, 420]) {
     const page = await conversationPage(width)
     try {
       // Opened from the button, the balloon stays (until closed) whatever the page's polls do meanwhile, so every box is read with it open.
       const measure = () => page.evaluate(() => {
-        const r = (id) => document.getElementById(id).getBoundingClientRect()
-        const bar = document.getElementById('convo-new').parentElement.getBoundingClientRect()
-        return { info: r('status-info'), fresh: r('convo-new'), log: r('convo-log'), balloon: r('status-balloon'), bar,
-          open: !document.getElementById('status-balloon').hidden, viewport: document.documentElement.clientWidth }
+        const r = (el) => { const b = (typeof el === 'string' ? document.getElementById(el) : el).getBoundingClientRect(); return { left: b.left, right: b.right, top: b.top, bottom: b.bottom } }
+        return { info: r('status-info'), fresh: r('convo-new'), log: r('convo-log'), tabbar: r('tabbar'), balloon: r('status-balloon'),
+          clip: r(document.querySelector('.convo-clip')), open: !document.getElementById('status-balloon').hidden,
+          viewport: document.documentElement.clientWidth, sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth }
       })
       const closed = await measure()
-      assert.ok(Math.abs(closed.bar.right - closed.fresh.right) <= 1, `${width}px: New conversation is not at the right edge`)
+      for (const key of ['info', 'fresh']) {
+        assert.ok(closed[key].top >= closed.tabbar.top && closed[key].bottom <= closed.tabbar.bottom, `${width}px: ${key} is not in the tab bar`)
+        assert.ok(closed[key].left >= 0 && closed[key].right <= closed.viewport, `${width}px: ${key} is out of reach (${Math.round(closed[key].left)}–${Math.round(closed[key].right)})`)
+      }
       assert.ok(closed.info.right <= closed.fresh.left && closed.fresh.left - closed.info.right < 16, `${width}px: the button is not just left of New conversation`)
+      assert.ok(closed.log.top - closed.tabbar.bottom < 30, `${width}px: ${Math.round(closed.log.top - closed.tabbar.bottom)}px between the tab bar and the conversation`)
+      // Side by side; narrow, the clipboard is stacked under the conversation.
+      if (closed.clip.left > closed.log.left) {
+        assert.ok(closed.clip.top - closed.tabbar.bottom < 30, `${width}px: ${Math.round(closed.clip.top - closed.tabbar.bottom)}px between the tab bar and the clipboard`)
+      }
+      assert.ok(!closed.sideways, `${width}px: the page scrolls sideways`)
       await page.click('#status-info')
       const open = await measure()
       assert.ok(open.open, `${width}px: the balloon did not open`)
@@ -1342,7 +1354,8 @@ test('the status button sits just left of New conversation at the right of the b
         assert.equal(Math.round(open[key].left), Math.round(closed[key].left), `${width}px: opening the balloon moved ${key}`)
       }
       assert.ok(open.balloon.left >= 0 && open.balloon.right <= open.viewport, `${width}px: the balloon runs off the page (${Math.round(open.balloon.left)}–${Math.round(open.balloon.right)})`)
-      assert.ok(open.balloon.top >= open.info.bottom, `${width}px: the balloon is not below its button`)
+      assert.ok(open.balloon.top >= open.tabbar.bottom, `${width}px: the balloon is not below the tab bar`)
+      assert.ok(open.balloon.left <= open.info.left && open.balloon.right >= open.info.right, `${width}px: the balloon is not under its button`)
     } finally { await page.close() }
   }
 })

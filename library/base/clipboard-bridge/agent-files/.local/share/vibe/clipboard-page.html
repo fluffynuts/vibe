@@ -47,6 +47,12 @@
     padding: 28px 16px; text-align: center; transition: background .15s, border-color .15s;
   }
   #drop.over { background: var(--drop); border-color: var(--accent); }
+  /* Framed, the page can be opened in a tab of its own from its corner (the companion page has no bar for it). */
+  #drop { position: relative; }
+  #open-alone { position: absolute; top: 6px; right: 6px; display: inline-flex; padding: 4px; border-radius: 6px; color: var(--muted); }
+  #open-alone:hover, #open-alone:focus-visible { color: var(--text); background: var(--border); }
+  #open-alone[hidden] { display: none; }
+  #open-alone svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   #drop strong { display: block; font-size: 17px; margin-bottom: 4px; }
   #drop p { margin: 4px 0; color: var(--muted); }
   kbd {
@@ -164,6 +170,7 @@
   </header>
 
   <section id="drop">
+    <a id="open-alone" target="_blank" rel="noopener noreferrer" aria-label="Open the clipboard in a tab of its own" title="Open in a tab of its own" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4 M13.5 2.5l-6 6 M11.5 9.5v4h-9v-9h4"/></svg></a>
     <strong>Paste anywhere on this page (<kbd>Ctrl</kbd>+<kbd>V</kbd>), or drop files here</strong>
     <p class="hint">It goes to the agent with your next message — give it a title first, if it needs explaining.</p>
     <p class="hint"><kbd>Ctrl</kbd>+<kbd>V</kbd> in the agent's terminal also attaches the item marked <em>current</em>.</p>
@@ -606,7 +613,12 @@ document.addEventListener("paste", function (e) {
 // page that framed this one and nobody else.
 var phone = window.matchMedia("(max-width: 560px) and (pointer: coarse)");
 var framedSplit = false;
-if (new URLSearchParams(location.search).has("framed")) document.documentElement.classList.add("framed");
+if (new URLSearchParams(location.search).has("framed")) {
+  document.documentElement.classList.add("framed");
+  var openAlone = document.getElementById("open-alone");
+  openAlone.href = location.origin + location.pathname;
+  openAlone.hidden = false;
+}
 function applyLayout() {
   document.documentElement.classList.toggle("split", phone.matches || framedSplit);
 }

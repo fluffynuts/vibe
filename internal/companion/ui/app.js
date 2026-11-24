@@ -60,7 +60,7 @@
   // The clipboard page, shown beside the conversation: its frame, waiting
   // notice and the controls that go with them.
   const CLIPBOARD_VIEWS = [
-    { frame: 'convo-clipboard-frame', wait: 'convo-clipboard-wait', text: 'convo-clipboard-wait-text', help: 'convo-clipboard-wait-help', start: 'convo-clipboard-start', open: 'convo-clipboard-open', note: 'convo-clipboard-note' },
+    { frame: 'convo-clipboard-frame', wait: 'convo-clipboard-wait', text: 'convo-clipboard-wait-text', help: 'convo-clipboard-wait-help', start: 'convo-clipboard-start', note: 'convo-clipboard-note' },
   ]
 
   const $ = (id) => document.getElementById(id)
@@ -1026,6 +1026,7 @@
       state.clipboardCanStart = !!res.body.clipboardCanStart
       state.conversation = !!res.body.conversation
       $('tab-conversation').hidden = !state.conversation
+      showConvoActions()
       state.viewFiles = !!res.body.viewFiles
       state.choice = state.conversation && !!res.body.choice
       $('convo-choice').hidden = !state.choice
@@ -1074,7 +1075,6 @@
         state.clipboardUrl = url
         state.clipboardReady = ready
         for (const view of CLIPBOARD_VIEWS) {
-          if (url) $(view.open).href = url
           // The frame only gets the page once vibe has seen it answer: a
           // frame on another origin can't be watched, and a browser's
           // "can't connect" page would otherwise sit there for good. Once
@@ -1156,7 +1156,7 @@
     const kept = !!state.clipboardUrl && state.clipboardLoaded === state.clipboardUrl
     for (const view of CLIPBOARD_VIEWS) {
       $(view.note).hidden = !kept || state.clipboardReady
-      $(view.note).textContent = "— not answering just now; it picks up again by itself"
+      $(view.note).textContent = "The clipboard page isn't answering just now; it picks up again by itself."
       $(view.note).title = $(view.note).textContent
     }
     const waiting = !!state.clipboardUrl && !state.clipboardReady && !kept
@@ -1250,11 +1250,18 @@
 
   // --- tabs -------------------------------------------------------------
 
+  // showConvoActions shows the status button and New conversation, at the tab bar's end, on the Conversation tab alone: they
+  // are the conversation's, and anywhere else they'd take the room the other tabs' bars want.
+  function showConvoActions() {
+    $('convo-actions').hidden = !state.conversation || state.tab !== 'conversation'
+  }
+
   // select shows tab, or the first tab the page has when it hasn't that one.
   function select(tab, remember = true) {
     const wanted = tab
     if (!TABS.includes(tab) || $('tab-' + tab).hidden) tab = TABS.find((t) => !$('tab-' + t).hidden) || 'log'
     state.tab = tab
+    showConvoActions()
     showTypingGoesToPrompt()
     // Only a tab that was asked for is a choice to keep: where it wasn't there to go to (no conversation yet, on a first
     // open), the one stood in for isn't, or it would stay the choice once the conversation is.

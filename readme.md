@@ -645,7 +645,9 @@ you're looking at:
 
 - **Conversation** — talk to the agent from the page, with the sandbox's clipboard page (see
   `clipboard-bridge` below) embedded beside it: paste images and files anywhere on the tab and they go
-  to the clipboard. The prompt box grows as you type, up to half the column. The agent's replies, and your prompts, are shown as Markdown — headings, lists, tables, code — built
+  to the clipboard. Both start right under the tab bar: the status button and **New conversation** sit at the tab bar's
+  end, beside the CPU and memory meters (on the Conversation tab alone), the clipboard has no bar of its own (its corner
+  icon opens it in a tab of its own, and a slim banner over it says when it isn't answering). The prompt box grows as you type, up to half the column. The agent's replies, and your prompts, are shown as Markdown — headings, lists, tables, code — built
   as text, so nothing in them can become markup on the page; links open only to this machine's own pages. A block of code has a copy button (two pages) at its top right. A block the agent tagged `markdown` is drawn as the Markdown it is (formatted, as text: no markup, no links followed), and its button copies the Markdown source it was written in, so a pull request description can be read formatted and pasted raw; a block with another tag is code, coloured by that language (see next), and one with none is code as it was. A fenced block tagged with a language
 (`go`, `js`, `csharp`, `sh`, `diff` ... whatever Chroma, the highlighter the Review tab uses, knows by name, alias or file extension) is
 coloured by the host as the Review tab's files are: the page asks for each block that comes into view, two at a time, and keeps the
@@ -931,8 +933,8 @@ nothing new to show; its tooltip says what it is for. It follows the conversatio
 the agent: work in an attached terminal session isn't seen, and agents the page can't talk to have
 no light.
 
-On the Conversation tab, the round **i** button left of **New conversation** says what the agent has going on, in a balloon,
-so it takes no room above the conversation. What resolves itself (work left running in the background, a context being
+On the Conversation tab, the round **i** button left of **New conversation**, at the tab bar's end, says what the agent has
+going on, in a balloon below it, so it takes no room above the conversation. What resolves itself (work left running in the background, a context being
 compacted) pops up and closes itself after 5 seconds, and the button keeps a pulsing blue dot while background work runs.
 What needs you ("no output for at least N minutes", a stop that hasn't taken effect) pops up and stays until it is no
 longer true or you close it, with a steady amber dot. Clicking the button shows the list at any time (or that there is
