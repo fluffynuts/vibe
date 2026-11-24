@@ -80,7 +80,13 @@ func canonicalMode(mode string) string {
 func (c *conversation) noteMode(raw []byte, typ, subtype, mode string) {
 	switch {
 	case typ == "system" && (subtype == "init" || subtype == "status") && mode != "":
+		// Kept together, from the same agent: the mode it is in, and the one it was asked for. Both outlive it (it ends ~30 s after
+		// its last work), until another agent says its own.
 		c.modeInForce = canonicalMode(mode)
+		c.modeAsked = ""
+		if asker, ok := c.agent.(ModeAsker); ok {
+			c.modeAsked = canonicalMode(asker.AskedPermissionMode())
+		}
 	case typ == "control_response":
 		var answer struct {
 			Response struct {
@@ -101,18 +107,13 @@ func (c *conversation) noteMode(raw []byte, typ, subtype, mode string) {
 	}
 }
 
-// modeState is the running agent's mode, nil when there's no agent, or it hasn't said what it was asked for, or what it is in.
-// mu is held.
+// modeState is the mode the agent last said it was in, and what it was asked for then; nil until an agent that says what it was
+// asked for has said its mode. mu is held.
 func (c *conversation) modeState() *permissionState {
-	asker, ok := c.agent.(ModeAsker)
-	if !ok || c.modeInForce == "" {
+	if c.modeInForce == "" || c.modeAsked == "" {
 		return nil
 	}
-	asked := canonicalMode(asker.AskedPermissionMode())
-	if asked == "" {
-		return nil
-	}
-	return &permissionState{Asked: asked, InForce: c.modeInForce, Refused: c.modeRefused}
+	return &permissionState{Asked: c.modeAsked, InForce: c.modeInForce, Refused: c.modeRefused}
 }
 
 // modeToSuggest is the mode that would let through what Claude Code just refused: bypass, unless it was bypass that was refused

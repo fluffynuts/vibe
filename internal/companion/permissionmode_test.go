@@ -257,3 +257,22 @@ func TestTheConversationsPollCarriesTheAgentsModeWheneverItIsKnown(t *testing.T)
 		t.Errorf("got %+v", got)
 	}
 }
+
+// The agent ends ~30 s after its last work: the mode it last said it was in is still the one to show (the label beside Send
+// vanished with it), until another agent says otherwise.
+func TestTheAgentsModeOutlivesTheAgent(t *testing.T) {
+	c := convoWith("bypassPermissions")
+	c.line([]byte(`{"type":"system","subtype":"init","permissionMode":"bypassPermissions"}`))
+	c.agent = nil
+	if got := c.modeNow(); got == nil || got.Asked != "bypassPermissions" || got.InForce != "bypassPermissions" {
+		t.Fatalf("after the agent ended: %+v", got)
+	}
+	c.agent = &askingAgent{asked: "manual"}
+	if got := c.modeNow(); got == nil || got.Asked != "bypassPermissions" {
+		t.Errorf("a new agent that hasn't said its mode changed what was said: %+v", got)
+	}
+	c.line([]byte(`{"type":"system","subtype":"init","permissionMode":"default"}`))
+	if got := c.modeNow(); got == nil || got.Asked != "manual" || got.InForce != "manual" {
+		t.Errorf("after the new agent said: %+v", got)
+	}
+}

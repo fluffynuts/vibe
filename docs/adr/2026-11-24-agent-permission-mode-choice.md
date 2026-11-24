@@ -50,9 +50,11 @@ So vibe never reads the policy: what Claude Code says is enough.
   things there, and no mode helps). vibe works it out when the refusal comes (`suggest` on the event).
 - **The mode in force, where the user works:** the conversation's poll carries the agent's mode whenever it is known
   (`agentMode`: asked, in force), and a label beside Send says it ("Permissions: Manual"), amber when it isn't the one chosen;
-  pressing it opens the card.
+  pressing it opens the card. It keeps the mode the agent last reported, with the one it had been asked for then, after the agent
+  ends: it vanished with the agent at first. It took two lines in the wide layout (sharing Send's column, both wrapped): both stay on
+  one line, and a Firefox test holds the bar to its height, nothing out of it, at three widths.
 
 ## Not built
 
-- What the agent reports is known only while an agent runs: an idle page (the agent ends ~30 s after its work) shows no mode in force
-  until the next prompt.
+- The mode shown is the one the agent last reported: after it ends (~30 s after its last work), a mode chosen since shows only once
+  the next prompt's agent says it.

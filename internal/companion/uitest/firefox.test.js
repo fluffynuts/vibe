@@ -1474,3 +1474,29 @@ test('a state poll cut off by its page closing is not an error, and any other fa
   await closed.close()
   await stateWith(closed, {})(route)
 })
+
+// The permission mode beside Send (see permissionmode.test.js) takes no extra height: the bar under the prompt is as tall with it
+// as without, wide and narrow (it made the row taller when it first showed).
+test('the permission mode beside Send leaves the bar under the prompt no taller, wide and narrow', async () => {
+  for (const width of [1500, 1000, 600]) {
+    const page = await conversationPage(width)
+    try {
+      const m = await page.evaluate(() => {
+        const bar = document.getElementById('convo-send').closest('.bar')
+        const label = document.getElementById('agent-mode')
+        const before = bar.getBoundingClientRect().height
+        label.textContent = 'Permissions: Bypass permissions'
+        label.hidden = false
+        const r = (el) => { const b = el.getBoundingClientRect(); return { top: b.top, bottom: b.bottom, height: b.height } }
+        const b = bar.getBoundingClientRect()
+        const l = label.getBoundingClientRect()
+        const s = document.getElementById('convo-send').getBoundingClientRect()
+        return { before, after: b.height, label: r(label), send: r(document.getElementById('convo-send')),
+          inside: l.left >= b.left - 1 && s.right <= b.right + 1, page: document.documentElement.scrollWidth <= document.documentElement.clientWidth }
+      })
+      assert.ok(m.after <= m.before + 1, `at ${width}px the bar grew from ${m.before}px to ${m.after}px (label ${JSON.stringify(m.label)}, Send ${JSON.stringify(m.send)})`)
+      assert.ok(m.inside, `at ${width}px the label or Send runs out of the bar`)
+      assert.ok(m.page, `at ${width}px the page scrolls sideways`)
+    } finally { await page.close() }
+  }
+})

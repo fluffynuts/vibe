@@ -620,6 +620,8 @@ html.themed .commands li[aria-selected="true"] {
 
 /* Send, and to its left the permission mode the agent is in (amber when it isn't the one chosen). */
 .convo-end { display: flex; align-items: center; gap: 8px; }
+/* Each on one line: squeezed into the column, they wrapped and made the bar twice as tall. */
+.convo-end > button { white-space: nowrap; }
 .agent-mode[hidden] { display: none; }
 .agent-mode.differs { color: var(--amber); border-color: var(--amber); }
 

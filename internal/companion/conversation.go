@@ -124,7 +124,9 @@ type conversation struct {
 	// modeInForce is the permission mode the agent last said it is in (as --permission-mode names it), and modeRefused Claude
 	// Code's words when it refused vibe's last change of it ("" when it took it). See permissionmode.go.
 	modeInForce, modeRefused string
-	cancelStart              context.CancelFunc
+	// modeAsked is the mode that agent had been asked for when it said it was in modeInForce.
+	modeAsked   string
+	cancelStart context.CancelFunc
 	// waiting are prompts given while the agent was being started: they go
 	// to it, in order, once it has. handingOver says they are being given to
 	// it now: a prompt given meanwhile joins them rather than overtake them.
@@ -483,8 +485,8 @@ func (c *conversation) startAgent(ctx context.Context, session string, start Sta
 		return
 	}
 	c.agent, c.starting, c.cancelStart, c.handingOver = agent, false, nil, true
-	// What the last agent said of its mode isn't this one's: its first turn says.
-	c.modeInForce, c.modeRefused = "", ""
+	// A refusal was the last agent's; the mode it was in is still shown until this one says its own.
+	c.modeRefused = ""
 	c.mu.Unlock()
 	go func() {
 		<-agent.Done()
