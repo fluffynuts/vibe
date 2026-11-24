@@ -276,3 +276,23 @@ func TestTheAgentsModeOutlivesTheAgent(t *testing.T) {
 		t.Errorf("after the new agent said: %+v", got)
 	}
 }
+
+// A live change Claude Code refuses sends no status event, only the error: what the agent was asked for is taken from it there
+// too, or the page saw asked and in force agree, and said nothing (seen: an agent in Manual, asked for bypass, refused with
+// bypass_not_launched, and nothing on the page said why).
+func TestARefusedLiveChangeIsSaidAsNotInForce(t *testing.T) {
+	agent := &askingAgent{asked: "manual"}
+	c := &conversation{}
+	c.agent = agent
+	c.line([]byte(`{"type":"system","subtype":"init","permissionMode":"default"}`))
+	if got := c.permission(); got != nil {
+		t.Fatalf("in Manual as asked, yet said: %+v", got)
+	}
+	agent.asked = "bypassPermissions"
+	words := "Cannot set permission mode to bypassPermissions because the session was not launched with --dangerously-skip-permissions"
+	c.line([]byte(`{"type":"control_response","response":{"subtype":"error","request_id":"vibe-mode-2","error":"` + words + `","error_code":"bypass_not_launched"}}`))
+	got := c.permission()
+	if got == nil || got.Asked != "bypassPermissions" || got.InForce != "manual" || got.Refused != words {
+		t.Errorf("got %+v", got)
+	}
+}

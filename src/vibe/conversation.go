@@ -35,9 +35,6 @@ func effectiveMode(mode string) string {
 	return mode
 }
 
-// permissionModes are the --permission-mode values Claude Code takes.
-var permissionModes = map[string]bool{"auto": true, "bypassPermissions": true, "acceptEdits": true, "manual": true, "dontAsk": true, "plan": true}
-
 // shellQuote makes s one word for a POSIX shell.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"

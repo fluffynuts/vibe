@@ -685,3 +685,31 @@ func TestTheAdminTabsModeIsKeptInTheProfilesPreferencesAndSaysWhereItCameFrom(t 
 		t.Errorf("nothing chosen: %q, %q", mode, from)
 	}
 }
+
+// What the card offers is what a turn takes: one list, so a mode offered can't be refused when the agent starts.
+func TestEveryModeTheCardOffersIsTakenByATurn(t *testing.T) {
+	for _, mode := range companion.PermissionModes {
+		c, _ := choiceHome(t, "permissionMode: "+mode+"\n")
+		if got, err := c.forTurn(); err != nil || got.PermissionMode != mode {
+			t.Errorf("%s: %+v, %v", mode, got, err)
+		}
+	}
+}
+
+// The refusal of an unknown mode says the modes there are, and what leaving it out gives, from the same constants the agent is
+// started with: written out by hand, it still said "auto" once the default was bypass again.
+func TestAnUnknownModesRefusalSaysTheRealDefault(t *testing.T) {
+	c, _ := choiceHome(t, "permissionMode: yolo\n")
+	_, err := c.forTurn()
+	if err == nil {
+		t.Fatal("taken")
+	}
+	if !strings.Contains(err.Error(), "leave it out for "+companion.DefaultPermissionMode) {
+		t.Errorf("doesn't say the default (%s): %v", companion.DefaultPermissionMode, err)
+	}
+	for _, mode := range companion.PermissionModes {
+		if !strings.Contains(err.Error(), mode) {
+			t.Errorf("doesn't name %s: %v", mode, err)
+		}
+	}
+}

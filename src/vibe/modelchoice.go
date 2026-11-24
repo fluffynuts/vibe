@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -118,9 +119,9 @@ func (p profileChoice) forTurn() (turnChoice, error) {
 	if err := modelchoice.CheckEffortName(c.Effort); err != nil {
 		return turnChoice{}, fmt.Errorf("the effort chosen in %s can't be used (nothing was sent): %w", pathresolve.Tilde(c.effortFrom), err)
 	}
-	if c.permissionMode != "" && !permissionModes[c.permissionMode] {
-		return turnChoice{}, fmt.Errorf("the permissionMode %q in %s isn't one Claude Code knows (nothing was sent): use one of auto, bypassPermissions, acceptEdits, manual, dontAsk or plan, or leave it out for auto",
-			c.permissionMode, pathresolve.Tilde(c.permissionFrom))
+	if c.permissionMode != "" && !slices.Contains(companion.PermissionModes, c.permissionMode) {
+		return turnChoice{}, fmt.Errorf("the permissionMode %q in %s isn't one Claude Code knows (nothing was sent): use one of %s, or leave it out for %s",
+			c.permissionMode, pathresolve.Tilde(c.permissionFrom), strings.Join(companion.PermissionModes, ", "), companion.DefaultPermissionMode)
 	}
 	out := c.turnChoice
 	out.PermissionMode = c.permissionMode

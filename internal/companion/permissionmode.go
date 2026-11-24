@@ -9,7 +9,7 @@ import (
 )
 
 // The agent's permission mode: chosen on the Admin tab, applied to the running agent, and said when the mode Claude Code reports
-// isn't the one asked for (see docs/plan-agent-permission-mode.md). An organisation's managed settings can disable a mode
+// isn't the one asked for (see docs/adr/2026-11-24-agent-permission-mode-choice.md). An organisation's managed settings can disable a mode
 // (bypassPermissions): Claude Code then starts in its settings' defaultMode without a word, or refuses a change with an error.
 
 // PermissionModes are the modes the Admin tab offers, as Claude Code's --permission-mode takes them.
@@ -98,6 +98,11 @@ func (c *conversation) noteMode(raw []byte, typ, subtype, mode string) {
 		json.Unmarshal(raw, &answer)
 		if !strings.HasPrefix(answer.Response.RequestID, modeRequestPrefix) {
 			return
+		}
+		// A refusal sends no status event: what the agent was asked for is taken here too, or asked and in force would agree
+		// and the refusal go unsaid.
+		if asker, ok := c.agent.(ModeAsker); ok {
+			c.modeAsked = canonicalMode(asker.AskedPermissionMode())
 		}
 		if answer.Response.Subtype == "error" {
 			c.modeRefused = answer.Response.Error
