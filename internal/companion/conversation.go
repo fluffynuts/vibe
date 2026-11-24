@@ -104,6 +104,9 @@ type event struct {
 	// Of is, for a retract, the Seq of the event it takes back: a page that
 	// has that event shows it no longer.
 	Of int `json:"of,omitempty"`
+	// Suggest is, for a denied, the permission mode that would have let it
+	// through, for the page to offer ("" for none).
+	Suggest string `json:"suggest,omitempty"`
 }
 
 // conversation is the one conversation the page has with the agent. It
@@ -714,6 +717,7 @@ func (c *conversation) line(raw []byte) string {
 	case head.Type == "system" && head.Subtype == "permission_denied":
 		// The agent may not say it was refused: the page does, with why, and the mode it was in.
 		c.add("denied", refusal(head.ToolName, head.Message, c.modeInForce), nil)
+		c.events[len(c.events)-1].Suggest = c.modeToSuggest()
 		c.heard = c.clock()
 		return head.Type
 	}
@@ -1127,6 +1131,8 @@ func (s *Server) conversationEvents(w http.ResponseWriter, r *http.Request) {
 		"stopState":    s.convo.stopState(),
 		// The agent's permission mode, when the one it says it is in isn't the one it was asked for (else null).
 		"permissionMode": s.convo.permission(),
+		// The agent's permission mode, as asked for and as it says it is in, whenever that is known (else null).
+		"agentMode": s.convo.modeNow(),
 	}
 	// The slash commands go only to a page without the latest (it says
 	// which it has), not with every poll.

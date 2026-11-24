@@ -170,3 +170,59 @@ test('a permission Claude Code refused is a line in the conversation, with a way
     assert.equal(p.window.document.activeElement, select(p))
   } finally { p.close() }
 })
+
+// The Conversation tab says the mode the agent is in, as Claude Code reports it, beside the model and effort.
+test('the Conversation tab says the permission mode the agent is in, and opens its card when pressed', async () => {
+  const p = await pageWith({ tab: 'conversation', poll: { running: true, agentMode: { asked: 'manual', inForce: 'manual' } } })
+  try {
+    await p.every('pollConversation')
+    const label = p.$('agent-mode')
+    assert.ok(!label.hidden, 'not shown')
+    assert.match(label.textContent, /Permissions: Manual/)
+    assert.ok(!label.classList.contains('differs'))
+    await p.click(label)
+    assert.equal(p.$('tab-admin').getAttribute('aria-selected'), 'true')
+    assert.equal(p.window.document.activeElement, select(p))
+  } finally { p.close() }
+})
+
+test('the label is amber, and says so, when the mode in force is not the one chosen', async () => {
+  const p = await pageWith({ tab: 'conversation', poll: { running: true, agentMode: { asked: 'bypassPermissions', inForce: 'auto' } } })
+  try {
+    await p.every('pollConversation')
+    const label = p.$('agent-mode')
+    assert.match(label.textContent, /Permissions: Auto/)
+    assert.ok(label.classList.contains('differs'))
+    assert.match(label.title, /Bypass permissions/)
+  } finally { p.close() }
+})
+
+test('the label is not shown until the agent has said its mode', async () => {
+  const p = await pageWith({ tab: 'conversation', poll: { running: false, agentMode: null } })
+  try {
+    await p.every('pollConversation')
+    assert.ok(p.$('agent-mode').hidden)
+  } finally { p.close() }
+})
+
+// A refusal offers the mode that would let it through, as vibe worked it out (the event's suggest).
+for (const [suggest, label] of [['bypassPermissions', 'Use Bypass permissions'], ['auto', 'Use Auto']]) {
+  test('a refusal suggesting ' + suggest + ' offers ' + label + ', which chooses it', async () => {
+    const p = await pageWith({ tab: 'conversation', poll: { events: [{ seq: 1, kind: 'denied', text: 'refused', suggest }], last: 1 } })
+    try {
+      await p.every('pollConversation')
+      const line = p.$('convo-log').querySelector('.msg.denied')
+      await p.click(p.button(label, line))
+      assert.deepEqual(p.posted('/api/permission-mode'), [{ mode: suggest }])
+    } finally { p.close() }
+  })
+}
+
+test('a refusal with nothing to suggest offers only the way to the card', async () => {
+  const p = await pageWith({ tab: 'conversation', poll: { events: [{ seq: 1, kind: 'denied', text: 'refused' }], last: 1 } })
+  try {
+    await p.every('pollConversation')
+    const line = p.$('convo-log').querySelector('.msg.denied')
+    assert.deepEqual([...line.querySelectorAll('button')].map((b) => b.textContent), ['Agent permissions…'])
+  } finally { p.close() }
+})

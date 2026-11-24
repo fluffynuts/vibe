@@ -6317,15 +6317,39 @@
     goToThread(id)
   }
 
+  // drawAgentMode shows, beside Send, the permission mode the agent says it is in (m: asked, inForce; null until it has said),
+  // amber when that isn't the one asked for; pressing it opens the Admin tab's card. Written only when it changes.
+  function drawAgentMode(m) {
+    const label = $('agent-mode')
+    const drawn = JSON.stringify(m)
+    if (drawn === label.dataset.drawn) return
+    label.dataset.drawn = drawn
+    label.hidden = !m || !m.inForce
+    if (label.hidden) return
+    const differs = !!m.asked && m.asked !== m.inForce
+    label.textContent = 'Permissions: ' + permissionModeName(m.inForce)
+    label.classList.toggle('differs', differs)
+    label.title = (differs ? 'The agent is in ' + permissionModeName(m.inForce) + ', not ' + permissionModeName(m.asked) + ' as chosen. '
+      : 'The permission mode the agent is in, as Claude Code says. ') + (state.permissionModeChoice ? 'Press to choose it.' : '')
+    label.disabled = !state.permissionModeChoice
+  }
+
+  function openPermissionCard() {
+    select('admin')
+    $('admin-permission-mode').focus()
+  }
+
   // deniedNote is a permission Claude Code refused the agent, as vibe said it: with the way to the Admin tab's choice of mode, where
   // the page has one.
   function deniedNote(ev) {
     endToolGroup()
-    const go = state.permissionModeChoice
-      ? el('button', { type: 'button', class: 'small ghost', text: 'Agent permissions…', onclick: () => { select('admin'); $('admin-permission-mode').focus() } })
+    // The mode that would have let it through, as vibe worked it out (none in bypass itself).
+    const use = state.permissionModeChoice && ev.suggest
+      ? el('button', { type: 'button', class: 'small', text: 'Use ' + permissionModeName(ev.suggest), onclick: () => setPermissionMode(ev.suggest) })
       : null
-    $('convo-log').append(el('div', { class: 'msg denied', 'data-seq': String(ev.seq) }, el('span', { text: ev.text || '' }), go ? ' ' : null, go,
-      el('span', { class: 'foot' }, stamp(ev.at))))
+    const go = state.permissionModeChoice ? el('button', { type: 'button', class: 'small ghost', text: 'Agent permissions…', onclick: openPermissionCard }) : null
+    $('convo-log').append(el('div', { class: 'msg denied', 'data-seq': String(ev.seq) }, el('span', { text: ev.text || '' }),
+      use ? ' ' : null, use, go ? ' ' : null, go, el('span', { class: 'foot' }, stamp(ev.at))))
   }
 
   // seq, when given, marks the line as that event of the conversation, so vibe
@@ -6849,6 +6873,7 @@
       // A turn that isn't running has no tools still being used, whatever the last thing said was.
       if (!res.body.running) endToolGroup()
       convo.permission = res.body.permissionMode || null
+      drawAgentMode(res.body.agentMode || null)
       setConvoRunning(!!res.body.running, !!res.body.background, res.body.quietMinutes || 0, !!res.body.compacting, res.body.stopState, res.body.tasks)
       if (convo.offerNow) {
         convo.offerNow = false
@@ -8765,6 +8790,7 @@
     $('settings-prompts-markdown').addEventListener('change', () => setPromptsAsMarkdown($('settings-prompts-markdown').checked))
     $('settings-theme').addEventListener('change', chooseTheme)
     $('admin-permission-mode').addEventListener('change', choosePermissionMode)
+    $('agent-mode').addEventListener('click', openPermissionCard)
     $('settings-emoji').checked = emojiState.on
     $('settings-emoji').addEventListener('change', () => setEmojiComplete($('settings-emoji').checked))
     document.addEventListener('paste', onPaste)

@@ -115,6 +115,27 @@ func (c *conversation) modeState() *permissionState {
 	return &permissionState{Asked: asked, InForce: c.modeInForce, Refused: c.modeRefused}
 }
 
+// modeToSuggest is the mode that would let through what Claude Code just refused: bypass, unless it was bypass that was refused
+// (Auto, which a policy that disables bypass allows); none in bypass itself, where Claude Code still refuses a few things that no
+// mode would let through, nor when the mode isn't known. mu is held.
+func (c *conversation) modeToSuggest() string {
+	st := c.modeState()
+	switch {
+	case st == nil, st.InForce == "bypassPermissions":
+		return ""
+	case st.Asked == "bypassPermissions":
+		return "auto"
+	}
+	return "bypassPermissions"
+}
+
+// modeNow is the running agent's mode, asked for and in force, whenever it is known (nil when it isn't).
+func (c *conversation) modeNow() *permissionState {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.modeState()
+}
+
 // permission is the running agent's mode when it isn't the one asked for (nil when it is, or isn't known): for the page to say so.
 func (c *conversation) permission() *permissionState {
 	c.mu.Lock()

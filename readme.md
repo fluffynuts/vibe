@@ -772,8 +772,11 @@ restarts, as for files). Colours follow the theme, and what is copied is the cod
   Claude Code's own words when it refused the change: an organisation's managed settings can disable bypass, and Claude
   Code then runs in another mode without saying so (in Manual nothing that needs approval can run, as nobody can approve
   it here). When it's bypass that was refused, the warning has **Use Auto**, which such a policy allows. Each time Claude
-  Code refuses the agent something, the conversation says so in a line of its own, with why, the mode it was in, and
-  **Agent permissions…** to change it.
+  Code refuses the agent something, the conversation says so in a line of its own, with why and the mode it was in, a
+  button for the mode that would have let it through (**Use Bypass permissions**, or **Use Auto** where bypass is what
+  was refused; none in bypass itself, where Claude Code still refuses a few things), and **Agent permissions…** to the
+  card. Beside Send, the Conversation tab says the mode the agent is in, as Claude Code reports it (amber when it isn't
+  the one chosen); pressing it opens the card.
   It also edits your [instructions to the agent](#your-instructions-to-the-agent): **Save** asks what to do when the file has
   changed on disk since (merge, overwrite, or reload), and **Optimise** asks the agent for a tidier
   version, leaving out what's repeated or already in the universal file, for you to **Accept** or

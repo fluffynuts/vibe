@@ -212,3 +212,48 @@ func TestARefusedPermissionBeforeTheModeIsKnownDoesntGuessIt(t *testing.T) {
 		t.Errorf("got %+v", last)
 	}
 }
+
+// A refusal suggests the mode that would have let it through: bypass, unless it was bypass that was refused (Auto then), and
+// nothing in bypass itself (Claude Code still refuses a few things there, and no mode would help).
+func TestARefusalSuggestsTheModeThatWouldLetItThrough(t *testing.T) {
+	for _, c := range []struct{ asked, inForce, want string }{
+		{"manual", "default", "bypassPermissions"},
+		{"auto", "auto", "bypassPermissions"},
+		{"bypassPermissions", "auto", "auto"},
+		{"bypassPermissions", "default", "auto"},
+		{"bypassPermissions", "bypassPermissions", ""},
+	} {
+		convo := convoWith(c.asked)
+		convo.line([]byte(`{"type":"system","subtype":"init","permissionMode":"` + c.inForce + `"}`))
+		convo.line([]byte(`{"type":"system","subtype":"permission_denied","tool_name":"Bash","message":"no"}`))
+		if got := convo.events[len(convo.events)-1].Suggest; got != c.want {
+			t.Errorf("asked %s, in %s: suggested %q, want %q", c.asked, c.inForce, got, c.want)
+		}
+	}
+	unknown := &conversation{}
+	unknown.line([]byte(`{"type":"system","subtype":"permission_denied","tool_name":"Bash","message":"no"}`))
+	if got := unknown.events[len(unknown.events)-1].Suggest; got != "" {
+		t.Errorf("the mode not known, yet suggested %q", got)
+	}
+}
+
+// The Conversation tab shows the mode the agent is in, whether or not it is the one asked for.
+func TestTheConversationsPollCarriesTheAgentsModeWheneverItIsKnown(t *testing.T) {
+	s := newServer(&fakeSbx{})
+	poll := func() *permissionState {
+		rec := do(t, s, req{path: "/api/conversation", headers: authed(nil)})
+		var body struct {
+			AgentMode *permissionState `json:"agentMode"`
+		}
+		json.Unmarshal(rec.Body.Bytes(), &body)
+		return body.AgentMode
+	}
+	if got := poll(); got != nil {
+		t.Errorf("no agent, yet %+v", got)
+	}
+	s.convo.agent = &askingAgent{asked: "bypassPermissions"}
+	s.convo.line([]byte(`{"type":"system","subtype":"init","permissionMode":"bypassPermissions"}`))
+	if got := poll(); got == nil || got.Asked != "bypassPermissions" || got.InForce != "bypassPermissions" {
+		t.Errorf("got %+v", got)
+	}
+}
