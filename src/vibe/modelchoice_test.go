@@ -14,6 +14,7 @@ import (
 
 	"vibe/internal/companion"
 	"vibe/internal/layout"
+	"vibe/internal/pathresolve"
 	"vibe/internal/userprefs"
 )
 
@@ -655,5 +656,32 @@ func TestThePermissionModeInTheProfilesPreferencesWinsOverItsSettings(t *testing
 	}
 	if _, err := c.forTurn(); err == nil || !strings.Contains(err.Error(), "user-preferences.yaml") {
 		t.Errorf("a bad value in the preferences: %v", err)
+	}
+}
+
+func TestTheAdminTabsModeIsKeptInTheProfilesPreferencesAndSaysWhereItCameFrom(t *testing.T) {
+	c, settingsPath := choiceHome(t, "permissionMode: acceptEdits\n")
+	choice := c.permissionModeChoice()
+	if mode, from, err := choice.Get(); err != nil || mode != "acceptEdits" || from != pathresolve.Tilde(settingsPath) {
+		t.Errorf("from the settings: %q, %q, %v", mode, from, err)
+	}
+	if err := choice.Set("bypassPermissions"); err != nil {
+		t.Fatal(err)
+	}
+	if mode, from, _ := choice.Get(); mode != "bypassPermissions" || from != pathresolve.Tilde(userprefs.Path(c.dir())) {
+		t.Errorf("chosen: %q, %q", mode, from)
+	}
+	if data, _ := os.ReadFile(settingsPath); string(data) != "permissionMode: acceptEdits\n" {
+		t.Errorf("the profile's settings.yaml was changed: %q", data)
+	}
+	if err := choice.Set(""); err != nil {
+		t.Fatal(err)
+	}
+	if mode, _, _ := choice.Get(); mode != "acceptEdits" {
+		t.Errorf("the default chosen, the settings' applies again: %q", mode)
+	}
+	empty, _ := choiceHome(t, "")
+	if mode, from, _ := empty.permissionModeChoice().Get(); mode != "" || from != "" {
+		t.Errorf("nothing chosen: %q, %q", mode, from)
 	}
 }

@@ -116,9 +116,12 @@ type conversation struct {
 	session string
 	// agent is the agent's process, while it lives; starting says one is
 	// being started (the sandbox made ready first), cancelStart stops that.
-	agent       Agent
-	starting    bool
-	cancelStart context.CancelFunc
+	agent    Agent
+	starting bool
+	// modeInForce is the permission mode the agent last said it is in (as --permission-mode names it), and modeRefused Claude
+	// Code's words when it refused vibe's last change of it ("" when it took it). See permissionmode.go.
+	modeInForce, modeRefused string
+	cancelStart              context.CancelFunc
 	// waiting are prompts given while the agent was being started: they go
 	// to it, in order, once it has. handingOver says they are being given to
 	// it now: a prompt given meanwhile joins them rather than overtake them.
@@ -477,6 +480,8 @@ func (c *conversation) startAgent(ctx context.Context, session string, start Sta
 		return
 	}
 	c.agent, c.starting, c.cancelStart, c.handingOver = agent, false, nil, true
+	// What the last agent said of its mode isn't this one's: its first turn says.
+	c.modeInForce, c.modeRefused = "", ""
 	c.mu.Unlock()
 	go func() {
 		<-agent.Done()
@@ -678,10 +683,12 @@ func (c *conversation) line(raw []byte) string {
 		NumTurns      *int             `json:"num_turns"`
 		Result        string           `json:"result"`
 		IsError       bool             `json:"is_error"`
+		Mode          string           `json:"permissionMode"`
 	}
 	json.Unmarshal(raw, &head)
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.noteMode(raw, head.Type, head.Subtype, head.Mode)
 	if SessionID.MatchString(head.SessionID) {
 		c.session = head.SessionID
 	}
@@ -1111,6 +1118,8 @@ func (s *Server) conversationEvents(w http.ResponseWriter, r *http.Request) {
 		"quietMinutes": quietMinutes(s.convo.quiet()),
 		"compacting":   s.convo.isCompacting(),
 		"stopState":    s.convo.stopState(),
+		// The agent's permission mode, when the one it says it is in isn't the one it was asked for (else null).
+		"permissionMode": s.convo.permission(),
 	}
 	// The slash commands go only to a page without the latest (it says
 	// which it has), not with every poll.

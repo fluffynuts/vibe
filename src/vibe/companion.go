@@ -394,6 +394,14 @@ func choiceFor(vibeHome, name string, inst state.Instance, kept profileChoice) *
 	return sandboxChoice(name, inst.Target, kept, state.ModelOptionsPath(vibeHome, name))
 }
 
+// permissionModeFor is the Admin tab's choice of the agent's permission mode, for a sandbox whose agent the page talks with.
+func permissionModeFor(inst state.Instance, kept profileChoice) *companion.PermissionModeChoice {
+	if !hasConversation(inst) {
+		return nil
+	}
+	return kept.permissionModeChoice()
+}
+
 // startCompanion serves the companion page for the sandbox, as the user's
 // settings say, and returns what stops it. It never stops the session
 // starting: whatever goes wrong is reported, and the session goes on
@@ -492,6 +500,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		Workspace:              inst.Target,
 		StartAgent:             conversationFor(vibeHome, name, inst, profileChoice{lay: lay, profile: inst.Profile}),
 		Choice:                 choiceFor(vibeHome, name, inst, profileChoice{lay: lay, profile: inst.Profile}),
+		PermissionMode:         permissionModeFor(inst, profileChoice{lay: lay, profile: inst.Profile}),
 		Prepare:                readyForTurn(name),
 		SandboxGit:             sandboxGitFor(name, inst.Target),
 		ExpiredGitTokens:       func() []string { return expiredForDot(vibeHome, timeNow(), sbxKnows) },

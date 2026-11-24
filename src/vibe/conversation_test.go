@@ -387,3 +387,41 @@ func TestTheAgentRunsInTheChosenPermissionModeElseAuto(t *testing.T) {
 		t.Errorf("--permission-mode given %d times: %s", n, inner)
 	}
 }
+
+// A permission mode chosen on the Admin tab while the agent runs is told it before the next prompt, as the model is, in a request
+// the page knows the answer of (companion.ModeRequestID): a refused change (bypass disabled by policy) is said, not lost.
+func TestAChangedPermissionModeIsToldTheAgentBeforeThePrompt(t *testing.T) {
+	choice := turnChoice{}
+	agent, sess, _, _ := startedAgent(t, &choice)
+	asker, ok := agent.(companion.ModeAsker)
+	if !ok {
+		t.Fatal("the agent doesn't say which mode it was asked for")
+	}
+	if got := asker.AskedPermissionMode(); got != "auto" {
+		t.Errorf("asked at the start: %q", got)
+	}
+	agent.Prompt("one", "id-1")
+	if n := len(sess.written()); n != 1 {
+		t.Fatalf("the mode it started in was sent again: %v", sess.written())
+	}
+	choice = turnChoice{PermissionMode: "bypassPermissions"}
+	agent.Prompt("two", "id-2")
+	w := sess.written()[1:]
+	if len(w) != 2 {
+		t.Fatalf("written %v", w)
+	}
+	if req := w[0]["request"].(map[string]interface{}); req["subtype"] != "set_permission_mode" || req["mode"] != "bypassPermissions" {
+		t.Errorf("mode request %v", req)
+	}
+	if id, _ := w[0]["request_id"].(string); !strings.HasPrefix(id, "vibe-mode-") {
+		t.Errorf("request_id %q isn't one the page knows as a mode change", id)
+	}
+	if got := asker.AskedPermissionMode(); got != "bypassPermissions" {
+		t.Errorf("asked after the change: %q", got)
+	}
+	choice = turnChoice{}
+	agent.Prompt("three", "id-3")
+	if req := sess.written()[3]["request"].(map[string]interface{}); req["mode"] != "auto" {
+		t.Errorf("back to the default: %v", req)
+	}
+}

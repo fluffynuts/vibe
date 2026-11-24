@@ -117,6 +117,7 @@ func Update(dir string, change func(*Prefs)) error {
 		{"model", current.Model, want.Model},
 		{"effort", current.Effort, want.Effort},
 		{"mode", current.Mode, want.Mode},
+		{"permissionMode", current.PermissionMode, want.PermissionMode},
 	} {
 		if k.have == k.want {
 			continue

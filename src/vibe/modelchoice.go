@@ -134,11 +134,8 @@ func (p profileChoice) forTurn() (turnChoice, error) {
 // moved first. It never makes a profile: a directory for one that isn't there
 // would hide the real one, wherever it is.
 func (p profileChoice) set(model, effort string) error {
-	if !p.lay.ProfileExists(p.profile) {
-		return fmt.Errorf("profile '%s' isn't there to keep the choice in", p.profile)
-	}
-	if dir := p.lay.HomePath("profiles", p.profile); dir == "" || !fileExists(dir) {
-		return fmt.Errorf("profile '%s' is vibe's own, which can't be written to: make a profile of your own (--profile) to keep the choice in", p.profile)
+	if err := p.writable(); err != nil {
+		return err
 	}
 	// First, so that a settings.yaml that can't be changed leaves the choice as
 	// it was, as the failure says, and not half made.
@@ -146,6 +143,38 @@ func (p profileChoice) set(model, effort string) error {
 		return err
 	}
 	return userprefs.Update(p.dir(), func(u *userprefs.Prefs) { u.Model, u.Effort = model, effort })
+}
+
+// permissionModeChoice is the Admin tab's way to the agent's permission mode: what's chosen, and the file it comes from (the
+// profile's preferences, its settings.yaml or the global one); a choice is kept in the preferences, never in a settings.yaml
+// (a generated profile's is what composing wrote: editing it would stop the profile's automatic updates).
+func (p profileChoice) permissionModeChoice() *companion.PermissionModeChoice {
+	return &companion.PermissionModeChoice{
+		Get: func() (string, string, error) {
+			c, err := p.resolve()
+			if err != nil || c.permissionMode == "" {
+				return "", "", err
+			}
+			return c.permissionMode, pathresolve.Tilde(c.permissionFrom), nil
+		},
+		Set: func(mode string) error {
+			if err := p.writable(); err != nil {
+				return err
+			}
+			return userprefs.Update(p.dir(), func(u *userprefs.Prefs) { u.PermissionMode = mode })
+		},
+	}
+}
+
+// writable says why a choice can't be kept in the profile, if it can't.
+func (p profileChoice) writable() error {
+	if !p.lay.ProfileExists(p.profile) {
+		return fmt.Errorf("profile '%s' isn't there to keep the choice in", p.profile)
+	}
+	if dir := p.lay.HomePath("profiles", p.profile); dir == "" || !fileExists(dir) {
+		return fmt.Errorf("profile '%s' is vibe's own, which can't be written to: make a profile of your own (--profile) to keep the choice in", p.profile)
+	}
+	return nil
 }
 
 // dropFromSettings takes the keys out of the profile's settings.yaml that the

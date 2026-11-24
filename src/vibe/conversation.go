@@ -27,6 +27,14 @@ var agentArgs = []string{"claude", "-p", "--input-format", "stream-json", "--out
 // over a Manual defaultMode (checked with Claude Code 2.1.305 to 2.1.331).
 const defaultPermissionMode = "auto"
 
+// effectiveMode is the mode the agent is asked for when mode is chosen ("" for nothing chosen).
+func effectiveMode(mode string) string {
+	if mode == "" {
+		return defaultPermissionMode
+	}
+	return mode
+}
+
 // permissionModes are the --permission-mode values Claude Code takes.
 var permissionModes = map[string]bool{"auto": true, "bypassPermissions": true, "acceptEdits": true, "manual": true, "dontAsk": true, "plan": true}
 
@@ -58,11 +66,7 @@ func conversationCommand(workspace, session, pidFile string, choice turnChoice) 
 	for _, a := range agentArgs {
 		words = append(words, shellQuote(a))
 	}
-	mode := choice.PermissionMode
-	if mode == "" {
-		mode = defaultPermissionMode
-	}
-	words = append(words, shellQuote("--permission-mode"), shellQuote(mode))
+	words = append(words, shellQuote("--permission-mode"), shellQuote(effectiveMode(choice.PermissionMode)))
 	if choice.Model != "" {
 		words = append(words, "--model", shellQuote(choice.Model))
 	}
@@ -201,7 +205,9 @@ func startAgent(name, workspace string, choose func() (turnChoice, error)) compa
 		if err != nil {
 			return nil, err
 		}
-		return &claudeAgent{name: name, pidFile: conversationPidFile, sess: sess, choose: choose, applied: choice}, nil
+		applied := choice
+		applied.PermissionMode = effectiveMode(choice.PermissionMode)
+		return &claudeAgent{name: name, pidFile: conversationPidFile, sess: sess, choose: choose, applied: applied}, nil
 	}
 }
 
@@ -210,8 +216,9 @@ func startAgent(name, workspace string, choose func() (turnChoice, error)) compa
 type claudeAgent struct {
 	name, pidFile string
 	sess          agentSession
-	// choose is the model and effort the user chose, read for each prompt;
-	// applied is what the agent was last told.
+	// choose is the model, effort and permission mode the user chose, read
+	// for each prompt; applied is what the agent was last told (its mode as
+	// asked for: "" never).
 	choose  func() (turnChoice, error)
 	mu      sync.Mutex
 	applied turnChoice
@@ -247,7 +254,7 @@ func (a *claudeAgent) Prompt(text, id string) error {
 	return a.write(map[string]interface{}{"type": "user", "uuid": id, "message": map[string]interface{}{"role": "user", "content": text}})
 }
 
-// apply tells the agent the model and effort chosen, where they changed.
+// apply tells the agent the model, effort and permission mode chosen, where they changed.
 // The agent's own default model can't be asked for by name: a choice back to
 // it holds from the next agent on. mu is held.
 func (a *claudeAgent) apply(choice turnChoice) error {
@@ -267,7 +274,24 @@ func (a *claudeAgent) apply(choice turnChoice) error {
 		}
 		a.applied.Effort = choice.Effort
 	}
+	if mode := effectiveMode(choice.PermissionMode); mode != a.applied.PermissionMode {
+		a.sent++
+		// Named so the page knows the answer: a mode the settings disable (bypass, by an organisation's policy) is refused there.
+		request := map[string]interface{}{"subtype": "set_permission_mode", "mode": mode}
+		if err := a.write(map[string]interface{}{"type": "control_request", "request_id": companion.ModeRequestID(a.sent), "request": request}); err != nil {
+			return err
+		}
+		a.applied.PermissionMode = mode
+	}
 	return nil
+}
+
+// AskedPermissionMode is the mode the agent was last asked for: the one it started in, or the last change since. What it is in
+// is what it says (see companion.ModeAsker).
+func (a *claudeAgent) AskedPermissionMode() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.applied.PermissionMode
 }
 
 // Interrupt stops the turn under way, sparing what runs in the background
