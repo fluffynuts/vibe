@@ -4264,10 +4264,16 @@
     try {
       const res = await api('/api/permission-mode')
       reached(true)
-      if (res.ok) drawPermissionMode(res.body)
-      else $('admin-permission-note').textContent = res.body.error || "vibe couldn't say what the permission mode is."
+      if (!res.ok) {
+        $('admin-permission-note').textContent = res.body.error || "vibe couldn't say what the permission mode is."
+        cardFailed('permission')
+        return
+      }
+      drawPermissionMode(res.body)
+      cardLoaded('permission')
     } catch (e) {
       reached(false)
+      cardFailed('permission')
     }
   }
 
@@ -4404,6 +4410,7 @@
   function setUpCardLoading() {
     Object.assign(cardLoaders, {
       admin: loadAdmin, signin: loadSignIn, packages: loadPackages, sync: loadSync, instructions: () => loadInstructions(false),
+      permission: loadPermissionMode,
     })
     for (const card of document.querySelectorAll('#panel-admin .card[data-loads]')) {
       cardLoads.set(card, new Set(card.dataset.loads.split(/\s+/).filter(Boolean)))
