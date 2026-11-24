@@ -1,0 +1,5 @@
+{
+  "name": "vibe-clipboard",
+  "version": "0.1.0",
+  "description": "Hands what was pasted on vibe's clipboard page to the agent with the user's next prompt"
+}

@@ -14,6 +14,7 @@ import (
 
 	"vibe/internal/companion"
 	"vibe/internal/layout"
+	"vibe/internal/pathresolve"
 	"vibe/internal/userprefs"
 )
 
@@ -608,5 +609,107 @@ func TestAChoiceIsNotHalfMadeWhenSettingsYamlCantBeChanged(t *testing.T) {
 	}
 	if got, _ := userprefs.Load(c.dir()); got.Model != "opus" {
 		t.Errorf("the choice was changed (%+v) though it was said not to be kept", got)
+	}
+}
+
+func TestThePermissionModeComesFromTheProfilesSettingsOverTheGlobalOnes(t *testing.T) {
+	c, _ := choiceHome(t, "")
+	if got, err := c.forTurn(); err != nil || got.PermissionMode != "" {
+		t.Errorf("unset: %+v, %v", got, err)
+	}
+	if err := os.WriteFile(filepath.Join(c.lay.Home, "settings.yaml"), []byte("permissionMode: acceptEdits\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.forTurn(); got.PermissionMode != "acceptEdits" {
+		t.Errorf("global: %+v", got)
+	}
+	if err := os.WriteFile(c.settingsPath(), []byte("permissionMode: bypassPermissions\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.forTurn(); got.PermissionMode != "bypassPermissions" {
+		t.Errorf("profile over global: %+v", got)
+	}
+}
+
+func TestAPermissionModeClaudeDoesntKnowIsRefusedSayingWhereToFixIt(t *testing.T) {
+	for _, mode := range []string{"bypass", "yolo", "\"$(x)\""} {
+		c, _ := choiceHome(t, "permissionMode: "+mode+"\n")
+		_, err := c.forTurn()
+		if err == nil || !strings.Contains(err.Error(), "settings.yaml") || !strings.Contains(err.Error(), "auto") {
+			t.Errorf("%s: %v", mode, err)
+		}
+	}
+}
+
+// A generated profile's settings.yaml is part of what composing wrote: a permissionMode put there makes the profile look edited
+// by hand, out of the automatic updates. Its user-preferences.yaml isn't, so a per-profile choice goes there, and wins.
+func TestThePermissionModeInTheProfilesPreferencesWinsOverItsSettings(t *testing.T) {
+	c, _ := choiceHome(t, "permissionMode: acceptEdits\n")
+	if err := os.WriteFile(userprefs.Path(c.dir()), []byte("permissionMode: bypassPermissions\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := c.forTurn(); err != nil || got.PermissionMode != "bypassPermissions" {
+		t.Errorf("got %+v, %v", got, err)
+	}
+	if err := os.WriteFile(userprefs.Path(c.dir()), []byte("permissionMode: nonsense\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.forTurn(); err == nil || !strings.Contains(err.Error(), "user-preferences.yaml") {
+		t.Errorf("a bad value in the preferences: %v", err)
+	}
+}
+
+func TestTheAdminTabsModeIsKeptInTheProfilesPreferencesAndSaysWhereItCameFrom(t *testing.T) {
+	c, settingsPath := choiceHome(t, "permissionMode: acceptEdits\n")
+	choice := c.permissionModeChoice()
+	if mode, from, err := choice.Get(); err != nil || mode != "acceptEdits" || from != pathresolve.Tilde(settingsPath) {
+		t.Errorf("from the settings: %q, %q, %v", mode, from, err)
+	}
+	if err := choice.Set("bypassPermissions"); err != nil {
+		t.Fatal(err)
+	}
+	if mode, from, _ := choice.Get(); mode != "bypassPermissions" || from != pathresolve.Tilde(userprefs.Path(c.dir())) {
+		t.Errorf("chosen: %q, %q", mode, from)
+	}
+	if data, _ := os.ReadFile(settingsPath); string(data) != "permissionMode: acceptEdits\n" {
+		t.Errorf("the profile's settings.yaml was changed: %q", data)
+	}
+	if err := choice.Set(""); err != nil {
+		t.Fatal(err)
+	}
+	if mode, _, _ := choice.Get(); mode != "acceptEdits" {
+		t.Errorf("the default chosen, the settings' applies again: %q", mode)
+	}
+	empty, _ := choiceHome(t, "")
+	if mode, from, _ := empty.permissionModeChoice().Get(); mode != "" || from != "" {
+		t.Errorf("nothing chosen: %q, %q", mode, from)
+	}
+}
+
+// What the card offers is what a turn takes: one list, so a mode offered can't be refused when the agent starts.
+func TestEveryModeTheCardOffersIsTakenByATurn(t *testing.T) {
+	for _, mode := range companion.PermissionModes {
+		c, _ := choiceHome(t, "permissionMode: "+mode+"\n")
+		if got, err := c.forTurn(); err != nil || got.PermissionMode != mode {
+			t.Errorf("%s: %+v, %v", mode, got, err)
+		}
+	}
+}
+
+// The refusal of an unknown mode says the modes there are, and what leaving it out gives, from the same constants the agent is
+// started with: written out by hand, it still said "auto" once the default was bypass again.
+func TestAnUnknownModesRefusalSaysTheRealDefault(t *testing.T) {
+	c, _ := choiceHome(t, "permissionMode: yolo\n")
+	_, err := c.forTurn()
+	if err == nil {
+		t.Fatal("taken")
+	}
+	if !strings.Contains(err.Error(), "leave it out for "+companion.DefaultPermissionMode) {
+		t.Errorf("doesn't say the default (%s): %v", companion.DefaultPermissionMode, err)
+	}
+	for _, mode := range companion.PermissionModes {
+		if !strings.Contains(err.Error(), mode) {
+			t.Errorf("doesn't name %s: %v", mode, err)
+		}
 	}
 }

@@ -244,3 +244,12 @@ func TestMergeGitAuthorOverrideWins(t *testing.T) {
 		t.Errorf("GitAuthor = %q, want the base's when the override sets none", got.GitAuthor)
 	}
 }
+
+func TestMergePermissionModeOverridesOnlyWhenSet(t *testing.T) {
+	if got := Merge(Settings{PermissionMode: "auto"}, Settings{PermissionMode: "bypassPermissions"}); got.PermissionMode != "bypassPermissions" {
+		t.Errorf("set: %q", got.PermissionMode)
+	}
+	if got := Merge(Settings{PermissionMode: "auto"}, Settings{}); got.PermissionMode != "auto" {
+		t.Errorf("unset: %q", got.PermissionMode)
+	}
+}

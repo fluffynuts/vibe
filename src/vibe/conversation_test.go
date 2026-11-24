@@ -37,7 +37,7 @@ func TestConversationCommandRunsClaudeInTheWorkspace(t *testing.T) {
 	if !strings.HasPrefix(inner, wrapTurn("", "/tmp/t.pid")+`cd '/home/me/my project' && 'claude' '-p'`) {
 		t.Errorf("inner = %s", inner)
 	}
-	for _, want := range []string{"'stream-json'", "'bypassPermissions'"} {
+	for _, want := range []string{"'stream-json'", "'--permission-mode' 'bypassPermissions'"} {
 		if !strings.Contains(inner, want) {
 			t.Errorf("inner lacks %s: %s", want, inner)
 		}
@@ -369,5 +369,73 @@ func TestEndingTheAgentClosesItsInput(t *testing.T) {
 	case <-sess.Done():
 	default:
 		t.Error("the agent's input is still open")
+	}
+}
+
+// The sandbox is the boundary the agent was given, so it runs in bypass unless another mode is chosen (Auto, where an
+// organisation's managed settings disable bypass: the page says so when they do).
+func TestTheAgentRunsInTheChosenPermissionModeElseBypass(t *testing.T) {
+	if inner := conversationCommand("/w", "", "/tmp/t.pid", turnChoice{})[4]; !strings.Contains(inner, "'--permission-mode' 'bypassPermissions'") {
+		t.Errorf("unchosen: %s", inner)
+	}
+	inner := conversationCommand("/w", "", "/tmp/t.pid", turnChoice{PermissionMode: "auto"})[4]
+	if !strings.Contains(inner, "'--permission-mode' 'auto'") || strings.Contains(inner, "'bypassPermissions'") {
+		t.Errorf("chosen auto: %s", inner)
+	}
+	if n := strings.Count(inner, "--permission-mode"); n != 1 {
+		t.Errorf("--permission-mode given %d times: %s", n, inner)
+	}
+}
+
+// A permission mode chosen on the Admin tab while the agent runs is told it before the next prompt, as the model is, in a request
+// the page knows the answer of (companion.ModeRequestID): a refused change (bypass disabled by policy) is said, not lost.
+func TestAChangedPermissionModeIsToldTheAgentBeforeThePrompt(t *testing.T) {
+	choice := turnChoice{}
+	agent, sess, _, _ := startedAgent(t, &choice)
+	asker, ok := agent.(companion.ModeAsker)
+	if !ok {
+		t.Fatal("the agent doesn't say which mode it was asked for")
+	}
+	if got := asker.AskedPermissionMode(); got != "bypassPermissions" {
+		t.Errorf("asked at the start: %q", got)
+	}
+	agent.Prompt("one", "id-1")
+	if n := len(sess.written()); n != 1 {
+		t.Fatalf("the mode it started in was sent again: %v", sess.written())
+	}
+	choice = turnChoice{PermissionMode: "auto"}
+	agent.Prompt("two", "id-2")
+	w := sess.written()[1:]
+	if len(w) != 2 {
+		t.Fatalf("written %v", w)
+	}
+	if req := w[0]["request"].(map[string]interface{}); req["subtype"] != "set_permission_mode" || req["mode"] != "auto" {
+		t.Errorf("mode request %v", req)
+	}
+	if id, _ := w[0]["request_id"].(string); !strings.HasPrefix(id, "vibe-mode-") {
+		t.Errorf("request_id %q isn't one the page knows as a mode change", id)
+	}
+	if got := asker.AskedPermissionMode(); got != "auto" {
+		t.Errorf("asked after the change: %q", got)
+	}
+	choice = turnChoice{}
+	agent.Prompt("three", "id-3")
+	if req := sess.written()[3]["request"].(map[string]interface{}); req["mode"] != "bypassPermissions" {
+		t.Errorf("back to the default: %v", req)
+	}
+}
+
+// A running agent can be switched into bypass (the Admin card, a refusal's Use Bypass permissions) only when it was started
+// with bypass allowed: started in another mode without it, Claude Code refused the switch ("the session was not launched with
+// --dangerously-skip-permissions", bypass_not_launched). The flag allows bypass without turning it on.
+func TestTheAgentIsAlwaysStartedWithBypassAllowed(t *testing.T) {
+	for _, mode := range []string{"", "manual", "auto", "bypassPermissions"} {
+		inner := conversationCommand("/w", "", "/tmp/t.pid", turnChoice{PermissionMode: mode})[4]
+		if !strings.Contains(inner, "'--allow-dangerously-skip-permissions'") {
+			t.Errorf("mode %q: started without bypass allowed: %s", mode, inner)
+		}
+		if strings.Contains(inner, "'--dangerously-skip-permissions'") {
+			t.Errorf("mode %q: started in bypass whatever was chosen: %s", mode, inner)
+		}
 	}
 }

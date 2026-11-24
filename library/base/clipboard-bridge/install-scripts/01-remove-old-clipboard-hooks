@@ -1,0 +1,10 @@
+#!/bin/sh
+# vibe: description: takes away the clipboard hook's old registration (the vibe-clipboard plugin registers it now)
+# vibe: user: 0
+# The hook (UserPromptSubmit: what was pasted goes with the user's next message) is registered by the vibe-clipboard plugin,
+# as vibe-band's hooks are. It was a managed-settings drop-in, which Claude Code 2.1.331 didn't run where an organisation's
+# managed settings came from its servers: pastes were never handed over. Where drop-ins are read, the old one would run the
+# hook a second time, so it goes.
+rm -f /etc/claude-code/managed-settings.d/50-vibe-clipboard.json
+rmdir /etc/claude-code/managed-settings.d 2>/dev/null
+true

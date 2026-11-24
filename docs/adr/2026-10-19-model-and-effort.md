@@ -7,7 +7,7 @@
 
 ## Context
 
-Every turn of the conversation is its own process (`claude -p --output-format stream-json --verbose --permission-mode bypassPermissions`, resumed with
+Every turn of the conversation is its own process (`claude -p --output-format stream-json --verbose --permission-mode bypassPermissions` (since 2026-11-24 `auto`, or `permissionMode` in settings.yaml: see `2026-11-24-agent-permission-mode.md`), resumed with
 `--resume <id>`), so a model or effort chosen on the page can ride on each turn's command line and nothing has to be changed in a running agent. The
 user wanted to see which model and effort the agent works with, and change either in one step: Opus to Sonnet for a simple job, a higher effort for a
 hard one. The Conversation tab exists only for Claude sandboxes, so this was Claude-only to begin with.

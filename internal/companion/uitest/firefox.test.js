@@ -776,6 +776,29 @@ test('the emoji list follows the prompt as it scrolls', async () => {
     await page.keyboard.type(' :roc')
     await page.waitForSelector('#convo-emoji:not([hidden]) li')
     const before = await listBox(page)
+    // Recorded from here on, and said if the list never moves: on macOS CI the prompt was seen scrolled back to its caret
+    // (scrollTop 94.65 → 33.75 → 94.65) with no clue what did it. Every scroll of the prompt, any script setting its scrollTop
+    // (with where from), its height being set (which can reset its scroll), its focus, input and selection, and the window's
+    // size and visibility.
+    await page.evaluate(() => {
+      const ta = document.getElementById('convo-input')
+      const log = window.vibeTestPromptLog = []
+      const t0 = performance.now()
+      const note = (what, extra) => log.push(Object.assign({ t: Math.round(performance.now() - t0), what, scrollTop: Math.round(ta.scrollTop),
+        height: ta.style.height, focused: document.activeElement === ta, caret: ta.selectionStart }, extra))
+      const scrollTop = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop')
+      Object.defineProperty(ta, 'scrollTop', {
+        configurable: true,
+        get() { return scrollTop.get.call(this) },
+        set(v) { note('scrollTop set', { to: Math.round(v), by: (new Error().stack || '').split('\n').slice(1, 4).join(' | ') }); scrollTop.set.call(this, v) },
+      })
+      ta.addEventListener('scroll', () => note('scroll'))
+      for (const e of ['focus', 'blur', 'input', 'select', 'keydown']) ta.addEventListener(e, () => note(e))
+      document.addEventListener('selectionchange', () => note('selectionchange'))
+      window.addEventListener('resize', () => note('resize', { w: innerWidth, h: innerHeight }))
+      document.addEventListener('visibilitychange', () => note('visibility ' + document.visibilityState))
+      new MutationObserver(() => note('style set')).observe(ta, { attributes: true, attributeFilter: ['style'] })
+    })
     // The line as listBox measures it: a computed line-height can be "normal" (macOS CI), which is no number to scroll by.
     const scrolled = await page.evaluate((line) => {
       const ta = document.getElementById('convo-input')
@@ -794,8 +817,12 @@ test('the emoji list follows the prompt as it scrolls', async () => {
       if (seen.bottom > before.list.bottom + 10) break
       await page.waitForTimeout(50)
     }
-    assert.ok(seen.bottom > before.list.bottom + 10, `the list did not move down with the prompt within 5s: before ${JSON.stringify(before.list)}, ` +
-      `scrolled ${JSON.stringify(scrolled)}, then ${JSON.stringify(seen)}`)
+    if (!(seen.bottom > before.list.bottom + 10)) {
+      const log = await page.evaluate(() => window.vibeTestPromptLog.slice(-40))
+      assert.fail(`the list did not move down with the prompt within 5s: before ${JSON.stringify(before.list)}, ` +
+        `scrolled ${JSON.stringify(scrolled)}, then ${JSON.stringify(seen)}; what the prompt saw since (last 40):\n` +
+        log.map((e) => JSON.stringify(e)).join('\n'))
+    }
     const after = await listBox(page)
     const moved = after.list.bottom - before.list.bottom
     const by = scrolled.was - scrolled.now
@@ -1320,20 +1347,32 @@ test('a coloured block in the conversation has the syntax colours, in the light 
   }
 })
 
-test('the status button sits just left of New conversation at the right of the bar, and its balloon moves nothing and stays on the page', async () => {
-  for (const width of [1000, 420]) {
+// The status button and New conversation sit at the tab bar's end (see layout.test.js), kept in reach when the tabs need the
+// width; their balloon hangs below the tab bar, under the button, and moves nothing; the conversation and the clipboard start
+// right under the tab bar, with no bar of their own taking the height.
+test('the status button and New conversation sit in the tab bar, in reach at every width, and the conversation starts under it', async () => {
+  for (const width of [1500, 1000, 420]) {
     const page = await conversationPage(width)
     try {
       // Opened from the button, the balloon stays (until closed) whatever the page's polls do meanwhile, so every box is read with it open.
       const measure = () => page.evaluate(() => {
-        const r = (id) => document.getElementById(id).getBoundingClientRect()
-        const bar = document.getElementById('convo-new').parentElement.getBoundingClientRect()
-        return { info: r('status-info'), fresh: r('convo-new'), log: r('convo-log'), balloon: r('status-balloon'), bar,
-          open: !document.getElementById('status-balloon').hidden, viewport: document.documentElement.clientWidth }
+        const r = (el) => { const b = (typeof el === 'string' ? document.getElementById(el) : el).getBoundingClientRect(); return { left: b.left, right: b.right, top: b.top, bottom: b.bottom } }
+        return { info: r('status-info'), fresh: r('convo-new'), log: r('convo-log'), tabbar: r('tabbar'), balloon: r('status-balloon'),
+          clip: r(document.querySelector('.convo-clip')), open: !document.getElementById('status-balloon').hidden,
+          viewport: document.documentElement.clientWidth, sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth }
       })
       const closed = await measure()
-      assert.ok(Math.abs(closed.bar.right - closed.fresh.right) <= 1, `${width}px: New conversation is not at the right edge`)
+      for (const key of ['info', 'fresh']) {
+        assert.ok(closed[key].top >= closed.tabbar.top && closed[key].bottom <= closed.tabbar.bottom, `${width}px: ${key} is not in the tab bar`)
+        assert.ok(closed[key].left >= 0 && closed[key].right <= closed.viewport, `${width}px: ${key} is out of reach (${Math.round(closed[key].left)}–${Math.round(closed[key].right)})`)
+      }
       assert.ok(closed.info.right <= closed.fresh.left && closed.fresh.left - closed.info.right < 16, `${width}px: the button is not just left of New conversation`)
+      assert.ok(closed.log.top - closed.tabbar.bottom < 30, `${width}px: ${Math.round(closed.log.top - closed.tabbar.bottom)}px between the tab bar and the conversation`)
+      // Side by side; narrow, the clipboard is stacked under the conversation.
+      if (closed.clip.left > closed.log.left) {
+        assert.ok(closed.clip.top - closed.tabbar.bottom < 30, `${width}px: ${Math.round(closed.clip.top - closed.tabbar.bottom)}px between the tab bar and the clipboard`)
+      }
+      assert.ok(!closed.sideways, `${width}px: the page scrolls sideways`)
       await page.click('#status-info')
       const open = await measure()
       assert.ok(open.open, `${width}px: the balloon did not open`)
@@ -1342,7 +1381,8 @@ test('the status button sits just left of New conversation at the right of the b
         assert.equal(Math.round(open[key].left), Math.round(closed[key].left), `${width}px: opening the balloon moved ${key}`)
       }
       assert.ok(open.balloon.left >= 0 && open.balloon.right <= open.viewport, `${width}px: the balloon runs off the page (${Math.round(open.balloon.left)}–${Math.round(open.balloon.right)})`)
-      assert.ok(open.balloon.top >= open.info.bottom, `${width}px: the balloon is not below its button`)
+      assert.ok(open.balloon.top >= open.tabbar.bottom, `${width}px: the balloon is not below the tab bar`)
+      assert.ok(open.balloon.left <= open.info.left && open.balloon.right >= open.info.right, `${width}px: the balloon is not under its button`)
     } finally { await page.close() }
   }
 })
@@ -1516,5 +1556,51 @@ test('a countdown bar shrinks over its time inside the top edge of its toast, an
       return new DOMMatrix(getComputedStyle(bar).transform).a
     })
     assert.ok(Math.abs(scale - 0.5) < 0.01, `halfway through, it is at ${scale} of its width`)
+  } finally { await page.close() }
+})
+
+// The permission mode beside Send (see permissionmode.test.js) takes no extra height: the bar under the prompt is as tall with it
+// as without, wide and narrow (it made the row taller when it first showed).
+test('the permission mode beside Send leaves the bar under the prompt no taller, wide and narrow', async () => {
+  for (const width of [1500, 1000, 600]) {
+    const page = await conversationPage(width)
+    try {
+      const m = await page.evaluate(() => {
+        const bar = document.getElementById('convo-send').closest('.bar')
+        const label = document.getElementById('agent-mode')
+        const before = bar.getBoundingClientRect().height
+        label.textContent = 'Permissions: Bypass permissions'
+        label.hidden = false
+        const r = (el) => { const b = el.getBoundingClientRect(); return { top: b.top, bottom: b.bottom, height: b.height } }
+        const b = bar.getBoundingClientRect()
+        const l = label.getBoundingClientRect()
+        const s = document.getElementById('convo-send').getBoundingClientRect()
+        return { before, after: b.height, label: r(label), send: r(document.getElementById('convo-send')),
+          inside: l.left >= b.left - 1 && s.right <= b.right + 1, page: document.documentElement.scrollWidth <= document.documentElement.clientWidth }
+      })
+      assert.ok(m.after <= m.before + 1, `at ${width}px the bar grew from ${m.before}px to ${m.after}px (label ${JSON.stringify(m.label)}, Send ${JSON.stringify(m.send)})`)
+      assert.ok(m.inside, `at ${width}px the label or Send runs out of the bar`)
+      assert.ok(m.page, `at ${width}px the page scrolls sideways`)
+    } finally { await page.close() }
+  }
+})
+
+// The permission mode beside Send shows only when it isn't the one chosen (see permissionmode.test.js), and then always in amber,
+// the colour the page warns in.
+test('the permission mode beside Send is amber whenever it shows', async () => {
+  const page = await conversationPage(1500)
+  try {
+    const m = await page.evaluate(() => {
+      const label = document.getElementById('agent-mode')
+      label.textContent = 'Permissions: Manual'
+      label.hidden = false
+      const probe = document.createElement('span')
+      probe.style.color = 'var(--amber)'
+      document.body.append(probe)
+      const amber = getComputedStyle(probe).color
+      probe.remove()
+      return { label: getComputedStyle(label).color, amber }
+    })
+    assert.equal(m.label, m.amber)
   } finally { await page.close() }
 })

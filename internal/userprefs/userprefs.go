@@ -41,6 +41,9 @@ type Prefs struct {
 	// Mode is how vibe starts for this profile when nothing typed decides it:
 	// "headless" or "terminal"; unset, the settings' say.
 	Mode string `yaml:"mode,omitempty"`
+	// PermissionMode is the --permission-mode the conversation runs the agent with (see settings.Settings.PermissionMode);
+	// unset, the settings' say.
+	PermissionMode string `yaml:"permissionMode,omitempty"`
 
 	Others map[string]interface{} `yaml:",inline"`
 }
@@ -114,6 +117,7 @@ func Update(dir string, change func(*Prefs)) error {
 		{"model", current.Model, want.Model},
 		{"effort", current.Effort, want.Effort},
 		{"mode", current.Mode, want.Mode},
+		{"permissionMode", current.PermissionMode, want.PermissionMode},
 	} {
 		if k.have == k.want {
 			continue

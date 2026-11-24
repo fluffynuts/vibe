@@ -179,6 +179,7 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .msg.tool { font-family: var(--mono); font-size: 12px; color: var(--muted); }
 .msg.meta { font-size: 12px; color: var(--muted); }
 .msg.error { color: var(--bad); }
+.msg.denied { font-size: 12px; color: var(--amber); }
 .tool-group > summary { cursor: pointer; font: 12px var(--mono); color: var(--muted); }
 .tool-group.bad > summary { color: var(--bad); }
 .tool-group-body { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 2px 12px; padding-left: 10px; border-left: 2px solid var(--line); }
@@ -206,10 +207,18 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .convo-clip .wait p { margin: 0; }
 .convo-clip .wait button { margin-top: 10px; }
 /* One line however narrow the column: the note coming and going must never push the page down. */
-.convo-clip .bar { flex-wrap: nowrap; }
-.convo-clip .bar > * { flex: none; }
-.convo-clip .bar > #convo-clipboard-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.convo-clip .bar > .spacer { flex: 1 1 0; }
+/* The clipboard column has no bar of its own: a page that stops answering is said in a slim banner over the top of its frame. */
+.convo-clip { position: relative; }
+.clip-banner { position: absolute; top: 0; left: 0; right: 0; z-index: 1; margin: 0; padding: 4px 10px; font-size: 12px;
+  background: var(--warn-bg); color: var(--amber); border: 1px solid var(--warn-line); border-radius: 8px 8px 0 0;
+  /* Room at its right for the icon at the frame's corner, which sits above it. */
+  padding-right: 36px; }
+.clip-banner[hidden] { display: none; }
+/* Opens the clipboard in a tab of its own, from the frame's top right corner. */
+.clip-open { position: absolute; top: 6px; right: 6px; z-index: 2; display: inline-flex; padding: 4px; border-radius: 6px; color: var(--muted); }
+.clip-open:hover, .clip-open:focus-visible { color: var(--text); background: var(--line); }
+.clip-open[hidden] { display: none; }
+.clip-open svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .convo-clip iframe { flex: 1; width: 100%; min-height: 240px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
 @media (max-width: 900px) {
   .convo-layout { grid-template-columns: 1fr; }
@@ -617,13 +626,21 @@ html.themed .commands li[aria-selected="true"] {
 .convo-form .bar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; }
 .convo-form .bar > #convo-stop { grid-column: 1; justify-self: start; }
 .convo-form .bar > .choice { grid-column: 2; justify-self: center; }
-.convo-form .bar > #convo-send { grid-column: 3; justify-self: end; }
+.convo-form .bar > .convo-end { grid-column: 3; justify-self: end; }
 @container (max-width: 920px) {
   .convo-form .bar { grid-template-columns: 1fr 1fr; }
   .convo-form .bar > .choice { grid-column: 1 / -1; grid-row: 1; }
   .convo-form .bar > #convo-stop { grid-column: 1; grid-row: 2; }
-  .convo-form .bar > #convo-send { grid-column: 2; grid-row: 2; }
+  .convo-form .bar > .convo-end { grid-column: 2; grid-row: 2; }
 }
+
+/* Send, and to its left the permission mode the agent is in (amber when it isn't the one chosen). */
+.convo-end { display: flex; align-items: center; gap: 8px; }
+/* Each on one line: squeezed into the column, they wrapped and made the bar twice as tall. */
+.convo-end > button { white-space: nowrap; }
+/* Shown only when the mode in force isn't the one chosen: a warning, in the colour the page warns in. */
+.agent-mode { color: var(--amber); border-color: var(--amber); }
+.agent-mode[hidden] { display: none; }
 
 /* the model and effort drop-downs */
 .choice { position: relative; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 8px; }
@@ -677,14 +694,18 @@ html.themed .commands li[aria-selected="true"] {
 .choice-info.warn::after { background: var(--amber); }
 /* The Conversation tab's status: its own info button left of New conversation, and a balloon below it (docs/adr/2026-11-18-status-balloon.md).
    A dot pulsing between blue and grey while background work runs (steady for those who ask for less motion), a steady amber one while a warning stands. */
-.convo-bar { position: relative; }
+/* The status button and New conversation, at the tab bar's end; their balloon hangs below them, from the panel's top
+   right (inside the tab bar, which scrolls sideways when narrow, it would be cut off). */
+.convo-actions { display: flex; align-items: center; gap: 8px; }
+.convo-actions[hidden] { display: none; }
+.panel-conversation { position: relative; }
 .status-info.busy::after { content: ""; position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
   animation: status-pulse 2s ease-in-out infinite; }
 .status-info.warn::after { content: ""; position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); }
 /* As the favicon's dot pulses: the same size throughout, its colour between the accent and grey, a second each way. */
 @keyframes status-pulse { 0%, 100% { background: var(--accent); } 50% { background: var(--muted); } }
 @media (prefers-reduced-motion: reduce) { .status-info.busy::after { animation: none; } }
-.status-balloon { position: absolute; z-index: 20; top: calc(100% + 6px); right: 0; box-sizing: border-box; width: min(32rem, 100%);
+.status-balloon { position: absolute; z-index: 20; top: 6px; right: 16px; box-sizing: border-box; width: min(32rem, calc(100% - 32px));
   padding: 10px 30px 4px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: 0 4px 16px rgba(0, 0, 0, .18); }
 .status-balloon[hidden] { display: none; }
 .status-balloon p { margin: 0 0 6px; }
@@ -823,7 +844,9 @@ dialog.glass::backdrop { background: rgba(250, 250, 250, .55); backdrop-filter: 
 #convo-packages { display: flex; gap: 8px; align-items: center; padding: 6px 10px; margin-bottom: 6px; border: 1px solid var(--bad, #c33); border-radius: 6px; }
 
 /* The bars at the tab bar's far end: pushed there when there's room, scrolling with the tabs when there isn't. */
-.tabbar-end { margin-left: auto; padding-left: 16px; flex: none; display: flex; align-items: center; gap: 14px; }
+/* Kept at the right edge, the tabs scrolling under it when there's no room: New conversation and the meters stay in reach. */
+.tabbar-end { margin-left: auto; padding-left: 16px; flex: none; display: flex; align-items: center; gap: 14px;
+  position: sticky; right: 0; background: var(--panel); }
 .usage { flex: none; display: flex; flex-direction: column; justify-content: center; gap: 3px; font-size: 11px; color: var(--muted); }
 .usage-row { display: flex; align-items: center; justify-content: flex-end; gap: 6px; white-space: nowrap; }
 .meter { display: inline-block; width: 90px; height: 7px; border-radius: 3px; background: var(--line); overflow: hidden; }

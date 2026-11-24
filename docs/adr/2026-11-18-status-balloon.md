@@ -15,7 +15,8 @@ keep the user informed with as little noise, and as little of the screen, as pos
 
 ## Decision
 
-**An info button of its own**, just left of New conversation (not the model/effort one: unrelated concerns). The status line's messages
+**An info button of its own**, just left of New conversation (not the model/effort one: unrelated concerns). (Since 2026-11-24 both sit at the tab bar's end, on the Conversation tab alone, and the balloon hangs from the panel's top
+right below them: see `2026-11-24-conversation-tab-height.md`.) The status line's messages
 move into a **balloon** that opens from it, with a ✕ top-right. Only the status line's texts: the banners with buttons (sign-in, stale, git
 author, sync), the network and packages banners, and the "Stopped… Stop them too / Leave them running" offer in the conversation stay.
 

@@ -1,0 +1,9 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [{ "type": "command", "command": "/home/agent/.local/bin/clipboard-hook", "timeout": 5 }]
+      }
+    ]
+  }
+}
