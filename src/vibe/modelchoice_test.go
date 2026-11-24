@@ -610,3 +610,32 @@ func TestAChoiceIsNotHalfMadeWhenSettingsYamlCantBeChanged(t *testing.T) {
 		t.Errorf("the choice was changed (%+v) though it was said not to be kept", got)
 	}
 }
+
+func TestThePermissionModeComesFromTheProfilesSettingsOverTheGlobalOnes(t *testing.T) {
+	c, _ := choiceHome(t, "")
+	if got, err := c.forTurn(); err != nil || got.PermissionMode != "" {
+		t.Errorf("unset: %+v, %v", got, err)
+	}
+	if err := os.WriteFile(filepath.Join(c.lay.Home, "settings.yaml"), []byte("permissionMode: acceptEdits\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.forTurn(); got.PermissionMode != "acceptEdits" {
+		t.Errorf("global: %+v", got)
+	}
+	if err := os.WriteFile(c.settingsPath(), []byte("permissionMode: bypassPermissions\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.forTurn(); got.PermissionMode != "bypassPermissions" {
+		t.Errorf("profile over global: %+v", got)
+	}
+}
+
+func TestAPermissionModeClaudeDoesntKnowIsRefusedSayingWhereToFixIt(t *testing.T) {
+	for _, mode := range []string{"bypass", "yolo", "\"$(x)\""} {
+		c, _ := choiceHome(t, "permissionMode: "+mode+"\n")
+		_, err := c.forTurn()
+		if err == nil || !strings.Contains(err.Error(), "settings.yaml") || !strings.Contains(err.Error(), "auto") {
+			t.Errorf("%s: %v", mode, err)
+		}
+	}
+}

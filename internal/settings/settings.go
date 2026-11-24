@@ -74,6 +74,10 @@ type Settings struct {
 	// The page writes them into the profile's settings.yaml.
 	Model  string `yaml:"model,omitempty"`
 	Effort string `yaml:"effort,omitempty"`
+	// PermissionMode is the --permission-mode the conversation tab runs the agent with (one of Claude Code's: auto,
+	// bypassPermissions, acceptEdits, manual, dontAsk, plan). Unset means auto: an organisation's managed settings can disable
+	// bypassPermissions, and Claude Code then falls back, without a word, to the settings' defaultMode.
+	PermissionMode string `yaml:"permissionMode,omitempty"`
 	// GitAuthor is what vibe does when a sandbox's agent has no git author
 	// name and email, which git needs to commit: "import" gives it the
 	// user's own, "leave" leaves it without; unset asks (and keeps the answer
@@ -150,6 +154,9 @@ func Merge(base, override Settings) Settings {
 	}
 	if override.Effort != "" {
 		out.Effort = override.Effort
+	}
+	if override.PermissionMode != "" {
+		out.PermissionMode = override.PermissionMode
 	}
 	if override.GitAuthor != "" {
 		out.GitAuthor = override.GitAuthor

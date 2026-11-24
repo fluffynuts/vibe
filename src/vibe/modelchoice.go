@@ -42,6 +42,8 @@ func (p profileChoice) settingsPath() string { return filepath.Join(p.dir(), set
 type chosen struct {
 	turnChoice
 	modelFrom, effortFrom string
+	// permissionMode is set in settings.yaml only (the page doesn't choose it), and permissionFrom is the file it came from.
+	permissionMode, permissionFrom string
 }
 
 // resolve works out the choice that applies, from the profile's preferences,
@@ -71,6 +73,7 @@ func (p profileChoice) resolve() (chosen, error) {
 	var out chosen
 	out.Model, out.modelFrom = pick(prefs.Model, own.Model, global.Model)
 	out.Effort, out.effortFrom = pick(prefs.Effort, own.Effort, global.Effort)
+	out.permissionMode, out.permissionFrom = pick("", own.PermissionMode, global.PermissionMode)
 	return out, nil
 }
 
@@ -115,7 +118,13 @@ func (p profileChoice) forTurn() (turnChoice, error) {
 	if err := modelchoice.CheckEffortName(c.Effort); err != nil {
 		return turnChoice{}, fmt.Errorf("the effort chosen in %s can't be used (nothing was sent): %w", pathresolve.Tilde(c.effortFrom), err)
 	}
-	return c.turnChoice, nil
+	if c.permissionMode != "" && !permissionModes[c.permissionMode] {
+		return turnChoice{}, fmt.Errorf("the permissionMode %q in %s isn't one Claude Code knows (nothing was sent): use one of auto, bypassPermissions, acceptEdits, manual, dontAsk or plan, or leave it out for auto",
+			c.permissionMode, pathresolve.Tilde(c.permissionFrom))
+	}
+	out := c.turnChoice
+	out.PermissionMode = c.permissionMode
+	return out, nil
 }
 
 // set keeps model and effort in the profile's user preferences, as it takes

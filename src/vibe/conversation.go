@@ -16,10 +16,19 @@ import (
 
 // agentArgs is how the conversation tab runs claude: one process for as long
 // as it has work, prompts (and vibe's requests: a stop, a model) written to
-// its stdin as stream-json, its progress as stream-json on stdout. There is
-// no terminal to approve anything on, and the sandbox is the boundary the
-// agent was given, so it runs the way sbx itself runs it.
-var agentArgs = []string{"claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions"}
+// its stdin as stream-json, its progress as stream-json on stdout. Its
+// --permission-mode is added by conversationCommand.
+var agentArgs = []string{"claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"}
+
+// defaultPermissionMode is how the agent runs unless settings.yaml says otherwise. There is no terminal to approve anything on,
+// and the sandbox is the boundary the agent was given, so nothing should wait for an answer. Not bypassPermissions: an
+// organisation's managed settings can disable it (disableBypassPermissionsMode), and Claude Code then falls back, without a
+// word, to the settings' defaultMode, where a Manual one refused nearly everything. Auto is allowed under that policy, and wins
+// over a Manual defaultMode (checked with Claude Code 2.1.305 to 2.1.331).
+const defaultPermissionMode = "auto"
+
+// permissionModes are the --permission-mode values Claude Code takes.
+var permissionModes = map[string]bool{"auto": true, "bypassPermissions": true, "acceptEdits": true, "manual": true, "dontAsk": true, "plan": true}
 
 // shellQuote makes s one word for a POSIX shell.
 func shellQuote(s string) string {
@@ -35,6 +44,8 @@ const asAgentScript = `if [ "$(id -u)" = 0 ]; then exec su - "$(id -un 1000 2>/d
 // chose on the page, empty where they left the agent's own default.
 type turnChoice struct {
 	Model, Effort string
+	// PermissionMode is the agent's --permission-mode from settings.yaml; "" is defaultPermissionMode.
+	PermissionMode string
 }
 
 // conversationCommand is what sbx exec runs for one turn: claude, in the
@@ -46,6 +57,11 @@ func conversationCommand(workspace, session, pidFile string, choice turnChoice) 
 	for _, a := range agentArgs {
 		words = append(words, shellQuote(a))
 	}
+	mode := choice.PermissionMode
+	if mode == "" {
+		mode = defaultPermissionMode
+	}
+	words = append(words, shellQuote("--permission-mode"), shellQuote(mode))
 	if choice.Model != "" {
 		words = append(words, "--model", shellQuote(choice.Model))
 	}

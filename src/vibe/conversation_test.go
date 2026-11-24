@@ -37,7 +37,7 @@ func TestConversationCommandRunsClaudeInTheWorkspace(t *testing.T) {
 	if !strings.HasPrefix(inner, wrapTurn("", "/tmp/t.pid")+`cd '/home/me/my project' && 'claude' '-p'`) {
 		t.Errorf("inner = %s", inner)
 	}
-	for _, want := range []string{"'stream-json'", "'bypassPermissions'"} {
+	for _, want := range []string{"'stream-json'", "'--permission-mode' 'auto'"} {
 		if !strings.Contains(inner, want) {
 			t.Errorf("inner lacks %s: %s", want, inner)
 		}
@@ -79,7 +79,7 @@ func TestConversationCommandAsksForAModelAndEffortOnlyWhenChosen(t *testing.T) {
 		}
 	}
 	inner = conversationCommand("/w", "abc-123", "/tmp/t.pid", turnChoice{Model: "opus", Effort: "high"})[4]
-	if !strings.HasSuffix(inner, "'bypassPermissions' --model 'opus' --effort 'high' --resume 'abc-123'") {
+	if !strings.HasSuffix(inner, "'auto' --model 'opus' --effort 'high' --resume 'abc-123'") {
 		t.Errorf("inner = %s", inner)
 	}
 	inner = conversationCommand("/w", "", "/tmp/t.pid", turnChoice{Model: "sonnet[1m]"})[4]
@@ -369,5 +369,21 @@ func TestEndingTheAgentClosesItsInput(t *testing.T) {
 	case <-sess.Done():
 	default:
 		t.Error("the agent's input is still open")
+	}
+}
+
+// Bypass can be disabled for a whole organisation by its managed settings (disableBypassPermissionsMode), and Claude Code then
+// falls back, silently, to the settings' defaultMode: a Manual one refused nearly everything. Auto is allowed under that policy,
+// and wins over a Manual defaultMode, so it is the default; the user can choose another in settings.yaml.
+func TestTheAgentRunsInTheChosenPermissionModeElseAuto(t *testing.T) {
+	if inner := conversationCommand("/w", "", "/tmp/t.pid", turnChoice{})[4]; !strings.Contains(inner, "'--permission-mode' 'auto'") {
+		t.Errorf("unchosen: %s", inner)
+	}
+	inner := conversationCommand("/w", "", "/tmp/t.pid", turnChoice{PermissionMode: "bypassPermissions"})[4]
+	if !strings.Contains(inner, "'--permission-mode' 'bypassPermissions'") || strings.Contains(inner, "'auto'") {
+		t.Errorf("chosen bypassPermissions: %s", inner)
+	}
+	if n := strings.Count(inner, "--permission-mode"); n != 1 {
+		t.Errorf("--permission-mode given %d times: %s", n, inner)
 	}
 }
