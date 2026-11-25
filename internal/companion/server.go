@@ -230,6 +230,8 @@ type Server struct {
 	// clip is where the clipboard page was last found to be published.
 	clip  clipboardAddress
 	clock func() time.Time
+	// clipboardUpEvery is how often clearing the clipboard asks its page again while the page is still starting.
+	clipboardUpEvery time.Duration
 	// branchLookup reads the branch the review's folder is on (a variable for tests), and branchSeen is the last answer and when it
 	// was asked: the Review tab's polls look at most every branchLookEvery, sharing a look under way (flight).
 	branchLookup func(ctx context.Context, dir string) (string, error)
@@ -266,7 +268,7 @@ type asked struct {
 func New(cfg Config) *Server {
 	ui, _ := fs.Sub(uiFiles, "ui")
 	life, cancel := context.WithCancel(context.Background())
-	s := &Server{cfg: cfg, ui: ui, clock: time.Now, branchLookup: review.CurrentBranch, lifeCtx: life, lifeCancel: cancel, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer(colourAtOnce), boot: newBoot()}
+	s := &Server{cfg: cfg, ui: ui, clock: time.Now, clipboardUpEvery: time.Second, branchLookup: review.CurrentBranch, lifeCtx: life, lifeCancel: cancel, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer(colourAtOnce), boot: newBoot()}
 	return s
 }
 

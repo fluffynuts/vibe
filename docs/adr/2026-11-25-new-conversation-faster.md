@@ -27,6 +27,9 @@ every 3 s, each time waking and running git anew.
   rather than the whole options every 3 s, twenty times.
 - **The log tells a slow start as one story:** the clipboard page not answering the options (and why), answering on a later try, or still
   not by the last; the options' own line says "1 run" of git.
+- **Clearing waits for the clipboard page to come up**, asking again every second while it drops the connection, for up to 30 s:
+  the user's first early Start from cold said "The clipboard couldn't be cleared: … connection reset by peer", the page still starting
+  with the sandbox. Past 30 s, or for any other error, the new conversation says it wasn't cleared, as before.
 - **An empty clipboard cleared says nothing** in the new conversation (an early Start can ask it to clear one).
 
 ## Not done

@@ -662,6 +662,60 @@ func TestClearingAnEmptyClipboardSaysNothing(t *testing.T) {
 	}
 }
 
+// Start can be pressed before the clipboard page is up (it starts with the sandbox, which starting wakes): clearing waits for it,
+// asking again while it drops the connection, as the user saw ("connection reset by peer") on an early Start from cold.
+func TestClearingTheClipboardWaitsForItsPageToComeUp(t *testing.T) {
+	items := &clipboardItemsStandIn{sent: []int{1}, unsent: []int{2}}
+	answer := items.serve(t)
+	var dropped atomic.Int32
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if dropped.Load() < 2 {
+			dropped.Add(1)
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			conn.Close()
+			return
+		}
+		req, _ := http.NewRequest(r.Method, answer+r.URL.Path, r.Body)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer res.Body.Close()
+		w.WriteHeader(res.StatusCode)
+		io.Copy(w, res.Body)
+	}))
+	t.Cleanup(page.Close)
+	s := freshServer(t, freshSetup{})
+	s.cfg.ClipboardURL = func() string { return page.URL }
+	s.clipboardUpEvery = time.Millisecond
+	if code, out := send(t, s, "/api/conversation/new", `{"clipboard":"all"}`); code != http.StatusOK {
+		t.Fatalf("new: %d %v", code, out)
+	}
+	if said := strings.Join(eventsAfterReset(t, s), "\n"); !strings.Contains(said, "Cleared the clipboard (2 items)") {
+		t.Errorf("the conversation says %q", said)
+	}
+}
+
+// A page that doesn't come up is waited for only so long: the conversation starts anew, saying the clipboard wasn't cleared.
+func TestAClipboardPageThatNeverComesUpIsWaitedForOnlySoLong(t *testing.T) {
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closedURL := closed.URL
+	closed.Close()
+	s := freshServer(t, freshSetup{})
+	s.cfg.ClipboardURL = func() string { return closedURL }
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	s.clock = func() time.Time { mu.Lock(); defer mu.Unlock(); now = now.Add(time.Second); return now }
+	s.clipboardUpEvery = time.Millisecond
+	if code, out := send(t, s, "/api/conversation/new", `{"clipboard":"all"}`); code != http.StatusOK {
+		t.Fatalf("new: %d %v", code, out)
+	}
+	if said := strings.Join(eventsAfterReset(t, s), "\n"); !strings.Contains(said, "couldn't be cleared") {
+		t.Errorf("the conversation says %q", said)
+	}
+}
+
 func TestAClipboardThatCantBeClearedIsReportedAndTheConversationStillStartsAnew(t *testing.T) {
 	c := &clipboardItemsStandIn{sent: []int{1}, down: true}
 	s := freshServer(t, freshSetup{clipboard: c})

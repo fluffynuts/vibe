@@ -473,7 +473,7 @@ func (s *Server) conversationNew(w http.ResponseWriter, r *http.Request) {
 	if req.Clipboard != "" {
 		if asleep != nil {
 			failed = append(failed, "The clipboard couldn't be cleared: "+asleep.Error())
-		} else if n, err := s.clearClipboard(ctx, req.Clipboard == "all"); err != nil {
+		} else if n, err := s.clearClipboardOnceUp(ctx, req.Clipboard == "all"); err != nil {
 			failed = append(failed, "The clipboard couldn't be cleared: "+err.Error())
 		} else if n > 0 {
 			done = append(done, fmt.Sprintf("Cleared the clipboard (%s).", items(n)))
@@ -596,6 +596,26 @@ func (s *Server) makeBranch(ctx context.Context, b newBranch) (said, problem str
 
 // clearClipboard deletes the clipboard page's items: those sent to the
 // agent already, or all of them, saying how many went.
+// clipboardUpWithin bounds waiting for the clipboard page to come up, to clear it: it starts with the sandbox, which takes seconds.
+const clipboardUpWithin = 30 * time.Second
+
+// clearClipboardOnceUp is clearClipboard, asking the page again while it doesn't answer at all (it may still be starting, when Start
+// was pressed with the sandbox asleep), up to clipboardUpWithin.
+func (s *Server) clearClipboardOnceUp(ctx context.Context, all bool) (int, error) {
+	give := s.clock().Add(clipboardUpWithin)
+	for {
+		n, err := s.clearClipboard(ctx, all)
+		if err == nil || !couldntConnect(err) || !s.clock().Before(give) {
+			return n, err
+		}
+		select {
+		case <-ctx.Done():
+			return n, err
+		case <-time.After(s.clipboardUpEvery):
+		}
+	}
+}
+
 func (s *Server) clearClipboard(ctx context.Context, all bool) (int, error) {
 	base := s.clipboardAt()
 	if base == "" {
