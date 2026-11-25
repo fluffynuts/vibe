@@ -102,6 +102,77 @@ test('opened from the button, the balloon stays until closed by the button, its 
   } finally { p.close() }
 })
 
+test('opened from the button, the balloon closes when the work it lists ends, and the focus goes back to the button', async () => {
+  const p = await convoPage({ running: false, background: true, tasks: [npmTest] })
+  try {
+    p.at.closeTimers()
+    assert.equal(shown(p), false)
+    await p.click('status-info')
+    p.$('status-balloon-close').focus()
+    await poll(p, { running: false, background: false, tasks: [] })
+    assert.equal(shown(p), false, 'it stayed open, saying only what it is for')
+    assert.equal(button(p).getAttribute('aria-expanded'), 'false')
+    assert.equal(p.window.document.activeElement, button(p), 'the focus was lost with the balloon')
+  } finally { p.close() }
+})
+
+test('a balloon that popped up of itself has a countdown bar as long as its timer; one the user opened, or with a warning, has none', async () => {
+  const p = await convoPage({ running: false })
+  try {
+    const bar = () => balloon(p).querySelector(':scope > .countdown')
+    await poll(p, { running: false, background: true, tasks: [npmTest] })
+    assert.ok(bar(), 'no countdown bar')
+    assert.equal(bar().style.getPropertyValue('--countdown-ms'), CLOSE_AFTER_MS + 'ms')
+    await p.click('status-info')
+    await p.click('status-info')
+    assert.equal(bar(), null, 'a balloon the user opened has a bar')
+    await poll(p, { running: false, background: true, tasks: [npmTest], quietMinutes: 5 })
+    assert.ok(shown(p))
+    assert.equal(bar(), null, 'a warning that stays has a bar')
+  } finally { p.close() }
+})
+
+test('a balloon that popped up of itself is held open while hovered or focused, its bar full, and counts down afresh when let go', async () => {
+  const p = await convoPage({ running: false })
+  try {
+    const bar = () => balloon(p).querySelector(':scope > .countdown')
+    await poll(p, { running: false, background: true, tasks: [npmTest] })
+    const first = bar()
+    balloon(p).dispatchEvent(new p.window.MouseEvent('mouseenter'))
+    assert.ok(bar().classList.contains('held'))
+    p.at.closeTimers()
+    assert.ok(shown(p), 'it closed while hovered')
+    balloon(p).dispatchEvent(new p.window.MouseEvent('mouseleave'))
+    assert.notEqual(bar(), first)
+    assert.equal(bar().classList.contains('held'), false)
+    assert.equal(p.at.held.length, 1, 'its timer did not start again')
+    balloon(p).dispatchEvent(new p.window.FocusEvent('focusin'))
+    p.at.closeTimers()
+    assert.ok(shown(p), 'it closed while focused')
+    balloon(p).dispatchEvent(new p.window.FocusEvent('focusout'))
+    p.at.closeTimers()
+    assert.equal(shown(p), false, 'let go, it did not close itself')
+    assert.equal(bar(), null, 'its bar outlived it')
+  } finally { p.close() }
+})
+
+test('opened from the button, the balloon stays open when what it lists changes without emptying, with no countdown', async () => {
+  const p = await convoPage({ running: false, background: true, tasks: [npmTest, watch] })
+  try {
+    p.at.closeTimers()
+    await p.click('status-info')
+    await poll(p, { running: false, background: true, tasks: [watch] })
+    await poll(p, { running: false, background: true, tasks: [watch, npmTest] })
+    await poll(p, { running: true, quietMinutes: 5, background: true, tasks: [watch] })
+    assert.ok(shown(p))
+    assert.equal(p.at.held.length, 0, 'a close timer was set on a balloon the user opened')
+    assert.equal(balloon(p).querySelector(':scope > .countdown'), null, 'it has a countdown bar')
+    assert.equal(button(p).getAttribute('aria-expanded'), 'true')
+    await p.click('status-info')
+    assert.equal(shown(p), false, 'the button no longer closes it: it took itself for popped up')
+  } finally { p.close() }
+})
+
 test('a warning pops up and stays, says "at least", and its count updating changes the text without opening it again', async () => {
   const p = await convoPage({ running: true })
   try {

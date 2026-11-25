@@ -129,3 +129,32 @@ test('emphasis and links that never close take time in proportion to the text', 
     assert.ok(ms < 2000, `${JSON.stringify(unit)} × 40000 took ${ms.toFixed(0)}ms`)
   }
 })
+
+// The file viewer opens a Markdown file at a line formatted, marking the block the line is in: each block of the file says the line it
+// starts on (1 for the first). Blocks inside a quote or a list are read from part of the file, and say nothing of it.
+test('each block says the line of the text it starts on', () => {
+  const blocks = parse('# Title\n\nA paragraph\nover two lines.\n\n- one\n- two\n\n```go\nx := 1\n```\n\n> quoted\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n---\nSetext\n===\n')
+  assert.deepEqual(blocks.map((b) => [b.type, b.line]), [['heading', 1], ['para', 3], ['list', 6], ['code', 9], ['quote', 13], ['table', 15], ['hr', 19], ['heading', 20]])
+  assert.equal(blocks[2].items[0][0].line, undefined, 'a block in a list says a line of the item, not of the file')
+  assert.equal(blocks[4].blocks[0].line, undefined)
+})
+
+// The viewer marks the item of a list a line is in, not the whole list: a top-level list says the line each of its items starts on.
+test('a list says the line each of its items starts on', () => {
+  const [, list] = parse('Intro.\n\n- one\n  more of one\n- two\n\n- three\n')
+  assert.deepEqual(list.itemLines, [3, 5, 7])
+})
+
+// A file is written with its lines wrapped where its writer liked: GitHub shows a .md file's line breaks as spaces, and so does the file
+// viewer. The conversation keeps them, as GitHub does in a comment.
+test('with softBreaks, a line break in a paragraph is a space; without, a break', () => {
+  assert.deepEqual(parse('one\ntwo', { softBreaks: true }), [{ type: 'para', inline: [{ type: 'text', text: 'one two' }] }])
+  assert.deepEqual(parse('- a\n  b', { softBreaks: true })[0].items[0], [{ type: 'para', inline: [{ type: 'text', text: 'a b' }] }])
+  assert.deepEqual(parse('one\ntwo'), [{ type: 'para', inline: [{ type: 'text', text: 'one' }, { type: 'br' }, { type: 'text', text: 'two' }] }])
+})
+
+// A file's hard breaks are kept with softBreaks, as GitHub keeps them: a line ending in two spaces, or in a backslash (not shown).
+test('with softBreaks, a line ending in two spaces or a backslash still breaks', () => {
+  assert.deepEqual(parse('one  \ntwo\\\nthree\nfour', { softBreaks: true }), [{ type: 'para', inline: [
+    { type: 'text', text: 'one' }, { type: 'br' }, { type: 'text', text: 'two' }, { type: 'br' }, { type: 'text', text: 'three four' }] }])
+})

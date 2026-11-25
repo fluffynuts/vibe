@@ -2831,11 +2831,14 @@ test("an untracked file that couldn't be read says so", async () => {
 // --- comments named in the conversation -----------------------------------------------
 
 // talkPage is the Conversation tab open on what the agent said, with a
-// review whose threads are commented's.
-async function talkPage(text, git) {
+// review whose threads are commented's, and the repository's pull requests
+// prs (none known, by default).
+async function talkPage(text, git, prs = []) {
   const p = await openPage({
     routes: {
-      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, git },
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, git,
+        reviewThreads: commented.threads.map((t) => t.id), reviewClosed: false, pullRequests: prs.length ? 1 : 0 },
+      '/api/pull-requests': { numbers: prs, version: prs.length ? 1 : 0, unavailable: '' },
       '/api/review': { review: { ...commented, started: '2026-10-16T10:00:00Z' }, diff: twoFiles },
       '/api/conversation': () => ({ events: [{ seq: 1, kind: 'user', text: 'please fix' }, agentSaid(2, text)], last: 2, running: false }),
       '/api/log': { entries: [] },
@@ -2919,11 +2922,140 @@ test("a pull request named where the repository isn't on GitHub is plain text, n
   } finally { p.close() }
 })
 
-test("a comment that isn't on the review says so", async () => {
-  const p = await talkPage('Fixed #9.')
+// A bare #N is a Review comment when the review has one, else a pull request when the repository has one, else plain text.
+test("a bare number no comment or pull request has is plain text", async () => {
+  const p = await talkPage('Fixed #9.', onGitHub)
   try {
-    await p.click(refsIn(p)[0])
-    assert.match(p.$('toast').textContent, /no comment #9/)
+    assert.deepEqual(refsIn(p), [])
+    assert.deepEqual(repoRefs(p), [])
+    assert.match(p.$('convo-log').textContent, /Fixed #9\./)
+  } finally { p.close() }
+})
+
+test('a bare number that is a pull request, and no comment, links to it on GitHub', async () => {
+  const p = await talkPage('#37 is open, MERGEABLE. You merge #37; see #2.', onGitHub, [37])
+  try {
+    assert.deepEqual(refsIn(p).map((r) => r.textContent), ['#2'])
+    assert.deepEqual(repoRefs(p).map((a) => [a.textContent, a.getAttribute('href'), a.title]), [
+      ['#37', 'https://github.com/me/vibe/pull/37', 'Pull request #37 on GitHub'],
+      ['#37', 'https://github.com/me/vibe/pull/37', 'Pull request #37 on GitHub'],
+    ])
+    assert.equal(repoRefs(p)[0].target, '_blank')
+  } finally { p.close() }
+})
+
+test('a bare number that is both a comment and a pull request is the comment, its title naming the pull request', async () => {
+  const p = await talkPage('See #2.', onGitHub, [2])
+  try {
+    assert.deepEqual(repoRefs(p), [])
+    assert.deepEqual(refsIn(p).map((r) => r.textContent), ['#2'])
+    assert.match(refsIn(p)[0].title, /comment #2/)
+    assert.match(refsIn(p)[0].title, /pull request #2/i)
+  } finally { p.close() }
+})
+
+test("a pull request's number is plain text where the repository isn't on GitHub", async () => {
+  const p = await talkPage('#37 is open.', { branch: 'main' }, [37])
+  try {
+    assert.deepEqual(repoRefs(p), [])
+    assert.deepEqual(refsIn(p), [])
+  } finally { p.close() }
+})
+
+test('the page asks which pull requests there are for the bare numbers no comment has, and only those', async () => {
+  const p = await talkPage('#37 and #38 are open; see #2.', onGitHub)
+  try {
+    const asks = p.calls.filter((c) => c.path === '/api/pull-requests')
+    assert.ok(asks.length >= 1, 'not asked')
+    const wanted = asks.flatMap((c) => new URLSearchParams(c.query).get('want') || '').join(',').split(',').filter(Boolean)
+    assert.deepEqual([...new Set(wanted)].sort(), ['37', '38'])
+  } finally { p.close() }
+})
+
+// A number past what Number() keeps exact would reach vibe as something else (1e+21, or rounded): no pull request is numbered that
+// high, so a bare number of more than nine digits is not asked about, and doesn't spoil the ask for the others.
+test('a bare number too long to be a pull request is not asked about, and the others still are', async () => {
+  const p = await talkPage('#37, and #123456789012345678901 too.', onGitHub)
+  try {
+    const wanted = p.calls.filter((c) => c.path === '/api/pull-requests').flatMap((c) => (new URLSearchParams(c.query).get('want') || '').split(',')).filter(Boolean)
+    assert.deepEqual([...new Set(wanted)], ['37'])
+  } finally { p.close() }
+})
+
+test("a page whose vibe can't list pull requests doesn't ask", async () => {
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, git: onGitHub, reviewThreads: [] },
+      '/api/conversation': () => ({ events: [agentSaid(1, '#37 is open.')], last: 1, running: false }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+  })
+  try {
+    await p.every('pollConversation')
+    assert.deepEqual(p.calls.filter((c) => c.path === '/api/pull-requests'), [])
+  } finally { p.close() }
+})
+
+test('a bare number drawn before its pull request was known links to it once the list says so', async () => {
+  const at = { version: 0, numbers: [] }
+  const p = await openPage({
+    routes: {
+      '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, git: onGitHub,
+        reviewThreads: [], pullRequests: at.version }),
+      '/api/pull-requests': () => ({ numbers: at.numbers, version: at.version, unavailable: '' }),
+      '/api/conversation': () => ({ events: [agentSaid(1, '#37 is open.')], last: 1, running: false }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+  })
+  try {
+    await p.every('pollConversation')
+    assert.deepEqual(repoRefs(p), [])
+    at.version = 1
+    at.numbers = [37]
+    await p.every('tick')
+    assert.deepEqual(repoRefs(p).map((a) => a.getAttribute('href')), ['https://github.com/me/vibe/pull/37'])
+  } finally { p.close() }
+})
+
+test('a bare number becomes a link to a comment once the review has one, and stops being one when it goes', async () => {
+  const at = { threads: [] }
+  const p = await openPage({
+    routes: {
+      '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, reviewThreads: at.threads }),
+      '/api/conversation': () => ({ events: [agentSaid(1, 'See #2.')], last: 1, running: false }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+  })
+  try {
+    await p.every('pollConversation')
+    assert.deepEqual(refsIn(p), [])
+    at.threads = [2]
+    await p.every('tick')
+    assert.deepEqual(refsIn(p).map((r) => r.textContent), ['#2'])
+    at.threads = []
+    await p.every('tick')
+    assert.deepEqual(refsIn(p), [])
+  } finally { p.close() }
+})
+
+test('on a closed review, a pull request wins over its comment', async () => {
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, git: onGitHub,
+        reviewThreads: [2, 3], reviewClosed: true, pullRequests: 1 },
+      '/api/pull-requests': { numbers: [2], version: 1, unavailable: '' },
+      '/api/conversation': () => ({ events: [agentSaid(1, 'See #2 and #3.')], last: 1, running: false }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+  })
+  try {
+    await p.every('pollConversation')
+    assert.deepEqual(repoRefs(p).map((a) => a.textContent), ['#2'])
+    assert.deepEqual(refsIn(p).map((r) => r.textContent), ['#3'], "a closed review's comment is still one, when no pull request has its number")
   } finally { p.close() }
 })
 
@@ -3017,7 +3149,7 @@ test('Refresh while the diff is on its way loads it again once that one is in', 
 test("a comment named on a closed review says the review's closed", async () => {
   const p = await openPage({
     routes: {
-      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, reviewThreads: [1, 2, 3, 4], reviewClosed: true },
       '/api/review': { review: { ...commented, started: '2026-10-16T10:00:00Z', closed: 'You closed it.' }, diff: twoFiles },
       '/api/conversation': () => ({ events: [agentSaid(1, 'Fixed #2.')], last: 1, running: false }),
       '/api/log': { entries: [] },
@@ -3076,9 +3208,9 @@ test('a deleted comment stays deleted when a poll set out before it lands', asyn
 })
 
 test('a comment named as the agent wrote it is shown so, and only a plain #N', async () => {
-  const p = await talkPage('See #007, not #1.5; [see #3](http://localhost:1/x); and example.com/#4.')
+  const p = await talkPage('See #004, not #1.5; [see #3](http://localhost:1/x); and example.com/#4.')
   try {
-    assert.deepEqual(refsIn(p).map((r) => r.textContent), ['#007'])
+    assert.deepEqual(refsIn(p).map((r) => r.textContent), ['#004'])
     assert.equal(p.$('convo-log').querySelector('a .thread-ref'), null, 'none inside a link')
   } finally { p.close() }
 })
@@ -3360,15 +3492,20 @@ test("the log says when it couldn't be checked against the rules", async () => {
 // with clickNow, which lets the page run a few turns (see turns).
 const clickNow = async (p, id) => { p.$(id).click(); await turns() }
 
-async function freshPage({ options = { review: false }, fetched = { checked: true, local: true, ahead: 0, behind: 0 }, answer = { ok: true }, open = true, before = null } = {}) {
+// readyFor is the dialog's first answer, what it offers at all, as the options will fill in.
+const readyFor = (o) => typeof o === 'function' ? { review: false, clipboard: false, repository: false } : { review: !!o.review, clipboard: !!o.clipboard, repository: !!o.branch }
+
+async function freshPage({ options = { review: false }, ready = readyFor(options), clipboard = null, fetched = { checked: true, local: true, ahead: 0, behind: 0 }, answer = { ok: true }, open = true, before = null } = {}) {
   const p = await openPage({
     before,
     routes: {
       '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, attention: {} },
       '/api/conversation': { events: [], last: 0, running: false },
+      '/api/conversation/new/ready': typeof ready === 'function' ? ready : () => ready,
       '/api/conversation/new/options': typeof options === 'function' ? options : () => options,
+      '/api/conversation/new/clipboard': clipboard || (() => ({ sent: 0, unsent: 0 })),
       '/api/conversation/new/fetch': typeof fetched === 'function' ? fetched : () => fetched,
-      '/api/conversation/new': () => answer,
+      '/api/conversation/new': typeof answer === 'function' ? answer : () => answer,
       '/api/log': { entries: [] },
     },
     storage: { 'vibe-companion-tab': 'conversation' },
@@ -3433,14 +3570,15 @@ test('with nothing unsent, only the sent items are offered for clearing', async 
   } finally { p.close() }
 })
 
-test('a clipboard page that could not be reached is asked after again, and offered once it answers', async () => {
+// While the clipboard page may still be starting, only it is asked again (no sbx call), every second, for a minute.
+const RETRY_MS = 1000
+
+test('a clipboard page that could not be reached is asked after again, on its own, and offered once it answers', async () => {
   const held = []
-  const RETRY_MS = 3000
-  let answers = 0
+  let tries = 0
   const p = await freshPage({
-    options: () => ++answers === 1
-      ? { clipboard: { unavailable: "The clipboard page couldn't be reached: refused", retry: true } }
-      : { clipboard: { sent: 2, unsent: 0 } },
+    options: { clipboard: { unavailable: "The clipboard page couldn't be reached: connection reset", retry: true } },
+    clipboard: () => (++tries, { sent: 2, unsent: 0 }),
     before: (w) => {
       const real = w.setTimeout.bind(w)
       w.setTimeout = (fn, ms, ...rest) => ms === RETRY_MS ? held.push(fn) : real(fn, ms, ...rest)
@@ -3452,6 +3590,9 @@ test('a clipboard page that could not be reached is asked after again, and offer
     assert.ok(p.$('fresh-clipboard-why').querySelector('.spinner'), 'says it is checking again')
     held.shift()()
     await p.settle()
+    assert.equal(tries, 1)
+    assert.deepEqual(p.posted('/api/conversation/new/clipboard'), [{ try: 2, last: false }])
+    assert.equal(p.posted('/api/conversation/new/options').length, 1, 'the whole of the options asked again')
     assert.ok(!p.$('fresh-clipboard').disabled && p.$('fresh-clipboard').checked, 'offered now')
     assert.ok(!shown(p, 'fresh-clipboard-why'))
     assert.equal(held.length, 0, 'no more asking')
@@ -3464,9 +3605,10 @@ test('a clipboard page that never answers is asked after a limited number of tim
   const reason = "The clipboard page couldn't be reached: refused"
   const p = await freshPage({
     options: { clipboard: { unavailable: reason, retry: true } },
+    clipboard: () => ({ unavailable: reason, retry: true }),
     before: (w) => {
       const real = w.setTimeout.bind(w)
-      w.setTimeout = (fn, ms, ...rest) => ms === 3000 ? held.push(fn) : real(fn, ms, ...rest)
+      w.setTimeout = (fn, ms, ...rest) => ms === RETRY_MS ? held.push(fn) : real(fn, ms, ...rest)
     },
   })
   try {
@@ -3475,9 +3617,12 @@ test('a clipboard page that never answers is asked after a limited number of tim
       held.shift()()
       await p.settle()
       asks++
-      assert.ok(asks < 100, 'it never stops asking')
+      assert.ok(asks < 200, 'it never stops asking')
     }
-    assert.equal(asks, 21, 'the first ask and twenty more')
+    assert.equal(asks, 61, 'the first ask and sixty more')
+    const again = p.posted('/api/conversation/new/clipboard')
+    assert.deepEqual(again.at(-1), { try: 61, last: true }, 'the last says so, for vibe to log')
+    assert.ok(again.slice(0, -1).every((b) => !b.last))
     assert.ok(!p.$('fresh-clipboard-why').querySelector('.spinner'), 'no longer says it is checking')
     assert.ok(shown(p, 'fresh-clipboard-why'))
     assert.ok(p.$('fresh-clipboard-why').textContent.includes(reason))
@@ -3491,7 +3636,7 @@ test('a clipboard page that is unavailable for another reason is not asked after
     options: { clipboard: { unavailable: 'this sandbox could not be woken' } },
     before: (w) => {
       const real = w.setTimeout.bind(w)
-      w.setTimeout = (fn, ms, ...rest) => ms === 3000 ? held.push(fn) : real(fn, ms, ...rest)
+      w.setTimeout = (fn, ms, ...rest) => ms === RETRY_MS ? held.push(fn) : real(fn, ms, ...rest)
     },
   })
   try {
@@ -3507,18 +3652,68 @@ test('an empty clipboard is not offered for clearing', async () => {
   } finally { p.close() }
 })
 
-test('the dialog waits for the sandbox before it can start, saying so', async () => {
+// Start doesn't wait for the sandbox (starting wakes it anyway): the dialog offers at once what this machine knows of, ticked as
+// ever, and fills in the clipboard's counts and the branch once the sandbox answers.
+test('the dialog can start before the sandbox answers, doing what is ticked, and says what it is still checking', async () => {
   let answer
-  const p = await freshPage({ options: () => new Promise((resolve) => { answer = resolve }), open: false })
+  const p = await freshPage({ ready: { review: true, clipboard: true, repository: true }, options: () => new Promise((resolve) => { answer = resolve }), open: false })
   try {
     await clickNow(p, 'convo-new')
-    assert.ok(p.$('fresh-run').disabled)
+    assert.ok(!p.$('fresh-run').disabled, 'Start waits for the sandbox')
     assert.ok(shown(p, 'fresh-loading'))
     assert.match(p.$('fresh-loading').textContent, /sandbox/)
+    assert.ok(shown(p, 'fresh-clipboard-row') && p.$('fresh-clipboard').checked && !p.$('fresh-clipboard').disabled)
+    assert.match(p.$('fresh-clipboard-count').textContent, /counting/)
+    assert.ok(shown(p, 'fresh-unsent-row') && p.$('fresh-unsent').checked, 'unsent items, if any, are cleared too, as ever: so said')
+    assert.ok(shown(p, 'fresh-review-row') && p.$('fresh-review').checked)
+    assert.ok(shown(p, 'fresh-branch-row') && p.$('fresh-branch').disabled, 'a branch needs what the sandbox says')
+    assert.match(p.$('fresh-branch-why').textContent, /Checking/)
+    await clickNow(p, 'fresh-run')
+    assert.deepEqual(p.posted('/api/conversation/new'), [{ clipboard: 'all', review: true, branch: null }])
+  } finally { p.close() }
+})
+
+// Start is usable before the options come, so they can come while a start is under way: Start stays disabled till it ends, or a
+// second press starts afresh again (losing the first one's note, or failing on a branch already made).
+test('options that come while a start is under way leave Start disabled', async () => {
+  let answer
+  let started
+  const p = await freshPage({ ready: { review: true, clipboard: false, repository: false }, options: () => new Promise((resolve) => { answer = resolve }),
+    answer: () => new Promise((resolve) => { started = resolve }), open: false })
+  try {
+    await clickNow(p, 'convo-new')
+    await clickNow(p, 'fresh-run')
+    assert.ok(p.$('fresh-run').disabled)
     answer({ review: true })
+    await turns()
+    assert.ok(p.$('fresh-run').disabled, 'the options re-enabled Start during the start')
+    await clickNow(p, 'fresh-run')
+    assert.equal(p.posted('/api/conversation/new').length, 1, 'started twice')
+    started({ ok: true })
     await p.settle()
-    assert.ok(!p.$('fresh-run').disabled)
+  } finally { p.close() }
+})
+
+test('once the sandbox answers, the dialog offers what it said', async () => {
+  let answer
+  const p = await freshPage({ ready: { review: false, clipboard: true, repository: true }, options: () => new Promise((resolve) => { answer = resolve }), open: false })
+  try {
+    await clickNow(p, 'convo-new')
+    answer({ clipboard: { sent: 2, unsent: 0 }, branch: clean })
+    await p.settle()
     assert.ok(!shown(p, 'fresh-loading'))
+    assert.match(p.$('fresh-clipboard-count').textContent, /2 items sent/)
+    assert.ok(!shown(p, 'fresh-unsent-row'), 'nothing unsent')
+    assert.ok(!p.$('fresh-branch').disabled)
+  } finally { p.close() }
+})
+
+test('a folder with nothing to offer shows nothing while the sandbox is asked', async () => {
+  const p = await freshPage({ ready: { review: false, clipboard: false, repository: false }, options: () => new Promise(() => {}), open: false })
+  try {
+    await clickNow(p, 'convo-new')
+    assert.ok(!p.$('fresh-run').disabled)
+    for (const row of ['fresh-clipboard-row', 'fresh-review-row', 'fresh-branch-row']) assert.ok(!shown(p, row), row)
   } finally { p.close() }
 })
 
@@ -4345,6 +4540,63 @@ test('the bar of an open review reads "Review of <what>:", then the note, whole 
     const order = [...open.$('review-title').parentElement.children].filter((e) => !e.hidden).map((e) => e.id)
     assert.deepEqual(order, ['review-title', 'review-note', 'review-state'])
   } finally { open.close() }
+})
+
+// --- a countdown bar on a toast ------------------------------------------------------------------------------------------------
+
+// toastPage is the page with a toast that says a comment is on a closed review (one that closes itself after 4 s), its timers kept
+// in timers (ms) and cleared ones in cleared.
+async function toastPage() {
+  const timers = []
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {}, reviewThreads: [1, 2, 3, 4], reviewClosed: true },
+      '/api/review': { review: { ...commented, started: '2026-10-16T10:00:00Z', closed: 'You closed it.' }, diff: twoFiles },
+      '/api/conversation': () => ({ events: [agentSaid(1, 'Fixed #2.')], last: 1, running: false }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'conversation' },
+    before: (w) => {
+      const real = w.setTimeout
+      w.setTimeout = (fn, ms, ...rest) => { if (ms >= 1000) timers.push(ms); return real(fn, ms, ...rest) }
+    },
+  })
+  await p.every('pollConversation')
+  await p.click(p.$('convo-log').querySelector('.thread-ref'))
+  return Object.assign(p, { timers })
+}
+const countdownOf = (box) => box.querySelector(':scope > .countdown')
+
+test('a toast that closes itself has a countdown bar along its top, as long as its timer', async () => {
+  const p = await toastPage()
+  try {
+    assert.match(p.$('toast').textContent, /closed/)
+    const bar = countdownOf(p.$('toast'))
+    assert.ok(bar, 'no countdown bar')
+    assert.equal(bar.getAttribute('aria-hidden'), 'true')
+    assert.equal(p.timers.at(-1), 4000)
+    assert.equal(bar.style.getPropertyValue('--countdown-ms'), '4000ms')
+    assert.equal(bar.classList.contains('held'), false)
+  } finally { p.close() }
+})
+
+test("a toast held by the pointer or focus shows its bar full and still, and starts again from full when let go", async () => {
+  const p = await toastPage()
+  try {
+    const t = p.$('toast')
+    const first = countdownOf(t)
+    t.dispatchEvent(new p.window.MouseEvent('mouseenter'))
+    assert.ok(countdownOf(t).classList.contains('held'), 'not held full')
+    const timersHeld = p.timers.length
+    t.dispatchEvent(new p.window.MouseEvent('mouseleave'))
+    const again = countdownOf(t)
+    assert.notEqual(again, first, 'the bar was not started again')
+    assert.equal(again.classList.contains('held'), false)
+    assert.equal(again.style.getPropertyValue('--countdown-ms'), '4000ms')
+    assert.deepEqual(p.timers.slice(timersHeld), [4000], 'the timer was not started again')
+    t.dispatchEvent(new p.window.FocusEvent('focusin'))
+    assert.ok(countdownOf(t).classList.contains('held'), 'focus does not hold it')
+  } finally { p.close() }
 })
 
 // Shown before the review was drawn, the comments button said 0 and stood where it wouldn't stay: the review's title and note, drawn

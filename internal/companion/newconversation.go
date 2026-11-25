@@ -8,8 +8,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"vibe/internal/review"
@@ -63,24 +65,106 @@ type branchOffer struct {
 	Remote   []string `json:"remote,omitempty"`
 }
 
+// conversationNewReady is what the dialog offers at all, from this machine alone: its Start doesn't wait for the sandbox, which
+// starting wakes anyway (conversationNewOptions fills in the rest meanwhile).
+func (s *Server) conversationNewReady(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]bool{"review": s.reviewOpen(), "clipboard": s.clipboardAt() != "", "repository": s.repositoryHere()})
+}
+
+// conversationNewClipboard asks the clipboard page's counts again, and nothing of the sandbox: while the page may still be
+// starting (conversationNewOptions said Retry), the dialog asks this, try counting from the first ask (the options'), last its last.
+func (s *Server) conversationNewClipboard(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Try  int  `json:"try"`
+		Last bool `json:"last"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "expected {\"try\": n, \"last\": true or false}")
+		return
+	}
+	offer := s.clipboardOffer(r.Context(), "")
+	switch {
+	case offer.Unavailable == "" && req.Try > 1:
+		s.log(fmt.Sprintf("companion page: the clipboard page answered on try %d of New conversation's", req.Try))
+	case offer.Unavailable != "" && req.Last:
+		s.log(fmt.Sprintf("companion page: the clipboard page still didn't answer New conversation after %d tries: %s", req.Try, offer.Unavailable))
+	}
+	writeJSON(w, http.StatusOK, offer)
+}
+
+func (s *Server) log(line string) {
+	if s.cfg.Log != nil {
+		s.cfg.Log(line)
+	}
+}
+
 // conversationNewOptions is what the dialog can offer: a POST, as it may
 // wake the sandbox to find out.
 func (s *Server) conversationNewOptions(w http.ResponseWriter, r *http.Request) {
+	steps := s.newSteps()
+	ctx := context.WithValue(r.Context(), gitRunsKey{}, &steps.gitRuns)
 	body := map[string]interface{}{"review": s.reviewOpen()}
 	hasClipboard, hasRepository := s.clipboardAt() != "", s.repositoryHere()
+	steps.done("the review and the folder's git status on the host")
 	if hasClipboard || hasRepository {
 		asleep := ""
-		if err := s.wake(r.Context()); err != nil {
+		if err := s.wake(ctx); err != nil {
 			asleep = err.Error()
 		}
+		steps.done("waking the sandbox")
 		if hasClipboard {
-			body["clipboard"] = s.clipboardOffer(r.Context(), asleep)
+			offer := s.clipboardOffer(ctx, asleep)
+			steps.done("the clipboard page")
+			if offer.Retry {
+				s.log("companion page: the clipboard page didn't answer New conversation's options (" + offer.Unavailable + "): the dialog asks again")
+			}
+			body["clipboard"] = offer
 		}
 		if hasRepository {
-			body["branch"] = s.branchOffer(r.Context(), asleep)
+			body["branch"] = s.branchOffer(ctx, asleep)
+			steps.done("git in the sandbox")
 		}
 	}
+	steps.logIfSlow("New conversation's options")
 	writeJSON(w, http.StatusOK, body)
+}
+
+// gitRunsKey is the context key of a count of the times sandboxGit ran git in the sandbox, for steps.
+type gitRunsKey struct{}
+
+// steps times what a request does, step by step, for vibe's log when the whole takes longer than slowRequest: the request's own
+// line (see timed) says that it was slow, this says where the time went.
+type steps struct {
+	s       *Server
+	began   time.Time
+	last    time.Time
+	took    []string
+	gitRuns atomic.Int32
+}
+
+func (s *Server) newSteps() *steps {
+	now := s.clock()
+	return &steps{s: s, began: now, last: now}
+}
+
+func (st *steps) done(what string) {
+	now := st.s.clock()
+	line := what + " " + now.Sub(st.last).Round(100*time.Millisecond).String()
+	if what == "git in the sandbox" {
+		if runs := st.gitRuns.Load(); runs == 1 {
+			line += " (1 run)"
+		} else {
+			line += fmt.Sprintf(" (%d runs)", runs)
+		}
+	}
+	st.took = append(st.took, line)
+	st.last = now
+}
+
+func (st *steps) logIfSlow(what string) {
+	if took := st.s.clock().Sub(st.began); took > slowRequest && st.s.cfg.Log != nil {
+		st.s.cfg.Log(fmt.Sprintf("companion page: %s took %s: %s", what, took.Round(100*time.Millisecond), strings.Join(st.took, ", ")))
+	}
 }
 
 func (s *Server) wake(ctx context.Context) error {
@@ -143,15 +227,15 @@ func (s *Server) branchOffer(ctx context.Context, asleep string) branchOffer {
 	if asleep != "" {
 		return branchOffer{Unavailable: asleep}
 	}
-	tree, err := s.treeState(ctx)
+	repo, err := s.repoState(ctx)
 	if err != nil {
 		return branchOffer{Unavailable: "Git in the sandbox can't read the repository: " + err.Error()}
 	}
-	offer := branchOffer{Current: tree.branch, Dirty: tree.dirty, Conflicted: tree.conflicted}
+	tree := repo.tree
+	offer := branchOffer{Current: tree.branch, Dirty: tree.dirty, Conflicted: tree.conflicted, Branches: repo.local, Remote: repo.remote}
 	if tree.conflicted {
 		offer.Unavailable = "A merge has conflicts: resolve them before branching."
 	}
-	offer.Branches, offer.Remote = s.branchNames(ctx)
 	def, err := s.defaultBranch(ctx)
 	switch {
 	case err != nil:
@@ -160,27 +244,9 @@ func (s *Server) branchOffer(ctx context.Context, asleep string) branchOffer {
 		offer.NoDefault = def.Why
 	default:
 		offer.Default, offer.DefaultSet = def.Name, def.Set
-		offer.DefaultEmpty = def.Set && !s.hasLocalBranch(ctx, def.Name)
+		offer.DefaultEmpty = def.Set && !slices.Contains(repo.local, def.Name)
 	}
 	return offer
-}
-
-// branchNames are the local branches and origin's, as last fetched. A repository git can't list
-// is as if it had none: the name is checked again when the branch is made.
-func (s *Server) branchNames(ctx context.Context) (local, remote []string) {
-	out, err := s.sandboxGit(ctx, gitWithin, "for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes/origin")
-	if err != nil {
-		return nil, nil
-	}
-	for _, ref := range strings.Fields(out) {
-		switch {
-		case strings.HasPrefix(ref, "refs/heads/"):
-			local = append(local, strings.TrimPrefix(ref, "refs/heads/"))
-		case strings.HasPrefix(ref, "refs/remotes/origin/") && ref != "refs/remotes/origin/HEAD":
-			remote = append(remote, strings.TrimPrefix(ref, "refs/remotes/origin/"))
-		}
-	}
-	return local, remote
 }
 
 func (s *Server) hasLocalBranch(ctx context.Context, name string) bool {
@@ -191,11 +257,14 @@ func (s *Server) hasLocalBranch(ctx context.Context, name string) bool {
 // sandboxGit runs git in the sandbox's folder, within limit; one it gave up
 // on says what it waited for.
 func (s *Server) sandboxGit(ctx context.Context, limit time.Duration, args ...string) (string, error) {
+	if runs, ok := ctx.Value(gitRunsKey{}).(*atomic.Int32); ok {
+		runs.Add(1)
+	}
 	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	out, err := s.cfg.SandboxGit(ctx, args...)
 	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return out, fmt.Errorf("git %s didn't finish within %s, so it was stopped", args[0], limit)
+		return out, fmt.Errorf("git %s didn't finish within %s, so it was stopped", gitCommand(args), limit)
 	}
 	return out, err
 }
@@ -205,29 +274,67 @@ type treeState struct {
 	dirty, conflicted bool
 }
 
-// conflictCodes are git status's codes for a path with a conflict.
-var conflictCodes = map[string]bool{"DD": true, "AU": true, "UD": true, "UA": true, "DU": true, "AA": true, "UU": true}
-
+// treeState is the branch checked out ("" when HEAD is detached), and whether the tree has changes, conflicts among them.
 func (s *Server) treeState(ctx context.Context) (treeState, error) {
-	status, err := s.sandboxGit(ctx, gitWithin, "status", "--porcelain=v1")
+	repo, err := s.repoState(ctx)
+	return repo.tree, err
+}
+
+// repoState is the tree's state and the branches, here and at origin as last fetched.
+type repoState struct {
+	tree          treeState
+	local, remote []string
+}
+
+// repoStateAlias reads the repository in one run of git in the sandbox: each run is an sbx exec, which costs a second or more
+// of sbx's own. The sandbox is asked to run git and nothing else, so the commands go as a git alias, which git runs with sh.
+const (
+	repoStateEnd   = "vibe-refs-follow"
+	repoStateAlias = "!git status --porcelain=v2 --branch && echo " + repoStateEnd +
+		" && git for-each-ref '--format=%(refname)' refs/heads refs/remotes/origin"
+)
+
+func (s *Server) repoState(ctx context.Context) (repoState, error) {
+	out, err := s.sandboxGit(ctx, gitWithin, "-c", "alias.vibe-read-state="+repoStateAlias, "vibe-read-state")
 	if err != nil {
-		return treeState{}, err
+		return repoState{}, err
 	}
-	branch, err := s.sandboxGit(ctx, gitWithin, "branch", "--show-current")
-	if err != nil {
-		return treeState{}, err
+	// A line of its own: a file of that name ends a status line with it. Status prints its branch lines first, so the marker is never
+	// the first line.
+	status, refs, found := strings.Cut(out, "\n"+repoStateEnd+"\n")
+	if !found {
+		return repoState{}, fmt.Errorf("git in the sandbox said something unexpected: %q", out)
 	}
-	st := treeState{branch: strings.TrimSpace(branch)}
+	var st repoState
 	for _, line := range strings.Split(status, "\n") {
-		if len(line) < 2 {
-			continue
+		switch {
+		case strings.HasPrefix(line, "# branch.head "):
+			if head := strings.TrimPrefix(line, "# branch.head "); head != "(detached)" {
+				st.tree.branch = head
+			}
+		case strings.HasPrefix(line, "u "):
+			st.tree.dirty, st.tree.conflicted = true, true
+		case strings.HasPrefix(line, "1 "), strings.HasPrefix(line, "2 "), strings.HasPrefix(line, "? "):
+			st.tree.dirty = true
 		}
-		st.dirty = true
-		if conflictCodes[line[:2]] {
-			st.conflicted = true
+	}
+	for _, ref := range strings.Fields(refs) {
+		switch {
+		case strings.HasPrefix(ref, "refs/heads/"):
+			st.local = append(st.local, strings.TrimPrefix(ref, "refs/heads/"))
+		case strings.HasPrefix(ref, "refs/remotes/origin/") && ref != "refs/remotes/origin/HEAD":
+			st.remote = append(st.remote, strings.TrimPrefix(ref, "refs/remotes/origin/"))
 		}
 	}
 	return st, nil
+}
+
+// gitCommand is the git command args run, past any -c settings before it.
+func gitCommand(args []string) string {
+	for len(args) > 1 && args[0] == "-c" {
+		args = args[2:]
+	}
+	return args[0]
 }
 
 // defaultBranch is the folder's default branch, as the Review tab has it.
@@ -371,9 +478,9 @@ func (s *Server) conversationNew(w http.ResponseWriter, r *http.Request) {
 	if req.Clipboard != "" {
 		if asleep != nil {
 			failed = append(failed, "The clipboard couldn't be cleared: "+asleep.Error())
-		} else if n, err := s.clearClipboard(ctx, req.Clipboard == "all"); err != nil {
+		} else if n, err := s.clearClipboardOnceUp(ctx, req.Clipboard == "all"); err != nil {
 			failed = append(failed, "The clipboard couldn't be cleared: "+err.Error())
-		} else {
+		} else if n > 0 {
 			done = append(done, fmt.Sprintf("Cleared the clipboard (%s).", items(n)))
 		}
 	}
@@ -490,6 +597,26 @@ func (s *Server) makeBranch(ctx context.Context, b newBranch) (said, problem str
 		said += " (local " + def + " brought up to date first)"
 	}
 	return said + ".", problem, nil
+}
+
+// clipboardUpWithin bounds waiting for the clipboard page to come up, to clear it: it starts with the sandbox, which takes seconds.
+const clipboardUpWithin = 30 * time.Second
+
+// clearClipboardOnceUp is clearClipboard, asking the page again while it doesn't answer at all (it may still be starting, when Start
+// was pressed with the sandbox asleep), up to clipboardUpWithin.
+func (s *Server) clearClipboardOnceUp(ctx context.Context, all bool) (int, error) {
+	give := s.clock().Add(clipboardUpWithin)
+	for {
+		n, err := s.clearClipboard(ctx, all)
+		if err == nil || !couldntConnect(err) || !s.clock().Before(give) {
+			return n, err
+		}
+		select {
+		case <-ctx.Done():
+			return n, err
+		case <-time.After(s.clipboardUpEvery):
+		}
+	}
 }
 
 // clearClipboard deletes the clipboard page's items: those sent to the

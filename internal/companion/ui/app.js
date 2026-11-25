@@ -98,6 +98,10 @@
     sandbox: '',
     // repoWeb is the repository's address on GitHub, that pull requests and issues named in the conversation link to ('' if not there).
     repoWeb: '',
+    // reviewThreads are the numbers of the review's comments, and reviewClosed says it is closed (from vibe's state): a bare #N
+    // is a link to a comment only when there is one.
+    reviewThreads: new Set(),
+    reviewClosed: false,
     // attention is the tabs vibe last said want looking at, and why;
     // reviewAt when the agent last updated the review ("" if never).
     attention: {},
@@ -565,6 +569,18 @@
     toast.held = false
     clearTimeout(toast.timer)
     toast.timer = setTimeout(hideToast, toast.lasts)
+    showCountdown(t, toast.lasts, false)
+  }
+
+  // showCountdown puts a bar along the top of box that shrinks to nothing over ms, as box's timer to close itself runs out; held, it
+  // is full and still (box is held open). ms 0 takes it away. A new bar each time, so its shrinking starts again from full.
+  function showCountdown(box, ms, held) {
+    const old = box.querySelector(':scope > .countdown')
+    if (old) old.remove()
+    if (!ms) return
+    const bar = el('span', { class: 'countdown' + (held ? ' held' : ''), 'aria-hidden': 'true' })
+    bar.style.setProperty('--countdown-ms', ms + 'ms')
+    box.append(bar)
   }
 
   function hideToast() {
@@ -589,6 +605,7 @@
     toast.held = held
     clearTimeout(toast.timer)
     if (!held) toast.timer = setTimeout(hideToast, toast.lasts)
+    showCountdown($('toast'), toast.lasts, held)
   }
 
   // showProgress brings the Last action box with id card into view, with
@@ -1013,6 +1030,8 @@
       $('sandbox').textContent = state.sandbox || 'all profiles and sandboxes'
       renderWhere(res.body.folder || '', res.body.git || null)
       setRepoWeb(res.body.git)
+      setReviewThreads(res.body.reviewThreads, !!res.body.reviewClosed)
+      pullRequestsVersion(res.body.pullRequests)
       // What can be reviewed depends on the branch, so the start screen's answer is asked again when it changes.
       const branchNow = res.body.git ? res.body.git.branch : ''
       if (reviewView.branch !== undefined && reviewView.branch !== branchNow && reviewView.review && !reviewIsOn(reviewView.review)) loadOptions()
@@ -5804,13 +5823,22 @@
   // markdown is the agent's Markdown as elements, built from what
   // markdown.js read: every piece of text set as text, never as markup. A
   // link becomes one only where localLink allows (this machine's own pages);
-  // any other shows its address instead.
-  function markdown(text) {
+  // any other shows its address instead. A file (asFile) is read as GitHub
+  // shows a .md file, its wrapped lines run together. With at ({ from, to },
+  // lines of the text), what those lines are in is marked: a formatted page
+  // has no lines of its own, so a line is taken to be in the block that starts
+  // at or before it (in a list, the item), the blank lines after it with it.
+  function markdown(text, { at = null, asFile = false } = {}) {
     // inLink: in a link's text, where a button can't go.
     const inline = (nodes, inLink) => nodes.flatMap((n) => {
       switch (n.type) {
         case 'text': return inLink ? document.createTextNode(visible(n.text)) : withThreadRefs(visible(n.text))
-        case 'code': return !inLink && state.viewFiles && looksLikeFile(n.text) ? fileCandidate(n.text) : el('code', { text: visible(n.text) })
+        case 'code': {
+          if (inLink || !state.viewFiles) return el('code', { text: visible(n.text) })
+          if (looksLikeFile(n.text)) return fileCandidate(n.text)
+          const at = fileAt(n.text)
+          return at ? fileCandidate(at.path, n.text, '', at) : el('code', { text: visible(n.text) })
+        }
         case 'br': return el('br')
         case 'strong': return el('strong', {}, ...inline(n.children, inLink))
         case 'em': return el('em', {}, ...inline(n.children, inLink))
@@ -5821,7 +5849,7 @@
           const label = n.children.map((c) => c.text || '').join('')
           const shown = visible(label === n.href ? n.href : label + ' (' + n.href + ')')
           const file = state.viewFiles && !inLink ? fileLinkPath(n.href) : null
-          return file ? fileCandidate(file, shown, visible(label)) : document.createTextNode(shown)
+          return file ? fileCandidate(file, shown, visible(label), linkLines(n.href)) : document.createTextNode(shown)
         }
       }
       return document.createTextNode('')
@@ -5845,7 +5873,22 @@
       }
       return document.createTextNode('')
     })
-    return el('div', { class: 'md' }, ...blocks(window.vibeMarkdown.parse(text)))
+    const parsed = window.vibeMarkdown.parse(text, { softBreaks: asFile })
+    const drawn = blocks(parsed)
+    if (at) {
+      const touched = (from, end) => from <= at.to && end >= at.from
+      parsed.forEach((b, i) => {
+        const end = i + 1 < parsed.length ? parsed[i + 1].line - 1 : Infinity
+        if (!touched(b.line, end) || !drawn[i].classList) return
+        if (b.type !== 'list') { drawn[i].classList.add('marked'); return }
+        const items = drawn[i].children
+        b.itemLines.forEach((from, k) => {
+          const itemEnd = k + 1 < b.itemLines.length ? b.itemLines[k + 1] - 1 : end
+          if (touched(from, itemEnd) && items[k]) items[k].classList.add('marked')
+        })
+      })
+    }
+    return el('div', { class: 'md' }, ...drawn)
   }
 
   // looksLikeFile is whether code the agent wrote reads as a path to a file: no spaces, a name with an
@@ -5880,6 +5923,28 @@
     return parts.join('/')
   }
 
+  // fileAt is a path the agent wrote with where in the file it means, as agents write it: path:12, path:12:5 (the
+  // column isn't shown) or path:12-20; as { path, from, to }, or null when the text isn't one.
+  function fileAt(text) {
+    const m = /^(.+?):(\d+)(?:-(\d+)|:\d+)?$/.exec(text)
+    if (!m || !looksLikeFile(m[1])) return null
+    const from = Number(m[2])
+    const to = m[3] ? Number(m[3]) : from
+    return from >= 1 && to >= from ? { path: m[1], from, to } : null
+  }
+
+  // linkLines is where in its file a link's address points, as GitHub writes it (#L12, #L12-L20), or null.
+  function linkLines(href) {
+    const m = /#L(\d+)(?:-L?(\d+))?$/.exec(href)
+    if (!m) return null
+    const from = Number(m[1])
+    const to = m[2] ? Number(m[2]) : from
+    return from >= 1 && to >= from ? { from, to } : null
+  }
+
+  // linesSaid is a place in a file as the viewer's buttons say it: "line 12", "lines 12-20".
+  function linesSaid(at) { return at.to > at.from ? 'lines ' + at.from + '-' + at.to : 'line ' + at.from }
+
   // fileLinkPath is the file a Markdown link's address names, when it is a reference to one on this machine
   // ("./other.md", "docs/a.md#top"): no scheme, not a network address, no query; null for anything else.
   function fileLinkPath(href) {
@@ -5891,10 +5956,11 @@
 
   // fileCandidate is a path the host has yet to say is a file: code showing it, or (for a Markdown link to
   // it) its words, with label for what the button says once it is one.
-  function fileCandidate(path, text = path, label = '') {
+  function fileCandidate(path, text = path, label = '', at = null) {
     if (!fileCheckQueued) { fileCheckQueued = true; queueMicrotask(checkFileCandidates) }
     const props = { class: 'file-candidate', text, 'data-path': pathFrom(viewedFolder, path) }
     if (label) props['data-label'] = label
+    if (at) { props['data-from'] = String(at.from); props['data-to'] = String(at.to) }
     return el(label ? 'span' : 'code', props)
   }
 
@@ -5913,41 +5979,51 @@
         console.warn("vibe couldn't tell which paths are files it can show:", err.message)
       }
     }
-    for (const n of nodes) if (n.isConnected && files.has(n.dataset.path)) n.replaceWith(fileRef(n.dataset.path, n.dataset.label || n.textContent, !n.dataset.label))
+    for (const n of nodes) {
+      if (!n.isConnected || !files.has(n.dataset.path)) continue
+      const at = n.dataset.from ? { from: Number(n.dataset.from), to: Number(n.dataset.to) } : null
+      n.replaceWith(fileRef(n.dataset.path, n.dataset.label || n.textContent, !n.dataset.label, at))
+    }
   }
 
   // fileRef is a path the agent named, as a button showing that file over the conversation. It is never a
   // link: the agent chooses the path, so what comes of clicking is only the host reading it, if it is in the
   // workspace, and the page showing it as text.
-  function fileRef(path, shown = path, asCode = true) {
+  function fileRef(path, shown = path, asCode = true, at = null) {
     const words = asCode ? el('code', { text: shown }) : el('span', { text: shown })
-    return el('button', { type: 'button', class: 'file-ref', title: shown === path ? 'Show this file' : 'Show ' + path, onclick: () => viewFile(path) }, words)
+    const title = at ? 'Show ' + path + ' at ' + linesSaid(at) : shown === path ? 'Show this file' : 'Show ' + path
+    return el('button', { type: 'button', class: 'file-ref', title, onclick: () => viewFile(path, at) }, words)
   }
 
   // The viewer keeps a history as a browser does: each file followed from a link in it is a step on from the
   // last, Back and Forward move along the steps, and following a link from a step back along drops those that
   // were ahead. Each step keeps how far down it was read, to go back to. Closing the viewer ends it: the next file
   // opened is the first of a new one.
-  const viewer = { steps: [], at: -1, loading: 0 }
+  const viewer = { steps: [], at: -1, loading: 0, drawn: false }
 
-  // viewFile shows path over the conversation: from a button in it, the first step of a new history; from a
-  // link in a file already shown, the next step of that one.
-  function viewFile(path) {
+  // viewFile shows path over the conversation, at the lines at ({ from, to }) when given, marked: from a button
+  // in it, the first step of a new history; from a link in a file already shown, the next step of that one. A
+  // step's place is how far down it was read (null until it has been); source, for Markdown, whether its text is
+  // shown, numbered, rather than the formatted page (only once chosen).
+  function viewFile(path, at = null) {
     const dialog = $('file-view')
+    const step = { path, place: null, at, source: null }
     if (dialog.open) {
       rememberPlace()
       viewer.steps.length = viewer.at + 1
-      viewer.steps.push({ path, place: 0 })
+      viewer.steps.push(step)
       viewer.at++
     } else {
-      viewer.steps = [{ path, place: 0 }]
+      viewer.steps = [step]
       viewer.at = 0
     }
     return showStep()
   }
 
+  // rememberPlace keeps how far down the step shown was read: only once its file is drawn, as "Loading…" says nothing of where it
+  // would be read (a step left while it loads opens as it would have, at its marked line, say).
   function rememberPlace() {
-    if (viewer.steps[viewer.at]) viewer.steps[viewer.at].place = $('file-view-body').scrollTop
+    if (viewer.steps[viewer.at] && viewer.drawn) viewer.steps[viewer.at].place = $('file-view-body').scrollTop
   }
 
   async function goViewer(to) {
@@ -5969,12 +6045,14 @@
     const step = viewer.steps[viewer.at]
     const path = step.path
     const mine = ++viewer.loading
+    viewer.drawn = false
     $('file-view-path').value = path
     $('file-view-path').title = path
     endOfPath()
     drawViewerButtons()
     dialog.classList.remove('outside')
     $('file-view-copy').hidden = true
+    $('file-view-mode').hidden = true
     $('file-view-body').replaceChildren(el('p', { class: 'muted', text: 'Loading…' }))
     if (!dialog.open) dialog.showModal()
     endOfPath()
@@ -5989,29 +6067,79 @@
     if (!res.ok) {
       dialog.classList.toggle('outside', res.body.code === 'outside')
       $('file-view-body').replaceChildren(el('p', { text: res.body.error || 'That file could not be shown.' }))
-      $('file-view-body').scrollTop = step.place
+      $('file-view-body').scrollTop = step.place || 0
       return
     }
     const text = res.body.text
+    const isMarkdown = /\.(md|markdown)$/i.test(path)
+    const source = !isMarkdown || step.source === true
+    const mode = $('file-view-mode')
+    mode.hidden = !isMarkdown
+    mode.textContent = source ? 'Formatted' : 'Source'
+    mode.title = source ? 'Show it formatted' : 'Show its source, the lines numbered'
     $('file-view-copy').hidden = false
-    // It narrows the path bar.
+    // They narrow the path bar.
     endOfPath()
     $('file-view-copy').onclick = () => copyText(text)
     viewedFolder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+    const body = $('file-view-body')
+    const count = lineCount(text)
+    const pastEnd = step.at && step.at.from > count
+      ? [el('p', { class: 'muted', text: 'Line ' + step.at.from + ' is past the end of ' + path + ' (' + plural(count, 'line') + '): it may have changed since it was named.' })]
+      : []
     try {
-      $('file-view-body').replaceChildren(...(/\.(md|markdown)$/i.test(path) ? [markdown(text)] : codeView(text, res.body.colour)))
+      const shown = text === '' ? [el('p', { class: 'fv-empty', text: 'Empty File' })]
+        : source ? codeView(text, res.body.colour, step.at) : [markdown(text, { at: step.at, asFile: true })]
+      body.replaceChildren(...pastEnd, ...shown)
     } finally {
       viewedFolder = ''
     }
-    $('file-view-body').scrollTop = step.place
+    viewer.drawn = true
+    const first = body.querySelector('.fv-line.marked, .md .marked')
+    if (step.place != null) body.scrollTop = step.place
+    else if (first) first.scrollIntoView({ block: 'center' })
+    else body.scrollTop = pastEnd.length ? body.scrollHeight : 0
   }
 
-  // codeView is a file that isn't Markdown, as text: coloured where the host gave its colours (a line at a
-  // time, by what each run of it is: a line they no longer spell is plain), saying why where it didn't colour it.
-  function codeView(text, colour) {
+  // switchViewerMode shows a Markdown file's source in place of the formatted page, or the other way, from the top
+  // (or its marked line): the two are not the same height.
+  function switchViewerMode() {
+    const step = viewer.steps[viewer.at]
+    if (!step) return
+    step.source = $('file-view-mode').textContent === 'Source'
+    step.place = null
+    return showStep()
+  }
+
+  // fileLines is text as a file's lines, the last one's newline not starting another.
+  function fileLines(text) {
+    const lines = text.replace(/\r\n/g, '\n').split('\n')
+    if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop()
+    return lines
+  }
+
+  function lineCount(text) { return text === '' ? 0 : fileLines(text).length }
+
+  // codeView is a file as text, a line at a time, each numbered: coloured where the host gave its colours (by what
+  // each run of a line is: a line they no longer spell is plain), saying why where it didn't colour it, and the
+  // lines at ({ from, to }) marked. The numbers are drawn by the page's style, so they are not in the text: what is
+  // selected and copied is the file's.
+  function codeView(text, colour, at = null) {
     const note = colour && colour.skipped ? [el('p', { class: 'muted', text: 'Not coloured: ' + colour.skipped })] : []
-    if (!colour || !Array.isArray(colour.lines)) return [...note, el('pre', {}, el('code', { text: visible(text) }))]
-    return [...note, el('pre', {}, el('code', {}, ...colouredParts(text, colour)))]
+    const coloured = !!colour && Array.isArray(colour.lines)
+    const lines = fileLines(text)
+    const ends = text !== '' && /\n$/.test(text)
+    const code = el('code', { class: 'fv-lines' })
+    code.style.setProperty('--fv-digits', String(String(lines.length).length))
+    lines.forEach((line, i) => {
+      const n = i + 1
+      const runs = coloured ? R.lineRuns(colour.lines[i], line) : null
+      const parts = runs ? runs.map((r) => r.kind ? el('span', { class: 'hl-' + r.kind, text: visible(r.text) }) : visible(r.text)) : [visible(line)]
+      const isMarked = !!at && n >= at.from && n <= at.to
+      code.append(el('span', { class: 'fv-line' + (isMarked ? ' marked' : ''), 'data-n': String(n) }, ...parts))
+      if (i < lines.length - 1 || ends) code.append('\n')
+    })
+    return [...note, el('pre', {}, code)]
   }
 
   // colouredParts is text as what a code element holds: each line's runs as spans by what they are, as the host coloured it, and
@@ -6058,6 +6186,7 @@
   $('file-view-back').onclick = () => goViewer(viewer.at - 1)
   $('file-view-forward').onclick = () => goViewer(viewer.at + 1)
   $('file-view-reload').onclick = () => { rememberPlace(); return showStep() }
+  $('file-view-mode').onclick = switchViewerMode
   $('file-view-close').onclick = () => $('file-view').close()
 
   // HIDDEN_CONTROL is what a terminal acts on but a page doesn't show: the
@@ -6281,21 +6410,103 @@
     if (web === state.repoWeb) return
     state.repoWeb = web
     for (const a of document.querySelectorAll('a.repo-ref')) linkRepoRef(a)
+    relinkBareRefs()
   }
 
-  // withCommentRefs is text as nodes, each review comment it names (#24, not in a word: issue#3, C#4 aren't) a link to that comment
-  // on the Review tab.
+  // pulls is what the page knows of the repository's pull requests, for a bare #N no comment has: numbers (null until vibe has
+  // said), the version of the list they are (vibe's state says when there's a newer one), and the numbers drawn that the list
+  // doesn't have (wanted), to be asked about: each at once when first drawn, then again at most every PULLS_RECHECK_MS.
+  const pulls = { numbers: null, version: 0, canAsk: false, wanted: new Set(), asked: new Set(), askedAt: 0, loading: false, again: false }
+  const PULLS_RECHECK_MS = 60000
+
+  // pullRequestsVersion takes what vibe's state says of the list: null when vibe can't list them, else the list's version.
+  function pullRequestsVersion(version) {
+    pulls.canAsk = typeof version === 'number'
+    if (!pulls.canAsk) return
+    const recheck = pulls.wanted.size > 0 && Date.now() - pulls.askedAt >= PULLS_RECHECK_MS
+    if (recheck) pulls.asked.clear()
+    if (version !== pulls.version || recheck) loadPullRequests()
+  }
+
+  // wantPullRequest asks vibe whether n is a pull request, unless it has been asked already.
+  function wantPullRequest(n) {
+    pulls.wanted.add(n)
+    if (!pulls.canAsk || !state.repoWeb || pulls.asked.has(n)) return
+    // Several drawn together are asked about in one go.
+    if (!pulls.queued) {
+      pulls.queued = true
+      Promise.resolve().then(() => { pulls.queued = false; loadPullRequests() })
+    }
+  }
+
+  async function loadPullRequests() {
+    if (pulls.loading) { pulls.again = true; return }
+    pulls.loading = true
+    const want = state.repoWeb ? [...pulls.wanted].filter((n) => !pulls.asked.has(n)).slice(0, 200) : []
+    for (const n of want) pulls.asked.add(n)
+    if (want.length) pulls.askedAt = Date.now()
+    try {
+      const res = await api('/api/pull-requests' + (want.length ? '?want=' + want.join(',') : ''))
+      if (!res.ok) return
+      pulls.version = res.body.version || 0
+      pulls.numbers = new Set(res.body.numbers || [])
+      for (const n of pulls.numbers) pulls.wanted.delete(n)
+      relinkBareRefs()
+    } catch (e) {
+      // The next state poll asks again, when vibe answers.
+    } finally {
+      pulls.loading = false
+      if (pulls.again) { pulls.again = false; loadPullRequests() }
+    }
+  }
+
+  // setReviewThreads takes the review's comments from vibe's state, relinking the bare numbers drawn when they change.
+  function setReviewThreads(ids, closed) {
+    const was = [...state.reviewThreads].join(',') + '|' + state.reviewClosed
+    state.reviewThreads = new Set(ids || [])
+    state.reviewClosed = closed
+    if ([...state.reviewThreads].join(',') + '|' + closed !== was) relinkBareRefs()
+  }
+
+  function relinkBareRefs() {
+    for (const span of document.querySelectorAll('span.bare-ref')) drawBareRef(span)
+  }
+
+  // drawBareRef draws a bare #N (in span) as what it names: a comment on the open review, else a pull request on GitHub, else a
+  // comment on the closed review (which says it's closed), else plain text. Drawn again only when that changes: a redraw would
+  // take the focus from it.
+  function drawBareRef(span) {
+    const id = Number(span.dataset.number)
+    const text = span.dataset.text
+    const comment = state.reviewThreads.has(id)
+    const pull = !!state.repoWeb && !!pulls.numbers && pulls.numbers.has(id)
+    const as = comment && (!state.reviewClosed || !pull) ? (pull ? 'comment+pull' : 'comment') : pull ? 'pull' : 'plain'
+    if (!comment && !pull) wantPullRequest(id)
+    if (span.dataset.as === as) return
+    span.dataset.as = as
+    if (as === 'plain') span.replaceChildren(document.createTextNode(text))
+    else if (as === 'pull') span.replaceChildren(repoRef('pull', id, text))
+    else {
+      const title = 'Go to comment #' + id + ' on the Review tab' + (as === 'comment+pull' ? ' (there is a pull request #' + id + ' too)' : '')
+      span.replaceChildren(el('button', { type: 'button', class: 'thread-ref', 'data-thread': String(id), title, text, onclick: () => openThread(id) }))
+    }
+  }
+
+  // withCommentRefs is text as nodes, each bare number in it (#24, not in a word: issue#3, C#4 aren't) drawn as what it names
+  // (drawBareRef): a review comment, a pull request, or plain text.
   function withCommentRefs(text) {
     const nodes = []
     let at = 0
     // Not in a word (issue#3), a path or address (example.com/#4), nor a
-    // number going on (#1.5); shown as written (#007).
-    for (const m of text.matchAll(/(^|[^\w#/])#(\d+)(?![\w.]*\d)\b/g)) {
+    // number going on (#1.5); shown as written (#007). Nine digits at most:
+    // past what Number() keeps exact, a number would be asked about as another.
+    for (const m of text.matchAll(/(^|[^\w#/])#(\d{1,9})(?![\w.]*\d)\b/g)) {
       const start = m.index + m[1].length
       const id = Number(m[2])
       if (start > at) nodes.push(document.createTextNode(text.slice(at, start)))
-      nodes.push(el('button', { type: 'button', class: 'thread-ref', 'data-thread': String(id), title: 'Go to comment #' + id + ' on the Review tab',
-        text: '#' + m[2], onclick: () => openThread(id) }))
+      const span = el('span', { class: 'bare-ref', 'data-number': String(id), 'data-text': '#' + m[2] })
+      drawBareRef(span)
+      nodes.push(span)
       at = start + 1 + m[2].length
     }
     if (at < text.length) nodes.push(document.createTextNode(text.slice(at)))
@@ -6665,13 +6876,14 @@
   // --- the status balloon (docs/adr/2026-11-18-status-balloon.md) ---------------------------------------------------------------------------
   // What the agent has going on, in a balloon from its own info button: what resolves itself (background work, compacting) pops up and
   // closes itself after STATUS_CLOSE_MS; a warning that needs the user stays until it is no longer true, or is closed. Opened by the
-  // user, it stays until closed. items are what is current; token makes a close timer that has been overtaken do nothing.
+  // user, it stays until closed. items are what is current; token makes a close timer that has been overtaken do nothing. closing says
+  // a close timer is set (its countdown bar showing), and held that the pointer or focus is on the balloon, which holds it open.
   const STATUS_CLOSE_MS = 5000
   // stoppingTasks is a stop of the background work asked for and not yet seen through: its button waits until the tasks have gone, or
   // until FORCE_STOP_AFTER_MS, when stopStuck offers to force it (stopToken makes the wait of a stop already over do nothing).
   // drawn is what the balloon was last written to say (drawStatus).
   const statusView = { items: [], open: false, byUser: false, pending: false, token: 0, stoppingTasks: false, stopStuck: false, stopToken: 0,
-    drawn: '' }
+    drawn: '', closing: false, held: false }
 
   // statusSeen is whether the status balloon can be seen popping up: the Conversation tab showing, in a window being looked at.
   function statusSeen() {
@@ -6692,18 +6904,21 @@
       statusView.stoppingTasks = false
       statusView.stopStuck = false
       statusView.stopToken++
-      // The stop has done what it was opened for: left empty, the balloon would only say what it is for.
-      if (!items.length && statusView.open) {
-        statusView.open = false
-        statusView.byUser = false
-        // Keyboard focus was on the stop button, gone with the balloon: it goes back to the button the balloon opens from.
-        const focus = document.activeElement
-        if (!focus || focus === document.body || $('status-balloon').contains(focus)) $('status-info').focus()
-      }
+    }
+    // What it listed has gone, however it was opened: left empty, the balloon would only say what it is for.
+    if (before.length && !items.length && statusView.open) {
+      statusView.open = false
+      statusView.byUser = false
+      // Keyboard focus inside it (on Stop, say) goes with the balloon: it goes back to the button the balloon opens from.
+      const focus = document.activeElement
+      if (!focus || focus === document.body || $('status-balloon').contains(focus)) $('status-info').focus()
     }
     // News that has since gone (work started and ended out of sight) is not kept for coming back to: it would pop up empty.
     if (!items.length) statusView.pending = false
-    if (news) {
+    // Opened by the user, it is already showing the news, and stays until they close it: popping it up again would make it close itself.
+    if (news && statusView.open && statusView.byUser) {
+      statusView.pending = false
+    } else if (news) {
       if (statusSeen()) popStatus()
       else statusView.pending = true
     } else if (statusView.open && !statusView.byUser) {
@@ -6720,12 +6935,17 @@
     statusView.open = true
     statusView.byUser = false
     statusView.token++
+    statusView.closing = false
     if (!statusView.items.some((i) => i.warn)) closeStatusLater()
     drawStatus()
   }
 
+  // closeStatusLater closes the balloon after STATUS_CLOSE_MS, its bar counting down; held, it waits until let go, and starts again.
   function closeStatusLater() {
     const token = ++statusView.token
+    statusView.closing = true
+    showCountdown($('status-balloon'), STATUS_CLOSE_MS, statusView.held)
+    if (statusView.held) return
     setTimeout(() => {
       if (token !== statusView.token || statusView.byUser) return
       statusView.open = false
@@ -6736,9 +6956,16 @@
   // setStatusOpen is the user opening or closing the balloon: opened so, it stays until they close it.
   function setStatusOpen(open) {
     statusView.token++
+    statusView.closing = false
     statusView.open = open
     statusView.byUser = open
     drawStatus()
+  }
+
+  function holdStatus(held) {
+    if (held === statusView.held) return
+    statusView.held = held
+    if (statusView.closing && statusView.open && !statusView.byUser) closeStatusLater()
   }
 
   // statusSeenAgain pops up, once, what changed while the balloon could not be seen.
@@ -6759,6 +6986,12 @@
       drawStatusWords(warns, tasks, others)
     }
     $('status-balloon').hidden = !statusView.open
+    if (!statusView.open || statusView.byUser || !statusView.closing) {
+      statusView.closing = false
+      showCountdown($('status-balloon'), 0)
+    }
+    // Hidden under the pointer, it may never hear the pointer leave.
+    if (!statusView.open) statusView.held = false
     const button = $('status-info')
     button.classList.toggle('warn', warns.length > 0)
     button.classList.toggle('busy', !warns.length && tasks.length > 0)
@@ -8452,10 +8685,10 @@
   const FRESH_OPTIONS_MS = 4 * 60 * 1000
   const FRESH_FETCH_MS = 3 * 60 * 1000
   const FRESH_START_MS = 5 * 60 * 1000
-  // A clipboard page that doesn't answer may still be starting with the sandbox: ask again this
-  // often, this many times, then leave the reason showing.
-  const FRESH_RETRY_MS = 3000
-  const FRESH_RETRIES = 20
+  // A clipboard page that doesn't answer may still be starting with the sandbox: ask it again (it
+  // alone, which costs no sbx call) this often, this many times, then leave the reason showing.
+  const FRESH_RETRY_MS = 1000
+  const FRESH_RETRIES = 60
   const fresh = { generation: 0, options: null, fetching: false, fetched: null, cancel: null, nameTyped: false }
 
   // branchNameProblem is why git would refuse name for a branch (git check-ref-format's rules, as far
@@ -8512,7 +8745,7 @@
   function openFresh() {
     if (fresh.cancel) fresh.cancel.abort()
     const generation = ++fresh.generation
-    Object.assign(fresh, { options: null, retries: 0, rechecking: false, clipboardWasOff: false, fetching: false, fetched: null, setterWhy: null, cancel: new AbortController() })
+    Object.assign(fresh, { options: null, waiting: true, starting: false, retries: 0, rechecking: false, clipboardWasOff: false, fetching: false, fetched: null, setterWhy: null, cancel: new AbortController() })
     $('fresh-clipboard').checked = true
     $('fresh-unsent').checked = true
     $('fresh-review').checked = true
@@ -8526,7 +8759,25 @@
     drawFresh()
     $('fresh').showModal()
     raiseToast()
+    askFreshReady()
     askFreshOptions(false)
+  }
+
+  // askFreshReady asks what the dialog offers at all, which vibe knows without the sandbox: Start needn't
+  // wait for the sandbox (starting wakes it anyway), and does what is ticked. The clipboard's counts and
+  // the branch are filled in when the options come.
+  function askFreshReady() {
+    const generation = fresh.generation
+    api('/api/conversation/new/ready', { cancel: fresh.cancel }).then((res) => {
+      if (generation !== fresh.generation || fresh.options) return
+      if (!res.ok) { console.warn('vibe could not say what New conversation offers; waiting for the sandbox:', res.body && res.body.error); return }
+      fresh.options = {
+        review: !!res.body.review,
+        clipboard: res.body.clipboard ? { counting: true } : undefined,
+        branch: res.body.repository ? { checking: true } : undefined,
+      }
+      drawFresh()
+    }, (err) => console.warn('vibe could not say what New conversation offers; waiting for the sandbox:', err.message))
   }
 
   // askFreshOptions asks vibe what else the dialog can offer, and draws it,
@@ -8538,21 +8789,38 @@
       if (generation !== fresh.generation) return
       freshError(text)
       fresh.rechecking = false
-      if (!keep) fresh.options = {}
+      fresh.waiting = false
+      if (!keep) fresh.options = { review: !!(fresh.options && fresh.options.review) }
       drawFresh()
     }
     post('/api/conversation/new/options', {}, { timeout: FRESH_OPTIONS_MS, cancel: fresh.cancel }).then((res) => {
       if (!res.ok) { failed(res.body.error || "vibe couldn't say what else can be done."); return }
       if (generation !== fresh.generation) return
       fresh.options = res.body
-      const c = res.body.clipboard
-      const again = !!(c && c.retry && fresh.retries++ < FRESH_RETRIES)
-      fresh.rechecking = again
-      drawFresh()
-      if (again) {
-        setTimeout(() => { if (generation === fresh.generation) askFreshOptions(true) }, FRESH_RETRY_MS)
-      }
+      fresh.waiting = false
+      clipboardAnswered(generation, res.body.clipboard)
     }, () => failed('Could not reach vibe to ask what else can be done.'))
+  }
+
+  // clipboardAnswered draws what the clipboard page said, and asks it again later when it may still be
+  // starting. Each try is counted from the options' (the first), and the last says so, for vibe's log.
+  function clipboardAnswered(generation, c) {
+    const again = !!(c && c.retry && fresh.retries < FRESH_RETRIES)
+    fresh.rechecking = again
+    drawFresh()
+    if (!again) return
+    setTimeout(() => {
+      if (generation !== fresh.generation) return
+      fresh.retries++
+      const body = { try: fresh.retries + 1, last: fresh.retries === FRESH_RETRIES }
+      const unanswered = (why) => clipboardAnswered(generation, { unavailable: "The clipboard page couldn't be asked: " + why })
+      post('/api/conversation/new/clipboard', body, { cancel: fresh.cancel }).then((res) => {
+        if (generation !== fresh.generation || !fresh.options) return
+        if (!res.ok) { unanswered(res.body.error || 'vibe said ' + res.status); return }
+        fresh.options.clipboard = res.body
+        clipboardAnswered(generation, res.body)
+      }, () => unanswered("vibe couldn't be reached"))
+    }, FRESH_RETRY_MS)
   }
 
   function freshError(text) {
@@ -8569,10 +8837,11 @@
 
   function drawFresh() {
     const o = fresh.options
-    showIf('fresh-loading', !o)
-    $('fresh-run').disabled = !o
+    showIf('fresh-loading', fresh.waiting)
+    // Start can be pressed before the options come: they may come during the start, which mustn't be started twice.
+    $('fresh-run').disabled = !o || fresh.starting
     const c = o && o.clipboard
-    showIf('fresh-clipboard-row', !!c && (!!c.unavailable || c.sent + c.unsent > 0))
+    showIf('fresh-clipboard-row', !!c && (!!c.counting || !!c.unavailable || c.sent + c.unsent > 0))
     if (c) {
       $('fresh-clipboard').disabled = !!c.unavailable
       if (c.unavailable) {
@@ -8588,18 +8857,19 @@
         ...(checking ? [el('span', { class: 'spinner', 'aria-hidden': 'true' })] : []),
         (c.unavailable || '') + (checking ? ' Checking again…' : ''))
       showIf('fresh-clipboard-why', !!c.unavailable)
-      $('fresh-clipboard-count').textContent = !c.unavailable && c.sent ? '(' + plural(c.sent, 'item') + ' sent)' : ''
-      showIf('fresh-unsent-row', !c.unavailable && c.unsent > 0 && $('fresh-clipboard').checked)
-      $('fresh-unsent-count').textContent = '(' + c.unsent + ' waiting to go with your next message)'
+      $('fresh-clipboard-count').textContent = c.counting ? '(counting…)' : !c.unavailable && c.sent ? '(' + plural(c.sent, 'item') + ' sent)' : ''
+      showIf('fresh-unsent-row', !c.unavailable && (c.counting || c.unsent > 0) && $('fresh-clipboard').checked)
+      $('fresh-unsent-count').textContent = c.counting ? '(counting…)' : '(' + c.unsent + ' waiting to go with your next message)'
     }
     showIf('fresh-review-row', !!(o && o.review))
     const b = o && o.branch
     showIf('fresh-branch-row', !!b)
     if (!b) return
-    $('fresh-branch').disabled = !!b.unavailable
-    if (b.unavailable) $('fresh-branch').checked = false
-    $('fresh-branch-why').textContent = b.unavailable || ''
-    showIf('fresh-branch-why', !!b.unavailable)
+    $('fresh-branch').disabled = !!b.unavailable || !!b.checking
+    if (b.unavailable || b.checking) $('fresh-branch').checked = false
+    $('fresh-branch-why').textContent = b.checking ? 'Checking the repository in the sandbox…' : b.unavailable || ''
+    showIf('fresh-branch-why', !!b.unavailable || !!b.checking)
+    if (b.checking) { showIf('fresh-branch-details', false); return }
     showIf('fresh-branch-details', $('fresh-branch').checked)
     $('fresh-from-here-name').textContent = b.current ? '(' + b.current + ')' : '(the detached HEAD)'
     const def = freshDefault()
@@ -8675,7 +8945,7 @@
       body.clipboard = !$('fresh-unsent-row').hidden && $('fresh-unsent').checked ? 'all' : 'sent'
     }
     if (o.review && $('fresh-review').checked) body.review = true
-    if (o.branch && !o.branch.unavailable && $('fresh-branch').checked) {
+    if (o.branch && !o.branch.unavailable && !o.branch.checking && $('fresh-branch').checked) {
       const fromDefault = !!freshDefault() && !$('fresh-from-default').disabled && $('fresh-from-default').checked
       body.branch = {
         name: $('fresh-branch-name').value,
@@ -8695,6 +8965,7 @@
       return
     }
     showIf('fresh-error', false)
+    fresh.starting = true
     $('fresh-run').disabled = true
     $('fresh-run').textContent = 'Starting…'
     let res
@@ -8705,6 +8976,7 @@
       reached(false)
       res = { ok: false, body: { error: 'Could not reach vibe.' } }
     }
+    fresh.starting = false
     $('fresh-run').textContent = 'Start a new conversation'
     $('fresh-run').disabled = false
     if (!res.ok) {
@@ -8845,6 +9117,7 @@
   setUpAdmin()
   for (const [on, held] of [['mouseenter', true], ['mouseleave', false], ['focusin', true], ['focusout', false]]) {
     $('toast').addEventListener(on, () => holdToast(held))
+    $('status-balloon').addEventListener(on, () => holdStatus(held))
   }
   setUpManage()
 

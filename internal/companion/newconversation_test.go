@@ -15,7 +15,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"vibe/internal/review"
 )
@@ -362,6 +364,46 @@ func TestWithoutOriginHEADTheDefaultBranchIsntGuessed(t *testing.T) {
 	}
 }
 
+func TestADetachedHeadIsOfferedAsOnNoBranch(t *testing.T) {
+	work, _ := repoWithOrigin(t)
+	gitOut(t, work, "switch", "-q", "--detach")
+	s := freshServer(t, freshSetup{work: work})
+	if o := options(t, s); o.Branch == nil || o.Branch.Current != "" || o.Branch.Unavailable != "" {
+		t.Errorf("detached: %+v", o.Branch)
+	}
+}
+
+// Each sbx exec costs a second or more (sbx's own start-up), so the dialog's options read the repository with one run of git
+// in the sandbox, whatever they find: a set default branch too.
+func TestTheOptionsRunGitInTheSandboxOnce(t *testing.T) {
+	for name, setUp := range map[string]func(t *testing.T) string{
+		"origin's default branch": func(t *testing.T) string { work, _ := repoWithOrigin(t); return work },
+		"a set default branch": func(t *testing.T) string {
+			work := newRepo(t)
+			commitIn(t, work, "a.txt", "one\n")
+			gitOut(t, work, "config", "vibe.defaultBranch", "master")
+			gitOut(t, work, "switch", "-q", "-c", "feat/a")
+			return work
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := freshServer(t, freshSetup{work: setUp(t)})
+			var runs atomic.Int32
+			git := s.cfg.SandboxGit
+			s.cfg.SandboxGit = func(ctx context.Context, args ...string) (string, error) {
+				runs.Add(1)
+				return git(ctx, args...)
+			}
+			if o := options(t, s); o.Branch == nil || o.Branch.Unavailable != "" {
+				t.Fatalf("branch = %+v", o.Branch)
+			}
+			if n := runs.Load(); n != 1 {
+				t.Errorf("git ran %d times in the sandbox, want 1", n)
+			}
+		})
+	}
+}
+
 func TestADirtyTreeIsSaidAndUntrackedFilesCount(t *testing.T) {
 	work, _ := repoWithOrigin(t)
 	s := freshServer(t, freshSetup{work: work})
@@ -382,6 +424,24 @@ func TestConflictsMakeBranchingUnavailable(t *testing.T) {
 	o := options(t, s)
 	if !o.Branch.Conflicted || !strings.Contains(o.Branch.Unavailable, "conflict") {
 		t.Errorf("mid-merge with a conflict: %+v", o.Branch)
+	}
+}
+
+// The repository is read with one run of git, which prints the tree's state, a line marking where the branches start, then the
+// branches: a file named as the marker, listed before a conflict, must not hide the conflict (as if the rest were branches).
+func TestAFileNamedAsTheMarkerDoesntHideAConflict(t *testing.T) {
+	work, _ := repoWithOrigin(t)
+	gitOut(t, work, "switch", "-q", "-c", "other")
+	commitIn(t, work, "a.txt", "other\n")
+	gitOut(t, work, "switch", "-q", "master")
+	commitIn(t, work, "a.txt", "mine\n")
+	exec.Command("git", "-C", work, "-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "other").Run()
+	os.MkdirAll(filepath.Join(work, "0"), 0o755)
+	writeIn(t, work, "0/"+repoStateEnd, "listed before a.txt\n")
+	gitOut(t, work, "add", "0/"+repoStateEnd)
+	s := freshServer(t, freshSetup{work: work})
+	if o := options(t, s); !o.Branch.Conflicted {
+		t.Errorf("the conflict was hidden: %+v", o.Branch)
 	}
 }
 
@@ -608,6 +668,72 @@ func TestTheNewConversationSaysWhatWasDone(t *testing.T) {
 	}
 }
 
+// Start can be pressed before the clipboard's counts are known, its box ticked as ever: an empty clipboard has nothing cleared to
+// say, so the new conversation says nothing of it.
+func TestClearingAnEmptyClipboardSaysNothing(t *testing.T) {
+	s := freshServer(t, freshSetup{clipboard: &clipboardItemsStandIn{}})
+	if code, out := send(t, s, "/api/conversation/new", `{"clipboard":"all"}`); code != http.StatusOK {
+		t.Fatalf("new: %d %v", code, out)
+	}
+	if said := strings.Join(eventsAfterReset(t, s), "\n"); strings.Contains(said, "clipboard") {
+		t.Errorf("the conversation says %q", said)
+	}
+}
+
+// Start can be pressed before the clipboard page is up (it starts with the sandbox, which starting wakes): clearing waits for it,
+// asking again while it drops the connection, as the user saw ("connection reset by peer") on an early Start from cold.
+func TestClearingTheClipboardWaitsForItsPageToComeUp(t *testing.T) {
+	items := &clipboardItemsStandIn{sent: []int{1}, unsent: []int{2}}
+	answer := items.serve(t)
+	var dropped atomic.Int32
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if dropped.Load() < 2 {
+			dropped.Add(1)
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			conn.Close()
+			return
+		}
+		req, _ := http.NewRequest(r.Method, answer+r.URL.Path, r.Body)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer res.Body.Close()
+		w.WriteHeader(res.StatusCode)
+		io.Copy(w, res.Body)
+	}))
+	t.Cleanup(page.Close)
+	s := freshServer(t, freshSetup{})
+	s.cfg.ClipboardURL = func() string { return page.URL }
+	s.clipboardUpEvery = time.Millisecond
+	if code, out := send(t, s, "/api/conversation/new", `{"clipboard":"all"}`); code != http.StatusOK {
+		t.Fatalf("new: %d %v", code, out)
+	}
+	if said := strings.Join(eventsAfterReset(t, s), "\n"); !strings.Contains(said, "Cleared the clipboard (2 items)") {
+		t.Errorf("the conversation says %q", said)
+	}
+}
+
+// A page that doesn't come up is waited for only so long: the conversation starts anew, saying the clipboard wasn't cleared.
+func TestAClipboardPageThatNeverComesUpIsWaitedForOnlySoLong(t *testing.T) {
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closedURL := closed.URL
+	closed.Close()
+	s := freshServer(t, freshSetup{})
+	s.cfg.ClipboardURL = func() string { return closedURL }
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	s.clock = func() time.Time { mu.Lock(); defer mu.Unlock(); now = now.Add(time.Second); return now }
+	s.clipboardUpEvery = time.Millisecond
+	if code, out := send(t, s, "/api/conversation/new", `{"clipboard":"all"}`); code != http.StatusOK {
+		t.Fatalf("new: %d %v", code, out)
+	}
+	if said := strings.Join(eventsAfterReset(t, s), "\n"); !strings.Contains(said, "couldn't be cleared") {
+		t.Errorf("the conversation says %q", said)
+	}
+}
+
 func TestAClipboardThatCantBeClearedIsReportedAndTheConversationStillStartsAnew(t *testing.T) {
 	c := &clipboardItemsStandIn{sent: []int{1}, down: true}
 	s := freshServer(t, freshSetup{clipboard: c})
@@ -675,6 +801,161 @@ func TestTheClipboardOfferAsksAgainOnlyWhereAMomentMayCureIt(t *testing.T) {
 		s.cfg.ClipboardURL = func() string { return c.url }
 		if got := s.clipboardOffer(context.Background(), c.asleep); got.Retry != c.retry {
 			t.Errorf("%s: Retry is %v, want %v (%+v)", c.name, got.Retry, c.retry, got)
+		}
+	}
+}
+
+// The dialog's Start doesn't wait for the sandbox: its first answer, what the dialog offers at all, is from this machine alone.
+// Starting wakes the sandbox anyway, and does what was ticked once it is up.
+func TestTheDialogsFirstAnswerAsksNothingOfTheSandbox(t *testing.T) {
+	work, _ := repoWithOrigin(t)
+	s := freshServer(t, freshSetup{work: work, clipboard: &clipboardItemsStandIn{sent: []int{1}}, store: openReview(t)})
+	s.cfg.Wake = func(context.Context, func(string)) error { t.Error("the sandbox was woken"); return nil }
+	s.cfg.SandboxGit = func(context.Context, ...string) (string, error) { t.Error("git ran in the sandbox"); return "", nil }
+	rec := do(t, s, req{path: "/api/conversation/new/ready", headers: authed(nil)})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ready: %d %s", rec.Code, rec.Body)
+	}
+	var got map[string]bool
+	json.Unmarshal(rec.Body.Bytes(), &got)
+	if want := map[string]bool{"review": true, "clipboard": true, "repository": true}; !reflect.DeepEqual(got, want) {
+		t.Errorf("ready = %v, want %v", got, want)
+	}
+
+	none := freshServer(t, freshSetup{})
+	rec = do(t, none, req{path: "/api/conversation/new/ready", headers: authed(nil)})
+	json.Unmarshal(rec.Body.Bytes(), &got)
+	if want := map[string]bool{"review": false, "clipboard": false, "repository": false}; !reflect.DeepEqual(got, want) {
+		t.Errorf("with nothing to offer, ready = %v, want %v", got, want)
+	}
+}
+
+// clipboardAgain asks the clipboard's counts again, as the dialog does while the clipboard page may still be starting.
+func clipboardAgain(t *testing.T, s *Server, body string) clipboardOffer {
+	t.Helper()
+	rec := do(t, s, post("/api/conversation/new/clipboard", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clipboard: %d %s", rec.Code, rec.Body)
+	}
+	var o clipboardOffer
+	if err := json.Unmarshal(rec.Body.Bytes(), &o); err != nil {
+		t.Fatal(err)
+	}
+	return o
+}
+
+// Asking the clipboard page again costs no sbx call: only the page is asked, not the sandbox woken nor git run, so the dialog can
+// ask often while the page starts.
+func TestTheClipboardIsAskedAgainOnItsOwn(t *testing.T) {
+	work, _ := repoWithOrigin(t)
+	s := freshServer(t, freshSetup{work: work, clipboard: &clipboardItemsStandIn{sent: []int{1, 2}, unsent: []int{3}}})
+	s.cfg.Wake = func(context.Context, func(string)) error { t.Error("the sandbox was woken"); return nil }
+	s.cfg.SandboxGit = func(context.Context, ...string) (string, error) { t.Error("git ran in the sandbox"); return "", nil }
+	if o := clipboardAgain(t, s, `{"try":2}`); o.Sent != 2 || o.Unsent != 1 || o.Unavailable != "" || o.Retry {
+		t.Errorf("clipboard = %+v", o)
+	}
+}
+
+func TestAnAskForTheClipboardThatCantBeReadIsRefused(t *testing.T) {
+	s := freshServer(t, freshSetup{clipboard: &clipboardItemsStandIn{}})
+	if rec := do(t, s, post("/api/conversation/new/clipboard", `{"try":`)); rec.Code != http.StatusBadRequest {
+		t.Errorf("status %d: %s", rec.Code, rec.Body)
+	}
+}
+
+// A slow start of the dialog reads as one story in vibe's log: the clipboard page not answering at first, then answering on a
+// later try, or not at all by the last.
+func TestTheClipboardPageAnsweringLateIsLogged(t *testing.T) {
+	items := &clipboardItemsStandIn{sent: []int{1}}
+	answer := items.serve(t)
+	var starting atomic.Bool
+	starting.Store(true)
+	// A page still starting drops the connection, as the user saw ("connection reset"); then it answers.
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if starting.Load() {
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			conn.Close()
+			return
+		}
+		res, err := http.Get(answer + r.URL.Path)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer res.Body.Close()
+		io.Copy(w, res.Body)
+	}))
+	t.Cleanup(page.Close)
+	s := freshServer(t, freshSetup{})
+	s.cfg.ClipboardURL = func() string { return page.URL }
+	var logged []string
+	s.cfg.Log = func(m string) { logged = append(logged, m) }
+
+	if o := options(t, s); o.Clipboard == nil || o.Clipboard.Unavailable == "" {
+		t.Fatalf("clipboard = %+v", o.Clipboard)
+	}
+	if len(logged) != 1 || !strings.Contains(logged[0], "the clipboard page didn't answer") || !strings.Contains(logged[0], "asks again") {
+		t.Errorf("the first try: %q", logged)
+	}
+	logged = nil
+	clipboardAgain(t, s, `{"try":2}`)
+	if len(logged) != 0 {
+		t.Errorf("a try between the first and the last: %q", logged)
+	}
+	clipboardAgain(t, s, `{"try":5,"last":true}`)
+	if len(logged) != 1 || !strings.Contains(logged[0], "still didn't answer") || !strings.Contains(logged[0], "5 tries") {
+		t.Errorf("the last try: %q", logged)
+	}
+	logged = nil
+	starting.Store(false)
+	clipboardAgain(t, s, `{"try":3}`)
+	if len(logged) != 1 || !strings.Contains(logged[0], "answered on try 3") {
+		t.Errorf("answered on a later try: %q", logged)
+	}
+	logged = nil
+	clipboardAgain(t, s, `{"try":1}`)
+	if len(logged) != 0 {
+		t.Errorf("answered on the first try: %q", logged)
+	}
+}
+
+// Opening the New conversation dialog was slow to offer its button, saying nothing of why: when its options take long, vibe's log
+// says how long each step took, and how many times git was run in the sandbox, to tell which to make faster.
+func TestSlowNewConversationOptionsSayWhereTheTimeWent(t *testing.T) {
+	work, _ := repoWithOrigin(t)
+	s := freshServer(t, freshSetup{work: work, clipboard: &clipboardItemsStandIn{}})
+	var logged []string
+	s.cfg.Log = func(m string) { logged = append(logged, m) }
+	var mu sync.Mutex
+	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	advance := func(d time.Duration) { mu.Lock(); now = now.Add(d); mu.Unlock() }
+	s.clock = func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	s.cfg.Wake = func(context.Context, func(string)) error { advance(3 * time.Second); return nil }
+	git := s.cfg.SandboxGit
+	s.cfg.SandboxGit = func(ctx context.Context, args ...string) (string, error) {
+		advance(time.Second)
+		return git(ctx, args...)
+	}
+	options(t, s)
+	var line string
+	for _, m := range logged {
+		if strings.Contains(m, "New conversation") {
+			line = m
+		}
+	}
+	for _, want := range []string{"waking the sandbox 3s", "git in the sandbox 1s (1 run)", "the clipboard page 0s"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the log line lacks %q: %q", want, line)
+		}
+	}
+
+	logged = nil
+	s.cfg.Wake = func(context.Context, func(string)) error { return nil }
+	s.cfg.SandboxGit = git
+	options(t, s)
+	for _, m := range logged {
+		if strings.Contains(m, "New conversation") {
+			t.Errorf("a quick one was logged: %q", m)
 		}
 	}
 }

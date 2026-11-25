@@ -17,7 +17,9 @@ async function stalePage({ tab = 'review', review = running, world = {} } = {}) 
   const w = Object.assign({ changed: false, running: false, failing: false, diffKey: 'k1' }, world)
   const p = await openPage({
     routes: {
-      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} },
+      // statedThreads are comments the state names that the review no longer has (deleted since).
+      '/api/state': { sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {},
+        reviewThreads: [...review.threads.map((t) => t.id), ...(w.statedThreads || [])] },
       '/api/review': (call) => (call.query.includes('diff=1') ? { review, diff: [file], diffKey: w.diffKey } : { review }),
       '/api/review/changed': async () => {
         if (w.hold) await w.hold
@@ -276,7 +278,7 @@ test('a link to such a comment, in the conversation, says the same', async () =>
 })
 
 test('a link to a comment the review does not have says there is none, and asks nothing about the code', async () => {
-  const p = await pageWithMissing({ changed: true, events: [mentions(99)] })
+  const p = await pageWithMissing({ changed: true, events: [mentions(99)], statedThreads: [99] })
   try {
     await p.every('pollConversation')
     p.$('convo-log').querySelector('.thread-ref').click()

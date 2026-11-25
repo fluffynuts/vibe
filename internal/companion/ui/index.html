@@ -545,6 +545,7 @@
       <button type="button" id="file-view-forward" class="ghost small" title="Forward" aria-label="Forward" disabled></button>
       <button type="button" id="file-view-reload" class="ghost small" title="Reload" aria-label="Reload"></button>
       <div id="file-view-url" class="file-view-url"><input id="file-view-path" readonly spellcheck="false" aria-label="File path"></div>
+      <button type="button" id="file-view-mode" class="ghost small" hidden></button>
       <button type="button" id="file-view-copy" class="ghost small" title="Copy the file" aria-label="Copy the file" hidden></button>
       <button type="button" id="file-view-close" class="ghost small" title="Close (Escape)" aria-label="Close"></button>
     </header>
@@ -590,7 +591,7 @@
       <h2>Start a new conversation?</h2>
       <p>This one is cleared from the page (and any other page open for this sandbox), and the agent starts afresh, without remembering it. There's no undo. The agent's long-term memories and the terminal session aren't touched.</p>
       <div class="fresh-options">
-        <p id="fresh-loading" class="muted note">Checking the sandbox (waking it if it's asleep)…</p>
+        <p id="fresh-loading" class="muted note">Checking the sandbox (waking it if it's asleep)… You can start without waiting.</p>
         <div id="fresh-clipboard-row" hidden>
           <label><input type="checkbox" id="fresh-clipboard"> Clear the clipboard <span id="fresh-clipboard-count" class="muted"></span></label>
           <p id="fresh-clipboard-why" class="muted note sub" hidden></p>

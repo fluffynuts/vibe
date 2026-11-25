@@ -15,6 +15,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -145,6 +146,25 @@ func WithBackgroundWorkRule(merged, kit string) string {
 		"About 30 seconds after you have no turn and no tasks the run ends, and anything else left waiting in it (a scheduled wake-up, a loop) with it. " +
 		"Work that must outlive the run can be started detached (`setsid nohup <command> > /tmp/<name>.log 2>&1 &`, its pid in `/tmp/<name>.pid`): say so, and look at it on your next turn. " +
 		"More is in the section \"" + BackgroundWorkHeading + "\" of your kit instructions.\n"
+	if merged == "" {
+		return rule
+	}
+	return rule + "\n" + merged
+}
+
+// ReviewsHeading is the heading, in the kits' instructions, of the reviews feature, whose Review tab numbers its comments #1, #2.
+const ReviewsHeading = "## Reviews"
+
+// WithPullRequestRule is merged with, ahead of it, the line telling an agent with reviews to name pull requests and issues in
+// full: the page draws a bare #N as Review comment N when the review has one. Up front, for the reason the copyable-blocks rule is.
+func WithPullRequestRule(merged, kit string) string {
+	if !regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(ReviewsHeading) + `$`).MatchString(kit) {
+		return merged
+	}
+	const heading = "Pull requests and issues (from vibe)"
+	rule := heading + "\n" + strings.Repeat("-", len(heading)) + "\n\n" +
+		"Write a pull request as \"PR #12\" and an issue as \"issue #12\", never a bare #12: " +
+		"the page shows a bare #12 as a link to Review comment 12 when the review has one.\n"
 	if merged == "" {
 		return rule
 	}

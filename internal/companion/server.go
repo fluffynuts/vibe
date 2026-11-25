@@ -106,6 +106,9 @@ type Config struct {
 	// same path as Workspace), giving what it wrote to stdout; a failure
 	// carries what it said. Nil means the page can't start a new branch.
 	SandboxGit func(ctx context.Context, args ...string) (string, error)
+	// PullRequests lists the numbers of repo's pull requests (repo is https://github.com/owner/name), asking the sandbox, and says
+	// ErrNotRunning, not starting it, when it isn't running; it may be slow. Nil means a bare #N never links to a pull request.
+	PullRequests func(ctx context.Context, repo string) ([]int, error)
 	// PermissionMode is the agent's permission mode as the Admin tab chooses it; nil means the tab can't.
 	PermissionMode *PermissionModeChoice
 	// Wake gets the sandbox running for something the user asked of it,
@@ -223,9 +226,12 @@ type Server struct {
 	// signInJob is the sign-in the card started, or the last that was.
 	signInJob signInJob
 	blocked   blockedCache
+	prs       pullRequests
 	// clip is where the clipboard page was last found to be published.
 	clip  clipboardAddress
 	clock func() time.Time
+	// clipboardUpEvery is how often clearing the clipboard asks its page again while the page is still starting.
+	clipboardUpEvery time.Duration
 	// branchLookup reads the branch the review's folder is on (a variable for tests), and branchSeen is the last answer and when it
 	// was asked: the Review tab's polls look at most every branchLookEvery, sharing a look under way (flight).
 	branchLookup func(ctx context.Context, dir string) (string, error)
@@ -262,7 +268,7 @@ type asked struct {
 func New(cfg Config) *Server {
 	ui, _ := fs.Sub(uiFiles, "ui")
 	life, cancel := context.WithCancel(context.Background())
-	s := &Server{cfg: cfg, ui: ui, clock: time.Now, branchLookup: review.CurrentBranch, lifeCtx: life, lifeCancel: cancel, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer(colourAtOnce), boot: newBoot()}
+	s := &Server{cfg: cfg, ui: ui, clock: time.Now, clipboardUpEvery: time.Second, branchLookup: review.CurrentBranch, lifeCtx: life, lifeCancel: cancel, cache: newCache(time.Second), pageVersion: versionOf(ui), colours: newColourer(colourAtOnce), boot: newBoot()}
 	return s
 }
 
@@ -430,7 +436,9 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"POST /api/conversation/send", s.serving(conversationFeature, s.conversationSend)},
 		{"POST /api/conversation/stop", s.serving(conversationFeature, s.conversationStop)},
 		{"POST /api/conversation/new", s.serving(conversationFeature, s.conversationNew)},
+		{"GET /api/conversation/new/ready", s.serving(conversationFeature, s.conversationNewReady)},
 		{"POST /api/conversation/new/options", s.serving(conversationFeature, s.conversationNewOptions)},
+		{"POST /api/conversation/new/clipboard", s.serving(conversationFeature, s.conversationNewClipboard)},
 		{"POST /api/conversation/new/fetch", s.serving(conversationFeature, s.conversationNewFetch)},
 		{"GET /api/default-branch", s.serving(defaultBranchFeature, s.defaultBranchState)},
 		{"POST /api/default-branch", s.serving(defaultBranchFeature, s.defaultBranchSet)},
@@ -462,6 +470,7 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"POST /api/admin/instructions/optimise", s.serving(instructionsFeature, s.instructionsOptimise)},
 		{"POST /api/awake", s.authed(s.changing(s.keepAwake))},
 		{"GET /api/review", s.serving(reviewFeature, s.reviewState)},
+		{"GET /api/pull-requests", s.serving(pullRequestsFeature, s.pullRequestList)},
 		{"GET /api/permission-mode", s.serving(permissionModeFeature, s.permissionModeState)},
 		{"POST /api/permission-mode", s.serving(permissionModeFeature, s.permissionModeSet)},
 		{"GET /api/review/changed", s.serving(reviewFeature, s.reviewChanged)},
@@ -611,16 +620,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		// Not (or no longer) answering where it was: it may have been published again elsewhere.
 		s.clipboardMoved()
 	}
-	var git *GitInfo
-	if s.cfg.Workspace != "" {
-		read := s.cfg.Git
-		if read == nil {
-			read = readGit
-		}
-		git = cachedStale(s.cache, "git", 2*time.Second, func() *GitInfo {
-			return read(s.cfg.Workspace)
-		})
-	}
+	git := s.gitInfo()
 	theme := ""
 	if s.cfg.ThemeColor != nil {
 		// /theme in the agent can change it at any time, but that's seldom.
@@ -660,12 +660,22 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	// reviewAt is when the agent last updated the review: the page marks the
 	// Review tab when it's later than the user has seen. Taken in here, as
 	// the Review tab only polls the review while it's open.
+	// reviewThreads are the numbers of the review's comments, and reviewClosed says it is closed: a bare #N in the conversation
+	// is a link to a comment only when there is one.
 	reviewAt := ""
+	reviewThreads := []int{}
+	reviewClosed := false
 	if s.cfg.ReviewTab != nil {
 		if rv, err := s.cfg.ReviewTab.Store.Take(); err != nil {
 			attention["review"] = []string{"The review couldn't be read: " + err.Error()}
-		} else if !rv.AgentAt.IsZero() {
-			reviewAt = rv.AgentAt.UTC().Format(time.RFC3339Nano)
+		} else {
+			if !rv.AgentAt.IsZero() {
+				reviewAt = rv.AgentAt.UTC().Format(time.RFC3339Nano)
+			}
+			for _, th := range rv.Threads {
+				reviewThreads = append(reviewThreads, th.ID)
+			}
+			reviewClosed = rv.Closed != ""
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -678,6 +688,8 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"blockedHosts":          blockedHosts,
 		"blockedAt":             blockedAt,
 		"reviewAt":              reviewAt,
+		"reviewThreads":         reviewThreads,
+		"reviewClosed":          reviewClosed,
 		"pageVersion":           s.pageVersion,
 		"boot":                  s.boot,
 		"power":                 s.cfg.Power != nil,
@@ -686,6 +698,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"agent":                 s.cfg.Agent,
 		"folder":                pathresolve.Tilde(s.cfg.Workspace),
 		"git":                   git,
+		"pullRequests":          pullRequestsVersion(s),
 		"clipboardUrl":          clipboard,
 		"clipboardReady":        ready,
 		"clipboardTrouble":      s.clipboardTrouble(clipboard, ready),
@@ -707,6 +720,20 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"signinKey":             s.cfg.SignIn != nil && s.cfg.SignInAPIKey != nil,
 		// A page for no sandbox has only the Profiles tab.
 		"sandboxTabs": s.cfg.Sandbox != "",
+	})
+}
+
+// gitInfo is the folder's git status, read at most every couple of seconds; nil when there's no folder or no repository.
+func (s *Server) gitInfo() *GitInfo {
+	if s.cfg.Workspace == "" {
+		return nil
+	}
+	read := s.cfg.Git
+	if read == nil {
+		read = readGit
+	}
+	return cachedStale(s.cache, "git", 2*time.Second, func() *GitInfo {
+		return read(s.cfg.Workspace)
 	})
 }
 

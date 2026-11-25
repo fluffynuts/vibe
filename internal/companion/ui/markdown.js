@@ -58,17 +58,36 @@
     return FENCE.test(line) || HEADING.test(line) || HR.test(line) || QUOTE.test(line) || ITEM.test(line)
   }
 
-  function parse(text) {
+  // softBreaks is parse's option: a line break inside a paragraph read as a space (but for a hard one: see softJoined), as GitHub
+  // shows a .md file (its writer wrapped its lines where they liked), rather than as a break, as it shows a comment, and the
+  // conversation does. Set for one parse, which runs through in one go.
+  let softBreaks = false
+
+  function parse(text, options = {}) {
     const lines = String(text || '').replace(/\r\n?/g, '\n').replace(/\t/g, '    ').split('\n')
-    return parseLines(lines)
+    softBreaks = !!options.softBreaks
+    try {
+      return parseLines(lines, true)
+    } finally {
+      softBreaks = false
+    }
   }
 
-  function parseLines(lines) {
+  // parseLines reads lines as blocks. Read from the whole text (top), each block says the line it starts on (1 for
+  // the first), for the file viewer to mark the block a line is in. Not enumerable: where a block is isn't what it
+  // is, so two blocks that read alike are equal.
+  function parseLines(lines, top = false) {
     const blocks = []
     let i = 0
+    let start = 0
+    const add = (block) => {
+      if (top) Object.defineProperty(block, 'line', { value: start + 1 })
+      blocks.push(block)
+    }
     while (i < lines.length) {
       const line = lines[i]
       if (blank(line)) { i++; continue }
+      start = i
 
       let m = FENCE.exec(line)
       if (m) {
@@ -81,18 +100,18 @@
           i++
         }
         i++ // the closing fence, if there was one
-        blocks.push({ type: 'code', lang: m[2] || '', text: body.join('\n') })
+        add({ type: 'code', lang: m[2] || '', text: body.join('\n') })
         continue
       }
 
       m = HEADING.exec(line)
       if (m) {
-        blocks.push({ type: 'heading', level: m[1].length, inline: parseInline(m[2] || '') })
+        add({ type: 'heading', level: m[1].length, inline: parseInline(m[2] || '') })
         i++
         continue
       }
 
-      if (HR.test(line)) { blocks.push({ type: 'hr' }); i++; continue }
+      if (HR.test(line)) { add({ type: 'hr' }); i++; continue }
 
       if (QUOTE.test(line)) {
         const body = []
@@ -101,13 +120,13 @@
           body.push(q ? q[1] : lines[i])
           i++
         }
-        blocks.push({ type: 'quote', blocks: parseLines(body), source: body.join('\n') })
+        add({ type: 'quote', blocks: parseLines(body), source: body.join('\n') })
         continue
       }
 
       if (ITEM.test(line)) {
         const list = readList(lines, i)
-        blocks.push(list.block)
+        add(list.block)
         i = list.next
         continue
       }
@@ -124,41 +143,57 @@
             rows.push(row.slice(0, head.length).map(parseInline))
             i++
           }
-          blocks.push({ type: 'table', align: rule.map(alignOf), head: head.map(parseInline), rows })
+          add({ type: 'table', align: rule.map(alignOf), head: head.map(parseInline), rows })
           continue
         }
       }
 
       // A paragraph: lines up to a blank one or the start of another block,
       // or a setext underline, which makes it a heading.
-      const para = [line.trim()]
+      const para = [line]
       i++
       let level = 0
       while (i < lines.length && !blank(lines[i])) {
         if (SETEXT_1.test(lines[i])) { level = 1; i++; break }
         if (SETEXT_2.test(lines[i])) { level = 2; i++; break }
         if (startsBlock(lines[i])) break
-        para.push(lines[i].trim())
+        para.push(lines[i])
         i++
       }
-      const inline = parseInline(para.join('\n'))
-      blocks.push(level ? { type: 'heading', level, inline } : { type: 'para', inline })
+      const inline = parseInline(softBreaks ? softJoined(para) : para.map((l) => l.trim()).join('\n'))
+      add(level ? { type: 'heading', level, inline } : { type: 'para', inline })
     }
     return blocks
   }
 
+  // softJoined is a paragraph's lines as one text, for softBreaks: each line break a space, but for a hard one, which GitHub keeps
+  // in a file too: a line ending in two spaces, or in a backslash (which isn't shown).
+  function softJoined(lines) {
+    return lines.map((line, k) => {
+      const text = line.trim()
+      if (k === lines.length - 1) return text
+      if (text.endsWith('\\')) return text.slice(0, -1) + '\n'
+      return text + (/ {2,}$/.test(line) ? '\n' : ' ')
+    }).join('')
+  }
+
   // readList reads the list starting at lines[start]: its items, each the
-  // lines indented under it, read as blocks of their own.
+  // lines indented under it, read as blocks of their own. The list says the
+  // line each item starts on (itemLines, 1 for lines[0]; not enumerable, as
+  // a block's line): for a list of the whole text, the line of the text.
   function readList(lines, start) {
     const first = ITEM.exec(lines[start])
     const indent = first[1].length
     const ordered = first[3] !== undefined
     const block = { type: 'list', ordered, start: ordered ? Number(first[3]) : 1, items: [] }
+    const itemLines = []
+    Object.defineProperty(block, 'itemLines', { value: itemLines })
     let i = start
     while (i < lines.length) {
       const m = ITEM.exec(lines[i])
       if (!m || m[1].length !== indent || (m[3] !== undefined) !== ordered) break
       const contentIndent = m[1].length + m[2].length + 1
+      itemLines.push(i + 1)
       const body = [m[4] || '']
       i++
       while (i < lines.length) {
