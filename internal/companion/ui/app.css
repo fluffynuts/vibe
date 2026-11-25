@@ -102,7 +102,8 @@ body {
 .git .untracked { color: var(--git-untracked); }
 .git .ahead, .git .behind, .git .stashed { color: var(--ok); }
 .git .noupstream { color: var(--muted); }
-.git span + span { margin-left: 6px; }
+.git span + span, .git > .pr { margin-left: 6px; }
+.git .pr { color: var(--accent); }
 .power-wrap { position: relative; margin-left: auto; }
 /* Lit and glowing when vibe is reached, flat and dim when it isn't, dim and pulsing while the first answer is awaited: the states differ in brightness and glow, not in colour alone. */
 .link { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: var(--panel); color: var(--muted); cursor: pointer; }

@@ -1002,6 +1002,31 @@ test('a Markdown file opened at a line shows the block the line is in, marked an
   } finally { await page.close() }
 })
 
+// The pull request open for the branch is a link at the end of the git status: on the top bar's one line when there's room, and on
+// the page whatever its width (the bar wraps when narrow, as it did before).
+test("the branch's pull request link keeps to the top bar's line when wide, and on the page when narrow", async () => {
+  for (const width of [1500, 1000, 600]) {
+    const page = await browser.newPage({ viewport: { width, height: 700 } })
+    await page.route(/\/api\/state$/, stateWith(page, { folder: '~/code/opensource/vibe',
+      git: { branch: 'feat/review-tab-pr-link', modified: 2, ahead: 1, web: 'https://github.com/me/vibe' },
+      branchPullRequest: { number: 40, url: 'https://github.com/me/vibe/pull/40' } }))
+    try {
+      await page.goto(URL)
+      await page.waitForSelector('#git a.pr')
+      const m = await page.evaluate(() => {
+        const r = (el) => el.getBoundingClientRect()
+        const link = r(document.querySelector('#git a.pr'))
+        const project = r(document.querySelector('.brand .project'))
+        return { linkTop: link.top, linkRight: link.right, projectTop: project.top, lineHeight: project.height,
+          page: document.documentElement.scrollWidth <= document.documentElement.clientWidth, vw: window.innerWidth }
+      })
+      if (width === 1500) assert.ok(Math.abs(m.linkTop - m.projectTop) < m.lineHeight / 2, `at ${width}px the link went to another line`)
+      assert.ok(m.linkRight <= m.vw, `at ${width}px the link runs off the page (${m.linkRight} > ${m.vw})`)
+      assert.ok(m.page, `at ${width}px the page scrolls sideways`)
+    } finally { await page.close() }
+  }
+})
+
 const longFile = (title) => '# ' + title + '\n\n' + Array.from({ length: 150 }, (_, i) => 'Paragraph ' + i + ' of ' + title + '.').join('\n\n') + '\n\nOn to [the other](./b.md).'
 
 test("the file viewer's bar is one line from wide to narrow: buttons, then the path between them and the close button", async () => {

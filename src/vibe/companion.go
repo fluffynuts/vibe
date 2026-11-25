@@ -504,6 +504,7 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		Prepare:                readyForTurn(name),
 		SandboxGit:             sandboxGitFor(name, inst.Target),
 		PullRequests:           pullRequestsFor(name, inst.Target),
+		BranchPullRequest:      ghBranchPullRequest,
 		ExpiredGitTokens:       func() []string { return expiredForDot(vibeHome, timeNow(), sbxKnows) },
 		PreferredDefaultBranch: preferredDefaultBranch(lay.HomePath("settings.yaml")),
 		RememberDefaultBranch:  rememberDefaultBranch(lay.HomePath("settings.yaml")),

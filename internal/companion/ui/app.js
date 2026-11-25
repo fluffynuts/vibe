@@ -985,8 +985,13 @@
     unlessBusy('tab log', () => load('log'))
   }
 
-  // The folder and git status, as the infobar in the sandbox shows them.
-  function renderWhere(folder, git) {
+  // The folder and git status, as the infobar in the sandbox shows them, and the pull request open for the branch (pr), as the
+  // host's gh says. Drawn again only when what it says changes: drawn at every poll, the link lost keyboard focus.
+  let whereShown = ''
+  function renderWhere(folder, git, pr) {
+    const said = JSON.stringify([folder, git, pr])
+    if (said === whereShown) return
+    whereShown = said
     $('folder').textContent = folder
     $('folder-part').hidden = !folder
     const box = $('git')
@@ -1013,6 +1018,11 @@
     if (git.behind) part('behind', '⇣' + git.behind, git.behind + ' commit' + (git.behind === 1 ? '' : 's') + ' fetched but not merged')
     if (git.stashed) part('stashed', '#' + git.stashed, git.stashed + ' stash' + (git.stashed === 1 ? '' : 'es'))
     if (git.noUpstream) part('noupstream', 'no upstream', 'this branch follows no branch, so there is nothing for it to be ahead of or behind')
+    // Only a pull request's address on GitHub is linked: it is what gh said, and becomes a link.
+    if (pr && /^https:\/\/github\.com\/[\w-]+\/[\w.-]+\/pull\/\d+$/.test(pr.url || '')) {
+      box.append(el('a', { class: 'pr', href: pr.url, target: '_blank', rel: 'noopener noreferrer', text: 'PR #' + pr.number,
+        title: 'Pull request #' + pr.number + ', open for this branch: open it on GitHub' }))
+    }
   }
 
   async function loadState() {
@@ -1028,7 +1038,7 @@
       // find out, as for a failed turn, and not more often than that.
       if (res.body.sbxSignedOut && state.signin && Date.now() - signInShown.lastCheck > SIGNIN_RECHECK_MS) loadSignIn()
       $('sandbox').textContent = state.sandbox || 'all profiles and sandboxes'
-      renderWhere(res.body.folder || '', res.body.git || null)
+      renderWhere(res.body.folder || '', res.body.git || null, res.body.branchPullRequest || null)
       setRepoWeb(res.body.git)
       setReviewThreads(res.body.reviewThreads, !!res.body.reviewClosed)
       pullRequestsVersion(res.body.pullRequests)

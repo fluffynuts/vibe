@@ -66,3 +66,49 @@ test('a branch that follows none says so, and a detached head says it is one', a
     assert.match([...q.$('git').children][0].title, /detached HEAD/)
   } finally { p.close(); q.close() }
 })
+
+// The pull request open for the branch, as the host's gh says: a link after the status, opening on GitHub in a tab of its own.
+function pageWithPR(pr, git = { branch: 'feat/a', web: 'https://github.com/me/vibe' }) {
+  return openPage({ routes: { '/api/state': { sandbox: 'box', sandboxTabs: true, folder: '~/work/box', git, branchPullRequest: pr, attention: {} }, '/api/log': { entries: [] } } })
+}
+
+test("the branch's open pull request is a link after the status", async () => {
+  const p = await pageWithPR({ number: 40, url: 'https://github.com/me/vibe/pull/40' })
+  try {
+    const link = p.$('git').lastElementChild
+    assert.equal(link.tagName, 'A')
+    assert.equal(link.textContent, 'PR #40')
+    assert.equal(link.getAttribute('href'), 'https://github.com/me/vibe/pull/40')
+    assert.equal(link.target, '_blank')
+    assert.match(link.rel, /noopener/)
+    assert.match(link.title, /pull request #40.*open.*this branch/i)
+  } finally { p.close() }
+})
+
+test('a branch with no open pull request has no link', async () => {
+  const p = await pageWithPR(null)
+  try {
+    assert.equal(p.$('git').querySelector('a'), null)
+  } finally { p.close() }
+})
+
+test("an address that isn't a pull request on GitHub is not linked", async () => {
+  for (const url of ['javascript:alert(1)', 'https://example.com/me/vibe/pull/40', 'https://github.com/me/vibe/issues/40']) {
+    const p = await pageWithPR({ number: 40, url })
+    try {
+      assert.equal(p.$('git').querySelector('a'), null, url)
+    } finally { p.close() }
+  }
+})
+
+// The bar is drawn again only when what it says changes: drawn afresh at every poll, a link focused from the keyboard lost focus.
+test('the pull request link keeps focus while the state is polled', async () => {
+  const p = await pageWithPR({ number: 40, url: 'https://github.com/me/vibe/pull/40' })
+  try {
+    const link = p.$('git').querySelector('a')
+    link.focus()
+    await p.poll()
+    assert.equal(p.window.document.activeElement, link)
+    assert.ok(link.isConnected, 'drawn again')
+  } finally { p.close() }
+})
