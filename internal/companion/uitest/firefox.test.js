@@ -963,7 +963,9 @@ test('a file opened at a line shows it marked and in view, numbered beside it, a
       range.selectNodeContents(document.querySelector('#file-view-body pre code'))
       getSelection().removeAllRanges()
       getSelection().addRange(range)
-      return { inView: r.top >= body.top && r.bottom <= body.bottom, n: line.dataset.n, number, wide: r.width, bodyWide: body.width, selected: getSelection().toString() }
+      // Firefox gives a selection's line breaks as the platform's: \r\n on Windows.
+      const selected = getSelection().toString().replace(/\r\n/g, '\n')
+      return { inView: r.top >= body.top && r.bottom <= body.bottom, n: line.dataset.n, number, wide: r.width, bodyWide: body.width, selected }
     })
     assert.ok(m.inView, 'the marked line is not in view')
     assert.equal(m.n, '120')
