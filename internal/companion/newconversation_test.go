@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -363,6 +364,46 @@ func TestWithoutOriginHEADTheDefaultBranchIsntGuessed(t *testing.T) {
 	}
 }
 
+func TestADetachedHeadIsOfferedAsOnNoBranch(t *testing.T) {
+	work, _ := repoWithOrigin(t)
+	gitOut(t, work, "switch", "-q", "--detach")
+	s := freshServer(t, freshSetup{work: work})
+	if o := options(t, s); o.Branch == nil || o.Branch.Current != "" || o.Branch.Unavailable != "" {
+		t.Errorf("detached: %+v", o.Branch)
+	}
+}
+
+// Each sbx exec costs a second or more (sbx's own start-up), so the dialog's options read the repository with one run of git
+// in the sandbox, whatever they find: a set default branch too.
+func TestTheOptionsRunGitInTheSandboxOnce(t *testing.T) {
+	for name, setUp := range map[string]func(t *testing.T) string{
+		"origin's default branch": func(t *testing.T) string { work, _ := repoWithOrigin(t); return work },
+		"a set default branch": func(t *testing.T) string {
+			work := newRepo(t)
+			commitIn(t, work, "a.txt", "one\n")
+			gitOut(t, work, "config", "vibe.defaultBranch", "master")
+			gitOut(t, work, "switch", "-q", "-c", "feat/a")
+			return work
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := freshServer(t, freshSetup{work: setUp(t)})
+			var runs atomic.Int32
+			git := s.cfg.SandboxGit
+			s.cfg.SandboxGit = func(ctx context.Context, args ...string) (string, error) {
+				runs.Add(1)
+				return git(ctx, args...)
+			}
+			if o := options(t, s); o.Branch == nil || o.Branch.Unavailable != "" {
+				t.Fatalf("branch = %+v", o.Branch)
+			}
+			if n := runs.Load(); n != 1 {
+				t.Errorf("git ran %d times in the sandbox, want 1", n)
+			}
+		})
+	}
+}
+
 func TestADirtyTreeIsSaidAndUntrackedFilesCount(t *testing.T) {
 	work, _ := repoWithOrigin(t)
 	s := freshServer(t, freshSetup{work: work})
@@ -704,7 +745,7 @@ func TestSlowNewConversationOptionsSayWhereTheTimeWent(t *testing.T) {
 			line = m
 		}
 	}
-	for _, want := range []string{"waking the sandbox 3s", "git in the sandbox 3s (3 runs)", "the clipboard page 0s"} {
+	for _, want := range []string{"waking the sandbox 3s", "git in the sandbox 1s (1 run)", "the clipboard page 0s"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("the log line lacks %q: %q", want, line)
 		}
