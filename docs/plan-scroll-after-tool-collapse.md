@@ -1,4 +1,10 @@
-# The conversation left scrolled up after a tool group collapses (to investigate, not decided)
+# The conversation left scrolled up after a tool group collapses (parked: not reproduced)
+
+**Parked 2026-11-25.** Throwaway Firefox tests played a turn through the real page (a dozen tool uses with long results, then text, more
+tools, a code block coloured late; and each status the poll can turn on: background tasks, compacting, quiet, stopping, a mode warning):
+the log stayed at its end, dots in view, every time. The user has seen it about twice and may have nudged the scroll wheel; they will send
+a recording if it happens again (the agent can watch them now, with ffmpeg). Option kept: follow the end on any height change while at
+the end with the dots showing, which would cure it without knowing why.
 
 Raised 2026-11-24 by the user, seen a few times: the agent runs tools, the group of tool uses collapses when it is done (as
 designed), and the log is left scrolled a little up, the "talking" dots below the fold, though the user hadn't scrolled away.
