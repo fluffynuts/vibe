@@ -973,6 +973,33 @@ test('a file opened at a line shows it marked and in view, numbered beside it, a
   } finally { await page.close() }
 })
 
+// A Markdown file opened at a line is shown formatted, the block the line is in marked and in view.
+test('a Markdown file opened at a line shows the block the line is in, marked and in view', async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
+  const text = '# Long\n\n' + Array.from({ length: 150 }, (_, i) => 'Paragraph ' + (i + 1) + ', the words of it.').join('\n\n') + '\n'
+  const events = [{ seq: 1, kind: 'user', text: 'hi' }, sayEv(2, 'See `docs/long.md:203`.')]
+  const json = (route, body) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) })
+  const query = (route) => new (require('node:url').URL)(route.request().url()).searchParams
+  await page.route(/\/api\/state$/, stateWith(page, { viewFiles: true }))
+  await page.route(/\/api\/conversation\?/, (route) => json(route, { events: events.filter((e) => e.seq > (Number(query(route).get('after')) || 0)), last: 2, running: false }))
+  await page.route(/\/api\/workspace-files\?/, (route) => json(route, { files: query(route).getAll('path').filter((p) => p === 'docs/long.md') }))
+  await page.route(/\/api\/workspace-file\?/, (route) => json(route, { path: 'docs/long.md', text }))
+  try {
+    await page.goto(URL)
+    await page.click('#tab-conversation')
+    await page.click('#convo-log button.file-ref')
+    await page.waitForSelector('#file-view-body .md > .marked')
+    const m = await page.evaluate(() => {
+      const body = document.getElementById('file-view-body').getBoundingClientRect()
+      const block = document.querySelector('#file-view-body .md > .marked')
+      const r = block.getBoundingClientRect()
+      return { inView: r.top >= body.top && r.bottom <= body.bottom, text: block.textContent }
+    })
+    assert.equal(m.text, 'Paragraph 101, the words of it.', 'line 203 is paragraph 101')
+    assert.ok(m.inView, 'the marked block is not in view')
+  } finally { await page.close() }
+})
+
 const longFile = (title) => '# ' + title + '\n\n' + Array.from({ length: 150 }, (_, i) => 'Paragraph ' + i + ' of ' + title + '.').join('\n\n') + '\n\nOn to [the other](./b.md).'
 
 test("the file viewer's bar is one line from wide to narrow: buttons, then the path between them and the close button", async () => {

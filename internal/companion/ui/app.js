@@ -5823,8 +5823,11 @@
   // markdown is the agent's Markdown as elements, built from what
   // markdown.js read: every piece of text set as text, never as markup. A
   // link becomes one only where localLink allows (this machine's own pages);
-  // any other shows its address instead.
-  function markdown(text) {
+  // any other shows its address instead. With at ({ from, to }, lines of the
+  // text), the blocks those lines are in are marked: a formatted page has no
+  // lines of its own, so a line is taken to be in the block that starts at or
+  // before it, the blank lines after a block with it.
+  function markdown(text, at = null) {
     // inLink: in a link's text, where a button can't go.
     const inline = (nodes, inLink) => nodes.flatMap((n) => {
       switch (n.type) {
@@ -5869,7 +5872,15 @@
       }
       return document.createTextNode('')
     })
-    return el('div', { class: 'md' }, ...blocks(window.vibeMarkdown.parse(text)))
+    const parsed = window.vibeMarkdown.parse(text)
+    const drawn = blocks(parsed)
+    if (at) {
+      parsed.forEach((b, i) => {
+        const end = i + 1 < parsed.length ? parsed[i + 1].line - 1 : Infinity
+        if (b.line <= at.to && end >= at.from && drawn[i].classList) drawn[i].classList.add('marked')
+      })
+    }
+    return el('div', { class: 'md' }, ...drawn)
   }
 
   // looksLikeFile is whether code the agent wrote reads as a path to a file: no spaces, a name with an
@@ -5985,7 +5996,7 @@
   // viewFile shows path over the conversation, at the lines at ({ from, to }) when given, marked: from a button
   // in it, the first step of a new history; from a link in a file already shown, the next step of that one. A
   // step's place is how far down it was read (null until it has been); source, for Markdown, whether its text is
-  // shown rather than the formatted page (null until chosen: the text when it was opened at a line, which the page has none of).
+  // shown, numbered, rather than the formatted page (only once chosen).
   function viewFile(path, at = null) {
     const dialog = $('file-view')
     const step = { path, place: null, at, source: null }
@@ -6050,7 +6061,7 @@
     }
     const text = res.body.text
     const isMarkdown = /\.(md|markdown)$/i.test(path)
-    const source = !isMarkdown || (step.source == null ? !!step.at : step.source)
+    const source = !isMarkdown || step.source === true
     const mode = $('file-view-mode')
     mode.hidden = !isMarkdown
     mode.textContent = source ? 'Formatted' : 'Source'
@@ -6066,11 +6077,11 @@
       ? [el('p', { class: 'muted', text: 'Line ' + step.at.from + ' is past the end of ' + path + ' (' + plural(count, 'line') + '): it may have changed since it was named.' })]
       : []
     try {
-      body.replaceChildren(...pastEnd, ...(source ? codeView(text, res.body.colour, step.at) : [markdown(text)]))
+      body.replaceChildren(...pastEnd, ...(source ? codeView(text, res.body.colour, step.at) : [markdown(text, step.at)]))
     } finally {
       viewedFolder = ''
     }
-    const first = body.querySelector('.fv-line.marked')
+    const first = body.querySelector('.fv-line.marked, .md > .marked')
     if (step.place != null) body.scrollTop = step.place
     else if (first) first.scrollIntoView({ block: 'center' })
     else body.scrollTop = pastEnd.length ? body.scrollHeight : 0

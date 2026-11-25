@@ -60,15 +60,24 @@
 
   function parse(text) {
     const lines = String(text || '').replace(/\r\n?/g, '\n').replace(/\t/g, '    ').split('\n')
-    return parseLines(lines)
+    return parseLines(lines, true)
   }
 
-  function parseLines(lines) {
+  // parseLines reads lines as blocks. Read from the whole text (top), each block says the line it starts on (1 for
+  // the first), for the file viewer to mark the block a line is in. Not enumerable: where a block is isn't what it
+  // is, so two blocks that read alike are equal.
+  function parseLines(lines, top = false) {
     const blocks = []
     let i = 0
+    let start = 0
+    const add = (block) => {
+      if (top) Object.defineProperty(block, 'line', { value: start + 1 })
+      blocks.push(block)
+    }
     while (i < lines.length) {
       const line = lines[i]
       if (blank(line)) { i++; continue }
+      start = i
 
       let m = FENCE.exec(line)
       if (m) {
@@ -81,18 +90,18 @@
           i++
         }
         i++ // the closing fence, if there was one
-        blocks.push({ type: 'code', lang: m[2] || '', text: body.join('\n') })
+        add({ type: 'code', lang: m[2] || '', text: body.join('\n') })
         continue
       }
 
       m = HEADING.exec(line)
       if (m) {
-        blocks.push({ type: 'heading', level: m[1].length, inline: parseInline(m[2] || '') })
+        add({ type: 'heading', level: m[1].length, inline: parseInline(m[2] || '') })
         i++
         continue
       }
 
-      if (HR.test(line)) { blocks.push({ type: 'hr' }); i++; continue }
+      if (HR.test(line)) { add({ type: 'hr' }); i++; continue }
 
       if (QUOTE.test(line)) {
         const body = []
@@ -101,13 +110,13 @@
           body.push(q ? q[1] : lines[i])
           i++
         }
-        blocks.push({ type: 'quote', blocks: parseLines(body), source: body.join('\n') })
+        add({ type: 'quote', blocks: parseLines(body), source: body.join('\n') })
         continue
       }
 
       if (ITEM.test(line)) {
         const list = readList(lines, i)
-        blocks.push(list.block)
+        add(list.block)
         i = list.next
         continue
       }
@@ -124,7 +133,7 @@
             rows.push(row.slice(0, head.length).map(parseInline))
             i++
           }
-          blocks.push({ type: 'table', align: rule.map(alignOf), head: head.map(parseInline), rows })
+          add({ type: 'table', align: rule.map(alignOf), head: head.map(parseInline), rows })
           continue
         }
       }
@@ -142,7 +151,7 @@
         i++
       }
       const inline = parseInline(para.join('\n'))
-      blocks.push(level ? { type: 'heading', level, inline } : { type: 'para', inline })
+      add(level ? { type: 'heading', level, inline } : { type: 'para', inline })
     }
     return blocks
   }

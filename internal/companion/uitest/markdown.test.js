@@ -129,3 +129,12 @@ test('emphasis and links that never close take time in proportion to the text', 
     assert.ok(ms < 2000, `${JSON.stringify(unit)} × 40000 took ${ms.toFixed(0)}ms`)
   }
 })
+
+// The file viewer opens a Markdown file at a line formatted, marking the block the line is in: each block of the file says the line it
+// starts on (1 for the first). Blocks inside a quote or a list are read from part of the file, and say nothing of it.
+test('each block says the line of the text it starts on', () => {
+  const blocks = parse('# Title\n\nA paragraph\nover two lines.\n\n- one\n- two\n\n```go\nx := 1\n```\n\n> quoted\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n---\nSetext\n===\n')
+  assert.deepEqual(blocks.map((b) => [b.type, b.line]), [['heading', 1], ['para', 3], ['list', 6], ['code', 9], ['quote', 13], ['table', 15], ['hr', 19], ['heading', 20]])
+  assert.equal(blocks[2].items[0][0].line, undefined, 'a block in a list says a line of the item, not of the file')
+  assert.equal(blocks[4].blocks[0].line, undefined)
+})

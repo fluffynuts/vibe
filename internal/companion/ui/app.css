@@ -894,6 +894,8 @@ dialog.file-view { max-width: min(900px, calc(100% - 32px)); max-height: calc(10
 dialog.file-view[open] { display: flex; }
 dialog.file-view header { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
 dialog.file-view header button { line-height: 0; padding: 4px 6px; flex: none; }
+/* The one button with words: as tall as those with an icon (14px), which have no line height of their own. */
+dialog.file-view header #file-view-mode { line-height: 14px; font-size: 12px; padding: 4px 8px; }
 dialog.file-view header button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; stroke-linecap: round; }
 .file-view-url { flex: 1; min-width: 0; display: flex; align-items: center; margin: 0 4px; }
 #file-view-path { flex: 1; min-width: 0; width: 100%; box-sizing: border-box; padding: 4px 8px; font: 600 13px var(--mono); color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
@@ -910,6 +912,9 @@ dialog.file-view header button svg { width: 14px; height: 14px; fill: none; stro
 #file-view-body .fv-line::before { content: attr(data-n); display: inline-block; width: calc(var(--fv-digits, 1) * 1ch); margin-right: 2ch;
   text-align: right; color: var(--muted); user-select: none; }
 #file-view-body .fv-line.marked { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+/* A formatted Markdown file has no lines: the block a line is in is marked, as far as it goes, a bar at its left saying so. */
+#file-view-body .md > .marked { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 3px 0 0 var(--accent);
+  padding-left: 9px; border-radius: 2px; }
 dialog.file-view.outside { border-color: var(--warn-line); border-width: 2px; }
 dialog.file-view.outside .file-view-url::before { content: "⚠"; flex: none; margin-right: 6px; }
 
