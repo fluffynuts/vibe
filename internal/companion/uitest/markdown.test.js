@@ -138,3 +138,17 @@ test('each block says the line of the text it starts on', () => {
   assert.equal(blocks[2].items[0][0].line, undefined, 'a block in a list says a line of the item, not of the file')
   assert.equal(blocks[4].blocks[0].line, undefined)
 })
+
+// The viewer marks the item of a list a line is in, not the whole list: a top-level list says the line each of its items starts on.
+test('a list says the line each of its items starts on', () => {
+  const [, list] = parse('Intro.\n\n- one\n  more of one\n- two\n\n- three\n')
+  assert.deepEqual(list.itemLines, [3, 5, 7])
+})
+
+// A file is written with its lines wrapped where its writer liked: GitHub shows a .md file's line breaks as spaces, and so does the file
+// viewer. The conversation keeps them, as GitHub does in a comment.
+test('with softBreaks, a line break in a paragraph is a space; without, a break', () => {
+  assert.deepEqual(parse('one\ntwo', { softBreaks: true }), [{ type: 'para', inline: [{ type: 'text', text: 'one two' }] }])
+  assert.deepEqual(parse('- a\n  b', { softBreaks: true })[0].items[0], [{ type: 'para', inline: [{ type: 'text', text: 'a b' }] }])
+  assert.deepEqual(parse('one\ntwo'), [{ type: 'para', inline: [{ type: 'text', text: 'one' }, { type: 'br' }, { type: 'text', text: 'two' }] }])
+})

@@ -547,12 +547,12 @@ test('a Markdown file named with a line is shown formatted, the block the line i
   try {
     await p.click(p.$('convo-log').querySelector('button.file-ref'))
     assert.equal(p.$('file-view-body').querySelector('h1').textContent, 'Plan', 'not formatted')
-    assert.deepEqual(markedBlocks(p), ['The first paragraph,over two lines.'])
+    assert.deepEqual(markedBlocks(p), ['The first paragraph, over two lines.'])
     assert.match(p.$('file-view-mode').title, /source/i)
     await p.click('file-view-mode')
     assert.deepEqual(marked(p), [4], 'in its source, the line itself')
     await p.click('file-view-mode')
-    assert.deepEqual(markedBlocks(p), ['The first paragraph,over two lines.'])
+    assert.deepEqual(markedBlocks(p), ['The first paragraph, over two lines.'])
   } finally { p.close() }
 })
 
@@ -560,7 +560,26 @@ test('a range of lines marks every block it touches', async () => {
   const p = await filePage('See `docs/plan.md:4-6`.', { files: { 'docs/plan.md': plan } })
   try {
     await p.click(p.$('convo-log').querySelector('button.file-ref'))
-    assert.deepEqual(markedBlocks(p), ['The first paragraph,over two lines.', 'onetwo'])
+    assert.deepEqual(markedBlocks(p), ['The first paragraph, over two lines.'])
+    assert.deepEqual(Array.from(p.$('file-view-body').querySelectorAll('.md li.marked')).map((n) => n.textContent), ['one'], 'the items it touches')
+  } finally { p.close() }
+})
+
+test('a line in a list marks its item, not the whole list', async () => {
+  const p = await filePage('See `docs/plan.md:7`.', { files: { 'docs/plan.md': plan } })
+  try {
+    await p.click(p.$('convo-log').querySelector('button.file-ref'))
+    assert.deepEqual(markedBlocks(p), [], 'the whole list')
+    assert.deepEqual(Array.from(p.$('file-view-body').querySelectorAll('.md li.marked')).map((n) => n.textContent), ['two'])
+  } finally { p.close() }
+})
+
+test('a file shown formatted runs its wrapped lines together, as GitHub shows it', async () => {
+  const p = await filePage('See `docs/plan.md`.', { files: { 'docs/plan.md': plan } })
+  try {
+    await p.click(p.$('convo-log').querySelector('button.file-ref'))
+    assert.equal(p.$('file-view-body').querySelector('.md p').textContent, 'The first paragraph, over two lines.')
+    assert.equal(p.$('file-view-body').querySelector('.md p br'), null)
   } finally { p.close() }
 })
 
@@ -568,7 +587,7 @@ test('a blank line between blocks marks the block before it', async () => {
   const p = await filePage('See `docs/plan.md:5`.', { files: { 'docs/plan.md': plan } })
   try {
     await p.click(p.$('convo-log').querySelector('button.file-ref'))
-    assert.deepEqual(markedBlocks(p), ['The first paragraph,over two lines.'])
+    assert.deepEqual(markedBlocks(p), ['The first paragraph, over two lines.'])
   } finally { p.close() }
 })
 

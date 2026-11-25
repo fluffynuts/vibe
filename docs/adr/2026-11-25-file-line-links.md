@@ -20,9 +20,12 @@ The conversation made code that reads like a path (`internal/companion/ui/app.cs
 - **Opened at a line**, that line (or range) is marked across the viewer and scrolled to the middle. The line is part of the viewer's
   history step, so Back and Forward come back to it, marked, where it was read.
 - **A line past the end** (the file changed since it was named) says so, with the file's length, and shows its end.
-- **Markdown** is shown formatted, as ever, at a line too: a formatted page has no lines, so the block the line is in (the paragraph,
-  list, table or code block that starts at or before it, the blank lines after it counting as its) is marked, with a bar at its left,
-  and scrolled to the middle; a range marks every block it touches. The parser says the line each top-level block starts on (not
-  enumerable: where a block is isn't what it is). A Source button in the viewer's bar shows any Markdown file's text, numbered, the line
-  itself marked there, and Formatted goes back; the user wanted it kept, to copy parts of the raw Markdown (the copy button copies the
-  whole file as written either way).
+- **Markdown** is shown formatted, as ever, at a line too: a formatted page has no lines, so what the line is in is marked, with a bar at
+  its left, and scrolled to the middle: the paragraph, table or code block that starts at or before it (the blank lines after it counting
+  as its), or in a list, the item. A range marks everything it touches. The parser says the line each top-level block, and each item of a
+  top-level list, starts on (not enumerable: where a block is isn't what it is). A Source button in the viewer's bar shows any Markdown
+  file's text, numbered, the line itself marked there, and Formatted goes back; the user wanted it kept, to copy parts of the raw Markdown
+  (the copy button copies the whole file as written either way).
+- **A file shown formatted runs its wrapped lines together**, as GitHub shows a `.md` file: a line break inside a paragraph is a space
+  (the parser's `softBreaks`). The conversation keeps them as breaks, as GitHub does in a comment. Found on the user's hand-test, which
+  showed the ADR's bullets broken mid-sentence where the file wraps.

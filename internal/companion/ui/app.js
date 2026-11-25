@@ -5823,11 +5823,12 @@
   // markdown is the agent's Markdown as elements, built from what
   // markdown.js read: every piece of text set as text, never as markup. A
   // link becomes one only where localLink allows (this machine's own pages);
-  // any other shows its address instead. With at ({ from, to }, lines of the
-  // text), the blocks those lines are in are marked: a formatted page has no
-  // lines of its own, so a line is taken to be in the block that starts at or
-  // before it, the blank lines after a block with it.
-  function markdown(text, at = null) {
+  // any other shows its address instead. A file (asFile) is read as GitHub
+  // shows a .md file, its wrapped lines run together. With at ({ from, to },
+  // lines of the text), what those lines are in is marked: a formatted page
+  // has no lines of its own, so a line is taken to be in the block that starts
+  // at or before it (in a list, the item), the blank lines after it with it.
+  function markdown(text, { at = null, asFile = false } = {}) {
     // inLink: in a link's text, where a button can't go.
     const inline = (nodes, inLink) => nodes.flatMap((n) => {
       switch (n.type) {
@@ -5872,12 +5873,19 @@
       }
       return document.createTextNode('')
     })
-    const parsed = window.vibeMarkdown.parse(text)
+    const parsed = window.vibeMarkdown.parse(text, { softBreaks: asFile })
     const drawn = blocks(parsed)
     if (at) {
+      const touched = (from, end) => from <= at.to && end >= at.from
       parsed.forEach((b, i) => {
         const end = i + 1 < parsed.length ? parsed[i + 1].line - 1 : Infinity
-        if (b.line <= at.to && end >= at.from && drawn[i].classList) drawn[i].classList.add('marked')
+        if (!touched(b.line, end) || !drawn[i].classList) return
+        if (b.type !== 'list') { drawn[i].classList.add('marked'); return }
+        const items = drawn[i].children
+        b.itemLines.forEach((from, k) => {
+          const itemEnd = k + 1 < b.itemLines.length ? b.itemLines[k + 1] - 1 : end
+          if (touched(from, itemEnd) && items[k]) items[k].classList.add('marked')
+        })
       })
     }
     return el('div', { class: 'md' }, ...drawn)
@@ -6077,11 +6085,11 @@
       ? [el('p', { class: 'muted', text: 'Line ' + step.at.from + ' is past the end of ' + path + ' (' + plural(count, 'line') + '): it may have changed since it was named.' })]
       : []
     try {
-      body.replaceChildren(...pastEnd, ...(source ? codeView(text, res.body.colour, step.at) : [markdown(text, step.at)]))
+      body.replaceChildren(...pastEnd, ...(source ? codeView(text, res.body.colour, step.at) : [markdown(text, { at: step.at, asFile: true })]))
     } finally {
       viewedFolder = ''
     }
-    const first = body.querySelector('.fv-line.marked, .md > .marked')
+    const first = body.querySelector('.fv-line.marked, .md .marked')
     if (step.place != null) body.scrollTop = step.place
     else if (first) first.scrollIntoView({ block: 'center' })
     else body.scrollTop = pastEnd.length ? body.scrollHeight : 0

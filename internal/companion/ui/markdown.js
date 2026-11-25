@@ -58,9 +58,19 @@
     return FENCE.test(line) || HEADING.test(line) || HR.test(line) || QUOTE.test(line) || ITEM.test(line)
   }
 
-  function parse(text) {
+  // softBreaks is parse's option: a line break inside a paragraph read as a space, as GitHub shows a .md file (its writer wrapped
+  // its lines where they liked), rather than as a break, as it shows a comment, and the conversation does. Set for one parse, which
+  // runs through in one go.
+  let softBreaks = false
+
+  function parse(text, options = {}) {
     const lines = String(text || '').replace(/\r\n?/g, '\n').replace(/\t/g, '    ').split('\n')
-    return parseLines(lines, true)
+    softBreaks = !!options.softBreaks
+    try {
+      return parseLines(lines, true)
+    } finally {
+      softBreaks = false
+    }
   }
 
   // parseLines reads lines as blocks. Read from the whole text (top), each block says the line it starts on (1 for
@@ -157,17 +167,22 @@
   }
 
   // readList reads the list starting at lines[start]: its items, each the
-  // lines indented under it, read as blocks of their own.
+  // lines indented under it, read as blocks of their own. The list says the
+  // line each item starts on (itemLines, 1 for lines[0]; not enumerable, as
+  // a block's line): for a list of the whole text, the line of the text.
   function readList(lines, start) {
     const first = ITEM.exec(lines[start])
     const indent = first[1].length
     const ordered = first[3] !== undefined
     const block = { type: 'list', ordered, start: ordered ? Number(first[3]) : 1, items: [] }
+    const itemLines = []
+    Object.defineProperty(block, 'itemLines', { value: itemLines })
     let i = start
     while (i < lines.length) {
       const m = ITEM.exec(lines[i])
       if (!m || m[1].length !== indent || (m[3] !== undefined) !== ordered) break
       const contentIndent = m[1].length + m[2].length + 1
+      itemLines.push(i + 1)
       const body = [m[4] || '']
       i++
       while (i < lines.length) {
@@ -223,6 +238,7 @@
     while (i < s.length) {
       const c = s[i]
       if (c === '\\' && i + 1 < s.length && PUNCT.test(s[i + 1])) { buf += s[i + 1]; i += 2; continue }
+      if (c === '\n' && softBreaks) { buf += ' '; i++; continue }
       if (c === '\n') { flush(); out.push({ type: 'br' }); i++; continue }
       if (c === '`') {
         let n = 1
