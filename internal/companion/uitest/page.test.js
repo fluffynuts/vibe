@@ -3495,7 +3495,7 @@ async function freshPage({ options = { review: false }, ready = readyFor(options
       '/api/conversation/new/options': typeof options === 'function' ? options : () => options,
       '/api/conversation/new/clipboard': clipboard || (() => ({ sent: 0, unsent: 0 })),
       '/api/conversation/new/fetch': typeof fetched === 'function' ? fetched : () => fetched,
-      '/api/conversation/new': () => answer,
+      '/api/conversation/new': typeof answer === 'function' ? answer : () => answer,
       '/api/log': { entries: [] },
     },
     storage: { 'vibe-companion-tab': 'conversation' },
@@ -3660,6 +3660,27 @@ test('the dialog can start before the sandbox answers, doing what is ticked, and
     assert.match(p.$('fresh-branch-why').textContent, /Checking/)
     await clickNow(p, 'fresh-run')
     assert.deepEqual(p.posted('/api/conversation/new'), [{ clipboard: 'all', review: true, branch: null }])
+  } finally { p.close() }
+})
+
+// Start is usable before the options come, so they can come while a start is under way: Start stays disabled till it ends, or a
+// second press starts afresh again (losing the first one's note, or failing on a branch already made).
+test('options that come while a start is under way leave Start disabled', async () => {
+  let answer
+  let started
+  const p = await freshPage({ ready: { review: true, clipboard: false, repository: false }, options: () => new Promise((resolve) => { answer = resolve }),
+    answer: () => new Promise((resolve) => { started = resolve }), open: false })
+  try {
+    await clickNow(p, 'convo-new')
+    await clickNow(p, 'fresh-run')
+    assert.ok(p.$('fresh-run').disabled)
+    answer({ review: true })
+    await turns()
+    assert.ok(p.$('fresh-run').disabled, 'the options re-enabled Start during the start')
+    await clickNow(p, 'fresh-run')
+    assert.equal(p.posted('/api/conversation/new').length, 1, 'started twice')
+    started({ ok: true })
+    await p.settle()
   } finally { p.close() }
 })
 

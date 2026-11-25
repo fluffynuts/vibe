@@ -8738,7 +8738,7 @@
   function openFresh() {
     if (fresh.cancel) fresh.cancel.abort()
     const generation = ++fresh.generation
-    Object.assign(fresh, { options: null, waiting: true, retries: 0, rechecking: false, clipboardWasOff: false, fetching: false, fetched: null, setterWhy: null, cancel: new AbortController() })
+    Object.assign(fresh, { options: null, waiting: true, starting: false, retries: 0, rechecking: false, clipboardWasOff: false, fetching: false, fetched: null, setterWhy: null, cancel: new AbortController() })
     $('fresh-clipboard').checked = true
     $('fresh-unsent').checked = true
     $('fresh-review').checked = true
@@ -8831,7 +8831,8 @@
   function drawFresh() {
     const o = fresh.options
     showIf('fresh-loading', fresh.waiting)
-    $('fresh-run').disabled = !o
+    // Start can be pressed before the options come: they may come during the start, which mustn't be started twice.
+    $('fresh-run').disabled = !o || fresh.starting
     const c = o && o.clipboard
     showIf('fresh-clipboard-row', !!c && (!!c.counting || !!c.unavailable || c.sent + c.unsent > 0))
     if (c) {
@@ -8957,6 +8958,7 @@
       return
     }
     showIf('fresh-error', false)
+    fresh.starting = true
     $('fresh-run').disabled = true
     $('fresh-run').textContent = 'Starting…'
     let res
@@ -8967,6 +8969,7 @@
       reached(false)
       res = { ok: false, body: { error: 'Could not reach vibe.' } }
     }
+    fresh.starting = false
     $('fresh-run').textContent = 'Start a new conversation'
     $('fresh-run').disabled = false
     if (!res.ok) {
