@@ -402,7 +402,7 @@ test('a code file is shown with its keywords, strings, comments and the rest col
   try {
     const code = p.$('file-view-body').querySelector('pre code')
     assert.equal(code.textContent, text, 'the text is the file, exactly')
-    const kinds = Array.from(code.querySelectorAll('span')).map((s) => [s.className, s.textContent])
+    const kinds = Array.from(code.querySelectorAll('span[class^="hl-"]')).map((s) => [s.className, s.textContent])
     assert.deepEqual(kinds, [['hl-kw', 'package'], ['hl-comment', '// hi'], ['hl-kw', 'var'], ['hl-str', '"x"']])
   } finally { p.close() }
 })
@@ -411,7 +411,7 @@ test('what the colours cannot tell is left as plain text, in the text', async ()
   const p = await view('x.go', { path: 'x.go', text: 'a b\n', colour: colour([['nx', 'a'], ['', ' b']]) })
   try {
     const code = p.$('file-view-body').querySelector('pre code')
-    assert.equal(code.querySelectorAll('span').length, 0)
+    assert.equal(code.querySelectorAll('span[class^="hl-"]').length, 0)
     assert.equal(code.textContent, 'a b\n')
   } finally { p.close() }
 })
@@ -420,7 +420,7 @@ test('a file with no colours is shown as plain text as it always was', async () 
   const p = await view('notes.txt', 'just words\n')
   try {
     assert.equal(p.$('file-view-body').querySelector('pre code').textContent, 'just words\n')
-    assert.equal(p.$('file-view-body').querySelectorAll('span').length, 0)
+    assert.equal(p.$('file-view-body').querySelectorAll('span[class^="hl-"]').length, 0)
   } finally { p.close() }
 })
 
@@ -429,7 +429,7 @@ test('a line whose colours do not spell it (the file changed since) is plain, an
   try {
     const code = p.$('file-view-body').querySelector('pre code')
     assert.equal(code.textContent, 'package main\nfunc f() {}\n')
-    assert.deepEqual(Array.from(code.querySelectorAll('span')).map((s) => s.textContent), ['package'])
+    assert.deepEqual(Array.from(code.querySelectorAll('span[class^="hl-"]')).map((s) => s.textContent), ['package'])
   } finally { p.close() }
 })
 
@@ -466,5 +466,106 @@ test('Markdown is shown as Markdown, whatever colours come with it', async () =>
   try {
     assert.equal(p.$('file-view-body').querySelector('h1').textContent, 'Plan')
     assert.equal(p.$('file-view-body').querySelector('pre'), null)
+  } finally { p.close() }
+})
+
+// --- a path with a line ---------------------------------------------------------------------------------------------------------
+
+// An agent writes where in a file it means as path:line (app.js:6342), path:line:column, path:from-to, or in a link's address as
+// GitHub does (path#L12, path#L12-L20). Each shows the file at that line, marked; the host is asked about the path alone.
+const lines4 = 'one\ntwo\nthree\nfour\n'
+const marked = (p) => Array.from(p.$('file-view-body').querySelectorAll('.fv-line.marked')).map((n) => Number(n.dataset.n))
+
+for (const [written, path, want] of [
+  ['`src/a.go:3`', 'src/a.go', [3]],
+  ['`src/a.go:3:7`', 'src/a.go', [3]],
+  ['`src/a.go:2-3`', 'src/a.go', [2, 3]],
+  ['[there](src/a.go#L2)', 'src/a.go', [2]],
+  ['[there](src/a.go#L2-L3)', 'src/a.go', [2, 3]],
+]) {
+  test('a file named with a line, as ' + written + ', is a button showing the file there, the line marked', async () => {
+    const p = await filePage('See ' + written + '.', { files: { [path]: lines4 } })
+    try {
+      assert.deepEqual(checks(p), [[path]], 'the host is asked about the path alone')
+      const ref = p.$('convo-log').querySelector('button.file-ref')
+      assert.ok(ref, 'no button')
+      assert.match(ref.title, want.length > 1 ? /at lines 2-3$/ : new RegExp('at line ' + want[0] + '$'))
+      await p.click(ref)
+      assert.deepEqual(asked(p), [path])
+      assert.deepEqual(marked(p), want)
+    } finally { p.close() }
+  })
+}
+
+test('what only looks like a path with a line stays as it was written', async () => {
+  const p = await filePage('`1.2.3:4`, `a.go:abc`, `http://x:80` and `a.go:0`', { files: { 'a.go': lines4 } })
+  try {
+    assert.deepEqual(refs(p), [])
+    assert.deepEqual(checks(p).flat().filter((x) => x !== 'a.go'), [], 'asked about what is not a path')
+  } finally { p.close() }
+})
+
+test('the viewer numbers each line of a file, the numbers not part of its text', async () => {
+  const p = await filePage('See `src/a.go`.', { files: { 'src/a.go': lines4 } })
+  try {
+    await p.click(p.$('convo-log').querySelector('button.file-ref'))
+    const code = p.$('file-view-body').querySelector('pre code')
+    assert.deepEqual(Array.from(code.querySelectorAll('.fv-line')).map((n) => [n.dataset.n, n.textContent]), [['1', 'one'], ['2', 'two'], ['3', 'three'], ['4', 'four']])
+    assert.equal(code.textContent, lines4, 'the text is the file, exactly: copied, it has no numbers')
+    assert.deepEqual(marked(p), [], 'nothing marked without a line')
+  } finally { p.close() }
+})
+
+test('a line past the end of the file says so, and shows its end', async () => {
+  const p = await filePage('See `src/a.go:99`.', { files: { 'src/a.go': lines4 } })
+  try {
+    await p.click(p.$('convo-log').querySelector('button.file-ref'))
+    assert.match(p.$('file-view-body').textContent, /Line 99 is past the end of src\/a\.go \(4 lines\)/)
+    assert.deepEqual(marked(p), [])
+  } finally { p.close() }
+})
+
+test('back at a file opened at a line, the line is still marked', async () => {
+  const p = await filePage('See `docs/a.md`.', { files: { 'docs/a.md': '# A\n\nSee [the code](../src/a.go#L2).', 'src/a.go': lines4 } })
+  try {
+    await p.click(p.$('convo-log').querySelector('button.file-ref'))
+    await p.click(Array.from(p.$('file-view-body').querySelectorAll('button.file-ref')).find((b) => b.textContent === 'the code'))
+    assert.deepEqual(marked(p), [2])
+    await p.click('file-view-back')
+    await p.click('file-view-forward')
+    assert.deepEqual(marked(p), [2])
+  } finally { p.close() }
+})
+
+// Markdown is shown formatted, which has no lines: at a line, its source is shown, numbered, with a way to the formatted view and back.
+test('a Markdown file named with a line shows its source there, and can be shown formatted', async () => {
+  const p = await filePage('See `docs/a.md:3`.', { files: { 'docs/a.md': '# A\n\nThe line.\n' } })
+  try {
+    await p.click(p.$('convo-log').querySelector('button.file-ref'))
+    assert.equal(p.$('file-view-body').querySelector('h1'), null, 'formatted')
+    assert.deepEqual(marked(p), [3])
+    const toggle = p.$('file-view-mode')
+    assert.ok(!toggle.hidden)
+    assert.match(toggle.title, /formatted/i)
+    await p.click(toggle)
+    assert.equal(p.$('file-view-body').querySelector('h1').textContent, 'A')
+    assert.match(toggle.title, /source/i)
+    await p.click(toggle)
+    assert.deepEqual(marked(p), [3])
+  } finally { p.close() }
+})
+
+test('a Markdown file is shown formatted, with a way to its source; other files have no such button', async () => {
+  const p = await filePage('`docs/a.md` and `src/a.go`', { files: { 'docs/a.md': '# A\n', 'src/a.go': lines4 } })
+  try {
+    const [md, go] = Array.from(p.$('convo-log').querySelectorAll('button.file-ref'))
+    await p.click(md)
+    assert.equal(p.$('file-view-body').querySelector('h1').textContent, 'A')
+    assert.ok(!p.$('file-view-mode').hidden)
+    await p.click(p.$('file-view-mode'))
+    assert.deepEqual(Array.from(p.$('file-view-body').querySelectorAll('.fv-line')).map((n) => n.textContent), ['# A'])
+    await p.click('file-view-close')
+    await p.click(go)
+    assert.ok(p.$('file-view-mode').hidden)
   } finally { p.close() }
 })

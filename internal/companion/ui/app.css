@@ -903,6 +903,13 @@ dialog.file-view header button svg { width: 14px; height: 14px; fill: none; stro
 #file-view-body pre { margin: 0; }
 #file-view-body code { display: inline; padding: 0; background: none; border: 0; }
 #file-view-body pre code, #file-view-body .code-block code { display: block; font: 13px var(--mono); white-space: pre; word-break: normal; }
+/* A file's lines, numbered: the number is the style's (::before), so selecting and copying takes the file's text alone. A line is as wide
+   as the widest, so a marked one is marked across. */
+#file-view-body .fv-lines { width: max-content; min-width: 100%; }
+#file-view-body .fv-line { display: inline-block; min-width: 100%; }
+#file-view-body .fv-line::before { content: attr(data-n); display: inline-block; width: calc(var(--fv-digits, 1) * 1ch); margin-right: 2ch;
+  text-align: right; color: var(--muted); user-select: none; }
+#file-view-body .fv-line.marked { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 dialog.file-view.outside { border-color: var(--warn-line); border-width: 2px; }
 dialog.file-view.outside .file-view-url::before { content: "⚠"; flex: none; margin-right: 6px; }
 

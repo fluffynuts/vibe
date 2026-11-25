@@ -39,3 +39,4 @@ where there is something to say. A decision that is later changed gets a note in
 | [2026-11-24-clipboard-hook-plugin](2026-11-24-clipboard-hook-plugin.md) | The clipboard hook is registered by a plugin: Claude Code ran nothing from the managed-settings drop-in |
 | [2026-11-24-conversation-tab-height](2026-11-24-conversation-tab-height.md) | The Conversation tab uses the height under the tab bar: its buttons in the tab bar, the clipboard without a bar |
 | [2026-11-25-new-conversation-faster](2026-11-25-new-conversation-faster.md) | New conversation's Start doesn't wait for the sandbox; one git run in it, and only the clipboard asked again |
+| [2026-11-25-file-line-links](2026-11-25-file-line-links.md) | A file named with a line (app.js:12, path#L12) opens there, marked, in a viewer that numbers its lines |

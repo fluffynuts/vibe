@@ -5829,7 +5829,12 @@
     const inline = (nodes, inLink) => nodes.flatMap((n) => {
       switch (n.type) {
         case 'text': return inLink ? document.createTextNode(visible(n.text)) : withThreadRefs(visible(n.text))
-        case 'code': return !inLink && state.viewFiles && looksLikeFile(n.text) ? fileCandidate(n.text) : el('code', { text: visible(n.text) })
+        case 'code': {
+          if (inLink || !state.viewFiles) return el('code', { text: visible(n.text) })
+          if (looksLikeFile(n.text)) return fileCandidate(n.text)
+          const at = fileAt(n.text)
+          return at ? fileCandidate(at.path, n.text, '', at) : el('code', { text: visible(n.text) })
+        }
         case 'br': return el('br')
         case 'strong': return el('strong', {}, ...inline(n.children, inLink))
         case 'em': return el('em', {}, ...inline(n.children, inLink))
@@ -5840,7 +5845,7 @@
           const label = n.children.map((c) => c.text || '').join('')
           const shown = visible(label === n.href ? n.href : label + ' (' + n.href + ')')
           const file = state.viewFiles && !inLink ? fileLinkPath(n.href) : null
-          return file ? fileCandidate(file, shown, visible(label)) : document.createTextNode(shown)
+          return file ? fileCandidate(file, shown, visible(label), linkLines(n.href)) : document.createTextNode(shown)
         }
       }
       return document.createTextNode('')
@@ -5899,6 +5904,28 @@
     return parts.join('/')
   }
 
+  // fileAt is a path the agent wrote with where in the file it means, as agents write it: path:12, path:12:5 (the
+  // column isn't shown) or path:12-20; as { path, from, to }, or null when the text isn't one.
+  function fileAt(text) {
+    const m = /^(.+?):(\d+)(?:-(\d+)|:\d+)?$/.exec(text)
+    if (!m || !looksLikeFile(m[1])) return null
+    const from = Number(m[2])
+    const to = m[3] ? Number(m[3]) : from
+    return from >= 1 && to >= from ? { path: m[1], from, to } : null
+  }
+
+  // linkLines is where in its file a link's address points, as GitHub writes it (#L12, #L12-L20), or null.
+  function linkLines(href) {
+    const m = /#L(\d+)(?:-L?(\d+))?$/.exec(href)
+    if (!m) return null
+    const from = Number(m[1])
+    const to = m[2] ? Number(m[2]) : from
+    return from >= 1 && to >= from ? { from, to } : null
+  }
+
+  // linesSaid is a place in a file as the viewer's buttons say it: "line 12", "lines 12-20".
+  function linesSaid(at) { return at.to > at.from ? 'lines ' + at.from + '-' + at.to : 'line ' + at.from }
+
   // fileLinkPath is the file a Markdown link's address names, when it is a reference to one on this machine
   // ("./other.md", "docs/a.md#top"): no scheme, not a network address, no query; null for anything else.
   function fileLinkPath(href) {
@@ -5910,10 +5937,11 @@
 
   // fileCandidate is a path the host has yet to say is a file: code showing it, or (for a Markdown link to
   // it) its words, with label for what the button says once it is one.
-  function fileCandidate(path, text = path, label = '') {
+  function fileCandidate(path, text = path, label = '', at = null) {
     if (!fileCheckQueued) { fileCheckQueued = true; queueMicrotask(checkFileCandidates) }
     const props = { class: 'file-candidate', text, 'data-path': pathFrom(viewedFolder, path) }
     if (label) props['data-label'] = label
+    if (at) { props['data-from'] = String(at.from); props['data-to'] = String(at.to) }
     return el(label ? 'span' : 'code', props)
   }
 
@@ -5932,15 +5960,20 @@
         console.warn("vibe couldn't tell which paths are files it can show:", err.message)
       }
     }
-    for (const n of nodes) if (n.isConnected && files.has(n.dataset.path)) n.replaceWith(fileRef(n.dataset.path, n.dataset.label || n.textContent, !n.dataset.label))
+    for (const n of nodes) {
+      if (!n.isConnected || !files.has(n.dataset.path)) continue
+      const at = n.dataset.from ? { from: Number(n.dataset.from), to: Number(n.dataset.to) } : null
+      n.replaceWith(fileRef(n.dataset.path, n.dataset.label || n.textContent, !n.dataset.label, at))
+    }
   }
 
   // fileRef is a path the agent named, as a button showing that file over the conversation. It is never a
   // link: the agent chooses the path, so what comes of clicking is only the host reading it, if it is in the
   // workspace, and the page showing it as text.
-  function fileRef(path, shown = path, asCode = true) {
+  function fileRef(path, shown = path, asCode = true, at = null) {
     const words = asCode ? el('code', { text: shown }) : el('span', { text: shown })
-    return el('button', { type: 'button', class: 'file-ref', title: shown === path ? 'Show this file' : 'Show ' + path, onclick: () => viewFile(path) }, words)
+    const title = at ? 'Show ' + path + ' at ' + linesSaid(at) : shown === path ? 'Show this file' : 'Show ' + path
+    return el('button', { type: 'button', class: 'file-ref', title, onclick: () => viewFile(path, at) }, words)
   }
 
   // The viewer keeps a history as a browser does: each file followed from a link in it is a step on from the
@@ -5949,17 +5982,20 @@
   // opened is the first of a new one.
   const viewer = { steps: [], at: -1, loading: 0 }
 
-  // viewFile shows path over the conversation: from a button in it, the first step of a new history; from a
-  // link in a file already shown, the next step of that one.
-  function viewFile(path) {
+  // viewFile shows path over the conversation, at the lines at ({ from, to }) when given, marked: from a button
+  // in it, the first step of a new history; from a link in a file already shown, the next step of that one. A
+  // step's place is how far down it was read (null until it has been); source, for Markdown, whether its text is
+  // shown rather than the formatted page (null until chosen: the text when it was opened at a line, which the page has none of).
+  function viewFile(path, at = null) {
     const dialog = $('file-view')
+    const step = { path, place: null, at, source: null }
     if (dialog.open) {
       rememberPlace()
       viewer.steps.length = viewer.at + 1
-      viewer.steps.push({ path, place: 0 })
+      viewer.steps.push(step)
       viewer.at++
     } else {
-      viewer.steps = [{ path, place: 0 }]
+      viewer.steps = [step]
       viewer.at = 0
     }
     return showStep()
@@ -5994,6 +6030,7 @@
     drawViewerButtons()
     dialog.classList.remove('outside')
     $('file-view-copy').hidden = true
+    $('file-view-mode').hidden = true
     $('file-view-body').replaceChildren(el('p', { class: 'muted', text: 'Loading…' }))
     if (!dialog.open) dialog.showModal()
     endOfPath()
@@ -6008,29 +6045,76 @@
     if (!res.ok) {
       dialog.classList.toggle('outside', res.body.code === 'outside')
       $('file-view-body').replaceChildren(el('p', { text: res.body.error || 'That file could not be shown.' }))
-      $('file-view-body').scrollTop = step.place
+      $('file-view-body').scrollTop = step.place || 0
       return
     }
     const text = res.body.text
+    const isMarkdown = /\.(md|markdown)$/i.test(path)
+    const source = !isMarkdown || (step.source == null ? !!step.at : step.source)
+    const mode = $('file-view-mode')
+    mode.hidden = !isMarkdown
+    mode.textContent = source ? 'Formatted' : 'Source'
+    mode.title = source ? 'Show it formatted' : 'Show its source, the lines numbered'
     $('file-view-copy').hidden = false
-    // It narrows the path bar.
+    // They narrow the path bar.
     endOfPath()
     $('file-view-copy').onclick = () => copyText(text)
     viewedFolder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+    const body = $('file-view-body')
+    const count = lineCount(text)
+    const pastEnd = step.at && step.at.from > count
+      ? [el('p', { class: 'muted', text: 'Line ' + step.at.from + ' is past the end of ' + path + ' (' + plural(count, 'line') + '): it may have changed since it was named.' })]
+      : []
     try {
-      $('file-view-body').replaceChildren(...(/\.(md|markdown)$/i.test(path) ? [markdown(text)] : codeView(text, res.body.colour)))
+      body.replaceChildren(...pastEnd, ...(source ? codeView(text, res.body.colour, step.at) : [markdown(text)]))
     } finally {
       viewedFolder = ''
     }
-    $('file-view-body').scrollTop = step.place
+    const first = body.querySelector('.fv-line.marked')
+    if (step.place != null) body.scrollTop = step.place
+    else if (first) first.scrollIntoView({ block: 'center' })
+    else body.scrollTop = pastEnd.length ? body.scrollHeight : 0
   }
 
-  // codeView is a file that isn't Markdown, as text: coloured where the host gave its colours (a line at a
-  // time, by what each run of it is: a line they no longer spell is plain), saying why where it didn't colour it.
-  function codeView(text, colour) {
+  // switchViewerMode shows a Markdown file's source in place of the formatted page, or the other way, from the top
+  // (or its marked line): the two are not the same height.
+  function switchViewerMode() {
+    const step = viewer.steps[viewer.at]
+    if (!step) return
+    step.source = $('file-view-mode').textContent === 'Source'
+    step.place = null
+    return showStep()
+  }
+
+  // fileLines is text as a file's lines, the last one's newline not starting another.
+  function fileLines(text) {
+    const lines = text.replace(/\r\n/g, '\n').split('\n')
+    if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop()
+    return lines
+  }
+
+  function lineCount(text) { return text === '' ? 0 : fileLines(text).length }
+
+  // codeView is a file as text, a line at a time, each numbered: coloured where the host gave its colours (by what
+  // each run of a line is: a line they no longer spell is plain), saying why where it didn't colour it, and the
+  // lines at ({ from, to }) marked. The numbers are drawn by the page's style, so they are not in the text: what is
+  // selected and copied is the file's.
+  function codeView(text, colour, at = null) {
     const note = colour && colour.skipped ? [el('p', { class: 'muted', text: 'Not coloured: ' + colour.skipped })] : []
-    if (!colour || !Array.isArray(colour.lines)) return [...note, el('pre', {}, el('code', { text: visible(text) }))]
-    return [...note, el('pre', {}, el('code', {}, ...colouredParts(text, colour)))]
+    const coloured = !!colour && Array.isArray(colour.lines)
+    const lines = fileLines(text)
+    const ends = text !== '' && /\n$/.test(text)
+    const code = el('code', { class: 'fv-lines' })
+    code.style.setProperty('--fv-digits', String(String(lines.length).length))
+    lines.forEach((line, i) => {
+      const n = i + 1
+      const runs = coloured ? R.lineRuns(colour.lines[i], line) : null
+      const parts = runs ? runs.map((r) => r.kind ? el('span', { class: 'hl-' + r.kind, text: visible(r.text) }) : visible(r.text)) : [visible(line)]
+      const isMarked = !!at && n >= at.from && n <= at.to
+      code.append(el('span', { class: 'fv-line' + (isMarked ? ' marked' : ''), 'data-n': String(n) }, ...parts))
+      if (i < lines.length - 1 || ends) code.append('\n')
+    })
+    return [...note, el('pre', {}, code)]
   }
 
   // colouredParts is text as what a code element holds: each line's runs as spans by what they are, as the host coloured it, and
@@ -6077,6 +6161,7 @@
   $('file-view-back').onclick = () => goViewer(viewer.at - 1)
   $('file-view-forward').onclick = () => goViewer(viewer.at + 1)
   $('file-view-reload').onclick = () => { rememberPlace(); return showStep() }
+  $('file-view-mode').onclick = switchViewerMode
   $('file-view-close').onclick = () => $('file-view').close()
 
   // HIDDEN_CONTROL is what a terminal acts on but a page doesn't show: the

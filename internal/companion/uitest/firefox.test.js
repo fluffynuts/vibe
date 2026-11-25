@@ -937,6 +937,42 @@ async function viewerPage(files, width) {
   return page
 }
 
+// A file opened at a line (app.go:120, as an agent writes it) shows that line marked and in view, its number beside it, and what is selected
+// of the text is the file's alone: the numbers are the style's.
+test('a file opened at a line shows it marked and in view, numbered beside it, and a selection of it carries no numbers', async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
+  const text = Array.from({ length: 300 }, (_, i) => 'line ' + (i + 1) + ' of the file').join('\n') + '\n'
+  const events = [{ seq: 1, kind: 'user', text: 'hi' }, sayEv(2, 'See `app.go:120`.')]
+  const json = (route, body) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) })
+  const query = (route) => new (require('node:url').URL)(route.request().url()).searchParams
+  await page.route(/\/api\/state$/, stateWith(page, { viewFiles: true }))
+  await page.route(/\/api\/conversation\?/, (route) => json(route, { events: events.filter((e) => e.seq > (Number(query(route).get('after')) || 0)), last: 2, running: false }))
+  await page.route(/\/api\/workspace-files\?/, (route) => json(route, { files: query(route).getAll('path').filter((p) => p === 'app.go') }))
+  await page.route(/\/api\/workspace-file\?/, (route) => json(route, { path: 'app.go', text }))
+  try {
+    await page.goto(URL)
+    await page.click('#tab-conversation')
+    await page.click('#convo-log button.file-ref')
+    await page.waitForSelector('#file-view-body .fv-line.marked')
+    const m = await page.evaluate(() => {
+      const body = document.getElementById('file-view-body').getBoundingClientRect()
+      const line = document.querySelector('#file-view-body .fv-line.marked')
+      const r = line.getBoundingClientRect()
+      const number = getComputedStyle(line, '::before').content
+      const range = document.createRange()
+      range.selectNodeContents(document.querySelector('#file-view-body pre code'))
+      getSelection().removeAllRanges()
+      getSelection().addRange(range)
+      return { inView: r.top >= body.top && r.bottom <= body.bottom, n: line.dataset.n, number, wide: r.width, bodyWide: body.width, selected: getSelection().toString() }
+    })
+    assert.ok(m.inView, 'the marked line is not in view')
+    assert.equal(m.n, '120')
+    assert.equal(m.number, '"120"', 'its number is not drawn beside it')
+    assert.ok(m.wide >= m.bodyWide - 20, `the mark is ${m.wide}px of the ${m.bodyWide}px across`)
+    assert.equal(m.selected, text, 'what is selected is not the file, exactly')
+  } finally { await page.close() }
+})
+
 const longFile = (title) => '# ' + title + '\n\n' + Array.from({ length: 150 }, (_, i) => 'Paragraph ' + i + ' of ' + title + '.').join('\n\n') + '\n\nOn to [the other](./b.md).'
 
 test("the file viewer's bar is one line from wide to narrow: buttons, then the path between them and the close button", async () => {
