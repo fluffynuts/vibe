@@ -3482,13 +3482,18 @@ test("the log says when it couldn't be checked against the rules", async () => {
 // with clickNow, which lets the page run a few turns (see turns).
 const clickNow = async (p, id) => { p.$(id).click(); await turns() }
 
-async function freshPage({ options = { review: false }, fetched = { checked: true, local: true, ahead: 0, behind: 0 }, answer = { ok: true }, open = true, before = null } = {}) {
+// readyFor is the dialog's first answer, what it offers at all, as the options will fill in.
+const readyFor = (o) => typeof o === 'function' ? { review: false, clipboard: false, repository: false } : { review: !!o.review, clipboard: !!o.clipboard, repository: !!o.branch }
+
+async function freshPage({ options = { review: false }, ready = readyFor(options), clipboard = null, fetched = { checked: true, local: true, ahead: 0, behind: 0 }, answer = { ok: true }, open = true, before = null } = {}) {
   const p = await openPage({
     before,
     routes: {
       '/api/state': { sandbox: 'box', sandboxTabs: true, conversation: true, attention: {} },
       '/api/conversation': { events: [], last: 0, running: false },
+      '/api/conversation/new/ready': typeof ready === 'function' ? ready : () => ready,
       '/api/conversation/new/options': typeof options === 'function' ? options : () => options,
+      '/api/conversation/new/clipboard': clipboard || (() => ({ sent: 0, unsent: 0 })),
       '/api/conversation/new/fetch': typeof fetched === 'function' ? fetched : () => fetched,
       '/api/conversation/new': () => answer,
       '/api/log': { entries: [] },
@@ -3555,14 +3560,15 @@ test('with nothing unsent, only the sent items are offered for clearing', async 
   } finally { p.close() }
 })
 
-test('a clipboard page that could not be reached is asked after again, and offered once it answers', async () => {
+// While the clipboard page may still be starting, only it is asked again (no sbx call), every second, for a minute.
+const RETRY_MS = 1000
+
+test('a clipboard page that could not be reached is asked after again, on its own, and offered once it answers', async () => {
   const held = []
-  const RETRY_MS = 3000
-  let answers = 0
+  let tries = 0
   const p = await freshPage({
-    options: () => ++answers === 1
-      ? { clipboard: { unavailable: "The clipboard page couldn't be reached: refused", retry: true } }
-      : { clipboard: { sent: 2, unsent: 0 } },
+    options: { clipboard: { unavailable: "The clipboard page couldn't be reached: connection reset", retry: true } },
+    clipboard: () => (++tries, { sent: 2, unsent: 0 }),
     before: (w) => {
       const real = w.setTimeout.bind(w)
       w.setTimeout = (fn, ms, ...rest) => ms === RETRY_MS ? held.push(fn) : real(fn, ms, ...rest)
@@ -3574,6 +3580,9 @@ test('a clipboard page that could not be reached is asked after again, and offer
     assert.ok(p.$('fresh-clipboard-why').querySelector('.spinner'), 'says it is checking again')
     held.shift()()
     await p.settle()
+    assert.equal(tries, 1)
+    assert.deepEqual(p.posted('/api/conversation/new/clipboard'), [{ try: 2, last: false }])
+    assert.equal(p.posted('/api/conversation/new/options').length, 1, 'the whole of the options asked again')
     assert.ok(!p.$('fresh-clipboard').disabled && p.$('fresh-clipboard').checked, 'offered now')
     assert.ok(!shown(p, 'fresh-clipboard-why'))
     assert.equal(held.length, 0, 'no more asking')
@@ -3586,9 +3595,10 @@ test('a clipboard page that never answers is asked after a limited number of tim
   const reason = "The clipboard page couldn't be reached: refused"
   const p = await freshPage({
     options: { clipboard: { unavailable: reason, retry: true } },
+    clipboard: () => ({ unavailable: reason, retry: true }),
     before: (w) => {
       const real = w.setTimeout.bind(w)
-      w.setTimeout = (fn, ms, ...rest) => ms === 3000 ? held.push(fn) : real(fn, ms, ...rest)
+      w.setTimeout = (fn, ms, ...rest) => ms === RETRY_MS ? held.push(fn) : real(fn, ms, ...rest)
     },
   })
   try {
@@ -3597,9 +3607,12 @@ test('a clipboard page that never answers is asked after a limited number of tim
       held.shift()()
       await p.settle()
       asks++
-      assert.ok(asks < 100, 'it never stops asking')
+      assert.ok(asks < 200, 'it never stops asking')
     }
-    assert.equal(asks, 21, 'the first ask and twenty more')
+    assert.equal(asks, 61, 'the first ask and sixty more')
+    const again = p.posted('/api/conversation/new/clipboard')
+    assert.deepEqual(again.at(-1), { try: 61, last: true }, 'the last says so, for vibe to log')
+    assert.ok(again.slice(0, -1).every((b) => !b.last))
     assert.ok(!p.$('fresh-clipboard-why').querySelector('.spinner'), 'no longer says it is checking')
     assert.ok(shown(p, 'fresh-clipboard-why'))
     assert.ok(p.$('fresh-clipboard-why').textContent.includes(reason))
@@ -3613,7 +3626,7 @@ test('a clipboard page that is unavailable for another reason is not asked after
     options: { clipboard: { unavailable: 'this sandbox could not be woken' } },
     before: (w) => {
       const real = w.setTimeout.bind(w)
-      w.setTimeout = (fn, ms, ...rest) => ms === 3000 ? held.push(fn) : real(fn, ms, ...rest)
+      w.setTimeout = (fn, ms, ...rest) => ms === RETRY_MS ? held.push(fn) : real(fn, ms, ...rest)
     },
   })
   try {
@@ -3629,18 +3642,47 @@ test('an empty clipboard is not offered for clearing', async () => {
   } finally { p.close() }
 })
 
-test('the dialog waits for the sandbox before it can start, saying so', async () => {
+// Start doesn't wait for the sandbox (starting wakes it anyway): the dialog offers at once what this machine knows of, ticked as
+// ever, and fills in the clipboard's counts and the branch once the sandbox answers.
+test('the dialog can start before the sandbox answers, doing what is ticked, and says what it is still checking', async () => {
   let answer
-  const p = await freshPage({ options: () => new Promise((resolve) => { answer = resolve }), open: false })
+  const p = await freshPage({ ready: { review: true, clipboard: true, repository: true }, options: () => new Promise((resolve) => { answer = resolve }), open: false })
   try {
     await clickNow(p, 'convo-new')
-    assert.ok(p.$('fresh-run').disabled)
+    assert.ok(!p.$('fresh-run').disabled, 'Start waits for the sandbox')
     assert.ok(shown(p, 'fresh-loading'))
     assert.match(p.$('fresh-loading').textContent, /sandbox/)
-    answer({ review: true })
+    assert.ok(shown(p, 'fresh-clipboard-row') && p.$('fresh-clipboard').checked && !p.$('fresh-clipboard').disabled)
+    assert.match(p.$('fresh-clipboard-count').textContent, /counting/)
+    assert.ok(shown(p, 'fresh-unsent-row') && p.$('fresh-unsent').checked, 'unsent items, if any, are cleared too, as ever: so said')
+    assert.ok(shown(p, 'fresh-review-row') && p.$('fresh-review').checked)
+    assert.ok(shown(p, 'fresh-branch-row') && p.$('fresh-branch').disabled, 'a branch needs what the sandbox says')
+    assert.match(p.$('fresh-branch-why').textContent, /Checking/)
+    await clickNow(p, 'fresh-run')
+    assert.deepEqual(p.posted('/api/conversation/new'), [{ clipboard: 'all', review: true, branch: null }])
+  } finally { p.close() }
+})
+
+test('once the sandbox answers, the dialog offers what it said', async () => {
+  let answer
+  const p = await freshPage({ ready: { review: false, clipboard: true, repository: true }, options: () => new Promise((resolve) => { answer = resolve }), open: false })
+  try {
+    await clickNow(p, 'convo-new')
+    answer({ clipboard: { sent: 2, unsent: 0 }, branch: clean })
     await p.settle()
-    assert.ok(!p.$('fresh-run').disabled)
     assert.ok(!shown(p, 'fresh-loading'))
+    assert.match(p.$('fresh-clipboard-count').textContent, /2 items sent/)
+    assert.ok(!shown(p, 'fresh-unsent-row'), 'nothing unsent')
+    assert.ok(!p.$('fresh-branch').disabled)
+  } finally { p.close() }
+})
+
+test('a folder with nothing to offer shows nothing while the sandbox is asked', async () => {
+  const p = await freshPage({ ready: { review: false, clipboard: false, repository: false }, options: () => new Promise(() => {}), open: false })
+  try {
+    await clickNow(p, 'convo-new')
+    assert.ok(!p.$('fresh-run').disabled)
+    for (const row of ['fresh-clipboard-row', 'fresh-review-row', 'fresh-branch-row']) assert.ok(!shown(p, row), row)
   } finally { p.close() }
 })
 

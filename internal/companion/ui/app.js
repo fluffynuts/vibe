@@ -8574,10 +8574,10 @@
   const FRESH_OPTIONS_MS = 4 * 60 * 1000
   const FRESH_FETCH_MS = 3 * 60 * 1000
   const FRESH_START_MS = 5 * 60 * 1000
-  // A clipboard page that doesn't answer may still be starting with the sandbox: ask again this
-  // often, this many times, then leave the reason showing.
-  const FRESH_RETRY_MS = 3000
-  const FRESH_RETRIES = 20
+  // A clipboard page that doesn't answer may still be starting with the sandbox: ask it again (it
+  // alone, which costs no sbx call) this often, this many times, then leave the reason showing.
+  const FRESH_RETRY_MS = 1000
+  const FRESH_RETRIES = 60
   const fresh = { generation: 0, options: null, fetching: false, fetched: null, cancel: null, nameTyped: false }
 
   // branchNameProblem is why git would refuse name for a branch (git check-ref-format's rules, as far
@@ -8634,7 +8634,7 @@
   function openFresh() {
     if (fresh.cancel) fresh.cancel.abort()
     const generation = ++fresh.generation
-    Object.assign(fresh, { options: null, retries: 0, rechecking: false, clipboardWasOff: false, fetching: false, fetched: null, setterWhy: null, cancel: new AbortController() })
+    Object.assign(fresh, { options: null, waiting: true, retries: 0, rechecking: false, clipboardWasOff: false, fetching: false, fetched: null, setterWhy: null, cancel: new AbortController() })
     $('fresh-clipboard').checked = true
     $('fresh-unsent').checked = true
     $('fresh-review').checked = true
@@ -8648,7 +8648,25 @@
     drawFresh()
     $('fresh').showModal()
     raiseToast()
+    askFreshReady()
     askFreshOptions(false)
+  }
+
+  // askFreshReady asks what the dialog offers at all, which vibe knows without the sandbox: Start needn't
+  // wait for the sandbox (starting wakes it anyway), and does what is ticked. The clipboard's counts and
+  // the branch are filled in when the options come.
+  function askFreshReady() {
+    const generation = fresh.generation
+    api('/api/conversation/new/ready', { cancel: fresh.cancel }).then((res) => {
+      if (generation !== fresh.generation || fresh.options) return
+      if (!res.ok) { console.warn('vibe could not say what New conversation offers; waiting for the sandbox:', res.body && res.body.error); return }
+      fresh.options = {
+        review: !!res.body.review,
+        clipboard: res.body.clipboard ? { counting: true } : undefined,
+        branch: res.body.repository ? { checking: true } : undefined,
+      }
+      drawFresh()
+    }, (err) => console.warn('vibe could not say what New conversation offers; waiting for the sandbox:', err.message))
   }
 
   // askFreshOptions asks vibe what else the dialog can offer, and draws it,
@@ -8660,21 +8678,38 @@
       if (generation !== fresh.generation) return
       freshError(text)
       fresh.rechecking = false
-      if (!keep) fresh.options = {}
+      fresh.waiting = false
+      if (!keep) fresh.options = { review: !!(fresh.options && fresh.options.review) }
       drawFresh()
     }
     post('/api/conversation/new/options', {}, { timeout: FRESH_OPTIONS_MS, cancel: fresh.cancel }).then((res) => {
       if (!res.ok) { failed(res.body.error || "vibe couldn't say what else can be done."); return }
       if (generation !== fresh.generation) return
       fresh.options = res.body
-      const c = res.body.clipboard
-      const again = !!(c && c.retry && fresh.retries++ < FRESH_RETRIES)
-      fresh.rechecking = again
-      drawFresh()
-      if (again) {
-        setTimeout(() => { if (generation === fresh.generation) askFreshOptions(true) }, FRESH_RETRY_MS)
-      }
+      fresh.waiting = false
+      clipboardAnswered(generation, res.body.clipboard)
     }, () => failed('Could not reach vibe to ask what else can be done.'))
+  }
+
+  // clipboardAnswered draws what the clipboard page said, and asks it again later when it may still be
+  // starting. Each try is counted from the options' (the first), and the last says so, for vibe's log.
+  function clipboardAnswered(generation, c) {
+    const again = !!(c && c.retry && fresh.retries < FRESH_RETRIES)
+    fresh.rechecking = again
+    drawFresh()
+    if (!again) return
+    setTimeout(() => {
+      if (generation !== fresh.generation) return
+      fresh.retries++
+      const body = { try: fresh.retries + 1, last: fresh.retries === FRESH_RETRIES }
+      const unanswered = (why) => clipboardAnswered(generation, { unavailable: "The clipboard page couldn't be asked: " + why })
+      post('/api/conversation/new/clipboard', body, { cancel: fresh.cancel }).then((res) => {
+        if (generation !== fresh.generation || !fresh.options) return
+        if (!res.ok) { unanswered(res.body.error || 'vibe said ' + res.status); return }
+        fresh.options.clipboard = res.body
+        clipboardAnswered(generation, res.body)
+      }, () => unanswered("vibe couldn't be reached"))
+    }, FRESH_RETRY_MS)
   }
 
   function freshError(text) {
@@ -8691,10 +8726,10 @@
 
   function drawFresh() {
     const o = fresh.options
-    showIf('fresh-loading', !o)
+    showIf('fresh-loading', fresh.waiting)
     $('fresh-run').disabled = !o
     const c = o && o.clipboard
-    showIf('fresh-clipboard-row', !!c && (!!c.unavailable || c.sent + c.unsent > 0))
+    showIf('fresh-clipboard-row', !!c && (!!c.counting || !!c.unavailable || c.sent + c.unsent > 0))
     if (c) {
       $('fresh-clipboard').disabled = !!c.unavailable
       if (c.unavailable) {
@@ -8710,18 +8745,19 @@
         ...(checking ? [el('span', { class: 'spinner', 'aria-hidden': 'true' })] : []),
         (c.unavailable || '') + (checking ? ' Checking again…' : ''))
       showIf('fresh-clipboard-why', !!c.unavailable)
-      $('fresh-clipboard-count').textContent = !c.unavailable && c.sent ? '(' + plural(c.sent, 'item') + ' sent)' : ''
-      showIf('fresh-unsent-row', !c.unavailable && c.unsent > 0 && $('fresh-clipboard').checked)
-      $('fresh-unsent-count').textContent = '(' + c.unsent + ' waiting to go with your next message)'
+      $('fresh-clipboard-count').textContent = c.counting ? '(counting…)' : !c.unavailable && c.sent ? '(' + plural(c.sent, 'item') + ' sent)' : ''
+      showIf('fresh-unsent-row', !c.unavailable && (c.counting || c.unsent > 0) && $('fresh-clipboard').checked)
+      $('fresh-unsent-count').textContent = c.counting ? '(counting…)' : '(' + c.unsent + ' waiting to go with your next message)'
     }
     showIf('fresh-review-row', !!(o && o.review))
     const b = o && o.branch
     showIf('fresh-branch-row', !!b)
     if (!b) return
-    $('fresh-branch').disabled = !!b.unavailable
-    if (b.unavailable) $('fresh-branch').checked = false
-    $('fresh-branch-why').textContent = b.unavailable || ''
-    showIf('fresh-branch-why', !!b.unavailable)
+    $('fresh-branch').disabled = !!b.unavailable || !!b.checking
+    if (b.unavailable || b.checking) $('fresh-branch').checked = false
+    $('fresh-branch-why').textContent = b.checking ? 'Checking the repository in the sandbox…' : b.unavailable || ''
+    showIf('fresh-branch-why', !!b.unavailable || !!b.checking)
+    if (b.checking) { showIf('fresh-branch-details', false); return }
     showIf('fresh-branch-details', $('fresh-branch').checked)
     $('fresh-from-here-name').textContent = b.current ? '(' + b.current + ')' : '(the detached HEAD)'
     const def = freshDefault()
@@ -8797,7 +8833,7 @@
       body.clipboard = !$('fresh-unsent-row').hidden && $('fresh-unsent').checked ? 'all' : 'sent'
     }
     if (o.review && $('fresh-review').checked) body.review = true
-    if (o.branch && !o.branch.unavailable && $('fresh-branch').checked) {
+    if (o.branch && !o.branch.unavailable && !o.branch.checking && $('fresh-branch').checked) {
       const fromDefault = !!freshDefault() && !$('fresh-from-default').disabled && $('fresh-from-default').checked
       body.branch = {
         name: $('fresh-branch-name').value,

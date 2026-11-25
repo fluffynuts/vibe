@@ -1,11 +1,11 @@
 # A bare #N that is a pull request links to it on GitHub
 
-- **Status:** accepted, built 2026-11-23 on `feat/bare-pr-numbers`. Not yet tried by hand in a sandbox.
+- **Status:** accepted, built 2026-11-23 on `feat/bare-pr-numbers`. Tried by hand 2026-11-25: a bare #39 in the conversation linked to PR #39 on GitHub.
 - **Decided:** 2026-11-23, with the user: another sandbox's agent wrote "#123 is open, MERGEABLE" and "You merge #123", meaning pull
   request 123, and the page drew both as links to Review comment 123. Amends `2026-11-20-pr-and-issue-links.md`, which left every bare
   `#N` a comment ("only the words before it tell them apart").
-- **Came from:** `docs/plan-bare-pr-numbers.md` (`git show 24c1c9e:docs/plan-bare-pr-numbers.md`), whose last part is still a plan:
-  `docs/plan-new-conversation-slow.md`.
+- **Came from:** `docs/plan-bare-pr-numbers.md` (`git show 24c1c9e:docs/plan-bare-pr-numbers.md`), whose last part became
+  `2026-11-25-new-conversation-faster.md`.
 
 ## Decision
 

@@ -1,6 +1,6 @@
 # What closes itself shows its time running out; the balloon closes when emptied
 
-- **Status:** accepted, built 2026-11-23 on `feat/bare-pr-numbers`. Not yet tried by hand (the clipboard page's part needs `./test-clean`).
+- **Status:** accepted, built 2026-11-23 on `feat/bare-pr-numbers`. Tried by hand 2026-11-25: the companion page's and the clipboard page's toasts count down, hold while hovered, and start again from full; the rest is left to the tests.
 - **Decided:** 2026-11-23, with the user.
 - **Came from:** `docs/plan-bare-pr-numbers.md` (`git show 24c1c9e:docs/plan-bare-pr-numbers.md`).
 

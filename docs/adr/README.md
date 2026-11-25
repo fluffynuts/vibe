@@ -38,3 +38,4 @@ where there is something to say. A decision that is later changed gets a note in
 | [2026-11-24-agent-permission-mode-choice](2026-11-24-agent-permission-mode-choice.md) | The Admin tab chooses the agent's permission mode, applied before the next prompt; the page warns when the mode in force isn't the one chosen |
 | [2026-11-24-clipboard-hook-plugin](2026-11-24-clipboard-hook-plugin.md) | The clipboard hook is registered by a plugin: Claude Code ran nothing from the managed-settings drop-in |
 | [2026-11-24-conversation-tab-height](2026-11-24-conversation-tab-height.md) | The Conversation tab uses the height under the tab bar: its buttons in the tab bar, the clipboard without a bar |
+| [2026-11-25-new-conversation-faster](2026-11-25-new-conversation-faster.md) | New conversation's Start doesn't wait for the sandbox; one git run in it, and only the clipboard asked again |

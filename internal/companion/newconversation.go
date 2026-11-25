@@ -65,6 +65,36 @@ type branchOffer struct {
 	Remote   []string `json:"remote,omitempty"`
 }
 
+// conversationNewReady is what the dialog offers at all, from this machine alone: its Start doesn't wait for the sandbox, which
+// starting wakes anyway (conversationNewOptions fills in the rest meanwhile).
+func (s *Server) conversationNewReady(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]bool{"review": s.reviewOpen(), "clipboard": s.clipboardAt() != "", "repository": s.repositoryHere()})
+}
+
+// conversationNewClipboard asks the clipboard page's counts again, and nothing of the sandbox: while the page may still be
+// starting (conversationNewOptions said Retry), the dialog asks this, try counting from the first ask (the options'), last its last.
+func (s *Server) conversationNewClipboard(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Try  int  `json:"try"`
+		Last bool `json:"last"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	offer := s.clipboardOffer(r.Context(), "")
+	switch {
+	case offer.Unavailable == "" && req.Try > 1:
+		s.log(fmt.Sprintf("companion page: the clipboard page answered on try %d of New conversation's", req.Try))
+	case offer.Unavailable != "" && req.Last:
+		s.log(fmt.Sprintf("companion page: the clipboard page still didn't answer New conversation after %d tries: %s", req.Try, offer.Unavailable))
+	}
+	writeJSON(w, http.StatusOK, offer)
+}
+
+func (s *Server) log(line string) {
+	if s.cfg.Log != nil {
+		s.cfg.Log(line)
+	}
+}
+
 // conversationNewOptions is what the dialog can offer: a POST, as it may
 // wake the sandbox to find out.
 func (s *Server) conversationNewOptions(w http.ResponseWriter, r *http.Request) {
@@ -80,8 +110,12 @@ func (s *Server) conversationNewOptions(w http.ResponseWriter, r *http.Request) 
 		}
 		steps.done("waking the sandbox")
 		if hasClipboard {
-			body["clipboard"] = s.clipboardOffer(ctx, asleep)
+			offer := s.clipboardOffer(ctx, asleep)
 			steps.done("the clipboard page")
+			if offer.Retry {
+				s.log("companion page: the clipboard page didn't answer New conversation's options (" + offer.Unavailable + "): the dialog asks again")
+			}
+			body["clipboard"] = offer
 		}
 		if hasRepository {
 			body["branch"] = s.branchOffer(ctx, asleep)
@@ -441,7 +475,7 @@ func (s *Server) conversationNew(w http.ResponseWriter, r *http.Request) {
 			failed = append(failed, "The clipboard couldn't be cleared: "+asleep.Error())
 		} else if n, err := s.clearClipboard(ctx, req.Clipboard == "all"); err != nil {
 			failed = append(failed, "The clipboard couldn't be cleared: "+err.Error())
-		} else {
+		} else if n > 0 {
 			done = append(done, fmt.Sprintf("Cleared the clipboard (%s).", items(n)))
 		}
 	}

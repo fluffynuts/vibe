@@ -650,6 +650,18 @@ func TestTheNewConversationSaysWhatWasDone(t *testing.T) {
 	}
 }
 
+// Start can be pressed before the clipboard's counts are known, its box ticked as ever: an empty clipboard has nothing cleared to
+// say, so the new conversation says nothing of it.
+func TestClearingAnEmptyClipboardSaysNothing(t *testing.T) {
+	s := freshServer(t, freshSetup{clipboard: &clipboardItemsStandIn{}})
+	if code, out := send(t, s, "/api/conversation/new", `{"clipboard":"all"}`); code != http.StatusOK {
+		t.Fatalf("new: %d %v", code, out)
+	}
+	if said := strings.Join(eventsAfterReset(t, s), "\n"); strings.Contains(said, "clipboard") {
+		t.Errorf("the conversation says %q", said)
+	}
+}
+
 func TestAClipboardThatCantBeClearedIsReportedAndTheConversationStillStartsAnew(t *testing.T) {
 	c := &clipboardItemsStandIn{sent: []int{1}, down: true}
 	s := freshServer(t, freshSetup{clipboard: c})
@@ -718,6 +730,113 @@ func TestTheClipboardOfferAsksAgainOnlyWhereAMomentMayCureIt(t *testing.T) {
 		if got := s.clipboardOffer(context.Background(), c.asleep); got.Retry != c.retry {
 			t.Errorf("%s: Retry is %v, want %v (%+v)", c.name, got.Retry, c.retry, got)
 		}
+	}
+}
+
+// The dialog's Start doesn't wait for the sandbox: its first answer, what the dialog offers at all, is from this machine alone.
+// Starting wakes the sandbox anyway, and does what was ticked once it is up.
+func TestTheDialogsFirstAnswerAsksNothingOfTheSandbox(t *testing.T) {
+	work, _ := repoWithOrigin(t)
+	s := freshServer(t, freshSetup{work: work, clipboard: &clipboardItemsStandIn{sent: []int{1}}, store: openReview(t)})
+	s.cfg.Wake = func(context.Context, func(string)) error { t.Error("the sandbox was woken"); return nil }
+	s.cfg.SandboxGit = func(context.Context, ...string) (string, error) { t.Error("git ran in the sandbox"); return "", nil }
+	rec := do(t, s, req{path: "/api/conversation/new/ready", headers: authed(nil)})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ready: %d %s", rec.Code, rec.Body)
+	}
+	var got map[string]bool
+	json.Unmarshal(rec.Body.Bytes(), &got)
+	if want := map[string]bool{"review": true, "clipboard": true, "repository": true}; !reflect.DeepEqual(got, want) {
+		t.Errorf("ready = %v, want %v", got, want)
+	}
+
+	none := freshServer(t, freshSetup{})
+	rec = do(t, none, req{path: "/api/conversation/new/ready", headers: authed(nil)})
+	json.Unmarshal(rec.Body.Bytes(), &got)
+	if want := map[string]bool{"review": false, "clipboard": false, "repository": false}; !reflect.DeepEqual(got, want) {
+		t.Errorf("with nothing to offer, ready = %v, want %v", got, want)
+	}
+}
+
+// clipboardAgain asks the clipboard's counts again, as the dialog does while the clipboard page may still be starting.
+func clipboardAgain(t *testing.T, s *Server, body string) clipboardOffer {
+	t.Helper()
+	rec := do(t, s, post("/api/conversation/new/clipboard", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clipboard: %d %s", rec.Code, rec.Body)
+	}
+	var o clipboardOffer
+	if err := json.Unmarshal(rec.Body.Bytes(), &o); err != nil {
+		t.Fatal(err)
+	}
+	return o
+}
+
+// Asking the clipboard page again costs no sbx call: only the page is asked, not the sandbox woken nor git run, so the dialog can
+// ask often while the page starts.
+func TestTheClipboardIsAskedAgainOnItsOwn(t *testing.T) {
+	work, _ := repoWithOrigin(t)
+	s := freshServer(t, freshSetup{work: work, clipboard: &clipboardItemsStandIn{sent: []int{1, 2}, unsent: []int{3}}})
+	s.cfg.Wake = func(context.Context, func(string)) error { t.Error("the sandbox was woken"); return nil }
+	s.cfg.SandboxGit = func(context.Context, ...string) (string, error) { t.Error("git ran in the sandbox"); return "", nil }
+	if o := clipboardAgain(t, s, `{"try":2}`); o.Sent != 2 || o.Unsent != 1 || o.Unavailable != "" || o.Retry {
+		t.Errorf("clipboard = %+v", o)
+	}
+}
+
+// A slow start of the dialog reads as one story in vibe's log: the clipboard page not answering at first, then answering on a
+// later try, or not at all by the last.
+func TestTheClipboardPageAnsweringLateIsLogged(t *testing.T) {
+	items := &clipboardItemsStandIn{sent: []int{1}}
+	answer := items.serve(t)
+	var starting atomic.Bool
+	starting.Store(true)
+	// A page still starting drops the connection, as the user saw ("connection reset"); then it answers.
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if starting.Load() {
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			conn.Close()
+			return
+		}
+		res, err := http.Get(answer + r.URL.Path)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer res.Body.Close()
+		io.Copy(w, res.Body)
+	}))
+	t.Cleanup(page.Close)
+	s := freshServer(t, freshSetup{})
+	s.cfg.ClipboardURL = func() string { return page.URL }
+	var logged []string
+	s.cfg.Log = func(m string) { logged = append(logged, m) }
+
+	if o := options(t, s); o.Clipboard == nil || o.Clipboard.Unavailable == "" {
+		t.Fatalf("clipboard = %+v", o.Clipboard)
+	}
+	if len(logged) != 1 || !strings.Contains(logged[0], "the clipboard page didn't answer") || !strings.Contains(logged[0], "asks again") {
+		t.Errorf("the first try: %q", logged)
+	}
+	logged = nil
+	clipboardAgain(t, s, `{"try":2}`)
+	if len(logged) != 0 {
+		t.Errorf("a try between the first and the last: %q", logged)
+	}
+	clipboardAgain(t, s, `{"try":5,"last":true}`)
+	if len(logged) != 1 || !strings.Contains(logged[0], "still didn't answer") || !strings.Contains(logged[0], "5 tries") {
+		t.Errorf("the last try: %q", logged)
+	}
+	logged = nil
+	starting.Store(false)
+	clipboardAgain(t, s, `{"try":3}`)
+	if len(logged) != 1 || !strings.Contains(logged[0], "answered on try 3") {
+		t.Errorf("answered on a later try: %q", logged)
+	}
+	logged = nil
+	clipboardAgain(t, s, `{"try":1}`)
+	if len(logged) != 0 {
+		t.Errorf("answered on the first try: %q", logged)
 	}
 }
 
