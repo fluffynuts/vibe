@@ -78,7 +78,10 @@ func (s *Server) conversationNewClipboard(w http.ResponseWriter, r *http.Request
 		Try  int  `json:"try"`
 		Last bool `json:"last"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "expected {\"try\": n, \"last\": true or false}")
+		return
+	}
 	offer := s.clipboardOffer(r.Context(), "")
 	switch {
 	case offer.Unavailable == "" && req.Try > 1:
@@ -596,8 +599,6 @@ func (s *Server) makeBranch(ctx context.Context, b newBranch) (said, problem str
 	return said + ".", problem, nil
 }
 
-// clearClipboard deletes the clipboard page's items: those sent to the
-// agent already, or all of them, saying how many went.
 // clipboardUpWithin bounds waiting for the clipboard page to come up, to clear it: it starts with the sandbox, which takes seconds.
 const clipboardUpWithin = 30 * time.Second
 
@@ -618,6 +619,8 @@ func (s *Server) clearClipboardOnceUp(ctx context.Context, all bool) (int, error
 	}
 }
 
+// clearClipboard deletes the clipboard page's items: those sent to the
+// agent already, or all of them, saying how many went.
 func (s *Server) clearClipboard(ctx context.Context, all bool) (int, error) {
 	base := s.clipboardAt()
 	if base == "" {

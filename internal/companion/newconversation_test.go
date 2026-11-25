@@ -856,6 +856,13 @@ func TestTheClipboardIsAskedAgainOnItsOwn(t *testing.T) {
 	}
 }
 
+func TestAnAskForTheClipboardThatCantBeReadIsRefused(t *testing.T) {
+	s := freshServer(t, freshSetup{clipboard: &clipboardItemsStandIn{}})
+	if rec := do(t, s, post("/api/conversation/new/clipboard", `{"try":`)); rec.Code != http.StatusBadRequest {
+		t.Errorf("status %d: %s", rec.Code, rec.Body)
+	}
+}
+
 // A slow start of the dialog reads as one story in vibe's log: the clipboard page not answering at first, then answering on a
 // later try, or not at all by the last.
 func TestTheClipboardPageAnsweringLateIsLogged(t *testing.T) {
