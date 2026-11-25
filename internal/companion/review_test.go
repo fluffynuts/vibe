@@ -228,8 +228,12 @@ func TestSubmittingWhileTheAgentAnswersLeavesTheCommentsUnsent(t *testing.T) {
 	s.cfg.StartAgent = f.start
 	store.Do(review.Request{Op: "comment", File: "a.txt", Line: 1, Body: "hmm"}, review.User)
 	send(t, s, "/api/conversation/send", `{"prompt":"busy"}`)
-	if rec := do(t, s, post("/api/review/submit", `{}`)); rec.Code != http.StatusConflict {
+	rec := do(t, s, post("/api/review/submit", `{}`))
+	if rec.Code != http.StatusConflict {
 		t.Errorf("while busy: %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "your 1 comment is kept, and Submit sends it once it's done") {
+		t.Errorf("the refusal doesn't say what is kept: %s", rec.Body)
 	}
 	close(f.release)
 	idle(t, s)

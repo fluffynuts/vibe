@@ -3305,6 +3305,21 @@
   // drawReview draws the review when it has changed; a poll's redraw waits
   // while a box on the tab is being typed in (it would take the focus away),
   // one the user asked for (force) doesn't.
+  // drawSubmit says whether Submit can send the unsent comments now, and why not: the host refuses one while the agent answers, so
+  // the button says so before it's pressed, and is drawn again when the answer ends (setConvoRunning).
+  function drawSubmit(rv) {
+    const unsent = unsentCount(rv)
+    const stillWriting = rv.state === 'in progress'
+    const answering = convo.running
+    $('review-submit').disabled = !unsent || !state.conversation || stillWriting || answering
+    $('review-submit').textContent = unsent ? 'Submit ' + unsent + ' to agent' : 'Submit to agent'
+    $('review-submit').title = !state.conversation ? "This sandbox's agent can't be talked to from the page"
+      : stillWriting ? 'The agent is still writing this review: submit your comments once it has finished'
+      : answering && unsent ? 'The agent is answering: your ' + plural(unsent, 'comment') + (unsent === 1 ? ' is' : ' are') + ' kept, to submit once it has finished'
+      : unsent ? 'Send the agent your ' + plural(unsent, 'comment') + " it hasn't seen: it changes code only where you ask it to"
+        : "Nothing new to send: comment on a line, or reply, first"
+  }
+
   function drawReview(force) {
     const rv = reviewView.review
     if (!rv) return
@@ -3338,14 +3353,7 @@
       : rv.state || ''
     $('review-state').classList.toggle('reviewing', on && rv.state === 'in progress')
     if (on) announceReview(rv)
-    const unsent = unsentCount(rv)
-    const stillWriting = rv.state === 'in progress'
-    $('review-submit').disabled = !unsent || !state.conversation || stillWriting
-    $('review-submit').textContent = unsent ? 'Submit ' + unsent + ' to agent' : 'Submit to agent'
-    $('review-submit').title = !state.conversation ? "This sandbox's agent can't be talked to from the page"
-      : stillWriting ? 'The agent is still writing this review: submit your comments once it has finished'
-      : unsent ? 'Send the agent your ' + plural(unsent, 'comment') + " it hasn't seen: it changes code only where you ask it to"
-        : "Nothing new to send: comment on a line, or reply, first"
+    drawSubmit(rv)
     $('review-error').hidden = !reviewView.diffError
     $('review-error').textContent = reviewView.diffError
     const problems = on ? rv.problems || [] : []
@@ -6840,11 +6848,13 @@
     convo.stopState = stopState
     if (Array.isArray(tasks)) convo.tasks = tasks
     const ended = convo.running && !running
+    const wasRunning = convo.running
     convo.background = !running && background
     drawAgentLight(running, background, quietMinutes, compacting)
     if (running) setFaviconDot('working')
     else if (convo.running) setFaviconDot(document.visibilityState === 'visible' && document.hasFocus() ? '' : 'done')
     convo.running = running
+    if (ended || (running && !wasRunning)) { if (reviewView.review) drawSubmit(reviewView.review) }
     // What the agent ran is known now, and what was chosen has been used.
     if (ended && state.choice) choiceTurnEnded()
     if (ended) reviewTurnEnded()

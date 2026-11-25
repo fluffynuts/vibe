@@ -175,6 +175,31 @@ test('Submit to agent sends the unsent comments', async () => {
   } finally { p.close() }
 })
 
+// The host refuses a submit while the agent is answering: the button says so before it's pressed, keeping the count of what waits, and
+// is usable again the moment the answer ends, with no click or reload (raised by the user, docs/plan-review-tab-enhancements.md).
+test('Submit to agent waits while the agent is answering, saying why, and is usable once it has answered', async () => {
+  const now = { running: true }
+  const p = await openPage({
+    routes: {
+      '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} }),
+      '/api/review': () => ({ review: unsent, diff: [] }),
+      '/api/conversation': () => ({ events: [], last: 0, running: now.running }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+  })
+  try {
+    await p.every('pollConversation')
+    const submit = p.$('review-submit')
+    assert.equal(submit.disabled, true, 'usable while the agent answers')
+    assert.match(submit.textContent, /^Submit 1 to agent$/, 'the count of what waits is gone')
+    assert.match(submit.title, /agent is answering.*kept.*once it/i)
+    now.running = false
+    await p.every('pollConversation')
+    assert.equal(submit.disabled, false, 'still off once the agent has answered')
+  } finally { p.close() }
+})
+
 test("Submit to agent is off when the page can't talk to the agent", async () => {
   const p = await reviewPage({ review: unsent, conversation: false })
   try {
