@@ -912,6 +912,8 @@ dialog.file-view header button svg { width: 14px; height: 14px; fill: none; stro
 #file-view-body .fv-line::before { content: attr(data-n); display: inline-block; width: calc(var(--fv-digits, 1) * 1ch); margin-right: 2ch;
   text-align: right; color: var(--muted); user-select: none; }
 #file-view-body .fv-line.marked { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+/* An empty file has no lines to number: said in the middle of the viewer. */
+#file-view-body .fv-empty { text-align: center; color: var(--muted); padding: 4em 0; margin: 0; }
 /* A formatted Markdown file has no lines: the block a line is in (in a list, the item) is marked, as far as it goes, a bar at its left saying so. */
 #file-view-body .md > .marked, #file-view-body .md > ul > li.marked, #file-view-body .md > ol > li.marked { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 3px 0 0 var(--accent);
   padding-left: 9px; border-radius: 2px; }

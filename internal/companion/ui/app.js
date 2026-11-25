@@ -6088,7 +6088,9 @@
       ? [el('p', { class: 'muted', text: 'Line ' + step.at.from + ' is past the end of ' + path + ' (' + plural(count, 'line') + '): it may have changed since it was named.' })]
       : []
     try {
-      body.replaceChildren(...pastEnd, ...(source ? codeView(text, res.body.colour, step.at) : [markdown(text, { at: step.at, asFile: true })]))
+      const shown = text === '' ? [el('p', { class: 'fv-empty', text: 'Empty File' })]
+        : source ? codeView(text, res.body.colour, step.at) : [markdown(text, { at: step.at, asFile: true })]
+      body.replaceChildren(...pastEnd, ...shown)
     } finally {
       viewedFolder = ''
     }

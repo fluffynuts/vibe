@@ -627,3 +627,16 @@ test('a file left while it loads opens at its line when gone back to', async () 
     assert.ok(scrolled.some((n) => n.classList.contains('marked')), 'not scrolled to its line')
   } finally { p.close() }
 })
+
+// An empty file has no lines to number: the viewer says so, in its middle, whether it would be shown as code or formatted.
+for (const path of ['src/empty.go', 'docs/empty.md']) {
+  test('an empty file says so, with no line numbers: ' + path, async () => {
+    const p = await filePage('See `' + path + '`.', { files: { [path]: '' } })
+    try {
+      await p.click(p.$('convo-log').querySelector('button.file-ref'))
+      const body = p.$('file-view-body')
+      assert.equal(body.querySelectorAll('.fv-line').length, 0, 'numbered')
+      assert.equal(body.querySelector('.fv-empty').textContent, 'Empty File')
+    } finally { p.close() }
+  })
+}
