@@ -6492,8 +6492,9 @@
     const nodes = []
     let at = 0
     // Not in a word (issue#3), a path or address (example.com/#4), nor a
-    // number going on (#1.5); shown as written (#007).
-    for (const m of text.matchAll(/(^|[^\w#/])#(\d+)(?![\w.]*\d)\b/g)) {
+    // number going on (#1.5); shown as written (#007). Nine digits at most:
+    // past what Number() keeps exact, a number would be asked about as another.
+    for (const m of text.matchAll(/(^|[^\w#/])#(\d{1,9})(?![\w.]*\d)\b/g)) {
       const start = m.index + m[1].length
       const id = Number(m[2])
       if (start > at) nodes.push(document.createTextNode(text.slice(at, start)))

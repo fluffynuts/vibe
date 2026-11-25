@@ -2972,6 +2972,16 @@ test('the page asks which pull requests there are for the bare numbers no commen
   } finally { p.close() }
 })
 
+// A number past what Number() keeps exact would reach vibe as something else (1e+21, or rounded): no pull request is numbered that
+// high, so a bare number of more than nine digits is not asked about, and doesn't spoil the ask for the others.
+test('a bare number too long to be a pull request is not asked about, and the others still are', async () => {
+  const p = await talkPage('#37, and #123456789012345678901 too.', onGitHub)
+  try {
+    const wanted = p.calls.filter((c) => c.path === '/api/pull-requests').flatMap((c) => (new URLSearchParams(c.query).get('want') || '').split(',')).filter(Boolean)
+    assert.deepEqual([...new Set(wanted)], ['37'])
+  } finally { p.close() }
+})
+
 test("a page whose vibe can't list pull requests doesn't ask", async () => {
   const p = await openPage({
     routes: {

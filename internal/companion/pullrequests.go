@@ -87,6 +87,10 @@ func wantedNumbers(s string) ([]int, bool) {
 	out := make([]int, 0, len(parts))
 	for _, part := range parts {
 		n, err := strconv.Atoi(part)
+		if errors.Is(err, strconv.ErrRange) && n > 0 {
+			// Digits too many for an int: no pull request, and the numbers asked with it are still answered.
+			continue
+		}
 		if err != nil || n < 0 {
 			return nil, false
 		}

@@ -212,6 +212,18 @@ func TestOddWantsAreRefused(t *testing.T) {
 	}
 }
 
+// A page that asks about a number too big for an int (an older page, or a rounding in it) has it skipped, not the whole ask refused: the
+// numbers asked with it would never be linked.
+func TestANumberTooBigToBeAPullRequestIsSkipped(t *testing.T) {
+	asker := &prAsker{numbers: []int{7}}
+	var logged []string
+	s, _ := prServer(asker, &logged)
+	getPRs(t, s, "7,123456789012345680000")
+	if asker.times() != 1 {
+		t.Errorf("asked %d times, want once, for 7", asker.times())
+	}
+}
+
 func TestAStoppedSandboxsGitIsNotRunToListPullRequests(t *testing.T) {
 	ran := 0
 	list := PullRequestsFrom(func(context.Context) bool { return false }, func(context.Context, ...string) (string, error) { ran++; return "", nil })
