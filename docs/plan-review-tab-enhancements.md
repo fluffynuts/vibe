@@ -72,3 +72,27 @@ jsdom: Submit disabled with the reason in its title while the conversation says 
 
 - With "hide whitespace changes" on, a whitespace-only edit still counts as a change and shows the note, because a file's fingerprint includes its blob id. Rare, and Refresh then changes nothing visible; a key over the hunks alone would not have this.
 - The toast with a Refresh button over the fly-out has been checked in jsdom, and a plain toast over the pane in real Firefox; the two together have not been looked at by hand.
+
+## The branch's pull request in the top bar (raised 2026-11-25)
+
+The user: beside the project, folder and git status in the top bar, a link to the pull request open for the current branch, if there
+is one; vibe can use the host's `gh`, as it runs outside the sandbox.
+
+### Proposed (agreed 2026-11-25)
+
+1. **Asked of the host's `gh`, never in the project folder**: `gh pr list --repo owner/name --head <branch> --state open --json
+   number,url --limit 1`, run from a folder outside the project. `gh` in the project would run git there, and its `.git/config` can be
+   written from inside the sandbox (`core.fsmonitor` and the like would run commands on the host). The owner/name come from the
+   repository's GitHub address vibe already reads (`GitInfo.Web`, read with go-git, which runs nothing), the branch from the same read.
+2. **In the background, never waited on**: the state says what is known for the current branch; a branch not asked about yet, or asked
+   about more than two minutes ago, is asked about in the background, one ask at a time. A detached HEAD, a repository not on GitHub, or
+   no `gh` on the host asks nothing.
+3. **Shown as "PR #N"** after the git status, a link to the pull request, opening in a tab of its own. Nothing when there's none.
+4. **`gh` missing or not signed in** shows nothing; a failed ask is logged once per reason, not every two minutes.
+
+### Tests
+
+- Go: the state carries the pull request once asked; another branch asks again; asked again only after two minutes; no ask without a
+  branch or GitHub; a failure is logged once and shows nothing. The `gh` call: its arguments, its folder outside the project, and no ask
+  without `gh`.
+- Page: the link is drawn from the state, and not without one. Firefox: the top bar keeps to one line with it, wide and narrow.
