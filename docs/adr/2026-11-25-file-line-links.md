@@ -1,6 +1,6 @@
 # A file named with a line opens at that line, in a viewer that numbers its lines
 
-- **Status:** accepted, built 2026-11-25 on `feat/bare-pr-numbers`. Not yet tried by hand.
+- **Status:** accepted, built 2026-11-25 on `feat/bare-pr-numbers`. Tried by hand 2026-11-25: code files opened at a line and a range, marked; a selection pasted without numbers; Markdown at a line and a range, formatted and as source.
 - **Decided:** 2026-11-25, with the user: numbers wherever a file's text is shown; Markdown always formatted, the block a line is in
   marked (the agent's first build showed its source at a line instead, which the user didn't want: Markdown is read formatted).
 - **Came from:** `docs/plan-file-line-links.md` (`git show a8233de:docs/plan-file-line-links.md`).
