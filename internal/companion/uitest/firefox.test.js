@@ -1012,10 +1012,10 @@ test("the branch's pull request link keeps to the top bar's line when wide, and 
       branchPullRequest: { number: 40, url: 'https://github.com/me/vibe/pull/40' } }))
     try {
       await page.goto(URL)
-      await page.waitForSelector('#git a.pr')
+      await page.waitForSelector('#pr')
       const m = await page.evaluate(() => {
         const r = (el) => el.getBoundingClientRect()
-        const link = r(document.querySelector('#git a.pr'))
+        const link = r(document.querySelector('#pr'))
         const project = r(document.querySelector('.brand .project'))
         return { linkTop: link.top, linkRight: link.right, projectTop: project.top, lineHeight: project.height,
           page: document.documentElement.scrollWidth <= document.documentElement.clientWidth, vw: window.innerWidth }

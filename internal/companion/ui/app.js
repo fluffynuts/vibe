@@ -994,6 +994,14 @@
     whereShown = said
     $('folder').textContent = folder
     $('folder-part').hidden = !folder
+    // Only a pull request's address on GitHub is linked: it is what gh said, and becomes a link.
+    const linked = !!git && !!pr && /^https:\/\/github\.com\/[\w-]+\/[\w.-]+\/pull\/\d+$/.test(pr.url || '')
+    $('pr-part').hidden = !linked
+    if (linked) {
+      $('pr').href = pr.url
+      $('pr').textContent = 'PR #' + pr.number
+      $('pr').title = 'Pull request #' + pr.number + ', open for this branch: open it on GitHub'
+    }
     const box = $('git')
     box.replaceChildren()
     $('git-part').hidden = !git
@@ -1018,11 +1026,6 @@
     if (git.behind) part('behind', '⇣' + git.behind, git.behind + ' commit' + (git.behind === 1 ? '' : 's') + ' fetched but not merged')
     if (git.stashed) part('stashed', '#' + git.stashed, git.stashed + ' stash' + (git.stashed === 1 ? '' : 'es'))
     if (git.noUpstream) part('noupstream', 'no upstream', 'this branch follows no branch, so there is nothing for it to be ahead of or behind')
-    // Only a pull request's address on GitHub is linked: it is what gh said, and becomes a link.
-    if (pr && /^https:\/\/github\.com\/[\w-]+\/[\w.-]+\/pull\/\d+$/.test(pr.url || '')) {
-      box.append(el('a', { class: 'pr', href: pr.url, target: '_blank', rel: 'noopener noreferrer', text: 'PR #' + pr.number,
-        title: 'Pull request #' + pr.number + ', open for this branch: open it on GitHub' }))
-    }
   }
 
   async function loadState() {

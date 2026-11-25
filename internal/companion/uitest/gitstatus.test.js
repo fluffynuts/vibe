@@ -67,15 +67,20 @@ test('a branch that follows none says so, and a detached head says it is one', a
   } finally { p.close(); q.close() }
 })
 
-// The pull request open for the branch, as the host's gh says: a link after the status, opening on GitHub in a tab of its own.
+// The pull request open for the branch, as the host's gh says: a link after the status, past a divider as the parts before it are,
+// opening on GitHub in a tab of its own.
 function pageWithPR(pr, git = { branch: 'feat/a', web: 'https://github.com/me/vibe' }) {
   return openPage({ routes: { '/api/state': { sandbox: 'box', sandboxTabs: true, folder: '~/work/box', git, branchPullRequest: pr, attention: {} }, '/api/log': { entries: [] } } })
 }
 
-test("the branch's open pull request is a link after the status", async () => {
+test("the branch's open pull request is a link after the status, past a divider", async () => {
   const p = await pageWithPR({ number: 40, url: 'https://github.com/me/vibe/pull/40' })
   try {
-    const link = p.$('git').lastElementChild
+    const part = p.$('pr-part')
+    assert.ok(!part.hidden)
+    assert.equal(part.previousElementSibling, p.$('git-part'), 'not after the git status')
+    assert.equal(part.querySelector('.sep').textContent, '│', 'no divider')
+    const link = part.querySelector('a')
     assert.equal(link.tagName, 'A')
     assert.equal(link.textContent, 'PR #40')
     assert.equal(link.getAttribute('href'), 'https://github.com/me/vibe/pull/40')
@@ -88,7 +93,7 @@ test("the branch's open pull request is a link after the status", async () => {
 test('a branch with no open pull request has no link', async () => {
   const p = await pageWithPR(null)
   try {
-    assert.equal(p.$('git').querySelector('a'), null)
+    assert.ok(p.$('pr-part').hidden)
   } finally { p.close() }
 })
 
@@ -96,7 +101,7 @@ test("an address that isn't a pull request on GitHub is not linked", async () =>
   for (const url of ['javascript:alert(1)', 'https://example.com/me/vibe/pull/40', 'https://github.com/me/vibe/issues/40']) {
     const p = await pageWithPR({ number: 40, url })
     try {
-      assert.equal(p.$('git').querySelector('a'), null, url)
+      assert.ok(p.$('pr-part').hidden, url)
     } finally { p.close() }
   }
 })
@@ -105,7 +110,7 @@ test("an address that isn't a pull request on GitHub is not linked", async () =>
 test('the pull request link keeps focus while the state is polled', async () => {
   const p = await pageWithPR({ number: 40, url: 'https://github.com/me/vibe/pull/40' })
   try {
-    const link = p.$('git').querySelector('a')
+    const link = p.$('pr')
     link.focus()
     await p.poll()
     assert.equal(p.window.document.activeElement, link)
