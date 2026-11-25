@@ -296,7 +296,9 @@ func (s *Server) repoState(ctx context.Context) (repoState, error) {
 	if err != nil {
 		return repoState{}, err
 	}
-	status, refs, found := strings.Cut(out, repoStateEnd+"\n")
+	// A line of its own: a file of that name ends a status line with it. Status prints its branch lines first, so the marker is never
+	// the first line.
+	status, refs, found := strings.Cut(out, "\n"+repoStateEnd+"\n")
 	if !found {
 		return repoState{}, fmt.Errorf("git in the sandbox said something unexpected: %q", out)
 	}

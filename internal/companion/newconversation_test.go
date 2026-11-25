@@ -427,6 +427,24 @@ func TestConflictsMakeBranchingUnavailable(t *testing.T) {
 	}
 }
 
+// The repository is read with one run of git, which prints the tree's state, a line marking where the branches start, then the
+// branches: a file named as the marker, listed before a conflict, must not hide the conflict (as if the rest were branches).
+func TestAFileNamedAsTheMarkerDoesntHideAConflict(t *testing.T) {
+	work, _ := repoWithOrigin(t)
+	gitOut(t, work, "switch", "-q", "-c", "other")
+	commitIn(t, work, "a.txt", "other\n")
+	gitOut(t, work, "switch", "-q", "master")
+	commitIn(t, work, "a.txt", "mine\n")
+	exec.Command("git", "-C", work, "-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "other").Run()
+	os.MkdirAll(filepath.Join(work, "0"), 0o755)
+	writeIn(t, work, "0/"+repoStateEnd, "listed before a.txt\n")
+	gitOut(t, work, "add", "0/"+repoStateEnd)
+	s := freshServer(t, freshSetup{work: work})
+	if o := options(t, s); !o.Branch.Conflicted {
+		t.Errorf("the conflict was hidden: %+v", o.Branch)
+	}
+}
+
 // A folder below its repository's top: git in the sandbox, which has only
 // the folder, sees no repository at all.
 func TestGitInTheSandboxSeeingNoRepositoryMakesBranchingUnavailable(t *testing.T) {
