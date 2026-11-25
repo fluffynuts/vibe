@@ -198,6 +198,14 @@ func TestAPageThatCantAskHasNoPullRequests(t *testing.T) {
 	}
 }
 
+// The state says null when vibe can't list them, so the page doesn't ask (and is refused) for each number it draws, every minute.
+func TestTheStateSaysWhenPullRequestsCantBeListed(t *testing.T) {
+	s := newServer(&fakeSbx{})
+	if v, ok := pageState(t, s)["pullRequests"]; !ok || v != nil {
+		t.Errorf("pullRequests = %v (present %v), want null", v, ok)
+	}
+}
+
 func TestOddWantsAreRefused(t *testing.T) {
 	asker := &prAsker{numbers: []int{3}}
 	var logged []string

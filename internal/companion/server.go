@@ -698,7 +698,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"agent":                 s.cfg.Agent,
 		"folder":                pathresolve.Tilde(s.cfg.Workspace),
 		"git":                   git,
-		"pullRequests":          s.prs.currentVersion(),
+		"pullRequests":          pullRequestsVersion(s),
 		"clipboardUrl":          clipboard,
 		"clipboardReady":        ready,
 		"clipboardTrouble":      s.clipboardTrouble(clipboard, ready),

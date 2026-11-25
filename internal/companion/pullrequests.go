@@ -76,6 +76,14 @@ func (s *Server) pullRequestList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, body)
 }
 
+// pullRequestsVersion is what the state says of the list: its version, or nil when this page can't ask (the page then never does).
+func pullRequestsVersion(s *Server) interface{} {
+	if !pullRequestsFeature.present(s) {
+		return nil
+	}
+	return s.prs.currentVersion()
+}
+
 func wantedNumbers(s string) ([]int, bool) {
 	if s == "" {
 		return nil, true
