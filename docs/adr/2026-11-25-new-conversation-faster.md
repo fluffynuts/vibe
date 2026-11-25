@@ -1,6 +1,6 @@
 # New conversation: Start doesn't wait for the sandbox, and asks it less
 
-- **Status:** accepted, built 2026-11-25 on `feat/bare-pr-numbers`. Not yet tried by hand.
+- **Status:** accepted, built 2026-11-25 on `feat/bare-pr-numbers`. Tried by hand 2026-11-25: Start usable at once, warm and cold; an early Start from cold cleared the clipboard; cold options took 5-5.9 s (waking 3.3-4 s, git 1.6-1.9 s in one run), from 11.7 s.
 - **Decided:** 2026-11-25, with the user.
 - **Came from:** `docs/plan-new-conversation-slow.md` (`git show a8233de:docs/plan-new-conversation-slow.md`).
 
