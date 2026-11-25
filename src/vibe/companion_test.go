@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"vibe/internal/cliargs"
@@ -488,5 +489,59 @@ func TestATurnThatCannotStartTheSandboxBecauseSbxIsSignedOutSaysSoWithoutTheFixe
 	err := readyForTurn("box")(context.Background(), func(string) {})
 	if err == nil || !strings.Contains(err.Error(), "isn't signed in to Docker") || strings.Contains(err.Error(), "3m0s") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// The page can wake the sandbox twice at once (New conversation's Start pressed while its options wake it; a turn while keeping it
+// awake starts it): the second waits for the first's start rather than starting it again, and is told how it went.
+func TestTwoWakesAtOnceStartTheSandboxOnce(t *testing.T) {
+	turn := func() error { return readyForTurn("box")(context.Background(), func(string) {}) }
+	awake := func() error {
+		if said := keepAwakeFor("box")(); said != "" {
+			return errors.New("keeping it awake said " + said + ", though another wake started it")
+		}
+		return nil
+	}
+	for name, second := range map[string]func() error{"a turn": turn, "keeping it awake": awake} {
+		t.Run(name, func(t *testing.T) { twoWakesAtOnce(t, turn, second) })
+	}
+}
+
+func twoWakesAtOnce(t *testing.T, first, second func() error) {
+	keepAwakeStandIns(t, false, true)
+	oldVM, oldJoined := vmCheck, joinedStart
+	t.Cleanup(func() { vmCheck, joinedStart = oldVM, oldJoined })
+	vmCheck = func() error { return nil }
+	var starts atomic.Int32
+	started, again, gate, joined := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+	startSandboxForPage = func(context.Context, string) error {
+		switch starts.Add(1) {
+		case 1:
+			close(started)
+		case 2:
+			close(again)
+		}
+		<-gate
+		return nil
+	}
+	joinedStart = func() { close(joined) }
+	a, b := make(chan error, 1), make(chan error, 1)
+	go func() { a <- first() }()
+	<-started
+	go func() { b <- second() }()
+	select {
+	case <-joined:
+	case <-again:
+		t.Error("the second wake started the sandbox again")
+	}
+	close(gate)
+	if err := <-a; err != nil {
+		t.Errorf("the first wake: %v", err)
+	}
+	if err := <-b; err != nil {
+		t.Errorf("the second wake: %v", err)
+	}
+	if n := starts.Load(); n != 1 {
+		t.Errorf("started %d times", n)
 	}
 }

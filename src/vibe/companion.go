@@ -639,7 +639,12 @@ func keepAwakeFor(name string) func() string {
 		}
 		startCtx, cancelStart := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancelStart()
-		if err := startSandboxForPage(startCtx, name); err != nil {
+		started, err := startOncePerPage(startCtx, name)
+		if !started {
+			// Another wake of the page's was starting it: that one says how it went.
+			return ""
+		}
+		if err != nil {
 			return "sandbox '" + name + "' was stopped, and couldn't be started again for the page: " + startFailure(err)
 		}
 		// As when a turn starts it (readyForTurn) or the Admin tab's Start does: a session held for the sandbox to be
@@ -649,6 +654,47 @@ func keepAwakeFor(name string) func() string {
 		return "sandbox '" + name + "' was stopped: started it again"
 	}
 }
+
+// pageStart is the page's start of the sandbox under way, if any.
+var pageStart struct {
+	mu  sync.Mutex
+	now *sandboxStart
+}
+
+// sandboxStart is one start: done is closed when it has ended, err then its outcome.
+type sandboxStart struct {
+	done chan struct{}
+	err  error
+}
+
+// startOncePerPage starts sandbox name for the page, one start at a time: asked again while one is under way (New
+// conversation's Start pressed while its options wake the sandbox, a turn while keeping it awake starts it), it waits for that
+// one's outcome rather than running sbx's start twice at once. started says this call ran it.
+func startOncePerPage(ctx context.Context, name string) (started bool, err error) {
+	pageStart.mu.Lock()
+	if under := pageStart.now; under != nil {
+		pageStart.mu.Unlock()
+		joinedStart()
+		select {
+		case <-under.done:
+			return false, under.err
+		case <-ctx.Done():
+			return false, ctx.Err()
+		}
+	}
+	mine := &sandboxStart{done: make(chan struct{})}
+	pageStart.now = mine
+	pageStart.mu.Unlock()
+	mine.err = startSandboxForPage(ctx, name)
+	pageStart.mu.Lock()
+	pageStart.now = nil
+	pageStart.mu.Unlock()
+	close(mine.done)
+	return true, mine.err
+}
+
+// joinedStart is told when a start joins one under way (tests wait on it).
+var joinedStart = func() {}
 
 // turnStartWithin bounds starting a stopped sandbox for a turn: a cold
 // boot, with its start-up, is well within it.
@@ -673,7 +719,7 @@ func readyForTurn(name string) func(ctx context.Context, say func(string)) error
 		say("starting the sandbox (sbx stops one that's left idle) — the agent answers once it's up")
 		start, cancel := context.WithTimeout(ctx, turnStartWithin)
 		defer cancel()
-		if err := startSandboxForPage(start, name); err != nil {
+		if _, err := startOncePerPage(start, name); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
