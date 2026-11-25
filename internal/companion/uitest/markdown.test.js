@@ -152,3 +152,9 @@ test('with softBreaks, a line break in a paragraph is a space; without, a break'
   assert.deepEqual(parse('- a\n  b', { softBreaks: true })[0].items[0], [{ type: 'para', inline: [{ type: 'text', text: 'a b' }] }])
   assert.deepEqual(parse('one\ntwo'), [{ type: 'para', inline: [{ type: 'text', text: 'one' }, { type: 'br' }, { type: 'text', text: 'two' }] }])
 })
+
+// A file's hard breaks are kept with softBreaks, as GitHub keeps them: a line ending in two spaces, or in a backslash (not shown).
+test('with softBreaks, a line ending in two spaces or a backslash still breaks', () => {
+  assert.deepEqual(parse('one  \ntwo\\\nthree\nfour', { softBreaks: true }), [{ type: 'para', inline: [
+    { type: 'text', text: 'one' }, { type: 'br' }, { type: 'text', text: 'two' }, { type: 'br' }, { type: 'text', text: 'three four' }] }])
+})

@@ -58,9 +58,9 @@
     return FENCE.test(line) || HEADING.test(line) || HR.test(line) || QUOTE.test(line) || ITEM.test(line)
   }
 
-  // softBreaks is parse's option: a line break inside a paragraph read as a space, as GitHub shows a .md file (its writer wrapped
-  // its lines where they liked), rather than as a break, as it shows a comment, and the conversation does. Set for one parse, which
-  // runs through in one go.
+  // softBreaks is parse's option: a line break inside a paragraph read as a space (but for a hard one: see softJoined), as GitHub
+  // shows a .md file (its writer wrapped its lines where they liked), rather than as a break, as it shows a comment, and the
+  // conversation does. Set for one parse, which runs through in one go.
   let softBreaks = false
 
   function parse(text, options = {}) {
@@ -150,20 +150,31 @@
 
       // A paragraph: lines up to a blank one or the start of another block,
       // or a setext underline, which makes it a heading.
-      const para = [line.trim()]
+      const para = [line]
       i++
       let level = 0
       while (i < lines.length && !blank(lines[i])) {
         if (SETEXT_1.test(lines[i])) { level = 1; i++; break }
         if (SETEXT_2.test(lines[i])) { level = 2; i++; break }
         if (startsBlock(lines[i])) break
-        para.push(lines[i].trim())
+        para.push(lines[i])
         i++
       }
-      const inline = parseInline(para.join('\n'))
+      const inline = parseInline(softBreaks ? softJoined(para) : para.map((l) => l.trim()).join('\n'))
       add(level ? { type: 'heading', level, inline } : { type: 'para', inline })
     }
     return blocks
+  }
+
+  // softJoined is a paragraph's lines as one text, for softBreaks: each line break a space, but for a hard one, which GitHub keeps
+  // in a file too: a line ending in two spaces, or in a backslash (which isn't shown).
+  function softJoined(lines) {
+    return lines.map((line, k) => {
+      const text = line.trim()
+      if (k === lines.length - 1) return text
+      if (text.endsWith('\\')) return text.slice(0, -1) + '\n'
+      return text + (/ {2,}$/.test(line) ? '\n' : ' ')
+    }).join('')
   }
 
   // readList reads the list starting at lines[start]: its items, each the
@@ -238,7 +249,6 @@
     while (i < s.length) {
       const c = s[i]
       if (c === '\\' && i + 1 < s.length && PUNCT.test(s[i + 1])) { buf += s[i + 1]; i += 2; continue }
-      if (c === '\n' && softBreaks) { buf += ' '; i++; continue }
       if (c === '\n') { flush(); out.push({ type: 'br' }); i++; continue }
       if (c === '`') {
         let n = 1
