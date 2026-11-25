@@ -5999,7 +5999,7 @@
   // last, Back and Forward move along the steps, and following a link from a step back along drops those that
   // were ahead. Each step keeps how far down it was read, to go back to. Closing the viewer ends it: the next file
   // opened is the first of a new one.
-  const viewer = { steps: [], at: -1, loading: 0 }
+  const viewer = { steps: [], at: -1, loading: 0, drawn: false }
 
   // viewFile shows path over the conversation, at the lines at ({ from, to }) when given, marked: from a button
   // in it, the first step of a new history; from a link in a file already shown, the next step of that one. A
@@ -6020,8 +6020,10 @@
     return showStep()
   }
 
+  // rememberPlace keeps how far down the step shown was read: only once its file is drawn, as "Loading…" says nothing of where it
+  // would be read (a step left while it loads opens as it would have, at its marked line, say).
   function rememberPlace() {
-    if (viewer.steps[viewer.at]) viewer.steps[viewer.at].place = $('file-view-body').scrollTop
+    if (viewer.steps[viewer.at] && viewer.drawn) viewer.steps[viewer.at].place = $('file-view-body').scrollTop
   }
 
   async function goViewer(to) {
@@ -6043,6 +6045,7 @@
     const step = viewer.steps[viewer.at]
     const path = step.path
     const mine = ++viewer.loading
+    viewer.drawn = false
     $('file-view-path').value = path
     $('file-view-path').title = path
     endOfPath()
@@ -6089,6 +6092,7 @@
     } finally {
       viewedFolder = ''
     }
+    viewer.drawn = true
     const first = body.querySelector('.fv-line.marked, .md .marked')
     if (step.place != null) body.scrollTop = step.place
     else if (first) first.scrollIntoView({ block: 'center' })

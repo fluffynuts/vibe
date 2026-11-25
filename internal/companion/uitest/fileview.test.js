@@ -605,3 +605,25 @@ test('a Markdown file is shown formatted, with a way to its source; other files 
     assert.ok(p.$('file-view-mode').hidden)
   } finally { p.close() }
 })
+
+// A step's place is remembered only once its file is drawn: left while it was still loading, it is opened again as it would have
+// been (at its marked line), not at the top of the "Loading…" that was there.
+test('a file left while it loads opens at its line when gone back to', async () => {
+  let release
+  const loading = new Promise((resolve) => { release = resolve })
+  const p = await filePage('See `docs/a.md`.', { files: { 'docs/a.md': '# A\n\nSee [the code](../src/a.go#L3).', 'src/a.go': loading } })
+  try {
+    const scrolled = []
+    p.window.Element.prototype.scrollIntoView = function () { scrolled.push(this) }
+    await p.click(p.$('convo-log').querySelector('button.file-ref'))
+    Array.from(p.$('file-view-body').querySelectorAll('button.file-ref')).find((b) => b.textContent === 'the code').click()
+    // A few turns of the page, for the link's file to be asked for (and held), as the page's other tests do.
+    for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve))
+    p.$('file-view-back').click()
+    release({ path: 'src/a.go', text: lines4 })
+    await p.settle()
+    await p.click('file-view-forward')
+    assert.deepEqual(marked(p), [3])
+    assert.ok(scrolled.some((n) => n.classList.contains('marked')), 'not scrolled to its line')
+  } finally { p.close() }
+})
