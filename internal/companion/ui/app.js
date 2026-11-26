@@ -986,7 +986,8 @@
   }
 
   // PR_STATUS_WORDS say a pull request's status, as the host worked it out from its checks, reviews and merge.
-  const PR_STATUS_WORDS = { failing: 'failing', pending: 'pending (checks running, or a review waited for)', passing: 'passing' }
+  // Each says only the status: the why after it says what makes it so.
+  const PR_STATUS_WORDS = { failing: 'failing', pending: 'pending', passing: 'passing' }
 
   // The folder and git status, as the infobar in the sandbox shows them, and the pull request open for the branch (pr), as the
   // host's gh says. Drawn again only when what it says changes: drawn at every poll, the link lost keyboard focus.

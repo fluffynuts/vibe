@@ -13,6 +13,7 @@ func TestAPullRequestsStatusIsWorkedOutFromItsChecksReviewAndMerge(t *testing.T)
 	statusOK := Check{Name: "ci/legacy", State: "SUCCESS"}
 	statusPending := Check{Name: "ci/legacy", State: "PENDING"}
 	statusError := Check{Name: "ci/legacy", State: "ERROR"}
+	approved := func(who string) Review { return Review{Author: who, State: "APPROVED"} }
 	for _, c := range []struct {
 		name   string
 		checks PullRequestChecks
@@ -25,15 +26,35 @@ func TestAPullRequestsStatusIsWorkedOutFromItsChecksReviewAndMerge(t *testing.T)
 		{"a status pending", PullRequestChecks{Checks: []Check{statusPending}}, PRPending, "1 check running"},
 		// Gated, and nobody asked: no one will ever approve it, so it needs you (the user, 2026-11-26).
 		{"review required, nobody asked", PullRequestChecks{Checks: []Check{ok}, Review: "REVIEW_REQUIRED"}, PRFailing, "review required, but nobody is asked"},
+		// An agent's review is no person's: gated, with nobody asked, it still has no one to approve it (review #156).
+		{"review required, only an agent reviewed", PullRequestChecks{Checks: []Check{ok}, Review: "REVIEW_REQUIRED",
+			Reviews: []Review{{Author: "copilot-pull-request-reviewer", Bot: true, State: "COMMENTED"}},
+			Threads: []Thread{{Author: "copilot-pull-request-reviewer", Bot: true, Resolved: true}}}, PRFailing, "review required, but nobody is asked"},
+		{"review required, a person reviewed", PullRequestChecks{Checks: []Check{ok}, Review: "REVIEW_REQUIRED", Reviews: []Review{approved("alice")}}, PRPending, "review required"},
 		{"review required, someone asked", PullRequestChecks{Checks: []Check{ok}, Review: "REVIEW_REQUIRED", Requests: []string{"@alice"}}, PRPending, "waiting on @alice"},
 		{"merge not worked out yet", PullRequestChecks{Checks: []Check{ok}, Mergeable: "UNKNOWN"}, PRPending, "mergeability"},
 		// While any check runs the dot is yellow, failures said in words: worked out again when they end (the user, 2026-11-26).
-		{"a check failed, another running", PullRequestChecks{Checks: []Check{ok, running, failed}}, PRPending, "test (windows-latest) failed; 1 check running"},
+		{"a check failed, another running", PullRequestChecks{Checks: []Check{ok, running, failed}}, PRPending, "1 check running; test (windows-latest) failed"},
 		{"a check failed, none running", PullRequestChecks{Checks: []Check{ok, failed}}, PRFailing, "test (windows-latest) failed"},
-		{"changes requested, a check running", PullRequestChecks{Checks: []Check{running}, Review: "CHANGES_REQUESTED"}, PRPending, "changes requested; 1 check running"},
+		{"changes requested, a check running", PullRequestChecks{Checks: []Check{running}, Review: "CHANGES_REQUESTED"}, PRPending, "1 check running; changes requested"},
 		{"a conflict, a check running", PullRequestChecks{Checks: []Check{running}, Mergeable: "CONFLICTING"}, PRPending, "conflicts with its base branch"},
 		{"a status errored", PullRequestChecks{Checks: []Check{statusError}}, PRFailing, "ci/legacy failed"},
 		{"cancelled", PullRequestChecks{Checks: []Check{{Name: "build", Status: "COMPLETED", Conclusion: "CANCELLED"}}}, PRFailing, "build failed"},
+		// STALE: GitHub gave up on a run left unfinished for about two weeks (a self-hosted runner gone, say): it never passed.
+		{"stale", PullRequestChecks{Checks: []Check{{Name: "integration (self-hosted)", Status: "COMPLETED", Conclusion: "STALE"}}}, PRFailing, "integration (self-hosted) failed"},
+		// A job held for a deployment's approval waits on a person, not a runner: steady yellow, and it doesn't hide a failure.
+		{"a job waiting for approval", PullRequestChecks{Checks: []Check{ok, {Name: "deploy (production)", Status: "WAITING"}}}, PRPending, "deploy (production) waiting for approval"},
+		{"a job waiting for approval beside a failure", PullRequestChecks{Checks: []Check{failed, {Name: "deploy (production)", Status: "WAITING"}}}, PRFailing, "test (windows-latest) failed"},
+		{"a status expected, never reported", PullRequestChecks{Checks: []Check{ok, {Name: "ci/legacy", State: "EXPECTED"}}}, PRPending, "ci/legacy expected, not reported yet"},
+		{"a status expected beside a failure", PullRequestChecks{Checks: []Check{failed, {Name: "ci/legacy", State: "EXPECTED"}}}, PRFailing, "test (windows-latest) failed"},
+		{"queued", PullRequestChecks{Checks: []Check{{Name: "build", Status: "QUEUED"}}}, PRPending, "1 check running"},
+		// More checks than were read: GitHub's sum of all of them decides for the rest (#155).
+		{"more checks than read, all passed", PullRequestChecks{Checks: []Check{ok}, ChecksUnread: 20, ChecksSummary: "SUCCESS"}, PRPassing, "21 checks passed"},
+		{"more checks than read, one unread failed", PullRequestChecks{Checks: []Check{ok}, ChecksUnread: 20, ChecksSummary: "FAILURE"}, PRFailing, "20 more checks not read; GitHub sums up all the checks as failed"},
+		{"more checks than read, one unread errored", PullRequestChecks{Checks: []Check{ok}, ChecksUnread: 20, ChecksSummary: "ERROR"}, PRFailing, "GitHub sums up all the checks as failed"},
+		{"more checks than read, one unread running", PullRequestChecks{Checks: []Check{ok}, ChecksUnread: 20, ChecksSummary: "PENDING"}, PRPending, "20 more checks not read; GitHub sums up all the checks as running"},
+		{"more checks than read, one unread running, beside a failure", PullRequestChecks{Checks: []Check{failed}, ChecksUnread: 20, ChecksSummary: "PENDING"}, PRPending, "20 more checks not read; GitHub sums up all the checks as running; test (windows-latest) failed"},
+		{"more checks than read, one unread expected", PullRequestChecks{Checks: []Check{ok}, ChecksUnread: 20, ChecksSummary: "EXPECTED"}, PRPending, "GitHub sums up all the checks as expected"},
 		{"timed out", PullRequestChecks{Checks: []Check{{Name: "build", Status: "COMPLETED", Conclusion: "TIMED_OUT"}}}, PRFailing, "build failed"},
 		{"changes requested", PullRequestChecks{Checks: []Check{ok}, Review: "CHANGES_REQUESTED"}, PRFailing, "changes requested"},
 		{"a merge conflict", PullRequestChecks{Checks: []Check{ok}, Mergeable: "CONFLICTING"}, PRFailing, "conflicts"},
@@ -57,6 +78,11 @@ func TestAPullRequestSaysWhetherAnyOfItsChecksIsRunning(t *testing.T) {
 		{"all done", PullRequestChecks{Checks: []Check{done}}, false},
 		{"a check run in progress", PullRequestChecks{Checks: []Check{done, {Name: "b", Status: "IN_PROGRESS"}}}, true},
 		{"a commit status pending", PullRequestChecks{Checks: []Check{{Name: "c", State: "PENDING"}}}, true},
+		{"a check run queued", PullRequestChecks{Checks: []Check{{Name: "b", Status: "QUEUED"}}}, true},
+		{"a job waiting for approval", PullRequestChecks{Checks: []Check{done, {Name: "deploy", Status: "WAITING"}}}, false},
+		{"a commit status expected", PullRequestChecks{Checks: []Check{done, {Name: "c", State: "EXPECTED"}}}, false},
+		{"unread checks GitHub sums up as running", PullRequestChecks{Checks: []Check{done}, ChecksUnread: 5, ChecksSummary: "PENDING"}, true},
+		{"unread checks GitHub sums up as passed", PullRequestChecks{Checks: []Check{done}, ChecksUnread: 5, ChecksSummary: "SUCCESS"}, false},
 		{"waiting on a review only", PullRequestChecks{Checks: []Check{done}, Review: "REVIEW_REQUIRED"}, false},
 	} {
 		if got := c.checks.Running(); got != c.want {

@@ -137,6 +137,15 @@ for (const [status, words] of [['failing', /failing/i], ['pending', /pending|run
   })
 }
 
+// "Pending" is all that yellow says: the reasons for it are many (checks running, a review asked for, a conversation unresolved, a
+// merge not worked out), and the why after it names them, so the word claims none of its own.
+test('a yellow dot says only "pending", leaving why to the reasons after it', async () => {
+  const p = await pageWithPR({ number: 41, url: 'https://github.com/me/vibe/pull/41', status: 'pending', why: '1 conversation unresolved (@alice)' })
+  try {
+    assert.match(p.$('pr-dot').getAttribute('aria-label'), /^pending: 1 conversation unresolved \(@alice\)$/i)
+  } finally { p.close() }
+})
+
 test('a draft pull request has a ring in its status\'s colour, and says it is a draft', async () => {
   const p = await pageWithPR({ number: 41, url: 'https://github.com/me/vibe/pull/41', draft: true, status: 'failing', why: 'build failed' })
   try {

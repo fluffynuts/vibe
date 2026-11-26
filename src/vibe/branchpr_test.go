@@ -119,7 +119,21 @@ func TestTheBranchsPullRequestCarriesItsStatusAndDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A check still running: yellow, the failure said meanwhile (see companion.PullRequestChecks.Status).
-	if pr == nil || !pr.Draft || pr.Status != companion.PRPending || !strings.Contains(pr.Why, "test (windows-latest) failed") || !strings.Contains(pr.Why, "1 check running") || !pr.Running {
+	if pr == nil || !pr.Draft || pr.Status != companion.PRPending || !strings.Contains(pr.Why, "1 check running; test (windows-latest) failed") || !pr.Running {
+		t.Errorf("pr = %+v", pr)
+	}
+}
+
+// More checks than were read: how many, and GitHub's sum of them all, go with the pull request, so the unread ones count (#155).
+func TestAPullRequestWithMoreChecksThanReadCountsTheRestByGitHubsSum(t *testing.T) {
+	ghStandIns(t, true, prsSaid(`{"number":41,"url":"https://github.com/me/vibe/pull/41","mergeable":"MERGEABLE",
+		"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"FAILURE","contexts":{"totalCount":120,"nodes":[
+			{"__typename":"CheckRun","name":"test (ubuntu-latest)","status":"COMPLETED","conclusion":"SUCCESS"}]}}}}]}}`), nil)
+	pr, err := ghBranchPullRequest(context.Background(), "https://github.com/me/vibe", "feat/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pr == nil || pr.Status != companion.PRFailing || !strings.Contains(pr.Why, "119 more checks not read") {
 		t.Errorf("pr = %+v", pr)
 	}
 }

@@ -84,7 +84,7 @@ var branchPullRequestsQuery = `query($owner: String!, $name: String!, $head: Str
         reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } ... on Bot { login } ... on Mannequin { login } } } }
         latestReviews(first: 50) { nodes { state author { __typename login } } }
         reviewThreads(first: ` + strconv.Itoa(maxThreads) + `) { totalCount nodes { isResolved comments(first: 1) { nodes { author { __typename login } } } } }
-        commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
+        commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 100) { totalCount nodes {
           __typename ... on CheckRun { name status conclusion } ... on StatusContext { context state } } } } } } }
       }
     }
@@ -142,8 +142,10 @@ type ghPullRequest struct {
 		Nodes []struct {
 			Commit struct {
 				Rollup *struct {
+					State    string `json:"state"`
 					Contexts struct {
-						Nodes []struct {
+						TotalCount int `json:"totalCount"`
+						Nodes      []struct {
 							Type       string `json:"__typename"`
 							Name       string `json:"name"`
 							Status     string `json:"status"`
@@ -165,6 +167,8 @@ func (g ghPullRequest) pullRequest() *companion.BranchPullRequest {
 		if c.Commit.Rollup == nil {
 			continue
 		}
+		checks.ChecksSummary = c.Commit.Rollup.State
+		checks.ChecksUnread = max(0, c.Commit.Rollup.Contexts.TotalCount-len(c.Commit.Rollup.Contexts.Nodes))
 		for _, n := range c.Commit.Rollup.Contexts.Nodes {
 			if n.Type == "StatusContext" {
 				checks.Checks = append(checks.Checks, companion.Check{Name: n.Context, State: n.State})
