@@ -176,7 +176,7 @@ func TestTheDayCombinesTheLogWithGitInEveryFolderSeen(t *testing.T) {
 	}
 	var got []string
 	for _, b := range r.Day.Branches {
-		got = append(got, b.Repo+" "+b.Branch+" "+strings.Join(b.Bullets, ","))
+		got = append(got, b.Repo+" "+b.Branch+" "+strings.Join(b.Commits, ","))
 	}
 	if want := []string{"phoenix fix/y fix the root cause", "yumbi-web feat/x "}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("want %v, got %v", want, got)

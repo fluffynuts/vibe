@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -10,9 +11,11 @@ import (
 	"vibe/internal/activity"
 	"vibe/internal/companion"
 	"vibe/internal/fscopy"
+	"vibe/internal/instructions"
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
 	"vibe/internal/review"
+	"vibe/internal/sbxrun"
 	"vibe/internal/settings"
 	"vibe/internal/state"
 )
@@ -24,9 +27,10 @@ func activityLog(lay layout.Layout) activity.Log {
 
 // activityTabFor is the Activity tab's: every folder vibe has opened (the sandboxes it has now, and those in the log),
 // read on the host with the review helper, never with git (see review.History).
-func activityTabFor(lay layout.Layout) *companion.ActivityTab {
+func activityTabFor(lay layout.Layout, name, agent string) *companion.ActivityTab {
 	path := lay.HomePath("settings.yaml")
 	return &companion.ActivityTab{
+		Summaries: summariserFor(lay, name, agent),
 		Desk: &activity.Desk{
 			Log:     activityLog(lay),
 			Folders: func() []string { return workspacesOnRecord(lay.Home) },
@@ -55,6 +59,48 @@ func activityTabFor(lay layout.Layout) *companion.ActivityTab {
 			return fscopy.WriteWholeMode(path, data, 0o644)
 		},
 	}
+}
+
+// summariserFor makes the branches' summaries with the agent of sandbox name, when it is Claude, the one agent with a tester
+// (see TESTERS_WANTED.md); a page for no sandbox only shows those other pages made.
+func summariserFor(lay layout.Layout, name, agent string) *activity.Summariser {
+	s := &activity.Summariser{Dir: lay.HomePath("activity", "summaries"), Holder: name, Rules: lay.HomePath("activity", "summary-rules.md"),
+		Problem: func(why string) { note("activity: %s", why) }}
+	switch {
+	case name == "":
+		s.Unavailable = "Commit summaries are made on a sandbox's page: open the Activity tab there to have these summarised."
+	case agent != "claude":
+		if agent == "" {
+			agent = "this sandbox's agent"
+		}
+		s.Unavailable = "Commit summaries are only shown for Claude agents. If you'd like " + agent + " to be supported, please ask for it with Request a feature, in the power menu."
+	default:
+		s.Ask = func(ctx context.Context, prompt string) (string, error) { return askOnce(ctx, name, prompt) }
+	}
+	return s
+}
+
+// summaryModel is the model summaries are asked of: a few lines from commit subjects need no more.
+const summaryModel = "haiku"
+
+// askOnce asks sandbox name's Claude prompt once, with no tools, in a neutral folder (as Optimise does), with summaryModel. The
+// sandbox is started if it is stopped: the page keeps its own sandbox awake while it is in view anyway.
+func askOnce(ctx context.Context, name, prompt string) (string, error) {
+	if !sbxrun.Reachable(ctx, name) {
+		return "", errors.New("the sandbox " + name + " isn't running, and couldn't be started")
+	}
+	words := append(append([]string(nil), instructions.Agents["claude"].OneShot...), "--model", summaryModel)
+	for i, w := range words {
+		words[i] = shellQuote(w)
+	}
+	reply, err := sbxrun.ExecInputStdout(ctx, name, prompt, asAgent("cd /tmp && exec "+strings.Join(words, " "))...)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("the agent took too long to summarise, and was stopped: %w", ctx.Err())
+		}
+		return "", fmt.Errorf("the agent couldn't be asked: %w", err)
+	}
+	return reply, nil
 }
 
 // activityRecorderFor keeps the marks of the sandbox name's page, on its folder.

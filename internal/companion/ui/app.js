@@ -5269,7 +5269,9 @@
   const ACTIVITY_EVERY_MS = 15000
   // How often the page says the user is busy on it, at most: the minute is all the time is counted in.
   const ACTIVITY_SEEN_MS = 60000
-  const activityView = { day: '', report: null, attention: [], problems: [], rounding: '', asked: 0, loaded: false, open: new Set(), seen: 0 }
+  // How soon the tab asks again while a summary is being made, here or by another vibe.
+  const ACTIVITY_SUMMARY_MS = 3000
+  const activityView = { day: '', report: null, summaries: [], attention: [], problems: [], rounding: '', asked: 0, loaded: false, open: new Set(), seen: 0 }
 
   async function loadActivity(now) {
     if (!now && Date.now() - activityView.asked < ACTIVITY_EVERY_MS) return
@@ -5284,8 +5286,10 @@
     activityView.attention = res.body.attention || []
     activityView.problems = res.body.problems || []
     activityView.rounding = res.body.rounding || ''
-    // A look at GitHub under way: asked again soon, for what it said.
-    if (activityView.attention.some((a) => a.checking)) activityView.asked = Date.now() - ACTIVITY_EVERY_MS + 3000
+    activityView.summaries = res.body.summaries || []
+    // A look at GitHub, or a summary, under way: asked again soon, for what came of it.
+    const waiting = activityView.attention.some((a) => a.checking) || activityView.summaries.some((s) => s.state === 'pending' || s.state === 'elsewhere')
+    if (waiting) activityView.asked = Date.now() - ACTIVITY_EVERY_MS + ACTIVITY_SUMMARY_MS
     drawActivity()
   }
 
@@ -5302,17 +5306,13 @@
 
   function clock(iso) { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
 
-  // activityText is the day as the user pastes it into a timesheet: each repository, its branches' hours and what was done.
-  function activityText(day) {
-    const lines = []
-    let repo = null
-    for (const b of day.branches) {
-      if (b.repo !== repo) { repo = b.repo; lines.push('[' + repo + ']') }
-      lines.push('  [' + b.branch + '] ' + hours(b.hours))
-      for (const bullet of b.bullets) lines.push('  - ' + bullet)
-    }
-    return lines.join('\n') + '\n'
+  // withEmoji draws the :name: codes commit messages carry (gitmoji: :bug:, :memo:) as their emoji; a code that names none stays.
+  function withEmoji(text) {
+    return text.replace(/:([a-z0-9_+-]+):/gi, (code, name) => (window.vibeEmoji && window.vibeEmoji.named(name)) || code)
   }
+
+  // bulletsText is lines as they are pasted somewhere else: a bullet each.
+  function bulletsText(lines) { return lines.map((l) => '- ' + l).join('\n') + '\n' }
 
   function drawActivity() {
     const r = activityView.report
@@ -5325,17 +5325,17 @@
     $('activity-prev').disabled = day.date <= r.earliest
     $('activity-next').disabled = day.date >= r.today
     setText($('activity-total'), day.branches.length ? 'total ' + hours(day.hours) : '')
-    $('activity-copy').disabled = !day.branches.length
     $('activity-none').hidden = day.branches.length > 0
     $('activity-problems').hidden = !activityView.problems.length
     drawnAs($('activity-problems'), JSON.stringify(activityView.problems), () => activityView.problems.map((p) => el('li', { text: p })))
     $('activity-attention').hidden = !activityView.attention.length
     drawnAs($('activity-attention-list'), JSON.stringify(activityView.attention), () => activityView.attention.map((a) =>
       el('li', {}, a.folder + ' (' + a.branch + '): ' + a.what, a.checking ? el('span', { class: 'muted', text: ' (checking with GitHub…)' }) : '')))
-    drawnAs($('activity-list'), JSON.stringify(day), () => day.branches.map((b) => activityRow(b, day.hours)))
+    const summaries = activityView.summaries
+    drawnAs($('activity-list'), JSON.stringify([day, summaries]), () => day.branches.map((b, i) => activityRow(b, day.hours, summaries[i])))
   }
 
-  function activityRow(b, total) {
+  function activityRow(b, total, summary) {
     const key = b.repo + ' ' + b.branch
     const share = total ? b.hours / total : 0
     const estimated = b.estimatedMinutes > 0
@@ -5352,7 +5352,39 @@
         el('span', {}, 'Before rounding: ' + hours(b.measuredMinutes / 60) + ' measured, ~' + hours(b.estimatedMinutes / 60) + ' estimated'),
         el('span', { class: 'muted' }, 'In: ' + b.folders.join(', '))))
     details.addEventListener('toggle', () => { if (details.open) activityView.open.add(key); else activityView.open.delete(key) })
-    return el('div', {}, details, b.bullets.length ? el('ul', { class: 'activity-bullets' }, ...b.bullets.map((t) => el('li', { text: t }))) : null)
+    const commits = b.commits.map(withEmoji)
+    return el('div', { class: 'activity-entry' }, details,
+      el('div', { class: 'activity-work' },
+        activityPane('Summary', summary && summary.state === 'ready' ? summary.bullets : null, summaryNote(summary), b),
+        activityPane('Commits', commits.length ? commits : null, el('p', { class: 'muted', text: 'No commits this day.' }), b)))
+  }
+
+  // activityPane is a side of a branch's work: its lines, with a button to copy them, or note when there are none.
+  function activityPane(title, lines, note, b) {
+    const what = title.toLowerCase()
+    return el('section', { class: 'activity-pane', 'aria-label': title + ' of ' + b.repo + ' ' + b.branch },
+      el('h3', {}, title, lines ? el('button', { type: 'button', class: 'copy-code small', title: 'Copy the ' + what, 'aria-label': 'Copy the ' + what + ' of ' + b.branch,
+        onclick: () => copyText(bulletsText(lines)) }, copyIcon()) : null),
+      lines ? el('ul', {}, ...lines.map((t) => el('li', { text: t }))) : note)
+  }
+
+  // summaryNote is what the summary side says while there is no summary to show.
+  function summaryNote(summary) {
+    const state = summary ? summary.state : 'unavailable'
+    if (state === 'pending') return el('p', { class: 'muted', text: 'Summarising…' })
+    if (state === 'elsewhere') return el('p', { class: 'muted', text: 'Activity is being summarised on the ' + summary.holder + ' vibe, and will appear here shortly.' })
+    if (state === 'none') return el('p', { class: 'muted', text: 'No commits to summarise.' })
+    if (state === 'failed') {
+      return el('p', { class: 'bad-text' }, "Couldn't summarise: " + summary.why + ' ',
+        el('button', { type: 'button', class: 'small', text: 'Retry', onclick: () => retrySummary(summary.key) }))
+    }
+    return el('p', { class: 'muted', text: (summary && summary.why) || 'No summary.' })
+  }
+
+  async function retrySummary(key) {
+    const res = await post('/api/activity/summary/retry', { key })
+    if (!res.ok) { toast(res.body.error || "The summary couldn't be tried again", true); return }
+    loadActivity(true)
   }
 
   function showActivityDay(date) {
@@ -5387,7 +5419,6 @@
     $('activity-prev').addEventListener('click', () => stepActivityDay(-1))
     $('activity-next').addEventListener('click', () => stepActivityDay(1))
     $('activity-day').addEventListener('click', () => showActivityDay(''))
-    $('activity-copy').addEventListener('click', () => { if (activityView.report) copyText(activityText(activityView.report.day)) })
     for (const b of $('activity-rounding').querySelectorAll('button')) {
       b.addEventListener('click', async () => {
         const res = await post('/api/activity/rounding', { rounding: b.dataset.rounding })

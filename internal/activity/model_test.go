@@ -151,8 +151,8 @@ func TestBulletsAreThoseAuthoredThatDayOnBranchesWithTime(t *testing.T) {
 		{At: at("09:50"), Repo: "r", Branch: "idle", Text: "on a branch with no time"},
 	}
 	got := only(t, Summarise(day, nil, []Event{event("09:40", "r", "b")}, bullets, 15*time.Minute))
-	if want := []string{"added the button", "rebased onto master"}; !reflect.DeepEqual(got.Bullets, want) {
-		t.Fatalf("want %q, got %q", want, got.Bullets)
+	if want := []string{"added the button", "rebased onto master"}; !reflect.DeepEqual(got.Commits, want) {
+		t.Fatalf("want %q, got %q", want, got.Commits)
 	}
 }
 

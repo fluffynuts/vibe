@@ -808,7 +808,13 @@ dialog.glass::backdrop { background: rgba(250, 250, 250, .55); backdrop-filter: 
 .activity-share { text-align: right; font-variant-numeric: tabular-nums; }
 .activity-branch meter { width: 100%; }
 .activity-more { margin: 6px 0 0 1em; display: flex; flex-direction: column; gap: 2px; }
-.activity-bullets { margin: 4px 0 0; padding-left: 2.2em; }
+.activity-work { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22em), 1fr)); gap: 8px; margin: 4px 0 0 1em; }
+.activity-pane { min-width: 0; }
+.activity-pane h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.activity-pane .copy-code { padding: 2px 4px; line-height: 0; }
+.activity-pane .copy-code svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; }
+.activity-pane ul { margin: 2px 0 0; padding-left: 1.2em; }
+.activity-pane p { margin: 2px 0 0; }
 .manage-list { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 12px; }
 .mgr-profile { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 6px 10px; }
 .mgr-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; padding: 2px 0; }

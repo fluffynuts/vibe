@@ -156,8 +156,8 @@ func TestARebaseIsOneEventAndOneBulletAndKeepsItsCommitsAuthoredDays(t *testing.
 	}
 	d := Summarise(day, nil, events, bullets, 30*time.Minute)
 	for _, b := range d.Branches {
-		if b.Branch == "feat/x" && !reflect.DeepEqual(b.Bullets, []string{"today's work", "rebased onto master"}) {
-			t.Errorf("the day's bullets leave out last week's commit: got %v", b.Bullets)
+		if b.Branch == "feat/x" && !reflect.DeepEqual(b.Commits, []string{"today's work", "rebased onto master"}) {
+			t.Errorf("the day's bullets leave out last week's commit: got %v", b.Commits)
 		}
 	}
 }

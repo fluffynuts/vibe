@@ -65,8 +65,9 @@ type BranchTime struct {
 	Measured  int `json:"measuredMinutes"`
 	Estimated int `json:"estimatedMinutes"`
 	// Hours is the time rounded up to the step, in hours.
-	Hours   float64  `json:"hours"`
-	Bullets []string `json:"bullets"`
+	Hours float64 `json:"hours"`
+	// Commits are what was done on the branch that day, a line each: the user's commits' subjects, merges and rebases.
+	Commits []string `json:"commits"`
 	Folders []string `json:"folders"`
 }
 
@@ -138,7 +139,7 @@ func Summarise(midnight time.Time, marks []Mark, events []Event, bullets []Bulle
 	}
 	day := Day{Date: midnight.Format(time.DateOnly), Branches: []BranchTime{}}
 	for k := range keys {
-		bt := BranchTime{Repo: k.repo, Branch: k.branch, Bullets: notes[k], Folders: sortedKeys(folders[k])}
+		bt := BranchTime{Repo: k.repo, Branch: k.branch, Commits: notes[k], Folders: sortedKeys(folders[k])}
 		bt.Stretches = append(append([]Stretch{}, measured[k]...), estimated[k]...)
 		sort.Slice(bt.Stretches, func(i, j int) bool { return bt.Stretches[i].Start.Before(bt.Stretches[j].Start) })
 		var m, e time.Duration
@@ -151,8 +152,8 @@ func Summarise(midnight time.Time, marks []Mark, events []Event, bullets []Bulle
 		}
 		bt.Measured, bt.Estimated = int(m.Minutes()), int(e.Minutes())
 		bt.Hours = roundUp(m+e, step)
-		if bt.Bullets == nil {
-			bt.Bullets = []string{}
+		if bt.Commits == nil {
+			bt.Commits = []string{}
 		}
 		day.Branches = append(day.Branches, bt)
 		day.Hours += bt.Hours

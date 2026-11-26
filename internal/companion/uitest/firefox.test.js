@@ -1728,7 +1728,7 @@ async function activityPage(width) {
   const page = await browser.newPage({ viewport: { width, height: 900 } })
   await page.route('**/api/state', stateWith(page, { activity: true }))
   const branch = (repo, name, hours, more = {}) => Object.assign({
-    repo, branch: name, hours, bullets: ['a line saying what was done on it, long enough to need wrapping on a narrow window, and then some'],
+    repo, branch: name, hours, commits: [':bug: a line saying what was done on it, long enough to need wrapping on a narrow window, and then some'],
     folders: ['~/code/' + repo], stretches: [{ start: '2026-11-26T09:10:00Z', end: '2026-11-26T11:40:00Z', measured: true }],
     measuredMinutes: 150, estimatedMinutes: 0,
   }, more)
@@ -1737,7 +1737,8 @@ async function activityPage(width) {
     branch('a-repository-with-a-long-name-too', 'fix/y', 1, { estimatedMinutes: 30 }),
   ] }
   await page.route('**/api/activity', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
-    report: { day, today: '2026-11-26', earliest: '2026-11-19', problems: [] }, attention: [], problems: [], rounding: '30m' }) }))
+    report: { day, today: '2026-11-26', earliest: '2026-11-19', problems: [] }, attention: [], problems: [], rounding: '30m',
+    summaries: day.branches.map((b, i) => ({ key: 'k' + i, state: 'ready', bullets: ['what stands out on ' + b.branch + ', said in a line long enough to wrap'] })) }) }))
   await page.goto(URL)
   await page.click('#tab-activity')
   await page.waitForSelector('.activity-branch summary')
@@ -1760,6 +1761,14 @@ test("each branch's row is one line on the page at every width, a long name cut 
       }
       const hours = await page.locator('.activity-hours').first().boundingBox()
       assert.ok(hours && hours.width > 0, `at ${width}px, the hours aren't shown`)
+      // The summary and commits sit side by side where there is room, one over the other where there isn't, never off the page.
+      const [summary, commits] = await page.evaluate(() => [...document.querySelector('.activity-work').children].map((c) => {
+        const r = c.getBoundingClientRect()
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }
+      }))
+      assert.ok(summary.right <= pageWidth && commits.right <= pageWidth, `at ${width}px, a side runs off the page`)
+      if (width >= 800) assert.ok(commits.left >= summary.right && commits.top === summary.top, `at ${width}px, the sides aren't side by side: ${JSON.stringify([summary, commits])}`)
+      else assert.ok(commits.top >= summary.bottom, `at ${width}px, the sides overlap: ${JSON.stringify([summary, commits])}`)
     } finally { await page.close() }
   }
 })

@@ -761,9 +761,13 @@ restarts, as for files). Colours follow the theme, and what is copied is the cod
   Review tab reads, never by running git. Branches are grouped by the repository's name on origin, so every checkout of one is
   together. Each branch's time is rounded **up** to the step chosen on the tab (15 minutes, half an hour, an hour: kept as
   `activityRounding` in `~/.vibe/settings.yaml`), so any work at all counts at least one step; branches worked on at once each
-  count in full, and the bars show each one's share. Under each branch are your commits authored that day ("merged master",
-  "rebased onto master" for those), and a branch's row opens to show when it was worked on. **Copy** gives the day as text to
-  paste into a timesheet. `<` and `>` step through the last week. **Needs attention** lists, as things are now, folders with
+  count in full, and the bars show each one's share. Under each branch, side by side, are a **Summary** of its day in 1 to 3
+  lines and its **Commits** (yours, authored that day, with "merged master" and "rebased onto master" for those, `:bug:` codes
+  drawn as emoji), each with a copy button. The summary is made by a one-shot Claude in the sandbox of the page you're on, without
+  being asked, the first time a day's commits are shown and whenever they change; only the commits' first lines are sent, and
+  summaries are kept in `~/.vibe/activity/summaries/`, shared by every vibe (one summarises at a time; the others say which). Its
+  rules are yours to edit, in `~/.vibe/activity/summary-rules.md`. A branch's row opens to show when it was worked on. `<` and `>`
+  step through the last week. **Needs attention** lists, as things are now, folders with
   uncommitted changes and branches with commits not pushed, asking GitHub (with this machine's `gh`) before saying so, as the
   local copy of a branch on GitHub can be out of date.
 - **Admin** — what `vibe --info` shows of the sandbox, and what you'd otherwise go to a terminal for:

@@ -19,6 +19,8 @@ type ActivityTab struct {
 	// Rounding is the step chosen ("15m", "30m", "1h"; "" for the default); SetRounding keeps a new one.
 	Rounding    func() string
 	SetRounding func(string) error
+	// Summaries makes and keeps the branches' summaries; nil means none are shown.
+	Summaries *activity.Summariser
 }
 
 // activityWithin bounds reading a day: a helper process for each folder's git, the first time.
@@ -48,8 +50,13 @@ func (s *Server) activityState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	attention, problems := s.cfg.Activity.Desk.Attention(ctx)
+	summaries := []activity.SummaryState{}
+	if s.cfg.Activity.Summaries != nil {
+		summaries = s.cfg.Activity.Summaries.States(report.Day)
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"report":    report,
+		"summaries": summaries,
 		"attention": attention,
 		"problems":  append(report.Problems, problems...),
 		"rounding":  rounding,
@@ -77,6 +84,26 @@ func (s *Server) activityRounding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"rounding": req.Rounding})
+}
+
+// activitySummaryRetry forgets a summary that failed, so the next look makes it again.
+func (s *Server) activitySummaryRetry(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "expected a summary's key")
+		return
+	}
+	if s.cfg.Activity.Summaries == nil {
+		writeError(w, http.StatusNotFound, "this page shows no summaries")
+		return
+	}
+	if err := s.cfg.Activity.Summaries.Retry(req.Key); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // activitySeen is the user busy on the page (typing, clicking, scrolling), which the page says at most once a minute.

@@ -127,3 +127,18 @@ func TestAPageWithNoMarksKeepsNone(t *testing.T) {
 		t.Fatalf("want the page's word taken, and nothing done, got %d %s", rec.Code, rec.Body)
 	}
 }
+
+func TestTheActivitySaysEachBranchsSummaryAndARetryNeedsAKey(t *testing.T) {
+	s, _, _ := activityServer(t)
+	dir := t.TempDir()
+	s.cfg.Activity.Summaries = &activity.Summariser{Dir: dir, Rules: dir + "/rules.md", Unavailable: "not here"}
+	if body := do(t, s, req{path: "/api/activity", headers: authed(nil)}).Body.String(); !strings.Contains(body, `"summaries":[]`) {
+		t.Fatalf("want the summaries said, one for each branch (none today), got %s", body)
+	}
+	if rec := do(t, s, post("/api/activity/summary/retry", `{"key":"../x"}`)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("want a key that isn't one refused, got %d %s", rec.Code, rec.Body)
+	}
+	if rec := do(t, s, post("/api/activity/summary/retry", `{"key":"0123456789abcdef0123456789abcdef"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("want a retry of one not kept taken quietly, got %d %s", rec.Code, rec.Body)
+	}
+}
