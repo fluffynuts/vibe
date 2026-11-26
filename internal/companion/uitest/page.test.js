@@ -1992,6 +1992,17 @@ for (const [order, label] of [['path', 'Order by file path'], ['reading', 'Order
   })
 }
 
+test('the arrows say they go to the unresolved comments, to the eye and to a screen reader', async () => {
+  const p = await reviewPage(settled({ 2: 'resolved' }))
+  try {
+    await p.click('tab-review')
+    for (const [id, word] of [['review-prev-comment', 'Previous'], ['review-next-comment', 'Next']]) {
+      assert.equal(p.$(id).title, word + ' unresolved comment')
+      assert.equal(p.$(id).getAttribute('aria-label'), word + ' unresolved comment')
+    }
+  } finally { p.close() }
+})
+
 test('with no unresolved comments, the arrows are off and the bar says so', async () => {
   const p = await reviewPage(settled({ 1: 'resolved', 2: 'resolved', 3: 'dismissed', 4: 'resolved' }))
   try {
