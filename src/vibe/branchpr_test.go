@@ -118,7 +118,8 @@ func TestTheBranchsPullRequestCarriesItsStatusAndDraft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pr == nil || !pr.Draft || pr.Status != companion.PRFailing || !strings.Contains(pr.Why, "test (windows-latest) failed") || !strings.Contains(pr.Why, "1 check running") || !pr.Running {
+	// A check still running: yellow, the failure said meanwhile (see companion.PullRequestChecks.Status).
+	if pr == nil || !pr.Draft || pr.Status != companion.PRPending || !strings.Contains(pr.Why, "test (windows-latest) failed") || !strings.Contains(pr.Why, "1 check running") || !pr.Running {
 		t.Errorf("pr = %+v", pr)
 	}
 }
