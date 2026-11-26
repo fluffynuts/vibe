@@ -3,7 +3,9 @@
 - **Status:** accepted, built 2026-11-25/26 on `feat/review-tab-pr-link` (PR #41). Tried by hand: the pull request link, and its
   dot (a red ring for PR #41, a draft whose last checks failed; yellow while CI ran, green after); the arrows, the count, Ctrl+Enter in
   open, resolved and empty reply boxes, Resolve and Dismiss going on (and the toast with none left), the going-on setting off, and
-  Submit disabled with its reason while the agent answered.
+  Submit disabled with its reason while the agent answered. The reviewers-and-conversations dot on a work pull request (2026-11-26):
+  pulsing yellow and pulsing red while checks ran (red pulsing as a cancelled check was re-run: something failed, and checks are
+  running again).
 - **Decided:** with the user: the first two raised 2026-10-22 ("unresolved" is status open, decided then), the link 2026-11-25.
 - **Came from:** `docs/plan-review-tab-enhancements.md` (`git show 0bf625a:docs/plan-review-tab-enhancements.md`).
 
