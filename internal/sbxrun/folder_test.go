@@ -78,3 +78,14 @@ func TestOnWindowsAFolderNotInTheSandboxIsAnErrorNotAGuess(t *testing.T) {
 		t.Fatalf("want an error naming where it looked, got %v", err)
 	}
 }
+
+func TestOnWindowsAFolderAlreadyWrittenTheSandboxsWayIsKeptAndAsksNothing(t *testing.T) {
+	_, calls := playWindows(t)
+	got, err := FolderInSandbox(context.Background(), "box", "/c/Users/Quickemu/code/yafs")
+	if err != nil || got != "/c/Users/Quickemu/code/yafs" {
+		t.Fatalf("want it as it is, got %q, %v", got, err)
+	}
+	if _, err := os.Stat(calls); err == nil {
+		t.Fatal("want sbx not asked")
+	}
+}

@@ -21,9 +21,10 @@ const findFolderScript = `for p do if [ -d "$p" ]; then printf '%s\n' "$p"; exit
 // FolderInSandbox is where folder, a folder on this machine that sandbox name was made with, is inside the sandbox, for a
 // command run there. On Linux and macOS a mount keeps its host path, so it is folder itself. A Windows path (C:\Users\...)
 // can't be one in a Linux sandbox, and sbx doesn't document what it becomes (it was /c/Users/...): the likely spellings are
-// tried in one exec, the first that is a folder there taken, and kept for the sandbox.
+// tried in one exec, the first that is a folder there taken, and kept for the sandbox. A folder already written the
+// sandbox's way (/c/Users/...) is that.
 func FolderInSandbox(ctx context.Context, name, folder string) (string, error) {
-	if hostOS != "windows" || folder == "" {
+	if hostOS != "windows" || folder == "" || strings.HasPrefix(folder, "/") {
 		return folder, nil
 	}
 	key := name + "\x00" + folder
