@@ -44,7 +44,7 @@ func ghBranchPullRequest(ctx context.Context, repo, branch string) (*companion.B
 	}
 	defer os.RemoveAll(dir)
 	out, err := runGh(ctx, gh, dir, "pr", "list", "--repo="+strings.TrimPrefix(repo, "https://github.com/"), "--head="+branch,
-		"--state=open", "--json=number,url,isDraft,reviewDecision,mergeable,statusCheckRollup", "--limit=1")
+		"--state=open", "--json=number,url,isCrossRepository,isDraft,reviewDecision,mergeable,statusCheckRollup", "--limit=20")
 	if err != nil {
 		return nil, err
 	}
@@ -52,19 +52,24 @@ func ghBranchPullRequest(ctx context.Context, repo, branch string) (*companion.B
 	if err := json.Unmarshal(out, &open); err != nil {
 		return nil, fmt.Errorf("gh said something unexpected: %q", strings.TrimSpace(string(out)))
 	}
-	if len(open) == 0 {
-		return nil, nil
+	// --head matches a branch by its name alone: a fork's pull request from a branch of the same name (master, say) is listed too,
+	// and isn't this branch's.
+	for _, pr := range open {
+		if !pr.IsCrossRepository {
+			return pr.pullRequest(), nil
+		}
 	}
-	return open[0].pullRequest(), nil
+	return nil, nil
 }
 
 // ghPullRequest is a pull request as gh pr list --json gives it.
 type ghPullRequest struct {
-	Number         int    `json:"number"`
-	URL            string `json:"url"`
-	IsDraft        bool   `json:"isDraft"`
-	ReviewDecision string `json:"reviewDecision"`
-	Mergeable      string `json:"mergeable"`
+	Number            int    `json:"number"`
+	URL               string `json:"url"`
+	IsCrossRepository bool   `json:"isCrossRepository"`
+	IsDraft           bool   `json:"isDraft"`
+	ReviewDecision    string `json:"reviewDecision"`
+	Mergeable         string `json:"mergeable"`
 	// StatusCheckRollup holds check runs (name, status, conclusion) and commit statuses (context, state), told apart by __typename.
 	StatusCheckRollup []struct {
 		Type       string `json:"__typename"`

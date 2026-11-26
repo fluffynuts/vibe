@@ -46,7 +46,7 @@ func TestTheBranchsPullRequestIsAskedOfGhByRepositoryAndBranch(t *testing.T) {
 		t.Errorf("pr = %+v", pr)
 	}
 	want := [][]string{{"pr", "list", "--repo=me/vibe", "--head=-feat/a", "--state=open",
-		"--json=number,url,isDraft,reviewDecision,mergeable,statusCheckRollup", "--limit=1"}}
+		"--json=number,url,isCrossRepository,isDraft,reviewDecision,mergeable,statusCheckRollup", "--limit=20"}}
 	if !reflect.DeepEqual(*args, want) {
 		t.Errorf("gh ran with %q, want %q", *args, want)
 	}
@@ -105,5 +105,21 @@ func TestTheBranchsPullRequestCarriesItsStatusAndDraft(t *testing.T) {
 	}
 	if pr == nil || !pr.Draft || pr.Status != companion.PRFailing || !strings.Contains(pr.Why, "test (windows-latest) failed") || !strings.Contains(pr.Why, "1 check running") {
 		t.Errorf("pr = %+v", pr)
+	}
+}
+
+// --head matches a branch by its name alone, so a fork's pull request from a branch of the same name is listed too (on golang/go,
+// --head=master gave three, all from forks): only one from this repository is this branch's.
+func TestAForksPullRequestFromABranchOfTheSameNameIsNotThisBranchs(t *testing.T) {
+	ghStandIns(t, true, `[
+		{"number":82519,"url":"https://github.com/me/vibe/pull/82519","isCrossRepository":true},
+		{"number":41,"url":"https://github.com/me/vibe/pull/41","isCrossRepository":false}]`, nil)
+	pr, err := ghBranchPullRequest(context.Background(), "https://github.com/me/vibe", "master")
+	if err != nil || pr == nil || pr.Number != 41 {
+		t.Errorf("pr = %+v, err %v; want PR 41, not the fork's", pr, err)
+	}
+	ghStandIns(t, true, `[{"number":82519,"url":"https://github.com/me/vibe/pull/82519","isCrossRepository":true}]`, nil)
+	if pr, err := ghBranchPullRequest(context.Background(), "https://github.com/me/vibe", "master"); pr != nil || err != nil {
+		t.Errorf("only a fork's: pr = %+v, err %v; want none", pr, err)
 	}
 }

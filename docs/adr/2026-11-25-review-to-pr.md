@@ -32,7 +32,7 @@ pressing it.
 
 - **"PR #N", a part of the top bar of its own** after the git status, past a divider as the folder and the status are: the pull request
   open for the current branch, opening on GitHub in a tab of its own. Only a pull request's address on GitHub is linked.
-- **Asked of the host's gh**, `gh pr list --repo=owner/name --head=<branch> --state=open --json=number,url --limit=1`, run in an empty
+- **Asked of the host's gh**, `gh pr list --repo=owner/name --head=<branch> --state=open --json=number,url,isCrossRepository,isDraft,reviewDecision,mergeable,statusCheckRollup --limit=20`, run in an empty
   folder of its own, never the project's: there gh would run git, and the project's `.git/config` can be written from inside the sandbox
   (`core.fsmonitor` and the like run commands on this machine). The repository and branch come from vibe's own read (go-git, which runs
   nothing).
@@ -49,7 +49,8 @@ pressing it.
 - **Asked every 30 s while yellow**, so the dot turns green or red soon after the checks end; every minute otherwise. It asks GitHub,
   not sbx, and GitHub's limits are far above that.
 
-## Not done
+## A fork's pull request isn't this branch's
 
-- A pull request from a fork whose branch has the same name as this one would be found too (`--head` is the branch's name alone). Not
-  seen; left until it is.
+`--head` matches a branch by its name alone: on golang/go, `--head=master` listed three pull requests, all from forks. So up to 20
+are listed, and the first from this repository (`isCrossRepository` false) is the branch's; with none, there's no link. Found in review
+(#146), where the first build's ADR had called it "not seen".
