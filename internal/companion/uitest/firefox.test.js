@@ -799,13 +799,25 @@ test('the emoji list follows the prompt as it scrolls', async () => {
       document.addEventListener('visibilitychange', () => note('visibility ' + document.visibilityState))
       new MutationObserver(() => note('style set')).observe(ta, { attributes: true, attributeFilter: ['style'] })
     })
-    // The line as listBox measures it: a computed line-height can be "normal" (macOS CI), which is no number to scroll by.
-    const scrolled = await page.evaluate((line) => {
+    // The browser's own scroll to the caret, after the keystroke that showed the list, can come late: on macOS CI it came after the
+    // test's scroll and undid it (the log: scrollTop set 95 → 34, then a scroll back to 95 that no script made). So the prompt is
+    // let settle first (its scrollTop the same over a few frames), then scrolled as a person would, with the wheel.
+    const settled = () => page.evaluate(() => new Promise((resolve) => {
       const ta = document.getElementById('convo-input')
-      const was = ta.scrollTop
-      ta.scrollTop = was - 3 * line
-      return { was, now: ta.scrollTop }
-    }, before.line)
+      let last = ta.scrollTop
+      let still = 0
+      const frame = () => {
+        if (ta.scrollTop === last) { if (++still >= 3) { resolve(last); return } } else { still = 0; last = ta.scrollTop }
+        requestAnimationFrame(frame)
+      }
+      requestAnimationFrame(frame)
+    }))
+    const was = await settled()
+    const at = await page.locator('#convo-input').boundingBox()
+    await page.mouse.move(at.x + at.width / 2, at.y + at.height / 2)
+    // The line as listBox measures it: a computed line-height can be "normal" (macOS CI), which is no number to scroll by.
+    await page.mouse.wheel(0, -3 * before.line)
+    const scrolled = { was, now: await settled() }
     assert.ok(scrolled.now < scrolled.was, `the prompt did not scroll (scrollTop ${scrolled.was} → ${scrolled.now}), so this tests nothing`)
     // Polled, saying where things were if the list never moves: it timed out once on macOS CI with nothing to go on.
     let seen = null
