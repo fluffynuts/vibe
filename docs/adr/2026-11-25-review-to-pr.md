@@ -48,9 +48,12 @@ pressing it.
   HEAD, outside GitHub, or without gh; a failure (not signed in, say) is logged once, not at every ask.
 - **The top bar is drawn again only when it changes**: drawn at every poll, the link lost keyboard focus.
 - **A dot before the link says its status**, decided with the user 2026-11-26, conservatively ("start strict, dog-food, revise"):
-  - **red, something needs you:** a check failed (failed, timed out, cancelled, needing action; a commit status erroring); anyone's
+  - **red, something needs you,** once no check is running: a check failed (failed, timed out, cancelled, needing action; a commit
+    status erroring; a cancelled check counts, as it hasn't passed); anyone's
     latest review requests changes; it conflicts with its base; or a review is required and nobody is asked (no one will approve it).
-  - **yellow, on its way:** a check still running, and then the dot **pulses** (not with reduced motion: the title says it); or,
+  - **yellow, on its way:** any check still running, whatever else (a failure, a change request), and then the dot **pulses** (not with
+    reduced motion: the title says it); it is worked out afresh when the checks end, the failures said meanwhile in the title. Red
+    while re-running a check was "more anxiety than help" (the user, play-testing: one check re-run beside another still cancelled);
     steady: a review asked for and not given (each person asked counts on their own, so two people from one team both must approve;
     a team asked as a team is done when one member reviews, as GitHub has it); a person whose latest review only commented (a sign-off
     is an approval: a reviewer who only commented, and a passer-by's comment, both hold it yellow); any review conversation unresolved,

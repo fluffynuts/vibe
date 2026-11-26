@@ -6,10 +6,10 @@ import (
 )
 
 // A pull request's status, for the dot beside its link in the top bar (decided with the user, 2026-11-26, conservatively):
-//   - failing (red), something needs you: a check failed, a review asked for changes, it conflicts with its base, or a review is
-//     required and nobody is asked;
-//   - pending (yellow), on its way: a check still running (the dot pulses), a review asked for and not given, a person's review that
-//     only commented, any conversation unresolved, a review still required, or GitHub not yet sure it merges;
+//   - failing (red), something needs you, once no check is running: a check failed (or was cancelled), a review asked for changes, it
+//     conflicts with its base, or a review is required and nobody is asked;
+//   - pending (yellow), on its way: any check still running (the dot pulses), whatever else; or a review asked for and not given,
+//     a person's review that only commented, any conversation unresolved, a review still required, or GitHub not yet sure it merges;
 //   - passing (green), good to go: every check passed, every person who reviewed approved, every agent (a bot account: Copilot,
 //     any GitHub App) has reviewed, and no conversation is unresolved.
 const (
@@ -159,6 +159,10 @@ func (c PullRequestChecks) Status() (status, why string) {
 		waiting = append(waiting, "GitHub is still working out its mergeability")
 	}
 	switch {
+	// While a check runs the dot is yellow, failures said in words: they may be what is being run again, and it is worked out
+	// afresh when the checks end (the user's call, 2026-11-26).
+	case running > 0:
+		return PRPending, strings.Join(append(bad, waiting...), "; ")
 	case len(bad) > 0:
 		return PRFailing, strings.Join(append(bad, waiting...), "; ")
 	case len(waiting) > 0:

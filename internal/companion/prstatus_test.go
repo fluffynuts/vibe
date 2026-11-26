@@ -27,7 +27,11 @@ func TestAPullRequestsStatusIsWorkedOutFromItsChecksReviewAndMerge(t *testing.T)
 		{"review required, nobody asked", PullRequestChecks{Checks: []Check{ok}, Review: "REVIEW_REQUIRED"}, PRFailing, "review required, but nobody is asked"},
 		{"review required, someone asked", PullRequestChecks{Checks: []Check{ok}, Review: "REVIEW_REQUIRED", Requests: []string{"@alice"}}, PRPending, "waiting on @alice"},
 		{"merge not worked out yet", PullRequestChecks{Checks: []Check{ok}, Mergeable: "UNKNOWN"}, PRPending, "mergeability"},
-		{"a check failed", PullRequestChecks{Checks: []Check{ok, running, failed}}, PRFailing, "test (windows-latest) failed"},
+		// While any check runs the dot is yellow, failures said in words: worked out again when they end (the user, 2026-11-26).
+		{"a check failed, another running", PullRequestChecks{Checks: []Check{ok, running, failed}}, PRPending, "test (windows-latest) failed; 1 check running"},
+		{"a check failed, none running", PullRequestChecks{Checks: []Check{ok, failed}}, PRFailing, "test (windows-latest) failed"},
+		{"changes requested, a check running", PullRequestChecks{Checks: []Check{running}, Review: "CHANGES_REQUESTED"}, PRPending, "changes requested; 1 check running"},
+		{"a conflict, a check running", PullRequestChecks{Checks: []Check{running}, Mergeable: "CONFLICTING"}, PRPending, "conflicts with its base branch"},
 		{"a status errored", PullRequestChecks{Checks: []Check{statusError}}, PRFailing, "ci/legacy failed"},
 		{"cancelled", PullRequestChecks{Checks: []Check{{Name: "build", Status: "COMPLETED", Conclusion: "CANCELLED"}}}, PRFailing, "build failed"},
 		{"timed out", PullRequestChecks{Checks: []Check{{Name: "build", Status: "COMPLETED", Conclusion: "TIMED_OUT"}}}, PRFailing, "build failed"},
