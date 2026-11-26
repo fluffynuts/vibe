@@ -1,7 +1,7 @@
 # From review to pull request: the next unresolved comment, Submit saying why, and the branch's pull request and its status in the top bar
 
-- **Status:** accepted, built 2026-11-25 on `feat/review-tab-pr-link` (PR #41). The pull request link tried by hand; the other two not
-  yet.
+- **Status:** accepted, built 2026-11-25/26 on `feat/review-tab-pr-link` (PR #41). Tried by hand: the pull request link, and its
+  dot (a red ring for PR #41, a draft whose last checks failed). The arrows and Submit not yet.
 - **Decided:** with the user: the first two raised 2026-10-22 ("unresolved" is status open, decided then), the link 2026-11-25.
 - **Came from:** `docs/plan-review-tab-enhancements.md` (`git show 0bf625a:docs/plan-review-tab-enhancements.md`).
 
