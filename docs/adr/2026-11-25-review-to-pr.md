@@ -15,6 +15,8 @@ scrolled past them.
   pane still lists every thread.
 - **Ctrl+Enter in an empty reply box goes on** to the next unresolved comment, sending nothing (it couldn't send an empty reply anyway);
   the box's hint says so. Going on, by either, says when there's no other unresolved comment, rather than landing on a resolved one.
+- **Resolve and Dismiss go on too**, with "go on after reply" ticked, to the next unresolved comment: the thread they leave is one the
+  arrows pass over (the user, trying it). Unticked, the page stays; Reopen always stays, as a thread is reopened to work on.
 - Tests that stepped through threads used a fixture with one resolved: they now step through an all-open copy (they are of how the
   arrows step), and the count's wording is "unresolved comments".
 

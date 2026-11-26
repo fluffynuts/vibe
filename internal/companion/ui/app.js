@@ -3925,7 +3925,9 @@
       box.value = ''
       box.blur()
       drawReview()
-      if (byKeys && reviewView.replyNext) goToCommentAfter(t.id)
+      // Going on: after a reply sent by Ctrl+Enter, and after Resolve or Dismiss, which leave a thread the arrows pass over. Not after
+      // Reopen: a thread is reopened to work on.
+      if (reviewView.replyNext && (byKeys || op === 'resolve' || op === 'dismiss')) goToCommentAfter(t.id)
     })
     // A turn: the answer comes back on this comment, from the agent's
     // vibe-review reply, and the turn shows on the Conversation tab too.

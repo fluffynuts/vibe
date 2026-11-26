@@ -2067,6 +2067,53 @@ test('in the reading order, the arrows go on from a resolved thread the page is 
   } finally { p.close() }
 })
 
+// A thread resolved or dismissed is one the arrows pass over: with "go on after reply" ticked, Resolve and Dismiss go on to the next
+// unresolved one, as a reply by Ctrl+Enter does (the user); unticked, the page stays. Reopen stays: a thread is reopened to work on.
+for (const op of ['Resolve', 'Dismiss']) {
+  test(op + ' goes on to the next unresolved comment, with going on after a reply ticked', async () => {
+    const p = await reviewPage(settled({}))
+    try {
+      await p.click('tab-review')
+      const shown = []
+      p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
+      await p.click(p.button(op, p.$('review-thread-3')))
+      assert.deepEqual(p.posted('/api/review/do').map((b) => b.op), [op.toLowerCase()])
+      assert.deepEqual(shown, ['review-thread-2'], 'after ui/b.go comes a.go')
+    } finally { p.close() }
+  })
+
+  test(op + ' stays at the comment with going on after a reply unticked', async () => {
+    const p = await reviewPage(settled({}))
+    try {
+      await p.click('tab-review')
+      await p.click('review-reply-next')
+      const shown = []
+      p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
+      await p.click(p.button(op, p.$('review-thread-3')))
+      assert.deepEqual(shown, [])
+    } finally { p.close() }
+  })
+}
+
+test('Reopen stays at the comment it reopens', async () => {
+  const p = await reviewPage(settled({ 3: 'resolved' }))
+  try {
+    await p.click('tab-review')
+    const shown = []
+    p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
+    await p.click(p.button('Reopen', p.$('review-thread-3')))
+    assert.deepEqual(shown, [])
+  } finally { p.close() }
+})
+
+test("the going-on setting says it is for Resolve and Dismiss too", async () => {
+  const p = await reviewPage(settled({}))
+  try {
+    await p.click('tab-review')
+    assert.match(p.$('review-reply-next').closest('label').title, /Resolve.*Dismiss|Dismiss.*Resolve/)
+  } finally { p.close() }
+})
+
 test('a file whose change has changed since it was ticked says so, unticked', async () => {
   const p = await viewedPage({ 'a.txt': 'fp-a.txt', 'c.txt': 'what it was' })
   try {
