@@ -2044,6 +2044,36 @@ test('Ctrl+Enter in an empty reply box goes on to the next unresolved comment, s
   } finally { p.close() }
 })
 
+// From a resolved thread (which still has a reply box), going on is to the next unresolved one after it, in the arrows' order: not
+// round to the first.
+test('Ctrl+Enter in a resolved thread goes on to the next unresolved comment after it', async () => {
+  const p = await reviewPage(settled({ 3: 'resolved' }))
+  try {
+    await p.click('tab-review')
+    const shown = []
+    p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
+    await replyByKeys(p, 3, '')
+    assert.deepEqual(shown, ['review-thread-2'], 'ui/b.go (resolved) goes on to a.go, after it, not round to the whole review')
+  } finally { p.close() }
+})
+
+// The page at a resolved thread, in the reading order: ▼ goes to the next unresolved one after it in that order, not after the
+// unresolved one before it in the page's (path) order.
+test('in the reading order, the arrows go on from a resolved thread the page is at, in that order', async () => {
+  const p = await reviewPage(settled({ 3: 'resolved' }))
+  try {
+    await p.click('tab-review')
+    await p.click('review-order')
+    await p.click(orderItem(p, 'Order by agent reading order'))
+    const shown = []
+    p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
+    // The page's order is the whole review, ui/b.go, a.go, z.go; the page is at ui/b.go (resolved).
+    laidOut(p, { 1: -400, 3: 10, 2: 300, 4: 500 })
+    await p.click('review-next-comment')
+    assert.deepEqual(shown, ['review-thread-2'], 'reading order is the whole review, z.go, ui/b.go, a.go: after ui/b.go comes a.go')
+  } finally { p.close() }
+})
+
 test('a file whose change has changed since it was ticked says so, unticked', async () => {
   const p = await viewedPage({ 'a.txt': 'fp-a.txt', 'c.txt': 'what it was' })
   try {

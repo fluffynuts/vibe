@@ -2598,24 +2598,43 @@
 
   // arrowCards are the shown threads' cards in the order the comment
   // arrows go in: the page's, or the reading order's.
-  // arrowCards are the threads the arrows, and going on after a reply, go to: the unresolved (open) ones shown, in the order chosen.
-  // Once most are resolved, stepping through those was scrolling past them; the comments pane lists every thread.
-  function arrowCards() {
-    const cards = threadCards().filter(isUnresolved)
+  // shownInArrowOrder is every thread shown, resolved or not, in the order the arrows go: where a resolved one is, for going on from it.
+  function shownInArrowOrder() {
+    const cards = threadCards()
     if (reviewView.order !== 'reading') return cards
     const entries = cards.map((card) => { const file = card.closest('.review-file'); return { file: file ? file.dataset.path : null, card } })
     return R.inStepOrder(entries, reviewSteps()).map((e) => e.card)
   }
 
+  // arrowCards are the threads the arrows, and going on after a reply, go to: the unresolved (open) ones shown, in the order chosen.
+  // Once most are resolved, stepping through those was scrolling past them; the comments pane lists every thread.
+  function arrowCards() {
+    return shownInArrowOrder().filter(isUnresolved)
+  }
+
   function isUnresolved(card) { return card.classList.contains('open') }
 
-  // unresolvedFrom is the arrows' place for the thread card at, or before it in the page, when it is resolved: -1 for none.
-  function unresolvedFrom(cards, page, at) {
-    for (let k = at; k >= 0; k--) {
-      const i = cards.indexOf(page[k])
-      if (i >= 0) return i
+  // unresolvedNear is the unresolved thread after card ('next') or before it ('prev'), in the order the arrows go, round at the ends;
+  // card may be resolved (it has a reply box still), and is never its own answer: null when there's no other.
+  function unresolvedNear(card, dir) {
+    const all = shownInArrowOrder()
+    const n = all.length
+    const i = all.indexOf(card)
+    for (let k = 1; k <= n; k++) {
+      const c = all[(((dir === 'next' ? i + k : i - k) % n) + n) % n]
+      if (c !== card && isUnresolved(c)) return c
     }
-    return -1
+    return null
+  }
+
+  // unresolvedAtOrBefore is the arrows' place (in arrowCards) for card: its own if it is unresolved, else that of the unresolved one
+  // before it in the arrows' order; -1 for none.
+  function unresolvedAtOrBefore(card) {
+    const cards = arrowCards()
+    if (cards.includes(card)) return cards.indexOf(card)
+    const before = unresolvedNear(card, 'prev')
+    const all = shownInArrowOrder()
+    return before && all.indexOf(before) < all.indexOf(card) ? cards.indexOf(before) : -1
   }
 
   // threadCards are the threads' cards the page shows, in its order: the
@@ -2640,7 +2659,7 @@
       // Where the page is: in the page's order, then counted in the arrows'.
       if (reviewView.order === 'reading') {
         const i = R.currentOf(page.map((c) => c.getBoundingClientRect().top), threadLine())
-        reviewView.at = Math.max(0, unresolvedFrom(cards, page, i))
+        reviewView.at = i < 0 ? 0 : Math.max(0, unresolvedAtOrBefore(page[i]))
       } else reviewView.at = Math.max(0, R.positionOf(cards.map((c) => c.getBoundingClientRect().top), threadLine()))
     }
     reviewView.at = Math.min(reviewView.at, Math.max(0, shown - 1))
@@ -2664,8 +2683,7 @@
       // From the thread the page is at, on in the reading order.
       const page = threadCards()
       const at = R.currentOf(page.map((c) => c.getBoundingClientRect().top), threadLine())
-      const from = unresolvedFrom(cards, page, at)
-      i = dir === 'next' ? (from + 1) % n : from <= 0 ? n - 1 : from - 1
+      i = at < 0 ? (dir === 'next' ? 0 : n - 1) : cards.indexOf(unresolvedNear(page[at], dir))
     } else i = R.stepTo(cards.map((c) => c.getBoundingClientRect().top), threadLine(), dir)
     if (i < 0) return
     showComment(cards, i)
@@ -2675,10 +2693,9 @@
   // there's no other to go to.
   function goToCommentAfter(id) {
     const cards = arrowCards()
-    const i = cards.findIndex((card) => card.id === 'review-thread-' + id)
-    const others = cards.length - (i < 0 ? 0 : 1)
-    if (!others) { toast(i < 0 ? 'No unresolved comments.' : 'No other unresolved comments.'); return }
-    showComment(cards, (i + 1) % cards.length)
+    const next = unresolvedNear($('review-thread-' + id), 'next')
+    if (!next) { toast(cards.length ? 'No other unresolved comments.' : 'No unresolved comments.'); return }
+    showComment(cards, cards.indexOf(next))
   }
 
   // showComment scrolls to cards[i], its reply box ready to type in, and
