@@ -261,29 +261,9 @@ test('the bar counts the comment threads, and says how many the filter hides', a
   try {
     laidOut(p, { 1: 200, 3: 400, 2: 600, 4: 800 })
     await p.click('tab-review')
-    assert.equal(p.$('review-count').textContent, 'at 1 of 4 unresolved')
+    assert.equal(p.$('review-count').textContent, '4 unresolved')
     await p.type(p.$('review-filter'), 'b.txt')
-    assert.equal(p.$('review-count').textContent, 'at 1 of 2 unresolved (2 hidden by the filter)')
-  } finally { p.close() }
-})
-
-test('the bar says which comment the page is at, by the arrows or by scrolling', async () => {
-  const p = await reviewPage({ review: allOpen, diff: twoFiles })
-  try {
-    p.window.Element.prototype.scrollIntoView = function () {}
-    const tops = { 1: 200, 3: 400, 2: 600, 4: 800 }
-    laidOut(p, tops)
-    await p.click('tab-review')
-    assert.equal(p.$('review-count').textContent, 'at 1 of 4 unresolved', 'none reached yet')
-    Object.assign(tops, { 1: -300, 3: -100, 2: 100, 4: 300 })
-    p.$('panel-review').dispatchEvent(new p.window.Event('scroll'))
-    assert.equal(p.$('review-count').textContent, 'at 2 of 4 unresolved', 'scrolled past two')
-    const counts = []
-    for (const id of ['review-next-comment', 'review-next-comment', 'review-next-comment', 'review-prev-comment']) {
-      await p.click(id)
-      counts.push(p.$('review-count').textContent)
-    }
-    assert.deepEqual(counts, ['at 3 of 4 unresolved', 'at 4 of 4 unresolved', 'at 1 of 4 unresolved', 'at 4 of 4 unresolved'], 'on, on, round to the first, back to the last')
+    assert.equal(p.$('review-count').textContent, '4 unresolved (2 hidden by the filter)')
   } finally { p.close() }
 })
 
@@ -301,18 +281,20 @@ test("the arrows step on past threads that can't reach the bar, and round", asyn
   } finally { p.close() }
 })
 
+// Once scrolled by hand, ▼ goes on from where the page is, not from where the arrows last were.
 test('scrolling by hand takes over from the arrows', async () => {
   const p = await reviewPage({ review: allOpen, diff: twoFiles })
   try {
-    p.window.Element.prototype.scrollIntoView = function () {}
+    const shown = []
+    p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
     const tops = { 1: -500, 3: -300, 2: 200, 4: 400 }
     laidOut(p, tops)
     await p.click('tab-review')
     await p.click('review-next-comment')
-    assert.equal(p.$('review-count').textContent, 'at 3 of 4 unresolved')
     p.$('panel-review').dispatchEvent(new p.window.Event('wheel'))
     p.$('panel-review').dispatchEvent(new p.window.Event('scroll'))
-    assert.equal(p.$('review-count').textContent, 'at 2 of 4 unresolved', 'measured again: thread 2 is still below the bar')
+    await p.click('review-next-comment')
+    assert.deepEqual(shown, ['review-thread-2', 'review-thread-2'], 'on from the page (thread 2 still below the bar), not from the arrows (on to 4)')
   } finally { p.close() }
 })
 
@@ -502,7 +484,7 @@ test('Ctrl+Enter in a reply box goes on to the next comment, ready to reply', as
     await replyByKeys(p, 1, 'noted')
     assert.deepEqual(shown, ['review-thread-3'], 'the next comment down the page')
     assert.equal(replyBoxFocused(p), 3, 'its reply box ready')
-    assert.match(p.$('review-count').textContent, /^at 2 of 3 unresolved/, 'the resolved one (b.txt) not counted')
+    assert.match(p.$('review-count').textContent, /^3 unresolved/, 'the resolved one (b.txt) not counted')
   } finally { p.close() }
 })
 
@@ -1715,7 +1697,7 @@ test('the count opens a choice of order; the reading order sends the arrows by s
     assert.match(p.$('review-order').title, /reading order/)
     assert.equal(p.window.localStorage.getItem('vibe-review-comment-order'), 'reading')
     assert.deepEqual(await arrowsVisit(p, 4), [1, 4, 3, 2], 'the whole review, then z.go (1), ui/b.go (2), a.go')
-    assert.equal(p.$('review-count').textContent, 'at 4 of 4 unresolved')
+    assert.equal(p.$('review-count').textContent, '4 unresolved')
     const files = Array.from(p.$('review-files').querySelectorAll('.review-file')).map((c) => c.dataset.path)
     assert.deepEqual(files, ['ui/b.go', 'a.go', 'z.go'], 'the files stay as the tree has them')
   } finally { p.close() }
@@ -2005,7 +1987,7 @@ for (const [order, label] of [['path', 'Order by file path'], ['reading', 'Order
       await p.click('tab-review')
       if (order === 'reading') { await p.click('review-order'); await p.click(orderItem(p, label)) }
       assert.deepEqual(await arrowsVisit(p, 3), [1, 4, 1])
-      assert.equal(p.$('review-count').textContent, 'at 1 of 2 unresolved')
+      assert.equal(p.$('review-count').textContent, '2 unresolved')
     } finally { p.close() }
   })
 }
@@ -2088,7 +2070,7 @@ test('a file whose change has changed since it was ticked says so, unticked', as
 test('the comment arrows pass over comments in viewed files, and say so', async () => {
   const p = await viewedPage({ 'b.txt': 'fp-b.txt:9f1fda36' })
   try {
-    assert.equal(p.$('review-count').textContent, '1 unresolved comment (1 in viewed files)')
+    assert.equal(p.$('review-count').textContent, '1 unresolved (1 in viewed files)')
     assert.equal(p.$('review-next-comment').disabled, true)
   } finally { p.close() }
 })

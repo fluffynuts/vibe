@@ -2663,11 +2663,10 @@
       } else reviewView.at = Math.max(0, R.positionOf(cards.map((c) => c.getBoundingClientRect().top), threadLine()))
     }
     reviewView.at = Math.min(reviewView.at, Math.max(0, shown - 1))
-    // Where the arrows are among the unresolved: "at 3 of 4", not "3/4", which read as how many were unresolved.
-    const where = shown ? 'at ' + (reviewView.at + 1) + ' of ' + shown + ' unresolved' : plural(open, 'unresolved comment')
-    $('review-count').textContent = !all ? 'no comments yet' : !open ? 'no unresolved comments' : where + (hiddenNote ? ' (' + hiddenNote + ')' : '')
-    $('review-order').title = (shown ? 'At unresolved comment ' + (reviewView.at + 1) + ' of ' + shown + '; ' + plural(all, 'comment') + ' in all. '
-      : all ? open + ' unresolved of ' + plural(all, 'comment') + '. ' : '') +
+    // How many are left to deal with, not where the page is among them: that followed the scroll, so it was often a guess, and
+    // "3/4" read as how many were unresolved (the user's call). The arrows still step on from where the page is.
+    $('review-count').textContent = !all ? 'no comments yet' : !open ? 'no unresolved comments' : open + ' unresolved' + (hiddenNote ? ' (' + hiddenNote + ')' : '')
+    $('review-order').title = (all ? open + ' unresolved of ' + plural(all, 'comment') + '. ' : '') +
       (reviewView.order === 'reading' ? "The arrows go in the agent's reading order" : 'The arrows go in path order, as the tree') + ': click to change.'
     $('review-prev-comment').disabled = !shown
     $('review-next-comment').disabled = !shown
