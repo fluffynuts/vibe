@@ -985,10 +985,36 @@
     unlessBusy('tab log', () => load('log'))
   }
 
-  // The folder and git status, as the infobar in the sandbox shows them.
-  function renderWhere(folder, git) {
+  // PR_STATUS_WORDS say a pull request's status, as the host worked it out from its checks, reviews and merge.
+  // Each says only the status: the why after it says what makes it so.
+  const PR_STATUS_WORDS = { failing: 'failing', pending: 'pending', passing: 'passing' }
+
+  // The folder and git status, as the infobar in the sandbox shows them, and the pull request open for the branch (pr), as the
+  // host's gh says. Drawn again only when what it says changes: drawn at every poll, the link lost keyboard focus.
+  let whereShown = ''
+  function renderWhere(folder, git, pr) {
+    const said = JSON.stringify([folder, git, pr])
+    if (said === whereShown) return
+    whereShown = said
     $('folder').textContent = folder
     $('folder-part').hidden = !folder
+    // Only a pull request's address on GitHub is linked: it is what gh said, and becomes a link.
+    const linked = !!git && !!pr && /^https:\/\/github\.com\/[\w-]+\/[\w.-]+\/pull\/\d+$/.test(pr.url || '')
+    $('pr-part').hidden = !linked
+    if (linked) {
+      // Its status as a dot before it (a ring for a draft), said in words too: colour alone says nothing to some.
+      const status = PR_STATUS_WORDS[pr.status] ? pr.status : ''
+      const said = status ? (pr.draft ? 'Draft, ' : '') + PR_STATUS_WORDS[status] + (pr.why ? ': ' + pr.why : '') : ''
+      const dot = $('pr-dot')
+      dot.hidden = !status
+      // Pulsing while a check runs: "the checks are running" is not "half-way there" (a review waited for), though both are yellow.
+      dot.className = 'pr-dot' + (status ? ' ' + status : '') + (pr.draft ? ' draft' : '') + (status && pr.running ? ' running' : '')
+      if (status) dot.setAttribute('aria-label', said)
+      else dot.removeAttribute('aria-label')
+      $('pr').href = pr.url
+      $('pr').textContent = 'PR #' + pr.number
+      $('pr').title = 'Pull request #' + pr.number + (pr.draft ? ' (draft)' : '') + ', open for this branch' + (said ? '. ' + said : '') + '. Open it on GitHub.'
+    }
     const box = $('git')
     box.replaceChildren()
     $('git-part').hidden = !git
@@ -1028,7 +1054,7 @@
       // find out, as for a failed turn, and not more often than that.
       if (res.body.sbxSignedOut && state.signin && Date.now() - signInShown.lastCheck > SIGNIN_RECHECK_MS) loadSignIn()
       $('sandbox').textContent = state.sandbox || 'all profiles and sandboxes'
-      renderWhere(res.body.folder || '', res.body.git || null)
+      renderWhere(res.body.folder || '', res.body.git || null, res.body.branchPullRequest || null)
       setRepoWeb(res.body.git)
       setReviewThreads(res.body.reviewThreads, !!res.body.reviewClosed)
       pullRequestsVersion(res.body.pullRequests)
@@ -2574,11 +2600,43 @@
 
   // arrowCards are the shown threads' cards in the order the comment
   // arrows go in: the page's, or the reading order's.
-  function arrowCards() {
+  // shownInArrowOrder is every thread shown, resolved or not, in the order the arrows go: where a resolved one is, for going on from it.
+  function shownInArrowOrder() {
     const cards = threadCards()
     if (reviewView.order !== 'reading') return cards
     const entries = cards.map((card) => { const file = card.closest('.review-file'); return { file: file ? file.dataset.path : null, card } })
     return R.inStepOrder(entries, reviewSteps()).map((e) => e.card)
+  }
+
+  // arrowCards are the threads the arrows, and going on after a reply, go to: the unresolved (open) ones shown, in the order chosen.
+  // Once most are resolved, stepping through those was scrolling past them; the comments pane lists every thread.
+  function arrowCards() {
+    return shownInArrowOrder().filter(isUnresolved)
+  }
+
+  function isUnresolved(card) { return card.classList.contains('open') }
+
+  // unresolvedNear is the unresolved thread after card ('next') or before it ('prev'), in the order the arrows go, round at the ends;
+  // card may be resolved (it has a reply box still), and is never its own answer: null when there's no other.
+  function unresolvedNear(card, dir) {
+    const all = shownInArrowOrder()
+    const n = all.length
+    const i = all.indexOf(card)
+    for (let k = 1; k <= n; k++) {
+      const c = all[(((dir === 'next' ? i + k : i - k) % n) + n) % n]
+      if (c !== card && isUnresolved(c)) return c
+    }
+    return null
+  }
+
+  // unresolvedAtOrBefore is the arrows' place (in arrowCards) for card: its own if it is unresolved, else that of the unresolved one
+  // before it in the arrows' order; -1 for none.
+  function unresolvedAtOrBefore(card) {
+    const cards = arrowCards()
+    if (cards.includes(card)) return cards.indexOf(card)
+    const before = unresolvedNear(card, 'prev')
+    const all = shownInArrowOrder()
+    return before && all.indexOf(before) < all.indexOf(card) ? cards.indexOf(before) : -1
   }
 
   // threadCards are the threads' cards the page shows, in its order: the
@@ -2596,21 +2654,21 @@
     const page = threadCards()
     const cards = arrowCards()
     const shown = cards.length
-    const filtered = $('review-files').querySelectorAll('.review-file[hidden] .review-thread').length
-    const inViewed = Math.max(0, all - shown - filtered)
+    const filtered = $('review-files').querySelectorAll('.review-file[hidden] .review-thread.open').length
+    const inViewed = Math.max(0, open - shown - filtered)
     const hiddenNote = [filtered ? filtered + ' hidden by the filter' : '', inViewed ? inViewed + ' in viewed files' : ''].filter(Boolean).join(', ')
     if (!reviewView.steering) {
       // Where the page is: in the page's order, then counted in the arrows'.
-      const tops = page.map((c) => c.getBoundingClientRect().top)
       if (reviewView.order === 'reading') {
-        const i = R.currentOf(tops, threadLine())
-        reviewView.at = i < 0 ? 0 : cards.indexOf(page[i])
-      } else reviewView.at = Math.max(0, R.positionOf(tops, threadLine()))
+        const i = R.currentOf(page.map((c) => c.getBoundingClientRect().top), threadLine())
+        reviewView.at = i < 0 ? 0 : Math.max(0, unresolvedAtOrBefore(page[i]))
+      } else reviewView.at = Math.max(0, R.positionOf(cards.map((c) => c.getBoundingClientRect().top), threadLine()))
     }
     reviewView.at = Math.min(reviewView.at, Math.max(0, shown - 1))
-    const where = shown ? (reviewView.at + 1) + '/' + plural(shown, 'comment') : plural(all, 'comment')
-    $('review-count').textContent = !all ? 'no comments yet' : where + (hiddenNote ? ' (' + hiddenNote + ')' : '')
-    $('review-order').title = (all ? open + ' open of ' + all + ' comment threads. ' : '') +
+    // How many are left to deal with, not where the page is among them: that followed the scroll, so it was often a guess, and
+    // "3/4" read as how many were unresolved (the user's call). The arrows still step on from where the page is.
+    $('review-count').textContent = !all ? 'no comments yet' : !open ? 'no unresolved comments' : open + ' unresolved' + (hiddenNote ? ' (' + hiddenNote + ')' : '')
+    $('review-order').title = (all ? open + ' unresolved of ' + plural(all, 'comment') + '. ' : '') +
       (reviewView.order === 'reading' ? "The arrows go in the agent's reading order" : 'The arrows go in path order, as the tree') + ': click to change.'
     $('review-prev-comment').disabled = !shown
     $('review-next-comment').disabled = !shown
@@ -2628,20 +2686,19 @@
       // From the thread the page is at, on in the reading order.
       const page = threadCards()
       const at = R.currentOf(page.map((c) => c.getBoundingClientRect().top), threadLine())
-      const from = at < 0 ? -1 : cards.indexOf(page[at])
-      i = dir === 'next' ? (from + 1) % n : from <= 0 ? n - 1 : from - 1
+      i = at < 0 ? (dir === 'next' ? 0 : n - 1) : cards.indexOf(unresolvedNear(page[at], dir))
     } else i = R.stepTo(cards.map((c) => c.getBoundingClientRect().top), threadLine(), dir)
     if (i < 0) return
     showComment(cards, i)
   }
 
-  // goToCommentAfter goes to the comment after thread id's, in the order the
-  // arrows go, round at the end.
+  // goToCommentAfter goes to the unresolved comment after thread id's, in the order the arrows go, round at the end; saying so when
+  // there's no other to go to.
   function goToCommentAfter(id) {
     const cards = arrowCards()
-    const i = cards.findIndex((card) => card.id === 'review-thread-' + id)
-    if (i < 0 || cards.length < 2) return
-    showComment(cards, (i + 1) % cards.length)
+    const next = unresolvedNear($('review-thread-' + id), 'next')
+    if (!next) { toast(cards.length ? 'No other unresolved comments.' : 'No unresolved comments.'); return }
+    showComment(cards, cards.indexOf(next))
   }
 
   // showComment scrolls to cards[i], its reply box ready to type in, and
@@ -3292,6 +3349,21 @@
   // drawReview draws the review when it has changed; a poll's redraw waits
   // while a box on the tab is being typed in (it would take the focus away),
   // one the user asked for (force) doesn't.
+  // drawSubmit says whether Submit can send the unsent comments now, and why not: the host refuses one while the agent answers, so
+  // the button says so before it's pressed, and is drawn again when the answer ends (setConvoRunning).
+  function drawSubmit(rv) {
+    const unsent = unsentCount(rv)
+    const stillWriting = rv.state === 'in progress'
+    const answering = convo.running
+    $('review-submit').disabled = !unsent || !state.conversation || stillWriting || answering
+    $('review-submit').textContent = unsent ? 'Submit ' + unsent + ' to agent' : 'Submit to agent'
+    $('review-submit').title = !state.conversation ? "This sandbox's agent can't be talked to from the page"
+      : stillWriting ? 'The agent is still writing this review: submit your comments once it has finished'
+      : answering && unsent ? 'The agent is answering: your ' + plural(unsent, 'comment') + (unsent === 1 ? ' is' : ' are') + ' kept, to submit once it has finished'
+      : unsent ? 'Send the agent your ' + plural(unsent, 'comment') + " it hasn't seen: it changes code only where you ask it to"
+        : "Nothing new to send: comment on a line, or reply, first"
+  }
+
   function drawReview(force) {
     const rv = reviewView.review
     if (!rv) return
@@ -3325,14 +3397,7 @@
       : rv.state || ''
     $('review-state').classList.toggle('reviewing', on && rv.state === 'in progress')
     if (on) announceReview(rv)
-    const unsent = unsentCount(rv)
-    const stillWriting = rv.state === 'in progress'
-    $('review-submit').disabled = !unsent || !state.conversation || stillWriting
-    $('review-submit').textContent = unsent ? 'Submit ' + unsent + ' to agent' : 'Submit to agent'
-    $('review-submit').title = !state.conversation ? "This sandbox's agent can't be talked to from the page"
-      : stillWriting ? 'The agent is still writing this review: submit your comments once it has finished'
-      : unsent ? 'Send the agent your ' + plural(unsent, 'comment') + " it hasn't seen: it changes code only where you ask it to"
-        : "Nothing new to send: comment on a line, or reply, first"
+    drawSubmit(rv)
     $('review-error').hidden = !reviewView.diffError
     $('review-error').textContent = reviewView.diffError
     const problems = on ? rv.problems || [] : []
@@ -3832,11 +3897,15 @@
         el('button', { type: 'button', class: 'ghost', text: 'Cancel', onclick: () => { reviewView.editing = null; redrawReview() } })))
     })
     const where = t.file ? t.file + ':' + t.line + (t.endLine > t.line ? '–' + t.endLine : '') + (t.side === 'old' ? ' (old)' : '') : 'on the whole review'
-    const box = el('textarea', { 'data-thread': String(t.id), placeholder: 'Reply… (Ctrl+Enter replies)', 'aria-label': 'Reply to comment ' + t.id })
+    const box = el('textarea', { 'data-thread': String(t.id), placeholder: 'Reply… (Ctrl+Enter replies, or goes on if empty)', 'aria-label': 'Reply to comment ' + t.id })
     box.value = reviewView.drafts.get(String(t.id)) || ''
     box.addEventListener('input', () => reviewView.drafts.set(String(t.id), box.value))
     box.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); act('reply', true)() }
+      if (ev.key !== 'Enter' || !(ev.ctrlKey || ev.metaKey)) return
+      ev.preventDefault()
+      // Empty, there's nothing to send: the same key goes on, as it would after a reply.
+      if (!box.value.trim()) { if (reviewView.replyNext) goToCommentAfter(t.id); return }
+      act('reply', true)()
     })
     // byKeys: replied with Ctrl+Enter, which can go on to the next comment.
     // One at a time, whichever button (or Ctrl+Enter, held) asks.
@@ -3858,7 +3927,9 @@
       box.value = ''
       box.blur()
       drawReview()
-      if (byKeys && reviewView.replyNext) goToCommentAfter(t.id)
+      // Going on: after a reply sent by Ctrl+Enter, and after Resolve or Dismiss, which leave a thread the arrows pass over. Not after
+      // Reopen: a thread is reopened to work on.
+      if (reviewView.replyNext && (byKeys || op === 'resolve' || op === 'dismiss')) goToCommentAfter(t.id)
     })
     // A turn: the answer comes back on this comment, from the agent's
     // vibe-review reply, and the turn shows on the Conversation tab too.
@@ -6827,11 +6898,13 @@
     convo.stopState = stopState
     if (Array.isArray(tasks)) convo.tasks = tasks
     const ended = convo.running && !running
+    const wasRunning = convo.running
     convo.background = !running && background
     drawAgentLight(running, background, quietMinutes, compacting)
     if (running) setFaviconDot('working')
     else if (convo.running) setFaviconDot(document.visibilityState === 'visible' && document.hasFocus() ? '' : 'done')
     convo.running = running
+    if (ended || (running && !wasRunning)) { if (reviewView.review) drawSubmit(reviewView.review) }
     // What the agent ran is known now, and what was chosen has been used.
     if (ended && state.choice) choiceTurnEnded()
     if (ended) reviewTurnEnded()

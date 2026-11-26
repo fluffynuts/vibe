@@ -109,6 +109,9 @@ type Config struct {
 	// PullRequests lists the numbers of repo's pull requests (repo is https://github.com/owner/name), asking the sandbox, and says
 	// ErrNotRunning, not starting it, when it isn't running; it may be slow. Nil means a bare #N never links to a pull request.
 	PullRequests func(ctx context.Context, repo string) ([]int, error)
+	// BranchPullRequest is the pull request open for branch in repo (https://github.com/owner/name), nil for none, asked of the
+	// host's gh; ErrNoGh without it. Nil means the top bar links none.
+	BranchPullRequest func(ctx context.Context, repo, branch string) (*BranchPullRequest, error)
 	// PermissionMode is the agent's permission mode as the Admin tab chooses it; nil means the tab can't.
 	PermissionMode *PermissionModeChoice
 	// Wake gets the sandbox running for something the user asked of it,
@@ -227,6 +230,7 @@ type Server struct {
 	signInJob signInJob
 	blocked   blockedCache
 	prs       pullRequests
+	branchPR  branchPR
 	// clip is where the clipboard page was last found to be published.
 	clip  clipboardAddress
 	clock func() time.Time
@@ -699,6 +703,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"folder":                pathresolve.Tilde(s.cfg.Workspace),
 		"git":                   git,
 		"pullRequests":          pullRequestsVersion(s),
+		"branchPullRequest":     s.branchPullRequest(git),
 		"clipboardUrl":          clipboard,
 		"clipboardReady":        ready,
 		"clipboardTrouble":      s.clipboardTrouble(clipboard, ready),

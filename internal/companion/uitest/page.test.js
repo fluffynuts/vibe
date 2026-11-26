@@ -175,6 +175,31 @@ test('Submit to agent sends the unsent comments', async () => {
   } finally { p.close() }
 })
 
+// The host refuses a submit while the agent is answering: the button says so before it's pressed, keeping the count of what waits, and
+// is usable again the moment the answer ends, with no click or reload (raised by the user, docs/plan-review-tab-enhancements.md).
+test('Submit to agent waits while the agent is answering, saying why, and is usable once it has answered', async () => {
+  const now = { running: true }
+  const p = await openPage({
+    routes: {
+      '/api/state': () => ({ sandbox: 'box', sandboxTabs: true, review: true, conversation: true, reviewAt: '', attention: {} }),
+      '/api/review': () => ({ review: unsent, diff: [] }),
+      '/api/conversation': () => ({ events: [], last: 0, running: now.running }),
+      '/api/log': { entries: [] },
+    },
+    storage: { 'vibe-companion-tab': 'review' },
+  })
+  try {
+    await p.every('pollConversation')
+    const submit = p.$('review-submit')
+    assert.equal(submit.disabled, true, 'usable while the agent answers')
+    assert.match(submit.textContent, /^Submit 1 to agent$/, 'the count of what waits is gone')
+    assert.match(submit.title, /agent is answering.*kept.*once it/i)
+    now.running = false
+    await p.every('pollConversation')
+    assert.equal(submit.disabled, false, 'still off once the agent has answered')
+  } finally { p.close() }
+})
+
 test("Submit to agent is off when the page can't talk to the agent", async () => {
   const p = await reviewPage({ review: unsent, conversation: false })
   try {
@@ -219,6 +244,9 @@ test('the file tree shows how many comment threads each file has', async () => {
 // laidOut gives the page the layout jsdom hasn't: the review bar's foot at
 // 50, and each thread's top as tops says (by thread id), for the page to
 // measure where it is in the comments.
+// allOpen is commented with every thread open: the arrows go only to unresolved threads, and these tests are of how they step.
+const allOpen = { ...commented, threads: commented.threads.map((t) => ({ ...t, status: 'open' })) }
+
 function laidOut(p, tops) {
   p.window.Element.prototype.getBoundingClientRect = function () {
     const id = this.id && this.id.match(/^review-thread-(\d+)$/)
@@ -229,40 +257,20 @@ function laidOut(p, tops) {
 }
 
 test('the bar counts the comment threads, and says how many the filter hides', async () => {
-  const p = await reviewPage({ review: commented, diff: twoFiles })
+  const p = await reviewPage({ review: allOpen, diff: twoFiles })
   try {
     laidOut(p, { 1: 200, 3: 400, 2: 600, 4: 800 })
     await p.click('tab-review')
-    assert.equal(p.$('review-count').textContent, '1/4 comments')
+    assert.equal(p.$('review-count').textContent, '4 unresolved')
     await p.type(p.$('review-filter'), 'b.txt')
-    assert.equal(p.$('review-count').textContent, '1/2 comments (2 hidden by the filter)')
-  } finally { p.close() }
-})
-
-test('the bar says which comment the page is at, by the arrows or by scrolling', async () => {
-  const p = await reviewPage({ review: commented, diff: twoFiles })
-  try {
-    p.window.Element.prototype.scrollIntoView = function () {}
-    const tops = { 1: 200, 3: 400, 2: 600, 4: 800 }
-    laidOut(p, tops)
-    await p.click('tab-review')
-    assert.equal(p.$('review-count').textContent, '1/4 comments', 'none reached yet')
-    Object.assign(tops, { 1: -300, 3: -100, 2: 100, 4: 300 })
-    p.$('panel-review').dispatchEvent(new p.window.Event('scroll'))
-    assert.equal(p.$('review-count').textContent, '2/4 comments', 'scrolled past two')
-    const counts = []
-    for (const id of ['review-next-comment', 'review-next-comment', 'review-next-comment', 'review-prev-comment']) {
-      await p.click(id)
-      counts.push(p.$('review-count').textContent)
-    }
-    assert.deepEqual(counts, ['3/4 comments', '4/4 comments', '1/4 comments', '4/4 comments'], 'on, on, round to the first, back to the last')
+    assert.equal(p.$('review-count').textContent, '4 unresolved (2 hidden by the filter)')
   } finally { p.close() }
 })
 
 // At the foot of the page the last threads can't be scrolled up to the bar:
 // stepping on goes from the one stepped to, not from where the page is.
 test("the arrows step on past threads that can't reach the bar, and round", async () => {
-  const p = await reviewPage({ review: commented, diff: twoFiles })
+  const p = await reviewPage({ review: allOpen, diff: twoFiles })
   try {
     const shown = []
     p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
@@ -273,23 +281,25 @@ test("the arrows step on past threads that can't reach the bar, and round", asyn
   } finally { p.close() }
 })
 
+// Once scrolled by hand, ▼ goes on from where the page is, not from where the arrows last were.
 test('scrolling by hand takes over from the arrows', async () => {
-  const p = await reviewPage({ review: commented, diff: twoFiles })
+  const p = await reviewPage({ review: allOpen, diff: twoFiles })
   try {
-    p.window.Element.prototype.scrollIntoView = function () {}
+    const shown = []
+    p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
     const tops = { 1: -500, 3: -300, 2: 200, 4: 400 }
     laidOut(p, tops)
     await p.click('tab-review')
     await p.click('review-next-comment')
-    assert.equal(p.$('review-count').textContent, '3/4 comments')
     p.$('panel-review').dispatchEvent(new p.window.Event('wheel'))
     p.$('panel-review').dispatchEvent(new p.window.Event('scroll'))
-    assert.equal(p.$('review-count').textContent, '2/4 comments', 'measured again: thread 2 is still below the bar')
+    await p.click('review-next-comment')
+    assert.deepEqual(shown, ['review-thread-2', 'review-thread-2'], 'on from the page (thread 2 still below the bar), not from the arrows (on to 4)')
   } finally { p.close() }
 })
 
 test('the comment arrows go through all the threads in page order, round at the ends', async () => {
-  const p = await reviewPage({ review: commented, diff: twoFiles })
+  const p = await reviewPage({ review: allOpen, diff: twoFiles })
   try {
     const shown = []
     p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
@@ -298,7 +308,7 @@ test('the comment arrows go through all the threads in page order, round at the 
     // step each way goes round to the end.
     await p.click('review-next-comment')
     await p.click('review-prev-comment')
-    assert.deepEqual(shown, ['review-thread-1', 'review-thread-4'], 'the first (the whole review), then the last (resolved, on b.txt)')
+    assert.deepEqual(shown, ['review-thread-1', 'review-thread-4'], 'the first (the whole review), then the last (on b.txt)')
     assert.equal(p.window.document.activeElement.dataset.thread, '4', 'its reply box has focus, to type in at once')
   } finally { p.close() }
 })
@@ -474,7 +484,7 @@ test('Ctrl+Enter in a reply box goes on to the next comment, ready to reply', as
     await replyByKeys(p, 1, 'noted')
     assert.deepEqual(shown, ['review-thread-3'], 'the next comment down the page')
     assert.equal(replyBoxFocused(p), 3, 'its reply box ready')
-    assert.match(p.$('review-count').textContent, /^2\/4/)
+    assert.match(p.$('review-count').textContent, /^3 unresolved/, 'the resolved one (b.txt) not counted')
   } finally { p.close() }
 })
 
@@ -1687,7 +1697,7 @@ test('the count opens a choice of order; the reading order sends the arrows by s
     assert.match(p.$('review-order').title, /reading order/)
     assert.equal(p.window.localStorage.getItem('vibe-review-comment-order'), 'reading')
     assert.deepEqual(await arrowsVisit(p, 4), [1, 4, 3, 2], 'the whole review, then z.go (1), ui/b.go (2), a.go')
-    assert.equal(p.$('review-count').textContent, '4/4 comments')
+    assert.equal(p.$('review-count').textContent, '4 unresolved')
     const files = Array.from(p.$('review-files').querySelectorAll('.review-file')).map((c) => c.dataset.path)
     assert.deepEqual(files, ['ui/b.go', 'a.go', 'z.go'], 'the files stay as the tree has them')
   } finally { p.close() }
@@ -1962,6 +1972,148 @@ test('a new comment on a viewed file unticks and unfolds it, apart from a code c
   } finally { p.close() }
 })
 
+// --- the arrows go to the unresolved comments ----------------------------------------------------
+
+// The arrows, and going on after a reply, go only to unresolved (open) threads: once most are resolved, stepping through them was
+// scrolling past resolved ones (raised by the user; "unresolved" is status open, docs/plan-review-tab-enhancements.md). The comments
+// pane still lists the resolved ones.
+const settled = (statuses) => ({ ...stepped,
+  review: { ...stepped.review, threads: stepped.review.threads.map((t) => ({ ...t, status: statuses[t.id] || t.status })) } })
+
+for (const [order, label] of [['path', 'Order by file path'], ['reading', 'Order by agent reading order']]) {
+  test('the comment arrows skip resolved and dismissed threads, round among the unresolved, in ' + order + ' order', async () => {
+    const p = await reviewPage(settled({ 2: 'resolved', 3: 'dismissed' }))
+    try {
+      await p.click('tab-review')
+      if (order === 'reading') { await p.click('review-order'); await p.click(orderItem(p, label)) }
+      assert.deepEqual(await arrowsVisit(p, 3), [1, 4, 1])
+      assert.equal(p.$('review-count').textContent, '2 unresolved')
+    } finally { p.close() }
+  })
+}
+
+test('the arrows say they go to the unresolved comments, to the eye and to a screen reader', async () => {
+  const p = await reviewPage(settled({ 2: 'resolved' }))
+  try {
+    await p.click('tab-review')
+    for (const [id, word] of [['review-prev-comment', 'Previous'], ['review-next-comment', 'Next']]) {
+      assert.equal(p.$(id).title, word + ' unresolved comment')
+      assert.equal(p.$(id).getAttribute('aria-label'), word + ' unresolved comment')
+    }
+  } finally { p.close() }
+})
+
+test('with no unresolved comments, the arrows are off and the bar says so', async () => {
+  const p = await reviewPage(settled({ 1: 'resolved', 2: 'resolved', 3: 'dismissed', 4: 'resolved' }))
+  try {
+    await p.click('tab-review')
+    assert.equal(p.$('review-next-comment').disabled, true)
+    assert.equal(p.$('review-prev-comment').disabled, true)
+    assert.equal(p.$('review-count').textContent, 'no unresolved comments')
+  } finally { p.close() }
+})
+
+test('a reply sent with Ctrl+Enter goes on to the next unresolved comment, past a resolved one', async () => {
+  const p = await reviewPage(settled({ 4: 'resolved' }))
+  try {
+    await p.click('tab-review')
+    const shown = []
+    p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
+    await replyByKeys(p, 2, 'noted')
+    assert.deepEqual(shown, ['review-thread-1'], 'z.go (resolved) passed over, round to the whole review')
+  } finally { p.close() }
+})
+
+test('Ctrl+Enter in an empty reply box goes on to the next unresolved comment, sending nothing', async () => {
+  const p = await reviewPage(settled({ 2: 'resolved' }))
+  try {
+    await p.click('tab-review')
+    const shown = []
+    p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
+    await replyByKeys(p, 3, '')
+    assert.deepEqual(p.posted('/api/review/do'), [], 'sent something')
+    assert.deepEqual(shown, ['review-thread-4'], 'a.go (resolved) passed over')
+    assert.match(p.$('review-thread-3').querySelector('textarea[data-thread]').placeholder, /goes on if empty/)
+  } finally { p.close() }
+})
+
+// From a resolved thread (which still has a reply box), going on is to the next unresolved one after it, in the arrows' order: not
+// round to the first.
+test('Ctrl+Enter in a resolved thread goes on to the next unresolved comment after it', async () => {
+  const p = await reviewPage(settled({ 3: 'resolved' }))
+  try {
+    await p.click('tab-review')
+    const shown = []
+    p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
+    await replyByKeys(p, 3, '')
+    assert.deepEqual(shown, ['review-thread-2'], 'ui/b.go (resolved) goes on to a.go, after it, not round to the whole review')
+  } finally { p.close() }
+})
+
+// The page at a resolved thread, in the reading order: ▼ goes to the next unresolved one after it in that order, not after the
+// unresolved one before it in the page's (path) order.
+test('in the reading order, the arrows go on from a resolved thread the page is at, in that order', async () => {
+  const p = await reviewPage(settled({ 3: 'resolved' }))
+  try {
+    await p.click('tab-review')
+    await p.click('review-order')
+    await p.click(orderItem(p, 'Order by agent reading order'))
+    const shown = []
+    p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
+    // The page's order is the whole review, ui/b.go, a.go, z.go; the page is at ui/b.go (resolved).
+    laidOut(p, { 1: -400, 3: 10, 2: 300, 4: 500 })
+    await p.click('review-next-comment')
+    assert.deepEqual(shown, ['review-thread-2'], 'reading order is the whole review, z.go, ui/b.go, a.go: after ui/b.go comes a.go')
+  } finally { p.close() }
+})
+
+// A thread resolved or dismissed is one the arrows pass over: with "go on after reply" ticked, Resolve and Dismiss go on to the next
+// unresolved one, as a reply by Ctrl+Enter does (the user); unticked, the page stays. Reopen stays: a thread is reopened to work on.
+for (const op of ['Resolve', 'Dismiss']) {
+  test(op + ' goes on to the next unresolved comment, with going on after a reply ticked', async () => {
+    const p = await reviewPage(settled({}))
+    try {
+      await p.click('tab-review')
+      const shown = []
+      p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
+      await p.click(p.button(op, p.$('review-thread-3')))
+      assert.deepEqual(p.posted('/api/review/do').map((b) => b.op), [op.toLowerCase()])
+      assert.deepEqual(shown, ['review-thread-2'], 'after ui/b.go comes a.go')
+    } finally { p.close() }
+  })
+
+  test(op + ' stays at the comment with going on after a reply unticked', async () => {
+    const p = await reviewPage(settled({}))
+    try {
+      await p.click('tab-review')
+      await p.click('review-reply-next')
+      const shown = []
+      p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
+      await p.click(p.button(op, p.$('review-thread-3')))
+      assert.deepEqual(shown, [])
+    } finally { p.close() }
+  })
+}
+
+test('Reopen stays at the comment it reopens', async () => {
+  const p = await reviewPage(settled({ 3: 'resolved' }))
+  try {
+    await p.click('tab-review')
+    const shown = []
+    p.window.Element.prototype.scrollIntoView = function () { shown.push(this.id) }
+    await p.click(p.button('Reopen', p.$('review-thread-3')))
+    assert.deepEqual(shown, [])
+  } finally { p.close() }
+})
+
+test("the going-on setting says it is for Resolve and Dismiss too", async () => {
+  const p = await reviewPage(settled({}))
+  try {
+    await p.click('tab-review')
+    assert.match(p.$('review-reply-next').closest('label').title, /Resolve.*Dismiss|Dismiss.*Resolve/)
+  } finally { p.close() }
+})
+
 test('a file whose change has changed since it was ticked says so, unticked', async () => {
   const p = await viewedPage({ 'a.txt': 'fp-a.txt', 'c.txt': 'what it was' })
   try {
@@ -1976,7 +2128,7 @@ test('a file whose change has changed since it was ticked says so, unticked', as
 test('the comment arrows pass over comments in viewed files, and say so', async () => {
   const p = await viewedPage({ 'b.txt': 'fp-b.txt:9f1fda36' })
   try {
-    assert.equal(p.$('review-count').textContent, '1 comment (1 in viewed files)')
+    assert.equal(p.$('review-count').textContent, '1 unresolved (1 in viewed files)')
     assert.equal(p.$('review-next-comment').disabled, true)
   } finally { p.close() }
 })

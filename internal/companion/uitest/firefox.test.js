@@ -799,13 +799,25 @@ test('the emoji list follows the prompt as it scrolls', async () => {
       document.addEventListener('visibilitychange', () => note('visibility ' + document.visibilityState))
       new MutationObserver(() => note('style set')).observe(ta, { attributes: true, attributeFilter: ['style'] })
     })
-    // The line as listBox measures it: a computed line-height can be "normal" (macOS CI), which is no number to scroll by.
-    const scrolled = await page.evaluate((line) => {
+    // The browser's own scroll to the caret, after the keystroke that showed the list, can come late: on macOS CI it came after the
+    // test's scroll and undid it (the log: scrollTop set 95 → 34, then a scroll back to 95 that no script made). So the prompt is
+    // let settle first (its scrollTop the same over a few frames), then scrolled as a person would, with the wheel.
+    const settled = () => page.evaluate(() => new Promise((resolve) => {
       const ta = document.getElementById('convo-input')
-      const was = ta.scrollTop
-      ta.scrollTop = was - 3 * line
-      return { was, now: ta.scrollTop }
-    }, before.line)
+      let last = ta.scrollTop
+      let still = 0
+      const frame = () => {
+        if (ta.scrollTop === last) { if (++still >= 3) { resolve(last); return } } else { still = 0; last = ta.scrollTop }
+        requestAnimationFrame(frame)
+      }
+      requestAnimationFrame(frame)
+    }))
+    const was = await settled()
+    const at = await page.locator('#convo-input').boundingBox()
+    await page.mouse.move(at.x + at.width / 2, at.y + at.height / 2)
+    // The line as listBox measures it: a computed line-height can be "normal" (macOS CI), which is no number to scroll by.
+    await page.mouse.wheel(0, -3 * before.line)
+    const scrolled = { was, now: await settled() }
     assert.ok(scrolled.now < scrolled.was, `the prompt did not scroll (scrollTop ${scrolled.was} → ${scrolled.now}), so this tests nothing`)
     // Polled, saying where things were if the list never moves: it timed out once on macOS CI with nothing to go on.
     let seen = null
@@ -1000,6 +1012,47 @@ test('a Markdown file opened at a line shows the block the line is in, marked an
     assert.equal(m.text, 'Paragraph 101, the words of it.', 'line 203 is paragraph 101')
     assert.ok(m.inView, 'the marked block is not in view')
   } finally { await page.close() }
+})
+
+// The pull request open for the branch is a link at the end of the git status: on the top bar's one line when there's room, and on
+// the page whatever its width (the bar wraps when narrow, as it did before).
+test("the branch's pull request link keeps to the top bar's line when wide, and on the page when narrow", async () => {
+  for (const width of [1500, 1000, 600]) {
+    const page = await browser.newPage({ viewport: { width, height: 700 } })
+    await page.route(/\/api\/state$/, stateWith(page, { folder: '~/code/opensource/vibe',
+      git: { branch: 'feat/review-tab-pr-link', modified: 2, ahead: 1, web: 'https://github.com/me/vibe' },
+      branchPullRequest: { number: 40, url: 'https://github.com/me/vibe/pull/40' } }))
+    try {
+      await page.goto(URL)
+      await page.waitForSelector('#pr')
+      const m = await page.evaluate(() => {
+        const r = (el) => el.getBoundingClientRect()
+        const link = r(document.querySelector('#pr'))
+        const project = r(document.querySelector('.brand .project'))
+        return { linkTop: link.top, linkRight: link.right, projectTop: project.top, lineHeight: project.height,
+          page: document.documentElement.scrollWidth <= document.documentElement.clientWidth, vw: window.innerWidth }
+      })
+      if (width === 1500) assert.ok(Math.abs(m.linkTop - m.projectTop) < m.lineHeight / 2, `at ${width}px the link went to another line`)
+      assert.ok(m.linkRight <= m.vw, `at ${width}px the link runs off the page (${m.linkRight} > ${m.vw})`)
+      assert.ok(m.page, `at ${width}px the page scrolls sideways`)
+    } finally { await page.close() }
+  }
+})
+
+// The dot pulses while a check runs, and not with reduced motion asked for (the title says it then).
+test('the pull request dot pulses while a check runs, and is still with reduced motion', async () => {
+  for (const reducedMotion of ['no-preference', 'reduce']) {
+    const page = await browser.newPage({ viewport: { width: 1200, height: 600 }, reducedMotion })
+    await page.route(/\/api\/state$/, stateWith(page, { folder: '~/code/opensource/vibe',
+      git: { branch: 'feat/a', web: 'https://github.com/me/vibe' },
+      branchPullRequest: { number: 41, url: 'https://github.com/me/vibe/pull/41', status: 'pending', running: true, why: '2 checks running' } }))
+    try {
+      await page.goto(URL)
+      await page.waitForSelector('#pr-dot.running')
+      const animation = await page.evaluate(() => getComputedStyle(document.getElementById('pr-dot')).animationName)
+      assert.equal(animation, reducedMotion === 'reduce' ? 'none' : 'pr-pulse', `with ${reducedMotion}`)
+    } finally { await page.close() }
+  }
 })
 
 const longFile = (title) => '# ' + title + '\n\n' + Array.from({ length: 150 }, (_, i) => 'Paragraph ' + i + ' of ' + title + '.').join('\n\n') + '\n\nOn to [the other](./b.md).'

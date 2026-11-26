@@ -16,6 +16,7 @@
       <span class="project">⬢ <span id="sandbox"></span></span>
       <span id="folder-part" hidden><span class="sep">│</span><span id="folder" class="folder"></span></span>
       <span id="git-part" hidden><span class="sep">│</span><span id="git" class="git"></span></span>
+      <span id="pr-part" hidden><span class="sep">│</span><span id="pr-dot" class="pr-dot" role="img" hidden></span><a id="pr" class="pr" target="_blank" rel="noopener noreferrer"></a></span>
     </div>
     <div class="power-wrap">
       <button type="button" id="link" class="link connecting" aria-haspopup="menu" aria-expanded="false" aria-controls="power-menu" title="connecting…" aria-label="Power menu: connecting…"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v6M4.6 3.9a5.5 5.5 0 1 0 6.8 0"/></svg></button>
@@ -244,9 +245,9 @@
                 <button type="button" role="menuitemradio" data-order="reading">Order by agent reading order</button>
               </div>
             </span>
-            <label class="muted inline-check" title="After Ctrl+Enter sends a reply, go on to the next comment, ready to reply to it"><input type="checkbox" id="review-reply-next"> Next after reply</label>
-            <button type="button" id="review-prev-comment" class="ghost" disabled aria-label="Previous comment" title="Previous comment">▲</button>
-            <button type="button" id="review-next-comment" class="ghost" disabled aria-label="Next comment" title="Next comment">▼</button>
+            <label class="muted inline-check" title="After Ctrl+Enter sends a reply, or after Resolve or Dismiss, go on to the next unresolved comment, ready to reply to it"><input type="checkbox" id="review-reply-next"> Next after reply</label>
+            <button type="button" id="review-prev-comment" class="ghost" disabled aria-label="Previous unresolved comment" title="Previous unresolved comment">▲</button>
+            <button type="button" id="review-next-comment" class="ghost" disabled aria-label="Next unresolved comment" title="Next unresolved comment">▼</button>
           </span>
           <label class="muted inline-check" title="Leave out what changed only in whitespace (indentation, spacing): comments stay where they are"><input type="checkbox" id="review-whitespace"> Hide whitespace changes</label>
           <button type="button" id="review-layout" class="ghost"></button>

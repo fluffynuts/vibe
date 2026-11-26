@@ -520,7 +520,11 @@ func (s *Server) reviewSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	launch, _, ok := s.claimTurn(submitPrompt(rv, refs))
 	if !ok {
-		writeError(w, http.StatusConflict, "the agent is still answering the last prompt — submit once it's done")
+		kept := "your 1 comment is kept, and Submit sends it"
+		if len(refs) != 1 {
+			kept = fmt.Sprintf("your %d comments are kept, and Submit sends them", len(refs))
+		}
+		writeError(w, http.StatusConflict, "the agent is still answering the last prompt: "+kept+" once it's done")
 		return
 	}
 	s.reviewBegan()
