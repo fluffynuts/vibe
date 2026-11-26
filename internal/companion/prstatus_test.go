@@ -40,3 +40,21 @@ func TestAPullRequestsStatusIsWorkedOutFromItsChecksReviewAndMerge(t *testing.T)
 		})
 	}
 }
+
+func TestAPullRequestSaysWhetherAnyOfItsChecksIsRunning(t *testing.T) {
+	done := Check{Name: "a", Status: "COMPLETED", Conclusion: "SUCCESS"}
+	for _, c := range []struct {
+		name   string
+		checks PullRequestChecks
+		want   bool
+	}{
+		{"all done", PullRequestChecks{Checks: []Check{done}}, false},
+		{"a check run in progress", PullRequestChecks{Checks: []Check{done, {Name: "b", Status: "IN_PROGRESS"}}}, true},
+		{"a commit status pending", PullRequestChecks{Checks: []Check{{Name: "c", State: "PENDING"}}}, true},
+		{"waiting on a review only", PullRequestChecks{Checks: []Check{done}, Review: "REVIEW_REQUIRED"}, false},
+	} {
+		if got := c.checks.Running(); got != c.want {
+			t.Errorf("%s: Running() = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

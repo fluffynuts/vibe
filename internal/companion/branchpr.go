@@ -18,13 +18,16 @@ type BranchPullRequest struct {
 	Draft  bool   `json:"draft,omitempty"`
 	Status string `json:"status,omitempty"`
 	Why    string `json:"why,omitempty"`
+	// Running says a check is still running: it is asked about again sooner then (see branchPRPendingEvery). The page needn't know.
+	Running bool `json:"-"`
 }
 
 // ErrNoGh is Config.BranchPullRequest's answer on a host without gh: nothing to show, and nothing to say about it.
 var ErrNoGh = errors.New("gh isn't installed on this machine")
 
 // branchPRAskEvery is how often the same branch is asked about again (a pull request opened, merged or closed since, a review given);
-// branchPRPendingEvery, while its checks run, so its dot turns green or red soon after they end.
+// branchPRPendingEvery, while one of its checks is running, so its dot turns green or red soon after they end. Pending on a review
+// alone, news comes when someone acts, which the minute is soon enough for.
 const (
 	branchPRAskEvery     = time.Minute
 	branchPRPendingEvery = 30 * time.Second
@@ -62,7 +65,7 @@ func (s *Server) branchPullRequest(git *GitInfo) *BranchPullRequest {
 		b.key, b.open, b.askedAt = key, nil, time.Time{}
 	}
 	every := branchPRAskEvery
-	if b.open != nil && b.open.Status == PRPending {
+	if b.open != nil && b.open.Running {
 		every = branchPRPendingEvery
 	}
 	if !b.asking && (b.askedAt.IsZero() || now.Sub(b.askedAt) >= every) {

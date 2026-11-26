@@ -103,7 +103,7 @@ func TestTheBranchsPullRequestCarriesItsStatusAndDraft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pr == nil || !pr.Draft || pr.Status != companion.PRFailing || !strings.Contains(pr.Why, "test (windows-latest) failed") || !strings.Contains(pr.Why, "1 check running") {
+	if pr == nil || !pr.Draft || pr.Status != companion.PRFailing || !strings.Contains(pr.Why, "test (windows-latest) failed") || !strings.Contains(pr.Why, "1 check running") || !pr.Running {
 		t.Errorf("pr = %+v", pr)
 	}
 }

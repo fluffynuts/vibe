@@ -35,6 +35,20 @@ type Check struct {
 // let it pass.
 var failedConclusions = map[string]bool{"FAILURE": true, "TIMED_OUT": true, "CANCELLED": true, "ACTION_REQUIRED": true, "STARTUP_FAILURE": true}
 
+// Running says one of the checks hasn't finished: a check run not yet completed, or a commit status pending.
+func (c PullRequestChecks) Running() bool {
+	for _, check := range c.Checks {
+		if check.State != "" {
+			if check.State == "PENDING" || check.State == "EXPECTED" {
+				return true
+			}
+		} else if check.Status != "COMPLETED" {
+			return true
+		}
+	}
+	return false
+}
+
 // Status is the pull request's status, and why, in words.
 func (c PullRequestChecks) Status() (status, why string) {
 	var failed []string

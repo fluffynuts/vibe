@@ -46,8 +46,9 @@ pressing it.
   a screen reader, say it in words, with why ("test (windows-latest) failed"): colour alone says nothing to some.
 - **A draft has a ring, not a dot**, in its status's colour: a draft is often opened to watch the checks, so the colour stays, and the
   shape says draft (fading the dot was thought of: 80% is hard to tell apart, and reads as disabled). Its title says "draft".
-- **Asked every 30 s while yellow**, so the dot turns green or red soon after the checks end; every minute otherwise. It asks GitHub,
-  not sbx, and GitHub's limits are far above that.
+- **Asked every 30 s while a check is running**, so the dot turns green or red soon after the checks end; every minute otherwise,
+  including while it is yellow only for a review waited for (news then comes when someone acts: the user's call, review #149). It asks
+  GitHub, not sbx, and GitHub's limits are far above that.
 
 ## A fork's pull request isn't this branch's
 

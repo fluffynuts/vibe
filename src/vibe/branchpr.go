@@ -91,5 +91,5 @@ func (g ghPullRequest) pullRequest() *companion.BranchPullRequest {
 		}
 	}
 	status, why := checks.Status()
-	return &companion.BranchPullRequest{Number: g.Number, URL: g.URL, Draft: g.IsDraft, Status: status, Why: why}
+	return &companion.BranchPullRequest{Number: g.Number, URL: g.URL, Draft: g.IsDraft, Status: status, Why: why, Running: checks.Running()}
 }

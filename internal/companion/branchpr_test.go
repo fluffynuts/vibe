@@ -172,8 +172,8 @@ func TestTheStateCarriesThePullRequestsStatusAndDraft(t *testing.T) {
 }
 
 // While checks run, the dot is asked about every 30 s, so it turns green or red soon after they end; settled, every minute.
-func TestAPendingPullRequestIsAskedAboutAgainSooner(t *testing.T) {
-	p := &prAt{open: map[string]*BranchPullRequest{"feat/a": {Number: 41, URL: "https://github.com/me/vibe/pull/41", Status: PRPending}}}
+func TestAPullRequestWhoseChecksRunIsAskedAboutAgainSooner(t *testing.T) {
+	p := &prAt{open: map[string]*BranchPullRequest{"feat/a": {Number: 41, URL: "https://github.com/me/vibe/pull/41", Status: PRPending, Running: true}}}
 	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
 	var logged []string
 	s := branchPRServer(t, p, &GitInfo{Branch: "feat/a", Web: "https://github.com/me/vibe"}, &now, &logged)
@@ -189,7 +189,7 @@ func TestAPendingPullRequestIsAskedAboutAgainSooner(t *testing.T) {
 		t.Fatalf("asked %d times after 30 s while pending, want 2", p.times())
 	}
 	p.mu.Lock()
-	p.open["feat/a"].Status = PRPassing
+	p.open["feat/a"].Status, p.open["feat/a"].Running = PRPassing, false
 	p.mu.Unlock()
 	now = now.Add(31 * time.Second)
 	stateAfterAsk(t, s)
@@ -197,5 +197,20 @@ func TestAPendingPullRequestIsAskedAboutAgainSooner(t *testing.T) {
 	stateAfterAsk(t, s)
 	if p.times() != 3 {
 		t.Errorf("asked %d times once passing, want 3 (no more till a minute)", p.times())
+	}
+}
+
+// Pending on a review, or on GitHub working out its mergeability, with no check running: news comes when someone acts, which the
+// minute's pace is soon enough for (the user, review #149).
+func TestAPullRequestPendingWithNoCheckRunningIsAskedAboutEveryMinute(t *testing.T) {
+	p := &prAt{open: map[string]*BranchPullRequest{"feat/a": {Number: 41, URL: "https://github.com/me/vibe/pull/41", Status: PRPending}}}
+	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	var logged []string
+	s := branchPRServer(t, p, &GitInfo{Branch: "feat/a", Web: "https://github.com/me/vibe"}, &now, &logged)
+	stateAfterAsk(t, s)
+	now = now.Add(40 * time.Second)
+	stateAfterAsk(t, s)
+	if p.times() != 1 {
+		t.Errorf("asked %d times within a minute, with no check running", p.times())
 	}
 }
