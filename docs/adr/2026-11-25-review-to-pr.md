@@ -6,7 +6,8 @@
   Submit disabled with its reason while the agent answered. The reviewers-and-conversations dot on a work pull request (2026-11-26):
   pulsing yellow and pulsing red while checks ran (red pulsing as a cancelled check was re-run: something failed, and checks are
   running again); and yellow on a work pull request whose reviewer had since approved, with three conversations unresolved, turning
-  green as the user resolved them.
+  green as the user resolved them; and, with yellow while running, a work pull request red for a cancelled check turning pulsing
+  yellow as it was re-run.
 - **Decided:** with the user: the first two raised 2026-10-22 ("unresolved" is status open, decided then), the link 2026-11-25.
 - **Came from:** `docs/plan-review-tab-enhancements.md` (`git show 0bf625a:docs/plan-review-tab-enhancements.md`).
 
