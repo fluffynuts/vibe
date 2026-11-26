@@ -14,9 +14,14 @@ type prAt struct {
 	open  map[string]*BranchPullRequest
 	err   error
 	asked []string
+	// gate, when set, holds every ask until it is closed: an ask still under way.
+	gate chan struct{}
 }
 
 func (p *prAt) ask(_ context.Context, repo, branch string) (*BranchPullRequest, error) {
+	if p.gate != nil {
+		<-p.gate
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.asked = append(p.asked, repo+" "+branch)
@@ -212,5 +217,31 @@ func TestAPullRequestPendingWithNoCheckRunningIsAskedAboutEveryMinute(t *testing
 	stateAfterAsk(t, s)
 	if p.times() != 1 {
 		t.Errorf("asked %d times within a minute, with no check running", p.times())
+	}
+}
+
+// The branch can change while gh is still being asked about the one before: its answer is of that branch, and is thrown away, not
+// shown for the new one (review #150).
+func TestAnAnswerForABranchLeftWhileGhWasAskedIsThrownAway(t *testing.T) {
+	p := &prAt{open: map[string]*BranchPullRequest{"feat/a": {Number: 40, URL: "https://github.com/me/vibe/pull/40"}}, gate: make(chan struct{})}
+	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	git := &GitInfo{Branch: "feat/a", Web: "https://github.com/me/vibe"}
+	var logged []string
+	s := branchPRServer(t, p, git, &now, &logged)
+	pageState(t, s)
+	git.Branch = "feat/b"
+	s.cache.clear()
+	pageState(t, s)
+	close(p.gate)
+	s.branchPR.flight.Wait()
+	s.cache.clear()
+	if v, ok := pageState(t, s)["branchPullRequest"]; ok && v != nil {
+		t.Errorf("feat/a's pull request shown on feat/b: %v", v)
+	}
+	s.branchPR.flight.Wait()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.asked) != 2 || p.asked[1] != "https://github.com/me/vibe feat/b" {
+		t.Errorf("asked %v, want feat/a then feat/b", p.asked)
 	}
 }
