@@ -3,6 +3,7 @@ package review
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -42,8 +43,10 @@ type ReflogCommit struct {
 // GitHistory is what git recorded in a repository since a time: its reflogs (HEAD's, and each local branch's), the
 // commits they name, who the user is there, and the repository's origin.
 type GitHistory struct {
-	Origin    string `json:"origin"`
-	UserEmail string `json:"userEmail"`
+	// Repository is false for a folder in no repository, which has no history: nothing else is set.
+	Repository bool   `json:"repository"`
+	Origin     string `json:"origin"`
+	UserEmail  string `json:"userEmail"`
 	// Branches are the local branches that have a reflog.
 	Branches []string                `json:"branches"`
 	Entries  []ReflogEntry           `json:"entries"`
@@ -62,11 +65,14 @@ func historyOf(dir, sinceText string) (GitHistory, error) {
 		return GitHistory{}, fmt.Errorf("since %q isn't a time: %w", sinceText, err)
 	}
 	r, err := openRepo(dir)
+	if errors.Is(err, errNotRepository) {
+		return GitHistory{}, nil
+	}
 	if err != nil {
 		return GitHistory{}, err
 	}
 	defer r.close()
-	h := GitHistory{Commits: map[string]ReflogCommit{}, UserEmail: r.setting("user", "email")}
+	h := GitHistory{Repository: true, Commits: map[string]ReflogCommit{}, UserEmail: r.setting("user", "email")}
 	if remote, err := r.git.Remote("origin"); err == nil && len(remote.Config().URLs) > 0 {
 		h.Origin = remote.Config().URLs[0]
 	}

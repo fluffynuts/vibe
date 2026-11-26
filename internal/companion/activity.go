@@ -1,0 +1,104 @@
+package companion
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
+
+	"vibe/internal/activity"
+)
+
+// The Activity tab: how the day's time split between repositories and branches, for a timesheet, from what vibe saw and
+// what git recorded in every folder vibe has opened (see docs/plan-activity.md).
+
+// ActivityTab is what the Activity tab reads, and the rounding it is shown with.
+type ActivityTab struct {
+	Desk *activity.Desk
+	// Rounding is the step chosen ("15m", "30m", "1h"; "" for the default); SetRounding keeps a new one.
+	Rounding    func() string
+	SetRounding func(string) error
+}
+
+// activityWithin bounds reading a day: a helper process for each folder's git, the first time.
+const activityWithin = 60 * time.Second
+
+var activityFeature = feature{func(s *Server) bool { return s.cfg.Activity != nil },
+	"this page has no Activity tab", 1 << 10}
+
+func (s *Server) rounding() string {
+	r := ""
+	if s.cfg.Activity.Rounding != nil {
+		r = s.cfg.Activity.Rounding()
+	}
+	if _, ok := activity.Roundings[r]; !ok {
+		return activity.DefaultRounding
+	}
+	return r
+}
+
+func (s *Server) activityState(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), activityWithin)
+	defer cancel()
+	rounding := s.rounding()
+	report, err := s.cfg.Activity.Desk.Day(ctx, r.URL.Query().Get("day"), activity.Roundings[rounding])
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	attention, problems := s.cfg.Activity.Desk.Attention(ctx)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"report":    report,
+		"attention": attention,
+		"problems":  append(report.Problems, problems...),
+		"rounding":  rounding,
+	})
+}
+
+func (s *Server) activityRounding(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Rounding string `json:"rounding"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "expected a rounding")
+		return
+	}
+	if _, ok := activity.Roundings[req.Rounding]; !ok {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("%q isn't a rounding: 15m, 30m or 1h", req.Rounding))
+		return
+	}
+	if s.cfg.Activity.SetRounding == nil {
+		writeError(w, http.StatusNotFound, "the rounding can't be changed here")
+		return
+	}
+	if err := s.cfg.Activity.SetRounding(req.Rounding); err != nil {
+		writeError(w, http.StatusInternalServerError, "the rounding couldn't be kept: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"rounding": req.Rounding})
+}
+
+// activitySeen is the user busy on the page (typing, clicking, scrolling), which the page says at most once a minute.
+func (s *Server) activitySeen(w http.ResponseWriter, r *http.Request) {
+	s.mark(activity.KindPage)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// mark records kind of work on the folder's branch as it is now, when the page keeps marks (Config.Mark).
+func (s *Server) mark(kind string) {
+	if s.cfg.Mark == nil {
+		return
+	}
+	if git := s.gitInfo(); git != nil {
+		s.cfg.Mark(kind, git.Branch)
+	}
+}
+
+// markGitChange marks the folder's git status having changed since it was last read.
+func (s *Server) markGitChange(was, now *GitInfo) {
+	if s.cfg.Mark == nil || was == nil || now == nil || *was == *now {
+		return
+	}
+	s.cfg.Mark(activity.KindGit, now.Branch)
+}

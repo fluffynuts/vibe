@@ -753,6 +753,19 @@ restarts, as for files). Colours follow the theme, and what is copied is the cod
   the profile, and global ones never went. `--migrate` takes the copy along, and deleting the sandbox
   deletes it.
 - **Filesystem rules** — the same, read-only (sbx doesn't log filesystem access yet).
+- **Activity** — how the day's time split between repositories and branches, for a timesheet, in every folder vibe has
+  opened (the sandboxes it has, and those it ran in this week, even if deleted since); it is on the Profiles page too. Time
+  is **measured** while a sandbox's page runs (a prompt, the agent answering, you typing or clicking on the page, a review
+  comment, the folder's git status changing: vibe keeps a line for each, at most one a minute, in `~/.vibe/activity/`), and
+  **estimated** (~) from git's record otherwise (each branch's reflog: commits, checkouts, merges, rebases), read with go-git, as the
+  Review tab reads, never by running git. Branches are grouped by the repository's name on origin, so every checkout of one is
+  together. Each branch's time is rounded **up** to the step chosen on the tab (15 minutes, half an hour, an hour: kept as
+  `activityRounding` in `~/.vibe/settings.yaml`), so any work at all counts at least one step; branches worked on at once each
+  count in full, and the bars show each one's share. Under each branch are your commits authored that day ("merged master",
+  "rebased onto master" for those), and a branch's row opens to show when it was worked on. **Copy** gives the day as text to
+  paste into a timesheet. `<` and `>` step through the last week. **Needs attention** lists, as things are now, folders with
+  uncommitted changes and branches with commits not pushed, asking GitHub (with this machine's `gh`) before saying so, as the
+  local copy of a branch on GitHub can be out of date.
 - **Admin** — what `vibe --info` shows of the sandbox, and what you'd otherwise go to a terminal for:
   start or stop it, rebuild it from its profile (`-r`), re-compose it with features added or taken away
   (`-C`), restore a backup of its profile (`--restore`), and save the agent's memories now. It also says

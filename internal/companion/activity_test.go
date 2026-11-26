@@ -1,0 +1,129 @@
+package companion
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+	"sync"
+	"testing"
+
+	"vibe/internal/activity"
+)
+
+// marks is a page's Config.Mark: what it was told, as "kind branch".
+type marks struct {
+	mu   sync.Mutex
+	seen []string
+}
+
+func (m *marks) mark(kind, branch string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.seen = append(m.seen, kind+" "+branch)
+}
+
+func (m *marks) said() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.seen...)
+}
+
+func activityServer(t *testing.T) (*Server, *marks, *string) {
+	t.Helper()
+	s := newServer(&fakeSbx{})
+	kept := ""
+	m := &marks{}
+	s.cfg.Workspace = t.TempDir()
+	s.cfg.Git = func(string) *GitInfo { return &GitInfo{Branch: "feat/x"} }
+	s.cfg.Mark = m.mark
+	s.cfg.Activity = &ActivityTab{
+		Desk:        &activity.Desk{Log: activity.Log{Dir: t.TempDir()}, Folders: func() []string { return nil }},
+		Rounding:    func() string { return kept },
+		SetRounding: func(r string) error { kept = r; return nil },
+	}
+	return s, m, &kept
+}
+
+func TestTheActivityIsTheDayWithItsRounding(t *testing.T) {
+	s, _, _ := activityServer(t)
+	rec := do(t, s, req{path: "/api/activity", headers: authed(nil)})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	var got struct {
+		Report    activity.Report      `json:"report"`
+		Attention []activity.Attention `json:"attention"`
+		Rounding  string               `json:"rounding"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Rounding != "30m" || got.Report.Day.Date != got.Report.Today || got.Attention == nil {
+		t.Fatalf("want today at the default half hour, got %s", rec.Body)
+	}
+	if rec := do(t, s, req{path: "/api/activity?day=1999-01-01", headers: authed(nil)}); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "outside the days kept") {
+		t.Fatalf("want a day long gone refused, got %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestTheRoundingIsOneOfThoseOfferedAndIsKept(t *testing.T) {
+	s, _, kept := activityServer(t)
+	if rec := do(t, s, post("/api/activity/rounding", `{"rounding":"7m"}`)); rec.Code != http.StatusBadRequest || *kept != "" {
+		t.Fatalf("want 7m refused and nothing kept, got %d %s, kept %q", rec.Code, rec.Body, *kept)
+	}
+	if rec := do(t, s, post("/api/activity/rounding", `{"rounding":"1h"}`)); rec.Code != http.StatusOK || *kept != "1h" {
+		t.Fatalf("want 1h kept, got %d %s, kept %q", rec.Code, rec.Body, *kept)
+	}
+	if !strings.Contains(do(t, s, req{path: "/api/activity", headers: authed(nil)}).Body.String(), `"rounding":"1h"`) {
+		t.Fatal("want the rounding kept used")
+	}
+}
+
+func TestTheUserBusyOnThePageIsMarkedOnTheFoldersBranch(t *testing.T) {
+	s, m, _ := activityServer(t)
+	if rec := do(t, s, post("/api/activity/seen", `{}`)); rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if got := m.said(); len(got) != 1 || got[0] != "page feat/x" {
+		t.Fatalf("want the page marked on feat/x, got %v", got)
+	}
+}
+
+func TestAPromptSentIsMarked(t *testing.T) {
+	s := converseServer(&fakeAgent{})
+	m := &marks{}
+	s.cfg.Workspace = t.TempDir()
+	s.cfg.Git = func(string) *GitInfo { return &GitInfo{Branch: "feat/x"} }
+	s.cfg.Mark = m.mark
+	send(t, s, "/api/conversation/send", `{"prompt":"hello"}`)
+	idle(t, s)
+	if got := m.said(); len(got) != 1 || got[0] != "prompt feat/x" {
+		t.Fatalf("want the prompt marked on feat/x, got %v", got)
+	}
+}
+
+func TestTheFoldersGitStatusChangingIsMarkedButNotItsFirstReading(t *testing.T) {
+	s, m, _ := activityServer(t)
+	modified := 0
+	s.cfg.Git = func(string) *GitInfo { return &GitInfo{Branch: "feat/x", Modified: modified} }
+	s.gitInfo()
+	s.cache.clear()
+	s.gitInfo()
+	if got := m.said(); len(got) != 0 {
+		t.Fatalf("want nothing marked while nothing changes, got %v", got)
+	}
+	modified = 1
+	s.cache.clear()
+	s.gitInfo()
+	if got := m.said(); len(got) != 1 || got[0] != "git feat/x" {
+		t.Fatalf("want the change marked, got %v", got)
+	}
+}
+
+func TestAPageWithNoMarksKeepsNone(t *testing.T) {
+	s, _, _ := activityServer(t)
+	s.cfg.Mark = nil
+	if rec := do(t, s, post("/api/activity/seen", `{}`)); rec.Code != http.StatusOK {
+		t.Fatalf("want the page's word taken, and nothing done, got %d %s", rec.Code, rec.Body)
+	}
+}

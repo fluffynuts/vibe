@@ -194,6 +194,9 @@ func (d *Desk) Attention(ctx context.Context) ([]Attention, []string) {
 	problems := []string{}
 	since := midnightOf(d.now()).AddDate(0, 0, -HistoryDays)
 	for _, f := range d.knownFolders(since) {
+		if h, err := d.historyOf(ctx, f, since.AddDate(0, 0, -1)); err == nil && !h.Repository {
+			continue
+		}
 		st, err := d.statusOf(ctx, f)
 		if errors.Is(err, os.ErrNotExist) {
 			continue

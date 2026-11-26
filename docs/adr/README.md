@@ -41,3 +41,4 @@ where there is something to say. A decision that is later changed gets a note in
 | [2026-11-25-new-conversation-faster](2026-11-25-new-conversation-faster.md) | New conversation's Start doesn't wait for the sandbox; one git run in it, and only the clipboard asked again |
 | [2026-11-25-file-line-links](2026-11-25-file-line-links.md) | A file named with a line (app.js:12, path#L12) opens there, marked, in a viewer that numbers its lines |
 | [2026-11-25-review-to-pr](2026-11-25-review-to-pr.md) | The arrows go to unresolved comments; Submit says why it can't; the branch's pull request in the top bar, asked of the host's gh |
+| [2026-11-26-activity](2026-11-26-activity.md) | The Activity tab: time per repository and branch for a timesheet, measured by vibe and estimated from git; Needs attention |

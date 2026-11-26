@@ -45,6 +45,7 @@ import (
 	"sync"
 	"time"
 
+	"vibe/internal/activity"
 	"vibe/internal/pathresolve"
 	"vibe/internal/policy"
 	"vibe/internal/review"
@@ -187,6 +188,10 @@ type Config struct {
 	// History is the file the conversation is kept in between runs, so it
 	// survives vibe being started again; "" keeps it only in memory.
 	History string
+	// Activity is what the Activity tab reads; nil means the page has no such tab.
+	Activity *ActivityTab
+	// Mark records work seen on the folder (one of activity's kinds) on branch, for the Activity tab; nil means none is kept.
+	Mark func(kind, branch string)
 }
 
 // Server is a running companion page.
@@ -257,6 +262,11 @@ type Server struct {
 	// boot is this run of the server: a page that has seen it change knows
 	// vibe was restarted.
 	boot string
+	// gitSeen is the folder's git status as last read, to mark its changes as activity.
+	gitSeen struct {
+		mu   sync.Mutex
+		info *GitInfo
+	}
 }
 
 // asked is the thread of the review the user last asked the agent about,
@@ -309,7 +319,7 @@ func Start(cfg Config) (*Server, error) {
 	}
 	go s.http.Serve(ln)
 	s.done = make(chan struct{})
-	go s.keepAwakeWhileWorking(s.done)
+	go s.whileWorking(s.done)
 	if cfg.PackageSync != nil {
 		s.loops.Add(1)
 		go func(done <-chan struct{}) {
@@ -492,6 +502,9 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"POST /api/review/start", s.serving(reviewFeature, s.reviewStart)},
 		{"POST /api/review/close", s.serving(reviewFeature, s.reviewClose)},
 		{"POST /api/review/afresh", s.serving(reviewFeature, s.reviewAfresh)},
+		{"GET /api/activity", s.serving(activityFeature, s.activityState)},
+		{"POST /api/activity/rounding", s.serving(activityFeature, s.activityRounding)},
+		{"POST /api/activity/seen", s.serving(activityFeature, s.activitySeen)},
 		{"GET /api/manage", s.authed(s.managed(s.manageState))},
 		{"POST /api/manage/plan", s.serving(manageFeature, s.managePlan)},
 		{"POST /api/manage/delete", s.serving(manageFeature, s.manageDelete)},
@@ -716,6 +729,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		"packageSync":           packageSyncFeature.present(s),
 		"themes":                s.cfg.Themes != nil,
 		"manage":                s.cfg.Manage != nil,
+		"activity":              s.cfg.Activity != nil,
 		"review":                s.cfg.ReviewTab != nil,
 		"viewFiles":             fileFeature.present(s),
 		"gitAuthor":             s.gitAuthorState(),
@@ -738,7 +752,13 @@ func (s *Server) gitInfo() *GitInfo {
 		read = readGit
 	}
 	return cachedStale(s.cache, "git", 2*time.Second, func() *GitInfo {
-		return read(s.cfg.Workspace)
+		now := read(s.cfg.Workspace)
+		s.gitSeen.mu.Lock()
+		was := s.gitSeen.info
+		s.gitSeen.info = now
+		s.gitSeen.mu.Unlock()
+		s.markGitChange(was, now)
+		return now
 	})
 }
 
@@ -781,9 +801,9 @@ func probeClipboard(url string) bool {
 // works: as often as the page asks, well within sbx's idle stop.
 const workingAwakeEvery = 20 * time.Second
 
-// keepAwakeWhileWorking keeps the sandbox awake for as long as the agent
-// works, until done is closed.
-func (s *Server) keepAwakeWhileWorking(done <-chan struct{}) {
+// whileWorking keeps the sandbox awake for as long as the agent works, and
+// marks the agent's turns as activity, until done is closed.
+func (s *Server) whileWorking(done <-chan struct{}) {
 	tick := time.NewTicker(workingAwakeEvery)
 	defer tick.Stop()
 	for {
@@ -792,6 +812,7 @@ func (s *Server) keepAwakeWhileWorking(done <-chan struct{}) {
 			return
 		case <-tick.C:
 			s.keepAwakeIfWorking()
+			s.markIfAnswering()
 		}
 	}
 }
@@ -803,6 +824,14 @@ func (s *Server) keepAwakeWhileWorking(done <-chan struct{}) {
 func (s *Server) keepAwakeIfWorking() {
 	if s.convo.working() {
 		s.keepAwake(nil)
+	}
+}
+
+// markIfAnswering marks the agent's work while a turn is under way: on an API account that costs money, so it is billable.
+// Tasks left running after the turn cost nothing, and aren't marked.
+func (s *Server) markIfAnswering() {
+	if s.convo.answeringNow() {
+		s.mark(activity.KindAgent)
 	}
 }
 

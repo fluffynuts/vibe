@@ -122,6 +122,8 @@ type fakeGit struct {
 	ahead     map[string]review.Ahead
 	noGitHub  bool
 	asked     int
+	// notRepos are folders in no repository.
+	notRepos map[string]bool
 }
 
 func (f *fakeGit) desk(l Log, folders ...string) *Desk {
@@ -132,7 +134,9 @@ func (f *fakeGit) desk(l Log, folders ...string) *Desk {
 			f.mu.Lock()
 			defer f.mu.Unlock()
 			f.asked++
-			return f.histories[dir], f.errs[dir]
+			h := f.histories[dir]
+			h.Repository = !f.notRepos[dir]
+			return h, f.errs[dir]
 		},
 		Status: func(_ context.Context, dir string) (*review.FolderStatus, error) {
 			return f.statuses[dir], f.errs[dir]
@@ -263,5 +267,19 @@ func TestNeedsAttentionAsksGitHubBeforeSayingCommitsAreNotPushed(t *testing.T) {
 	}
 	if want := []string{"partly: 1 commit not pushed", "new: never pushed"}; !sameSet(said, want) {
 		t.Fatalf("want %v, got %v", want, said)
+	}
+}
+
+func TestAFolderInNoRepositoryIsNeitherAProblemNorNeedsAttention(t *testing.T) {
+	plain := t.TempDir()
+	f := &fakeGit{notRepos: map[string]bool{plain: true}, errs: map[string]error{plain: nil},
+		statuses: map[string]*review.FolderStatus{}}
+	d := f.desk(Log{Dir: t.TempDir()}, plain)
+	r, err := d.Day(context.Background(), "", time.Hour)
+	if err != nil || len(r.Problems) != 0 {
+		t.Fatalf("want no problems, got %v, %q", err, r.Problems)
+	}
+	if got, problems := d.Attention(context.Background()); len(got) != 0 || len(problems) != 0 {
+		t.Fatalf("want nothing needing attention, got %+v, %q", got, problems)
 	}
 }

@@ -1722,3 +1722,44 @@ test('the permission mode beside Send is amber whenever it shows', async () => {
     assert.equal(m.label, m.amber)
   } finally { await page.close() }
 })
+
+// activityPage opens the Activity tab on a day whose branches have long names, its calls answered here.
+async function activityPage(width) {
+  const page = await browser.newPage({ viewport: { width, height: 900 } })
+  await page.route('**/api/state', stateWith(page, { activity: true }))
+  const branch = (repo, name, hours, more = {}) => Object.assign({
+    repo, branch: name, hours, bullets: ['a line saying what was done on it, long enough to need wrapping on a narrow window, and then some'],
+    folders: ['~/code/' + repo], stretches: [{ start: '2026-11-26T09:10:00Z', end: '2026-11-26T11:40:00Z', measured: true }],
+    measuredMinutes: 150, estimatedMinutes: 0,
+  }, more)
+  const day = { date: '2026-11-26', hours: 4, branches: [
+    branch('yumbi-web', 'feat/a-branch-name-as-long-as-they-come-in-a-busy-team-with-a-ticket-number-1234', 3),
+    branch('a-repository-with-a-long-name-too', 'fix/y', 1, { estimatedMinutes: 30 }),
+  ] }
+  await page.route('**/api/activity', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+    report: { day, today: '2026-11-26', earliest: '2026-11-19', problems: [] }, attention: [], problems: [], rounding: '30m' }) }))
+  await page.goto(URL)
+  await page.click('#tab-activity')
+  await page.waitForSelector('.activity-branch summary')
+  return page
+}
+
+test("each branch's row is one line on the page at every width, a long name cut short rather than pushing the rest off", async () => {
+  for (const width of [1400, 800, 420]) {
+    const page = await activityPage(width)
+    try {
+      const rows = await page.evaluate(() => [...document.querySelectorAll('.activity-branch summary')].map((s) => {
+        const r = s.getBoundingClientRect()
+        const kids = [...s.children].map((c) => c.getBoundingClientRect())
+        return { right: Math.max(...kids.map((k) => k.right)), top: Math.min(...kids.map((k) => k.top)), bottom: Math.max(...kids.map((k) => k.bottom)), height: r.height }
+      }))
+      const pageWidth = await page.evaluate(() => document.documentElement.clientWidth)
+      for (const row of rows) {
+        assert.ok(row.right <= pageWidth, `at ${width}px, a row runs off the page: ${JSON.stringify(row)} past ${pageWidth}`)
+        assert.ok(row.bottom - row.top < 30, `at ${width}px, a row is more than one line: ${JSON.stringify(row)}`)
+      }
+      const hours = await page.locator('.activity-hours').first().boundingBox()
+      assert.ok(hours && hours.width > 0, `at ${width}px, the hours aren't shown`)
+    } finally { await page.close() }
+  }
+})

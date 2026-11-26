@@ -206,7 +206,7 @@ func TestHistoryLeavesOutWhatIsOlderThanSince(t *testing.T) {
 	if len(h.Entries) != 0 {
 		t.Fatalf("want no entries after 09:00, got %+v", h.Entries)
 	}
-	if h.UserEmail != "me@example.com" || h.Origin != "git@github.com:codeo/yumbi-web.git" {
+	if !h.Repository || h.UserEmail != "me@example.com" || h.Origin != "git@github.com:codeo/yumbi-web.git" {
 		t.Fatalf("want the user and origin read, got %q and %q", h.UserEmail, h.Origin)
 	}
 }
@@ -226,5 +226,14 @@ func TestAheadOfCountsTheCommitsHeadHasThatACommitHasnt(t *testing.T) {
 	got, err = review.AheadOf(ctx, r.dir, strings.Repeat("ab", 20))
 	if err != nil || got.Known {
 		t.Fatalf("want a commit the repository hasn't to be unknown, got %+v, %v", got, err)
+	}
+}
+
+func TestHistoryOfAFolderInNoRepositoryIsEmptyNotAnError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	h, err := review.History(ctx, t.TempDir(), day)
+	if err != nil || h.Repository {
+		t.Fatalf("want no repository and no error, got %+v, %v", h, err)
 	}
 }

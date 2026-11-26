@@ -47,6 +47,7 @@
       <button role="tab" data-tab="log" id="tab-log">Network log</button>
       <button role="tab" data-tab="rules" id="tab-rules">Network rules</button>
       <button role="tab" data-tab="fs" id="tab-fs">Filesystem rules</button>
+      <button role="tab" data-tab="activity" id="tab-activity" hidden>Activity</button>
       <button role="tab" data-tab="admin" id="tab-admin" hidden>Admin</button>
       <button role="tab" data-tab="manage" id="tab-manage" hidden>Profiles</button>
     </nav>
@@ -443,6 +444,31 @@
           <p id="admin-permission-warning" class="warn-text" role="alert" hidden></p>
         </section>
       </div>
+    </section>
+
+    <section id="panel-activity" class="panel panel-activity" hidden>
+      <div class="bar">
+        <button type="button" id="activity-prev" class="ghost" aria-label="The day before" title="The day before">&lt;</button>
+        <button type="button" id="activity-day" class="ghost activity-day" title="Back to today">Today</button>
+        <button type="button" id="activity-next" class="ghost" aria-label="The day after" title="The day after">&gt;</button>
+        <div class="seg" id="activity-rounding" role="group" aria-label="Round each branch's time up to">
+          <button type="button" data-rounding="15m" aria-pressed="false">15 min</button>
+          <button type="button" data-rounding="30m" aria-pressed="false">½ hour</button>
+          <button type="button" data-rounding="1h" aria-pressed="false">1 hour</button>
+        </div>
+        <span class="spacer"></span>
+        <span id="activity-total" class="muted"></span>
+        <button type="button" id="activity-copy" title="Copy the day as text for a timesheet">Copy</button>
+      </div>
+      <p class="note muted">How the day's time split between repositories and branches, in every folder vibe has opened: measured while vibe's page ran, estimated (~) from git's record otherwise. Each branch is rounded up to the step chosen, which stands for the cost of switching to it; branches worked on at once each count in full.</p>
+      <p id="activity-wait" class="note muted">Reading git in the folders vibe has opened…</p>
+      <ul id="activity-problems" class="note bad-text activity-problems" hidden></ul>
+      <section class="card activity-attention" id="activity-attention" aria-labelledby="activity-attention-h" hidden>
+        <h2 id="activity-attention-h">Needs attention <span class="muted activity-now">now, whichever day is shown</span></h2>
+        <ul id="activity-attention-list"></ul>
+      </section>
+      <p id="activity-none" class="note muted" hidden>Nothing was worked on this day in the folders vibe has opened.</p>
+      <div id="activity-list" class="activity-list"></div>
     </section>
 
     <section id="panel-manage" class="panel panel-manage" hidden>

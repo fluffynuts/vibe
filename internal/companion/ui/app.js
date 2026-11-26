@@ -49,7 +49,7 @@
   // How long the clipboard page gets to come up before the page says so and
   // offers to start it.
   const CLIPBOARD_PATIENCE_MS = 30000
-  const TABS = ['conversation', 'review', 'log', 'rules', 'fs', 'admin', 'manage']
+  const TABS = ['conversation', 'review', 'log', 'rules', 'fs', 'activity', 'admin', 'manage']
   // The tabs about a sandbox: a page served for none ('vibe --manage') has
   // only the Profiles tab.
   const SANDBOX_TABS = ['log', 'rules', 'fs']
@@ -1094,6 +1094,8 @@
       $('usage').hidden = !state.usage
       $('tab-admin').hidden = !state.admin
       $('tab-manage').hidden = !res.body.manage
+      state.activity = !!res.body.activity
+      $('tab-activity').hidden = !state.activity
       $('tab-review').hidden = !res.body.review
       for (const t of SANDBOX_TABS) $('tab-' + t).hidden = res.body.sandboxTabs === false
       state.attention = res.body.attention || {}
@@ -1288,6 +1290,7 @@
     const loads = state.tab === 'conversation' ? [unlessBusy('state', loadState)]
       : state.tab === 'admin' ? [unlessBusy('state', loadState), unlessBusy('admin', loadAdmin), unlessBusy('permission', loadPermissionMode), unlessBusy('packages', loadPackages), unlessBusy('sync', loadSync), unlessBusy('instructions', () => loadInstructions(false))]
       : state.tab === 'manage' ? [unlessBusy('state', loadState), unlessBusy('manage', loadManage)]
+      : state.tab === 'activity' ? [unlessBusy('state', loadState), unlessBusy('activity', () => loadActivity(false))]
       : state.tab === 'review' ? [unlessBusy('state', loadState), unlessBusy('review', () => loadReview(reviewView.files === null))]
       : [unlessBusy('state', loadState), unlessBusy('tab ' + state.tab, () => load(state.tab))]
     if (state.tab === 'admin' && state.themes) loads.push(unlessBusy('theme', loadTheme))
@@ -5259,6 +5262,144 @@
     })
   }
 
+  // --- the Activity tab ---------------------------------------------------
+
+  // How the day's time split between repositories and branches, for a timesheet (see docs/plan-activity.md). Reading it runs
+  // a helper for each folder's git, so the tab asks again only every ACTIVITY_EVERY_MS, or when the day or rounding changes.
+  const ACTIVITY_EVERY_MS = 15000
+  // How often the page says the user is busy on it, at most: the minute is all the time is counted in.
+  const ACTIVITY_SEEN_MS = 60000
+  const activityView = { day: '', report: null, attention: [], problems: [], rounding: '', asked: 0, loaded: false, open: new Set(), seen: 0 }
+
+  async function loadActivity(now) {
+    if (!now && Date.now() - activityView.asked < ACTIVITY_EVERY_MS) return
+    activityView.asked = Date.now()
+    const day = activityView.day
+    const res = await api('/api/activity' + (day ? '?day=' + encodeURIComponent(day) : ''), { timeout: 70000 })
+    if (day !== activityView.day) return
+    if (!res.ok) { problem('activity', res); return }
+    banner('activity', '')
+    activityView.loaded = true
+    activityView.report = res.body.report
+    activityView.attention = res.body.attention || []
+    activityView.problems = res.body.problems || []
+    activityView.rounding = res.body.rounding || ''
+    // A look at GitHub under way: asked again soon, for what it said.
+    if (activityView.attention.some((a) => a.checking)) activityView.asked = Date.now() - ACTIVITY_EVERY_MS + 3000
+    drawActivity()
+  }
+
+  // hours is a branch's time as a timesheet takes it: decimal hours, with one decimal at least (3.0, 2.5, 0.25).
+  function hours(n) { return Number.isInteger(n) ? n.toFixed(1) : String(Math.round(n * 100) / 100) }
+
+  function dayLabel(date, today) {
+    if (date === today) return 'Today'
+    const d = new Date(date + 'T00:00:00')
+    const t = new Date(today + 'T00:00:00')
+    if (Math.round((t - d) / 86400000) === 1) return 'Yesterday'
+    return d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })
+  }
+
+  function clock(iso) { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
+
+  // activityText is the day as the user pastes it into a timesheet: each repository, its branches' hours and what was done.
+  function activityText(day) {
+    const lines = []
+    let repo = null
+    for (const b of day.branches) {
+      if (b.repo !== repo) { repo = b.repo; lines.push('[' + repo + ']') }
+      lines.push('  [' + b.branch + '] ' + hours(b.hours))
+      for (const bullet of b.bullets) lines.push('  - ' + bullet)
+    }
+    return lines.join('\n') + '\n'
+  }
+
+  function drawActivity() {
+    const r = activityView.report
+    $('activity-wait').hidden = activityView.loaded
+    for (const b of $('activity-rounding').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.rounding === activityView.rounding))
+    if (!r) return
+    const day = r.day
+    setText($('activity-day'), dayLabel(day.date, r.today))
+    $('activity-day').title = day.date === r.today ? day.date : day.date + ': back to today'
+    $('activity-prev').disabled = day.date <= r.earliest
+    $('activity-next').disabled = day.date >= r.today
+    setText($('activity-total'), day.branches.length ? 'total ' + hours(day.hours) : '')
+    $('activity-copy').disabled = !day.branches.length
+    $('activity-none').hidden = day.branches.length > 0
+    $('activity-problems').hidden = !activityView.problems.length
+    drawnAs($('activity-problems'), JSON.stringify(activityView.problems), () => activityView.problems.map((p) => el('li', { text: p })))
+    $('activity-attention').hidden = !activityView.attention.length
+    drawnAs($('activity-attention-list'), JSON.stringify(activityView.attention), () => activityView.attention.map((a) =>
+      el('li', {}, a.folder + ' (' + a.branch + '): ' + a.what, a.checking ? el('span', { class: 'muted', text: ' (checking with GitHub…)' }) : '')))
+    drawnAs($('activity-list'), JSON.stringify(day), () => day.branches.map((b) => activityRow(b, day.hours)))
+  }
+
+  function activityRow(b, total) {
+    const key = b.repo + ' ' + b.branch
+    const share = total ? b.hours / total : 0
+    const estimated = b.estimatedMinutes > 0
+    const details = el('details', { class: 'activity-branch', open: activityView.open.has(key) },
+      el('summary', {},
+        el('span', { class: 'activity-repo', text: b.repo, title: b.repo }),
+        el('span', { class: 'activity-branch-name', text: b.branch, title: b.branch }),
+        el('span', { class: 'activity-hours', text: hours(b.hours) }),
+        el('meter', { min: '0', max: '1', value: String(share), 'aria-label': Math.round(share * 100) + '% of the day' }),
+        el('span', { class: 'activity-share', text: Math.round(share * 100) + '%' }),
+        el('span', { class: 'muted', text: estimated ? '~estimated' : '' })),
+      el('div', { class: 'activity-more' },
+        el('span', {}, 'When: ' + b.stretches.map((s) => clock(s.start) + '–' + clock(s.end) + (s.measured ? '' : ' (~)')).join(', ')),
+        el('span', {}, 'Before rounding: ' + hours(b.measuredMinutes / 60) + ' measured, ~' + hours(b.estimatedMinutes / 60) + ' estimated'),
+        el('span', { class: 'muted' }, 'In: ' + b.folders.join(', '))))
+    details.addEventListener('toggle', () => { if (details.open) activityView.open.add(key); else activityView.open.delete(key) })
+    return el('div', {}, details, b.bullets.length ? el('ul', { class: 'activity-bullets' }, ...b.bullets.map((t) => el('li', { text: t }))) : null)
+  }
+
+  function showActivityDay(date) {
+    activityView.day = date
+    activityView.loaded = false
+    activityView.report = null
+    $('activity-list').replaceChildren()
+    drawnKeys.delete($('activity-list'))
+    drawActivity()
+    loadActivity(true)
+  }
+
+  function stepActivityDay(by) {
+    const r = activityView.report
+    if (!r) return
+    const d = new Date(r.day.date + 'T12:00:00')
+    d.setDate(d.getDate() + by)
+    const date = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+    if (date < r.earliest || date > r.today) return
+    showActivityDay(date === r.today ? '' : date)
+  }
+
+  // activitySeen says the user is busy on the page (typing, clicking, scrolling), at most once a minute: time at the page is
+  // time on the sandbox's branch.
+  function activitySeen() {
+    if (!state.activity || !state.sandbox || Date.now() - activityView.seen < ACTIVITY_SEEN_MS) return
+    activityView.seen = Date.now()
+    post('/api/activity/seen', {}).catch(() => {})
+  }
+
+  function setUpActivity() {
+    $('activity-prev').addEventListener('click', () => stepActivityDay(-1))
+    $('activity-next').addEventListener('click', () => stepActivityDay(1))
+    $('activity-day').addEventListener('click', () => showActivityDay(''))
+    $('activity-copy').addEventListener('click', () => { if (activityView.report) copyText(activityText(activityView.report.day)) })
+    for (const b of $('activity-rounding').querySelectorAll('button')) {
+      b.addEventListener('click', async () => {
+        const res = await post('/api/activity/rounding', { rounding: b.dataset.rounding })
+        if (!res.ok) { toast(res.body.error || "The rounding couldn't be changed", true); return }
+        activityView.rounding = res.body.rounding
+        drawActivity()
+        loadActivity(true)
+      })
+    }
+    for (const type of ['keydown', 'pointerdown', 'wheel']) document.addEventListener(type, activitySeen, { capture: true, passive: true })
+  }
+
   // --- the Profiles tab ---------------------------------------------------
 
   // What the tab last showed, and what's ticked, by ID (see manage.js).
@@ -9193,6 +9334,7 @@
     $('status-balloon').addEventListener(on, () => holdStatus(held))
   }
   setUpManage()
+  setUpActivity()
 
   // Out of sight, the next time in view asks to keep the sandbox awake at
   // once, rather than when the last ask is old enough.

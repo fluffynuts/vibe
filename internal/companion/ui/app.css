@@ -795,6 +795,20 @@ dialog.glass::backdrop { background: rgba(250, 250, 250, .55); backdrop-filter: 
 
 /* The Profiles tab: a group per profile, its sandboxes under it. */
 .panel-manage { overflow: auto; }
+.panel-activity { overflow: auto; }
+.activity-day { min-width: 8em; }
+.activity-problems { margin: 4px 0; padding-left: 1.2em; }
+.activity-attention ul { margin: 0; padding-left: 1.2em; }
+.activity-now { font-weight: normal; font-size: 12px; }
+.activity-list { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 12px; }
+.activity-branch { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 6px 10px; }
+.activity-branch summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) 3em minmax(0, 2fr) 2.8em auto; gap: 10px; align-items: center; cursor: pointer; }
+.activity-branch summary > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity-hours { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.activity-share { text-align: right; font-variant-numeric: tabular-nums; }
+.activity-branch meter { width: 100%; }
+.activity-more { margin: 6px 0 0 1em; display: flex; flex-direction: column; gap: 2px; }
+.activity-bullets { margin: 4px 0 0; padding-left: 2.2em; }
 .manage-list { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 12px; }
 .mgr-profile { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 6px 10px; }
 .mgr-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; padding: 2px 0; }
