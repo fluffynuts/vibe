@@ -435,6 +435,32 @@ func TestAPromptGivenAsTheNewAgentEndsStartsAnother(t *testing.T) {
 	idle(t, s)
 }
 
+// Vibe stopping while the prompts that waited for the agent are handed to it starts no other agent for those left: the
+// conversation is closed. It did, and was left starting for good (seen as a test whose turn never ended, on Windows CI).
+func TestVibeStoppingDuringTheHandOverStartsNoOtherAgent(t *testing.T) {
+	f := &fakeAgent{release: make(chan struct{}), startGate: make(chan struct{}),
+		firstPromptReached: make(chan struct{}), firstPromptGate: make(chan struct{})}
+	s := converseServer(f)
+	send(t, s, "/api/conversation/send", `{"prompt":"first"}`)
+	close(f.startGate)
+	select {
+	case <-f.firstPromptReached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first prompt was never given to the agent")
+	}
+	send(t, s, "/api/conversation/send", `{"prompt":"second"}`)
+	s.Close()
+	close(f.firstPromptGate)
+	waitFor(t, "the hand-over to end", func() bool { s.convo.mu.Lock(); defer s.convo.mu.Unlock(); return !s.convo.handingOver })
+	if n := f.count(&f.starts); n != 1 {
+		t.Errorf("%d agents were started, want the one", n)
+	}
+	if p := poll(t, s, 0); p.Running {
+		t.Errorf("the closed conversation is still running: %s", kinds(p))
+	}
+	close(f.release)
+}
+
 func TestAPromptWhileTheAgentAnswersIsGivenToTheSameAgent(t *testing.T) {
 	f := &fakeAgent{release: make(chan struct{})}
 	s := converseServer(f)

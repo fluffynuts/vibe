@@ -500,8 +500,10 @@ func (c *conversation) startAgent(ctx context.Context, session string, start Sta
 			c.handingOver = false
 			// The agent ended while the prompts were handed to it. Those it was
 			// given were marked undelivered as it ended; any given meanwhile have
-			// not been tried, and start a new agent, as with no agent there.
-			if len(waiting) > 0 {
+			// not been tried, and start a new agent, as with no agent there. Not
+			// once vibe is stopping: it was killed for that, and nothing would end
+			// the start.
+			if len(waiting) > 0 && !c.closed {
 				c.waiting = waiting
 				c.beginStart(start, prepare)
 			}
