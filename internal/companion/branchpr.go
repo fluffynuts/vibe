@@ -26,7 +26,7 @@ var ErrNoGh = errors.New("gh isn't installed on this machine")
 // branchPRAskEvery is how often the same branch is asked about again (a pull request opened, merged or closed since, a review given);
 // branchPRPendingEvery, while its checks run, so its dot turns green or red soon after they end.
 const (
-	branchPRAskEvery     = 2 * time.Minute
+	branchPRAskEvery     = time.Minute
 	branchPRPendingEvery = 30 * time.Second
 )
 

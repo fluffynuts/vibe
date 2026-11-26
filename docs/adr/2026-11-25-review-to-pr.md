@@ -36,7 +36,7 @@ pressing it.
   folder of its own, never the project's: there gh would run git, and the project's `.git/config` can be written from inside the sandbox
   (`core.fsmonitor` and the like run commands on this machine). The repository and branch come from vibe's own read (go-git, which runs
   nothing).
-- **In the background**, never waited on: asked when the branch changes, then at most every two minutes. Nothing is asked on a detached
+- **In the background**, never waited on: asked when the branch changes, then every minute (two at first; the user asked for one, 2026-11-26). Nothing is asked on a detached
   HEAD, outside GitHub, or without gh; a failure (not signed in, say) is logged once, not at every ask.
 - **The top bar is drawn again only when it changes**: drawn at every poll, the link lost keyboard focus.
 - **A dot before the link says its status** (the user, 2026-11-26): red when a check failed (failed, timed out, cancelled, needing
@@ -46,7 +46,7 @@ pressing it.
   a screen reader, say it in words, with why ("test (windows-latest) failed"): colour alone says nothing to some.
 - **A draft has a ring, not a dot**, in its status's colour: a draft is often opened to watch the checks, so the colour stays, and the
   shape says draft (fading the dot was thought of: 80% is hard to tell apart, and reads as disabled). Its title says "draft".
-- **Asked every 30 s while yellow**, so the dot turns green or red soon after the checks end; two minutes otherwise. It asks GitHub,
+- **Asked every 30 s while yellow**, so the dot turns green or red soon after the checks end; every minute otherwise. It asks GitHub,
   not sbx, and GitHub's limits are far above that.
 
 ## Not done

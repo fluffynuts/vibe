@@ -97,21 +97,21 @@ func TestAnotherBranchIsAskedAboutAtOnce(t *testing.T) {
 	}
 }
 
-func TestTheSameBranchIsAskedAgainOnlyAfterTwoMinutes(t *testing.T) {
+func TestTheSameBranchIsAskedAgainOnlyAfterAMinute(t *testing.T) {
 	p := &prAt{}
 	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
 	var logged []string
 	s := branchPRServer(t, p, &GitInfo{Branch: "feat/a", Web: "https://github.com/me/vibe"}, &now, &logged)
 	stateAfterAsk(t, s)
-	now = now.Add(time.Minute)
+	now = now.Add(40 * time.Second)
 	stateAfterAsk(t, s)
 	if p.times() != 1 {
-		t.Fatalf("asked %d times within two minutes", p.times())
+		t.Fatalf("asked %d times within a minute", p.times())
 	}
-	now = now.Add(time.Minute + time.Second)
+	now = now.Add(21 * time.Second)
 	stateAfterAsk(t, s)
 	if p.times() != 2 {
-		t.Errorf("asked %d times after two minutes, want 2", p.times())
+		t.Errorf("asked %d times after a minute, want 2", p.times())
 	}
 }
 
@@ -134,8 +134,8 @@ func TestNothingIsAskedWithoutABranchOnGitHub(t *testing.T) {
 	}
 }
 
-// gh missing says nothing: most hosts won't have it. Any other failure (not signed in, the network) is logged once, not every two
-// minutes, and shows no pull request.
+// gh missing says nothing: most hosts won't have it. Any other failure (not signed in, the network) is logged once, not every
+// minute, and shows no pull request.
 func TestAFailedAskShowsNoneAndIsLoggedOnce(t *testing.T) {
 	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
 	for name, c := range map[string]struct {
@@ -171,7 +171,7 @@ func TestTheStateCarriesThePullRequestsStatusAndDraft(t *testing.T) {
 	}
 }
 
-// While checks run, the dot is asked about every 30 s, so it turns green or red soon after they end; settled, every two minutes.
+// While checks run, the dot is asked about every 30 s, so it turns green or red soon after they end; settled, every minute.
 func TestAPendingPullRequestIsAskedAboutAgainSooner(t *testing.T) {
 	p := &prAt{open: map[string]*BranchPullRequest{"feat/a": {Number: 41, URL: "https://github.com/me/vibe/pull/41", Status: PRPending}}}
 	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
@@ -196,6 +196,6 @@ func TestAPendingPullRequestIsAskedAboutAgainSooner(t *testing.T) {
 	now = now.Add(31 * time.Second)
 	stateAfterAsk(t, s)
 	if p.times() != 3 {
-		t.Errorf("asked %d times once passing, want 3 (no more till two minutes)", p.times())
+		t.Errorf("asked %d times once passing, want 3 (no more till a minute)", p.times())
 	}
 }
