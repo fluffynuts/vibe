@@ -15,7 +15,6 @@ import (
 	"vibe/internal/layout"
 	"vibe/internal/modelchoice"
 	"vibe/internal/pathresolve"
-	"vibe/internal/sbxrun"
 	"vibe/internal/settings"
 	"vibe/internal/userprefs"
 )
@@ -394,7 +393,7 @@ func keptOptions(file string, now func() time.Time) (cached func() (companion.Op
 func sandboxChoice(name, workspace string, kept profileChoice, optionsFile string) *companion.Choice {
 	cached, remember := keptOptions(optionsFile, time.Now)
 	ask := func(ctx context.Context, script string) (string, error) {
-		return sbxrun.ExecStdout(ctx, name, asAgent(script)...)
+		return sandboxExec(ctx, name, asAgent(script)...)
 	}
 	return &companion.Choice{
 		Get: func() (string, string, error) {
@@ -407,7 +406,7 @@ func sandboxChoice(name, workspace string, kept profileChoice, optionsFile strin
 		},
 		Set: kept.set,
 		Options: func(ctx context.Context) (companion.Options, error) {
-			inside, err := sbxrun.FolderInSandbox(ctx, name, workspace)
+			inside, err := folderInSandbox(ctx, name, workspace)
 			if err != nil {
 				return companion.Options{}, err
 			}

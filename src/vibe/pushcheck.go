@@ -17,6 +17,10 @@ const pushCheckWithin = 60 * time.Second
 // sandboxExec runs a command in a sandbox; tests stand in for it.
 var sandboxExec = sbxrun.ExecStdout
 
+// folderInSandbox is where sandbox name has its folder, for a command run there (see sbxrun.FolderInSandbox). A variable for
+// tests: off Windows it is the folder itself, so only a stand-in shows that a caller uses what it gives.
+var folderInSandbox = sbxrun.FolderInSandbox
+
 // pushFromInside is checkPushFromInside; the tests of what calls it stand in for it.
 var pushFromInside = checkPushFromInside
 
@@ -46,7 +50,7 @@ func checkPushFromInside(name, target string, repo *gittoken.Repo) insideCheck {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), pushCheckWithin)
 	defer cancel()
-	inside, err := sbxrun.FolderInSandbox(ctx, name, target)
+	inside, err := folderInSandbox(ctx, name, target)
 	if err != nil {
 		return insideCheck{said: "not checked from inside: " + err.Error()}
 	}

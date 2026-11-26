@@ -2,7 +2,9 @@ package sbxrun
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
@@ -15,8 +17,11 @@ var hostOS = runtime.GOOS
 // when it is made.
 var folders sync.Map
 
-// findFolderScript prints the first of its arguments that is a folder, and fails (exit 3) when none is.
+// findFolderScript prints the first of its arguments that is a folder, and fails (noneIsAFolder) when none is.
 const findFolderScript = `for p do if [ -d "$p" ]; then printf '%s\n' "$p"; exit 0; fi; done; exit 3`
+
+// noneIsAFolder is findFolderScript's exit code when none of the places is a folder: any other failure is sbx's or the exec's.
+const noneIsAFolder = 3
 
 // FolderInSandbox is where folder, a folder on this machine that sandbox name was made with, is inside the sandbox, for a
 // command run there. On Linux and macOS a mount keeps its host path, so it is folder itself. A Windows path (C:\Users\...)
@@ -33,11 +38,16 @@ func FolderInSandbox(ctx context.Context, name, folder string) (string, error) {
 	}
 	candidates := WindowsMountCandidates(folder)
 	out, err := ExecStdout(ctx, name, append([]string{"sh", "-c", findFolderScript, "find"}, candidates...)...)
-	if err != nil {
-		if ctx.Err() != nil {
-			return "", ctx.Err()
-		}
-		return "", fmt.Errorf("couldn't find %s inside the sandbox (looked at %s): %w", folder, strings.Join(candidates, ", "), err)
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+	case ctx.Err() != nil:
+		return "", ctx.Err()
+	case errors.As(err, &exit) && exit.ExitCode() == noneIsAFolder:
+		return "", fmt.Errorf("couldn't find %s inside the sandbox (looked at %s)", folder, strings.Join(candidates, ", "))
+	default:
+		// The sandbox stopped, sbx signed out: not the folder being missing, which would send the user looking for it.
+		return "", fmt.Errorf("couldn't ask the sandbox where its folder is: %w", err)
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	found := strings.TrimSpace(lines[len(lines)-1])

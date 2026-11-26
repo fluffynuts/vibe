@@ -74,8 +74,20 @@ func TestOnWindowsTheFolderIsFoundWhereSbxMountedItOnceAndKept(t *testing.T) {
 func TestOnWindowsAFolderNotInTheSandboxIsAnErrorNotAGuess(t *testing.T) {
 	playWindows(t)
 	_, err := FolderInSandbox(context.Background(), "box", `C:\Users\Quickemu\code\yafs`)
-	if err == nil || !strings.Contains(err.Error(), "/c/Users/Quickemu/code/yafs") {
-		t.Fatalf("want an error naming where it looked, got %v", err)
+	if err == nil || !strings.HasPrefix(err.Error(), "couldn't find") || !strings.Contains(err.Error(), "/c/Users/Quickemu/code/yafs") {
+		t.Fatalf("want an error saying it isn't there, naming where it looked, got %v", err)
+	}
+}
+
+func TestOnWindowsASandboxThatCantBeAskedIsSaidSoNotAMissingFolder(t *testing.T) {
+	playWindows(t)
+	sbxtest.OnPath(t, `echo "the sandbox is stopped" >&2; exit 1`)
+	_, err := FolderInSandbox(context.Background(), "box", `C:\Users\Quickemu\code\yafs`)
+	if err == nil || strings.Contains(err.Error(), "couldn't find") || !strings.Contains(err.Error(), "couldn't ask the sandbox where its folder is") || !strings.Contains(err.Error(), "the sandbox is stopped") {
+		t.Fatalf("want the sandbox's own failure said, not a missing folder, got %v", err)
+	}
+	if _, ok := folders.Load("box\x00" + `C:\Users\Quickemu\code\yafs`); ok {
+		t.Fatal("want a failure not kept")
 	}
 }
 
