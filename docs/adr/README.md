@@ -41,4 +41,4 @@ where there is something to say. A decision that is later changed gets a note in
 | [2026-11-25-new-conversation-faster](2026-11-25-new-conversation-faster.md) | New conversation's Start doesn't wait for the sandbox; one git run in it, and only the clipboard asked again |
 | [2026-11-25-file-line-links](2026-11-25-file-line-links.md) | A file named with a line (app.js:12, path#L12) opens there, marked, in a viewer that numbers its lines |
 | [2026-11-25-review-to-pr](2026-11-25-review-to-pr.md) | The arrows go to unresolved comments; Submit says why it can't; the branch's pull request in the top bar, asked of the host's gh |
-| [2026-11-26-windows-hidden-processes](2026-11-26-windows-hidden-processes.md) | On Windows, what a vibe with no console starts opens no window; every program is started through internal/proc |
+| [2026-11-26-windows-hidden-processes](2026-11-26-windows-hidden-processes.md) | On Windows, what a vibe with no console starts opens no window (internal/proc); commands in the sandbox use the folder where sbx mounted it (/c/Users/...) |

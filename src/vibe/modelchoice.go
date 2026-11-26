@@ -407,7 +407,11 @@ func sandboxChoice(name, workspace string, kept profileChoice, optionsFile strin
 		},
 		Set: kept.set,
 		Options: func(ctx context.Context) (companion.Options, error) {
-			return agentOptions(ctx, ask, workspace)
+			inside, err := sbxrun.FolderInSandbox(ctx, name, workspace)
+			if err != nil {
+				return companion.Options{}, err
+			}
+			return agentOptions(ctx, ask, inside)
 		},
 		Cached:   cached,
 		Remember: remember,

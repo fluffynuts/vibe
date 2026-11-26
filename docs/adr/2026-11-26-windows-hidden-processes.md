@@ -1,4 +1,4 @@
-# On Windows, what a vibe with no console starts opens no window
+# On Windows, what a vibe with no console starts opens no window; the folder is found where the sandbox has it
 
 - **Status:** accepted, built 2026-11-26 on `fix/windows-hidden-processes`, a hotfix. Not yet tried on Windows by hand.
 - **Decided:** with the user, 2026-11-26, after they saw the windows in a Windows 11 VM.
@@ -28,7 +28,18 @@ seconds while a page is open.
 - On Windows, by hand: that the headless vibe's page no longer opens windows, and that a vibe in a terminal still runs `sbx run`
   and signs in as before. CI runs the Windows unit tests.
 
-## Not built
+## The folder's path inside the sandbox (found in the same VM, fixed on the same branch)
 
-- A second Windows problem seen in the same VM: the page's toast "asking claude for its --help: … cd: C:\Users\…\yafs: invalid
-  argument". Something gives the sandbox a Windows path to `cd` to. Left for its own fix.
+**Context:** the page said "asking claude for its --help: … cd: C:\Users\Quickemu\code\yafs: invalid argument". vibe took the
+sandbox's folder to have the same path inside as on the host, which holds on Linux and macOS; on Windows sbx mounts
+`C:\Users\...` as `/c/Users/...`. Every conversation turn (`cd <folder> && claude …`), the model list, git run in the sandbox
+(a new branch, the pull request list) and the push check were given the Windows path. The user wanted both fixed together: hiding
+the windows alone left a Windows user unable to work.
+
+- **`sbxrun.FolderInSandbox`**: the folder itself off Windows; on Windows, the first of the likely spellings
+  (`sbxrun.WindowsMountCandidates`: `C:/Users/...`, `/c/Users/...`, `/mnt/c/...`, …, the memory store's list, now shared) that is a
+  folder in the sandbox, found with **one** `sbx exec` and kept for the sandbox (its mounts are fixed when it is made). One that is
+  in none is an error naming where it looked, not a guess.
+- Used for the four commands run in the sandbox on its folder; what reads the folder on the host (the Review tab, the git status)
+  keeps the host path.
+- Not tried on Windows: tested here with a stand-in sbx under a pretend `/`.

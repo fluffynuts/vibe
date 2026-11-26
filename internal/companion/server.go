@@ -102,8 +102,8 @@ type Config struct {
 	// shows; an error ends the turn with it, unrun. Nil means nothing is
 	// done first.
 	Prepare func(ctx context.Context, say func(string)) error
-	// SandboxGit runs git, with args, in the sandbox on its folder (the
-	// same path as Workspace), giving what it wrote to stdout; a failure
+	// SandboxGit runs git, with args, in the sandbox on its folder (Workspace,
+	// where the sandbox has it), giving what it wrote to stdout; a failure
 	// carries what it said. Nil means the page can't start a new branch.
 	SandboxGit func(ctx context.Context, args ...string) (string, error)
 	// PullRequests lists the numbers of repo's pull requests (repo is https://github.com/owner/name), asking the sandbox, and says
