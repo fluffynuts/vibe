@@ -16,9 +16,13 @@ func terminate(p *os.Process) {
 // ignoreTerminalInterrupt starts cmd in a process group of its own, so the
 // SIGINT a terminal sends its foreground group on Ctrl-C doesn't reach it.
 // Cancelling it kills that whole group, so nothing sbx started is left
-// holding its output open.
+// holding its output open. Added to how cmd starts, keeping what else it was
+// given (internal/proc's settings, say).
 func ignoreTerminalInterrupt(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setpgid = true
 	cmd.Cancel = func() error {
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}

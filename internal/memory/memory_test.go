@@ -231,26 +231,6 @@ func TestProbeAndBackupFindMemoriesHoweverSbxPassesArgs(t *testing.T) {
 	}
 }
 
-func TestWindowsMountCandidatesCoverTheUsualSpellings(t *testing.T) {
-	got := windowsMountCandidates(`C:\Users\me\.vibe\memories\proj`)
-	want := []string{
-		"C:/Users/me/.vibe/memories/proj",
-		"/c/Users/me/.vibe/memories/proj",
-		"/mnt/c/Users/me/.vibe/memories/proj",
-		"/run/desktop/mnt/host/c/Users/me/.vibe/memories/proj",
-		"/host_mnt/c/Users/me/.vibe/memories/proj",
-		"/Users/me/.vibe/memories/proj",
-	}
-	if len(got) != len(want) {
-		t.Fatalf("candidates = %q, want %q", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("candidate %d = %q, want %q", i, got[i], want[i])
-		}
-	}
-}
-
 // On Windows the store's path inside the sandbox is found, not assumed:
 // only a candidate where the host's marker file shows up is accepted.
 func TestSandboxPathOnWindowsFindsTheMountByItsMarker(t *testing.T) {

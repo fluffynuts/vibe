@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"time"
 
 	"vibe/internal/fscopy"
+	"vibe/internal/proc"
 )
 
 // Options say where a fetch happens. Nothing here comes from the agent.
@@ -86,7 +86,7 @@ func restore(ctx context.Context, projectXML string, opts Options) (string, erro
 
 	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "dotnet", RestoreArgs(project)...)
+	cmd := proc.CommandContext(ctx, "dotnet", RestoreArgs(project)...)
 	cmd.Dir = dir
 	cmd.Env = RestoreEnv(opts.Env, opts.Cache)
 	out, err := cmd.CombinedOutput()

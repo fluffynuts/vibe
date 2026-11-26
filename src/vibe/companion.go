@@ -747,8 +747,12 @@ func sandboxGitFor(name, target string) func(ctx context.Context, args ...string
 		return nil
 	}
 	return func(ctx context.Context, args ...string) (string, error) {
-		full := append([]string{"env", "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -o BatchMode=yes", "git", "-C", target}, args...)
-		return sbxrun.ExecStdout(ctx, name, full...)
+		inside, err := folderInSandbox(ctx, name, target)
+		if err != nil {
+			return "", err
+		}
+		full := append([]string{"env", "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -o BatchMode=yes", "git", "-C", inside}, args...)
+		return sandboxExec(ctx, name, full...)
 	}
 }
 

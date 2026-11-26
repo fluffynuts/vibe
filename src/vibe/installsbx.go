@@ -11,6 +11,7 @@ import (
 
 	"vibe/internal/fscopy"
 	"vibe/internal/pathresolve"
+	"vibe/internal/proc"
 	"vibe/internal/sbxinstall"
 )
 
@@ -161,7 +162,7 @@ func sbxMethods() ([]sbxMethod, error) {
 		}}, nil
 
 	case "darwin":
-		if out, err := exec.Command("sw_vers", "-productVersion").Output(); err == nil && !sbxinstall.SupportedMacOS(string(out)) {
+		if out, err := proc.Command("sw_vers", "-productVersion").Output(); err == nil && !sbxinstall.SupportedMacOS(string(out)) {
 			return nil, fmt.Errorf("sbx needs macOS %d (Sonoma) or newer, and this is %s", sbxinstall.MinMacOS, strings.TrimSpace(string(out)))
 		}
 		methods := []sbxMethod{
@@ -180,7 +181,7 @@ func sbxMethods() ([]sbxMethod, error) {
 		}
 		if brew, err := exec.LookPath("brew"); err == nil {
 			brewBin := filepath.Dir(brew)
-			if out, err := exec.Command(brew, "--prefix").Output(); err == nil {
+			if out, err := proc.Command(brew, "--prefix").Output(); err == nil {
 				brewBin = filepath.Join(strings.TrimSpace(string(out)), "bin")
 			}
 			methods = append(methods, sbxMethod{
@@ -188,7 +189,7 @@ func sbxMethods() ([]sbxMethod, error) {
 				sbx:   filepath.Join(brewBin, "sbx"), binDir: brewBin,
 				install: func(_, _ string, reinstall bool) error { return installSbxBrew(brew, reinstall) },
 				installed: func() bool {
-					return exec.Command(brew, "list", "--cask", sbxinstall.BrewCask).Run() == nil
+					return proc.Command(brew, "list", "--cask", sbxinstall.BrewCask).Run() == nil
 				},
 				goBackByHand: func(tag string) string {
 					return fmt.Sprintf("Docker SBX came from Homebrew, which installs only the cask's current release: to go back to %s, 'brew uninstall --cask %s', then 'vibe --install-sbx' and pick the tarball, then 'vibe --downgrade'", tag, sbxinstall.BrewCask)
@@ -259,14 +260,14 @@ func installSbxLinux(tarball, prefix string) error {
 	if sbxinstall.NeedsSudo(bundle) {
 		note("the installer adds an AppArmor profile for sbx to /etc/apparmor.d, which needs root:")
 		note("you'll be asked for your password, so that just that step can run with sudo")
-		sudo := exec.Command("sudo", "-v")
+		sudo := proc.Command("sudo", "-v")
 		sudo.Stdin, sudo.Stdout, sudo.Stderr = os.Stdin, os.Stdout, os.Stderr
 		if err := sudo.Run(); err != nil {
 			return fmt.Errorf("couldn't get sudo for the AppArmor step, so sbx isn't installed: %w", err)
 		}
 	}
 
-	cmd := exec.Command(script)
+	cmd := proc.Command(script)
 	cmd.Env = append(os.Environ(), "PREFIX="+prefix)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -313,13 +314,13 @@ func installSbxMacDMG(dmg, binDir string) error {
 		return err
 	}
 	defer os.RemoveAll(mount)
-	attach := exec.Command("hdiutil", "attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mount, dmg)
+	attach := proc.Command("hdiutil", "attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mount, dmg)
 	if out, err := attach.CombinedOutput(); err != nil {
 		return fmt.Errorf("mounting %s: %w\n%s", filepath.Base(dmg), err, out)
 	}
 	defer func() {
-		if exec.Command("hdiutil", "detach", mount, "-quiet").Run() != nil {
-			exec.Command("hdiutil", "detach", mount, "-force", "-quiet").Run()
+		if proc.Command("hdiutil", "detach", mount, "-quiet").Run() != nil {
+			proc.Command("hdiutil", "detach", mount, "-force", "-quiet").Run()
 		}
 	}()
 
@@ -332,7 +333,7 @@ func installSbxMacDMG(dmg, binDir string) error {
 	}
 	defer os.RemoveAll(staging)
 	// ditto keeps everything the app's code signature covers.
-	if out, err := exec.Command("ditto", filepath.Join(mount, "Sbx.app"), filepath.Join(staging, "Sbx.app")).CombinedOutput(); err != nil {
+	if out, err := proc.Command("ditto", filepath.Join(mount, "Sbx.app"), filepath.Join(staging, "Sbx.app")).CombinedOutput(); err != nil {
 		return fmt.Errorf("copying Sbx.app out of %s: %w\n%s", filepath.Base(dmg), err, out)
 	}
 	app := filepath.Join(macApplications, "Sbx.app")
@@ -360,14 +361,14 @@ func installSbxMacDMG(dmg, binDir string) error {
 // reinstall.
 func installSbxBrew(brew string, reinstall bool) error {
 	verb := "install"
-	if exec.Command(brew, "list", "--cask", sbxinstall.BrewCask).Run() == nil {
+	if proc.Command(brew, "list", "--cask", sbxinstall.BrewCask).Run() == nil {
 		verb = "upgrade"
 		if reinstall {
 			verb = "reinstall"
 		}
 	}
 	note("running: brew %s --cask %s", verb, sbxinstall.BrewCask)
-	cmd := exec.Command(brew, verb, "--cask", sbxinstall.BrewCask)
+	cmd := proc.Command(brew, verb, "--cask", sbxinstall.BrewCask)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("brew %s didn't finish cleanly (see above): %w", verb, err)
@@ -389,7 +390,7 @@ func installSbxMSI(msi string, machine, reinstall bool) error {
 	if reinstall {
 		op = "/fa"
 	}
-	cmd := exec.Command("msiexec", op, msi, "/passive", "/norestart", "/l*v", log)
+	cmd := proc.Command("msiexec", op, msi, "/passive", "/norestart", "/l*v", log)
 	err := cmd.Run()
 	code := 0
 	var exit *exec.ExitError
@@ -416,7 +417,7 @@ func stopSbxDaemon(path string) {
 	if _, err := os.Stat(path); err != nil {
 		return
 	}
-	exec.Command(path, "daemon", "stop").Run()
+	proc.Command(path, "daemon", "stop").Run()
 }
 
 // restartSbxDaemon restarts the daemon of the sbx at path, showing what it
@@ -424,7 +425,7 @@ func stopSbxDaemon(path string) {
 // The install has worked either way, so a failure is a warning.
 func restartSbxDaemon(path string) {
 	note("Restarting Docker SBX daemon")
-	cmd := exec.Command(path, "daemon", "restart")
+	cmd := proc.Command(path, "daemon", "restart")
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		note("  WARNING: '%s daemon restart' failed (%v) — run it yourself, or sbx may give odd errors", path, err)

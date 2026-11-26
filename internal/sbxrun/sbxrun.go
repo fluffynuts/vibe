@@ -20,6 +20,7 @@ import (
 
 	"golang.org/x/term"
 
+	"vibe/internal/proc"
 	"vibe/internal/sbxfind"
 )
 
@@ -33,7 +34,7 @@ func Available() bool {
 // Agents lists the agents sbx can run, read from the "Available agents:"
 // line of sbx run --help.
 func Agents() ([]string, error) {
-	out, err := exec.Command(sbxfind.Path(), "run", "--help").CombinedOutput()
+	out, err := proc.Command(sbxfind.Path(), "run", "--help").CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("sbx run --help: %w", err)
 	}
@@ -145,7 +146,7 @@ func runInherit(args ...string) (int, error) {
 // outright. Either way vibe gets to finish up (saving the agent's memories,
 // say) once sbx has gone.
 func runInheritUntil(stop <-chan struct{}, args ...string) (int, error) {
-	cmd := exec.Command(sbxfind.Path(), args...)
+	cmd := proc.Command(sbxfind.Path(), args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -413,7 +414,7 @@ func outputTo(cmd *exec.Cmd, out io.Writer) {
 // and a Ctrl-C would otherwise reach sbx before the caller could ask what
 // was meant. A ctx that never ends gives a plain command.
 func cancellable(ctx context.Context, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, sbxfind.Path(), args...)
+	cmd := proc.CommandContext(ctx, sbxfind.Path(), args...)
 	if ctx.Done() != nil {
 		ignoreTerminalInterrupt(cmd)
 		cmd.WaitDelay = time.Second
@@ -451,7 +452,7 @@ func StopQuiet(ctx context.Context, name string) error {
 
 // Ssh connects an ssh session to the sandbox's host alias.
 func Ssh(host string) (int, error) {
-	cmd := exec.Command("ssh", host)
+	cmd := proc.Command("ssh", host)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -468,7 +469,7 @@ func Ssh(host string) (int, error) {
 // SshConfigured reports whether ssh has a usable ProxyCommand for host,
 // mirroring vibe.sh's ssh_host_configured (via `ssh -G`).
 func SshConfigured(host string) bool {
-	cmd := exec.Command("ssh", "-G", host)
+	cmd := proc.Command("ssh", "-G", host)
 	out, err := cmd.Output()
 	if err != nil {
 		// ssh -G unavailable: let ssh speak for itself, as vibe.sh does.
@@ -640,7 +641,7 @@ func ExecSilent(ctx context.Context, name string, args ...string) bool {
 // content gets there with no shell in the sandbox to put it there.
 func ExecInput(name, input string, args ...string) error {
 	full := append([]string{"exec", "-i", name, "--"}, args...)
-	cmd := exec.Command(sbxfind.Path(), full...)
+	cmd := proc.Command(sbxfind.Path(), full...)
 	cmd.Stdin = strings.NewReader(input)
 	var out capped
 	cmd.Stdout = &out
@@ -662,7 +663,7 @@ const maxStreamLine = 1 << 20
 // its stderr.
 func ExecStream(ctx context.Context, name, input string, delivered func(), onLine func(line []byte), args ...string) error {
 	full := append([]string{"exec", "-i", name, "--"}, args...)
-	cmd := exec.CommandContext(ctx, sbxfind.Path(), full...)
+	cmd := proc.CommandContext(ctx, sbxfind.Path(), full...)
 	return stream(cmd, input, delivered, onLine)
 }
 
@@ -753,7 +754,7 @@ type Session struct {
 // each line it prints (from a goroutine of its own, in order).
 func ExecSession(ctx context.Context, name string, onLine func(line []byte), args ...string) (*Session, error) {
 	full := append([]string{"exec", "-i", name, "--"}, args...)
-	return startSession(exec.CommandContext(ctx, sbxfind.Path(), full...), onLine)
+	return startSession(proc.CommandContext(ctx, sbxfind.Path(), full...), onLine)
 }
 
 func startSession(cmd *exec.Cmd, onLine func(line []byte)) (*Session, error) {
@@ -832,7 +833,7 @@ func SetGitHubSecret(name, token string) error {
 	// sbx only overwrites without asking when the token is given with -t,
 	// so the old one goes first; there being none to remove is fine.
 	RemoveGitHubSecret(name)
-	cmd := exec.Command(sbxfind.Path(), "secret", "set", "github", "--sandbox", name)
+	cmd := proc.Command(sbxfind.Path(), "secret", "set", "github", "--sandbox", name)
 	cmd.Stdin = strings.NewReader(token)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("sbx secret set github --sandbox %s: %w: %s", name, err, strings.TrimSpace(string(out)))
@@ -843,7 +844,7 @@ func SetGitHubSecret(name, token string) error {
 // RemoveGitHubSecret takes the sandbox's own GitHub secret away. It leaves
 // a global one alone.
 func RemoveGitHubSecret(name string) error {
-	if out, err := exec.Command(sbxfind.Path(), "secret", "rm", "github", "--sandbox", name, "-f").CombinedOutput(); err != nil {
+	if out, err := proc.Command(sbxfind.Path(), "secret", "rm", "github", "--sandbox", name, "-f").CombinedOutput(); err != nil {
 		return fmt.Errorf("sbx secret rm github --sandbox %s: %w: %s", name, err, strings.TrimSpace(string(out)))
 	}
 	return nil
