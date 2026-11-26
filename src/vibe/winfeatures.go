@@ -9,6 +9,7 @@ import (
 
 	"vibe/internal/fscopy"
 	"vibe/internal/layout"
+	"vibe/internal/proc"
 	"vibe/internal/winfeatures"
 )
 
@@ -77,7 +78,7 @@ func enableMissingFeatures() (int, error) {
 	var missing []string
 	pending := false
 	for _, f := range winfeatures.Required {
-		out, err := exec.Command(winfeatures.Dism(), winfeatures.InfoArgs(f)...).Output()
+		out, err := proc.Command(winfeatures.Dism(), winfeatures.InfoArgs(f)...).Output()
 		if err != nil {
 			var exit *exec.ExitError
 			if errors.As(err, &exit) {
@@ -102,7 +103,7 @@ func enableMissingFeatures() (int, error) {
 		return 0, nil
 	}
 	note("enabling the Windows feature(s) %s with dism — this can take a minute or two", strings.Join(missing, " and "))
-	cmd := exec.Command(winfeatures.Dism(), winfeatures.EnableArgs(missing)...)
+	cmd := proc.Command(winfeatures.Dism(), winfeatures.EnableArgs(missing)...)
 	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 	err := cmd.Run()
 	var exit *exec.ExitError

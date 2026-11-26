@@ -12,6 +12,7 @@ import (
 	"vibe/internal/gittoken"
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
+	"vibe/internal/proc"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
 	"vibe/internal/userprefs"
@@ -181,7 +182,7 @@ func firstOf(a, b string) string {
 // it trimmed. Git exits 1 for a key that isn't set, which is "", not a
 // failure; anything else (git not there, an unreadable config) is.
 func gitConfigValue(program string, args ...string) (string, error) {
-	out, err := exec.Command(program, args...).Output()
+	out, err := proc.Command(program, args...).Output()
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && exit.ExitCode() == 1 {

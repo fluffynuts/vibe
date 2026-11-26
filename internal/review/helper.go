@@ -8,12 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"runtime"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
+
+	"vibe/internal/proc"
 )
 
 // A repository is read in a helper process: vibe running itself, with
@@ -169,7 +170,7 @@ func isolated(ctx context.Context, op string, args helperArgs, out any) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, exe)
+	cmd := proc.CommandContext(ctx, exe)
 	cmd.Env = append(os.Environ(), helperEnv+"=1")
 	cmd.Stdin = bytes.NewReader(req)
 	stdout := &capped{max: maxAnswer}

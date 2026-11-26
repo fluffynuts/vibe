@@ -13,6 +13,7 @@ import (
 	"vibe"
 	"vibe/internal/companion"
 	"vibe/internal/pathresolve"
+	"vibe/internal/proc"
 	"vibe/internal/prompt"
 	"vibe/internal/sbxinstall"
 	"vibe/internal/selfupdate"
@@ -173,7 +174,7 @@ var installedVibeVersion = func() string {
 	if err != nil {
 		return ""
 	}
-	out, err := exec.Command(exe, "--version").Output()
+	out, err := proc.Command(exe, "--version").Output()
 	if err != nil {
 		return ""
 	}
@@ -372,7 +373,7 @@ func installVibeRelease(tag, zipPath string, force bool, strategyValue string) e
 		args = append(args, "--update-strategy", strategyValue)
 	}
 	note("running %s from release %s", strings.Join(args, " "), tag)
-	cmd := exec.Command(exe, args...)
+	cmd := proc.Command(exe, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("release %s's --install didn't finish cleanly (see above): %w", tag, err)

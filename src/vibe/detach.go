@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -16,6 +15,7 @@ import (
 	"vibe/internal/fscopy"
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
+	"vibe/internal/proc"
 	"vibe/internal/running"
 	"vibe/internal/sbxrun"
 	"vibe/internal/state"
@@ -191,7 +191,7 @@ func detachHeadless(lay layout.Layout, args cliargs.Args, name, target string) e
 		childArgs = append(childArgs, "--force")
 	}
 	childArgs = append(childArgs, "--", target)
-	cmd := exec.Command(exe, childArgs...)
+	cmd := proc.Command(exe, childArgs...)
 	cmd.Env = append(os.Environ(), headlessChildEnv+"=1")
 	cmd.Stderr = logFile
 	detach(cmd)
