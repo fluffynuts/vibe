@@ -18,8 +18,8 @@ type BranchPullRequest struct {
 	Draft  bool   `json:"draft,omitempty"`
 	Status string `json:"status,omitempty"`
 	Why    string `json:"why,omitempty"`
-	// Running says a check is still running: it is asked about again sooner then (see branchPRPendingEvery). The page needn't know.
-	Running bool `json:"-"`
+	// Running says a check is still running: the dot pulses, and it is asked about again sooner (see branchPRPendingEvery).
+	Running bool `json:"running,omitempty"`
 }
 
 // ErrNoGh is Config.BranchPullRequest's answer on a host without gh: nothing to show, and nothing to say about it.

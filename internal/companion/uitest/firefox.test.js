@@ -1039,6 +1039,22 @@ test("the branch's pull request link keeps to the top bar's line when wide, and 
   }
 })
 
+// The dot pulses while a check runs, and not with reduced motion asked for (the title says it then).
+test('the pull request dot pulses while a check runs, and is still with reduced motion', async () => {
+  for (const reducedMotion of ['no-preference', 'reduce']) {
+    const page = await browser.newPage({ viewport: { width: 1200, height: 600 }, reducedMotion })
+    await page.route(/\/api\/state$/, stateWith(page, { folder: '~/code/opensource/vibe',
+      git: { branch: 'feat/a', web: 'https://github.com/me/vibe' },
+      branchPullRequest: { number: 41, url: 'https://github.com/me/vibe/pull/41', status: 'pending', running: true, why: '2 checks running' } }))
+    try {
+      await page.goto(URL)
+      await page.waitForSelector('#pr-dot.running')
+      const animation = await page.evaluate(() => getComputedStyle(document.getElementById('pr-dot')).animationName)
+      assert.equal(animation, reducedMotion === 'reduce' ? 'none' : 'pr-pulse', `with ${reducedMotion}`)
+    } finally { await page.close() }
+  }
+})
+
 const longFile = (title) => '# ' + title + '\n\n' + Array.from({ length: 150 }, (_, i) => 'Paragraph ' + i + ' of ' + title + '.').join('\n\n') + '\n\nOn to [the other](./b.md).'
 
 test("the file viewer's bar is one line from wide to narrow: buttons, then the path between them and the close button", async () => {

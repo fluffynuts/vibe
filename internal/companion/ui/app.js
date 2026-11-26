@@ -1006,7 +1006,8 @@
       const said = status ? (pr.draft ? 'Draft, ' : '') + PR_STATUS_WORDS[status] + (pr.why ? ': ' + pr.why : '') : ''
       const dot = $('pr-dot')
       dot.hidden = !status
-      dot.className = 'pr-dot' + (status ? ' ' + status : '') + (pr.draft ? ' draft' : '')
+      // Pulsing while a check runs: "the checks are running" is not "half-way there" (a review waited for), though both are yellow.
+      dot.className = 'pr-dot' + (status ? ' ' + status : '') + (pr.draft ? ' draft' : '') + (status && pr.running ? ' running' : '')
       if (status) dot.setAttribute('aria-label', said)
       else dot.removeAttribute('aria-label')
       $('pr').href = pr.url

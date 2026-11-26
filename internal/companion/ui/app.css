@@ -113,6 +113,10 @@ body {
 .brand .pr-dot.draft.failing { border-color: var(--bad); }
 .brand .pr-dot.draft.pending { border-color: var(--amber); }
 .brand .pr-dot.draft.passing { border-color: var(--ok); }
+/* A check is running: the dot pulses, slowly. Not with reduced motion: the title says it in words. */
+.brand .pr-dot.running { animation: pr-pulse 2s ease-in-out infinite; }
+@keyframes pr-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.8); } }
+@media (prefers-reduced-motion: reduce) { .brand .pr-dot.running { animation: none; } }
 .power-wrap { position: relative; margin-left: auto; }
 /* Lit and glowing when vibe is reached, flat and dim when it isn't, dim and pulsing while the first answer is awaited: the states differ in brightness and glow, not in colour alone. */
 .link { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: var(--panel); color: var(--muted); cursor: pointer; }

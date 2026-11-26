@@ -23,7 +23,9 @@ func TestAPullRequestsStatusIsWorkedOutFromItsChecksReviewAndMerge(t *testing.T)
 		{"approved, no checks", PullRequestChecks{Review: "APPROVED", Mergeable: "MERGEABLE"}, PRPassing, "approved"},
 		{"a check running", PullRequestChecks{Checks: []Check{ok, running}, Mergeable: "MERGEABLE"}, PRPending, "1 check running"},
 		{"a status pending", PullRequestChecks{Checks: []Check{statusPending}}, PRPending, "1 check running"},
-		{"review required", PullRequestChecks{Checks: []Check{ok}, Review: "REVIEW_REQUIRED"}, PRPending, "review required"},
+		// Gated, and nobody asked: no one will ever approve it, so it needs you (the user, 2026-11-26).
+		{"review required, nobody asked", PullRequestChecks{Checks: []Check{ok}, Review: "REVIEW_REQUIRED"}, PRFailing, "review required, but nobody is asked"},
+		{"review required, someone asked", PullRequestChecks{Checks: []Check{ok}, Review: "REVIEW_REQUIRED", Requests: []string{"@alice"}}, PRPending, "waiting on @alice"},
 		{"merge not worked out yet", PullRequestChecks{Checks: []Check{ok}, Mergeable: "UNKNOWN"}, PRPending, "mergeability"},
 		{"a check failed", PullRequestChecks{Checks: []Check{ok, running, failed}}, PRFailing, "test (windows-latest) failed"},
 		{"a status errored", PullRequestChecks{Checks: []Check{statusError}}, PRFailing, "ci/legacy failed"},
@@ -56,5 +58,43 @@ func TestAPullRequestSaysWhetherAnyOfItsChecksIsRunning(t *testing.T) {
 		if got := c.checks.Running(); got != c.want {
 			t.Errorf("%s: Running() = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// Reviews, by person and agent, and the conversations on the pull request (decided with the user, 2026-11-26, conservatively): green
+// means every check passed, every human reviewer approved, every agent has reviewed, and no conversation is unresolved.
+func TestAPullRequestsReviewersAndConversationsDecideItsStatus(t *testing.T) {
+	ok := Check{Name: "test", Status: "COMPLETED", Conclusion: "SUCCESS"}
+	approved := func(who string) Review { return Review{Author: who, State: "APPROVED"} }
+	commented := func(who string) Review { return Review{Author: who, State: "COMMENTED"} }
+	copilot := Review{Author: "copilot-pull-request-reviewer", Bot: true, State: "COMMENTED"}
+	for _, c := range []struct {
+		name   string
+		checks PullRequestChecks
+		status string
+		whyHas string
+	}{
+		{"both people approved", PullRequestChecks{Checks: []Check{ok}, Reviews: []Review{approved("alice"), approved("bob")}}, PRPassing, "approved by @alice, @bob"},
+		{"one of two approved, the other still asked", PullRequestChecks{Checks: []Check{ok}, Reviews: []Review{approved("alice")}, Requests: []string{"@bob"}}, PRPending, "waiting on @bob"},
+		{"a person only commented", PullRequestChecks{Checks: []Check{ok}, Reviews: []Review{approved("alice"), commented("ceo")}}, PRPending, "@ceo commented without approving"},
+		{"a person asked for changes", PullRequestChecks{Checks: []Check{ok}, Reviews: []Review{approved("alice"), {Author: "bob", State: "CHANGES_REQUESTED"}}}, PRFailing, "@bob requested changes"},
+		{"an agent reviewed, its conversations resolved", PullRequestChecks{Checks: []Check{ok}, Reviews: []Review{approved("alice"), copilot},
+			Threads: []Thread{{Author: "copilot-pull-request-reviewer", Bot: true, Resolved: true}}}, PRPassing, "approved by @alice"},
+		{"an agent's conversation unresolved", PullRequestChecks{Checks: []Check{ok}, Reviews: []Review{approved("alice"), copilot},
+			Threads: []Thread{{Author: "copilot-pull-request-reviewer", Bot: true}}}, PRPending, "1 conversation unresolved (copilot-pull-request-reviewer)"},
+		{"a person's conversation unresolved, though they approved", PullRequestChecks{Checks: []Check{ok}, Reviews: []Review{approved("alice")},
+			Threads: []Thread{{Author: "alice"}, {Author: "alice", Resolved: true}}}, PRPending, "1 conversation unresolved (@alice)"},
+		{"an agent asked for changes", PullRequestChecks{Checks: []Check{ok}, Reviews: []Review{{Author: "some-bot", Bot: true, State: "CHANGES_REQUESTED"}}}, PRFailing, "some-bot requested changes"},
+		{"a request GitHub won't name", PullRequestChecks{Checks: []Check{ok}, Requests: []string{""}}, PRPending, "waiting on a reviewer"},
+		{"a team asked", PullRequestChecks{Checks: []Check{ok}, Requests: []string{"team core"}}, PRPending, "waiting on team core"},
+		{"too many conversations to read", PullRequestChecks{Checks: []Check{ok}, ThreadsCut: true}, PRPending, "too many conversations to read"},
+		{"a dismissed review is no review", PullRequestChecks{Checks: []Check{ok}, Reviews: []Review{{Author: "bob", State: "DISMISSED"}}}, PRPassing, "1 check passed"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			status, why := c.checks.Status()
+			if status != c.status || !strings.Contains(why, c.whyHas) {
+				t.Errorf("status %q, why %q; want %q, why with %q", status, why, c.status, c.whyHas)
+			}
+		})
 	}
 }

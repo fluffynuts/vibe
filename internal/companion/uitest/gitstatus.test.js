@@ -153,3 +153,16 @@ test('a pull request with no status said has no dot', async () => {
     assert.ok(p.$('pr-dot').hidden)
   } finally { p.close() }
 })
+
+// While a check is running, the dot pulses: "the checks are running" is not "half-way there" (a review waited for), and both are yellow.
+test('the dot pulses while a check is running, and not while only waiting on a review', async () => {
+  const running = await pageWithPR({ number: 41, url: 'https://github.com/me/vibe/pull/41', status: 'pending', running: true, why: '2 checks running' })
+  try {
+    assert.ok(running.$('pr-dot').classList.contains('running'), running.$('pr-dot').className)
+    assert.match(running.$('pr-dot').getAttribute('aria-label'), /2 checks running/)
+  } finally { running.close() }
+  const waiting = await pageWithPR({ number: 41, url: 'https://github.com/me/vibe/pull/41', status: 'pending', why: 'waiting on @bob' })
+  try {
+    assert.ok(!waiting.$('pr-dot').classList.contains('running'), waiting.$('pr-dot').className)
+  } finally { waiting.close() }
+})
