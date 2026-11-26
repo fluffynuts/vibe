@@ -11,7 +11,7 @@
 scrolled past them.
 
 - **The arrows and going on after a reply** visit only unresolved (open) threads, in the order chosen (path or the agent's reading
-  order), round at the ends. The bar counts them: "2/3 unresolved comments", "no unresolved comments" (the arrows then off). The comments
+  order), round at the ends. The bar says where the arrows are among them: "at 2 of 3 unresolved" (the user found "2/3 unresolved comments" read as how many were unresolved), its title "At unresolved comment 2 of 3; 8 comments in all"; "no unresolved comments" with the arrows off. The comments
   pane still lists every thread.
 - **Ctrl+Enter in an empty reply box goes on** to the next unresolved comment, sending nothing (it couldn't send an empty reply anyway);
   the box's hint says so. Going on, by either, says when there's no other unresolved comment, rather than landing on a resolved one.

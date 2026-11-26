@@ -2663,9 +2663,11 @@
       } else reviewView.at = Math.max(0, R.positionOf(cards.map((c) => c.getBoundingClientRect().top), threadLine()))
     }
     reviewView.at = Math.min(reviewView.at, Math.max(0, shown - 1))
-    const where = shown ? (reviewView.at + 1) + '/' + plural(shown, 'unresolved comment') : plural(open, 'unresolved comment')
+    // Where the arrows are among the unresolved: "at 3 of 4", not "3/4", which read as how many were unresolved.
+    const where = shown ? 'at ' + (reviewView.at + 1) + ' of ' + shown + ' unresolved' : plural(open, 'unresolved comment')
     $('review-count').textContent = !all ? 'no comments yet' : !open ? 'no unresolved comments' : where + (hiddenNote ? ' (' + hiddenNote + ')' : '')
-    $('review-order').title = (all ? open + ' open of ' + all + ' comment threads. ' : '') +
+    $('review-order').title = (shown ? 'At unresolved comment ' + (reviewView.at + 1) + ' of ' + shown + '; ' + plural(all, 'comment') + ' in all. '
+      : all ? open + ' unresolved of ' + plural(all, 'comment') + '. ' : '') +
       (reviewView.order === 'reading' ? "The arrows go in the agent's reading order" : 'The arrows go in path order, as the tree') + ': click to change.'
     $('review-prev-comment').disabled = !shown
     $('review-next-comment').disabled = !shown
