@@ -176,7 +176,7 @@ func sandboxPath(ctx context.Context, sandboxName, store string) (string, error)
 		return "", fmt.Errorf("marking the memory store: %w", err)
 	}
 	defer os.Remove(filepath.Join(store, marker))
-	for _, candidate := range windowsMountCandidates(store) {
+	for _, candidate := range sbxrun.WindowsMountCandidates(store) {
 		if sbxrun.ExecSilent(ctx, sandboxName, "test", "-e", candidate+"/"+marker) {
 			return candidate, nil
 		}
@@ -185,28 +185,4 @@ func sandboxPath(ctx context.Context, sandboxName, store string) (string, error)
 		return "", ctx.Err()
 	}
 	return "", fmt.Errorf("could not find %s inside the sandbox", store)
-}
-
-// windowsMountCandidates lists the paths a Windows host directory might be
-// mounted at inside a Linux sandbox: the host path with forward slashes,
-// and the /c/..., /mnt/c/... and drive-less forms other Docker tools use.
-func windowsMountCandidates(store string) []string {
-	slashed := strings.ReplaceAll(store, `\`, "/")
-	drive, rest := "", slashed
-	if len(slashed) >= 2 && slashed[1] == ':' {
-		drive, rest = strings.ToLower(slashed[:1]), slashed[2:]
-	}
-	if !strings.HasPrefix(rest, "/") {
-		rest = "/" + rest
-	}
-	candidates := []string{slashed}
-	if drive != "" {
-		candidates = append(candidates,
-			"/"+drive+rest,
-			"/mnt/"+drive+rest,
-			"/run/desktop/mnt/host/"+drive+rest,
-			"/host_mnt/"+drive+rest,
-			rest)
-	}
-	return candidates
 }

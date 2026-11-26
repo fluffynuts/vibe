@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -16,6 +15,7 @@ import (
 	"vibe/internal/instructions"
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
+	"vibe/internal/proc"
 	"vibe/internal/sbxfind"
 	"vibe/internal/sbxinstall"
 	"vibe/internal/upgrade"
@@ -276,7 +276,7 @@ func installBinary() error {
 var installedVersion = func(path string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, path, "--version").Output()
+	out, err := proc.CommandContext(ctx, path, "--version").Output()
 	if err != nil {
 		return ""
 	}

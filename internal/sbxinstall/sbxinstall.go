@@ -29,6 +29,7 @@ import (
 	"vibe/internal/selfupdate"
 
 	"vibe/internal/pathresolve"
+	"vibe/internal/proc"
 )
 
 // Releases is where sbx's releases live. A variable so tests can point it at
@@ -343,7 +344,7 @@ func Prefix(home string) string {
 // Version runs sbx at path with "version", and returns the version it
 // reports ("v0.46.0").
 func Version(path string) (string, error) {
-	out, err := exec.Command(path, "version").Output()
+	out, err := proc.Command(path, "version").Output()
 	if err != nil {
 		return "", err
 	}

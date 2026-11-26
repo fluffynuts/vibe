@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"vibe/internal/proc"
 )
 
 // sbxFailureHint is shown when sbx exits non-zero, which is most often a
@@ -35,14 +37,14 @@ func portHolders(goos string, port int) []string {
 		if _, err := exec.LookPath(name); err != nil {
 			return
 		}
-		if out, err := exec.Command(name, args...).CombinedOutput(); err == nil {
+		if out, err := proc.Command(name, args...).CombinedOutput(); err == nil {
 			outputs = append(outputs, string(out))
 		}
 	}
 	switch goos {
 	case "windows":
 		if _, err := exec.LookPath("netstat"); err == nil {
-			if out, err := exec.Command("netstat", "-ano", "-p", "TCP").CombinedOutput(); err == nil {
+			if out, err := proc.Command("netstat", "-ano", "-p", "TCP").CombinedOutput(); err == nil {
 				if lines := netstatListeners(string(out), port); lines != "" {
 					outputs = append(outputs, "  Proto  Local Address  Foreign Address  State  PID\n"+lines)
 				}
@@ -64,7 +66,7 @@ func runningProcesses(goos string, names []string) []string {
 	var listed []string
 	switch goos {
 	case "windows":
-		out, err := exec.Command("tasklist", "/FO", "CSV", "/NH").Output()
+		out, err := proc.Command("tasklist", "/FO", "CSV", "/NH").Output()
 		if err != nil {
 			return nil
 		}
@@ -79,7 +81,7 @@ func runningProcesses(goos string, names []string) []string {
 			}
 		}
 	default: // macOS and the BSDs
-		out, err := exec.Command("ps", "-A", "-o", "comm=").Output()
+		out, err := proc.Command("ps", "-A", "-o", "comm=").Output()
 		if err != nil {
 			return nil
 		}

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"time"
 
+	"vibe/internal/proc"
 	"vibe/internal/sbxfind"
 )
 
@@ -39,7 +40,7 @@ func start(withInput bool, args ...string) (*Process, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	// A command whose end the caller decides is kept apart from the terminal's Ctrl-C, and cancelling it ends everything
 	// it started.
-	cmd := exec.CommandContext(ctx, sbxfind.Path(), args...)
+	cmd := proc.CommandContext(ctx, sbxfind.Path(), args...)
 	ignoreTerminalInterrupt(cmd)
 	// Once it is stopped, a descendant that has left its process group (a daemon it started) must not hold what is read from it open:
 	// that would leave Done unsent, and a sign-in "running" for good. After a second the pipes are closed, and it is ended.

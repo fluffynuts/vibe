@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+
+	"vibe/internal/proc"
 )
 
 // Open starts the user's browser on url, without waiting for it, and says
@@ -18,7 +20,7 @@ func Open(url string) bool {
 	if !ok {
 		return false
 	}
-	cmd := exec.Command(name, args...)
+	cmd := proc.Command(name, args...)
 	// Nothing the opener prints belongs on vibe's terminal.
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, nil, nil
 	if err := cmd.Start(); err != nil {

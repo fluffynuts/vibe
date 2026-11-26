@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"vibe/internal/companion"
+	"vibe/internal/proc"
 )
 
 // lookGh finds the host's gh (a variable, for tests).
@@ -18,7 +19,7 @@ var lookGh = func() (string, error) { return exec.LookPath("gh") }
 
 // runGh runs gh in dir, giving what it printed; a failure carries what it said (a variable, for tests).
 var runGh = func(ctx context.Context, gh, dir string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, gh, args...)
+	cmd := proc.CommandContext(ctx, gh, args...)
 	cmd.Dir = dir
 	// Nobody is there to answer a prompt, and an update notice would be read as its answer.
 	cmd.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1", "NO_COLOR=1")

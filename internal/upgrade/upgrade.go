@@ -38,6 +38,7 @@ import (
 
 	"vibe/internal/filekind"
 	"vibe/internal/fscopy"
+	"vibe/internal/proc"
 )
 
 // BaseDir is where, under ~/.vibe, the package's version of every file from
@@ -453,7 +454,7 @@ func merge(mine, base, theirs string, hasBase bool, mineText, baseText, theirsTe
 		return nil, false, "git isn't installed"
 	}
 	var out, errOut bytes.Buffer
-	cmd := exec.Command(git, "merge-file", "-p", "-L", "yours", "-L", "original", "-L", "package", mine, base, theirs)
+	cmd := proc.Command(git, "merge-file", "-p", "-L", "yours", "-L", "original", "-L", "package", mine, base, theirs)
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	err = cmd.Run()
 	var exit *exec.ExitError

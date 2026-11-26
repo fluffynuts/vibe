@@ -185,7 +185,8 @@ var endLeftover = func(name, pidFile string) error {
 }
 
 // startAgent is the companion page's way of starting the agent of sandbox
-// name, which works in workspace (the same path inside as out), with the
+// name, which works in workspace (where the sandbox has it: see
+// folderInSandbox), with the
 // model and effort chosen for it: what a previous vibe left running is ended
 // first, or two would answer.
 func startAgent(name, workspace string, choose func() (turnChoice, error)) companion.StartAgent {
@@ -197,8 +198,12 @@ func startAgent(name, workspace string, choose func() (turnChoice, error)) compa
 		if err := endLeftover(name, conversationPidFile); err != nil {
 			return nil, err
 		}
+		inside, err := folderInSandbox(ctx, name, workspace)
+		if err != nil {
+			return nil, err
+		}
 		// Not ctx: that bounds the start, and the agent outlives it.
-		sess, err := startSession(context.Background(), name, onLine, conversationCommand(workspace, session, conversationPidFile, choice)...)
+		sess, err := startSession(context.Background(), name, onLine, conversationCommand(inside, session, conversationPidFile, choice)...)
 		if err != nil {
 			return nil, err
 		}

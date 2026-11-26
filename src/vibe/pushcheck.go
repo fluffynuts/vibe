@@ -17,6 +17,10 @@ const pushCheckWithin = 60 * time.Second
 // sandboxExec runs a command in a sandbox; tests stand in for it.
 var sandboxExec = sbxrun.ExecStdout
 
+// folderInSandbox is where sandbox name has its folder, for a command run there (see sbxrun.FolderInSandbox). A variable for
+// tests: off Windows it is the folder itself, so only a stand-in shows that a caller uses what it gives.
+var folderInSandbox = sbxrun.FolderInSandbox
+
 // pushFromInside is checkPushFromInside; the tests of what calls it stand in for it.
 var pushFromInside = checkPushFromInside
 
@@ -46,10 +50,14 @@ func checkPushFromInside(name, target string, repo *gittoken.Repo) insideCheck {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), pushCheckWithin)
 	defer cancel()
+	inside, err := folderInSandbox(ctx, name, target)
+	if err != nil {
+		return insideCheck{said: "not checked from inside: " + err.Error()}
+	}
 	ref := fmt.Sprintf("HEAD:refs/heads/vibe-push-check-%d", timeNow().UnixNano())
 	// --no-verify: the repository's pre-push hook has no say in whether GitHub lets the token push, and can be slow, fail on
 	// something else (seen: one requiring a clean tree, failing on a .pnpm-store folder, until the check ran out of time), or ask.
-	_, err := sandboxExec(ctx, name, "env", "GIT_TERMINAL_PROMPT=0", "git", "-C", target, "push", "--dry-run", "--no-verify", "--quiet",
+	_, err = sandboxExec(ctx, name, "env", "GIT_TERMINAL_PROMPT=0", "git", "-C", inside, "push", "--dry-run", "--no-verify", "--quiet",
 		"https://github.com/"+repo.String()+".git", ref)
 	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		err = context.DeadlineExceeded

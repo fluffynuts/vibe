@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"vibe/internal/fscopy"
 	"vibe/internal/layout"
 	"vibe/internal/pathresolve"
+	"vibe/internal/proc"
 	"vibe/internal/running"
 	"vibe/internal/state"
 )
@@ -198,7 +198,7 @@ func (d *powerDesk) Do(name, action string) error {
 	}
 	defer logFile.Close()
 	fmt.Fprintf(logFile, "=== vibe %s, started %s ===\n", strings.Join(args, " "), time.Now().Format("2006-01-02 15:04:05"))
-	cmd := exec.Command(exe, args...)
+	cmd := proc.Command(exe, args...)
 	// A headless vibe is the background copy of one (see detachedChild), which skips what --restart and
 	// --headless do: the action is the command as a terminal would run it. And a vibe that was itself started
 	// without opening a page has that in its environment for good: it isn't for the page this one starts.
