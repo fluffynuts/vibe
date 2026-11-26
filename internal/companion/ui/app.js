@@ -985,6 +985,9 @@
     unlessBusy('tab log', () => load('log'))
   }
 
+  // PR_STATUS_WORDS say a pull request's status, as the host worked it out from its checks, reviews and merge.
+  const PR_STATUS_WORDS = { failing: 'failing', pending: 'pending (checks running, or a review waited for)', passing: 'passing' }
+
   // The folder and git status, as the infobar in the sandbox shows them, and the pull request open for the branch (pr), as the
   // host's gh says. Drawn again only when what it says changes: drawn at every poll, the link lost keyboard focus.
   let whereShown = ''
@@ -998,9 +1001,17 @@
     const linked = !!git && !!pr && /^https:\/\/github\.com\/[\w-]+\/[\w.-]+\/pull\/\d+$/.test(pr.url || '')
     $('pr-part').hidden = !linked
     if (linked) {
+      // Its status as a dot before it (a ring for a draft), said in words too: colour alone says nothing to some.
+      const status = PR_STATUS_WORDS[pr.status] ? pr.status : ''
+      const said = status ? (pr.draft ? 'Draft, ' : '') + PR_STATUS_WORDS[status] + (pr.why ? ': ' + pr.why : '') : ''
+      const dot = $('pr-dot')
+      dot.hidden = !status
+      dot.className = 'pr-dot' + (status ? ' ' + status : '') + (pr.draft ? ' draft' : '')
+      if (status) dot.setAttribute('aria-label', said)
+      else dot.removeAttribute('aria-label')
       $('pr').href = pr.url
       $('pr').textContent = 'PR #' + pr.number
-      $('pr').title = 'Pull request #' + pr.number + ', open for this branch: open it on GitHub'
+      $('pr').title = 'Pull request #' + pr.number + (pr.draft ? ' (draft)' : '') + ', open for this branch' + (said ? '. ' + said : '') + '. Open it on GitHub.'
     }
     const box = $('git')
     box.replaceChildren()

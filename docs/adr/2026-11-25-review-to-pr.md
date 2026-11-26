@@ -1,4 +1,4 @@
-# From review to pull request: the next unresolved comment, Submit saying why, and the branch's pull request in the top bar
+# From review to pull request: the next unresolved comment, Submit saying why, and the branch's pull request and its status in the top bar
 
 - **Status:** accepted, built 2026-11-25 on `feat/review-tab-pr-link` (PR #41). The pull request link tried by hand; the other two not
   yet.
@@ -39,6 +39,15 @@ pressing it.
 - **In the background**, never waited on: asked when the branch changes, then at most every two minutes. Nothing is asked on a detached
   HEAD, outside GitHub, or without gh; a failure (not signed in, say) is logged once, not at every ask.
 - **The top bar is drawn again only when it changes**: drawn at every poll, the link lost keyboard focus.
+- **A dot before the link says its status** (the user, 2026-11-26): red when a check failed (failed, timed out, cancelled, needing
+  action; a commit status erroring), a review asked for changes, or it conflicts with its base; yellow when a check is still running, a
+  review is required and not given, or GitHub hasn't worked out whether it merges; else green. The same gh call carries it
+  (`isDraft,reviewDecision,mergeable,statusCheckRollup`), worked out on the host (`PullRequestChecks.Status`). Its title, and its label for
+  a screen reader, say it in words, with why ("test (windows-latest) failed"): colour alone says nothing to some.
+- **A draft has a ring, not a dot**, in its status's colour: a draft is often opened to watch the checks, so the colour stays, and the
+  shape says draft (fading the dot was thought of: 80% is hard to tell apart, and reads as disabled). Its title says "draft".
+- **Asked every 30 s while yellow**, so the dot turns green or red soon after the checks end; two minutes otherwise. It asks GitHub,
+  not sbx, and GitHub's limits are far above that.
 
 ## Not done
 

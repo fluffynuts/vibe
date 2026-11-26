@@ -44,16 +44,47 @@ func ghBranchPullRequest(ctx context.Context, repo, branch string) (*companion.B
 	}
 	defer os.RemoveAll(dir)
 	out, err := runGh(ctx, gh, dir, "pr", "list", "--repo="+strings.TrimPrefix(repo, "https://github.com/"), "--head="+branch,
-		"--state=open", "--json=number,url", "--limit=1")
+		"--state=open", "--json=number,url,isDraft,reviewDecision,mergeable,statusCheckRollup", "--limit=1")
 	if err != nil {
 		return nil, err
 	}
-	var open []companion.BranchPullRequest
+	var open []ghPullRequest
 	if err := json.Unmarshal(out, &open); err != nil {
 		return nil, fmt.Errorf("gh said something unexpected: %q", strings.TrimSpace(string(out)))
 	}
 	if len(open) == 0 {
 		return nil, nil
 	}
-	return &open[0], nil
+	return open[0].pullRequest(), nil
+}
+
+// ghPullRequest is a pull request as gh pr list --json gives it.
+type ghPullRequest struct {
+	Number         int    `json:"number"`
+	URL            string `json:"url"`
+	IsDraft        bool   `json:"isDraft"`
+	ReviewDecision string `json:"reviewDecision"`
+	Mergeable      string `json:"mergeable"`
+	// StatusCheckRollup holds check runs (name, status, conclusion) and commit statuses (context, state), told apart by __typename.
+	StatusCheckRollup []struct {
+		Type       string `json:"__typename"`
+		Name       string `json:"name"`
+		Status     string `json:"status"`
+		Conclusion string `json:"conclusion"`
+		Context    string `json:"context"`
+		State      string `json:"state"`
+	} `json:"statusCheckRollup"`
+}
+
+func (g ghPullRequest) pullRequest() *companion.BranchPullRequest {
+	checks := companion.PullRequestChecks{Review: g.ReviewDecision, Mergeable: g.Mergeable}
+	for _, c := range g.StatusCheckRollup {
+		if c.Type == "StatusContext" {
+			checks.Checks = append(checks.Checks, companion.Check{Name: c.Context, State: c.State})
+		} else {
+			checks.Checks = append(checks.Checks, companion.Check{Name: c.Name, Status: c.Status, Conclusion: c.Conclusion})
+		}
+	}
+	status, why := checks.Status()
+	return &companion.BranchPullRequest{Number: g.Number, URL: g.URL, Draft: g.IsDraft, Status: status, Why: why}
 }

@@ -104,6 +104,15 @@ body {
 .git .noupstream { color: var(--muted); }
 .git span + span { margin-left: 6px; }
 .brand .pr { color: var(--accent); }
+/* The pull request's status before its link: a dot, or for a draft a ring in the same colour (still saying how its checks are). */
+.brand .pr-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; box-sizing: border-box; vertical-align: middle; }
+.brand .pr-dot.failing { background: var(--bad); }
+.brand .pr-dot.pending { background: var(--amber); }
+.brand .pr-dot.passing { background: var(--ok); }
+.brand .pr-dot.draft { background: transparent; border: 2px solid; }
+.brand .pr-dot.draft.failing { border-color: var(--bad); }
+.brand .pr-dot.draft.pending { border-color: var(--amber); }
+.brand .pr-dot.draft.passing { border-color: var(--ok); }
 .power-wrap { position: relative; margin-left: auto; }
 /* Lit and glowing when vibe is reached, flat and dim when it isn't, dim and pulsing while the first answer is awaited: the states differ in brightness and glow, not in colour alone. */
 .link { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: var(--panel); color: var(--muted); cursor: pointer; }

@@ -10,17 +10,25 @@ import (
 // The top bar links the pull request open for the current branch, as the host's gh says (Config.BranchPullRequest): asked in the
 // background, never waited on, for the branch and GitHub repository vibe already reads (see docs/plan-review-tab-enhancements.md).
 
-// BranchPullRequest is the pull request open for a branch.
+// BranchPullRequest is the pull request open for a branch: whether it is a draft, and its status (PRPassing, PRPending, PRFailing)
+// and why, in words (see PullRequestChecks).
 type BranchPullRequest struct {
 	Number int    `json:"number"`
 	URL    string `json:"url"`
+	Draft  bool   `json:"draft,omitempty"`
+	Status string `json:"status,omitempty"`
+	Why    string `json:"why,omitempty"`
 }
 
 // ErrNoGh is Config.BranchPullRequest's answer on a host without gh: nothing to show, and nothing to say about it.
 var ErrNoGh = errors.New("gh isn't installed on this machine")
 
-// branchPRAskEvery is how often the same branch is asked about again (a pull request opened, merged or closed since).
-const branchPRAskEvery = 2 * time.Minute
+// branchPRAskEvery is how often the same branch is asked about again (a pull request opened, merged or closed since, a review given);
+// branchPRPendingEvery, while its checks run, so its dot turns green or red soon after they end.
+const (
+	branchPRAskEvery     = 2 * time.Minute
+	branchPRPendingEvery = 30 * time.Second
+)
 
 // branchPRAskWithin bounds one ask of gh, which goes to GitHub.
 const branchPRAskWithin = 30 * time.Second
@@ -53,7 +61,11 @@ func (s *Server) branchPullRequest(git *GitInfo) *BranchPullRequest {
 	if key != b.key {
 		b.key, b.open, b.askedAt = key, nil, time.Time{}
 	}
-	if !b.asking && (b.askedAt.IsZero() || now.Sub(b.askedAt) >= branchPRAskEvery) {
+	every := branchPRAskEvery
+	if b.open != nil && b.open.Status == PRPending {
+		every = branchPRPendingEvery
+	}
+	if !b.asking && (b.askedAt.IsZero() || now.Sub(b.askedAt) >= every) {
 		b.asking, b.askedAt = true, now
 		b.flight.Add(1)
 		go s.askBranchPullRequest(key, git.Web, git.Branch)

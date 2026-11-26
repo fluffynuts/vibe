@@ -23,7 +23,12 @@ func (p *prAt) ask(_ context.Context, repo, branch string) (*BranchPullRequest, 
 	if p.err != nil {
 		return nil, p.err
 	}
-	return p.open[branch], nil
+	// A copy, as gh's answer is each time: what the test changes later isn't what the page already has.
+	if pr := p.open[branch]; pr != nil {
+		c := *pr
+		return &c, nil
+	}
+	return nil, nil
 }
 
 func (p *prAt) times() int {
@@ -151,5 +156,46 @@ func TestAFailedAskShowsNoneAndIsLoggedOnce(t *testing.T) {
 				t.Errorf("asked %d times, logged %q", p.times(), logged)
 			}
 		})
+	}
+}
+
+func TestTheStateCarriesThePullRequestsStatusAndDraft(t *testing.T) {
+	p := &prAt{open: map[string]*BranchPullRequest{"feat/a": {Number: 41, URL: "https://github.com/me/vibe/pull/41", Draft: true,
+		Status: PRFailing, Why: "test (windows-latest) failed"}}}
+	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	var logged []string
+	s := branchPRServer(t, p, &GitInfo{Branch: "feat/a", Web: "https://github.com/me/vibe"}, &now, &logged)
+	pr, _ := stateAfterAsk(t, s)["branchPullRequest"].(map[string]interface{})
+	if pr == nil || pr["draft"] != true || pr["status"] != PRFailing || pr["why"] != "test (windows-latest) failed" {
+		t.Errorf("branchPullRequest = %v", pr)
+	}
+}
+
+// While checks run, the dot is asked about every 30 s, so it turns green or red soon after they end; settled, every two minutes.
+func TestAPendingPullRequestIsAskedAboutAgainSooner(t *testing.T) {
+	p := &prAt{open: map[string]*BranchPullRequest{"feat/a": {Number: 41, URL: "https://github.com/me/vibe/pull/41", Status: PRPending}}}
+	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	var logged []string
+	s := branchPRServer(t, p, &GitInfo{Branch: "feat/a", Web: "https://github.com/me/vibe"}, &now, &logged)
+	stateAfterAsk(t, s)
+	now = now.Add(20 * time.Second)
+	stateAfterAsk(t, s)
+	if p.times() != 1 {
+		t.Fatalf("asked %d times within 30 s", p.times())
+	}
+	now = now.Add(11 * time.Second)
+	stateAfterAsk(t, s)
+	if p.times() != 2 {
+		t.Fatalf("asked %d times after 30 s while pending, want 2", p.times())
+	}
+	p.mu.Lock()
+	p.open["feat/a"].Status = PRPassing
+	p.mu.Unlock()
+	now = now.Add(31 * time.Second)
+	stateAfterAsk(t, s)
+	now = now.Add(31 * time.Second)
+	stateAfterAsk(t, s)
+	if p.times() != 3 {
+		t.Errorf("asked %d times once passing, want 3 (no more till two minutes)", p.times())
 	}
 }

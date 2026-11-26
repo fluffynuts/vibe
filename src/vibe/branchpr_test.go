@@ -45,7 +45,8 @@ func TestTheBranchsPullRequestIsAskedOfGhByRepositoryAndBranch(t *testing.T) {
 	if pr == nil || pr.Number != 40 || pr.URL != "https://github.com/me/vibe/pull/40" {
 		t.Errorf("pr = %+v", pr)
 	}
-	want := [][]string{{"pr", "list", "--repo=me/vibe", "--head=-feat/a", "--state=open", "--json=number,url", "--limit=1"}}
+	want := [][]string{{"pr", "list", "--repo=me/vibe", "--head=-feat/a", "--state=open",
+		"--json=number,url,isDraft,reviewDecision,mergeable,statusCheckRollup", "--limit=1"}}
 	if !reflect.DeepEqual(*args, want) {
 		t.Errorf("gh ran with %q, want %q", *args, want)
 	}
@@ -87,5 +88,22 @@ func TestGhFailingSaysWhat(t *testing.T) {
 	ghStandIns(t, true, ``, errors.New("exit status 4: To get started with GitHub CLI, please run:  gh auth login"))
 	if _, err := ghBranchPullRequest(context.Background(), "https://github.com/me/vibe", "main"); err == nil || !strings.Contains(err.Error(), "gh auth login") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// What gh says of the checks (check runs, and commit statuses, which name and say their state differently), the review and the merge
+// becomes the pull request's status, and whether it is a draft.
+func TestTheBranchsPullRequestCarriesItsStatusAndDraft(t *testing.T) {
+	ghStandIns(t, true, `[{"number":41,"url":"https://github.com/me/vibe/pull/41","isDraft":true,"reviewDecision":"","mergeable":"MERGEABLE",
+		"statusCheckRollup":[
+			{"__typename":"CheckRun","name":"test (ubuntu-latest)","status":"COMPLETED","conclusion":"SUCCESS"},
+			{"__typename":"CheckRun","name":"test (windows-latest)","status":"COMPLETED","conclusion":"FAILURE"},
+			{"__typename":"StatusContext","context":"ci/legacy","state":"PENDING"}]}]`, nil)
+	pr, err := ghBranchPullRequest(context.Background(), "https://github.com/me/vibe", "feat/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pr == nil || !pr.Draft || pr.Status != companion.PRFailing || !strings.Contains(pr.Why, "test (windows-latest) failed") || !strings.Contains(pr.Why, "1 check running") {
+		t.Errorf("pr = %+v", pr)
 	}
 }

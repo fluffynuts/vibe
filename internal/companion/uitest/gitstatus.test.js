@@ -117,3 +117,39 @@ test('the pull request link keeps focus while the state is polled', async () => 
     assert.ok(link.isConnected, 'drawn again')
   } finally { p.close() }
 })
+
+// A dot before the link says the pull request's status at a glance: red failing, yellow pending, green passing; a ring, not a dot, for
+// a draft, still in its status's colour (a draft is often opened to watch the checks). Said in words too: its title, and to a screen
+// reader, as colour alone says nothing to some.
+for (const [status, words] of [['failing', /failing/i], ['pending', /pending|running|waiting/i], ['passing', /passing/i]]) {
+  test('the pull request\'s status is a dot before its link: ' + status, async () => {
+    const p = await pageWithPR({ number: 41, url: 'https://github.com/me/vibe/pull/41', status, why: 'the reason' })
+    try {
+      const dot = p.$('pr-dot')
+      assert.ok(!dot.hidden)
+      assert.equal(dot.nextElementSibling, p.$('pr'), 'not just before the link')
+      assert.ok(dot.classList.contains(status), dot.className)
+      assert.ok(!dot.classList.contains('draft'))
+      assert.match(dot.getAttribute('aria-label'), words)
+      assert.match(p.$('pr').title, words)
+      assert.match(p.$('pr').title, /the reason/)
+    } finally { p.close() }
+  })
+}
+
+test('a draft pull request has a ring in its status\'s colour, and says it is a draft', async () => {
+  const p = await pageWithPR({ number: 41, url: 'https://github.com/me/vibe/pull/41', draft: true, status: 'failing', why: 'build failed' })
+  try {
+    const dot = p.$('pr-dot')
+    assert.ok(dot.classList.contains('draft') && dot.classList.contains('failing'), dot.className)
+    assert.match(dot.getAttribute('aria-label'), /draft/i)
+    assert.match(p.$('pr').title, /draft/i)
+  } finally { p.close() }
+})
+
+test('a pull request with no status said has no dot', async () => {
+  const p = await pageWithPR({ number: 41, url: 'https://github.com/me/vibe/pull/41' })
+  try {
+    assert.ok(p.$('pr-dot').hidden)
+  } finally { p.close() }
+})
