@@ -126,6 +126,10 @@ func serve(in io.Reader) helperAnswer {
 		result, err = originOf(a.Dir)
 	case "status":
 		result, err = statusOf(ctx, a.Dir)
+	case "history":
+		result, err = historyOf(a.Dir, a.Ref)
+	case "aheadOf":
+		result, err = aheadOf(a.Dir, a.Ref)
 	case "moves":
 		result = moves(ctx, a.Dir, a.Review)
 	case "fileLines":
