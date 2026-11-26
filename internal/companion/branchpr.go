@@ -8,7 +8,7 @@ import (
 )
 
 // The top bar links the pull request open for the current branch, as the host's gh says (Config.BranchPullRequest): asked in the
-// background, never waited on, for the branch and GitHub repository vibe already reads (see docs/plan-review-tab-enhancements.md).
+// background, never waited on, for the branch and GitHub repository vibe already reads (see docs/adr/2026-11-25-review-to-pr.md).
 
 // BranchPullRequest is the pull request open for a branch: whether it is a draft, and its status (PRPassing, PRPending, PRFailing)
 // and why, in words (see PullRequestChecks).
