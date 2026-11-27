@@ -4544,7 +4544,7 @@
   // it ends: so the bar is up at its start (5%) from the click, and the rest of it is the packages
   // as they come into the cache, counted by the host.
   const PROGRESS_START = 5
-  function showProgress(bar, got) {
+  function fillProgress(bar, got) {
     bar.max = 100
     bar.value = got && got.total > 0 ? PROGRESS_START + (100 - PROGRESS_START) * Math.min(got.done, got.total) / got.total : PROGRESS_START
   }
@@ -4619,7 +4619,7 @@
     if (running) {
       // The host counts them in the cache; without a count the bar is of unknown length.
       const got = b.progress
-      showProgress(bar, got)
+      fillProgress(bar, got)
       status.hidden = false
       status.textContent = got && got.total > 0 && got.done >= got.total
         ? 'Finishing… all ' + got.total + ' are in your cache; the restore is wrapping up.'
@@ -7734,7 +7734,7 @@
         ' waiting for your approval: it can\'t have ' + (undecided === 1 ? 'that package' : 'those packages') + ' until you decide.'
       : ''
     $('convo-gate-progress').hidden = !gate.fetching
-    showProgress($('convo-gate-progress'), got)
+    fillProgress($('convo-gate-progress'), got)
     const ide = packagesWord(toFetch) + " the agent will build with aren't in your package cache. Your IDE can't see them, and the agent will download its own copies."
     $('convo-gate-text').textContent = [
       gate.fetching
