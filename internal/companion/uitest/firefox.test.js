@@ -16,15 +16,20 @@ let browser
 test.before(async () => { browser = await firefox.launch() })
 test.after(async () => { if (browser) await browser.close() })
 
-// stateWith serves /api/state as the server answers it, with patch merged in. A poll still being fetched when a test closes its page has the
-// response disposed under it ("Response has been disposed"): that is the end of the test, not a failure, and left to throw it was an unhandled
-// rejection that failed a whole CI run (Windows) in which every test had passed. Any other error is still the test's.
+// endedByClose says an error in a route's handler is its page being closed under it: a poll still being fetched when a test closes its page
+// has its request or response disposed ("Request context disposed", "Response has been disposed"). That is the end of the test, not a
+// failure; left to throw, it was an unhandled rejection that failed whole CI runs in which every test had passed. The page counts as
+// closed only after its close has disposed of what was in flight, so isClosed() can still be false then (5 times in 40, tried
+// 2026-11-27): the error's own words are what say so. Any other error is still the test's.
+const endedByClose = (page, e) => page.isClosed() || /Request context disposed|Response has been disposed|has been closed/.test(String(e && e.message))
+
+// stateWith serves /api/state as the server answers it, with patch merged in.
 const stateWith = (page, patch) => async (route) => {
   try {
     const state = await (await route.fetch()).json()
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify(Object.assign(state, patch)) })
   } catch (e) {
-    if (!page.isClosed()) throw e
+    if (!endedByClose(page, e)) throw e
   }
 }
 
@@ -165,7 +170,7 @@ const withReview = (page, patch) => page.route(/\/api\/review(\?|$)/, async (rou
     patch(body)
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) })
   } catch (e) {
-    if (!page.isClosed()) throw e
+    if (!endedByClose(page, e)) throw e
   }
 })
 
