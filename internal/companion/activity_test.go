@@ -176,7 +176,7 @@ func TestATicketLinkIsKeptForABranchAndOnlyAWebAddress(t *testing.T) {
 	if rec := do(t, s, post("/api/activity/ticket", `{"repo":"r","branch":"b","url":"https://trello.com/c/abc"}`)); rec.Code != http.StatusOK {
 		t.Fatalf("got %d %s", rec.Code, rec.Body)
 	}
-	if got := s.cfg.Activity.Tickets.All()[activity.TicketKey("r", "b")]; got != "https://trello.com/c/abc" {
+	if got := ticketLinks(t, s.cfg.Activity.Tickets)[activity.TicketKey("r", "b")]; got != "https://trello.com/c/abc" {
 		t.Fatalf("want it kept, got %q", got)
 	}
 	if rec := do(t, s, post("/api/activity/ticket", `{"repo":"r","url":"https://x"}`)); rec.Code != http.StatusBadRequest {
@@ -264,5 +264,27 @@ func TestRulesAsLongAsTheUsersAreSavedAndOnesTooLongAreSaidToBe(t *testing.T) {
 	rec := do(t, s, post("/api/activity/rules", string(huge)))
 	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), "too long") {
 		t.Fatalf("want rules too long to keep said to be, got %d %s", rec.Code, rec.Body)
+	}
+}
+
+func ticketLinks(t *testing.T, tk *activity.Tickets) map[string]string {
+	t.Helper()
+	all, err := tk.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return all
+}
+
+func TestATicketLinkAsLongAsAllowedIsKept(t *testing.T) {
+	s, _, _ := activityServer(t)
+	s.cfg.Activity.Tickets = &activity.Tickets{Path: t.TempDir() + "/tickets.json"}
+	link := "https://dev.azure.com/org/project/_workitems/edit/1?q=" + strings.Repeat("x", activity.MaxTicketLink-len("https://dev.azure.com/org/project/_workitems/edit/1?q="))
+	body, _ := json.Marshal(map[string]string{"repo": "a-repository-with-a-long-name", "branch": "feat/a-branch-name-as-long-as-they-come", "url": link})
+	if rec := do(t, s, post("/api/activity/ticket", string(body))); rec.Code != http.StatusOK {
+		t.Fatalf("want a %d-character link kept, got %d %s", len(link), rec.Code, rec.Body)
+	}
+	if got := ticketLinks(t, s.cfg.Activity.Tickets)[activity.TicketKey("a-repository-with-a-long-name", "feat/a-branch-name-as-long-as-they-come")]; got != link {
+		t.Fatalf("want it kept whole, got %d characters", len(got))
 	}
 }

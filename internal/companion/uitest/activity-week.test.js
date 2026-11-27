@@ -229,3 +229,37 @@ test("a row's copy takes the week's summary, its ticket link first, once it's re
     assert.deepEqual(openRows(p), [], 'rows opened in another week stay closed')
   } finally { p.close() }
 })
+
+test('a repository with commits but no time once rounded is listed at 0%, with no slice, and a week of only such has no NaN', async () => {
+  const quick = repo('dotfiles', [0, 0, 0, 0, 0, 0, 0], [{ branch: 'master', days: [0, 0, 0, 0, 0, 0, 0], hours: 0, commits: [{ date: '2026-11-24', lines: ['tidy'] }] }])
+  const week = Object.assign({}, thisWeek, { repos: [thisWeek.repos[0], quick], hours: 6 })
+  const p = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, activity: true, attention: {} },
+      '/api/log': { entries: [] },
+      '/api/activity/week': { week, fills: { vibe: 0, dotfiles: 1 }, colourBlind: false, rounding: '30m', attention: [], summaries: {} },
+    },
+    storage: { 'vibe-companion-tab': 'activity', 'vibe-activity-mode': 'week' },
+  })
+  try {
+    await p.settle()
+    assert.deepEqual(legend(p), ['vibe | 6.0h | 100%', 'dotfiles | 0.0h | 0%'])
+    assert.deepEqual(slices(p).map((s) => s.dataset.repo), ['vibe'], 'a slice for no time')
+    await p.click(p.$('activity-week-legend').querySelector('[data-repo="dotfiles"]'))
+    assert.match(p.$('activity-week-branches').textContent, /master0\.0h0%/)
+  } finally { p.close() }
+  const none = Object.assign({}, thisWeek, { repos: [quick], hours: 0 })
+  const q = await openPage({
+    routes: {
+      '/api/state': { sandbox: 'box', sandboxTabs: true, activity: true, attention: {} },
+      '/api/log': { entries: [] },
+      '/api/activity/week': { week: none, fills: { dotfiles: 1 }, colourBlind: false, rounding: '30m', attention: [], summaries: {} },
+    },
+    storage: { 'vibe-companion-tab': 'activity', 'vibe-activity-mode': 'week' },
+  })
+  try {
+    await q.settle()
+    assert.doesNotMatch(q.$('activity-week').textContent, /NaN/)
+    assert.deepEqual(legend(q), ['dotfiles | 0.0h | 0%'])
+  } finally { q.close() }
+})

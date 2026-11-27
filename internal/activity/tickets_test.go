@@ -3,31 +3,43 @@ package activity
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"vibe/internal/review"
 )
+
+// links are the links tk keeps, which must be readable.
+func links(t *testing.T, tk *Tickets) map[string]string {
+	t.Helper()
+	all, err := tk.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return all
+}
 
 func TestATicketLinkIsKeptByRepositoryAndBranchAndCanBeCleared(t *testing.T) {
 	tk := Tickets{Path: filepath.Join(t.TempDir(), "tickets.json")}
 	if err := tk.Set("yumbi-web", "fix/x", "https://trello.com/c/abc"); err != nil {
 		t.Fatal(err)
 	}
-	if got := tk.All()[TicketKey("yumbi-web", "fix/x")]; got != "https://trello.com/c/abc" {
+	if got := links(t, &tk)[TicketKey("yumbi-web", "fix/x")]; got != "https://trello.com/c/abc" {
 		t.Fatalf("want the link kept, got %q", got)
 	}
 	again := Tickets{Path: tk.Path}
-	if got := again.All()[TicketKey("yumbi-web", "fix/x")]; got != "https://trello.com/c/abc" {
+	if got := links(t, &again)[TicketKey("yumbi-web", "fix/x")]; got != "https://trello.com/c/abc" {
 		t.Fatalf("want it read back by another vibe, got %q", got)
 	}
 	if err := tk.Set("yumbi-web", "fix/x", ""); err != nil {
 		t.Fatal(err)
 	}
-	if len(tk.All()) != 0 {
-		t.Fatalf("want an empty link to clear it, got %v", tk.All())
+	if len(links(t, &tk)) != 0 {
+		t.Fatalf("want an empty link to clear it, got %v", links(t, &tk))
 	}
 }
 
@@ -85,7 +97,7 @@ func TestATicketLinkIsForgottenOnlyWhenItsBranchIsGoneEverywhereAndUnmentionedAl
 		t.Fatal(err)
 	}
 	var kept []string
-	for k := range tk.All() {
+	for k := range links(t, tk) {
 		kept = append(kept, k)
 	}
 	want := []string{TicketKey("yumbi-web", "stalled"), TicketKey("yumbi-web", "on-origin"), TicketKey("yumbi-web", "in-the-other-checkout"),
@@ -102,8 +114,8 @@ func TestATicketLinkIsKeptWhenACheckoutCouldntBeRead(t *testing.T) {
 	d.Folders = func() []string { return []string{a, broken} }
 	tk.Set("yumbi-web", "gone", "https://trello.com/c/x")
 	d.Day(context.Background(), "", 30*60e9)
-	if len(tk.All()) != 1 {
-		t.Fatalf("want the link kept while a checkout can't be read, got %v", tk.All())
+	if len(links(t, tk)) != 1 {
+		t.Fatalf("want the link kept while a checkout can't be read, got %v", links(t, tk))
 	}
 }
 
@@ -121,5 +133,38 @@ func TestTheDaysBranchesCarryTheirTicketLinks(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, []string{"fix/x https://trello.com/c/abc"}) {
 		t.Fatalf("got %v", got)
+	}
+}
+
+func TestATicketsFileThatCantBeReadIsNeverWrittenOverAndIsSaidToBe(t *testing.T) {
+	tk := Tickets{Path: filepath.Join(t.TempDir(), "tickets.json")}
+	broken := []byte(`[{"repo": "vibe", "branch": "feat/a", "url": "https://trello.com/c/a"}, {"repo": `)
+	if err := os.WriteFile(tk.Path, broken, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := tk.Set("vibe", "feat/b", "https://trello.com/c/b"); err == nil || !strings.Contains(err.Error(), "tickets.json") {
+		t.Fatalf("want a link not kept over a file that can't be read, saying which, got %v", err)
+	}
+	if err := tk.forget(func(string, string) bool { return true }); err == nil {
+		t.Fatal("want nothing forgotten from a file that can't be read")
+	}
+	if data, _ := os.ReadFile(tk.Path); string(data) != string(broken) {
+		t.Fatalf("want the file left as it was, got %q", data)
+	}
+	if _, err := tk.All(); err == nil {
+		t.Fatal("want reading it to say it couldn't")
+	}
+	d := (&fakeGit{}).desk(Log{Dir: t.TempDir()})
+	d.Tickets = &tk
+	r, err := d.Day(context.Background(), "", 30*time.Minute)
+	if err != nil || !strings.Contains(strings.Join(r.Problems, "\n"), "ticket links") {
+		t.Fatalf("want the day to say the links couldn't be read, got %v, %q", err, r.Problems)
+	}
+}
+
+func TestNoTicketsFileIsNoLinks(t *testing.T) {
+	tk := Tickets{Path: filepath.Join(t.TempDir(), "none", "tickets.json")}
+	if all, err := tk.All(); err != nil || len(all) != 0 {
+		t.Fatalf("want no links and no trouble, got %v, %v", all, err)
 	}
 }

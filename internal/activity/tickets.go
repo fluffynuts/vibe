@@ -22,8 +22,8 @@ type Tickets struct {
 	mu   sync.Mutex
 }
 
-// maxTicketLink bounds a link kept.
-const maxTicketLink = 2000
+// MaxTicketLink bounds a link kept; the page's request to keep one is bounded by it too.
+const MaxTicketLink = 2000
 
 // TicketKey is how a branch's link is kept: "repo branch" (a repository's name has no spaces; a branch's can't).
 func TicketKey(repo, branch string) string { return repo + " " + branch }
@@ -34,27 +34,32 @@ type ticketEntry struct {
 	URL    string `json:"url"`
 }
 
-// All are the links kept, by TicketKey.
-func (t *Tickets) All() map[string]string {
+// All are the links kept, by TicketKey; none when there is no file yet.
+func (t *Tickets) All() (map[string]string, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.read()
 }
 
-func (t *Tickets) read() map[string]string {
+// read is the links in the file, none when it isn't there. A file that can't be read is an error, never no links: written over
+// with what was read, every link in it would be lost.
+func (t *Tickets) read() (map[string]string, error) {
 	out := map[string]string{}
 	data, err := fscopy.ReadFile(t.Path)
+	if os.IsNotExist(err) {
+		return out, nil
+	}
 	if err != nil {
-		return out
+		return nil, fmt.Errorf("couldn't read the ticket links in %s: %w", t.Path, err)
 	}
 	var entries []ticketEntry
-	if json.Unmarshal(data, &entries) != nil {
-		return out
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("couldn't read the ticket links in %s (put it right, or remove it to start again): %w", t.Path, err)
 	}
 	for _, e := range entries {
 		out[TicketKey(e.Repo, e.Branch)] = e.URL
 	}
-	return out
+	return out, nil
 }
 
 func (t *Tickets) write(all map[string]string) error {
@@ -79,8 +84,8 @@ func (t *Tickets) write(all map[string]string) error {
 // CheckTicketLink says why link can't be a ticket's: it must be a web address (http or https, with a host), which the page links
 // to.
 func CheckTicketLink(link string) error {
-	if len(link) > maxTicketLink {
-		return fmt.Errorf("that link is longer than %d characters", maxTicketLink)
+	if len(link) > MaxTicketLink {
+		return fmt.Errorf("that link is longer than %d characters", MaxTicketLink)
 	}
 	u, err := url.Parse(link)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || strings.ContainsAny(link, " \t\n") {
@@ -99,7 +104,10 @@ func (t *Tickets) Set(repo, branch, link string) error {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	all := t.read()
+	all, err := t.read()
+	if err != nil {
+		return err
+	}
 	if link == "" {
 		delete(all, TicketKey(repo, branch))
 	} else {
@@ -112,7 +120,10 @@ func (t *Tickets) Set(repo, branch, link string) error {
 func (t *Tickets) forget(gone func(repo, branch string) bool) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	all := t.read()
+	all, err := t.read()
+	if err != nil {
+		return err
+	}
 	changed := false
 	for k := range all {
 		repo, branch, _ := strings.Cut(k, " ")

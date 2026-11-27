@@ -212,7 +212,8 @@ func (d *Desk) Week(ctx context.Context, date string, step time.Duration) (WeekR
 			if b.Ticket != "" {
 				tickets[k] = b.Ticket
 			}
-			if b.Hours == 0 {
+			// A branch with commits or prompts stays though its time rounds to nothing, as on a day: its work is in the week.
+			if b.Hours == 0 && len(b.Commits) == 0 && len(b.Asked) == 0 {
 				continue
 			}
 			r := repos[b.Repo]
@@ -285,6 +286,8 @@ type evidence struct {
 	events   []Event
 	bullets  []Bullet
 	problems []string
+	// tickets are the ticket links, by TicketKey.
+	tickets map[string]string
 }
 
 func (d *Desk) evidence(ctx context.Context, first, last, earliest time.Time) (evidence, error) {
@@ -324,9 +327,21 @@ func (d *Desk) evidence(ctx context.Context, first, last, earliest time.Time) (e
 			}
 		}
 	}
-	if d.Tickets != nil && allRead {
-		if err := d.forgetTickets(branches, earliest, ev.events); err != nil {
-			ev.problems = append(ev.problems, "couldn't tidy the ticket links: "+err.Error())
+	if d.Tickets != nil {
+		links, err := d.Tickets.All()
+		if err != nil {
+			ev.problems = append(ev.problems, err.Error()+"; the links are left as they are, and none is shown")
+		} else {
+			if allRead {
+				if err := d.forgetTickets(branches, earliest, ev.events); err != nil {
+					ev.problems = append(ev.problems, "couldn't tidy the ticket links: "+err.Error())
+				}
+			}
+			// Read again: tidying may have forgotten some.
+			if links, err = d.Tickets.All(); err != nil {
+				ev.problems = append(ev.problems, err.Error()+"; the links are left as they are, and none is shown")
+			}
+			ev.tickets = links
 		}
 	}
 	return ev, nil
@@ -335,11 +350,8 @@ func (d *Desk) evidence(ctx context.Context, first, last, earliest time.Time) (e
 // summarise is the day starting at midnight from ev, with the branches' ticket links and their folders as the user writes them.
 func (d *Desk) summarise(midnight time.Time, ev evidence, step time.Duration) Day {
 	day := Summarise(midnight, ev.marks, ev.events, ev.bullets, step)
-	if d.Tickets != nil {
-		links := d.Tickets.All()
-		for i := range day.Branches {
-			day.Branches[i].Ticket = links[TicketKey(day.Branches[i].Repo, day.Branches[i].Branch)]
-		}
+	for i := range day.Branches {
+		day.Branches[i].Ticket = ev.tickets[TicketKey(day.Branches[i].Repo, day.Branches[i].Branch)]
 	}
 	for i := range day.Branches {
 		for j, f := range day.Branches[i].Folders {

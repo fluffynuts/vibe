@@ -5529,13 +5529,17 @@
     drawnAs($('activity-week-branches'), JSON.stringify([w, activityView.picked, activityView.weekSummaries, [...activityView.weekOpen]]), () => weekBranches(w))
   }
 
+  // weekShare is n's share of of, none of nothing: a week whose work all rounded to nothing has no hours to share.
+  function weekShare(n, of) { return of ? n / of : 0 }
+
   function weekPie(w) {
     const box = $('activity-week-pie')
     box.classList.toggle('has-pick', !!activityView.picked)
     let a = 0
     const at = (angle, r) => (r * Math.sin(angle)).toFixed(2) + ' ' + (-r * Math.cos(angle)).toFixed(2)
-    return w.repos.map((r) => {
-      const share = r.hours / w.hours
+    // A repository listed for its commits, with no time once rounded, has no slice.
+    return w.repos.filter((r) => r.hours > 0).map((r) => {
+      const share = weekShare(r.hours, w.hours)
       const a1 = a + 2 * Math.PI * share
       const mid = (a + a1) / 2
       const out = r.repo === activityView.picked ? 6 : 0
@@ -5563,13 +5567,13 @@
 
   function weekLegend(w) {
     return w.repos.map((r) => el('li', {}, el('button', { type: 'button', 'data-repo': r.repo, 'aria-pressed': String(r.repo === activityView.picked),
-      'aria-label': r.repo + ', ' + hours(r.hours) + ', ' + Math.round(100 * r.hours / w.hours) + '% of the week, drawn ' + fillName(r.repo),
+      'aria-label': r.repo + ', ' + hours(r.hours) + ', ' + Math.round(100 * weekShare(r.hours, w.hours)) + '% of the week, drawn ' + fillName(r.repo),
       title: r.repo + daysText(w, r.days),
       onclick: () => pickRepo(r.repo, '#activity-week-legend button'), onkeydown: (ev) => stepFocus(ev, '#activity-week-legend button') },
     svg('svg', { class: 'activity-swatch', viewBox: '0 0 16 16', 'aria-hidden': 'true' }, svg('rect', { width: 16, height: 16, fill: paintOf(r.repo) })),
     el('span', { class: 'activity-legend-name', text: r.repo }),
     el('span', { class: 'activity-hours', text: hours(r.hours) }),
-    el('span', { class: 'activity-share', text: Math.round(100 * r.hours / w.hours) + '%' }))))
+    el('span', { class: 'activity-share', text: Math.round(100 * weekShare(r.hours, w.hours)) + '%' }))))
   }
 
   function weekColumns(w) {
@@ -5614,7 +5618,7 @@
   function weekBranches(w) {
     const r = w.repos.find((x) => x.repo === activityView.picked)
     if (!r) return [el('p', { class: 'note muted', text: w.repos.length ? 'Pick a repository, in either chart or the list, to see its branches this week.' : '' })]
-    const share = r.hours / w.hours
+    const share = weekShare(r.hours, w.hours)
     const keys = r.branches.map((b) => rowKey({ repo: r.repo, branch: b.branch }))
     const allOpen = keys.every((k) => activityView.weekOpen.has(k))
     const head = el('div', { class: 'activity-group-head' },
@@ -5638,7 +5642,7 @@
     const key = rowKey(it)
     const open = activityView.weekOpen.has(key)
     const summary = activityView.weekSummaries[r.repo + ' ' + b.branch]
-    const of = r.hours ? b.hours / r.hours : 0
+    const of = weekShare(b.hours, r.hours)
     const panelId = 'activity-week-work-' + encodeURIComponent(key).replace(/[^A-Za-z0-9_-]/g, '_')
     const toggle = el('button', { type: 'button', class: 'activity-toggle', 'aria-expanded': String(open), 'aria-controls': panelId,
       onclick: () => toggleWeekRow(key) },

@@ -74,6 +74,10 @@ const maxSummaryRules = 64 << 10
 
 var activityRulesFeature = feature{activityFeature.present, activityFeature.missing, 3 * maxSummaryRules}
 
+// activityTicketFeature bounds a request to keep a ticket link by the longest link kept, and room for the repository's and
+// branch's names around it.
+var activityTicketFeature = feature{activityFeature.present, activityFeature.missing, activity.MaxTicketLink + 4<<10}
+
 func (s *Server) rounding() string {
 	r := ""
 	if s.cfg.Activity.Rounding != nil {
