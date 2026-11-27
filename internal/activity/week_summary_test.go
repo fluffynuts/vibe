@@ -35,7 +35,7 @@ func TestTheWeekIsSummarisedInOneAskUnderItsOwnRulesEachBranchKeyedByRepositoryA
 		t.Fatalf("want the week asked about once, got %d", a.asked())
 	}
 	p := a.prompts[0]
-	for _, want := range []string{"Up to 10", "one week", `"Mon: the week view"`, `"Thu: :bug: fix the pie"`, `"prompts": [`, `"Tue: plan the release"`} {
+	for _, want := range []string{"Up to 10", "one week", "under 600 characters", `"Mon: the week view"`, `"Thu: :bug: fix the pie"`, `"prompts": [`, `"Tue: plan the release"`} {
 		if !strings.Contains(p, want) {
 			t.Errorf("the week's prompt doesn't have %q:\n%s", want, p)
 		}
@@ -51,7 +51,7 @@ func TestAWeeksSummaryKeepsUpToTenBullets(t *testing.T) {
 	for i := range bullets {
 		bullets[i] = `"line ` + string(rune('a'+i)) + `"`
 	}
-	got, err := parseSummaries(`{"branches":[{"id":1,"bullets":[`+strings.Join(bullets, ",")+`]}]}`, 1, weekBullets)
+	got, err := parseSummaries(`{"branches":[{"id":1,"bullets":[`+strings.Join(bullets, ",")+`]}]}`, 1, weekBullets, weekBullet)
 	if err != nil || len(got[0]) != 10 || got[0][9] != "line j" {
 		t.Fatalf("want the first ten kept, got %v, %v", got, err)
 	}
@@ -78,5 +78,16 @@ func TestTheWeekKeepsEachBranchsCommitsAndPromptsByDayAndItsTicket(t *testing.T)
 	want := []DayLines{{Date: "2026-11-23", Lines: []string{"plan it"}}, {Date: "2026-11-26", Lines: []string{"and the pie"}}}
 	if !reflect.DeepEqual(b.Asked, want) || len(b.Commits) != 0 || b.Ticket != "https://trello.com/c/a" {
 		t.Fatalf("want the week's prompts by day (no commits) and the ticket, got %+v", b)
+	}
+}
+
+func TestAWeeksLineKeepsTwiceADays(t *testing.T) {
+	long := strings.Repeat("x", 550)
+	reply := `{"branches":[{"id":1,"bullets":["` + long + `"]}]}`
+	if got, _ := parseSummaries(reply, 1, weekBullets, weekBullet); got[0][0] != long {
+		t.Fatalf("want a week's 550-character line whole, got %d characters", len(got[0][0]))
+	}
+	if got, _ := ParseSummaries(reply, 1); len(got[0][0]) >= 550 {
+		t.Fatalf("want a day's line cut, got %d characters", len(got[0][0]))
 	}
 }
