@@ -763,7 +763,8 @@ restarts, as for files). Colours follow the theme, and what is copied is the cod
   `activityRounding` in `~/.vibe/settings.yaml`) and shared between the branches in whole steps, the steps left over going to
   those with the most left over, so no branch is more than a step off and small tasks don't lose the day their sum. Switching to
   a branch, or pulling it, counts only when work follows; branches worked on at once each
-  count in full, and the bars show each one's share. The rows start closed, and one opens at a time: click a branch to see, side
+  count in full, and the bars show each one's share of the day. Branches are grouped under their repository, whose heading has its
+  total and share; both are in order of time, the longest first. The rows start closed, and one opens at a time: click a branch to see, side
   by side, a **Summary** of its day in 1 to 3
   lines and its **Commits** (yours, authored that day, with "merged master" and "rebased onto master" for those, `:bug:` codes
   drawn as emoji), each with a copy button. The summary is made by a one-shot Claude in the sandbox of the page you're on, without

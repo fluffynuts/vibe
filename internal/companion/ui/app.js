@@ -5353,12 +5353,44 @@
     const rows = day.branches.map((b, i) => ({ b, summary: summaries[i] }))
     const hidden = rows.filter((row) => shortAndEmpty(row.b))
     const shown = activityView.showHidden ? rows : rows.filter((row) => !shortAndEmpty(row.b))
+    const groups = byRepository(rows, shown)
     $('activity-none').hidden = day.branches.length > 0
     $('activity-hidden').hidden = !hidden.length
     setText($('activity-hidden-text'), hidden.length + ' hidden: no time once rounded, and no commits.')
     setText($('activity-hidden-toggle'), activityView.showHidden ? 'hide' : 'show')
     drawnAs($('activity-list'), JSON.stringify([day, summaries, activityView.openKey, activityView.showHidden]),
-      () => shown.map((row) => activityRow(row.b, day.hours, row.summary)))
+      () => groups.map((g) => activityGroup(g, day.hours)))
+  }
+
+  // byRepository is the rows shown, under their repositories: each repository's total is all its branches' (shown or not), and
+  // both are in order of time, the longest first, then by name, so equal times hold still. A repository with none shown isn't.
+  function byRepository(rows, shown) {
+    const longestFirst = (aHours, bHours, aName, bName) => bHours - aHours || (aName < bName ? -1 : aName > bName ? 1 : 0)
+    const groups = new Map()
+    for (const row of rows) {
+      if (!groups.has(row.b.repo)) groups.set(row.b.repo, { repo: row.b.repo, hours: 0, estimated: false, rows: [] })
+      const g = groups.get(row.b.repo)
+      g.hours += row.b.hours
+      g.estimated = g.estimated || row.b.estimatedMinutes > 0
+      if (shown.includes(row)) g.rows.push(row)
+    }
+    const out = [...groups.values()].filter((g) => g.rows.length)
+    for (const g of out) g.rows.sort((a, b) => longestFirst(a.b.hours, b.b.hours, a.b.branch, b.b.branch))
+    return out.sort((a, b) => longestFirst(a.hours, b.hours, a.repo, b.repo))
+  }
+
+  // activityGroup is a repository's heading, as a branch's row looks but not opening: its name, total and share of the day, and its
+  // branches' rows under it.
+  function activityGroup(g, total) {
+    const share = total ? g.hours / total : 0
+    const head = el('div', { class: 'activity-group-head' },
+      el('span', { class: 'activity-repo', text: g.repo, title: g.repo }),
+      el('span', { class: 'activity-hours', text: hours(g.hours) }),
+      el('meter', { min: '0', max: '1', value: String(share), 'aria-label': g.repo + ': ' + Math.round(share * 100) + '% of the day' }),
+      el('span', { class: 'activity-share', text: Math.round(share * 100) + '%' }),
+      el('span', { class: 'muted activity-mark', text: g.estimated ? '~estimated' : '' }))
+    return el('section', { class: 'activity-group', 'aria-label': g.repo }, head,
+      el('div', { class: 'activity-group-rows' }, ...g.rows.map((row) => activityRow(row.b, total, row.summary))))
   }
 
   function rowKey(b) { return b.repo + ' ' + b.branch }
@@ -5378,7 +5410,6 @@
     const panelId = 'activity-work-' + encodeURIComponent(key).replace(/[^A-Za-z0-9_-]/g, '_')
     const toggle = el('button', { type: 'button', class: 'activity-toggle', 'aria-expanded': String(open), 'aria-controls': panelId,
       onclick: () => toggleActivityRow(key) },
-      el('span', { class: 'activity-repo', text: b.repo, title: b.repo }),
       el('span', { class: 'activity-branch-name', text: b.branch, title: b.branch }),
       el('span', { class: 'activity-hours', text: hours(b.hours) }),
       el('meter', { min: '0', max: '1', value: String(share), 'aria-label': Math.round(share * 100) + '% of the day' }),
@@ -5400,7 +5431,7 @@
   // toggleActivityRow opens the row (closing the one open) or closes it, keeping the row clicked where it was on the screen: closing
   // one above it would otherwise pull it up from under the pointer.
   function toggleActivityRow(key) {
-    const find = () => [...$('activity-list').children].find((n) => n.dataset.key === key)
+    const find = () => [...$('activity-list').querySelectorAll('.activity-entry')].find((n) => n.dataset.key === key)
     const before = find() ? find().getBoundingClientRect().top : 0
     activityView.openKey = activityView.openKey === key ? null : key
     closeActivityBalloons()

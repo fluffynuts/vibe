@@ -11,9 +11,9 @@ const branch = (repo, name, hours, commits = [], more = {}) => Object.assign({
 }, more)
 
 const today = {
-  date: '2026-11-26', hours: 6.5,
+  date: '2026-11-26', hours: 9,
   branches: [
-    branch('phoenix', 'fix/some-bug', 2.5, [':bug: fix the root cause of the issue', ':nosuchemoji: kept as written']),
+    branch('phoenix', 'fix/some-bug', 5, [':bug: fix the root cause of the issue', ':nosuchemoji: kept as written']),
     branch('yumbi-web', 'feat/some-new-feature', 3, ['implemented new search button', 'fixed bug in the vicinity']),
     branch('yumbi-web', 'feat/some-other-feature', 1, ['merged master'], { estimatedMinutes: 40 }),
   ],
@@ -43,6 +43,7 @@ async function pageWith({ days = { '': today }, attention = [], problems = [], s
 }
 
 const rows = (p) => [...p.$('activity-list').querySelectorAll('.activity-toggle')].map((s) => [...s.children].map((c) => c.textContent.trim()).filter(Boolean).join(' | '))
+const groups = (p) => [...p.$('activity-list').querySelectorAll('.activity-group-head')].map((s) => [...s.children].map((c) => c.textContent.trim()).filter(Boolean).join(' | '))
 const entry = (p, i) => p.$('activity-list').querySelectorAll('.activity-entry')[i]
 const open = (p, i) => p.click(entry(p, i).querySelector('.activity-toggle'))
 const panes = (p, i) => [...entry(p, i).querySelectorAll('.activity-pane')]
@@ -53,11 +54,11 @@ test('the rows start closed: each branch with its rounded hours and share of the
   try {
     assert.equal(p.$('tab-activity').hidden, false)
     assert.equal(p.$('panel-activity').hidden, false)
-    assert.equal(p.$('activity-total').textContent, 'total 6.5')
+    assert.equal(p.$('activity-total').textContent, 'total 9.0')
     assert.deepEqual(rows(p), [
-      'phoenix | fix/some-bug | 2.5 | 38%',
-      'yumbi-web | feat/some-new-feature | 3.0 | 46%',
-      'yumbi-web | feat/some-other-feature | 1.0 | 15% | ~estimated',
+      'fix/some-bug | 5.0 | 56%',
+      'feat/some-new-feature | 3.0 | 33%',
+      'feat/some-other-feature | 1.0 | 11% | ~estimated',
     ])
     assert.equal(p.$('activity-list').querySelectorAll('.activity-pane').length, 0, 'no summary or commits until a row is opened')
     for (const t of p.$('activity-list').querySelectorAll('.activity-toggle')) assert.equal(t.getAttribute('aria-expanded'), 'false')
@@ -148,11 +149,11 @@ test("a row with no time once rounded and no commits is hidden, behind a line th
   ] }
   const p = await pageWith({ days: { '': day } })
   try {
-    assert.deepEqual(rows(p).map((r) => r.split(' | ')[1]), ['feat/x', 'fix/quick'], 'a short branch with commits still shows')
+    assert.deepEqual(rows(p).map((r) => r.split(' | ')[0]), ['feat/x', 'fix/quick'], 'a short branch with commits still shows')
     assert.equal(p.$('activity-hidden').hidden, false)
     assert.match(p.$('activity-hidden').textContent, /1 hidden: no time once rounded, and no commits\. show/)
     await p.click('activity-hidden-toggle')
-    assert.deepEqual(rows(p).map((r) => r.split(' | ')[1]), ['master', 'feat/x', 'fix/quick'])
+    assert.deepEqual(rows(p).map((r) => r.split(' | ')[0]), ['feat/x', 'fix/quick', 'master'])
     assert.equal(p.$('activity-hidden-toggle').textContent, 'hide')
   } finally { p.close() }
 })
@@ -292,5 +293,40 @@ test('the page for no sandbox has the tab, and says nobody is busy on a sandbox'
     p.window.document.body.dispatchEvent(new p.window.Event('pointerdown', { bubbles: true }))
     await p.settle()
     assert.equal(p.sent('/api/activity/seen').length, 0)
+  } finally { p.close() }
+})
+
+test('branches are grouped by repository, under a heading with its total and share of the day, the longest first', async () => {
+  const day = { date: '2026-11-26', hours: 6, branches: [
+    branch('phoenix', 'fix/y', 1.5),
+    branch('vibe', 'feat/a', 1), branch('vibe', 'feat/b', 2), branch('vibe', 'feat/c', 0.5, [], { estimatedMinutes: 20 }),
+    branch('yumbi-web', 'fix/z', 1),
+  ] }
+  const p = await pageWith({ days: { '': day } })
+  try {
+    assert.deepEqual(groups(p), ['vibe | 3.5 | 58% | ~estimated', 'phoenix | 1.5 | 25%', 'yumbi-web | 1.0 | 17%'])
+    const inGroup = [...p.$('activity-list').querySelectorAll('.activity-group')].map((g) =>
+      [...g.querySelectorAll('.activity-toggle')].map((t) => t.querySelector('.activity-branch-name').textContent))
+    assert.deepEqual(inGroup, [['feat/b', 'feat/a', 'feat/c'], ['fix/y'], ['fix/z']], 'branches under their repository, the longest first')
+    assert.equal(p.$('activity-list').querySelector('.activity-toggle .activity-repo'), null, "a branch's row doesn't repeat its repository")
+  } finally { p.close() }
+})
+
+test('equal times are ordered by name, so the order holds still', async () => {
+  const day = { date: '2026-11-26', hours: 2, branches: [branch('b-repo', 'x', 1), branch('a-repo', 'y', 0.5), branch('a-repo', 'w', 0.5)] }
+  const p = await pageWith({ days: { '': day } })
+  try {
+    assert.deepEqual(groups(p).map((g) => g.split(' | ')[0]), ['a-repo', 'b-repo'])
+    assert.deepEqual(rows(p).map((r) => r.split(' | ')[0]), ['w', 'y', 'x'])
+  } finally { p.close() }
+})
+
+test('a repository whose branches are all hidden is hidden with them', async () => {
+  const day = { date: '2026-11-26', hours: 1, branches: [branch('vibe', 'master', 0), branch('phoenix', 'fix/y', 1, ['work'])] }
+  const p = await pageWith({ days: { '': day } })
+  try {
+    assert.deepEqual(groups(p).map((g) => g.split(' | ')[0]), ['phoenix'])
+    await p.click('activity-hidden-toggle')
+    assert.deepEqual(groups(p).map((g) => g.split(' | ')[0]), ['phoenix', 'vibe'])
   } finally { p.close() }
 })

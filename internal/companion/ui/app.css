@@ -795,7 +795,15 @@ dialog.glass::backdrop { background: rgba(250, 250, 250, .55); backdrop-filter: 
 
 /* The Profiles tab: a group per profile, its sandboxes under it. */
 .panel-manage { overflow: auto; }
-.panel-activity { overflow: auto; position: relative; }
+.panel-activity { overflow: auto; position: relative;
+  /* Everything right of the name is a fixed width (the bar's by the window's), so the columns line up from the right, under a heading
+     and in its indented rows alike. */
+  --activity-columns: minmax(0, 1fr) 3em clamp(4em, 24vw, 26em) 2.8em 7.5em; }
+/* Too narrow for a bar beside a name worth reading: the hours and share say it. */
+@media (max-width: 640px) {
+  .panel-activity { --activity-columns: minmax(0, 1fr) 3em 2.8em 7.5em; }
+  .activity-toggle meter, .activity-group-head meter { display: none; }
+}
 .activity-bar { flex-wrap: wrap; }
 .activity-days button { min-width: 2.2em; }
 .activity-days .activity-day { min-width: 11em; }
@@ -815,7 +823,15 @@ dialog.glass::backdrop { background: rgba(250, 250, 250, .55); backdrop-filter: 
 .activity-list { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 12px; }
 .activity-entry { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .activity-head { display: flex; align-items: center; gap: 8px; padding-right: 8px; }
-.activity-toggle { flex: 1; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) 3em minmax(0, 2fr) 2.8em auto;
+/* A repository's heading and its branches' rows share their columns, so the hours, bars and shares line up down the page; the heading
+   leaves room for the rows' (i). */
+.activity-group { display: flex; flex-direction: column; gap: 4px; }
+.activity-group-head { display: grid; grid-template-columns: var(--activity-columns); gap: 10px;
+  align-items: center; padding: 6px 49px 6px 10px; font-weight: 600; border-bottom: 1px solid var(--line); }
+.activity-group-head > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity-group-head .activity-mark { font-weight: normal; }
+.activity-group-rows { display: flex; flex-direction: column; gap: 6px; margin-left: 1.2em; }
+.activity-toggle { flex: 1; min-width: 0; display: grid; grid-template-columns: var(--activity-columns);
   gap: 10px; align-items: center; text-align: left; border: 0; border-radius: 8px; background: none; padding: 6px 10px; cursor: pointer; color: inherit; font: inherit; }
 .activity-toggle > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .activity-hours { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }

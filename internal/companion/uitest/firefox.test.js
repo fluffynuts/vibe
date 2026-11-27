@@ -1755,7 +1755,8 @@ test("each branch's row is one line on the page at every width, a long name cut 
     try {
       const rows = await page.evaluate(() => [...document.querySelectorAll('.activity-head')].map((s) => {
         const r = s.getBoundingClientRect()
-        const kids = [...s.querySelectorAll('.activity-toggle > *, .activity-info')].map((c) => c.getBoundingClientRect())
+        // What isn't displayed (the bar, on a narrow window) has no box to measure.
+        const kids = [...s.querySelectorAll('.activity-toggle > *, .activity-info')].map((c) => c.getBoundingClientRect()).filter((k) => k.width > 0)
         return { right: Math.max(...kids.map((k) => k.right)), top: Math.min(...kids.map((k) => k.top)), bottom: Math.max(...kids.map((k) => k.bottom)), height: r.height }
       }))
       const pageWidth = await page.evaluate(() => document.documentElement.clientWidth)
@@ -1765,6 +1766,16 @@ test("each branch's row is one line on the page at every width, a long name cut 
       }
       const hours = await page.locator('.activity-hours').first().boundingBox()
       assert.ok(hours && hours.width > 0, `at ${width}px, the hours aren't shown`)
+      // A repository's heading and its rows line up: the hours, and the bar where there is one.
+      const lined = await page.evaluate(() => {
+        const box = (sel, within) => within.querySelector(sel) ? within.querySelector(sel).getBoundingClientRect() : null
+        const group = document.querySelector('.activity-group')
+        const head = group.querySelector('.activity-group-head'), row = group.querySelector('.activity-toggle')
+        const edges = (b) => b && b.width ? [Math.round(b.left), Math.round(b.right)] : null
+        return { hours: [edges(box('.activity-hours', head)), edges(box('.activity-hours', row))], bar: [edges(box('meter', head)), edges(box('meter', row))] }
+      })
+      assert.deepEqual(lined.hours[0], lined.hours[1], `at ${width}px, the heading's hours aren't over its rows': ${JSON.stringify(lined)}`)
+      assert.deepEqual(lined.bar[0], lined.bar[1], `at ${width}px, the heading's bar isn't over its rows': ${JSON.stringify(lined)}`)
       // The summary and commits sit side by side where there is room, one over the other where there isn't, never off the page.
       await page.click('.activity-toggle')
       const [summary, commits] = await page.evaluate(() => [...document.querySelector('.activity-work').children].map((c) => {
