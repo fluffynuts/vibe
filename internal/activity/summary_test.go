@@ -52,7 +52,7 @@ func itoa(i int) string { return string(rune('0' + i)) }
 
 func summariser(t *testing.T, dir string, a *asker, holder string) *Summariser {
 	t.Helper()
-	s := &Summariser{Dir: filepath.Join(dir, "summaries"), Holder: holder, Rules: filepath.Join(dir, "summary-rules.md")}
+	s := &Summariser{Dir: filepath.Join(dir, "summaries"), Holder: holder, Rules: filepath.Join(dir, "summary-rules.md"), WeekRules: filepath.Join(dir, "week-summary-rules.md")}
 	if a != nil {
 		s.Ask = a.ask
 	}

@@ -142,11 +142,21 @@ type RepoWeek struct {
 	Branches []BranchWeek `json:"branches"`
 }
 
-// BranchWeek is a branch's week: its hours each day (Monday first) and in all.
+// BranchWeek is a branch's week: its hours each day (Monday first) and in all, what was done each day (its commits; or, with none
+// all week, the prompts asked on it), and its ticket link.
 type BranchWeek struct {
-	Branch string    `json:"branch"`
-	Hours  float64   `json:"hours"`
-	Days   []float64 `json:"days"`
+	Branch  string     `json:"branch"`
+	Hours   float64    `json:"hours"`
+	Days    []float64  `json:"days"`
+	Commits []DayLines `json:"commits"`
+	Asked   []DayLines `json:"asked,omitempty"`
+	Ticket  string     `json:"ticket,omitempty"`
+}
+
+// DayLines are a day's lines (its commits, or prompts) on a branch.
+type DayLines struct {
+	Date  string   `json:"date"`
+	Lines []string `json:"lines"`
 }
 
 // Week is the work of the week (Monday to Sunday) that date (YYYY-MM-DD, local; "" for today) is in: each day rounded as the day
@@ -178,6 +188,9 @@ func (d *Desk) Week(ctx context.Context, date string, step time.Duration) (WeekR
 	w.Problems = append(w.Problems, ev.problems...)
 	repos := map[string]*RepoWeek{}
 	branches := map[branchKey]*BranchWeek{}
+	commits := map[branchKey][]DayLines{}
+	asked := map[branchKey][]DayLines{}
+	tickets := map[branchKey]string{}
 	for i := 0; i < 7; i++ {
 		day := monday.AddDate(0, 0, i)
 		w.Days = append(w.Days, day.Format(time.DateOnly))
@@ -189,6 +202,16 @@ func (d *Desk) Week(ctx context.Context, date string, step time.Duration) (WeekR
 			continue
 		}
 		for _, b := range d.summarise(day, ev, step).Branches {
+			k := branchKey{b.Repo, b.Branch}
+			if len(b.Commits) > 0 {
+				commits[k] = append(commits[k], DayLines{Date: day.Format(time.DateOnly), Lines: b.Commits})
+			}
+			if len(b.Asked) > 0 {
+				asked[k] = append(asked[k], DayLines{Date: day.Format(time.DateOnly), Lines: b.Asked})
+			}
+			if b.Ticket != "" {
+				tickets[k] = b.Ticket
+			}
 			if b.Hours == 0 {
 				continue
 			}
@@ -197,7 +220,6 @@ func (d *Desk) Week(ctx context.Context, date string, step time.Duration) (WeekR
 				r = &RepoWeek{Repo: b.Repo, Days: make([]float64, 7)}
 				repos[b.Repo] = r
 			}
-			k := branchKey{b.Repo, b.Branch}
 			bw := branches[k]
 			if bw == nil {
 				bw = &BranchWeek{Branch: b.Branch, Days: make([]float64, 7)}
@@ -211,6 +233,11 @@ func (d *Desk) Week(ctx context.Context, date string, step time.Duration) (WeekR
 		}
 	}
 	for k, bw := range branches {
+		bw.Commits, bw.Ticket = commits[k], tickets[k]
+		if bw.Commits == nil {
+			bw.Commits = []DayLines{}
+			bw.Asked = asked[k]
+		}
 		repos[k.repo].Branches = append(repos[k.repo].Branches, *bw)
 	}
 	for _, r := range repos {

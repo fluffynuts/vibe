@@ -77,7 +77,8 @@ func setSetting(path, key string, value interface{}) error {
 // (see TESTERS_WANTED.md); a page for no sandbox only shows those other pages made.
 func summariserFor(lay layout.Layout, name, agent string) *activity.Summariser {
 	s := &activity.Summariser{Dir: lay.HomePath("activity", "summaries"), Holder: name, Rules: lay.HomePath("activity", "summary-rules.md"),
-		Problem: func(why string) { note("activity: %s", why) }}
+		WeekRules: lay.HomePath("activity", "week-summary-rules.md"),
+		Problem:   func(why string) { note("activity: %s", why) }}
 	switch {
 	case name == "":
 		s.Unavailable = "Commit summaries are made on a sandbox's page: open the Activity tab there to have these summarised."

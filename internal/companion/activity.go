@@ -131,8 +131,13 @@ func (s *Server) activityWeek(w http.ResponseWriter, r *http.Request) {
 	week.Problems = append(week.Problems, tab.prune(week.Today)...)
 	attention, problems := tab.Desk.Attention(ctx)
 	week.Problems = append(week.Problems, problems...)
+	summaries := map[string]activity.SummaryState{}
+	if tab.Summaries != nil {
+		summaries = tab.Summaries.WeekStates(week)
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"week":        week,
+		"summaries":   summaries,
 		"attention":   attention,
 		"fills":       fills,
 		"colourBlind": tab.ColourBlind != nil && tab.ColourBlind(),

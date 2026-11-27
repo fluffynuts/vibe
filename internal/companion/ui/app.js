@@ -5277,7 +5277,8 @@
   // each repository's fill there, picked the repository whose branches show under the charts.
   const ACTIVITY_MODE = 'vibe-activity-mode'
   const activityView = { day: '', report: null, summaries: [], attention: [], problems: [], rounding: '', asked: 0, loaded: false, openKey: null, infoKey: null, showHidden: false, seen: 0,
-    mode: store.get(ACTIVITY_MODE) === 'week' ? 'week' : 'day', week: null, weekDay: '', fills: {}, colourBlind: false, picked: null }
+    mode: store.get(ACTIVITY_MODE) === 'week' ? 'week' : 'day', week: null, weekDay: '', fills: {}, colourBlind: false, picked: null,
+    weekSummaries: {}, weekOpen: new Set() }
 
   async function loadActivity(now) {
     if (!now && Date.now() - activityView.asked < ACTIVITY_EVERY_MS) return
@@ -5405,8 +5406,11 @@
     activityView.rounding = res.body.rounding || ''
     activityView.attention = res.body.attention || []
     activityView.problems = res.body.week.problems || []
+    activityView.weekSummaries = res.body.summaries || {}
     if (activityView.picked && !activityView.week.repos.some((r) => r.repo === activityView.picked)) activityView.picked = null
-    if (activityView.attention.some((a) => a.checking)) activityView.asked = Date.now() - ACTIVITY_EVERY_MS + ACTIVITY_SUMMARY_MS
+    const waiting = activityView.attention.some((a) => a.checking) ||
+      Object.values(activityView.weekSummaries).some((s) => s.state === 'pending' || s.state === 'elsewhere')
+    if (waiting) activityView.asked = Date.now() - ACTIVITY_EVERY_MS + ACTIVITY_SUMMARY_MS
     drawActivity()
   }
 
@@ -5523,7 +5527,7 @@
     drawnAs($('activity-week-pie'), key, () => weekPie(w))
     drawnAs($('activity-week-legend'), key, () => weekLegend(w))
     drawnAs($('activity-week-columns'), key, () => weekColumns(w))
-    drawnAs($('activity-week-branches'), key, () => weekBranches(w))
+    drawnAs($('activity-week-branches'), JSON.stringify([w, activityView.picked, activityView.weekSummaries, [...activityView.weekOpen]]), () => weekBranches(w))
   }
 
   function weekPie(w) {
@@ -5605,35 +5609,90 @@
     return out
   }
 
-  // weekBranches are the picked repository's branches, as the day's rows are laid out, with their week and each day's hours.
+  // weekBranches are the picked repository's branches, as the day's rows are laid out, with their week and each day's hours. A row
+  // opens (several may be open) to its week's summary beside what was done each day; one button opens them all, or closes them
+  // all once all are open.
   function weekBranches(w) {
     const r = w.repos.find((x) => x.repo === activityView.picked)
     if (!r) return [el('p', { class: 'note muted', text: w.repos.length ? 'Pick a repository, in either chart or the list, to see its branches this week.' : '' })]
     const share = r.hours / w.hours
+    const keys = r.branches.map((b) => rowKey({ repo: r.repo, branch: b.branch }))
+    const allOpen = keys.every((k) => activityView.weekOpen.has(k))
     const head = el('div', { class: 'activity-group-head' },
       el('span', { class: 'activity-repo', text: r.repo, title: r.repo }), el('span'),
       el('span', { class: 'activity-hours', text: hours(r.hours) }),
       el('meter', { min: '0', max: '1', value: String(share), 'aria-label': r.repo + ': ' + Math.round(share * 100) + '% of the week' }),
       el('span', { class: 'activity-share', text: Math.round(share * 100) + '%' }), el('span'))
-    const rows = r.branches.map((b) => {
-      const of = r.hours ? b.hours / r.hours : 0
-      return el('div', { class: 'activity-entry' },
-        el('div', { class: 'activity-head' },
-          el('div', { class: 'activity-toggle activity-week-row' },
-            el('span', { text: b.branch, title: b.branch }), el('span'),
-            el('span', { class: 'activity-hours', text: hours(b.hours) }),
-            el('meter', { min: '0', max: '1', value: String(of), 'aria-label': b.branch + ': ' + Math.round(of * 100) + '% of ' + r.repo + "'s week" }),
-            el('span', { class: 'activity-share', text: Math.round(of * 100) + '%' }), el('span')),
-          el('span', { class: 'activity-actions' })),
-        el('p', { class: 'activity-week-days muted', text: b.days.map((h, i) => h ? WEEK_DAYS[i] + ' ' + hours(h) : '').filter(Boolean).join(' · ') }))
-    })
-    return [el('section', { class: 'activity-group', 'aria-label': r.repo + ' this week' }, head, el('div', { class: 'activity-group-rows' }, ...rows))]
+    const all = el('button', { type: 'button', id: 'activity-week-all', class: 'linklike activity-week-all', text: allOpen ? 'Collapse all' : 'Expand all',
+      onclick: () => {
+        for (const k of keys) { if (allOpen) activityView.weekOpen.delete(k); else activityView.weekOpen.add(k) }
+        drawActivityWeek()
+        $('activity-week-all').focus()
+      } })
+    return [el('div', { class: 'activity-week-all-bar' }, all),
+      el('section', { class: 'activity-group', 'aria-label': r.repo + ' this week' }, head,
+        el('div', { class: 'activity-group-rows' }, ...r.branches.map((b) => weekRow(r, b))))]
+  }
+
+  function weekRow(r, b) {
+    const it = { repo: r.repo, branch: b.branch, ticket: b.ticket }
+    const key = rowKey(it)
+    const open = activityView.weekOpen.has(key)
+    const summary = activityView.weekSummaries[r.repo + ' ' + b.branch]
+    const of = r.hours ? b.hours / r.hours : 0
+    const panelId = 'activity-week-work-' + encodeURIComponent(key).replace(/[^A-Za-z0-9_-]/g, '_')
+    const toggle = el('button', { type: 'button', class: 'activity-toggle', 'aria-expanded': String(open), 'aria-controls': panelId,
+      onclick: () => toggleWeekRow(key) },
+      el('span', { class: 'activity-branch-name', text: b.branch, title: b.branch }),
+      stateMark(stateOf(summary), summary && summary.state === 'failed' ? "Couldn't summarise: " + summary.why : ''),
+      el('span', { class: 'activity-hours', text: hours(b.hours) }),
+      el('meter', { min: '0', max: '1', value: String(of), 'aria-label': Math.round(of * 100) + '% of ' + r.repo + "'s week" }),
+      el('span', { class: 'activity-share', text: Math.round(of * 100) + '%' }), el('span'))
+    const ready = summary && summary.state === 'ready'
+    const copy = el('button', { type: 'button', class: 'copy-code small activity-copy', disabled: !ready,
+      title: ready ? "Copy the week's summary" + (b.ticket ? ', its ticket link first' : '') : 'No summary to copy yet',
+      'aria-label': "Copy the week's summary of " + b.branch, onclick: () => copyText(summaryText(it, summary)) }, copyIcon())
+    const ticket = b.ticket && /^https?:\/\//.test(b.ticket)
+      ? el('a', { class: 'activity-ticket', href: b.ticket, target: '_blank', rel: 'noopener noreferrer', title: 'Open the ticket: ' + b.ticket,
+        'aria-label': 'Open the ticket for ' + b.branch, text: '↗' })
+      : el('span', { class: 'activity-ticket-none' })
+    let work = null
+    if (open) {
+      const done = (b.commits.length ? b.commits : b.asked || []).flatMap((d) => d.lines.map((line) => dayShort(d.date) + ' · ' + (b.commits.length ? withEmoji(line) : line)))
+      work = el('div', { class: 'activity-work', id: panelId },
+        activityPane('Summary', ready ? summary.bullets : null, summaryNote(summary), it, summaryText(it, summary)),
+        b.commits.length || !(b.asked || []).length
+          ? activityPane('Commits', done.length ? done : null, el('p', { class: 'muted', text: 'No commits this week.' }), it)
+          : activityPane('Asked', done, null, it))
+    }
+    return el('div', { class: 'activity-entry', 'data-key': key },
+      el('div', { class: 'activity-head' }, toggle, el('div', { class: 'activity-actions' }, ticket, copy)),
+      el('p', { class: 'activity-week-days muted', text: b.days.map((h, i) => h ? WEEK_DAYS[i] + ' ' + hours(h) : '').filter(Boolean).join(' · ') }),
+      work)
+  }
+
+  function dayShort(date) { return WEEK_DAYS[(new Date(date + 'T12:00:00').getDay() + 6) % 7] }
+
+  // toggleWeekRow opens or closes one row, leaving the others as they are, and keeps it where it was on the screen.
+  function toggleWeekRow(key) {
+    const find = () => [...$('activity-week-branches').querySelectorAll('.activity-entry')].find((n) => n.dataset.key === key)
+    const before = find() ? find().getBoundingClientRect().top : 0
+    if (activityView.weekOpen.has(key)) activityView.weekOpen.delete(key)
+    else activityView.weekOpen.add(key)
+    drawActivityWeek()
+    const row = find()
+    if (row) {
+      scrollerOf(row).scrollTop += row.getBoundingClientRect().top - before
+      row.querySelector('.activity-toggle').focus({ preventScroll: true })
+    }
   }
 
   function showActivityWeek(date) {
     activityView.weekDay = date
     activityView.loaded = false
     activityView.week = null
+    activityView.weekOpen = new Set()
+    activityView.weekSummaries = {}
     closeActivityBalloons()
     drawActivity()
     loadActivity(true)

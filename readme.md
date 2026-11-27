@@ -778,7 +778,9 @@ restarts, as for files). Colours follow the theme, and what is copied is the cod
   line that shows it. The arrows step through the last 14 days (the log and summaries are kept that long), and the date between them opens a list
   of the days kept; **Return to today** shows on any other day. **Week** shows the week (Monday to Sunday) as a pie by
   repository beside a column per day, stacked by repository, with a list of each repository's hours and share: pick one, in
-  either chart or the list, to see its branches' week and days below. Each repository keeps its colour (then a colour and a
+  either chart or the list, to see its branches' week and days below. A branch's row opens to a **summary of its week** (up to
+  10 lines, the most important first, under the rules in `~/.vibe/activity/week-summary-rules.md`) beside its commits by day,
+  with a copy button; **Expand all** opens every row, and **Collapse all**, once all are open, closes them. Each repository keeps its colour (then a colour and a
   pattern: 45 of them) while it's worked on in the 14 days, kept in `~/.vibe/activity/fills.json`; **Colour-blind-friendly**
   (under the columns, kept as `activityColourBlind` in `~/.vibe/settings.yaml`) draws them in three hues told apart by pattern
   too, and is on by itself in the system's high contrast. The **(i)** by the step buttons explains how the time is counted. On today, **Needs

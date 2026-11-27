@@ -199,6 +199,9 @@ func TestTheWeekIsTheReportWithEachRepositorysFillAndTheColourBlindChoice(t *tes
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(rec.Body.String(), `"summaries":{}`) {
+		t.Fatalf("want the week's summaries said, by branch (none this week), got %s", rec.Body)
+	}
 	if len(got.Week.Days) != 7 || got.Fills == nil || got.ColourBlind || got.Rounding != "30m" {
 		t.Fatalf("want this week, its fills (none yet), not colour-blind, at the half hour, got %s", rec.Body)
 	}

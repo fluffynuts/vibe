@@ -1815,12 +1815,15 @@ async function weekPage(width) {
   const repos = names.map((repo, i) => {
     const days = [0, 1, 2, 3, 4, 5, 6].map((d) => (i === 0 ? 4 : (i + d) % 3 === 0 ? 0.5 : 0))
     const hours = days.reduce((a, b) => a + b, 0)
-    return { repo, days, hours, branches: [{ branch: 'feat/a-branch-name-as-long-as-they-come-' + i, days, hours }] }
+    const commits = [{ date: '2026-11-24', lines: [':bug: a commit saying what was done, long enough to need wrapping on a narrow window, and then some'] }]
+    return { repo, days, hours, branches: [0, 1].map((n) => ({ branch: 'feat/a-branch-name-as-long-as-they-come-' + i + '-' + n, days, hours: hours / 2, commits })) }
   }).filter((r) => r.hours > 0)
   const week = { start: '2026-11-23', days: ['2026-11-23', '2026-11-24', '2026-11-25', '2026-11-26', '2026-11-27', '2026-11-28', '2026-11-29'],
     unread: [], today: '2026-11-26', earliest: '2026-11-13', problems: [], repos, hours: repos.reduce((a, r) => a + r.hours, 0) }
+  const summaries = Object.fromEntries(repos.flatMap((r) => r.branches.map((b) => [r.repo + ' ' + b.branch,
+    { key: 'k', state: 'ready', bullets: ['what stands out on ' + b.branch + ' this week, said in a line long enough to wrap'] }])))
   await page.route('**/api/activity/week*', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
-    week, fills: Object.fromEntries(repos.map((r, i) => [r.repo, i])), colourBlind: false, rounding: '30m', attention: [] }) }))
+    week, fills: Object.fromEntries(repos.map((r, i) => [r.repo, i])), colourBlind: false, rounding: '30m', attention: [], summaries }) }))
   await page.route('**/api/activity', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
     report: { day: { date: '2026-11-26', hours: 0, branches: [] }, today: '2026-11-26', earliest: '2026-11-13', problems: [] }, attention: [], problems: [], rounding: '30m', summaries: [] }) }))
   await page.goto(URL)
@@ -1847,7 +1850,23 @@ test("the week's pie, its list and the day columns fit the window at every width
         assert.ok(m[part].width > 0 && m[part].right <= m.panelRight + 1, `the ${part} isn't drawn within the window at ${width}px: ${JSON.stringify(m[part])}`)
       }
       assert.ok(m.pattern, `a slice's fill isn't drawn at ${width}px`)
-      if (width === 1400) await page.screenshot({ path: '/tmp/activity-week.png' })
+      await page.click('#activity-week-legend button >> nth=0')
+      await page.click('#activity-week-all')
+      const open = await page.evaluate(() => {
+        const panel = document.getElementById('panel-activity')
+        const heads = [...document.querySelectorAll('#activity-week-branches .activity-head')].map((h) => {
+          const kids = [...h.querySelectorAll('.activity-toggle > *, .activity-actions')].map((c) => c.getBoundingClientRect()).filter((k) => k.width > 0)
+          return { top: Math.min(...kids.map((k) => k.top)), bottom: Math.max(...kids.map((k) => k.bottom)), right: Math.max(...kids.map((k) => k.right)) }
+        })
+        return { overflow: panel.scrollWidth - panel.clientWidth, panelRight: panel.getBoundingClientRect().right, heads,
+          panes: document.querySelectorAll('#activity-week-branches .activity-pane').length }
+      })
+      assert.equal(open.panes, 4, `Expand all didn't open both rows at ${width}px`)
+      assert.ok(open.overflow <= 1, `the open rows overflow sideways by ${open.overflow}px at ${width}px`)
+      for (const h of open.heads) {
+        assert.ok(h.bottom - h.top < 40 && h.right <= open.panelRight + 1, `a row isn't one line within the window at ${width}px: ${JSON.stringify(h)}`)
+      }
+      if (width === 1400) await page.screenshot({ path: '/tmp/activity-week.png', fullPage: true })
     } finally { await page.close() }
   }
 })

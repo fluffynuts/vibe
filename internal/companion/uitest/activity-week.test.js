@@ -11,8 +11,9 @@ const thisWeek = {
   start: '2026-11-23', days, unread: [], today: '2026-11-26', earliest: '2026-11-13', problems: [], hours: 10,
   repos: [
     repo('vibe', [3, 2, 0, 1, 0, 0, 0], [
-      { branch: 'feat/activity', days: [3, 1.5, 0, 1, 0, 0, 0], hours: 5.5 },
-      { branch: 'master', days: [0, 0.5, 0, 0, 0, 0, 0], hours: 0.5 }]),
+      { branch: 'feat/activity', days: [3, 1.5, 0, 1, 0, 0, 0], hours: 5.5, ticket: 'https://trello.com/c/abc',
+        commits: [{ date: '2026-11-23', lines: [':sparkles: the week view'] }, { date: '2026-11-26', lines: [':bug: fix the pie'] }] },
+      { branch: 'master', days: [0, 0.5, 0, 0, 0, 0, 0], hours: 0.5, commits: [], asked: [{ date: '2026-11-24', lines: ['plan the release'] }] }]),
     repo('yumbi-web', [1, 1, 0, 0, 0, 0, 0], [{ branch: 'feat/dotnet-10', days: [1, 1, 0, 0, 0, 0, 0], hours: 2 }]),
     repo('NExpect', [0, 0, 1, 0.5, 0, 0, 0], [{ branch: 'master', days: [0, 0, 1, 0.5, 0, 0, 0], hours: 1.5 }]),
     repo('dotfiles', [0, 0, 0, 0.5, 0, 0, 0], [{ branch: 'master', days: [0, 0, 0, 0.5, 0, 0, 0], hours: 0.5 }]),
@@ -24,7 +25,10 @@ const lastWeek = Object.assign({}, thisWeek, {
 })
 const day = { date: '2026-11-26', hours: 0, branches: [] }
 
-async function weekPage({ mode = 'week', fills = { vibe: 0, 'yumbi-web': 1, NExpect: 2, dotfiles: 9 }, colourBlind = false } = {}) {
+const ready = (...bullets) => ({ key: 'k', state: 'ready', bullets })
+const weekSummaries = { 'vibe feat/activity': ready('built the week view', 'fixed the pie'), 'vibe master': { key: 'm', state: 'pending' } }
+
+async function weekPage({ mode = 'week', fills = { vibe: 0, 'yumbi-web': 1, NExpect: 2, dotfiles: 9 }, colourBlind = false, summaries = weekSummaries } = {}) {
   const kept = { colourBlind }
   const p = await openPage({
     routes: {
@@ -34,7 +38,7 @@ async function weekPage({ mode = 'week', fills = { vibe: 0, 'yumbi-web': 1, NExp
       '/api/activity/week': (call) => {
         const asked = new URLSearchParams(call.query).get('day') || ''
         const week = asked && asked < '2026-11-23' ? lastWeek : thisWeek
-        return { week, fills, colourBlind: kept.colourBlind, rounding: '30m', attention: [] }
+        return { week, fills, colourBlind: kept.colourBlind, rounding: '30m', attention: [], summaries }
       },
       '/api/activity/colour-blind': (call) => { kept.colourBlind = call.body.on; return { on: call.body.on } },
       '/api/activity/seen': { ok: true },
@@ -88,7 +92,7 @@ test('picking a repository in the list (or a slice) shows its branches with the 
     assert.match(p.$('activity-week-branches').textContent, /Pick a repository/)
     await p.click(p.$('activity-week-legend').querySelector('[data-repo="vibe"]'))
     const rows = [...p.$('activity-week-branches').querySelectorAll('.activity-entry')].map((e) => e.textContent.replace(/\s+/g, ' ').trim())
-    assert.deepEqual(rows, ['feat/activity5.5h92%Mon 3.0h · Tue 1.5h · Thu 1.0h', 'master0.5h8%Tue 0.5h'])
+    assert.deepEqual(rows, ['feat/activity5.5h92%↗Mon 3.0h · Tue 1.5h · Thu 1.0h', 'master0.5h8%Tue 0.5h'])
     assert.equal(p.$('activity-week-pie').classList.contains('has-pick'), true)
     assert.equal(slices(p)[0].getAttribute('aria-pressed'), 'true')
     slices(p)[0].dispatchEvent(new p.window.MouseEvent('click', { bubbles: true }))
@@ -151,5 +155,65 @@ test('the slices are reached by Tab, moved between with the arrow keys, and pick
     await p.settle()
     assert.match(p.$('activity-week-branches').textContent, /feat\/dotnet-10/)
     assert.equal(p.window.document.activeElement.dataset.repo, 'yumbi-web', 'focus stays on the slice picked')
+  } finally { p.close() }
+})
+
+const pickVibe = (p) => p.click(p.$('activity-week-legend').querySelector('[data-repo="vibe"]'))
+const weekRows = (p) => [...p.$('activity-week-branches').querySelectorAll('.activity-entry')]
+const openRows = (p) => weekRows(p).filter((e) => e.querySelector('.activity-toggle').getAttribute('aria-expanded') === 'true').map((e) => e.dataset.key)
+
+test("a branch's row opens to its week's summary beside what was done each day; several may be open", async () => {
+  const p = await weekPage()
+  try {
+    await pickVibe(p)
+    assert.deepEqual(openRows(p), [], 'the rows start closed')
+    await p.click(weekRows(p)[0].querySelector('.activity-toggle'))
+    const [summary, commits] = [...weekRows(p)[0].querySelectorAll('.activity-pane')]
+    assert.deepEqual([...summary.querySelectorAll('li')].map((li) => li.textContent), ['built the week view', 'fixed the pie'])
+    assert.equal(commits.querySelector('h3').textContent, 'Commits')
+    assert.deepEqual([...commits.querySelectorAll('li')].map((li) => li.textContent), ['Mon · ✨ the week view', 'Thu · 🐛 fix the pie'])
+    await p.click(weekRows(p)[1].querySelector('.activity-toggle'))
+    assert.deepEqual(openRows(p), ['vibe feat/activity', 'vibe master'], 'opening one leaves the other open')
+    const [pending, asked] = [...weekRows(p)[1].querySelectorAll('.activity-pane')]
+    assert.match(pending.textContent, /Summarising…/)
+    assert.equal(asked.querySelector('h3').textContent, 'Asked')
+    assert.deepEqual([...asked.querySelectorAll('li')].map((li) => li.textContent), ['Tue · plan the release'])
+  } finally { p.close() }
+})
+
+test('one button expands every row unless all are open, when it collapses them all', async () => {
+  const p = await weekPage()
+  try {
+    await pickVibe(p)
+    const all = () => p.$('activity-week-all')
+    assert.equal(all().textContent, 'Expand all')
+    await p.click(weekRows(p)[0].querySelector('.activity-toggle'))
+    assert.equal(all().textContent, 'Expand all', 'with one open of two, it still expands')
+    await p.click(all())
+    assert.deepEqual(openRows(p), ['vibe feat/activity', 'vibe master'])
+    assert.equal(all().textContent, 'Collapse all')
+    assert.equal(p.window.document.activeElement, all(), 'focus stays on the button')
+    await p.click(all())
+    assert.deepEqual(openRows(p), [])
+    assert.equal(all().textContent, 'Expand all')
+  } finally { p.close() }
+})
+
+test("a row's copy takes the week's summary, its ticket link first, once it's ready; a week stepped to starts closed", async () => {
+  const p = await weekPage()
+  try {
+    let copied = null
+    Object.defineProperty(p.window.navigator, 'clipboard', { value: { writeText: async (t) => { copied = t } }, configurable: true })
+    await pickVibe(p)
+    const copies = weekRows(p).map((e) => e.querySelector('.activity-copy'))
+    assert.equal(copies[0].disabled, false)
+    assert.equal(copies[1].disabled, true, 'still being made')
+    await p.click(copies[0])
+    assert.equal(copied, 'https://trello.com/c/abc\n- built the week view\n- fixed the pie\n')
+    await p.click(p.$('activity-week-all'))
+    await p.click('activity-prev')
+    await p.click('activity-today')
+    await pickVibe(p)
+    assert.deepEqual(openRows(p), [], 'rows opened in another week stay closed')
   } finally { p.close() }
 })
