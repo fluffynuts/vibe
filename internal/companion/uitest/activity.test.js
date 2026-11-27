@@ -208,11 +208,18 @@ test('needs attention shows on today only, saying when GitHub is being asked', a
   } finally { p.close() }
 })
 
-test('a closed row says while its summary is being made, or that it failed', async () => {
-  const p = await pageWith({ summaries: () => [{ key: 'k1', state: 'pending' }, { key: 'k2', state: 'failed', why: 'signed out' }, { key: 'k3', state: 'none' }] })
+test("a closed row shows a spinner while its summary is being made, or a warning when it failed, and its repository's heading shows it too", async () => {
+  const p = await pageWith({ summaries: () => [{ key: 'k1', state: 'failed', why: 'signed out' }, { key: 'k2', state: 'pending' }, { key: 'k3', state: 'none' }] })
   try {
-    assert.match(rows(p)[0], /summarising…/)
-    assert.match(rows(p)[1], /⚠ no summary/)
+    const state = (n) => n.querySelector('.activity-state')
+    // phoenix (5.0) first: its one branch's summary failed; yumbi-web: one being made.
+    const [phoenix, yumbi] = [...p.$('activity-list').querySelectorAll('.activity-group')]
+    assert.equal(state(entry(p, 0)).textContent, '⚠')
+    assert.match(state(entry(p, 0)).title, /Couldn't summarise: signed out/)
+    assert.ok(state(entry(p, 1)).querySelector('.spinner'), 'a spinner while it is made')
+    assert.equal(state(entry(p, 2)).childElementCount + state(entry(p, 2)).textContent.length, 0, 'nothing with no commits to summarise')
+    assert.ok(state(yumbi.querySelector('.activity-group-head')).querySelector('.spinner'), "the branch's spinner shows on its repository")
+    assert.equal(state(phoenix.querySelector('.activity-group-head')).textContent, '⚠', "and a failure, when none is under way")
   } finally { p.close() }
 })
 

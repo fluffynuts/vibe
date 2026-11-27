@@ -5383,8 +5383,12 @@
   // branches' rows under it.
   function activityGroup(g, total) {
     const share = total ? g.hours / total : 0
+    // A branch's spinner shows on its repository too, so a summary under way is seen with the rows scrolled past; else a failure.
+    const states = g.rows.map((row) => stateOf(row.summary))
+    const state = states.includes('busy') ? 'busy' : states.includes('failed') ? 'failed' : ''
     const head = el('div', { class: 'activity-group-head' },
       el('span', { class: 'activity-repo', text: g.repo, title: g.repo }),
+      stateMark(state, state === 'failed' ? 'A branch here has no summary' : ''),
       el('span', { class: 'activity-hours', text: hours(g.hours) }),
       el('meter', { min: '0', max: '1', value: String(share), 'aria-label': g.repo + ': ' + Math.round(share * 100) + '% of the day' }),
       el('span', { class: 'activity-share', text: Math.round(share * 100) + '%' }),
@@ -5395,11 +5399,18 @@
 
   function rowKey(b) { return b.repo + ' ' + b.branch }
 
-  // summaryMark is what a closed row says of its summary while there's none to show yet, or none could be made.
-  function summaryMark(summary) {
-    if (summary && (summary.state === 'pending' || summary.state === 'elsewhere')) return el('span', { class: 'muted', text: 'summarising…' })
-    if (summary && summary.state === 'failed') return el('span', { class: 'warn-text', text: '⚠ no summary', title: "Couldn't summarise: " + summary.why })
-    return el('span', {})
+  // summaryState is what a row's state column shows of its summary: a spinner while it's being made (here or by another vibe), a
+  // warning when it failed, else nothing. stateOf is that state, for a repository's heading to show its branches'.
+  function stateOf(summary) {
+    if (summary && (summary.state === 'pending' || summary.state === 'elsewhere')) return 'busy'
+    if (summary && summary.state === 'failed') return 'failed'
+    return ''
+  }
+
+  function stateMark(state, title) {
+    if (state === 'busy') return el('span', { class: 'activity-state', title: title || 'Summarising…' }, el('span', { class: 'spinner', role: 'img', 'aria-label': 'Summarising' }))
+    if (state === 'failed') return el('span', { class: 'activity-state warn-text', role: 'img', 'aria-label': 'No summary', title: title || "Couldn't summarise", text: '⚠' })
+    return el('span', { class: 'activity-state' })
   }
 
   function activityRow(b, total, summary) {
@@ -5411,10 +5422,11 @@
     const toggle = el('button', { type: 'button', class: 'activity-toggle', 'aria-expanded': String(open), 'aria-controls': panelId,
       onclick: () => toggleActivityRow(key) },
       el('span', { class: 'activity-branch-name', text: b.branch, title: b.branch }),
+      stateMark(stateOf(summary), summary && summary.state === 'failed' ? "Couldn't summarise: " + summary.why : ''),
       el('span', { class: 'activity-hours', text: hours(b.hours) }),
       el('meter', { min: '0', max: '1', value: String(share), 'aria-label': Math.round(share * 100) + '% of the day' }),
       el('span', { class: 'activity-share', text: Math.round(share * 100) + '%' }),
-      el('span', { class: 'muted activity-mark' }, estimated ? '~estimated ' : '', summaryMark(summary)))
+      el('span', { class: 'muted activity-mark', text: estimated ? '~estimated' : '' }))
     const info = el('button', { type: 'button', class: 'choice-info activity-info', 'aria-expanded': 'false', 'aria-controls': 'activity-row-balloon',
       'aria-label': 'When and where ' + b.branch + ' was worked on', title: 'When and where it was worked on', text: 'i',
       onclick: (ev) => toggleRowInfo(b, ev.currentTarget) })
@@ -5479,10 +5491,22 @@
         ...row('Before rounding', hours(b.measuredMinutes / 60) + ' measured, ~' + hours(b.estimatedMinutes / 60) + ' estimated'),
         ...row('In', b.folders.join(', '))))
     balloon.setAttribute('aria-label', 'When and where ' + b.branch + ' was worked on')
-    const head = button.closest('.activity-entry')
-    balloon.style.top = (head.offsetTop + head.offsetHeight + 4) + 'px'
     balloon.hidden = false
+    placeUnder(balloon, button, 'right')
     button.setAttribute('aria-expanded', 'true')
+  }
+
+  // placeUnder puts box (shown, in the Activity panel) just under button: its left edge at the button's ('left'), or its right edge
+  // at the button's ('right'), kept inside the panel.
+  function placeUnder(box, button, align) {
+    const panel = $('panel-activity')
+    const pr = panel.getBoundingClientRect()
+    const br = button.getBoundingClientRect()
+    const width = box.offsetWidth
+    let left = (align === 'right' ? br.right - width : br.left) - pr.left + panel.scrollLeft
+    left = Math.max(8, Math.min(left, panel.clientWidth - width - 8))
+    box.style.left = left + 'px'
+    box.style.top = (br.bottom - pr.top + panel.scrollTop + 4) + 'px'
   }
 
   function toggleDayList() {
@@ -5500,6 +5524,7 @@
     }
     list.replaceChildren(...items)
     list.hidden = false
+    placeUnder(list, $('activity-day'), 'left')
     $('activity-day').setAttribute('aria-expanded', 'true')
     const current = list.querySelector('[aria-current="date"]') || list.querySelector('button')
     if (current) current.focus()
@@ -5570,6 +5595,7 @@
       const open = $('activity-help-balloon').hidden
       closeActivityBalloons()
       $('activity-help-balloon').hidden = !open
+      if (open) placeUnder($('activity-help-balloon'), $('activity-help'), 'left')
       $('activity-help').setAttribute('aria-expanded', String(open))
     })
     $('activity-hidden-toggle').addEventListener('click', () => { activityView.showHidden = !activityView.showHidden; drawActivity() })

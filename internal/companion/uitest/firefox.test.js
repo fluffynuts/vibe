@@ -1805,3 +1805,22 @@ test('opening a row below the open one keeps the row clicked where it was on the
     assert.equal(await target.getAttribute('aria-expanded'), 'true')
   } finally { await page.close() }
 })
+
+test("a balloon opens just under its own button: a row's (i), the help's, and the day's list", async () => {
+  const page = await activityPage(1200)
+  try {
+    const near = async (button, box, align) => {
+      await page.click(button)
+      const b = await page.locator(button).boundingBox()
+      const x = await page.locator(box).boundingBox()
+      assert.ok(x, `${box} didn't open`)
+      assert.ok(x.y >= b.y + b.height && x.y - (b.y + b.height) <= 8, `${box} isn't just under ${button}: ${JSON.stringify({ b, x })}`)
+      const edge = align === 'right' ? Math.abs(x.x + x.width - (b.x + b.width)) : Math.abs(x.x - b.x)
+      assert.ok(edge <= 2, `${box} isn't lined up with ${button}'s ${align} edge: ${JSON.stringify({ b, x })}`)
+    }
+    await near('.activity-info >> nth=1', '#activity-row-balloon', 'right')
+    await page.screenshot({ path: '/tmp/activity-balloon.png' })
+    await near('#activity-help', '#activity-help-balloon', 'left')
+    await near('#activity-day', '#activity-days-list', 'left')
+  } finally { await page.close() }
+})
