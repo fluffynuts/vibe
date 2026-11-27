@@ -1,6 +1,6 @@
 // Package activity works out how a day's time split between repositories and branches, for a timesheet: from the marks
 // vibe keeps while its page runs (measured), and what git recorded in the folders vibe has opened (estimated). See
-// docs/plan-activity.md.
+// docs/adr/2026-11-26-activity.md.
 package activity
 
 import (

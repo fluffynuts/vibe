@@ -13,7 +13,7 @@ import (
 )
 
 // The Activity tab: how the day's time split between repositories and branches, for a timesheet, from what vibe saw and
-// what git recorded in every folder vibe has opened (see docs/plan-activity.md).
+// what git recorded in every folder vibe has opened (see docs/adr/2026-11-26-activity.md).
 
 // ActivityTab is what the Activity tab reads, and the rounding it is shown with.
 type ActivityTab struct {

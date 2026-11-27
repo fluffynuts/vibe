@@ -5265,7 +5265,7 @@
 
   // --- the Activity tab ---------------------------------------------------
 
-  // How the day's time split between repositories and branches, for a timesheet (see docs/plan-activity.md). Reading it runs
+  // How the day's time split between repositories and branches, for a timesheet (see docs/adr/2026-11-26-activity.md). Reading it runs
   // a helper for each folder's git, so the tab asks again only every ACTIVITY_EVERY_MS, or when the day or rounding changes.
   const ACTIVITY_EVERY_MS = 15000
   // How often the page says the user is busy on it, at most: the minute is all the time is counted in.
