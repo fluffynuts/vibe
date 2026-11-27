@@ -65,6 +65,12 @@ type Settings struct {
 	// repository's default branch when origin can't say which it is: the
 	// one last set there.
 	DefaultBranch string `yaml:"defaultBranch,omitempty"`
+	// ActivityRounding is the step the Activity tab rounds each branch's day to (the nearest): "15m", "30m" or "1h". It is one for
+	// all of vibe, kept only in ~/.vibe/settings.yaml, as the tab covers every sandbox.
+	ActivityRounding string `yaml:"activityRounding,omitempty"`
+	// ActivityColourBlind draws the Activity tab's week in the fills that stay apart for colour-blind readers: three hues, told
+	// apart by pattern too. One for all of vibe, kept only in ~/.vibe/settings.yaml, as it is the user's, not a sandbox's.
+	ActivityColourBlind bool `yaml:"activityColourBlind,omitempty"`
 	// Mode is how vibe starts: "headless", serving the companion page with
 	// no terminal, or "terminal". Unset means terminal. Layered as the rest
 	// are: a profile's settings.yaml over ~/.vibe/settings.yaml.

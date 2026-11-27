@@ -84,6 +84,9 @@ function main() {
     return;
   }
   if (input.hook_event_name !== "UserPromptSubmit") return;
+  // A claude vibe runs for its own ends (a summary of the day's commits, Optimise, the model list) is marked so: its prompt is
+  // not the user's, and what they pasted waits for theirs. A summary once took a pasted screenshot, marked sent, never seen.
+  if (process.env.VIBE_CLIPBOARD_HOOK === "off") return;
   claim(function (items) {
     if (!items.length) return;
     process.stdout.write(JSON.stringify({

@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
 
 	"context"
 	"os"
@@ -289,13 +288,7 @@ func (a *companionAdmin) Optimise(ctx context.Context, which, text string) (stri
 	defer termtitle.Set(title)
 	noteIfFree("asking the agent to optimise the %s instructions…", which)
 
-	words := make([]string, len(spec.OneShot))
-	for i, w := range spec.OneShot {
-		words[i] = shellQuote(w)
-	}
-	// Somewhere neutral, not the workspace: it has no tools, and needn't
-	// pick up the project's own instructions.
-	reply, err := sbxrun.ExecInputStdout(ctx, a.name, prompt, asAgent("cd /tmp && exec "+strings.Join(words, " "))...)
+	reply, err := sbxrun.ExecInputStdout(ctx, a.name, prompt, asAgent(oneShotCommand(spec.OneShot...))...)
 	if err != nil {
 		if ctx.Err() != nil {
 			return "", ctx.Err()

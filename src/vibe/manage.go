@@ -473,7 +473,7 @@ func doManage(lay layout.Layout) error {
 		}
 		return nil
 	}
-	srv, err := companion.Start(companion.Config{Token: token, Port: port, Manage: &companionManager{lay: lay}, Power: &powerDesk{lay: lay}})
+	srv, err := companion.Start(companion.Config{Token: token, Port: port, Manage: &companionManager{lay: lay}, Power: &powerDesk{lay: lay}, Activity: activityTabFor(lay, "", "")})
 	if err != nil {
 		return fmt.Errorf("couldn't serve the Profiles page on port %d: %w", port, err)
 	}

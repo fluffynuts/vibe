@@ -49,7 +49,7 @@
   // How long the clipboard page gets to come up before the page says so and
   // offers to start it.
   const CLIPBOARD_PATIENCE_MS = 30000
-  const TABS = ['conversation', 'review', 'log', 'rules', 'fs', 'admin', 'manage']
+  const TABS = ['conversation', 'review', 'log', 'rules', 'fs', 'activity', 'admin', 'manage']
   // The tabs about a sandbox: a page served for none ('vibe --manage') has
   // only the Profiles tab.
   const SANDBOX_TABS = ['log', 'rules', 'fs']
@@ -1094,6 +1094,8 @@
       $('usage').hidden = !state.usage
       $('tab-admin').hidden = !state.admin
       $('tab-manage').hidden = !res.body.manage
+      state.activity = !!res.body.activity
+      $('tab-activity').hidden = !state.activity
       $('tab-review').hidden = !res.body.review
       for (const t of SANDBOX_TABS) $('tab-' + t).hidden = res.body.sandboxTabs === false
       state.attention = res.body.attention || {}
@@ -1286,8 +1288,9 @@
       post('/api/awake', {}).catch(() => {})
     }
     const loads = state.tab === 'conversation' ? [unlessBusy('state', loadState)]
-      : state.tab === 'admin' ? [unlessBusy('state', loadState), unlessBusy('admin', loadAdmin), unlessBusy('permission', loadPermissionMode), unlessBusy('packages', loadPackages), unlessBusy('sync', loadSync), unlessBusy('instructions', () => loadInstructions(false))]
+      : state.tab === 'admin' ? [unlessBusy('state', loadState), unlessBusy('admin', loadAdmin), unlessBusy('permission', loadPermissionMode), unlessBusy('packages', loadPackages), unlessBusy('sync', loadSync), unlessBusy('instructions', () => loadInstructions(false)), unlessBusy('rules', () => loadRules(false))]
       : state.tab === 'manage' ? [unlessBusy('state', loadState), unlessBusy('manage', loadManage)]
+      : state.tab === 'activity' ? [unlessBusy('state', loadState), unlessBusy('activity', () => loadActivity(false))]
       : state.tab === 'review' ? [unlessBusy('state', loadState), unlessBusy('review', () => loadReview(reviewView.files === null))]
       : [unlessBusy('state', loadState), unlessBusy('tab ' + state.tab, () => load(state.tab))]
     if (state.tab === 'admin' && state.themes) loads.push(unlessBusy('theme', loadTheme))
@@ -2360,7 +2363,7 @@
         : 'line ' + (c.side === 'old' ? 'L' : 'R') + c.line) }),
       el('div', { class: 'review-compose-tabs' }, el('span', { role: 'tablist' }, tab('write', 'Write'), tab('preview', 'Preview')),
         c.mode === 'write' ? formattable(body) : null),
-      body,
+      c.mode === 'write' ? emojiBox(body, () => body.dispatchEvent(new Event('input'))) : body,
       el('div', { class: 'bar review-compose-actions' }, el('span', { class: 'spacer' }),
         el('button', { type: 'button', class: 'ghost', text: 'Cancel', onclick: cancelComposer }), send))
     return sideRow(columns, c.side === 'old' ? [box] : [], c.side === 'old' ? [] : [box])
@@ -3892,7 +3895,7 @@
       box.addEventListener('keydown', (ev) => {
         if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); saveEdit(t, c) }
       })
-      return el('div', { class: 'comment' }, head, formattable(box), box, el('div', { class: 'bar' },
+      return el('div', { class: 'comment' }, head, formattable(box), emojiBox(box, () => box.dispatchEvent(new Event('input'))), el('div', { class: 'bar' },
         el('button', { type: 'button', text: 'Save', title: 'Save (Ctrl+Enter)', onclick: () => saveEdit(t, c) }),
         el('button', { type: 'button', class: 'ghost', text: 'Cancel', onclick: () => { reviewView.editing = null; redrawReview() } })))
     })
@@ -3955,7 +3958,7 @@
       el('div', { class: 'muted' }, '#' + t.id + ' · ' + where + (t.movedFrom ? ' · moved from line ' + t.movedFrom : '') + (open ? '' : ' · '),
         open ? null : el('span', { class: 'thread-state', text: t.status }),
         reviewView.outdated && reviewView.outdated.has(t.id) ? el('span', { class: 'review-outdated', text: ' · the code has changed since' }) : null),
-      ...comments, askFeedback(t), formattable(box), box,
+      ...comments, askFeedback(t), formattable(box), emojiBox(box, () => box.dispatchEvent(new Event('input'))),
       el('div', { class: 'bar' },
         el('button', { type: 'button', text: 'Reply', onclick: act('reply') }),
         state.conversation ? el('button', { type: 'button', class: 'ghost', text: 'Ask the agent', title: 'Send your reply to the agent as a question: it answers here', onclick: ask }) : null,
@@ -4510,6 +4513,7 @@
   function setUpCardLoading() {
     Object.assign(cardLoaders, {
       admin: loadAdmin, signin: loadSignIn, packages: loadPackages, sync: loadSync, instructions: () => loadInstructions(false),
+      rules: () => loadRules(false),
       permission: loadPermissionMode,
     })
     for (const card of document.querySelectorAll('#panel-admin .card[data-loads]')) {
@@ -4541,7 +4545,7 @@
   // it ends: so the bar is up at its start (5%) from the click, and the rest of it is the packages
   // as they come into the cache, counted by the host.
   const PROGRESS_START = 5
-  function showProgress(bar, got) {
+  function fillProgress(bar, got) {
     bar.max = 100
     bar.value = got && got.total > 0 ? PROGRESS_START + (100 - PROGRESS_START) * Math.min(got.done, got.total) / got.total : PROGRESS_START
   }
@@ -4616,7 +4620,7 @@
     if (running) {
       // The host counts them in the cache; without a count the bar is of unknown length.
       const got = b.progress
-      showProgress(bar, got)
+      fillProgress(bar, got)
       status.hidden = false
       status.textContent = got && got.total > 0 && got.done >= got.total
         ? 'Finishing… all ' + got.total + ' are in your cache; the restore is wrapping up.'
@@ -5259,6 +5263,939 @@
     })
   }
 
+  // --- the Activity tab ---------------------------------------------------
+
+  // How the day's time split between repositories and branches, for a timesheet (see docs/adr/2026-11-26-activity.md). Reading it runs
+  // a helper for each folder's git, so the tab asks again only every ACTIVITY_EVERY_MS, or when the day or rounding changes.
+  const ACTIVITY_EVERY_MS = 15000
+  // How often the page says the user is busy on it, at most: the minute is all the time is counted in.
+  const ACTIVITY_SEEN_MS = 60000
+  // How soon the tab asks again while a summary is being made, here or by another vibe.
+  const ACTIVITY_SUMMARY_MS = 3000
+  // openKey is the one row open (its repository and branch), null for none; showHidden shows the rows hidden for being short and
+  // empty (no time once rounded, and no commits).
+  // mode is 'day' or 'week' (kept for the page); week is the week shown (its report), weekDay a day in it ('' for this week), fills
+  // each repository's fill there, picked the repository whose branches show under the charts.
+  const ACTIVITY_MODE = 'vibe-activity-mode'
+  const activityView = { day: '', report: null, summaries: [], attention: [], problems: [], rounding: '', asked: 0, loaded: false, openKey: null, infoKey: null, showHidden: false, seen: 0,
+    mode: store.get(ACTIVITY_MODE) === 'week' ? 'week' : 'day', week: null, weekDay: '', fills: {}, colourBlind: false, picked: null,
+    weekSummaries: {}, weekOpen: new Set() }
+
+  async function loadActivity(now) {
+    if (!now && Date.now() - activityView.asked < ACTIVITY_EVERY_MS) return
+    activityView.asked = Date.now()
+    if (activityView.mode === 'week') { await loadActivityWeek(); return }
+    const day = activityView.day
+    const res = await api('/api/activity' + (day ? '?day=' + encodeURIComponent(day) : ''), { timeout: 70000 })
+    if (day !== activityView.day) return
+    if (!res.ok) { problem('activity', res); return }
+    banner('activity', '')
+    activityView.loaded = true
+    activityView.report = res.body.report
+    activityView.attention = res.body.attention || []
+    activityView.problems = res.body.problems || []
+    activityView.rounding = res.body.rounding || ''
+    activityView.summaries = res.body.summaries || []
+    // A look at GitHub, or a summary, under way: asked again soon, for what came of it.
+    const waiting = activityView.attention.some((a) => a.checking) || activityView.summaries.some((s) => s.state === 'pending' || s.state === 'elsewhere')
+    if (waiting) activityView.asked = Date.now() - ACTIVITY_EVERY_MS + ACTIVITY_SUMMARY_MS
+    drawActivity()
+  }
+
+  // hours is a branch's time as a timesheet takes it: decimal hours, with one decimal at least, marked as hours (3.0h, 2.5h, 0.25h).
+  function hours(n) { return (Number.isInteger(n) ? n.toFixed(1) : String(Math.round(n * 100) / 100)) + 'h' }
+
+  // dayName is a day as the bar shows it: "Thursday, 27 Nov".
+  function dayName(date) {
+    return new Date(date + 'T00:00:00').toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'short' })
+  }
+
+  // dayChoice is a day as the list of days names it: Today, Yesterday, then by name.
+  function dayChoice(date, today) {
+    if (date === today) return 'Today'
+    const days = Math.round((new Date(today + 'T00:00:00') - new Date(date + 'T00:00:00')) / 86400000)
+    return days === 1 ? 'Yesterday' : dayName(date)
+  }
+
+  // shiftDay is date moved by days, as YYYY-MM-DD.
+  function shiftDay(date, days) {
+    const d = new Date(date + 'T12:00:00')
+    d.setDate(d.getDate() + days)
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+  }
+
+  function clock(iso) { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
+
+  // withEmoji draws the :name: codes in text (a commit's gitmoji, :bug:, or an agent's message) as their emoji (ui/emoji.js's drawn).
+  function withEmoji(text) { return window.vibeEmoji ? window.vibeEmoji.drawn(text) : text }
+
+  // bulletsText is lines as they are pasted somewhere else: a bullet each.
+  function bulletsText(lines) { return lines.map((l) => '- ' + l).join('\n') + '\n' }
+
+  // shortAndEmpty says a branch is hidden unless asked for: no time once the day is rounded, and no commits or prompts. An
+  // investigation that took long enough shows by its time; a few minutes passing through a branch don't.
+  function shortAndEmpty(b) { return b.hours === 0 && b.commits.length === 0 && !(b.asked || []).length }
+
+  function drawActivity() {
+    const r = activityView.report
+    const week = activityView.mode === 'week'
+    $('activity-wait').hidden = activityView.loaded
+    for (const b of $('activity-rounding').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.rounding === activityView.rounding))
+    for (const b of $('activity-mode').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.mode === activityView.mode))
+    $('activity-list').hidden = week
+    $('activity-week').hidden = !week
+    if (week) {
+      $('activity-none').hidden = true
+      $('activity-hidden').hidden = true
+      drawActivityWeek()
+      return
+    }
+    if (!r) return
+    setText($('activity-today'), 'Return to today')
+    const day = r.day
+    const isToday = day.date === r.today
+    setText($('activity-day'), dayName(day.date))
+    $('activity-prev').disabled = day.date <= r.earliest
+    $('activity-next').disabled = isToday
+    $('activity-today').hidden = isToday
+    setText($('activity-total'), day.branches.length ? 'total ' + hours(day.hours) : '')
+    $('activity-problems').hidden = !activityView.problems.length
+    drawnAs($('activity-problems'), JSON.stringify(activityView.problems), () => activityView.problems.map((p) => el('li', { text: p })))
+    drawNeeds(isToday)
+    const summaries = activityView.summaries
+    const rows = day.branches.map((b, i) => ({ b, summary: summaries[i] }))
+    const hidden = rows.filter((row) => shortAndEmpty(row.b))
+    const shown = activityView.showHidden ? rows : rows.filter((row) => !shortAndEmpty(row.b))
+    const groups = byRepository(rows, shown)
+    $('activity-none').hidden = day.branches.length > 0
+    $('activity-hidden').hidden = !hidden.length
+    setText($('activity-hidden-text'), hidden.length + ' hidden: no time once rounded, and no commits or prompts.')
+    setText($('activity-hidden-toggle'), activityView.showHidden ? 'hide' : 'show')
+    drawnAs($('activity-list'), JSON.stringify([day, summaries, activityView.openKey, activityView.showHidden]),
+      () => groups.map((g) => activityGroup(g, day.hours)))
+  }
+
+  // --- The week: a pie of the week by repository beside a column per day, stacked by repository; each repository drawn in its own
+  // fill (a colour, then a colour and a pattern), the one it keeps while worked on in the days kept (activity.Fills). Picking one (in
+  // either chart or the legend) shows its branches below. See docs/adr/2026-11-26-activity.md.
+  const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+  // Normal: 9 colours, every pair ΔE >= 15 apart for normal colour vision and >= 3:1 against the panel, in both themes (each the
+  // same hue in each), the most different first; then each again with each pattern, a colour's repeats each a different one.
+  const FILL_COLOURS = {
+    dark: ['#2ba1ed', '#f93825', '#39b620', '#a622df', '#fd34bc', '#c18f23', '#2a64f8', '#a97cf0', '#bb3f7b'],
+    light: ['#1494df', '#ea2413', '#27a902', '#9901d1', '#ee1daf', '#b4820a', '#1e56ea', '#9d6fe3', '#ae3170'],
+  }
+  // Colour-blind-friendly: 3 hues that stay apart for colour-blind readers, each with each pattern.
+  const SAFE_COLOURS = { dark: ['#338ced', '#e76624', '#00a888'], light: ['#257de0', '#f47230', '#00b894'] }
+  const FILL_PATTERNS = ['solid', 'stripes /', 'dots', 'stripes \\', 'cross-hatch']
+  const OTHER_COLOUR = { dark: '#6b7280', light: '#9ca3af' }
+  const NORMAL_FILLS = 45
+  const SAFE_FILLS = 15
+
+  async function loadActivityWeek() {
+    const day = activityView.weekDay
+    const res = await api('/api/activity/week' + (day ? '?day=' + encodeURIComponent(day) : ''), { timeout: 70000 })
+    if (day !== activityView.weekDay || activityView.mode !== 'week') return
+    if (!res.ok) { problem('activity', res); return }
+    banner('activity', '')
+    activityView.loaded = true
+    activityView.week = res.body.week
+    activityView.fills = res.body.fills || {}
+    activityView.colourBlind = !!res.body.colourBlind
+    activityView.rounding = res.body.rounding || ''
+    activityView.attention = res.body.attention || []
+    activityView.problems = res.body.week.problems || []
+    activityView.weekSummaries = res.body.summaries || {}
+    if (activityView.picked && !activityView.week.repos.some((r) => r.repo === activityView.picked)) activityView.picked = null
+    const waiting = activityView.attention.some((a) => a.checking) ||
+      Object.values(activityView.weekSummaries).some((s) => s.state === 'pending' || s.state === 'elsewhere')
+    if (waiting) activityView.asked = Date.now() - ACTIVITY_EVERY_MS + ACTIVITY_SUMMARY_MS
+    drawActivity()
+  }
+
+  function pageIsDark() {
+    const chosen = document.documentElement.dataset.theme
+    return chosen ? chosen === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches
+  }
+
+  // highContrast is the system's own high contrast (forced colours): its colours replace the page's, so the patterns tell the
+  // repositories apart, and the colour-blind fills are used.
+  function highContrast() { return matchMedia('(forced-colors: active)').matches }
+
+  function safeFills() { return activityView.colourBlind || highContrast() }
+
+  // fillOf is the fill numbered slot: its colour and pattern, or Other past the fills there are.
+  function fillOf(slot) {
+    const mode = pageIsDark() ? 'dark' : 'light'
+    if (safeFills()) {
+      if (slot >= SAFE_FILLS) return { colour: OTHER_COLOUR[mode], pattern: 'solid', other: true }
+      return { colour: SAFE_COLOURS[mode][slot % 3], pattern: FILL_PATTERNS[Math.floor(slot / 3)] }
+    }
+    if (slot >= NORMAL_FILLS) return { colour: OTHER_COLOUR[mode], pattern: 'solid', other: true }
+    const colour = slot % 9
+    const round = Math.floor(slot / 9)
+    return { colour: FILL_COLOURS[mode][colour], pattern: round === 0 ? 'solid' : FILL_PATTERNS[1 + (colour + round - 1) % 4] }
+  }
+
+  const SVG = 'http://www.w3.org/2000/svg'
+  function svg(tag, attrs, ...children) {
+    const node = document.createElementNS(SVG, tag)
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (k === 'text') node.textContent = v
+      else if (k.startsWith('on')) node.addEventListener(k.slice(2), v)
+      else if (v != null) node.setAttribute(k, v)
+    }
+    for (const c of children) if (c != null) node.append(c)
+    return node
+  }
+
+  // drawFills writes the patterns the week's fills paint with: the fill's colour, with lines or dots of the panel's colour over it.
+  function drawFills(slots) {
+    const panel = getComputedStyle(document.documentElement).getPropertyValue('--panel').trim() || '#ffffff'
+    drawnAs($('activity-fill-defs'), JSON.stringify([slots, panel, pageIsDark(), safeFills()]), () => slots.map((slot) => {
+      const f = fillOf(slot)
+      const marks = []
+      if (f.pattern.startsWith('stripes')) marks.push(svg('rect', { x: 0, y: 0, width: 2.2, height: 6, fill: panel }))
+      if (f.pattern === 'cross-hatch') marks.push(svg('rect', { x: 0, y: 0, width: 1.8, height: 6, fill: panel }), svg('rect', { x: 0, y: 0, width: 6, height: 1.8, fill: panel }))
+      if (f.pattern === 'dots') marks.push(svg('circle', { cx: 3, cy: 3, r: 1.5, fill: panel }))
+      const turn = f.pattern === 'stripes /' || f.pattern === 'cross-hatch' ? 45 : f.pattern === 'stripes \\' ? -45 : 0
+      return svg('pattern', { id: 'activity-fill-' + slot, patternUnits: 'userSpaceOnUse', width: 6, height: 6, patternTransform: 'rotate(' + turn + ')' },
+        svg('rect', { width: 6, height: 6, fill: f.colour }), ...marks)
+    }))
+  }
+
+  function paintOf(repo) {
+    const slot = activityView.fills[repo]
+    const f = fillOf(slot == null ? NORMAL_FILLS : slot)
+    return f.other ? f.colour : 'url(#activity-fill-' + slot + ')'
+  }
+
+  function fillName(repo) {
+    const slot = activityView.fills[repo]
+    const f = fillOf(slot == null ? NORMAL_FILLS : slot)
+    return f.other ? 'grey (Other)' : f.pattern
+  }
+
+  function pickRepo(repo, focusFrom) {
+    activityView.picked = activityView.picked === repo ? null : repo
+    drawActivityWeek()
+    if (focusFrom) {
+      const again = [...$('activity-week').querySelectorAll(focusFrom)].find((n) => n.dataset.repo === repo)
+      if (again) again.focus()
+    }
+  }
+
+  // stepFocus moves the focus to the next or previous of a chart's or the legend's choices with the arrow keys.
+  function stepFocus(ev, selector) {
+    const by = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[ev.key]
+    if (!by) return
+    ev.preventDefault()
+    const all = [...$('activity-week').querySelectorAll(selector)]
+    all[(all.indexOf(ev.currentTarget) + by + all.length) % all.length].focus()
+  }
+
+  function weekName(start) {
+    return 'Week of ' + new Date(start + 'T00:00:00').toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })
+  }
+
+  function drawActivityWeek() {
+    const w = activityView.week
+    if (!w) return
+    const thisWeek = w.days.includes(w.today)
+    setText($('activity-day'), weekName(w.start))
+    $('activity-prev').disabled = w.start <= w.earliest
+    $('activity-next').disabled = thisWeek
+    $('activity-today').hidden = thisWeek
+    setText($('activity-today'), 'Return to this week')
+    setText($('activity-total'), w.repos.length ? 'total ' + hours(w.hours) : '')
+    $('activity-problems').hidden = !activityView.problems.length
+    drawnAs($('activity-problems'), JSON.stringify(activityView.problems), () => activityView.problems.map((p) => el('li', { text: p })))
+    drawNeeds(thisWeek)
+    const cvd = $('activity-colour-blind')
+    cvd.checked = safeFills()
+    cvd.disabled = highContrast()
+    $('activity-colour-blind-label').title = highContrast() ? "On while the system's high contrast is" : 'Draw the charts in fills that stay apart for colour-blind readers, told apart by pattern too'
+    const unread = w.unread.length ? w.unread.map((d) => WEEK_DAYS[w.days.indexOf(d)]).join(', ') + (w.unread.length === 1 ? ' is' : ' are') + ' before the days kept, so not counted.' : ''
+    setText($('activity-week-unread'), unread)
+    $('activity-week-unread').hidden = !unread
+    $('activity-week-none').hidden = w.repos.length > 0
+    $('activity-week-charts').hidden = !w.repos.length
+    const slots = [...new Set(w.repos.map((r) => activityView.fills[r.repo]).filter((n) => n != null))]
+    drawFills(slots)
+    const key = JSON.stringify([w, activityView.fills, activityView.picked, pageIsDark(), safeFills()])
+    drawnAs($('activity-week-pie'), key, () => weekPie(w))
+    drawnAs($('activity-week-legend'), key, () => weekLegend(w))
+    drawnAs($('activity-week-columns'), key, () => weekColumns(w))
+    drawnAs($('activity-week-branches'), JSON.stringify([w, activityView.picked, activityView.weekSummaries, [...activityView.weekOpen]]), () => weekBranches(w))
+  }
+
+  // weekShare is n's share of of, none of nothing: a week whose work all rounded to nothing has no hours to share.
+  function weekShare(n, of) { return of ? n / of : 0 }
+
+  function weekPie(w) {
+    const box = $('activity-week-pie')
+    box.classList.toggle('has-pick', !!activityView.picked)
+    let a = 0
+    const at = (angle, r) => (r * Math.sin(angle)).toFixed(2) + ' ' + (-r * Math.cos(angle)).toFixed(2)
+    // A repository listed for its commits, with no time once rounded, has no slice.
+    return w.repos.filter((r) => r.hours > 0).map((r) => {
+      const share = weekShare(r.hours, w.hours)
+      const a1 = a + 2 * Math.PI * share
+      const mid = (a + a1) / 2
+      const out = r.repo === activityView.picked ? 6 : 0
+      // A whole circle can't be drawn as one arc.
+      const d = share >= 0.9999 ? 'M0 -104 A104 104 0 1 1 0 104 A104 104 0 1 1 0 -104 Z'
+        : 'M0 0 L' + at(a, 104) + ' A104 104 0 ' + (a1 - a > Math.PI ? 1 : 0) + ' 1 ' + at(a1, 104) + ' Z'
+      const label = r.repo + ', ' + hours(r.hours) + ', ' + Math.round(share * 100) + '% of the week'
+      const slice = svg('path', { d, fill: paintOf(r.repo), class: 'activity-mark-fill' + (r.repo === activityView.picked ? ' picked' : ''),
+        tabindex: '0', role: 'button', 'data-repo': r.repo, 'aria-label': label, 'aria-pressed': String(r.repo === activityView.picked),
+        transform: 'translate(' + (out * Math.sin(mid)).toFixed(2) + ' ' + (-out * Math.cos(mid)).toFixed(2) + ')',
+        onclick: () => pickRepo(r.repo, '#activity-week-pie path'),
+        onkeydown: (ev) => {
+          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); pickRepo(r.repo, '#activity-week-pie path') } else stepFocus(ev, '#activity-week-pie path')
+        } }, svg('title', { text: label + daysText(w, r.days) }))
+      a = a1
+      return slice
+    })
+  }
+
+  // daysText is a week's hours each day, as the charts' hover says it: "\nMon 2.0h, Tue 1.5h".
+  function daysText(w, days) {
+    const said = days.map((h, i) => h ? WEEK_DAYS[i] + ' ' + hours(h) : '').filter(Boolean)
+    return said.length ? '\n' + said.join(', ') : ''
+  }
+
+  function weekLegend(w) {
+    return w.repos.map((r) => el('li', {}, el('button', { type: 'button', 'data-repo': r.repo, 'aria-pressed': String(r.repo === activityView.picked),
+      'aria-label': r.repo + ', ' + hours(r.hours) + ', ' + Math.round(100 * weekShare(r.hours, w.hours)) + '% of the week, drawn ' + fillName(r.repo),
+      title: r.repo + daysText(w, r.days),
+      onclick: () => pickRepo(r.repo, '#activity-week-legend button'), onkeydown: (ev) => stepFocus(ev, '#activity-week-legend button') },
+    svg('svg', { class: 'activity-swatch', viewBox: '0 0 16 16', 'aria-hidden': 'true' }, svg('rect', { width: 16, height: 16, fill: paintOf(r.repo) })),
+    el('span', { class: 'activity-legend-name', text: r.repo }),
+    el('span', { class: 'activity-hours', text: hours(r.hours) }),
+    el('span', { class: 'activity-share', text: Math.round(100 * weekShare(r.hours, w.hours)) + '%' }))))
+  }
+
+  function weekColumns(w) {
+    const box = $('activity-week-columns')
+    box.classList.toggle('has-pick', !!activityView.picked)
+    const dayTotal = (i) => w.repos.reduce((sum, r) => sum + r.days[i], 0)
+    const top = Math.max(2, Math.ceil(Math.max(...WEEK_DAYS.map((_, i) => dayTotal(i))) / 2) * 2)
+    const left = 34, right = 452, base = 220, height = 190, width = 26
+    const y = (v) => base - height * v / top
+    const step = (right - left) / 7
+    const grid = svg('g', { class: 'activity-grid' })
+    const out = [grid]
+    for (let v = 0; v <= top; v += 2) {
+      grid.append(svg('line', { x1: left, x2: right, y1: y(v), y2: y(v) }))
+      out.push(svg('text', { x: left - 6, y: y(v) + 4, 'text-anchor': 'end', text: v + 'h' }))
+    }
+    WEEK_DAYS.forEach((name, i) => {
+      const cx = left + step * (i + 0.5)
+      const x0 = cx - width / 2
+      const parts = w.repos.filter((r) => r.days[i] > 0)
+      let sofar = 0
+      parts.forEach((r, j) => {
+        const v = r.days[i]
+        const y0 = y(sofar), y1 = y(sofar + v)
+        // Square at the baseline; the column's top rounded.
+        const rr = j === parts.length - 1 ? Math.min(4, (y0 - y1) / 2) : 0
+        const d = 'M' + x0 + ' ' + y0 + ' V' + (y1 + rr) + (rr ? ' Q' + x0 + ' ' + y1 + ' ' + (x0 + rr) + ' ' + y1 : '') + ' H' + (x0 + width - rr) +
+          (rr ? ' Q' + (x0 + width) + ' ' + y1 + ' ' + (x0 + width) + ' ' + (y1 + rr) : '') + ' V' + y0 + ' Z'
+        out.push(svg('path', { d, fill: paintOf(r.repo), class: 'activity-mark-fill' + (r.repo === activityView.picked ? ' picked' : ''), 'data-repo': r.repo,
+          onclick: () => pickRepo(r.repo) }, svg('title', { text: r.repo + ', ' + name + ' ' + hours(v) + '\nthe week: ' + hours(r.hours) })))
+        sofar += v
+      })
+      if (sofar) out.push(svg('text', { x: cx, y: y(sofar) - 6, 'text-anchor': 'middle', text: hours(sofar) }))
+      out.push(svg('text', { class: 'activity-day-name', x: cx, y: base + 18, 'text-anchor': 'middle', text: name }))
+    })
+    return out
+  }
+
+  // weekBranches are the picked repository's branches, as the day's rows are laid out, with their week and each day's hours. A row
+  // opens (several may be open) to its week's summary beside what was done each day; one button opens them all, or closes them
+  // all once all are open.
+  function weekBranches(w) {
+    const r = w.repos.find((x) => x.repo === activityView.picked)
+    if (!r) return [el('p', { class: 'note muted', text: w.repos.length ? 'Pick a repository, in either chart or the list, to see its branches this week.' : '' })]
+    const share = weekShare(r.hours, w.hours)
+    const keys = r.branches.map((b) => rowKey({ repo: r.repo, branch: b.branch }))
+    const allOpen = keys.every((k) => activityView.weekOpen.has(k))
+    const head = el('div', { class: 'activity-group-head' },
+      el('span', { class: 'activity-repo', text: r.repo, title: r.repo }), el('span'),
+      el('span', { class: 'activity-hours', text: hours(r.hours) }),
+      el('meter', { min: '0', max: '1', value: String(share), 'aria-label': r.repo + ': ' + Math.round(share * 100) + '% of the week' }),
+      el('span', { class: 'activity-share', text: Math.round(share * 100) + '%' }), el('span'))
+    const all = el('button', { type: 'button', id: 'activity-week-all', class: 'linklike activity-week-all', text: allOpen ? 'Collapse all' : 'Expand all',
+      onclick: () => {
+        for (const k of keys) { if (allOpen) activityView.weekOpen.delete(k); else activityView.weekOpen.add(k) }
+        drawActivityWeek()
+        $('activity-week-all').focus()
+      } })
+    return [el('div', { class: 'activity-week-all-bar' }, all),
+      el('section', { class: 'activity-group', 'aria-label': r.repo + ' this week' }, head,
+        el('div', { class: 'activity-group-rows' }, ...r.branches.map((b) => weekRow(r, b))))]
+  }
+
+  function weekRow(r, b) {
+    const it = { repo: r.repo, branch: b.branch, ticket: b.ticket }
+    const key = rowKey(it)
+    const open = activityView.weekOpen.has(key)
+    const summary = activityView.weekSummaries[r.repo + ' ' + b.branch]
+    const of = weekShare(b.hours, r.hours)
+    const panelId = 'activity-week-work-' + encodeURIComponent(key).replace(/[^A-Za-z0-9_-]/g, '_')
+    const toggle = el('button', { type: 'button', class: 'activity-toggle', 'aria-expanded': String(open), 'aria-controls': panelId,
+      onclick: () => toggleWeekRow(key) },
+      el('span', { class: 'activity-branch-name', text: b.branch, title: b.branch }),
+      stateMark(stateOf(summary), summary && summary.state === 'failed' ? "Couldn't summarise: " + summary.why : ''),
+      el('span', { class: 'activity-hours', text: hours(b.hours) }),
+      el('meter', { min: '0', max: '1', value: String(of), 'aria-label': Math.round(of * 100) + '% of ' + r.repo + "'s week" }),
+      el('span', { class: 'activity-share', text: Math.round(of * 100) + '%' }), el('span'),
+      // Inside the button, so the whole bar (both its lines) opens the row, not only the name's line.
+      el('span', { class: 'activity-week-days muted', text: b.days.map((h, i) => h ? WEEK_DAYS[i] + ' ' + hours(h) : '').filter(Boolean).join(' · ') }))
+    const ready = summary && summary.state === 'ready'
+    const copy = el('button', { type: 'button', class: 'copy-code small activity-copy', disabled: !ready,
+      title: ready ? "Copy the week's summary" + (b.ticket ? ', its ticket link first' : '') : 'No summary to copy yet',
+      'aria-label': "Copy the week's summary of " + b.branch, onclick: () => copyText(summaryText(it, summary)) }, copyIcon())
+    const ticket = b.ticket && /^https?:\/\//.test(b.ticket)
+      ? el('a', { class: 'activity-ticket', href: b.ticket, target: '_blank', rel: 'noopener noreferrer', title: 'Open the ticket: ' + b.ticket,
+        'aria-label': 'Open the ticket for ' + b.branch, text: '↗' })
+      : el('span', { class: 'activity-ticket-none' })
+    let work = null
+    if (open) {
+      const done = (b.commits.length ? b.commits : b.asked || []).flatMap((d) => d.lines.map((line) => dayShort(d.date) + ' · ' + (b.commits.length ? withEmoji(line) : line)))
+      work = el('div', { class: 'activity-work', id: panelId },
+        activityPane('Summary', ready ? summary.bullets : null, summaryNote(summary), it, summaryText(it, summary)),
+        b.commits.length || !(b.asked || []).length
+          ? activityPane('Commits', done.length ? done : null, el('p', { class: 'muted', text: 'No commits this week.' }), it)
+          : activityPane('Asked', done, null, it))
+    }
+    return el('div', { class: 'activity-entry', 'data-key': key },
+      el('div', { class: 'activity-head' }, toggle, el('div', { class: 'activity-actions' }, ticket, copy)),
+      work)
+  }
+
+  function dayShort(date) { return WEEK_DAYS[(new Date(date + 'T12:00:00').getDay() + 6) % 7] }
+
+  // toggleWeekRow opens or closes one row, leaving the others as they are, and keeps it where it was on the screen.
+  function toggleWeekRow(key) {
+    const find = () => [...$('activity-week-branches').querySelectorAll('.activity-entry')].find((n) => n.dataset.key === key)
+    const before = find() ? find().getBoundingClientRect().top : 0
+    if (activityView.weekOpen.has(key)) activityView.weekOpen.delete(key)
+    else activityView.weekOpen.add(key)
+    drawActivityWeek()
+    const row = find()
+    if (row) {
+      scrollerOf(row).scrollTop += row.getBoundingClientRect().top - before
+      row.querySelector('.activity-toggle').focus({ preventScroll: true })
+    }
+  }
+
+  function showActivityWeek(date) {
+    activityView.weekDay = date
+    activityView.loaded = false
+    activityView.week = null
+    activityView.weekOpen = new Set()
+    activityView.weekSummaries = {}
+    closeActivityBalloons()
+    drawActivity()
+    loadActivity(true)
+  }
+
+  function stepActivityWeek(by) {
+    const w = activityView.week
+    if (!w) return
+    const date = shiftDay(w.start, 7 * by)
+    if (shiftDay(date, 6) < w.earliest || date > w.today) return
+    showActivityWeek(date > w.today || shiftDay(date, 6) >= w.today ? '' : date)
+  }
+
+  function setActivityMode(mode) {
+    if (mode === activityView.mode) return
+    activityView.mode = mode
+    store.set(ACTIVITY_MODE, mode)
+    activityView.loaded = false
+    closeActivityBalloons()
+    drawActivity()
+    loadActivity(true)
+  }
+
+  async function setColourBlind(on) {
+    const res = await post('/api/activity/colour-blind', { on })
+    if (!res.ok) { toast(res.body.error || "The choice couldn't be kept", true); drawActivityWeek(); return }
+    activityView.colourBlind = on
+    drawActivityWeek()
+  }
+
+  // --- Needs attention: a ⚠ N button in the bar, whose balloon pops up when what it lists changed since it was last seen, and closes
+  // itself after NEEDS_CLOSE_MS (the pointer or focus on it holds it open). Opened from the button, it stays until closed. What
+  // was seen is kept for the page (localStorage), so opening it again doesn't pop up the same list.
+  const NEEDS_CLOSE_MS = 6000
+  const NEEDS_SEEN = 'vibe-activity-attention-seen'
+  const needsView = { byUser: false, token: 0, held: false, closing: false }
+
+  // needsSays is what the list says, for telling whether it changed: whether GitHub is still being asked isn't news.
+  function needsSays(list) { return JSON.stringify(list.map((a) => [a.folder, a.branch, a.what])) }
+
+  // drawNeeds shows what needs doing: git's state now, so on today only, and popped up once GitHub has answered, when it's news
+  // and the tab can be seen.
+  function drawNeeds(isToday) {
+    const list = isToday ? activityView.attention : []
+    const button = $('activity-attention-button')
+    button.hidden = !list.length
+    const n = list.length
+    setText(button, '⚠ ' + n)
+    const label = n + (n === 1 ? ' thing needs' : ' things need') + ' attention'
+    button.setAttribute('aria-label', label)
+    button.title = label
+    if (!list.length && !$('activity-attention').hidden) closeActivityBalloons()
+    drawnAs($('activity-attention-list'), JSON.stringify(list), () => list.map((a) =>
+      el('li', {}, a.folder + ' (' + a.branch + '): ' + a.what, a.checking ? el('span', { class: 'muted', text: ' (checking with GitHub…)' }) : '')))
+    if (!isToday || list.some((a) => a.checking)) return
+    const says = needsSays(list)
+    if (says === store.get(NEEDS_SEEN)) return
+    if (!list.length) { store.set(NEEDS_SEEN, says); return }
+    if (!$('panel-activity').hidden && document.visibilityState !== 'hidden') popNeeds()
+  }
+
+  function showNeeds(byUser) {
+    closeActivityBalloons('activity-attention')
+    const box = $('activity-attention')
+    box.hidden = false
+    placeUnder(box, $('activity-attention-button'), 'left')
+    $('activity-attention-button').setAttribute('aria-expanded', 'true')
+    store.set(NEEDS_SEEN, needsSays(activityView.attention))
+    needsView.byUser = byUser
+    needsView.token++
+    needsView.closing = false
+    showCountdown(box, 0)
+  }
+
+  function popNeeds() {
+    showNeeds(false)
+    closeNeedsLater()
+  }
+
+  // closeNeedsLater closes the popped-up balloon after NEEDS_CLOSE_MS, its bar counting down; held, it waits until let go.
+  function closeNeedsLater() {
+    const token = ++needsView.token
+    needsView.closing = true
+    showCountdown($('activity-attention'), NEEDS_CLOSE_MS, needsView.held)
+    if (needsView.held) return
+    setTimeout(() => {
+      if (token !== needsView.token || needsView.byUser || $('activity-attention').hidden) return
+      closeActivityBalloons()
+    }, NEEDS_CLOSE_MS)
+  }
+
+  function holdNeeds(held) {
+    if (held === needsView.held) return
+    needsView.held = held
+    if (needsView.closing && !needsView.byUser && !$('activity-attention').hidden) closeNeedsLater()
+  }
+
+  function toggleNeeds() {
+    if (!$('activity-attention').hidden) { closeActivityBalloons(); return }
+    showNeeds(true)
+  }
+
+  // byRepository is the rows shown, under their repositories: each repository's total is all its branches' (shown or not), and
+  // both are in order of time, the longest first, then by name, so equal times hold still. A repository with none shown isn't.
+  function byRepository(rows, shown) {
+    const longestFirst = (aHours, bHours, aName, bName) => bHours - aHours || (aName < bName ? -1 : aName > bName ? 1 : 0)
+    const groups = new Map()
+    for (const row of rows) {
+      if (!groups.has(row.b.repo)) groups.set(row.b.repo, { repo: row.b.repo, hours: 0, estimated: false, rows: [] })
+      const g = groups.get(row.b.repo)
+      g.hours += row.b.hours
+      g.estimated = g.estimated || row.b.estimatedMinutes > 0
+      if (shown.includes(row)) g.rows.push(row)
+    }
+    const out = [...groups.values()].filter((g) => g.rows.length)
+    for (const g of out) g.rows.sort((a, b) => longestFirst(a.b.hours, b.b.hours, a.b.branch, b.b.branch))
+    return out.sort((a, b) => longestFirst(a.hours, b.hours, a.repo, b.repo))
+  }
+
+  // activityGroup is a repository's heading, as a branch's row looks but not opening: its name, total and share of the day, and its
+  // branches' rows under it.
+  function activityGroup(g, total) {
+    const share = total ? g.hours / total : 0
+    // A branch's spinner shows on its repository too, so a summary under way is seen with the rows scrolled past; else a failure.
+    const states = g.rows.map((row) => stateOf(row.summary))
+    const state = states.includes('busy') ? 'busy' : states.includes('failed') ? 'failed' : ''
+    const head = el('div', { class: 'activity-group-head' },
+      el('span', { class: 'activity-repo', text: g.repo, title: g.repo }),
+      stateMark(state, state === 'failed' ? 'A branch here has no summary' : ''),
+      el('span', { class: 'activity-hours', text: hours(g.hours) }),
+      el('meter', { min: '0', max: '1', value: String(share), 'aria-label': g.repo + ': ' + Math.round(share * 100) + '% of the day' }),
+      el('span', { class: 'activity-share', text: Math.round(share * 100) + '%' }),
+      el('span', { class: 'muted activity-mark', text: g.estimated ? '~estimated' : '' }))
+    return el('section', { class: 'activity-group', 'aria-label': g.repo }, head,
+      el('div', { class: 'activity-group-rows' }, ...g.rows.map((row) => activityRow(row.b, total, row.summary))))
+  }
+
+  function rowKey(b) { return b.repo + ' ' + b.branch }
+
+  // summaryState is what a row's state column shows of its summary: a spinner while it's being made (here or by another vibe), a
+  // warning when it failed, else nothing. stateOf is that state, for a repository's heading to show its branches'.
+  function stateOf(summary) {
+    if (summary && (summary.state === 'pending' || summary.state === 'elsewhere')) return 'busy'
+    if (summary && summary.state === 'failed') return 'failed'
+    return ''
+  }
+
+  function stateMark(state, title) {
+    if (state === 'busy') return el('span', { class: 'activity-state', title: title || 'Summarising…' }, el('span', { class: 'spinner', role: 'img', 'aria-label': 'Summarising' }))
+    if (state === 'failed') return el('span', { class: 'activity-state warn-text', role: 'img', 'aria-label': 'No summary', title: title || "Couldn't summarise", text: '⚠' })
+    return el('span', { class: 'activity-state' })
+  }
+
+  function activityRow(b, total, summary) {
+    const key = rowKey(b)
+    const open = activityView.openKey === key
+    const share = total ? b.hours / total : 0
+    const estimated = b.estimatedMinutes > 0
+    const panelId = 'activity-work-' + encodeURIComponent(key).replace(/[^A-Za-z0-9_-]/g, '_')
+    const toggle = el('button', { type: 'button', class: 'activity-toggle', 'aria-expanded': String(open), 'aria-controls': panelId,
+      onclick: () => toggleActivityRow(key) },
+      el('span', { class: 'activity-branch-name', text: b.branch, title: b.branch }),
+      stateMark(stateOf(summary), summary && summary.state === 'failed' ? "Couldn't summarise: " + summary.why : ''),
+      el('span', { class: 'activity-hours', text: hours(b.hours) }),
+      el('meter', { min: '0', max: '1', value: String(share), 'aria-label': Math.round(share * 100) + '% of the day' }),
+      el('span', { class: 'activity-share', text: Math.round(share * 100) + '%' }),
+      el('span', { class: 'muted activity-mark', text: estimated ? '~estimated' : '' }))
+    const info = el('button', { type: 'button', class: 'choice-info activity-info', 'aria-expanded': 'false', 'aria-controls': 'activity-row-balloon',
+      'aria-label': 'When and where ' + b.branch + ' was worked on', title: 'When and where it was worked on', text: 'i',
+      onclick: (ev) => toggleRowInfo(b, ev.currentTarget) })
+    const ready = summary && summary.state === 'ready'
+    const copy = el('button', { type: 'button', class: 'copy-code small activity-copy', disabled: !ready,
+      title: ready ? 'Copy the summary' + (b.ticket ? ', its ticket link first' : '') : 'No summary to copy yet',
+      'aria-label': 'Copy the summary of ' + b.branch, onclick: () => copyText(summaryText(b, summary)) }, copyIcon())
+    const ticket = b.ticket && /^https?:\/\//.test(b.ticket)
+      ? el('a', { class: 'activity-ticket', href: b.ticket, target: '_blank', rel: 'noopener noreferrer', title: 'Open the ticket: ' + b.ticket,
+        'aria-label': 'Open the ticket for ' + b.branch, text: '↗' })
+      : el('span', { class: 'activity-ticket-none' })
+    let work = null
+    if (open) {
+      const commits = b.commits.map(withEmoji)
+      const asked = b.asked || []
+      work = el('div', { class: 'activity-work', id: panelId },
+        activityPane('Summary', summary && summary.state === 'ready' ? summary.bullets : null, summaryNote(summary), b, summaryText(b, summary)),
+        asked.length && !commits.length
+          ? activityPane('Asked', asked, null, b)
+          : activityPane('Commits', commits.length ? commits : null, el('p', { class: 'muted', text: 'No commits this day.' }), b))
+    }
+    return el('div', { class: 'activity-entry', 'data-key': key },
+      el('div', { class: 'activity-head' }, toggle, el('div', { class: 'activity-actions' }, ticket, copy, info)), work)
+  }
+
+  // summaryText is a branch's summary as it is pasted into a timesheet: its ticket link first, then the bullets.
+  function summaryText(b, summary) {
+    if (!summary || summary.state !== 'ready') return ''
+    return (b.ticket ? b.ticket + '\n' : '') + bulletsText(summary.bullets)
+  }
+
+  // toggleActivityRow opens the row (closing the one open) or closes it, keeping the row clicked where it was on the screen: closing
+  // one above it would otherwise pull it up from under the pointer.
+  function toggleActivityRow(key) {
+    const find = () => [...$('activity-list').querySelectorAll('.activity-entry')].find((n) => n.dataset.key === key)
+    const before = find() ? find().getBoundingClientRect().top : 0
+    activityView.openKey = activityView.openKey === key ? null : key
+    closeActivityBalloons()
+    drawActivity()
+    const row = find()
+    if (row) {
+      scrollerOf(row).scrollTop += row.getBoundingClientRect().top - before
+      row.querySelector('.activity-toggle').focus({ preventScroll: true })
+    }
+  }
+
+  // scrollerOf is what scrolls node into view: its nearest ancestor that scrolls, else the page.
+  function scrollerOf(node) {
+    for (let n = node.parentElement; n; n = n.parentElement) {
+      const overflow = getComputedStyle(n).overflowY
+      if ((overflow === 'auto' || overflow === 'scroll') && n.scrollHeight > n.clientHeight) return n
+    }
+    return document.scrollingElement || document.documentElement
+  }
+
+  // The balloons (the help, a row's details) and the list of days: one at a time, closed by a click outside, Escape, or their button.
+  function closeActivityBalloons(except) {
+    for (const [id, button] of [['activity-help-balloon', $('activity-help')], ['activity-days-list', $('activity-day')], ['activity-row-balloon', null],
+      ['activity-attention', $('activity-attention-button')]]) {
+      if (id === except) continue
+      $(id).hidden = true
+      if (button) button.setAttribute('aria-expanded', 'false')
+    }
+    if (except !== 'activity-attention') {
+      needsView.token++
+      needsView.closing = false
+      needsView.held = false
+      showCountdown($('activity-attention'), 0)
+    }
+    if (except !== 'activity-row-balloon') {
+      for (const b of $('activity-list').querySelectorAll('.activity-info')) b.setAttribute('aria-expanded', 'false')
+      activityView.infoKey = null
+    }
+  }
+
+  function toggleRowInfo(b, button) {
+    const key = rowKey(b)
+    const balloon = $('activity-row-balloon')
+    if (!balloon.hidden && activityView.infoKey === key) { closeActivityBalloons(); return }
+    closeActivityBalloons()
+    activityView.infoKey = key
+    const row = (term, text) => [el('dt', { text: term }), el('dd', { text })]
+    balloon.replaceChildren(
+      el('p', {}, el('strong', { text: b.repo + ' · ' + b.branch })),
+      el('dl', {},
+        ...row('When', b.stretches.map((s) => clock(s.start) + '–' + clock(s.end) + (s.measured ? '' : ' (~)')).join(', ')),
+        ...row('Before rounding', hours(b.measuredMinutes / 60) + ' measured, ~' + hours(b.estimatedMinutes / 60) + ' estimated'),
+        ...row('In', b.folders.join(', '))),
+      ticketField(b))
+    balloon.setAttribute('aria-label', 'When and where ' + b.branch + ' was worked on')
+    balloon.hidden = false
+    placeUnder(balloon, button, 'right')
+    button.setAttribute('aria-expanded', 'true')
+  }
+
+  // placeUnder puts box (shown, in the Activity panel) just under button: its left edge at the button's ('left'), or its right edge
+  // at the button's ('right'), kept inside the panel.
+  function placeUnder(box, button, align) {
+    const panel = $('panel-activity')
+    const pr = panel.getBoundingClientRect()
+    const br = button.getBoundingClientRect()
+    const width = box.offsetWidth
+    let left = (align === 'right' ? br.right - width : br.left) - pr.left + panel.scrollLeft
+    left = Math.max(8, Math.min(left, panel.clientWidth - width - 8))
+    box.style.left = left + 'px'
+    box.style.top = (br.bottom - pr.top + panel.scrollTop + 4) + 'px'
+  }
+
+  // ticketField is where a branch's ticket link (a Trello card, a Jira or GitHub issue) is set, kept by vibe for the branch, and copied
+  // ahead of its summary.
+  function ticketField(b) {
+    const input = el('input', { type: 'url', class: 'activity-ticket-input', placeholder: 'https://…', value: b.ticket || '',
+      'aria-label': 'Ticket link for ' + b.branch })
+    const save = async (url) => {
+      const res = await post('/api/activity/ticket', { repo: b.repo, branch: b.branch, url })
+      if (!res.ok) { toast(res.body.error || "The ticket link couldn't be kept", true); return }
+      closeActivityBalloons()
+      toast(url ? 'Ticket link kept for ' + b.branch : 'Ticket link cleared for ' + b.branch)
+      loadActivity(true)
+    }
+    input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); save(input.value.trim()) } })
+    return el('div', { class: 'activity-ticket-field' },
+      el('label', {}, 'Ticket link', input),
+      el('button', { type: 'button', class: 'small', text: 'Save', onclick: () => save(input.value.trim()) }),
+      b.ticket ? el('button', { type: 'button', class: 'small ghost', text: 'Clear', onclick: () => save('') }) : null)
+  }
+
+  function toggleDayList() {
+    const list = $('activity-days-list')
+    if (!list.hidden) { closeActivityBalloons(); return }
+    closeActivityBalloons()
+    if (activityView.mode === 'week') { showWeekList(list); return }
+    const r = activityView.report
+    if (!r) return
+    const items = []
+    for (let d = r.today; d >= r.earliest; d = shiftDay(d, -1)) {
+      const date = d
+      items.push(el('li', { role: 'none' }, el('button', { type: 'button', role: 'menuitem', text: dayChoice(date, r.today),
+        'aria-current': date === r.day.date ? 'date' : null,
+        onclick: () => { closeActivityBalloons(); showActivityDay(date === r.today ? '' : date); $('activity-day').focus() } })))
+    }
+    list.replaceChildren(...items)
+    list.hidden = false
+    placeUnder(list, $('activity-day'), 'left')
+    $('activity-day').setAttribute('aria-expanded', 'true')
+    const current = list.querySelector('[aria-current="date"]') || list.querySelector('button')
+    if (current) current.focus()
+  }
+
+  // showWeekList lists the weeks the days kept reach into, this week first.
+  function showWeekList(list) {
+    const w = activityView.week
+    if (!w) return
+    const items = []
+    for (let start = w.days.includes(w.today) ? w.start : shiftDay(w.today, -((new Date(w.today + 'T12:00:00').getDay() + 6) % 7)); shiftDay(start, 6) >= w.earliest; start = shiftDay(start, -7)) {
+      const monday = start
+      const thisWeek = monday <= w.today && w.today <= shiftDay(monday, 6)
+      items.push(el('li', { role: 'none' }, el('button', { type: 'button', role: 'menuitem', text: thisWeek ? 'This week' : weekName(monday),
+        'aria-current': monday === w.start ? 'date' : null,
+        onclick: () => { closeActivityBalloons(); showActivityWeek(thisWeek ? '' : monday); $('activity-day').focus() } })))
+    }
+    list.replaceChildren(...items)
+    list.hidden = false
+    placeUnder(list, $('activity-day'), 'left')
+    $('activity-day').setAttribute('aria-expanded', 'true')
+    const current = list.querySelector('[aria-current="date"]') || list.querySelector('button')
+    if (current) current.focus()
+  }
+
+  // activityPane is a side of a branch's work: its lines, with a button to copy them, or note when there are none.
+  function activityPane(title, lines, note, b, text) {
+    const what = title.toLowerCase()
+    return el('section', { class: 'activity-pane', 'aria-label': title + ' of ' + b.repo + ' ' + b.branch },
+      el('h3', {}, title, lines ? el('button', { type: 'button', class: 'copy-code small', title: 'Copy the ' + what, 'aria-label': 'Copy the ' + what + ' of ' + b.branch,
+        onclick: () => copyText(text || bulletsText(lines)) }, copyIcon()) : null),
+      lines ? el('ul', {}, ...lines.map((t) => el('li', { text: t }))) : note)
+  }
+
+  // summaryNote is what the summary side says while there is no summary to show.
+  function summaryNote(summary) {
+    const state = summary ? summary.state : 'unavailable'
+    if (state === 'pending') return el('p', { class: 'muted', text: 'Summarising…' })
+    if (state === 'elsewhere') return el('p', { class: 'muted', text: 'Activity is being summarised on the ' + summary.holder + ' vibe, and will appear here shortly.' })
+    if (state === 'none') return el('p', { class: 'muted', text: 'Nothing to summarise: no commits, and no prompts sent from vibe.' })
+    if (state === 'failed') {
+      return el('p', { class: 'bad-text' }, "Couldn't summarise: " + summary.why + ' ',
+        el('button', { type: 'button', class: 'small', text: 'Retry', onclick: () => retrySummary(summary.key) }))
+    }
+    return el('p', { class: 'muted', text: (summary && summary.why) || 'No summary.' })
+  }
+
+  async function retrySummary(key) {
+    const res = await post('/api/activity/summary/retry', { key })
+    if (!res.ok) { toast(res.body.error || "The summary couldn't be tried again", true); return }
+    loadActivity(true)
+  }
+
+  function showActivityDay(date) {
+    activityView.day = date
+    activityView.loaded = false
+    activityView.report = null
+    activityView.openKey = null
+    closeActivityBalloons()
+    $('activity-list').replaceChildren()
+    drawnKeys.delete($('activity-list'))
+    drawActivity()
+    loadActivity(true)
+  }
+
+  function stepActivityDay(by) {
+    const r = activityView.report
+    if (!r) return
+    const date = shiftDay(r.day.date, by)
+    if (date < r.earliest || date > r.today) return
+    showActivityDay(date === r.today ? '' : date)
+  }
+
+  // activitySeen says the user is busy on the page (typing, clicking, scrolling), at most once a minute: time at the page is
+  // time on the sandbox's branch.
+  function activitySeen() {
+    if (!state.activity || !state.sandbox || Date.now() - activityView.seen < ACTIVITY_SEEN_MS) return
+    activityView.seen = Date.now()
+    post('/api/activity/seen', {}).catch(() => {})
+  }
+
+  // --- The splitter between the conversation and the clipboard: dragged, or moved with the arrow keys (Home and End for the
+  // least and the most), it shares the width, each side keeping at least a fifth; double-clicked, it puts back the usual share.
+  // The share is the conversation's, in percent, kept for the page.
+  const CONVO_SHARE = 'vibe-convo-share'
+  const CONVO_SHARE_USUAL = 67
+  const CONVO_SHARE_LEAST = 20
+  const CONVO_SHARE_MOST = 80
+  const CONVO_SHARE_STEP = 5
+
+  function setUpSplitter() {
+    const splitter = $('convo-splitter')
+    const layout = splitter.parentElement
+    let share = CONVO_SHARE_USUAL
+    const apply = (to, keep) => {
+      share = Math.round(Math.min(CONVO_SHARE_MOST, Math.max(CONVO_SHARE_LEAST, to)))
+      layout.style.setProperty('--convo-fr', share + 'fr')
+      layout.style.setProperty('--clip-fr', (100 - share) + 'fr')
+      splitter.setAttribute('aria-valuenow', String(share))
+      splitter.setAttribute('aria-valuetext', 'The conversation has ' + share + '% of the width')
+      if (keep) store.set(CONVO_SHARE, String(share))
+    }
+    const kept = Number(store.get(CONVO_SHARE))
+    apply(kept >= CONVO_SHARE_LEAST && kept <= CONVO_SHARE_MOST ? kept : CONVO_SHARE_USUAL, false)
+    splitter.addEventListener('pointerdown', (ev) => {
+      if (ev.button !== 0) return
+      ev.preventDefault()
+      splitter.setPointerCapture(ev.pointerId)
+      layout.classList.add('splitting')
+    })
+    splitter.addEventListener('pointermove', (ev) => {
+      if (!splitter.hasPointerCapture(ev.pointerId)) return
+      const box = layout.getBoundingClientRect()
+      apply(100 * (ev.clientX - box.left) / box.width, false)
+    })
+    const done = (ev) => {
+      if (!layout.classList.contains('splitting')) return
+      if (splitter.hasPointerCapture(ev.pointerId)) splitter.releasePointerCapture(ev.pointerId)
+      layout.classList.remove('splitting')
+      apply(share, true)
+    }
+    splitter.addEventListener('pointerup', done)
+    splitter.addEventListener('pointercancel', done)
+    splitter.addEventListener('dblclick', () => apply(CONVO_SHARE_USUAL, true))
+    splitter.addEventListener('keydown', (ev) => {
+      const to = { ArrowLeft: share - CONVO_SHARE_STEP, ArrowRight: share + CONVO_SHARE_STEP, Home: CONVO_SHARE_LEAST, End: CONVO_SHARE_MOST }[ev.key]
+      if (to == null) return
+      ev.preventDefault()
+      apply(to, true)
+    })
+  }
+
+  function setUpActivity() {
+    $('activity-prev').addEventListener('click', () => activityView.mode === 'week' ? stepActivityWeek(-1) : stepActivityDay(-1))
+    $('activity-next').addEventListener('click', () => activityView.mode === 'week' ? stepActivityWeek(1) : stepActivityDay(1))
+    for (const b of $('activity-mode').querySelectorAll('button')) b.addEventListener('click', () => setActivityMode(b.dataset.mode))
+    $('activity-colour-blind').addEventListener('change', (ev) => setColourBlind(ev.target.checked))
+    // The fills are drawn for the page's theme and the system's contrast: either changing draws them again.
+    const redrawWeek = () => { if (activityView.mode === 'week') drawActivityWeek() }
+    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', redrawWeek)
+    matchMedia('(forced-colors: active)').addEventListener('change', redrawWeek)
+    new MutationObserver(redrawWeek).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+    $('activity-day').addEventListener('click', toggleDayList)
+    $('activity-today').addEventListener('click', () => { if (activityView.mode === 'week') showActivityWeek(''); else showActivityDay(''); $('activity-day').focus() })
+    $('activity-help').addEventListener('click', () => {
+      // The rules are edited on the Admin tab, which a page for no sandbox hasn't.
+      $('activity-rules-link').hidden = $('tab-admin').hidden
+      const open = $('activity-help-balloon').hidden
+      closeActivityBalloons()
+      $('activity-help-balloon').hidden = !open
+      if (open) placeUnder($('activity-help-balloon'), $('activity-help'), 'left')
+      $('activity-help').setAttribute('aria-expanded', String(open))
+    })
+    $('activity-hidden-toggle').addEventListener('click', () => { activityView.showHidden = !activityView.showHidden; drawActivity() })
+    $('activity-rules-link').addEventListener('click', showRules)
+    $('activity-attention-button').addEventListener('click', toggleNeeds)
+    const box = $('activity-attention')
+    box.addEventListener('pointerenter', () => holdNeeds(true))
+    box.addEventListener('pointerleave', () => holdNeeds(box.contains(document.activeElement)))
+    box.addEventListener('focusin', () => holdNeeds(true))
+    box.addEventListener('focusout', (ev) => holdNeeds(box.contains(ev.relatedTarget) || box.matches(':hover')))
+    // A click outside a balloon or the list of days closes it, as Escape does; one on its own button is that button's to do.
+    document.addEventListener('pointerdown', (ev) => {
+      if (ev.target.closest && ev.target.closest('#activity-help-balloon, #activity-row-balloon, #activity-days-list, #activity-help, #activity-day, .activity-info, #activity-attention, #activity-attention-button')) return
+      closeActivityBalloons()
+    })
+    $('panel-activity').addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Escape') return
+      const open = ['activity-help-balloon', 'activity-row-balloon', 'activity-days-list', 'activity-attention'].find((id) => !$(id).hidden)
+      if (!open) return
+      ev.stopPropagation()
+      closeActivityBalloons()
+      if (open === 'activity-help-balloon') $('activity-help').focus()
+      if (open === 'activity-days-list') $('activity-day').focus()
+      if (open === 'activity-attention') $('activity-attention-button').focus()
+    })
+    for (const b of $('activity-rounding').querySelectorAll('button')) {
+      b.addEventListener('click', async () => {
+        const res = await post('/api/activity/rounding', { rounding: b.dataset.rounding })
+        if (!res.ok) { toast(res.body.error || "The rounding couldn't be changed", true); return }
+        activityView.rounding = res.body.rounding
+        drawActivity()
+        loadActivity(true)
+      })
+    }
+    for (const type of ['keydown', 'pointerdown', 'wheel']) document.addEventListener(type, activitySeen, { capture: true, passive: true })
+  }
+
   // --- the Profiles tab ---------------------------------------------------
 
   // What the tab last showed, and what's ticked, by ID (see manage.js).
@@ -5625,6 +6562,86 @@
     })
   }
 
+  // --- the Activity tab's summary rules, on the Admin tab ------------------
+  // The day's and the week's rules, each in its own editor: Save keeps it (refused if the file changed since it was loaded here,
+  // which Reload then picks up); "Back to the default" puts the default in the box, to save or not. Read once; a page that makes no
+  // summaries has no card.
+  const rulesView = { loaded: false }
+  const RULES_LABELS = { day: "A day's summaries", week: "A week's summaries" }
+
+  async function loadRules(force) {
+    if (rulesView.loaded && !force) return
+    // A page with no Activity tab makes no summaries.
+    if (!state.activity) { $('admin-rules-card').hidden = true; cardLoaded('rules'); return }
+    try {
+      const res = await api('/api/activity/rules')
+      reached(true)
+      if (res.status === 404) { $('admin-rules-card').hidden = true; cardLoaded('rules'); return }
+      if (!res.ok || !Array.isArray(res.body.files)) { cardFailed('rules'); return }
+      rulesView.loaded = true
+      $('admin-rules-card').hidden = false
+      $('admin-rules').replaceChildren(...res.body.files.map(rulesEditor))
+      cardLoaded('rules')
+    } catch (e) {
+      reached(false)
+      cardFailed('rules')
+    }
+  }
+
+  function rulesEditor(file) {
+    let base = file.text
+    const box = el('textarea', { spellcheck: 'true', 'aria-label': RULES_LABELS[file.which] + ' — ' + file.path, 'data-rules': file.which })
+    box.value = file.text
+    const meta = el('p', { class: 'meta' })
+    const status = el('p', { class: 'status', role: 'status' })
+    const save = el('button', { type: 'button', text: 'Save' })
+    const usual = el('button', { type: 'button', class: 'ghost', text: 'Back to the default' })
+    const reload = el('button', { type: 'button', class: 'ghost', text: 'Reload', hidden: true })
+    const refresh = () => {
+      meta.textContent = box.value === file.default ? 'The default.' : box.value !== base ? 'Unsaved changes.' : 'Your own.'
+      save.disabled = box.value === base
+      usual.disabled = box.value === file.default
+    }
+    const say = (text, cls) => { status.className = 'status' + (cls ? ' ' + cls : ''); status.textContent = text }
+    box.addEventListener('input', refresh)
+    usual.addEventListener('click', () => { replaceText(box, file.default); refresh(); say('The default, to save or not.') })
+    save.addEventListener('click', async () => {
+      save.disabled = true
+      say('Saving…')
+      try {
+        const res = await post('/api/activity/rules', { which: file.which, text: box.value, base })
+        reached(true)
+        if (res.status === 409) { say(res.body.error, 'bad'); reload.hidden = false; return }
+        if (!res.ok) { say((res.body && res.body.error) || "The rules couldn't be saved.", 'bad'); return }
+        base = res.body.text
+        say('Saved: the summaries are made again under them the next time each day or week is looked at.', 'ok')
+      } catch (e) {
+        reached(false)
+        say('Could not reach vibe.', 'bad')
+      } finally {
+        refresh()
+      }
+    })
+    reload.addEventListener('click', () => { rulesView.loaded = false; loadRules(true) })
+    refresh()
+    return el('section', { class: 'instr' },
+      el('h3', {}, el('span', { text: RULES_LABELS[file.which] }), el('span', { class: 'path', text: file.path })),
+      box, meta, el('div', { class: 'bar' }, save, usual, reload), status)
+  }
+
+  // showRules takes the user from the Activity tab to the rules' card, read first if the Admin tab hasn't been looked at yet.
+  async function showRules() {
+    closeActivityBalloons()
+    select('admin')
+    await loadRules(false)
+    const card = $('admin-rules-card')
+    card.scrollIntoView({ block: 'start' })
+    const box = card.querySelector('textarea')
+    if (box) { box.focus({ preventScroll: true }); return }
+    $('admin-rules-h').setAttribute('tabindex', '-1')
+    $('admin-rules-h').focus({ preventScroll: true })
+  }
+
   // --- the agent's instructions, on the Admin tab ------------------------
 
   // INSTRUCTIONS_HINT is the size past which a file is worth tidying: these
@@ -5903,7 +6920,7 @@
     // inLink: in a link's text, where a button can't go.
     const inline = (nodes, inLink) => nodes.flatMap((n) => {
       switch (n.type) {
-        case 'text': return inLink ? document.createTextNode(visible(n.text)) : withThreadRefs(visible(n.text))
+        case 'text': return inLink ? document.createTextNode(withEmoji(visible(n.text))) : withThreadRefs(withEmoji(visible(n.text)))
         case 'code': {
           if (inLink || !state.viewFiles) return el('code', { text: visible(n.text) })
           if (looksLikeFile(n.text)) return fileCandidate(n.text)
@@ -7244,7 +8261,7 @@
 
   async function sendPrompt() {
     const input = $('convo-input')
-    resolveTrailingEmoticon(input)
+    resolveTrailingEmoticon()
     const prompt = input.value.trim()
     if (!prompt || gate.active) return
     if (await holdForPackages(prompt)) return
@@ -7330,7 +8347,7 @@
         ' waiting for your approval: it can\'t have ' + (undecided === 1 ? 'that package' : 'those packages') + ' until you decide.'
       : ''
     $('convo-gate-progress').hidden = !gate.fetching
-    showProgress($('convo-gate-progress'), got)
+    fillProgress($('convo-gate-progress'), got)
     const ide = packagesWord(toFetch) + " the agent will build with aren't in your package cache. Your IDE can't see them, and the agent will download its own copies."
     $('convo-gate-text').textContent = [
       gate.fetching
@@ -7739,56 +8756,172 @@
   // A colon and the start of a name in the prompt (:roc) offers the emoji it could be, as the slash commands are offered; the
   // pick puts the character itself in the prompt, and typing the closing colon of a whole name (:tada:) does too. The
   // names, and what is a name being typed, are ui/emoji.js's. It can be turned off (Settings), and is remembered.
-  const emojiState = { on: store.get('vibe-emoji-complete') !== 'off', shown: [], at: 0, open: false, start: 0 }
+  const emojiState = { on: store.get('vibe-emoji-complete') !== 'off' }
   const EMOJI_SHOWN = 8
 
-  function closeEmoji() {
-    if (!emojiState.open && $('convo-emoji').hidden) return
-    emojiState.open = false
-    $('convo-emoji').hidden = true
-    $('convo-emoji').replaceChildren()
-    const input = $('convo-input')
-    input.setAttribute('aria-controls', 'convo-commands')
-    // The slash commands' list may be what is open: its own state says so.
-    if (!slash.open) {
-      input.setAttribute('aria-expanded', 'false')
-      input.removeAttribute('aria-activedescendant')
+  // emojiCompleter completes :emoji: names in input, a textarea, offering them in list (a ul.commands.emoji placed in the same
+  // positioned wrapper as input), its options' ids starting with prefix. changed is told when it changes the text; shut, when the
+  // list closes (the prompt gives its slash commands' list the input's aria back). It is the prompt's, and each review box's.
+  function emojiCompleter(input, list, prefix, changed, shut) {
+    const st = { shown: [], at: 0, open: false, start: 0 }
+
+    function close() {
+      if (!st.open && list.hidden) return
+      st.open = false
+      list.hidden = true
+      list.replaceChildren()
+      if (shut) shut()
+      else {
+        input.setAttribute('aria-expanded', 'false')
+        input.removeAttribute('aria-activedescendant')
+      }
     }
+
+    // update shows the list for the name being typed at the cursor, or hides it; fresh is a change to the text, which picks
+    // the closest match again.
+    function update(fresh) {
+      if (!emojiState.on || !window.vibeEmoji || input.selectionStart !== input.selectionEnd) { close(); return }
+      const word = window.vibeEmoji.at(input.value, input.selectionStart)
+      const shown = word ? window.vibeEmoji.find(word.query, EMOJI_SHOWN) : []
+      if (!shown.length) { close(); return }
+      if (fresh || st.at >= shown.length) st.at = 0
+      st.shown = shown
+      const q = word.query.toLowerCase()
+      list.replaceChildren(...shown.map((e, i) => {
+        const found = e.alias || e.name
+        const at = found.toLowerCase().indexOf(q)
+        const label = at < 0 ? [found]
+          : [found.slice(0, at), el('mark', { text: found.slice(at, at + q.length) }), found.slice(at + q.length)]
+        const item = el('li', { id: prefix + i, role: 'option', 'data-name': e.name, 'aria-selected': String(i === st.at) },
+          el('span', { class: 'glyph', text: e.char, 'aria-hidden': 'true' }), ':', ...label, ':',
+          e.alias ? el('span', { class: 'alias', text: e.name }) : e.emoticon ? el('span', { class: 'alias', text: e.emoticon }) : null)
+        // mousedown, not click: the box keeps the focus.
+        item.addEventListener('mousedown', (ev) => { ev.preventDefault(); accept(i) })
+        return item
+      }))
+      st.open = true
+      list.hidden = false
+      input.setAttribute('aria-controls', list.id)
+      input.setAttribute('aria-expanded', 'true')
+      input.setAttribute('aria-activedescendant', prefix + st.at)
+      st.start = word.start
+      place(word.start)
+      const picked = document.getElementById(prefix + st.at)
+      if (picked) picked.scrollIntoView({ block: 'nearest' })
+    }
+
+    // place puts the list above the line the colon is on, at the colon, and inside the box: the list is in the box's wrapper,
+    // so the box's own offsets are added. Below the line when there is no room above it.
+    function place(start) {
+      const wrap = list.offsetParent || input.parentElement
+      const caret = caretPoint(input, start)
+      const wrapTop = wrap && wrap.getBoundingClientRect ? wrap.getBoundingClientRect().top : 0
+      const at = window.vibeEmoji.place({
+        caretLeft: caret.left + input.offsetLeft, caretTop: caret.top + input.offsetTop, caretHeight: caret.height,
+        listWidth: list.offsetWidth, listHeight: list.offsetHeight,
+        boxWidth: wrap ? wrap.clientWidth : input.offsetWidth,
+        roomAbove: wrapTop + caret.top + input.offsetTop,
+      })
+      list.style.left = at.left + 'px'
+      list.style.top = at.top + 'px'
+    }
+
+    function move(by) {
+      if (!st.shown.length) return
+      st.at = (st.at + by + st.shown.length) % st.shown.length
+      update(false)
+    }
+
+    // put puts char in place of what runs from start to the cursor, with a space after, ready for what goes on.
+    function put(start, char, space) {
+      const end = input.selectionStart
+      const after = input.value.slice(end)
+      const gap = space && !/^\s/.test(after) ? ' ' : ''
+      replaceInPrompt(input, start, end, char + gap)
+      changed()
+      close()
+    }
+
+    function accept(i) {
+      const word = window.vibeEmoji && window.vibeEmoji.at(input.value, input.selectionStart)
+      const picked = st.shown[i]
+      if (!word || !picked) { close(); return }
+      put(word.start, picked.char, true)
+    }
+
+    // resolveAtCaret turns an emoticon that ends at the cursor into its emoji, for the Enter that follows it.
+    function resolveAtCaret() {
+      if (!emojiState.on || !window.vibeEmoji || input.selectionStart !== input.selectionEnd) return
+      const end = input.selectionStart
+      const found = window.vibeEmoji.emoticonBefore(input.value, end)
+      if (found) replaceInPrompt(input, found.start, end, found.char)
+    }
+
+    // resolveTrailing does the same for an emoticon the text ends with, wherever the cursor is: a message ending in :) is meant
+    // as the emoji, and is sent as it.
+    function resolveTrailing() {
+      if (!emojiState.on || !window.vibeEmoji) return
+      const end = input.value.replace(/\s+$/, '').length
+      const found = end > 0 ? window.vibeEmoji.emoticonBefore(input.value, end) : null
+      if (found) replaceInPrompt(input, found.start, end, found.char)
+    }
+
+    // Ahead of the box's other keys: while the list is open the arrows, Tab, Enter and Escape are its (Escape would otherwise
+    // stop the agent, or cancel a comment). With it shut, Enter after an emoticon turns it into its emoji, and does as it does.
+    input.addEventListener('keydown', (ev) => {
+      if (!st.open && ev.key === 'Enter' && !ev.isComposing) resolveAtCaret()
+      if (!st.open || ev.isComposing) return
+      const plain = !ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey
+      let handled = true
+      if (ev.key === 'ArrowDown' && plain) move(1)
+      else if (ev.key === 'ArrowUp' && plain) move(-1)
+      else if ((ev.key === 'Tab' || ev.key === 'Enter') && plain && st.shown.length) accept(st.at)
+      else if (ev.key === 'Escape') close()
+      else handled = false
+      if (handled) { ev.preventDefault(); ev.stopImmediatePropagation() }
+    })
+    input.addEventListener('input', (ev) => {
+      // The colon that closes a whole name turns it into the character: only typing it does, not a deletion that leaves one.
+      if (emojiState.on && window.vibeEmoji && ev.inputType === 'insertText' && ev.data === ':' && input.selectionStart === input.selectionEnd) {
+        const done = window.vibeEmoji.closing(input.value, input.selectionStart)
+        if (done) { put(done.start, done.char, false); return }
+      }
+      // The space that finishes an emoticon turns it into its emoji, and stays where it was typed.
+      if (emojiState.on && window.vibeEmoji && ev.inputType === 'insertText' && ev.data === ' ' && input.selectionStart === input.selectionEnd) {
+        const end = input.selectionStart - 1
+        const found = end > 0 ? window.vibeEmoji.emoticonBefore(input.value, end) : null
+        if (found && input.value[end] === ' ') {
+          replaceInPrompt(input, found.start, end, found.char)
+          const caret = found.start + found.char.length + 1
+          input.setSelectionRange(caret, caret)
+          changed()
+          close()
+          return
+        }
+      }
+      update(true)
+    })
+    input.addEventListener('click', () => update(false))
+    // The list is placed at the caret as the box shows it, and the browser may scroll the box to the caret after the input that
+    // showed the list (Firefox on Windows does): it follows.
+    input.addEventListener('scroll', () => { if (st.open) place(st.start) })
+    input.addEventListener('keyup', (ev) => {
+      if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) update(false)
+    })
+    input.addEventListener('blur', close)
+    return { close, resolveTrailing, state: st }
   }
 
-  // updateEmoji shows the list for the name being typed at the cursor, or hides it; fresh is a change to the text, which picks
-  // the closest match again.
-  function updateEmoji(fresh) {
-    const input = $('convo-input')
-    if (!emojiState.on || !window.vibeEmoji || input.selectionStart !== input.selectionEnd) { closeEmoji(); return }
-    const word = window.vibeEmoji.at(input.value, input.selectionStart)
-    const shown = word ? window.vibeEmoji.find(word.query, EMOJI_SHOWN) : []
-    if (!shown.length) { closeEmoji(); return }
-    if (fresh || emojiState.at >= shown.length) emojiState.at = 0
-    emojiState.shown = shown
-    const q = word.query.toLowerCase()
-    const list = $('convo-emoji')
-    list.replaceChildren(...shown.map((e, i) => {
-      const found = e.alias || e.name
-      const at = found.toLowerCase().indexOf(q)
-      const label = at < 0 ? [found]
-        : [found.slice(0, at), el('mark', { text: found.slice(at, at + q.length) }), found.slice(at + q.length)]
-      const item = el('li', { id: 'convo-emoji-' + i, role: 'option', 'data-name': e.name, 'aria-selected': String(i === emojiState.at) },
-        el('span', { class: 'glyph', text: e.char, 'aria-hidden': 'true' }), ':', ...label, ':',
-        e.alias ? el('span', { class: 'alias', text: e.name }) : e.emoticon ? el('span', { class: 'alias', text: e.emoticon }) : null)
-      // mousedown, not click: the prompt keeps the focus.
-      item.addEventListener('mousedown', (ev) => { ev.preventDefault(); acceptEmoji(i) })
-      return item
-    }))
-    emojiState.open = true
-    list.hidden = false
-    input.setAttribute('aria-controls', 'convo-emoji')
-    input.setAttribute('aria-expanded', 'true')
-    input.setAttribute('aria-activedescendant', 'convo-emoji-' + emojiState.at)
-    emojiState.start = word.start
-    placeEmoji(word.start)
-    const picked = $('convo-emoji-' + emojiState.at)
-    if (picked) picked.scrollIntoView({ block: 'nearest' })
+  let emojiSerial = 0
+
+  // emojiBox gives a review's textarea emoji completion: it and its list in a wrapper the list is placed in. changed is the box's
+  // own input handling, told when the completion changes the text.
+  function emojiBox(box, changed) {
+    const list = el('ul', { id: 'emoji-list-' + (++emojiSerial), class: 'commands emoji', role: 'listbox', 'aria-label': 'Emoji', hidden: true })
+    box.setAttribute('aria-autocomplete', 'list')
+    box.setAttribute('aria-expanded', 'false')
+    emojiCompleter(box, list, list.id + '-', changed)
+    return el('div', { class: 'emoji-host' }, list, box)
   }
 
   // caretPoint is where character index of the prompt is, from the top left of the prompt's border box: a textarea can't
@@ -7830,112 +8963,22 @@
     return point
   }
 
-  // placeEmoji puts the list above the line the colon is on, at the colon, and inside the prompt: the list is in the prompt's
-  // wrapper, so the prompt's own offsets are added. Below the line when there is no room above it.
-  function placeEmoji(start) {
-    const ta = $('convo-input')
-    const list = $('convo-emoji')
-    const wrap = list.offsetParent || ta.parentElement
-    const caret = caretPoint(ta, start)
-    const wrapTop = wrap && wrap.getBoundingClientRect ? wrap.getBoundingClientRect().top : 0
-    const at = window.vibeEmoji.place({
-      caretLeft: caret.left + ta.offsetLeft, caretTop: caret.top + ta.offsetTop, caretHeight: caret.height,
-      listWidth: list.offsetWidth, listHeight: list.offsetHeight,
-      boxWidth: wrap ? wrap.clientWidth : ta.offsetWidth,
-      roomAbove: wrapTop + caret.top + ta.offsetTop,
-    })
-    list.style.left = at.left + 'px'
-    list.style.top = at.top + 'px'
-  }
+  let promptEmoji = null
 
-  function moveEmoji(by) {
-    if (!emojiState.shown.length) return
-    emojiState.at = (emojiState.at + by + emojiState.shown.length) % emojiState.shown.length
-    updateEmoji(false)
-  }
+  function closeEmoji() { if (promptEmoji) promptEmoji.close() }
 
-  // putEmoji puts char in place of what runs from start to the cursor, with a space after, ready for what goes on.
-  function putEmoji(start, char, space) {
-    const input = $('convo-input')
-    const end = input.selectionStart
-    const after = input.value.slice(end)
-    const gap = space && !/^\s/.test(after) ? ' ' : ''
-    replaceInPrompt(input, start, end, char + gap)
-    promptChanged()
-    closeEmoji()
-  }
-
-  function acceptEmoji(i) {
-    const input = $('convo-input')
-    const word = window.vibeEmoji && window.vibeEmoji.at(input.value, input.selectionStart)
-    const picked = emojiState.shown[i]
-    if (!word || !picked) { closeEmoji(); return }
-    putEmoji(word.start, picked.char, true)
-  }
-
-  // resolveEmoticonAtCaret turns an emoticon that ends at the cursor into its emoji, for the Enter that follows it.
-  function resolveEmoticonAtCaret(input) {
-    if (!emojiState.on || !window.vibeEmoji || input.selectionStart !== input.selectionEnd) return
-    const end = input.selectionStart
-    const found = window.vibeEmoji.emoticonBefore(input.value, end)
-    if (found) replaceInPrompt(input, found.start, end, found.char)
-  }
-
-  // resolveTrailingEmoticon does the same for an emoticon the prompt ends with, wherever the cursor is: a message ending in
-  // :) is meant as the emoji, and is sent as it.
-  function resolveTrailingEmoticon(input) {
-    if (!emojiState.on || !window.vibeEmoji) return
-    const end = input.value.replace(/\s+$/, '').length
-    const found = end > 0 ? window.vibeEmoji.emoticonBefore(input.value, end) : null
-    if (found) replaceInPrompt(input, found.start, end, found.char)
-  }
+  function resolveTrailingEmoticon() { if (promptEmoji) promptEmoji.resolveTrailing() }
 
   function setUpEmoji() {
     const input = $('convo-input')
-    // Ahead of the prompt's other keys, as the slash commands': while the list is open the arrows, Tab, Enter and Escape are its
-    // (Escape would otherwise stop the agent). With it shut, Enter after an emoticon turns it into its emoji, and is then a
-    // new line as always.
-    input.addEventListener('keydown', (ev) => {
-      if (!emojiState.open && ev.key === 'Enter' && !ev.isComposing) resolveEmoticonAtCaret(input)
-      if (!emojiState.open || ev.isComposing) return
-      const plain = !ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey
-      let handled = true
-      if (ev.key === 'ArrowDown' && plain) moveEmoji(1)
-      else if (ev.key === 'ArrowUp' && plain) moveEmoji(-1)
-      else if ((ev.key === 'Tab' || ev.key === 'Enter') && plain && emojiState.shown.length) acceptEmoji(emojiState.at)
-      else if (ev.key === 'Escape') closeEmoji()
-      else handled = false
-      if (handled) { ev.preventDefault(); ev.stopImmediatePropagation() }
-    })
-    input.addEventListener('input', (ev) => {
-      // The colon that closes a whole name turns it into the character: only typing it does, not a deletion that leaves one.
-      if (emojiState.on && window.vibeEmoji && ev.inputType === 'insertText' && ev.data === ':' && input.selectionStart === input.selectionEnd) {
-        const done = window.vibeEmoji.closing(input.value, input.selectionStart)
-        if (done) { putEmoji(done.start, done.char, false); return }
+    promptEmoji = emojiCompleter(input, $('convo-emoji'), 'convo-emoji-', promptChanged, () => {
+      input.setAttribute('aria-controls', 'convo-commands')
+      // The slash commands' list may be what is open: its own state says so.
+      if (!slash.open) {
+        input.setAttribute('aria-expanded', 'false')
+        input.removeAttribute('aria-activedescendant')
       }
-      // The space that finishes an emoticon turns it into its emoji, and stays where it was typed.
-      if (emojiState.on && window.vibeEmoji && ev.inputType === 'insertText' && ev.data === ' ' && input.selectionStart === input.selectionEnd) {
-        const end = input.selectionStart - 1
-        const found = end > 0 ? window.vibeEmoji.emoticonBefore(input.value, end) : null
-        if (found && input.value[end] === ' ') {
-          replaceInPrompt(input, found.start, end, found.char)
-          const caret = found.start + found.char.length + 1
-          input.setSelectionRange(caret, caret)
-          promptChanged()
-          closeEmoji()
-          return
-        }
-      }
-      updateEmoji(true)
     })
-    input.addEventListener('click', () => updateEmoji(false))
-    // The list is placed at the caret as the prompt shows it, and the browser may scroll the prompt to the caret after the
-    // input that showed the list (Firefox on Windows does): it follows.
-    input.addEventListener('scroll', () => { if (emojiState.open) placeEmoji(emojiState.start) })
-    input.addEventListener('keyup', (ev) => {
-      if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) updateEmoji(false)
-    })
-    input.addEventListener('blur', closeEmoji)
   }
 
   function setEmojiComplete(on) {
@@ -9193,6 +10236,8 @@
     $('status-balloon').addEventListener(on, () => holdStatus(held))
   }
   setUpManage()
+  setUpActivity()
+  setUpSplitter()
 
   // Out of sight, the next time in view asks to keep the sandbox awake at
   // once, rather than when the last ask is old enough.

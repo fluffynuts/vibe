@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"vibe/internal/activity"
 	"vibe/internal/fscopy"
 )
 
@@ -1171,6 +1172,7 @@ func (s *Server) conversationSend(w http.ResponseWriter, r *http.Request) {
 	}
 	seq, _ := s.convo.claim(req.Prompt, true)
 	s.convo.give(seq, req.Prompt, s.cfg.StartAgent, s.cfg.Prepare)
+	s.markPrompt(req.Prompt)
 	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
 }
 
@@ -1185,7 +1187,10 @@ func (s *Server) claimTurn(prompt string) (launch func(), abandon func(error), o
 	if !ok {
 		return nil, nil, false
 	}
-	launch = func() { s.convo.give(seq, prompt, s.cfg.StartAgent, s.cfg.Prepare) }
+	launch = func() {
+		s.convo.give(seq, prompt, s.cfg.StartAgent, s.cfg.Prepare)
+		s.mark(activity.KindPrompt)
+	}
 	abandon = func(why error) { s.convo.abandon(seq, why) }
 	return launch, abandon, true
 }

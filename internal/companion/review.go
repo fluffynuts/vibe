@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"vibe/internal/activity"
 	"vibe/internal/review"
 )
 
@@ -381,6 +382,9 @@ func (s *Server) reviewDo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rv, err := s.cfg.ReviewTab.Store.Do(req, review.User)
+	if err == nil {
+		s.mark(activity.KindReview)
+	}
 	if errors.Is(err, review.ErrReplaced) {
 		writeReplaced(w)
 		return

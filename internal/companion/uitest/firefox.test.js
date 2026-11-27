@@ -16,15 +16,20 @@ let browser
 test.before(async () => { browser = await firefox.launch() })
 test.after(async () => { if (browser) await browser.close() })
 
-// stateWith serves /api/state as the server answers it, with patch merged in. A poll still being fetched when a test closes its page has the
-// response disposed under it ("Response has been disposed"): that is the end of the test, not a failure, and left to throw it was an unhandled
-// rejection that failed a whole CI run (Windows) in which every test had passed. Any other error is still the test's.
+// endedByClose says an error in a route's handler is its page being closed under it: a poll still being fetched when a test closes its page
+// has its request or response disposed ("Request context disposed", "Response has been disposed"). That is the end of the test, not a
+// failure; left to throw, it was an unhandled rejection that failed whole CI runs in which every test had passed. The page counts as
+// closed only after its close has disposed of what was in flight, so isClosed() can still be false then (5 times in 40, tried
+// 2026-11-27): the error's own words are what say so. Any other error is still the test's.
+const endedByClose = (page, e) => page.isClosed() || /Request context disposed|Response has been disposed|has been closed/.test(String(e && e.message))
+
+// stateWith serves /api/state as the server answers it, with patch merged in.
 const stateWith = (page, patch) => async (route) => {
   try {
     const state = await (await route.fetch()).json()
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify(Object.assign(state, patch)) })
   } catch (e) {
-    if (!page.isClosed()) throw e
+    if (!endedByClose(page, e)) throw e
   }
 }
 
@@ -73,6 +78,24 @@ async function hoverPlus(page, label) {
 }
 
 const composerSays = (page) => page.locator('.review-compose-head').textContent()
+
+test("a review comment's emoji list opens at the colon being typed, over the box, and Tab puts the character in", async () => {
+  const page = await reviewPage()
+  try {
+    await (await hoverPlus(page, 'R20')).click()
+    const box = page.locator('textarea[aria-label="Your comment"]')
+    await box.click()
+    await page.keyboard.type('looks good :roc')
+    const list = page.locator('.review-composer ul.emoji')
+    await list.waitFor({ state: 'visible', timeout: 5000 })
+    const [l, b] = [await list.boundingBox(), await box.boundingBox()]
+    assert.ok(l.x >= b.x - 1 && l.x + l.width <= b.x + b.width + 1, 'the list is not over the box: ' + JSON.stringify({ l, b }))
+    assert.ok(Math.abs(l.y + l.height - b.y) < 60 || Math.abs(l.y - b.y) < 60, 'the list is far from the line typed on: ' + JSON.stringify({ l, b }))
+    await page.keyboard.press('Tab')
+    assert.equal(await box.inputValue(), 'looks good 🚀 ')
+    assert.equal(await list.isVisible(), false)
+  } finally { await page.close() }
+})
 
 test('Shift-click makes a range on one side', async () => {
   const page = await reviewPage()
@@ -147,7 +170,7 @@ const withReview = (page, patch) => page.route(/\/api\/review(\?|$)/, async (rou
     patch(body)
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) })
   } catch (e) {
-    if (!page.isClosed()) throw e
+    if (!endedByClose(page, e)) throw e
   }
 })
 
@@ -679,6 +702,41 @@ async function promptPage(width) {
   await page.click('#tab-conversation')
   return page
 }
+
+test('the splitter shows only under the pointer, and dragging it shares the width, a fifth at least either side, kept for the page', async () => {
+  const page = await promptPage(1400)
+  try {
+    const widths = () => page.evaluate(() => {
+      const w = (sel) => document.querySelector(sel).getBoundingClientRect().width
+      return { convo: w('.convo'), clip: w('.convo-clip'), layout: w('.convo-layout') }
+    })
+    const line = () => page.evaluate(() => getComputedStyle(document.getElementById('convo-splitter'), '::after').opacity)
+    assert.equal(await line(), '0', 'the line shows with the pointer elsewhere')
+    const s = await page.locator('#convo-splitter').boundingBox()
+    assert.ok(s && s.width >= 10, 'the splitter has no width to grab: ' + JSON.stringify(s))
+    await page.mouse.move(s.x + s.width / 2, s.y + 100)
+    await page.waitForFunction(() => getComputedStyle(document.getElementById('convo-splitter'), '::after').opacity === '1')
+    assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('convo-splitter')).cursor), 'col-resize')
+    const before = await widths()
+    assert.ok(Math.abs(before.convo / (before.convo + before.clip) - 2 / 3) < 0.02, 'not two thirds to start with: ' + JSON.stringify(before))
+    await page.mouse.down()
+    // Over the clipboard's frame, which mustn't take the pointer from the drag.
+    const layout = await page.locator('.convo-layout').boundingBox()
+    await page.mouse.move(layout.x + layout.width * 0.4, s.y + 100, { steps: 8 })
+    await page.mouse.up()
+    const after = await widths()
+    assert.ok(Math.abs(after.convo / after.layout - 0.4) < 0.03, 'dragged to 40%, the conversation has ' + JSON.stringify(after))
+    const moved = await page.locator('#convo-splitter').boundingBox()
+    await page.mouse.move(moved.x + moved.width / 2, s.y + 100)
+    await page.mouse.down()
+    await page.mouse.move(layout.x + 20, s.y + 100, { steps: 8 })
+    await page.mouse.up()
+    const least = await widths()
+    assert.ok(Math.abs(least.convo / least.layout - 0.2) < 0.02, 'dragged to the edge, the conversation should keep a fifth: ' + JSON.stringify(least))
+    assert.equal(await page.evaluate(() => localStorage.getItem('vibe-convo-share')), '20')
+    await page.screenshot({ path: '/tmp/convo-splitter.png' })
+  } finally { await page.close() }
+})
 
 // listBox is where the list is, where the prompt is, and how high a line of it is.
 const listBox = (page) => page.evaluate(() => {
@@ -1622,15 +1680,20 @@ test('a Network rules row says it is removing without moving the columns', async
 })
 
 test('a state poll cut off by its page closing is not an error, and any other failure of one still is', async () => {
+  const failing = (e) => ({ fetch: async () => { throw e }, fulfill: async () => {} })
   const gone = new Error('apiResponse.json: Response has been disposed')
-  const route = { fetch: async () => { throw gone }, fulfill: async () => {} }
+  const broken = new Error('the server answered 500')
   const open = await browser.newPage()
   try {
-    await assert.rejects(stateWith(open, {})(route), /disposed/, 'a failure while the page is open was swallowed')
+    await assert.rejects(stateWith(open, {})(failing(broken)), /answered 500/, 'a real failure while the page is open was swallowed')
+    // A page being closed disposes what is in flight before it counts as closed: the error's words say so while isClosed() is false.
+    await stateWith(open, {})(failing(gone))
+    await stateWith(open, {})(failing(new Error('route.fetch: Request context disposed.')))
   } finally { await open.close() }
   const closed = await browser.newPage()
   await closed.close()
-  await stateWith(closed, {})(route)
+  await stateWith(closed, {})(failing(gone))
+  await stateWith(closed, {})(failing(broken))
 })
 
 // A countdown bar (see the countdown tests in page.test.js) runs for as long as its --countdown-ms says, inside the top edge of what it
@@ -1720,5 +1783,173 @@ test('the permission mode beside Send is amber whenever it shows', async () => {
       return { label: getComputedStyle(label).color, amber }
     })
     assert.equal(m.label, m.amber)
+  } finally { await page.close() }
+})
+
+// activityPage opens the Activity tab on a day whose branches have long names (and, with many, enough of them to scroll), its calls
+// answered here.
+async function activityPage(width, many = 0) {
+  const page = await browser.newPage({ viewport: { width, height: 900 } })
+  await page.route('**/api/state', stateWith(page, { activity: true }))
+  const commits = (n) => Array.from({ length: n }, (_, i) => ':bug: line ' + (i + 1) + ' saying what was done, long enough to need wrapping on a narrow window, and then some')
+  const branch = (repo, name, hours, more = {}) => Object.assign({
+    repo, branch: name, hours, commits: commits(1),
+    folders: ['~/code/' + repo], stretches: [{ start: '2026-11-26T09:10:00Z', end: '2026-11-26T11:40:00Z', measured: true }],
+    measuredMinutes: 150, estimatedMinutes: 0,
+  }, more)
+  const branches = [
+    branch('yumbi-web', 'feat/a-branch-name-as-long-as-they-come-in-a-busy-team-with-a-ticket-number-1234', 3, { commits: commits(many ? 20 : 1) }),
+    branch('a-repository-with-a-long-name-too', 'fix/y', 1, { estimatedMinutes: 30, ticket: 'https://trello.com/c/abc' }),
+  ]
+  for (let i = 0; i < many; i++) branches.push(branch('vibe', 'feat/n' + String(i).padStart(2, '0'), 0.5))
+  const day = { date: '2026-11-26', hours: 4 + many / 2, branches }
+  await page.route('**/api/activity', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+    report: { day, today: '2026-11-26', earliest: '2026-11-19', problems: [] }, attention: [], problems: [], rounding: '30m',
+    summaries: day.branches.map((b, i) => ({ key: 'k' + i, state: 'ready', bullets: ['what stands out on ' + b.branch + ', said in a line long enough to wrap'] })) }) }))
+  await page.goto(URL)
+  await page.click('#tab-activity')
+  await page.waitForSelector('.activity-toggle')
+  return page
+}
+
+test("each branch's row is one line on the page at every width, a long name cut short rather than pushing the rest off", async () => {
+  for (const width of [1400, 800, 420]) {
+    const page = await activityPage(width)
+    try {
+      const rows = await page.evaluate(() => [...document.querySelectorAll('.activity-head')].map((s) => {
+        const r = s.getBoundingClientRect()
+        // What isn't displayed (the bar, on a narrow window) has no box to measure.
+        const kids = [...s.querySelectorAll('.activity-toggle > *, .activity-info')].map((c) => c.getBoundingClientRect()).filter((k) => k.width > 0)
+        return { right: Math.max(...kids.map((k) => k.right)), top: Math.min(...kids.map((k) => k.top)), bottom: Math.max(...kids.map((k) => k.bottom)), height: r.height }
+      }))
+      const pageWidth = await page.evaluate(() => document.documentElement.clientWidth)
+      for (const row of rows) {
+        assert.ok(row.right <= pageWidth, `at ${width}px, a row runs off the page: ${JSON.stringify(row)} past ${pageWidth}`)
+        assert.ok(row.bottom - row.top < 30, `at ${width}px, a row is more than one line: ${JSON.stringify(row)}`)
+      }
+      const hours = await page.locator('.activity-hours').first().boundingBox()
+      assert.ok(hours && hours.width > 0, `at ${width}px, the hours aren't shown`)
+      // A repository's heading and its rows line up: the hours, and the bar where there is one.
+      const lined = await page.evaluate(() => {
+        const box = (sel, within) => within.querySelector(sel) ? within.querySelector(sel).getBoundingClientRect() : null
+        const group = document.querySelector('.activity-group')
+        const head = group.querySelector('.activity-group-head'), row = group.querySelector('.activity-toggle')
+        const edges = (b) => b && b.width ? [Math.round(b.left), Math.round(b.right)] : null
+        return { hours: [edges(box('.activity-hours', head)), edges(box('.activity-hours', row))], bar: [edges(box('meter', head)), edges(box('meter', row))] }
+      })
+      assert.deepEqual(lined.hours[0], lined.hours[1], `at ${width}px, the heading's hours aren't over its rows': ${JSON.stringify(lined)}`)
+      assert.deepEqual(lined.bar[0], lined.bar[1], `at ${width}px, the heading's bar isn't over its rows': ${JSON.stringify(lined)}`)
+      // The summary and commits sit side by side where there is room, one over the other where there isn't, never off the page.
+      await page.click('.activity-toggle')
+      const [summary, commits] = await page.evaluate(() => [...document.querySelector('.activity-work').children].map((c) => {
+        const r = c.getBoundingClientRect()
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }
+      }))
+      assert.ok(summary.right <= pageWidth && commits.right <= pageWidth, `at ${width}px, a side runs off the page`)
+      if (width >= 800) assert.ok(commits.left >= summary.right && commits.top === summary.top, `at ${width}px, the sides aren't side by side: ${JSON.stringify([summary, commits])}`)
+      else assert.ok(commits.top >= summary.bottom, `at ${width}px, the sides overlap: ${JSON.stringify([summary, commits])}`)
+    } finally { await page.close() }
+  }
+})
+
+test('opening a row below the open one keeps the row clicked where it was on the screen', async () => {
+  const page = await activityPage(1200, 40)
+  try {
+    const toggles = page.locator('.activity-toggle')
+    await toggles.nth(0).click()
+    // Down to a row below the open one's long commits, as reading on would.
+    const target = toggles.nth(30)
+    await target.scrollIntoViewIfNeeded()
+    const before = (await target.boundingBox()).y
+    await target.click()
+    const after = (await target.boundingBox()).y
+    assert.ok(Math.abs(after - before) <= 2, `the row clicked moved from ${before} to ${after}`)
+    assert.equal(await toggles.nth(0).getAttribute('aria-expanded'), 'false', 'the first row closed')
+    assert.equal(await target.getAttribute('aria-expanded'), 'true')
+  } finally { await page.close() }
+})
+
+// weekPage opens the Activity tab's week: many repositories, long names among them, a few big and many small.
+async function weekPage(width) {
+  const page = await browser.newPage({ viewport: { width, height: 900 } })
+  await page.route('**/api/state', stateWith(page, { activity: true }))
+  const names = ['vibe', 'yumbi-web', 'codeo.core', 'NExpect', 'PeanutButter', 'a-repository-with-a-long-name-too', 'zarro', 'yafs', 'yumbi-api',
+    'codeo.infra', 'dotfiles', 'gitea-mirror']
+  const repos = names.map((repo, i) => {
+    const days = [0, 1, 2, 3, 4, 5, 6].map((d) => (i === 0 ? 4 : (i + d) % 3 === 0 ? 0.5 : 0))
+    const hours = days.reduce((a, b) => a + b, 0)
+    const commits = [{ date: '2026-11-24', lines: [':bug: a commit saying what was done, long enough to need wrapping on a narrow window, and then some'] }]
+    return { repo, days, hours, branches: [0, 1].map((n) => ({ branch: 'feat/a-branch-name-as-long-as-they-come-' + i + '-' + n, days, hours: hours / 2, commits })) }
+  }).filter((r) => r.hours > 0)
+  const week = { start: '2026-11-23', days: ['2026-11-23', '2026-11-24', '2026-11-25', '2026-11-26', '2026-11-27', '2026-11-28', '2026-11-29'],
+    unread: [], today: '2026-11-26', earliest: '2026-11-13', problems: [], repos, hours: repos.reduce((a, r) => a + r.hours, 0) }
+  const summaries = Object.fromEntries(repos.flatMap((r) => r.branches.map((b) => [r.repo + ' ' + b.branch,
+    { key: 'k', state: 'ready', bullets: ['what stands out on ' + b.branch + ' this week, said in a line long enough to wrap'] }])))
+  await page.route('**/api/activity/week*', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+    week, fills: Object.fromEntries(repos.map((r, i) => [r.repo, i])), colourBlind: false, rounding: '30m', attention: [], summaries }) }))
+  await page.route('**/api/activity', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+    report: { day: { date: '2026-11-26', hours: 0, branches: [] }, today: '2026-11-26', earliest: '2026-11-13', problems: [] }, attention: [], problems: [], rounding: '30m', summaries: [] }) }))
+  await page.goto(URL)
+  await page.click('#tab-activity')
+  await page.click('#activity-mode [data-mode="week"]')
+  await page.waitForSelector('#activity-week-pie path')
+  return page
+}
+
+test("the week's pie, its list and the day columns fit the window at every width, and the fills are drawn", async () => {
+  for (const width of [1400, 800, 420]) {
+    const page = await weekPage(width)
+    try {
+      const m = await page.evaluate(() => {
+        const panel = document.getElementById('panel-activity')
+        const box = (id) => document.getElementById(id).getBoundingClientRect()
+        const slice = document.querySelector('#activity-week-pie path')
+        const pattern = document.getElementById(slice.getAttribute('fill').replace(/^url\(#|\)$/g, ''))
+        return { overflow: panel.scrollWidth - panel.clientWidth, panelRight: panel.getBoundingClientRect().right,
+          pie: box('activity-week-pie'), legend: box('activity-week-legend'), columns: box('activity-week-columns'), pattern: !!pattern }
+      })
+      assert.ok(m.overflow <= 1, `the week overflows sideways by ${m.overflow}px at ${width}px`)
+      for (const part of ['pie', 'legend', 'columns']) {
+        assert.ok(m[part].width > 0 && m[part].right <= m.panelRight + 1, `the ${part} isn't drawn within the window at ${width}px: ${JSON.stringify(m[part])}`)
+      }
+      assert.ok(m.pattern, `a slice's fill isn't drawn at ${width}px`)
+      await page.click('#activity-week-legend button >> nth=0')
+      await page.click('#activity-week-all')
+      const open = await page.evaluate(() => {
+        const panel = document.getElementById('panel-activity')
+        const heads = [...document.querySelectorAll('#activity-week-branches .activity-head')].map((h) => {
+          // The name's line: the days' line under it is the button's too.
+          const kids = [...h.querySelectorAll('.activity-toggle > :not(.activity-week-days), .activity-actions')].map((c) => c.getBoundingClientRect()).filter((k) => k.width > 0)
+          return { top: Math.min(...kids.map((k) => k.top)), bottom: Math.max(...kids.map((k) => k.bottom)), right: Math.max(...kids.map((k) => k.right)) }
+        })
+        return { overflow: panel.scrollWidth - panel.clientWidth, panelRight: panel.getBoundingClientRect().right, heads,
+          panes: document.querySelectorAll('#activity-week-branches .activity-pane').length }
+      })
+      assert.equal(open.panes, 4, `Expand all didn't open both rows at ${width}px`)
+      assert.ok(open.overflow <= 1, `the open rows overflow sideways by ${open.overflow}px at ${width}px`)
+      for (const h of open.heads) {
+        assert.ok(h.bottom - h.top < 40 && h.right <= open.panelRight + 1, `a row isn't one line within the window at ${width}px: ${JSON.stringify(h)}`)
+      }
+      if (width === 1400) await page.screenshot({ path: '/tmp/activity-week.png', fullPage: true })
+    } finally { await page.close() }
+  }
+})
+
+test("a balloon opens just under its own button: a row's (i), the help's, and the day's list", async () => {
+  const page = await activityPage(1200)
+  try {
+    const near = async (button, box, align) => {
+      await page.click(button)
+      const b = await page.locator(button).boundingBox()
+      const x = await page.locator(box).boundingBox()
+      assert.ok(x, `${box} didn't open`)
+      assert.ok(x.y >= b.y + b.height && x.y - (b.y + b.height) <= 8, `${box} isn't just under ${button}: ${JSON.stringify({ b, x })}`)
+      const edge = align === 'right' ? Math.abs(x.x + x.width - (b.x + b.width)) : Math.abs(x.x - b.x)
+      assert.ok(edge <= 2, `${box} isn't lined up with ${button}'s ${align} edge: ${JSON.stringify({ b, x })}`)
+    }
+    await near('.activity-info >> nth=1', '#activity-row-balloon', 'right')
+    await page.screenshot({ path: '/tmp/activity-balloon.png' })
+    await near('#activity-help', '#activity-help-balloon', 'left')
+    await near('#activity-day', '#activity-days-list', 'left')
   } finally { await page.close() }
 })

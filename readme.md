@@ -647,7 +647,7 @@ you're looking at:
   `clipboard-bridge` below) embedded beside it: paste images and files anywhere on the tab and they go
   to the clipboard. Both start right under the tab bar: the status button and **New conversation** sit at the tab bar's
   end, beside the CPU and memory meters (on the Conversation tab alone), the clipboard has no bar of its own (its corner
-  icon opens it in a tab of its own, and a slim banner over it says when it isn't answering). The prompt box grows as you type, up to half the column. The agent's replies, and your prompts, are shown as Markdown — headings, lists, tables, code — built
+  icon opens it in a tab of its own, and a slim banner over it says when it isn't answering). The line between the two (it shows under the pointer) drags to share the width, each keeping at least a fifth, and the share is kept for the page; ←/→ move it from the keyboard, and a double-click puts back the usual two thirds. The prompt box grows as you type, up to half the column. The agent's replies, and your prompts, are shown as Markdown — headings, lists, tables, code — built
   as text, so nothing in them can become markup on the page; links open only to this machine's own pages. A block of code has a copy button (two pages) at its top right. A block the agent tagged `markdown` is drawn as the Markdown it is (formatted, as text: no markup, no links followed), and its button copies the Markdown source it was written in, so a pull request description can be read formatted and pasted raw; a block with another tag is code, coloured by that language (see next), and one with none is code as it was. A fenced block tagged with a language
 (`go`, `js`, `csharp`, `sh`, `diff` ... whatever Chroma, the highlighter the Review tab uses, knows by name, alias or file extension) is
 coloured by the host as the Review tab's files are: the page asks for each block that comes into view, two at a time, and keeps the
@@ -658,7 +658,8 @@ restarts, as for files). Colours follow the theme, and what is copied is the cod
   Your prompt is sent exactly as you typed it; only how it's shown changes, so fence pasted console output
   in ``` (and put globs like `*.go` in backticks) to keep it as it is. **My prompts as Markdown**, in the
   Admin tab's **Settings** card, turns that off for your prompts, in that browser, if you'd rather see them as you typed them.
-  Typing a colon and the start of an emoji's name in the prompt (`:roc`, `:+1`, `:D`) opens a list of the emoji it could be, at the
+  A `:name:` in what the page shows (the agent's messages, yours, review comments) is drawn as its emoji, as GitHub draws them,
+  but never in code, nor one stuck to a word (`a:b:c`). Typing a colon and the start of an emoji's name in the prompt, or in a review comment or reply (`:roc`, `:+1`, `:D`) opens a list of the emoji it could be, at the
   colon: **Tab**, **Enter** or a click puts the emoji in, the arrow keys choose another and **Escape** closes the list, leaving
   what you typed; typing the closing colon of a whole name (`:tada:`) gives the emoji too. A few emoticons become their emoji when
   the word is finished, by a space, Enter or sending: `:D` 😀, `:)` and `(:` 🙂, `:(` 🙁, `:/` 😕, `:P` 😛, `;)` 😉, `:'(` 😢 and
@@ -753,6 +754,41 @@ restarts, as for files). Colours follow the theme, and what is copied is the cod
   the profile, and global ones never went. `--migrate` takes the copy along, and deleting the sandbox
   deletes it.
 - **Filesystem rules** — the same, read-only (sbx doesn't log filesystem access yet).
+- **Activity** — how the day's time split between repositories and branches, for a timesheet, in every folder vibe has
+  opened (the sandboxes it has, and those it ran in the last 14 days, even if deleted since); it is on the Profiles page too. Time
+  is **measured** while a sandbox's page runs (a prompt, the agent answering, you typing or clicking on the page, a review
+  comment, the folder's git status changing: vibe keeps a line for each, at most one a minute, in `~/.vibe/activity/`), and
+  **estimated** (~) from git's record otherwise (HEAD's reflog and each branch's: commits, checkouts, merges, rebases, kept for a branch since deleted), read with go-git, as the
+  Review tab reads, never by running git. Branches are grouped by the repository's name on origin, so every checkout of one is
+  together. The day's time is rounded to the **nearest** step chosen on the tab (15 minutes, half an hour, an hour: kept as
+  `activityRounding` in `~/.vibe/settings.yaml`) and shared between the branches in whole steps, the steps left over going to
+  those with the most left over, so no branch is more than a step off and small tasks don't lose the day their sum. Switching to
+  a branch, or pulling it, counts only when work follows; branches worked on at once each
+  count in full, and the bars show each one's share of the day. Branches are grouped under their repository, whose heading has its
+  total and share; both are in order of time, the longest first. The rows start closed, and one opens at a time: click a branch to see, side
+  by side, a **Summary** of its day in 1 to 3
+  lines and its **Commits** (yours, authored that day, with "merged master" and "rebased onto master" for those, `:bug:` codes
+  drawn as emoji), each with a copy button. The summary is made by a one-shot Claude in the sandbox of the page you're on, without
+  being asked, the first time a day's commits are shown and whenever they change; only the commits' first lines are sent, and
+  summaries are kept in `~/.vibe/activity/summaries/`, shared by every vibe (one summarises at a time; the others say which). Its
+  rules are yours to edit, in `~/.vibe/activity/summary-rules.md`, or on the Admin tab's **Activity summaries** card (linked from
+  the tab's (i)), which has a week's rules too. A closed row says when its summary is being made, or failed, and has a copy button for its summary, with the branch's
+  **ticket link** first when it has one: set it in the row's (i) (a Trello card, a Jira or GitHub issue, any web address), and
+  the row gets a link to it. Links are kept in `~/.vibe/activity/tickets.json` by repository and branch, for every vibe, and
+  forgotten once the branch is gone from every checkout and from origin, and nothing in the last 14 days mentions it.
+  A row's **(i)** shows when it was worked on, and where. A branch with no time once rounded and no commits is hidden, behind a
+  line that shows it. The arrows step through the last 14 days (the log and summaries are kept that long), and the date between them opens a list
+  of the days kept; **Return to today** shows on any other day. **Week** shows the week (Monday to Sunday) as a pie by
+  repository beside a column per day, stacked by repository, with a list of each repository's hours and share: pick one, in
+  either chart or the list, to see its branches' week and days below. A branch's row opens to a **summary of its week** (up to
+  10 lines, the most important first, under the rules in `~/.vibe/activity/week-summary-rules.md`) beside its commits by day,
+  with a copy button; **Expand all** opens every row, and **Collapse all**, once all are open, closes them. Each repository keeps its colour (then a colour and a
+  pattern: 45 of them) while it's worked on in the 14 days, kept in `~/.vibe/activity/fills.json`; **Colour-blind-friendly**
+  (under the columns, kept as `activityColourBlind` in `~/.vibe/settings.yaml`) draws them in three hues told apart by pattern
+  too, and is on by itself in the system's high contrast. The **(i)** by the step buttons explains how the time is counted. On today, **Needs
+  attention** lists, as things are now, folders with
+  uncommitted changes and branches with commits not pushed, asking GitHub (with this machine's `gh`) before saying so, as the
+  local copy of a branch on GitHub can be out of date.
 - **Admin** — what `vibe --info` shows of the sandbox, and what you'd otherwise go to a terminal for:
   start or stop it, rebuild it from its profile (`-r`), re-compose it with features added or taken away
   (`-C`), restore a backup of its profile (`--restore`), and save the agent's memories now. It also says

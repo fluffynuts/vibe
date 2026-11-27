@@ -3,6 +3,8 @@ package companion
 import (
 	"net/http"
 	"testing"
+
+	"vibe/internal/activity"
 )
 
 // changingRoutes are the page's calls that change something: each needs
@@ -16,6 +18,7 @@ var changingRoutes = []string{
 	"/api/admin/instructions", "/api/admin/instructions/optimise",
 	"/api/review/do", "/api/review/ask", "/api/review/submit", "/api/review/start", "/api/review/afresh",
 	"/api/manage/plan", "/api/manage/delete", "/api/manage/do", "/api/manage/cancel",
+	"/api/activity/rounding", "/api/activity/seen", "/api/activity/summary/retry", "/api/activity/ticket",
 }
 
 func TestEveryChangeNeedsItsFeature(t *testing.T) {
@@ -35,6 +38,7 @@ func TestEveryChangeNeedsTheTokenAndASameOriginJSONRequest(t *testing.T) {
 	s.cfg.Admin = &fakeAdmin{}
 	s.cfg.Manage = &fakeManager{}
 	s.cfg.GitAuthor = (&fakeAuthor{}).config()
+	s.cfg.Activity = &ActivityTab{Desk: &activity.Desk{Log: activity.Log{Dir: t.TempDir()}}}
 	for _, path := range changingRoutes {
 		for _, c := range []struct {
 			why     string

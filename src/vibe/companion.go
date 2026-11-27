@@ -510,6 +510,8 @@ func startCompanion(lay layout.Layout, args cliargs.Args, name string) (stop fun
 		RememberDefaultBranch:  rememberDefaultBranch(lay.HomePath("settings.yaml")),
 		Wake:                   readyForTurn(name),
 		History:                state.ConversationPath(vibeHome, name),
+		Activity:               activityTabFor(lay, name, agent),
+		Mark:                   activityRecorderFor(lay, name, inst.Target),
 		ReviewTab:              reviewTabFor(vibeHome, name, inst),
 		Admin:                  adminFor(lay, name, inst.Target),
 		GitAuthor:              gitAuthor,
