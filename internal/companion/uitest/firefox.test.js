@@ -74,6 +74,24 @@ async function hoverPlus(page, label) {
 
 const composerSays = (page) => page.locator('.review-compose-head').textContent()
 
+test("a review comment's emoji list opens at the colon being typed, over the box, and Tab puts the character in", async () => {
+  const page = await reviewPage()
+  try {
+    await (await hoverPlus(page, 'R20')).click()
+    const box = page.locator('textarea[aria-label="Your comment"]')
+    await box.click()
+    await page.keyboard.type('looks good :roc')
+    const list = page.locator('.review-composer ul.emoji')
+    await list.waitFor({ state: 'visible', timeout: 5000 })
+    const [l, b] = [await list.boundingBox(), await box.boundingBox()]
+    assert.ok(l.x >= b.x - 1 && l.x + l.width <= b.x + b.width + 1, 'the list is not over the box: ' + JSON.stringify({ l, b }))
+    assert.ok(Math.abs(l.y + l.height - b.y) < 60 || Math.abs(l.y - b.y) < 60, 'the list is far from the line typed on: ' + JSON.stringify({ l, b }))
+    await page.keyboard.press('Tab')
+    assert.equal(await box.inputValue(), 'looks good 🚀 ')
+    assert.equal(await list.isVisible(), false)
+  } finally { await page.close() }
+})
+
 test('Shift-click makes a range on one side', async () => {
   const page = await reviewPage()
   try {

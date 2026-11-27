@@ -1057,6 +1057,9 @@ ul.signins summary { cursor: pointer; color: var(--muted); }
 .signin-job input { flex: 1; min-width: 0; }
 .signin-job code { user-select: all; }
 .commands.emoji { bottom: auto; }
+/* A review box and its emoji list: the list is placed at the caret, in here. */
+.emoji-host { position: relative; display: flex; flex-direction: column; }
+.emoji-host > textarea { width: 100%; }
 .commands.emoji li .glyph { display: inline-block; min-width: 1.6em; margin-right: 4px; text-align: center; }
 .commands.emoji li .alias { color: var(--muted); margin-left: 6px; font-size: 12px; }
 

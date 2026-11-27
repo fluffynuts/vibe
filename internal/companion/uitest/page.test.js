@@ -2229,7 +2229,12 @@ test('a selection spanning several rows of a split diff, including a thread row,
 // --- the formatting toolbar ------------------------------------------------------------------
 
 const select = (box, text, from, to) => { box.focus(); box.value = text; box.dispatchEvent(new box.ownerDocument.defaultView.Event('input', { bubbles: true })); box.setSelectionRange(from, to) }
-const toolbarOf = (box) => box.previousElementSibling && box.previousElementSibling.matches('.md-toolbar') ? box.previousElementSibling : box.parentElement.querySelector('.md-toolbar')
+// A box's toolbar is in what the box is part of: its comment, the composer, or its thread (for a reply, the last one).
+const toolbarOf = (box) => {
+  const whole = box.closest('.comment, .review-composer, .review-thread')
+  const bars = whole ? [...whole.querySelectorAll('.md-toolbar')] : []
+  return bars.length ? bars[bars.length - 1] : null
+}
 const pressKey = async (p, box, key) => { box.dispatchEvent(new p.window.KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, cancelable: true })); await p.settle() }
 
 test('a reply has a formatting toolbar, and what it does is replied', async () => {

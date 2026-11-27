@@ -2363,7 +2363,7 @@
         : 'line ' + (c.side === 'old' ? 'L' : 'R') + c.line) }),
       el('div', { class: 'review-compose-tabs' }, el('span', { role: 'tablist' }, tab('write', 'Write'), tab('preview', 'Preview')),
         c.mode === 'write' ? formattable(body) : null),
-      body,
+      c.mode === 'write' ? emojiBox(body, () => body.dispatchEvent(new Event('input'))) : body,
       el('div', { class: 'bar review-compose-actions' }, el('span', { class: 'spacer' }),
         el('button', { type: 'button', class: 'ghost', text: 'Cancel', onclick: cancelComposer }), send))
     return sideRow(columns, c.side === 'old' ? [box] : [], c.side === 'old' ? [] : [box])
@@ -3895,7 +3895,7 @@
       box.addEventListener('keydown', (ev) => {
         if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); saveEdit(t, c) }
       })
-      return el('div', { class: 'comment' }, head, formattable(box), box, el('div', { class: 'bar' },
+      return el('div', { class: 'comment' }, head, formattable(box), emojiBox(box, () => box.dispatchEvent(new Event('input'))), el('div', { class: 'bar' },
         el('button', { type: 'button', text: 'Save', title: 'Save (Ctrl+Enter)', onclick: () => saveEdit(t, c) }),
         el('button', { type: 'button', class: 'ghost', text: 'Cancel', onclick: () => { reviewView.editing = null; redrawReview() } })))
     })
@@ -3958,7 +3958,7 @@
       el('div', { class: 'muted' }, '#' + t.id + ' · ' + where + (t.movedFrom ? ' · moved from line ' + t.movedFrom : '') + (open ? '' : ' · '),
         open ? null : el('span', { class: 'thread-state', text: t.status }),
         reviewView.outdated && reviewView.outdated.has(t.id) ? el('span', { class: 'review-outdated', text: ' · the code has changed since' }) : null),
-      ...comments, askFeedback(t), formattable(box), box,
+      ...comments, askFeedback(t), formattable(box), emojiBox(box, () => box.dispatchEvent(new Event('input'))),
       el('div', { class: 'bar' },
         el('button', { type: 'button', text: 'Reply', onclick: act('reply') }),
         state.conversation ? el('button', { type: 'button', class: 'ghost', text: 'Ask the agent', title: 'Send your reply to the agent as a question: it answers here', onclick: ask }) : null,
@@ -8175,7 +8175,7 @@
 
   async function sendPrompt() {
     const input = $('convo-input')
-    resolveTrailingEmoticon(input)
+    resolveTrailingEmoticon()
     const prompt = input.value.trim()
     if (!prompt || gate.active) return
     if (await holdForPackages(prompt)) return
@@ -8670,56 +8670,172 @@
   // A colon and the start of a name in the prompt (:roc) offers the emoji it could be, as the slash commands are offered; the
   // pick puts the character itself in the prompt, and typing the closing colon of a whole name (:tada:) does too. The
   // names, and what is a name being typed, are ui/emoji.js's. It can be turned off (Settings), and is remembered.
-  const emojiState = { on: store.get('vibe-emoji-complete') !== 'off', shown: [], at: 0, open: false, start: 0 }
+  const emojiState = { on: store.get('vibe-emoji-complete') !== 'off' }
   const EMOJI_SHOWN = 8
 
-  function closeEmoji() {
-    if (!emojiState.open && $('convo-emoji').hidden) return
-    emojiState.open = false
-    $('convo-emoji').hidden = true
-    $('convo-emoji').replaceChildren()
-    const input = $('convo-input')
-    input.setAttribute('aria-controls', 'convo-commands')
-    // The slash commands' list may be what is open: its own state says so.
-    if (!slash.open) {
-      input.setAttribute('aria-expanded', 'false')
-      input.removeAttribute('aria-activedescendant')
+  // emojiCompleter completes :emoji: names in input, a textarea, offering them in list (a ul.commands.emoji placed in the same
+  // positioned wrapper as input), its options' ids starting with prefix. changed is told when it changes the text; shut, when the
+  // list closes (the prompt gives its slash commands' list the input's aria back). It is the prompt's, and each review box's.
+  function emojiCompleter(input, list, prefix, changed, shut) {
+    const st = { shown: [], at: 0, open: false, start: 0 }
+
+    function close() {
+      if (!st.open && list.hidden) return
+      st.open = false
+      list.hidden = true
+      list.replaceChildren()
+      if (shut) shut()
+      else {
+        input.setAttribute('aria-expanded', 'false')
+        input.removeAttribute('aria-activedescendant')
+      }
     }
+
+    // update shows the list for the name being typed at the cursor, or hides it; fresh is a change to the text, which picks
+    // the closest match again.
+    function update(fresh) {
+      if (!emojiState.on || !window.vibeEmoji || input.selectionStart !== input.selectionEnd) { close(); return }
+      const word = window.vibeEmoji.at(input.value, input.selectionStart)
+      const shown = word ? window.vibeEmoji.find(word.query, EMOJI_SHOWN) : []
+      if (!shown.length) { close(); return }
+      if (fresh || st.at >= shown.length) st.at = 0
+      st.shown = shown
+      const q = word.query.toLowerCase()
+      list.replaceChildren(...shown.map((e, i) => {
+        const found = e.alias || e.name
+        const at = found.toLowerCase().indexOf(q)
+        const label = at < 0 ? [found]
+          : [found.slice(0, at), el('mark', { text: found.slice(at, at + q.length) }), found.slice(at + q.length)]
+        const item = el('li', { id: prefix + i, role: 'option', 'data-name': e.name, 'aria-selected': String(i === st.at) },
+          el('span', { class: 'glyph', text: e.char, 'aria-hidden': 'true' }), ':', ...label, ':',
+          e.alias ? el('span', { class: 'alias', text: e.name }) : e.emoticon ? el('span', { class: 'alias', text: e.emoticon }) : null)
+        // mousedown, not click: the box keeps the focus.
+        item.addEventListener('mousedown', (ev) => { ev.preventDefault(); accept(i) })
+        return item
+      }))
+      st.open = true
+      list.hidden = false
+      input.setAttribute('aria-controls', list.id)
+      input.setAttribute('aria-expanded', 'true')
+      input.setAttribute('aria-activedescendant', prefix + st.at)
+      st.start = word.start
+      place(word.start)
+      const picked = document.getElementById(prefix + st.at)
+      if (picked) picked.scrollIntoView({ block: 'nearest' })
+    }
+
+    // place puts the list above the line the colon is on, at the colon, and inside the box: the list is in the box's wrapper,
+    // so the box's own offsets are added. Below the line when there is no room above it.
+    function place(start) {
+      const wrap = list.offsetParent || input.parentElement
+      const caret = caretPoint(input, start)
+      const wrapTop = wrap && wrap.getBoundingClientRect ? wrap.getBoundingClientRect().top : 0
+      const at = window.vibeEmoji.place({
+        caretLeft: caret.left + input.offsetLeft, caretTop: caret.top + input.offsetTop, caretHeight: caret.height,
+        listWidth: list.offsetWidth, listHeight: list.offsetHeight,
+        boxWidth: wrap ? wrap.clientWidth : input.offsetWidth,
+        roomAbove: wrapTop + caret.top + input.offsetTop,
+      })
+      list.style.left = at.left + 'px'
+      list.style.top = at.top + 'px'
+    }
+
+    function move(by) {
+      if (!st.shown.length) return
+      st.at = (st.at + by + st.shown.length) % st.shown.length
+      update(false)
+    }
+
+    // put puts char in place of what runs from start to the cursor, with a space after, ready for what goes on.
+    function put(start, char, space) {
+      const end = input.selectionStart
+      const after = input.value.slice(end)
+      const gap = space && !/^\s/.test(after) ? ' ' : ''
+      replaceInPrompt(input, start, end, char + gap)
+      changed()
+      close()
+    }
+
+    function accept(i) {
+      const word = window.vibeEmoji && window.vibeEmoji.at(input.value, input.selectionStart)
+      const picked = st.shown[i]
+      if (!word || !picked) { close(); return }
+      put(word.start, picked.char, true)
+    }
+
+    // resolveAtCaret turns an emoticon that ends at the cursor into its emoji, for the Enter that follows it.
+    function resolveAtCaret() {
+      if (!emojiState.on || !window.vibeEmoji || input.selectionStart !== input.selectionEnd) return
+      const end = input.selectionStart
+      const found = window.vibeEmoji.emoticonBefore(input.value, end)
+      if (found) replaceInPrompt(input, found.start, end, found.char)
+    }
+
+    // resolveTrailing does the same for an emoticon the text ends with, wherever the cursor is: a message ending in :) is meant
+    // as the emoji, and is sent as it.
+    function resolveTrailing() {
+      if (!emojiState.on || !window.vibeEmoji) return
+      const end = input.value.replace(/\s+$/, '').length
+      const found = end > 0 ? window.vibeEmoji.emoticonBefore(input.value, end) : null
+      if (found) replaceInPrompt(input, found.start, end, found.char)
+    }
+
+    // Ahead of the box's other keys: while the list is open the arrows, Tab, Enter and Escape are its (Escape would otherwise
+    // stop the agent, or cancel a comment). With it shut, Enter after an emoticon turns it into its emoji, and does as it does.
+    input.addEventListener('keydown', (ev) => {
+      if (!st.open && ev.key === 'Enter' && !ev.isComposing) resolveAtCaret()
+      if (!st.open || ev.isComposing) return
+      const plain = !ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey
+      let handled = true
+      if (ev.key === 'ArrowDown' && plain) move(1)
+      else if (ev.key === 'ArrowUp' && plain) move(-1)
+      else if ((ev.key === 'Tab' || ev.key === 'Enter') && plain && st.shown.length) accept(st.at)
+      else if (ev.key === 'Escape') close()
+      else handled = false
+      if (handled) { ev.preventDefault(); ev.stopImmediatePropagation() }
+    })
+    input.addEventListener('input', (ev) => {
+      // The colon that closes a whole name turns it into the character: only typing it does, not a deletion that leaves one.
+      if (emojiState.on && window.vibeEmoji && ev.inputType === 'insertText' && ev.data === ':' && input.selectionStart === input.selectionEnd) {
+        const done = window.vibeEmoji.closing(input.value, input.selectionStart)
+        if (done) { put(done.start, done.char, false); return }
+      }
+      // The space that finishes an emoticon turns it into its emoji, and stays where it was typed.
+      if (emojiState.on && window.vibeEmoji && ev.inputType === 'insertText' && ev.data === ' ' && input.selectionStart === input.selectionEnd) {
+        const end = input.selectionStart - 1
+        const found = end > 0 ? window.vibeEmoji.emoticonBefore(input.value, end) : null
+        if (found && input.value[end] === ' ') {
+          replaceInPrompt(input, found.start, end, found.char)
+          const caret = found.start + found.char.length + 1
+          input.setSelectionRange(caret, caret)
+          changed()
+          close()
+          return
+        }
+      }
+      update(true)
+    })
+    input.addEventListener('click', () => update(false))
+    // The list is placed at the caret as the box shows it, and the browser may scroll the box to the caret after the input that
+    // showed the list (Firefox on Windows does): it follows.
+    input.addEventListener('scroll', () => { if (st.open) place(st.start) })
+    input.addEventListener('keyup', (ev) => {
+      if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) update(false)
+    })
+    input.addEventListener('blur', close)
+    return { close, resolveTrailing, state: st }
   }
 
-  // updateEmoji shows the list for the name being typed at the cursor, or hides it; fresh is a change to the text, which picks
-  // the closest match again.
-  function updateEmoji(fresh) {
-    const input = $('convo-input')
-    if (!emojiState.on || !window.vibeEmoji || input.selectionStart !== input.selectionEnd) { closeEmoji(); return }
-    const word = window.vibeEmoji.at(input.value, input.selectionStart)
-    const shown = word ? window.vibeEmoji.find(word.query, EMOJI_SHOWN) : []
-    if (!shown.length) { closeEmoji(); return }
-    if (fresh || emojiState.at >= shown.length) emojiState.at = 0
-    emojiState.shown = shown
-    const q = word.query.toLowerCase()
-    const list = $('convo-emoji')
-    list.replaceChildren(...shown.map((e, i) => {
-      const found = e.alias || e.name
-      const at = found.toLowerCase().indexOf(q)
-      const label = at < 0 ? [found]
-        : [found.slice(0, at), el('mark', { text: found.slice(at, at + q.length) }), found.slice(at + q.length)]
-      const item = el('li', { id: 'convo-emoji-' + i, role: 'option', 'data-name': e.name, 'aria-selected': String(i === emojiState.at) },
-        el('span', { class: 'glyph', text: e.char, 'aria-hidden': 'true' }), ':', ...label, ':',
-        e.alias ? el('span', { class: 'alias', text: e.name }) : e.emoticon ? el('span', { class: 'alias', text: e.emoticon }) : null)
-      // mousedown, not click: the prompt keeps the focus.
-      item.addEventListener('mousedown', (ev) => { ev.preventDefault(); acceptEmoji(i) })
-      return item
-    }))
-    emojiState.open = true
-    list.hidden = false
-    input.setAttribute('aria-controls', 'convo-emoji')
-    input.setAttribute('aria-expanded', 'true')
-    input.setAttribute('aria-activedescendant', 'convo-emoji-' + emojiState.at)
-    emojiState.start = word.start
-    placeEmoji(word.start)
-    const picked = $('convo-emoji-' + emojiState.at)
-    if (picked) picked.scrollIntoView({ block: 'nearest' })
+  let emojiSerial = 0
+
+  // emojiBox gives a review's textarea emoji completion: it and its list in a wrapper the list is placed in. changed is the box's
+  // own input handling, told when the completion changes the text.
+  function emojiBox(box, changed) {
+    const list = el('ul', { id: 'emoji-list-' + (++emojiSerial), class: 'commands emoji', role: 'listbox', 'aria-label': 'Emoji', hidden: true })
+    box.setAttribute('aria-autocomplete', 'list')
+    box.setAttribute('aria-expanded', 'false')
+    emojiCompleter(box, list, list.id + '-', changed)
+    return el('div', { class: 'emoji-host' }, list, box)
   }
 
   // caretPoint is where character index of the prompt is, from the top left of the prompt's border box: a textarea can't
@@ -8761,112 +8877,22 @@
     return point
   }
 
-  // placeEmoji puts the list above the line the colon is on, at the colon, and inside the prompt: the list is in the prompt's
-  // wrapper, so the prompt's own offsets are added. Below the line when there is no room above it.
-  function placeEmoji(start) {
-    const ta = $('convo-input')
-    const list = $('convo-emoji')
-    const wrap = list.offsetParent || ta.parentElement
-    const caret = caretPoint(ta, start)
-    const wrapTop = wrap && wrap.getBoundingClientRect ? wrap.getBoundingClientRect().top : 0
-    const at = window.vibeEmoji.place({
-      caretLeft: caret.left + ta.offsetLeft, caretTop: caret.top + ta.offsetTop, caretHeight: caret.height,
-      listWidth: list.offsetWidth, listHeight: list.offsetHeight,
-      boxWidth: wrap ? wrap.clientWidth : ta.offsetWidth,
-      roomAbove: wrapTop + caret.top + ta.offsetTop,
-    })
-    list.style.left = at.left + 'px'
-    list.style.top = at.top + 'px'
-  }
+  let promptEmoji = null
 
-  function moveEmoji(by) {
-    if (!emojiState.shown.length) return
-    emojiState.at = (emojiState.at + by + emojiState.shown.length) % emojiState.shown.length
-    updateEmoji(false)
-  }
+  function closeEmoji() { if (promptEmoji) promptEmoji.close() }
 
-  // putEmoji puts char in place of what runs from start to the cursor, with a space after, ready for what goes on.
-  function putEmoji(start, char, space) {
-    const input = $('convo-input')
-    const end = input.selectionStart
-    const after = input.value.slice(end)
-    const gap = space && !/^\s/.test(after) ? ' ' : ''
-    replaceInPrompt(input, start, end, char + gap)
-    promptChanged()
-    closeEmoji()
-  }
-
-  function acceptEmoji(i) {
-    const input = $('convo-input')
-    const word = window.vibeEmoji && window.vibeEmoji.at(input.value, input.selectionStart)
-    const picked = emojiState.shown[i]
-    if (!word || !picked) { closeEmoji(); return }
-    putEmoji(word.start, picked.char, true)
-  }
-
-  // resolveEmoticonAtCaret turns an emoticon that ends at the cursor into its emoji, for the Enter that follows it.
-  function resolveEmoticonAtCaret(input) {
-    if (!emojiState.on || !window.vibeEmoji || input.selectionStart !== input.selectionEnd) return
-    const end = input.selectionStart
-    const found = window.vibeEmoji.emoticonBefore(input.value, end)
-    if (found) replaceInPrompt(input, found.start, end, found.char)
-  }
-
-  // resolveTrailingEmoticon does the same for an emoticon the prompt ends with, wherever the cursor is: a message ending in
-  // :) is meant as the emoji, and is sent as it.
-  function resolveTrailingEmoticon(input) {
-    if (!emojiState.on || !window.vibeEmoji) return
-    const end = input.value.replace(/\s+$/, '').length
-    const found = end > 0 ? window.vibeEmoji.emoticonBefore(input.value, end) : null
-    if (found) replaceInPrompt(input, found.start, end, found.char)
-  }
+  function resolveTrailingEmoticon() { if (promptEmoji) promptEmoji.resolveTrailing() }
 
   function setUpEmoji() {
     const input = $('convo-input')
-    // Ahead of the prompt's other keys, as the slash commands': while the list is open the arrows, Tab, Enter and Escape are its
-    // (Escape would otherwise stop the agent). With it shut, Enter after an emoticon turns it into its emoji, and is then a
-    // new line as always.
-    input.addEventListener('keydown', (ev) => {
-      if (!emojiState.open && ev.key === 'Enter' && !ev.isComposing) resolveEmoticonAtCaret(input)
-      if (!emojiState.open || ev.isComposing) return
-      const plain = !ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey
-      let handled = true
-      if (ev.key === 'ArrowDown' && plain) moveEmoji(1)
-      else if (ev.key === 'ArrowUp' && plain) moveEmoji(-1)
-      else if ((ev.key === 'Tab' || ev.key === 'Enter') && plain && emojiState.shown.length) acceptEmoji(emojiState.at)
-      else if (ev.key === 'Escape') closeEmoji()
-      else handled = false
-      if (handled) { ev.preventDefault(); ev.stopImmediatePropagation() }
-    })
-    input.addEventListener('input', (ev) => {
-      // The colon that closes a whole name turns it into the character: only typing it does, not a deletion that leaves one.
-      if (emojiState.on && window.vibeEmoji && ev.inputType === 'insertText' && ev.data === ':' && input.selectionStart === input.selectionEnd) {
-        const done = window.vibeEmoji.closing(input.value, input.selectionStart)
-        if (done) { putEmoji(done.start, done.char, false); return }
+    promptEmoji = emojiCompleter(input, $('convo-emoji'), 'convo-emoji-', promptChanged, () => {
+      input.setAttribute('aria-controls', 'convo-commands')
+      // The slash commands' list may be what is open: its own state says so.
+      if (!slash.open) {
+        input.setAttribute('aria-expanded', 'false')
+        input.removeAttribute('aria-activedescendant')
       }
-      // The space that finishes an emoticon turns it into its emoji, and stays where it was typed.
-      if (emojiState.on && window.vibeEmoji && ev.inputType === 'insertText' && ev.data === ' ' && input.selectionStart === input.selectionEnd) {
-        const end = input.selectionStart - 1
-        const found = end > 0 ? window.vibeEmoji.emoticonBefore(input.value, end) : null
-        if (found && input.value[end] === ' ') {
-          replaceInPrompt(input, found.start, end, found.char)
-          const caret = found.start + found.char.length + 1
-          input.setSelectionRange(caret, caret)
-          promptChanged()
-          closeEmoji()
-          return
-        }
-      }
-      updateEmoji(true)
     })
-    input.addEventListener('click', () => updateEmoji(false))
-    // The list is placed at the caret as the prompt shows it, and the browser may scroll the prompt to the caret after the
-    // input that showed the list (Firefox on Windows does): it follows.
-    input.addEventListener('scroll', () => { if (emojiState.open) placeEmoji(emojiState.start) })
-    input.addEventListener('keyup', (ev) => {
-      if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) updateEmoji(false)
-    })
-    input.addEventListener('blur', closeEmoji)
   }
 
   function setEmojiComplete(on) {
