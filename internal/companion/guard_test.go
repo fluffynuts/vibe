@@ -18,7 +18,7 @@ var changingRoutes = []string{
 	"/api/admin/instructions", "/api/admin/instructions/optimise",
 	"/api/review/do", "/api/review/ask", "/api/review/submit", "/api/review/start", "/api/review/afresh",
 	"/api/manage/plan", "/api/manage/delete", "/api/manage/do", "/api/manage/cancel",
-	"/api/activity/rounding", "/api/activity/seen", "/api/activity/summary/retry",
+	"/api/activity/rounding", "/api/activity/seen", "/api/activity/summary/retry", "/api/activity/ticket",
 }
 
 func TestEveryChangeNeedsItsFeature(t *testing.T) {

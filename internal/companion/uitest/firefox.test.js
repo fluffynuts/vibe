@@ -1736,7 +1736,7 @@ async function activityPage(width, many = 0) {
   }, more)
   const branches = [
     branch('yumbi-web', 'feat/a-branch-name-as-long-as-they-come-in-a-busy-team-with-a-ticket-number-1234', 3, { commits: commits(many ? 20 : 1) }),
-    branch('a-repository-with-a-long-name-too', 'fix/y', 1, { estimatedMinutes: 30 }),
+    branch('a-repository-with-a-long-name-too', 'fix/y', 1, { estimatedMinutes: 30, ticket: 'https://trello.com/c/abc' }),
   ]
   for (let i = 0; i < many; i++) branches.push(branch('vibe', 'feat/n' + String(i).padStart(2, '0'), 0.5))
   const day = { date: '2026-11-26', hours: 4 + many / 2, branches }

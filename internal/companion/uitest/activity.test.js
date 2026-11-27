@@ -35,6 +35,7 @@ async function pageWith({ days = { '': today }, attention = [], problems = [], s
       '/api/activity/rounding': (call) => { kept.rounding = call.body.rounding; return { rounding: kept.rounding } },
       '/api/activity/seen': { ok: true },
       '/api/activity/summary/retry': (call) => { kept.retried = call.body.key; return { ok: true } },
+      '/api/activity/ticket': { ok: true },
     },
     storage: { 'vibe-companion-tab': 'activity' },
   })
@@ -335,5 +336,57 @@ test('a repository whose branches are all hidden is hidden with them', async () 
     assert.deepEqual(groups(p).map((g) => g.split(' | ')[0]), ['phoenix'])
     await p.click('activity-hidden-toggle')
     assert.deepEqual(groups(p).map((g) => g.split(' | ')[0]), ['phoenix', 'vibe'])
+  } finally { p.close() }
+})
+
+test("a branch's row copies its summary, with its ticket link first, once the summary is ready", async () => {
+  let copied = null
+  const day = { date: '2026-11-26', hours: 3, branches: [
+    branch('vibe', 'feat/a', 2, ['x'], { ticket: 'https://trello.com/c/abc' }), branch('vibe', 'feat/b', 1, ['y']),
+  ] }
+  const p = await pageWith({ days: { '': day }, summaries: () => [ready('k1', 'did a', 'and more'), { key: 'k2', state: 'pending' }] })
+  try {
+    Object.defineProperty(p.window.navigator, 'clipboard', { value: { writeText: async (t) => { copied = t } }, configurable: true })
+    const copy = (i) => entry(p, i).querySelector('.activity-copy')
+    assert.equal(copy(1).disabled, true, 'nothing to copy while the summary is made')
+    await p.click(copy(0))
+    assert.equal(copied, 'https://trello.com/c/abc\n- did a\n- and more\n')
+    const link = entry(p, 0).querySelector('a.activity-ticket')
+    assert.equal(link.getAttribute('href'), 'https://trello.com/c/abc')
+    assert.equal(link.getAttribute('target'), '_blank')
+    assert.match(link.getAttribute('rel'), /noopener/)
+    assert.equal(entry(p, 1).querySelector('a.activity-ticket'), null, 'no link where none is set')
+    await open(p, 0)
+    await p.click(panes(p, 0)[0].querySelector('button.copy-code'))
+    assert.equal(copied, 'https://trello.com/c/abc\n- did a\n- and more\n', "the open row's summary copies the same")
+  } finally { p.close() }
+})
+
+test("a branch's ticket link is set in its (i) balloon", async () => {
+  const sent = []
+  const day = { date: '2026-11-26', hours: 1, branches: [branch('vibe', 'feat/a', 1, ['x'])] }
+  const p = await pageWith({ days: { '': day } })
+  try {
+    await p.click(entry(p, 0).querySelector('.activity-info'))
+    const balloon = p.$('activity-row-balloon')
+    const input = balloon.querySelector('input[type=url]')
+    assert.ok(input, 'a field for the link')
+    input.value = 'https://trello.com/c/abc'
+    await p.click(p.button('Save', balloon))
+    assert.deepEqual(p.sent('/api/activity/ticket'), [{ repo: 'vibe', branch: 'feat/a', url: 'https://trello.com/c/abc' }])
+    assert.equal(balloon.hidden, true, 'it closes once kept')
+    assert.equal(p.button('Clear', balloon), undefined, 'nothing to clear where no link was set')
+  } finally { p.close() }
+})
+
+test("a branch's ticket link can be cleared from its (i) balloon", async () => {
+  const day = { date: '2026-11-26', hours: 1, branches: [branch('vibe', 'feat/a', 1, ['x'], { ticket: 'https://trello.com/c/abc' })] }
+  const p = await pageWith({ days: { '': day } })
+  try {
+    await p.click(entry(p, 0).querySelector('.activity-info'))
+    const balloon = p.$('activity-row-balloon')
+    assert.equal(balloon.querySelector('input[type=url]').value, 'https://trello.com/c/abc')
+    await p.click(p.button('Clear', balloon))
+    assert.deepEqual(p.sent('/api/activity/ticket'), [{ repo: 'vibe', branch: 'feat/a', url: '' }])
   } finally { p.close() }
 })

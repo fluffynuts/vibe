@@ -29,9 +29,12 @@ func activityLog(lay layout.Layout) activity.Log {
 // read on the host with the review helper, never with git (see review.History).
 func activityTabFor(lay layout.Layout, name, agent string) *companion.ActivityTab {
 	path := lay.HomePath("settings.yaml")
+	tickets := &activity.Tickets{Path: lay.HomePath("activity", "tickets.json")}
 	return &companion.ActivityTab{
 		Summaries: summariserFor(lay, name, agent),
+		Tickets:   tickets,
 		Desk: &activity.Desk{
+			Tickets: tickets,
 			Log:     activityLog(lay),
 			Folders: func() []string { return workspacesOnRecord(lay.Home) },
 			History: review.History,

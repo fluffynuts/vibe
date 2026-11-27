@@ -45,6 +45,8 @@ type Desk struct {
 	// AheadOf is how many commits the folder's HEAD has that sha hasn't, known false when the folder hasn't sha.
 	AheadOf func(ctx context.Context, dir, sha string) (ahead int, known bool, err error)
 	Now     func() time.Time
+	// Tickets are the branches' ticket links, given the day's branches and forgotten when gone (see forgetTickets); nil for none.
+	Tickets *Tickets
 
 	mu      sync.Mutex
 	history map[string]cachedHistory
@@ -121,25 +123,72 @@ func (d *Desk) Day(ctx context.Context, date string, step time.Duration) (Report
 	}
 	var events []Event
 	var bullets []Bullet
+	// What the week says of each repository's branches, for forgetting ticket links: those there are, in any checkout or on origin,
+	// and whether every checkout could be read.
+	branches := map[string]map[string]bool{}
+	allRead := true
 	for _, f := range d.knownFolders(earliest) {
 		h, err := d.historyOf(ctx, f, earliest.AddDate(0, 0, -1))
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
+			allRead = false
 			r.Problems = append(r.Problems, fmt.Sprintf("couldn't read git in %s: %v", pathresolve.Tilde(f), err))
 			continue
 		}
 		e, b := FromHistory(h, f)
 		events, bullets = append(events, e...), append(bullets, b...)
+		if h.Repository {
+			repo := RepoName(h.Origin, f)
+			if branches[repo] == nil {
+				branches[repo] = map[string]bool{}
+			}
+			for _, name := range append(append([]string(nil), h.Branches...), h.RemoteBranches...) {
+				branches[repo][name] = true
+			}
+		}
+	}
+	if d.Tickets != nil && allRead {
+		if err := d.forgetTickets(branches, earliest, events); err != nil {
+			r.Problems = append(r.Problems, "couldn't tidy the ticket links: "+err.Error())
+		}
 	}
 	r.Day = Summarise(midnight, marks, events, bullets, step)
+	if d.Tickets != nil {
+		links := d.Tickets.All()
+		for i := range r.Day.Branches {
+			r.Day.Branches[i].Ticket = links[TicketKey(r.Day.Branches[i].Repo, r.Day.Branches[i].Branch)]
+		}
+	}
 	for i := range r.Day.Branches {
 		for j, f := range r.Day.Branches[i].Folders {
 			r.Day.Branches[i].Folders[j] = pathresolve.Tilde(f)
 		}
 	}
 	return r, nil
+}
+
+// forgetTickets forgets the link of a branch that is gone, on positive evidence only: its repository has a checkout that was read
+// (all were, or nothing is forgotten), the branch is in none of them nor on origin, and nothing in the week's log or git mentions it.
+func (d *Desk) forgetTickets(branches map[string]map[string]bool, since time.Time, events []Event) error {
+	mentioned := map[string]bool{}
+	if marks, _, err := d.Log.Marks(since, d.now()); err == nil {
+		for _, m := range marks {
+			mentioned[TicketKey(m.Repo, m.Branch)] = true
+		}
+	} else {
+		return err
+	}
+	for _, e := range events {
+		if !e.At.Before(since) {
+			mentioned[TicketKey(e.Repo, e.Branch)] = true
+		}
+	}
+	return d.Tickets.forget(func(repo, branch string) bool {
+		there, known := branches[repo]
+		return known && !there[branch] && !mentioned[TicketKey(repo, branch)]
+	})
 }
 
 // knownFolders are the folders vibe has now, and those in the log since since.

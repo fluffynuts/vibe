@@ -21,6 +21,8 @@ type ActivityTab struct {
 	SetRounding func(string) error
 	// Summaries makes and keeps the branches' summaries; nil means none are shown.
 	Summaries *activity.Summariser
+	// Tickets keeps the branches' ticket links; nil means none can be set.
+	Tickets *activity.Tickets
 }
 
 // activityWithin bounds reading a day: a helper process for each folder's git, the first time.
@@ -100,6 +102,28 @@ func (s *Server) activitySummaryRetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.cfg.Activity.Summaries.Retry(req.Key); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// activityTicket keeps (or, with no link, forgets) the link to a branch's ticket.
+func (s *Server) activityTicket(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Repo   string `json:"repo"`
+		Branch string `json:"branch"`
+		URL    string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Repo == "" || req.Branch == "" {
+		writeError(w, http.StatusBadRequest, "expected a repository, a branch and a link")
+		return
+	}
+	if s.cfg.Activity.Tickets == nil {
+		writeError(w, http.StatusNotFound, "ticket links can't be kept here")
+		return
+	}
+	if err := s.cfg.Activity.Tickets.Set(req.Repo, req.Branch, req.URL); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

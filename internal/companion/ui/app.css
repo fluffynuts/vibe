@@ -798,11 +798,14 @@ dialog.glass::backdrop { background: rgba(250, 250, 250, .55); backdrop-filter: 
 .panel-activity { overflow: auto; position: relative;
   /* Everything right of the name is a fixed width (the bar's by the window's), so the columns line up from the right, under a heading
      and in its indented rows alike. */
-  --activity-columns: minmax(0, 1fr) 1.2em 3em clamp(4em, 24vw, 26em) 2.8em 6em; }
+  --activity-columns: minmax(0, 1fr) 1.2em 3em clamp(4em, 24vw, 26em) 2.8em 6em;
+  --activity-actions: 82px; }
 /* Too narrow for a bar beside a name worth reading: the hours and share say it. */
 @media (max-width: 640px) {
-  .panel-activity { --activity-columns: minmax(0, 1fr) 1.2em 3em 2.8em 6em; }
+  .panel-activity { --activity-columns: minmax(0, 1fr) 1.2em 3em 2.8em; }
   .activity-toggle meter, .activity-group-head meter { display: none; }
+  /* The name wants the room more: how much was estimated is in the row's (i). */
+  .activity-toggle .activity-mark, .activity-group-head .activity-mark { display: none; }
 }
 .activity-bar { flex-wrap: wrap; }
 .activity-days button { min-width: 2.2em; }
@@ -829,7 +832,18 @@ dialog.glass::backdrop { background: rgba(250, 250, 250, .55); backdrop-filter: 
    leaves room for the rows' (i). */
 .activity-group { display: flex; flex-direction: column; gap: 4px; }
 .activity-group-head { display: grid; grid-template-columns: var(--activity-columns); gap: 10px;
-  align-items: center; padding: 6px 49px 6px 10px; font-weight: 600; border-bottom: 1px solid var(--line); }
+  align-items: center; padding: 6px calc(var(--activity-actions) + 27px) 6px 10px; font-weight: 600; border-bottom: 1px solid var(--line); }
+/* A row's ticket link, copy and (i): a fixed width whatever is there, so the columns line up with the heading's. */
+.activity-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; width: var(--activity-actions); flex: none; }
+.activity-actions .copy-code { padding: 2px 4px; line-height: 0; }
+.activity-actions .copy-code svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; }
+.activity-actions .copy-code:disabled { opacity: .35; cursor: default; }
+.activity-ticket { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line);
+  color: var(--accent); text-decoration: none; font-size: 13px; }
+.activity-ticket-none { width: 22px; }
+.activity-ticket-field { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 4px 0 8px; }
+.activity-ticket-field label { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 16em; color: var(--muted); }
+.activity-ticket-input { flex: 1; min-width: 0; }
 .activity-group-head > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .activity-group-head .activity-mark { font-weight: normal; }
 .activity-group-rows { display: flex; flex-direction: column; gap: 6px; margin-left: 1.2em; }

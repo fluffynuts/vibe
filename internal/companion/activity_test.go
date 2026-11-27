@@ -142,3 +142,20 @@ func TestTheActivitySaysEachBranchsSummaryAndARetryNeedsAKey(t *testing.T) {
 		t.Fatalf("want a retry of one not kept taken quietly, got %d %s", rec.Code, rec.Body)
 	}
 }
+
+func TestATicketLinkIsKeptForABranchAndOnlyAWebAddress(t *testing.T) {
+	s, _, _ := activityServer(t)
+	s.cfg.Activity.Tickets = &activity.Tickets{Path: t.TempDir() + "/tickets.json"}
+	if rec := do(t, s, post("/api/activity/ticket", `{"repo":"r","branch":"b","url":"javascript:alert(1)"}`)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("want a link that isn't a web address refused, got %d %s", rec.Code, rec.Body)
+	}
+	if rec := do(t, s, post("/api/activity/ticket", `{"repo":"r","branch":"b","url":"https://trello.com/c/abc"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("got %d %s", rec.Code, rec.Body)
+	}
+	if got := s.cfg.Activity.Tickets.All()[activity.TicketKey("r", "b")]; got != "https://trello.com/c/abc" {
+		t.Fatalf("want it kept, got %q", got)
+	}
+	if rec := do(t, s, post("/api/activity/ticket", `{"repo":"r","url":"https://x"}`)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("want a missing branch refused, got %d", rec.Code)
+	}
+}

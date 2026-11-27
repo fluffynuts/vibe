@@ -69,6 +69,8 @@ type BranchTime struct {
 	Estimated int `json:"estimatedMinutes"`
 	// Hours is the time rounded to the nearest step, in hours: none for less than half a step.
 	Hours float64 `json:"hours"`
+	// Ticket is the link the user gave the branch to its ticket, "" for none (see Tickets).
+	Ticket string `json:"ticket,omitempty"`
 	// Commits are what was done on the branch that day, a line each: the user's commits' subjects, merges and rebases.
 	Commits []string `json:"commits"`
 	Folders []string `json:"folders"`

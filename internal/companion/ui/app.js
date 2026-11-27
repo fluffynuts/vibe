@@ -5430,14 +5430,29 @@
     const info = el('button', { type: 'button', class: 'choice-info activity-info', 'aria-expanded': 'false', 'aria-controls': 'activity-row-balloon',
       'aria-label': 'When and where ' + b.branch + ' was worked on', title: 'When and where it was worked on', text: 'i',
       onclick: (ev) => toggleRowInfo(b, ev.currentTarget) })
+    const ready = summary && summary.state === 'ready'
+    const copy = el('button', { type: 'button', class: 'copy-code small activity-copy', disabled: !ready,
+      title: ready ? 'Copy the summary' + (b.ticket ? ', its ticket link first' : '') : 'No summary to copy yet',
+      'aria-label': 'Copy the summary of ' + b.branch, onclick: () => copyText(summaryText(b, summary)) }, copyIcon())
+    const ticket = b.ticket && /^https?:\/\//.test(b.ticket)
+      ? el('a', { class: 'activity-ticket', href: b.ticket, target: '_blank', rel: 'noopener noreferrer', title: 'Open the ticket: ' + b.ticket,
+        'aria-label': 'Open the ticket for ' + b.branch, text: '↗' })
+      : el('span', { class: 'activity-ticket-none' })
     let work = null
     if (open) {
       const commits = b.commits.map(withEmoji)
       work = el('div', { class: 'activity-work', id: panelId },
-        activityPane('Summary', summary && summary.state === 'ready' ? summary.bullets : null, summaryNote(summary), b),
+        activityPane('Summary', summary && summary.state === 'ready' ? summary.bullets : null, summaryNote(summary), b, summaryText(b, summary)),
         activityPane('Commits', commits.length ? commits : null, el('p', { class: 'muted', text: 'No commits this day.' }), b))
     }
-    return el('div', { class: 'activity-entry', 'data-key': key }, el('div', { class: 'activity-head' }, toggle, info), work)
+    return el('div', { class: 'activity-entry', 'data-key': key },
+      el('div', { class: 'activity-head' }, toggle, el('div', { class: 'activity-actions' }, ticket, copy, info)), work)
+  }
+
+  // summaryText is a branch's summary as it is pasted into a timesheet: its ticket link first, then the bullets.
+  function summaryText(b, summary) {
+    if (!summary || summary.state !== 'ready') return ''
+    return (b.ticket ? b.ticket + '\n' : '') + bulletsText(summary.bullets)
   }
 
   // toggleActivityRow opens the row (closing the one open) or closes it, keeping the row clicked where it was on the screen: closing
@@ -5489,7 +5504,8 @@
       el('dl', {},
         ...row('When', b.stretches.map((s) => clock(s.start) + '–' + clock(s.end) + (s.measured ? '' : ' (~)')).join(', ')),
         ...row('Before rounding', hours(b.measuredMinutes / 60) + ' measured, ~' + hours(b.estimatedMinutes / 60) + ' estimated'),
-        ...row('In', b.folders.join(', '))))
+        ...row('In', b.folders.join(', '))),
+      ticketField(b))
     balloon.setAttribute('aria-label', 'When and where ' + b.branch + ' was worked on')
     balloon.hidden = false
     placeUnder(balloon, button, 'right')
@@ -5507,6 +5523,25 @@
     left = Math.max(8, Math.min(left, panel.clientWidth - width - 8))
     box.style.left = left + 'px'
     box.style.top = (br.bottom - pr.top + panel.scrollTop + 4) + 'px'
+  }
+
+  // ticketField is where a branch's ticket link (a Trello card, a Jira or GitHub issue) is set, kept by vibe for the branch, and copied
+  // ahead of its summary.
+  function ticketField(b) {
+    const input = el('input', { type: 'url', class: 'activity-ticket-input', placeholder: 'https://…', value: b.ticket || '',
+      'aria-label': 'Ticket link for ' + b.branch })
+    const save = async (url) => {
+      const res = await post('/api/activity/ticket', { repo: b.repo, branch: b.branch, url })
+      if (!res.ok) { toast(res.body.error || "The ticket link couldn't be kept", true); return }
+      closeActivityBalloons()
+      toast(url ? 'Ticket link kept for ' + b.branch : 'Ticket link cleared for ' + b.branch)
+      loadActivity(true)
+    }
+    input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); save(input.value.trim()) } })
+    return el('div', { class: 'activity-ticket-field' },
+      el('label', {}, 'Ticket link', input),
+      el('button', { type: 'button', class: 'small', text: 'Save', onclick: () => save(input.value.trim()) }),
+      b.ticket ? el('button', { type: 'button', class: 'small ghost', text: 'Clear', onclick: () => save('') }) : null)
   }
 
   function toggleDayList() {
@@ -5531,11 +5566,11 @@
   }
 
   // activityPane is a side of a branch's work: its lines, with a button to copy them, or note when there are none.
-  function activityPane(title, lines, note, b) {
+  function activityPane(title, lines, note, b, text) {
     const what = title.toLowerCase()
     return el('section', { class: 'activity-pane', 'aria-label': title + ' of ' + b.repo + ' ' + b.branch },
       el('h3', {}, title, lines ? el('button', { type: 'button', class: 'copy-code small', title: 'Copy the ' + what, 'aria-label': 'Copy the ' + what + ' of ' + b.branch,
-        onclick: () => copyText(bulletsText(lines)) }, copyIcon()) : null),
+        onclick: () => copyText(text || bulletsText(lines)) }, copyIcon()) : null),
       lines ? el('ul', {}, ...lines.map((t) => el('li', { text: t }))) : note)
   }
 

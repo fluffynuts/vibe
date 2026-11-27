@@ -47,8 +47,9 @@ type GitHistory struct {
 	Repository bool   `json:"repository"`
 	Origin     string `json:"origin"`
 	UserEmail  string `json:"userEmail"`
-	// Branches are the local branches that have a reflog.
-	Branches []string `json:"branches"`
+	// Branches are the local branches there are; RemoteBranches, origin's as this repository last fetched them (refs/remotes/origin).
+	Branches       []string `json:"branches"`
+	RemoteBranches []string `json:"remoteBranches"`
 	// Current is the branch HEAD is on now, "" when it is detached: what HEAD's reflog was on before its first checkout
 	// in it.
 	Current string                  `json:"current"`
@@ -88,12 +89,22 @@ func historyOf(dir, sinceText string) (GitHistory, error) {
 			return nil
 		}
 		branch := strings.TrimPrefix(name, heads+"/")
-		h.Branches = append(h.Branches, branch)
 		if data, err := readTail(r.common, name, maxReflog); err == nil {
 			h.Entries = append(h.Entries, parseReflog("refs/heads/"+branch, data, since)...)
 		}
 		return nil
 	})
+	if refs, err := r.git.References(); err == nil {
+		refs.ForEach(func(ref *plumbing.Reference) error {
+			switch name := ref.Name(); {
+			case name.IsBranch():
+				h.Branches = append(h.Branches, name.Short())
+			case name.IsRemote() && strings.HasPrefix(name.String(), "refs/remotes/origin/") && name.String() != "refs/remotes/origin/HEAD":
+				h.RemoteBranches = append(h.RemoteBranches, strings.TrimPrefix(name.String(), "refs/remotes/origin/"))
+			}
+			return nil
+		})
+	}
 	for _, e := range h.Entries {
 		if len(h.Commits) >= maxReflogCommits {
 			break
