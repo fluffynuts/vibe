@@ -92,7 +92,7 @@ test('picking a repository in the list (or a slice) shows its branches with the 
     assert.match(p.$('activity-week-branches').textContent, /Pick a repository/)
     await p.click(p.$('activity-week-legend').querySelector('[data-repo="vibe"]'))
     const rows = [...p.$('activity-week-branches').querySelectorAll('.activity-entry')].map((e) => e.textContent.replace(/\s+/g, ' ').trim())
-    assert.deepEqual(rows, ['feat/activity5.5h92%↗Mon 3.0h · Tue 1.5h · Thu 1.0h', 'master0.5h8%Tue 0.5h'])
+    assert.deepEqual(rows, ['feat/activity5.5h92%Mon 3.0h · Tue 1.5h · Thu 1.0h↗', 'master0.5h8%Tue 0.5h'])
     assert.equal(p.$('activity-week-pie').classList.contains('has-pick'), true)
     assert.equal(slices(p)[0].getAttribute('aria-pressed'), 'true')
     slices(p)[0].dispatchEvent(new p.window.MouseEvent('click', { bubbles: true }))
@@ -178,6 +178,18 @@ test("a branch's row opens to its week's summary beside what was done each day; 
     assert.match(pending.textContent, /Summarising…/)
     assert.equal(asked.querySelector('h3').textContent, 'Asked')
     assert.deepEqual([...asked.querySelectorAll('li')].map((li) => li.textContent), ['Tue · plan the release'])
+  } finally { p.close() }
+})
+
+test("the whole of a branch's bar opens it: the line of its days too, not only its name's", async () => {
+  const p = await weekPage()
+  try {
+    await pickVibe(p)
+    const days = weekRows(p)[0].querySelector('.activity-week-days')
+    assert.match(days.textContent, /Mon 3\.0h · Tue 1\.5h · Thu 1\.0h/)
+    days.dispatchEvent(new p.window.MouseEvent('click', { bubbles: true }))
+    await p.settle()
+    assert.deepEqual(openRows(p), ['vibe feat/activity'])
   } finally { p.close() }
 })
 

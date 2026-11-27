@@ -5647,7 +5647,9 @@
       stateMark(stateOf(summary), summary && summary.state === 'failed' ? "Couldn't summarise: " + summary.why : ''),
       el('span', { class: 'activity-hours', text: hours(b.hours) }),
       el('meter', { min: '0', max: '1', value: String(of), 'aria-label': Math.round(of * 100) + '% of ' + r.repo + "'s week" }),
-      el('span', { class: 'activity-share', text: Math.round(of * 100) + '%' }), el('span'))
+      el('span', { class: 'activity-share', text: Math.round(of * 100) + '%' }), el('span'),
+      // Inside the button, so the whole bar (both its lines) opens the row, not only the name's line.
+      el('span', { class: 'activity-week-days muted', text: b.days.map((h, i) => h ? WEEK_DAYS[i] + ' ' + hours(h) : '').filter(Boolean).join(' · ') }))
     const ready = summary && summary.state === 'ready'
     const copy = el('button', { type: 'button', class: 'copy-code small activity-copy', disabled: !ready,
       title: ready ? "Copy the week's summary" + (b.ticket ? ', its ticket link first' : '') : 'No summary to copy yet',
@@ -5667,7 +5669,6 @@
     }
     return el('div', { class: 'activity-entry', 'data-key': key },
       el('div', { class: 'activity-head' }, toggle, el('div', { class: 'activity-actions' }, ticket, copy)),
-      el('p', { class: 'activity-week-days muted', text: b.days.map((h, i) => h ? WEEK_DAYS[i] + ' ' + hours(h) : '').filter(Boolean).join(' · ') }),
       work)
   }
 

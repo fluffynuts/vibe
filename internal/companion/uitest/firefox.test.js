@@ -1855,7 +1855,8 @@ test("the week's pie, its list and the day columns fit the window at every width
       const open = await page.evaluate(() => {
         const panel = document.getElementById('panel-activity')
         const heads = [...document.querySelectorAll('#activity-week-branches .activity-head')].map((h) => {
-          const kids = [...h.querySelectorAll('.activity-toggle > *, .activity-actions')].map((c) => c.getBoundingClientRect()).filter((k) => k.width > 0)
+          // The name's line: the days' line under it is the button's too.
+          const kids = [...h.querySelectorAll('.activity-toggle > :not(.activity-week-days), .activity-actions')].map((c) => c.getBoundingClientRect()).filter((k) => k.width > 0)
           return { top: Math.min(...kids.map((k) => k.top)), bottom: Math.max(...kids.map((k) => k.bottom)), right: Math.max(...kids.map((k) => k.right)) }
         })
         return { overflow: panel.scrollWidth - panel.clientWidth, panelRight: panel.getBoundingClientRect().right, heads,
