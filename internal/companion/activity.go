@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"vibe/internal/activity"
@@ -23,6 +24,35 @@ type ActivityTab struct {
 	Summaries *activity.Summariser
 	// Tickets keeps the branches' ticket links; nil means none can be set.
 	Tickets *activity.Tickets
+
+	pruning  sync.Mutex
+	prunedOn string
+}
+
+// prune removes the log's days and the summaries older than activity.KeepDays, the first time the tab is read on today (a
+// date of the report's: "YYYY-MM-DD"), saying what couldn't be removed.
+func (a *ActivityTab) prune(today string) []string {
+	a.pruning.Lock()
+	defer a.pruning.Unlock()
+	if a.prunedOn == today {
+		return nil
+	}
+	day, err := time.ParseInLocation(time.DateOnly, today, time.Local)
+	if err != nil {
+		return []string{"couldn't prune the activity log: " + err.Error()}
+	}
+	a.prunedOn = today
+	first := activity.FirstKept(day)
+	var problems []string
+	if err := a.Desk.Log.Prune(first); err != nil {
+		problems = append(problems, "couldn't prune the activity log: "+err.Error())
+	}
+	if a.Summaries != nil {
+		if err := a.Summaries.Prune(first); err != nil {
+			problems = append(problems, "couldn't prune the summaries: "+err.Error())
+		}
+	}
+	return problems
 }
 
 // activityWithin bounds reading a day: a helper process for each folder's git, the first time.
@@ -52,6 +82,7 @@ func (s *Server) activityState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	attention, problems := s.cfg.Activity.Desk.Attention(ctx)
+	problems = append(problems, s.cfg.Activity.prune(report.Today)...)
 	summaries := []activity.SummaryState{}
 	if s.cfg.Activity.Summaries != nil {
 		summaries = s.cfg.Activity.Summaries.States(report.Day)

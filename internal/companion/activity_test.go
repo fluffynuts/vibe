@@ -3,6 +3,8 @@ package companion
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -63,6 +65,21 @@ func TestTheActivityIsTheDayWithItsRounding(t *testing.T) {
 	}
 	if rec := do(t, s, req{path: "/api/activity?day=1999-01-01", headers: authed(nil)}); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "outside the days kept") {
 		t.Fatalf("want a day long gone refused, got %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestReadingTheActivityPrunesTheDaysNoLongerKept(t *testing.T) {
+	s, _, _ := activityServer(t)
+	dir := s.cfg.Activity.Desk.Log.Dir
+	old := filepath.Join(dir, "2000-01-01")
+	if err := os.MkdirAll(old, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if rec := do(t, s, req{path: "/api/activity", headers: authed(nil)}); rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatalf("want a day long gone pruned, got %v", err)
 	}
 }
 
