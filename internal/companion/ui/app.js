@@ -5345,10 +5345,7 @@
     setText($('activity-total'), day.branches.length ? 'total ' + hours(day.hours) : '')
     $('activity-problems').hidden = !activityView.problems.length
     drawnAs($('activity-problems'), JSON.stringify(activityView.problems), () => activityView.problems.map((p) => el('li', { text: p })))
-    // What needs doing is git's state now: it is about today, and not shown on another day.
-    $('activity-attention').hidden = !isToday || !activityView.attention.length
-    drawnAs($('activity-attention-list'), JSON.stringify(activityView.attention), () => activityView.attention.map((a) =>
-      el('li', {}, a.folder + ' (' + a.branch + '): ' + a.what, a.checking ? el('span', { class: 'muted', text: ' (checking with GitHub…)' }) : '')))
+    drawNeeds(isToday)
     const summaries = activityView.summaries
     const rows = day.branches.map((b, i) => ({ b, summary: summaries[i] }))
     const hidden = rows.filter((row) => shortAndEmpty(row.b))
@@ -5360,6 +5357,78 @@
     setText($('activity-hidden-toggle'), activityView.showHidden ? 'hide' : 'show')
     drawnAs($('activity-list'), JSON.stringify([day, summaries, activityView.openKey, activityView.showHidden]),
       () => groups.map((g) => activityGroup(g, day.hours)))
+  }
+
+  // --- Needs attention: a ⚠ N button in the bar, whose balloon pops up when what it lists changed since it was last seen, and closes
+  // itself after NEEDS_CLOSE_MS (the pointer or focus on it holds it open). Opened from the button, it stays until closed. What
+  // was seen is kept for the page (localStorage), so opening it again doesn't pop up the same list.
+  const NEEDS_CLOSE_MS = 6000
+  const NEEDS_SEEN = 'vibe-activity-attention-seen'
+  const needsView = { byUser: false, token: 0, held: false, closing: false }
+
+  // needsSays is what the list says, for telling whether it changed: whether GitHub is still being asked isn't news.
+  function needsSays(list) { return JSON.stringify(list.map((a) => [a.folder, a.branch, a.what])) }
+
+  // drawNeeds shows what needs doing: git's state now, so on today only, and popped up once GitHub has answered, when it's news
+  // and the tab can be seen.
+  function drawNeeds(isToday) {
+    const list = isToday ? activityView.attention : []
+    const button = $('activity-attention-button')
+    button.hidden = !list.length
+    const n = list.length
+    setText(button, '⚠ ' + n)
+    const label = n + (n === 1 ? ' thing needs' : ' things need') + ' attention'
+    button.setAttribute('aria-label', label)
+    button.title = label
+    if (!list.length && !$('activity-attention').hidden) closeActivityBalloons()
+    drawnAs($('activity-attention-list'), JSON.stringify(list), () => list.map((a) =>
+      el('li', {}, a.folder + ' (' + a.branch + '): ' + a.what, a.checking ? el('span', { class: 'muted', text: ' (checking with GitHub…)' }) : '')))
+    if (!isToday || list.some((a) => a.checking)) return
+    const says = needsSays(list)
+    if (says === store.get(NEEDS_SEEN)) return
+    if (!list.length) { store.set(NEEDS_SEEN, says); return }
+    if (!$('panel-activity').hidden && document.visibilityState !== 'hidden') popNeeds()
+  }
+
+  function showNeeds(byUser) {
+    closeActivityBalloons('activity-attention')
+    const box = $('activity-attention')
+    box.hidden = false
+    placeUnder(box, $('activity-attention-button'), 'left')
+    $('activity-attention-button').setAttribute('aria-expanded', 'true')
+    store.set(NEEDS_SEEN, needsSays(activityView.attention))
+    needsView.byUser = byUser
+    needsView.token++
+    needsView.closing = false
+    showCountdown(box, 0)
+  }
+
+  function popNeeds() {
+    showNeeds(false)
+    closeNeedsLater()
+  }
+
+  // closeNeedsLater closes the popped-up balloon after NEEDS_CLOSE_MS, its bar counting down; held, it waits until let go.
+  function closeNeedsLater() {
+    const token = ++needsView.token
+    needsView.closing = true
+    showCountdown($('activity-attention'), NEEDS_CLOSE_MS, needsView.held)
+    if (needsView.held) return
+    setTimeout(() => {
+      if (token !== needsView.token || needsView.byUser || $('activity-attention').hidden) return
+      closeActivityBalloons()
+    }, NEEDS_CLOSE_MS)
+  }
+
+  function holdNeeds(held) {
+    if (held === needsView.held) return
+    needsView.held = held
+    if (needsView.closing && !needsView.byUser && !$('activity-attention').hidden) closeNeedsLater()
+  }
+
+  function toggleNeeds() {
+    if (!$('activity-attention').hidden) { closeActivityBalloons(); return }
+    showNeeds(true)
   }
 
   // byRepository is the rows shown, under their repositories: each repository's total is all its branches' (shown or not), and
@@ -5484,10 +5553,17 @@
 
   // The balloons (the help, a row's details) and the list of days: one at a time, closed by a click outside, Escape, or their button.
   function closeActivityBalloons(except) {
-    for (const [id, button] of [['activity-help-balloon', $('activity-help')], ['activity-days-list', $('activity-day')], ['activity-row-balloon', null]]) {
+    for (const [id, button] of [['activity-help-balloon', $('activity-help')], ['activity-days-list', $('activity-day')], ['activity-row-balloon', null],
+      ['activity-attention', $('activity-attention-button')]]) {
       if (id === except) continue
       $(id).hidden = true
       if (button) button.setAttribute('aria-expanded', 'false')
+    }
+    if (except !== 'activity-attention') {
+      needsView.token++
+      needsView.closing = false
+      needsView.held = false
+      showCountdown($('activity-attention'), 0)
     }
     if (except !== 'activity-row-balloon') {
       for (const b of $('activity-list').querySelectorAll('.activity-info')) b.setAttribute('aria-expanded', 'false')
@@ -5637,19 +5713,26 @@
       $('activity-help').setAttribute('aria-expanded', String(open))
     })
     $('activity-hidden-toggle').addEventListener('click', () => { activityView.showHidden = !activityView.showHidden; drawActivity() })
+    $('activity-attention-button').addEventListener('click', toggleNeeds)
+    const box = $('activity-attention')
+    box.addEventListener('pointerenter', () => holdNeeds(true))
+    box.addEventListener('pointerleave', () => holdNeeds(box.contains(document.activeElement)))
+    box.addEventListener('focusin', () => holdNeeds(true))
+    box.addEventListener('focusout', (ev) => holdNeeds(box.contains(ev.relatedTarget) || box.matches(':hover')))
     // A click outside a balloon or the list of days closes it, as Escape does; one on its own button is that button's to do.
     document.addEventListener('pointerdown', (ev) => {
-      if (ev.target.closest && ev.target.closest('#activity-help-balloon, #activity-row-balloon, #activity-days-list, #activity-help, #activity-day, .activity-info')) return
+      if (ev.target.closest && ev.target.closest('#activity-help-balloon, #activity-row-balloon, #activity-days-list, #activity-help, #activity-day, .activity-info, #activity-attention, #activity-attention-button')) return
       closeActivityBalloons()
     })
     $('panel-activity').addEventListener('keydown', (ev) => {
       if (ev.key !== 'Escape') return
-      const open = ['activity-help-balloon', 'activity-row-balloon', 'activity-days-list'].find((id) => !$(id).hidden)
+      const open = ['activity-help-balloon', 'activity-row-balloon', 'activity-days-list', 'activity-attention'].find((id) => !$(id).hidden)
       if (!open) return
       ev.stopPropagation()
       closeActivityBalloons()
       if (open === 'activity-help-balloon') $('activity-help').focus()
       if (open === 'activity-days-list') $('activity-day').focus()
+      if (open === 'activity-attention') $('activity-attention-button').focus()
     })
     for (const b of $('activity-rounding').querySelectorAll('button')) {
       b.addEventListener('click', async () => {

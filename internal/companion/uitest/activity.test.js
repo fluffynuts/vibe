@@ -21,8 +21,11 @@ const today = {
 
 const ready = (key, ...bullets) => ({ key, state: 'ready', bullets })
 
-async function pageWith({ days = { '': today }, attention = [], problems = [], sandbox = 'box', rounding = '30m', summaries = () => [] } = {}) {
-  const kept = { rounding }
+const ATTENTION_CLOSE_MS = 6000
+
+async function pageWith({ days = { '': today }, attention = [], problems = [], sandbox = 'box', rounding = '30m', summaries = () => [], storage = {} } = {}) {
+  const kept = { rounding, held: [] }
+  kept.closeTimers = () => { const fns = kept.held.splice(0); for (const fn of fns) fn() }
   const p = await openPage({
     routes: {
       '/api/state': { sandbox, sandboxTabs: !!sandbox, activity: true, attention: {} },
@@ -30,14 +33,18 @@ async function pageWith({ days = { '': today }, attention = [], problems = [], s
       '/api/activity': (call) => {
         const day = new URLSearchParams(call.query).get('day') || ''
         if (!days[day]) return { status: 400, body: { error: 'no such day' } }
-        return { report: { day: days[day], today: '2026-11-26', earliest: '2026-11-19', problems: [] }, attention, problems, rounding: kept.rounding, summaries: summaries(day) }
+        return { report: { day: days[day], today: '2026-11-26', earliest: '2026-11-19', problems: [] }, attention: kept.attention || attention, problems, rounding: kept.rounding, summaries: summaries(day) }
       },
       '/api/activity/rounding': (call) => { kept.rounding = call.body.rounding; return { rounding: kept.rounding } },
       '/api/activity/seen': { ok: true },
       '/api/activity/summary/retry': (call) => { kept.retried = call.body.key; return { ok: true } },
       '/api/activity/ticket': { ok: true },
     },
-    storage: { 'vibe-companion-tab': 'activity' },
+    storage: Object.assign({ 'vibe-companion-tab': 'activity' }, storage),
+    before: (w) => {
+      const real = w.setTimeout
+      w.setTimeout = (fn, ms, ...rest) => ms === ATTENTION_CLOSE_MS ? (kept.held.push(() => fn(...rest)), 0) : real(fn, ms, ...rest)
+    },
   })
   p.kept = kept
   return p
@@ -217,20 +224,89 @@ test('the date shows in the bar; Return to today shows only on another day; the 
   } finally { p.close() }
 })
 
-test('needs attention shows on today only, saying when GitHub is being asked', async () => {
-  const attention = [
-    { folder: '~/code/yumbi', branch: 'feat/x', what: 'uncommitted changes: please commit and push' },
-    { folder: '~/code/phoenix', branch: 'fix/y', what: '3 commits not pushed', checking: true },
-  ]
-  const p = await pageWith({ attention, problems: ["couldn't read git in ~/code/broken: it is damaged"], days: { '': today, '2026-11-25': { date: '2026-11-25', hours: 0, branches: [] } } })
+const attentionItems = [
+  { folder: '~/code/yumbi', branch: 'feat/x', what: 'uncommitted changes: please commit and push' },
+  { folder: '~/code/phoenix', branch: 'fix/y', what: '3 commits not pushed', checking: true },
+]
+const attentionButton = (p) => p.$('activity-attention-button')
+const attentionShown = (p) => !p.$('activity-attention').hidden
+// later polls as the tab's own timer would, the 15 s between its looks gone by.
+const later = async (p) => { const real = p.window.Date.now; p.window.Date.now = () => real() + 20000; await p.poll() }
+
+test('needs attention is a ⚠ N button in the bar, on today only, its balloon saying when GitHub is being asked', async () => {
+  const p = await pageWith({ attention: attentionItems, problems: ["couldn't read git in ~/code/broken: it is damaged"], days: { '': today, '2026-11-25': { date: '2026-11-25', hours: 0, branches: [] } } })
   try {
-    assert.equal(p.$('activity-attention').hidden, false)
+    assert.equal(attentionButton(p).hidden, false)
+    assert.equal(attentionButton(p).textContent, '⚠ 2')
+    assert.match(attentionButton(p).getAttribute('aria-label'), /2 things need attention/)
+    assert.equal(attentionShown(p), false, 'it waits for GitHub before popping up')
+    await p.click('activity-attention-button')
+    assert.equal(attentionShown(p), true)
     assert.equal(p.$('activity-attention-h').textContent, 'Needs attention')
     const items = [...p.$('activity-attention-list').querySelectorAll('li')].map((li) => li.textContent)
     assert.deepEqual(items, ['~/code/yumbi (feat/x): uncommitted changes: please commit and push', '~/code/phoenix (fix/y): 3 commits not pushed (checking with GitHub…)'])
     assert.match(p.$('activity-problems').textContent, /it is damaged/)
     await p.click('activity-prev')
-    assert.equal(p.$('activity-attention').hidden, true, 'not on another day')
+    assert.equal(attentionButton(p).hidden, true, 'not on another day')
+    assert.equal(attentionShown(p), false)
+  } finally { p.close() }
+})
+
+test('needs attention pops up when its list changed since last seen, closes itself, and not again until it changes', async () => {
+  const settled = attentionItems.map((a) => Object.assign({}, a, { checking: false }))
+  const p = await pageWith({ attention: settled })
+  try {
+    assert.equal(attentionShown(p), true, 'a new list did not pop up')
+    assert.equal(attentionButton(p).getAttribute('aria-expanded'), 'true')
+    assert.equal(p.kept.held.length, 1, 'no close was set')
+    p.kept.closeTimers()
+    assert.equal(attentionShown(p), false, 'it did not close itself')
+    await later(p)
+    assert.equal(attentionShown(p), false, 'the same list popped up again')
+    p.kept.attention = [settled[0]]
+    await later(p)
+    assert.equal(attentionShown(p), true, 'a changed list did not pop up')
+  } finally { p.close() }
+})
+
+test('a list already seen does not pop up when the page is opened again', async () => {
+  const settled = attentionItems.map((a) => Object.assign({}, a, { checking: false }))
+  const first = await pageWith({ attention: settled })
+  const seen = first.window.localStorage.getItem('vibe-activity-attention-seen')
+  first.close()
+  assert.ok(seen, 'what was seen was not kept')
+  const p = await pageWith({ attention: settled, storage: { 'vibe-activity-attention-seen': seen } })
+  try {
+    assert.equal(attentionShown(p), false)
+    assert.equal(attentionButton(p).hidden, false)
+  } finally { p.close() }
+})
+
+test('the pointer on the popped-up balloon holds it open; leaving starts the countdown again', async () => {
+  const settled = attentionItems.map((a) => Object.assign({}, a, { checking: false }))
+  const p = await pageWith({ attention: settled })
+  try {
+    const box = p.$('activity-attention')
+    box.dispatchEvent(new p.window.Event('pointerenter'))
+    p.kept.closeTimers()
+    assert.equal(attentionShown(p), true, 'it closed under the pointer')
+    assert.ok(box.querySelector('.countdown.held'), 'the countdown does not show it held')
+    box.dispatchEvent(new p.window.Event('pointerleave'))
+    assert.equal(p.kept.held.length, 1, 'leaving did not start the countdown again')
+    p.kept.closeTimers()
+    assert.equal(attentionShown(p), false)
+  } finally { p.close() }
+})
+
+test('opened from its button, the balloon stays until closed; Escape closes it and gives the button focus', async () => {
+  const p = await pageWith({ attention: attentionItems })
+  try {
+    await p.click('activity-attention-button')
+    assert.equal(p.kept.held.length, 0, 'opened by the user, it closes itself')
+    assert.equal(p.$('activity-attention').querySelector('.countdown'), null)
+    p.$('activity-attention').dispatchEvent(new p.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    assert.equal(attentionShown(p), false)
+    assert.equal(p.window.document.activeElement, attentionButton(p))
   } finally { p.close() }
 })
 
