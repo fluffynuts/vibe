@@ -21,9 +21,10 @@ type Log struct {
 // maxLogLine is the longest line read: a mark is far shorter.
 const maxLogLine = 64 << 10
 
-// Append adds m to sandbox's file for m's local day.
+// Append adds m to sandbox's file for m's day, as m's own clock has it (vibe's are on this computer's, which Marks reads days by:
+// converting here made a test's marks, on another zone's clock, land in a day it didn't read, as CI's runners are on UTC).
 func (l Log) Append(sandbox string, m Mark) error {
-	dir := filepath.Join(l.Dir, m.At.Local().Format(time.DateOnly))
+	dir := filepath.Join(l.Dir, m.At.Format(time.DateOnly))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}

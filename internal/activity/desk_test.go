@@ -24,14 +24,14 @@ func TestTheLogKeepsEachSandboxsMarksByDayAndReadsThemBack(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, unread, err := l.Marks(day.In(time.Local), day.In(time.Local))
+	got, unread, err := l.Marks(day, day)
 	if err != nil || unread != 0 {
 		t.Fatalf("want marks read, got %v, %d unread", err, unread)
 	}
 	if len(got) != 2 {
 		t.Fatalf("want today's two marks, got %+v", got)
 	}
-	if _, err := os.Stat(filepath.Join(l.Dir, at("09:00").Local().Format(time.DateOnly), "one.jsonl")); err != nil {
+	if _, err := os.Stat(filepath.Join(l.Dir, at("09:00").Format(time.DateOnly), "one.jsonl")); err != nil {
 		t.Fatalf("want a file for the sandbox and day: %v", err)
 	}
 }
@@ -41,11 +41,11 @@ func TestALineOfTheLogThatCantBeReadIsCountedNotFatal(t *testing.T) {
 	if err := l.Append("one", mark("09:00", "r", "b")); err != nil {
 		t.Fatal(err)
 	}
-	file := filepath.Join(l.Dir, at("09:00").Local().Format(time.DateOnly), "one.jsonl")
+	file := filepath.Join(l.Dir, at("09:00").Format(time.DateOnly), "one.jsonl")
 	f, _ := os.OpenFile(file, os.O_APPEND|os.O_WRONLY, 0)
 	f.WriteString(`{"at":"2026-11-26T09:0`)
 	f.Close()
-	got, unread, err := l.Marks(at("09:00").Local(), at("09:00").Local())
+	got, unread, err := l.Marks(at("09:00"), at("09:00"))
 	if err != nil || len(got) != 1 || unread != 1 {
 		t.Fatalf("want one mark and one unread line, got %d marks, %d unread, %v", len(got), unread, err)
 	}
@@ -67,7 +67,7 @@ func TestTheRecorderKeepsOneMarkOfAKindOnABranchAMinuteUnderOriginsName(t *testi
 	mu.Unlock()
 	r.Mark(KindAgent, "feat/x")
 	r.Wait()
-	got, _, _ := l.Marks(now.Local(), now.Local())
+	got, _, _ := l.Marks(now, now)
 	var seen []string
 	for _, m := range got {
 		if m.Repo != "yumbi-web" || m.Folder != "/code/yumbi" {
