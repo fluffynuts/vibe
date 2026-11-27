@@ -181,8 +181,8 @@ func TestTheDayCombinesTheLogWithGitInEveryFolderSeen(t *testing.T) {
 	if want := []string{"phoenix fix/y fix the root cause", "yumbi-web feat/x "}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("want %v, got %v", want, got)
 	}
-	if r.Day.Hours != 1 {
-		t.Fatalf("want half an hour each, got %v", r.Day.Hours)
+	if r.Day.Hours != 0.5 {
+		t.Fatalf("want 11 minutes to round to none and 15 to half an hour, got %v", r.Day.Hours)
 	}
 }
 

@@ -64,7 +64,7 @@ type BranchTime struct {
 	// Measured and Estimated are the minutes of each, before rounding.
 	Measured  int `json:"measuredMinutes"`
 	Estimated int `json:"estimatedMinutes"`
-	// Hours is the time rounded up to the step, in hours.
+	// Hours is the time rounded to the nearest step, in hours: none for less than half a step.
 	Hours float64 `json:"hours"`
 	// Commits are what was done on the branch that day, a line each: the user's commits' subjects, merges and rebases.
 	Commits []string `json:"commits"`
@@ -80,8 +80,7 @@ type Day struct {
 
 type branchKey struct{ repo, branch string }
 
-// Summarise is the day starting at midnight's work, each branch's time rounded up to step (at least one step for a branch
-// with any). Marks, events and bullets from other days may be given: they are left out, though marks and events just
+// Summarise is the day starting at midnight's work, each branch's time rounded to the nearest step. Marks, events and bullets from other days may be given: they are left out, though marks and events just
 // before midnight can carry a stretch into the day.
 func Summarise(midnight time.Time, marks []Mark, events []Event, bullets []Bullet, step time.Duration) Day {
 	end := midnight.AddDate(0, 0, 1)
@@ -151,7 +150,7 @@ func Summarise(midnight time.Time, marks []Mark, events []Event, bullets []Bulle
 			}
 		}
 		bt.Measured, bt.Estimated = int(m.Minutes()), int(e.Minutes())
-		bt.Hours = roundUp(m+e, step)
+		bt.Hours = rounded(m+e, step)
 		if bt.Commits == nil {
 			bt.Commits = []string{}
 		}
@@ -168,10 +167,11 @@ func Summarise(midnight time.Time, marks []Mark, events []Event, bullets []Bulle
 	return day
 }
 
-// roundUp is d in hours, rounded up to a whole number of steps: any time at all is at least one, which stands for the cost of
-// switching to the work.
-func roundUp(d, step time.Duration) float64 {
-	return math.Ceil(float64(d)/float64(step)) * step.Hours()
+// rounded is d in hours, rounded to the nearest whole number of steps, exactly half a step going up: what is under half a
+// step (a minute's switch to master to pull) counts for none, and a few minutes past a step (33 of a half hour) don't
+// count for another.
+func rounded(d, step time.Duration) float64 {
+	return math.Round(float64(d)/float64(step)) * step.Hours()
 }
 
 func inDay(t, midnight, end time.Time) bool { return !t.Before(midnight) && t.Before(end) }

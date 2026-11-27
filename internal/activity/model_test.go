@@ -99,18 +99,20 @@ func TestOverlappingBranchesEachCountInFull(t *testing.T) {
 	}
 }
 
-func TestRoundingIsUpToTheStepWithAtLeastOneStep(t *testing.T) {
+func TestEachBranchsTimeIsRoundedToTheNearestStep(t *testing.T) {
 	for _, c := range []struct {
 		name    string
 		minutes int
 		step    time.Duration
 		want    float64
 	}{
-		{"a minute is a whole quarter hour", 1, 15 * time.Minute, 0.25},
-		{"exactly a step stays one step", 30, 30 * time.Minute, 0.5},
-		{"a minute over goes up", 31, 30 * time.Minute, 1},
-		{"a short PR fix is half an hour", 10, 30 * time.Minute, 0.5},
-		{"hours", 61, time.Hour, 2},
+		{"5 minutes of a quarter hour is none", 5, 15 * time.Minute, 0},
+		{"10 minutes of a quarter hour is one", 10, 15 * time.Minute, 0.25},
+		{"10 minutes of a half hour is none", 10, 30 * time.Minute, 0},
+		{"exactly half a step goes up", 15, 30 * time.Minute, 0.5},
+		{"33 minutes of a half hour is one, not two", 33, 30 * time.Minute, 0.5},
+		{"1h10 of an hour is one, not two", 70, time.Hour, 1},
+		{"1h30 of an hour is two", 90, time.Hour, 2},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var marks []Mark

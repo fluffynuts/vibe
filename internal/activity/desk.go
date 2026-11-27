@@ -15,7 +15,7 @@ import (
 // HistoryDays is how far back the page can step: about a week, as the user looks once a day.
 const HistoryDays = 7
 
-// Roundings are the steps a branch's day can be rounded up to, as the setting names them; DefaultRounding is the one
+// Roundings are the steps a branch's day is rounded to, as the setting names them; DefaultRounding is the one
 // used when none is set.
 var Roundings = map[string]time.Duration{"15m": 15 * time.Minute, "30m": 30 * time.Minute, "1h": time.Hour}
 
@@ -94,7 +94,7 @@ func (d *Desk) now() time.Time {
 	return time.Now()
 }
 
-// Day is the work of date (YYYY-MM-DD, local; "" for today), each branch rounded up to step.
+// Day is the work of date (YYYY-MM-DD, local; "" for today), each branch rounded to the nearest step.
 func (d *Desk) Day(ctx context.Context, date string, step time.Duration) (Report, error) {
 	now := d.now()
 	today := midnightOf(now)

@@ -451,7 +451,7 @@
         <button type="button" id="activity-prev" class="ghost" aria-label="The day before" title="The day before">&lt;</button>
         <button type="button" id="activity-day" class="ghost activity-day" title="Back to today">Today</button>
         <button type="button" id="activity-next" class="ghost" aria-label="The day after" title="The day after">&gt;</button>
-        <div class="seg" id="activity-rounding" role="group" aria-label="Round each branch's time up to">
+        <div class="seg" id="activity-rounding" role="group" aria-label="Round each branch's time to the nearest">
           <button type="button" data-rounding="15m" aria-pressed="false">15 min</button>
           <button type="button" data-rounding="30m" aria-pressed="false">½ hour</button>
           <button type="button" data-rounding="1h" aria-pressed="false">1 hour</button>
@@ -459,7 +459,7 @@
         <span class="spacer"></span>
         <span id="activity-total" class="muted"></span>
       </div>
-      <p class="note muted">How the day's time split between repositories and branches, in every folder vibe has opened: measured while vibe's page ran, estimated (~) from git's record otherwise. Each branch is rounded up to the step chosen, which stands for the cost of switching to it; branches worked on at once each count in full. Each branch's commits are summarised by a sandbox's Claude, under the rules in <code>~/.vibe/activity/summary-rules.md</code>.</p>
+      <p class="note muted">How the day's time split between repositories and branches, in every folder vibe has opened: measured while vibe's page ran, estimated (~) from git's record otherwise. Each branch is rounded to the nearest step chosen: less than half a step counts for none. Branches worked on at once each count in full. Each branch's commits are summarised by a sandbox's Claude, under the rules in <code>~/.vibe/activity/summary-rules.md</code>.</p>
       <p id="activity-wait" class="note muted">Reading git in the folders vibe has opened…</p>
       <ul id="activity-problems" class="note bad-text activity-problems" hidden></ul>
       <section class="card activity-attention" id="activity-attention" aria-labelledby="activity-attention-h" hidden>
