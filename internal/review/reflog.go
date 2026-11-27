@@ -48,9 +48,12 @@ type GitHistory struct {
 	Origin     string `json:"origin"`
 	UserEmail  string `json:"userEmail"`
 	// Branches are the local branches that have a reflog.
-	Branches []string                `json:"branches"`
-	Entries  []ReflogEntry           `json:"entries"`
-	Commits  map[string]ReflogCommit `json:"commits"`
+	Branches []string `json:"branches"`
+	// Current is the branch HEAD is on now, "" when it is detached: what HEAD's reflog was on before its first checkout
+	// in it.
+	Current string                  `json:"current"`
+	Entries []ReflogEntry           `json:"entries"`
+	Commits map[string]ReflogCommit `json:"commits"`
 }
 
 // History is what git recorded in the repository the folder dir is in, since since (see GitHistory).
@@ -72,7 +75,7 @@ func historyOf(dir, sinceText string) (GitHistory, error) {
 		return GitHistory{}, err
 	}
 	defer r.close()
-	h := GitHistory{Repository: true, Commits: map[string]ReflogCommit{}, UserEmail: r.setting("user", "email")}
+	h := GitHistory{Repository: true, Commits: map[string]ReflogCommit{}, UserEmail: r.setting("user", "email"), Current: r.branch()}
 	if remote, err := r.git.Remote("origin"); err == nil && len(remote.Config().URLs) > 0 {
 		h.Origin = remote.Config().URLs[0]
 	}
@@ -95,7 +98,8 @@ func historyOf(dir, sinceText string) (GitHistory, error) {
 		if len(h.Commits) >= maxReflogCommits {
 			break
 		}
-		if _, done := h.Commits[e.New]; done || e.Ref == "HEAD" {
+		// HEAD's too: a deleted branch's commits are only in HEAD's reflog.
+		if _, done := h.Commits[e.New]; done {
 			continue
 		}
 		c, err := r.git.CommitObject(plumbing.NewHash(e.New))

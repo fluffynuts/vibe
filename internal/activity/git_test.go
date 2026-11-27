@@ -237,3 +237,56 @@ func TestHistoryOfAFolderInNoRepositoryIsEmptyNotAnError(t *testing.T) {
 		t.Fatalf("want no repository and no error, got %+v, %v", h, err)
 	}
 }
+
+// Deleting a branch deletes its own reflog: what was done on it is still in HEAD's, which says when HEAD moved onto it and
+// what was committed there.
+func TestADeletedBranchsWorkIsReadFromHeadsReflog(t *testing.T) {
+	r := newRepo(t)
+	r.commit("08:00", "first")
+	r.git("09:00", "checkout", "-q", "-b", "fix/gone")
+	r.commit("09:30", "fixed it")
+	r.git("09:40", "cherry-pick", "--allow-empty", "--keep-redundant-commits", "-x", "HEAD")
+	r.git("10:00", "checkout", "-q", "master")
+	r.git("10:05", "merge", "-q", "--no-ff", "--no-edit", "fix/gone")
+	r.git("10:10", "branch", "-q", "-D", "fix/gone")
+	events, bullets := r.history()
+	if got, want := eventsOn(events, "fix/gone"), []string{"09:00", "09:30", "09:40"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("fix/gone events: want %v, got %v", want, got)
+	}
+	if got := bulletsOn(bullets, "fix/gone"); len(got) == 0 || got[0] != "fixed it" {
+		t.Errorf("fix/gone bullets: want its commit, got %v", got)
+	}
+	if got := bulletsOn(bullets, "master"); !reflect.DeepEqual(got, []string{"first", "merged fix/gone"}) {
+		t.Errorf("master bullets: want first and the merge, got %v", got)
+	}
+}
+
+func TestEachCommitIsCountedOnceThoughBothReflogsHaveIt(t *testing.T) {
+	r := newRepo(t)
+	r.commit("08:00", "first")
+	r.commit("08:30", "second")
+	events, bullets := r.history()
+	if got, want := eventsOn(events, "master"), []string{"08:00", "08:30"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("want each commit an event once, got %v", got)
+	}
+	if got, want := bulletsOn(bullets, "master"), []string{"first", "second"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("want each commit a bullet once, got %v", got)
+	}
+}
+
+func TestAMergedRemoteBranchReadsAsItsName(t *testing.T) {
+	for _, c := range []struct{ entry, subject, want string }{
+		{"merge refs/remotes/origin/master: Merge made by the 'ort' strategy.", "", "merged master"},
+		{"commit (merge): Merge remote-tracking branch 'refs/remotes/origin/master' into feat/activity", "Merge remote-tracking branch 'refs/remotes/origin/master' into feat/activity", "merged master"},
+		{"merge refs/heads/feat/x: Fast-forward", "", "merged feat/x"},
+		{"merge origin/main: Fast-forward", "", "merged main"},
+	} {
+		h := review.GitHistory{Repository: true, Branches: []string{"b"}, Commits: map[string]review.ReflogCommit{
+			"c1": {AuthorTime: day.Add(9 * time.Hour), Subject: c.subject, Parents: 2}}}
+		h.Entries = []review.ReflogEntry{{Ref: "refs/heads/b", New: "c1", At: day.Add(9 * time.Hour), Message: c.entry}}
+		_, bullets := FromHistory(h, "/code/r")
+		if len(bullets) != 1 || bullets[0].Text != c.want {
+			t.Errorf("%q: want %q, got %+v", c.entry, c.want, bullets)
+		}
+	}
+}
