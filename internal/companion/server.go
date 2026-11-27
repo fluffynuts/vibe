@@ -506,6 +506,8 @@ func (s *Server) apiRoutes() []apiRoute {
 		{"GET /api/activity", s.serving(activityFeature, s.activityState)},
 		{"GET /api/activity/week", s.serving(activityFeature, s.activityWeek)},
 		{"POST /api/activity/colour-blind", s.serving(activityFeature, s.activityColourBlind)},
+		{"GET /api/activity/rules", s.serving(activityFeature, s.activityRules)},
+		{"POST /api/activity/rules", s.serving(activityFeature, s.activityRulesSave)},
 		{"POST /api/activity/rounding", s.serving(activityFeature, s.activityRounding)},
 		{"POST /api/activity/seen", s.serving(activityFeature, s.activitySeen)},
 		{"POST /api/activity/summary/retry", s.serving(activityFeature, s.activitySummaryRetry)},

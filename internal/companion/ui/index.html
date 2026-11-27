@@ -403,6 +403,14 @@
         </section>
 
 
+        <section class="card card-wide" id="admin-rules-card" data-loads="rules" aria-labelledby="admin-rules-h">
+          <h2 id="admin-rules-h">Activity summaries</h2>
+          <p class="note muted">The rules Claude is given to write the Activity tab's summaries: a day's, for a timesheet entry, and a week's, for a
+            meeting. They are vibe's, not this sandbox's: every page uses them. After a change, each day's or week's summaries are made again the
+            next time it is looked at.</p>
+          <div id="admin-rules" class="instructions"></div>
+        </section>
+
         <section class="card card-wide" data-loads="instructions" aria-labelledby="admin-instructions-h">
           <h2 id="admin-instructions-h">Agent instructions</h2>
           <p id="admin-instructions-note" class="note muted"></p>
@@ -477,7 +485,7 @@
         <p>How the day's time split between repositories and branches, in every folder vibe has opened: measured while vibe's page ran, estimated (~) from git's record otherwise.</p>
         <p>The day's time is rounded to the nearest step chosen and shared between its branches in whole steps, the steps left over going to the branches with the most left over: no branch is more than a step off, and small tasks don't lose the day their sum. Switching to a branch, or pulling it, counts only when work follows. Branches worked on at once each count in full.</p>
         <p>Week shows how the week split between repositories, and each day: a repository keeps its colour (and pattern) while it is worked on in the 14 days kept.</p>
-        <p>Each branch's commits are summarised by a sandbox's Claude, under the rules in <code>~/.vibe/activity/summary-rules.md</code>; a branch with no commits is summarised from the prompts sent on it from vibe.</p>
+        <p>Each branch's commits are summarised by a sandbox's Claude, under the rules in <code>~/.vibe/activity/summary-rules.md</code> (a week's in <code>week-summary-rules.md</code>); a branch with no commits is summarised from the prompts sent on it from vibe. <button type="button" id="activity-rules-link" class="linklike">Edit the summary rules</button></p>
       </div>
       <div id="activity-row-balloon" class="status-balloon activity-balloon" role="dialog" hidden></div>
       <section id="activity-attention" class="status-balloon activity-balloon activity-attention" role="dialog" aria-labelledby="activity-attention-h" hidden>

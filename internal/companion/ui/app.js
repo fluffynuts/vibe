@@ -1288,7 +1288,7 @@
       post('/api/awake', {}).catch(() => {})
     }
     const loads = state.tab === 'conversation' ? [unlessBusy('state', loadState)]
-      : state.tab === 'admin' ? [unlessBusy('state', loadState), unlessBusy('admin', loadAdmin), unlessBusy('permission', loadPermissionMode), unlessBusy('packages', loadPackages), unlessBusy('sync', loadSync), unlessBusy('instructions', () => loadInstructions(false))]
+      : state.tab === 'admin' ? [unlessBusy('state', loadState), unlessBusy('admin', loadAdmin), unlessBusy('permission', loadPermissionMode), unlessBusy('packages', loadPackages), unlessBusy('sync', loadSync), unlessBusy('instructions', () => loadInstructions(false)), unlessBusy('rules', () => loadRules(false))]
       : state.tab === 'manage' ? [unlessBusy('state', loadState), unlessBusy('manage', loadManage)]
       : state.tab === 'activity' ? [unlessBusy('state', loadState), unlessBusy('activity', () => loadActivity(false))]
       : state.tab === 'review' ? [unlessBusy('state', loadState), unlessBusy('review', () => loadReview(reviewView.files === null))]
@@ -4513,6 +4513,7 @@
   function setUpCardLoading() {
     Object.assign(cardLoaders, {
       admin: loadAdmin, signin: loadSignIn, packages: loadPackages, sync: loadSync, instructions: () => loadInstructions(false),
+      rules: () => loadRules(false),
       permission: loadPermissionMode,
     })
     for (const card of document.querySelectorAll('#panel-admin .card[data-loads]')) {
@@ -6148,6 +6149,8 @@
     $('activity-day').addEventListener('click', toggleDayList)
     $('activity-today').addEventListener('click', () => { if (activityView.mode === 'week') showActivityWeek(''); else showActivityDay(''); $('activity-day').focus() })
     $('activity-help').addEventListener('click', () => {
+      // The rules are edited on the Admin tab, which a page for no sandbox hasn't.
+      $('activity-rules-link').hidden = $('tab-admin').hidden
       const open = $('activity-help-balloon').hidden
       closeActivityBalloons()
       $('activity-help-balloon').hidden = !open
@@ -6155,6 +6158,7 @@
       $('activity-help').setAttribute('aria-expanded', String(open))
     })
     $('activity-hidden-toggle').addEventListener('click', () => { activityView.showHidden = !activityView.showHidden; drawActivity() })
+    $('activity-rules-link').addEventListener('click', showRules)
     $('activity-attention-button').addEventListener('click', toggleNeeds)
     const box = $('activity-attention')
     box.addEventListener('pointerenter', () => holdNeeds(true))
@@ -6552,6 +6556,86 @@
         toast('Could not reach vibe.', true)
       }
     })
+  }
+
+  // --- the Activity tab's summary rules, on the Admin tab ------------------
+  // The day's and the week's rules, each in its own editor: Save keeps it (refused if the file changed since it was loaded here,
+  // which Reload then picks up); "Back to the default" puts the default in the box, to save or not. Read once; a page that makes no
+  // summaries has no card.
+  const rulesView = { loaded: false }
+  const RULES_LABELS = { day: "A day's summaries", week: "A week's summaries" }
+
+  async function loadRules(force) {
+    if (rulesView.loaded && !force) return
+    // A page with no Activity tab makes no summaries.
+    if (!state.activity) { $('admin-rules-card').hidden = true; cardLoaded('rules'); return }
+    try {
+      const res = await api('/api/activity/rules')
+      reached(true)
+      if (res.status === 404) { $('admin-rules-card').hidden = true; cardLoaded('rules'); return }
+      if (!res.ok || !Array.isArray(res.body.files)) { cardFailed('rules'); return }
+      rulesView.loaded = true
+      $('admin-rules-card').hidden = false
+      $('admin-rules').replaceChildren(...res.body.files.map(rulesEditor))
+      cardLoaded('rules')
+    } catch (e) {
+      reached(false)
+      cardFailed('rules')
+    }
+  }
+
+  function rulesEditor(file) {
+    let base = file.text
+    const box = el('textarea', { spellcheck: 'true', 'aria-label': RULES_LABELS[file.which] + ' — ' + file.path, 'data-rules': file.which })
+    box.value = file.text
+    const meta = el('p', { class: 'meta' })
+    const status = el('p', { class: 'status', role: 'status' })
+    const save = el('button', { type: 'button', text: 'Save' })
+    const usual = el('button', { type: 'button', class: 'ghost', text: 'Back to the default' })
+    const reload = el('button', { type: 'button', class: 'ghost', text: 'Reload', hidden: true })
+    const refresh = () => {
+      meta.textContent = box.value === file.default ? 'The default.' : box.value !== base ? 'Unsaved changes.' : 'Your own.'
+      save.disabled = box.value === base
+      usual.disabled = box.value === file.default
+    }
+    const say = (text, cls) => { status.className = 'status' + (cls ? ' ' + cls : ''); status.textContent = text }
+    box.addEventListener('input', refresh)
+    usual.addEventListener('click', () => { replaceText(box, file.default); refresh(); say('The default, to save or not.') })
+    save.addEventListener('click', async () => {
+      save.disabled = true
+      say('Saving…')
+      try {
+        const res = await post('/api/activity/rules', { which: file.which, text: box.value, base })
+        reached(true)
+        if (res.status === 409) { say(res.body.error, 'bad'); reload.hidden = false; return }
+        if (!res.ok) { say((res.body && res.body.error) || "The rules couldn't be saved.", 'bad'); return }
+        base = res.body.text
+        say('Saved: the summaries are made again under them the next time each day or week is looked at.', 'ok')
+      } catch (e) {
+        reached(false)
+        say('Could not reach vibe.', 'bad')
+      } finally {
+        refresh()
+      }
+    })
+    reload.addEventListener('click', () => { rulesView.loaded = false; loadRules(true) })
+    refresh()
+    return el('section', { class: 'instr' },
+      el('h3', {}, el('span', { text: RULES_LABELS[file.which] }), el('span', { class: 'path', text: file.path })),
+      box, meta, el('div', { class: 'bar' }, save, usual, reload), status)
+  }
+
+  // showRules takes the user from the Activity tab to the rules' card, read first if the Admin tab hasn't been looked at yet.
+  async function showRules() {
+    closeActivityBalloons()
+    select('admin')
+    await loadRules(false)
+    const card = $('admin-rules-card')
+    card.scrollIntoView({ block: 'start' })
+    const box = card.querySelector('textarea')
+    if (box) { box.focus({ preventScroll: true }); return }
+    $('admin-rules-h').setAttribute('tabindex', '-1')
+    $('admin-rules-h').focus({ preventScroll: true })
   }
 
   // --- the agent's instructions, on the Admin tab ------------------------

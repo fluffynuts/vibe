@@ -222,3 +222,29 @@ func TestTheColourBlindChoiceIsKept(t *testing.T) {
 		t.Fatalf("want a choice that isn't true or false refused, got %d", rec.Code)
 	}
 }
+
+func TestTheSummaryRulesAreReadAndSavedUnlessChangedOnDisk(t *testing.T) {
+	s, _, _ := activityServer(t)
+	if rec := do(t, s, req{path: "/api/activity/rules", headers: authed(nil)}); rec.Code != http.StatusNotFound {
+		t.Fatalf("want no rules on a page with no summaries, got %d", rec.Code)
+	}
+	dir := t.TempDir()
+	s.cfg.Activity.Summaries = &activity.Summariser{Dir: dir, Rules: dir + "/day.md", WeekRules: dir + "/week.md"}
+	rec := do(t, s, req{path: "/api/activity/rules", headers: authed(nil)})
+	var got struct {
+		Files []activity.RulesFile `json:"files"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got.Files) != 2 {
+		t.Fatalf("want the day's and the week's, got %d %s", rec.Code, rec.Body)
+	}
+	body, _ := json.Marshal(map[string]string{"which": "week", "text": "Short.", "base": got.Files[1].Text})
+	if rec := do(t, s, post("/api/activity/rules", string(body))); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"text":"Short."`) {
+		t.Fatalf("want it kept, got %d %s", rec.Code, rec.Body)
+	}
+	if rec := do(t, s, post("/api/activity/rules", string(body))); rec.Code != http.StatusConflict {
+		t.Fatalf("want a save over rules since changed refused, got %d %s", rec.Code, rec.Body)
+	}
+	if rec := do(t, s, post("/api/activity/rules", `{"which":"month","text":"x","base":""}`)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("want other rules refused, got %d", rec.Code)
+	}
+}

@@ -3,6 +3,7 @@ package companion
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -162,6 +163,46 @@ func (s *Server) activityColourBlind(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"on": *req.On})
+}
+
+// activityRules are the summaries' rules, the day's and the week's, for the Admin tab to edit.
+func (s *Server) activityRules(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Activity.Summaries == nil {
+		writeError(w, http.StatusNotFound, "this page makes no summaries")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"files": s.cfg.Activity.Summaries.RulesFiles()})
+}
+
+// activityRulesSave keeps the day's or the week's rules, unless they changed since the page read them.
+func (s *Server) activityRulesSave(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Which string `json:"which"`
+		Text  string `json:"text"`
+		Base  string `json:"base"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "expected the rules to keep")
+		return
+	}
+	if s.cfg.Activity.Summaries == nil {
+		writeError(w, http.StatusNotFound, "this page makes no summaries")
+		return
+	}
+	if req.Which != "day" && req.Which != "week" {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("%q isn't the day's or the week's rules", req.Which))
+		return
+	}
+	saved, err := s.cfg.Activity.Summaries.SaveRules(req.Which, req.Text, req.Base)
+	if errors.Is(err, activity.ErrRulesChanged) {
+		writeError(w, http.StatusConflict, "the rules were changed since they were loaded here (by hand, or on another page): reload them, and make your change again")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "the rules couldn't be kept: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, saved)
 }
 
 func (s *Server) activityRounding(w http.ResponseWriter, r *http.Request) {

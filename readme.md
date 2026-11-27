@@ -771,7 +771,8 @@ restarts, as for files). Colours follow the theme, and what is copied is the cod
   drawn as emoji), each with a copy button. The summary is made by a one-shot Claude in the sandbox of the page you're on, without
   being asked, the first time a day's commits are shown and whenever they change; only the commits' first lines are sent, and
   summaries are kept in `~/.vibe/activity/summaries/`, shared by every vibe (one summarises at a time; the others say which). Its
-  rules are yours to edit, in `~/.vibe/activity/summary-rules.md`. A closed row says when its summary is being made, or failed, and has a copy button for its summary, with the branch's
+  rules are yours to edit, in `~/.vibe/activity/summary-rules.md`, or on the Admin tab's **Activity summaries** card (linked from
+  the tab's (i)), which has a week's rules too. A closed row says when its summary is being made, or failed, and has a copy button for its summary, with the branch's
   **ticket link** first when it has one: set it in the row's (i) (a Trello card, a Jira or GitHub issue, any web address), and
   the row gets a link to it. Links are kept in `~/.vibe/activity/tickets.json` by repository and branch, for every vibe, and
   forgotten once the branch is gone from every checkout and from origin, and nothing in the last 14 days mentions it.
