@@ -1680,15 +1680,20 @@ test('a Network rules row says it is removing without moving the columns', async
 })
 
 test('a state poll cut off by its page closing is not an error, and any other failure of one still is', async () => {
+  const failing = (e) => ({ fetch: async () => { throw e }, fulfill: async () => {} })
   const gone = new Error('apiResponse.json: Response has been disposed')
-  const route = { fetch: async () => { throw gone }, fulfill: async () => {} }
+  const broken = new Error('the server answered 500')
   const open = await browser.newPage()
   try {
-    await assert.rejects(stateWith(open, {})(route), /disposed/, 'a failure while the page is open was swallowed')
+    await assert.rejects(stateWith(open, {})(failing(broken)), /answered 500/, 'a real failure while the page is open was swallowed')
+    // A page being closed disposes what is in flight before it counts as closed: the error's words say so while isClosed() is false.
+    await stateWith(open, {})(failing(gone))
+    await stateWith(open, {})(failing(new Error('route.fetch: Request context disposed.')))
   } finally { await open.close() }
   const closed = await browser.newPage()
   await closed.close()
-  await stateWith(closed, {})(route)
+  await stateWith(closed, {})(failing(gone))
+  await stateWith(closed, {})(failing(broken))
 })
 
 // A countdown bar (see the countdown tests in page.test.js) runs for as long as its --countdown-ms says, inside the top edge of what it
