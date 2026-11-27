@@ -144,6 +144,31 @@ test('the help is in a balloon from the (i) in the bar, closed by the (i), Escap
   } finally { p.close() }
 })
 
+test("a branch with no commits shows the prompts asked on it beside its summary", async () => {
+  const day = { date: '2026-11-26', hours: 1, branches: [
+    branch('vibe', 'master', 1, [], { asked: ['plan the week view', 'now the pie'] }),
+  ] }
+  const p = await pageWith({ days: { '': day }, summaries: () => [ready('k1', 'planned the week view')] })
+  try {
+    await open(p, 0)
+    const [summary, asked] = panes(p, 0)
+    assert.deepEqual(lines(summary), ['planned the week view'])
+    assert.equal(asked.querySelector('h3').textContent, 'Asked')
+    assert.deepEqual(lines(asked), ['plan the week view', 'now the pie'])
+  } finally { p.close() }
+})
+
+test("a short branch with prompts but no commits is still shown", async () => {
+  const day = { date: '2026-11-26', hours: 1, branches: [
+    branch('vibe', 'feat/x', 1, ['work']), branch('vibe', 'master', 0, [], { asked: ['what broke?'] }),
+  ] }
+  const p = await pageWith({ days: { '': day } })
+  try {
+    assert.deepEqual(rows(p).map((r) => r.split(' | ')[0]), ['feat/x', 'master'])
+    assert.equal(p.$('activity-hidden').hidden, true)
+  } finally { p.close() }
+})
+
 test("a row with no time once rounded and no commits is hidden, behind a line that shows it", async () => {
   const day = { date: '2026-11-26', hours: 1, branches: [
     branch('vibe', 'master', 0), branch('vibe', 'feat/x', 1, ['work']), branch('vibe', 'fix/quick', 0, ['a quick fix']),
@@ -152,7 +177,7 @@ test("a row with no time once rounded and no commits is hidden, behind a line th
   try {
     assert.deepEqual(rows(p).map((r) => r.split(' | ')[0]), ['feat/x', 'fix/quick'], 'a short branch with commits still shows')
     assert.equal(p.$('activity-hidden').hidden, false)
-    assert.match(p.$('activity-hidden').textContent, /1 hidden: no time once rounded, and no commits\. show/)
+    assert.match(p.$('activity-hidden').textContent, /1 hidden: no time once rounded, and no commits or prompts\. show/)
     await p.click('activity-hidden-toggle')
     assert.deepEqual(rows(p).map((r) => r.split(' | ')[0]), ['feat/x', 'fix/quick', 'master'])
     assert.equal(p.$('activity-hidden-toggle').textContent, 'hide')
@@ -231,7 +256,7 @@ test('the summary says while it is being made, here or on another vibe, and the 
     await open(p, 1)
     assert.match(panes(p, 1)[0].textContent, /Activity is being summarised on the yumbi vibe, and will appear here shortly\./)
     await open(p, 2)
-    assert.match(panes(p, 2)[0].textContent, /No commits to summarise/)
+    assert.match(panes(p, 2)[0].textContent, /Nothing to summarise: no commits, and no prompts sent from vibe\./)
     await open(p, 0)
     assert.equal(panes(p, 0)[0].textContent.includes('Summarising…'), true)
     assert.equal(panes(p, 0)[0].querySelector('button.copy-code'), null, 'nothing to copy yet')

@@ -190,8 +190,9 @@ type Config struct {
 	History string
 	// Activity is what the Activity tab reads; nil means the page has no such tab.
 	Activity *ActivityTab
-	// Mark records work seen on the folder (one of activity's kinds) on branch, for the Activity tab; nil means none is kept.
-	Mark func(kind, branch string)
+	// Mark records work seen on the folder (one of activity's kinds) on branch, for the Activity tab, with the prompt for the
+	// user's own prompts ("" otherwise); nil means none is kept.
+	Mark func(kind, branch, prompt string)
 }
 
 // Server is a running companion page.

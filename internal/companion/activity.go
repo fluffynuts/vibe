@@ -168,12 +168,17 @@ func (s *Server) activitySeen(w http.ResponseWriter, r *http.Request) {
 }
 
 // mark records kind of work on the folder's branch as it is now, when the page keeps marks (Config.Mark).
-func (s *Server) mark(kind string) {
+func (s *Server) mark(kind string) { s.markWith(kind, "") }
+
+// markPrompt records the user's prompt, sent from the page, on the folder's branch.
+func (s *Server) markPrompt(prompt string) { s.markWith(activity.KindPrompt, prompt) }
+
+func (s *Server) markWith(kind, prompt string) {
 	if s.cfg.Mark == nil {
 		return
 	}
 	if git := s.gitInfo(); git != nil {
-		s.cfg.Mark(kind, git.Branch)
+		s.cfg.Mark(kind, git.Branch, prompt)
 	}
 }
 
@@ -182,5 +187,5 @@ func (s *Server) markGitChange(was, now *GitInfo) {
 	if s.cfg.Mark == nil || was == nil || now == nil || *was == *now {
 		return
 	}
-	s.cfg.Mark(activity.KindGit, now.Branch)
+	s.cfg.Mark(activity.KindGit, now.Branch, "")
 }

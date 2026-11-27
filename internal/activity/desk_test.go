@@ -58,14 +58,14 @@ func TestTheRecorderKeepsOneMarkOfAKindOnABranchAMinuteUnderOriginsName(t *testi
 	r := &Recorder{Log: l, Sandbox: "s", Folder: "/code/yumbi",
 		Origin: func(context.Context, string) (string, error) { return "git@github.com:codeo/yumbi-web.git", nil },
 		Now:    func() time.Time { mu.Lock(); defer mu.Unlock(); return now }}
-	r.Mark(KindAgent, "feat/x")
-	r.Mark(KindAgent, "feat/x")
-	r.Mark(KindPage, "feat/x")
-	r.Mark(KindAgent, "feat/y")
+	r.Mark(KindAgent, "feat/x", "")
+	r.Mark(KindAgent, "feat/x", "")
+	r.Mark(KindPage, "feat/x", "")
+	r.Mark(KindAgent, "feat/y", "")
 	mu.Lock()
 	now = at("09:01")
 	mu.Unlock()
-	r.Mark(KindAgent, "feat/x")
+	r.Mark(KindAgent, "feat/x", "")
 	r.Wait()
 	got, _, _ := l.Marks(now, now)
 	var seen []string
@@ -87,9 +87,9 @@ func TestTheRecorderSaysOnceWhyItCantKeepAMark(t *testing.T) {
 	var said []string
 	now := at("09:00")
 	r := &Recorder{Log: Log{Dir: file}, Sandbox: "s", Folder: "/code/r", Now: func() time.Time { return now }, Problem: func(s string) { said = append(said, s) }}
-	r.Mark(KindAgent, "b")
+	r.Mark(KindAgent, "b", "")
 	r.Wait()
-	r.Mark(KindPage, "b")
+	r.Mark(KindPage, "b", "")
 	r.Wait()
 	if len(said) != 1 || !strings.Contains(said[0], "activity log") {
 		t.Fatalf("want one problem said, got %q", said)

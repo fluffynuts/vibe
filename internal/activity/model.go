@@ -29,6 +29,8 @@ type Mark struct {
 	Repo   string    `json:"repo"`
 	Branch string    `json:"branch"`
 	Kind   string    `json:"kind"`
+	// Text is the start of the prompt a prompt's mark is for (PromptStart), "" for other marks and prompts vibe made.
+	Text string `json:"text,omitempty"`
 }
 
 // Event is a moment git recorded work on a branch (a commit, a checkout, a merge, a rebase): work done whether or not vibe
@@ -73,6 +75,9 @@ type BranchTime struct {
 	Ticket string `json:"ticket,omitempty"`
 	// Commits are what was done on the branch that day, a line each: the user's commits' subjects, merges and rebases.
 	Commits []string `json:"commits"`
+	// Asked are the starts of the day's prompts on a branch with no commits, oldest first: what the work was, when no commit
+	// says (planning, investigating). A branch with commits has none: its commits tell its day.
+	Asked   []string `json:"asked,omitempty"`
 	Folders []string `json:"folders"`
 }
 
@@ -141,6 +146,7 @@ func Summarise(midnight time.Time, marks []Mark, events []Event, bullets []Bulle
 			notes[k] = append(notes[k], b.Text)
 		}
 	}
+	asked := askedOn(marks, midnight, end)
 	raw := map[int]time.Duration{}
 	day := Day{Date: midnight.Format(time.DateOnly), Branches: []BranchTime{}}
 	for k := range keys {
@@ -159,6 +165,9 @@ func Summarise(midnight time.Time, marks []Mark, events []Event, bullets []Bulle
 		raw[len(day.Branches)] = m + e
 		if bt.Commits == nil {
 			bt.Commits = []string{}
+		}
+		if len(bt.Commits) == 0 {
+			bt.Asked = asked[k]
 		}
 		day.Branches = append(day.Branches, bt)
 
@@ -357,4 +366,30 @@ func sortedKeys(m map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// askedOn are the prompts' starts in the day, by branch, oldest first, once each.
+func askedOn(marks []Mark, midnight, end time.Time) map[branchKey][]string {
+	sorted := append([]Mark(nil), marks...)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].At.Before(sorted[j].At) })
+	out := map[branchKey][]string{}
+	for _, m := range sorted {
+		k := branchKey{m.Repo, m.Branch}
+		if m.Kind == KindPrompt && m.Text != "" && inDay(m.At, midnight, end) && !contains(out[k], m.Text) {
+			out[k] = append(out[k], m.Text)
+		}
+	}
+	return out
+}
+
+// PromptKept is how many characters of a prompt its mark keeps: enough to say what was asked, not the whole of it.
+const PromptKept = 200
+
+// PromptStart is what a prompt's mark keeps of it: its first PromptKept characters, on one line.
+func PromptStart(prompt string) string {
+	r := []rune(strings.Join(strings.Fields(prompt), " "))
+	if len(r) <= PromptKept {
+		return string(r)
+	}
+	return string(r[:PromptKept]) + "…"
 }

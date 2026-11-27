@@ -5327,9 +5327,9 @@
   // bulletsText is lines as they are pasted somewhere else: a bullet each.
   function bulletsText(lines) { return lines.map((l) => '- ' + l).join('\n') + '\n' }
 
-  // shortAndEmpty says a branch is hidden unless asked for: no time once the day is rounded, and no commits. An investigation
-  // that took long enough shows by its time; a few minutes passing through a branch don't.
-  function shortAndEmpty(b) { return b.hours === 0 && b.commits.length === 0 }
+  // shortAndEmpty says a branch is hidden unless asked for: no time once the day is rounded, and no commits or prompts. An
+  // investigation that took long enough shows by its time; a few minutes passing through a branch don't.
+  function shortAndEmpty(b) { return b.hours === 0 && b.commits.length === 0 && !(b.asked || []).length }
 
   function drawActivity() {
     const r = activityView.report
@@ -5356,7 +5356,7 @@
     const groups = byRepository(rows, shown)
     $('activity-none').hidden = day.branches.length > 0
     $('activity-hidden').hidden = !hidden.length
-    setText($('activity-hidden-text'), hidden.length + ' hidden: no time once rounded, and no commits.')
+    setText($('activity-hidden-text'), hidden.length + ' hidden: no time once rounded, and no commits or prompts.')
     setText($('activity-hidden-toggle'), activityView.showHidden ? 'hide' : 'show')
     drawnAs($('activity-list'), JSON.stringify([day, summaries, activityView.openKey, activityView.showHidden]),
       () => groups.map((g) => activityGroup(g, day.hours)))
@@ -5441,9 +5441,12 @@
     let work = null
     if (open) {
       const commits = b.commits.map(withEmoji)
+      const asked = b.asked || []
       work = el('div', { class: 'activity-work', id: panelId },
         activityPane('Summary', summary && summary.state === 'ready' ? summary.bullets : null, summaryNote(summary), b, summaryText(b, summary)),
-        activityPane('Commits', commits.length ? commits : null, el('p', { class: 'muted', text: 'No commits this day.' }), b))
+        asked.length && !commits.length
+          ? activityPane('Asked', asked, null, b)
+          : activityPane('Commits', commits.length ? commits : null, el('p', { class: 'muted', text: 'No commits this day.' }), b))
     }
     return el('div', { class: 'activity-entry', 'data-key': key },
       el('div', { class: 'activity-head' }, toggle, el('div', { class: 'activity-actions' }, ticket, copy, info)), work)
@@ -5579,7 +5582,7 @@
     const state = summary ? summary.state : 'unavailable'
     if (state === 'pending') return el('p', { class: 'muted', text: 'Summarising…' })
     if (state === 'elsewhere') return el('p', { class: 'muted', text: 'Activity is being summarised on the ' + summary.holder + ' vibe, and will appear here shortly.' })
-    if (state === 'none') return el('p', { class: 'muted', text: 'No commits to summarise.' })
+    if (state === 'none') return el('p', { class: 'muted', text: 'Nothing to summarise: no commits, and no prompts sent from vibe.' })
     if (state === 'failed') {
       return el('p', { class: 'bad-text' }, "Couldn't summarise: " + summary.why + ' ',
         el('button', { type: 'button', class: 'small', text: 'Retry', onclick: () => retrySummary(summary.key) }))

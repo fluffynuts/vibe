@@ -117,15 +117,17 @@ type Recorder struct {
 // repoEvery is how often the folder's origin is read again for its name.
 const repoEvery = 5 * time.Minute
 
-// Mark records kind of work on branch now, unless one was recorded this minute. It doesn't wait for the writing.
-func (r *Recorder) Mark(kind, branch string) {
+// Mark records kind of work on branch now, unless one was recorded this minute; a prompt's (text, its prompt) is always
+// recorded, with its start. It doesn't wait for the writing.
+func (r *Recorder) Mark(kind, branch, text string) {
 	now := r.now()
+	text = PromptStart(text)
 	r.mu.Lock()
 	if r.last == nil {
 		r.last = map[string]time.Time{}
 	}
 	key := kind + "\x00" + branch
-	if last, ok := r.last[key]; ok && now.Sub(last) < time.Minute {
+	if last, ok := r.last[key]; ok && now.Sub(last) < time.Minute && text == "" {
 		r.mu.Unlock()
 		return
 	}
@@ -134,7 +136,7 @@ func (r *Recorder) Mark(kind, branch string) {
 	r.mu.Unlock()
 	go func() {
 		defer r.writing.Done()
-		m := Mark{At: now, Folder: r.Folder, Repo: r.repoName(), Branch: branch, Kind: kind}
+		m := Mark{At: now, Folder: r.Folder, Repo: r.repoName(), Branch: branch, Kind: kind, Text: text}
 		if err := r.Log.Append(r.Sandbox, m); err != nil {
 			r.problem("couldn't keep a mark in the activity log: " + err.Error())
 		}

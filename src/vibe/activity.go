@@ -118,7 +118,7 @@ func oneShotCommand(words ...string) string {
 }
 
 // activityRecorderFor keeps the marks of the sandbox name's page, on its folder.
-func activityRecorderFor(lay layout.Layout, name, folder string) func(kind, branch string) {
+func activityRecorderFor(lay layout.Layout, name, folder string) func(kind, branch, prompt string) {
 	if folder == "" {
 		return nil
 	}

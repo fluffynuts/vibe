@@ -226,8 +226,9 @@ func joinParts(a, b string) string {
 //
 // OneShot, when the agent has one, is how to ask it something once, with no
 // tools (--tools "" leaves MCP servers' tools: --strict-mcp-config, with no
-// config given, takes those) and nothing kept: the prompt goes in on stdin, the answer comes out
-// on stdout. It is what Optimise uses.
+// config given, takes those) and nothing kept (no session written, where the
+// agent would otherwise keep a transcript of it): the prompt goes in on stdin,
+// the answer comes out on stdout. Optimise and the Activity tab's summaries use it.
 type Agent struct {
 	Dir, Global string
 	Imports     bool
@@ -241,7 +242,7 @@ const MergedFile = "vibe-instructions.md"
 // Agents are the agents vibe knows how to give these instructions to; one
 // not here doesn't get them (yet).
 var Agents = map[string]Agent{
-	"claude": {Dir: ".claude", Global: "CLAUDE.md", Imports: true, OneShot: []string{"claude", "-p", "--tools", "", "--strict-mcp-config"}},
+	"claude": {Dir: ".claude", Global: "CLAUDE.md", Imports: true, OneShot: []string{"claude", "-p", "--tools", "", "--strict-mcp-config", "--no-session-persistence"}},
 	"gemini": {Dir: ".gemini", Global: "GEMINI.md", Imports: true},
 	"codex":  {Dir: ".codex", Global: "AGENTS.md"},
 }

@@ -10,10 +10,11 @@ import (
 )
 
 // vibe's own one-shot asks of the sandbox's claude say they are vibe's (the clipboard hook leaves the user's pastes to the user's
-// next message), and have no tools: --tools "" left the MCP gateway's, and the summaries are given other repositories' commits.
+// next message), have no tools (--tools "" left the MCP gateway's, and the summaries are given other repositories' commits and
+// prompts), and leave no session behind in the sandbox, where the agent's memories could pick them up.
 func TestAOneShotAskIsMarkedAsVibesOwnAndHasNoTools(t *testing.T) {
 	cmd := oneShotCommand(append(append([]string(nil), instructions.Agents["claude"].OneShot...), "--model", "haiku")...)
-	for _, want := range []string{"cd /tmp && exec env " + oneShotEnv + " ", "'claude' '-p'", "'--tools' ''", "'--strict-mcp-config'", "'--model' 'haiku'"} {
+	for _, want := range []string{"cd /tmp && exec env " + oneShotEnv + " ", "'claude' '-p'", "'--tools' ''", "'--strict-mcp-config'", "'--no-session-persistence'", "'--model' 'haiku'"} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("%q lacks %q", cmd, want)
 		}

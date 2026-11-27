@@ -1172,7 +1172,7 @@ func (s *Server) conversationSend(w http.ResponseWriter, r *http.Request) {
 	}
 	seq, _ := s.convo.claim(req.Prompt, true)
 	s.convo.give(seq, req.Prompt, s.cfg.StartAgent, s.cfg.Prepare)
-	s.mark(activity.KindPrompt)
+	s.markPrompt(req.Prompt)
 	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
 }
 

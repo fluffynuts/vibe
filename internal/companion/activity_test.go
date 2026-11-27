@@ -12,15 +12,18 @@ import (
 	"vibe/internal/activity"
 )
 
-// marks is a page's Config.Mark: what it was told, as "kind branch".
+// marks is a page's Config.Mark: what it was told, as "kind branch", and " prompt" after when it was given one.
 type marks struct {
 	mu   sync.Mutex
 	seen []string
 }
 
-func (m *marks) mark(kind, branch string) {
+func (m *marks) mark(kind, branch, prompt string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if prompt != "" {
+		branch += " " + prompt
+	}
 	m.seen = append(m.seen, kind+" "+branch)
 }
 
@@ -114,8 +117,8 @@ func TestAPromptSentIsMarked(t *testing.T) {
 	s.cfg.Mark = m.mark
 	send(t, s, "/api/conversation/send", `{"prompt":"hello"}`)
 	idle(t, s)
-	if got := m.said(); len(got) != 1 || got[0] != "prompt feat/x" {
-		t.Fatalf("want the prompt marked on feat/x, got %v", got)
+	if got := m.said(); len(got) != 1 || got[0] != "prompt feat/x hello" {
+		t.Fatalf("want the prompt marked on feat/x with what was asked, got %v", got)
 	}
 }
 
