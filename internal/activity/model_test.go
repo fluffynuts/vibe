@@ -182,3 +182,75 @@ func TestBranchesAreInRepositoryThenBranchOrder(t *testing.T) {
 		t.Fatalf("want %v, got %v", want, got)
 	}
 }
+
+func link(hhmm, repo, branch string) Event {
+	e := event(hhmm, repo, branch)
+	e.Link = true
+	return e
+}
+
+func TestACheckoutOrPullAloneCountsForNothing(t *testing.T) {
+	d := Summarise(day, nil, []Event{link("13:26", "r", "master"), link("17:15", "r", "master")}, nil, 15*time.Minute)
+	if len(d.Branches) != 0 {
+		t.Fatalf("want no time for passing through a branch, got %+v", d.Branches)
+	}
+}
+
+func TestACheckoutStartsTheWorkThatFollowsIt(t *testing.T) {
+	got := only(t, Summarise(day, nil, []Event{link("09:00", "r", "b"), event("09:40", "r", "b")}, nil, 15*time.Minute))
+	if want := []Stretch{span("09:00", "09:40", false)}; !reflect.DeepEqual(got.Stretches, want) {
+		t.Fatalf("want the stretch from the checkout to the commit, got %v", got.Stretches)
+	}
+	late := only(t, Summarise(day, nil, []Event{link("09:35", "r", "b"), event("09:40", "r", "b")}, nil, 15*time.Minute))
+	if want := []Stretch{span("09:25", "09:40", false)}; !reflect.DeepEqual(late.Stretches, want) {
+		t.Fatalf("want the usual 15 minutes before the commit when the checkout is nearer, got %v", late.Stretches)
+	}
+}
+
+func TestACheckoutJoinsWorkEitherSideButDoesntExtendPastTheLast(t *testing.T) {
+	events := []Event{event("09:00", "r", "b"), link("09:50", "r", "b"), event("10:40", "r", "b"), link("11:00", "r", "b")}
+	got := only(t, Summarise(day, nil, events, nil, 15*time.Minute))
+	if want := []Stretch{span("08:45", "10:40", false)}; !reflect.DeepEqual(got.Stretches, want) {
+		t.Fatalf("want one stretch to the last commit, got %v", got.Stretches)
+	}
+}
+
+func TestTheDaysRoundedTimeIsSharedOutSoSmallTasksArentLost(t *testing.T) {
+	var marks []Mark
+	for i, minutes := range []int{10, 10, 10, 11} {
+		branch := string(rune('a' + i))
+		start := at("09:00").Add(time.Duration(i) * time.Hour)
+		for m := 0; m < minutes; m++ {
+			marks = append(marks, Mark{At: start.Add(time.Duration(m) * time.Minute), Repo: "r", Branch: branch})
+		}
+	}
+	d := Summarise(day, marks, nil, nil, 30*time.Minute)
+	var got []float64
+	for _, b := range d.Branches {
+		got = append(got, b.Hours)
+	}
+	// 41 minutes in all is one half-hour step; it goes to the biggest share, the 11 minutes.
+	if want := []float64{0, 0, 0, 0.5}; !reflect.DeepEqual(got, want) || d.Hours != 0.5 {
+		t.Fatalf("want %v (0.5 in all), got %v (%v)", want, got, d.Hours)
+	}
+}
+
+func TestSharingOutKeepsEachBranchWithinAStepOfItsTime(t *testing.T) {
+	var marks []Mark
+	for i, minutes := range []int{50, 50, 50} {
+		branch := string(rune('a' + i))
+		start := at("09:00").Add(time.Duration(i) * 2 * time.Hour)
+		for m := 0; m < minutes; m++ {
+			marks = append(marks, Mark{At: start.Add(time.Duration(m) * time.Minute), Repo: "r", Branch: branch})
+		}
+	}
+	d := Summarise(day, marks, nil, nil, time.Hour)
+	var got []float64
+	for _, b := range d.Branches {
+		got = append(got, b.Hours)
+	}
+	// 150 minutes is 3 hours rounded (2.5 rounds up); each 50 minutes gets one.
+	if want := []float64{1, 1, 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("want %v, got %v", want, got)
+	}
+}

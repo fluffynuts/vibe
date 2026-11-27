@@ -290,3 +290,20 @@ func TestAMergedRemoteBranchReadsAsItsName(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckoutsAndPullsAreLinksAndCommitsAreWork(t *testing.T) {
+	r := newRepo(t)
+	r.commit("08:00", "first")
+	r.git("09:00", "checkout", "-q", "-b", "feat/x")
+	r.commit("09:30", "work")
+	events, _ := r.history()
+	kinds := map[string]bool{}
+	for _, e := range events {
+		if e.Branch == "feat/x" {
+			kinds[e.At.In(zone).Format("15:04")] = e.Link
+		}
+	}
+	if want := map[string]bool{"09:00": true, "09:30": false}; !reflect.DeepEqual(kinds, want) {
+		t.Fatalf("want the checkout a link and the commit work, got %v", kinds)
+	}
+}

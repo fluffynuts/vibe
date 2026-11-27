@@ -38,6 +38,9 @@ type Event struct {
 	Folder string
 	Repo   string
 	Branch string
+	// Link is a move onto the branch that is no work of itself (a checkout, a pull, a reset): it joins work before and
+	// after it, and starts what follows, but alone counts for nothing.
+	Link bool
 }
 
 // Bullet is a line for the timesheet saying what was done on a branch: a commit's subject, "merged master", "rebased onto
@@ -107,7 +110,7 @@ func Summarise(midnight time.Time, marks []Mark, events []Event, bullets []Bulle
 		}
 	}
 	for k, es := range eventsByBranch(events) {
-		for _, s := range join(eventTimes(es), gitGap, gitLead, 0) {
+		for _, s := range gitStretches(es) {
 			if s, ok := clip(s, midnight, end); ok {
 				estimated[k] = append(estimated[k], without(s, measured[k])...)
 			}
@@ -136,6 +139,7 @@ func Summarise(midnight time.Time, marks []Mark, events []Event, bullets []Bulle
 			notes[k] = append(notes[k], b.Text)
 		}
 	}
+	raw := map[int]time.Duration{}
 	day := Day{Date: midnight.Format(time.DateOnly), Branches: []BranchTime{}}
 	for k := range keys {
 		bt := BranchTime{Repo: k.repo, Branch: k.branch, Commits: notes[k], Folders: sortedKeys(folders[k])}
@@ -150,12 +154,20 @@ func Summarise(midnight time.Time, marks []Mark, events []Event, bullets []Bulle
 			}
 		}
 		bt.Measured, bt.Estimated = int(m.Minutes()), int(e.Minutes())
-		bt.Hours = rounded(m+e, step)
+		raw[len(day.Branches)] = m + e
 		if bt.Commits == nil {
 			bt.Commits = []string{}
 		}
 		day.Branches = append(day.Branches, bt)
-		day.Hours += bt.Hours
+
+	}
+	times := make([]time.Duration, len(day.Branches))
+	for i := range day.Branches {
+		times[i] = raw[i]
+	}
+	for i, h := range sharedOut(times, step) {
+		day.Branches[i].Hours = h
+		day.Hours += h
 	}
 	sort.Slice(day.Branches, func(i, j int) bool {
 		a, b := day.Branches[i], day.Branches[j]
@@ -167,11 +179,72 @@ func Summarise(midnight time.Time, marks []Mark, events []Event, bullets []Bulle
 	return day
 }
 
-// rounded is d in hours, rounded to the nearest whole number of steps, exactly half a step going up: what is under half a
-// step (a minute's switch to master to pull) counts for none, and a few minutes past a step (33 of a half hour) don't
-// count for another.
-func rounded(d, step time.Duration) float64 {
-	return math.Round(float64(d)/float64(step)) * step.Hours()
+// sharedOut is each of times in hours, in whole steps, adding up to their total rounded to the nearest step (exactly half
+// going up): each gets its whole steps, and the steps left go to those with the most left over, the longer first where
+// that's even. So no time is more than a step off, and small tasks that each round to nothing don't lose the day their
+// sum: four 10-minute fixes at half-hour steps keep their half hour, on the longest.
+func sharedOut(times []time.Duration, step time.Duration) []float64 {
+	var total time.Duration
+	steps := make([]int, len(times))
+	order := make([]int, len(times))
+	for i, t := range times {
+		total += t
+		steps[i] = int(t / step)
+		order[i] = i
+	}
+	left := int(math.Round(float64(total) / float64(step)))
+	for _, n := range steps {
+		left -= n
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		ra, rb := times[order[a]]%step, times[order[b]]%step
+		if ra != rb {
+			return ra > rb
+		}
+		return times[order[a]] > times[order[b]]
+	})
+	for i := 0; i < left && i < len(order); i++ {
+		steps[order[i]]++
+	}
+	out := make([]float64, len(times))
+	for i, n := range steps {
+		out[i] = float64(n) * step.Hours()
+	}
+	return out
+}
+
+// gitStretches are the stretches git's events on a branch stand for: those no more than gitGap apart are one stretch,
+// from gitLead before its first piece of work (or the checkout before it, if earlier) to its last. Links (checkouts, pulls)
+// join work either side and start what follows them, but a stretch with no work in it counts for nothing.
+func gitStretches(es []Event) []Stretch {
+	sorted := append([]Event(nil), es...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].At.Before(sorted[j].At) })
+	var out []Stretch
+	for i := 0; i < len(sorted); {
+		j := i + 1
+		for j < len(sorted) && sorted[j].At.Sub(sorted[j-1].At) <= gitGap {
+			j++
+		}
+		var first, last time.Time
+		for _, e := range sorted[i:j] {
+			if e.Link {
+				continue
+			}
+			if first.IsZero() {
+				first = e.At
+			}
+			last = e.At
+		}
+		if !first.IsZero() {
+			start := first.Add(-gitLead)
+			if sorted[i].At.Before(start) {
+				start = sorted[i].At
+			}
+			out = append(out, Stretch{Start: start, End: last})
+		}
+		i = j
+	}
+	return out
 }
 
 func inDay(t, midnight, end time.Time) bool { return !t.Before(midnight) && t.Before(end) }

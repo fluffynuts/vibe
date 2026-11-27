@@ -759,8 +759,10 @@ restarts, as for files). Colours follow the theme, and what is copied is the cod
   comment, the folder's git status changing: vibe keeps a line for each, at most one a minute, in `~/.vibe/activity/`), and
   **estimated** (~) from git's record otherwise (HEAD's reflog and each branch's: commits, checkouts, merges, rebases, kept for a branch since deleted), read with go-git, as the
   Review tab reads, never by running git. Branches are grouped by the repository's name on origin, so every checkout of one is
-  together. Each branch's time is rounded to the **nearest** step chosen on the tab (15 minutes, half an hour, an hour: kept as
-  `activityRounding` in `~/.vibe/settings.yaml`), so less than half a step counts for none; branches worked on at once each
+  together. The day's time is rounded to the **nearest** step chosen on the tab (15 minutes, half an hour, an hour: kept as
+  `activityRounding` in `~/.vibe/settings.yaml`) and shared between the branches in whole steps, the steps left over going to
+  those with the most left over, so no branch is more than a step off and small tasks don't lose the day their sum. Switching to
+  a branch, or pulling it, counts only when work follows; branches worked on at once each
   count in full, and the bars show each one's share. Under each branch, side by side, are a **Summary** of its day in 1 to 3
   lines and its **Commits** (yours, authored that day, with "merged master" and "rebased onto master" for those, `:bug:` codes
   drawn as emoji), each with a copy button. The summary is made by a one-shot Claude in the sandbox of the page you're on, without

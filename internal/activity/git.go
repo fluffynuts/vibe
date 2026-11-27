@@ -60,7 +60,7 @@ func FromHistory(h review.GitHistory, folder string) ([]Event, []Bullet) {
 	onto := ""
 	// record is what one move of branch tells: an event, and a bullet for what the user did.
 	record := func(e review.ReflogEntry, branch string) {
-		event(Event{At: e.At, Folder: folder, Repo: repo, Branch: branch})
+		event(Event{At: e.At, Folder: folder, Repo: repo, Branch: branch, Link: isLink(e.Message)})
 		bullet := func(text string, at time.Time) {
 			bullets = append(bullets, Bullet{At: at, Repo: repo, Branch: branch, Text: text})
 		}
@@ -104,7 +104,7 @@ func FromHistory(h review.GitHistory, folder string) ([]Event, []Bullet) {
 			current = ""
 			if isBranch(m[1]) {
 				current = m[1]
-				event(Event{At: e.At, Folder: folder, Repo: repo, Branch: current})
+				event(Event{At: e.At, Folder: folder, Repo: repo, Branch: current, Link: true})
 			}
 		case strings.HasPrefix(e.Message, "rebase"):
 			// The steps of a rebase are on a detached HEAD: its finish, returning to the branch, is the one event.
@@ -132,6 +132,16 @@ func FromHistory(h review.GitHistory, folder string) ([]Event, []Bullet) {
 		}
 	}
 	return events, kept
+}
+
+// isLink says a move of a branch is no work of itself: bringing it up to date (a pull), moving it (a reset), making it.
+func isLink(message string) bool {
+	for _, p := range []string{"pull", "reset", "branch:", "checkout"} {
+		if strings.HasPrefix(message, p) {
+			return true
+		}
+	}
+	return false
 }
 
 var rebaseReturn = regexp.MustCompile(`^rebase( -i)? \(finish\): returning to `)
