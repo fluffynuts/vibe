@@ -5271,7 +5271,9 @@
   const ACTIVITY_SEEN_MS = 60000
   // How soon the tab asks again while a summary is being made, here or by another vibe.
   const ACTIVITY_SUMMARY_MS = 3000
-  const activityView = { day: '', report: null, summaries: [], attention: [], problems: [], rounding: '', asked: 0, loaded: false, open: new Set(), seen: 0 }
+  // openKey is the one row open (its repository and branch), null for none; showHidden shows the rows hidden for being short and
+  // empty (no time once rounded, and no commits).
+  const activityView = { day: '', report: null, summaries: [], attention: [], problems: [], rounding: '', asked: 0, loaded: false, openKey: null, infoKey: null, showHidden: false, seen: 0 }
 
   async function loadActivity(now) {
     if (!now && Date.now() - activityView.asked < ACTIVITY_EVERY_MS) return
@@ -5296,12 +5298,23 @@
   // hours is a branch's time as a timesheet takes it: decimal hours, with one decimal at least (3.0, 2.5, 0.25).
   function hours(n) { return Number.isInteger(n) ? n.toFixed(1) : String(Math.round(n * 100) / 100) }
 
-  function dayLabel(date, today) {
+  // dayName is a day as the bar shows it: "Thursday, 27 Nov".
+  function dayName(date) {
+    return new Date(date + 'T00:00:00').toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'short' })
+  }
+
+  // dayChoice is a day as the list of days names it: Today, Yesterday, then by name.
+  function dayChoice(date, today) {
     if (date === today) return 'Today'
-    const d = new Date(date + 'T00:00:00')
-    const t = new Date(today + 'T00:00:00')
-    if (Math.round((t - d) / 86400000) === 1) return 'Yesterday'
-    return d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })
+    const days = Math.round((new Date(today + 'T00:00:00') - new Date(date + 'T00:00:00')) / 86400000)
+    return days === 1 ? 'Yesterday' : dayName(date)
+  }
+
+  // shiftDay is date moved by days, as YYYY-MM-DD.
+  function shiftDay(date, days) {
+    const d = new Date(date + 'T12:00:00')
+    d.setDate(d.getDate() + days)
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
   }
 
   function clock(iso) { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
@@ -5314,49 +5327,151 @@
   // bulletsText is lines as they are pasted somewhere else: a bullet each.
   function bulletsText(lines) { return lines.map((l) => '- ' + l).join('\n') + '\n' }
 
+  // shortAndEmpty says a branch is hidden unless asked for: no time once the day is rounded, and no commits. An investigation
+  // that took long enough shows by its time; a few minutes passing through a branch don't.
+  function shortAndEmpty(b) { return b.hours === 0 && b.commits.length === 0 }
+
   function drawActivity() {
     const r = activityView.report
     $('activity-wait').hidden = activityView.loaded
     for (const b of $('activity-rounding').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.rounding === activityView.rounding))
     if (!r) return
     const day = r.day
-    setText($('activity-day'), dayLabel(day.date, r.today))
-    $('activity-day').title = day.date === r.today ? day.date : day.date + ': back to today'
+    const isToday = day.date === r.today
+    setText($('activity-day'), dayName(day.date))
     $('activity-prev').disabled = day.date <= r.earliest
-    $('activity-next').disabled = day.date >= r.today
+    $('activity-next').disabled = isToday
+    $('activity-today').hidden = isToday
     setText($('activity-total'), day.branches.length ? 'total ' + hours(day.hours) : '')
-    $('activity-none').hidden = day.branches.length > 0
     $('activity-problems').hidden = !activityView.problems.length
     drawnAs($('activity-problems'), JSON.stringify(activityView.problems), () => activityView.problems.map((p) => el('li', { text: p })))
-    $('activity-attention').hidden = !activityView.attention.length
+    // What needs doing is git's state now: it is about today, and not shown on another day.
+    $('activity-attention').hidden = !isToday || !activityView.attention.length
     drawnAs($('activity-attention-list'), JSON.stringify(activityView.attention), () => activityView.attention.map((a) =>
       el('li', {}, a.folder + ' (' + a.branch + '): ' + a.what, a.checking ? el('span', { class: 'muted', text: ' (checking with GitHub…)' }) : '')))
     const summaries = activityView.summaries
-    drawnAs($('activity-list'), JSON.stringify([day, summaries]), () => day.branches.map((b, i) => activityRow(b, day.hours, summaries[i])))
+    const rows = day.branches.map((b, i) => ({ b, summary: summaries[i] }))
+    const hidden = rows.filter((row) => shortAndEmpty(row.b))
+    const shown = activityView.showHidden ? rows : rows.filter((row) => !shortAndEmpty(row.b))
+    $('activity-none').hidden = day.branches.length > 0
+    $('activity-hidden').hidden = !hidden.length
+    setText($('activity-hidden-text'), hidden.length + ' hidden: no time once rounded, and no commits.')
+    setText($('activity-hidden-toggle'), activityView.showHidden ? 'hide' : 'show')
+    drawnAs($('activity-list'), JSON.stringify([day, summaries, activityView.openKey, activityView.showHidden]),
+      () => shown.map((row) => activityRow(row.b, day.hours, row.summary)))
+  }
+
+  function rowKey(b) { return b.repo + ' ' + b.branch }
+
+  // summaryMark is what a closed row says of its summary while there's none to show yet, or none could be made.
+  function summaryMark(summary) {
+    if (summary && (summary.state === 'pending' || summary.state === 'elsewhere')) return el('span', { class: 'muted', text: 'summarising…' })
+    if (summary && summary.state === 'failed') return el('span', { class: 'warn-text', text: '⚠ no summary', title: "Couldn't summarise: " + summary.why })
+    return el('span', {})
   }
 
   function activityRow(b, total, summary) {
-    const key = b.repo + ' ' + b.branch
+    const key = rowKey(b)
+    const open = activityView.openKey === key
     const share = total ? b.hours / total : 0
     const estimated = b.estimatedMinutes > 0
-    const details = el('details', { class: 'activity-branch', open: activityView.open.has(key) },
-      el('summary', {},
-        el('span', { class: 'activity-repo', text: b.repo, title: b.repo }),
-        el('span', { class: 'activity-branch-name', text: b.branch, title: b.branch }),
-        el('span', { class: 'activity-hours', text: hours(b.hours) }),
-        el('meter', { min: '0', max: '1', value: String(share), 'aria-label': Math.round(share * 100) + '% of the day' }),
-        el('span', { class: 'activity-share', text: Math.round(share * 100) + '%' }),
-        el('span', { class: 'muted', text: estimated ? '~estimated' : '' })),
-      el('div', { class: 'activity-more' },
-        el('span', {}, 'When: ' + b.stretches.map((s) => clock(s.start) + '–' + clock(s.end) + (s.measured ? '' : ' (~)')).join(', ')),
-        el('span', {}, 'Before rounding: ' + hours(b.measuredMinutes / 60) + ' measured, ~' + hours(b.estimatedMinutes / 60) + ' estimated'),
-        el('span', { class: 'muted' }, 'In: ' + b.folders.join(', '))))
-    details.addEventListener('toggle', () => { if (details.open) activityView.open.add(key); else activityView.open.delete(key) })
-    const commits = b.commits.map(withEmoji)
-    return el('div', { class: 'activity-entry' }, details,
-      el('div', { class: 'activity-work' },
+    const panelId = 'activity-work-' + encodeURIComponent(key).replace(/[^A-Za-z0-9_-]/g, '_')
+    const toggle = el('button', { type: 'button', class: 'activity-toggle', 'aria-expanded': String(open), 'aria-controls': panelId,
+      onclick: () => toggleActivityRow(key) },
+      el('span', { class: 'activity-repo', text: b.repo, title: b.repo }),
+      el('span', { class: 'activity-branch-name', text: b.branch, title: b.branch }),
+      el('span', { class: 'activity-hours', text: hours(b.hours) }),
+      el('meter', { min: '0', max: '1', value: String(share), 'aria-label': Math.round(share * 100) + '% of the day' }),
+      el('span', { class: 'activity-share', text: Math.round(share * 100) + '%' }),
+      el('span', { class: 'muted activity-mark' }, estimated ? '~estimated ' : '', summaryMark(summary)))
+    const info = el('button', { type: 'button', class: 'choice-info activity-info', 'aria-expanded': 'false', 'aria-controls': 'activity-row-balloon',
+      'aria-label': 'When and where ' + b.branch + ' was worked on', title: 'When and where it was worked on', text: 'i',
+      onclick: (ev) => toggleRowInfo(b, ev.currentTarget) })
+    let work = null
+    if (open) {
+      const commits = b.commits.map(withEmoji)
+      work = el('div', { class: 'activity-work', id: panelId },
         activityPane('Summary', summary && summary.state === 'ready' ? summary.bullets : null, summaryNote(summary), b),
-        activityPane('Commits', commits.length ? commits : null, el('p', { class: 'muted', text: 'No commits this day.' }), b)))
+        activityPane('Commits', commits.length ? commits : null, el('p', { class: 'muted', text: 'No commits this day.' }), b))
+    }
+    return el('div', { class: 'activity-entry', 'data-key': key }, el('div', { class: 'activity-head' }, toggle, info), work)
+  }
+
+  // toggleActivityRow opens the row (closing the one open) or closes it, keeping the row clicked where it was on the screen: closing
+  // one above it would otherwise pull it up from under the pointer.
+  function toggleActivityRow(key) {
+    const find = () => [...$('activity-list').children].find((n) => n.dataset.key === key)
+    const before = find() ? find().getBoundingClientRect().top : 0
+    activityView.openKey = activityView.openKey === key ? null : key
+    closeActivityBalloons()
+    drawActivity()
+    const row = find()
+    if (row) {
+      scrollerOf(row).scrollTop += row.getBoundingClientRect().top - before
+      row.querySelector('.activity-toggle').focus({ preventScroll: true })
+    }
+  }
+
+  // scrollerOf is what scrolls node into view: its nearest ancestor that scrolls, else the page.
+  function scrollerOf(node) {
+    for (let n = node.parentElement; n; n = n.parentElement) {
+      const overflow = getComputedStyle(n).overflowY
+      if ((overflow === 'auto' || overflow === 'scroll') && n.scrollHeight > n.clientHeight) return n
+    }
+    return document.scrollingElement || document.documentElement
+  }
+
+  // The balloons (the help, a row's details) and the list of days: one at a time, closed by a click outside, Escape, or their button.
+  function closeActivityBalloons(except) {
+    for (const [id, button] of [['activity-help-balloon', $('activity-help')], ['activity-days-list', $('activity-day')], ['activity-row-balloon', null]]) {
+      if (id === except) continue
+      $(id).hidden = true
+      if (button) button.setAttribute('aria-expanded', 'false')
+    }
+    if (except !== 'activity-row-balloon') {
+      for (const b of $('activity-list').querySelectorAll('.activity-info')) b.setAttribute('aria-expanded', 'false')
+      activityView.infoKey = null
+    }
+  }
+
+  function toggleRowInfo(b, button) {
+    const key = rowKey(b)
+    const balloon = $('activity-row-balloon')
+    if (!balloon.hidden && activityView.infoKey === key) { closeActivityBalloons(); return }
+    closeActivityBalloons()
+    activityView.infoKey = key
+    const row = (term, text) => [el('dt', { text: term }), el('dd', { text })]
+    balloon.replaceChildren(
+      el('p', {}, el('strong', { text: b.repo + ' · ' + b.branch })),
+      el('dl', {},
+        ...row('When', b.stretches.map((s) => clock(s.start) + '–' + clock(s.end) + (s.measured ? '' : ' (~)')).join(', ')),
+        ...row('Before rounding', hours(b.measuredMinutes / 60) + ' measured, ~' + hours(b.estimatedMinutes / 60) + ' estimated'),
+        ...row('In', b.folders.join(', '))))
+    balloon.setAttribute('aria-label', 'When and where ' + b.branch + ' was worked on')
+    const head = button.closest('.activity-entry')
+    balloon.style.top = (head.offsetTop + head.offsetHeight + 4) + 'px'
+    balloon.hidden = false
+    button.setAttribute('aria-expanded', 'true')
+  }
+
+  function toggleDayList() {
+    const list = $('activity-days-list')
+    if (!list.hidden) { closeActivityBalloons(); return }
+    closeActivityBalloons()
+    const r = activityView.report
+    if (!r) return
+    const items = []
+    for (let d = r.today; d >= r.earliest; d = shiftDay(d, -1)) {
+      const date = d
+      items.push(el('li', { role: 'none' }, el('button', { type: 'button', role: 'menuitem', text: dayChoice(date, r.today),
+        'aria-current': date === r.day.date ? 'date' : null,
+        onclick: () => { closeActivityBalloons(); showActivityDay(date === r.today ? '' : date); $('activity-day').focus() } })))
+    }
+    list.replaceChildren(...items)
+    list.hidden = false
+    $('activity-day').setAttribute('aria-expanded', 'true')
+    const current = list.querySelector('[aria-current="date"]') || list.querySelector('button')
+    if (current) current.focus()
   }
 
   // activityPane is a side of a branch's work: its lines, with a button to copy them, or note when there are none.
@@ -5391,6 +5506,8 @@
     activityView.day = date
     activityView.loaded = false
     activityView.report = null
+    activityView.openKey = null
+    closeActivityBalloons()
     $('activity-list').replaceChildren()
     drawnKeys.delete($('activity-list'))
     drawActivity()
@@ -5400,9 +5517,7 @@
   function stepActivityDay(by) {
     const r = activityView.report
     if (!r) return
-    const d = new Date(r.day.date + 'T12:00:00')
-    d.setDate(d.getDate() + by)
-    const date = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+    const date = shiftDay(r.day.date, by)
     if (date < r.earliest || date > r.today) return
     showActivityDay(date === r.today ? '' : date)
   }
@@ -5418,7 +5533,29 @@
   function setUpActivity() {
     $('activity-prev').addEventListener('click', () => stepActivityDay(-1))
     $('activity-next').addEventListener('click', () => stepActivityDay(1))
-    $('activity-day').addEventListener('click', () => showActivityDay(''))
+    $('activity-day').addEventListener('click', toggleDayList)
+    $('activity-today').addEventListener('click', () => { showActivityDay(''); $('activity-day').focus() })
+    $('activity-help').addEventListener('click', () => {
+      const open = $('activity-help-balloon').hidden
+      closeActivityBalloons()
+      $('activity-help-balloon').hidden = !open
+      $('activity-help').setAttribute('aria-expanded', String(open))
+    })
+    $('activity-hidden-toggle').addEventListener('click', () => { activityView.showHidden = !activityView.showHidden; drawActivity() })
+    // A click outside a balloon or the list of days closes it, as Escape does; one on its own button is that button's to do.
+    document.addEventListener('pointerdown', (ev) => {
+      if (ev.target.closest && ev.target.closest('#activity-help-balloon, #activity-row-balloon, #activity-days-list, #activity-help, #activity-day, .activity-info')) return
+      closeActivityBalloons()
+    })
+    $('panel-activity').addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Escape') return
+      const open = ['activity-help-balloon', 'activity-row-balloon', 'activity-days-list'].find((id) => !$(id).hidden)
+      if (!open) return
+      ev.stopPropagation()
+      closeActivityBalloons()
+      if (open === 'activity-help-balloon') $('activity-help').focus()
+      if (open === 'activity-days-list') $('activity-day').focus()
+    })
     for (const b of $('activity-rounding').querySelectorAll('button')) {
       b.addEventListener('click', async () => {
         const res = await post('/api/activity/rounding', { rounding: b.dataset.rounding })

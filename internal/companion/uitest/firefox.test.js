@@ -1723,25 +1723,29 @@ test('the permission mode beside Send is amber whenever it shows', async () => {
   } finally { await page.close() }
 })
 
-// activityPage opens the Activity tab on a day whose branches have long names, its calls answered here.
-async function activityPage(width) {
+// activityPage opens the Activity tab on a day whose branches have long names (and, with many, enough of them to scroll), its calls
+// answered here.
+async function activityPage(width, many = 0) {
   const page = await browser.newPage({ viewport: { width, height: 900 } })
   await page.route('**/api/state', stateWith(page, { activity: true }))
+  const commits = (n) => Array.from({ length: n }, (_, i) => ':bug: line ' + (i + 1) + ' saying what was done, long enough to need wrapping on a narrow window, and then some')
   const branch = (repo, name, hours, more = {}) => Object.assign({
-    repo, branch: name, hours, commits: [':bug: a line saying what was done on it, long enough to need wrapping on a narrow window, and then some'],
+    repo, branch: name, hours, commits: commits(1),
     folders: ['~/code/' + repo], stretches: [{ start: '2026-11-26T09:10:00Z', end: '2026-11-26T11:40:00Z', measured: true }],
     measuredMinutes: 150, estimatedMinutes: 0,
   }, more)
-  const day = { date: '2026-11-26', hours: 4, branches: [
-    branch('yumbi-web', 'feat/a-branch-name-as-long-as-they-come-in-a-busy-team-with-a-ticket-number-1234', 3),
+  const branches = [
+    branch('yumbi-web', 'feat/a-branch-name-as-long-as-they-come-in-a-busy-team-with-a-ticket-number-1234', 3, { commits: commits(many ? 20 : 1) }),
     branch('a-repository-with-a-long-name-too', 'fix/y', 1, { estimatedMinutes: 30 }),
-  ] }
+  ]
+  for (let i = 0; i < many; i++) branches.push(branch('vibe', 'feat/n' + String(i).padStart(2, '0'), 0.5))
+  const day = { date: '2026-11-26', hours: 4 + many / 2, branches }
   await page.route('**/api/activity', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
     report: { day, today: '2026-11-26', earliest: '2026-11-19', problems: [] }, attention: [], problems: [], rounding: '30m',
     summaries: day.branches.map((b, i) => ({ key: 'k' + i, state: 'ready', bullets: ['what stands out on ' + b.branch + ', said in a line long enough to wrap'] })) }) }))
   await page.goto(URL)
   await page.click('#tab-activity')
-  await page.waitForSelector('.activity-branch summary')
+  await page.waitForSelector('.activity-toggle')
   return page
 }
 
@@ -1749,9 +1753,9 @@ test("each branch's row is one line on the page at every width, a long name cut 
   for (const width of [1400, 800, 420]) {
     const page = await activityPage(width)
     try {
-      const rows = await page.evaluate(() => [...document.querySelectorAll('.activity-branch summary')].map((s) => {
+      const rows = await page.evaluate(() => [...document.querySelectorAll('.activity-head')].map((s) => {
         const r = s.getBoundingClientRect()
-        const kids = [...s.children].map((c) => c.getBoundingClientRect())
+        const kids = [...s.querySelectorAll('.activity-toggle > *, .activity-info')].map((c) => c.getBoundingClientRect())
         return { right: Math.max(...kids.map((k) => k.right)), top: Math.min(...kids.map((k) => k.top)), bottom: Math.max(...kids.map((k) => k.bottom)), height: r.height }
       }))
       const pageWidth = await page.evaluate(() => document.documentElement.clientWidth)
@@ -1762,6 +1766,7 @@ test("each branch's row is one line on the page at every width, a long name cut 
       const hours = await page.locator('.activity-hours').first().boundingBox()
       assert.ok(hours && hours.width > 0, `at ${width}px, the hours aren't shown`)
       // The summary and commits sit side by side where there is room, one over the other where there isn't, never off the page.
+      await page.click('.activity-toggle')
       const [summary, commits] = await page.evaluate(() => [...document.querySelector('.activity-work').children].map((c) => {
         const r = c.getBoundingClientRect()
         return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }
@@ -1771,4 +1776,21 @@ test("each branch's row is one line on the page at every width, a long name cut 
       else assert.ok(commits.top >= summary.bottom, `at ${width}px, the sides overlap: ${JSON.stringify([summary, commits])}`)
     } finally { await page.close() }
   }
+})
+
+test('opening a row below the open one keeps the row clicked where it was on the screen', async () => {
+  const page = await activityPage(1200, 40)
+  try {
+    const toggles = page.locator('.activity-toggle')
+    await toggles.nth(0).click()
+    // Down to a row below the open one's long commits, as reading on would.
+    const target = toggles.nth(30)
+    await target.scrollIntoViewIfNeeded()
+    const before = (await target.boundingBox()).y
+    await target.click()
+    const after = (await target.boundingBox()).y
+    assert.ok(Math.abs(after - before) <= 2, `the row clicked moved from ${before} to ${after}`)
+    assert.equal(await toggles.nth(0).getAttribute('aria-expanded'), 'false', 'the first row closed')
+    assert.equal(await target.getAttribute('aria-expanded'), 'true')
+  } finally { await page.close() }
 })

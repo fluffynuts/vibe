@@ -447,27 +447,39 @@
     </section>
 
     <section id="panel-activity" class="panel panel-activity" hidden>
-      <div class="bar">
-        <button type="button" id="activity-prev" class="ghost" aria-label="The day before" title="The day before">&lt;</button>
-        <button type="button" id="activity-day" class="ghost activity-day" title="Back to today">Today</button>
-        <button type="button" id="activity-next" class="ghost" aria-label="The day after" title="The day after">&gt;</button>
-        <div class="seg" id="activity-rounding" role="group" aria-label="Round each branch's time to the nearest">
+      <div class="bar activity-bar">
+        <div class="seg activity-days" role="group" aria-label="Day">
+          <button type="button" id="activity-prev" aria-label="The day before" title="The day before">&larr;</button>
+          <button type="button" id="activity-day" class="activity-day" aria-haspopup="menu" aria-expanded="false" aria-controls="activity-days-list" title="Choose a day">Today</button>
+          <button type="button" id="activity-next" aria-label="The day after" title="The day after">&rarr;</button>
+        </div>
+        <button type="button" id="activity-today" class="linklike" hidden>Return to today</button>
+        <div class="seg" id="activity-rounding" role="group" aria-label="Round the day's time to the nearest">
           <button type="button" data-rounding="15m" aria-pressed="false">15 min</button>
           <button type="button" data-rounding="30m" aria-pressed="false">½ hour</button>
           <button type="button" data-rounding="1h" aria-pressed="false">1 hour</button>
         </div>
+        <button type="button" id="activity-help" class="choice-info" aria-expanded="false" aria-controls="activity-help-balloon"
+          aria-label="How the Activity tab counts time" title="How the time is counted">i</button>
         <span class="spacer"></span>
         <span id="activity-total" class="muted"></span>
       </div>
-      <p class="note muted">How the day's time split between repositories and branches, in every folder vibe has opened: measured while vibe's page ran, estimated (~) from git's record otherwise. The day's time is rounded to the nearest step chosen and shared between its branches in whole steps, the steps left over going to the branches with the most left over: no branch is more than a step off, and small tasks don't lose the day their sum. Switching to a branch, or pulling it, counts only when work follows. Branches worked on at once each count in full. Each branch's commits are summarised by a sandbox's Claude, under the rules in <code>~/.vibe/activity/summary-rules.md</code>.</p>
+      <ul id="activity-days-list" class="activity-days-list" role="menu" aria-label="Days" hidden></ul>
+      <div id="activity-help-balloon" class="status-balloon activity-balloon" role="dialog" aria-label="How the Activity tab counts time" hidden>
+        <p>How the day's time split between repositories and branches, in every folder vibe has opened: measured while vibe's page ran, estimated (~) from git's record otherwise.</p>
+        <p>The day's time is rounded to the nearest step chosen and shared between its branches in whole steps, the steps left over going to the branches with the most left over: no branch is more than a step off, and small tasks don't lose the day their sum. Switching to a branch, or pulling it, counts only when work follows. Branches worked on at once each count in full.</p>
+        <p>Each branch's commits are summarised by a sandbox's Claude, under the rules in <code>~/.vibe/activity/summary-rules.md</code>.</p>
+      </div>
+      <div id="activity-row-balloon" class="status-balloon activity-balloon" role="dialog" hidden></div>
       <p id="activity-wait" class="note muted">Reading git in the folders vibe has opened…</p>
       <ul id="activity-problems" class="note bad-text activity-problems" hidden></ul>
       <section class="card activity-attention" id="activity-attention" aria-labelledby="activity-attention-h" hidden>
-        <h2 id="activity-attention-h">Needs attention <span class="muted activity-now">now, whichever day is shown</span></h2>
+        <h2 id="activity-attention-h">Needs attention</h2>
         <ul id="activity-attention-list"></ul>
       </section>
       <p id="activity-none" class="note muted" hidden>Nothing was worked on this day in the folders vibe has opened.</p>
       <div id="activity-list" class="activity-list"></div>
+      <p id="activity-hidden" class="note muted" hidden><span id="activity-hidden-text"></span> <button type="button" id="activity-hidden-toggle" class="linklike">show</button></p>
     </section>
 
     <section id="panel-manage" class="panel panel-manage" hidden>

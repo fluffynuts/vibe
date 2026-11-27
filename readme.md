@@ -763,13 +763,17 @@ restarts, as for files). Colours follow the theme, and what is copied is the cod
   `activityRounding` in `~/.vibe/settings.yaml`) and shared between the branches in whole steps, the steps left over going to
   those with the most left over, so no branch is more than a step off and small tasks don't lose the day their sum. Switching to
   a branch, or pulling it, counts only when work follows; branches worked on at once each
-  count in full, and the bars show each one's share. Under each branch, side by side, are a **Summary** of its day in 1 to 3
+  count in full, and the bars show each one's share. The rows start closed, and one opens at a time: click a branch to see, side
+  by side, a **Summary** of its day in 1 to 3
   lines and its **Commits** (yours, authored that day, with "merged master" and "rebased onto master" for those, `:bug:` codes
   drawn as emoji), each with a copy button. The summary is made by a one-shot Claude in the sandbox of the page you're on, without
   being asked, the first time a day's commits are shown and whenever they change; only the commits' first lines are sent, and
   summaries are kept in `~/.vibe/activity/summaries/`, shared by every vibe (one summarises at a time; the others say which). Its
-  rules are yours to edit, in `~/.vibe/activity/summary-rules.md`. A branch's row opens to show when it was worked on. `<` and `>`
-  step through the last week. **Needs attention** lists, as things are now, folders with
+  rules are yours to edit, in `~/.vibe/activity/summary-rules.md`. A closed row says when its summary is being made, or failed.
+  A row's **(i)** shows when it was worked on, and where. A branch with no time once rounded and no commits is hidden, behind a
+  line that shows it. The arrows step through the last week, and the date between them opens a list of the days kept; **Return
+  to today** shows on any other day. The **(i)** by the step buttons explains how the time is counted. On today, **Needs
+  attention** lists, as things are now, folders with
   uncommitted changes and branches with commits not pushed, asking GitHub (with this machine's `gh`) before saying so, as the
   local copy of a branch on GitHub can be out of date.
 - **Admin** — what `vibe --info` shows of the sandbox, and what you'd otherwise go to a terminal for:

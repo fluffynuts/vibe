@@ -42,47 +42,52 @@ async function pageWith({ days = { '': today }, attention = [], problems = [], s
   return p
 }
 
-const rows = (p) => [...p.$('activity-list').querySelectorAll('summary')].map((s) => [...s.children].map((c) => c.textContent).filter(Boolean).join(' | '))
+const rows = (p) => [...p.$('activity-list').querySelectorAll('.activity-toggle')].map((s) => [...s.children].map((c) => c.textContent.trim()).filter(Boolean).join(' | '))
+const entry = (p, i) => p.$('activity-list').querySelectorAll('.activity-entry')[i]
+const open = (p, i) => p.click(entry(p, i).querySelector('.activity-toggle'))
+const panes = (p, i) => [...entry(p, i).querySelectorAll('.activity-pane')]
+const lines = (pane) => [...pane.querySelectorAll('li')].map((li) => li.textContent)
 
-test('the tab shows each branch with its rounded hours, share of the day and what was done', async () => {
+test('the rows start closed: each branch with its rounded hours and share of the day', async () => {
   const p = await pageWith()
   try {
     assert.equal(p.$('tab-activity').hidden, false)
     assert.equal(p.$('panel-activity').hidden, false)
-    assert.equal(p.$('activity-day').textContent, 'Today')
     assert.equal(p.$('activity-total').textContent, 'total 6.5')
     assert.deepEqual(rows(p), [
       'phoenix | fix/some-bug | 2.5 | 38%',
       'yumbi-web | feat/some-new-feature | 3.0 | 46%',
       'yumbi-web | feat/some-other-feature | 1.0 | 15% | ~estimated',
     ])
+    assert.equal(p.$('activity-list').querySelectorAll('.activity-pane').length, 0, 'no summary or commits until a row is opened')
+    for (const t of p.$('activity-list').querySelectorAll('.activity-toggle')) assert.equal(t.getAttribute('aria-expanded'), 'false')
     assert.equal(p.$('activity-copy'), null, 'the day-wide Copy is gone: time is logged per branch')
-    assert.equal(p.$('activity-none').hidden, true)
   } finally { p.close() }
 })
 
-test('a branch opens to show when it was worked on, measured and estimated, and in which folders', async () => {
-  const p = await pageWith()
+test('opening a row shows its summary and commits; opening another closes it', async () => {
+  const p = await pageWith({ summaries: () => [ready('k1', 'fixed the root cause'), ready('k2', 'new search button'), ready('k3', 'kept up')] })
   try {
-    const more = p.$('activity-list').querySelectorAll('details')[2].querySelector('.activity-more').textContent
-    assert.match(more, /When: \d\d:\d\d( [AP]M)?–\d\d:\d\d( [AP]M)?Before/)
-    assert.match(more, /Before rounding: 2\.5 measured, ~0\.67 estimated/)
-    assert.match(more, /In: ~\/code\/yumbi-web/)
+    await open(p, 0)
+    assert.equal(entry(p, 0).querySelector('.activity-toggle').getAttribute('aria-expanded'), 'true')
+    assert.deepEqual(lines(panes(p, 0)[0]), ['fixed the root cause'])
+    await open(p, 1)
+    assert.equal(panes(p, 0).length, 0, 'the first row closed')
+    assert.deepEqual(lines(panes(p, 1)[0]), ['new search button'])
+    await open(p, 1)
+    assert.equal(p.$('activity-list').querySelectorAll('.activity-pane').length, 0, 'clicking the open row closes it')
   } finally { p.close() }
 })
-
-const panes = (p, i) => [...p.$('activity-list').querySelectorAll('.activity-entry')[i].querySelectorAll('.activity-pane')]
-const lines = (pane) => [...pane.querySelectorAll('li')].map((li) => li.textContent)
 
 test("each branch's summary and commits are side by side, the commits' :emoji: codes drawn as emoji", async () => {
   const p = await pageWith({ summaries: () => [ready('k1', 'fixed the root cause'), ready('k2', 'new search button', 'prepare PR for review'), ready('k3', 'kept up with master')] })
   try {
+    await open(p, 0)
     const [summary, commits] = panes(p, 0)
     assert.equal(summary.querySelector('h3').textContent, 'Summary')
     assert.deepEqual(lines(summary), ['fixed the root cause'])
     assert.equal(commits.querySelector('h3').textContent, 'Commits')
     assert.deepEqual(lines(commits), ['🐛 fix the root cause of the issue', ':nosuchemoji: kept as written'])
-    assert.deepEqual(lines(panes(p, 1)[0]), ['new search button', 'prepare PR for review'])
   } finally { p.close() }
 })
 
@@ -91,6 +96,7 @@ test('each side copies its own lines as bullets, with emoji as shown', async () 
   const p = await pageWith({ summaries: () => [ready('k1', 'fixed the root cause'), ready('k2', 'x'), ready('k3', 'y')] })
   try {
     Object.defineProperty(p.window.navigator, 'clipboard', { value: { writeText: async (t) => { copied = t } }, configurable: true })
+    await open(p, 0)
     const [summary, commits] = panes(p, 0)
     await p.click(summary.querySelector('button.copy-code'))
     assert.equal(copied, '- fixed the root cause\n')
@@ -99,48 +105,160 @@ test('each side copies its own lines as bullets, with emoji as shown', async () 
   } finally { p.close() }
 })
 
+test("a row's (i) shows when and where it was worked on, without opening the row", async () => {
+  const p = await pageWith()
+  try {
+    const info = entry(p, 2).querySelector('.activity-info')
+    await p.click(info)
+    const balloon = p.$('activity-row-balloon')
+    assert.equal(balloon.hidden, false)
+    assert.equal(info.getAttribute('aria-expanded'), 'true')
+    assert.match(balloon.textContent, /yumbi-web · feat\/some-other-feature/)
+    assert.match(balloon.textContent, /When\d\d:\d\d( [AP]M)?–\d\d:\d\d/)
+    assert.match(balloon.textContent, /Before rounding2\.5 measured, ~0\.67 estimated/)
+    assert.match(balloon.textContent, /In~\/code\/yumbi-web/)
+    assert.equal(panes(p, 2).length, 0, 'the row stays closed')
+    await p.click(info)
+    assert.equal(balloon.hidden, true, 'its (i) again closes it')
+  } finally { p.close() }
+})
+
+test('the help is in a balloon from the (i) in the bar, closed by the (i), Escape or a click elsewhere', async () => {
+  const p = await pageWith()
+  try {
+    const help = p.$('activity-help-balloon')
+    assert.equal(help.hidden, true)
+    await p.click('activity-help')
+    assert.equal(help.hidden, false)
+    assert.match(help.textContent, /rounded to the nearest step/)
+    await p.click('activity-help')
+    assert.equal(help.hidden, true)
+    await p.click('activity-help')
+    p.$('activity-total').dispatchEvent(new p.window.Event('pointerdown', { bubbles: true }))
+    assert.equal(help.hidden, true, 'a click elsewhere closes it')
+    await p.click('activity-help')
+    help.dispatchEvent(new p.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    assert.equal(help.hidden, true, 'Escape closes it')
+  } finally { p.close() }
+})
+
+test("a row with no time once rounded and no commits is hidden, behind a line that shows it", async () => {
+  const day = { date: '2026-11-26', hours: 1, branches: [
+    branch('vibe', 'master', 0), branch('vibe', 'feat/x', 1, ['work']), branch('vibe', 'fix/quick', 0, ['a quick fix']),
+  ] }
+  const p = await pageWith({ days: { '': day } })
+  try {
+    assert.deepEqual(rows(p).map((r) => r.split(' | ')[1]), ['feat/x', 'fix/quick'], 'a short branch with commits still shows')
+    assert.equal(p.$('activity-hidden').hidden, false)
+    assert.match(p.$('activity-hidden').textContent, /1 hidden: no time once rounded, and no commits\. show/)
+    await p.click('activity-hidden-toggle')
+    assert.deepEqual(rows(p).map((r) => r.split(' | ')[1]), ['master', 'feat/x', 'fix/quick'])
+    assert.equal(p.$('activity-hidden-toggle').textContent, 'hide')
+  } finally { p.close() }
+})
+
+test('the date shows in the bar; Return to today shows only on another day; the date opens a list of the days kept', async () => {
+  const yesterday = { date: '2026-11-25', hours: 0, branches: [] }
+  const days = { '': today }
+  for (let d = 19; d <= 25; d++) days['2026-11-' + d] = { date: '2026-11-' + d, hours: 0, branches: [] }
+  days['2026-11-25'] = yesterday
+  const p = await pageWith({ days })
+  try {
+    assert.match(p.$('activity-day').textContent, /Thursday/)
+    assert.match(p.$('activity-day').textContent, /26/)
+    assert.equal(p.$('activity-today').hidden, true, 'no Return to today on today')
+    assert.equal(p.$('activity-next').disabled, true)
+    await p.click('activity-prev')
+    assert.match(p.$('activity-day').textContent, /Wednesday/)
+    assert.equal(p.$('activity-today').hidden, false)
+    assert.equal(p.$('activity-none').hidden, false)
+    await p.click('activity-today')
+    assert.match(p.$('activity-day').textContent, /Thursday/)
+    assert.equal(p.$('activity-today').hidden, true)
+    await p.click('activity-day')
+    const list = p.$('activity-days-list')
+    assert.equal(list.hidden, false)
+    const items = [...list.querySelectorAll('button')]
+    assert.equal(items.length, 8, 'today and the week before it')
+    assert.equal(items[0].textContent, 'Today')
+    assert.equal(items[1].textContent, 'Yesterday')
+    assert.equal(items[0].getAttribute('aria-current'), 'date')
+    await p.click(items[7])
+    assert.equal(list.hidden, true)
+    assert.ok(p.calls.some((c) => c.path === '/api/activity' && c.query === '?day=2026-11-19'), 'asked for the day chosen')
+    assert.equal(p.$('activity-prev').disabled, true, 'no going past the week kept')
+  } finally { p.close() }
+})
+
+test('needs attention shows on today only, saying when GitHub is being asked', async () => {
+  const attention = [
+    { folder: '~/code/yumbi', branch: 'feat/x', what: 'uncommitted changes: please commit and push' },
+    { folder: '~/code/phoenix', branch: 'fix/y', what: '3 commits not pushed', checking: true },
+  ]
+  const p = await pageWith({ attention, problems: ["couldn't read git in ~/code/broken: it is damaged"], days: { '': today, '2026-11-25': { date: '2026-11-25', hours: 0, branches: [] } } })
+  try {
+    assert.equal(p.$('activity-attention').hidden, false)
+    assert.equal(p.$('activity-attention-h').textContent, 'Needs attention')
+    const items = [...p.$('activity-attention-list').querySelectorAll('li')].map((li) => li.textContent)
+    assert.deepEqual(items, ['~/code/yumbi (feat/x): uncommitted changes: please commit and push', '~/code/phoenix (fix/y): 3 commits not pushed (checking with GitHub…)'])
+    assert.match(p.$('activity-problems').textContent, /it is damaged/)
+    await p.click('activity-prev')
+    assert.equal(p.$('activity-attention').hidden, true, 'not on another day')
+  } finally { p.close() }
+})
+
+test('a closed row says while its summary is being made, or that it failed', async () => {
+  const p = await pageWith({ summaries: () => [{ key: 'k1', state: 'pending' }, { key: 'k2', state: 'failed', why: 'signed out' }, { key: 'k3', state: 'none' }] })
+  try {
+    assert.match(rows(p)[0], /summarising…/)
+    assert.match(rows(p)[1], /⚠ no summary/)
+  } finally { p.close() }
+})
+
 test('the summary says while it is being made, here or on another vibe, and the tab asks again soon', async () => {
   let state = [{ key: 'k1', state: 'pending' }, { key: 'k2', state: 'elsewhere', holder: 'yumbi' }, { key: 'k3', state: 'none' }]
   const p = await pageWith({ summaries: () => state })
   try {
-    assert.equal(panes(p, 0)[0].textContent.includes('Summarising…'), true)
+    await open(p, 1)
     assert.match(panes(p, 1)[0].textContent, /Activity is being summarised on the yumbi vibe, and will appear here shortly\./)
+    await open(p, 2)
     assert.match(panes(p, 2)[0].textContent, /No commits to summarise/)
+    await open(p, 0)
+    assert.equal(panes(p, 0)[0].textContent.includes('Summarising…'), true)
     assert.equal(panes(p, 0)[0].querySelector('button.copy-code'), null, 'nothing to copy yet')
     state = [ready('k1', 'done now'), ready('k2', 'and here'), { key: 'k3', state: 'none' }]
     const realNow = p.window.Date.now
     p.window.Date.now = () => realNow() + 3500
     await p.poll()
     assert.deepEqual(lines(panes(p, 0)[0]), ['done now'], 'not asked again within a few seconds')
+    assert.equal(entry(p, 0).querySelector('.activity-toggle').getAttribute('aria-expanded'), 'true', 'the open row stays open across a poll')
+  } finally { p.close() }
+})
+
+test('a poll that brings the same day leaves the rows as they are, the open one open', async () => {
+  const p = await pageWith()
+  try {
+    await open(p, 1)
+    const row = entry(p, 1)
+    const realNow = p.window.Date.now
+    p.window.Date.now = () => realNow() + 60000
+    await p.poll()
+    assert.equal(entry(p, 1), row, 'the rows were drawn again')
+    assert.equal(row.querySelector('.activity-toggle').getAttribute('aria-expanded'), 'true')
   } finally { p.close() }
 })
 
 test('a summary that failed says why, and Retry asks for it again', async () => {
   const p = await pageWith({ summaries: () => [{ key: 'k1', state: 'failed', why: "the agent isn't signed in" }, { key: 'k2', state: 'unavailable', why: 'Commit summaries are only shown for Claude agents.' }, { key: 'k3', state: 'none' }] })
   try {
-    assert.match(panes(p, 0)[0].textContent, /Couldn't summarise: the agent isn't signed in/)
+    await open(p, 1)
     assert.match(panes(p, 1)[0].textContent, /only shown for Claude agents/)
+    await open(p, 0)
+    assert.match(panes(p, 0)[0].textContent, /Couldn't summarise: the agent isn't signed in/)
     const before = p.calls.filter((c) => c.path === '/api/activity').length
     await p.click(p.button('Retry', panes(p, 0)[0]))
     assert.equal(p.kept.retried, 'k1')
     assert.equal(p.calls.filter((c) => c.path === '/api/activity').length, before + 1)
-  } finally { p.close() }
-})
-
-test('the arrows step through the days kept, and the day returns to today', async () => {
-  const yesterday = { date: '2026-11-25', hours: 0, branches: [] }
-  const p = await pageWith({ days: { '': today, '2026-11-25': yesterday } })
-  try {
-    assert.equal(p.$('activity-next').disabled, true, "there's no going past today")
-    await p.click('activity-prev')
-    assert.equal(p.$('activity-day').textContent, 'Yesterday')
-    assert.equal(p.$('activity-none').hidden, false)
-    assert.equal(p.$('activity-next').disabled, false)
-    await p.click('activity-day')
-    assert.equal(p.$('activity-day').textContent, 'Today')
-    assert.equal(rows(p).length, 3)
-    const asked = p.calls.filter((c) => c.path === '/api/activity').map((c) => c.query)
-    assert.ok(asked.includes('?day=2026-11-25'), 'asked for ' + JSON.stringify(asked))
   } finally { p.close() }
 })
 
@@ -154,34 +272,6 @@ test('the rounding chosen is shown, and choosing another keeps it and reads the 
     assert.deepEqual(p.sent('/api/activity/rounding'), [{ rounding: '15m' }])
     assert.deepEqual(pressed(), ['15m'])
     assert.equal(p.calls.filter((c) => c.path === '/api/activity').length, before + 1)
-  } finally { p.close() }
-})
-
-test('needs attention lists what wants doing now, saying when GitHub is being asked', async () => {
-  const attention = [
-    { folder: '~/code/yumbi', branch: 'feat/x', what: 'uncommitted changes: please commit and push' },
-    { folder: '~/code/phoenix', branch: 'fix/y', what: '3 commits not pushed', checking: true },
-  ]
-  const p = await pageWith({ attention, problems: ["couldn't read git in ~/code/broken: it is damaged"] })
-  try {
-    assert.equal(p.$('activity-attention').hidden, false)
-    const items = [...p.$('activity-attention-list').querySelectorAll('li')].map((li) => li.textContent)
-    assert.deepEqual(items, ['~/code/yumbi (feat/x): uncommitted changes: please commit and push', '~/code/phoenix (fix/y): 3 commits not pushed (checking with GitHub…)'])
-    assert.equal(p.$('activity-problems').hidden, false)
-    assert.match(p.$('activity-problems').textContent, /it is damaged/)
-  } finally { p.close() }
-})
-
-test('a poll that brings the same day leaves the rows as they are, an opened one open', async () => {
-  const p = await pageWith()
-  try {
-    const first = p.$('activity-list').querySelector('details')
-    first.open = true
-    first.dispatchEvent(new p.window.Event('toggle'))
-    p.window.Date.now = ((now) => () => now() + 60000)(p.window.Date.now)
-    await p.poll()
-    assert.equal(p.$('activity-list').querySelector('details'), first, 'the rows were drawn again')
-    assert.equal(first.open, true)
   } finally { p.close() }
 })
 
