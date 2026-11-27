@@ -26,18 +26,21 @@ test('there are enough of them, and each has a name and a character', () => {
   for (const e of all) assert.ok(e.name && e.char, JSON.stringify(e))
 })
 
-test('what starts with the query comes first, shortest first', () => {
-  const found = emoji.find('smi').map((e) => e.name)
+test('what starts with the query comes first, shortest first among the usual ones, then among the rest', () => {
+  const found = emoji.find('smi')
   assert.ok(found.length > 1)
-  assert.equal(found[0], 'smile')
-  const starts = found.filter((n) => n.startsWith('smi'))
+  assert.equal(found[0].name, 'smile')
+  const starts = found.filter((e) => e.name.startsWith('smi'))
   assert.deepEqual(found.slice(0, starts.length), starts, 'a name that only has it inside came before one that starts with it')
-  for (let i = 1; i < starts.length; i++) assert.ok(starts[i - 1].length <= starts[i].length)
+  const usual = starts.filter((e) => emoji.usual(e.name))
+  assert.deepEqual(starts.slice(0, usual.length), usual, 'a rarer one came before a usual one')
+  for (const group of [usual, starts.slice(usual.length)]) {
+    for (let i = 1; i < group.length; i++) assert.ok(group[i - 1].name.length <= group[i].name.length)
+  }
 })
 
 test('a name with the query inside it is found, after those that start with it', () => {
   const found = emoji.find('rock').map((e) => e.name)
-  assert.equal(found[0], 'rocket')
   assert.ok(found.includes('shamrock'))
   assert.ok(found.indexOf('rocket') < found.indexOf('shamrock'))
 })
@@ -275,4 +278,102 @@ test('typing :D or :P or :O, the emoticon is the first thing offered', () => {
   assert.equal(emoji.find('O')[0].char, '😮')
   assert.equal(emoji.find('d', 8).filter((e) => e.name === 'grinning').length, 1, 'listed twice')
   assert.equal(emoji.find('ro')[0].emoticon, undefined, 'a name that is not an emoticon got one')
+})
+
+// Every gitmoji (gitmoji.dev, as commit subjects use them: :alembic:, :lipstick:) has its emoji, as the commits and the conversation
+// draw them; the list as gitmoji had it on 2026-11-27.
+const GITMOJI = [
+  ['art', '🎨'],
+  ['zap', '⚡️'],
+  ['fire', '🔥'],
+  ['bug', '🐛'],
+  ['ambulance', '🚑️'],
+  ['sparkles', '✨'],
+  ['memo', '📝'],
+  ['rocket', '🚀'],
+  ['lipstick', '💄'],
+  ['tada', '🎉'],
+  ['white_check_mark', '✅'],
+  ['lock', '🔒️'],
+  ['closed_lock_with_key', '🔐'],
+  ['bookmark', '🔖'],
+  ['rotating_light', '🚨'],
+  ['construction', '🚧'],
+  ['green_heart', '💚'],
+  ['arrow_down', '⬇️'],
+  ['arrow_up', '⬆️'],
+  ['pushpin', '📌'],
+  ['construction_worker', '👷'],
+  ['chart_with_upwards_trend', '📈'],
+  ['recycle', '♻️'],
+  ['heavy_plus_sign', '➕'],
+  ['heavy_minus_sign', '➖'],
+  ['wrench', '🔧'],
+  ['hammer', '🔨'],
+  ['globe_with_meridians', '🌐'],
+  ['pencil2', '✏️'],
+  ['poop', '💩'],
+  ['rewind', '⏪️'],
+  ['twisted_rightwards_arrows', '🔀'],
+  ['package', '📦️'],
+  ['alien', '👽️'],
+  ['truck', '🚚'],
+  ['page_facing_up', '📄'],
+  ['boom', '💥'],
+  ['bento', '🍱'],
+  ['wheelchair', '♿️'],
+  ['bulb', '💡'],
+  ['beers', '🍻'],
+  ['speech_balloon', '💬'],
+  ['card_file_box', '🗃️'],
+  ['loud_sound', '🔊'],
+  ['mute', '🔇'],
+  ['busts_in_silhouette', '👥'],
+  ['children_crossing', '🚸'],
+  ['building_construction', '🏗️'],
+  ['iphone', '📱'],
+  ['clown_face', '🤡'],
+  ['egg', '🥚'],
+  ['see_no_evil', '🙈'],
+  ['camera_flash', '📸'],
+  ['alembic', '⚗️'],
+  ['mag', '🔍️'],
+  ['label', '🏷️'],
+  ['seedling', '🌱'],
+  ['triangular_flag_on_post', '🚩'],
+  ['goal_net', '🥅'],
+  ['dizzy', '💫'],
+  ['wastebasket', '🗑️'],
+  ['passport_control', '🛂'],
+  ['adhesive_bandage', '🩹'],
+  ['monocle_face', '🧐'],
+  ['coffin', '⚰️'],
+  ['test_tube', '🧪'],
+  ['necktie', '👔'],
+  ['stethoscope', '🩺'],
+  ['bricks', '🧱'],
+  ['technologist', '🧑‍💻'],
+  ['money_with_wings', '💸'],
+  ['thread', '🧵'],
+  ['safety_vest', '🦺'],
+  ['airplane', '✈️'],
+  ['t-rex', '🦖']
+
+]
+
+test('every gitmoji code has its emoji', () => {
+  const missing = GITMOJI.filter(([name, char]) => emoji.named(name).replace(/\uFE0F/g, '') !== char.replace(/\uFE0F/g, '')).map(([name]) => name)
+  assert.deepEqual(missing, [])
+})
+
+test('the newer and less usual emoji have their names too, as GitHub names them', () => {
+  assert.equal(emoji.named('saluting_face'), '🫡')
+  assert.equal(emoji.named('alembic'), '⚗️')
+  assert.equal(emoji.named('t-rex'), '🦖')
+  assert.equal(emoji.named('south_africa'), '🇿🇦')
+})
+
+test('the usual emoji come before the rarer ones that start the same, but a name typed in full comes first', () => {
+  assert.deepEqual(emoji.find('roc', 2).map((e) => e.name), ['rocket', 'rock'], 'rocket is usual; rock (🪨) is from the rest')
+  assert.equal(emoji.find('rock', 1)[0].name, 'rock')
 })
