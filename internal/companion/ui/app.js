@@ -6086,6 +6086,57 @@
     post('/api/activity/seen', {}).catch(() => {})
   }
 
+  // --- The splitter between the conversation and the clipboard: dragged, or moved with the arrow keys (Home and End for the
+  // least and the most), it shares the width, each side keeping at least a fifth; double-clicked, it puts back the usual share.
+  // The share is the conversation's, in percent, kept for the page.
+  const CONVO_SHARE = 'vibe-convo-share'
+  const CONVO_SHARE_USUAL = 67
+  const CONVO_SHARE_LEAST = 20
+  const CONVO_SHARE_MOST = 80
+  const CONVO_SHARE_STEP = 5
+
+  function setUpSplitter() {
+    const splitter = $('convo-splitter')
+    const layout = splitter.parentElement
+    let share = CONVO_SHARE_USUAL
+    const apply = (to, keep) => {
+      share = Math.round(Math.min(CONVO_SHARE_MOST, Math.max(CONVO_SHARE_LEAST, to)))
+      layout.style.setProperty('--convo-fr', share + 'fr')
+      layout.style.setProperty('--clip-fr', (100 - share) + 'fr')
+      splitter.setAttribute('aria-valuenow', String(share))
+      splitter.setAttribute('aria-valuetext', 'The conversation has ' + share + '% of the width')
+      if (keep) store.set(CONVO_SHARE, String(share))
+    }
+    const kept = Number(store.get(CONVO_SHARE))
+    apply(kept >= CONVO_SHARE_LEAST && kept <= CONVO_SHARE_MOST ? kept : CONVO_SHARE_USUAL, false)
+    splitter.addEventListener('pointerdown', (ev) => {
+      if (ev.button !== 0) return
+      ev.preventDefault()
+      splitter.setPointerCapture(ev.pointerId)
+      layout.classList.add('splitting')
+    })
+    splitter.addEventListener('pointermove', (ev) => {
+      if (!splitter.hasPointerCapture(ev.pointerId)) return
+      const box = layout.getBoundingClientRect()
+      apply(100 * (ev.clientX - box.left) / box.width, false)
+    })
+    const done = (ev) => {
+      if (!layout.classList.contains('splitting')) return
+      if (splitter.hasPointerCapture(ev.pointerId)) splitter.releasePointerCapture(ev.pointerId)
+      layout.classList.remove('splitting')
+      apply(share, true)
+    }
+    splitter.addEventListener('pointerup', done)
+    splitter.addEventListener('pointercancel', done)
+    splitter.addEventListener('dblclick', () => apply(CONVO_SHARE_USUAL, true))
+    splitter.addEventListener('keydown', (ev) => {
+      const to = { ArrowLeft: share - CONVO_SHARE_STEP, ArrowRight: share + CONVO_SHARE_STEP, Home: CONVO_SHARE_LEAST, End: CONVO_SHARE_MOST }[ev.key]
+      if (to == null) return
+      ev.preventDefault()
+      apply(to, true)
+    })
+  }
+
   function setUpActivity() {
     $('activity-prev').addEventListener('click', () => activityView.mode === 'week' ? stepActivityWeek(-1) : stepActivityDay(-1))
     $('activity-next').addEventListener('click', () => activityView.mode === 'week' ? stepActivityWeek(1) : stepActivityDay(1))
@@ -10074,6 +10125,7 @@
   }
   setUpManage()
   setUpActivity()
+  setUpSplitter()
 
   // Out of sight, the next time in view asks to keep the sandbox awake at
   // once, rather than when the last ask is old enough.

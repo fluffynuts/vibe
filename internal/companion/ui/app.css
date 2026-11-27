@@ -15,6 +15,7 @@
   --ok: #1a7f37;
   --bad: #cf222e;
   --amber: #9a6700;
+  --splitter: #111111;
   --git-untracked: #0b7bb5;
   --warn-bg: #fff4d6;
   --warn-line: #e0b84a;
@@ -44,6 +45,7 @@
     --ok: #7ad06f;
     --bad: #f47067;
     --amber: #e3b341;
+    --splitter: #eeeeee;
     --git-untracked: #79c0ff;
     --warn-bg: #3a3012;
     --warn-line: #7a6420;
@@ -70,6 +72,7 @@
   --ok: #7ad06f;
   --bad: #f47067;
   --amber: #e3b341;
+  --splitter: #eeeeee;
   --git-untracked: #79c0ff;
   --warn-bg: #3a3012;
   --warn-line: #7a6420;
@@ -156,7 +159,16 @@ body {
 .panel { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
 main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .panel-conversation { padding-bottom: 0; }
-.convo-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 2fr 1fr; gap: 16px; padding-bottom: 16px; }
+.convo-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, var(--convo-fr, 2fr)) 16px minmax(0, var(--clip-fr, 1fr));
+  padding-bottom: 16px; }
+/* The splitter is the gap between the two: nothing shows until the pointer is over it (or it has the keyboard, or is dragged). */
+.convo-splitter { position: relative; cursor: col-resize; touch-action: none; outline: none; }
+.convo-splitter::after { content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 4px; margin-left: -2px; border-radius: 2px;
+  background: var(--splitter); opacity: 0; transition: opacity .12s; }
+.convo-splitter:hover::after, .convo-splitter:focus-visible::after, .convo-layout.splitting .convo-splitter::after { opacity: 1; }
+/* While dragging, the clipboard's frame mustn't take the pointer, nor the text be selected. */
+.convo-layout.splitting { cursor: col-resize; user-select: none; }
+.convo-layout.splitting iframe { pointer-events: none; }
 .convo, .convo-clip { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
 .convo-log-wrap { position: relative; flex: 1; min-height: 200px; min-width: 0; display: flex; }
 /* The search sits over the log, not in it, so it stays put as the log scrolls. */
@@ -235,7 +247,8 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .clip-open svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .convo-clip iframe { flex: 1; width: 100%; min-height: 240px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
 @media (max-width: 900px) {
-  .convo-layout { grid-template-columns: 1fr; }
+  .convo-layout { grid-template-columns: 1fr; gap: 16px; }
+  .convo-splitter { display: none; }
   .convo-clip iframe { min-height: 440px; }
 }
 

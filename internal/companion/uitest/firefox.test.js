@@ -680,6 +680,41 @@ async function promptPage(width) {
   return page
 }
 
+test('the splitter shows only under the pointer, and dragging it shares the width, a fifth at least either side, kept for the page', async () => {
+  const page = await promptPage(1400)
+  try {
+    const widths = () => page.evaluate(() => {
+      const w = (sel) => document.querySelector(sel).getBoundingClientRect().width
+      return { convo: w('.convo'), clip: w('.convo-clip'), layout: w('.convo-layout') }
+    })
+    const line = () => page.evaluate(() => getComputedStyle(document.getElementById('convo-splitter'), '::after').opacity)
+    assert.equal(await line(), '0', 'the line shows with the pointer elsewhere')
+    const s = await page.locator('#convo-splitter').boundingBox()
+    assert.ok(s && s.width >= 10, 'the splitter has no width to grab: ' + JSON.stringify(s))
+    await page.mouse.move(s.x + s.width / 2, s.y + 100)
+    await page.waitForFunction(() => getComputedStyle(document.getElementById('convo-splitter'), '::after').opacity === '1')
+    assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('convo-splitter')).cursor), 'col-resize')
+    const before = await widths()
+    assert.ok(Math.abs(before.convo / (before.convo + before.clip) - 2 / 3) < 0.02, 'not two thirds to start with: ' + JSON.stringify(before))
+    await page.mouse.down()
+    // Over the clipboard's frame, which mustn't take the pointer from the drag.
+    const layout = await page.locator('.convo-layout').boundingBox()
+    await page.mouse.move(layout.x + layout.width * 0.4, s.y + 100, { steps: 8 })
+    await page.mouse.up()
+    const after = await widths()
+    assert.ok(Math.abs(after.convo / after.layout - 0.4) < 0.03, 'dragged to 40%, the conversation has ' + JSON.stringify(after))
+    const moved = await page.locator('#convo-splitter').boundingBox()
+    await page.mouse.move(moved.x + moved.width / 2, s.y + 100)
+    await page.mouse.down()
+    await page.mouse.move(layout.x + 20, s.y + 100, { steps: 8 })
+    await page.mouse.up()
+    const least = await widths()
+    assert.ok(Math.abs(least.convo / least.layout - 0.2) < 0.02, 'dragged to the edge, the conversation should keep a fifth: ' + JSON.stringify(least))
+    assert.equal(await page.evaluate(() => localStorage.getItem('vibe-convo-share')), '20')
+    await page.screenshot({ path: '/tmp/convo-splitter.png' })
+  } finally { await page.close() }
+})
+
 // listBox is where the list is, where the prompt is, and how high a line of it is.
 const listBox = (page) => page.evaluate(() => {
   const ta = document.getElementById('convo-input')
