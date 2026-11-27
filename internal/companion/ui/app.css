@@ -798,11 +798,11 @@ dialog.glass::backdrop { background: rgba(250, 250, 250, .55); backdrop-filter: 
 .panel-activity { overflow: auto; position: relative;
   /* Everything right of the name is a fixed width (the bar's by the window's), so the columns line up from the right, under a heading
      and in its indented rows alike. */
-  --activity-columns: minmax(0, 1fr) 1.2em 3em clamp(4em, 24vw, 26em) 2.8em 6em;
+  --activity-columns: minmax(0, 1fr) 1.2em 3.8em clamp(4em, 24vw, 26em) 2.8em 6em;
   --activity-actions: 82px; }
 /* Too narrow for a bar beside a name worth reading: the hours and share say it. */
 @media (max-width: 640px) {
-  .panel-activity { --activity-columns: minmax(0, 1fr) 1.2em 3em 2.8em; }
+  .panel-activity { --activity-columns: minmax(0, 1fr) 1.2em 3.8em 2.8em; }
   .activity-toggle meter, .activity-group-head meter { display: none; }
   /* The name wants the room more: how much was estimated is in the row's (i). */
   .activity-toggle .activity-mark, .activity-group-head .activity-mark { display: none; }

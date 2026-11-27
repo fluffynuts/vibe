@@ -62,11 +62,11 @@ test('the rows start closed: each branch with its rounded hours and share of the
   try {
     assert.equal(p.$('tab-activity').hidden, false)
     assert.equal(p.$('panel-activity').hidden, false)
-    assert.equal(p.$('activity-total').textContent, 'total 9.0')
+    assert.equal(p.$('activity-total').textContent, 'total 9.0h')
     assert.deepEqual(rows(p), [
-      'fix/some-bug | 5.0 | 56%',
-      'feat/some-new-feature | 3.0 | 33%',
-      'feat/some-other-feature | 1.0 | 11% | ~estimated',
+      'fix/some-bug | 5.0h | 56%',
+      'feat/some-new-feature | 3.0h | 33%',
+      'feat/some-other-feature | 1.0h | 11% | ~estimated',
     ])
     assert.equal(p.$('activity-list').querySelectorAll('.activity-pane').length, 0, 'no summary or commits until a row is opened')
     for (const t of p.$('activity-list').querySelectorAll('.activity-toggle')) assert.equal(t.getAttribute('aria-expanded'), 'false')
@@ -124,7 +124,7 @@ test("a row's (i) shows when and where it was worked on, without opening the row
     assert.equal(info.getAttribute('aria-expanded'), 'true')
     assert.match(balloon.textContent, /yumbi-web · feat\/some-other-feature/)
     assert.match(balloon.textContent, /When\d\d:\d\d( [AP]M)?–\d\d:\d\d/)
-    assert.match(balloon.textContent, /Before rounding2\.5 measured, ~0\.67 estimated/)
+    assert.match(balloon.textContent, /Before rounding2\.5h measured, ~0\.67h estimated/)
     assert.match(balloon.textContent, /In~\/code\/yumbi-web/)
     assert.equal(panes(p, 2).length, 0, 'the row stays closed')
     await p.click(info)
@@ -413,7 +413,7 @@ test('branches are grouped by repository, under a heading with its total and sha
   ] }
   const p = await pageWith({ days: { '': day } })
   try {
-    assert.deepEqual(groups(p), ['vibe | 3.5 | 58% | ~estimated', 'phoenix | 1.5 | 25%', 'yumbi-web | 1.0 | 17%'])
+    assert.deepEqual(groups(p), ['vibe | 3.5h | 58% | ~estimated', 'phoenix | 1.5h | 25%', 'yumbi-web | 1.0h | 17%'])
     const inGroup = [...p.$('activity-list').querySelectorAll('.activity-group')].map((g) =>
       [...g.querySelectorAll('.activity-toggle')].map((t) => t.querySelector('.activity-branch-name').textContent))
     assert.deepEqual(inGroup, [['feat/b', 'feat/a', 'feat/c'], ['fix/y'], ['fix/z']], 'branches under their repository, the longest first')

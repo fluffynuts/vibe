@@ -5295,8 +5295,8 @@
     drawActivity()
   }
 
-  // hours is a branch's time as a timesheet takes it: decimal hours, with one decimal at least (3.0, 2.5, 0.25).
-  function hours(n) { return Number.isInteger(n) ? n.toFixed(1) : String(Math.round(n * 100) / 100) }
+  // hours is a branch's time as a timesheet takes it: decimal hours, with one decimal at least, marked as hours (3.0h, 2.5h, 0.25h).
+  function hours(n) { return (Number.isInteger(n) ? n.toFixed(1) : String(Math.round(n * 100) / 100)) + 'h' }
 
   // dayName is a day as the bar shows it: "Thursday, 27 Nov".
   function dayName(date) {
