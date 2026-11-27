@@ -76,7 +76,7 @@ func TestABranchWithOnlyPromptsIsSummarisedFromThem(t *testing.T) {
 	}
 	s.Wait()
 	p := a.prompts[0]
-	for _, want := range []string{`"prompts": [`, `"plan the week view"`, "what the work was"} {
+	for _, want := range []string{`"prompts": [`, `"plan the week view"`, "what the work was", "don't say that there were no commits"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("the prompt doesn't have %q:\n%s", want, p)
 		}
