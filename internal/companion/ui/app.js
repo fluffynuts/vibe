@@ -5325,10 +5325,8 @@
 
   function clock(iso) { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
 
-  // withEmoji draws the :name: codes commit messages carry (gitmoji: :bug:, :memo:) as their emoji; a code that names none stays.
-  function withEmoji(text) {
-    return text.replace(/:([a-z0-9_+-]+):/gi, (code, name) => (window.vibeEmoji && window.vibeEmoji.named(name)) || code)
-  }
+  // withEmoji draws the :name: codes in text (a commit's gitmoji, :bug:, or an agent's message) as their emoji (ui/emoji.js's drawn).
+  function withEmoji(text) { return window.vibeEmoji ? window.vibeEmoji.drawn(text) : text }
 
   // bulletsText is lines as they are pasted somewhere else: a bullet each.
   function bulletsText(lines) { return lines.map((l) => '- ' + l).join('\n') + '\n' }
@@ -6834,7 +6832,7 @@
     // inLink: in a link's text, where a button can't go.
     const inline = (nodes, inLink) => nodes.flatMap((n) => {
       switch (n.type) {
-        case 'text': return inLink ? document.createTextNode(visible(n.text)) : withThreadRefs(visible(n.text))
+        case 'text': return inLink ? document.createTextNode(withEmoji(visible(n.text))) : withThreadRefs(withEmoji(visible(n.text)))
         case 'code': {
           if (inLink || !state.viewFiles) return el('code', { text: visible(n.text) })
           if (looksLikeFile(n.text)) return fileCandidate(n.text)

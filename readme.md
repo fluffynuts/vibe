@@ -658,7 +658,8 @@ restarts, as for files). Colours follow the theme, and what is copied is the cod
   Your prompt is sent exactly as you typed it; only how it's shown changes, so fence pasted console output
   in ``` (and put globs like `*.go` in backticks) to keep it as it is. **My prompts as Markdown**, in the
   Admin tab's **Settings** card, turns that off for your prompts, in that browser, if you'd rather see them as you typed them.
-  Typing a colon and the start of an emoji's name in the prompt, or in a review comment or reply (`:roc`, `:+1`, `:D`) opens a list of the emoji it could be, at the
+  A `:name:` in what the page shows (the agent's messages, yours, review comments) is drawn as its emoji, as GitHub draws them,
+  but never in code, nor one stuck to a word (`a:b:c`). Typing a colon and the start of an emoji's name in the prompt, or in a review comment or reply (`:roc`, `:+1`, `:D`) opens a list of the emoji it could be, at the
   colon: **Tab**, **Enter** or a click puts the emoji in, the arrow keys choose another and **Escape** closes the list, leaving
   what you typed; typing the closing colon of a whole name (`:tada:`) gives the emoji too. A few emoticons become their emoji when
   the word is finished, by a space, Enter or sending: `:D` 😀, `:)` and `(:` 🙂, `:(` 🙁, `:/` 😕, `:P` 😛, `;)` 😉, `:'(` 😢 and

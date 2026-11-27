@@ -377,3 +377,12 @@ test('the usual emoji come before the rarer ones that start the same, but a name
   assert.deepEqual(emoji.find('roc', 2).map((e) => e.name), ['rocket', 'rock'], 'rocket is usual; rock (🪨) is from the rest')
   assert.equal(emoji.find('rock', 1)[0].name, 'rock')
 })
+
+test('drawn turns the :names: in text into their emoji, but not one stuck to a word, nor a name there is no emoji for', () => {
+  assert.equal(emoji.drawn(':bug: fixed it :tada:'), '🐛 fixed it 🎉')
+  assert.equal(emoji.drawn('(:rocket:)'), '(🚀)')
+  assert.equal(emoji.drawn('a:b:c and 12:30:45'), 'a:b:c and 12:30:45')
+  assert.equal(emoji.drawn('done:tada:'), 'done:tada:')
+  assert.equal(emoji.drawn(':not_a_thing: stays'), ':not_a_thing: stays')
+  assert.equal(emoji.drawn(':ROCKET:'), '🚀')
+})

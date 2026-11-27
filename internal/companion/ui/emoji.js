@@ -7,6 +7,8 @@
 //                         start of a word (so 12:30 and http://x aren't one), has a letter in it (or is +1 or -1), has
 //                         no space in it, and isn't inside a `code span`
 //   named(name)           the character a complete name stands for, or ""
+//   drawn(text)           text with each :name: that stands apart (not stuck to a letter or digit either side: a:b:c stays) and
+//                         names an emoji drawn as it, as GitHub draws them; the rest as it is
 //   usual(name)           whether name is one of the usual emoji (hand-picked), which complete before the rarer ones
 //   place(measures)       where the list goes, from how the prompt measured: above the line the colon is on, its left edge
 //                         at the colon and kept inside the box; below the line when there is no room above
@@ -2025,6 +2027,13 @@ wales 🏴󠁧󠁢󠁷󠁬󠁳󠁿
     return { start, query }
   }
 
+  function drawn(text) {
+    return String(text).replace(/(^|[^a-z0-9])(:([a-z0-9_+-]+):)(?![a-z0-9])/gi, (all, before, code, name) => {
+      const char = named(name)
+      return before + (char || code)
+    })
+  }
+
   function usual(name) {
     const e = byName.get(String(name || '').toLowerCase())
     return !!(e && e.usual)
@@ -2062,7 +2071,7 @@ wales 🏴󠁧󠁢󠁷󠁬󠁳󠁿
       : { left, top: caretTop + n(m.caretHeight) + gap, below: true }
   }
 
-  const api = { find, at, named, usual, closing, place, emoticonBefore, count: entries.length }
+  const api = { find, at, named, drawn, usual, closing, place, emoticonBefore, count: entries.length }
   if (typeof module === 'object' && module.exports) module.exports = api
   else root.vibeEmoji = api
 })(this)
