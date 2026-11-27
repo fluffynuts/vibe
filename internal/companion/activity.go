@@ -68,6 +68,12 @@ const activityWithin = 60 * time.Second
 var activityFeature = feature{func(s *Server) bool { return s.cfg.Activity != nil },
 	"this page has no Activity tab", 1 << 10}
 
+// maxSummaryRules is the longest the summaries' rules may be. A save sends them twice (the text, and the text it was loaded as),
+// so its request may be three times that.
+const maxSummaryRules = 64 << 10
+
+var activityRulesFeature = feature{activityFeature.present, activityFeature.missing, 3 * maxSummaryRules}
+
 func (s *Server) rounding() string {
 	r := ""
 	if s.cfg.Activity.Rounding != nil {
@@ -182,11 +188,20 @@ func (s *Server) activityRulesSave(w http.ResponseWriter, r *http.Request) {
 		Base  string `json:"base"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "expected the rules to keep")
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("the rules are too long to keep: at most %d KB", maxSummaryRules>>10))
+			return
+		}
+		writeError(w, http.StatusBadRequest, "expected {which, text, base}: the rules to keep, and the text they were loaded as")
 		return
 	}
 	if s.cfg.Activity.Summaries == nil {
 		writeError(w, http.StatusNotFound, "this page makes no summaries")
+		return
+	}
+	if len(req.Text) > maxSummaryRules {
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("the rules are too long to keep: at most %d KB", maxSummaryRules>>10))
 		return
 	}
 	if req.Which != "day" && req.Which != "week" {
@@ -195,7 +210,8 @@ func (s *Server) activityRulesSave(w http.ResponseWriter, r *http.Request) {
 	}
 	saved, err := s.cfg.Activity.Summaries.SaveRules(req.Which, req.Text, req.Base)
 	if errors.Is(err, activity.ErrRulesChanged) {
-		writeError(w, http.StatusConflict, "the rules were changed since they were loaded here (by hand, or on another page): reload them, and make your change again")
+		writeError(w, http.StatusConflict, "Not saved: the file was changed outside this page after it was loaded here (by hand, or from another vibe's page), "+
+			"and saving would undo that change. Reload to see the file as it is now, then make your change again.")
 		return
 	}
 	if err != nil {

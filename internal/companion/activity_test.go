@@ -248,3 +248,21 @@ func TestTheSummaryRulesAreReadAndSavedUnlessChangedOnDisk(t *testing.T) {
 		t.Fatalf("want other rules refused, got %d", rec.Code)
 	}
 }
+
+// A save sends the rules twice (the text, and the text it was loaded as): the default week's alone is near a kilobyte.
+func TestRulesAsLongAsTheUsersAreSavedAndOnesTooLongAreSaidToBe(t *testing.T) {
+	s, _, _ := activityServer(t)
+	dir := t.TempDir()
+	s.cfg.Activity.Summaries = &activity.Summariser{Dir: dir, Rules: dir + "/day.md", WeekRules: dir + "/week.md"}
+	week := s.cfg.Activity.Summaries.RulesFiles()[1]
+	long := strings.Repeat("Say what mattered most, first. ", 200)
+	body, _ := json.Marshal(map[string]string{"which": "week", "text": long, "base": week.Text})
+	if rec := do(t, s, post("/api/activity/rules", string(body))); rec.Code != http.StatusOK {
+		t.Fatalf("want %d bytes of rules kept, got %d %s", len(long), rec.Code, rec.Body)
+	}
+	huge, _ := json.Marshal(map[string]string{"which": "week", "text": strings.Repeat("x", 300<<10), "base": long})
+	rec := do(t, s, post("/api/activity/rules", string(huge)))
+	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), "too long") {
+		t.Fatalf("want rules too long to keep said to be, got %d %s", rec.Code, rec.Body)
+	}
+}
