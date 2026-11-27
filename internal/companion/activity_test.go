@@ -37,14 +37,18 @@ func activityServer(t *testing.T) (*Server, *marks, *string) {
 	t.Helper()
 	s := newServer(&fakeSbx{})
 	kept := ""
+	colourBlind := false
 	m := &marks{}
 	s.cfg.Workspace = t.TempDir()
 	s.cfg.Git = func(string) *GitInfo { return &GitInfo{Branch: "feat/x"} }
 	s.cfg.Mark = m.mark
 	s.cfg.Activity = &ActivityTab{
-		Desk:        &activity.Desk{Log: activity.Log{Dir: t.TempDir()}, Folders: func() []string { return nil }},
-		Rounding:    func() string { return kept },
-		SetRounding: func(r string) error { kept = r; return nil },
+		Desk:           &activity.Desk{Log: activity.Log{Dir: t.TempDir()}, Folders: func() []string { return nil }},
+		Rounding:       func() string { return kept },
+		SetRounding:    func(r string) error { kept = r; return nil },
+		Fills:          &activity.Fills{Path: t.TempDir() + "/fills.json"},
+		ColourBlind:    func() bool { return colourBlind },
+		SetColourBlind: func(on bool) error { colourBlind = on; return nil },
 	}
 	return s, m, &kept
 }
@@ -177,5 +181,41 @@ func TestATicketLinkIsKeptForABranchAndOnlyAWebAddress(t *testing.T) {
 	}
 	if rec := do(t, s, post("/api/activity/ticket", `{"repo":"r","url":"https://x"}`)); rec.Code != http.StatusBadRequest {
 		t.Fatalf("want a missing branch refused, got %d", rec.Code)
+	}
+}
+
+func TestTheWeekIsTheReportWithEachRepositorysFillAndTheColourBlindChoice(t *testing.T) {
+	s, _, _ := activityServer(t)
+	rec := do(t, s, req{path: "/api/activity/week", headers: authed(nil)})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	var got struct {
+		Week        activity.WeekReport `json:"week"`
+		Fills       map[string]int      `json:"fills"`
+		ColourBlind bool                `json:"colourBlind"`
+		Rounding    string              `json:"rounding"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Week.Days) != 7 || got.Fills == nil || got.ColourBlind || got.Rounding != "30m" {
+		t.Fatalf("want this week, its fills (none yet), not colour-blind, at the half hour, got %s", rec.Body)
+	}
+	if rec := do(t, s, req{path: "/api/activity/week?day=1999-01-01", headers: authed(nil)}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("want a week long gone refused, got %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestTheColourBlindChoiceIsKept(t *testing.T) {
+	s, _, _ := activityServer(t)
+	if rec := do(t, s, post("/api/activity/colour-blind", `{"on":true}`)); rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(do(t, s, req{path: "/api/activity/week", headers: authed(nil)}).Body.String(), `"colourBlind":true`) {
+		t.Fatal("want the choice kept and said")
+	}
+	if rec := do(t, s, post("/api/activity/colour-blind", `{"on":"yes"}`)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("want a choice that isn't true or false refused, got %d", rec.Code)
 	}
 }

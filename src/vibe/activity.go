@@ -47,21 +47,30 @@ func activityTabFor(lay layout.Layout, name, agent string) *companion.ActivityTa
 				return a.Count, a.Known, err
 			},
 		},
+		Fills: &activity.Fills{Path: lay.HomePath("activity", "fills.json")},
 		Rounding: func() string {
 			s, _ := settings.Load(path)
 			return s.ActivityRounding
 		},
-		SetRounding: func(step string) error {
-			data, err := fscopy.ReadFile(path)
-			if err != nil && !os.IsNotExist(err) {
-				return err
-			}
-			if data, err = settings.Set(data, "activityRounding", step); err != nil {
-				return fmt.Errorf("updating %s: %w", pathresolve.Tilde(path), err)
-			}
-			return fscopy.WriteWholeMode(path, data, 0o644)
+		SetRounding: func(step string) error { return setSetting(path, "activityRounding", step) },
+		ColourBlind: func() bool {
+			s, _ := settings.Load(path)
+			return s.ActivityColourBlind
 		},
+		SetColourBlind: func(on bool) error { return setSetting(path, "activityColourBlind", on) },
 	}
+}
+
+// setSetting keeps key's value in the settings file at path, leaving the rest of it as the user wrote it.
+func setSetting(path, key string, value interface{}) error {
+	data, err := fscopy.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if data, err = settings.Set(data, key, value); err != nil {
+		return fmt.Errorf("updating %s: %w", pathresolve.Tilde(path), err)
+	}
+	return fscopy.WriteWholeMode(path, data, 0o644)
 }
 
 // summariserFor makes the branches' summaries with the agent of sandbox name, when it is Claude, the one agent with a tester

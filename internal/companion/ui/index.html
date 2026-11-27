@@ -448,6 +448,10 @@
 
     <section id="panel-activity" class="panel panel-activity" hidden>
       <div class="bar activity-bar">
+        <div class="seg" id="activity-mode" role="group" aria-label="Show">
+          <button type="button" data-mode="day" aria-pressed="true">Day</button>
+          <button type="button" data-mode="week" aria-pressed="false">Week</button>
+        </div>
         <div class="seg activity-days" role="group" aria-label="Day">
           <button type="button" id="activity-prev" aria-label="The day before" title="The day before">&larr;</button>
           <button type="button" id="activity-day" class="activity-day" aria-haspopup="menu" aria-expanded="false" aria-controls="activity-days-list" title="Choose a day">Today</button>
@@ -469,6 +473,7 @@
       <div id="activity-help-balloon" class="status-balloon activity-balloon" role="dialog" aria-label="How the Activity tab counts time" hidden>
         <p>How the day's time split between repositories and branches, in every folder vibe has opened: measured while vibe's page ran, estimated (~) from git's record otherwise.</p>
         <p>The day's time is rounded to the nearest step chosen and shared between its branches in whole steps, the steps left over going to the branches with the most left over: no branch is more than a step off, and small tasks don't lose the day their sum. Switching to a branch, or pulling it, counts only when work follows. Branches worked on at once each count in full.</p>
+        <p>Week shows how the week split between repositories, and each day: a repository keeps its colour (and pattern) while it is worked on in the 14 days kept.</p>
         <p>Each branch's commits are summarised by a sandbox's Claude, under the rules in <code>~/.vibe/activity/summary-rules.md</code>; a branch with no commits is summarised from the prompts sent on it from vibe.</p>
       </div>
       <div id="activity-row-balloon" class="status-balloon activity-balloon" role="dialog" hidden></div>
@@ -480,6 +485,20 @@
       <ul id="activity-problems" class="note bad-text activity-problems" hidden></ul>
       <p id="activity-none" class="note muted" hidden>Nothing was worked on this day in the folders vibe has opened.</p>
       <div id="activity-list" class="activity-list"></div>
+      <section id="activity-week" class="activity-week" aria-label="The week" hidden>
+        <svg id="activity-fill-defs-holder" width="0" height="0" aria-hidden="true" focusable="false"><defs id="activity-fill-defs"></defs></svg>
+        <p id="activity-week-unread" class="note muted" hidden></p>
+        <p id="activity-week-none" class="note muted" hidden>Nothing was worked on this week in the folders vibe has opened.</p>
+        <div id="activity-week-charts" class="activity-week-charts">
+          <svg id="activity-week-pie" class="activity-week-pie" viewBox="-115 -115 230 230" role="group" aria-label="The week by repository"></svg>
+          <ul id="activity-week-legend" class="activity-week-legend" aria-label="Repositories this week"></ul>
+          <div class="activity-week-side">
+            <svg id="activity-week-columns" class="activity-week-columns" viewBox="0 0 460 250" role="img" aria-label="Each day of the week by repository: the list beside it says each repository's hours"></svg>
+            <label class="activity-colour-blind" id="activity-colour-blind-label"><input type="checkbox" id="activity-colour-blind"> Colour-blind-friendly</label>
+          </div>
+        </div>
+        <div id="activity-week-branches"></div>
+      </section>
       <p id="activity-hidden" class="note muted" hidden><span id="activity-hidden-text"></span> <button type="button" id="activity-hidden-toggle" class="linklike">show</button></p>
     </section>
 

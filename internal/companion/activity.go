@@ -24,6 +24,12 @@ type ActivityTab struct {
 	Summaries *activity.Summariser
 	// Tickets keeps the branches' ticket links; nil means none can be set.
 	Tickets *activity.Tickets
+	// Fills keeps the fill each repository is drawn with in the week's charts; nil means each is given its place in the week.
+	Fills *activity.Fills
+	// ColourBlind says whether the week is drawn in the fills that stay apart for colour-blind readers; SetColourBlind keeps a
+	// new choice. Nil means not, and the choice can't be kept.
+	ColourBlind    func() bool
+	SetColourBlind func(bool) error
 
 	pruning  sync.Mutex
 	prunedOn string
@@ -94,6 +100,63 @@ func (s *Server) activityState(w http.ResponseWriter, r *http.Request) {
 		"problems":  append(report.Problems, problems...),
 		"rounding":  rounding,
 	})
+}
+
+// activityWeek is the week (Monday to Sunday) a day is in, with each repository's fill.
+func (s *Server) activityWeek(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), activityWithin)
+	defer cancel()
+	tab := s.cfg.Activity
+	rounding := s.rounding()
+	week, err := tab.Desk.Week(ctx, r.URL.Query().Get("day"), activity.Roundings[rounding])
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	fills := map[string]int{}
+	if tab.Fills != nil {
+		first, _ := time.ParseInLocation(time.DateOnly, week.Earliest, time.Local)
+		got, err := tab.Fills.Assign(week.Repos, week.Days, first)
+		if err != nil {
+			week.Problems = append(week.Problems, "couldn't keep the charts' colours: "+err.Error())
+		}
+		if got != nil {
+			fills = got
+		}
+	} else {
+		for i, repo := range week.Repos {
+			fills[repo.Repo] = i
+		}
+	}
+	week.Problems = append(week.Problems, tab.prune(week.Today)...)
+	attention, problems := tab.Desk.Attention(ctx)
+	week.Problems = append(week.Problems, problems...)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"week":        week,
+		"attention":   attention,
+		"fills":       fills,
+		"colourBlind": tab.ColourBlind != nil && tab.ColourBlind(),
+		"rounding":    rounding,
+	})
+}
+
+func (s *Server) activityColourBlind(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		On *bool `json:"on"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.On == nil {
+		writeError(w, http.StatusBadRequest, "expected {\"on\": true or false}")
+		return
+	}
+	if s.cfg.Activity.SetColourBlind == nil {
+		writeError(w, http.StatusNotFound, "the choice can't be kept here")
+		return
+	}
+	if err := s.cfg.Activity.SetColourBlind(*req.On); err != nil {
+		writeError(w, http.StatusInternalServerError, "the choice couldn't be kept: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"on": *req.On})
 }
 
 func (s *Server) activityRounding(w http.ResponseWriter, r *http.Request) {

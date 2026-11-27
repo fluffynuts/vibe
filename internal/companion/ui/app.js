@@ -5273,11 +5273,16 @@
   const ACTIVITY_SUMMARY_MS = 3000
   // openKey is the one row open (its repository and branch), null for none; showHidden shows the rows hidden for being short and
   // empty (no time once rounded, and no commits).
-  const activityView = { day: '', report: null, summaries: [], attention: [], problems: [], rounding: '', asked: 0, loaded: false, openKey: null, infoKey: null, showHidden: false, seen: 0 }
+  // mode is 'day' or 'week' (kept for the page); week is the week shown (its report), weekDay a day in it ('' for this week), fills
+  // each repository's fill there, picked the repository whose branches show under the charts.
+  const ACTIVITY_MODE = 'vibe-activity-mode'
+  const activityView = { day: '', report: null, summaries: [], attention: [], problems: [], rounding: '', asked: 0, loaded: false, openKey: null, infoKey: null, showHidden: false, seen: 0,
+    mode: store.get(ACTIVITY_MODE) === 'week' ? 'week' : 'day', week: null, weekDay: '', fills: {}, colourBlind: false, picked: null }
 
   async function loadActivity(now) {
     if (!now && Date.now() - activityView.asked < ACTIVITY_EVERY_MS) return
     activityView.asked = Date.now()
+    if (activityView.mode === 'week') { await loadActivityWeek(); return }
     const day = activityView.day
     const res = await api('/api/activity' + (day ? '?day=' + encodeURIComponent(day) : ''), { timeout: 70000 })
     if (day !== activityView.day) return
@@ -5333,9 +5338,20 @@
 
   function drawActivity() {
     const r = activityView.report
+    const week = activityView.mode === 'week'
     $('activity-wait').hidden = activityView.loaded
     for (const b of $('activity-rounding').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.rounding === activityView.rounding))
+    for (const b of $('activity-mode').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.mode === activityView.mode))
+    $('activity-list').hidden = week
+    $('activity-week').hidden = !week
+    if (week) {
+      $('activity-none').hidden = true
+      $('activity-hidden').hidden = true
+      drawActivityWeek()
+      return
+    }
     if (!r) return
+    setText($('activity-today'), 'Return to today')
     const day = r.day
     const isToday = day.date === r.today
     setText($('activity-day'), dayName(day.date))
@@ -5357,6 +5373,295 @@
     setText($('activity-hidden-toggle'), activityView.showHidden ? 'hide' : 'show')
     drawnAs($('activity-list'), JSON.stringify([day, summaries, activityView.openKey, activityView.showHidden]),
       () => groups.map((g) => activityGroup(g, day.hours)))
+  }
+
+  // --- The week: a pie of the week by repository beside a column per day, stacked by repository; each repository drawn in its own
+  // fill (a colour, then a colour and a pattern), the one it keeps while worked on in the days kept (activity.Fills). Picking one (in
+  // either chart or the legend) shows its branches below. See docs/adr/2026-11-26-activity.md.
+  const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+  // Normal: 9 colours, every pair ΔE >= 15 apart for normal colour vision and >= 3:1 against the panel, in both themes (each the
+  // same hue in each), the most different first; then each again with each pattern, a colour's repeats each a different one.
+  const FILL_COLOURS = {
+    dark: ['#2ba1ed', '#f93825', '#39b620', '#a622df', '#fd34bc', '#c18f23', '#2a64f8', '#a97cf0', '#bb3f7b'],
+    light: ['#1494df', '#ea2413', '#27a902', '#9901d1', '#ee1daf', '#b4820a', '#1e56ea', '#9d6fe3', '#ae3170'],
+  }
+  // Colour-blind-friendly: 3 hues that stay apart for colour-blind readers, each with each pattern.
+  const SAFE_COLOURS = { dark: ['#338ced', '#e76624', '#00a888'], light: ['#257de0', '#f47230', '#00b894'] }
+  const FILL_PATTERNS = ['solid', 'stripes /', 'dots', 'stripes \\', 'cross-hatch']
+  const OTHER_COLOUR = { dark: '#6b7280', light: '#9ca3af' }
+  const NORMAL_FILLS = 45
+  const SAFE_FILLS = 15
+
+  async function loadActivityWeek() {
+    const day = activityView.weekDay
+    const res = await api('/api/activity/week' + (day ? '?day=' + encodeURIComponent(day) : ''), { timeout: 70000 })
+    if (day !== activityView.weekDay || activityView.mode !== 'week') return
+    if (!res.ok) { problem('activity', res); return }
+    banner('activity', '')
+    activityView.loaded = true
+    activityView.week = res.body.week
+    activityView.fills = res.body.fills || {}
+    activityView.colourBlind = !!res.body.colourBlind
+    activityView.rounding = res.body.rounding || ''
+    activityView.attention = res.body.attention || []
+    activityView.problems = res.body.week.problems || []
+    if (activityView.picked && !activityView.week.repos.some((r) => r.repo === activityView.picked)) activityView.picked = null
+    if (activityView.attention.some((a) => a.checking)) activityView.asked = Date.now() - ACTIVITY_EVERY_MS + ACTIVITY_SUMMARY_MS
+    drawActivity()
+  }
+
+  function pageIsDark() {
+    const chosen = document.documentElement.dataset.theme
+    return chosen ? chosen === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches
+  }
+
+  // highContrast is the system's own high contrast (forced colours): its colours replace the page's, so the patterns tell the
+  // repositories apart, and the colour-blind fills are used.
+  function highContrast() { return matchMedia('(forced-colors: active)').matches }
+
+  function safeFills() { return activityView.colourBlind || highContrast() }
+
+  // fillOf is the fill numbered slot: its colour and pattern, or Other past the fills there are.
+  function fillOf(slot) {
+    const mode = pageIsDark() ? 'dark' : 'light'
+    if (safeFills()) {
+      if (slot >= SAFE_FILLS) return { colour: OTHER_COLOUR[mode], pattern: 'solid', other: true }
+      return { colour: SAFE_COLOURS[mode][slot % 3], pattern: FILL_PATTERNS[Math.floor(slot / 3)] }
+    }
+    if (slot >= NORMAL_FILLS) return { colour: OTHER_COLOUR[mode], pattern: 'solid', other: true }
+    const colour = slot % 9
+    const round = Math.floor(slot / 9)
+    return { colour: FILL_COLOURS[mode][colour], pattern: round === 0 ? 'solid' : FILL_PATTERNS[1 + (colour + round - 1) % 4] }
+  }
+
+  const SVG = 'http://www.w3.org/2000/svg'
+  function svg(tag, attrs, ...children) {
+    const node = document.createElementNS(SVG, tag)
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (k === 'text') node.textContent = v
+      else if (k.startsWith('on')) node.addEventListener(k.slice(2), v)
+      else if (v != null) node.setAttribute(k, v)
+    }
+    for (const c of children) if (c != null) node.append(c)
+    return node
+  }
+
+  // drawFills writes the patterns the week's fills paint with: the fill's colour, with lines or dots of the panel's colour over it.
+  function drawFills(slots) {
+    const panel = getComputedStyle(document.documentElement).getPropertyValue('--panel').trim() || '#ffffff'
+    drawnAs($('activity-fill-defs'), JSON.stringify([slots, panel, pageIsDark(), safeFills()]), () => slots.map((slot) => {
+      const f = fillOf(slot)
+      const marks = []
+      if (f.pattern.startsWith('stripes')) marks.push(svg('rect', { x: 0, y: 0, width: 2.2, height: 6, fill: panel }))
+      if (f.pattern === 'cross-hatch') marks.push(svg('rect', { x: 0, y: 0, width: 1.8, height: 6, fill: panel }), svg('rect', { x: 0, y: 0, width: 6, height: 1.8, fill: panel }))
+      if (f.pattern === 'dots') marks.push(svg('circle', { cx: 3, cy: 3, r: 1.5, fill: panel }))
+      const turn = f.pattern === 'stripes /' || f.pattern === 'cross-hatch' ? 45 : f.pattern === 'stripes \\' ? -45 : 0
+      return svg('pattern', { id: 'activity-fill-' + slot, patternUnits: 'userSpaceOnUse', width: 6, height: 6, patternTransform: 'rotate(' + turn + ')' },
+        svg('rect', { width: 6, height: 6, fill: f.colour }), ...marks)
+    }))
+  }
+
+  function paintOf(repo) {
+    const slot = activityView.fills[repo]
+    const f = fillOf(slot == null ? NORMAL_FILLS : slot)
+    return f.other ? f.colour : 'url(#activity-fill-' + slot + ')'
+  }
+
+  function fillName(repo) {
+    const slot = activityView.fills[repo]
+    const f = fillOf(slot == null ? NORMAL_FILLS : slot)
+    return f.other ? 'grey (Other)' : f.pattern
+  }
+
+  function pickRepo(repo, focusFrom) {
+    activityView.picked = activityView.picked === repo ? null : repo
+    drawActivityWeek()
+    if (focusFrom) {
+      const again = [...$('activity-week').querySelectorAll(focusFrom)].find((n) => n.dataset.repo === repo)
+      if (again) again.focus()
+    }
+  }
+
+  // stepFocus moves the focus to the next or previous of a chart's or the legend's choices with the arrow keys.
+  function stepFocus(ev, selector) {
+    const by = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[ev.key]
+    if (!by) return
+    ev.preventDefault()
+    const all = [...$('activity-week').querySelectorAll(selector)]
+    all[(all.indexOf(ev.currentTarget) + by + all.length) % all.length].focus()
+  }
+
+  function weekName(start) {
+    return 'Week of ' + new Date(start + 'T00:00:00').toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })
+  }
+
+  function drawActivityWeek() {
+    const w = activityView.week
+    if (!w) return
+    const thisWeek = w.days.includes(w.today)
+    setText($('activity-day'), weekName(w.start))
+    $('activity-prev').disabled = w.start <= w.earliest
+    $('activity-next').disabled = thisWeek
+    $('activity-today').hidden = thisWeek
+    setText($('activity-today'), 'Return to this week')
+    setText($('activity-total'), w.repos.length ? 'total ' + hours(w.hours) : '')
+    $('activity-problems').hidden = !activityView.problems.length
+    drawnAs($('activity-problems'), JSON.stringify(activityView.problems), () => activityView.problems.map((p) => el('li', { text: p })))
+    drawNeeds(thisWeek)
+    const cvd = $('activity-colour-blind')
+    cvd.checked = safeFills()
+    cvd.disabled = highContrast()
+    $('activity-colour-blind-label').title = highContrast() ? "On while the system's high contrast is" : 'Draw the charts in fills that stay apart for colour-blind readers, told apart by pattern too'
+    const unread = w.unread.length ? w.unread.map((d) => WEEK_DAYS[w.days.indexOf(d)]).join(', ') + (w.unread.length === 1 ? ' is' : ' are') + ' before the days kept, so not counted.' : ''
+    setText($('activity-week-unread'), unread)
+    $('activity-week-unread').hidden = !unread
+    $('activity-week-none').hidden = w.repos.length > 0
+    $('activity-week-charts').hidden = !w.repos.length
+    const slots = [...new Set(w.repos.map((r) => activityView.fills[r.repo]).filter((n) => n != null))]
+    drawFills(slots)
+    const key = JSON.stringify([w, activityView.fills, activityView.picked, pageIsDark(), safeFills()])
+    drawnAs($('activity-week-pie'), key, () => weekPie(w))
+    drawnAs($('activity-week-legend'), key, () => weekLegend(w))
+    drawnAs($('activity-week-columns'), key, () => weekColumns(w))
+    drawnAs($('activity-week-branches'), key, () => weekBranches(w))
+  }
+
+  function weekPie(w) {
+    const box = $('activity-week-pie')
+    box.classList.toggle('has-pick', !!activityView.picked)
+    let a = 0
+    const at = (angle, r) => (r * Math.sin(angle)).toFixed(2) + ' ' + (-r * Math.cos(angle)).toFixed(2)
+    return w.repos.map((r) => {
+      const share = r.hours / w.hours
+      const a1 = a + 2 * Math.PI * share
+      const mid = (a + a1) / 2
+      const out = r.repo === activityView.picked ? 6 : 0
+      // A whole circle can't be drawn as one arc.
+      const d = share >= 0.9999 ? 'M0 -104 A104 104 0 1 1 0 104 A104 104 0 1 1 0 -104 Z'
+        : 'M0 0 L' + at(a, 104) + ' A104 104 0 ' + (a1 - a > Math.PI ? 1 : 0) + ' 1 ' + at(a1, 104) + ' Z'
+      const label = r.repo + ', ' + hours(r.hours) + ', ' + Math.round(share * 100) + '% of the week'
+      const slice = svg('path', { d, fill: paintOf(r.repo), class: 'activity-mark-fill' + (r.repo === activityView.picked ? ' picked' : ''),
+        tabindex: '0', role: 'button', 'data-repo': r.repo, 'aria-label': label, 'aria-pressed': String(r.repo === activityView.picked),
+        transform: 'translate(' + (out * Math.sin(mid)).toFixed(2) + ' ' + (-out * Math.cos(mid)).toFixed(2) + ')',
+        onclick: () => pickRepo(r.repo, '#activity-week-pie path'),
+        onkeydown: (ev) => {
+          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); pickRepo(r.repo, '#activity-week-pie path') } else stepFocus(ev, '#activity-week-pie path')
+        } }, svg('title', { text: label + daysText(w, r.days) }))
+      a = a1
+      return slice
+    })
+  }
+
+  // daysText is a week's hours each day, as the charts' hover says it: "\nMon 2.0h, Tue 1.5h".
+  function daysText(w, days) {
+    const said = days.map((h, i) => h ? WEEK_DAYS[i] + ' ' + hours(h) : '').filter(Boolean)
+    return said.length ? '\n' + said.join(', ') : ''
+  }
+
+  function weekLegend(w) {
+    return w.repos.map((r) => el('li', {}, el('button', { type: 'button', 'data-repo': r.repo, 'aria-pressed': String(r.repo === activityView.picked),
+      'aria-label': r.repo + ', ' + hours(r.hours) + ', ' + Math.round(100 * r.hours / w.hours) + '% of the week, drawn ' + fillName(r.repo),
+      title: r.repo + daysText(w, r.days),
+      onclick: () => pickRepo(r.repo, '#activity-week-legend button'), onkeydown: (ev) => stepFocus(ev, '#activity-week-legend button') },
+    svg('svg', { class: 'activity-swatch', viewBox: '0 0 16 16', 'aria-hidden': 'true' }, svg('rect', { width: 16, height: 16, fill: paintOf(r.repo) })),
+    el('span', { class: 'activity-legend-name', text: r.repo }),
+    el('span', { class: 'activity-hours', text: hours(r.hours) }),
+    el('span', { class: 'activity-share', text: Math.round(100 * r.hours / w.hours) + '%' }))))
+  }
+
+  function weekColumns(w) {
+    const box = $('activity-week-columns')
+    box.classList.toggle('has-pick', !!activityView.picked)
+    const dayTotal = (i) => w.repos.reduce((sum, r) => sum + r.days[i], 0)
+    const top = Math.max(2, Math.ceil(Math.max(...WEEK_DAYS.map((_, i) => dayTotal(i))) / 2) * 2)
+    const left = 34, right = 452, base = 220, height = 190, width = 26
+    const y = (v) => base - height * v / top
+    const step = (right - left) / 7
+    const grid = svg('g', { class: 'activity-grid' })
+    const out = [grid]
+    for (let v = 0; v <= top; v += 2) {
+      grid.append(svg('line', { x1: left, x2: right, y1: y(v), y2: y(v) }))
+      out.push(svg('text', { x: left - 6, y: y(v) + 4, 'text-anchor': 'end', text: v + 'h' }))
+    }
+    WEEK_DAYS.forEach((name, i) => {
+      const cx = left + step * (i + 0.5)
+      const x0 = cx - width / 2
+      const parts = w.repos.filter((r) => r.days[i] > 0)
+      let sofar = 0
+      parts.forEach((r, j) => {
+        const v = r.days[i]
+        const y0 = y(sofar), y1 = y(sofar + v)
+        // Square at the baseline; the column's top rounded.
+        const rr = j === parts.length - 1 ? Math.min(4, (y0 - y1) / 2) : 0
+        const d = 'M' + x0 + ' ' + y0 + ' V' + (y1 + rr) + (rr ? ' Q' + x0 + ' ' + y1 + ' ' + (x0 + rr) + ' ' + y1 : '') + ' H' + (x0 + width - rr) +
+          (rr ? ' Q' + (x0 + width) + ' ' + y1 + ' ' + (x0 + width) + ' ' + (y1 + rr) : '') + ' V' + y0 + ' Z'
+        out.push(svg('path', { d, fill: paintOf(r.repo), class: 'activity-mark-fill' + (r.repo === activityView.picked ? ' picked' : ''), 'data-repo': r.repo,
+          onclick: () => pickRepo(r.repo) }, svg('title', { text: r.repo + ', ' + name + ' ' + hours(v) + '\nthe week: ' + hours(r.hours) })))
+        sofar += v
+      })
+      if (sofar) out.push(svg('text', { x: cx, y: y(sofar) - 6, 'text-anchor': 'middle', text: hours(sofar) }))
+      out.push(svg('text', { class: 'activity-day-name', x: cx, y: base + 18, 'text-anchor': 'middle', text: name }))
+    })
+    return out
+  }
+
+  // weekBranches are the picked repository's branches, as the day's rows are laid out, with their week and each day's hours.
+  function weekBranches(w) {
+    const r = w.repos.find((x) => x.repo === activityView.picked)
+    if (!r) return [el('p', { class: 'note muted', text: w.repos.length ? 'Pick a repository, in either chart or the list, to see its branches this week.' : '' })]
+    const share = r.hours / w.hours
+    const head = el('div', { class: 'activity-group-head' },
+      el('span', { class: 'activity-repo', text: r.repo, title: r.repo }), el('span'),
+      el('span', { class: 'activity-hours', text: hours(r.hours) }),
+      el('meter', { min: '0', max: '1', value: String(share), 'aria-label': r.repo + ': ' + Math.round(share * 100) + '% of the week' }),
+      el('span', { class: 'activity-share', text: Math.round(share * 100) + '%' }), el('span'))
+    const rows = r.branches.map((b) => {
+      const of = r.hours ? b.hours / r.hours : 0
+      return el('div', { class: 'activity-entry' },
+        el('div', { class: 'activity-head' },
+          el('div', { class: 'activity-toggle activity-week-row' },
+            el('span', { text: b.branch, title: b.branch }), el('span'),
+            el('span', { class: 'activity-hours', text: hours(b.hours) }),
+            el('meter', { min: '0', max: '1', value: String(of), 'aria-label': b.branch + ': ' + Math.round(of * 100) + '% of ' + r.repo + "'s week" }),
+            el('span', { class: 'activity-share', text: Math.round(of * 100) + '%' }), el('span')),
+          el('span', { class: 'activity-actions' })),
+        el('p', { class: 'activity-week-days muted', text: b.days.map((h, i) => h ? WEEK_DAYS[i] + ' ' + hours(h) : '').filter(Boolean).join(' · ') }))
+    })
+    return [el('section', { class: 'activity-group', 'aria-label': r.repo + ' this week' }, head, el('div', { class: 'activity-group-rows' }, ...rows))]
+  }
+
+  function showActivityWeek(date) {
+    activityView.weekDay = date
+    activityView.loaded = false
+    activityView.week = null
+    closeActivityBalloons()
+    drawActivity()
+    loadActivity(true)
+  }
+
+  function stepActivityWeek(by) {
+    const w = activityView.week
+    if (!w) return
+    const date = shiftDay(w.start, 7 * by)
+    if (shiftDay(date, 6) < w.earliest || date > w.today) return
+    showActivityWeek(date > w.today || shiftDay(date, 6) >= w.today ? '' : date)
+  }
+
+  function setActivityMode(mode) {
+    if (mode === activityView.mode) return
+    activityView.mode = mode
+    store.set(ACTIVITY_MODE, mode)
+    activityView.loaded = false
+    closeActivityBalloons()
+    drawActivity()
+    loadActivity(true)
+  }
+
+  async function setColourBlind(on) {
+    const res = await post('/api/activity/colour-blind', { on })
+    if (!res.ok) { toast(res.body.error || "The choice couldn't be kept", true); drawActivityWeek(); return }
+    activityView.colourBlind = on
+    drawActivityWeek()
   }
 
   // --- Needs attention: a ⚠ N button in the bar, whose balloon pops up when what it lists changed since it was last seen, and closes
@@ -5627,6 +5932,7 @@
     const list = $('activity-days-list')
     if (!list.hidden) { closeActivityBalloons(); return }
     closeActivityBalloons()
+    if (activityView.mode === 'week') { showWeekList(list); return }
     const r = activityView.report
     if (!r) return
     const items = []
@@ -5635,6 +5941,26 @@
       items.push(el('li', { role: 'none' }, el('button', { type: 'button', role: 'menuitem', text: dayChoice(date, r.today),
         'aria-current': date === r.day.date ? 'date' : null,
         onclick: () => { closeActivityBalloons(); showActivityDay(date === r.today ? '' : date); $('activity-day').focus() } })))
+    }
+    list.replaceChildren(...items)
+    list.hidden = false
+    placeUnder(list, $('activity-day'), 'left')
+    $('activity-day').setAttribute('aria-expanded', 'true')
+    const current = list.querySelector('[aria-current="date"]') || list.querySelector('button')
+    if (current) current.focus()
+  }
+
+  // showWeekList lists the weeks the days kept reach into, this week first.
+  function showWeekList(list) {
+    const w = activityView.week
+    if (!w) return
+    const items = []
+    for (let start = w.days.includes(w.today) ? w.start : shiftDay(w.today, -((new Date(w.today + 'T12:00:00').getDay() + 6) % 7)); shiftDay(start, 6) >= w.earliest; start = shiftDay(start, -7)) {
+      const monday = start
+      const thisWeek = monday <= w.today && w.today <= shiftDay(monday, 6)
+      items.push(el('li', { role: 'none' }, el('button', { type: 'button', role: 'menuitem', text: thisWeek ? 'This week' : weekName(monday),
+        'aria-current': monday === w.start ? 'date' : null,
+        onclick: () => { closeActivityBalloons(); showActivityWeek(thisWeek ? '' : monday); $('activity-day').focus() } })))
     }
     list.replaceChildren(...items)
     list.hidden = false
@@ -5701,10 +6027,17 @@
   }
 
   function setUpActivity() {
-    $('activity-prev').addEventListener('click', () => stepActivityDay(-1))
-    $('activity-next').addEventListener('click', () => stepActivityDay(1))
+    $('activity-prev').addEventListener('click', () => activityView.mode === 'week' ? stepActivityWeek(-1) : stepActivityDay(-1))
+    $('activity-next').addEventListener('click', () => activityView.mode === 'week' ? stepActivityWeek(1) : stepActivityDay(1))
+    for (const b of $('activity-mode').querySelectorAll('button')) b.addEventListener('click', () => setActivityMode(b.dataset.mode))
+    $('activity-colour-blind').addEventListener('change', (ev) => setColourBlind(ev.target.checked))
+    // The fills are drawn for the page's theme and the system's contrast: either changing draws them again.
+    const redrawWeek = () => { if (activityView.mode === 'week') drawActivityWeek() }
+    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', redrawWeek)
+    matchMedia('(forced-colors: active)').addEventListener('change', redrawWeek)
+    new MutationObserver(redrawWeek).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
     $('activity-day').addEventListener('click', toggleDayList)
-    $('activity-today').addEventListener('click', () => { showActivityDay(''); $('activity-day').focus() })
+    $('activity-today').addEventListener('click', () => { if (activityView.mode === 'week') showActivityWeek(''); else showActivityDay(''); $('activity-day').focus() })
     $('activity-help').addEventListener('click', () => {
       const open = $('activity-help-balloon').hidden
       closeActivityBalloons()

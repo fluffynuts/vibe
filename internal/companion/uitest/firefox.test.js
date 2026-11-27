@@ -1806,6 +1806,52 @@ test('opening a row below the open one keeps the row clicked where it was on the
   } finally { await page.close() }
 })
 
+// weekPage opens the Activity tab's week: many repositories, long names among them, a few big and many small.
+async function weekPage(width) {
+  const page = await browser.newPage({ viewport: { width, height: 900 } })
+  await page.route('**/api/state', stateWith(page, { activity: true }))
+  const names = ['vibe', 'yumbi-web', 'codeo.core', 'NExpect', 'PeanutButter', 'a-repository-with-a-long-name-too', 'zarro', 'yafs', 'yumbi-api',
+    'codeo.infra', 'dotfiles', 'gitea-mirror']
+  const repos = names.map((repo, i) => {
+    const days = [0, 1, 2, 3, 4, 5, 6].map((d) => (i === 0 ? 4 : (i + d) % 3 === 0 ? 0.5 : 0))
+    const hours = days.reduce((a, b) => a + b, 0)
+    return { repo, days, hours, branches: [{ branch: 'feat/a-branch-name-as-long-as-they-come-' + i, days, hours }] }
+  }).filter((r) => r.hours > 0)
+  const week = { start: '2026-11-23', days: ['2026-11-23', '2026-11-24', '2026-11-25', '2026-11-26', '2026-11-27', '2026-11-28', '2026-11-29'],
+    unread: [], today: '2026-11-26', earliest: '2026-11-13', problems: [], repos, hours: repos.reduce((a, r) => a + r.hours, 0) }
+  await page.route('**/api/activity/week*', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+    week, fills: Object.fromEntries(repos.map((r, i) => [r.repo, i])), colourBlind: false, rounding: '30m', attention: [] }) }))
+  await page.route('**/api/activity', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+    report: { day: { date: '2026-11-26', hours: 0, branches: [] }, today: '2026-11-26', earliest: '2026-11-13', problems: [] }, attention: [], problems: [], rounding: '30m', summaries: [] }) }))
+  await page.goto(URL)
+  await page.click('#tab-activity')
+  await page.click('#activity-mode [data-mode="week"]')
+  await page.waitForSelector('#activity-week-pie path')
+  return page
+}
+
+test("the week's pie, its list and the day columns fit the window at every width, and the fills are drawn", async () => {
+  for (const width of [1400, 800, 420]) {
+    const page = await weekPage(width)
+    try {
+      const m = await page.evaluate(() => {
+        const panel = document.getElementById('panel-activity')
+        const box = (id) => document.getElementById(id).getBoundingClientRect()
+        const slice = document.querySelector('#activity-week-pie path')
+        const pattern = document.getElementById(slice.getAttribute('fill').replace(/^url\(#|\)$/g, ''))
+        return { overflow: panel.scrollWidth - panel.clientWidth, panelRight: panel.getBoundingClientRect().right,
+          pie: box('activity-week-pie'), legend: box('activity-week-legend'), columns: box('activity-week-columns'), pattern: !!pattern }
+      })
+      assert.ok(m.overflow <= 1, `the week overflows sideways by ${m.overflow}px at ${width}px`)
+      for (const part of ['pie', 'legend', 'columns']) {
+        assert.ok(m[part].width > 0 && m[part].right <= m.panelRight + 1, `the ${part} isn't drawn within the window at ${width}px: ${JSON.stringify(m[part])}`)
+      }
+      assert.ok(m.pattern, `a slice's fill isn't drawn at ${width}px`)
+      if (width === 1400) await page.screenshot({ path: '/tmp/activity-week.png' })
+    } finally { await page.close() }
+  }
+})
+
 test("a balloon opens just under its own button: a row's (i), the help's, and the day's list", async () => {
   const page = await activityPage(1200)
   try {

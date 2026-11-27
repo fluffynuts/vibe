@@ -171,8 +171,8 @@ func TestTheDayCombinesTheLogWithGitInEveryFolderSeen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Today != "2026-11-26" || r.Earliest != "2026-11-19" || len(r.Problems) != 0 {
-		t.Fatalf("want today, a week back and no problems, got %+v", r)
+	if r.Today != "2026-11-26" || r.Earliest != "2026-11-13" || len(r.Problems) != 0 {
+		t.Fatalf("want today, the days kept back and no problems, got %+v", r)
 	}
 	var got []string
 	for _, b := range r.Day.Branches {
@@ -188,13 +188,13 @@ func TestTheDayCombinesTheLogWithGitInEveryFolderSeen(t *testing.T) {
 
 func TestTheDayIsOnlyOneOfThoseKept(t *testing.T) {
 	d := (&fakeGit{}).desk(Log{Dir: t.TempDir()})
-	for _, date := range []string{"2026-11-27", "2026-11-18", "yesterday"} {
+	for _, date := range []string{"2026-11-27", "2026-11-12", "yesterday"} {
 		if _, err := d.Day(context.Background(), date, time.Hour); err == nil {
 			t.Errorf("want %q refused", date)
 		}
 	}
-	if r, err := d.Day(context.Background(), "2026-11-19", time.Hour); err != nil || r.Day.Date != "2026-11-19" {
-		t.Errorf("want a week back allowed, got %v, %+v", err, r)
+	if r, err := d.Day(context.Background(), "2026-11-13", time.Hour); err != nil || r.Day.Date != "2026-11-13" {
+		t.Errorf("want the first day kept allowed, got %v, %+v", err, r)
 	}
 }
 

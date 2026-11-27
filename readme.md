@@ -754,7 +754,7 @@ restarts, as for files). Colours follow the theme, and what is copied is the cod
   deletes it.
 - **Filesystem rules** — the same, read-only (sbx doesn't log filesystem access yet).
 - **Activity** — how the day's time split between repositories and branches, for a timesheet, in every folder vibe has
-  opened (the sandboxes it has, and those it ran in this week, even if deleted since); it is on the Profiles page too. Time
+  opened (the sandboxes it has, and those it ran in the last 14 days, even if deleted since); it is on the Profiles page too. Time
   is **measured** while a sandbox's page runs (a prompt, the agent answering, you typing or clicking on the page, a review
   comment, the folder's git status changing: vibe keeps a line for each, at most one a minute, in `~/.vibe/activity/`), and
   **estimated** (~) from git's record otherwise (HEAD's reflog and each branch's: commits, checkouts, merges, rebases, kept for a branch since deleted), read with go-git, as the
@@ -773,10 +773,15 @@ restarts, as for files). Colours follow the theme, and what is copied is the cod
   rules are yours to edit, in `~/.vibe/activity/summary-rules.md`. A closed row says when its summary is being made, or failed, and has a copy button for its summary, with the branch's
   **ticket link** first when it has one: set it in the row's (i) (a Trello card, a Jira or GitHub issue, any web address), and
   the row gets a link to it. Links are kept in `~/.vibe/activity/tickets.json` by repository and branch, for every vibe, and
-  forgotten once the branch is gone from every checkout and from origin, and nothing this week mentions it.
+  forgotten once the branch is gone from every checkout and from origin, and nothing in the last 14 days mentions it.
   A row's **(i)** shows when it was worked on, and where. A branch with no time once rounded and no commits is hidden, behind a
-  line that shows it. The arrows step through the last week, and the date between them opens a list of the days kept; **Return
-  to today** shows on any other day. The **(i)** by the step buttons explains how the time is counted. On today, **Needs
+  line that shows it. The arrows step through the last 14 days (the log and summaries are kept that long), and the date between them opens a list
+  of the days kept; **Return to today** shows on any other day. **Week** shows the week (Monday to Sunday) as a pie by
+  repository beside a column per day, stacked by repository, with a list of each repository's hours and share: pick one, in
+  either chart or the list, to see its branches' week and days below. Each repository keeps its colour (then a colour and a
+  pattern: 45 of them) while it's worked on in the 14 days, kept in `~/.vibe/activity/fills.json`; **Colour-blind-friendly**
+  (under the columns, kept as `activityColourBlind` in `~/.vibe/settings.yaml`) draws them in three hues told apart by pattern
+  too, and is on by itself in the system's high contrast. The **(i)** by the step buttons explains how the time is counted. On today, **Needs
   attention** lists, as things are now, folders with
   uncommitted changes and branches with commits not pushed, asking GitHub (with this machine's `gh`) before saying so, as the
   local copy of a branch on GitHub can be out of date.
