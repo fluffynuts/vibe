@@ -385,4 +385,6 @@ test('drawn turns the :names: in text into their emoji, but not one stuck to a w
   assert.equal(emoji.drawn('done:tada:'), 'done:tada:')
   assert.equal(emoji.drawn(':not_a_thing: stays'), ':not_a_thing: stays')
   assert.equal(emoji.drawn(':ROCKET:'), '🚀')
+  assert.equal(emoji.drawn(':bug::tada: two at once'), '🐛🎉 two at once', 'codes side by side, as commit subjects have them')
+  assert.equal(emoji.drawn(':bug::not_a_thing:'), '🐛:not_a_thing:')
 })

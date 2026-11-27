@@ -2,10 +2,13 @@ package activity
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"vibe/internal/review"
 )
 
 // work logs marks on repo's branch every ten minutes from from to to, on the day starting at midnight.
@@ -76,5 +79,59 @@ func TestTheDaysKeptAreTodayAndThirteenBefore(t *testing.T) {
 	}
 	if r.Earliest != FirstKept(day).Format(time.DateOnly) || r.Earliest != "2026-11-13" {
 		t.Fatalf("want the earliest day the first one kept, 2026-11-13, got %s", r.Earliest)
+	}
+}
+
+// commitsOn is a history of one branch of phoenix with a commit at each of when, each subject its time.
+func commitsOn(branch string, when ...time.Time) review.GitHistory {
+	h := review.GitHistory{Repository: true, Origin: "git@github.com:codeo/phoenix.git", Branches: []string{branch}, UserEmail: "me@x",
+		Commits: map[string]review.ReflogCommit{}}
+	for i, at := range when {
+		sha := fmt.Sprintf("c%d", i)
+		subject := "work of " + at.Format("Mon 15:04")
+		h.Entries = append(h.Entries, review.ReflogEntry{Ref: "refs/heads/" + branch, New: sha, At: at, Message: "commit: " + subject})
+		h.Commits[sha] = review.ReflogCommit{AuthorEmail: "me@x", AuthorTime: at, Subject: subject, Parents: 1}
+	}
+	return h
+}
+
+func TestTheWeekSumsGitsEstimateAndKeepsEachDaysCommitsByDate(t *testing.T) {
+	folder := t.TempDir()
+	monday := day.AddDate(0, 0, -3)
+	f := &fakeGit{histories: map[string]review.GitHistory{folder: commitsOn("fix/y", monday.Add(9*time.Hour), at("14:00"))}}
+	w, err := f.desk(Log{Dir: t.TempDir()}, folder).Week(context.Background(), "", 30*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w.Repos) != 1 || len(w.Repos[0].Branches) != 1 {
+		t.Fatalf("want phoenix's fix/y alone, got %+v", w.Repos)
+	}
+	b := w.Repos[0].Branches[0]
+	if want := []float64{0.5, 0, 0, 0.5, 0, 0, 0}; !reflect.DeepEqual(b.Days, want) || b.Hours != 1 {
+		t.Fatalf("want each commit's estimated quarter hour as half an hour on its day, got %v (%vh)", b.Days, b.Hours)
+	}
+	want := []DayLines{{Date: "2026-11-23", Lines: []string{"work of Mon 09:00"}}, {Date: "2026-11-26", Lines: []string{"work of Thu 14:00"}}}
+	if !reflect.DeepEqual(b.Commits, want) {
+		t.Fatalf("want the commits by day, got %+v", b.Commits)
+	}
+}
+
+func TestABranchWithCommitsButNoTimeOnceRoundedIsInTheWeekWithItsCommits(t *testing.T) {
+	folder := t.TempDir()
+	f := &fakeGit{histories: map[string]review.GitHistory{folder: commitsOn("fix/quick", at("14:00"))}}
+	// An hour's step: the commit's quarter hour rounds to nothing.
+	w, err := f.desk(Log{Dir: t.TempDir()}, folder).Week(context.Background(), "", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w.Repos) != 1 || w.Repos[0].Repo != "phoenix" || len(w.Repos[0].Branches) != 1 {
+		t.Fatalf("want phoenix's fix/quick in the week, got %+v", w.Repos)
+	}
+	b := w.Repos[0].Branches[0]
+	if b.Branch != "fix/quick" || b.Hours != 0 || len(b.Commits) != 1 || b.Commits[0].Lines[0] != "work of Thu 14:00" {
+		t.Fatalf("want it at no time, with its commit, got %+v", b)
+	}
+	if w.Repos[0].Hours != 0 || w.Hours != 0 {
+		t.Fatalf("want no hours counted for it, got %v and %v", w.Repos[0].Hours, w.Hours)
 	}
 }

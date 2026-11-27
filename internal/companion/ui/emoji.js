@@ -2028,10 +2028,8 @@ wales 🏴󠁧󠁢󠁷󠁬󠁳󠁿
   }
 
   function drawn(text) {
-    return String(text).replace(/(^|[^a-z0-9])(:([a-z0-9_+-]+):)(?![a-z0-9])/gi, (all, before, code, name) => {
-      const char = named(name)
-      return before + (char || code)
-    })
+    // Looked behind, not taken: a code's own closing colon can be what stands before the next (:bug::tada:).
+    return String(text).replace(/(?<![a-z0-9]):([a-z0-9_+-]+):(?![a-z0-9])/gi, (code, name) => named(name) || code)
   }
 
   function usual(name) {
