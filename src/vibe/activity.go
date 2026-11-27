@@ -89,11 +89,7 @@ func askOnce(ctx context.Context, name, prompt string) (string, error) {
 	if !sbxrun.Reachable(ctx, name) {
 		return "", errors.New("the sandbox " + name + " isn't running, and couldn't be started")
 	}
-	words := append(append([]string(nil), instructions.Agents["claude"].OneShot...), "--model", summaryModel)
-	for i, w := range words {
-		words[i] = shellQuote(w)
-	}
-	reply, err := sbxrun.ExecInputStdout(ctx, name, prompt, asAgent("cd /tmp && exec "+strings.Join(words, " "))...)
+	reply, err := sbxrun.ExecInputStdout(ctx, name, prompt, asAgent(oneShotCommand(append(append([]string(nil), instructions.Agents["claude"].OneShot...), "--model", summaryModel)...))...)
 	if err != nil {
 		if ctx.Err() != nil {
 			return "", fmt.Errorf("the agent took too long to summarise, and was stopped: %w", ctx.Err())
@@ -101,6 +97,21 @@ func askOnce(ctx context.Context, name, prompt string) (string, error) {
 		return "", fmt.Errorf("the agent couldn't be asked: %w", err)
 	}
 	return reply, nil
+}
+
+// oneShotEnv marks a claude vibe runs for its own ends (a summary, Optimise, the model list), not the user's: the clipboard hook
+// (library/base/clipboard-bridge) leaves what the user pasted for their next prompt. A summary once took a pasted screenshot,
+// which was marked sent and never reached the user's message.
+const oneShotEnv = "VIBE_CLIPBOARD_HOOK=off"
+
+// oneShotCommand is the shell command that runs words, an agent's one-shot ask (instructions.Agent.OneShot, the prompt on its
+// stdin), marked as vibe's own, from somewhere neutral (not the workspace, whose instructions it needn't pick up).
+func oneShotCommand(words ...string) string {
+	words = append([]string(nil), words...)
+	for i, w := range words {
+		words[i] = shellQuote(w)
+	}
+	return "cd /tmp && exec env " + oneShotEnv + " " + strings.Join(words, " ")
 }
 
 // activityRecorderFor keeps the marks of the sandbox name's page, on its folder.

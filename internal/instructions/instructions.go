@@ -225,7 +225,8 @@ func joinParts(a, b string) string {
 // merged text itself.
 //
 // OneShot, when the agent has one, is how to ask it something once, with no
-// tools and nothing kept: the prompt goes in on stdin, the answer comes out
+// tools (--tools "" leaves MCP servers' tools: --strict-mcp-config, with no
+// config given, takes those) and nothing kept: the prompt goes in on stdin, the answer comes out
 // on stdout. It is what Optimise uses.
 type Agent struct {
 	Dir, Global string
@@ -240,7 +241,7 @@ const MergedFile = "vibe-instructions.md"
 // Agents are the agents vibe knows how to give these instructions to; one
 // not here doesn't get them (yet).
 var Agents = map[string]Agent{
-	"claude": {Dir: ".claude", Global: "CLAUDE.md", Imports: true, OneShot: []string{"claude", "-p", "--tools", ""}},
+	"claude": {Dir: ".claude", Global: "CLAUDE.md", Imports: true, OneShot: []string{"claude", "-p", "--tools", "", "--strict-mcp-config"}},
 	"gemini": {Dir: ".gemini", Global: "GEMINI.md", Imports: true},
 	"codex":  {Dir: ".codex", Global: "AGENTS.md"},
 }

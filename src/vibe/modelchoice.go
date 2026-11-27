@@ -260,7 +260,8 @@ func agentOptions(ctx context.Context, ask askAgent, workspace string) (companio
 		}
 		return "cd " + shellQuote(workspace) + " && " + command
 	}
-	help, err := within(ctx, ask, in("claude --help"), maxHelp, "--help")
+	// Marked as vibe's own, as every ask of claude for vibe's ends is (see oneShotEnv).
+	help, err := within(ctx, ask, in("env "+oneShotEnv+" claude --help"), maxHelp, "--help")
 	if err != nil {
 		return companion.Options{}, fmt.Errorf("asking claude for its --help: %w", err)
 	}
@@ -268,7 +269,7 @@ func agentOptions(ctx context.Context, ask askAgent, workspace string) (companio
 	if err != nil {
 		return companion.Options{}, err
 	}
-	answer, err := within(ctx, ask, in("claude -p /model --output-format json --no-session-persistence"), maxAnswer, "/model")
+	answer, err := within(ctx, ask, in("env "+oneShotEnv+" claude -p /model --output-format json --no-session-persistence"), maxAnswer, "/model")
 	if err != nil {
 		return companion.Options{}, fmt.Errorf("asking claude which models it has: %w", err)
 	}

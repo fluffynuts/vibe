@@ -104,7 +104,7 @@ func TestTheClipboardCanBeClearedAtOnce(t *testing.T) {
 
 // runClipboardHook runs the clipboard feature's hook as Claude Code does,
 // for event, against the server at base, and gives what it printed.
-func runClipboardHook(t *testing.T, base, event string) string {
+func runClipboardHook(t *testing.T, base, event string, env ...string) string {
 	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -112,7 +112,7 @@ func runClipboardHook(t *testing.T, base, event string) string {
 	}
 	script := filepath.Join("..", "..", "library", "base", "clipboard-bridge", "agent-files", ".local", "share", "vibe", "clipboard-hook.js")
 	cmd := exec.Command(node, script)
-	cmd.Env = append(os.Environ(), "VIBE_CLIPBOARD_SERVER="+base)
+	cmd.Env = append(append(os.Environ(), "VIBE_CLIPBOARD_SERVER="+base), env...)
 	cmd.Stdin = strings.NewReader(`{"hook_event_name":"` + event + `"}`)
 	out, err := cmd.Output()
 	if err != nil {
@@ -137,6 +137,25 @@ func TestAPasteWaitsForTheUsersNextMessage(t *testing.T) {
 	}
 	if out := runClipboardHook(t, base, "UserPromptSubmit"); !strings.Contains(out, "pasted while the agent worked") {
 		t.Errorf("not handed over with the user's message: %q", out)
+	}
+}
+
+// vibe's own one-shot asks of the sandbox's claude (the Activity tab's summaries, Optimise, the model list) are prompts too, but
+// not the user's: a paste taken by one was marked sent and never reached the user's next message (the summaries took a screenshot
+// on 2026-11-27).
+func TestAPasteIsLeftForTheUserWhenVibeAsksClaudeItself(t *testing.T) {
+	base, _ := clipboardServer(t)
+	res, err := http.Post(base+"/api/items", "text/plain", strings.NewReader("pasted for the user's next message"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+
+	if out := runClipboardHook(t, base, "UserPromptSubmit", oneShotEnv); out != "" {
+		t.Errorf("handed to vibe's own ask: %s", out)
+	}
+	if out := runClipboardHook(t, base, "UserPromptSubmit"); !strings.Contains(out, "pasted for the user's next message") {
+		t.Errorf("not left for the user's message: %q", out)
 	}
 }
 
